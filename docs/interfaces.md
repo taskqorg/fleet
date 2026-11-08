@@ -14,7 +14,7 @@ The objects below identify shared information and actions, not mandatory forms, 
 
 | Workspace | Information and actions |
 |---|---|
-| Overview | Tasks by project, progress, results and situations needing attention; manage priorities and balance work. |
+| Overview | Tasks by project, progress, results and situations needing attention; manage priorities and balance work across hosts and harnesses with visible load, quotas and placement reasons. |
 | Projects | Purpose, materials, workflow rules, connections and selected capabilities; open related tasks and results. |
 | Sessions | Ordinary conversations with a selected agent, including PM; related projects and tasks; continuation through another agent. |
 | Tasks | Expected result, requirements, executions, steps, questions, files, checks and costs; control work and accept results or return them for rework under project rules. |
@@ -41,7 +41,7 @@ A representative path is: interrupted task -> cause -> another available agent -
 |---|---|
 | Agents | Configurations, harnesses, models, instructions, skills and assigned tools; inspect changes and usage. |
 | Capabilities and methods | Expected outcomes, alternative implementations, tools, pipelines and recommendations. |
-| Environments and resources | Environments, working areas, preparation, cleanup, capacity and resource consumption. |
+| Environments and resources | Register hosts and environments; inspect availability, software, working areas, preparation, cleanup, capacity, consumption and allocation rules. |
 | Connections and access | Services, accounts, limits and project access. |
 | History and analysis | Project-wide time, costs, resources, waits and repeated work; drill down to executions and discuss findings with an agent. |
 | Laboratory | Compare variants from new or recorded work, inspect numeric and qualitative results, control budgeted improvement runs and apply selected improvements. |

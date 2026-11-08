@@ -154,3 +154,11 @@ For a compiler, compare compilation time and resource use while retaining correc
 A person asks an agent where a project's work spends time and resources. Both inspect [work analysis](work-analysis.md), including preparation, questions, retries, merge, CI and cleanup, and drill down to supporting executions.
 
 They discuss a suspected inefficiency, change a skill, configuration or workflow, and evaluate it through the same laboratory mechanism. Keep missing measurements visible and compare results before applying the improvement; a proposed saving is not a measured saving.
+
+## UC11. Balance a distributed fleet
+
+A persistent Linux server coordinates project and laboratory work. Mac and Windows hosts provide additional environments and may disconnect. Register their capabilities and apply [allocation rules](work-allocation.md); a single-machine test does not qualify this scenario.
+
+Through a PM session or direct controls, an operator keeps general work off the Mac, caps Windows concurrency, redirects eligible work during a host problem and later restores it. Prefer Codex while reserving Claude for explicitly requiring tasks; reduce or prohibit Antigravity use as configured. Reevaluate queued work without silently changing requirements or moving active executions.
+
+Show the effective policy, resource and quota observations, selected placement and waiting reasons. Account for shared machine capacity and account quotas across project and laboratory work. An unreachable active executor remains unconfirmed; reconcile before any replacement execution.

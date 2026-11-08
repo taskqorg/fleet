@@ -10,7 +10,7 @@ Human interfaces, pipelines and agents use the [shared core](../fleet.md#princip
 | Execution | Launch agents or pipelines, observe state, request stop or continuation. |
 | Handoff | Prepare context, select a successor and transfer work and working area access. |
 | Communication | Send messages, ask questions, answer and deliver results. |
-| Environments and resources | Find suitable environments, allocate working areas, check availability and release resources. |
+| Environments and resources | Register execution hosts and environments, inspect capacity, allocate working areas, steer placement and harness use, adjust concurrency and release resources. |
 | Catalogue and history | Discover methods and recommendations; retrieve results, history and telemetry. |
 | Configuration and access | Manage agent configurations, skills, pipeline definitions, connections and grants within role permissions. |
 | Experiments and improvement | Create experiments from recorded work, compare variants, write assessments, set recommendations and apply selected improvements under project rules. |
@@ -18,6 +18,10 @@ Human interfaces, pipelines and agents use the [shared core](../fleet.md#princip
 ## Method contracts
 
 Define each method's authorized callers, inputs, outputs, state changes and how its outcome can be checked after lost contact.
+
+The [shared execution contract](execution-contract.md) defines start, observation, input delivery, interruption and outcome collection across interactive work, autonomous assignments and experiments.
+
+[Orchestration](orchestration.md) coordinates delegation, dependencies and continuation without requiring an active caller session.
 
 Commands report acceptance separately from work starting and results becoming available. A lost response does not authorize duplicate work; callers must be able to determine the original operation's outcome.
 

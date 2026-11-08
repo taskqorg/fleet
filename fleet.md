@@ -95,7 +95,7 @@ Neither pause nor cancellation rolls back completed external effects. Rollback r
 
 ### Agent execution
 
-Run and control agents through their harnesses. Preserve supported harness capabilities, including images, history and session controls, as harnesses evolve.
+Run and control agents through their harnesses under the [runtime boundary](docs/runtime-integration.md). Preserve supported harness capabilities, including images, history and session controls, as harnesses evolve.
 
 An agent configuration combines a harness, model and settings, instructions, skills, tools and environment requirements.
 
@@ -125,7 +125,7 @@ An environment provides:
 
 Manage its lifecycle: prepare, check readiness, make available for work, preserve or release. Track [working area ownership and cleanup](docs/execution-continuity.md#working-areas); preserve required results and history before release. A task completes only when its result reaches its destination.
 
-Agents specify environment requirements; the system selects a concrete local or remote environment with verified capabilities. An agent configuration need not bind to one machine.
+Agents specify environment requirements; [work allocation](docs/work-allocation.md) selects eligible configurations and local or remote environments across registered hosts. Support the [distributed deployment](docs/deployment.md), including intermittently connected computers. An agent configuration need not bind to one machine.
 
 Agents primarily work in dedicated environments. An environment may serve multiple tasks; isolate working files and concurrent actions where conflicts are possible. A separate machine per task is not required. People can connect to observe or intervene, including through a desktop when available.
 
@@ -144,7 +144,7 @@ Architects manage the catalogue, pipelines and [connections](docs/connections.md
 
 Independent steps run concurrently within resource limits. A failed step blocks its dependants; others finish before the run fails. Reruns use current definitions and repeat failed or changed steps and affected dependants. Reuse requires unchanged inputs, definitions and effective configuration, including instructions and skills; operators may force a full rerun.
 
-The caller owns the run: it reads failures and reruns within its permissions and project rules; needed decisions become questions. Definitions may express branches and bounded review/rework loops. Laboratory and project runs use one run mechanism, distinguished by owner and tags.
+Runs retain their caller and result route under [orchestration](docs/orchestration.md); the caller need not remain active. Recovery follows permissions and project rules; needed decisions become questions. Definitions may express branches and bounded review/rework loops. Laboratory and project runs use one run mechanism.
 
 A definition declares run parameters, transitions and review iteration limits; each step names its executor, inputs, outputs, environment requirements and instruction path where applicable. Executors may be agents, tools, programs or pipelines. Operational retry policies, timeouts and credentials remain in project rules, resources and connections.
 
@@ -196,7 +196,7 @@ Observation confidence is separate from execution state. Lost contact means curr
 - Reliability: preserve accepted work and results. After failure, check the original operation's state and outcome before resuming, safely retrying or requesting a decision. An uncertain external action outcome does not authorize repeating it.
 - Authority: architects grant projects shared capabilities and connections; operators work within the grant. An execution's permissions are the intersection of the project grant, the agent configuration and explicit task choices. Instructions define behavior but do not grant permissions. Operator and architect are roles; one person may hold both.
 - History access: execution history is project data. Operators read history within their project grants; architects can read all execution history for evaluation.
-- Resources: account for CPU, memory, disk capacity, occupancy, provider quotas and budgets across concurrent work, including laboratory runs and environment preparation. Allocate work and explain resource waits. Operators control priorities and limits and may select agents or environments. A separate scheduling optimizer is not required.
+- Resources: account for CPU, memory, disk, provider quotas and budgets across concurrent work, including laboratory runs and preparation. [Balance work](docs/work-allocation.md) across eligible hosts and agents; expose selection and waiting reasons. Operators steer placement, harness use and concurrency through interfaces or authorized agents.
 
 Routine work advances automatically. People resolve substantive decisions and exceptions beyond the system's authority; project acceptance rules still apply.
 
