@@ -12,6 +12,16 @@ The [catalogue](../fleet.md#tools-and-pipelines) describes what callers can obta
 
 These distinctions do not require separate services. Alternative methods satisfy the advertised contract, including file formats, textures, accessible artifacts and check results where required. Follow the existing explicit-choice and recommendation rules when selecting a method.
 
+## Catalogue scope
+
+Catalogue entries may be shared or project-specific. Project pipelines may compose shared methods with project requirements, tools and checks. Extract shared methods when reuse warrants it.
+
+People and agents discover available shared entries and entries for their project context. Other projects' entries are not offered by default. Availability determines usable methods; recommendations guide selection among them.
+
+## Pipeline development
+
+Develop pipelines through ordinary agent sessions: discuss requirements, edit definitions, run trials and compare results. Use the [laboratory workflow](interfaces.md#architect-workflow) to assess methods and select project or system recommendations for subsequent tasks.
+
 ## Pipeline execution
 
 A pipeline is a process executed by the system. Its caller supplies inputs and receives results without coordinating its internal steps.
@@ -23,6 +33,16 @@ An agent step receives a work assignment and chooses actions within it. The defi
 A single-step pipeline is valid. A simple API call need not be wrapped in a pipeline; direct tools and pipelines share invocation and observation conventions.
 
 MCP exposes tools to agents. A tool's implementation may call an API directly or execute a pipeline. Provider configuration, accounts and key pools belong to connections, not to the calling agent's instructions.
+
+## Results and transfer
+
+A capability declares named required and optional outputs. An output may contain data or reference accessible material in its source system, with its type and description. Fleet need not duplicate materials already held elsewhere.
+
+Downstream steps bind their inputs to these outputs. The system makes the material accessible in the receiving environment within permissions; callers need not know the producing machine's file layout.
+
+Humans and agents use the same result through suitable representations. Material availability and verification outcome are separate: retain the artifact and its check report even when the artifact needs rework.
+
+Code results may reference repository changes and provide a diff. Both human interfaces provide [result viewers](interfaces.md#result-viewing); storage and transport choices do not define the result contract.
 
 ## Alternative methods
 

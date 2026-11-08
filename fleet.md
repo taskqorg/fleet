@@ -7,7 +7,7 @@ A system for performing work through agents across projects. This specification 
 - **R1 Shared rules.** [specq](https://github.com/taskqorg/specq) governs engineering, design and documentation.
 - **R2 Shared core.** Every system operation is a tool over one core state; a data layer serves queries. Human interfaces, pipelines and agents use the same tools and data, each within its own permissions. Interfaces add no operations of their own.
 - **R3 System requirements.** [Reliability, authority and resources](#system-requirements) apply to every block.
-- **R4 Design depth.** Agree on each level's parts, responsibilities and relationships before detailing any part. Revisit earlier levels when needed.
+- **R4 Design depth.** Agree on each level's parts, responsibilities and relationships before detailing any part. Revisit earlier levels when needed. Existing product implementations and contracts are evidence to assess, not a template for Fleet's structure.
 - **R5 Observability.** Instrument every system component and operation, including agents, tools and infrastructure. Retain queryable history for diagnosis, resource attribution and improvement under [observation and evaluation](#observation-and-evaluation).
 
 ## Operator interface
