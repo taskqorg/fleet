@@ -17,7 +17,7 @@ An operator wants a new product page in an existing project. Project context and
 
 ### Questions and visibility
 
-A question at any step follows [work management](../fleet.md#work-management): task context reaches the operator and the answer reaches the relevant execution. Closing the PM session does not prevent continuation.
+A question at any step follows [work management](../fleet.md#work-management): task context reaches the addressee roles and the answer reaches the relevant execution. Closing the PM session does not prevent continuation.
 
 The operator sees the task, agent, environment, progress and waiting reasons, and can open execution history or the agent's desktop when available.
 
@@ -40,7 +40,7 @@ Two pipelines create 3D objects. An architect wants to compare their suitability
 1. The architect, optionally with an agent, selects methods, example objects and comparison criteria.
 2. The system runs both methods on the selected examples and retains actual settings, inputs, outputs and errors.
 3. The architect and assisting agents inspect objects, add comments and tags, and compare quality, time and known costs. Conclusions link to supporting runs.
-4. Through the [laboratory workflow](../fleet.md#architect-interface), the architect recommends methods for specific uses within a project or across the system. Different methods may suit characters and props.
+4. Through the [laboratory workflow](interfaces.md#architect-workflow), the architect recommends methods for specific uses within a project or across the system. Different methods may suit characters and props.
 5. A worker receives a character task and follows the [catalogue selection rules](../fleet.md#tools-and-pipelines). With no explicit method choice, it reads applicable recommendations and usage conditions before choosing.
 6. The worker runs the chosen method, retains the object and execution evidence, and checks the task's requirements.
 
@@ -81,7 +81,7 @@ A project pipeline renders a batch of 3D assets in three steps: prepare inputs, 
 2. The system checks granted connections, environment requirements and resource limits, then launches the prepare step; render steps start when prepare finishes and run concurrently.
 3. One render step fails. Its dependant assembly step does not start; other render steps finish and retain their outputs. The run fails with the error retained.
 4. The task applies the [transition rules](../fleet.md#task-states): the worker reads the error and reruns. The rerun reuses retained outputs of unchanged steps and repeats the failed render and the assembly step.
-5. Environments are released after outputs reach the project's result storage; working files are discarded.
+5. Environments are released after outputs reach the project's result storage; temporary working areas are cleaned under the [ownership and cleanup rules](execution-continuity.md#working-areas).
 
 ### Visibility
 
@@ -90,5 +90,31 @@ The operator sees the run as the definition combined with step states, including
 ### Checks
 
 - Definition to run: parameters, executors and instruction paths resolve from committed revisions; a pinned run uses one revision throughout.
-- Failure to rerun: retained outputs survive the failed run; the rerun repeats only failed steps and their dependants unless a full rerun is forced.
+- Failure to rerun: retained outputs survive the failed run; reuse follows the [input and configuration rules](../fleet.md#tools-and-pipelines). Repeat failed or changed steps and affected dependants unless a full rerun is forced.
 - Run to result: the task completes only when assembled results reach their destination and the task's completion requirements hold.
+
+## UC5. Qualify an agent and use it in project work
+
+An architect prepares an agent configuration and a pipeline for a catalogue kind of work. A project operator will use the recommended method through a PM session.
+
+### Qualification flow
+
+1. The architect commits the configuration, skills, instructions and pipeline definition, prepares a suitable environment and configures tool connections. Agents use tools without receiving credentials.
+2. The architect runs compatibility checks for the selected combination. Retain tested revisions and outcomes; confirmed incompatibility blocks launch. Incomplete or unchecked results remain visible without being treated as incompatibility.
+3. The architect runs representative examples through the shared execution mechanism. Retain full session history, outputs, tool calls, results, errors, time and cost, including failed runs.
+4. The architect or a laboratory agent creates an assessment linked to those runs, describing criteria, comparisons, limitations and suitability. A later assessment preserves the earlier one.
+5. The architect explicitly recommends the method for the project's kind of work. An assisting agent may propose this decision through a question; an assessment alone does not change the recommendation.
+6. The architect grants the project required capabilities and connections. The operator binds granted connections to concrete project resources.
+
+### First project execution
+
+1. The PM prepares a task under project rules. With no explicit method choice, the worker queries recommendations by project and kind of work; the response resolves scope fallback and usage conditions.
+2. The worker starts the selected method within granted permissions. The execution records the revisions actually used; a recommendation does not bypass launch checks.
+3. The task retains results and full execution history, then follows project verification, acceptance and delivery requirements. Laboratory success does not establish acceptance of this result.
+4. The architect can use the project run as evidence for a new assessment. Changing the recommendation remains a separate action.
+
+### Access and traceability checks
+
+- Operators can inspect history within their project grants; they cannot read another project's history without its grant. Architects can inspect all execution history for evaluation.
+- Human interfaces and agent queries enforce the same permissions. A recommendation does not grant access to its supporting project history.
+- A result links to its execution and actual configuration; a recommendation links to its assessment and supporting runs.

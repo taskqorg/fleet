@@ -8,14 +8,13 @@ A system for performing work through agents across projects. This specification 
 - **R2 Shared core.** Every system operation is a tool over one core state; a data layer serves queries. Human interfaces, pipelines and agents use the same tools and data, each within its own permissions. Interfaces add no operations of their own.
 - **R3 System requirements.** [Reliability, authority and resources](#system-requirements) apply to every block.
 - **R4 Design depth.** Agree on each level's parts, responsibilities and relationships before detailing any part. Revisit earlier levels when needed.
+- **R5 Observability.** Instrument every system component and operation, including agents, tools and infrastructure. Retain queryable history for diagnosis, resource attribution and improvement under [observation and evaluation](#observation-and-evaluation).
 
 ## Operator interface
 
 A desktop application for Windows, macOS and Linux and a web portal, used across all projects. Both use the same UI components.
 
-Conversation with an interactive product manager (PM) is the primary way to discuss and assign work.
-
-A PM is an ordinary session in a chosen agent, with role-specific instructions, tools and project access. Sessions may span related projects; they are not permanent project channels. Conversation has no separate request object.
+Conversation with a product manager (PM) is the primary way to discuss and assign work. A PM is an ordinary session in a chosen agent with role-specific instructions, tools and project access. Sessions may span related projects; they are not permanent project channels. Conversation has no separate request object.
 
 - Projects and tasks: create and configure projects, describe work and set priorities.
 - Execution: balance work and track progress.
@@ -30,15 +29,10 @@ A web interface for a separate architect role. Configure and qualify the agents 
 - Skills and tools: manage available capabilities and their assignment to agents.
 - Environments: prepare execution conditions.
 - Resources: manage capacity, provider quotas and spending limits.
-- Evaluation: test compatibility, benchmark configurations and rerun checks after changes.
+- Evaluation: test compatibility, benchmark configurations, rerun checks after changes and analyze retained history to improve projects, pipelines, skills, tools and infrastructure.
 - Access: grant projects shared capabilities and connections, with quotas.
 
-Laboratory workflow:
-
-1. Configure an agent, method or pipeline.
-2. Run experiments or benchmarks; retain each run's conditions and results.
-3. Add comments, tags, comparisons, limitations and suitability conclusions.
-4. Recommend a method for specific tasks within a project or across the system.
+The [architect workflow](docs/interfaces.md#architect-workflow) connects configuration, experiments, assessment and scoped recommendations.
 
 Retain assessments as knowledge. Changing a recommendation is a separate architect action; comments and conclusions do not change it automatically.
 
@@ -114,7 +108,7 @@ Before launch, check environment compatibility and granted permissions. Resolve 
 
 A session holds conversation and working context within a harness: messages, actions and interaction history. It may exist without a task.
 
-An execution may start a new session or continue an existing one, according to the work and harness capabilities. Task, execution and session lifecycles remain distinct.
+An execution may start or continue a session according to harness capabilities. Task, execution and session lifecycles remain distinct. [Continuation and handoff](docs/execution-continuity.md#continuation-and-handoff) preserve work when accounts, agents or environments change.
 
 Execution states are preparing, running, waiting, succeeded, failed and cancelled. Available controls depend on the harness or tool.
 
@@ -128,7 +122,7 @@ An environment provides:
 - Interaction: terminal, browser, APIs and desktop control through computer use (CUA).
 - Access: available data, accounts and external services.
 
-Manage its lifecycle: prepare, check readiness, make available for work, preserve or release. Working files are distinct from retained results; preserve required results and history before releasing an environment, then discard working files. A task completes only when its result reaches its destination.
+Manage its lifecycle: prepare, check readiness, make available for work, preserve or release. Track [working area ownership and cleanup](docs/execution-continuity.md#working-areas); preserve required results and history before release. A task completes only when its result reaches its destination.
 
 Agents specify environment requirements; the system selects a concrete local or remote environment with verified capabilities. An agent configuration need not bind to one machine.
 
@@ -145,7 +139,7 @@ A personal desktop may be explicitly connected as an environment; an agent can r
 
 Architects manage the catalogue, pipelines and connections; a connection holds service, account, credentials and limits. Operators bind granted connections to project resources. Missing access is a question: binding changes address operators, new grants and connections address architects.
 
-Independent steps run concurrently within resource limits. A failed step blocks its dependants; independent steps finish, then the run fails. A rerun uses current definitions, repeats failed steps and their dependants, and reuses retained results of steps whose inputs and definition are unchanged; operators may force a full rerun.
+Independent steps run concurrently within resource limits. A failed step blocks its dependants; others finish before the run fails. Reruns use current definitions and repeat failed or changed steps and affected dependants. Reuse requires unchanged inputs, definitions and effective configuration, including instructions and skills; operators may force a full rerun.
 
 The caller owns the run: it reads failures and reruns within its permissions and project rules; needed decisions become questions. Definitions have no branching or loop constructs; conditional work belongs to the step's agent, repetition to rework executions. Laboratory and project runs use one run mechanism, distinguished by owner and tags.
 
@@ -177,22 +171,20 @@ Project rules may override PM communication, task formulation, execution practic
 
 PMs apply the project's effective rules when preparing tasks. Executing agents apply them when doing the work and delivering results.
 
-Refine defaults through real work across projects, from conversation through execution to usable results.
-
 ### Observation and evaluation
 
 - Live execution: agents, locations, progress, waits and problems.
 - History and evidence: retain every execution in full, without default expiry: session history, agent output, actions, tool calls, questions, results and verification materials. This is the source for analysis and pipeline improvement.
 - Changes: operators and architects can inspect diffs between skill and agent configuration revisions using existing version-control and diff tools.
-- Compatibility: checked combinations of harnesses, models, skills, tools and environments, stored as versioned facts. A failed check blocks launch; an unchecked combination is shown, not blocked.
+- Compatibility: checked combinations of harnesses, models, skills, tools and environments, stored as versioned facts. Confirmed incompatibility blocks launch; incomplete or unchecked results are visible, not treated as incompatibility.
 - Quality: configuration performance on specific kinds of work.
-- Operation: time, cost, failures and recovery, collected from every project and laboratory run.
+- Operation: retain invocation counts, duration, cost, CPU, memory, disk usage, failures and recovery across agents, tools, Fleet components and infrastructure, including preparation and cleanup. Link records to components, tools, working areas and runs where applicable; expose missing observations.
 
 Three records: a run with its conditions and results; an assessment of runs with criteria, comparison, limitations and suitability, appended and never rewritten; a recommendation for a catalogue kind of work within a project or system scope, linked to its assessment. Comments and tags are fields of runs and assessments. Keep failed runs visible.
 
 Architects and laboratory agents write assessments; only architects set recommendations, and an agent proposes one as a question. Updating a recommendation preserves earlier runs and assessments; new work reads current recommendations when choosing a method.
 
-Agents read recommendations through one data query by kind of work and project, with scope fallback and usage conditions resolved; assessments stay reachable for reasoning. Operators use these records to manage work and accept results; architects compare configurations and identify improvements.
+Agents query recommendations by kind of work and project with scope fallback and usage conditions resolved; assessments remain reachable. Human and agent tools query retained history, attribute resource use, inspect frequent calls and failures, and identify useful new tools. Architects use this evidence to improve configurations and defaults through real work.
 
 Observation confidence is separate from execution state. Lost contact means current execution is unconfirmed, not failed or cancelled; show the last known state and the uncertainty.
 
@@ -200,10 +192,15 @@ Observation confidence is separate from execution state. Lost contact means curr
 
 - Reliability: preserve accepted work and results. After failure, check the original operation's state and outcome before resuming, safely retrying or requesting a decision. An uncertain external action outcome does not authorize repeating it.
 - Authority: architects grant projects shared capabilities and connections; operators work within the grant. An execution's permissions are the intersection of the project grant, the agent configuration and explicit task choices. Instructions define behavior but do not grant permissions. Operator and architect are roles; one person may hold both.
-- Resources: account for available capacity, occupancy, provider quotas and configured budgets. Allocate work automatically and explain resource waits. Operators control priorities and limits and may explicitly select agents or environments. A separate scheduling optimizer is not required.
+- History access: execution history is project data. Operators read history within their project grants; architects can read all execution history for evaluation.
+- Resources: account for CPU, memory, disk capacity, occupancy, provider quotas and budgets across concurrent work, including laboratory runs and environment preparation. Allocate work and explain resource waits. Operators control priorities and limits and may select agents or environments. A separate scheduling optimizer is not required.
 
 Routine work advances automatically. People resolve substantive decisions and exceptions beyond the system's authority; project acceptance rules still apply.
 
 ## Linked detail
 
 - [Use cases](docs/use-cases.md): end-to-end scenarios connecting the system blocks.
+- [Execution continuity](docs/execution-continuity.md): working area lifecycle, resource visibility and handoff.
+- [System operations](docs/system-operations.md): operation groups, contracts and agent communication semantics.
+- [Experiments](docs/experiments.md): reproduce recorded work, compare changes and apply improvements to products.
+- [Interface workflows](docs/interfaces.md): operator and architect activities and contextual actions.
