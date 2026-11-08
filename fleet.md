@@ -132,6 +132,8 @@ A personal desktop may be explicitly connected as an environment; an agent can r
 
 ### Tools and pipelines
 
+Distinguish [capability, method and tool](docs/capabilities-and-pipelines.md): the expected outcome, its implementation and its callable interface. A pipeline is a system-executed process implementing a method, not a list of instructions for its caller to execute.
+
 - Catalogue: describe tools, methods and pipelines, their purpose, inputs, results, usage conditions and current recommendations.
 - Connections: provide access to harness tools, MCP, external APIs, system services and Fleet's own operations and data. Credentials stay in connections, tools and environments, outside versioned files; agents receive capability through tools, never credentials.
 - Pipelines: structured text definitions compose tools, programs and agents through steps, dependencies, executors, inputs and outputs. Keep definitions, step instructions and run state separate; the system coordinates steps and result transfer. A pipeline may be exposed as an agent tool: the caller uses its description and results, not its steps.
@@ -141,9 +143,9 @@ Architects manage the catalogue, pipelines and connections; a connection holds s
 
 Independent steps run concurrently within resource limits. A failed step blocks its dependants; others finish before the run fails. Reruns use current definitions and repeat failed or changed steps and affected dependants. Reuse requires unchanged inputs, definitions and effective configuration, including instructions and skills; operators may force a full rerun.
 
-The caller owns the run: it reads failures and reruns within its permissions and project rules; needed decisions become questions. Definitions have no branching or loop constructs; conditional work belongs to the step's agent, repetition to rework executions. Laboratory and project runs use one run mechanism, distinguished by owner and tags.
+The caller owns the run: it reads failures and reruns within its permissions and project rules; needed decisions become questions. Definitions may express branches and bounded review/rework loops. Laboratory and project runs use one run mechanism, distinguished by owner and tags.
 
-A definition declares run parameters and, per step, an identifier, an executor (agent configuration, tool or pipeline), a repository path to its instruction, inputs from parameters or earlier steps, named outputs and environment requirements. Retries, timeouts, credentials and conditions stay outside: project rules, resources and connections supply them.
+A definition declares run parameters, transitions and review iteration limits; each step names its executor, inputs, outputs, environment requirements and instruction path where applicable. Executors may be agents, tools, programs or pipelines. Operational retry policies, timeouts and credentials remain in project rules, resources and connections.
 
 Humans and agents use one catalogue; agent configurations select available capabilities. Human views support inspection and discussion with a PM. Agents discover applicable descriptions, recommendations and instructions on demand, without browsing the human interface or loading the whole catalogue into context.
 
@@ -204,3 +206,4 @@ Routine work advances automatically. People resolve substantive decisions and ex
 - [System operations](docs/system-operations.md): operation groups, contracts and agent communication semantics.
 - [Experiments](docs/experiments.md): reproduce recorded work, compare changes and apply improvements to products.
 - [Interface workflows](docs/interfaces.md): operator and architect activities and contextual actions.
+- [Capabilities and pipelines](docs/capabilities-and-pipelines.md): callable outcomes, alternative methods and system-executed workflows.
