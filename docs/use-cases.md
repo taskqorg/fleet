@@ -89,7 +89,7 @@ The operator sees the run as the definition combined with step states, including
 
 ### Checks
 
-- Definition to run: parameters, executors and instruction paths resolve from committed revisions; a pinned run uses one revision throughout.
+- Definition to run: parameters, executors and instructions follow the [source rules](../fleet.md#knowledge-and-rules), including recorded drafts when explicitly selected; a pinned run uses its selected revision throughout.
 - Failure to rerun: retained outputs survive the failed run; reuse follows the [input and configuration rules](../fleet.md#tools-and-pipelines). Repeat failed or changed steps and affected dependants unless a full rerun is forced.
 - Run to result: the task completes only when assembled results reach their destination and the task's completion requirements hold.
 
@@ -99,11 +99,11 @@ An architect prepares an agent configuration and a pipeline for a catalogue kind
 
 ### Qualification flow
 
-1. The architect commits the configuration, skills, instructions and pipeline definition, prepares a suitable environment and configures tool connections. Agents use tools without receiving credentials.
+1. The architect prepares the configuration, skills, instructions and pipeline definition under the [source rules](../fleet.md#knowledge-and-rules), prepares a suitable environment and configures tool connections. Agents use tools without receiving credentials.
 2. The architect runs compatibility checks for the selected combination. Retain tested revisions and outcomes; confirmed incompatibility blocks launch. Incomplete or unchecked results remain visible without being treated as incompatibility.
 3. The architect runs representative examples through the shared execution mechanism. Retain full session history, outputs, tool calls, results, errors, time and cost, including failed runs.
 4. The architect or a laboratory agent creates an assessment linked to those runs, describing criteria, comparisons, limitations and suitability. A later assessment preserves the earlier one.
-5. The architect explicitly recommends the method for the project's kind of work. An assisting agent may propose this decision through a question; an assessment alone does not change the recommendation.
+5. The architect or an agent with delegated architect authority explicitly recommends the method for the project's kind of work. Without that authority, an agent proposes the decision through a question; an assessment alone does not change the recommendation.
 6. The architect grants the project required capabilities and connections. The operator binds granted connections to concrete project resources.
 
 ### First project execution
@@ -118,3 +118,39 @@ An architect prepares an agent configuration and a pipeline for a catalogue kind
 - Operators can inspect history within their project grants; they cannot read another project's history without its grant. Architects can inspect all execution history for evaluation.
 - Human interfaces and agent queries enforce the same permissions. A recommendation does not grant access to its supporting project history.
 - A result links to its execution and actual configuration; a recommendation links to its assessment and supporting runs.
+
+## UC6. Refine a character through conversation
+
+An operator supplies references in a session and requests a playable character. The agent uses project requirements and an applicable method, or investigates without a predefined pipeline. Results and checks appear in the conversation with links to their executions.
+
+The operator reports damaged hands. The agent reworks the relevant material and affected checks, retaining earlier results for comparison. The operator need not navigate separate step or experiment screens. Inspecting internals or comparing methods remains available through the same underlying records.
+
+## UC7. Evaluate a development approach
+
+An architect supplies a specification and configures a developer with SDD instructions. The agent implements the project through ordinary execution. The architect reviews the product, records shortcomings and discusses changes in a session.
+
+Run another variant with changed instructions, skills or orchestration; compare result quality, human intervention, repeated work and recorded costs under the [experiment contract](experiments.md). The same process can evaluate PM behavior. SDD is a candidate method, not a Fleet requirement.
+
+Once a method is useful, recommend it for relevant assignments within the selected scope. Project work uses that recommendation under the normal selection rules; previous results remain unchanged unless explicitly reworked.
+
+## UC8. Execute delegated or event-initiated work
+
+An operator supplies a prepared specification and delegates implementation. Alternatively, a configured monitoring event initiates investigation under [event rules](system-operations.md#event-initiated-work). Both use ordinary assignments and execution.
+
+The agent acts within its instructions and authority, optionally delegating work. Questions use the [communication rules](system-operations.md#agent-communication): available requirements, authorized agent decisions, specialist or PM assistance, then human decisions where needed. Independent work may continue while an answer is pending.
+
+For an alert, return a concise finding, evidence, impact and proposed next action. A code defect, infrastructure issue, false alarm or insufficient evidence are possible outcomes. Remediation follows project authority; receiving an alert does not authorize a fix.
+
+The operator sees progress, questions and results without keeping a session open. Project instructions may change planning style, agent roles and permitted automatic actions without changing the execution mechanism.
+
+## UC9. Improve measurable work within a budget
+
+An architect assigns an optimization objective, requirements and budget using ordinary instructions. An agent iterates through changes, trials and measurements, optionally delegating work to other sessions. Follow [iterative improvement](experiments.md#iterative-improvement) for shared budget accounting, comparison and stopping.
+
+For a compiler, compare compilation time and resource use while retaining correctness checks. Return qualifying candidates, measurements and costs; the newest candidate need not be the best. Human comments remain available alongside numeric results.
+
+## UC10. Analyze and improve project operations
+
+A person asks an agent where a project's work spends time and resources. Both inspect [work analysis](work-analysis.md), including preparation, questions, retries, merge, CI and cleanup, and drill down to supporting executions.
+
+They discuss a suspected inefficiency, change a skill, configuration or workflow, and evaluate it through the same laboratory mechanism. Keep missing measurements visible and compare results before applying the improvement; a proposed saving is not a measured saving.

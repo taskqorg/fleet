@@ -2,6 +2,14 @@
 
 Workflows for the separate [operator and architect interfaces](../fleet.md#operator-interface). These define activities and information, not menus or screen layouts.
 
+## Interaction model
+
+Support both conversation-led work and autonomous assignments. Sessions show messages, tool activity, results and questions, including answer choices, while preserving supported harness capabilities. Tasks summarize outcomes, progress and decisions and link to relevant sessions and executions; neither view replaces the other.
+
+People may discuss, inspect results and request rework within a session. Background work continues without an open conversation. Show questions in the work overview and relevant conversations as views of the same record. Reveal execution details when needed rather than requiring navigation through every object.
+
+The objects below identify shared information and actions, not mandatory forms, screens or operator steps. Domain-specific content belongs to project tools and materials; Fleet does not require a universal schema for every kind of work.
+
 ## Operator workflow
 
 | Workspace | Information and actions |
@@ -18,6 +26,15 @@ A session need not belong to one project; it may discuss and create tasks for se
 
 A representative path is: interrupted task -> cause -> another available agent -> continued work -> result in the same task. These workspaces do not prescribe the final menu.
 
+### Operator objects
+
+| Object | Detail and actions |
+|---|---|
+| Project | Purpose, description location, rules, available methods and tasks. Discuss, configure and open related work. |
+| Session | Conversation, selected agent, related projects and tasks. Attach materials, assign work and hand off to another agent. |
+| Task | Expected outcome, inputs, requirements, progress, questions and results. Clarify, prioritize, pause, continue, cancel, accept or request rework. |
+| Result | Material, producing execution, checks and comments. Inspect, compare, annotate and reuse as input. |
+
 ## Architect workflow
 
 | Workspace | Information and actions |
@@ -26,8 +43,8 @@ A representative path is: interrupted task -> cause -> another available agent -
 | Capabilities and methods | Expected outcomes, alternative implementations, tools, pipelines and recommendations. |
 | Environments and resources | Environments, working areas, preparation, cleanup, capacity and resource consumption. |
 | Connections and access | Services, accounts, limits and project access. |
-| History and analysis | Executions, results, tool calls, costs and errors, linked to the underlying work. |
-| Laboratory | Create experiments from recorded work, compare variants, assess results, update recommendations and apply selected improvements. |
+| History and analysis | Project-wide time, costs, resources, waits and repeated work; drill down to executions and discuss findings with an agent. |
+| Laboratory | Compare variants from new or recorded work, inspect numeric and qualitative results, control budgeted improvement runs and apply selected improvements. |
 
 These workspaces organize the architect's work, not services or repositories. Their objects link across workspaces; exact menus and screen layouts remain unspecified.
 
@@ -58,7 +75,15 @@ Follow the [experiment contract](experiments.md) when applying improvements. Ass
 
 Cross-workspace navigation opens the same objects rather than independently maintained copies. A skill reached from an agent is the same skill shown in its catalogue. Result viewers remain available in execution context.
 
+A pipeline-backed method may use one integrated detail view; distinct concepts do not require separate forms. Every interface action uses the same system operations available to agents under equivalent permissions.
+
 A representative path is: expensive model generation -> execution -> costly step -> method and agent -> experiment with a different skill -> comparison -> application of the improvement.
+
+## Character workflow prototype
+
+The [CSGO storyboard](prototypes/csgo-workflow.html) is a historical navigation study with synthetic data. It overemphasizes sequential screens and does not establish the interaction model above, native harness fidelity or project acceptance. Do not use it as an approved layout or required workflow.
+
+Inspect the same result across operator and architect views. Compare a replacement with its predecessor, then distinguish applying it to existing work from recommending its method for future work. Application follows project checks; it does not imply immediate publication.
 
 ## Result viewing
 

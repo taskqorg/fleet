@@ -23,10 +23,18 @@ Commands report acceptance separately from work starting and results becoming av
 
 ## Agent communication
 
-A work assignment with an expected result creates a tracked task or step. An ordinary message does not automatically create a work obligation.
+An independently delegated assignment is tracked as a task or step. Ordinary conversation and actions within an existing assignment do not require separate tasks; retain them in session and execution history.
 
 A question requires an answer and may block continuation. A notification reports an event without requiring an answer. Route questions through the [addressee roles](../fleet.md#work-management).
+
+Agents use available requirements and decide within their assignment and authority. Route unresolved questions to a configured agent or person; technical versus product subject alone does not determine authority. Agent assistance may retrieve context, propose options or answer within delegated authority.
+
+Keep one question and answer across session, task and attention views. Wait only on affected work. Routing and continuation do not require an open conversation window or a continuously running PM.
 
 Retain messages, questions, answers and results with their associated work where applicable. Make them available after reconnection under the same access rules as the underlying data.
 
 Provide the context needed to act and access to further detail. Communication supports the [handoff contract](execution-continuity.md#continuation-and-handoff); delivery alone does not establish that work started or completed.
+
+## Event-initiated work
+
+Configured events may invoke the same operations as people and agents, within granted authority. Retain the source event with the work. An alert may initiate investigation; it does not establish a defect or authorize remediation. Use project rules to continue automatically or request a decision.

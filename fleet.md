@@ -9,6 +9,7 @@ A system for performing work through agents across projects. This specification 
 - **R3 System requirements.** [Reliability, authority and resources](#system-requirements) apply to every block.
 - **R4 Design depth.** Agree on each level's parts, responsibilities and relationships before detailing any part. Revisit earlier levels when needed. Existing product implementations and contracts are evidence to assess, not a template for Fleet's structure.
 - **R5 Observability.** Instrument every system component and operation, including agents, tools and infrastructure. Retain queryable history for diagnosis, resource attribution and improvement under [observation and evaluation](#observation-and-evaluation).
+- **R6 Minimal mechanisms.** Structure what Fleet must execute, route, observe and recover. Keep domain workflows and development methodologies in configurable instructions, tools and pipelines. Scenarios test the core's coverage; they do not require dedicated subsystems or screens.
 
 ## Operator interface
 
@@ -42,7 +43,7 @@ Retain assessments as knowledge. Changing a recommendation is a separate archite
 
 A project groups the goal, context, rules and work for a product or area. Follow the [project context](docs/project-context.md) baseline for files, materials and reusable methods.
 
-Its configuration contains:
+Configure these areas as needed, using shared defaults:
 
 - Purpose and context: specifications and materials.
 - Connections: bindings of granted [connections](#tools-and-pipelines) to concrete repositories, task board, data sources, CI and external services.
@@ -56,7 +57,7 @@ Own work from task creation to an accepted result:
 
 - Task: identity, project, expected outcome, dependencies, completion requirements and result destination.
 - Execution: agent and environment assignment, state and execution history.
-- Questions: retain questions and context with the task, deliver answers to the relevant execution and continue. Each question carries addressee roles; the waiting reason names the role that can answer.
+- Questions: retain context with the related work, route to an authorized person or agent and deliver the answer to the relevant execution. Show the addressee and waiting reason; follow [communication rules](docs/system-operations.md#agent-communication).
 - Results: retain accessible materials and checks linked to their task and execution. Projects choose repositories, file or object storage, or external systems as destinations; Fleet need not store every artifact itself.
 - Completion: distinguish creation, verification and publication; enforce the task's requirements under project rules.
 
@@ -104,7 +105,7 @@ An execution binds a configuration version and role to inputs, an environment, p
 
 Resolve settings in order: selected agent configuration and role, project rules and settings, then task requirements and explicit tool or method choices. Task choices override defaults, not mandatory project requirements; conflicting requirements need resolution.
 
-Before launch, check environment compatibility and granted permissions. Resolve instructions, skills and configuration from committed revisions at execution start and retain them with the execution; later repository edits affect only new executions. A run may pin one revision for all its steps; by default each step resolves current versions.
+Before launch, check environment compatibility and granted permissions. Resolve instructions, skills and configuration at execution start under the [source rules](#knowledge-and-rules); later repository edits affect only new executions. A run may pin one revision for all its steps; by default each step resolves current versions.
 
 A session holds conversation and working context within a harness: messages, actions and interaction history. It may exist without a task.
 
@@ -161,7 +162,7 @@ Provide agent operations to find and launch agents, select and use environments,
 - Context: supply task materials, related decisions, results and project information.
 
 Skills, instructions, agent configurations and pipeline definitions are canonical Git repository files. The catalogue references them rather than storing editable copies.
-Use current versions unless a version is explicitly selected. Executions record the repository, commits and paths actually used; separate copies are optional if referenced revisions remain accessible. Uncommitted edits are invisible to executions; test drafts through a laboratory run pinned to a branch. A lost revision shows as an unavailable source on its executions, without repair.
+Use current versions unless explicitly selected otherwise. Record repository, revision and paths used. An explicitly selected draft need not be committed; retain its actual content and difference from the base. Referenced revisions need no copy while accessible. Missing sources remain visible; recovery does not rewrite execution history.
 
 Provide applicable knowledge and rules with their sources. Each execution exposes its effective instructions and project overrides.
 
@@ -179,14 +180,14 @@ PMs apply the project's effective rules when preparing tasks. Executing agents a
 - History and evidence: retain every execution in full, without default expiry: session history, agent output, actions, tool calls, questions, results and verification materials. This is the source for analysis and pipeline improvement.
 - Changes: operators and architects can inspect diffs between skill and agent configuration revisions using existing version-control and diff tools.
 - Compatibility: checked combinations of harnesses, models, skills, tools and environments, stored as versioned facts. Confirmed incompatibility blocks launch; incomplete or unchecked results are visible, not treated as incompatibility.
-- Quality: configuration performance on specific kinds of work.
+- Quality: compare agents, methods and methodologies through [experiments](docs/experiments.md), including numeric evaluations and budgeted iterative improvement at step, task or project scope.
 - Operation: retain invocation counts, duration, cost, CPU, memory, disk usage, failures and recovery across agents, tools, Fleet components and infrastructure, including preparation and cleanup. Link records to components, tools, working areas and runs where applicable; expose missing observations.
 
 Three records: a run with its conditions and results; an assessment of runs with criteria, comparison, limitations and suitability, appended and never rewritten; a recommendation for a catalogue kind of work within a project or system scope, linked to its assessment. Comments and tags are fields of runs and assessments. Keep failed runs visible.
 
-Architects and laboratory agents write assessments; only architects set recommendations, and an agent proposes one as a question. Updating a recommendation preserves earlier runs and assessments; new work reads current recommendations when choosing a method.
+Architects and assisting agents write assessments. Recommendation changes require architect authority, which may be delegated to an agent; otherwise the agent proposes the change as a question. Updating a recommendation preserves earlier runs and assessments; new work reads current recommendations when choosing a method.
 
-Agents query recommendations by kind of work and project with scope fallback and usage conditions resolved; assessments remain reachable. Human and agent tools query retained history, attribute resource use, inspect frequent calls and failures, and identify useful new tools. Architects use this evidence to improve configurations and defaults through real work.
+Agents query recommendations by kind of work and project with scope fallback and usage conditions resolved; assessments remain reachable. Humans and agents use [work analysis](docs/work-analysis.md) to inspect the full work cycle, attribute resources and identify improvements to rules, tools and configurations.
 
 Observation confidence is separate from execution state. Lost contact means current execution is unconfirmed, not failed or cancelled; show the last known state and the uncertainty.
 
