@@ -4,6 +4,10 @@ Requirements supporting [agent execution and environments](../fleet.md#agent-exe
 
 ## Working areas
 
+Pipeline steps declare required capabilities rather than machine identities. Architects configure suitable environments and preferences; callers may explicitly select an environment. Different steps may use different environments, while compatible steps may reuse one working area.
+
+Execution prepares the selected environment and working area and makes required inputs accessible. A change of agent need not recreate the area; a change of environment requires access to the necessary materials. Show preparation progress, resource use and failures alongside execution.
+
 An environment provides compute, software and access. A working area provides files for particular work: a worktree, a separate directory or an attached project directory.
 
 Track each area's associated work, active users, origin (system-created or user-provided), retained materials and release conditions.

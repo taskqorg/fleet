@@ -22,6 +22,8 @@ People and agents discover available shared entries and entries for their projec
 
 Develop pipelines through ordinary agent sessions: discuss requirements, edit definitions, run trials and compare results. Use the [laboratory workflow](interfaces.md#architect-workflow) to assess methods and select project or system recommendations for subsequent tasks.
 
+Follow the [project context](project-context.md) baseline for one-off work and when to formalize reusable methods.
+
 ## Pipeline execution
 
 A pipeline is a process executed by the system. Its caller supplies inputs and receives results without coordinating its internal steps.
@@ -29,6 +31,10 @@ A pipeline is a process executed by the system. Its caller supplies inputs and r
 Steps may call APIs through tools, execute programs, launch agents or invoke other pipelines. An agent can call a pipeline that launches another agent; results return through the calling chain.
 
 An agent step receives a work assignment and chooses actions within it. The definition need not enumerate every internal agent action; expose significant stages when they need explicit coordination, comparison or repetition.
+
+Start with coarse steps. Split a step when its result, alternatives, reruns or resource use need independent control. A known procedure may run as a program without an agent.
+
+Agents may adapt their approach within an assignment. Improving the current result does not automatically change the pipeline definition for future runs; changing that definition is a separate action within the assigned scope.
 
 A single-step pipeline is valid. A simple API call need not be wrapped in a pipeline; direct tools and pipelines share invocation and observation conventions.
 

@@ -40,7 +40,7 @@ Retain assessments as knowledge. Changing a recommendation is a separate archite
 
 ### Work management
 
-A project groups the goal, context, rules and work for a product or area.
+A project groups the goal, context, rules and work for a product or area. Follow the [project context](docs/project-context.md) baseline for files, materials and reusable methods.
 
 Its configuration contains:
 
@@ -139,7 +139,7 @@ Distinguish [capability, method and tool](docs/capabilities-and-pipelines.md): t
 - Pipelines: structured text definitions compose tools, programs and agents through steps, dependencies, executors, inputs and outputs. Keep definitions, step instructions and run state separate; the system coordinates steps and result transfer. A pipeline may be exposed as an agent tool: the caller uses its description and results, not its steps.
 - Execution and results: start operations, observe their state and retrieve results. Pipeline views combine the definition with run state; they do not maintain a separate workflow definition.
 
-Architects manage the catalogue, pipelines and connections; a connection holds service, account, credentials and limits. Operators bind granted connections to project resources. Missing access is a question: binding changes address operators, new grants and connections address architects.
+Architects manage the catalogue, pipelines and [connections](docs/connections.md); a connection holds service access, accounts, credentials and limits. Operators bind granted connections to project resources. Missing access is a question: binding changes address operators, new grants and connections address architects.
 
 Independent steps run concurrently within resource limits. A failed step blocks its dependants; others finish before the run fails. Reruns use current definitions and repeat failed or changed steps and affected dependants. Reuse requires unchanged inputs, definitions and effective configuration, including instructions and skills; operators may force a full rerun.
 
