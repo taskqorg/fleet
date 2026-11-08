@@ -70,3 +70,25 @@ A task has an active execution or external operation. The operator must see what
 | The operator cancels the task | End further work and request active executions to stop. Keep their actual state visible. |
 
 Pausing or cancelling after merge leaves the merged changes intact. Any rollback needs a separate decision under the task rules.
+
+## UC4. Run a pipeline with a failed step
+
+A project pipeline renders a batch of 3D assets in three steps: prepare inputs, render each asset, assemble a catalogue page. A worker chose the pipeline for a task under the [catalogue selection rules](../fleet.md#tools-and-pipelines).
+
+### Run flow
+
+1. The worker starts the pipeline through its tool description, passing run parameters. The run records the definition revision and resolves each step's instruction at that step's start ([agent execution](../fleet.md#agent-execution)).
+2. The system checks granted connections, environment requirements and resource limits, then launches the prepare step; render steps start when prepare finishes and run concurrently.
+3. One render step fails. Its dependant assembly step does not start; other render steps finish and retain their outputs. The run fails with the error retained.
+4. The task applies the [transition rules](../fleet.md#task-states): the worker reads the error and reruns. The rerun reuses retained outputs of unchanged steps and repeats the failed render and the assembly step.
+5. Environments are released after outputs reach the project's result storage; working files are discarded.
+
+### Visibility
+
+The operator sees the run as the definition combined with step states, including the failed step, its error and which steps were reused on rerun. Lost contact with a render environment shows that step as unconfirmed, not failed.
+
+### Checks
+
+- Definition to run: parameters, executors and instruction paths resolve from committed revisions; a pinned run uses one revision throughout.
+- Failure to rerun: retained outputs survive the failed run; the rerun repeats only failed steps and their dependants unless a full rerun is forced.
+- Run to result: the task completes only when assembled results reach their destination and the task's completion requirements hold.

@@ -5,32 +5,33 @@ A system for performing work through agents across projects. This specification 
 ## Principles
 
 - **R1 Shared rules.** [specq](https://github.com/taskqorg/specq) governs engineering, design and documentation.
-- **R2 Shared core.** Human and agent interfaces use the same core operations and state.
+- **R2 Shared core.** Every system operation is a tool over one core state; a data layer serves queries. Human interfaces, pipelines and agents use the same tools and data, each within its own permissions. Interfaces add no operations of their own.
 - **R3 System requirements.** [Reliability, authority and resources](#system-requirements) apply to every block.
 - **R4 Design depth.** Agree on each level's parts, responsibilities and relationships before detailing any part. Revisit earlier levels when needed.
 
 ## Operator interface
 
-A desktop application for Windows, macOS and Linux, used across all projects.
+A desktop application for Windows, macOS and Linux and a web portal, used across all projects. Both use the same UI components.
 
 Conversation with an interactive product manager (PM) is the primary way to discuss and assign work.
 
 A PM is an ordinary session in a chosen agent, with role-specific instructions, tools and project access. Sessions may span related projects; they are not permanent project channels. Conversation has no separate request object.
 
-- Projects and tasks: describe work and set priorities.
+- Projects and tasks: create and configure projects, describe work and set priorities.
 - Execution: balance work and track progress.
 - Decisions: answer questions and resolve blockers.
 - Results: inspect what was done, where to find it, what was checked and what remains; accept work under project rules.
 
 ## Architect interface
 
-Configure and qualify the agents and facilities available to operators.
+A web interface for a separate architect role. Configure and qualify the agents and facilities available to operators.
 
 - Agents: manage configurations, harnesses and models.
 - Skills and tools: manage available capabilities and their assignment to agents.
 - Environments: prepare execution conditions.
 - Resources: manage capacity, provider quotas and spending limits.
 - Evaluation: test compatibility, benchmark configurations and rerun checks after changes.
+- Access: grant projects shared capabilities and connections, with quotas.
 
 Laboratory workflow:
 
@@ -50,7 +51,7 @@ A project groups the goal, context, rules and work for a product or area.
 Its configuration contains:
 
 - Purpose and context: specifications and materials.
-- Connections: repositories, task board, data sources, CI and external services.
+- Connections: bindings of granted [connections](#tools-and-pipelines) to concrete repositories, task board, data sources, CI and external services.
 - Workflow: project instructions, checks, review and completion conditions.
 - Execution: references to agent configurations, environments, tools and catalogue recommendations.
 - Delivery: result storage, merge, publication and deployment.
@@ -63,7 +64,7 @@ Own work from task creation to an accepted result:
 
 - Task: identity, project, expected outcome, dependencies, completion requirements and result destination.
 - Execution: agent and environment assignment, state and execution history.
-- Questions: retain questions and context with the task, deliver operator answers to the relevant execution and continue.
+- Questions: retain questions and context with the task, deliver answers to the relevant execution and continue. Each question carries addressee roles; the waiting reason names the role that can answer.
 - Results: retain accessible materials and checks linked to their task and execution. Projects choose repositories, file or object storage, or external systems as destinations; Fleet need not store every artifact itself.
 - Completion: distinguish creation, verification and publication; enforce the task's requirements under project rules.
 
@@ -109,11 +110,9 @@ A role defines an agent's purpose through instructions and tools, not a hard-cod
 
 An execution binds a configuration version and role to inputs, an environment, permissions, a session and a task when applicable.
 
-Resolve settings in order: selected agent configuration and role, project rules and settings, then task requirements and explicit tool or method choices.
+Resolve settings in order: selected agent configuration and role, project rules and settings, then task requirements and explicit tool or method choices. Task choices override defaults, not mandatory project requirements; conflicting requirements need resolution.
 
-Task choices may override defaults, not mandatory project requirements. Conflicting requirements need resolution.
-
-Before launch, check environment compatibility and granted permissions. Retain the configuration actually used with the execution.
+Before launch, check environment compatibility and granted permissions. Resolve instructions, skills and configuration from committed revisions at execution start and retain them with the execution; later repository edits affect only new executions. A run may pin one revision for all its steps; by default each step resolves current versions.
 
 A session holds conversation and working context within a harness: messages, actions and interaction history. It may exist without a task.
 
@@ -131,7 +130,7 @@ An environment provides:
 - Interaction: terminal, browser, APIs and desktop control through computer use (CUA).
 - Access: available data, accounts and external services.
 
-Manage its lifecycle: prepare, check readiness, make available for work, preserve or release. Working files are distinct from retained results; preserve required results and history before releasing an environment.
+Manage its lifecycle: prepare, check readiness, make available for work, preserve or release. Working files are distinct from retained results; preserve required results and history before releasing an environment, then discard working files. A task completes only when its result reaches its destination.
 
 Agents specify environment requirements; the system selects a concrete local or remote environment with verified capabilities. An agent configuration need not bind to one machine.
 
@@ -142,21 +141,23 @@ A personal desktop may be explicitly connected as an environment; an agent can r
 ### Tools and pipelines
 
 - Catalogue: describe tools, methods and pipelines, their purpose, inputs, results, usage conditions and current recommendations.
-- Connections: provide access to harness tools, MCP, external APIs and system services.
-- Pipelines: structured text definitions compose tools, programs and agents through steps, dependencies, executors, inputs and outputs. Keep definitions, step instructions and run state separate; the system coordinates steps and result transfer.
+- Connections: provide access to harness tools, MCP, external APIs, system services and Fleet's own operations and data. Credentials stay in connections, tools and environments, outside versioned files; agents receive capability through tools, never credentials.
+- Pipelines: structured text definitions compose tools, programs and agents through steps, dependencies, executors, inputs and outputs. Keep definitions, step instructions and run state separate; the system coordinates steps and result transfer. A pipeline may be exposed as an agent tool: the caller uses its description and results, not its steps.
 - Execution and results: start operations, observe their state and retrieve results. Pipeline views combine the definition with run state; they do not maintain a separate workflow definition.
 
-Configure service connections separately; projects and agents reference them. Store secrets outside versioned files. Request missing access through the operator question mechanism.
+Architects manage the catalogue, pipelines and connections; a connection holds service, account, credentials and limits. Operators bind granted connections to project resources. Missing access is a question: binding changes address operators, new grants and connections address architects.
 
-A pipeline may be exposed as an agent tool. Its definition owns the internal steps; the caller uses its operation description and receives its results.
+Independent steps run concurrently within resource limits. A failed step blocks its dependants; independent steps finish, then the run fails. A rerun uses current definitions, repeats failed steps and their dependants, and reuses retained results of steps whose inputs and definition are unchanged; operators may force a full rerun.
 
-Architects manage the catalogue, connections and pipelines. Agent configurations select available capabilities.
+The caller owns the run: it reads failures and reruns within its permissions and project rules; needed decisions become questions. Definitions have no branching or loop constructs; conditional work belongs to the step's agent, repetition to rework executions. Laboratory and project runs use one run mechanism, distinguished by owner and tags.
 
-Humans and agents use one catalogue. Human views support inspection and discussion with a PM. Agents discover applicable descriptions, recommendations and instructions on demand, without browsing the human interface or loading the whole catalogue into context.
+A definition declares run parameters and, per step, an identifier, an executor (agent configuration, tool or pipeline), a repository path to its instruction, inputs from parameters or earlier steps, named outputs and environment requirements. Retries, timeouts, credentials and conditions stay outside: project rules, resources and connections supply them.
+
+Humans and agents use one catalogue; agent configurations select available capabilities. Human views support inspection and discussion with a PM. Agents discover applicable descriptions, recommendations and instructions on demand, without browsing the human interface or loading the whole catalogue into context.
 
 Honor explicit tool, method or pipeline choices made when planning work with the PM. Otherwise, agents choose using current project recommendations, falling back to system recommendations where the project defines none.
 
-Provide agent operations to find and launch agents, select and use environments, create and track tasks, run pipelines and retrieve results within granted permissions.
+Provide agent operations to find and launch agents, select and use environments, create and configure projects, create and track tasks, run pipelines, retrieve results and query Fleet state within granted permissions.
 
 ### Knowledge and rules
 
@@ -166,7 +167,7 @@ Provide agent operations to find and launch agents, select and use environments,
 - Context: supply task materials, related decisions, results and project information.
 
 Skills, instructions, agent configurations and pipeline definitions are canonical Git repository files. The catalogue references them rather than storing editable copies.
-Use current versions unless a version is explicitly selected. Executions record the repository, commits and paths actually used; separate copies are optional if referenced revisions remain accessible.
+Use current versions unless a version is explicitly selected. Executions record the repository, commits and paths actually used; separate copies are optional if referenced revisions remain accessible. Uncommitted edits are invisible to executions; test drafts through a laboratory run pinned to a branch. A lost revision shows as an unavailable source on its executions, without repair.
 
 Provide applicable knowledge and rules with their sources. Each execution exposes its effective instructions and project overrides.
 
@@ -191,16 +192,14 @@ Refine defaults through real work across projects, from conversation through exe
 
 Retain check conditions, configurations and results for reproduction and comparison. Keep failed runs visible and link assessments to their supporting runs.
 
-Updating a recommendation preserves earlier runs and assessments. New work reads current recommendations when choosing a method.
-
-Operators use these records to manage work and accept results; architects use them to compare configurations and identify improvements.
+Updating a recommendation preserves earlier runs and assessments; new work reads current recommendations when choosing a method. Operators use these records to manage work and accept results; architects use them to compare configurations and identify improvements.
 
 Observation confidence is separate from execution state. Lost contact means current execution is unconfirmed, not failed or cancelled; show the last known state and the uncertainty.
 
 ## System requirements
 
 - Reliability: preserve accepted work and results. After failure, check the original operation's state and outcome before resuming, safely retrying or requesting a decision. An uncertain external action outcome does not authorize repeating it.
-- Authority: explicitly grant access to projects, data, tools and environments. Instructions define behavior but do not grant permissions.
+- Authority: architects grant projects shared capabilities and connections; operators work within the grant. An execution's permissions are the intersection of the project grant, the agent configuration and explicit task choices. Instructions define behavior but do not grant permissions. Operator and architect are roles; one person may hold both.
 - Resources: account for available capacity, occupancy, provider quotas and configured budgets. Allocate work automatically and explain resource waits. Operators control priorities and limits and may explicitly select agents or environments. A separate scheduling optimizer is not required.
 
 Routine work advances automatically. People resolve substantive decisions and exceptions beyond the system's authority; project acceptance rules still apply.
