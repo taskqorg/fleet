@@ -56,9 +56,7 @@ Its configuration contains:
 - Execution: references to agent configurations, environments, tools and catalogue recommendations.
 - Delivery: result storage, merge, publication and deployment.
 
-A project may use several repositories or contain no code. Repository, CI and deployment connections are independent.
-
-Inherit shared defaults; store project differences and references to shared capabilities. Selecting a capability does not grant access to it.
+A project may use several repositories or contain no code; repository, CI and deployment connections are independent. Inherit shared defaults; store project differences and references to shared capabilities. Selecting a capability does not grant access to it.
 
 Own work from task creation to an accepted result:
 
@@ -184,15 +182,17 @@ Refine defaults through real work across projects, from conversation through exe
 ### Observation and evaluation
 
 - Live execution: agents, locations, progress, waits and problems.
-- History and evidence: actions, results and verification materials.
+- History and evidence: retain every execution in full, without default expiry: session history, agent output, actions, tool calls, questions, results and verification materials. This is the source for analysis and pipeline improvement.
 - Changes: operators and architects can inspect diffs between skill and agent configuration revisions using existing version-control and diff tools.
-- Compatibility: checked combinations of harnesses, models, skills, tools and environments.
+- Compatibility: checked combinations of harnesses, models, skills, tools and environments, stored as versioned facts. A failed check blocks launch; an unchecked combination is shown, not blocked.
 - Quality: configuration performance on specific kinds of work.
-- Operation: time, resource usage, failures and recovery in real work.
+- Operation: time, cost, failures and recovery, collected from every project and laboratory run.
 
-Retain check conditions, configurations and results for reproduction and comparison. Keep failed runs visible and link assessments to their supporting runs.
+Three records: a run with its conditions and results; an assessment of runs with criteria, comparison, limitations and suitability, appended and never rewritten; a recommendation for a catalogue kind of work within a project or system scope, linked to its assessment. Comments and tags are fields of runs and assessments. Keep failed runs visible.
 
-Updating a recommendation preserves earlier runs and assessments; new work reads current recommendations when choosing a method. Operators use these records to manage work and accept results; architects use them to compare configurations and identify improvements.
+Architects and laboratory agents write assessments; only architects set recommendations, and an agent proposes one as a question. Updating a recommendation preserves earlier runs and assessments; new work reads current recommendations when choosing a method.
+
+Agents read recommendations through one data query by kind of work and project, with scope fallback and usage conditions resolved; assessments stay reachable for reasoning. Operators use these records to manage work and accept results; architects compare configurations and identify improvements.
 
 Observation confidence is separate from execution state. Lost contact means current execution is unconfirmed, not failed or cancelled; show the last known state and the uncertainty.
 
