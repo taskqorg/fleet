@@ -87,3 +87,18 @@ Coordinator-only port in `packages/coordinator/agent-tools.ts` + `resume-argv.ts
 | 6 | Reconcile + stop outcome | Works, fake proof. Runs at startup and as `reconcile` with `GET /api/reconciliation`, and never promotes or replays. Stop returns `proven` or `unknown`. |
 
 Next (native/live, Mac + PDS with Codex): executor `steer` (Codex `turn/steer`) and `native-fork` (`thread/fork`) plus advertising capabilities in poll; native MCP forwarding to `/api/hosts/agent-tools`; live handoff delivery Codex↔Claude on Mac only.
+
+## Native/live results (2026-11-09)
+
+Commits `b20c08b` (executor) + `818dd63` (security). Executor: Codex `turn/steer` (`expectedTurnId` = active turn, per T3 `CodexAdapterV2.ts`), `thread/fork` (source `threadId` + runtime params) when `payload.fork` is set, poll advertises `steer` and `native-fork`; the Fleet MCP server is now always attached and forwards agent tools via the journal outbox to `POST /api/hosts/agent-tools`. Coordinator: host-agent calls are bound to the caller's session (own or self-forked sessions only, lists default to own session, `reconcile` not exposed, `ask resume` checked against the asker); `transition()` enforces account format, active-execution and type checks itself; host-agent `session_transition` accepts only existing profiles and registered, enabled, ready managed accounts (403 otherwise). Tests: cargo 19 pass, npm 22/22.
+
+Live: release `candidate-26f931dffcbc` (archive `26f931df…`), Mac executor SHA256 `61537ed91ed6dca69a59bbaa5efecb697ed5b189c2c0b3095b896616cd80d378`, deployed with 0 unfinished executions. One Codex check on Mac (gpt-6.1-sol low), session `11636135-8fee-44d1-88bf-4d9d7c4e01b5`:
+
+| Step | Result |
+|---|---|
+| New session + turn (shell loop ~24s) | completed, native thread `01a1bfc6-5bc4-7c32-…` |
+| Steer mid-turn | queue `steered`; final reply `DONE STEERED` |
+| Native fork (`session_fork`) | strategy `native`, fork session `ac401d1a-…`, new thread `01a1bfc6-ead1-…`, reply `STEERED` (fork kept context) |
+| Resume of fork | completed, same thread `01a1bfc6-ead1-…`, reply `RESUMED` |
+
+Not exercised live: agent MCP forwarding from inside a native turn, Claude/Antigravity steer/fork. Rollback: `ln -sfn candidate-98cb004796a3 /home/fleet/releases/current` + restart `fleet.service`, `fleet-program-worker.service`; Mac `cp ~/.local/share/fleet-prototype/bin/fleet-executor.proven-21aa1379 …/fleet-executor` + `launchctl kickstart -k gui/$(id -u)/com.ufobe.fleet.executor` (when idle).
