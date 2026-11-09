@@ -4,7 +4,9 @@
 // records are served from the typed tables through the adapters below.
 import {randomUUID} from 'node:crypto';
 import type {Adapter,Raw,Executions} from './executions.js';
-export const TASK_STATES=['queued','in_progress','waiting','paused','completed','failed','cancelled'] as const;
+import {TASK_STATES as STATE_LIST} from '../view-url/view-url.js';
+// The task state list is defined once, in the view URL codec, which the browser and the coordinator share.
+export const TASK_STATES=STATE_LIST as readonly ('queued'|'in_progress'|'waiting'|'paused'|'completed'|'failed'|'cancelled')[];
 export type TaskState=typeof TASK_STATES[number];
 const OPEN=new Set<TaskState>(['queued','in_progress','waiting','paused']);
 const fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};
@@ -119,7 +121,7 @@ export function taskModel(raw:Raw,executions:Executions){
  // urgent, normal, background.
  const GROUPS:Record<string,string>={none:"left(x.id,0)",priority:"(CASE x.priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END)",project:"coalesce(x.project_id,'~')",agent:"coalesce(x.agent,'~')",host:"coalesce(x.host,'~')",
   state:"(CASE x.state WHEN 'waiting' THEN '1' WHEN 'failed' THEN '2' WHEN 'in_progress' THEN '3' WHEN 'queued' THEN '4' WHEN 'paused' THEN '5' WHEN 'completed' THEN '6' ELSE '7' END)"};
- const STATES=['queued','in_progress','waiting','paused','completed','failed','cancelled'];
+ const STATES:string[]=[...TASK_STATES];
  type PageFilter={projectId?:string|null,state?:string[],search?:string};
  const base=`WITH x AS (SELECT t.id,t.project_id,t.title,t.state,t.wait_reason,t.priority,t.created_at,t.updated_at,t.seq,
   (SELECT e.harness FROM execution e WHERE e.task_id=t.id AND e.state IN ('preparing','running') ORDER BY e.seq DESC LIMIT 1) AS agent,
