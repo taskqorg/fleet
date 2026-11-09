@@ -388,16 +388,18 @@ export function SplitButton({ main, alternatives, kind = 'default' }: {
 
 /* ---------- State counters: quick filter by state with totals (state-counters.md) ---------- */
 
-export function StateCounters<F extends Family>({ family, counts, active, onToggle, onAll, label }: {
+export function StateCounters<F extends Family>({ family, counts, active, onToggle, onAll, label, pending }: {
   family: F; counts: Partial<Record<StateOf<F>, number | null>>; active: StateOf<F>[]; onToggle: (s: StateOf<F>) => void;
   /** Σ button: show all (clear the state filter). Omit to hide the Σ button. */
   onAll?: () => void; label: string;
+  /** A newer answer is loading: the last counts stay, dimmed (docs/designs/fleet-view-urls-and-list-path.md §2). */
+  pending?: boolean;
 }) {
   const all = Object.keys(states[family]) as StateOf<F>[];
   const values = all.map(s => counts[s]).filter(n => n !== undefined) as (number | null)[];
   const total = values.includes(null) ? null : (values as number[]).reduce((a, b) => a + b, 0);
   return (
-    <div class="counters" data-ui="state-counters" role="group" aria-label={label}>
+    <div class={`counters${pending ? ' pending' : ''}`} data-ui="state-counters" role="group" aria-label={label} aria-busy={pending || undefined}>
       {onAll && <button type="button" class={`counter t-neutral sigma${active.length === 0 ? ' on' : ''}`} aria-pressed={active.length === 0}
         aria-label={`All: ${total === null ? 'unknown' : total}`} onClick={onAll}><span class="sig" aria-hidden="true">Σ</span><span class="num">{total === null ? '?' : total.toLocaleString('en')}</span></button>}
       {all.map(s => {
@@ -565,3 +567,8 @@ export function OfflineMarker({ state, since, now }: { state: 'current' | 'offli
     {state === 'signed-out' && <a href={location.pathname}>Sign in again</a>}
   </span>;
 }
+
+/* ---------- Row check: one checked row of a list, kept in the view URL as sel (fleet-view-urls-and-list-path.md §1) ---------- */
+
+export const RowCheck = ({ checked, label, onToggle }: { checked: boolean; label: string; onToggle: () => void }) =>
+  <input type="checkbox" class="row-check" data-ui="row-check" checked={checked} aria-label={label} onClick={e => e.stopPropagation()} onChange={onToggle} />;

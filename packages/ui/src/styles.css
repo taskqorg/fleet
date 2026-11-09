@@ -354,3 +354,9 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 @media (pointer:coarse){.composer textarea{min-height:var(--size-hit-phone)}}
 .sub-h{margin:var(--space-3) 0 var(--space-1);font-size:var(--font-size-sm);color:var(--fg-muted);font-weight:var(--font-weight-medium)}
 .conversation .pane{display:flex;flex-direction:column}
+
+/* Updating list (fleet-view-urls-and-list-path.md §2): last rows and counts stay, dimmed; a thin bar shows the request. */
+.list-progress{height:var(--space-1);background:var(--accent)}
+.list-progress[hidden]{display:none}
+.list-view.pending .vl-row,.counters.pending .counter{color:var(--fg-muted)}
+.row-check{width:var(--size-icon);height:var(--size-icon);margin:0;accent-color:var(--accent)}

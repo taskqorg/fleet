@@ -4,7 +4,7 @@ import { useEffect, useState } from 'preact/hooks';
 import {
   Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, ExecTree, DecisionBlock, ResultViewer, SplitButton, NavRail, StatStrip,
   SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Transcript, TaskListView, workspaces, states, actions,
-  Composer, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages,
+  Composer, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type Entry, type Family, type Stage,
 } from '../src/index';
 import { NAV } from './nav';
@@ -102,6 +102,21 @@ function FillDemo() {
     <FillBar total={100 * G} segments={[{ label: 'game', bytes: 100 * G }]} />
     <FillBar total={500 * G} segments={[{ label: 'design', bytes: 150 * G }]} stale={NOW - 2 * hr} now={NOW} />
     <FillBar total={null} segments={[]} />
+  </div>;
+}
+
+/** A list while a newer answer loads: counters and rows keep their values, dimmed; rows can be checked (sel). */
+function PendingDemo() {
+  const [pending, setPending] = useState(true), [sel, setSel] = useState<string[]>(['b']);
+  const rows = [['a', 'Render prop batch', 'in_progress'], ['b', 'Fix CI cache key', 'failed'], ['c', 'Rework hero copy', 'queued']] as const;
+  return <div class="col">
+    <Button label={pending ? 'Answer arrives' : 'Change filter'} onClick={() => setPending(p => !p)} />
+    <ListFrame pending={pending} bar={<div class="fbar"><div class="fbar-line"><StateCounters family="task" label="Tasks by state" pending={pending}
+      counts={{ queued: 4, in_progress: 2, failed: 1, waiting: 0 }} active={['failed']} onToggle={() => {}} onAll={() => {}} /></div></div>}>
+      <div role="grid" aria-label="Tasks">{rows.map(([id, title, st]) => <div key={id} role="row" class="vl-row static">
+        <span class="lead"><StateBadge family="task" state={st} compact /></span><span class="tt">{title}</span>
+        <RowCheck checked={sel.includes(id)} label={'Select ' + title} onToggle={() => setSel(x => x.includes(id) ? x.filter(i => i !== id) : [...x, id])} /></div>)}</div>
+    </ListFrame>
   </div>;
 }
 
@@ -251,6 +266,7 @@ const SECTIONS: [string, string, string | undefined, () => ComponentChildren, Co
   ['fill-bar', 'Fill bar', 'fill-bar', () => <FillDemo />],
   ['lifecycle', 'Harness marks, delivery stages, outcome block, detail sections', 'harness-counts', () => <LifecycleDemo />, <>D11: agent mark only while a task runs; delivery stage chip; harness counts per host omit zero; outcome block above task tabs (B2); stacked detail sections (C3).</>],
   ['stat-strip', 'Stat strip', 'stat-strip', () => <StatsDemo />, <>Operational counts: what needs you, failures, running against slots, workers per host. An offline host shows its last known count as a lower bound.</>],
+  ['list-pending', 'Updating list: pending counters and rows, row checks', 'row-check', () => <PendingDemo />, <>A filter change keeps the last rows and counts on screen, dimmed under a thin bar, until the new answer replaces them in place. Checked rows are the view URL's sel.</>],
   ['data-list', 'Task list view: views, state counters, grouping, filters, virtual list', 'data-list', () => <ListDemo />, <>Saved views per person (pin, unpin, Save view). State counters show totals and filter on click. Group by state or project; groups collapse. Filters expand inline (OR-14). Title takes the space; service fields sit on the right (OR-21). State is an icon with a delayed tooltip (B1, OR-20).</>],
   ['execution-tree', 'Execution tree', 'execution-tree', () => <ExecTree nodes={TREE} now={NOW} label="Executions" />],
   ['transcript-viewer', 'Live transcript', 'transcript-viewer', () => <TranscriptDemo />],

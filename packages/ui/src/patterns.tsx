@@ -159,4 +159,6 @@ export const NeedsYou = ({ children }: { children: ComponentChildren }) => (
 /** Operational counts and capacity (patterns/ops-summary.md): a stat strip plus side panels. */
 export const OpsSummary = ({ children }: { children: ComponentChildren }) => <div data-ui="ops-summary" class="stack">{children}</div>;
 /** Generic list frame: filter bar over a virtual list (patterns/list-view.md), for lists other than tasks. */
-export const ListFrame = ({ bar, children }: { bar: ComponentChildren; children: ComponentChildren }) => <div class="list-view" data-ui="list-view">{bar}{children}</div>;
+/** pending: a newer answer is loading; the rows stay, dimmed, under a thin progress bar (fleet-view-urls-and-list-path.md §2). */
+export const ListFrame = ({ bar, children, pending }: { bar: ComponentChildren; children: ComponentChildren; pending?: boolean }) =>
+  <div class={`list-view${pending ? ' pending' : ''}`} data-ui="list-view" aria-busy={pending || undefined}>{bar}<div class="list-progress" role="progressbar" aria-label="Updating" hidden={!pending} />{children}</div>;
