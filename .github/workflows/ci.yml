@@ -1,12 +1,17 @@
 # Build and test gate the job; the design report never does (D6, D14).
+# The job that runs PR code has a read-only token; only the comment job (no checkout) may write.
 name: ci
 on:
   pull_request:
 jobs:
   build-test-design:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -15,12 +20,15 @@ jobs:
       - run: npm run build
       - run: npm test
       - name: Install Chromium for the design checks
+        if: always()
         run: npx playwright install --with-deps chromium
       - name: Design report (warnings only)
+        if: always()
         continue-on-error: true
         run: |
           npm run book
           npm run check:design
+          { echo '### Design report (warnings only)'; echo '```'; cat design-report/report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload design report and screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -31,8 +39,18 @@ jobs:
             docs/design-system/book/index.html
             docs/design-system/pages/mockups.html
           if-no-files-found: warn
+  comment:
+    needs: build-test-design
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: design-report
       - name: Comment report summary on the PR
-        if: always()
         continue-on-error: true
         uses: actions/github-script@v7
         with:
