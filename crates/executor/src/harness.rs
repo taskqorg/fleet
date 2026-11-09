@@ -246,8 +246,9 @@ fn command_registry(
             .unwrap_or_default();
         c.args(["--tools", &tools.join(",")]);
         if let Some(n) = native {
-            c.args(["--resume", n]);
-        } else if let Some(src) = p["fork"]["nativeSessionId"].as_str().filter(|s| s.len() <= 64 && s.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-')) {
+            if !safe_native_id(n) { return Err(fail("invalid native session id")); }
+            c.arg(format!("--resume={n}"));
+        } else if let Some(src) = p["fork"]["nativeSessionId"].as_str().filter(|s| safe_native_id(s)) {
             // Claude stores sessions per cwd project; copy the source transcript into this session's project, then fork it natively.
             let file = format!("{src}.jsonl");
             let found = std::fs::read_dir(nh.join("projects"))?.flatten().map(|d| d.path().join(&file)).find(|f| f.is_file()).ok_or(fail("native fork source not found"))?;
@@ -255,7 +256,7 @@ fn command_registry(
             let target = nh.join("projects").join(enc);
             std::fs::create_dir_all(&target)?;
             if found.parent() != Some(target.as_path()) { std::fs::copy(&found, target.join(&file))?; }
-            c.args(["--resume", src, "--fork-session"]);
+            c.args([format!("--resume={src}").as_str(), "--fork-session"]);
         }
         // Variadic native tool flags must never consume the user prompt.
         Ok((c, Some(format!("{text}\n").into_bytes())))
@@ -282,6 +283,10 @@ fn command_registry(
         }
         Ok((c, None))
     }
+}
+/// Native ids reach argv; allow only ASCII alphanumerics and '-', at most 64, never a leading '-'.
+pub fn safe_native_id(n: &str) -> bool {
+    !n.is_empty() && n.len() <= 64 && !n.starts_with('-') && n.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
 }
 pub fn claude_mcp(c: &mut Command, profile: &Value, servers: &Value) {
     let mut allowed: Vec<String> = profile["tools"]
@@ -460,6 +465,11 @@ pub fn project(h: &str, v: &Value) -> Value {
 mod tests {
     use super::*;
     #[test]
+    fn native_id_allowlist() {
+        assert!(safe_native_id("01a1bfde-77b9-70c0-8c63-294cab617737"));
+        for bad in ["", "-x", "--help", "a b", "a;b", "a/b", &"a".repeat(65)] { assert!(!safe_native_id(bad), "{bad}"); }
+    }
+    #[test]
     fn fake_launch_routing_resume_and_credentials() {
         use std::io::Write;
         use std::process::Stdio;
@@ -517,7 +527,7 @@ print(json.dumps({'harness':h,'home':os.environ['HOME'],'args':sys.argv[1:]}))
                         v["args"]
                             .as_array()
                             .unwrap()
-                            .contains(&json!("retained-id"))
+                            .contains(&json!("--resume=retained-id"))
                     );
                 }
             }

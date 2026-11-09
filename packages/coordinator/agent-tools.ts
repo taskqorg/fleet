@@ -135,7 +135,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   if(b.outcome!=='succeeded'&&b.outcome!=='failed')return reject('invalid_outcome','worker_done requires outcome=succeeded or outcome=failed.');
   const latest=executions(e.sessionId).at(-1);if(latest?.id!==e.id)return reject('stale_dispatch',`Execution ${e.id} is superseded by ${latest?.id}.`);
   if(e.report){if(e.report.outcome===b.outcome&&e.report.summary===(b.summary??null))return {action:'accepted',executionId:e.id,report:e.report,duplicate:true};return reject('already_reported','A different worker_done was already accepted for this execution.')}
-  if(typeof b.nativeSessionId==='string'&&b.nativeSessionId){const known=knownNative(e);if(known&&known!==b.nativeSessionId)return reject('native_identity_conflict','Reported native session differs from the captured one.');captureNative(e,b.nativeSessionId)}
+  if(typeof b.nativeSessionId==='string'&&b.nativeSessionId){const known=knownNative(e);if(known&&known!==b.nativeSessionId)return reject('native_identity_conflict','Reported native session differs from the captured one.')}// only executor receipts set native ids
   const fresh=get(e.id,'execution');fresh.report={outcome:b.outcome,summary:typeof b.summary==='string'?b.summary:null,at:Date.now()};put('execution',fresh);
   const d=all('delegation').find(x=>x.childExecutionId===e.id);if(d){d.report=fresh.report;put('delegation',d)}
   const r={id:randomUUID(),executionId:e.id,action:'accepted',report:fresh.report,at:Date.now()};put('worker-done',r);return r}

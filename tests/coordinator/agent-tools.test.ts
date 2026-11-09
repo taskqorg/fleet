@@ -29,7 +29,8 @@ test('agent tools: queue, handoff, fork, resume, ask/reply, worker_done, stop ou
  assert.ok(ownQueue.queued.every((x:any)=>x.sessionId===s));
  const replied=await op('reply',{questionId:question.id,answer:'Blue'});assert.equal(replied.delivery.state,'queued');
  assert.equal((await op('worker_done',{executionId:first.id,outcome:'maybe'})).code,'invalid_outcome');
- assert.equal((await op('worker_done',{executionId:first.id,outcome:'succeeded',summary:'ok'})).action,'accepted');
+ assert.equal((await op('worker_done',{executionId:first.id,outcome:'succeeded',summary:'ok',nativeSessionId:'native-codex'})).action,'accepted');
+ assert.equal((await call('/api/sessions/'+s)).json().nativeSessionId,'native-codex');
  await receipt(c,'completed');
  // queued messages promote in order; worker_done on superseded execution is stale
  let next=(await poll()).filter((x:any)=>x.kind==='start');assert.equal(next.length,1);assert.equal(next[0].payload.text,'Then this');assert.equal(next[0].payload.nativeSessionId,'native-codex');
@@ -51,3 +52,11 @@ test('agent tools: queue, handoff, fork, resume, ask/reply, worker_done, stop ou
  const tools=(await call('/api/agent-tools',{jsonrpc:'2.0',id:1,method:'tools/list'})).json();assert.ok(tools.result.tools.some((x:any)=>x.name==='session_fork'));
  await app.close();
 });
+
+test('worker_done never sets an unconfirmed native session id',async()=>{
+ const config={database:mkdtempSync(tmpdir()+'/fleet-agent-')+'/db',browserSecret:'b',machineSecret:'m',hostId:'mac'};const app=createApp(config);try{
+ const call=async(url:string,payload?:any,machine=false)=>(await app.inject({method:payload?'POST':'GET',url,headers:{authorization:'Bearer '+(machine?'m':'b')},payload}));
+ const s=(await call('/api/sessions',{})).json().sessionId,e=(await call('/api/sessions/'+s+'/messages',{requestId:'one',text:'x'})).json();
+ const r=(await call('/api/agent-operations/worker_done',{executionId:e.id,outcome:'succeeded',nativeSessionId:'--evil'})).json();assert.equal(r.action,'accepted');
+ assert.equal((await call('/api/sessions/'+s)).json().nativeSessionId,undefined);
+ }finally{await app.close()}});

@@ -235,6 +235,10 @@ impl Executor {
         // The coordinator owns the native id per harness:account continuation; no id means a new native session
         // (a handoff to another harness must not resume the previous harness's thread).
         let native = p["nativeSessionId"].as_str().map(str::to_owned);
+        if native.as_deref().is_some_and(|n| !harness::safe_native_id(n)) {
+            self.event(&c, 1, "preparation.failed", json!({"reason":"invalid native session id"}))?;
+            return self.finish(&c, "failed", None);
+        }
         let lab_evidence = if let Some(config) = p.get("agentConfig") {
             match lab::prepare(&dir, config) {
                 Ok(e) => Some(e),
