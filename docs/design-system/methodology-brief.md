@@ -193,10 +193,7 @@ The code lives in `packages/ui`, and the checks live in `tests/design/`.
 
 Open decisions for the owner (each up to three options):
 
-1. **Front-end stack for `packages/ui` and the PWA:**
-   * (a) Preact + Signals + Wouter, as chosen in TaskQ;
-   * (b) plain TypeScript template functions, with no new dependency;
-   * (c) keep server-rendered pages and share only CSS and the registry.
+1. **Front-end stack: decided ([D4](decisions.md)).** Preact + Signals + Wouter, built with esbuild; Fastify serves JSON and the static bundle. Virtual scroll uses an existing library (candidate TanStack Virtual via `preact/compat`) that must pass the scroll tests.
 2. **Status of P1–P16 in Fleet:**
    * (a) all become binding OR rules;
    * (b) only the checkable ones are binding, the rest review-only;
