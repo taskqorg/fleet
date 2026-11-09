@@ -189,6 +189,20 @@ Open questions come first; answered ones follow with their evidence.
 
 *   **Proof results (2026-11-09).** Q2 is answered: the Windows store is Garage under WSL2. A cross-host proof passed: an 80 MiB multipart upload to the Windows store went through its tunnel, the Mac executor copied it to its own store, and PDS18 read it back with a matching SHA-256. Details and findings are in `docs/infrastructure-build.md`. The main finding: Access headers are added after S3 signing, because Cloudflare strips them before the origin.
 
+*   **Q10. Executor lifecycle through CoreQ (candidate, not decided).** CoreQ at `2f141a7` is the shared Rust library already used by taskq, DashQ and ServerQ. It ships, with tests on macOS, Linux and Windows, three things that Fleet now does by hand:
+    *   Service units: `service::host_unit` writes a launchd agent, a systemd user unit or a Windows Scheduled Task.
+    *   A launcher with crash rollback: `launcher::launch` rolls back after three unhealthy starts.
+    *   Atomic self-update: `update::prepare_install` and `activate_install` gate a release on SHA256SUMS and a `selftest` run, then switch `current` and `previous`.
+
+    It also provides `write_durable` (fsync before success) and a `status.json` freshness check.
+
+    Costs and limits:
+    *   Releases must be published as GitHub releases in CoreQ's naming (`latest.json`, `SHA256SUMS`).
+    *   It fits the Rust executor. It does not fit the TypeScript coordinator, which uses a `current` symlink.
+    *   Its telemetry shipper and enrollment speak DashQ's wire protocol and allow only fixed codes, so they do not replace Fleet's outbox.
+
+    Decide when executor packaging is designed (Windows executor, auto-update).
+
 ## Critical User Journeys (CUJs)
 
 ### CUJ 1: Operator sees what a task cost and where it stands
