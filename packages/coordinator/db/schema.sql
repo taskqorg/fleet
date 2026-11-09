@@ -198,3 +198,108 @@ UPDATE execution SET problem = NULL WHERE state = 'succeeded' AND problem IS NOT
 UPDATE execution c SET parent_execution_id = p.id FROM document s, LATERAL (SELECT e.id FROM execution e WHERE e.session_id = s.data->>'createdBySessionId' AND e.legacy_kind = 'execution' AND coalesce((e.data->>'createdAt')::bigint, 0) <= coalesce((s.data->>'createdAt')::bigint, 0) ORDER BY e.seq DESC LIMIT 1) p WHERE c.parent_execution_id IS NULL AND c.legacy_kind = 'execution' AND s.kind = 'session' AND s.id = c.session_id AND s.data ? 'startRequest' AND s.data ? 'createdBySessionId';
 -- Delegated children whose legacy record names the delegating execution.
 UPDATE execution SET parent_execution_id = data->>'parentExecutionId' WHERE parent_execution_id IS NULL AND legacy_kind = 'execution' AND data ? 'parentExecutionId'
+
+-- migration 8: artifact store (design §3, Phase 3 item 21). Bytes live in the per-host S3 stores; rows hold metadata,
+-- copies and upload state. An upload or copy in progress is its artifact_copy row (staging key, upload id, lease).
+CREATE TABLE store(
+ id text PRIMARY KEY,
+ kind text NOT NULL DEFAULT 's3',
+ host_id text NOT NULL,
+ zone text NULL,
+ bucket text NOT NULL,
+ endpoint text NOT NULL,
+ local_endpoint text NULL,
+ state text NOT NULL DEFAULT 'unreachable' CHECK (state IN ('reachable', 'unreachable', 'full')),
+ capacity_bytes bigint NULL,
+ used_bytes bigint NULL,
+ requires_logon boolean NOT NULL DEFAULT false,
+ observed_at timestamptz NULL,
+ registered_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE artifact(
+ id text PRIMARY KEY,
+ project_id text NULL,
+ scope text NOT NULL CHECK (scope IN ('lab', 'prod')),
+ content_hash text NOT NULL,
+ size bigint NOT NULL,
+ media_type text NOT NULL,
+ name text NOT NULL,
+ execution_id text NULL,
+ task_id text NULL REFERENCES task(id) DEFERRABLE INITIALLY DEFERRED,
+ required boolean NOT NULL DEFAULT false,
+ previous_artifact_id text NULL,
+ derived_from_artifact_id text NULL,
+ role text NOT NULL DEFAULT 'original' CHECK (role IN ('original', 'thumbnail', 'poster')),
+ state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'stored', 'failed', 'deleted')),
+ last_error text NULL,
+ deleted_at timestamptz NULL,
+ deleted_by text NULL,
+ legacy_id text NULL UNIQUE,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ seq bigint NOT NULL DEFAULT nextval(pg_get_serial_sequence('document', 'seq'))
+);
+CREATE INDEX artifact_hash ON artifact(project_id, scope, content_hash);
+CREATE INDEX artifact_execution ON artifact(execution_id, seq);
+CREATE INDEX artifact_task ON artifact(task_id);
+CREATE INDEX artifact_state ON artifact(state);
+CREATE TABLE artifact_copy(
+ artifact_id text NOT NULL REFERENCES artifact(id),
+ store_id text NOT NULL REFERENCES store(id),
+ project_id text NULL,
+ state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'copying', 'verified', 'failed', 'purge_pending', 'deleted')),
+ upload_id text NULL,
+ staging_key text NULL,
+ lease_expires_at timestamptz NULL,
+ verified_at timestamptz NULL,
+ last_error text NULL,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY (artifact_id, store_id)
+);
+CREATE INDEX artifact_copy_store ON artifact_copy(store_id, state);
+CREATE INDEX artifact_copy_lease ON artifact_copy(state, lease_expires_at);
+CREATE TABLE purged_hash(
+ project_id text NOT NULL,
+ scope text NOT NULL,
+ content_hash text NOT NULL,
+ reason text NOT NULL,
+ purged_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY (project_id, scope, content_hash)
+);
+CREATE TABLE artifact_rule_confirmation(
+ project_id text NOT NULL,
+ rule_hash text NOT NULL,
+ confirmed_by text NOT NULL,
+ confirmed_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY (project_id, rule_hash)
+);
+CREATE TRIGGER artifact_touch BEFORE UPDATE ON artifact FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+CREATE TRIGGER artifact_copy_touch BEFORE UPDATE ON artifact_copy FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+CREATE TRIGGER store_touch BEFORE UPDATE ON store FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+-- The latest stored result of a task, in the record shape the API returned for artifact documents.
+CREATE OR REPLACE VIEW task_view WITH (security_invoker = true) AS
+ SELECT t.id AS task_id, t.project_id, t.state, t.wait_reason,
+  coalesce((SELECT jsonb_object_agg(s.state, s.n) FROM (SELECT e.state, count(*) AS n FROM execution e WHERE e.task_id = t.id GROUP BY e.state) s), '{}') AS executions_by_state,
+  (SELECT count(*) FROM execution e WHERE e.task_id = t.id) AS execution_count,
+  (SELECT jsonb_build_object('tokens_input', sum(x.tokens_input), 'tokens_output', sum(x.tokens_output), 'tokens_cache_read', sum(x.tokens_cache_read), 'tokens_cache_write', sum(x.tokens_cache_write), 'wall_ms', sum(x.wall_ms), 'active_ms', sum(x.active_ms), 'cpu_ms', sum(x.cpu_ms), 'measured_wall', count(*) FILTER (WHERE x.wall_ms_basis = 'measured'), 'executions_with_totals', count(*))
+   FROM execution_totals x WHERE x.execution_id IN (SELECT e.id FROM execution e WHERE e.task_id = t.id)) AS totals,
+  (SELECT r.v FROM (SELECT jsonb_build_object('id', coalesce(a.legacy_id, a.id), 'artifactId', a.id, 'executionId', a.execution_id, 'path', a.name, 'mediaType', a.media_type, 'size', a.size, 'sha256', a.content_hash) AS v, a.seq FROM artifact a WHERE a.state = 'stored' AND a.execution_id IN (SELECT e.id FROM execution e WHERE e.task_id = t.id)
+   UNION ALL SELECT d.data - 'contentBase64', d.seq FROM document d WHERE d.kind = 'artifact' AND d.data->>'executionId' IN (SELECT e.id FROM execution e WHERE e.task_id = t.id)) r ORDER BY r.seq DESC LIMIT 1) AS latest_result,
+  (SELECT coalesce(jsonb_agg(jsonb_build_object('id', q.id, 'kind', q.kind, 'text', q.text, 'options', q.options) ORDER BY q.seq), '[]') FROM question q WHERE q.task_id = t.id AND q.state = 'open') AS open_questions
+ FROM task t;
+ALTER TABLE store ENABLE ROW LEVEL SECURITY;
+ALTER TABLE store FORCE ROW LEVEL SECURITY;
+CREATE POLICY operator_scope ON store USING (current_setting('fleet.project_ids', true) = '*');
+ALTER TABLE artifact ENABLE ROW LEVEL SECURITY;
+ALTER TABLE artifact FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON artifact USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')));
+ALTER TABLE artifact_copy ENABLE ROW LEVEL SECURITY;
+ALTER TABLE artifact_copy FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON artifact_copy USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')));
+ALTER TABLE purged_hash ENABLE ROW LEVEL SECURITY;
+ALTER TABLE purged_hash FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON purged_hash USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')));
+ALTER TABLE artifact_rule_confirmation ENABLE ROW LEVEL SECURITY;
+ALTER TABLE artifact_rule_confirmation FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON artifact_rule_confirmation USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')))

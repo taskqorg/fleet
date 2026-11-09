@@ -118,6 +118,8 @@ export function createStore(url:string,opts:{scope?:string}={}){
      if(version===6)await moveLegacyDocuments();
      await q('INSERT INTO schema_migration(version) VALUES($1)',[version])},'write',false)}
   },
+  // Serves a legacy kind from a typed module (Phase 3: artifact from artifacts.ts).
+  registerKind:(kind:string,adapter:Adapter)=>{kinds.set(kind,adapter)},
   stats,
   close:()=>db.close(),
  };
@@ -140,7 +142,7 @@ const TABLE_OF:Record<string,string>={execution:'execution','pipeline-run':'exec
 export type Docs=Pick<Store,'get'|'put'|'all'|'tx'|'atomic'|'read'|'lock'>;
 // Operations that wait on a pipeline run; they open short transactions around their own synchronous steps.
 // Operations that only read: they run in a read-only snapshot (a write inside one fails loudly).
-export const READ_OPERATIONS=new Set(['task_get','task_list','questions_list','executions_list','question_history','project_context','catalogue','pipeline_get','pipeline_history','project_list','account_list','account_hosts','account_login_handoff','transport_inspect','session_handoffs','queue_list','questions','execution_status','session_get','execution_differences','execution_events','profiles_list']);
+export const READ_OPERATIONS=new Set(['artifact_list','artifact_get','stores_list','artifact_rule_preview','task_get','task_list','questions_list','executions_list','question_history','project_context','catalogue','pipeline_get','pipeline_history','project_list','account_list','account_hosts','account_login_handoff','transport_inspect','session_handoffs','queue_list','questions','execution_status','session_get','execution_differences','execution_events','profiles_list']);
 export const LONG_OPERATIONS=new Set(['pipeline_run','direct_search','delivery_generate']);
 // Sequential async forms of the array methods, for callbacks that read the store; order of reads and writes stays as in the sync code.
 export const every=async<T>(xs:T[],f:(x:T)=>unknown)=>{for(const x of xs)if(!await f(x))return false;return true};

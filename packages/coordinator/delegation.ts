@@ -1,7 +1,7 @@
 
 import {randomUUID} from 'node:crypto';
 import {canonical,readTrustedProfile} from './lab.js';
-export function delegation(store:{all:(k:string,filter?:object,omit?:string[])=>Promise<any[]>,get:(id:string,k:string)=>Promise<any>,put:(k:string,v:any)=>Promise<unknown>,many:(ids:string[],k:string)=>Promise<Map<string,any>>,query:(sql:string,params?:any[])=>Promise<any[]>,executions:{openDelegations:()=>Promise<any[]>}},directory:string,enqueue:(session:any,text:string,requestId:string)=>Promise<any>){
+export function delegation(store:{all:(k:string,filter?:object,omit?:string[])=>Promise<any[]>,get:(id:string,k:string)=>Promise<any>,put:(k:string,v:any)=>Promise<unknown>,many:(ids:string[],k:string)=>Promise<Map<string,any>>,query:(sql:string,params?:any[])=>Promise<any[]>,executions:{openDelegations:()=>Promise<any[]>}},directory:string,enqueue:(session:any,text:string,requestId:string)=>Promise<any>,readArtifact:(id:string)=>Promise<Buffer>){
  const {all,get,put}=store;
  const fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};
  const terminal=(e:any)=>['completed','failed','stopped'].includes(e.state);
@@ -31,11 +31,11 @@ export function delegation(store:{all:(k:string,filter?:object,omit?:string[])=>
    const d=(await all('delegation',{childExecutionId:e.id})).find(d=>d.childExecutionId===e.id);
    const runs=(await all('execution',{sessionId:parent.sessionId})).filter(x=>x.sessionId===parent.sessionId);
    const history=runs.slice(0,runs.findIndex(x=>x.id===parent.id)+1).reverse();
-   const withArtifacts=new Set((await store.query("SELECT DISTINCT data->>'executionId' AS id FROM document WHERE kind='artifact' AND data->>'executionId'=ANY($1)",[history.map(run=>run.id)])).map((r:any)=>r.id));
+   const withArtifacts=new Set((await store.query("SELECT DISTINCT execution_id AS id FROM artifact WHERE state='stored' AND execution_id=ANY($1) UNION SELECT DISTINCT data->>'executionId' FROM document WHERE kind='artifact' AND data->>'executionId'=ANY($1)",[history.map(run=>run.id)])).map((r:any)=>r.id));
    const sourceRun=history.find(run=>withArtifacts.has(run.id));
    const latest=new Map<string,any>();// Every artifact has an executionId (the artifact route sets it), so no source run means no artifacts, not a scan of all of them.
    for(const a of sourceRun?(await all('artifact',{executionId:sourceRun.id})).filter(a=>a.executionId===sourceRun.id):[])latest.set(a.path,a);
-   const sources=[...latest.values()].filter(a=>/\.(html|css)$/i.test(a.path)).map(a=>({path:a.path,executionId:a.executionId,sha256:a.sha256,text:Buffer.from(a.contentBase64,'base64').toString('utf8')}));
+   const sources=[...latest.values()].filter(a=>/\.(html|css)$/i.test(a.path)).map(a=>({path:a.path,executionId:a.executionId,sha256:a.sha256,text:''}));for(const x of sources)x.text=(await readArtifact((latest.get(x.path)?.artifactId)??latest.get(x.path)?.id)).toString('utf8');
    if((!sources.length&&d.request.profileId==='website-reviewer')||JSON.stringify(sources).length>128000){d.routingError='Website text inputs unavailable or exceed 128000 characters';await put('delegation',d);return false}
    const parentMessages=(await all('event',{executionId:parent.id})).filter(e=>e.executionId===parent.id).flatMap(e=>e.data?.fleetNormalized?.messages??(e.data?.item?.type==='agent_message'?[{role:'assistant',text:e.data.item.text}]:[]));
    const observations={messages:parentMessages,artifacts:(await all('artifact',{executionId:parent.id},['contentBase64'])).filter(a=>a.executionId===parent.id).map(({contentBase64,...a})=>a)};if(!sources.length&&JSON.stringify(observations).length>128000){d.routingError='Retained parent observations exceed 128000 characters';await put('delegation',d);return false}

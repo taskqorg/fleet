@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Scoped Fleet static-site program worker. Host destinations never come from model input."""
-import base64, hashlib, json, os, pathlib, pwd, re, shutil, ssl, subprocess, sys, time, urllib.request
+import hashlib, json, os, pathlib, pwd, re, shutil, ssl, subprocess, sys, time, urllib.parse, urllib.request
 
 def run(argv, cwd=None):
     result=subprocess.run(argv,cwd=cwd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=90)
@@ -47,7 +47,34 @@ def main():
     journal=pathlib.Path(config['journal']); journal.mkdir(mode=0o700,parents=True,exist_ok=True)
     def api(route,body):
         req=urllib.request.Request(config['coordinator']+'/api/hosts/'+route,data=json.dumps(body).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','User-Agent':'Fleet-ProgramWorker/1'})
-        with urllib.request.urlopen(req,timeout=30,context=ssl.create_default_context(cafile='/etc/ssl/cert.pem' if os.path.exists('/etc/ssl/cert.pem') else None)) as r:return json.load(r)
+        with urllib.request.urlopen(req,timeout=30,context=tls) as r:return json.load(r)
+    tls=ssl.create_default_context(cafile='/etc/ssl/cert.pem' if os.path.exists('/etc/ssl/cert.pem') else None)
+    # Cloudflare Access service token for store tunnels; added to requests, never to presigned signatures (design section 3).
+    access={}
+    if config.get('cfAccessFile'):
+        env=dict(line.removeprefix('export ').strip().split('=',1) for line in pathlib.Path(config['cfAccessFile']).read_text().splitlines() if '=' in line)
+        access={'CF-Access-Client-Id':env['CF_ACCESS_CLIENT_ID'].strip('\'"'),'CF-Access-Client-Secret':env['CF_ACCESS_CLIENT_SECRET'].strip('\'"')}
+    def store_request(url,method='GET',data=None):
+        local=urllib.parse.urlsplit(url).hostname in ('127.0.0.1','localhost','::1')
+        return urllib.request.urlopen(urllib.request.Request(url,data=data,method=method,headers={} if local else access),timeout=120,context=tls)
+    # Artifacts: reserve, upload the parts to their presigned URLs, commit; when this host owns the store it also re-hashes
+    # the staged object over loopback and reports the digest (P3-D1).
+    def save(body,name,data,media):
+        r=api('artifacts/reserve',{**body,'name':name,'mediaType':media,'size':len(data),'sha256':hashlib.sha256(data).hexdigest()})
+        if r['state']=='stored':return r['artifactId']
+        size=r['partSize'];numbers=list(range(1,max(1,-(-len(data)//size))+1));done=[]
+        for n,u in [(p['partNumber'],p['url']) for p in api('artifacts/parts',{'hostId':body['hostId'],'artifactId':r['artifactId'],'partNumbers':numbers})['parts']]:
+            with store_request(u,'PUT',data[(n-1)*size:n*size]) as reply:done.append({'partNumber':n,'etag':reply.headers['ETag']})
+        c=api('artifacts/commit',{'hostId':body['hostId'],'artifactId':r['artifactId'],'parts':done})
+        if c.get('verify'):
+            digest=hashlib.sha256()
+            with store_request(c['verify']['url']) as reply:
+                for chunk in iter(lambda:reply.read(1<<20),b''):digest.update(chunk)
+            api('artifacts/verified',{'hostId':body['hostId'],'artifactId':r['artifactId'],'storeId':c['verify']['storeId'],'sha256':digest.hexdigest()})
+        return r['artifactId']
+    def fetch(body,artifact_id):
+        req=urllib.request.Request(config['coordinator']+'/api/hosts/artifacts/read',data=json.dumps({'hostId':body['hostId'],'artifactId':artifact_id}).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','User-Agent':'Fleet-ProgramWorker/1'})
+        with urllib.request.urlopen(req,timeout=120,context=tls) as r:return r.read()
     while True:
         commands=api('poll',{'hostId':config['hostId'],'platform':sys.platform})['commands']
         for c in commands:
@@ -78,20 +105,20 @@ def main():
                         result=account_status(binding,harness) if binding and binding.get('harness')==harness else {'readiness':'unavailable','reason':'binding-absent','nativeLoginObserved':None,'quota':'unknown'}
                         api('receipts',{**body,'accountObservation':{'accountId':p['accountId'],'binding':p['binding'],'platform':sys.platform,**result}})
                         result={**result,'accountId':p['accountId'],'binding':p['binding'],'authChanged':False}
-                    data=json.dumps(result).encode();api('artifacts',{**body,'path':'account-readiness.json','mediaType':'application/json','sha256':hashlib.sha256(data).hexdigest(),'contentBase64':base64.b64encode(data).decode()})
+                    save(body,'account-readiness.json',json.dumps(result).encode(),'application/json')
                     shutil.rmtree(workspace);state.write_text(json.dumps({'state':'completed'}));api('receipts',{**body,'status':'completed'});continue
                 if c['kind']=='pipe-search':
                     effect=True
                     proc=subprocess.run(['python3',config['pipeWrapper'],config['pipeConnection'],p['runId']],input=json.dumps(p['arguments']).encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=48,env={'PATH':os.environ['PATH']})
                     if proc.returncode:raise RuntimeError('Pipe host client failed')
-                    value=json.loads(proc.stdout);data=json.dumps(value).encode()
-                    api('artifacts',{**body,'path':'pipe-response.json','mediaType':'application/json','sha256':hashlib.sha256(data).hexdigest(),'contentBase64':base64.b64encode(data).decode()})
+                    value=json.loads(proc.stdout)
+                    save(body,'pipe-response.json',json.dumps(value).encode(),'application/json')
                     shutil.rmtree(workspace);state.write_text(json.dumps({'state':'completed'}));api('receipts',{**body,'status':'completed'});continue
                 project=config['projects'][p['projectId']]
                 if p['kind'] not in config['kinds']:raise RuntimeError('Worker kind denied')
                 for f in p['files']:
                     if not re.fullmatch(r'[A-Za-z0-9_-]+\.(html|css)',f['path']):raise RuntimeError('Static path denied')
-                    content=base64.b64decode(f['contentBase64'],validate=True)
+                    content=fetch(body,f['artifactId'])
                     if hashlib.sha256(content).hexdigest()!=f['sha256']:raise RuntimeError('Material digest mismatch')
                     (workspace/f['path']).write_bytes(content)
                 html=(workspace/'index.html').read_text() if not p.get('branch') else '<html>'
@@ -167,8 +194,7 @@ def main():
                     result.update(url=project['publicUrl'],release=p['deliveryId'],httpVerified=True)
                 shutil.rmtree(workspace)
                 result.update(durationMs=round((time.time()-started)*1000),usage=None,workingAreaRemoved=True)
-                data=json.dumps(result,indent=2).encode()
-                api('artifacts',{**body,'path':'delivery-result.json','mediaType':'application/json','sha256':hashlib.sha256(data).hexdigest(),'contentBase64':base64.b64encode(data).decode()})
+                save(body,'delivery-result.json',json.dumps(result,indent=2).encode(),'application/json')
                 api('events',{**body,'events':[{'id':c['id']+':result','seq':0,'type':'program.result','data':result}]})
                 state.write_text(json.dumps({'state':'effect-completed','result':result}));api('receipts',{**body,'status':'completed'})
             except Exception as e:
