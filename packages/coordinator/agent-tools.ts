@@ -27,7 +27,7 @@ export function decideTransition(current:Side|null,target:Side):Transition{
 }
 const side=(key:string,cfg:any):Side=>{const {model,effort,id,...rest}=cfg??{};return {key,model:model??'gpt-6.1-sol',effort:cfg?effort:'low',config:canonical(rest)}};
 
-export function agentTools(store:Store,deps:{directory:string,hostId:string,enqueue:(s:any,text:string,requestId:string)=>any,resolveAccount?:(account:string,harness:string)=>any}){
+export function agentTools(store:Store,deps:{directory:string,hostId:string,enqueue:(s:any,text:string,requestId:string)=>any,resolveAccount?:(account:string,harness:string)=>any,project?:(projectId:string)=>any}){
  const {all,get,put}=store;
  const capable=(name:string)=>{const h=all('host-observation').find(x=>x.id===deps.hostId);return Array.isArray(h?.capabilities)&&h.capabilities.includes(name)};
  const executions=(sessionId:string)=>all('execution').filter(e=>e.sessionId===sessionId);
@@ -90,6 +90,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
  // host can steer) and promoted in arrival order when the session is idle. Nothing is refused for being busy.
  function submit(b:any){
   const s=get(str(b?.sessionId,'sessionId'),'session'),requestId=str(b.requestId,'requestId'),text=str(b.text,'text');
+  if(b.setup!==undefined){if(!['run','skip'].includes(b.setup))fail(400,'Expected setup run|skip');s.setup=b.setup;put('session',s)}
   const sent=all('message').find(m=>m.sessionId===s.id&&m.requestId===requestId);if(sent){if(sent.text!==text)fail(409,'Request identity conflict');return get(sent.executionId,'execution')}
   const queued=all('queued-message').find(q=>q.sessionId===s.id&&q.requestId===requestId);if(queued){if(queued.text!==text)fail(409,'Request identity conflict');return view(queued)}
   const active=activeOf(s.id);
@@ -162,7 +163,13 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   const r={id:'reconcile:'+randomUUID(),at:Date.now(),items};put('reconciliation',r);return r}
 
  const sessionView=(sessionId:string)=>({queued:all('queued-message').filter(q=>q.sessionId===sessionId).map(view),questions:all('question').filter(q=>q.sessionId===sessionId),handoffs:all('handoff').filter(h=>h.sessionId===sessionId).map(({text,...h})=>h),transitions:all('session-transition').filter(t=>t.sessionId===sessionId),forks:all('session-fork').filter(f=>f.sourceSessionId===sessionId)});
+ // W5: one readiness command per environment host; results arrive as 'readiness' events on its program-worker execution.
+ function readiness(b:any){const projectId=str(b?.projectId,'projectId'),project=deps.project?.(projectId)??fail(404,'Unknown project');
+  return {projectId,hosts:[...new Set<string>((project.environments??[]).map((e:any)=>e.hostId))].map(hostId=>{const sessionId=randomUUID(),id=randomUUID();
+   put('session',{id:sessionId,createdAt:Date.now(),actor:'program-worker'});put('execution',{id,executionId:id,sessionId,hostId,state:'queued',createdAt:Date.now(),actor:'program-worker'});
+   put('command',{id:randomUUID(),executionId:id,sessionId,hostId,kind:'readiness',status:'pending',payload:{projectId,project}});return {hostId,executionId:id}})}}
  const operations:Record<string,(b:any)=>any>={
+  project_readiness:readiness,
   session_transition:transition,session_fork:fork,session_resume:resume,
   session_handoffs:b=>({handoffs:all('handoff').filter(h=>h.sessionId===str(b?.sessionId,'sessionId'))}),
   message_send:submit,queue_list:b=>({queued:all('queued-message').filter(q=>!b?.sessionId||q.sessionId===b.sessionId).map(view)}),
@@ -173,6 +180,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   session_transition:'Switch profile/harness/account/model; returns reuse|switch_model_in_session|restart_and_resume|create_with_handoff and hands context to a new native session',
   session_fork:'Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown',
   session_resume:'Native resume/fork argv and captured native sessions for a session',session_handoffs:'Context handoffs of a session with delivery state',
+  project_readiness:'Check a project per environment host: remote reachable, checkout, setup script, bound account login; read results with execution_status',
   message_send:'Send a message; starts a turn, or queues/steers it while the session is busy',queue_list:'Queued messages',
   ask:'Ask the coordinator a non-blocking question; pass resume=<questionId> to read the answer',reply:'Answer a question; delivered to the asker as its next message',
   questions:'List questions',worker_done:'Report the current execution done (checked against the current execution; captures native session)',

@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync} from 'node:fs';import {tmpdir} from 'node:os';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,mkdirSync,writeFileSync} from 'node:fs';import {tmpdir} from 'node:os';
 import {createApp} from '../../packages/coordinator/app.js';
 import {decideTransition} from '../../packages/coordinator/agent-tools.js';
 import {resumeArgv,forkArgv} from '../../packages/coordinator/resume-argv.js';
@@ -60,3 +60,21 @@ test('worker_done never sets an unconfirmed native session id',async()=>{
  const r=(await call('/api/agent-operations/worker_done',{executionId:e.id,outcome:'succeeded',nativeSessionId:'--evil'})).json();assert.equal(r.action,'accepted');
  assert.equal((await call('/api/sessions/'+s)).json().nativeSessionId,undefined);
  }finally{await app.close()}});
+test('readiness per environment host; start carries setup; archive sends teardown',async()=>{
+ const dir=mkdtempSync(tmpdir()+'/fleet-ready-');mkdirSync(dir+'/projects/p1',{recursive:true});
+ writeFileSync(dir+'/projects/p1/project.json',JSON.stringify({id:'p1',name:'P1',contextFiles:[],repos:[{id:'main',remote:'git@example.com:a/b.git',defaultBranch:'main'}],environments:[{hostId:'mac',checkoutPath:'/x'},{hostId:'pds',checkoutPath:'/y'}]}));
+ const app=createApp({database:dir+'/db',browserSecret:'b',machineSecret:'m',hostId:'mac',projectConfigDirectory:dir});
+ const call=async(url:string,payload?:any,machine=false)=>(await app.inject({method:payload?'POST':'GET',url,headers:{authorization:'Bearer '+(machine?'m':'b')},payload}));
+ const op=async(name:string,body:any)=>(await call('/api/ops/'+name,body)).json();
+ const poll=async(hostId='mac')=>(await call('/api/hosts/poll',{hostId},true)).json().commands;
+ const r=await op('project_readiness',{projectId:'p1'});assert.deepEqual(r.hosts.map((h:any)=>h.hostId),['mac','pds']);
+ const [rc]=await poll();assert.equal(rc.kind,'readiness');assert.equal(rc.payload.project.repos[0].id,'main');
+ const s=(await op('session_create',{})).sessionId;
+ await op('message_send',{sessionId:s,requestId:'one',text:'Go',setup:'skip'});
+ const start=(await poll()).find((x:any)=>x.kind==='start');assert.equal(start.payload.setup,'skip');
+ assert.equal((await call('/api/ops/session_archive',{sessionId:s})).statusCode,409);
+ await call('/api/hosts/receipts',{hostId:'mac',commandId:start.id,executionId:start.executionId,status:'completed'},true);
+ const t=await op('session_archive',{sessionId:s});assert.equal(t.kind,'teardown');assert.equal(t.executionId,start.executionId);
+ assert.equal((await op('session_archive',{sessionId:s})).id,t.id);
+ await app.close();
+});

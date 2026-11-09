@@ -4,6 +4,7 @@ mod harness;
 mod lab;
 mod native;
 mod outbox;
+mod readiness;
 mod worktree;
 use base64::Engine;
 use rusqlite::{Connection, params};
@@ -214,6 +215,16 @@ impl Executor {
                 Some(_) => Ok(()),
                 None => self.finish(&c, "failed", None),
             };
+        }
+        if c["kind"] == "readiness" {
+            let reg = std::env::var_os("FLEET_NATIVE_ACCOUNTS");
+            let data = readiness::run(&c["payload"]["project"], &self.host, reg.as_deref().map(std::path::Path::new));
+            let ok = data["ok"] == true;
+            self.event(&c, 0, "readiness", data)?;
+            if !ok {
+                self.event(&c, 1, "readiness.failed", json!({"reason":"readiness-check-failed"}))?;
+            }
+            return self.finish(&c, if ok { "completed" } else { "failed" }, None);
         }
         if c["kind"] == "teardown" {
             // Session finish: teardown script, keep on dirty/teardown failure, safe branch delete.
