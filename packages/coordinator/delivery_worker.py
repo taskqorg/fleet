@@ -73,7 +73,7 @@ def main():
             api('artifacts/verified',{'hostId':body['hostId'],'artifactId':r['artifactId'],'storeId':c['verify']['storeId'],'sha256':digest.hexdigest()})
         return r['artifactId']
     def fetch(body,artifact_id):
-        req=urllib.request.Request(config['coordinator']+'/api/hosts/artifacts/read',data=json.dumps({'hostId':body['hostId'],'artifactId':artifact_id}).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','User-Agent':'Fleet-ProgramWorker/1'})
+        req=urllib.request.Request(config['coordinator']+'/api/hosts/artifacts/read',data=json.dumps({'hostId':body['hostId'],'commandId':body['commandId'],'artifactId':artifact_id}).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','User-Agent':'Fleet-ProgramWorker/1'})
         with urllib.request.urlopen(req,timeout=120,context=tls) as r:return r.read()
     while True:
         commands=api('poll',{'hostId':config['hostId'],'platform':sys.platform})['commands']

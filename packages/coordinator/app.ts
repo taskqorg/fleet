@@ -15,7 +15,7 @@ import {agentTools} from './agent-tools.js';
 import {storeRegistry,accessToken} from './stores.js';
 import {artifactModel,type Artifacts} from './artifacts.js';
 import {placementWorker} from './placement.js';
-export function createApp(config:{nativeHostIds?:string[],database:string,store?:Store,browserSecret:string,machineSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,storeSecrets?:string,cfAccessFile?:string,defaultArtifactLocations?:string[],artifactRetryWindowMs?:number,placementIntervalMs?:number,projectConfigDirectory?:string,pipeConnectionFile?:string,integrationHostId?:string,publicationHostId?:string,testSiteRoot?:string,defaultAccountBinding?:string}) {
+export function createApp(config:{nativeHostIds?:string[],database:string,store?:Store,browserSecret:string,machineSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,storeSecrets?:string,storeEndpointHosts?:string[],cfAccessFile?:string,defaultArtifactLocations?:string[],artifactRetryWindowMs?:number,placementIntervalMs?:number,projectConfigDirectory?:string,pipeConnectionFile?:string,integrationHostId?:string,publicationHostId?:string,testSiteRoot?:string,defaultAccountBinding?:string}) {
  if(!config.browserSecret||!config.machineSecret||config.browserSecret===config.machineSecret) throw Error('Distinct credentials required');
  if(config.browserProxyAuth&&!config.browserOrigin)throw Error('Proxy browser auth requires configured browser origin');
  const ownStore=!config.store,store=config.store??createStore(config.database),{all,get,put}=store;
@@ -78,7 +78,7 @@ export function createApp(config:{nativeHostIds?:string[],database:string,store?
   const current=(await get(b?.executionId,'execution')),previous=(await get(text(b?.previous,300),'execution'));
   if(current.sessionId!==previous.sessionId)fail(403,'Different session');
   const before=await all('artifact',{executionId:previous.id}),after=await all('artifact',{executionId:current.id});
-  const lines=async(x:any)=>(await artifacts.readBuffer(x.artifactId)).toString('utf8').split('\n');
+  const lines=async(x:any)=>(await artifacts.readBuffer(x.artifactId,131072)).toString('utf8').split('\n');
   const files=await map([...new Set([...before,...after].map((x:any)=>x.path))].sort(),async (path:any)=>{
    const left=before.find(x=>x.path===path),right=after.find(x=>x.path===path);
    let textChange:any=null;
@@ -116,7 +116,7 @@ export function createApp(config:{nativeHostIds?:string[],database:string,store?
  // Executions bound to a host, account or environment nothing registered are marked with a problem (design §1).
  const detectProblems=async()=>{const environments:Record<string,string[]>={};for(const id of projects.project_list?(await projects.project_list()).projects.map((p:any)=>p.id):[]){try{environments[id]=projects.project_context({projectId:id}).settings.environments.map((e:any)=>e.hostId)}catch{}}
   return store.executions.detectProblems({hosts:[config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].filter(Boolean) as string[],environments})};
- const delegates=delegation(store,config.profilesDirectory||'config/agents',enqueue,(id:string)=>artifacts.readBuffer(id));
+ const delegates=delegation(store,config.profilesDirectory||'config/agents',enqueue,(id:string)=>artifacts.readBuffer(id,128000));
  app.get('/api/executions/:id/delegations',async(req:any)=>{(await get(req.params.id,'execution'));return {delegations:(await map((await all('delegation')).filter(d=>d.parentExecutionId===req.params.id||d.childExecutionId===req.params.id||d.continuationExecutionId===req.params.id),related))}});
  app.post('/api/sessions/:id/messages',async(req:any)=>(await store.tx(async ()=>{
   const s=(await get(req.params.id,'session')),b=req.body; if(!b||Array.isArray(b)||typeof b!=='object'||Object.keys(b).some(k=>!['requestId','text','delivery'].includes(k))||!Object.hasOwn(b,'requestId')||!Object.hasOwn(b,'text'))fail(400,'Expected requestId, text and optional delivery');text(b.requestId,200);text(b.text);return (await agent.submit({sessionId:s.id,requestId:b.requestId,text:b.text,delivery:b.delivery}));
@@ -145,12 +145,18 @@ export function createApp(config:{nativeHostIds?:string[],database:string,store?
  app.post('/api/hosts/artifacts/parts',hostArtifact(b=>artifacts.parts(b)));
  app.post('/api/hosts/artifacts/commit',hostArtifact(b=>artifacts.commit(b)));
  app.post('/api/hosts/artifacts/verified',hostArtifact(b=>artifacts.verified(b)));
- app.post('/api/hosts/artifacts/get',hostArtifact(b=>artifacts.get(text(b.artifactId,200),b.hostId)));
- app.post('/api/hosts/artifacts/read',async(req:any,r:any)=>{const b=req.body??{};(await owned({hostId:b.hostId}));const a=await artifacts.get(text(b.artifactId,200));return r.type(a.mediaType||'application/octet-stream').send(await artifacts.read(a.id))});
+ // A host reads an artifact only for its own command that names it (delivery files, copies), or for its own execution in
+ // the artifact's project (agent artifact_get).
+ const hostMayRead=async(b:any)=>{const a=await artifacts.get(text(b.artifactId,200));
+  if(typeof b.commandId==='string'){const c=await get(b.commandId,'command').catch(()=>null);const p=JSON.stringify(c?.payload??{});if(c&&c.hostId===b.hostId&&(p.includes('"'+a.id+'"')||(a.legacyId&&p.includes('"'+a.legacyId+'"'))))return a}
+  if(typeof b.executionId==='string'){(await owned(b));const e=await store.executions.get(b.executionId);if(a.executionId===e.id||(e.projectId&&a.projectId===e.projectId))return a}
+  return fail(403,'Artifact not readable by this host')};
+ app.post('/api/hosts/artifacts/get',hostArtifact(async b=>artifacts.get((await hostMayRead(b)).id,b.hostId)));
+ app.post('/api/hosts/artifacts/read',async(req:any,r:any)=>{const b=req.body??{};(await owned({hostId:b.hostId}));const a=await hostMayRead(b);return r.type(a.mediaType||'application/octet-stream').send(await artifacts.read(a.id))});
  app.post('/api/hosts/stores',async(req:any)=>{const b=req.body??{};(await owned({hostId:b.hostId}));return store.tx(()=>stores.register(b.hostId,b.store))});
  // Results stream from a verified copy with the same sandbox as before (no size limit; bytes never sit in the coordinator).
  app.get('/api/results/:id',async(req:any,r)=>{const a=await artifacts.get(req.params.id);if(a.state!=='stored')fail(404,'Not found');r.header('Content-Security-Policy',"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:");return r.type(a.mediaType||'application/octet-stream').send(await artifacts.read(a.id))});
- const projects=(registerProjects(app,store,{directory:config.projectConfigDirectory||'config',pipeConnectionFile:config.pipeConnectionFile,proxy:config.browserProxyAuth,searchHostId:config.integrationHostId,readArtifact:(id:string)=>artifacts.readBuffer(id)}));
+ const projects=(registerProjects(app,store,{directory:config.projectConfigDirectory||'config',pipeConnectionFile:config.pipeConnectionFile,proxy:config.browserProxyAuth,searchHostId:config.integrationHostId,readArtifact:(id:string)=>artifacts.readBuffer(id,16*1024*1024)}));
  Object.assign(projects,managed.operations);
  // Success rule (design §3, P3-D2): a start command reported completed waits for the execution's required artifacts; a
  // missing or failed one fails it. settle() finishes a waiting execution once its artifacts are settled or the window passed.
@@ -167,7 +173,7 @@ export function createApp(config:{nativeHostIds?:string[],database:string,store?
  // Artifact store (design §3): registry, operations, placement. Locations come from the project settings, the coordinator
  // default otherwise (PDS18 unless configured).
  // Store keys: FLEET_STORE_SECRETS in production; next to a file database, or a temporary folder, otherwise.
- const stores=storeRegistry(store,{secretsDir:config.storeSecrets??(/^(postgres(ql)?:|memory:)/.test(config.database)?mkdtempSync(join(tmpdir(),'fleet-store-secrets-')):join(dirname(config.database),'stores'))});
+ const stores=storeRegistry(store,{endpointHosts:config.storeEndpointHosts,secretsDir:config.storeSecrets??(/^(postgres(ql)?:|memory:)/.test(config.database)?mkdtempSync(join(tmpdir(),'fleet-store-secrets-')):join(dirname(config.database),'stores'))});
  const locations=(projectId:string|null)=>{if(projectId){try{const l=projects.project_context({projectId}).settings.artifact_locations;if(l)return l}catch{}}return config.defaultArtifactLocations??[config.hostId]};
  const rulesOf=(projectId:string|null)=>{if(!projectId)return [];try{return projects.project_context({projectId}).settings.artifact_rules??[]}catch{return []}};
  // Tool commands for a host's executor (copy, verify): a program-worker execution of its own, like the other host tools.
@@ -186,12 +192,12 @@ export function createApp(config:{nativeHostIds?:string[],database:string,store?
   artifact_rule_confirm:(b:any)=>placement.confirmRule(b?.projectId??null,b?.rule,'operator'),
   stores_list:async()=>({stores:(await stores.list()).map(({...s})=>s)}),
  });
- deliveryRuntime=delivery(store,config,enqueue,projects,managed.resolve,managed.preferred,(id:string)=>artifacts.readBuffer(id));
+ deliveryRuntime=delivery(store,config,enqueue,projects,managed.resolve,managed.preferred,(id:string)=>artifacts.readBuffer(id,1024*1024));
  Object.assign(projects,deliveryRuntime.operations);
  app.addHook('onReady',()=>store.atomic(async()=>{await deliveryRuntime.advance();await agent.reconcile()}));
  // Placement runs on its own timer (placement_interval_seconds, default 60 s); 0 turns the timer off (tests run it directly).
  let placementTimer:any;const placementMs=config.placementIntervalMs??60000;
- app.addHook('onReady',async()=>{if(placementMs>0)placementTimer=setInterval(()=>{stores.sweep().then(()=>artifacts.backfill()).then(()=>placement.runPlacement()).catch(e=>app.log.error(e))},placementMs);placementTimer.unref()});
+ app.addHook('onReady',async()=>{if(placementMs>0){placementTimer=setInterval(()=>{stores.sweep().then(()=>artifacts.backfill()).then(()=>placement.runPlacement()).catch(e=>app.log.error(e))},placementMs);placementTimer.unref()}});
  app.addHook('onClose',async()=>{clearInterval(placementTimer)});
  app.decorate('artifacts',artifacts);app.decorate('placement',placement);app.decorate('stores',stores);
  registerLab(app,{...store,transaction:store.tx},{hostId:config.hostId,profilesDirectory:config.profilesDirectory||'config/agents',browserProxyAuth:config.browserProxyAuth});

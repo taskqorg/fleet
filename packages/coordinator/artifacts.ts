@@ -6,7 +6,7 @@ import type {Readable} from 'node:stream';
 import {PutObjectCommand,S3Client,CreateMultipartUploadCommand,UploadPartCommand,CompleteMultipartUploadCommand,AbortMultipartUploadCommand,HeadObjectCommand,GetObjectCommand,CopyObjectCommand,UploadPartCopyCommand,DeleteObjectCommand} from '@aws-sdk/client-s3';
 import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
 import type {Store} from './store.js';
-import type {Stores,StoreRow} from './stores.js';
+import {type Stores,type StoreRow,allowedTunnel} from './stores.js';
 const fail=(code:number,message:string,extra:any={}):never=>{throw Object.assign(Error(message),{statusCode:code,...extra})};
 export const PART_SIZE=32*1024*1024;
 const COPY_LIMIT=5*1024*1024*1024,COPY_PART=1024*1024*1024,URL_SECONDS=900,LEASE_MS=3600000;
@@ -18,10 +18,11 @@ export type ArtifactRow={id:string,project_id:string|null,scope:'lab'|'prod',con
 export function artifactModel(store:Store,deps:{stores:Stores,locations:(projectId:string|null)=>string[],access:()=>{id:string,secret:string}|null,onSettled?:(executionId:string)=>Promise<void>,queueCommand:(hostId:string,kind:string,payload:any)=>Promise<void>}){
  // One S3 client per store and route. Tunnel requests get the Access headers after signing, so they are never signed headers.
  const clients=new Map<string,S3Client>();
- const s3=(s:StoreRow,via:'tunnel'|'local'='tunnel')=>{const k=s.id+':'+via;let c=clients.get(k);if(c)return c;
+ const s3=(s:StoreRow,via:'tunnel'|'local'='tunnel')=>{const k=[s.id,via,s.endpoint,s.local_endpoint].join('|');let c=clients.get(k);if(c)return c;
   const cred=deps.stores.credentials(s.id);
   c=new S3Client({endpoint:via==='local'&&s.local_endpoint?s.local_endpoint:s.endpoint,region:'garage',forcePathStyle:true,credentials:cred,requestChecksumCalculation:'WHEN_REQUIRED',responseChecksumValidation:'WHEN_REQUIRED'});
-  if(via==='tunnel')c.middlewareStack.addRelativeTo((next:any)=>async(args:any)=>{const a=deps.access();if(a&&args.request?.headers){args.request.headers['cf-access-client-id']=a.id;args.request.headers['cf-access-client-secret']=a.secret}return next(args)},{relation:'after',toMiddleware:'httpSigningMiddleware',name:'fleetCloudflareAccess',override:true});
+  // Access headers only to an allowed tunnel host, never to loopback or an unlisted host.
+  if(via==='tunnel'&&allowedTunnel(s.endpoint,deps.stores.endpointHosts))c.middlewareStack.addRelativeTo((next:any)=>async(args:any)=>{const a=deps.access();if(a&&args.request?.headers){args.request.headers['cf-access-client-id']=a.id;args.request.headers['cf-access-client-secret']=a.secret}return next(args)},{relation:'after',toMiddleware:'httpSigningMiddleware',name:'fleetCloudflareAccess',override:true});
   clients.set(k,c);return c};
  // URLs for a host: the store's loopback endpoint when that host is the store's own, its tunnel otherwise (store protocol rules).
  const viaFor=(s:StoreRow,hostId:string)=>hostId===s.host_id&&s.local_endpoint?'local' as const:'tunnel' as const;
@@ -109,10 +110,12 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
  // Coordinator reads of the bytes (delivery results, website sources, differences): streamed from a verified copy.
  async function read(id:string):Promise<Readable>{const legacyDoc=await legacyDocument(id);if(legacyDoc)return (await import('node:stream')).Readable.from([Buffer.from(legacyDoc.contentBase64??'','base64')]);const a=await row(id);if(a.state!=='stored')fail(409,'Artifact not stored');const s=await source(a)??fail(503,'Artifact unavailable: no reachable store holds a verified copy');
   return (await s3(s).send(new GetObjectCommand({Bucket:s.bucket,Key:keyOf(a)}))).Body as Readable}
- const readBuffer=async(id:string)=>{const chunks:Buffer[]=[];for await(const c of await read(id))chunks.push(Buffer.from(c));return Buffer.concat(chunks)};
+ // Coordinator code reads bounded content only: an artifact larger than maxBytes is refused before any byte is read.
+ const readBuffer=async(id:string,maxBytes:number)=>{const doc=await legacyDocument(id),size=doc?Number(doc.size??0):(await row(id)).size;if(size>maxBytes)fail(413,`Artifact larger than ${maxBytes} bytes`);
+  const chunks:Buffer[]=[];let n=0;for await(const c of await read(id)){n+=c.length;if(n>maxBytes)fail(413,`Artifact larger than ${maxBytes} bytes`);chunks.push(Buffer.from(c))}return Buffer.concat(chunks)};
  const view=(a:ArtifactRow)=>({id:a.id,legacyId:a.legacy_id,projectId:a.project_id,scope:a.scope,executionId:a.execution_id,taskId:a.task_id,name:a.name,mediaType:a.media_type,size:a.size,sha256:a.content_hash,required:a.required,role:a.role,derivedFromArtifactId:a.derived_from_artifact_id,previousArtifactId:a.previous_artifact_id,state:a.state,error:a.last_error});
  // Metadata and a presigned GET for the given host (§3 Reading); unavailable when no reachable store holds a verified copy.
- async function get(id:string,hostId?:string){const legacyDoc=await legacyDocument(id);if(legacyDoc)return {id:legacyDoc.id,legacyId:legacyDoc.id,executionId:legacyDoc.executionId,name:legacyDoc.path,mediaType:legacyDoc.mediaType,size:legacyDoc.size,sha256:legacyDoc.sha256,state:'stored',availability:'available',copies:[]};const a=await row(id),copies=await store.query('SELECT store_id,state,verified_at FROM artifact_copy WHERE artifact_id=$1 ORDER BY store_id',[a.id]);
+ async function get(id:string,hostId?:string){const legacyDoc=await legacyDocument(id);if(legacyDoc)return {id:legacyDoc.id,legacyId:legacyDoc.id,projectId:null as string|null,executionId:legacyDoc.executionId,name:legacyDoc.path,mediaType:legacyDoc.mediaType,size:legacyDoc.size,sha256:legacyDoc.sha256,state:'stored',availability:'available',copies:[]};const a=await row(id),copies=await store.query('SELECT store_id,state,verified_at FROM artifact_copy WHERE artifact_id=$1 ORDER BY store_id',[a.id]);
   const s=a.state==='stored'?await source(a,hostId):undefined;
   return {...view(a),copies:copies.map((c:any)=>({storeId:c.store_id,state:c.state})),availability:a.state!=='stored'?a.state:s?'available':'unavailable',...(s?{url:await presign(s,hostId??'',new GetObjectCommand({Bucket:s.bucket,Key:keyOf(a),ResponseContentType:a.media_type}))}:{})}}
  async function list(f:{executionId?:string,taskId?:string,mediaType?:string,projectId?:string}={}){const c:string[]=[],p:any[]=[];
