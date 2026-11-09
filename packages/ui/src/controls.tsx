@@ -2,7 +2,7 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, iconSvg, states, actions } from './registry';
-import { type Measured, type Kind, measured, age, bytes, clock } from './format';
+import { type Measured, type Kind, measured, age, bytes, exact, percent } from './format';
 import { VirtualList } from './virtual-list';
 import tokens from '../tokens.json';
 
@@ -129,18 +129,21 @@ export function AgeChip({ t, now, alertAfter, tone = 'danger' }: { t: number; no
 
 /* ---------- Fill bar (W9–W11) ---------- */
 
-type FillProps = { total: number | null; segments: { label: string; bytes: number }[]; warnAt?: number; stale?: number; now?: number };
+type FillProps = { total: number | null; segments: { label: string; bytes: number }[]; warnAt?: number; stale?: number; now?: number;
+  /** Units of total and segments: bytes (stores) or percent (quota windows). */
+  unit?: 'bytes' | 'percent' };
 export function FillBar(p: FillProps) {
   if (p.total === null) return <span class="fill-wrap"><span class="fill" role="img" aria-label="unavailable" /><span class="legend muted">— unavailable</span></span>;
   const used = p.segments.reduce((s, x) => s + x.bytes, 0), free = p.total - used;
   const state = free <= 0 ? 'full' : p.warnAt !== undefined && free < p.warnAt ? 'warn' : '';
   const legend = p.segments.map(s => `${s.label} ${Math.round(s.bytes / p.total! * 100)}%`).join(' · ');
-  const freeText = free <= 0 ? 'full' : `${bytes(free).text} free${state ? `, warning at ${bytes(p.warnAt!).text}` : ''}`;
+  const amount = (n: number) => p.unit === 'percent' ? percent(n, p.total!).text : bytes(n).text;
+  const freeText = free <= 0 ? 'full' : `${amount(free)} ${p.unit === 'percent' ? 'left' : 'free'}${state ? `, warning at ${amount(p.warnAt!)}` : ''}`;
   const staleText = p.stale !== undefined ? ` · ${age(p.stale, p.now ?? Date.now()).text} old` : '';
   return (
     <span class="fill-wrap">
       <span class={`fill ${state}${p.stale !== undefined ? ' stale' : ''}`} role="img" aria-label={`${legend}; ${freeText}${staleText}`}>
-        {p.segments.map((s, i) => <i key={s.label} class={`d${i % 4 + 1}`} style={{ width: `${s.bytes / p.total! * 100}%` }} data-tip={`${s.label} ${bytes(s.bytes).text}`} />)}
+        {p.segments.map((s, i) => <i key={s.label} class={`d${i % 4 + 1}`} style={{ width: `${s.bytes / p.total! * 100}%` }} data-tip={`${s.label} ${p.unit === 'percent' ? percent(s.bytes, p.total!).text : bytes(s.bytes).text}`} />)}
         {p.warnAt !== undefined && <b class="mark" style={{ left: `${(1 - p.warnAt / p.total) * 100}%` }} />}
       </span>
       <span class={`legend${state ? ` t-${state === 'full' ? 'danger' : 'attention'}` : ''}`}>{legend} · {freeText}{staleText}</span>
@@ -156,7 +159,8 @@ type FilterBarProps = {
   query: string; onQuery: (q: string) => void; placeholder: string;
   chips: Chip[]; onRemove: (c: Chip) => void; onAdd: (c: Chip) => void; onClear: () => void;
   fields: FilterField[];
-  saved: { name: string; active?: boolean; pinned?: boolean }[]; onSaved: (name: string) => void;
+  /** Second line: presets, state counters, grouping. */
+  extra?: ComponentChildren;
   shown: number; total: number;
 };
 export function FilterBar(p: FilterBarProps) {
@@ -175,12 +179,7 @@ export function FilterBar(p: FilterBarProps) {
         {p.chips.length > 0 && <Button label="Clear" kind="quiet" onClick={p.onClear} />}
         <span class="count" aria-live="polite">{p.shown.toLocaleString('en')} of {p.total.toLocaleString('en')}</span>
       </div>
-      <div class="fbar-line saved" role="group" aria-label="Saved filters">
-        {p.saved.filter(s => s.pinned).map(s => (
-          <button type="button" key={s.name} class={`saved-chip${s.active ? ' on' : ''}`} aria-pressed={!!s.active} onClick={() => p.onSaved(s.name)}>
-            <Icon name={actions.pin} />{s.name}</button>
-        ))}
-      </div>
+      {p.extra && <div class="fbar-line">{p.extra}</div>}
       {open !== null && (
         <div class="fbar-line inline-filter" role="group" aria-label="Add filter">
           {p.fields.map(f => <button type="button" key={f.field} class={`seg${f.field === open ? ' on' : ''}`} aria-pressed={f.field === open} onClick={() => setOpen(f.field)}>{f.field}</button>)}
@@ -341,7 +340,7 @@ export const Stale = ({ at, now, onRefresh }: { at: number; now: number; onRefre
 /* ---------- Live transcript (transcript-viewer.md) ---------- */
 
 export type Entry = { id: string; t: number; who?: string; text?: string; call?: { name: string; state: string; secs: number }; gap?: string };
-export function Transcript({ entries, label }: { entries: Entry[]; label: string }) {
+export function Transcript({ entries, label, now }: { entries: Entry[]; label: string; now: number }) {
   const [q, setQ] = useState('');
   const shown = q ? entries.filter(e => (e.text ?? e.call?.name ?? '').toLowerCase().includes(q.toLowerCase())) : entries;
   return (
@@ -350,10 +349,125 @@ export function Transcript({ entries, label }: { entries: Entry[]; label: string
         onInput={e => setQ((e.target as HTMLInputElement).value)} /></label><span class="count">{shown.length} of {entries.length}</span></div>
       <VirtualList class="tr-body" items={shown} getKey={e => e.id} rowHeight={ROW} dynamic follow="bottom" label={label} render={e => (
         e.gap ? <div class="tr-gap"><Icon name="triangle-alert" />{e.gap}</div>
-          : <div class="tr-e"><time>{clock(e.t)}</time>{e.call
+          : <div class="tr-e"><time data-tip={exact(e.t)}>{age(e.t, now).text}</time>{e.call
             ? <span class="call"><Icon name="square" />{e.call.name} · {e.call.state} · {e.call.secs}s</span>
             : <span><b>{e.who}</b> {e.text}</span>}</div>
       )} />
+    </div>
+  );
+}
+
+/* ---------- Split button (split-button.md) ---------- */
+
+/** Default action plus a short menu of alternatives for the same place (OR-14 allows short action menus). */
+export function SplitButton({ main, alternatives, kind = 'default' }: {
+  main: { label: string; icon?: IconName; onClick?: () => void };
+  alternatives: { label: string; icon?: IconName; onClick?: () => void }[]; kind?: 'primary' | 'default';
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => { if (!(e instanceof KeyboardEvent) || e.key === 'Escape') if (!ref.current?.contains(e.target as Node) || e instanceof KeyboardEvent) setOpen(false); };
+    document.addEventListener('pointerdown', close); document.addEventListener('keydown', close);
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close); };
+  }, [open]);
+  return (
+    <span class={`split ${kind}`} ref={ref}>
+      <Button label={main.label} icon={main.icon} kind={kind} onClick={main.onClick} />
+      <button type="button" class={`btn ${kind} split-more`} aria-haspopup="menu" aria-expanded={open} aria-label={`More actions for ${main.label}`} onClick={() => setOpen(!open)}><Icon name="chevron-down" /></button>
+      {open && <span class="menu" role="menu">{alternatives.map(a =>
+        <button type="button" role="menuitem" key={a.label} onClick={() => { setOpen(false); a.onClick?.(); }}>{a.icon && <Icon name={a.icon} />}{a.label}</button>)}</span>}
+    </span>
+  );
+}
+
+/* ---------- State counters: quick filter by state with totals (state-counters.md) ---------- */
+
+export function StateCounters<F extends Family>({ family, counts, active, onToggle, label }: {
+  family: F; counts: Partial<Record<StateOf<F>, number | null>>; active: StateOf<F>[]; onToggle: (s: StateOf<F>) => void; label: string;
+}) {
+  const all = Object.keys(states[family]) as StateOf<F>[];
+  return (
+    <div class="counters" role="group" aria-label={label}>
+      {all.map(s => {
+        const d = states[family][s] as StateDef, n = counts[s];
+        if (n === undefined) return null;
+        const on = active.includes(s);
+        const name = `${d.label}: ${n === null ? 'unknown' : n}`;
+        return <button type="button" key={String(s)} class={`counter t-${d.tone}${on ? ' on' : ''}${n === 0 ? ' zero' : ''}`} aria-pressed={on} aria-label={name} data-tip={d.label} onClick={() => onToggle(s)}>
+          <Icon name={d.icon} /><span class="num">{n === null ? '?' : n.toLocaleString('en')}</span></button>;
+      })}
+    </div>
+  );
+}
+
+/* ---------- Group header row for grouped lists ---------- */
+
+export function GroupHeader({ icon, label, count, open, onToggle, tone = 'neutral' }: { icon: IconName; label: string; count: number; open: boolean; onToggle: () => void; tone?: Tone }) {
+  return <button type="button" class={`group-h t-${tone}`} aria-expanded={open} onClick={onToggle}>
+    <span class={open ? 'chev open' : 'chev'}><Icon name="chevron-down" /></span><Icon name={icon} /><b>{label}</b><span class="num">{count.toLocaleString('en')}</span></button>;
+}
+
+/* ---------- Presets: saved views per person (filter-bar.md) ---------- */
+
+export function Presets({ presets, active, onPick, onSave, onUnpin }: {
+  presets: string[]; active: string | null; onPick: (name: string) => void; onSave: (name: string) => void; onUnpin: (name: string) => void;
+}) {
+  const [naming, setNaming] = useState<string | null>(null);
+  return (
+    <div class="presets" role="group" aria-label="Views">
+      {presets.map(n => <span key={n} class={`preset${n === active ? ' on' : ''}`}>
+        <button type="button" aria-pressed={n === active} onClick={() => onPick(n)}><Icon name="pin" />{n}</button>
+        <button type="button" class="x" aria-label={`Unpin view ${n}`} data-tip="Unpin" onClick={() => onUnpin(n)}><Icon name="x" /></button></span>)}
+      {naming === null
+        ? <Button label="Save view" icon="save" kind="quiet" onClick={() => setNaming('')} />
+        : <span class="naming"><input value={naming} placeholder="View name" aria-label="View name" ref={e => e?.focus()} onInput={e => setNaming((e.target as HTMLInputElement).value)}
+            onKeyDown={e => { if (e.key === 'Enter' && naming.trim()) { onSave(naming.trim()); setNaming(null); } if (e.key === 'Escape') setNaming(null); }} />
+          <Button label="Save" kind="primary" onClick={() => { if (naming.trim()) onSave(naming.trim()); setNaming(null); }} /></span>}
+    </div>
+  );
+}
+
+/* ---------- Navigation rail with pinned sections (nav-rail.md) ---------- */
+
+export type NavItem = { id: string; label: string; icon: IconName; group: string; count?: { n: number; tone: Tone; label: string } };
+export function NavRail({ items, pinned, current, onPin, onGo }: {
+  items: NavItem[]; pinned: string[]; current: string; onPin: (id: string, pin: boolean) => void; onGo: (id: string) => void;
+}) {
+  const [q, setQ] = useState('');
+  const item = (it: NavItem) => {
+    const isPinned = pinned.includes(it.id);
+    return <li key={it.id} class={`nav-i${it.id === current ? ' cur' : ''}`}>
+      <a href={`#/${it.id}`} aria-current={it.id === current ? 'page' : undefined} onClick={e => { e.preventDefault(); onGo(it.id); }}>
+        <Icon name={it.icon} /><span class="nm">{it.label}</span>
+        {it.count && it.count.n > 0 && <span class={`nav-count t-${it.count.tone}`} aria-label={`${it.count.n} ${it.count.label}`}>{it.count.n}</span>}
+      </a>
+      <button type="button" class={`nav-pin${isPinned ? ' on' : ''}`} aria-pressed={isPinned} aria-label={`${isPinned ? 'Unpin' : 'Pin'} ${it.label}`} data-tip={isPinned ? 'Unpin' : 'Pin'} onClick={() => onPin(it.id, !isPinned)}>
+        <Icon name={isPinned ? 'pin-off' : 'pin'} /></button>
+    </li>;
+  };
+  const found = items.filter(i => i.label.toLowerCase().includes(q.toLowerCase()));
+  const groups = [...new Set(found.map(i => i.group))];
+  return (
+    <nav class="rail" aria-label="Sections">
+      {pinned.length > 0 && <ul class="rail-g pinned" aria-label="Pinned">{pinned.map(id => items.find(i => i.id === id)).filter(Boolean).map(i => item(i!))}</ul>}
+      <label class="search rail-search"><Icon name="search" /><input type="search" placeholder="Sections" aria-label="Find section" value={q} onInput={e => setQ((e.target as HTMLInputElement).value)} /></label>
+      {groups.map(g => <ul key={g} class="rail-g" aria-label={g}><li class="rail-h">{g}</li>{found.filter(i => i.group === g && !pinned.includes(i.id)).map(item)}</ul>)}
+    </nav>
+  );
+}
+
+/* ---------- Stat strip: operational counts (stat-strip.md) ---------- */
+
+export type Stat = { label: string; icon: IconName; value: Measured; kind?: Kind; of?: number; tone?: Tone; href?: string };
+export function StatStrip({ stats, label }: { stats: Stat[]; label: string }) {
+  return (
+    <div class="stats" role="list" aria-label={label}>
+      {stats.map(s => {
+        const body = <><Icon name={s.icon} /><span class="sv"><Num m={s.value} kind={s.kind ?? 'count'} />{s.of !== undefined && <span class="of">/{s.of}</span>}</span><span class="sl">{s.label}</span></>;
+        return <span role="listitem" key={s.label} class={`stat${s.tone ? ` t-${s.tone} toned` : ''}`}>{s.href ? <a href={s.href}>{body}</a> : body}</span>;
+      })}
     </div>
   );
 }

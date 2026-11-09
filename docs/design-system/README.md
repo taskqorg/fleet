@@ -7,7 +7,7 @@ This folder is the single knowledge base for Fleet's interface design. It plays 
 1. [owner-rules.md](owner-rules.md): the owner's rules, OR-1 to OR-19. Read first in every design or UI session.
 2. [methodology-brief.md](methodology-brief.md): how design work is done here.
 3. `packages/ui`: the shared parts (tokens, icons, formatter, virtual list, controls). Use them; do not write local variants.
-4. [book/index.html](book/index.html): the live demo of `packages/ui`. `npm run book` rebuilds it; `npm run check:design` prints the warning report.
+4. [book/index.html](book/index.html): the live demo of `packages/ui`. [pages/mockups.html](pages/mockups.html): page mockups built from it. `npm run book` rebuilds it; `npm run check:design` prints the warning report.
 
 ## Files
 

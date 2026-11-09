@@ -2,15 +2,13 @@
 import { render, type ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import {
-  Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, FilterBar, ExecTree, DecisionBlock, ResultViewer,
-  SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Transcript, VirtualList, workspaces, states, actions,
-  type Chip, type TreeNode, type Entry, type Family,
+  Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, ExecTree, DecisionBlock, ResultViewer, SplitButton, NavRail, StatStrip,
+  SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Transcript, TaskListView, workspaces, states, actions,
+  type Entry, type Family,
 } from '../src/index';
-import tokens from '../tokens.json';
+import { NAV } from './nav';
+import { NOW, min, hr, tasks, mkTask, TREE, transcript, hosts, type Task } from './fixtures';
 
-const NOW = Date.now();
-const min = 60e3, hr = 60 * min;
-const ROW = parseInt(tokens.size.row);
 
 function Frames({ children }: { children: () => ComponentChildren }) {
   return <div class="pair">{(['light', 'dark'] as const).map(t => <div key={t} class={`frame th-${t}`}><div class="frame-label">{t}</div>{children()}</div>)}</div>;
@@ -106,82 +104,66 @@ function FillDemo() {
   </div>;
 }
 
-type Task = { id: number; title: string; state: keyof typeof states.task; agent: string; started: number; cost: number | null; est: boolean; pinned?: boolean; flash?: boolean };
-const AGENTS = ['codex', 'claude', 'pipeline'];
-const STATES = Object.keys(states.task) as Task['state'][];
-const WORDS = ['Render prop batch', 'Fix CI cache key', 'Rework hero copy', 'Compare 3D methods', 'Investigate disk alert', 'Write release notes', 'Character hands rework', 'Migrate store layout'];
-const mkTask = (id: number): Task => ({ id, title: `${WORDS[id % WORDS.length]} ${id % 97}`, state: STATES[id % 7], agent: AGENTS[id % 3], started: NOW - (id * 37 % 900) * min, cost: id % 11 === 0 ? null : (id % 130) / 10, est: id % 4 === 0 });
-
 function ListDemo() {
-  const [items, setItems] = useState(() => Array.from({ length: 10000 }, (_, i) => mkTask(10000 - i)));
+  const [items, setItems] = useState<Task[]>(() => tasks(10000));
   const [stream, setStream] = useState(false);
-  const [query, setQuery] = useState('');
-  const [chips, setChips] = useState<Chip[]>([{ field: 'Project', value: 'dashq' }]);
-  const [saved, setSaved] = useState('My waiting');
   useEffect(() => {
     if (!stream) return;
     const t = setInterval(() => setItems(xs => [mkTask(xs[0].id + 1), ...xs]), 900);
     return () => clearInterval(t);
   }, [stream]);
   const insert = () => setItems(xs => [...Array.from({ length: 5 }, (_, i) => mkTask(xs[0].id + 5 - i)), ...xs]);
-  const change = () => setItems(xs => xs.map((x, i) => i % 3 === 0 && i < 400 ? { ...x, cost: (x.cost ?? 0) + 0.25, flash: true } : x));
-  const pin = (id: number) => setItems(xs => xs.map(x => x.id === id ? { ...x, pinned: !x.pinned } : x));
-  const q = query.toLowerCase();
-  const shown = (q ? items.filter(x => x.title.toLowerCase().includes(q) || `t-${x.id}`.includes(q)) : items);
-  const ordered = [...shown.filter(x => x.pinned), ...shown.filter(x => !x.pinned)];
+  const change = () => setItems(xs => xs.map((x, i) => i % 3 === 0 && i < 400 ? { ...x, cost: (x.cost ?? 0) + 0.25 } : x));
   return <div class="pane">
-    <FilterBar query={query} onQuery={setQuery} placeholder="Search tasks" chips={chips}
-      onRemove={c => setChips(cs => cs.filter(x => x.field !== c.field || x.value !== c.value))} onAdd={c => setChips(cs => [...cs, c])} onClear={() => setChips([])}
-      fields={[{ field: 'State', values: STATES.map((s, i) => ({ value: states.task[s].label, count: 1400 - i * 90 })) }, { field: 'Agent', values: AGENTS.map((a, i) => ({ value: a, count: 3300 - i * 200 })) }, { field: 'Project', values: [{ value: 'dashq', count: 4100 }, { value: 'game', count: 3800 }, { value: 'fleet', count: 2100 }] }]}
-      saved={['My waiting', 'Failed today', 'dashq open'].map(n => ({ name: n, pinned: true, active: n === saved }))} onSaved={setSaved}
-      shown={ordered.length} total={items.length} />
-    <VirtualList items={ordered} getKey={x => String(x.id)} rowHeight={ROW} follow="top" label="Tasks"
-      columns="minmax(0,1fr) 4.5rem 1.25rem 4rem 2.75rem 4.5rem 1.75rem"
-      header={<><span>Task</span><span>ID</span><span /><span>Agent</span><span class="r">Age</span><span class="r">Cost</span><span /></>}
-      render={x => <>
-        <span class="title">{x.title}</span>
-        <span class="id svc">T-{x.id}</span>
-        <StateBadge family="task" state={x.state} reason={x.state === 'waiting' ? 'acceptance by you' : x.state === 'failed' ? 'render step exit 1' : undefined} compact />
-        <span class="svc">{x.agent}</span>
-        <span class="r"><AgeChip t={x.started} now={NOW} alertAfter={x.state === 'in_progress' ? 2 * 3600 : undefined} /></span>
-        <span class="r"><Num m={x.cost === null ? { value: null, basis: 'unavailable', reason: 'no meter' } : { value: x.cost, basis: x.est ? 'estimated' : 'measured' }} kind="money" rise="bad" /></span>
-        <Button label={x.pinned ? 'Unpin' : 'Pin'} icon={x.pinned ? actions.unpin : actions.pin} iconOnly pressed={x.pinned} onClick={() => pin(x.id)} />
-      </>} />
+    <TaskListView items={items} now={NOW} onPin={id => setItems(xs => xs.map(x => x.id === id ? { ...x, pinned: !x.pinned } : x))} />
     <div class="bar">
       <Button label="Insert 5 above" icon="plus" onClick={insert} />
       <Button label={stream ? 'Stop stream' : 'Stream rows'} icon={stream ? 'pause' : 'activity'} pressed={stream} onClick={() => setStream(!stream)} />
       <Button label="Change costs" onClick={change} />
-      <span class="muted type-sm">10,000 rows; only visible rows render. Scroll down, then insert: the row you read stays put.</span>
+      <span class="muted type-sm">10,000 rows. Choose "No groups", scroll down, then insert: the row you read stays put.</span>
     </div>
   </div>;
 }
 
-const TREE: TreeNode[] = [
-  { id: 'w', name: 'Worker · codex · windows', state: 'succeeded', time: { value: 540, basis: 'measured' }, tokens: { value: 120000, basis: 'measured' }, cost: { value: 0.3, basis: 'measured' }, children: [
-    { id: 'w1', name: 'edit index.html', state: 'succeeded', time: { value: 120, basis: 'measured' } },
-    { id: 'w2', name: 'run checks', note: 'reused from run 2', state: 'succeeded', time: { value: 60, basis: 'measured' } }] },
-  { id: 'r', name: 'Reviewer · claude · mac', state: 'waiting', time: { value: 240, basis: 'measured' }, tokens: { value: 62000, basis: 'measured' }, cost: { value: 0.12, basis: 'estimated' }, children: [
-    { id: 'r1', name: 'screenshot phone', state: 'running', lastSeen: NOW - 4 * min, time: { value: 40, basis: 'measured' } },
-    { id: 'r2', name: 'question: accept?', state: 'waiting', time: { value: 720, basis: 'measured' } }] },
-  { id: 'm', name: 'Merge · program', state: 'preparing', time: { value: null, basis: 'unavailable', reason: 'not started' }, children: [
-    { id: 'm1', name: 'merge to main', state: 'preparing' }] },
-];
-
 function TranscriptDemo() {
-  const [entries, setEntries] = useState<Entry[]>(() => [
-    { id: '1', t: NOW - 10 * min, who: 'User', text: 'Rework the hero copy; keep it short.' },
-    { id: '2', t: NOW - 10 * min + 3e3, call: { name: 'file_read index.html', state: 'completed', secs: 0 } },
-    { id: '3', t: NOW - 9 * min, gap: 'Events 120–180 not received yet' },
-    ...Array.from({ length: 40 }, (_, i): Entry => i % 2 ? { id: `a${i}`, t: NOW - (8 - i / 6) * min, call: { name: 'shell npm test', state: 'completed', secs: i % 9 } } : { id: `a${i}`, t: NOW - (8 - i / 6) * min, who: 'Assistant', text: `Step ${i} done. Checking the next file; long messages wrap and keep their measured height${i % 4 === 0 ? ' across several lines when the content needs more space than one row offers in this narrow frame.' : '.'}` }),
-  ]);
+  const [entries, setEntries] = useState<Entry[]>(transcript);
   const [on, setOn] = useState(false);
   useEffect(() => {
     if (!on) return;
     const t = setInterval(() => setEntries(es => [...es, { id: `n${es.length}`, t: Date.now(), who: 'Assistant', text: `Streamed entry ${es.length}. API key [masked] not used.` }]), 700);
     return () => clearInterval(t);
   }, [on]);
-  return <div class="pane"><Transcript entries={entries} label="Transcript" />
-    <div class="bar"><Button label={on ? 'Stop' : 'Stream'} icon={on ? 'pause' : 'activity'} pressed={on} onClick={() => setOn(!on)} /><span class="muted type-sm">At the bottom it follows; scroll up and it holds still.</span></div></div>;
+  return <div class="pane"><Transcript entries={entries} label="Transcript" now={Date.now()} />
+    <div class="bar"><Button label={on ? 'Stop' : 'Stream'} icon={on ? 'pause' : 'activity'} pressed={on} onClick={() => setOn(!on)} /><span class="muted type-sm">Times are relative; exact time on hover. At the bottom it follows; scroll up and it holds still.</span></div></div>;
+}
+
+function RailDemo() {
+  const [cur, setCur] = useState('tasks');
+  const [pinned, setPinned] = useState<string[]>(['tasks', 'hosts']);
+  return <div class="pane rail-demo"><NavRail items={NAV} pinned={pinned} current={cur} onGo={setCur} onPin={(id, p) => setPinned(p ? [...pinned, id] : pinned.filter(x => x !== id))} /></div>;
+}
+
+function SplitDemo() {
+  const [last, setLast] = useState('');
+  return <div class="row">
+    <SplitButton kind="primary" main={{ label: 'Retry', icon: 'rotate-ccw', onClick: () => setLast('Retry') }}
+      alternatives={[{ label: 'Retry on another host', icon: 'panels-top-left', onClick: () => setLast('Retry on another host') }, { label: 'Continue on codex', icon: 'bot', onClick: () => setLast('Continue on codex') }, { label: 'Full rerun', icon: 'rotate-cw', onClick: () => setLast('Full rerun') }]} />
+    <SplitButton main={{ label: 'Accept', icon: 'check' }} alternatives={[{ label: 'Accept and merge', icon: 'git-merge' }, { label: 'Accept without publishing', icon: 'save' }]} />
+    {last && <span class="muted type-sm">ran: {last}</span>}
+  </div>;
+}
+
+function StatsDemo() {
+  return <div class="col">
+    <StatStrip label="Operations" stats={[
+      { label: 'need you', icon: 'bell', value: { value: 3, basis: 'measured' }, tone: 'attention' },
+      { label: 'failed today', icon: 'octagon-x', value: { value: 2, basis: 'measured' }, tone: 'danger' },
+      { label: 'running', icon: 'activity', value: { value: 10, basis: 'measured' }, of: 13 },
+      { label: 'queued', icon: 'list-ordered', value: { value: 7, basis: 'measured' } },
+      { label: 'spent today', icon: 'chart-no-axes-column', value: { value: 41.2, basis: 'estimated', reason: 'tokens' }, kind: 'money' },
+    ]} />
+    <StatStrip label="Workers per host" stats={hosts.map(h => ({ label: h.id, icon: 'panels-top-left' as const, value: h.online ? { value: h.running, basis: 'measured' as const } : { value: h.running, basis: 'measured' as const, partial: `last seen ${Math.round((NOW - h.lastSeen) / hr)}h ago` }, of: h.slots, tone: h.running >= h.slots ? 'attention' as const : undefined }))} />
+  </div>;
 }
 
 function DecisionDemo() {
@@ -248,11 +230,14 @@ function ThemeButton() {
 const SECTIONS: [string, string, string | undefined, () => ComponentChildren, ComponentChildren?][] = [
   ['tokens', 'Tokens', undefined, () => <TokensDemo />, <>Colour carries meaning only. Numbers and IDs use the monospace stack.</>],
   ['navigation', 'Navigation anchors', undefined, () => <NavDemo />, <>OR-3: one stable icon per workspace, from the registry.</>],
+  ['nav-rail', 'Navigation rail with pinned sections', 'nav-rail', () => <RailDemo />, <>Hover a section and pin it: it moves to the pinned group at the top (D9). Counters show what needs a look. Search finds any section.</>],
+  ['split-button', 'Split button', 'split-button', () => <SplitDemo />, <>Click runs the default action; the chevron opens a short menu of alternatives for the same place (allowed by OR-14).</>],
   ['button', 'Button', 'button', () => <ButtonsDemo />],
   ['state-badge', 'State badge', 'state-badge', () => <BadgesDemo />, <>Left: icon and word, for detail views. Right: icon only, the form lists use (B1); hover or focus for the name and reason.</>],
   ['number', 'Numbers, totals, age chips', 'number', () => <NumbersDemo />, <>Measured, estimated (≈), unavailable (—), partial (≥). "Change values" shows the brief tint (OR-6): cost rising tints red, tokens neutral. The 2h chip is red (OR-18).</>],
   ['fill-bar', 'Fill bar', 'fill-bar', () => <FillDemo />],
-  ['data-list', 'Task list: filter bar, search, saved filters, virtual list', 'data-list', () => <ListDemo />, <>Filters expand inline, never in a popup (OR-14). Saved filters are pinned chips (OR-12). The new-rows pill has no arrow (OR-7). Title takes the space; service fields sit in one compact zone on the right (OR-21). State is an icon; its name and reason appear in a delayed tooltip (B1, OR-20). Pin is always visible (B2).</>],
+  ['stat-strip', 'Stat strip', 'stat-strip', () => <StatsDemo />, <>Operational counts: what needs you, failures, running against slots, workers per host. An offline host shows its last known count as a lower bound.</>],
+  ['data-list', 'Task list view: views, state counters, grouping, filters, virtual list', 'data-list', () => <ListDemo />, <>Saved views per person (pin, unpin, Save view). State counters show totals and filter on click. Group by state or project; groups collapse. Filters expand inline (OR-14). Title takes the space; service fields sit on the right (OR-21). State is an icon with a delayed tooltip (B1, OR-20).</>],
   ['execution-tree', 'Execution tree', 'execution-tree', () => <ExecTree nodes={TREE} now={NOW} label="Executions" />],
   ['transcript-viewer', 'Live transcript', 'transcript-viewer', () => <TranscriptDemo />],
   ['decision-block', 'Decision block', 'decision-block', () => <DecisionDemo />, <>Click Accept or press a while the block has focus: the block collapses to the answered line.</>],
@@ -275,4 +260,5 @@ function Book() {
   </div>;
 }
 
-render(<Book />, document.getElementById('app')!);
+const app = document.getElementById('app');
+if (app) render(<Book />, app);

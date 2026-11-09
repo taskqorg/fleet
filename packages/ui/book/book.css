@@ -33,3 +33,4 @@
 .frame .vl{--list-height:var(--size-list)}
 .frame .rv-b .empty{padding:var(--space-4)}
 @media (max-width:1000px){.pair,.grid2{grid-template-columns:1fr}}
+.rail-demo{display:flex;max-height:var(--size-list);overflow:auto}

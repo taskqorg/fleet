@@ -88,3 +88,9 @@ export function clock(t: number): string {
   const d = new Date(t);
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
+
+/** Share of a whole: 3%, 41%, 97%. */
+export function percent(part: number, whole: number): Formatted {
+  const v = Math.round(part / whole * 100);
+  return { text: `${v}%`, long: `${v} percent` };
+}

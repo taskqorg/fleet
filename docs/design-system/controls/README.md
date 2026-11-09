@@ -16,5 +16,9 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [decision-block](decision-block.md) | Decisions inline |
 | [result-viewer](result-viewer.md) | Result viewers |
 | [setting-field](setting-field.md) | Settings with applied or apply error |
+| [nav-rail](nav-rail.md) | Many sections; pinned per person |
+| [split-button](split-button.md) | Default action with alternatives |
+| [state-counters](state-counters.md) | Counts per state, quick state filter |
+| [stat-strip](stat-strip.md) | Operational counts |
 | [problem-row](problem-row.md) | Signals with cause and actions |
 | [status-states](status-states.md) | Empty, loading, error and stale |

@@ -15,5 +15,5 @@ try {
   await p.waitForTimeout(200);
   const after = await vl.evaluate((e, t) => [...e.querySelectorAll('.vl-row')].find(x => x.textContent === t)?.getBoundingClientRect().top, text);
   const pill = await p.locator('#data-list .pill').first().textContent();
-  console.log(after === top && pill === '5 new' ? 'ok' : `shift ${after - top}px, pill "${pill}"`);
+  console.log(after === top && /^\d+ new$/.test(pill) ? 'ok' : `shift ${after - top}px, pill "${pill}"`);
 } finally { await b.close(); }

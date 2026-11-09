@@ -82,3 +82,17 @@ Append only. Each entry: date, question, options, choice, reason.
   * Task list: the title gets the most space; ID, state icon, agent, age, cost and pin sit in one zone on the right.
   * Tooltips: one `TooltipLayer` that is small, delayed and hidden while typing. Elements opt in with `data-tip`, and `title` tooltips were removed where they added nothing (age chips, measured numbers, clock times).
   * The scroll-anchor bug found by the new behaviour check is fixed.
+
+## 2026-11-10 D9: Navigation pinning, split button, relative transcript times, views and counters, dashboards
+
+* **Owner requests:**
+  1. Pin any section in a left rail.
+  2. A split action button.
+  3. Relative transcript times, with the exact time on hover.
+  4. Deep filter design: per-person view presets, grouping, quick state filters, counters with totals, and quick navigation with counters (reference: TaskQ state counters).
+  5. Operational dashboards such as workers per host.
+* **Applied:**
+  * Controls: [nav-rail](controls/nav-rail.md), [split-button](controls/split-button.md), [state-counters](controls/state-counters.md), [stat-strip](controls/stat-strip.md). Views, grouping and counters are in the [filter bar](controls/filter-bar.md) and the [list view](patterns/list-view.md).
+  * The transcript uses `age()`.
+  * The fill bar supports percent for quota windows.
+* **Stage 3:** patterns in [patterns/](patterns/), page specs in [pages/](pages/), and mockups in [pages/mockups.html](pages/mockups.html), built from `packages/ui` only.

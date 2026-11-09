@@ -4,7 +4,7 @@
 
 **Purpose.** Reads a live or finished execution transcript: messages, tool calls, results and questions, with paging and search.
 
-**Anatomy.** Toolbar (search within transcript, filter by kind: messages, tool calls, errors; "Follow" toggle; jump to start/end); body on `surface-sunken`; entries with time in `font-mono` `fg-muted`, author or tool name, and content. Tool calls are collapsed to one line ("Call: file_change · completed · 2s") and expand on click. Code and command output use `font-mono`.
+**Anatomy.** Toolbar (search within transcript, filter by kind: messages, tool calls, errors; "Follow" toggle; jump to start/end); body on `surface-sunken`; entries with a relative time in `font-mono` `fg-muted` (`4m`, `2h`; OR-2, D9), with the exact time in the tooltip, author or tool name, and content. Tool calls are collapsed to one line ("Call: file_change · completed · 2s") and expand on click. Code and command output use `font-mono`.
 
 **States.** Loading (skeleton entries), following (live, pinned to the bottom), paused-follow (pill "24 new"), searching (matches highlighted, "3 of 17" with next/previous), finished, history gap ("Events 120–180 not received yet" in `attention-fg`), error.
 

@@ -19,6 +19,8 @@ export type VirtualListProps<T> = {
   columns?: string;
   header?: ComponentChildren;
   class?: string;
+  /** Extra class per row, e.g. group headers. */
+  rowClass?: (item: T) => string;
 };
 
 export function VirtualList<T>(p: VirtualListProps<T>) {
@@ -93,7 +95,7 @@ export function VirtualList<T>(p: VirtualListProps<T>) {
         <div class="vl-space" style={{ height: `${v.getTotalSize()}px` }}>
           {v.getVirtualItems().map(vi => (
             <div key={vi.key} data-index={vi.index} ref={p.dynamic ? v.measureElement : undefined} role="row" aria-rowindex={vi.index + 1}
-              class={`vl-row${p.dynamic ? ' dyn' : ''}`} style={{ transform: `translateY(${vi.start}px)`, height: p.dynamic ? undefined : `${p.rowHeight}px` }}>
+              class={`vl-row${p.dynamic ? ' dyn' : ''} ${p.rowClass?.(p.items[vi.index]) ?? ''}`} style={{ transform: `translateY(${vi.start}px)`, height: p.dynamic ? undefined : `${p.rowHeight}px` }}>
               {p.render(p.items[vi.index], vi.index)}
             </div>
           ))}
