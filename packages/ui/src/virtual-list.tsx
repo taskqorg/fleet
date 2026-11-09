@@ -89,7 +89,7 @@ export function VirtualList<T>(p: VirtualListProps<T>) {
 
   const style = p.columns ? { '--cols': p.columns } : undefined;
   return (
-    <div class={`vl-wrap ${p.class ?? ''}`} style={style}>
+    <div data-ui="data-list" class={`vl-wrap ${p.class ?? ''}`} style={style}>
       {p.header && <div class="vl-head" role="row">{p.header}</div>}
       <div ref={scroller} class="vl" role="grid" aria-label={p.label} aria-rowcount={p.items.length} tabIndex={0} onScroll={capture}>
         <div class="vl-space" style={{ height: `${v.getTotalSize()}px` }}>

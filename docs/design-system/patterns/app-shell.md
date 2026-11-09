@@ -14,4 +14,5 @@
 * The main area has one scroll region (specq F3). Lists scroll inside their own virtual list.
 * Routes are stable URLs (`#/tasks/9989` in mockups, real paths in the app; specq F7). Back restores the list position and selection.
 * Pages size to their content; there is no `100vh`.
-* Phone (below 760 px): the rail is hidden, the main area takes the full width, and list and detail stack ([list-detail](list-detail.md)).
+* Phone (below 760 px): the rail shrinks to icons (interim, [D10](../decisions.md)). List and detail stack ([list-detail](list-detail.md)).
+* Every page renders `AppShell`. The traceability check in `npm run check:design` reports any page that does not.

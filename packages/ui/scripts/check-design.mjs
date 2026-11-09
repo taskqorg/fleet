@@ -48,9 +48,12 @@ try { execFileSync('npx', ['tsx', '--test', 'tests/ui/format.test.ts'], { cwd: r
 
 let scroll;
 try { scroll = execFileSync('node', ['tests/ui/scroll.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim(); } catch (e) { scroll = `not run (${String(e.message).split('\n')[0]})`; }
+let trace;
+try { trace = execFileSync('node', ['tests/ui/trace.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim().replace(/\n/g, '\n    '); } catch (e) { trace = `not run (${String(e.message).split('\n')[0]})`; }
 console.log(`Design report for ${targets.join(', ')}: ${files.length} files`);
 console.log(`- packages/ui JavaScript: ${kb.toFixed(0)} KB minified (target ≤ 200 KB)${kb > 200 ? '  OVER TARGET' : ''}`);
 console.log(`- formatter tests: ${tests}`);
 console.log(`- scroll anchor on insert (book list): ${scroll}`);
+console.log(`- page specs against mockups:\n    ${trace}`);
 console.log(warn.length ? `- ${warn.length} warnings:\n  ${warn.join('\n  ')}` : '- no warnings');
 console.log('Rules: docs/design-system/owner-rules.md. This report never fails the build.');

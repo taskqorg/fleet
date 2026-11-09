@@ -1,5 +1,7 @@
 # Laboratory (architect)
 
+**Mockup routes:** `#/laboratory` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
+
 **Purpose.** Compare variants, inspect trials, assess and recommend.
 
 **Layout.**

@@ -17,7 +17,7 @@ Each item has a registry icon (OR-3), a name, an optional counter chip in a tone
 * Counters show only when they are not zero and link to the filtered list. A counter's tone follows the [state badge](state-badge.md) mapping.
 * Search filters the items by name as you type.
 * The current section has the `selected` background.
-* Below 760 px the rail is hidden. Navigation then comes from the top bar (phone layout, decided in stage 3 review).
+* Below 760 px the rail shrinks to icons, with pins first and counters on the icons. Names appear in tooltips, shown only while names are hidden (OR-20). This is interim; open question (d) holds the variants ([D10](../decisions.md)). The rail never disappears.
 
 **Keyboard.** `g` then a letter goes to a section ([principles §5](../principles.md#5-keyboard)). Up and down arrows move through items, `p` pins the focused item.
 

@@ -24,3 +24,4 @@ async function page(entry, outPath, title, extraCss = '') {
 }
 await page('book/book.tsx', '../../docs/design-system/book/index.html', 'Fleet design book', readFileSync(new URL('book/book.css', root), 'utf8'));
 await page('book/pages.tsx', '../../docs/design-system/pages/mockups.html', 'Fleet page mockups', 'html,body,#app{height:100%}');
+await page('book/open-questions.tsx', '../../docs/design-system/explorations/open-questions-01.html', 'Fleet open questions 01', readFileSync(new URL('book/oq.css', root), 'utf8'));

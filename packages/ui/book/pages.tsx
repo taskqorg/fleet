@@ -6,7 +6,8 @@ import { Router, Route, Switch, useLocation } from 'wouter-preact';
 import { useHashLocation } from 'wouter-preact/use-hash-location';
 import {
   AppShell, TaskListView, StatStrip, DecisionBlock, ProblemRow, FillBar, StateBadge, Num, Totals, AgeChip, ExecTree, Transcript,
-  ResultViewer, SettingField, SplitButton, Button, Empty, VirtualList, Icon, Stale, StateCounters, type TaskRow,
+  ResultViewer, SettingField, SplitButton, Button, Empty, VirtualList, Icon, Stale, StateCounters, FilterBar,
+  ListDetail, NeedsYou, OpsSummary, ListFrame, type TaskRow,
 } from '../src/index';
 import { NAV } from './nav';
 import { NOW, min, hr, tasks, TREE, transcript, hosts, PROJECTS } from './fixtures';
@@ -29,6 +30,7 @@ function Overview() {
   const byProject = PROJECTS.map(p => { const ts = ALL.filter(t => t.project === p); const c: Record<string, number> = {}; for (const t of ts) c[t.state] = (c[t.state] ?? 0) + 1; return { p, c }; });
   return <>
     <PageHead title="Overview"><Stale at={NOW - 20e3} now={NOW} /></PageHead>
+    <OpsSummary>
     <StatStrip label="Operations" stats={[
       { label: 'need you', icon: 'bell', value: { value: 3, basis: 'measured' }, tone: 'attention', href: '#/tasks' },
       { label: 'failed today', icon: 'octagon-x', value: { value: 2, basis: 'measured' }, tone: 'danger', href: '#/tasks' },
@@ -37,8 +39,7 @@ function Overview() {
       { label: 'spent today', icon: 'chart-no-axes-column', value: { value: 41.2, basis: 'estimated', reason: 'tokens' }, kind: 'money' },
     ]} />
     <div class="cols">
-      <Panel title="Needs you" class="wide">
-        <div class="stack">
+      <NeedsYou>
           {[{ id: 'q1', q: 'Accept this result?', by: 'reviewer (claude)', since: NOW - 12 * min, waits: 'T-9989 Write release notes 95', opts: [{ label: 'Accept', kbd: 'a', primary: true }, { label: 'Request rework', kbd: 'r' }] },
             { id: 'q2', q: 'Use the Windows store for the game bundle?', by: 'worker (codex)', since: NOW - 40 * min, waits: 'T-9976 Render prop batch 82', opts: [{ label: 'Yes', kbd: '1' }, { label: 'No, use mac', kbd: '2' }] }].map(d =>
             <DecisionBlock key={d.id} question={d.q} askedBy={d.by} addressedTo="you" since={d.since} now={NOW} waits={d.waits} options={d.opts}
@@ -47,8 +48,7 @@ function Overview() {
             actions={[{ label: 'Continue on codex', primary: true }, { label: 'Wait for reset' }]} />
           <ProblemRow severity="warning" title="Low space on windows store" facts={<><span class="mono">18 GB</span> free, warning at <span class="mono">25 GB</span></>}
             actions={[{ label: 'Open host' }]} />
-        </div>
-      </Panel>
+      </NeedsYou>
       <div class="stack">
         <Panel title="Workers per host" actions={<Button label="Hosts" icon="external-link" iconOnly onClick={() => go('/hosts')} />}>
           <ul class="kv">{hosts.map(h => <li key={h.id}>
@@ -72,6 +72,7 @@ function Overview() {
         </Panel>
       </div>
     </div>
+    </OpsSummary>
   </>;
 }
 
@@ -83,14 +84,13 @@ function Tasks({ id }: { id?: string }) {
   const [items, setItems] = useState(ALL);
   const [, go] = useLocation();
   const sel = items.find(t => String(t.id) === id);
-  return <div class={`split-view${sel ? ' has-detail' : ''}`}>
-    <div class="split-list">
+  return <ListDetail
+    list={<>
       <PageHead title="Tasks"><Button label="New task" icon="plus" kind="primary" /></PageHead>
       <Panel><TaskListView items={items} now={NOW} selected={sel?.id} height="var(--size-page-list)" onOpen={t => go(`/tasks/${t.id}`)}
         onPin={pid => setItems(xs => xs.map(x => x.id === pid ? { ...x, pinned: !x.pinned } : x))} /></Panel>
-    </div>
-    {sel && <TaskDetail t={sel} onClose={() => go('/tasks')} />}
-  </div>;
+    </>}
+    detail={sel && <TaskDetail t={sel} onClose={() => go('/tasks')} />} />;
 }
 
 function TaskDetail({ t, onClose }: { t: TaskRow; onClose: () => void }) {
@@ -136,11 +136,19 @@ const RESULTS: Res[] = Array.from({ length: 2000 }, (_, i) => ({ id: `r${i}`, na
 function Results() {
   const [sel, setSel] = useState<Res>(RESULTS[0]);
   const [tab, setTab] = useState('View');
-  return <div class="split-view has-detail">
-    <div class="split-list">
+  const [query, setQuery] = useState('');
+  const [copies, setCopies] = useState<Res['copy'][]>([]);
+  const counts = { stored: 0, placed: 0, pending: 0, unavailable: 0 } as Record<Res['copy'], number>;
+  for (const r of RESULTS) counts[r.copy]++;
+  const shown = RESULTS.filter(r => (!copies.length || copies.includes(r.copy)) && (!query || r.name.includes(query) || `t-${r.task}`.includes(query.toLowerCase())));
+  return <ListDetail
+    list={<>
       <PageHead title="Results" />
-      <Panel>
-        <VirtualList items={RESULTS} getKey={r => r.id} rowHeight={ROW} follow="top" label="Results" rowClass={r => r.id === sel.id ? 'sel' : ''}
+      <Panel><ListFrame bar={<FilterBar query={query} onQuery={setQuery} placeholder="Search results" chips={[]} onRemove={() => {}} onAdd={() => {}} onClear={() => setCopies([])}
+          fields={[{ field: 'Type', values: TYPES.map(t => ({ value: t, count: 400 })) }, { field: 'Project', values: PROJECTS.map(p => ({ value: p, count: 500 })) }]}
+          shown={shown.length} total={RESULTS.length}
+          extra={<StateCounters family="copy" label="Results by copy state" counts={counts} active={copies} onToggle={c => setCopies(copies.includes(c) ? copies.filter(x => x !== c) : [...copies, c])} />} />}>
+        <VirtualList items={shown} getKey={r => r.id} rowHeight={ROW} follow="top" label="Results" rowClass={r => r.id === sel.id ? 'sel' : ''}
           columns="minmax(0,1fr) 3.5rem 4rem 4.5rem 1.25rem 2.75rem"
           header={<><span>Result</span><span>Type</span><span>Project</span><span class="r">Size</span><span /><span class="r">Age</span></>}
           render={r => <>
@@ -150,15 +158,14 @@ function Results() {
             <StateBadge family="copy" state={r.copy} compact />
             <span class="r"><AgeChip t={r.at} now={NOW} /></span>
           </>} />
-      </Panel>
-    </div>
-    <article class="detail">
+      </ListFrame></Panel>
+    </>}
+    detail={<article class="detail">
       <ResultViewer name={sel.name} type={sel.type} size={sel.size} source={`T-${sel.task}`} tab={tab} onTab={setTab} tabs={['View', 'Checks 2', 'Versions 3']}
         copies={[{ where: 'windows', state: sel.copy }, { where: 'mac', state: 'pending' }]}>
         {sel.copy === 'unavailable' ? <Empty text="No holding store is online. Last copy on mac, seen 2h ago." action={<Button label="Notify when online" icon="bell" />} /> : <Empty text={`${sel.type} viewer for ${sel.name}`} />}
       </ResultViewer>
-    </article>
-  </div>;
+    </article>} />;
 }
 
 /* ---------- Hosts ---------- */

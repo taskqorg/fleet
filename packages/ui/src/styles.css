@@ -286,5 +286,11 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .vl-row.static{position:relative;transform:none;height:var(--size-row);cursor:default}
 .list-view .vl{height:var(--list-height,var(--size-list))}
 @media (max-width:1100px){.cols,.split-view.has-detail{grid-template-columns:minmax(0,1fr)}}
-@media (max-width:760px){.rail{display:none}.shell-main{padding:var(--space-3)}}
+@media (max-width:760px){
+  .rail{width:auto;padding:var(--space-2) var(--space-1)}
+  .rail .nm,.rail .rail-h,.rail-search,.rail .nav-pin{display:none}
+  .rail .nav-i a{padding:0 var(--space-2);position:relative}
+  .rail .nav-count{position:absolute;top:0;right:0;padding:0 var(--space-1)}
+  .shell-main{padding:var(--space-3)}
+}
 .vl-head .r{text-align:right}

@@ -61,7 +61,7 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height }: {
   ];
 
   return (
-    <div class="list-view" style={height ? { '--list-height': height } : undefined}>
+    <div class="list-view" data-ui="list-view" style={height ? { '--list-height': height } : undefined}>
       <FilterBar query={query} onQuery={setQuery} placeholder="Search tasks" chips={view.chips} fields={fields}
         onRemove={c => edit({ chips: view.chips.filter(x => x.field !== c.field || x.value !== c.value) })}
         onAdd={c => edit({ chips: [...view.chips, c] })} onClear={() => edit({ chips: [], states: [] })}
@@ -109,7 +109,7 @@ export function AppShell({ nav, current, onGo, waiting, children }: {
 }) {
   const [pinned, setPinned] = useState<string[]>(['tasks', 'hosts']);
   return (
-    <div class="shell">
+    <div class="shell" data-ui="app-shell">
       <header class="topbar">
         <b class="brand">Fleet</b>
         <span class="grow" />
@@ -123,3 +123,18 @@ export function AppShell({ nav, current, onGo, waiting, children }: {
     </div>
   );
 }
+
+/* ---------- Layout patterns used by pages ---------- */
+
+/** List on the left, detail on the right; stacks when narrow (patterns/list-detail.md). */
+export const ListDetail = ({ list, detail }: { list: ComponentChildren; detail?: ComponentChildren }) => (
+  <div data-ui="list-detail" class={`split-view${detail ? ' has-detail' : ''}`}><div class="split-list">{list}</div>{detail}</div>
+);
+/** Everything waiting for a person, answered in place (patterns/needs-you.md). */
+export const NeedsYou = ({ children }: { children: ComponentChildren }) => (
+  <section data-ui="needs-you" class="panel wide"><header class="panel-h"><h2>Needs you</h2></header><div class="stack">{children}</div></section>
+);
+/** Operational counts and capacity (patterns/ops-summary.md): a stat strip plus side panels. */
+export const OpsSummary = ({ children }: { children: ComponentChildren }) => <div data-ui="ops-summary" class="stack">{children}</div>;
+/** Generic list frame: filter bar over a virtual list (patterns/list-view.md), for lists other than tasks. */
+export const ListFrame = ({ bar, children }: { bar: ComponentChildren; children: ComponentChildren }) => <div class="list-view" data-ui="list-view">{bar}{children}</div>;
