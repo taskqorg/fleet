@@ -14,6 +14,7 @@
 | Execution | Waiting | Failed | Preparing, Running | Succeeded | Cancelled |
 | Copy | | Unavailable | Pending | Stored, Placed | |
 | Setting | | Apply error | Pending | Applied | |
+| Session | Waiting | Failed | Preparing, Running | Done | Idle, Stopped |
 | Host | | Offline | | Online | |
 
 **Observation overlay.** Unconfirmed state keeps the last known state word and adds a dashed outline and a hollow dot: "Running, seen 4m" (OR-2). It never turns into Failed.

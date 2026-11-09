@@ -6,7 +6,7 @@ import {taskModel} from './tasks.js';
 
 type Query=(sql:string,params?:any[])=>Promise<{rows:any[]}>;
 export type Mode='read'|'write';
-type Backend={query:Query,exec:(sql:string)=>Promise<unknown>,tx:<T>(fn:(q:Query)=>Promise<T>,mode:Mode)=>Promise<T>,close:()=>Promise<void>};
+type Backend={query:Query,exec:(sql:string)=>Promise<unknown>,tx:<T>(fn:(q:Query)=>Promise<T>,mode:Mode)=>Promise<T>,close:()=>Promise<void>,listen:(channel:string,fn:()=>void)=>Promise<()=>Promise<void>>};
 export type Store=ReturnType<typeof createStore>;
 // read: one consistent snapshot, never blocks writers and never fails to serialize. write: each statement sees the latest
 // committed data; the scope lock (below) makes writers of one scope run one at a time.
@@ -18,11 +18,15 @@ const backend=(url:string,scope:string):Backend=>{
  if(/^postgres(ql)?:\/\//.test(url)){
   // The scope is a startup option, set before the connection runs any query.
   const pool=new pg.Pool({connectionString:url,options:`-c fleet.project_ids=${scope.replace(/[^a-zA-Z0-9_*,-]/g,'')}`});
-  return {query:(s,p)=>pool.query(s,p),exec:s=>pool.query(s),close:()=>pool.end(),tx:async(fn,mode)=>{const c=await pool.connect();
+  // LISTEN holds one dedicated connection for the process; it reconnects and listens again after an error.
+  const listen=async(channel:string,fn:()=>void)=>{let client:any=null,stopped=false;
+   const open=async():Promise<void>=>{if(stopped)return;try{client=await pool.connect();client.on('notification',()=>fn());client.on('error',()=>{client?.release(true);client=null;setTimeout(()=>{open();fn()},1000)});await client.query('LISTEN '+channel.replace(/\W/g,''))}catch{client?.release(true);client=null;setTimeout(open,1000)}};
+   await open();return async()=>{stopped=true;if(client){await client.query('UNLISTEN *').catch(()=>{});client.release()}}};
+  return {listen,query:(s,p)=>pool.query(s,p),exec:s=>pool.query(s),close:()=>pool.end(),tx:async(fn,mode)=>{const c=await pool.connect();
    try{await c.query(BEGIN[mode]);const r=await fn((s,p)=>c.query(s,p));await c.query('COMMIT');return r}catch(e){await c.query('ROLLBACK').catch(()=>{});throw e}finally{c.release()}}};
  }
  let db:any;const ready=import('@electric-sql/pglite').then(async m=>{db=new m.PGlite(url);await db.query("SELECT set_config('fleet.project_ids',$1,false)",[scope])});
- return {query:async(s,p)=>(await ready,db.query(s,p)),exec:async s=>(await ready,db.exec(s)),close:async()=>{await ready;await db.close()},
+ return {listen:async(channel,fn)=>{await ready;const off=await db.listen(channel,()=>fn());return async()=>{await off()}},query:async(s,p)=>(await ready,db.query(s,p)),exec:async s=>(await ready,db.exec(s)),close:async()=>{await ready;await db.close()},
   tx:async(fn,mode)=>(await ready,db.transaction(async(t:any)=>{await t.query(BEGIN[mode].replace('BEGIN','SET TRANSACTION'));return fn((s,p)=>t.query(s,p))}))};
 };
 
@@ -120,6 +124,22 @@ export function createStore(url:string,opts:{scope?:string}={}){
   },
   stats,
   close:()=>db.close(),
+  // Change feed (docs/designs/fleet-operator-app.md §4). Rows are read in (xid, seq) order and only from transactions older
+  // than every transaction still running, so the cursor never passes a change that may still commit. The cursor is the seq
+  // of the last row delivered; a cursor whose row is gone (pruned) or unknown asks the client to resync.
+  listen:(channel:string,fn:()=>void)=>db.listen(channel,fn),
+  changes:{
+   async since(cursor:number|null,limit=500):Promise<{changes:any[],cursor:number,resync?:true}>{
+    const visible='xid < pg_snapshot_xmin(pg_current_snapshot())';
+    const head=async()=>Number((await q(`SELECT seq FROM change WHERE ${visible} ORDER BY xid DESC, seq DESC LIMIT 1`)).rows[0]?.seq??0);
+    if(cursor===null)return {changes:[],cursor:await head()};
+    let from:any;
+    if(cursor>0){from=(await q('SELECT xid::text AS xid, seq FROM change WHERE seq=$1',[cursor])).rows[0];if(!from)return {changes:[],cursor:await head(),resync:true}}
+    const rows=(await q(`SELECT seq, kind, id, task_id, session_id, host_id, op FROM change WHERE ${visible}${from?' AND (xid, seq) > ($1::xid8, $2::bigint)':''} ORDER BY xid, seq LIMIT ${Math.max(1,Math.min(1000,Math.floor(limit)))}`,from?[from.xid,from.seq]:[])).rows;
+    return {changes:rows.map(r=>({seq:Number(r.seq),kind:r.kind,id:r.id,taskId:r.task_id,sessionId:r.session_id,hostId:r.host_id,op:r.op})),cursor:rows.length?Number(rows.at(-1).seq):cursor}},
+   // Retention: batches in their own lock scope, never GLOBAL, so writers do not wait for a prune.
+   async prune(retentionDays:number,batch=10000):Promise<number>{let total=0;for(;;){const n=await run(async()=>(await q(`DELETE FROM change WHERE seq IN (SELECT seq FROM change WHERE at < now() - make_interval(days => $1) ORDER BY xid, seq LIMIT ${batch}) RETURNING seq`,[retentionDays])).rows.length,'write',false,'change:prune');total+=n;if(n<batch)return total}},
+  },
  };
  const executions=executionModel(api),tasks=taskModel(api,executions);
  for(const [k,a] of Object.entries({...executions.adapters,...tasks.adapters}))kinds.set(k,a);
@@ -140,7 +160,7 @@ const TABLE_OF:Record<string,string>={execution:'execution','pipeline-run':'exec
 export type Docs=Pick<Store,'get'|'put'|'all'|'tx'|'atomic'|'read'|'lock'>;
 // Operations that wait on a pipeline run; they open short transactions around their own synchronous steps.
 // Operations that only read: they run in a read-only snapshot (a write inside one fails loudly).
-export const READ_OPERATIONS=new Set(['task_get','task_list','questions_list','executions_list','question_history','project_context','catalogue','pipeline_get','pipeline_history','project_list','account_list','account_hosts','account_login_handoff','transport_inspect','session_handoffs','queue_list','questions','execution_status','session_get','execution_differences','execution_events','profiles_list']);
+export const READ_OPERATIONS=new Set(['task_page','changes_since','list_membership','sessions_list','hosts_list','me','task_get','task_list','questions_list','executions_list','question_history','project_context','catalogue','pipeline_get','pipeline_history','project_list','account_list','account_hosts','account_login_handoff','transport_inspect','session_handoffs','queue_list','questions','execution_status','session_get','execution_differences','execution_events','profiles_list']);
 export const LONG_OPERATIONS=new Set(['pipeline_run','direct_search','delivery_generate']);
 // Sequential async forms of the array methods, for callbacks that read the store; order of reads and writes stays as in the sync code.
 export const every=async<T>(xs:T[],f:(x:T)=>unknown)=>{for(const x of xs)if(!await f(x))return false;return true};

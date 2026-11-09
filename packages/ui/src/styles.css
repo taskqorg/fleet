@@ -344,3 +344,13 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
   .search{min-height:var(--size-hit-phone)}.search input{align-self:stretch}
   .answers input,.setting input,.naming input,.setting .value{min-height:var(--size-hit-phone)}
 }
+
+/* Composer and offline marker (D15) */
+.composer{display:flex;gap:var(--space-2);align-items:flex-end;padding:var(--space-3) var(--space-4);border-top:1px solid var(--line)}
+.composer textarea{flex:1;min-width:0;min-height:var(--size-control);max-height:calc(var(--size-control) * 6);padding:var(--space-2) var(--space-3);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--surface);font:inherit;resize:vertical}
+.offline-marker{display:inline-flex;align-items:center;gap:var(--space-1);padding:0 var(--space-2);border-radius:var(--radius-sm);background:var(--tone-bg);color:var(--tone-fg);font-size:var(--font-size-sm)}
+.offline-marker .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
+.offline-marker a{margin-left:var(--space-2);color:inherit}
+@media (pointer:coarse){.composer textarea{min-height:var(--size-hit-phone)}}
+.sub-h{margin:var(--space-3) 0 var(--space-1);font-size:var(--font-size-sm);color:var(--fg-muted);font-weight:var(--font-weight-medium)}
+.conversation .pane{display:flex;flex-direction:column}

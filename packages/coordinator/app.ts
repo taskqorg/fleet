@@ -2,8 +2,11 @@ import {recovery} from './recovery.js';
 import Fastify from 'fastify';
 import {createStore,type Store,every,filter,map,LONG_OPERATIONS,READ_OPERATIONS,executionScope} from './store.js';
 import {randomUUID,timingSafeEqual,createHash} from 'node:crypto';
-import {mkdirSync,readFileSync,realpathSync} from 'node:fs';
-import {dirname,resolve,sep} from 'node:path';
+import {mkdirSync,readFileSync,realpathSync,existsSync} from 'node:fs';
+import {dirname,resolve,sep,join} from 'node:path';
+import fastifyStatic from '@fastify/static';
+import {registerStream} from './stream.js';
+import {sessionModel} from './sessions.js';
 import {registerLab,profileDigest,readTrustedProfile,listProfiles} from './lab.js';
 import {delegation} from './delegation.js';
 import {registerProjects} from './projects.js';
@@ -11,11 +14,15 @@ import {accounts} from './accounts.js';
 import {delivery} from './delivery.js';
 import {ui} from './ui.js';
 import {agentTools} from './agent-tools.js';
-export function createApp(config:{nativeHostIds?:string[],database:string,store?:Store,browserSecret:string,machineSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,maxArtifactBytes?:number,projectConfigDirectory?:string,pipeConnectionFile?:string,integrationHostId?:string,publicationHostId?:string,testSiteRoot?:string,defaultAccountBinding?:string}) {
+export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRetentionDays?:number,nativeHostIds?:string[],database:string,store?:Store,browserSecret:string,machineSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,maxArtifactBytes?:number,projectConfigDirectory?:string,pipeConnectionFile?:string,integrationHostId?:string,publicationHostId?:string,testSiteRoot?:string,defaultAccountBinding?:string}) {
  if(!config.browserSecret||!config.machineSecret||config.browserSecret===config.machineSecret) throw Error('Distinct credentials required');
  if(config.browserProxyAuth&&!config.browserOrigin)throw Error('Proxy browser auth requires configured browser origin');
  const ownStore=!config.store,store=config.store??createStore(config.database),{all,get,put}=store;
  const maxArtifactBytes=config.maxArtifactBytes??16*1024*1024;
+ const retentionDays=config.changeLogRetentionDays??7;if(!(retentionDays>0))throw Error('Invalid change log retention');
+ const PUBLIC_ROUTES=new Set(['/','/overview','/tasks','/tasks/:id','/conversations','/conversations/:id','/hosts','/hosts/:id','/assets/*','/sw.js','/manifests/:name','/icons/:name','/lab','/projects','/recovery','/accounts']);
+ const LEGACY_ROUTES=new Set(['/legacy','/legacy/lab','/legacy/projects','/legacy/recovery','/legacy/accounts']);
+ const sessionList=sessionModel({query:(s:string,p?:any[])=>store.query(s,p??[])});
  if(!Number.isSafeInteger(maxArtifactBytes)||maxArtifactBytes<1)throw Error('Invalid artifact bound');
  const app=Fastify({bodyLimit:Math.ceil(maxArtifactBytes*4/3)+65536});
  // Startup work runs in onReady hooks, in registration order: schema first, then module recovery.
@@ -28,7 +35,7 @@ export function createApp(config:{nativeHostIds?:string[],database:string,store?
  // which no other handler writes: it runs in the execution's scope, in parallel with other executions and with GLOBAL writers.
  const ingestScope=(req:any)=>typeof req.body?.executionId==='string'?executionScope(req.body.executionId):fail(400,'Expected executionId');
  const ingestRoutes=new Set(['/api/hosts/events','/api/hosts/artifacts']);
- const longRoutes=new Set(['/api/pipeline-runs','/api/project-operations/:name','/api/project-tools','/api/ops/:name','/api/tools','/api/hosts/receipts','/api/agent-tools','/api/hosts/agent-tools']);
+ const longRoutes=new Set(['/api/stream','/assets/*','/assets/','/api/pipeline-runs','/api/project-operations/:name','/api/project-tools','/api/ops/:name','/api/tools','/api/hosts/receipts','/api/agent-tools','/api/hosts/agent-tools']);
  // Reads (GET, HEAD) run in a read-only snapshot; every other route is one GLOBAL write (store.atomic) unless it is host ingest.
  app.addHook('onRoute',(o:any)=>{if(longRoutes.has(o.url))return;const h=o.handler,method=[o.method].flat()[0];
   o.handler=['GET','HEAD'].includes(method)?function(this:any,req:any,reply:any){return store.read(()=>h.call(this,req,reply))}
@@ -40,8 +47,11 @@ export function createApp(config:{nativeHostIds?:string[],database:string,store?
  const equal=(a:string,b:string)=>Buffer.byteLength(a)===Buffer.byteLength(b)&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
  app.addHook('onRequest',async(req,reply)=>{
   reply.header('X-Content-Type-Options','nosniff').header('Referrer-Policy','no-referrer');
-  if(req.url.split('?')[0]==='/'||(['/lab','/projects','/recovery','/accounts'].includes(req.url.split('?')[0])&&!config.browserProxyAuth)) return;
-  const machine=req.url.startsWith('/api/hosts/');
+  // Fail closed on the matched route, not the raw URL: only the app shell routes (data comes through /api/*, behind Access and
+  // the guard) and, outside proxy mode, the legacy pages skip the Bearer. Unknown routes and everything else need it.
+  const route=req.routeOptions?.url;
+  if(route&&req.method==='GET'&&(PUBLIC_ROUTES.has(route)||(!config.browserProxyAuth&&LEGACY_ROUTES.has(route)))) return;
+  const machine=typeof route==='string'&&route.startsWith('/api/hosts/');
   const supplied=(req.headers.authorization||'').replace(/^Bearer /,'');
   if(!equal(supplied,machine?config.machineSecret:config.browserSecret)) fail(401,'Unauthorized');
   if(!machine&&config.browserProxyAuth&&!['GET','HEAD','OPTIONS'].includes(req.method)&&req.headers.origin!==config.browserOrigin)fail(403,'Origin required');
@@ -50,7 +60,18 @@ export function createApp(config:{nativeHostIds?:string[],database:string,store?
  let deliveryRuntime:ReturnType<typeof delivery>,agent:ReturnType<typeof agentTools>;
  const related=async (d:any)=>({...d,parentState:(await get(d.parentExecutionId,'execution')).state,childState:(await get(d.childExecutionId,'execution')).state,continuationState:d.continuationExecutionId?(await get(d.continuationExecutionId,'execution')).state:null});
  const owned=async (b:any)=>{if(![config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].filter(Boolean).includes(b.hostId)) fail(403,'Host rejected'); if(b.executionId&&(await get(b.executionId,'execution')).hostId!==b.hostId) fail(403,'Execution rejected')};
- app.get('/',async(_,r)=>r.type('text/html').send(ui(config.browserProxyAuth)));
+ app.get('/legacy',async(_,r)=>r.type('text/html').send(ui(config.browserProxyAuth)));
+ // Operator app (docs/designs/fleet-operator-app.md): '/' opens the Overview; old page paths moved under /legacy.
+ app.get('/',async(_,r)=>r.redirect('/overview'));
+ for(const old of ['lab','projects','recovery','accounts'])app.get('/'+old,async(_,r)=>r.code(301).redirect('/legacy/'+old));
+ // The built app (npm run build -> dist/app); hashed assets are immutable, the entry files are revalidated.
+ const appDir=resolve(config.appDir??'dist/app');
+ if(existsSync(join(appDir,'assets')))app.register(fastifyStatic,{root:join(appDir,'assets'),prefix:'/assets/',immutable:true,maxAge:'365d',index:false});
+ const appFile=(name:string,type:string)=>async(_:any,r:any)=>{if(!existsSync(join(appDir,name)))fail(404,'App not built');return r.header('Cache-Control','no-cache').type(type).send(readFileSync(join(appDir,name)))};
+ app.get('/sw.js',appFile('sw.js','text/javascript'));
+ app.get('/manifests/:name',async(req:any,r)=>{if(!/^[a-z]+\.webmanifest$/.test(req.params.name))fail(404,'Unknown manifest');return appFile('manifests/'+req.params.name,'application/manifest+json')(req,r)});
+ app.get('/icons/:name',async(req:any,r)=>{if(!/^[a-z0-9-]+\.svg$/.test(req.params.name))fail(404,'Unknown icon');return appFile('icons/'+req.params.name,'image/svg+xml')(req,r)});
+ for(const route of ['/overview','/tasks','/tasks/:id','/conversations','/conversations/:id','/hosts','/hosts/:id'])app.get(route,appFile('index.html','text/html'));
  app.get('/test-sites/:project/:file',async(req:any,r)=>{if(!config.testSiteRoot||!['hello-world','hello-world-alt'].includes(req.params.project)||!/^[a-zA-Z0-9_-]+\.(html|css)$/.test(req.params.file))fail(404,'Unknown test site');const root=realpathSync(resolve(config.testSiteRoot!,req.params.project)),path=realpathSync(resolve(root,'current',req.params.file));if(!path.startsWith(root+sep))fail(403,'Test-site path rejected');r.header('Content-Security-Policy',"sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src data:; frame-ancestors 'self'");return r.type(req.params.file.endsWith('.css')?'text/css':'text/html').send(readFileSync(path))});
  const profiles_list=()=>({profiles:listProfiles(config.profilesDirectory||'config/agents')});
  app.get('/api/profiles',async()=>profiles_list());
@@ -153,8 +174,23 @@ export function createApp(config:{nativeHostIds?:string[],database:string,store?
   questions_list:async(b:any)=>({questions:await store.tasks.questions({taskId:b?.taskId,state:b?.state,kind:b?.kind})}),
   questions_answer:async(b:any)=>{const q=await store.tasks.answer(str(b?.questionId,'questionId',200),{answer:str(b.answer,'answer'),by:'operator',artifactIds:Array.isArray(b.artifactIds)?b.artifactIds:undefined});return (await store.tasks.questions({})).find(x=>x.id===q.id)},
   executions_list:async(b:any)=>({executions:await store.executions.list({taskId:b?.taskId,projectId:b?.projectId,parentExecutionId:b?.parentExecutionId,problem:b?.problem===true})}),
+  // Operator app reads (docs/designs/fleet-operator-app.md §6); agents can call them too.
+  changes_since:(b:any)=>{const c=b?.cursor;if(c!==null&&c!==undefined&&(!Number.isSafeInteger(c)||c<0))fail(400,'Invalid cursor');return store.changes.since(c??null,b?.limit??500)},
+  task_page:(b:any)=>store.tasks.page({filter:b?.filter,group:b?.group,limit:b?.limit,after:b?.after}),
+  sessions_list:(b:any)=>sessionList.page({filter:b?.filter,limit:b?.limit,after:b?.after}),
+  list_membership:async(b:any)=>{const ids=Array.isArray(b?.ids)&&b.ids.length<=1000?b.ids:fail(400,'Expected at most 1000 ids');if(!Array.isArray(b?.lists)||b.lists.length<1||b.lists.length>2)fail(400,'Expected one or two lists');
+   return {lists:await map(b.lists,async(l:any)=>l?.name==='tasks'?{name:'tasks',rows:await store.tasks.membership(l.filter??{},l.group,ids),counts:(await store.tasks.page({filter:l.filter,group:l.group,limit:1})).counts}
+    :l?.name==='sessions'?{name:'sessions',rows:await sessionList.membership(l.filter??{},ids),counts:(await sessionList.page({filter:l.filter,limit:1})).counts}:fail(400,'Unknown list'))}},
+  hosts_list:async()=>{const configured=[config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].filter(Boolean) as string[];
+   const observed=await all('host-observation'),ids=[...new Set([...configured,...observed.map((h:any)=>h.id)])];
+   const running=await store.query("SELECT host_id,harness,count(*)::int AS n FROM execution WHERE state IN ('preparing','running') AND host_id IS NOT NULL GROUP BY 1,2");
+   const queued=await store.query("SELECT data->>'hostId' AS host_id,count(*)::int AS n FROM document WHERE kind='command' AND data->>'status'='pending' GROUP BY 1");
+   return {staleAfterMs:30000,serverNow:Date.now(),hosts:ids.map(id=>{const o:any=observed.find((h:any)=>h.id===id);const by:Record<string,number>={};for(const r of running)if(r.host_id===id)by[r.harness??'unknown']=r.n;
+    return {id,configured:configured.includes(id),platform:o?.platform??null,lastSeenAt:o?.lastSeenAt??null,capabilities:o?.capabilities??[],runningByHarness:by,running:Object.values(by).reduce((a,n)=>a+n,0),slots:null,queued:queued.find((q:any)=>q.host_id===id)?.n??0,stores:'unavailable'}})}},
+  me:async()=>({email:config.ownerEmail??null,roles:['operator','architect'],grantsVersion:'1',changeLogRetentionDays:retentionDays}),
  };
  const ops:Record<string,(b:any)=>any>={...typedOps,...projects,...transportRecovery.operations,...agent.operations,session_create,session_profile,session_archive,execution_stop,session_get,execution_differences,execution_events,profiles_list};
+ registerStream(app,store,{retentionDays});
  const runOp=async (n:string,b:any)=>{const op=ops[n];if(!op)fail(404,'Unknown operation');return READ_OPERATIONS.has(n)?store.read(()=>op(b??{})):LONG_OPERATIONS.has(n)?op(b??{}):op===projects[n]||op===transportRecovery.operations[n]?store.atomic(()=>op(b??{})):(await store.tx(()=>op(b??{})))};
  app.post('/api/ops/:name',async(req:any)=>(await runOp(req.params.name,req.body)));
  app.post('/api/tools',async(req:any)=>{const q=req.body;if(q?.method==='initialize')return {jsonrpc:'2.0',id:q.id,result:{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fleet',version:'1'}}};if(q?.method==='tools/list')return {jsonrpc:'2.0',id:q.id,result:{tools:Object.keys(ops).map(name=>({name,inputSchema:{type:'object'}}))}};if(q?.method!=='tools/call'||!ops[q.params?.name])fail(400,'Unknown tool');return {jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text:JSON.stringify(await runOp(q.params.name,q.params.arguments))}]}}});
