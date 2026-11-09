@@ -59,20 +59,19 @@ impl Client {
             url, token, host, access,
             coordinator: ureq::AgentBuilder::new().timeout(Duration::from_secs(60)).redirects(0).build(),
             // Parts are 32 MiB; a slow tunnel needs more than the outbox's 5 s.
-            store: ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(20)).timeout_read(Duration::from_secs(300)).timeout_write(Duration::from_secs(300)).build(),
+            // Never follows a redirect: requests carry the Access service token headers, which a redirect would hand on.
+            store: ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(20)).timeout_read(Duration::from_secs(300)).timeout_write(Duration::from_secs(300)).redirects(0).build(),
         }
     }
     pub fn post(&self, route: &str, body: Value) -> std::result::Result<Value, Failure> {
-        match self.coordinator.post(&format!("{}{route}", self.url)).set("Authorization", &format!("Bearer {}", self.token)).send_json(body) {
-            // The coordinator never redirects a machine route: a redirect (an edge login page) is permanent.
-            Ok(r) if (300..400).contains(&r.status()) => Err(Failure::Permanent(format!("coordinator redirected with {}", r.status()))),
-            Ok(r) => r.into_json::<Value>().map_err(|e| Failure::Retry(e.to_string())),
-            Err(ureq::Error::Status(code, r)) => {
-                let text = r.into_string().unwrap_or_default();
-                // 409 no_store: no listed store is reachable now (a sleeping Mac, Windows logged out): wait and retry.
-                if code >= 500 || code == 409 && text.contains("No reachable store") || code == 429 { Err(Failure::Retry(format!("{code} {text}"))) } else { Err(Failure::Permanent(format!("{code} {text}"))) }
-            }
-            Err(e) => Err(Failure::Retry(e.to_string())),
+        // Same classification as the outbox (outbox::classify): a redirect is an edge condition, retried and signalled once.
+        match outbox::classify(self.coordinator.post(&format!("{}{route}", self.url)).set("Authorization", &format!("Bearer {}", self.token)).send_json(body)) {
+            outbox::Answer::Ok(v) => { outbox::edge_ok(route); Ok(v) }
+            outbox::Answer::Redirect(status, to) => { outbox::edge_redirect(route, status, &to); Err(Failure::Retry(format!("coordinator redirected with {status} to {to}"))) }
+            outbox::Answer::Retry(e) => Err(Failure::Retry(e)),
+            // 409 no_store: no listed store is reachable now (a sleeping Mac, Windows logged out): wait and retry.
+            outbox::Answer::Reject(409, text) if text.contains("No reachable store") => { outbox::edge_ok(route); Err(Failure::Retry(format!("409 {text}"))) }
+            outbox::Answer::Reject(code, text) => { outbox::edge_ok(route); Err(Failure::Permanent(format!("{code} {text}"))) }
         }
     }
     /// A request to a store URL: the Access headers are added (never signed) unless it targets loopback.
@@ -87,6 +86,7 @@ impl Client {
     }
     pub fn put_part(&self, url: &str, bytes: &[u8]) -> std::result::Result<String, Failure> {
         match self.store_request("PUT", url).send_bytes(bytes) {
+            Ok(r) if (300..400).contains(&r.status()) => { let s = r.status(); let _ = r.into_string(); Err(Failure::Retry(format!("store redirected with {s}"))) }
             Ok(r) => r.header("ETag").map(str::to_owned).ok_or_else(|| Failure::Retry("part without ETag".into())),
             Err(ureq::Error::Status(code, r)) if code < 500 && code != 429 => Err(Failure::Permanent(format!("store {code} {}", r.into_string().unwrap_or_default()))),
             Err(e) => Err(Failure::Retry(e.to_string())),
@@ -94,6 +94,7 @@ impl Client {
     }
     pub fn get(&self, url: &str) -> std::result::Result<Box<dyn Read + Send + Sync>, Failure> {
         match self.store_request("GET", url).call() {
+            Ok(r) if (300..400).contains(&r.status()) => { let s = r.status(); let _ = r.into_string(); Err(Failure::Retry(format!("store redirected with {s}"))) }
             Ok(r) => Ok(r.into_reader()),
             Err(ureq::Error::Status(code, _)) if code < 500 && code != 429 => Err(Failure::Permanent(format!("store GET {code}"))),
             Err(e) => Err(Failure::Retry(e.to_string())),
@@ -335,6 +336,17 @@ mod tests {
         assert_eq!(leased("upload", "a1", &json!({})), Some(("a1".into(), None)));
         assert_eq!(leased("verify", "j", &json!({"artifactId":"a2","storeId":"s"})), Some(("a2".into(), Some("s".into()))));
         assert_eq!(leased("get", "j", &json!({"artifactId":"a3"})), None);
+    }
+    #[test]
+    fn the_store_agent_does_not_follow_redirects() {
+        // The redirect target would see the Access headers; it must never be asked.
+        let (target, hit) = crate::outbox::tests::serve(1, |_, _| ("200 OK", ""));
+        let location: &'static str = Box::leak(format!("Location: {target}/leak\r\n").into_boxed_str());
+        let (url, server) = crate::outbox::tests::serve(1, move |_, _| ("302 Found", location));
+        let c = Client::new("http://127.0.0.1:1".into(), "t".into(), "h".into(), Some(("id".into(), "secret".into())));
+        assert!(matches!(c.get(&format!("{url}/object")), Err(Failure::Retry(_))));
+        server.join().unwrap();
+        assert!(!hit.is_finished(), "redirect target was not contacted");
     }
     #[test]
     fn hash_streams() {
