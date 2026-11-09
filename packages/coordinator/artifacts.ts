@@ -15,7 +15,7 @@ const name=(v:any)=>typeof v==='string'&&v.length>0&&v.length<=1000&&!v.split('/
 const projectKey=(projectId:string|null)=>projectId??'_';
 export type ArtifactRow={id:string,project_id:string|null,scope:'lab'|'prod',content_hash:string,size:number,media_type:string,name:string,execution_id:string|null,task_id:string|null,required:boolean,state:string,legacy_id:string|null,role:string,derived_from_artifact_id:string|null,previous_artifact_id:string|null,last_error:string|null,created_at:any,seq:any};
 
-export function artifactModel(store:Store,deps:{stores:Stores,locations:(projectId:string|null)=>string[],access:()=>{id:string,secret:string}|null,onSettled?:(executionId:string)=>Promise<void>,queueCommand:(hostId:string,kind:string,payload:any)=>Promise<void>}){
+export function artifactModel(store:Store,deps:{stores:Stores,locations:(projectId:string|null)=>string[],access:()=>{id:string,secret:string}|null,onSettled?:(executionId:string)=>Promise<void>,retryWindowMs?:()=>number,queueCommand:(hostId:string,kind:string,payload:any)=>Promise<void>}){
  // One S3 client per store and route. Tunnel requests get the Access headers after signing, so they are never signed headers.
  const clients=new Map<string,S3Client>();
  const s3=(s:StoreRow,via:'tunnel'|'local'='tunnel')=>{const k=[s.id,via,s.endpoint,s.local_endpoint].join('|');let c=clients.get(k);if(c)return c;
@@ -46,7 +46,7 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
   if((await store.query('SELECT 1 FROM purged_hash WHERE project_id=$1 AND scope=$2 AND content_hash=$3',[projectKey(projectId),scope,hash])).length)fail(409,'Content was purged',{code:'purged'});
   const target=await select(deps.locations(projectId),b.hostId)??fail(409,'No reachable store in the project locations',{code:'no_store'});
   const media=typeof b.mediaType==='string'&&b.mediaType.length<200?b.mediaType:'application/octet-stream';
-  const required=b.required===true,role=['thumbnail','poster'].includes(b.role as string)?b.role:'original';
+  const required=b.required===true||(await declaredRequired(b.executionId)).includes(file),role=['thumbnail','poster'].includes(b.role as string)?b.role:'original';
   const insert=(state:string)=>store.query('INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,task_id,required,role,derived_from_artifact_id,previous_artifact_id,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)',
    [artifactId,projectId,scope,hash,size,media,file,b.executionId,e.taskId??null,required,role,b.derivedFrom??null,b.previousArtifactId??null,state]);
   // The same content of this project and scope, already verified on the chosen store: nothing to upload.
@@ -58,9 +58,10 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
   await store.tx(async()=>{await insert('pending');await store.query("INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,upload_id,staging_key,lease_expires_at) VALUES($1,$2,$3,'pending',$4,$5,now()+($6::text||' milliseconds')::interval)",[artifactId,target.id,projectId,up.UploadId,staging,String(LEASE_MS)])});
   return {artifactId,state:'pending',storeId:target.id,partSize:PART_SIZE}}
 
- // The copy row an upload or copy works on: the given store, else the artifact's one copy in progress.
- async function working(artifactId:string,storeId?:string){const c=storeId?await copy(artifactId,storeId):(await store.query("SELECT * FROM artifact_copy WHERE artifact_id=$1 AND state IN ('pending','copying') LIMIT 1",[artifactId]))[0];
-  if(!c||!['pending','copying'].includes(c.state)||!c.upload_id)fail(409,'No upload in progress for this artifact');return c}
+ // The copy row an upload or copy works on: the given store, else the artifact's one copy in progress. A committed upload
+ // (upload id cleared, staging object complete, awaiting verification) counts when `committed` is set: commit and renew.
+ async function working(artifactId:string,storeId?:string,committed=false){const c=storeId?await copy(artifactId,storeId):(await store.query("SELECT * FROM artifact_copy WHERE artifact_id=$1 AND state IN ('pending','copying') LIMIT 1",[artifactId]))[0];
+  if(!c||!['pending','copying'].includes(c.state)||!(c.upload_id||committed&&c.staging_key))fail(409,'No upload in progress for this artifact');return c}
  // Only the writer (the execution's host) or the target store's host may drive an upload.
  async function allowed(a:ArtifactRow,s:StoreRow,hostId:string){if(hostId===s.host_id)return;const e=a.execution_id?(await store.query('SELECT host_id FROM execution WHERE id=$1',[a.execution_id]))[0]:null;if(e?.host_id!==hostId)fail(403,'Upload belongs to another host')}
 
@@ -71,19 +72,30 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
 
  async function commit(b:{artifactId:string,storeId?:string,hostId:string,parts:{partNumber:number,etag:string}[]}){const a=await row(b.artifactId);
   if(a.state==='stored'&&!b.storeId)return {state:'stored'};
-  const c=await working(a.id,b.storeId),s=await deps.stores.get(c.store_id);await allowed(a,s,b.hostId);
+  // Idempotent: a repeated commit of an upload already completed (a retry after a failed verify, an executor restart)
+  // skips the completion and hands out the verification again.
+  const c=await working(a.id,b.storeId,true),s=await deps.stores.get(c.store_id);await allowed(a,s,b.hostId);
   const list=Array.isArray(b.parts)?b.parts.filter(p=>Number.isSafeInteger(p?.partNumber)&&typeof p.etag==='string').sort((x,y)=>x.partNumber-y.partNumber):fail(400,'Expected parts');
-  await s3(s).send(new CompleteMultipartUploadCommand({Bucket:s.bucket,Key:c.staging_key,UploadId:c.upload_id,MultipartUpload:{Parts:list.map(p=>({PartNumber:p.partNumber,ETag:p.etag}))}}));
+  if(c.upload_id)await s3(s).send(new CompleteMultipartUploadCommand({Bucket:s.bucket,Key:c.staging_key,UploadId:c.upload_id,MultipartUpload:{Parts:list.map(p=>({PartNumber:p.partNumber,ETag:p.etag}))}}));
   const head=await s3(s).send(new HeadObjectCommand({Bucket:s.bucket,Key:c.staging_key}));
   if(Number(head.ContentLength)!==a.size){await reject(a,s,c.staging_key,`size ${head.ContentLength} differs from reserved ${a.size}`);return {state:'failed'}}
   await store.tx(()=>store.query("UPDATE artifact_copy SET upload_id=NULL,lease_expires_at=now()+($3::text||' milliseconds')::interval WHERE artifact_id=$1 AND store_id=$2",[a.id,s.id,String(LEASE_MS)]));
   // P3-D1: the store host's executor re-hashes the staging object over loopback. When the writer is that host it does so now.
   const verifyUrl=await getSignedUrl(s3(s,s.local_endpoint?'local':'tunnel'),new GetObjectCommand({Bucket:s.bucket,Key:c.staging_key}),{expiresIn:URL_SECONDS});
   if(b.hostId===s.host_id)return {state:'verifying',verify:{artifactId:a.id,storeId:s.id,url:verifyUrl}};
-  await deps.queueCommand(s.host_id,'artifact-verify',{artifactId:a.id,storeId:s.id,url:verifyUrl});return {state:'verifying'}}
+  // A retried commit does not queue a second verification while one is still open.
+  const open=(await store.query("SELECT 1 FROM document WHERE kind='command' AND data->>'kind'='artifact-verify' AND data->>'hostId'=$1 AND data->>'status' IN ('pending','accepted','started') AND data->'payload'->>'artifactId'=$2 AND data->'payload'->>'storeId'=$3 LIMIT 1",[s.host_id,a.id,s.id])).length;
+  if(!open)await deps.queueCommand(s.host_id,'artifact-verify',{artifactId:a.id,storeId:s.id,url:verifyUrl});return {state:'verifying'}}
+ // Lease renewal: the executors holding an upload, copy or verification in their journal renew it while it is queued or
+ // running, so time spent waiting behind other transfers never expires a good upload.
+ async function renew(b:{artifactId:string,storeId?:string,hostId:string}){const a=await row(b.artifactId),c=await working(a.id,b.storeId,true).catch(()=>null);if(!c)return {state:a.state};
+  const s=await deps.stores.get(c.store_id);await allowed(a,s,b.hostId);
+  await store.tx(()=>store.query("UPDATE artifact_copy SET lease_expires_at=greatest(lease_expires_at,now()+($3::text||' milliseconds')::interval) WHERE artifact_id=$1 AND store_id=$2",[a.id,s.id,String(LEASE_MS)]));return {state:c.state}}
 
  async function reject(a:ArtifactRow,s:StoreRow,key:string,why:string){await s3(s).send(new DeleteObjectCommand({Bucket:s.bucket,Key:key})).catch(()=>{});
-  await store.tx(async()=>{await store.query("UPDATE artifact_copy SET state='failed',last_error=$3,upload_id=NULL,lease_expires_at=NULL WHERE artifact_id=$1 AND store_id=$2",[a.id,s.id,why]);
+  // Placement retries a failed copy after a backoff: 1 minute doubling per attempt, up to artifact_retry_window.
+  const window=deps.retryWindowMs?.()??86400000;
+  await store.tx(async()=>{await store.query("UPDATE artifact_copy SET state='failed',last_error=$3,upload_id=NULL,lease_expires_at=NULL,attempts=attempts+1,next_attempt_at=now()+(least($4::float8,60000*power(2,least(attempts,30)))::text||' milliseconds')::interval WHERE artifact_id=$1 AND store_id=$2",[a.id,s.id,why,window]);
    await store.query("UPDATE artifact SET state='failed',last_error=$2 WHERE id=$1 AND state='pending' AND NOT EXISTS (SELECT 1 FROM artifact_copy WHERE artifact_id=$1 AND state='verified')",[a.id,why])});
   if(a.execution_id&&deps.onSettled)await deps.onSettled(a.execution_id)}
 
@@ -143,15 +155,22 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
  // Required artifacts of an execution (P3-D3): the task's completion_requirements.artifacts (names or glob patterns) set the
  // minimum; artifacts saved with required=true add to it.
  async function requirement(executionId:string,declared:string[]=[]){const e=(await store.query('SELECT task_id FROM execution WHERE id=$1',[executionId]))[0];
+  // Names the agent declared required through artifact_save (recorded before the completion receipt, P3-D3).
+  const named=await declaredRequired(executionId);
   const patterns:string[]=e?.task_id?((await store.query('SELECT completion_requirements FROM task WHERE id=$1',[e.task_id]))[0]?.completion_requirements?.artifacts??[]).filter((x:any)=>typeof x==='string'):[];
   const rows:ArtifactRow[]=await store.query("SELECT * FROM artifact WHERE execution_id=$1 AND state<>'deleted' AND role='original' ORDER BY seq",[executionId]);
   const glob=(p:string)=>new RegExp('^'+p.replace(/[.+^${}()|[\]\\]/g,'\\$&').replace(/\*\*/g,'\u0000').replace(/\*/g,'[^/]*').replace(/\u0000/g,'.*').replace(/\?/g,'[^/]')+'$');
-  const needed=rows.filter(r=>r.required||patterns.some(p=>glob(p).test(r.name)));
+  const needed=rows.filter(r=>r.required||named.includes(r.name)||patterns.some(p=>glob(p).test(r.name)));
   // Names the executor reported as collected but not yet reserved count as pending, not missing.
-  const unreserved=declared.filter(n=>typeof n==='string'&&!rows.some(r=>r.name===n)&&patterns.some(p=>glob(p).test(n)));
+  const unreserved=[...new Set([...declared.filter(n=>typeof n==='string'&&patterns.some(p=>glob(p).test(n))),...named])].filter(n=>!rows.some(r=>r.name===n));
   const missing=patterns.filter(p=>!rows.some(r=>glob(p).test(r.name))&&!unreserved.some(n=>glob(p).test(n)));
   return {pending:[...needed.filter(r=>r.state==='pending').map(r=>r.name),...unreserved],failed:needed.filter(r=>r.state==='failed').map(r=>({name:r.name,error:r.last_error})),missing}}
 
+ const declaredRequired=async(executionId:string):Promise<string[]>=>{const x=await store.get(executionId,'execution').catch(()=>null);return Array.isArray(x?.requiredArtifacts)?x.requiredArtifacts:[]};
+ // An agent's required declaration (artifact_save required=true), recorded on the execution independent of the transfer.
+ async function declare(b:{executionId:string,name:string}){const file=name(b.name);await store.tx(async()=>{const e=await store.get(b.executionId,'execution');
+  e.requiredArtifacts=[...new Set([...(Array.isArray(e.requiredArtifacts)?e.requiredArtifacts:[]),file])];await store.put('execution',e);
+  await store.query('UPDATE artifact SET required=true WHERE execution_id=$1 AND name=$2',[b.executionId,file])});return {ok:true}}
  // Legacy record shape for the existing readers of kind 'artifact' (session results, lab trials, recovery, delegation).
  const legacy=(r:any)=>({id:r.legacy_id??r.id,artifactId:r.id,executionId:r.execution_id,sessionId:r.session_id??undefined,path:r.name,mediaType:r.media_type,size:Number(r.size),sha256:r.content_hash});
  // Base64 documents not yet moved by the backfill keep serving their readers (metadata here, bytes through read()).
@@ -181,6 +200,6 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
     await store.query("INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) SELECT id,$2,$3,'verified',now() FROM artifact WHERE legacy_id=$1 ON CONFLICT DO NOTHING",[d.id,target.id,projectId]);
     await store.query("DELETE FROM document WHERE kind='artifact' AND id=$1",[d.id])});moved++}
   return moved}
- return {backfill,reserve,parts,commit,verified,read,readBuffer,get,list,purge,expireLeases,requirement,adapter,s3,presign,keyOf,stagingOf,row,select,PART_SIZE};
+ return {backfill,reserve,parts,commit,renew,declare,verified,read,readBuffer,get,list,purge,expireLeases,requirement,adapter,s3,presign,keyOf,stagingOf,row,select,PART_SIZE};
 }
 export type Artifacts=ReturnType<typeof artifactModel>;

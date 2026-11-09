@@ -44,6 +44,7 @@ pub fn is_loopback(url: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
+#[derive(Clone)]
 pub struct Client {
     pub url: String,
     pub token: String,
@@ -102,8 +103,16 @@ pub enum Failure {
     Retry(String),
     Permanent(String),
 }
+/// Network-shaped I/O errors (a reset or timeout while streaming a body, a body cut short) are retried; others (a missing or
+/// unreadable local file) are permanent.
 impl From<std::io::Error> for Failure {
-    fn from(e: std::io::Error) -> Self { Failure::Permanent(e.to_string()) }
+    fn from(e: std::io::Error) -> Self {
+        use std::io::ErrorKind::*;
+        match e.kind() {
+            ConnectionReset | ConnectionAborted | ConnectionRefused | NotConnected | BrokenPipe | TimedOut | UnexpectedEof | Interrupted | WouldBlock => Failure::Retry(e.to_string()),
+            _ => Failure::Permanent(e.to_string()),
+        }
+    }
 }
 
 /// Streaming SHA-256 and size of a file.
@@ -235,14 +244,47 @@ fn run_job(c: &Client, db: &Connection, id: &str, kind: &str, body: &Value) -> s
     }
 }
 
-/// The worker: one job at a time, oldest first; retryable failures back off (2 s doubling to 5 min) and stay queued.
-/// A job that carries a host command reports its receipt when it ends.
-pub fn spawn(journal: PathBuf, client: Client, after: impl Fn(&Client, &Connection, &Value, &Value) + Send + 'static) -> std::io::Result<()> {
-    std::thread::Builder::new().name("fleet-transfers".into()).spawn(move || {
+/// The artifact a queued job holds a coordinator lease on, with its store when known.
+fn leased(kind: &str, id: &str, body: &Value) -> Option<(String, Option<String>)> {
+    match kind {
+        "upload" => Some((id.to_string(), None)),
+        "verify" | "copy" => Some((body["artifactId"].as_str()?.to_string(), body["storeId"].as_str().map(str::to_owned))),
+        _ => None,
+    }
+}
+/// The workers: two lanes, so a verification never waits behind a long upload or copy: `verify` jobs on their own thread,
+/// every other kind on another; each takes one job at a time, oldest first. Retryable failures back off (2 s doubling to
+/// 5 min) and stay queued. A job that carries a host command reports its receipt when it ends. A third thread renews the
+/// coordinator lease of every queued or running job every 10 minutes, so queue time never expires a good upload.
+pub fn spawn(journal: PathBuf, client: Client, after: impl Fn(&Client, &Connection, &Value, &Value) + Send + Sync + 'static) -> std::io::Result<()> {
+    let after = std::sync::Arc::new(after);
+    for (name, lane) in [("fleet-transfers", "kind<>'verify'"), ("fleet-verify", "kind='verify'")] {
+        let (journal, client, after) = (journal.clone(), client.clone(), after.clone());
+        std::thread::Builder::new().name(name.into()).spawn(move || work(journal, client, lane, &*after))?;
+    }
+    std::thread::Builder::new().name("fleet-leases".into()).spawn(move || {
         let Ok(db) = Connection::open(&journal) else { return };
         let _ = db.busy_timeout(Duration::from_secs(5));
         loop {
-            let job: Option<(String, String, String, i64)> = db.query_row("SELECT id,kind,body,attempts FROM transfers WHERE state IN ('queued','running') AND next_at<=? ORDER BY created_at LIMIT 1", [now_ms()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).ok();
+            std::thread::sleep(Duration::from_secs(600));
+            let jobs: Vec<(String, String, String)> = db.prepare("SELECT id,kind,body FROM transfers WHERE state IN ('queued','running')").and_then(|mut s| s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect()).unwrap_or_default();
+            for (id, kind, body) in jobs {
+                let body: Value = serde_json::from_str(&body).unwrap_or(json!({}));
+                if let Some((artifact, store)) = leased(&kind, &id, &body) {
+                    let mut req = json!({"hostId":client.host,"artifactId":artifact});
+                    if let Some(s) = store { req["storeId"] = json!(s) }
+                    let _ = client.post("/api/hosts/artifacts/renew", req);
+                }
+            }
+        }
+    })?;
+    Ok(())
+}
+fn work(journal: PathBuf, client: Client, lane: &str, after: &(dyn Fn(&Client, &Connection, &Value, &Value) + Send + Sync)) {
+        let Ok(db) = Connection::open(&journal) else { return };
+        let _ = db.busy_timeout(Duration::from_secs(5));
+        loop {
+            let job: Option<(String, String, String, i64)> = db.query_row(&format!("SELECT id,kind,body,attempts FROM transfers WHERE state IN ('queued','running') AND {lane} AND next_at<=? ORDER BY created_at LIMIT 1"), [now_ms()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).ok();
             let Some((id, kind, body, attempts)) = job else { std::thread::sleep(Duration::from_millis(250)); continue };
             let _ = db.execute("UPDATE transfers SET state='running' WHERE id=?", [&id]);
             let body: Value = serde_json::from_str(&body).unwrap_or(json!({}));
@@ -262,8 +304,6 @@ pub fn spawn(journal: PathBuf, client: Client, after: impl Fn(&Client, &Connecti
                 }
             }
         }
-    })?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -281,6 +321,18 @@ mod tests {
         let f = dir.join("cf.env");
         std::fs::write(&f, "export CF_ACCESS_CLIENT_ID='abc.access'\nCF_ACCESS_CLIENT_SECRET=\"s3cr3t\"\n").unwrap();
         assert_eq!(access_token(&f), Some(("abc.access".into(), "s3cr3t".into())));
+    }
+    #[test]
+    fn network_io_errors_retry_local_ones_do_not() {
+        use std::io::{Error, ErrorKind};
+        for k in [ErrorKind::ConnectionReset, ErrorKind::TimedOut, ErrorKind::UnexpectedEof, ErrorKind::BrokenPipe] { assert!(matches!(Failure::from(Error::from(k)), Failure::Retry(_)), "{k:?}") }
+        for k in [ErrorKind::NotFound, ErrorKind::PermissionDenied] { assert!(matches!(Failure::from(Error::from(k)), Failure::Permanent(_)), "{k:?}") }
+    }
+    #[test]
+    fn leases_cover_uploads_copies_and_verifications() {
+        assert_eq!(leased("upload", "a1", &json!({})), Some(("a1".into(), None)));
+        assert_eq!(leased("verify", "j", &json!({"artifactId":"a2","storeId":"s"})), Some(("a2".into(), Some("s".into()))));
+        assert_eq!(leased("get", "j", &json!({"artifactId":"a3"})), None);
     }
     #[test]
     fn hash_streams() {

@@ -50,8 +50,14 @@ test('a wrong hash fails and never overwrites a verified object; sizes, leases a
  // Unreachable or full stores take no uploads.
  await call('/api/hosts/poll',{hostId:'mac',stores:[{id:'mac-store',reachable:false}]});
  assert.equal((await call('/api/hosts/artifacts/reserve',{hostId:'mac',executionId:'e1',name:'e.txt',size:1,sha256:sha(Buffer.from('y'))})).statusCode,409);
+ // Full only below the operator's store.free_space_warning: none set, never full; set, capacity left 10 < 100 is full.
  await call('/api/hosts/poll',{hostId:'mac',stores:[{id:'mac-store',reachable:true,capacityBytes:10,usedBytes:11}]});
+ assert.equal((await (await (app as any).stores.get('mac-store'))).state,'reachable');
+ const op=(name:string,payload:any)=>app.inject({method:'POST',url:'/api/ops/'+name,headers:{authorization:'Bearer b'},payload});
+ assert.equal((await (await op('store_set_free_space_warning',{storeId:'mac-store',bytes:100})).json()).state,'full');
+ await call('/api/hosts/poll',{hostId:'mac',stores:[{id:'mac-store',reachable:true,capacityBytes:10}]});
  assert.equal((await (await (app as any).stores.get('mac-store'))).state,'full');
+ assert.ok((await (await op('stores_list',{})).json()).problems.some((p:any)=>p.kind==='store-full'&&p.storeId==='mac-store'));
  assert.equal((await call('/api/hosts/artifacts/reserve',{hostId:'mac',executionId:'e1',name:'e.txt',size:1,sha256:sha(Buffer.from('y'))})).statusCode,409);
  await app.close()});
 

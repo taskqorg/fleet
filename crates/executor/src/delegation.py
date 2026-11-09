@@ -59,6 +59,11 @@ def artifact_tool(name, q):
         body = {'path': spool, 'spool': True, 'previews': True, 'name': q.get('name') or os.path.relpath(path, root), 'mediaType': q.get('media_type') or mimetypes.guess_type(path)[0] or 'application/octet-stream', 'executionId': context['executionId'], 'required': q.get('required') is True}
         with db:
             db.execute("INSERT INTO transfers(id,kind,body,created_at) VALUES(?,?,?,?)", (key, 'upload', json.dumps(body), int(time.time() * 1000)))
+            # P3-D3: the required declaration goes to the coordinator through the outbox, in the same transaction and so ahead
+            # of the completion receipt, whether or not the transfer has reserved the upload by then.
+            if body['required']:
+                db.execute("CREATE TABLE IF NOT EXISTS outbox(route TEXT NOT NULL,body TEXT NOT NULL)")
+                db.execute("INSERT INTO outbox(route,body) VALUES(?,?)", ('/api/hosts/artifacts/declare', json.dumps({'hostId': context['hostId'], 'executionId': context['executionId'], 'name': body['name']})))
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             row = db.execute('SELECT state,response FROM transfers WHERE id=?', (key,)).fetchone()

@@ -251,6 +251,8 @@ CREATE TABLE store(
  capacity_bytes bigint NULL,
  used_bytes bigint NULL,
  requires_logon boolean NOT NULL DEFAULT false,
+ -- store.free_space_warning (operator setting, §11): full when capacity left falls below it; NULL: never full.
+ free_space_warning_bytes bigint NULL,
  observed_at timestamptz NULL,
  registered_at timestamptz NOT NULL DEFAULT now(),
  updated_at timestamptz NOT NULL DEFAULT now()
@@ -292,6 +294,9 @@ CREATE TABLE artifact_copy(
  lease_expires_at timestamptz NULL,
  verified_at timestamptz NULL,
  last_error text NULL,
+ -- A failed copy is retried by placement after next_attempt_at (backoff doubling up to artifact_retry_window).
+ attempts integer NOT NULL DEFAULT 0,
+ next_attempt_at timestamptz NULL,
  updated_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY (artifact_id, store_id)
 );

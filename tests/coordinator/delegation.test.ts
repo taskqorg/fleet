@@ -19,7 +19,8 @@ test('durable scoped delegation, sequential dispatch, actual results and stop su
  assert.equal((await call('/api/hosts/receipts',{...request,delegation:{...request.delegation,input:'changed'}},true)).statusCode,409);
  assert.ok(!(await poll()).some((c:any)=>c.executionId===d.childExecutionId));
  await receipt(parent,'unknown');assert.ok(!(await poll()).some((c:any)=>c.executionId===d.childExecutionId));await upload(app,'machine',{hostId:'mac',executionId:parent.executionId,path:'output/index.html',mediaType:'text/html',content:'<h1>Actual site</h1>'});await receipt(parent,'completed');
- const child=(await poll()).find((c:any)=>c.executionId===d.childExecutionId);assert.ok(child);await receipt(child,'started');
+ // Website sources are read outside the poll transaction: a later poll binds them.
+ let child:any;for(let i=0;i<50&&!child;i++){child=(await poll()).find((c:any)=>c.executionId===d.childExecutionId);if(!child)await new Promise(r=>setTimeout(r,20))}assert.ok(child);await receipt(child,'started');
  assert.equal((await call('/api/hosts/receipts',{hostId:'mac',commandId:child.id,executionId:child.executionId,delegation:{requestId:'recursive',profileId:'baseline',input:'x'}},true)).statusCode,403);
  await call('/api/hosts/events',{hostId:'mac',executionId:child.executionId,events:[{id:'answer',seq:0,type:'assistant',text:'actual review result'}]},true);
  await receipt(child,'completed');await app.close();app=createApp(config);

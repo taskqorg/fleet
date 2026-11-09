@@ -124,6 +124,8 @@ export function createStore(url:string,opts:{scope?:string}={}){
   },
   // Serves a legacy kind from a typed module (Phase 3: artifact from artifacts.ts).
   registerKind:(kind:string,adapter:Adapter)=>{kinds.set(kind,adapter)},
+  // Runs fn outside the caller's transaction (for work scheduled from inside one, such as store reads after a poll).
+  outside:<T>(fn:()=>T):T=>current.exit(fn),
   stats,
   close:()=>db.close(),
   // Change feed (docs/designs/fleet-operator-app.md §4). Rows are read in (xid, seq) order and only from transactions older
