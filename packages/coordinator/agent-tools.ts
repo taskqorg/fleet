@@ -197,7 +197,9 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
  function bound(name:string,args:any,executionId:string){
   const e=get(executionId,'execution'),own=e.sessionId,a={...(args??{})};
   const mine=(id:any)=>typeof id==='string'&&(id===own||get(id,'session').createdBySessionId===own)||fail(403,'Session belongs to another agent');
-  if(['ask','worker_done','execution_status'].includes(name))a.executionId=executionId;
+  // execution_status with sessionId: latest execution of a session this agent owns (PM watching its worker).
+  if(name==='execution_status'&&a.sessionId!==undefined){mine(a.sessionId);a.executionId=executions(a.sessionId).at(-1)?.id??fail(404,'No execution');delete a.sessionId}
+  else if(['ask','worker_done','execution_status'].includes(name))a.executionId=executionId;
   else if(name==='reply')mine(get(str(a.questionId,'questionId'),'question').sessionId);
   else if(name==='reconcile')fail(403,'Not available to host agents');
   else{a.sessionId=a.sessionId??own;mine(a.sessionId);if(name==='session_fork')a.callerSessionId=own}
@@ -207,7 +209,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
    let profile:any;try{profile=readTrustedProfile(deps.directory,str(a.profileId,'profileId'))}catch{fail(403,'Unknown profile')}
    if(a.account!==undefined&&a.account!==null){let ok:any;try{ok=deps.resolveAccount?.(a.account,profile.harness??'codex')}catch{}
     if(!ok||!all('managed-account').some(m=>m.id===a.account||m.name===a.account))fail(403,'Account not available')}}
-  if(name==='execution_status'&&e.sessionId!==own)fail(403,'Execution rejected');
+
   return operations[name](a);
  }
  return {operations,bound,decorate,captureNative,knownNative,onReceipt,promote,ready,reconcile,stopOutcome,sessionView,transition,submit,mcp};

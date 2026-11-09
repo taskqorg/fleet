@@ -9,7 +9,7 @@ journal, context_json = sys.argv[1:]
 context = json.loads(context_json)
 db = sqlite3.connect(journal, timeout=5)
 db.execute('PRAGMA synchronous=FULL')
-AGENT_TOOL_ARGS = {'ask': ['requestId', 'question', 'resume'], 'reply': ['questionId', 'answer'], 'message_send': ['sessionId', 'requestId', 'text', 'delivery'], 'session_fork': ['sessionId', 'requestId', 'text', 'strategy'], 'session_transition': ['sessionId', 'profileId', 'account'], 'worker_done': ['outcome', 'summary'], 'session_resume': ['sessionId'], 'session_handoffs': ['sessionId'], 'queue_list': ['sessionId'], 'questions': ['sessionId', 'state']}
+AGENT_TOOL_ARGS = {'ask': ['requestId', 'question', 'resume'], 'reply': ['questionId', 'answer'], 'message_send': ['sessionId', 'requestId', 'text', 'delivery'], 'session_fork': ['sessionId', 'requestId', 'text', 'strategy'], 'session_transition': ['sessionId', 'profileId', 'account'], 'worker_done': ['outcome', 'summary'], 'session_resume': ['sessionId'], 'session_handoffs': ['sessionId'], 'queue_list': ['sessionId'], 'questions': ['sessionId', 'state'], 'execution_status': ['sessionId']}
 AGENT_TOOL_REQUIRED = {'ask': ['requestId', 'question'], 'reply': ['questionId', 'answer'], 'message_send': ['requestId', 'text'], 'session_fork': ['requestId'], 'session_transition': ['profileId'], 'worker_done': ['outcome']}
 AGENT_TOOLS = ['session_transition', 'session_fork', 'session_resume', 'session_handoffs', 'message_send', 'queue_list', 'ask', 'reply', 'questions', 'worker_done', 'execution_status']
 for line in sys.stdin:

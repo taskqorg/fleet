@@ -678,7 +678,8 @@ impl Executor {
                 if let Some(status) = l.exit {
                     l.seq+=1;self.event(&l.command,l.seq,"process.closed",json!({"exitCode":status.code(),"stdoutClosed":l.eof,"observedOwnedProcessesRemaining":false,"cleanupUnknown":l.cleanup_unknown}))?;
                     let dir = self.session_dir(&id(&l.command, "sessionId")?);
-                    let output = dir.join("output");
+                    // Project sessions run in their worktree, so the agent writes output/ there.
+                    let output = [dir.join("worktree").join("output"), dir.join("output")].into_iter().find(|o| o.is_dir()).unwrap_or_else(|| dir.join("output"));
                     if output.is_dir() {
                         if let Err(_) = self.artifacts(&output, &output, &execution) {
                             return self
