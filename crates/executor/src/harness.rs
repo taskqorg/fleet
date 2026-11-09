@@ -509,6 +509,10 @@ print(json.dumps({'harness':h,'home':os.environ['HOME'],'args':sys.argv[1:]}))
         for (id, h) in [("claude", "claude"), ("antigravity", "antigravity")] {
             let p = json!({"harness":h,"account":id,"model":"native-model","text":"hello","instructions":"explicit"});
             let work = root.join(format!("{id}-work"));
+            if h == "claude" && !cfg!(target_os = "macos") {
+                assert!(command_registry(&work, None, &p, &registry).is_err());
+                continue;
+            }
             for n in [None, Some("retained-id")] {
                 let (mut c, input) = command_registry(&work, n, &p, &registry).unwrap();
                 if h == "claude" { assert_eq!(input.as_deref(),Some(b"hello\n".as_slice())); assert!(!c.get_args().any(|v| v == "hello")); }
