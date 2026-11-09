@@ -1,9 +1,10 @@
 // Sessions list for the operator app's Conversations view (docs/designs/fleet-operator-app.md §6). One WHERE builder serves the
 // page, the counts and membership, so the client never decides which sessions belong to a list.
+import {SESSION_STATES} from '../view-url/view-url.js';
 type Raw={query:(sql:string,params?:any[])=>Promise<any[]>};
 const fail=(code:number,message:string)=>{throw Object.assign(Error(message),{statusCode:code})};
 // Session state is the state of its latest execution; a session without one is 'idle'.
-const STATES=['idle','preparing','running','waiting','succeeded','failed','cancelled'];
+const STATES=SESSION_STATES;
 export type SessionFilter={state?:string[],search?:string,archived?:boolean};
 
 const base=`WITH x AS (SELECT d.id, d.data, d.project_id,
