@@ -5,7 +5,7 @@ import {attachStores,upload} from './artifact-helpers.js';
 test('durable scoped delegation, sequential dispatch, actual results and stop suppression',async()=>{
  const dir=mkdtempSync(tmpdir()+'/fleet-delegate-');mkdirSync(dir+'/profiles');
  for(const id of ['baseline','design-rules']){const p=JSON.parse(readFileSync('config/agents/'+id+'.json','utf8'));if(id==='design-rules')p.delegationProfiles=['baseline'];writeFileSync(dir+'/profiles/'+id+'.json',JSON.stringify(p))}
- const config={database:dir+'/db',profilesDirectory:dir+'/profiles',browserSecret:'browser',machineSecret:'machine',hostId:'mac'};let app=createApp(config);await attachStores(app,'machine',['mac']);
+ const config={database:dir+'/db',profilesDirectory:dir+'/profiles',browserSecret:'browser',machineSecret:'machine',hostId:'mac',storeEndpointHosts:['127.0.0.1']};let app=createApp(config);await attachStores(app,'machine',['mac']);
  const call=(url:string,payload?:any,machine=false)=>app.inject({method:payload?'POST':'GET',url,headers:{authorization:'Bearer '+(machine?'machine':'browser')},payload});
  const poll=async()=> (await call('/api/hosts/poll',{hostId:'mac'},true)).json().commands;
  const receipt=(c:any,status:string)=>call('/api/hosts/receipts',{hostId:'mac',commandId:c.id,executionId:c.executionId,status,nativeSessionId:'native-'+c.sessionId},true);

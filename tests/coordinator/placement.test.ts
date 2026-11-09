@@ -5,7 +5,7 @@ const sha=(b:Buffer)=>createHash('sha256').update(b).digest('hex');
 async function setup(){const dir=mkdtempSync(tmpdir()+'/fleet-placement-');
  const project=(id:string,locations:string[],extra:any={})=>{mkdirSync(dir+'/projects/'+id,{recursive:true});writeFileSync(dir+'/projects/'+id+'/project.json',JSON.stringify({id,name:id,contextFiles:[],artifact_locations:locations,...extra}))};
  project('win-only',['windows']);project('both',['windows','mac']);project('lab-rules',['mac'],{artifact_rules:[{scope:'prod',older_than_days:0,action:'delete'}]});
- const app=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac',nativeHostIds:['windows'],projectConfigDirectory:dir,placementIntervalMs:0});await app.ready();
+ const app=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac',nativeHostIds:['windows'],projectConfigDirectory:dir,placementIntervalMs:0,storeEndpointHosts:['127.0.0.1']});await app.ready();
  const s=(app as any).store,P=(app as any).placement,A=(app as any).artifacts;const mac=await fakeStore(),win=await fakeStore();
  const call=(url:string,payload:any)=>app.inject({method:'POST',url,headers:{authorization:'Bearer m'},payload});
  for(const [host,f] of [['mac',mac],['windows',win]] as const)await call('/api/hosts/stores',{hostId:host,store:{id:host+'-store',bucket:'fleet',endpoint:f.url,localEndpoint:f.url,accessKeyId:'k',secretAccessKey:'s',capacityBytes:1e12,usedBytes:0,requiresLogon:host==='windows'}});

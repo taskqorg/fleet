@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {createApp} from '../../packages/coordinator/app.js';
 import {attachStores,upload} from './artifact-helpers.js';
 test('retained artifact differences survive restart and enforce session boundary',async()=>{
- const config={database:mkdtempSync(tmpdir()+'/fleet-diff-')+'/db',browserSecret:'browser',machineSecret:'machine',hostId:'mac'};
+ const config={database:mkdtempSync(tmpdir()+'/fleet-diff-')+'/db',browserSecret:'browser',machineSecret:'machine',hostId:'mac',storeEndpointHosts:['127.0.0.1']};
  let app=createApp(config);await attachStores(app,'machine',['mac']);
  const call=(url:string,payload?:any,machine=false)=>app.inject({method:payload?'POST':'GET',url,headers:{authorization:'Bearer '+(machine?'machine':'browser')},payload});
  const session=(await call('/api/sessions',{})).json().id;

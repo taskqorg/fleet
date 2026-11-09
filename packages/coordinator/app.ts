@@ -148,7 +148,9 @@ export function createApp(config:{nativeHostIds?:string[],database:string,store?
  // A host reads an artifact only for its own command that names it (delivery files, copies), or for its own execution in
  // the artifact's project (agent artifact_get).
  const hostMayRead=async(b:any)=>{const a=await artifacts.get(text(b.artifactId,200));
-  if(typeof b.commandId==='string'){const c=await get(b.commandId,'command').catch(()=>null);const p=JSON.stringify(c?.payload??{});if(c&&c.hostId===b.hostId&&(p.includes('"'+a.id+'"')||(a.legacyId&&p.includes('"'+a.legacyId+'"'))))return a}
+  if(typeof b.commandId==='string'){const c=await get(b.commandId,'command').catch(()=>null);
+   const named=c?.kind==='delivery-step'?(c.payload?.files??[]).map((f:any)=>f?.artifactId):['artifact-copy','artifact-verify'].includes(c?.kind)?[c.payload?.artifactId]:[];
+   if(c&&c.hostId===b.hostId&&['pending','accepted','started'].includes(c.status)&&named.some((x:any)=>typeof x==='string'&&(x===a.id||x===a.legacyId)))return a}
   if(typeof b.executionId==='string'){(await owned(b));const e=await store.executions.get(b.executionId);if(a.executionId===e.id||(e.projectId&&a.projectId===e.projectId))return a}
   return fail(403,'Artifact not readable by this host')};
  app.post('/api/hosts/artifacts/get',hostArtifact(async b=>artifacts.get((await hostMayRead(b)).id,b.hostId)));

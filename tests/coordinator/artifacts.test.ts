@@ -4,7 +4,7 @@ const sha=(b:Buffer)=>createHash('sha256').update(b).digest('hex');
 async function setup(opts:{access?:boolean,taskArtifacts?:string[]}={}){const dir=mkdtempSync(tmpdir()+'/fleet-artifacts-');mkdirSync(dir+'/projects/p1',{recursive:true});
  writeFileSync(dir+'/projects/p1/project.json',JSON.stringify({id:'p1',name:'P1',contextFiles:[]}));
  let accessFile:string|undefined;if(opts.access){accessFile=dir+'/cf-access.env';writeFileSync(accessFile,"export CF_ACCESS_CLIENT_ID='cid'\nexport CF_ACCESS_CLIENT_SECRET='csecret'\n")}
- const app=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac',projectConfigDirectory:dir,placementIntervalMs:0,cfAccessFile:accessFile,defaultArtifactLocations:['mac'],nativeHostIds:['pc'],storeEndpointHosts:opts.access?['127.0.0.1']:[]});await app.ready();const s=(app as any).store,A=(app as any).artifacts;
+ const app=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac',projectConfigDirectory:dir,placementIntervalMs:0,cfAccessFile:accessFile,defaultArtifactLocations:['mac'],nativeHostIds:['pc'],storeEndpointHosts:['127.0.0.1']});await app.ready();const s=(app as any).store,A=(app as any).artifacts;
  const fake=await fakeStore(opts.access?{requireAccess:{id:'cid',secret:'csecret'}}:{});
  await s.put('session',{id:'s1',createdAt:1,projectId:'p1'});await s.put('execution',{id:'e1',executionId:'e1',sessionId:'s1',hostId:'mac',state:'started',createdAt:1});
  await s.put('command',{id:'c1',executionId:'e1',sessionId:'s1',hostId:'mac',kind:'start',status:'started',payload:{}});
@@ -114,4 +114,9 @@ test('store endpoints are allowlisted; hosts read only artifacts of their own co
  await s.put('command',{id:'c9',executionId:'e9',sessionId:'s9',hostId:'pc',kind:'delivery-step',status:'pending',payload:{files:[{artifactId:id}]}});
  const ok=await call('/api/hosts/artifacts/read',{hostId:'pc',commandId:'c9',artifactId:id});assert.equal(ok.statusCode,200);assert.equal(ok.body,'project p1 only');
  assert.equal((await call('/api/hosts/artifacts/read',{hostId:'mac',executionId:'e1',artifactId:id})).statusCode,200);
+ // Only structured fields of a command in progress count.
+ await s.put('command',{id:'c10',executionId:'e9',sessionId:'s9',hostId:'pc',kind:'delivery-step',status:'pending',payload:{note:'"'+id+'"'}});
+ assert.equal((await call('/api/hosts/artifacts/read',{hostId:'pc',commandId:'c10',artifactId:id})).statusCode,403);
+ await s.put('command',{id:'c9',executionId:'e9',sessionId:'s9',hostId:'pc',kind:'delivery-step',status:'completed',payload:{files:[{artifactId:id}]}});
+ assert.equal((await call('/api/hosts/artifacts/read',{hostId:'pc',commandId:'c9',artifactId:id})).statusCode,403);
  await assert.rejects(A.readBuffer(id,4),(e:any)=>e.statusCode===413);await app.close()});

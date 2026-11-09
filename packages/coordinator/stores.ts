@@ -23,7 +23,7 @@ export function storeRegistry(store:Store,config:{secretsDir:string,freeSpaceWar
  async function register(hostId:string,b:any){const storeId=id(b?.id,'store id'),bucket=id(b?.bucket,'bucket');
   if(typeof b.accessKeyId!=='string'||!b.accessKeyId||typeof b.secretAccessKey!=='string'||!b.secretAccessKey)fail(400,'Expected store credentials');
   const endpoint=url(b.endpoint,'endpoint'),local=b.localEndpoint?url(b.localEndpoint,'localEndpoint'):null,hosts=config.endpointHosts??[];
-  if(!isLoopback(endpoint)&&!allowedTunnel(endpoint,hosts))fail(403,'Store endpoint host is not allowed');if(local&&!isLoopback(local))fail(400,'localEndpoint must be a loopback URL');
+  if(!allowedTunnel(endpoint,hosts))fail(403,'Store endpoint host is not allowed');if(local&&!isLoopback(local))fail(400,'localEndpoint must be a loopback URL');
   const row=(await store.query('SELECT host_id FROM store WHERE id=$1',[storeId]))[0];if(row&&row.host_id!==hostId)fail(403,'Store belongs to another host');
   mkdirSync(config.secretsDir,{recursive:true,mode:0o700});writeFileSync(keyFile(storeId),JSON.stringify({accessKeyId:b.accessKeyId,secretAccessKey:b.secretAccessKey}),{mode:0o600});chmodSync(keyFile(storeId),0o600);
   await store.query(`INSERT INTO store(id,host_id,zone,bucket,endpoint,local_endpoint,capacity_bytes,used_bytes,requires_logon,state,observed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'reachable',now())
