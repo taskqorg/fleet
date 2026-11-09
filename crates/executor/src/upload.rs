@@ -64,10 +64,12 @@ impl Client {
         }
     }
     pub fn post(&self, route: &str, body: Value) -> std::result::Result<Value, Failure> {
-        // Same classification as the outbox (outbox::classify): a redirect is an edge condition, retried and signalled once.
+        // Same classification and edge state as the outbox (outbox::classify): an edge answer is retried after its backoff
+        // and signalled once.
+        if outbox::edge_wait(route) { return Err(Failure::Retry(format!("edge backoff for {route}"))) }
         match outbox::classify(self.coordinator.post(&format!("{}{route}", self.url)).set("Authorization", &format!("Bearer {}", self.token)).send_json(body)) {
             outbox::Answer::Ok(v) => { outbox::edge_ok(route); Ok(v) }
-            outbox::Answer::Redirect(status, to) => { outbox::edge_redirect(route, status, &to); Err(Failure::Retry(format!("coordinator redirected with {status} to {to}"))) }
+            outbox::Answer::Edge(status, detail) => { outbox::edge_redirect(route, status, &detail); Err(Failure::Retry(format!("coordinator edge answered {status} ({detail})"))) }
             outbox::Answer::Retry(e) => Err(Failure::Retry(e)),
             // 409 no_store: no listed store is reachable now (a sleeping Mac, Windows logged out): wait and retry.
             outbox::Answer::Reject(409, text) if text.contains("No reachable store") => { outbox::edge_ok(route); Err(Failure::Retry(format!("409 {text}"))) }
@@ -84,21 +86,22 @@ impl Client {
         }
         r
     }
-    pub fn put_part(&self, url: &str, bytes: &[u8]) -> std::result::Result<String, Failure> {
-        match self.store_request("PUT", url).send_bytes(bytes) {
-            Ok(r) if (300..400).contains(&r.status()) => { let s = r.status(); let _ = r.into_string(); Err(Failure::Retry(format!("store redirected with {s}"))) }
-            Ok(r) => r.header("ETag").map(str::to_owned).ok_or_else(|| Failure::Retry("part without ETag".into())),
-            Err(ureq::Error::Status(code, r)) if code < 500 && code != 429 => Err(Failure::Permanent(format!("store {code} {}", r.into_string().unwrap_or_default()))),
+    /// One classification of store answers: a redirect is an edge condition of that store (signalled as `store <host>`, the
+    /// redirect is never followed since requests carry the Access headers) and is retried; 4xx is permanent.
+    fn store_answer(url: &str, r: std::result::Result<ureq::Response, ureq::Error>) -> std::result::Result<ureq::Response, Failure> {
+        let key = format!("store {}", url.split_once("://").map_or(url, |(_, r)| r).split(['/', '?']).next().unwrap_or(""));
+        match r {
+            Ok(r) if (300..400).contains(&r.status()) => { let (s, to) = (r.status(), outbox::location(&r)); let _ = r.into_string(); outbox::edge_redirect(&key, s, &to); Err(Failure::Retry(format!("store redirected with {s} to {to}"))) }
+            Ok(r) => { outbox::edge_ok(&key); Ok(r) }
+            Err(ureq::Error::Status(code, r)) if code < 500 && code != 429 => { outbox::edge_ok(&key); Err(Failure::Permanent(format!("store {code} {}", r.into_string().unwrap_or_default()))) }
             Err(e) => Err(Failure::Retry(e.to_string())),
         }
     }
+    pub fn put_part(&self, url: &str, bytes: &[u8]) -> std::result::Result<String, Failure> {
+        Self::store_answer(url, self.store_request("PUT", url).send_bytes(bytes))?.header("ETag").map(str::to_owned).ok_or_else(|| Failure::Retry("part without ETag".into()))
+    }
     pub fn get(&self, url: &str) -> std::result::Result<Box<dyn Read + Send + Sync>, Failure> {
-        match self.store_request("GET", url).call() {
-            Ok(r) if (300..400).contains(&r.status()) => { let s = r.status(); let _ = r.into_string(); Err(Failure::Retry(format!("store redirected with {s}"))) }
-            Ok(r) => Ok(r.into_reader()),
-            Err(ureq::Error::Status(code, _)) if code < 500 && code != 429 => Err(Failure::Permanent(format!("store GET {code}"))),
-            Err(e) => Err(Failure::Retry(e.to_string())),
-        }
+        Ok(Self::store_answer(url, self.store_request("GET", url).call())?.into_reader())
     }
 }
 #[derive(Debug)]
@@ -271,6 +274,8 @@ pub fn spawn(journal: PathBuf, client: Client, after: impl Fn(&Client, &Connecti
         loop {
             std::thread::sleep(Duration::from_secs(600));
             let jobs: Vec<(String, String, String)> = db.prepare("SELECT id,kind,body FROM transfers WHERE state IN ('queued','running')").and_then(|mut s| s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect()).unwrap_or_default();
+            // Nothing left to transfer: idle transfer and store routes are not asked again, so their edge signals end here.
+            if jobs.is_empty() { outbox::edge_clear("/api/hosts/artifacts/"); outbox::edge_clear("store ") }
             for (id, kind, body) in jobs {
                 let body: Value = serde_json::from_str(&body).unwrap_or(json!({}));
                 if let Some((artifact, store)) = leased(&kind, &id, &body) {
@@ -340,13 +345,14 @@ mod tests {
     #[test]
     fn the_store_agent_does_not_follow_redirects() {
         // The redirect target would see the Access headers; it must never be asked.
-        let (target, hit) = crate::outbox::tests::serve(1, |_, _| ("200 OK", ""));
-        let location: &'static str = Box::leak(format!("Location: {target}/leak\r\n").into_boxed_str());
+        let target = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        target.set_nonblocking(true).unwrap();
+        let location: &'static str = Box::leak(format!("Location: http://{}/leak\r\n", target.local_addr().unwrap()).into_boxed_str());
         let (url, server) = crate::outbox::tests::serve(1, move |_, _| ("302 Found", location));
         let c = Client::new("http://127.0.0.1:1".into(), "t".into(), "h".into(), Some(("id".into(), "secret".into())));
         assert!(matches!(c.get(&format!("{url}/object")), Err(Failure::Retry(_))));
         server.join().unwrap();
-        assert!(!hit.is_finished(), "redirect target was not contacted");
+        assert!(matches!(target.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock), "redirect target was contacted");
     }
     #[test]
     fn hash_streams() {

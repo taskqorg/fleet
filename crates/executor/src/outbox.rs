@@ -11,19 +11,23 @@ pub fn schema(db: &Connection) -> rusqlite::Result<()> {
 }
 
 /// One classification of a coordinator answer, shared by the outbox and the transfer client so the two cannot drift.
-/// A redirect is an edge condition of the whole host (an Access login page for a path without a bypass), never a bad row:
-/// the row stays queued and is retried. The redirect body is drained so the pooled connection is reused.
-pub enum Answer { Ok(Value), Redirect(u16, String), Reject(u16, String), Retry(String) }
+/// `Edge` is a condition of the host's edge, never a bad row: a redirect (an Access login page for a path without a bypass)
+/// or a 2xx that is not JSON (a login page served inline). The row stays queued and is retried with backoff. The body is
+/// drained so the pooled connection is reused.
+pub enum Answer { Ok(Value), Edge(u16, String), Reject(u16, String), Retry(String) }
 pub fn classify(r: std::result::Result<ureq::Response, ureq::Error>) -> Answer {
     match r {
         Ok(r) if (300..400).contains(&r.status()) => {
             let status = r.status();
-            // Only the location's origin and path: an edge login URL can carry query parameters.
-            let to = r.header("Location").unwrap_or("").split(['?', '#']).next().unwrap_or("").to_string();
+            let to = location(&r);
             let _ = r.into_string();
-            Answer::Redirect(status, to)
+            Answer::Edge(status, to)
         }
-        Ok(r) => r.into_json::<Value>().map_or_else(|e| Answer::Retry(e.to_string()), Answer::Ok),
+        Ok(r) => {
+            let status = r.status();
+            let text = r.into_string().unwrap_or_default();
+            serde_json::from_str::<Value>(&text).map_or_else(|_| Answer::Edge(status, "an answer that is not JSON".into()), Answer::Ok)
+        }
         Err(ureq::Error::Status(code, r)) => {
             let text = r.into_string().unwrap_or_default();
             if code >= 500 || code == 429 { Answer::Retry(format!("{code} {text}")) } else { Answer::Reject(code, text) }
@@ -31,30 +35,48 @@ pub fn classify(r: std::result::Result<ureq::Response, ureq::Error>) -> Answer {
         Err(e) => Answer::Retry(e.to_string()),
     }
 }
-/// The poll's redirect, as an error the exchange loop recognizes.
+/// A redirect's Location without its query or fragment: an edge login URL can carry parameters.
+pub fn location(r: &ureq::Response) -> String {
+    r.header("Location").unwrap_or("").split(['?', '#']).next().unwrap_or("").to_string()
+}
+/// The poll's edge answer, as an error the exchange loop recognizes.
 #[derive(Debug)]
 pub struct Redirected(pub u16, pub String);
 impl std::fmt::Display for Redirected {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "coordinator redirected with {} to {}", self.0, self.1) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "coordinator edge answered {} ({})", self.0, self.1) }
 }
 impl std::error::Error for Redirected {}
 
-/// Edge redirects in progress, by route: one log line when a route starts redirecting and one when it recovers, and a host
-/// problem `edge_redirect` reported with every poll until delivery works again.
-static EDGE: std::sync::Mutex<std::collections::BTreeMap<String, (u16, String)>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
-pub fn edge_redirect(route: &str, status: u16, to: &str) {
+/// Edge conditions in progress, by route (a coordinator route, or `store <host>`): one log line when a route starts and one
+/// when it recovers; a host problem `edge-redirect` reported with every poll until then; and a backoff (2 s doubling to
+/// 5 min, as for transfers) before the route is asked again.
+struct Edge { status: u16, detail: String, attempts: u32, next_at: i64 }
+static EDGE: std::sync::Mutex<std::collections::BTreeMap<String, Edge>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+fn now_ms() -> i64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64) }
+pub fn edge_redirect(route: &str, status: u16, detail: &str) {
     let mut m = EDGE.lock().unwrap_or_else(|e| e.into_inner());
-    if m.insert(route.to_string(), (status, to.to_string())).is_none() {
-        eprintln!("executor: the coordinator edge redirects {route} with {status} to {to}; rows stay queued and are retried");
-    }
+    let attempts = m.get(route).map_or(0, |e| e.attempts + 1);
+    if attempts == 0 { eprintln!("executor: the edge answers {route} with {status} ({detail}); rows stay queued and are retried") }
+    let wait = 2000i64.saturating_mul(1 << attempts.min(8)).min(300_000);
+    m.insert(route.to_string(), Edge { status, detail: detail.to_string(), attempts, next_at: now_ms() + wait });
 }
 pub fn edge_ok(route: &str) {
     let mut m = EDGE.lock().unwrap_or_else(|e| e.into_inner());
-    if m.remove(route).is_some() { eprintln!("executor: the coordinator edge delivers {route} again") }
+    if m.remove(route).is_some() { eprintln!("executor: the edge delivers {route} again") }
 }
-pub fn edge_problems() -> Value {
+/// Clears the routes under `prefix` once nothing is left to send there (an idle transfer route is not asked again).
+pub fn edge_clear(prefix: &str) {
+    let mut m = EDGE.lock().unwrap_or_else(|e| e.into_inner());
+    m.retain(|r, _| if r.starts_with(prefix) { eprintln!("executor: nothing left for {r}; edge signal cleared"); false } else { true });
+}
+/// True while a route waits for its backoff.
+pub fn edge_wait(route: &str) -> bool {
+    EDGE.lock().unwrap_or_else(|e| e.into_inner()).get(route).is_some_and(|e| now_ms() < e.next_at)
+}
+/// The host problems for a poll; the poll's own route is left out (a poll that is delivered proves it works).
+pub fn edge_problems(except: &str) -> Value {
     let m = EDGE.lock().unwrap_or_else(|e| e.into_inner());
-    Value::Array(m.iter().map(|(route, (status, to))| json!({"kind":"edge_redirect","route":route,"status":status,"location":to})).collect())
+    Value::Array(m.iter().filter(|(r, _)| r.as_str() != except).map(|(route, e)| json!({"kind":"edge-redirect","route":route,"status":e.status,"location":e.detail})).collect())
 }
 
 /// One coordinator request on the pooled agent (keep-alive avoids a TLS handshake per row; redirects are not followed).
@@ -65,13 +87,13 @@ pub fn send(url: &str, token: &str, route: &str, v: Value) -> Answer {
         .post(&format!("{url}{route}"))
         .set("Authorization", &format!("Bearer {token}"))
         .send_json(v));
-    match &a { Answer::Redirect(s, to) => edge_redirect(route, *s, to), Answer::Retry(_) => {}, _ => edge_ok(route) }
+    match &a { Answer::Edge(s, d) => edge_redirect(route, *s, d), Answer::Retry(_) => {}, _ => edge_ok(route) }
     a
 }
 pub fn post(url: &str, token: &str, route: &str, v: Value) -> Result<Value> {
     match send(url, token, route, v) {
         Answer::Ok(v) => Ok(v),
-        Answer::Redirect(s, to) => Err(Box::new(Redirected(s, to))),
+        Answer::Edge(s, d) => Err(Box::new(Redirected(s, d))),
         Answer::Reject(code, text) => Err(format!("coordinator {code} {text}").into()),
         Answer::Retry(e) => Err(e.into()),
     }
@@ -83,8 +105,10 @@ pub fn queue(db: &Connection, route: &str, v: Value) -> Result<()> {
 }
 
 /// Delivers queued rows in order. A 4xx row is moved to `outbox_failed` and reported as an executor event; the following
-/// rows keep flowing. A redirected row stays queued and stops only its own route for this flush (rows of a route keep their
-/// order); other routes keep flowing. 5xx and network errors stop the flush and retry later.
+/// rows keep flowing. A row with an edge answer stays queued and holds, for this flush, its route and its execution: rows of
+/// one route keep their order, and rows of one execution keep theirs across routes (an agent's required declaration before
+/// its completion receipt); other routes and executions keep flowing. A held route is asked again only after its backoff.
+/// 5xx and network errors stop the flush and retry later.
 pub fn flush(db: &Connection, url: &str, token: &str, host: &str) -> Result<()> {
     let mut stmt = db.prepare("SELECT rowid,route,body FROM outbox ORDER BY rowid")?;
     let rows: Vec<(i64, String, String)> = stmt
@@ -93,11 +117,13 @@ pub fn flush(db: &Connection, url: &str, token: &str, host: &str) -> Result<()> 
     drop(stmt);
     let mut i = 0;
     let mut single = false;
-    let mut held = std::collections::HashSet::new();
+    let (mut routes, mut executions) = (std::collections::HashSet::new(), std::collections::HashSet::new());
     while i < rows.len() {
         let (n, p, b) = rows[i].clone();
-        if held.contains(&p) { i += 1; continue }
         let mut value: Value = serde_json::from_str(&b)?;
+        let execution = value["executionId"].as_str().map(str::to_owned);
+        let hold = |routes: &mut std::collections::HashSet<String>, executions: &mut std::collections::HashSet<String>| { routes.insert(p.clone()); if let Some(e) = &execution { executions.insert(e.clone()); } };
+        if routes.contains(&p) || execution.as_ref().is_some_and(|e| executions.contains(e)) || edge_wait(&p) { hold(&mut routes, &mut executions); i += 1; continue }
         // Consecutive event rows of one execution go in one request (coordinator validates the whole batch).
         let mut batch = vec![(n, b.clone())];
         if p == "/api/hosts/events" && !single {
@@ -111,7 +137,7 @@ pub fn flush(db: &Connection, url: &str, token: &str, host: &str) -> Result<()> 
         let response = match send(url, token, &p, value.clone()) {
             Answer::Ok(response) => response,
             Answer::Retry(e) => return Err(e.into()),
-            Answer::Redirect(..) => { held.insert(p); i += 1; continue }
+            Answer::Edge(..) => { hold(&mut routes, &mut executions); i += 1; continue }
             Answer::Reject(status, text) => {
                 let reason = format!("coordinator {status} {text}");
                 if value.get("delegation").is_some() || value.get("agentToolKey").is_some() {
@@ -227,27 +253,35 @@ pub mod tests {
         queue(&db, "/api/hosts/stores", json!({"hostId":"mac"})).unwrap();
         flush(&db, &url, "t", "mac").unwrap();
         assert_eq!((count(&db, "outbox"), count(&db, "outbox_failed")), (1, 0), "kept, not set aside");
-        let p = edge_problems();
+        let p = edge_problems("");
         assert!(p.as_array().unwrap().iter().any(|x| x["route"] == "/api/hosts/stores" && x["status"] == 302 && !x["location"].as_str().unwrap().contains("token")), "{p}");
+        // Within the backoff the route is not asked again; after it the row is delivered.
+        flush(&db, &url, "t", "mac").unwrap();
+        assert_eq!(count(&db, "outbox"), 1);
+        std::thread::sleep(Duration::from_millis(2100));
         flush(&db, &url, "t", "mac").unwrap();
         assert_eq!(count(&db, "outbox"), 0);
-        assert!(!edge_problems().as_array().unwrap().iter().any(|x| x["route"] == "/api/hosts/stores"), "cleared on delivery");
+        assert!(!edge_problems("").as_array().unwrap().iter().any(|x| x["route"] == "/api/hosts/stores"), "cleared on delivery");
         assert_eq!(server.join().unwrap().len(), 2);
     }
     #[test]
     fn a_redirect_on_one_route_does_not_block_other_routes() {
         let (url, server) = serve(3, |path, _| if path == "/api/hosts/artifacts/declare" { ("302 Found", LOGIN) } else { ("200 OK", "") });
         let db = journal();
-        queue(&db, "/api/hosts/artifacts/declare", json!({"name":"a"})).unwrap();
-        queue(&db, "/api/hosts/artifacts/declare", json!({"name":"b"})).unwrap();
+        queue(&db, "/api/hosts/artifacts/declare", json!({"name":"a","executionId":"e1"})).unwrap();
+        queue(&db, "/api/hosts/artifacts/declare", json!({"name":"b","executionId":"e2"})).unwrap();
+        // e1's receipt waits for e1's declaration (its required artifact must be known first), and holds the receipts route
+        // behind it; e3's receipt, queued before it, and e3's events flow.
+        queue(&db, "/api/hosts/receipts", json!({"commandId":"c3","executionId":"e3"})).unwrap();
         queue(&db, "/api/hosts/receipts", json!({"commandId":"c1","executionId":"e1"})).unwrap();
-        queue(&db, "/api/hosts/events", json!({"executionId":"e1","events":[{"id":"1"}]})).unwrap();
+        queue(&db, "/api/hosts/events", json!({"executionId":"e3","events":[{"id":"1"}]})).unwrap();
         flush(&db, &url, "t", "mac").unwrap();
         let seen = server.join().unwrap();
-        // The second declare row is not posted after the first redirect (order within a route), the other routes are.
-        assert_eq!(seen.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(), ["/api/hosts/artifacts/declare", "/api/hosts/receipts", "/api/hosts/events"]);
+        // The second declare row is not posted after the first redirect (order within a route), nor e1's receipt (order
+        // within an execution); e3's rows on the other routes are.
+        assert_eq!(seen.iter().map(|(p, v)| format!("{p} {}", v["executionId"].as_str().unwrap_or(""))).collect::<Vec<_>>(), ["/api/hosts/artifacts/declare e1", "/api/hosts/receipts e3", "/api/hosts/events e3"]);
         let left: Vec<String> = db.prepare("SELECT route FROM outbox ORDER BY rowid").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
-        assert_eq!(left, ["/api/hosts/artifacts/declare", "/api/hosts/artifacts/declare"]);
+        assert_eq!(left, ["/api/hosts/artifacts/declare", "/api/hosts/artifacts/declare", "/api/hosts/receipts"]);
         assert_eq!(count(&db, "outbox_failed"), 0);
     }
     #[test]
@@ -255,7 +289,8 @@ pub mod tests {
         let (url, server) = serve(1, |_, _| ("302 Found", LOGIN));
         let db = journal();
         db.execute("INSERT INTO delegation_requests(id,body) VALUES('c1:r1','{}')", []).unwrap();
-        queue(&db, "/api/hosts/receipts", json!({"commandId":"c1","executionId":"e1","delegation":{"requestId":"r1"}})).unwrap();
+        // Edge state is per process and shared by parallel tests: this test uses a route no other test touches.
+        queue(&db, "/api/hosts/receipts-delegation-test", json!({"commandId":"c1","executionId":"e1","delegation":{"requestId":"r1"}})).unwrap();
         flush(&db, &url, "t", "mac").unwrap();
         server.join().unwrap();
         let response: Option<String> = db.query_row("SELECT response FROM delegation_requests WHERE id='c1:r1'", [], |r| r.get(0)).unwrap();
