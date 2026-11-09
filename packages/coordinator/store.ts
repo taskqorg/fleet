@@ -16,7 +16,8 @@ const BEGIN={read:'BEGIN READ ONLY ISOLATION LEVEL REPEATABLE READ',write:'BEGIN
 // scope: the fleet.project_ids row-level security setting of every connection ('*' is the operator scope, see migration 6).
 const backend=(url:string,scope:string):Backend=>{
  if(/^postgres(ql)?:\/\//.test(url)){
-  const pool=new pg.Pool({connectionString:url});pool.on('connect',c=>{c.query("SELECT set_config('fleet.project_ids',$1,false)",[scope]).catch(()=>{})});
+  // The scope is a startup option, set before the connection runs any query.
+  const pool=new pg.Pool({connectionString:url,options:`-c fleet.project_ids=${scope.replace(/[^a-zA-Z0-9_*,-]/g,'')}`});
   return {query:(s,p)=>pool.query(s,p),exec:s=>pool.query(s),close:()=>pool.end(),tx:async(fn,mode)=>{const c=await pool.connect();
    try{await c.query(BEGIN[mode]);const r=await fn((s,p)=>c.query(s,p));await c.query('COMMIT');return r}catch(e){await c.query('ROLLBACK').catch(()=>{});throw e}finally{c.release()}}};
  }
@@ -126,10 +127,12 @@ export function createStore(url:string,opts:{scope?:string}={}){
  // A delegation lives on its child execution's row, so it follows the executions.
  async function moveLegacyDocuments(){const rows=(await q("SELECT kind,id,data,seq FROM document WHERE kind = ANY($1) ORDER BY (kind='delegation'), seq",[TYPED_KINDS])).rows;
   for(const r of rows)await keep(r.kind,r.data,r.seq);
-  await q('DELETE FROM document WHERE kind = ANY($1)',[TYPED_KINDS])}
+  await q('DELETE FROM document WHERE kind = ANY($1)',[TYPED_KINDS]);await settleDeliveries()}
+ // A delivery moves before its step executions (insertion order); once all are in, its task state is settled again.
+ async function settleDeliveries(){for(const d of await api.all('delivery'))await kinds.get('delivery')!.put(d)}
  // Writes a legacy record through its adapter and gives the typed row the given seq (SQLite rowid on forward migration).
  async function keep(kind:string,data:any,seq:number){await kinds.get(kind)!.put(data);const table=TABLE_OF[kind];if(table)await q(`UPDATE ${table} SET seq=$2 WHERE id=$1`,[data.id,seq])}
- return {...api,executions,tasks,keep,typedKinds:TYPED_KINDS};
+ return {...api,executions,tasks,keep,settleDeliveries,typedKinds:TYPED_KINDS};
 }
 // Legacy kinds that live in typed tables since migration 6, and the table holding each record's own row.
 export const TYPED_KINDS=['execution','pipeline-run','delivery','project-question','question','delegation'];

@@ -25,6 +25,7 @@ export async function forward(sqlite:string,store:Store){
  await store.tx(async()=>{
   for(const r of rows.filter(r=>!typed.has(r.kind)))inserted+=(await store.query('INSERT INTO document(kind,id,data,project_id,seq) VALUES($1,$2,$3,$4,$5) ON CONFLICT(id) DO NOTHING RETURNING id',[r.kind,r.id,JSON.stringify(r.data),typeof r.data?.projectId==='string'?r.data.projectId:null,r.seq])).length;
   for(const r of rows.filter(r=>typed.has(r.kind)).sort((a,b)=>Number(a.kind==='delegation')-Number(b.kind==='delegation')||a.seq-b.seq))if(!(await present(r.kind,r.id))){await store.keep(r.kind,r.data,r.seq);inserted++}
+  await store.settleDeliveries();
   // New rows continue after the highest migrated rowid.
   await store.query("SELECT setval(pg_get_serial_sequence('document','seq'),GREATEST((SELECT max(seq) FROM document),(SELECT max(seq) FROM execution),(SELECT max(seq) FROM task),(SELECT max(seq) FROM question),1))")});
  return {read:rows.length,inserted,skipped:rows.length-inserted};

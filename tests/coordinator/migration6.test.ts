@@ -22,6 +22,8 @@ test('migration 6 moves legacy documents into typed tables without changing any 
   assert.equal(await count('SELECT count(*)::int AS n FROM execution WHERE delegation IS NOT NULL'),n('delegation'));
   for(const d of rows.filter(r=>r.kind==='delivery')){const t=await s.tasks.get(d.id);assert.equal(t.legacyId,d.id);
    for(const step of d.data.steps??[])if(step.executionId)assert.equal((await s.executions.get(step.executionId)).taskId,d.id);
+   // A delivery whose step executions have started is in progress or further, not queued (steps move after the delivery).
+   if((d.data.steps??[]).some((x:any)=>x.executionId&&rows.some(r=>r.kind==='execution'&&r.id===x.executionId&&r.data.state!=='queued')))assert.notEqual(t.state,'queued',d.id);
    if(d.data.questionId)assert.equal(t.questions.find((q:any)=>q.id===d.data.questionId)?.kind,'operator_decision')}
   for(const e of rows.filter(r=>r.kind==='execution'&&r.data.experimentId))assert.equal((await s.executions.get(e.id)).experimentId,e.data.experimentId);
   moved+=rows.filter(r=>TYPED_KINDS.includes(r.kind)).length;await s.close()}
