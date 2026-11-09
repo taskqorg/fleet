@@ -120,9 +120,25 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
 *   **Q2. S3 store on Windows.** Garage officially targets Linux. Decide whether the Windows store is Garage under WSL2 or another S3 server with a native Windows build. Placement does not depend on this choice, because each store is independent.
 *   **Q9. Connection gateway.** How agents call third-party APIs without seeing keys, and how each call's cost reaches its execution. The gateway is a separate design, and it must use the `connection_cost` record defined here.
 *   **Q8. tight D7.** tight D7 says "Do not create a generic S3 service". That decision belongs to the AssetQ prototype. Update tight to allow Fleet's per-host stores, as a Podman Quadlet of `fleet` on PDS18.
-*   **Q4. Native OpenTelemetry export.** Do Claude Code and Codex export OTel natively in the installed versions? If they do, collection prefers it over parsing logs.
-*   **Q5. Rate-limit signals.** Which rate-limit events do Codex (rollout and app-server) and Claude Code (stream events, `/usage`) actually emit on the installed versions?
-*   **Q6. Claude transcript cleanup.** What is the default of `cleanupPeriodDays`, and does it apply under `--setting-sources ""`? This decides how urgently transcripts must be copied.
+*   **Q4. Native OpenTelemetry export: answered 2026-11-09.** The checks read the strings in the installed binaries; no harness was run.
+    *   Claude Code 2.1.319 has OTel export (`CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_*`).
+    *   Codex 0.167.0 has OTel export (`otlp-http`, `OTEL_EXPORTER_OTLP_*`, `log_user_prompt`).
+    *   Antigravity 1.5.3 has none.
+    *   Under D4, an adapter may point a harness's OTLP exporter at a loopback endpoint of the executor. That makes native OTel one more input to the adapter, not a separate path. Still open: whether the OTel data contains anything the native stream does not.
+*   **Q5. Rate-limit signals: answered 2026-11-09.**
+    *   Codex rollout files carry `rate_limits` with:
+        *   `primary` and `secondary` windows, each with `used_percent`, `window_minutes` and `resets_at`;
+        *   `credits` (`has_credits`, `unlimited`, `balance`);
+        *   `plan_type` and `rate_limit_reached_type`.
+
+        This is a measured value (`basis = measured`) for each window.
+    *   Claude Code `stream-json` emits `rate_limit_event` with `rate_limit_info` (`status`, for example `allowed` or `rejected`, reset time, overage and fallback flags). This is a measured status, not a percentage.
+    *   Antigravity contains quota fields (`remainingFraction`, `RESOURCE_EXHAUSTED`). Which command or event exposes them still needs a live check.
+    *   The executor drops all of these today (see item 35).
+*   **Q6. Claude transcript cleanup: answered 2026-11-09.**
+    *   The default `cleanupPeriodDays` is 30 days.
+    *   Claude 2.1.319 skips the retention sweep when `--setting-sources` excludes user settings and no other enabled source provides `cleanupPeriodDays`. Fleet launches Claude with `--setting-sources ""` (`crates/executor/src/harness.rs:226`), so Fleet-launched transcripts are not deleted by Claude.
+    *   The risk remains for sessions launched without that flag, and for any future change to that behaviour. Copying transcripts when a run ends (G4) is still required, but it is not urgent.
 *   **Q7. Backup and durability.** Is one storage node on PDS18 with backups enough, or is replication needed? What is the backup target?
 
 ## Critical User Journeys (CUJs)
