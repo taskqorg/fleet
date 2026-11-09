@@ -294,3 +294,27 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
   .shell-main{padding:var(--space-3)}
 }
 .vl-head .r{text-align:right}
+
+/* Harness marks and counts, stage chip, outcome block, detail sections (D11) */
+.harness{display:inline-flex;color:var(--fg-muted)}
+.harness-counts{display:inline-flex;gap:var(--space-2);align-items:center}
+.hc{display:inline-flex;align-items:center;gap:var(--space-1);font-size:var(--font-size-sm);color:var(--fg-muted)}
+.hc .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
+.hc .num{color:var(--fg)}
+.outcome{display:flex;gap:var(--space-2);align-items:flex-start;padding:var(--space-3);background:var(--surface-sunken);border-radius:var(--radius-md)}
+.outcome-b{flex:1;min-width:0}
+.outcome p{margin:0 0 var(--space-2)}
+.clamp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.outcome-meta{display:flex;flex-wrap:wrap;gap:var(--space-1);align-items:center}
+.chip.in{gap:var(--space-1);padding-right:var(--space-2)}
+.reqs{list-style:none;margin:var(--space-2) 0;padding:0}
+.reqs li{display:flex;gap:var(--space-2);align-items:center;min-height:var(--size-control)}
+.dsec{padding:var(--space-2) 0;border-top:1px solid var(--line-soft)}
+.dsec h3{margin:0 0 var(--space-1);font-size:var(--font-size-sm);color:var(--fg-muted);font-weight:var(--font-weight-medium)}
+.kv-row{display:flex;align-items:center;gap:var(--space-2);min-height:var(--size-row)}
+.vl-row .lead{display:flex;align-items:center}
+.vl-row .tt{display:flex;align-items:baseline;gap:var(--space-2);min-width:0}
+.vl-row .tt .title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vl-row .tt .id{margin:0;flex:none}
+.vl-row .p0{color:var(--danger-fg);font-family:var(--font-mono);font-size:var(--font-size-sm);font-weight:var(--font-weight-bold)}
+.stack-pad{padding:0 var(--space-4) var(--space-2)}

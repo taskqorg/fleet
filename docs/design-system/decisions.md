@@ -111,3 +111,17 @@ Append only. Each entry: date, question, options, choice, reason.
   * Page specs now link every control they name.
   * The layout patterns list-detail, needs-you and ops-summary are components (`ListDetail`, `NeedsYou`, `OpsSummary`, `ListFrame`), so pages compose them instead of copying markup.
 * **Open questions (a)–(d):** rendered as variants in [explorations/open-questions-01.html](explorations/open-questions-01.html) for the owner to pick.
+
+## 2026-11-10 D11: Owner picks on open questions (a)–(c), task row order, harness counts
+
+* **(a) Priority:** A2, generalised. The operator chooses the grouping: priority, state, project, agent, host or none, alongside quick state filters and saved views ([list view](patterns/list-view.md)). Default grouping is priority. The `p0` marker appears in rows only when the list is not grouped by priority (OR-17).
+* **New rule OR-22:**
+  * The state icon is the leftmost column.
+  * The ID sits right after the title.
+  * The agent's harness mark shows while the task runs.
+  * The delivery stage shows as a chip.
+* **(b) Outcome and inputs:** B2. The [outcome block](controls/outcome-block.md) sits above the task tabs.
+* **(c) Host detail:** C3. Stacked [detail sections](controls/detail-section.md), no tabs.
+* **(d) Phone navigation:** still open. The interim icon rail (D1) stays.
+* **Workers per host:** counts per harness, shown as harness mark plus number and omitted when zero ([harness counts](controls/harness-counts.md)). They appear in the stat strip, the Hosts table and the Overview.
+* **Registry:** adds the harness marks (Codex, Claude, Antigravity) from TaskQ's icon set, and the delivery stages.

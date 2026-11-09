@@ -1,9 +1,9 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import type { ComponentChildren } from 'preact';
 import { useMemo, useState } from 'preact/hooks';
-import { Button, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, NavRail, TooltipLayer, type Chip, type FilterField, type NavItem } from './controls';
+import { Button, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, NavRail, TooltipLayer, HarnessMark, StageChip, type Chip, type FilterField, type NavItem } from './controls';
 import { VirtualList } from './virtual-list';
-import { states, actions, type StateOf, type StateDef } from './registry';
+import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry';
 import tokens from '../tokens.json';
 
 const ROW = parseInt(tokens.size.row);
@@ -11,22 +11,26 @@ const ROW = parseInt(tokens.size.row);
 /* ---------- Task list view (patterns/list-view.md) ---------- */
 
 export type TaskRow = {
-  id: number; title: string; project: string; state: StateOf<'task'>; reason?: string; agent: string; host: string;
-  started: number; cost: number | null; est: boolean; pinned?: boolean;
+  id: number; title: string; project: string; state: StateOf<'task'>; reason?: string; agent: Harness; host: string;
+  started: number; cost: number | null; est: boolean; pinned?: boolean; priority: 0 | 1 | 2; stage?: Stage;
 };
-type View = { name: string; chips: Chip[]; states: StateOf<'task'>[]; group: 'state' | 'project' | 'none' };
-type Row = { kind: 'group'; key: string; label: string; state?: StateOf<'task'>; count: number } | { kind: 'task'; t: TaskRow };
+export type GroupBy = 'priority' | 'state' | 'project' | 'agent' | 'host' | 'none';
+type View = { name: string; chips: Chip[]; states: StateOf<'task'>[]; group: GroupBy };
+type Row = { kind: 'group'; key: string; label: string; icon: IconName; tone: Tone; count: number } | { kind: 'task'; t: TaskRow };
+const GROUPS: { id: GroupBy; label: string }[] = [
+  { id: 'priority', label: 'Priority' }, { id: 'state', label: 'State' }, { id: 'project', label: 'Project' },
+  { id: 'agent', label: 'Agent' }, { id: 'host', label: 'Host' }, { id: 'none', label: 'None' }];
 
 /** Filter bar + views + state counters + grouping + virtual list. View state lives here; a real page keeps it in the URL. */
 export function TaskListView({ items, now, onPin, onOpen, selected, height }: {
   items: TaskRow[]; now: number; onPin: (id: number) => void; onOpen?: (t: TaskRow) => void; selected?: number; height?: string;
 }) {
   const [views, setViews] = useState<View[]>([
-    { name: 'Needs me', chips: [], states: ['waiting', 'failed'], group: 'state' },
-    { name: 'Running', chips: [], states: ['in_progress', 'queued'], group: 'project' },
+    { name: 'Needs me', chips: [], states: ['waiting', 'failed'], group: 'priority' },
+    { name: 'Running', chips: [], states: ['in_progress', 'queued'], group: 'agent' },
     { name: 'dashq', chips: [{ field: 'Project', value: 'dashq' }], states: [], group: 'state' },
   ]);
-  const [view, setView] = useState<View>({ name: '', chips: [], states: [], group: 'state' });
+  const [view, setView] = useState<View>({ name: '', chips: [], states: [], group: 'priority' });
   const [active, setActive] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [closed, setClosed] = useState<string[]>(['completed', 'cancelled']);
@@ -42,14 +46,21 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height }: {
 
   const rows: Row[] = useMemo(() => {
     if (view.group === 'none') return pinnedFirst.map(t => ({ kind: 'task', t }));
-    const keyOf = (t: TaskRow) => view.group === 'state' ? t.state : t.project;
-    const order = view.group === 'state' ? ['waiting', 'failed', 'in_progress', 'queued', 'paused', 'completed', 'cancelled'] : [...new Set(pinnedFirst.map(keyOf))];
+    const g = view.group;
+    const keyOf = (t: TaskRow) => String(g === 'priority' ? t.priority : g === 'state' ? t.state : g === 'project' ? t.project : g === 'agent' ? t.agent : t.host);
+    const order = g === 'priority' ? ['0', '1', '2'] : g === 'state' ? ['waiting', 'failed', 'in_progress', 'queued', 'paused', 'completed', 'cancelled'] : [...new Set(pinnedFirst.map(keyOf))].sort();
+    const head = (k: string): { label: string; icon: IconName; tone: Tone } => {
+      if (g === 'priority') return { label: `Priority ${k}`, icon: k === '0' ? 'triangle-alert' : 'list-ordered', tone: k === '0' ? 'danger' : 'neutral' };
+      if (g === 'state') { const d = states.task[k as StateOf<'task'>] as StateDef; return { label: d.label, icon: d.icon, tone: d.tone }; }
+      if (g === 'agent') return { label: harnesses[k as Harness].label, icon: harnesses[k as Harness].icon, tone: 'neutral' };
+      return { label: k, icon: g === 'host' ? 'panels-top-left' : 'folder-open', tone: 'neutral' };
+    };
     const out: Row[] = [];
     for (const k of order) {
-      const g = pinnedFirst.filter(t => keyOf(t) === k);
-      if (!g.length) continue;
-      out.push({ kind: 'group', key: `g-${k}`, label: view.group === 'state' ? (states.task[k as StateOf<'task'>] as StateDef).label : k, state: view.group === 'state' ? k as StateOf<'task'> : undefined, count: g.length });
-      if (!closed.includes(k)) for (const t of g) out.push({ kind: 'task', t });
+      const items = pinnedFirst.filter(t => keyOf(t) === k);
+      if (!items.length) continue;
+      out.push({ kind: 'group', key: `g-${k}`, count: items.length, ...head(k) });
+      if (!closed.includes(k)) for (const t of items) out.push({ kind: 'task', t });
     }
     return out;
   }, [pinnedFirst, view.group, closed]);
@@ -74,28 +85,29 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height }: {
           <span class="grow" />
           <StateCounters family="task" label="Tasks by state" counts={counts} active={view.states}
             onToggle={s => edit({ states: view.states.includes(s) ? view.states.filter(x => x !== s) : [...view.states, s] })} />
-          <span class="seg-group" role="group" aria-label="Group by">
-            {(['state', 'project', 'none'] as const).map(g => <button type="button" key={g} class={`seg${view.group === g ? ' on' : ''}`} aria-pressed={view.group === g} onClick={() => edit({ group: g })}>{g === 'none' ? 'No groups' : `By ${g}`}</button>)}
+          <span class="seg-group" role="group" aria-label="Group by"><span class="muted type-sm">Group</span>
+            {GROUPS.map(g => <button type="button" key={g.id} class={`seg${view.group === g.id ? ' on' : ''}`} aria-pressed={view.group === g.id} onClick={() => edit({ group: g.id })}>{g.label}</button>)}
           </span>
         </>} />
       <VirtualList items={rows} getKey={r => r.kind === 'group' ? r.key : String(r.t.id)} rowHeight={ROW} follow="top" label="Tasks"
-        columns="minmax(0,1fr) 4.5rem 1.25rem 4rem 2.75rem 4.5rem 1.75rem"
+        columns="1.25rem minmax(0,1fr) 1.25rem 1.25rem 2.75rem 4.5rem 1.75rem"
         rowClass={r => r.kind === 'group' ? 'grp' : r.t.id === selected ? 'sel' : ''}
-        header={<><span>Task</span><span>ID</span><span /><span>Agent</span><span class="r">Age</span><span class="r">Cost</span><span /></>}
+        header={<><span /><span>Task</span><span /><span /><span class="r">Age</span><span class="r">Cost</span><span /></>}
         render={r => r.kind === 'group'
-          ? <GroupHeader icon={r.state ? (states.task[r.state] as StateDef).icon : 'folder-open'} tone={r.state ? (states.task[r.state] as StateDef).tone : 'neutral'} label={r.label} count={r.count}
+          ? <GroupHeader icon={r.icon} tone={r.tone} label={r.label} count={r.count}
               open={!closed.includes(r.key.slice(2))} onToggle={() => { const k = r.key.slice(2); setClosed(closed.includes(k) ? closed.filter(x => x !== k) : [...closed, k]); }} />
-          : <TaskCells t={r.t} now={now} onPin={onPin} onOpen={onOpen} />} />
+          : <TaskCells t={r.t} now={now} onPin={onPin} onOpen={onOpen} showPriority={view.group !== 'priority'} />} />
     </div>
   );
 }
 
-function TaskCells({ t, now, onPin, onOpen }: { t: TaskRow; now: number; onPin: (id: number) => void; onOpen?: (t: TaskRow) => void }) {
+function TaskCells({ t, now, onPin, onOpen, showPriority }: { t: TaskRow; now: number; onPin: (id: number) => void; onOpen?: (t: TaskRow) => void; showPriority: boolean }) {
+  // OR-22: state icon leftmost; ID beside the title; agent mark only while running; delivery stage as a chip.
   return <>
-    <a class="title row-link" href={`#/tasks/${t.id}`} onClick={e => { if (onOpen) { e.preventDefault(); onOpen(t); } }}>{t.title}</a>
-    <span class="id svc">T-{t.id}</span>
-    <StateBadge family="task" state={t.state} reason={t.reason} compact />
-    <span class="svc">{t.agent}</span>
+    <span class="lead"><StateBadge family="task" state={t.state} reason={t.reason} compact /></span>
+    <span class="tt">{showPriority && t.priority === 0 && <span class="p0" aria-label="priority 0">p0</span>}<a class="title row-link" href={`#/tasks/${t.id}`} onClick={e => { if (onOpen) { e.preventDefault(); onOpen(t); } }}>{t.title}</a><span class="id">T-{t.id}</span></span>
+    <span>{t.state === 'in_progress' && <HarnessMark h={t.agent} />}</span>
+    <span>{t.stage && <StageChip stage={t.stage} />}</span>
     <span class="r"><AgeChip t={t.started} now={now} alertAfter={t.state === 'in_progress' ? 2 * 3600 : undefined} /></span>
     <span class="r"><Num m={t.cost === null ? { value: null, basis: 'unavailable', reason: 'no meter' } : { value: t.cost, basis: t.est ? 'estimated' : 'measured' }} kind="money" rise="bad" /></span>
     <Button label={t.pinned ? 'Unpin' : 'Pin'} icon={t.pinned ? actions.unpin : actions.pin} iconOnly pressed={t.pinned} onClick={() => onPin(t.id)} />

@@ -4,7 +4,12 @@
 
 **Purpose.** Shows long, growing lists: tasks, executions, events, results, hosts. The main control of every workspace.
 
-**Anatomy.** Sticky header row with column heads (sortable ones show ▲▼); body of fixed-height rows; optional group headers; new-rows pill ("12 new", no arrow, OR-7); pin button per row (OR-12, visible on hover, focus and touch); footer count is in the [filter bar](filter-bar.md). A row (OR-21): the title takes the free width at medium weight; then one compact service zone on the right: ID (`font-mono`, `fg-muted`), state as an icon-only [state badge](state-badge.md) (name and reason in its tooltip, B1), agent, [age chip](number.md), value cells ([number](number.md), right aligned), and the pin button (always visible, B2).
+**Anatomy.** Sticky header row with column heads (sortable ones show ▲▼); body of fixed-height rows; optional group headers; new-rows pill ("12 new", no arrow, OR-7); pin button per row (OR-12, visible on hover, focus and touch); footer count is in the [filter bar](filter-bar.md). A task row (OR-21, OR-22), from left to right:
+* the state as an icon-only [state badge](state-badge.md), with name and reason in its tooltip (B1);
+* the title, which takes the free width at medium weight, with the ID (`font-mono`, `fg-muted`) right after it;
+* a compact service zone on the right: the [harness mark](harness-counts.md) while the task runs, the [delivery stage chip](stage-chip.md), the [age chip](number.md), the cost ([number](number.md), right aligned), and the pin button (always visible, B2).
+
+Other lists follow the same order: state, then name with ID, then the service zone.
 
 **Grouping.** Lists can group rows. Each group header row shows the group's icon, name and count. Groups collapse; completed and cancelled start collapsed. Anchor keeping works across groups.
 

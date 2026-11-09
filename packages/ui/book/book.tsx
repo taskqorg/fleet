@@ -4,7 +4,8 @@ import { useEffect, useState } from 'preact/hooks';
 import {
   Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, ExecTree, DecisionBlock, ResultViewer, SplitButton, NavRail, StatStrip,
   SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Transcript, TaskListView, workspaces, states, actions,
-  type Entry, type Family,
+  HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages,
+  type Entry, type Family, type Stage,
 } from '../src/index';
 import { NAV } from './nav';
 import { NOW, min, hr, tasks, mkTask, TREE, transcript, hosts, type Task } from './fixtures';
@@ -120,7 +121,7 @@ function ListDemo() {
       <Button label="Insert 5 above" icon="plus" onClick={insert} />
       <Button label={stream ? 'Stop stream' : 'Stream rows'} icon={stream ? 'pause' : 'activity'} pressed={stream} onClick={() => setStream(!stream)} />
       <Button label="Change costs" onClick={change} />
-      <span class="muted type-sm">10,000 rows. Choose "No groups", scroll down, then insert: the row you read stays put.</span>
+      <span class="muted type-sm">10,000 rows. Choose group None, scroll down, then insert: the row you read stays put.</span>
     </div>
   </div>;
 }
@@ -153,6 +154,18 @@ function SplitDemo() {
   </div>;
 }
 
+function LifecycleDemo() {
+  return <div class="col">
+    <div class="row"><span class="muted type-sm">Running on:</span><HarnessMark h="codex" /><HarnessMark h="claude" /><HarnessMark h="antigravity" />
+      <span class="muted type-sm">Per host:</span><HarnessCounts counts={{ codex: 4, claude: 2, antigravity: 0 }} label="pds18 workers by harness" /></div>
+    <div class="row"><span class="muted type-sm">Delivery stage:</span>{(Object.keys(stages) as Stage[]).map(s => <StageChip key={s} stage={s} />)}</div>
+    <OutcomeBlock outcome="Release notes for 0.4 in docs/releases/0.4.md, reviewed, linked from the changelog."
+      requirements={[{ text: 'Covers every merged PR since 0.3', met: true }, { text: 'Reviewed by the reviewer role', met: false }, { text: 'Linked from CHANGELOG.md', met: false }]}
+      inputs={[{ icon: 'file-text', label: 'template.md' }, { icon: 'git-pull-request', label: '14 merged PRs' }]} depends="Depends on T-9976 (completed)" />
+    <DetailSection title="Harnesses"><KvRow icon="openai" label="codex" meta={<span class="mono">0.48.1</span>} value={<span class="muted">ready</span>} /><KvRow icon="antigravity" label="agy" meta={<span class="mono">0.9.2</span>} value={<span class="muted">unchecked</span>} /></DetailSection>
+  </div>;
+}
+
 function StatsDemo() {
   return <div class="col">
     <StatStrip label="Operations" stats={[
@@ -162,7 +175,7 @@ function StatsDemo() {
       { label: 'queued', icon: 'list-ordered', value: { value: 7, basis: 'measured' } },
       { label: 'spent today', icon: 'chart-no-axes-column', value: { value: 41.2, basis: 'estimated', reason: 'tokens' }, kind: 'money' },
     ]} />
-    <StatStrip label="Workers per host" stats={hosts.map(h => ({ label: h.id, icon: 'panels-top-left' as const, value: h.online ? { value: h.running, basis: 'measured' as const } : { value: h.running, basis: 'measured' as const, partial: `last seen ${Math.round((NOW - h.lastSeen) / hr)}h ago` }, of: h.slots, tone: h.running >= h.slots ? 'attention' as const : undefined }))} />
+    <StatStrip label="Workers per host" stats={hosts.map(h => ({ label: h.id, icon: 'panels-top-left' as const, harness: h.byHarness, value: h.online ? { value: h.running, basis: 'measured' as const } : { value: h.running, basis: 'measured' as const, partial: `last seen ${Math.round((NOW - h.lastSeen) / hr)}h ago` }, of: h.slots, tone: h.running >= h.slots ? 'attention' as const : undefined }))} />
   </div>;
 }
 
@@ -236,6 +249,7 @@ const SECTIONS: [string, string, string | undefined, () => ComponentChildren, Co
   ['state-badge', 'State badge', 'state-badge', () => <BadgesDemo />, <>Left: icon and word, for detail views. Right: icon only, the form lists use (B1); hover or focus for the name and reason.</>],
   ['number', 'Numbers, totals, age chips', 'number', () => <NumbersDemo />, <>Measured, estimated (≈), unavailable (—), partial (≥). "Change values" shows the brief tint (OR-6): cost rising tints red, tokens neutral. The 2h chip is red (OR-18).</>],
   ['fill-bar', 'Fill bar', 'fill-bar', () => <FillDemo />],
+  ['lifecycle', 'Harness marks, delivery stages, outcome block, detail sections', 'harness-counts', () => <LifecycleDemo />, <>D11: agent mark only while a task runs; delivery stage chip; harness counts per host omit zero; outcome block above task tabs (B2); stacked detail sections (C3).</>],
   ['stat-strip', 'Stat strip', 'stat-strip', () => <StatsDemo />, <>Operational counts: what needs you, failures, running against slots, workers per host. An offline host shows its last known count as a lower bound.</>],
   ['data-list', 'Task list view: views, state counters, grouping, filters, virtual list', 'data-list', () => <ListDemo />, <>Saved views per person (pin, unpin, Save view). State counters show totals and filter on click. Group by state or project; groups collapse. Filters expand inline (OR-14). Title takes the space; service fields sit on the right (OR-21). State is an icon with a delayed tooltip (B1, OR-20).</>],
   ['execution-tree', 'Execution tree', 'execution-tree', () => <ExecTree nodes={TREE} now={NOW} label="Executions" />],

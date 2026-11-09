@@ -12,8 +12,8 @@
 |---|---|
 | Tasks across projects by state, priority and progress | Projects panel: [state counters](../controls/state-counters.md) per project; click opens Tasks filtered |
 | Everything waiting for a person | Needs-you panel: [decision blocks](../controls/decision-block.md) and [problem rows](../controls/problem-row.md) |
-| Load and capacity by host and account, with placement reasons | Workers per host (running/slots, queued); placement reasons in the host detail (Hosts page) |
+| Load and capacity by host and account, with placement reasons | Workers per host (running/slots, [harness counts](../controls/harness-counts.md), queued); placement reasons in the host detail (Hosts page) |
 | Account and quota state per subscription | Accounts panel: [fill bar](../controls/fill-bar.md) in percent, reset time in the tooltip, unavailable when unknown |
 | Change priority; pause or continue work | Actions in the task detail; priority is an open item for the Tasks list (sort by priority) |
 
-**Open.** The priority control (a column or a sort) is not yet designed. The inventory needs it.
+**Open.** Changing priority from the Overview: priority is a task field shown by grouping (D11); the edit control is not yet designed.

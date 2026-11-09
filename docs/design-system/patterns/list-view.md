@@ -9,13 +9,13 @@
 2. **Second line:**
    * saved views: pinned chips with unpin, plus "Save view";
    * [state counters](../controls/state-counters.md): totals per state, click to filter;
-   * "Group by": state, project, or none.
+   * "Group": priority, state, project, agent, host, or none (D11). A saved view stores its grouping.
 3. **[Virtual list](../controls/data-list.md):**
    * group header rows;
-   * title-first rows (OR-21) with one service zone: ID, state icon, agent, age chip, cost with basis, pin.
+   * rows in OR-22 order: state icon, title with its ID, then the service zone (harness mark while running, stage chip, age chip, cost with basis, pin).
 
 **Behaviour.**
-* Default grouping is by state, in attention order: waiting, failed, in progress, queued, paused, completed, cancelled. Completed and cancelled start collapsed.
+* Default grouping is by priority (D11). Grouping by state uses attention order: waiting, failed, in progress, queued, paused, completed, cancelled. Completed and cancelled start collapsed.
 * Pinned items come first within their group.
 * The whole view (filters, states, grouping, search) is in the URL and remembered per person ([principles §4](../principles.md#4-filters-and-search)).
 * Clicking a title opens the item in [list-detail](list-detail.md). The row stays selected.

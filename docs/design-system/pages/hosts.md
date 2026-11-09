@@ -13,10 +13,10 @@
 | Inventory item | Shown by |
 |---|---|
 | Hosts: platform, last contact, observation state, harness versions, readiness | Table: name, platform, [state icon](../controls/state-badge.md) (unconfirmed overlay when offline), last contact [age chip](../controls/number.md) (attention past 15m) |
-| Environments and account users per host | Not in the mockup; planned as a host detail tab |
+| Environments and account users per host | Host detail: stacked [detail sections](../controls/detail-section.md) (C3) |
 | Stores: capacity, used, free, tunnel state, fill per project | [Fill bar](../controls/fill-bar.md) per host with project segments, free space and warning mark |
 | Store capacity, memory and CPU bounds, free-space warning | Setting fields with applied, pending or apply error |
 | Low space: raise capacity, change locations, add retention rule | Problem row actions |
-| Workers running per host (owner, D9) | Stat strip and the Workers column (running/slots, queue) |
+| Workers running per host (owner, D9, D11) | Stat strip and the Workers column: running/slots plus [harness counts](../controls/harness-counts.md) |
 
-**Open.** The host detail tabs (environments, account users, harness versions) and the tunnel state column.
+**Open.** None from stage 3.

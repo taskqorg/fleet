@@ -7,7 +7,7 @@ import { useHashLocation } from 'wouter-preact/use-hash-location';
 import {
   AppShell, TaskListView, StatStrip, DecisionBlock, ProblemRow, FillBar, StateBadge, Num, Totals, AgeChip, ExecTree, Transcript,
   ResultViewer, SettingField, SplitButton, Button, Empty, VirtualList, Icon, Stale, StateCounters, FilterBar,
-  ListDetail, NeedsYou, OpsSummary, ListFrame, type TaskRow,
+  ListDetail, NeedsYou, OpsSummary, ListFrame, OutcomeBlock, DetailSection, KvRow, HarnessCounts, type TaskRow,
 } from '../src/index';
 import { NAV } from './nav';
 import { NOW, min, hr, tasks, TREE, transcript, hosts, PROJECTS } from './fixtures';
@@ -55,6 +55,7 @@ function Overview() {
             <StateBadge family="host" state={h.online ? 'online' : 'offline'} compact />
             <span class="k">{h.id}</span>
             <span class="v"><Num m={{ value: h.running, basis: 'measured', partial: h.online ? undefined : 'last known' }} kind="count" /><span class="muted">/{h.slots}</span></span>
+            <HarnessCounts counts={h.byHarness} label={`${h.id} workers by harness`} />
             <span class="v muted">{h.queued ? `${h.queued} queued` : ''}</span>
           </li>)}</ul>
         </Panel>
@@ -106,6 +107,10 @@ function TaskDetail({ t, onClose }: { t: TaskRow; onClose: () => void }) {
     </header>
     <h2 class="detail-title">{t.title}</h2>
     <div class="state-line"><StateBadge family="task" state={t.state} reason={t.reason} /><AgeChip t={t.started} now={NOW} /></div>
+    <OutcomeBlock outcome="Release notes for 0.4 in docs/releases/0.4.md, reviewed, linked from the changelog."
+      requirements={[{ text: 'Covers every merged PR since 0.3', met: true }, { text: 'Reviewed by the reviewer role', met: false }, { text: 'Linked from CHANGELOG.md', met: false }]}
+      inputs={[{ icon: 'file-text', label: 'template.md' }, { icon: 'git-pull-request', label: '14 merged PRs' }, { icon: 'messages-square', label: 'PM session' }]}
+      depends="Depends on T-9976 (completed)" />
     <Totals items={[
       { label: 'Time', m: { value: 860, basis: 'measured' }, kind: 'duration' },
       { label: 'Tokens', m: { value: 182000, basis: 'measured', partial: '2 of 3 measured' }, kind: 'count', note: '2 of 3 measured' },
@@ -175,26 +180,44 @@ function Hosts() {
   const h = hosts.find(x => x.id === sel)!;
   return <>
     <PageHead title="Hosts"><Stale at={NOW - 40e3} now={NOW} /></PageHead>
-    <StatStrip label="Workers per host" stats={hosts.map(x => ({ label: x.id, icon: 'panels-top-left' as const, value: { value: x.running, basis: 'measured' as const, partial: x.online ? undefined : 'last known' }, of: x.slots, tone: x.running >= x.slots ? 'attention' as const : undefined }))} />
+    <StatStrip label="Workers per host" stats={hosts.map(x => ({ label: x.id, icon: 'panels-top-left' as const, value: { value: x.running, basis: 'measured' as const, partial: x.online ? undefined : 'last known' }, of: x.slots, tone: x.running >= x.slots ? 'attention' as const : undefined, harness: x.byHarness }))} />
     <ProblemRow severity="warning" title="Low space on windows store" facts={<><span class="mono">18 GB</span> free, warning at <span class="mono">25 GB</span> · 4 uploads waiting</>}
       actions={[{ label: 'Raise capacity', primary: true }, { label: 'Change game locations' }, { label: 'Add retention rule' }]} />
     <Panel title="Hosts and stores">
-      <div class="vl-wrap" style={{ '--cols': 'minmax(6rem,10rem) 1.25rem 3.5rem 4rem 3rem minmax(0,1fr)' }}>
-        <div class="vl-head" role="row"><span>Host</span><span /><span>Seen</span><span class="r">Workers</span><span class="r">Queue</span><span>Store</span></div>
+      <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(6rem,9rem) 3rem 3.5rem 7rem 3rem minmax(0,1fr)' }}>
+        <div class="vl-head" role="row"><span /><span>Host</span><span>Seen</span><span class="r">Workers</span><span /><span class="r">Queue</span><span>Store</span></div>
         {hosts.map(x => <div key={x.id} role="row" class={`vl-row static${x.id === sel ? ' sel' : ''}`} onClick={() => setSel(x.id)}>
-          <span class="title">{x.id} <span class="id">{x.platform}</span></span>
           <StateBadge family="host" state={x.online ? 'online' : 'offline'} compact lastSeen={x.online ? undefined : x.lastSeen} now={NOW} />
+          <span class="title">{x.id} <span class="id">{x.platform}</span></span>
           <span><AgeChip t={x.lastSeen} now={NOW} alertAfter={15 * 60} tone="attention" /></span>
           <span class="r"><Num m={{ value: x.running, basis: 'measured', partial: x.online ? undefined : 'last known' }} kind="count" /><span class="muted">/{x.slots}</span></span>
+          <HarnessCounts counts={x.byHarness} label={`${x.id} workers by harness`} />
           <span class="r"><Num m={{ value: x.queued, basis: 'measured' }} kind="count" /></span>
           <FillBar total={x.store.total} segments={x.store.segments} warnAt={x.store.warnAt} stale={x.store.stale} now={NOW} />
         </div>)}
       </div>
     </Panel>
-    <Panel title={`${h.id} settings`}>
-      <SettingField label="Store capacity" value={h.capacity.value} help="Garage layout capacity." now={NOW} status={h.capacity.status} changed={{ by: 'Alex', at: NOW - 20 * min }} />
-      <SettingField label="Free-space warning" value="25 GB" help="Below this, the store shows a problem." now={NOW} status={{ kind: 'applied', at: NOW - 2 * hr }} />
-      <SettingField label="ClickHouse memory" value="4 GB" help="systemd MemoryMax for the Fleet unit." now={NOW} status={{ kind: 'applied', at: NOW - 5 * hr }} />
+    <Panel title={`${h.id} ${h.platform}`}>
+      <div class="stack-pad">
+        <DetailSection title="Environments">
+          <KvRow icon="folder-open" label="game-worktree-3" meta="codex · T-9976" value={<Num m={{ value: 4.2e9, basis: 'measured' }} kind="bytes" />} />
+          <KvRow icon="folder-open" label="design-main" meta="idle" value={<Num m={{ value: 1.1e9, basis: 'measured' }} kind="bytes" />} />
+        </DetailSection>
+        <DetailSection title="Account users">
+          <KvRow icon="bot" label="fleet-codex" meta="codex-pro" /><KvRow icon="bot" label="fleet-claude" meta="claude-max" />
+        </DetailSection>
+        <DetailSection title="Harnesses">
+          <KvRow icon="openai" label="codex" meta={<span class="mono">0.48.1</span>} value={<span class="muted">ready</span>} />
+          <KvRow icon="claude" label="claude" meta={<span class="mono">2.1.0</span>} value={<span class="muted">ready</span>} />
+          <KvRow icon="antigravity" label="agy" meta={<span class="mono">0.9.2</span>} value={<span class="muted">unchecked</span>} />
+        </DetailSection>
+        <DetailSection title="Store and tunnel">
+          <KvRow icon="shield" label="Tunnel" meta="connected" value={<AgeChip t={NOW - 12 * min} now={NOW} />} />
+          <SettingField label="Store capacity" value={h.capacity.value} help="Garage layout capacity." now={NOW} status={h.capacity.status} changed={{ by: 'Alex', at: NOW - 20 * min }} />
+          <SettingField label="Free-space warning" value="25 GB" help="Below this, the store shows a problem." now={NOW} status={{ kind: 'applied', at: NOW - 2 * hr }} />
+          <SettingField label="ClickHouse memory" value="4 GB" help="systemd MemoryMax for the Fleet unit." now={NOW} status={{ kind: 'applied', at: NOW - 5 * hr }} />
+        </DetailSection>
+      </div>
     </Panel>
   </>;
 }

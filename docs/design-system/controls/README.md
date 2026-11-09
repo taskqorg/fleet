@@ -20,5 +20,9 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [split-button](split-button.md) | Default action with alternatives |
 | [state-counters](state-counters.md) | Counts per state, quick state filter |
 | [stat-strip](stat-strip.md) | Operational counts |
+| [harness-counts](harness-counts.md) | Which harness runs it; workers per harness |
+| [stage-chip](stage-chip.md) | Delivery stage of a task |
+| [outcome-block](outcome-block.md) | Task outcome, requirements and inputs |
+| [detail-section](detail-section.md) | Stacked detail areas |
 | [problem-row](problem-row.md) | Signals with cause and actions |
 | [status-states](status-states.md) | Empty, loading, error and stale |

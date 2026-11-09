@@ -1,5 +1,6 @@
 // One catalogue of icons, state names and navigation anchors (OR-1, OR-3, OR-8).
-// Icons are the TaskQ set: Lucide static 1.17.0 (ISC), copied from taskq/src/ui-icons.json.
+// Icons are the TaskQ set: Lucide static 1.17.0 (ISC) from taskq/src/ui-icons.json, plus the harness and
+// provider marks from taskq/src/project-blocks.js (attribution: taskq docs/design/visual-style.md).
 import icons from '../icons.json';
 
 export type IconName = keyof typeof icons;
@@ -66,3 +67,22 @@ export const actions = {
   open: 'external-link', copy: 'copy', download: 'download', settings: 'settings', more: 'ellipsis',
   expand: 'chevron-down', back: 'arrow-left', share: 'paperclip', save: 'save', remove: 'trash-2', info: 'info',
 } as const satisfies Record<string, IconName>;
+
+/** Harnesses (agents' programs), shown as their mark (OR-1). */
+export const harnesses = {
+  codex: { label: 'Codex', icon: 'openai' },
+  claude: { label: 'Claude', icon: 'claude' },
+  antigravity: { label: 'Antigravity', icon: 'antigravity' },
+} as const satisfies Record<string, { label: string; icon: IconName }>;
+export type Harness = keyof typeof harnesses;
+
+/** Delivery stages shown on a task alongside its state (fleet.md: review, merge and deployment as stages). */
+export const stages = {
+  pr_open: { label: 'PR open', tone: 'neutral', icon: 'git-pull-request' },
+  checks: { label: 'Checks running', tone: 'running', icon: 'circle-dashed' },
+  checks_failed: { label: 'Checks failed', tone: 'danger', icon: 'circle-x' },
+  merging: { label: 'Merging', tone: 'running', icon: 'git-merge' },
+  merged: { label: 'Merged', tone: 'success', icon: 'check-check' },
+  deploying: { label: 'Deploying', tone: 'running', icon: 'rotate-cw' },
+} as const satisfies Record<string, StateDef>;
+export type Stage = keyof typeof stages;

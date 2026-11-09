@@ -1,7 +1,7 @@
 // Fleet controls. Specs: docs/design-system/controls/*.md. Styling: styles.css with tokens only.
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { type IconName, type Family, type StateOf, type StateDef, type Tone, iconSvg, states, actions } from './registry';
+import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages } from './registry';
 import { type Measured, type Kind, measured, age, bytes, exact, percent } from './format';
 import { VirtualList } from './virtual-list';
 import tokens from '../tokens.json';
@@ -462,14 +462,60 @@ export function NavRail({ items, pinned, current, onPin, onGo }: {
 
 /* ---------- Stat strip: operational counts (stat-strip.md) ---------- */
 
-export type Stat = { label: string; icon: IconName; value: Measured; kind?: Kind; of?: number; tone?: Tone; href?: string };
+export type Stat = { label: string; icon: IconName; value: Measured; kind?: Kind; of?: number; tone?: Tone; href?: string; harness?: Partial<Record<Harness, number>> };
 export function StatStrip({ stats, label }: { stats: Stat[]; label: string }) {
   return (
     <div class="stats" data-ui="stat-strip" role="list" aria-label={label}>
       {stats.map(s => {
-        const body = <><Icon name={s.icon} /><span class="sv"><Num m={s.value} kind={s.kind ?? 'count'} />{s.of !== undefined && <span class="of">/{s.of}</span>}</span><span class="sl">{s.label}</span></>;
+        const body = <><Icon name={s.icon} /><span class="sv"><Num m={s.value} kind={s.kind ?? 'count'} />{s.of !== undefined && <span class="of">/{s.of}</span>}</span><span class="sl">{s.label}</span>{s.harness && <HarnessCounts counts={s.harness} label={`${s.label} by harness`} />}</>;
         return <span role="listitem" key={s.label} class={`stat${s.tone ? ` t-${s.tone} toned` : ''}`}>{s.href ? <a href={s.href}>{body}</a> : body}</span>;
       })}
     </div>
   );
 }
+
+/* ---------- Harness mark, harness counts, stage chip (D11) ---------- */
+
+/** Which harness runs it: the mark only, name in the tooltip (OR-1, OR-20). */
+export const HarnessMark = ({ h }: { h: Harness }) =>
+  <span class="harness" data-ui="harness-counts" data-tip={harnesses[h].label} role="img" aria-label={harnesses[h].label}><Icon name={harnesses[h].icon} /></span>;
+
+/** Counts per harness as mark + number; zero counts are omitted. */
+export function HarnessCounts({ counts, label }: { counts: Partial<Record<Harness, number>>; label: string }) {
+  const parts = (Object.keys(harnesses) as Harness[]).filter(h => (counts[h] ?? 0) > 0);
+  return <span class="harness-counts" data-ui="harness-counts" role="group" aria-label={label}>
+    {parts.map(h => <span key={h} class="hc" data-tip={harnesses[h].label} aria-label={`${harnesses[h].label} ${counts[h]}`}><Icon name={harnesses[h].icon} /><span class="num">{counts[h]}</span></span>)}
+  </span>;
+}
+
+/** Delivery stage as a compact chip: icon, plus the short name only where the icon is not enough. */
+export function StageChip({ stage }: { stage: Stage }) {
+  const d = stages[stage] as StateDef;
+  return <span class={`badge compact t-${d.tone}`} data-ui="stage-chip" role="img" aria-label={d.label} data-tip={d.label}><Icon name={d.icon} /></span>;
+}
+
+/* ---------- Outcome block (D11, B2) ---------- */
+
+export function OutcomeBlock({ outcome, requirements, inputs, depends }: {
+  outcome: string; requirements: { text: string; met: boolean }[]; inputs: { icon: IconName; label: string }[]; depends?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const met = requirements.filter(r => r.met).length;
+  return <div class="outcome" data-ui="outcome-block">
+    <button type="button" class="tw" aria-expanded={open} aria-label={open ? 'Collapse outcome' : 'Expand outcome'} onClick={() => setOpen(!open)}><span class={open ? 'chev open' : 'chev'}><Icon name="chevron-down" /></span></button>
+    <div class="outcome-b">
+      <p class={open ? '' : 'clamp'}>{outcome}</p>
+      <div class="outcome-meta"><span class={`chip-age${met < requirements.length ? '' : ' t-success alert'}`} aria-label={`${met} of ${requirements.length} requirements met`}>{met}/{requirements.length}</span>
+        {inputs.map(i => <span key={i.label} class="chip in"><Icon name={i.icon} />{i.label}</span>)}</div>
+      {open && <ul class="reqs">{requirements.map(r => <li key={r.text}><Icon name={r.met ? 'circle-check' : 'square'} />{r.text}</li>)}</ul>}
+      {open && depends && <p class="muted">{depends}</p>}
+    </div>
+  </div>;
+}
+
+/* ---------- Detail sections (D11, C3) ---------- */
+
+export const DetailSection = ({ title, children }: { title: string; children: ComponentChildren }) =>
+  <section class="dsec" data-ui="detail-section"><h3>{title}</h3>{children}</section>;
+export const KvRow = ({ icon, label, meta, value }: { icon: IconName; label: string; meta?: ComponentChildren; value?: ComponentChildren }) =>
+  <div class="kv-row"><Icon name={icon} /><b>{label}</b>{meta && <span class="muted">{meta}</span>}<span class="grow" />{value}</div>;
