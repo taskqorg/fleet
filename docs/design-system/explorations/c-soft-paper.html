@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fleet direction C · Soft paper</title>
+<!-- Exploration specimen, stage 1. Synthetic data. Offline, no external files. -->
+<style>
+:root{color-scheme:light;--font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;--num:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;--bg:#f3f1ec;--bar:#f3f1ec;--panel:#fffdf9;--fg:#2a2622;--muted:#6f675e;--line:#e4dfd6;--line-soft:#efebe4;--hover:#f8f5ef;--sel:#efe8dc;--accent:#b4532a;--on-accent:#fff;--btn:#fffdf9;--r:8px;--rp:12px;--rc:99px;--gap:16px;--row:48px;--pane-border:0;--badge-pad:1px 8px;--title-display:block;--meta-gap:0;--attn-fg:#97570a;--attn-bg:#fbe9cc;--attn-soft:#fdf4e5;--attn-line:#eccb92;--bad-fg:#a8321e;--bad-bg:#f8e0d9;--run-fg:#2f5f8a;--run-bg:#e2ebf3;--ok-fg:#3d7a4a;--ok-bg:#e4f0e3;--neutral-bg:#eeeae2;--est:#7d5a9e;--d1:#b4532a;--d2:#e0a684}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;--bg:#1a1816;--bar:#1a1816;--panel:#24211e;--fg:#ece6dd;--muted:#a69d91;--line:#3a352f;--line-soft:#2e2a26;--hover:#2a2622;--sel:#3a2f25;--accent:#e8875a;--on-accent:#1a0e07;--btn:#2a2622;--attn-fg:#f0b45e;--attn-bg:#3d2c12;--attn-soft:#2b2218;--attn-line:#6b4f22;--bad-fg:#f08a75;--bad-bg:#3e1d16;--run-fg:#8fbbe0;--run-bg:#1f2d3a;--ok-fg:#86c793;--ok-bg:#1d3221;--neutral-bg:#322d28;--est:#c4a6e3;--d1:#e8875a;--d2:#8a4f33}}
+:root[data-theme=dark]{color-scheme:dark;--bg:#1a1816;--bar:#1a1816;--panel:#24211e;--fg:#ece6dd;--muted:#a69d91;--line:#3a352f;--line-soft:#2e2a26;--hover:#2a2622;--sel:#3a2f25;--accent:#e8875a;--on-accent:#1a0e07;--btn:#2a2622;--attn-fg:#f0b45e;--attn-bg:#3d2c12;--attn-soft:#2b2218;--attn-line:#6b4f22;--bad-fg:#f08a75;--bad-bg:#3e1d16;--run-fg:#8fbbe0;--run-bg:#1f2d3a;--ok-fg:#86c793;--ok-bg:#1d3221;--neutral-bg:#322d28;--est:#c4a6e3;--d1:#e8875a;--d2:#8a4f33}
+*{box-sizing:border-box}html,body{margin:0}body{background:var(--bg);color:var(--fg);font:var(--font);-webkit-font-smoothing:antialiased}
+button,input{font:inherit;color:inherit}
+.top{display:flex;align-items:center;gap:16px;padding:0 16px;height:44px;border-bottom:1px solid var(--line);background:var(--bar)}
+.top nav{display:flex;gap:2px;align-items:center}.top nav a{color:var(--muted);text-decoration:none;padding:6px 10px;border-radius:var(--r)}.top nav a[aria-current]{color:var(--fg);background:var(--sel)}
+.sep{width:1px;height:18px;background:var(--line);margin:0 6px}.spacer{flex:1}
+.waiting-count{color:var(--attn-fg);background:var(--attn-bg);padding:2px 8px;border-radius:var(--r)}
+.theme{background:none;border:1px solid var(--line);border-radius:var(--r);padding:3px 8px;cursor:pointer}
+.layout{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:var(--gap);padding:var(--gap)}
+.hosts{grid-column:1/-1}.list{overflow-x:auto}
+.pane{background:var(--panel);border:var(--pane-border);border-radius:var(--rp);min-width:0;position:relative;overflow:hidden}
+.detail,.hosts{padding:12px 16px}
+.filterbar{padding:8px 12px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+.search{width:100%;padding:6px 10px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;color:var(--muted)}
+.chip{border:1px solid var(--line);border-radius:var(--rc);padding:1px 4px 1px 8px;color:var(--fg)}.chip button{border:0;background:none;cursor:pointer;color:var(--muted)}
+.saved b{color:var(--fg)}.link{border:0;background:none;color:var(--accent);cursor:pointer}.count{margin-left:auto;font-variant-numeric:tabular-nums}
+.newpill{position:absolute;left:50%;transform:translateX(-50%);top:118px;background:var(--accent);color:var(--on-accent);padding:2px 10px;border-radius:99px;font-size:.85em;z-index:1}
+table.grid{width:100%;border-collapse:collapse}
+.grid th{text-align:left;font-weight:500;color:var(--muted);font-size:.85em;padding:6px 12px;border-bottom:1px solid var(--line)}
+.grid td{padding:0 12px;height:var(--row);border-bottom:1px solid var(--line-soft);vertical-align:middle;white-space:nowrap}
+.grid tbody tr:hover{background:var(--hover)}.grid tr.sel{background:var(--sel);box-shadow:inset 3px 0 var(--accent)}
+.grid .t{display:var(--title-display);font-weight:500;overflow:hidden;text-overflow:ellipsis;max-width:26ch;vertical-align:middle}
+.id,.reason{color:var(--muted);font-size:.85em;margin-left:var(--meta-gap)}.grid .id{display:var(--title-display)}
+.n{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--num)}
+.badge{line-height:1.5;vertical-align:middle;display:inline-flex;align-items:center;gap:5px;font-size:.85em;padding:var(--badge-pad);border-radius:var(--rc);background:var(--b-bg);color:var(--b-fg);font-weight:500}
+.badge::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.badge.waiting{--b-fg:var(--attn-fg);--b-bg:var(--attn-bg)}.badge.failed{--b-fg:var(--bad-fg);--b-bg:var(--bad-bg)}
+.badge.running{--b-fg:var(--run-fg);--b-bg:var(--run-bg)}.badge.ok,.badge.done{--b-fg:var(--ok-fg);--b-bg:var(--ok-bg)}
+.badge.queued,.badge.paused,.badge.cancelled{--b-fg:var(--muted);--b-bg:var(--neutral-bg)}
+.badge.unconf{--b-fg:var(--muted);--b-bg:transparent;outline:1px dashed var(--muted)}.badge.unconf::before{background:none;border:1.5px solid currentColor;box-sizing:border-box}
+.reason.unconf{font-style:italic}
+.est{font-style:italic;color:var(--est);text-decoration:underline dotted;text-underline-offset:3px}
+.na{color:var(--muted);opacity:.8}
+h1{font-size:1.25em;margin:2px 0 6px;font-weight:600}h2{font-size:1em;margin:16px 0 8px;font-weight:600}
+.crumb{margin:0;color:var(--muted);font-size:.85em}.state-line{margin:0 0 10px;color:var(--muted)}.state-line b{color:var(--fg)}
+.totals{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.totals div{background:var(--panel);padding:8px 10px;display:flex;flex-direction:column}.totals .k{color:var(--muted);font-size:.8em}.totals .v{font-size:1.15em;font-family:var(--num);font-variant-numeric:tabular-nums}.totals .sub{color:var(--muted);font-size:.75em}
+.decision{margin-top:12px;border:1px solid var(--attn-line);background:var(--attn-soft);border-radius:var(--r);padding:10px 12px}
+.decision .dh span{color:var(--muted);font-size:.85em;margin-left:6px}.decision p{margin:6px 0 8px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}.actions input{flex:1;min-width:140px;padding:5px 8px;border:1px solid var(--line);border-radius:var(--r);background:var(--panel)}
+button{cursor:pointer;background:var(--btn);border:1px solid var(--line);border-radius:var(--r);padding:4px 10px}
+button.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+kbd{font:inherit;font-size:.75em;opacity:.7;margin-left:4px;border:1px solid currentColor;border-radius:3px;padding:0 3px}
+button:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tree,.tree ul{list-style:none;margin:0;padding:0}.tree ul{padding-left:28px;border-left:1px solid var(--line);margin-left:7px}
+.tree li{line-height:var(--row)}.tw{display:inline-block;width:16px;color:var(--muted)}.tree .m{color:var(--muted);float:right;font-family:var(--num);font-variant-numeric:tabular-nums;font-size:.9em}
+.fill{display:inline-flex;width:140px;height:8px;background:var(--neutral-bg);border-radius:4px;overflow:hidden;vertical-align:middle}.fill i{display:block;height:100%}.fill .p1{background:var(--d1)}.fill .p2{background:var(--d2)}.fill.warn{outline:1.5px solid var(--attn-fg);outline-offset:1px}
+.applied{color:var(--ok-fg);font-size:.85em;margin-left:6px}.err{color:var(--bad-fg);font-size:.85em;margin-left:6px}.pending{color:var(--muted);font-size:.85em;margin-left:6px;font-style:italic}
+tr.problem{background:var(--attn-soft)}
+.problemrow{margin-top:10px;padding:8px 12px;border-left:3px solid var(--attn-fg);background:var(--attn-soft);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+@media (max-width:1100px){.layout{grid-template-columns:1fr}}
+@media (max-width:640px){.top nav a:not([aria-current]){display:none}.grid th:nth-child(3),.grid td:nth-child(3),.grid th:nth-child(4),.grid td:nth-child(4){display:none}.grid .t{max-width:20ch}.totals{grid-template-columns:repeat(2,1fr)}.hosts{overflow-x:auto}.tree .m{float:none;display:block;line-height:1.3;margin-left:16px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style></head><body>
+<p style="margin:0;padding:6px 16px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line)">Direction C · Soft paper: warm off-white, rounded floating panes, two-line rows (48 px), softer colour, more air.</p>
+<header class="top">
+  <strong class="brand">Fleet</strong>
+  <nav><a aria-current="page" href="#">Overview</a><a href="#">Tasks</a><a href="#">Results</a><span class="sep"></span><a href="#">Hosts</a><a href="#">Laboratory</a></nav>
+  <span class="spacer"></span>
+  <span class="waiting-count">3 waiting for you</span>
+  <button class="theme" type="button" onclick="var r=document.documentElement;r.dataset.theme=(r.dataset.theme==='dark'||(!r.dataset.theme&&matchMedia('(prefers-color-scheme: dark)').matches))?'light':'dark'">Light / dark</button>
+</header>
+<main class="layout">
+<section class="pane list" aria-label="Tasks">
+  <div class="filterbar">
+    <input class="search" type="search" placeholder="Search tasks  /" value="">
+    <div class="chips">
+      <span class="saved">Saved: <b>My waiting</b> · Failed today · dashq</span>
+      <span class="chip">Project: dashq <button aria-label="Remove project filter">×</button></span>
+      <span class="chip">State: not completed <button aria-label="Remove state filter">×</button></span>
+      <button class="link">Clear</button>
+      <span class="count">84 of 1,240</span>
+    </div>
+  </div>
+  <div class="newpill">12 new ↑</div>
+  <table class="grid">
+    <thead><tr><th>Task</th><th>State</th><th>Agent</th><th class="n">Time</th><th class="n">Cost</th></tr></thead>
+    <tbody>
+      <tr class="sel"><td><span class="t">Hello World page: rework hero copy</span><span class="id">T-1042 · dashq</span></td><td><span class="badge waiting">Waiting</span><span class="reason">acceptance by you</span></td><td>codex</td><td class="n">14m</td><td class="n"><span class="est">≈ $0.42</span></td></tr>
+      <tr><td><span class="t">Render prop batch 3</span><span class="id">T-1041 · game</span></td><td><span class="badge failed">Failed</span><span class="reason">step render-07 exit 1</span></td><td>pipeline</td><td class="n">1h 02m</td><td class="n">$3.10</td></tr>
+      <tr><td><span class="t">Fix CI cache key</span><span class="id">T-1039 · dashq</span></td><td><span class="badge running">In progress</span><span class="reason unconf">unconfirmed · seen 4m ago</span></td><td>claude</td><td class="n">22m</td><td class="n"><span class="na" title="unavailable: no meter on this account">—</span></td></tr>
+      <tr><td><span class="t">Character hands rework</span><span class="id">T-1037 · game</span></td><td><span class="badge queued">Queued</span><span class="reason">no free Windows slot</span></td><td>codex</td><td class="n">—</td><td class="n">$0.00</td></tr>
+      <tr><td><span class="t">Compare 3D methods for props</span><span class="id">T-1033 · lab</span></td><td><span class="badge paused">Paused</span><span class="reason">by Alex</span></td><td>claude</td><td class="n">3h 40m</td><td class="n">$12.80</td></tr>
+      <tr><td><span class="t">Write release notes 0.4</span><span class="id">T-1030 · fleet</span></td><td><span class="badge done">Completed</span><span class="reason">accepted automatically</span></td><td>codex</td><td class="n">6m</td><td class="n">$0.11</td></tr>
+      <tr><td><span class="t">Investigate disk alert on PDS18</span><span class="id">T-1028 · fleet</span></td><td><span class="badge done">Completed</span><span class="reason">false alarm</span></td><td>claude</td><td class="n">9m</td><td class="n"><span class="est">≈ $0.20</span></td></tr>
+      <tr><td><span class="t">Old migration cleanup</span><span class="id">T-1025 · dashq</span></td><td><span class="badge cancelled">Cancelled</span><span class="reason">superseded by T-1039</span></td><td>codex</td><td class="n">2m</td><td class="n">$0.03</td></tr>
+    </tbody>
+  </table>
+</section>
+<section class="pane detail" aria-label="Task detail">
+  <p class="crumb">dashq / T-1042</p>
+  <h1>Hello World page: rework hero copy</h1>
+  <p class="state-line"><span class="badge waiting">Waiting</span> for acceptance by <b>you</b> · since 12 min · releases when accepted or returned for rework</p>
+  <div class="totals">
+    <div><span class="k">Time</span><span class="v">14m 20s</span></div>
+    <div><span class="k">Tokens</span><span class="v">≥ 182k</span><span class="sub">2 of 3 measured</span></div>
+    <div><span class="k">Cost</span><span class="v est">≈ $0.42</span><span class="sub">estimated from tokens</span></div>
+    <div><span class="k">API calls</span><span class="v na">—</span><span class="sub">unavailable: no gateway</span></div>
+  </div>
+  <div class="decision" role="group" aria-label="Decision waiting">
+    <div class="dh"><b>Accept this result?</b> <span>Asked by reviewer (claude) · addressed to you</span></div>
+    <p>Hero copy rewritten; checks passed: links, contrast, screenshots desktop and phone.</p>
+    <div class="actions"><button class="primary">Accept <kbd>a</kbd></button><button>Request rework <kbd>r</kbd></button><input placeholder="Or type an answer…"></div>
+  </div>
+  <h2>Executions</h2>
+  <ul class="tree">
+    <li><span class="tw">▾</span><span class="badge ok">Succeeded</span> Worker · codex · windows <span class="m">9m · 120k tok · $0.30</span>
+      <ul><li><span class="badge ok">Succeeded</span> edit index.html <span class="m">2m</span></li><li><span class="badge ok">Succeeded</span> run checks <span class="m">1m</span></li></ul></li>
+    <li><span class="tw">▾</span><span class="badge waiting">Waiting</span> Reviewer · claude · mac <span class="m">4m · 62k tok · <span class="est">≈ $0.12</span></span>
+      <ul><li><span class="badge ok">Succeeded</span> screenshot desktop, phone <span class="m">40s</span></li><li><span class="badge waiting">Waiting</span> question: accept? <span class="m">12m</span></li></ul></li>
+    <li><span class="tw">▸</span><span class="badge queued">Preparing</span> Merge · program <span class="m"><span class="na">— not started</span></span></li>
+  </ul>
+</section>
+<section class="pane hosts" aria-label="Hosts">
+  <h2>Hosts and stores</h2>
+  <table class="grid">
+    <thead><tr><th>Host</th><th>Contact</th><th>Store fill</th><th class="n">Free</th><th>Capacity setting</th></tr></thead>
+    <tbody>
+      <tr><td><span class="t">PDS18</span><span class="id">linux · 4 harnesses</span></td><td><span class="badge ok">Online</span><span class="reason">just now</span></td><td><div class="fill" aria-label="62% used"><i style="width:40%" class="p1"></i><i style="width:22%" class="p2"></i></div><span class="reason">dashq 40% · fleet 22%</span></td><td class="n">380 GB</td><td>1 TB <span class="applied">applied 10:42</span></td></tr>
+      <tr class="problem"><td><span class="t">windows</span><span class="id">windows · 3 harnesses</span></td><td><span class="badge ok">Online</span><span class="reason">40s ago</span></td><td><div class="fill warn" aria-label="91% used"><i style="width:78%" class="p1"></i><i style="width:13%" class="p2"></i></div><span class="reason">game 78% · design 13%</span></td><td class="n">18 GB</td><td>200 GB <span class="err">apply error: Garage admin timeout</span></td></tr>
+      <tr><td><span class="t">mac</span><span class="id">macos · 3 harnesses</span></td><td><span class="badge unconf">Unconfirmed</span><span class="reason">last seen 2h ago</span></td><td><div class="fill"><i style="width:30%" class="p2"></i></div><span class="reason">design 30% · as of 2h ago</span></td><td class="n"><span class="na">—</span></td><td>500 GB <span class="pending">pending</span></td></tr>
+    </tbody>
+  </table>
+  <div class="problemrow"><b>Low space on windows store</b> · 18 GB free, warning at 25 GB · <button>Raise capacity</button><button>Change game locations</button><button>Add retention rule</button></div>
+</section>
+</main>
+</body></html>
