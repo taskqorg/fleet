@@ -12,5 +12,6 @@
   "reloadPersists": true,
   "outboxAfter": 0,
   "nativeEffectLaunches": 2,
-  "noNativeReplay": true
+  "noNativeReplay": true,
+  "testedExecutorSha256": "f7423847b21b00d4f52706d81be6fbb5ee6513377feebc90e8d998009b30c5c3"
 }

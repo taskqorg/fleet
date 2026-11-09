@@ -1,6 +1,6 @@
 # Architecture coverage
 
-2026-11-09. The connected multi-harness/project candidate is now deployed as `candidate-236931ff00c2`, source `cde6b4904c91d35f9e68f0fdbfde4c129ac660fe`, executor SHA256 `21aa1379f58ff7ad80f0c11638cc2283d78d6ee48577947789aa2a072a0834fb`. It is no longer an undeployed local candidate. Evidence-only commits do not change runtime. This matrix does not declare nine areas universally complete.
+2026-11-09. The connected multi-harness/project candidate is now deployed as `candidate-683f0e88c04c`, source `9bd1b8a14c024babe4b2bfe62a24e9bd8d2a137d`, executor SHA256 `21aa1379f58ff7ad80f0c11638cc2283d78d6ee48577947789aa2a072a0834fb`. It is no longer an undeployed local candidate. Evidence-only commits do not change runtime. This matrix does not declare nine areas universally complete.
 
 | Area | Implemented | Deterministic proof | Actual native/live proof | Gap / decision |
 |---|---|---|---|---|
@@ -31,3 +31,7 @@ PDS18 has no Codex/agy executable under fleet and no provisioned Linux native id
 ## Contained credential incident
 
 One old Fleet machine bearer appeared in a diagnostic transcript. Scoped rotation completed while idle: old safe invalid-host probe401, replacement403 after authentication, no dispatch. Native credentials unchanged. Diagnostics use metadata allowlists; staged/archive scans exclude old/current bearer bytes and private raw frames. Historical protected backup retains the revoked value; transcript deletion is not claimed. [Rotation proof](../evidence/fleet-machine-rotation.json).
+
+## Supported recovery follow-up
+
+[Next-stage plan](next-stage-plan.md) separates canonical requirements from three candidate milestones. [Recovery implementation/proof](recovery-milestone.md) adds shared inspection and audited authorization of the exact retained closure/resource sequence conflict, without native replay or outcome promotion. API/MCP ownership/Origin tests and an isolated actual executor plus browser reload pass; two independent account/session processes overlap with context/event/result separation. Program-worker crash evidence stays unknown/non-replayed. This is not live crash recovery, remote native proof or generic retry. Earlier connected native calls were not repeated.

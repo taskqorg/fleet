@@ -1,0 +1,44 @@
+{
+  "actionCount": 0,
+  "evidence": {
+    "audit": [],
+    "commands": [
+      {
+        "id": "ca290660-cc07-4ee7-8569-a083c4be0bda",
+        "kind": "start",
+        "status": "completed"
+      }
+    ],
+    "conflicts": [],
+    "error": null,
+    "eventCount": 63,
+    "executionId": "fa34505e-c55f-445f-afc5-2ae6b52705f6",
+    "hostId": "owner-mac",
+    "hostJournal": "Unknown to coordinator; delivery observation is not native reinspection",
+    "nativeOutcome": "Not inferred from transport; inspect native evidence and validated receipts",
+    "resend": "Owning host automatically resends its unchanged retained outbox; no native dispatch or program-effect replay",
+    "results": [
+      {
+        "executionId": "fa34505e-c55f-445f-afc5-2ae6b52705f6",
+        "id": "artifact:fa34505e-c55f-445f-afc5-2ae6b52705f6:index.html",
+        "mediaType": "text/html",
+        "path": "index.html",
+        "sessionId": "ff834715-4a99-4b86-9526-30bcfa34cba0",
+        "sha256": "129edefc5a638ed3cef38570cbe1646c384ecd87b3b6772eed140855bb780c5f",
+        "size": 4681
+      },
+      {
+        "executionId": "fa34505e-c55f-445f-afc5-2ae6b52705f6",
+        "id": "artifact:fa34505e-c55f-445f-afc5-2ae6b52705f6:styles.css",
+        "mediaType": "text/css",
+        "path": "styles.css",
+        "sessionId": "ff834715-4a99-4b86-9526-30bcfa34cba0",
+        "sha256": "2e272db612a871c8bf15cd1e517e8537bffae92e632713ef33df7f471ed21d7c",
+        "size": 4720
+      }
+    ],
+    "state": "completed"
+  },
+  "keyVisible": false,
+  "status": "Inspected \u00b7 completed"
+}
