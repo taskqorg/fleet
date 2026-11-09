@@ -72,3 +72,18 @@ Path prefixes: Orca `O/` = `src/main/runtime/rpc/methods/orchestration/`, `W/` =
 4. Ask/reply + checked done (Orca `messaging/ask-methods.ts`, `reply-method.ts`, `lifecycle-reconciliation.ts`).
 5. Queue/steer for busy sessions (T3 `ProviderTurnControlService.ts`, `QueuedRunOrder.ts`).
 6. Startup reconcile + proven/unknown stop (T3 `ProviderRuntimeRecoveryService.ts`; Orca `worker-stop.ts`).
+
+## Port results (2026-11-09)
+
+Coordinator-only port in `packages/coordinator/agent-tools.ts` + `resume-argv.ts`. Exposed as `POST /api/agent-operations/:name`, MCP `POST /api/agent-tools` (browser auth) and `POST /api/hosts/agent-tools` (machine auth, bound to the command's execution). Storage uses new record kinds only (`handoff`, `session-fork`, `session-transition`, `queued-message`, `question`, `worker-done`, `reconciliation`), so existing data stays as is. The Rust executor did not change. There is no `packages/executor`. Smoke test: `tests/coordinator/agent-tools.test.ts` (fake host receipts).
+
+| # | Row | Status |
+|---|---|---|
+| 1 | Handoff/transition | Works, fake proof. `session_transition` returns `reuse/switch_model_in_session/restart_and_resume/create_with_handoff`. Native session per harness:account. Full summary or delta since last seen, delivered inline on the next start; `started` = delivered, `unknown` = unconfirmed. `/profile` now hands off instead of returning 409. |
+| 2 | Fork | Works, fake proof. Context-transfer fork (also for `unknown` sessions; the original is left as is). Native fork (`payload.fork`) is used only when the host advertises the `native-fork` capability; the executor does not advertise it yet. |
+| 3 | Resume argv + capture | Works. Orca table ported; native id captured per continuation on receipts/`worker_done`; `session_resume`. |
+| 4 | ask/reply, worker_done | Works, fake proof. Non-blocking ask with `resume`; reply delivered as queued/follow-up message; `worker_done` rejects invalid/stale/conflicting reports, state stays receipt-driven. |
+| 5 | Queue/steer | Works, fake proof. A busy session queues instead of returning 409 and promotes messages in order. A `steer` command goes out only when the host advertises `steer`; a failed steer is requeued. Native steer is not implemented in the executor. |
+| 6 | Reconcile + stop outcome | Works, fake proof. Runs at startup and as `reconcile` with `GET /api/reconciliation`, and never promotes or replays. Stop returns `proven` or `unknown`. |
+
+Next (native/live, Mac + PDS with Codex): executor `steer` (Codex `turn/steer`) and `native-fork` (`thread/fork`) plus advertising capabilities in poll; native MCP forwarding to `/api/hosts/agent-tools`; live handoff delivery Codex↔Claude on Mac only.
