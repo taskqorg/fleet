@@ -116,7 +116,16 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
 
 ## Open Questions
 
-*   **Q1. Garage features.** Check presigned PUT and GET, multipart upload, server-side copy and lifecycle rules on the chosen Garage version. Garage is used as an independent single-node store on each host, because its layout is cluster-wide and cannot pin one bucket to one node.
+*   **Q1. Garage features: answered 2026-11-09.** Tested on a local single-node Garage 2.5.0 (Homebrew, native on macOS arm64), using `@aws-sdk/client-s3` v3. All of these passed:
+    *   a presigned PUT with `x-amz-checksum-sha256` (200), and a wrong SHA-256 is rejected with 400;
+    *   `HEAD` with `ChecksumMode` returns the stored SHA-256, which the commit step can check without downloading;
+    *   a presigned GET returns the exact bytes;
+    *   a multipart upload through presigned `UploadPart` URLs (11 MiB in 5 MiB parts);
+    *   a server-side `CopyObject` between buckets;
+    *   `PutBucketLifecycleConfiguration` and `GetBucketLifecycleConfiguration`.
+
+    One gotcha: the SDK client must set `requestChecksumCalculation: 'WHEN_REQUIRED'`. Otherwise the presigner embeds a CRC32 of an empty body in part URLs, and Garage rejects the part with `InvalidDigest`. Garage keeps an independent single-node store on each host, because its layout is cluster-wide.
+*   **Q1b. Garage on macOS: answered.** Homebrew ships a native `garage` 2.5.0 bottle for arm64, so the Mac store runs natively under launchd.
 *   **Q2. S3 store on Windows.** Garage officially targets Linux. Decide whether the Windows store is Garage under WSL2 or another S3 server with a native Windows build. Placement does not depend on this choice, because each store is independent.
 *   **Q9. Connection gateway.** How agents call third-party APIs without seeing keys, and how each call's cost reaches its execution. The gateway is a separate design, and it must use the `connection_cost` record defined here.
 *   **Q8. tight D7.** tight D7 says "Do not create a generic S3 service". That decision belongs to the AssetQ prototype. Update tight to allow Fleet's per-host stores, as a Podman Quadlet of `fleet` on PDS18.
@@ -133,7 +142,7 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
 
         This is a measured value (`basis = measured`) for each window.
     *   Claude Code `stream-json` emits `rate_limit_event` with `rate_limit_info` (`status`, for example `allowed` or `rejected`, reset time, overage and fallback flags). This is a measured status, not a percentage.
-    *   Antigravity contains quota fields (`remainingFraction`, `RESOURCE_EXHAUSTED`). Which command or event exposes them still needs a live check.
+    *   Antigravity has no CLI command for quota: `agy models` lists models only. Its binary contains a local `LanguageServerService/RetrieveUserQuotaSummary` handler and a `RetrieveUserQuota` response with buckets (`remaining_fraction`, `remaining_amount`, `reset_time`). Next live check: call that handler on the language server that an ACP session starts. Calling Google's API directly with the account's OAuth token is not acceptable, because it would act outside the harness.
     *   The executor drops all of these today (see item 35).
 *   **Q6. Claude transcript cleanup: answered 2026-11-09.**
     *   The default `cleanupPeriodDays` is 30 days.
@@ -815,6 +824,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 
 *   **Type / Scope**: Artifact operations.
 *   **Proposed Changes**:
+    *   The S3 client sets `requestChecksumCalculation: 'WHEN_REQUIRED'` (see Q1). Single-part uploads are presigned with `x-amz-checksum-sha256`, so the store itself rejects a wrong hash.
     *   `reserve({execution_id, name, media_type, size, sha256, required})` picks the store: the writer's host if it is in the list, otherwise the nearest one. It returns a presigned PUT, or multipart part URLs for files over 64 MiB.
     *   `commit(id)` checks the object's size and hash on the store with `HEAD` plus a stored checksum, then marks the artifact and its first copy `verified`.
     *   `discard(id)`, `list(filter)` and `get(id)`. `get` returns metadata and a presigned GET for a verified copy, preferring the reader's host.
