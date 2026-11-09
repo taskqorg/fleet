@@ -35,3 +35,10 @@ test('touched maps changes to the list ids they affect, including parent rows', 
   assert.deepEqual(touched(cs, 'tasks'), ['t1', 't2']);
   assert.deepEqual(touched(cs, 'sessions'), ['s1']);
 });
+
+test('chunks split membership ids at the server bound', async () => {
+  const { chunks } = await import('../../app/src/lists.ts');
+  const ids = Array.from({ length: 2500 }, (_, i) => 't' + i);
+  assert.deepEqual(chunks(ids, 1000).map(c => c.length), [1000, 1000, 500]);
+  assert.deepEqual(chunks([], 1000), []);
+});

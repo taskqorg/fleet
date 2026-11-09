@@ -539,7 +539,8 @@ export function Composer({ onSend, disabledReason, placeholder = 'Message', draf
   const keep = (v: string) => { setText(v); try { if (draftKey) localStorage.setItem('draft:' + draftKey, v); } catch { /* storage unavailable */ } };
   const send = async () => {
     const v = text.trim(); if (!v || busy || disabledReason) return;
-    setBusy(true); try { await onSend(v); keep(''); } finally { setBusy(false); }
+    // The draft is cleared only after a successful send; on failure it stays for another try.
+    setBusy(true); try { await onSend(v); keep(''); } catch { /* caller shows the error */ } finally { setBusy(false); }
   };
   return (
     <div class="composer" data-ui="composer">

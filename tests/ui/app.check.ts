@@ -17,7 +17,7 @@ const store = createStore('memory://'); await store.migrate();
 let waiting = '', running = '';
 await store.tx(async () => {
   for (let i = 0; i < 240; i++) {
-    const id = await store.tasks.create({ title: ['Render prop batch', 'Fix CI cache key', 'Rework hero copy', 'Write release notes', 'Compare 3D methods'][i % 5] + ' ' + i, projectId: ['dashq', 'game', 'fleet'][i % 3], priority: i % 3, expectedOutcome: 'A reviewed result linked from the changelog.' });
+    const id = await store.tasks.create({ title: ['Render prop batch', 'Fix CI cache key', 'Rework hero copy', 'Write release notes', 'Compare 3D methods'][i % 5] + ' ' + i, projectId: ['dashq', 'game', 'fleet'][i % 3], priority: ['urgent', 'normal', 'background'][i % 3], expectedOutcome: 'A reviewed result linked from the changelog.' });
     if (i % 7 === 0) { await store.executions.createExecution({ id: 'run-' + i, kind: 'agent_run', taskId: id, projectId: ['dashq', 'game', 'fleet'][i % 3], hostId: ['pds18', 'mac', 'windows'][i % 3], harness: ['codex', 'claude', 'antigravity'][i % 3], state: 'running' }); await store.tasks.transition(id, 'first_execution').catch(() => {}); if (!running) running = id; }
     if (i === 3) { waiting = id; await store.tasks.ask({ kind: 'acceptance', taskId: id, text: 'Accept this result?', options: ['accepted', 'rejected'] }); await store.tasks.settle(id).catch(() => {}); }
   }

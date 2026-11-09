@@ -11,8 +11,10 @@ const useTick = (msTick: number) => { const [, set] = useState(0); useEffect(() 
 export function Hosts({ id }: { id?: string }) {
   const [, go] = useLocation();
   useTick(5000);
-  const { data, state } = useLiveRecord<any>('hosts', () => op('hosts_list', {}), c => c.kind === 'host' || c.kind === 'execution');
-  const now = Date.now();
+  // Liveness comes from lastSeenAt, which polls move without a change row; re-read every 5 s (D11 CUJ 5) and judge age on the
+  // server's clock (serverNow) so a skewed browser clock does not mark hosts offline.
+  const { data, state } = useLiveRecord<any>('hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
+  const now = data ? data.serverNow + (Date.now() - data.fetchedAt) : Date.now();
   if (!data) return <><header class="page-h"><h1>Hosts</h1></header><Empty text="Loading…" /></>;
   const fresh = (h: any) => !!h.lastSeenAt && now - h.lastSeenAt < data.staleAfterMs;
   const sel = data.hosts.find((h: any) => h.id === id);

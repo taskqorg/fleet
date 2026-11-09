@@ -31,7 +31,7 @@ function App() {
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').then(r => r.addEventListener('updatefound', () => { if (navigator.serviceWorker.controller) setUpdate(true); })).catch(() => {});
     return () => removeEventListener('focus', me);
   }, []);
-  useEffect(() => { if (signedOut.value) clearAll(); }, [signedOut.value]);
+  useEffect(() => { if (signedOut.value) clearAll(true); }, [signedOut.value]);
   return <AppShell nav={NAV} current={current} waiting={0} onGo={id => id === 'legacy' ? (location.href = '/legacy') : go('/' + id)}>
     {update && <div class="problem warning" role="status"><b>Update available</b><span class="facts">A new version of the app is ready.</span><span class="acts"><Button label="Reload" onClick={() => location.reload()} /></span></div>}
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}

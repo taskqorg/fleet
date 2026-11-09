@@ -14,7 +14,7 @@ import { usePins, useViews, type SavedView } from '../prefs';
 
 const ROW = parseInt(tokens.size.row);
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
-type TaskRow = { id: string; title: string; state: StateOf<'task'>; waitReason: string | null; priority: number; agent: string | null; host: string | null; startedAt: string | null; createdAt: string; projectId: string | null; openQuestions: number; sortKey: (string | number)[] };
+type TaskRow = { id: string; title: string; state: StateOf<'task'>; waitReason: string | null; priority: 'urgent' | 'normal' | 'background'; agent: string | null; host: string | null; startedAt: string | null; createdAt: string; projectId: string | null; openQuestions: number; sortKey: (string | number)[] };
 type Item = { kind: 'group'; key: string; label: string; count: number } | { kind: 'task'; t: TaskRow };
 const ms = (v: string | number | null | undefined) => (v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v));
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
@@ -78,7 +78,7 @@ export function Tasks({ id }: { id?: string }) {
               ? <GroupHeader icon={view.group === 'priority' ? 'list-ordered' : 'folder-open'} label={i.label} count={i.count} open={!closed.includes(i.key)} onToggle={() => setClosed(c => c.includes(i.key) ? c.filter(x => x !== i.key) : [...c, i.key])} />
               : <>
                 <span class="lead"><StateBadge family="task" state={i.t.state} reason={i.t.waitReason ?? undefined} compact /></span>
-                <span class="tt"><a class="title row-link" href={`/tasks/${i.t.id}${location.search}`} onClick={e => { e.preventDefault(); go(`/tasks/${i.t.id}${location.search}`); }}>{i.t.title}</a><span class="id">{i.t.id.slice(0, 8)}</span></span>
+                <span class="tt">{view.group !== 'priority' && <PriorityChip p={i.t.priority} />}<a class="title row-link" href={`/tasks/${i.t.id}${location.search}`} onClick={e => { e.preventDefault(); go(`/tasks/${i.t.id}${location.search}`); }}>{i.t.title}</a><span class="id">{i.t.id.slice(0, 8)}</span></span>
                 <span>{i.t.state === 'in_progress' && isHarness(i.t.agent) && <HarnessMark h={i.t.agent} />}</span>
                 <span class="r">{ms(i.t.startedAt ?? i.t.createdAt) && <AgeChip t={ms(i.t.startedAt ?? i.t.createdAt)!} now={now} alertAfter={i.t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" />}</span>
                 <Button label={pins.has(i.t.id) ? 'Unpin' : 'Pin'} icon={pins.has(i.t.id) ? 'pin-off' : 'pin'} iconOnly pressed={pins.has(i.t.id)} onClick={() => pins.toggle(i.t.id)} />
@@ -89,8 +89,14 @@ export function Tasks({ id }: { id?: string }) {
   return <ListDetail list={listPane} detail={id ? <TaskDetail id={id} onClose={() => go('/tasks' + location.search)} /> : undefined} detailKey={id} />;
 }
 
+/** Priority class chip (owner decision): urgent red, background grey, normal none (OR-17). */
+function PriorityChip({ p }: { p: TaskRow['priority'] }) {
+  if (p === 'normal') return null;
+  return <span class={`chip-age${p === 'urgent' ? ' t-danger alert' : ''}`} aria-label={p === 'urgent' ? 'urgent priority' : 'background priority'}>{p === 'urgent' ? 'urgent' : 'background'}</span>;
+}
+
 function groupLabel(group: string, label: string | null) {
-  if (group === 'priority') return `Priority ${label ?? 0}`;
+  if (group === 'priority') return label === 'urgent' ? 'Urgent' : label === 'background' ? 'Background' : 'Normal';
   if (group === 'agent') return label && label in harnesses ? harnesses[label as Harness].label : 'No agent';
   if (group === 'state') return label ?? '';
   return label ?? 'None';
@@ -114,7 +120,7 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const tok = tokensIn === null || tokensIn === undefined ? null : Number(tokensIn) + Number(tokensOut ?? 0);
   const nodes: TreeNode[] = (t.executions ?? []).map((e: any) => ({ id: e.id, name: [e.kind ?? 'run', e.harness ?? e.agentConfig?.harness, e.hostId].filter(Boolean).join(' · '), state: execState(e.state),
     lastSeen: e.observation === 'unconfirmed' ? ms(e.lastSeenAt) ?? undefined : undefined,
-    time: e.startedAt && e.finishedAt ? { value: (ms(e.finishedAt)! - ms(e.startedAt)!) / 1000, basis: 'measured' } : { value: null, basis: 'unavailable', reason: 'not finished' } }));
+    time: e.startedAt && (e.endedAt ?? e.finishedAt) ? { value: (ms(e.endedAt ?? e.finishedAt)! - ms(e.startedAt)!) / 1000, basis: 'measured' } : { value: null, basis: 'unavailable', reason: 'not finished' } }));
   const disabled = off ? 'offline' : undefined;
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={t.title}>
     <header class="detail-h">

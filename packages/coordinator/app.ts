@@ -185,7 +185,7 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
    const observed=await all('host-observation'),ids=[...new Set([...configured,...observed.map((h:any)=>h.id)])];
    const running=await store.query("SELECT host_id,harness,count(*)::int AS n FROM execution WHERE state IN ('preparing','running') AND host_id IS NOT NULL GROUP BY 1,2");
    const queued=await store.query("SELECT data->>'hostId' AS host_id,count(*)::int AS n FROM document WHERE kind='command' AND data->>'status'='pending' GROUP BY 1");
-   return {staleAfterMs:30000,hosts:ids.map(id=>{const o:any=observed.find((h:any)=>h.id===id);const by:Record<string,number>={};for(const r of running)if(r.host_id===id)by[r.harness??'unknown']=r.n;
+   return {staleAfterMs:30000,serverNow:Date.now(),hosts:ids.map(id=>{const o:any=observed.find((h:any)=>h.id===id);const by:Record<string,number>={};for(const r of running)if(r.host_id===id)by[r.harness??'unknown']=r.n;
     return {id,configured:configured.includes(id),platform:o?.platform??null,lastSeenAt:o?.lastSeenAt??null,capabilities:o?.capabilities??[],runningByHarness:by,running:Object.values(by).reduce((a,n)=>a+n,0),slots:null,queued:queued.find((q:any)=>q.host_id===id)?.n??0,stores:'unavailable'}})}},
   me:async()=>({email:config.ownerEmail??null,roles:['operator','architect'],grantsVersion:'1',changeLogRetentionDays:retentionDays}),
  };

@@ -42,7 +42,8 @@ export function registerStream(app:FastifyInstance,store:Store,config:{retention
    if(cursor===null){const head=await store.read(()=>store.changes.since(null));o.cursor=head.cursor;send(o,'ready',{cursor:o.cursor})}
    else{o.cursor=cursor;send(o,'ready',{cursor});await drain(o)}
   }catch{res.end();return}
-  if(!gone&&!closed)open.add(o);else res.end();
+  // Join, then drain once more: a NOTIFY that arrived during the first read is not lost.
+  if(!gone&&!closed){open.add(o);await drain(o)}else res.end();
  });
  return {wake,openStreams:()=>open.size};
 }

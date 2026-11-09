@@ -318,6 +318,14 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
     *   `id`, `project_id`, `title`, `expected_outcome`;
     *   `state`: `queued`, `in_progress`, `waiting`, `paused`, `completed`, `failed` or `cancelled`;
     *   `wait_reason`, `priority`;
+    *   `priority` is a queue class (owner decision, 2026-11-10), not a number:
+        *   `urgent` runs first. It may use accounts the operator marked "reserve for urgent". It shows a red chip.
+        *   `normal` is the default. Tasks run first in, first out within the class, and the operator can move a task up or down by hand. Rows show no chip.
+        *   `background` covers tests, lab work and experiments. It runs only when no urgent or normal work is waiting for the same resource. It shows a grey chip.
+        *   The API takes the names and also accepts `p0`, `p1` and `p2` as synonyms (TaskQ vocabulary).
+        *   What background work may use, for example a share of an account window or nights only, is an operator setting with no built-in cap.
+        *   Old integers migrate to `normal` (migration 8).
+        *   The scheduler behaviour and the per-class queue view are planned work; see [fleet-operator-app.md](fleet-operator-app.md#future-improvements).
     *   `completion_requirements` (JSONB), `result_destination`;
     *   `created_by`, timestamps.
 *   **Table `task_dependency`.** `task_id`, `depends_on_task_id` and `kind`. Tasks are flat; there is no hierarchy. Only `blocks` dependencies gate transitions. `revision_of` records a delivery that revises an earlier one (legacy `previousDeliveryId`) without waiting for it, as the legacy flow never waited for acceptance.

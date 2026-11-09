@@ -94,6 +94,6 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
       onAnswer={a => run(() => op('questions_answer', { questionId: q.id, answer: a }))} />)}
     <div class="pane"><Transcript entries={entries(s)} label="Transcript" now={now} />
       <Composer draftKey={id} disabledReason={off ? 'offline' : undefined} placeholder={active ? 'Steer or queue a message' : 'Message'}
-        onSend={text => run(() => op('message_send', { sessionId: id, requestId: reqId(), text }))} /></div>
+        onSend={async text => { setFailure(null); try { await op('message_send', { sessionId: id, requestId: reqId(), text }); } catch (e: any) { setFailure(e.message); throw e; } }} /></div>
   </article>;
 }

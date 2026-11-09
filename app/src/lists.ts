@@ -42,3 +42,10 @@ export function touched(changes: { kind: string; id: string; taskId?: string | n
   }
   return [...out];
 }
+
+/** Split ids into server-sized batches (list_membership accepts at most 1000 ids per call). */
+export function chunks<T>(xs: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
+  return out;
+}
