@@ -127,6 +127,11 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
     *   Fleet checks access again on every operation.
     *   Fleet shows the state of access and onboarding: who has access, to what, since when, and whether Cloudflare matches Fleet's list.
 
+*   **G11. Hosts, environments and stores are visible and managed through Fleet.**
+    *   One list shows every connected host with its environments, account users, stores, harness versions, reachability, and disk and store fill.
+    *   Store capacity and service resource bounds are Fleet settings. An operator changes them through Fleet operations, and Fleet applies them on the host.
+    *   Low free space is a visible problem before it stops work.
+
 ## Non-Goals
 
 *   The laboratory ladder logic: N variants, interleaved trials, judges, assessments and promotion. This foundation only stores what the ladder needs.
@@ -539,6 +544,31 @@ The shapes are copied from t3code (`apps/server/src/mcp/toolkits/attachment/tool
     *   It compares the `fleet-people` group with Fleet's list and reports every difference as a problem with an action: add, remove or ignore.
     *   `access.status` also lists the hand edits still needed, for example a person in `people.json` who is missing from the group.
 *   **Agents.** An agent acts with its execution's permissions, never with a person's. Sharing with a new email is an operator action. An agent can only propose it as an `operator_decision` question.
+
+### 11. Hosts, environments and stores
+
+*   **One list, `hosts.list`.** For each registered host it returns:
+    *   platform, last contact and observation state;
+    *   environments and account users;
+    *   harness versions and readiness;
+    *   stores, with capacity, used and free bytes, and tunnel state;
+    *   free disk;
+    *   the running Fleet services, with their resource settings and current use.
+
+    The data comes from the existing host observation plus `host_metric`. Nothing is entered by hand.
+*   **Settings are Fleet data, applied on the host.** Table `host_setting(host_id, key, value, updated_by, updated_at, applied_at, apply_error)`. Settings in this design:
+    *   `store.capacity_bytes`: the executor applies it to Garage through the Garage admin API, as a layout capacity change.
+    *   `service.<name>.memory_max` and `service.<name>.cpu_quota`: the executor applies them with `systemctl --user set-property` to its own Fleet user units, such as ClickHouse and Garage.
+    *   `store.free_space_warning`: the threshold at which the store shows a problem.
+
+    How settings work:
+    *   The operator changes a setting with `hosts.set_setting`.
+    *   The executor applies the setting on its next poll. It reports `applied_at` or `apply_error`, and the list shows both.
+    *   Nothing has a built-in cap: every value is the operator's.
+*   **Fill and problems.**
+    *   When free space drops below `store.free_space_warning`, `hosts.list` and the problem view show the store, its fill per project, and the available actions: raise capacity, change a project's `artifact_locations`, or add a retention rule.
+    *   A full store stops new uploads with a visible reason. It never fails runs silently.
+*   **Agents** read `hosts.list` within their permissions. Changing a setting is an operator action, which an agent can only propose as an `operator_decision` question.
 
 ## Alternatives Considered
 
@@ -1277,6 +1307,34 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
     *   An artifact share grants that artifact only.
     *   An expired share removes the email from the group when no other share remains.
     *   A drift between the group and the table appears in `access.status`.
+
+#### Hosts, environments and stores (with Phase 3)
+
+##### 59. `packages/coordinator/hosts.ts` and `packages/coordinator/db/schema.sql` (Create / Modify)
+
+*   **Type / Scope**: Operations and migration.
+*   **Proposed Changes**: Add table `host_setting`, the operations `hosts.list`, `hosts.set_setting` and `hosts.get`, and the problem rule for low free space. Add the matching read-only MCP tools `hosts_list` and `hosts_get` to `agent-tools.ts`.
+*   **Why**: G11.
+
+##### 60. `crates/executor/src/settings.rs` (Create)
+
+*   **Type / Scope**: Rust module.
+*   **Proposed Changes**:
+    *   Receive pending settings in the poll response.
+    *   Apply `store.capacity_bytes` through the Garage admin API (layout assign, then apply).
+    *   Apply service bounds with `systemctl --user set-property` on Linux, or by updating the launchd plist and reloading it on macOS.
+    *   Report `applied_at` or the exact error.
+    *   Report store capacity, used bytes and free disk in `host_metric`.
+*   **Why**: G11. The settings are applied on the host that owns them.
+
+##### 61. `tests/coordinator/hosts.test.ts` and `tests/executor/settings_protocol.py` (Create)
+
+*   **Type / Scope**: Tests.
+*   **Proposed Changes**: These tests cover:
+    *   A setting change reaches the executor and is reported as applied.
+    *   An apply error is shown.
+    *   A store under its warning threshold appears as a problem with the three actions.
+    *   A full store refuses `reserve` with a reason.
 
 ### Verification Plan
 
