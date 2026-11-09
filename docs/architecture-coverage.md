@@ -1,6 +1,6 @@
 # Architecture coverage
 
-2026-11-09. Current connected candidate is local; latest multi-harness release is **not yet deployed**. Live rows will be updated only after readback. Owner-approved acceptance has three sequential milestones: two website projects, distributed execution, and a recorded method comparison.
+2026-11-09. Connected source366fc57 is deployed as candidate-9cefb6b5d795 with executor6623fd99. The first real Pipe search and managed-account Codex generation completed; source handoff is blocked by a relative-artifact-path mismatch under repair. Later repair code is not yet deployed. Full live acceptance remains incomplete. Owner-approved acceptance has three sequential milestones: two website projects, distributed execution, and a recorded method comparison.
 
 | Area | Implemented | Deterministic proof | Native/live proof | Remaining gap |
 |---|---|---|---|---|

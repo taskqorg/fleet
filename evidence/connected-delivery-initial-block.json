@@ -1,0 +1,38 @@
+{
+  "error": {
+    "code": "delivery-blocked",
+    "message": "Expected bounded static HTML/CSS artifacts"
+  },
+  "id": "d95e56ac-b4ec-40dc-bf23-b1d8c9faf046",
+  "state": "generating",
+  "steps": [
+    {
+      "actor": "native-agent",
+      "durationMs": 75768,
+      "error": null,
+      "executionId": "b010787a-48ee-47cc-ad6b-879a25b955c0",
+      "kind": "generate",
+      "results": [
+        {
+          "executionId": "b010787a-48ee-47cc-ad6b-879a25b955c0",
+          "id": "artifact:b010787a-48ee-47cc-ad6b-879a25b955c0:index.html",
+          "mediaType": "text/html",
+          "path": "index.html",
+          "sessionId": "af2976ef-42c5-40c1-814f-94662bcc4e33",
+          "sha256": "20ba9b08e7ce9b18fc8c6a253cdbe4c3009cf0692af89cbfe9c07a37b5246500",
+          "size": 4320
+        },
+        {
+          "executionId": "b010787a-48ee-47cc-ad6b-879a25b955c0",
+          "id": "artifact:b010787a-48ee-47cc-ad6b-879a25b955c0:style.css",
+          "mediaType": "text/css",
+          "path": "style.css",
+          "sessionId": "af2976ef-42c5-40c1-814f-94662bcc4e33",
+          "sha256": "1b87ecb63a02f19c95df0db1cb6103bd0e2f829208f4d0893cb162f3a42c1660",
+          "size": 3914
+        }
+      ],
+      "state": "completed"
+    }
+  ]
+}

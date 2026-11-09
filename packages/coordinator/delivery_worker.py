@@ -109,7 +109,7 @@ def main():
                 result.update(durationMs=round((time.time()-started)*1000),usage=None,workingAreaRemoved=True)
                 data=json.dumps(result,indent=2).encode()
                 api('artifacts',{**body,'path':'delivery-result.json','mediaType':'application/json','sha256':hashlib.sha256(data).hexdigest(),'contentBase64':base64.b64encode(data).decode()})
-                api('events',{**body,'events':[{'id':c['id']+':result','seq':0,'kind':'program.result','data':result}]})
+                api('events',{**body,'events':[{'id':c['id']+':result','seq':0,'type':'program.result','data':result}]})
                 state.write_text(json.dumps({'state':'effect-completed','result':result}));api('receipts',{**body,'status':'completed'})
             except Exception as e:
                 message=str(e) if isinstance(e,RuntimeError) else type(e).__name__

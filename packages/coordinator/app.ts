@@ -98,6 +98,7 @@ export function createApp(config:{database:string,browserSecret:string,machineSe
  Object.assign(projects,managed.operations);
  deliveryRuntime=delivery({all,get,put},config,enqueue,projects,managed.resolve,managed.preferred);
  Object.assign(projects,deliveryRuntime.operations);
+ deliveryRuntime.advance();
  registerLab(app,{all,get,put,transaction:fn=>db.transaction(fn)()},{hostId:config.hostId,profilesDirectory:config.profilesDirectory||'config/agents',browserProxyAuth:config.browserProxyAuth});
  app.addHook('onClose',async()=>{db.close()});return app;
 }
