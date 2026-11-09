@@ -246,7 +246,9 @@ impl Executor {
                 Err(e) => json!({"removed":false,"reason":e.to_string()}),
             } };
             let ok = data["removed"] == true || data["reason"] == "uncommitted" || data["reason"] == "no-worktree";
-            self.event(&c, 0, "teardown", data)?;
+            // The teardown command reuses the last execution, whose seq 0.. are taken by its turn: use a fresh seq.
+            let seq = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1 << 40, |d| d.as_millis() as u64);
+            self.event(&c, seq, "teardown", data)?;
             return self.finish(&c, if ok { "completed" } else { "failed" }, None);
         }
         if c["kind"] != "start" && c["kind"] != "input" {
