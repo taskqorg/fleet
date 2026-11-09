@@ -142,13 +142,15 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
 
  // Required artifacts of an execution (P3-D3): the task's completion_requirements.artifacts (names or glob patterns) set the
  // minimum; artifacts saved with required=true add to it.
- async function requirement(executionId:string){const e=(await store.query('SELECT task_id FROM execution WHERE id=$1',[executionId]))[0];
+ async function requirement(executionId:string,declared:string[]=[]){const e=(await store.query('SELECT task_id FROM execution WHERE id=$1',[executionId]))[0];
   const patterns:string[]=e?.task_id?((await store.query('SELECT completion_requirements FROM task WHERE id=$1',[e.task_id]))[0]?.completion_requirements?.artifacts??[]).filter((x:any)=>typeof x==='string'):[];
   const rows:ArtifactRow[]=await store.query("SELECT * FROM artifact WHERE execution_id=$1 AND state<>'deleted' AND role='original' ORDER BY seq",[executionId]);
   const glob=(p:string)=>new RegExp('^'+p.replace(/[.+^${}()|[\]\\]/g,'\\$&').replace(/\*\*/g,'\u0000').replace(/\*/g,'[^/]*').replace(/\u0000/g,'.*').replace(/\?/g,'[^/]')+'$');
   const needed=rows.filter(r=>r.required||patterns.some(p=>glob(p).test(r.name)));
-  const missing=patterns.filter(p=>!rows.some(r=>glob(p).test(r.name)));
-  return {pending:needed.filter(r=>r.state==='pending').map(r=>r.name),failed:needed.filter(r=>r.state==='failed').map(r=>({name:r.name,error:r.last_error})),missing}}
+  // Names the executor reported as collected but not yet reserved count as pending, not missing.
+  const unreserved=declared.filter(n=>typeof n==='string'&&!rows.some(r=>r.name===n)&&patterns.some(p=>glob(p).test(n)));
+  const missing=patterns.filter(p=>!rows.some(r=>glob(p).test(r.name))&&!unreserved.some(n=>glob(p).test(n)));
+  return {pending:[...needed.filter(r=>r.state==='pending').map(r=>r.name),...unreserved],failed:needed.filter(r=>r.state==='failed').map(r=>({name:r.name,error:r.last_error})),missing}}
 
  // Legacy record shape for the existing readers of kind 'artifact' (session results, lab trials, recovery, delegation).
  const legacy=(r:any)=>({id:r.legacy_id??r.id,artifactId:r.id,executionId:r.execution_id,sessionId:r.session_id??undefined,path:r.name,mediaType:r.media_type,size:Number(r.size),sha256:r.content_hash});
