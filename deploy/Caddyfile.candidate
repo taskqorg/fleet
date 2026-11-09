@@ -1,0 +1,4 @@
+# Candidate only. Requires verified CF Access / restricted origin ingress first.
+fleet.ufobe.com {
+    reverse_proxy 127.0.0.1:8787
+}

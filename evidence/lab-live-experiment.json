@@ -1,0 +1,2752 @@
+{
+  "createdAt": 1794189738642,
+  "id": "b284cf02-df90-4306-ad95-07034708bcc7",
+  "note": "",
+  "profileIds": [
+    "baseline",
+    "design-rules"
+  ],
+  "requestId": "effbc28d-3527-4a25-8123-1feb6c455546",
+  "text": "Create output/index.html and output/style.css for a small systems studio website. Consult project design rules when available. Produce a complete responsive static page with no external libraries, network requests or assets. Use local file checks, do not attempt browser launch or deployment, and briefly report what you created and checked. Do not use subagents.",
+  "trials": [
+    {
+      "agentConfig": {
+        "effort": "low",
+        "id": "baseline",
+        "instructions": "Create the requested files in output/. Do not use subagents.",
+        "mcpServers": [],
+        "model": "gpt-6.1-sol"
+      },
+      "createdAt": 1794189738642,
+      "effort": "low",
+      "events": [
+        {
+          "data": {
+            "applied": {
+              "availability": "unknown until native call/result",
+              "effort": "low",
+              "instructions": "Create the requested files in output/. Do not use subagents.",
+              "mapping": "per-invocation CLI config overrides",
+              "mcpServerSha256": "ac87a6af412ff694ffbd8c1a751a3e9d0fdb53999506b24e188ee0e9ec572b43",
+              "mcpServers": [],
+              "model": "gpt-6.1-sol",
+              "resumeCompatibility": "requested overrides supplied per invocation; actual changed settings unqualified; prior conversation context persists"
+            },
+            "grantsSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "instructionSources": {
+              "hooks": "disabled",
+              "memories": "disabled",
+              "nativeObservation": "pending rollout provenance check",
+              "personalConfig": "not loaded",
+              "personalHome": "not forwarded",
+              "profile": "explicit developer_instructions",
+              "projectInstructions": "discovery disabled",
+              "skills": "disabled"
+            },
+            "instructionsSha256": "0c12d4f560f6ccc449af01e2a79dccf6189fc1aa113da7fe2aca44fee9b150a4",
+            "profileSha256": "9d23f7fde668430ab9d50cb6db6fdcb3d92523b51f21c820f9e9d270825e8fd2",
+            "requested": {
+              "effort": "low",
+              "id": "baseline",
+              "instructions": "Create the requested files in output/. Do not use subagents.",
+              "mcpServers": [],
+              "model": "gpt-6.1-sol"
+            }
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-0",
+          "seq": 0,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189738988,
+          "type": "preparation"
+        },
+        {
+          "data": {
+            "thread_id": "01a1be0a-c60d-74b2-8864-4306b2401380",
+            "type": "thread.started"
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-1",
+          "seq": 1,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189740768,
+          "type": "thread.started"
+        },
+        {
+          "data": {
+            "item": {
+              "id": "item_0",
+              "message": "Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  session-flags: `skills.enabled` is ignored.",
+              "type": "error"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-2",
+          "seq": 2,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189743006,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "item": {
+              "id": "item_1",
+              "message": "Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  session-flags: `skills.enabled` is ignored.",
+              "type": "error"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-3",
+          "seq": 3,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189743007,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "item": {
+              "id": "item_2",
+              "message": "Under-development features enabled: skip_host_skill_discovery. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/kirs/Library/Application Support/Fleet/codex/config.toml.",
+              "type": "error"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-4",
+          "seq": 4,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189743007,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "type": "turn.started"
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-5",
+          "seq": 5,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189743007,
+          "type": "turn.started"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 1,
+            "diskBytes": 315392,
+            "ioBytes": null,
+            "residentBytes": 109608960
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-6",
+          "seq": 6,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189743499,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0,
+            "diskBytes": 315392,
+            "ioBytes": null,
+            "residentBytes": 109150208
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-7",
+          "seq": 7,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189747416,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "item": {
+              "id": "item_3",
+              "text": "I’ll check for project design rules, then build the responsive page and verify the files locally.",
+              "type": "agent_message"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-8",
+          "seq": 8,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189749273,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 2.2,
+            "diskBytes": 315392,
+            "ioBytes": null,
+            "residentBytes": 115916800
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-9",
+          "seq": 9,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189751369,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "item": {
+              "aggregated_output": "",
+              "command": "/bin/zsh -lc \"pwd; rg --files -g 'AGENTS.md' -g '*design*' -g '*DESIGN*' -g 'SKILL.md' -g '\"'!node_modules'\"' -g '\"'!vendor'\"'\"",
+              "exit_code": null,
+              "id": "item_4",
+              "status": "in_progress",
+              "type": "command_execution"
+            },
+            "type": "item.started"
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-10",
+          "seq": 10,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189753046,
+          "type": "item.started"
+        },
+        {
+          "data": {
+            "item": {
+              "aggregated_output": "/Users/kirs/.local/share/fleet-prototype/data/sessions/a82091f1-43f0-4492-b551-ac2313a146d0\nAGENTS.md\n",
+              "command": "/bin/zsh -lc \"pwd; rg --files -g 'AGENTS.md' -g '*design*' -g '*DESIGN*' -g 'SKILL.md' -g '\"'!node_modules'\"' -g '\"'!vendor'\"'\"",
+              "exit_code": 0,
+              "id": "item_4",
+              "status": "completed",
+              "type": "command_execution"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-11",
+          "seq": 11,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189753047,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "item": {
+              "aggregated_output": "",
+              "command": "/bin/zsh -lc \"cat AGENTS.md; rg --files -g '\"'!node_modules'\"' -g '\"'!vendor'\"' -g '\"'!.git'\"'\"",
+              "exit_code": null,
+              "id": "item_5",
+              "status": "in_progress",
+              "type": "command_execution"
+            },
+            "type": "item.started"
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-12",
+          "seq": 12,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189755312,
+          "type": "item.started"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 380928,
+            "ioBytes": null,
+            "residentBytes": 114458624
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-13",
+          "seq": 13,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189755514,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "item": {
+              "aggregated_output": "AGENTS.md\ne510f46e-5433-4a63-b162-5a53f38b0fb9.stderr\ne510f46e-5433-4a63-b162-5a53f38b0fb9.native.jsonl\n",
+              "command": "/bin/zsh -lc \"cat AGENTS.md; rg --files -g '\"'!node_modules'\"' -g '\"'!vendor'\"' -g '\"'!.git'\"'\"",
+              "exit_code": 0,
+              "id": "item_5",
+              "status": "completed",
+              "type": "command_execution"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-14",
+          "seq": 14,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189758450,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 380928,
+            "ioBytes": null,
+            "residentBytes": 115441664
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-15",
+          "seq": 15,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189758756,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "item": {
+              "id": "item_6",
+              "text": "The project’s `AGENTS.md` is empty, so there are no additional design rules. I’ll use a warm paper palette, bold typography, and a CSS-drawn systems diagram to keep the page self-contained.",
+              "type": "agent_message"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-16",
+          "seq": 16,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189761880,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 380928,
+            "ioBytes": null,
+            "residentBytes": 115507200
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-17",
+          "seq": 17,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189762217,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 446464,
+            "ioBytes": null,
+            "residentBytes": 115507200
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-18",
+          "seq": 18,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189764290,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 446464,
+            "ioBytes": null,
+            "residentBytes": 115507200
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-19",
+          "seq": 19,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189767286,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 446464,
+            "ioBytes": null,
+            "residentBytes": 115507200
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-20",
+          "seq": 20,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189769519,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 446464,
+            "ioBytes": null,
+            "residentBytes": 115130368
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-21",
+          "seq": 21,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189772008,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 446464,
+            "ioBytes": null,
+            "residentBytes": 115130368
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-22",
+          "seq": 22,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189774420,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.4,
+            "diskBytes": 446464,
+            "ioBytes": null,
+            "residentBytes": 115130368
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-23",
+          "seq": 23,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189776911,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 446464,
+            "ioBytes": null,
+            "residentBytes": 115097600
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-24",
+          "seq": 24,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189779319,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.4,
+            "diskBytes": 446464,
+            "ioBytes": null,
+            "residentBytes": 115097600
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-25",
+          "seq": 25,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189781749,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 512000,
+            "ioBytes": null,
+            "residentBytes": 115097600
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-26",
+          "seq": 26,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189784131,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.4,
+            "diskBytes": 512000,
+            "ioBytes": null,
+            "residentBytes": 115097600
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-27",
+          "seq": 27,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189786534,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 512000,
+            "ioBytes": null,
+            "residentBytes": 115097600
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-28",
+          "seq": 28,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189789022,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.4,
+            "diskBytes": 512000,
+            "ioBytes": null,
+            "residentBytes": 115097600
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-29",
+          "seq": 29,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189791383,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 512000,
+            "ioBytes": null,
+            "residentBytes": 115097600
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-30",
+          "seq": 30,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189793837,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 512000,
+            "ioBytes": null,
+            "residentBytes": 115097600
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-31",
+          "seq": 31,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189796283,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 512000,
+            "ioBytes": null,
+            "residentBytes": 115097600
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-32",
+          "seq": 32,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189798428,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.2,
+            "diskBytes": 512000,
+            "ioBytes": null,
+            "residentBytes": 118865920
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-33",
+          "seq": 33,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189800880,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 577536,
+            "ioBytes": null,
+            "residentBytes": 118865920
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-34",
+          "seq": 34,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189803268,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.4,
+            "diskBytes": 577536,
+            "ioBytes": null,
+            "residentBytes": 118849536
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-35",
+          "seq": 35,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189805679,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.4,
+            "diskBytes": 577536,
+            "ioBytes": null,
+            "residentBytes": 118849536
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-36",
+          "seq": 36,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189808066,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 577536,
+            "ioBytes": null,
+            "residentBytes": 118816768
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-37",
+          "seq": 37,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189810521,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.2,
+            "diskBytes": 577536,
+            "ioBytes": null,
+            "residentBytes": 118816768
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-38",
+          "seq": 38,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189812996,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 577536,
+            "ioBytes": null,
+            "residentBytes": 118816768
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-39",
+          "seq": 39,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189815394,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.4,
+            "diskBytes": 577536,
+            "ioBytes": null,
+            "residentBytes": 118816768
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-40",
+          "seq": 40,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189817876,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.4,
+            "diskBytes": 577536,
+            "ioBytes": null,
+            "residentBytes": 118702080
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-41",
+          "seq": 41,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189820345,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 643072,
+            "ioBytes": null,
+            "residentBytes": 117948416
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-42",
+          "seq": 42,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189822805,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.2,
+            "diskBytes": 643072,
+            "ioBytes": null,
+            "residentBytes": 117948416
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-43",
+          "seq": 43,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189825306,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.2,
+            "diskBytes": 643072,
+            "ioBytes": null,
+            "residentBytes": 117948416
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-44",
+          "seq": 44,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189827662,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 643072,
+            "ioBytes": null,
+            "residentBytes": 117948416
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-45",
+          "seq": 45,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189830109,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 643072,
+            "ioBytes": null,
+            "residentBytes": 117948416
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-46",
+          "seq": 46,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189832122,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.4,
+            "diskBytes": 643072,
+            "ioBytes": null,
+            "residentBytes": 117948416
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-47",
+          "seq": 47,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189834613,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.2,
+            "diskBytes": 643072,
+            "ioBytes": null,
+            "residentBytes": 117948416
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-48",
+          "seq": 48,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189837021,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.4,
+            "diskBytes": 643072,
+            "ioBytes": null,
+            "residentBytes": 117948416
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-49",
+          "seq": 49,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189839399,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.5,
+            "diskBytes": 708608,
+            "ioBytes": null,
+            "residentBytes": 117948416
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-50",
+          "seq": 50,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189841799,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.4,
+            "diskBytes": 708608,
+            "ioBytes": null,
+            "residentBytes": 117948416
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-51",
+          "seq": 51,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189843969,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "item": {
+              "aggregated_output": "",
+              "command": "/bin/zsh -lc \"mkdir -p output\ncat > output/index.html <<'EOF'\n<\"'!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <meta name=\"description\" content=\"Common Systems is an independent design and engineering studio making complex things feel simple.\">\n  <title>Common Systems — Independent design & engineering</title>\n  <link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n  <a class=\"skip-link\" href=\"#main\">Skip to content</a>\n  <header class=\"site-header\">\n    <a class=\"wordmark\" href=\"#\" aria-label=\"Common Systems home\"><span class=\"brand-mark\" aria-hidden=\"true\">✳</span> common systems<span class=\"registered\">®</span></a>\n    <nav aria-label=\"Main navigation\"><a href=\"#work\">Selected work <span>02</span></a><a href=\"#approach\">Our approach</a><a class=\"contact-link\" href=\"mailto:hello@common.systems\">Let’s talk <span aria-hidden=\"true\">↗</span></a></nav>\n  </header>\n  <main id=\"main\">\n    <section class=\"hero\" aria-labelledby=\"hero-title\">\n      <div class=\"hero-top\"><p class=\"eyebrow\"><span class=\"status-dot\"></span> Independent minds. Connected thinking.</p><p class=\"edition\">Design + Engineering / Est. 2024</p></div>\n      <h1 id=\"hero-title\">Good things<br>work <span class=\"serif\">together.</span></h1>\n      <div class=\"hero-bottom\"><p>We’re a small systems studio turning tangled ideas into clear identities, useful tools, and better digital experiences.</p><a class=\"round-link\" href=\"#work\"><span>Explore our work</span><span class=\"round-arrow\" aria-hidden=\"true\">↘</span></a></div>\n      <div class=\"system-art\" role=\"img\" aria-label=\"A connected system of geometric shapes: a circle, square, and star working together\">\n        <div class=\"art-label\">Fig. 01 — The whole is greater.</div>\n        <div class=\"art-grid\"><div class=\"shape circle\"><span>Perspective</span></div><div class=\"connector\" aria-hidden=\"true\">+</div><div class=\"shape square\"><span>Structure</span></div><div class=\"connector\" aria-hidden=\"true\">=</div><div class=\"shape star\"><span>Possibility</span></div></div>\n        <div class=\"art-footer\"><span>Different parts. Shared purpose.</span><span aria-hidden=\"true\">↗</span></div>\n      </div>\n    </section>\n    <section class=\"work section\" id=\"work\" aria-labelledby=\"work-title\">\n      <div class=\"section-heading\"><h2 id=\"work-title\">A few things we’ve put together.</h2><span class=\"eyebrow\">Selected work / 01–02</span></div>\n      <div class=\"project-grid\">\n        <article class=\"project\"><div class=\"project-image field-image\"><div class=\"field-word\">field<span>®</span></div><div class=\"field-lines\" aria-hidden=\"true\"></div><p>A clearer path forward.</p><span class=\"image-tag\">01 / FIELD</span></div><div class=\"project-caption\"><h3>Field</h3><p>Identity & digital experience</p><span aria-hidden=\"true\">↗</span></div><p class=\"project-description\">Making a new way to work feel like second nature.</p></article>\n        <article class=\"project\"><div class=\"project-image index-image\"><div class=\"index-top\"><span>INDEX / KNOWLEDGE IN MOTION</span><span>↗</span></div><div class=\"index-symbol\" aria-hidden=\"true\"><i></i><i></i><i></i><i></i><i></i></div><div class=\"index-word\">Index<span>_</span></div><span class=\"image-tag\">02 / INDEX</span></div><div class=\"project-caption\"><h3>Index</h3><p>Strategy & product design</p><span aria-hidden=\"true\">↗</span></div><p class=\"project-description\">Connecting curious people with what comes next.</p></article>\n      </div>\n    </section>\n    <section class=\"approach section\" id=\"approach\" aria-labelledby=\"approach-title\"><div><p class=\"eyebrow\">Small studio. Whole-picture thinking.</p><h2 id=\"approach-title\">Less noise.<br>More <span class=\"serif\">sense.</span></h2></div><div class=\"approach-copy\"><p>We believe the best work happens when strategy, design, and technology share a table. So that’s how we work: closely, thoughtfully, and without unnecessary layers.</p><p>From the first question to the final detail, we help ambitious teams build things that make sense — and make a difference.</p><div class=\"capabilities\"><span>01 / Strategy & direction</span><span>02 / Identity & design systems</span><span>03 / Digital products & websites</span><span>04 / Creative development</span></div></div></section>\n    <section class=\"contact section\" aria-labelledby=\"contact-title\"><p class=\"eyebrow\">Have something in mind?</p><a href=\"mailto:hello@common.systems\" class=\"contact-title\" id=\"contact-title\">Let’s connect.<span aria-hidden=\"true\">↗</span></a><div class=\"contact-bottom\"><p>Good conversations are where good systems start.</p><a href=\"mailto:hello@common.systems\">hello@common.systems</a></div></section>\n  </main>\n  <footer><a class=\"footer-brand\" href=\"#\">common systems®</a><p>Independent by nature. Connected by design.</p><span>© 2026 Common Systems</span></footer>\n</body>\n</html>\nEOF\ncat > output/style.css <<'\"'EOF'\n@charset \\\"UTF-8\\\";\n:root{--paper:#f4f2e9;--ink:#262820;--muted:#66685d;--line:#cecec2;--green:#d5ed56;--orange:#ff6c3b}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--paper);color:var(--ink);font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased}a{color:inherit;text-decoration:none}a:focus-visible{outline:2px solid var(--ink);outline-offset:6px}a:hover{text-decoration:underline;text-underline-offset:5px}.skip-link{position:absolute;top:-60px;left:20px;background:var(--green);padding:12px;z-index:10}.skip-link:focus{top:12px}.site-header,main,footer{max-width:1600px;margin:auto}.site-header{margin:0 auto;padding:30px 4%;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line)}.wordmark{display:flex;align-items:center;font-size:23px;font-weight:700;letter-spacing:-1px;gap:9px}.brand-mark{font-size:39px;line-height:1}.registered{align-self:flex-start;font-size:11px;margin-left:-5px;margin-top:6px}nav{display:flex;align-items:center;gap:37px;font-size:13px}nav a span{font-size:10px;margin-left:5px}.contact-link{border-bottom:1px solid var(--ink);padding-bottom:5px}.contact-link span{font-size:17px;margin-left:20px}.hero{padding:36px 4% 0}.hero-top{display:flex;justify-content:space-between;align-items:center}.eyebrow,.edition,.art-label,.art-footer,.image-tag,.index-top{font-family:\\\"Courier New\\\",monospace;font-size:11px;line-height:1.5;letter-spacing:.2px}.eyebrow{margin:0;text-transform:uppercase}.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ink);margin-right:10px}.edition{margin:0;color:var(--muted)}h1{font-size:clamp(64px,8.6vw,136px);font-weight:500;letter-spacing:-.075em;line-height:.99;margin:63px 0 32px}.serif{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-weight:400;letter-spacing:-.07em}.hero-bottom{display:flex;justify-content:space-between;align-items:end;margin-bottom:51px}.hero-bottom>p{max-width:385px;font-size:17px;line-height:1.55;margin:0}.round-link{display:flex;align-items:center;gap:28px;font-size:13px}.round-arrow{border:1px solid var(--ink);width:46px;height:46px;border-radius:50%;display:grid;place-items:center;font-size:23px}.system-art{background:var(--green);padding:22px 26px 17px;overflow:hidden}.art-label{text-transform:uppercase}.art-grid{display:flex;align-items:center;justify-content:center;gap:4%;padding:48px 5% 52px}.shape{width:23%;aspect-ratio:1;display:grid;place-items:center;position:relative}.shape span{font-family:\\\"Courier New\\\",monospace;font-size:11px;z-index:1}.circle{border:1px solid var(--ink);border-radius:50%;background:repeating-linear-gradient(90deg,transparent 0,transparent 12px,#26282026 12px,#26282026 13px)}.square{background:var(--ink);color:var(--green);transform:rotate(-10deg)}.square span{transform:rotate(10deg)}.star{background:var(--orange);clip-path:polygon(50% 0,59% 27%,79% 10%,77% 36%,100% 38%,80% 53%,97% 73%,71% 72%,69% 100%,50% 80%,31% 100%,29% 72%,3% 73%,20% 53%,0 38%,23% 36%,21% 10%,41% 27%)}.connector{font-size:30px;font-weight:300}.art-footer{border-top:1px solid #26282044;padding-top:13px;display:flex;justify-content:space-between}.art-footer>span:last-child{font-size:20px}.section{margin:0 4%;padding:80px 0;border-bottom:1px solid var(--line)}.section-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:30px}.section-heading h2{font-size:24px;letter-spacing:-.8px;font-weight:400;margin:0}.section-heading .eyebrow{color:var(--muted)}.project-grid{display:grid;grid-template-columns:1fr 1fr;gap:25px}.project-image{aspect-ratio:1.3;position:relative;overflow:hidden}.field-image{background:#dce1d6;color:#26483f;padding:32px}.field-word{font-family:Georgia,serif;font-size:95px;letter-spacing:-7px;position:relative;z-index:1}.field-word>span{font-family:Arial,sans-serif;font-size:16px;vertical-align:top;display:inline-block;margin:20px 0 0 8px;letter-spacing:0}.field-image>p{position:absolute;bottom:43px;font-size:17px}.field-lines{position:absolute;width:90%;height:110%;border:1px solid #738d79;border-radius:48%;top:29%;left:40%;transform:rotate(-35deg);box-shadow:0 0 0 16px #dce1d6,0 0 0 17px #738d79,0 0 0 33px #dce1d6,0 0 0 34px #738d79,0 0 0 50px #dce1d6,0 0 0 51px #738d79,0 0 0 67px #dce1d6,0 0 0 68px #738d79}.image-tag{position:absolute;bottom:18px;left:25px;font-size:9px}.index-image{background:#b7c6ee;padding:25px;color:#24315c}.index-top{display:flex;justify-content:space-between;font-size:9px}.index-symbol{display:flex;justify-content:center;align-items:center;height:55%;gap:8px;transform:rotate(-25deg);padding-top:30px}.index-symbol i{width:25px;height:75%;background:#24315c}.index-symbol i:nth-child(2),.index-symbol i:nth-child(4){height:95%}.index-symbol i:nth-child(3){height:115%}.index-word{position:absolute;bottom:38px;left:25px;font-size:65px;letter-spacing:-4px}.index-word span{color:#eef1fa}.project-caption{display:flex;align-items:center;gap:15px;padding-top:18px}.project-caption h3{font-size:19px;font-weight:500;margin:0}.project-caption p{font-size:11px;color:var(--muted);margin:0}.project-caption>span{margin-left:auto;font-size:22px}.project-description{color:var(--muted);font-size:13px;margin:10px 0 0}.approach{display:grid;grid-template-columns:1fr 1fr;gap:25px;padding-top:88px;padding-bottom:88px}.approach h2{font-size:70px;font-weight:400;line-height:1.05;letter-spacing:-4px;margin:27px 0 0}.approach-copy>p{font-size:18px;line-height:1.6;max-width:495px;margin:0 0 22px}.approach-copy>p+p{font-size:15px;color:var(--muted)}.capabilities{display:grid;grid-template-columns:1fr 1fr;gap:17px 10px;border-top:1px solid var(--line);padding-top:23px;margin-top:30px;font-family:\\\"Courier New\\\",monospace;font-size:10px}.contact{padding-top:55px;padding-bottom:35px}.contact-title{display:flex;justify-content:space-between;align-items:center;font-size:clamp(50px,8.5vw,128px);letter-spacing:-.07em;line-height:1.3;margin:20px 0}.contact-title span{font-size:.8em}.contact-bottom{display:flex;justify-content:space-between;font-size:13px;align-items:center}.contact-bottom p{color:var(--muted)}.contact-bottom>a{border-bottom:1px solid var(--ink);padding-bottom:4px}footer{padding:27px 4%;display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--muted);gap:20px}.footer-brand{font-weight:700;font-size:14px;color:var(--ink);letter-spacing:-.5px}footer p{margin:0}@media(min-width:1600px){.site-header{padding-left:64px;padding-right:64px}}@media(max-width:760px){.site-header{padding:22px 5%}.wordmark{font-size:19px}.brand-mark{font-size:30px}nav{gap:18px}nav a:first-child,nav a:nth-child(2){display:none}.hero{padding:27px 5% 0}.edition{display:none}.eyebrow{font-size:9px}h1{margin-top:44px;font-size:clamp(58px,12vw,90px)}.hero-bottom{align-items:start;gap:25px;margin-bottom:32px}.hero-bottom>p{font-size:14px;max-width:300px}.round-link{gap:0}.round-link>span:first-child{display:none}.round-arrow{width:40px;height:40px;flex-shrink:0}.system-art{padding:15px}.art-grid{padding:40px 0;gap:3%}.shape{width:25%}.shape span{font-size:8px}.connector{font-size:22px}.art-label,.art-footer{font-size:9px}.section{margin:0 5%;padding:45px 0}.section-heading{align-items:start;gap:20px}.section-heading h2{font-size:21px;max-width:220px}.section-heading .eyebrow{max-width:90px;text-align:right}.project-grid{grid-template-columns:1fr;gap:32px}.project-image{aspect-ratio:1.3}.field-word{font-size:90px}.approach{grid-template-columns:1fr;gap:32px}.approach h2{font-size:61px;margin-top:22px}.approach-copy>p{font-size:17px;max-width:none}.capabilities{font-size:9px}.contact-title{font-size:clamp(44px,11vw,80px);margin:24px 0}.contact-bottom{align-items:start;gap:16px;flex-direction:column}.contact-bottom p{margin:0}footer{padding:25px 5%;flex-wrap:wrap;gap:15px}footer p{display:none}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}\nEOF\npython3 - <<'PY'\nfrom pathlib import Path\nfrom html.parser import HTMLParser\nclass Check(HTMLParser):\n def __init__(self):\n  super().__init__(); self.ids=set(); self.links=[]\n def handle_starttag(self,tag,attrs):\n  a=dict(attrs)\n  if 'id' in a: assert a['id'] not in self.ids; self.ids.add(a['id'])\n  for k in ('href','src'):\n   if k in a:self.links.append(a[k])\np=Check(); p.feed(Path('output/index.html').read_text())\nfor link in p.links:\n if link.startswith('#') and len(link)>1:assert link[1:] in p.ids,link\n elif not link.startswith(('#','mailto:')):assert Path('output',link).is_file(),link\nassert not any(x.startswith(('http:','https:','//')) for x in p.links)\ncss=Path('output/style.css').read_text()\nassert css.count('{')==css.count('}')\nassert 'url(' not in css and '@import' not in css\nprint('PASS: internal anchors, local stylesheet, unique IDs, CSS brace balance, and no external asset references.')\nfor f in Path('output').iterdir():print(f, f.stat().st_size, 'bytes')\nPY\"",
+              "exit_code": null,
+              "id": "item_7",
+              "status": "in_progress",
+              "type": "command_execution"
+            },
+            "type": "item.started"
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-52",
+          "seq": 52,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189845780,
+          "type": "item.started"
+        },
+        {
+          "data": {
+            "item": {
+              "aggregated_output": "PASS: internal anchors, local stylesheet, unique IDs, CSS brace balance, and no external asset references.\noutput/index.html 4881 bytes\noutput/style.css 7971 bytes\n",
+              "command": "/bin/zsh -lc \"mkdir -p output\ncat > output/index.html <<'EOF'\n<\"'!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <meta name=\"description\" content=\"Common Systems is an independent design and engineering studio making complex things feel simple.\">\n  <title>Common Systems — Independent design & engineering</title>\n  <link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n  <a class=\"skip-link\" href=\"#main\">Skip to content</a>\n  <header class=\"site-header\">\n    <a class=\"wordmark\" href=\"#\" aria-label=\"Common Systems home\"><span class=\"brand-mark\" aria-hidden=\"true\">✳</span> common systems<span class=\"registered\">®</span></a>\n    <nav aria-label=\"Main navigation\"><a href=\"#work\">Selected work <span>02</span></a><a href=\"#approach\">Our approach</a><a class=\"contact-link\" href=\"mailto:hello@common.systems\">Let’s talk <span aria-hidden=\"true\">↗</span></a></nav>\n  </header>\n  <main id=\"main\">\n    <section class=\"hero\" aria-labelledby=\"hero-title\">\n      <div class=\"hero-top\"><p class=\"eyebrow\"><span class=\"status-dot\"></span> Independent minds. Connected thinking.</p><p class=\"edition\">Design + Engineering / Est. 2024</p></div>\n      <h1 id=\"hero-title\">Good things<br>work <span class=\"serif\">together.</span></h1>\n      <div class=\"hero-bottom\"><p>We’re a small systems studio turning tangled ideas into clear identities, useful tools, and better digital experiences.</p><a class=\"round-link\" href=\"#work\"><span>Explore our work</span><span class=\"round-arrow\" aria-hidden=\"true\">↘</span></a></div>\n      <div class=\"system-art\" role=\"img\" aria-label=\"A connected system of geometric shapes: a circle, square, and star working together\">\n        <div class=\"art-label\">Fig. 01 — The whole is greater.</div>\n        <div class=\"art-grid\"><div class=\"shape circle\"><span>Perspective</span></div><div class=\"connector\" aria-hidden=\"true\">+</div><div class=\"shape square\"><span>Structure</span></div><div class=\"connector\" aria-hidden=\"true\">=</div><div class=\"shape star\"><span>Possibility</span></div></div>\n        <div class=\"art-footer\"><span>Different parts. Shared purpose.</span><span aria-hidden=\"true\">↗</span></div>\n      </div>\n    </section>\n    <section class=\"work section\" id=\"work\" aria-labelledby=\"work-title\">\n      <div class=\"section-heading\"><h2 id=\"work-title\">A few things we’ve put together.</h2><span class=\"eyebrow\">Selected work / 01–02</span></div>\n      <div class=\"project-grid\">\n        <article class=\"project\"><div class=\"project-image field-image\"><div class=\"field-word\">field<span>®</span></div><div class=\"field-lines\" aria-hidden=\"true\"></div><p>A clearer path forward.</p><span class=\"image-tag\">01 / FIELD</span></div><div class=\"project-caption\"><h3>Field</h3><p>Identity & digital experience</p><span aria-hidden=\"true\">↗</span></div><p class=\"project-description\">Making a new way to work feel like second nature.</p></article>\n        <article class=\"project\"><div class=\"project-image index-image\"><div class=\"index-top\"><span>INDEX / KNOWLEDGE IN MOTION</span><span>↗</span></div><div class=\"index-symbol\" aria-hidden=\"true\"><i></i><i></i><i></i><i></i><i></i></div><div class=\"index-word\">Index<span>_</span></div><span class=\"image-tag\">02 / INDEX</span></div><div class=\"project-caption\"><h3>Index</h3><p>Strategy & product design</p><span aria-hidden=\"true\">↗</span></div><p class=\"project-description\">Connecting curious people with what comes next.</p></article>\n      </div>\n    </section>\n    <section class=\"approach section\" id=\"approach\" aria-labelledby=\"approach-title\"><div><p class=\"eyebrow\">Small studio. Whole-picture thinking.</p><h2 id=\"approach-title\">Less noise.<br>More <span class=\"serif\">sense.</span></h2></div><div class=\"approach-copy\"><p>We believe the best work happens when strategy, design, and technology share a table. So that’s how we work: closely, thoughtfully, and without unnecessary layers.</p><p>From the first question to the final detail, we help ambitious teams build things that make sense — and make a difference.</p><div class=\"capabilities\"><span>01 / Strategy & direction</span><span>02 / Identity & design systems</span><span>03 / Digital products & websites</span><span>04 / Creative development</span></div></div></section>\n    <section class=\"contact section\" aria-labelledby=\"contact-title\"><p class=\"eyebrow\">Have something in mind?</p><a href=\"mailto:hello@common.systems\" class=\"contact-title\" id=\"contact-title\">Let’s connect.<span aria-hidden=\"true\">↗</span></a><div class=\"contact-bottom\"><p>Good conversations are where good systems start.</p><a href=\"mailto:hello@common.systems\">hello@common.systems</a></div></section>\n  </main>\n  <footer><a class=\"footer-brand\" href=\"#\">common systems®</a><p>Independent by nature. Connected by design.</p><span>© 2026 Common Systems</span></footer>\n</body>\n</html>\nEOF\ncat > output/style.css <<'\"'EOF'\n@charset \\\"UTF-8\\\";\n:root{--paper:#f4f2e9;--ink:#262820;--muted:#66685d;--line:#cecec2;--green:#d5ed56;--orange:#ff6c3b}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--paper);color:var(--ink);font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased}a{color:inherit;text-decoration:none}a:focus-visible{outline:2px solid var(--ink);outline-offset:6px}a:hover{text-decoration:underline;text-underline-offset:5px}.skip-link{position:absolute;top:-60px;left:20px;background:var(--green);padding:12px;z-index:10}.skip-link:focus{top:12px}.site-header,main,footer{max-width:1600px;margin:auto}.site-header{margin:0 auto;padding:30px 4%;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line)}.wordmark{display:flex;align-items:center;font-size:23px;font-weight:700;letter-spacing:-1px;gap:9px}.brand-mark{font-size:39px;line-height:1}.registered{align-self:flex-start;font-size:11px;margin-left:-5px;margin-top:6px}nav{display:flex;align-items:center;gap:37px;font-size:13px}nav a span{font-size:10px;margin-left:5px}.contact-link{border-bottom:1px solid var(--ink);padding-bottom:5px}.contact-link span{font-size:17px;margin-left:20px}.hero{padding:36px 4% 0}.hero-top{display:flex;justify-content:space-between;align-items:center}.eyebrow,.edition,.art-label,.art-footer,.image-tag,.index-top{font-family:\\\"Courier New\\\",monospace;font-size:11px;line-height:1.5;letter-spacing:.2px}.eyebrow{margin:0;text-transform:uppercase}.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ink);margin-right:10px}.edition{margin:0;color:var(--muted)}h1{font-size:clamp(64px,8.6vw,136px);font-weight:500;letter-spacing:-.075em;line-height:.99;margin:63px 0 32px}.serif{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-weight:400;letter-spacing:-.07em}.hero-bottom{display:flex;justify-content:space-between;align-items:end;margin-bottom:51px}.hero-bottom>p{max-width:385px;font-size:17px;line-height:1.55;margin:0}.round-link{display:flex;align-items:center;gap:28px;font-size:13px}.round-arrow{border:1px solid var(--ink);width:46px;height:46px;border-radius:50%;display:grid;place-items:center;font-size:23px}.system-art{background:var(--green);padding:22px 26px 17px;overflow:hidden}.art-label{text-transform:uppercase}.art-grid{display:flex;align-items:center;justify-content:center;gap:4%;padding:48px 5% 52px}.shape{width:23%;aspect-ratio:1;display:grid;place-items:center;position:relative}.shape span{font-family:\\\"Courier New\\\",monospace;font-size:11px;z-index:1}.circle{border:1px solid var(--ink);border-radius:50%;background:repeating-linear-gradient(90deg,transparent 0,transparent 12px,#26282026 12px,#26282026 13px)}.square{background:var(--ink);color:var(--green);transform:rotate(-10deg)}.square span{transform:rotate(10deg)}.star{background:var(--orange);clip-path:polygon(50% 0,59% 27%,79% 10%,77% 36%,100% 38%,80% 53%,97% 73%,71% 72%,69% 100%,50% 80%,31% 100%,29% 72%,3% 73%,20% 53%,0 38%,23% 36%,21% 10%,41% 27%)}.connector{font-size:30px;font-weight:300}.art-footer{border-top:1px solid #26282044;padding-top:13px;display:flex;justify-content:space-between}.art-footer>span:last-child{font-size:20px}.section{margin:0 4%;padding:80px 0;border-bottom:1px solid var(--line)}.section-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:30px}.section-heading h2{font-size:24px;letter-spacing:-.8px;font-weight:400;margin:0}.section-heading .eyebrow{color:var(--muted)}.project-grid{display:grid;grid-template-columns:1fr 1fr;gap:25px}.project-image{aspect-ratio:1.3;position:relative;overflow:hidden}.field-image{background:#dce1d6;color:#26483f;padding:32px}.field-word{font-family:Georgia,serif;font-size:95px;letter-spacing:-7px;position:relative;z-index:1}.field-word>span{font-family:Arial,sans-serif;font-size:16px;vertical-align:top;display:inline-block;margin:20px 0 0 8px;letter-spacing:0}.field-image>p{position:absolute;bottom:43px;font-size:17px}.field-lines{position:absolute;width:90%;height:110%;border:1px solid #738d79;border-radius:48%;top:29%;left:40%;transform:rotate(-35deg);box-shadow:0 0 0 16px #dce1d6,0 0 0 17px #738d79,0 0 0 33px #dce1d6,0 0 0 34px #738d79,0 0 0 50px #dce1d6,0 0 0 51px #738d79,0 0 0 67px #dce1d6,0 0 0 68px #738d79}.image-tag{position:absolute;bottom:18px;left:25px;font-size:9px}.index-image{background:#b7c6ee;padding:25px;color:#24315c}.index-top{display:flex;justify-content:space-between;font-size:9px}.index-symbol{display:flex;justify-content:center;align-items:center;height:55%;gap:8px;transform:rotate(-25deg);padding-top:30px}.index-symbol i{width:25px;height:75%;background:#24315c}.index-symbol i:nth-child(2),.index-symbol i:nth-child(4){height:95%}.index-symbol i:nth-child(3){height:115%}.index-word{position:absolute;bottom:38px;left:25px;font-size:65px;letter-spacing:-4px}.index-word span{color:#eef1fa}.project-caption{display:flex;align-items:center;gap:15px;padding-top:18px}.project-caption h3{font-size:19px;font-weight:500;margin:0}.project-caption p{font-size:11px;color:var(--muted);margin:0}.project-caption>span{margin-left:auto;font-size:22px}.project-description{color:var(--muted);font-size:13px;margin:10px 0 0}.approach{display:grid;grid-template-columns:1fr 1fr;gap:25px;padding-top:88px;padding-bottom:88px}.approach h2{font-size:70px;font-weight:400;line-height:1.05;letter-spacing:-4px;margin:27px 0 0}.approach-copy>p{font-size:18px;line-height:1.6;max-width:495px;margin:0 0 22px}.approach-copy>p+p{font-size:15px;color:var(--muted)}.capabilities{display:grid;grid-template-columns:1fr 1fr;gap:17px 10px;border-top:1px solid var(--line);padding-top:23px;margin-top:30px;font-family:\\\"Courier New\\\",monospace;font-size:10px}.contact{padding-top:55px;padding-bottom:35px}.contact-title{display:flex;justify-content:space-between;align-items:center;font-size:clamp(50px,8.5vw,128px);letter-spacing:-.07em;line-height:1.3;margin:20px 0}.contact-title span{font-size:.8em}.contact-bottom{display:flex;justify-content:space-between;font-size:13px;align-items:center}.contact-bottom p{color:var(--muted)}.contact-bottom>a{border-bottom:1px solid var(--ink);padding-bottom:4px}footer{padding:27px 4%;display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--muted);gap:20px}.footer-brand{font-weight:700;font-size:14px;color:var(--ink);letter-spacing:-.5px}footer p{margin:0}@media(min-width:1600px){.site-header{padding-left:64px;padding-right:64px}}@media(max-width:760px){.site-header{padding:22px 5%}.wordmark{font-size:19px}.brand-mark{font-size:30px}nav{gap:18px}nav a:first-child,nav a:nth-child(2){display:none}.hero{padding:27px 5% 0}.edition{display:none}.eyebrow{font-size:9px}h1{margin-top:44px;font-size:clamp(58px,12vw,90px)}.hero-bottom{align-items:start;gap:25px;margin-bottom:32px}.hero-bottom>p{font-size:14px;max-width:300px}.round-link{gap:0}.round-link>span:first-child{display:none}.round-arrow{width:40px;height:40px;flex-shrink:0}.system-art{padding:15px}.art-grid{padding:40px 0;gap:3%}.shape{width:25%}.shape span{font-size:8px}.connector{font-size:22px}.art-label,.art-footer{font-size:9px}.section{margin:0 5%;padding:45px 0}.section-heading{align-items:start;gap:20px}.section-heading h2{font-size:21px;max-width:220px}.section-heading .eyebrow{max-width:90px;text-align:right}.project-grid{grid-template-columns:1fr;gap:32px}.project-image{aspect-ratio:1.3}.field-word{font-size:90px}.approach{grid-template-columns:1fr;gap:32px}.approach h2{font-size:61px;margin-top:22px}.approach-copy>p{font-size:17px;max-width:none}.capabilities{font-size:9px}.contact-title{font-size:clamp(44px,11vw,80px);margin:24px 0}.contact-bottom{align-items:start;gap:16px;flex-direction:column}.contact-bottom p{margin:0}footer{padding:25px 5%;flex-wrap:wrap;gap:15px}footer p{display:none}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}\nEOF\npython3 - <<'PY'\nfrom pathlib import Path\nfrom html.parser import HTMLParser\nclass Check(HTMLParser):\n def __init__(self):\n  super().__init__(); self.ids=set(); self.links=[]\n def handle_starttag(self,tag,attrs):\n  a=dict(attrs)\n  if 'id' in a: assert a['id'] not in self.ids; self.ids.add(a['id'])\n  for k in ('href','src'):\n   if k in a:self.links.append(a[k])\np=Check(); p.feed(Path('output/index.html').read_text())\nfor link in p.links:\n if link.startswith('#') and len(link)>1:assert link[1:] in p.ids,link\n elif not link.startswith(('#','mailto:')):assert Path('output',link).is_file(),link\nassert not any(x.startswith(('http:','https:','//')) for x in p.links)\ncss=Path('output/style.css').read_text()\nassert css.count('{')==css.count('}')\nassert 'url(' not in css and '@import' not in css\nprint('PASS: internal anchors, local stylesheet, unique IDs, CSS brace balance, and no external asset references.')\nfor f in Path('output').iterdir():print(f, f.stat().st_size, 'bytes')\nPY\"",
+              "exit_code": 0,
+              "id": "item_7",
+              "status": "completed",
+              "type": "command_execution"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-53",
+          "seq": 53,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189845781,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0,
+            "diskBytes": 819200,
+            "ioBytes": null,
+            "residentBytes": 120061952
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-54",
+          "seq": 54,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189846965,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.4,
+            "diskBytes": 819200,
+            "ioBytes": null,
+            "residentBytes": 120078336
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-55",
+          "seq": 55,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189849444,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "item": {
+              "id": "item_8",
+              "text": "Created [index.html](output/index.html) and [style.css](output/style.css): a complete responsive studio page with CSS artwork, project cards, services, and contact links.\n\nLocal checks passed for anchors, unique IDs, stylesheet linkage, CSS brace balance, and no external assets. No browser launch or deployment performed.",
+              "type": "agent_message"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-56",
+          "seq": 56,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189850318,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "type": "turn.completed",
+            "usage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 55424,
+              "input_tokens": 58060,
+              "output_tokens": 4565,
+              "reasoning_output_tokens": 8
+            }
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-57",
+          "seq": 57,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189850319,
+          "type": "turn.completed"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": null,
+            "diskBytes": 819200,
+            "ioBytes": null,
+            "residentBytes": null
+          },
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "event:e510f46e-5433-4a63-b162-5a53f38b0fb9:7d15ab4d-d226-4be5-9197-e7216d01f9e7-58",
+          "seq": 58,
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "timestamp": 1794189851581,
+          "type": "resource.observation"
+        }
+      ],
+      "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+      "experimentId": "b284cf02-df90-4306-ad95-07034708bcc7",
+      "finishedAt": 1794189852767,
+      "hostId": "owner-mac",
+      "id": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+      "messages": [
+        {
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "65f6ce64-0ed5-4661-8353-d45cfb44fca6",
+          "requestId": "effbc28d-3527-4a25-8123-1feb6c455546",
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "text": "Create output/index.html and output/style.css for a small systems studio website. Consult project design rules when available. Produce a complete responsive static page with no external libraries, network requests or assets. Use local file checks, do not attempt browser launch or deployment, and briefly report what you created and checked. Do not use subagents."
+        }
+      ],
+      "model": "gpt-6.1-sol",
+      "profileSha256": "9d23f7fde668430ab9d50cb6db6fdcb3d92523b51f21c820f9e9d270825e8fd2",
+      "results": [
+        {
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "artifact:e510f46e-5433-4a63-b162-5a53f38b0fb9:index.html",
+          "mediaType": "text/html",
+          "path": "index.html",
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "sha256": "3902989c408c52cca49536a843059d1352f15450bf960beeb69d3e1f0d9645a1",
+          "size": 4881
+        },
+        {
+          "executionId": "e510f46e-5433-4a63-b162-5a53f38b0fb9",
+          "id": "artifact:e510f46e-5433-4a63-b162-5a53f38b0fb9:style.css",
+          "mediaType": "text/css",
+          "path": "style.css",
+          "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+          "sha256": "dc6403635a19fbf5a4717e5731d715c8599097ca23e3e3da359efea3e1258ada",
+          "size": 7971
+        }
+      ],
+      "sessionId": "a82091f1-43f0-4492-b551-ac2313a146d0",
+      "sources": [
+        {
+          "path": "index.html",
+          "sha256": "3902989c408c52cca49536a843059d1352f15450bf960beeb69d3e1f0d9645a1",
+          "text": "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <meta name=\"description\" content=\"Common Systems is an independent design and engineering studio making complex things feel simple.\">\n  <title>Common Systems — Independent design & engineering</title>\n  <link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n  <a class=\"skip-link\" href=\"#main\">Skip to content</a>\n  <header class=\"site-header\">\n    <a class=\"wordmark\" href=\"#\" aria-label=\"Common Systems home\"><span class=\"brand-mark\" aria-hidden=\"true\">✳</span> common systems<span class=\"registered\">®</span></a>\n    <nav aria-label=\"Main navigation\"><a href=\"#work\">Selected work <span>02</span></a><a href=\"#approach\">Our approach</a><a class=\"contact-link\" href=\"mailto:hello@common.systems\">Let’s talk <span aria-hidden=\"true\">↗</span></a></nav>\n  </header>\n  <main id=\"main\">\n    <section class=\"hero\" aria-labelledby=\"hero-title\">\n      <div class=\"hero-top\"><p class=\"eyebrow\"><span class=\"status-dot\"></span> Independent minds. Connected thinking.</p><p class=\"edition\">Design + Engineering / Est. 2024</p></div>\n      <h1 id=\"hero-title\">Good things<br>work <span class=\"serif\">together.</span></h1>\n      <div class=\"hero-bottom\"><p>We’re a small systems studio turning tangled ideas into clear identities, useful tools, and better digital experiences.</p><a class=\"round-link\" href=\"#work\"><span>Explore our work</span><span class=\"round-arrow\" aria-hidden=\"true\">↘</span></a></div>\n      <div class=\"system-art\" role=\"img\" aria-label=\"A connected system of geometric shapes: a circle, square, and star working together\">\n        <div class=\"art-label\">Fig. 01 — The whole is greater.</div>\n        <div class=\"art-grid\"><div class=\"shape circle\"><span>Perspective</span></div><div class=\"connector\" aria-hidden=\"true\">+</div><div class=\"shape square\"><span>Structure</span></div><div class=\"connector\" aria-hidden=\"true\">=</div><div class=\"shape star\"><span>Possibility</span></div></div>\n        <div class=\"art-footer\"><span>Different parts. Shared purpose.</span><span aria-hidden=\"true\">↗</span></div>\n      </div>\n    </section>\n    <section class=\"work section\" id=\"work\" aria-labelledby=\"work-title\">\n      <div class=\"section-heading\"><h2 id=\"work-title\">A few things we’ve put together.</h2><span class=\"eyebrow\">Selected work / 01–02</span></div>\n      <div class=\"project-grid\">\n        <article class=\"project\"><div class=\"project-image field-image\"><div class=\"field-word\">field<span>®</span></div><div class=\"field-lines\" aria-hidden=\"true\"></div><p>A clearer path forward.</p><span class=\"image-tag\">01 / FIELD</span></div><div class=\"project-caption\"><h3>Field</h3><p>Identity & digital experience</p><span aria-hidden=\"true\">↗</span></div><p class=\"project-description\">Making a new way to work feel like second nature.</p></article>\n        <article class=\"project\"><div class=\"project-image index-image\"><div class=\"index-top\"><span>INDEX / KNOWLEDGE IN MOTION</span><span>↗</span></div><div class=\"index-symbol\" aria-hidden=\"true\"><i></i><i></i><i></i><i></i><i></i></div><div class=\"index-word\">Index<span>_</span></div><span class=\"image-tag\">02 / INDEX</span></div><div class=\"project-caption\"><h3>Index</h3><p>Strategy & product design</p><span aria-hidden=\"true\">↗</span></div><p class=\"project-description\">Connecting curious people with what comes next.</p></article>\n      </div>\n    </section>\n    <section class=\"approach section\" id=\"approach\" aria-labelledby=\"approach-title\"><div><p class=\"eyebrow\">Small studio. Whole-picture thinking.</p><h2 id=\"approach-title\">Less noise.<br>More <span class=\"serif\">sense.</span></h2></div><div class=\"approach-copy\"><p>We believe the best work happens when strategy, design, and technology share a table. So that’s how we work: closely, thoughtfully, and without unnecessary layers.</p><p>From the first question to the final detail, we help ambitious teams build things that make sense — and make a difference.</p><div class=\"capabilities\"><span>01 / Strategy & direction</span><span>02 / Identity & design systems</span><span>03 / Digital products & websites</span><span>04 / Creative development</span></div></div></section>\n    <section class=\"contact section\" aria-labelledby=\"contact-title\"><p class=\"eyebrow\">Have something in mind?</p><a href=\"mailto:hello@common.systems\" class=\"contact-title\" id=\"contact-title\">Let’s connect.<span aria-hidden=\"true\">↗</span></a><div class=\"contact-bottom\"><p>Good conversations are where good systems start.</p><a href=\"mailto:hello@common.systems\">hello@common.systems</a></div></section>\n  </main>\n  <footer><a class=\"footer-brand\" href=\"#\">common systems®</a><p>Independent by nature. Connected by design.</p><span>© 2026 Common Systems</span></footer>\n</body>\n</html>\n"
+        },
+        {
+          "path": "style.css",
+          "sha256": "dc6403635a19fbf5a4717e5731d715c8599097ca23e3e3da359efea3e1258ada",
+          "text": "@charset \"UTF-8\";\n:root{--paper:#f4f2e9;--ink:#262820;--muted:#66685d;--line:#cecec2;--green:#d5ed56;--orange:#ff6c3b}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--paper);color:var(--ink);font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased}a{color:inherit;text-decoration:none}a:focus-visible{outline:2px solid var(--ink);outline-offset:6px}a:hover{text-decoration:underline;text-underline-offset:5px}.skip-link{position:absolute;top:-60px;left:20px;background:var(--green);padding:12px;z-index:10}.skip-link:focus{top:12px}.site-header,main,footer{max-width:1600px;margin:auto}.site-header{margin:0 auto;padding:30px 4%;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line)}.wordmark{display:flex;align-items:center;font-size:23px;font-weight:700;letter-spacing:-1px;gap:9px}.brand-mark{font-size:39px;line-height:1}.registered{align-self:flex-start;font-size:11px;margin-left:-5px;margin-top:6px}nav{display:flex;align-items:center;gap:37px;font-size:13px}nav a span{font-size:10px;margin-left:5px}.contact-link{border-bottom:1px solid var(--ink);padding-bottom:5px}.contact-link span{font-size:17px;margin-left:20px}.hero{padding:36px 4% 0}.hero-top{display:flex;justify-content:space-between;align-items:center}.eyebrow,.edition,.art-label,.art-footer,.image-tag,.index-top{font-family:\"Courier New\",monospace;font-size:11px;line-height:1.5;letter-spacing:.2px}.eyebrow{margin:0;text-transform:uppercase}.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ink);margin-right:10px}.edition{margin:0;color:var(--muted)}h1{font-size:clamp(64px,8.6vw,136px);font-weight:500;letter-spacing:-.075em;line-height:.99;margin:63px 0 32px}.serif{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-weight:400;letter-spacing:-.07em}.hero-bottom{display:flex;justify-content:space-between;align-items:end;margin-bottom:51px}.hero-bottom>p{max-width:385px;font-size:17px;line-height:1.55;margin:0}.round-link{display:flex;align-items:center;gap:28px;font-size:13px}.round-arrow{border:1px solid var(--ink);width:46px;height:46px;border-radius:50%;display:grid;place-items:center;font-size:23px}.system-art{background:var(--green);padding:22px 26px 17px;overflow:hidden}.art-label{text-transform:uppercase}.art-grid{display:flex;align-items:center;justify-content:center;gap:4%;padding:48px 5% 52px}.shape{width:23%;aspect-ratio:1;display:grid;place-items:center;position:relative}.shape span{font-family:\"Courier New\",monospace;font-size:11px;z-index:1}.circle{border:1px solid var(--ink);border-radius:50%;background:repeating-linear-gradient(90deg,transparent 0,transparent 12px,#26282026 12px,#26282026 13px)}.square{background:var(--ink);color:var(--green);transform:rotate(-10deg)}.square span{transform:rotate(10deg)}.star{background:var(--orange);clip-path:polygon(50% 0,59% 27%,79% 10%,77% 36%,100% 38%,80% 53%,97% 73%,71% 72%,69% 100%,50% 80%,31% 100%,29% 72%,3% 73%,20% 53%,0 38%,23% 36%,21% 10%,41% 27%)}.connector{font-size:30px;font-weight:300}.art-footer{border-top:1px solid #26282044;padding-top:13px;display:flex;justify-content:space-between}.art-footer>span:last-child{font-size:20px}.section{margin:0 4%;padding:80px 0;border-bottom:1px solid var(--line)}.section-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:30px}.section-heading h2{font-size:24px;letter-spacing:-.8px;font-weight:400;margin:0}.section-heading .eyebrow{color:var(--muted)}.project-grid{display:grid;grid-template-columns:1fr 1fr;gap:25px}.project-image{aspect-ratio:1.3;position:relative;overflow:hidden}.field-image{background:#dce1d6;color:#26483f;padding:32px}.field-word{font-family:Georgia,serif;font-size:95px;letter-spacing:-7px;position:relative;z-index:1}.field-word>span{font-family:Arial,sans-serif;font-size:16px;vertical-align:top;display:inline-block;margin:20px 0 0 8px;letter-spacing:0}.field-image>p{position:absolute;bottom:43px;font-size:17px}.field-lines{position:absolute;width:90%;height:110%;border:1px solid #738d79;border-radius:48%;top:29%;left:40%;transform:rotate(-35deg);box-shadow:0 0 0 16px #dce1d6,0 0 0 17px #738d79,0 0 0 33px #dce1d6,0 0 0 34px #738d79,0 0 0 50px #dce1d6,0 0 0 51px #738d79,0 0 0 67px #dce1d6,0 0 0 68px #738d79}.image-tag{position:absolute;bottom:18px;left:25px;font-size:9px}.index-image{background:#b7c6ee;padding:25px;color:#24315c}.index-top{display:flex;justify-content:space-between;font-size:9px}.index-symbol{display:flex;justify-content:center;align-items:center;height:55%;gap:8px;transform:rotate(-25deg);padding-top:30px}.index-symbol i{width:25px;height:75%;background:#24315c}.index-symbol i:nth-child(2),.index-symbol i:nth-child(4){height:95%}.index-symbol i:nth-child(3){height:115%}.index-word{position:absolute;bottom:38px;left:25px;font-size:65px;letter-spacing:-4px}.index-word span{color:#eef1fa}.project-caption{display:flex;align-items:center;gap:15px;padding-top:18px}.project-caption h3{font-size:19px;font-weight:500;margin:0}.project-caption p{font-size:11px;color:var(--muted);margin:0}.project-caption>span{margin-left:auto;font-size:22px}.project-description{color:var(--muted);font-size:13px;margin:10px 0 0}.approach{display:grid;grid-template-columns:1fr 1fr;gap:25px;padding-top:88px;padding-bottom:88px}.approach h2{font-size:70px;font-weight:400;line-height:1.05;letter-spacing:-4px;margin:27px 0 0}.approach-copy>p{font-size:18px;line-height:1.6;max-width:495px;margin:0 0 22px}.approach-copy>p+p{font-size:15px;color:var(--muted)}.capabilities{display:grid;grid-template-columns:1fr 1fr;gap:17px 10px;border-top:1px solid var(--line);padding-top:23px;margin-top:30px;font-family:\"Courier New\",monospace;font-size:10px}.contact{padding-top:55px;padding-bottom:35px}.contact-title{display:flex;justify-content:space-between;align-items:center;font-size:clamp(50px,8.5vw,128px);letter-spacing:-.07em;line-height:1.3;margin:20px 0}.contact-title span{font-size:.8em}.contact-bottom{display:flex;justify-content:space-between;font-size:13px;align-items:center}.contact-bottom p{color:var(--muted)}.contact-bottom>a{border-bottom:1px solid var(--ink);padding-bottom:4px}footer{padding:27px 4%;display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--muted);gap:20px}.footer-brand{font-weight:700;font-size:14px;color:var(--ink);letter-spacing:-.5px}footer p{margin:0}@media(min-width:1600px){.site-header{padding-left:64px;padding-right:64px}}@media(max-width:760px){.site-header{padding:22px 5%}.wordmark{font-size:19px}.brand-mark{font-size:30px}nav{gap:18px}nav a:first-child,nav a:nth-child(2){display:none}.hero{padding:27px 5% 0}.edition{display:none}.eyebrow{font-size:9px}h1{margin-top:44px;font-size:clamp(58px,12vw,90px)}.hero-bottom{align-items:start;gap:25px;margin-bottom:32px}.hero-bottom>p{font-size:14px;max-width:300px}.round-link{gap:0}.round-link>span:first-child{display:none}.round-arrow{width:40px;height:40px;flex-shrink:0}.system-art{padding:15px}.art-grid{padding:40px 0;gap:3%}.shape{width:25%}.shape span{font-size:8px}.connector{font-size:22px}.art-label,.art-footer{font-size:9px}.section{margin:0 5%;padding:45px 0}.section-heading{align-items:start;gap:20px}.section-heading h2{font-size:21px;max-width:220px}.section-heading .eyebrow{max-width:90px;text-align:right}.project-grid{grid-template-columns:1fr;gap:32px}.project-image{aspect-ratio:1.3}.field-word{font-size:90px}.approach{grid-template-columns:1fr;gap:32px}.approach h2{font-size:61px;margin-top:22px}.approach-copy>p{font-size:17px;max-width:none}.capabilities{font-size:9px}.contact-title{font-size:clamp(44px,11vw,80px);margin:24px 0}.contact-bottom{align-items:start;gap:16px;flex-direction:column}.contact-bottom p{margin:0}footer{padding:25px 5%;flex-wrap:wrap;gap:15px}footer p{display:none}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}\n"
+        }
+      ],
+      "startedAt": 1794189740101,
+      "state": "completed",
+      "updatedAt": 1794189852767
+    },
+    {
+      "agentConfig": {
+        "effort": "low",
+        "id": "design-rules",
+        "instructions": "Create the requested files in output/. Before designing the website, call design-rules get_design_rules with empty arguments and apply its heading, palette and layout to the generated HTML and CSS. Do not use subagents.",
+        "mcpServers": [
+          {
+            "data": {
+              "heading": "Quiet systems, clear decisions",
+              "layout": "A narrow left introduction column beside three vertically stacked feature cards.",
+              "palette": {
+                "accent": "#f4b860",
+                "background": "#101b28",
+                "foreground": "#eef4ed"
+              }
+            },
+            "id": "design-rules"
+          }
+        ],
+        "model": "gpt-6.1-sol"
+      },
+      "createdAt": 1794189738643,
+      "effort": "low",
+      "events": [
+        {
+          "data": {
+            "applied": {
+              "availability": "unknown until native call/result",
+              "effort": "low",
+              "instructions": "Create the requested files in output/. Before designing the website, call design-rules get_design_rules with empty arguments and apply its heading, palette and layout to the generated HTML and CSS. Do not use subagents.",
+              "mapping": "per-invocation CLI config overrides",
+              "mcpServerSha256": "ac87a6af412ff694ffbd8c1a751a3e9d0fdb53999506b24e188ee0e9ec572b43",
+              "mcpServers": [
+                {
+                  "data": {
+                    "heading": "Quiet systems, clear decisions",
+                    "layout": "A narrow left introduction column beside three vertically stacked feature cards.",
+                    "palette": {
+                      "accent": "#f4b860",
+                      "background": "#101b28",
+                      "foreground": "#eef4ed"
+                    }
+                  },
+                  "id": "design-rules"
+                }
+              ],
+              "model": "gpt-6.1-sol",
+              "resumeCompatibility": "requested overrides supplied per invocation; actual changed settings unqualified; prior conversation context persists"
+            },
+            "grantsSha256": "4c087341ce22a852c0870fc786fd29a8e2a97fc51793c316774318842b7068a5",
+            "instructionSources": {
+              "hooks": "disabled",
+              "memories": "disabled",
+              "nativeObservation": "pending rollout provenance check",
+              "personalConfig": "not loaded",
+              "personalHome": "not forwarded",
+              "profile": "explicit developer_instructions",
+              "projectInstructions": "discovery disabled",
+              "skills": "disabled"
+            },
+            "instructionsSha256": "9d4c158f71661a73bae1c0645002382e5b0f473c37c37f35322b12a0fafab021",
+            "profileSha256": "34c2bf91daf333a39d3c23afc95651111310b2d15c58d08c30942ae6808943d3",
+            "requested": {
+              "effort": "low",
+              "id": "design-rules",
+              "instructions": "Create the requested files in output/. Before designing the website, call design-rules get_design_rules with empty arguments and apply its heading, palette and layout to the generated HTML and CSS. Do not use subagents.",
+              "mcpServers": [
+                {
+                  "data": {
+                    "heading": "Quiet systems, clear decisions",
+                    "layout": "A narrow left introduction column beside three vertically stacked feature cards.",
+                    "palette": {
+                      "accent": "#f4b860",
+                      "background": "#101b28",
+                      "foreground": "#eef4ed"
+                    }
+                  },
+                  "id": "design-rules"
+                }
+              ],
+              "model": "gpt-6.1-sol"
+            }
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-0",
+          "seq": 0,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189853283,
+          "type": "preparation"
+        },
+        {
+          "data": {
+            "thread_id": "01a1be0c-82b4-7843-8394-f12a1c5dd543",
+            "type": "thread.started"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-1",
+          "seq": 1,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189854555,
+          "type": "thread.started"
+        },
+        {
+          "data": {
+            "item": {
+              "id": "item_0",
+              "message": "Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  session-flags: `skills.enabled` is ignored.",
+              "type": "error"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-2",
+          "seq": 2,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189854555,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "item": {
+              "id": "item_1",
+              "message": "Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  session-flags: `skills.enabled` is ignored.",
+              "type": "error"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-3",
+          "seq": 3,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189854555,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "item": {
+              "id": "item_2",
+              "message": "Under-development features enabled: skip_host_skill_discovery. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/kirs/Library/Application Support/Fleet/codex/config.toml.",
+              "type": "error"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-4",
+          "seq": 4,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189854555,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "type": "turn.started"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-5",
+          "seq": 5,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189854555,
+          "type": "turn.started"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 1028096,
+            "ioBytes": null,
+            "residentBytes": 123551744
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-6",
+          "seq": 6,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189857139,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "item": {
+              "id": "item_3",
+              "text": "I’ll check the project design rules, then create a responsive page with self-contained HTML and CSS and verify the files locally.",
+              "type": "agent_message"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-7",
+          "seq": 7,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189858002,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "item": {
+              "aggregated_output": "",
+              "command": "/bin/zsh -lc \"pwd && rg --files -g 'AGENTS.md' -g '*design*' -g 'index.html' -g 'style.css' -g 'package.json'\"",
+              "exit_code": null,
+              "id": "item_4",
+              "status": "in_progress",
+              "type": "command_execution"
+            },
+            "type": "item.started"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-8",
+          "seq": 8,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189860847,
+          "type": "item.started"
+        },
+        {
+          "data": {
+            "item": {
+              "aggregated_output": "/Users/kirs/.local/share/fleet-prototype/data/sessions/e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1\nAGENTS.md\n",
+              "command": "/bin/zsh -lc \"pwd && rg --files -g 'AGENTS.md' -g '*design*' -g 'index.html' -g 'style.css' -g 'package.json'\"",
+              "exit_code": 0,
+              "id": "item_4",
+              "status": "completed",
+              "type": "command_execution"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-9",
+          "seq": 9,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189860847,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0,
+            "diskBytes": 1093632,
+            "ioBytes": null,
+            "residentBytes": 133808128
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-10",
+          "seq": 10,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189860851,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "item": {
+              "arguments": {},
+              "error": null,
+              "id": "item_5",
+              "result": null,
+              "server": "design-rules",
+              "status": "in_progress",
+              "tool": "get_design_rules",
+              "type": "mcp_tool_call"
+            },
+            "type": "item.started"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-11",
+          "seq": 11,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189862432,
+          "type": "item.started"
+        },
+        {
+          "data": {
+            "item": {
+              "arguments": {},
+              "error": null,
+              "id": "item_5",
+              "result": {
+                "content": [
+                  {
+                    "text": "{\"heading\": \"Quiet systems, clear decisions\", \"layout\": \"A narrow left introduction column beside three vertically stacked feature cards.\", \"palette\": {\"accent\": \"#f4b860\", \"background\": \"#101b28\", \"foreground\": \"#eef4ed\"}}",
+                    "type": "text"
+                  }
+                ],
+                "structured_content": null
+              },
+              "server": "design-rules",
+              "status": "completed",
+              "tool": "get_design_rules",
+              "type": "mcp_tool_call"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-12",
+          "seq": 12,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189862435,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "item": {
+              "aggregated_output": "",
+              "command": "/bin/zsh -lc 'cat AGENTS.md'",
+              "exit_code": null,
+              "id": "item_6",
+              "status": "in_progress",
+              "type": "command_execution"
+            },
+            "type": "item.started"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-13",
+          "seq": 13,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189862435,
+          "type": "item.started"
+        },
+        {
+          "data": {
+            "item": {
+              "aggregated_output": "",
+              "command": "/bin/zsh -lc 'cat AGENTS.md'",
+              "exit_code": 0,
+              "id": "item_6",
+              "status": "completed",
+              "type": "command_execution"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-14",
+          "seq": 14,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189862436,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0,
+            "diskBytes": 1093632,
+            "ioBytes": null,
+            "residentBytes": 136036352
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-15",
+          "seq": 15,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189864331,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "item": {
+              "id": "item_7",
+              "text": "The design rules specify “Quiet systems, clear decisions,” a dark blue palette with amber accents, and a narrow introduction beside three stacked cards. I’ll use that layout and stack the columns on smaller screens.",
+              "type": "agent_message"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-16",
+          "seq": 16,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189866266,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.5,
+            "diskBytes": 1159168,
+            "ioBytes": null,
+            "residentBytes": 136052736
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-17",
+          "seq": 17,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189867154,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 1159168,
+            "ioBytes": null,
+            "residentBytes": 133873664
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-18",
+          "seq": 18,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189869595,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0,
+            "diskBytes": 1159168,
+            "ioBytes": null,
+            "residentBytes": 106577920
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-19",
+          "seq": 19,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189872084,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 1159168,
+            "ioBytes": null,
+            "residentBytes": 107053056
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-20",
+          "seq": 20,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189874571,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0,
+            "diskBytes": 1159168,
+            "ioBytes": null,
+            "residentBytes": 107380736
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-21",
+          "seq": 21,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189876653,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.2,
+            "diskBytes": 1159168,
+            "ioBytes": null,
+            "residentBytes": 107347968
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-22",
+          "seq": 22,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189879512,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 1159168,
+            "ioBytes": null,
+            "residentBytes": 106610688
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-23",
+          "seq": 23,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189881890,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 1224704,
+            "ioBytes": null,
+            "residentBytes": 96518144
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-24",
+          "seq": 24,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189884612,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 1224704,
+            "ioBytes": null,
+            "residentBytes": 96141312
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-25",
+          "seq": 25,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189887148,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 1224704,
+            "ioBytes": null,
+            "residentBytes": 96092160
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-26",
+          "seq": 26,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189889670,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 1224704,
+            "ioBytes": null,
+            "residentBytes": 96108544
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-27",
+          "seq": 27,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189892216,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 1224704,
+            "ioBytes": null,
+            "residentBytes": 96550912
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-28",
+          "seq": 28,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189894347,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 1224704,
+            "ioBytes": null,
+            "residentBytes": 96567296
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-29",
+          "seq": 29,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189896837,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 1224704,
+            "ioBytes": null,
+            "residentBytes": 96141312
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-30",
+          "seq": 30,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189899268,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 1224704,
+            "ioBytes": null,
+            "residentBytes": 95846400
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-31",
+          "seq": 31,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189901808,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 1290240,
+            "ioBytes": null,
+            "residentBytes": 96518144
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-32",
+          "seq": 32,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189904039,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.2,
+            "diskBytes": 1290240,
+            "ioBytes": null,
+            "residentBytes": 96501760
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-33",
+          "seq": 33,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189906138,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.2,
+            "diskBytes": 1290240,
+            "ioBytes": null,
+            "residentBytes": 95830016
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-34",
+          "seq": 34,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189908166,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 1290240,
+            "ioBytes": null,
+            "residentBytes": 95830016
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-35",
+          "seq": 35,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189910253,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0,
+            "diskBytes": 1290240,
+            "ioBytes": null,
+            "residentBytes": 95830016
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-36",
+          "seq": 36,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189912768,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 1290240,
+            "ioBytes": null,
+            "residentBytes": 98959360
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-37",
+          "seq": 37,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189915309,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.2,
+            "diskBytes": 1290240,
+            "ioBytes": null,
+            "residentBytes": 98713600
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-38",
+          "seq": 38,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189917838,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 1290240,
+            "ioBytes": null,
+            "residentBytes": 98680832
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-39",
+          "seq": 39,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189920339,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 2338816,
+            "ioBytes": null,
+            "residentBytes": 98680832
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-40",
+          "seq": 40,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189922407,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 2338816,
+            "ioBytes": null,
+            "residentBytes": 99434496
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-41",
+          "seq": 41,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189924683,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.2,
+            "diskBytes": 2338816,
+            "ioBytes": null,
+            "residentBytes": 96043008
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-42",
+          "seq": 42,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189926838,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.2,
+            "diskBytes": 2338816,
+            "ioBytes": null,
+            "residentBytes": 96043008
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-43",
+          "seq": 43,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189929417,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 2338816,
+            "ioBytes": null,
+            "residentBytes": 96075776
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-44",
+          "seq": 44,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189931455,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 2338816,
+            "ioBytes": null,
+            "residentBytes": 96960512
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-45",
+          "seq": 45,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189933937,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "item": {
+              "aggregated_output": "",
+              "command": "/bin/zsh -lc 'mkdir -p output'",
+              "exit_code": null,
+              "id": "item_8",
+              "status": "in_progress",
+              "type": "command_execution"
+            },
+            "type": "item.started"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-46",
+          "seq": 46,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189934786,
+          "type": "item.started"
+        },
+        {
+          "data": {
+            "item": {
+              "aggregated_output": "",
+              "command": "/bin/zsh -lc 'mkdir -p output'",
+              "exit_code": 0,
+              "id": "item_8",
+              "status": "completed",
+              "type": "command_execution"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-47",
+          "seq": 47,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189934787,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "item": {
+              "changes": [
+                {
+                  "kind": "add",
+                  "path": "/Users/kirs/.local/share/fleet-prototype/data/sessions/e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1/output/index.html"
+                },
+                {
+                  "kind": "add",
+                  "path": "/Users/kirs/.local/share/fleet-prototype/data/sessions/e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1/output/style.css"
+                }
+              ],
+              "id": "item_9",
+              "status": "in_progress",
+              "type": "file_change"
+            },
+            "type": "item.started"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-48",
+          "seq": 48,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189934787,
+          "type": "item.started"
+        },
+        {
+          "data": {
+            "item": {
+              "changes": [
+                {
+                  "kind": "add",
+                  "path": "/Users/kirs/.local/share/fleet-prototype/data/sessions/e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1/output/index.html"
+                },
+                {
+                  "kind": "add",
+                  "path": "/Users/kirs/.local/share/fleet-prototype/data/sessions/e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1/output/style.css"
+                }
+              ],
+              "id": "item_9",
+              "status": "completed",
+              "type": "file_change"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-49",
+          "seq": 49,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189934788,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.6,
+            "diskBytes": 2355200,
+            "ioBytes": null,
+            "residentBytes": 107380736
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-50",
+          "seq": 50,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189936681,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 2355200,
+            "ioBytes": null,
+            "residentBytes": 103645184
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-51",
+          "seq": 51,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189939196,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.3,
+            "diskBytes": 2355200,
+            "ioBytes": null,
+            "residentBytes": 102367232
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-52",
+          "seq": 52,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189941267,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 2355200,
+            "ioBytes": null,
+            "residentBytes": 102137856
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-53",
+          "seq": 53,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189943833,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 2355200,
+            "ioBytes": null,
+            "residentBytes": 100532224
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-54",
+          "seq": 54,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189946470,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "item": {
+              "aggregated_output": "",
+              "command": "/bin/zsh -lc \"python3 - <<'PY'\nfrom html.parser import HTMLParser\nfrom pathlib import Path\nimport re\nroot=Path('output')\nclass Check(HTMLParser):\n def __init__(self):\n  super().__init__(); self.ids=set(); self.links=[]; self.styles=[]; self.stack=[]\n def handle_starttag(self, tag, attrs):\n  a=dict(attrs)\n  if 'id' in a:\n   assert a['id'] not in self.ids, 'Duplicate id'\n   self.ids.add(a['id'])\n  if tag=='a': self.links.append(a.get('href',''))\n  if tag=='link': self.styles.append(a['href'])\n  assert tag not in ('script','img','iframe'), 'Unexpected external asset element'\n  if tag not in ('meta','link','br','hr','input','img'): self.stack.append(tag)\n def handle_endtag(self, tag):\n  assert self.stack.pop()==tag, f'Mismatched tag: {tag}'\np=Check(); html=(root/'index.html').read_text(); p.feed(html)\nassert not p.stack\nfor link in p.links:\n if link.startswith('#') and len(link)>1: assert link[1:] in p.ids\nfor style in p.styles: assert (root/style).is_file()\ncss=(root/'style.css').read_text()\nassert css.count('{')==css.count('}')\nassert not re.search(r'https?://|@import|url\\\\s*\\\\(',html+css)\nfor value in ['#101b28','#eef4ed','#f4b860']: assert value in css\nassert 'Quiet systems,' in html and 'clear decisions' in html\nassert html.count('class=\\\"feature-card\\\"')==3\nassert '@media' in css and 'viewport' in html\nprint('PASS: HTML tag nesting, unique IDs, internal links, local stylesheet, design palette and heading, three cards, responsive rules, and no remote assets or requests.')\nfor f in sorted(root.iterdir()): print(f'{f}: {f.stat().st_size:,} bytes')\nPY\"",
+              "exit_code": null,
+              "id": "item_10",
+              "status": "in_progress",
+              "type": "command_execution"
+            },
+            "type": "item.started"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-55",
+          "seq": 55,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189950544,
+          "type": "item.started"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0,
+            "diskBytes": 2355200,
+            "ioBytes": null,
+            "residentBytes": 97812480
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-56",
+          "seq": 56,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189951395,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.1,
+            "diskBytes": 2355200,
+            "ioBytes": null,
+            "residentBytes": 100188160
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-57",
+          "seq": 57,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189956393,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "item": {
+              "aggregated_output": "PASS: HTML tag nesting, unique IDs, internal links, local stylesheet, design palette and heading, three cards, responsive rules, and no remote assets or requests.\noutput/index.html: 4,074 bytes\noutput/style.css: 6,478 bytes\n",
+              "command": "/bin/zsh -lc \"python3 - <<'PY'\nfrom html.parser import HTMLParser\nfrom pathlib import Path\nimport re\nroot=Path('output')\nclass Check(HTMLParser):\n def __init__(self):\n  super().__init__(); self.ids=set(); self.links=[]; self.styles=[]; self.stack=[]\n def handle_starttag(self, tag, attrs):\n  a=dict(attrs)\n  if 'id' in a:\n   assert a['id'] not in self.ids, 'Duplicate id'\n   self.ids.add(a['id'])\n  if tag=='a': self.links.append(a.get('href',''))\n  if tag=='link': self.styles.append(a['href'])\n  assert tag not in ('script','img','iframe'), 'Unexpected external asset element'\n  if tag not in ('meta','link','br','hr','input','img'): self.stack.append(tag)\n def handle_endtag(self, tag):\n  assert self.stack.pop()==tag, f'Mismatched tag: {tag}'\np=Check(); html=(root/'index.html').read_text(); p.feed(html)\nassert not p.stack\nfor link in p.links:\n if link.startswith('#') and len(link)>1: assert link[1:] in p.ids\nfor style in p.styles: assert (root/style).is_file()\ncss=(root/'style.css').read_text()\nassert css.count('{')==css.count('}')\nassert not re.search(r'https?://|@import|url\\\\s*\\\\(',html+css)\nfor value in ['#101b28','#eef4ed','#f4b860']: assert value in css\nassert 'Quiet systems,' in html and 'clear decisions' in html\nassert html.count('class=\\\"feature-card\\\"')==3\nassert '@media' in css and 'viewport' in html\nprint('PASS: HTML tag nesting, unique IDs, internal links, local stylesheet, design palette and heading, three cards, responsive rules, and no remote assets or requests.')\nfor f in sorted(root.iterdir()): print(f'{f}: {f.stat().st_size:,} bytes')\nPY\"",
+              "exit_code": 0,
+              "id": "item_10",
+              "status": "completed",
+              "type": "command_execution"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-58",
+          "seq": 58,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189958092,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": 0.2,
+            "diskBytes": 2355200,
+            "ioBytes": null,
+            "residentBytes": 102514688
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-59",
+          "seq": 59,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189959453,
+          "type": "resource.observation"
+        },
+        {
+          "data": {
+            "item": {
+              "id": "item_11",
+              "text": "Created [index.html](output/index.html) and [style.css](output/style.css) with the required heading, palette, and three-card layout.\n\nThe responsive page includes CSS illustrations, accessible navigation, and no external libraries or assets. Local checks passed for HTML structure, links, stylesheet references, and design requirements. No browser launch or deployment attempted.",
+              "type": "agent_message"
+            },
+            "type": "item.completed"
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-60",
+          "seq": 60,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189960318,
+          "type": "item.completed"
+        },
+        {
+          "data": {
+            "type": "turn.completed",
+            "usage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 66816,
+              "input_tokens": 75973,
+              "output_tokens": 4276,
+              "reasoning_output_tokens": 42
+            }
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-61",
+          "seq": 61,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189960318,
+          "type": "turn.completed"
+        },
+        {
+          "data": {
+            "cost": null,
+            "coverage": {
+              "cost": "unknown subscription allocation",
+              "cpu": "native leader ps lifetime average, excludes descendants",
+              "disk": "entire executor data directory allocated bytes; not per execution",
+              "io": "unknown",
+              "ram": "native leader rss only"
+            },
+            "cpuPercent": null,
+            "diskBytes": 2359296,
+            "ioBytes": null,
+            "residentBytes": null
+          },
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "event:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:8a4bd954-3354-4e8f-9e31-4aeda060311f-62",
+          "seq": 62,
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "timestamp": 1794189961818,
+          "type": "resource.observation"
+        }
+      ],
+      "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+      "experimentId": "b284cf02-df90-4306-ad95-07034708bcc7",
+      "finishedAt": 1794189963155,
+      "hostId": "owner-mac",
+      "id": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+      "messages": [
+        {
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "73de2477-2d3d-41a4-b1ad-e098a8eab59f",
+          "requestId": "effbc28d-3527-4a25-8123-1feb6c455546",
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "text": "Create output/index.html and output/style.css for a small systems studio website. Consult project design rules when available. Produce a complete responsive static page with no external libraries, network requests or assets. Use local file checks, do not attempt browser launch or deployment, and briefly report what you created and checked. Do not use subagents."
+        }
+      ],
+      "model": "gpt-6.1-sol",
+      "profileSha256": "34c2bf91daf333a39d3c23afc95651111310b2d15c58d08c30942ae6808943d3",
+      "results": [
+        {
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "artifact:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:index.html",
+          "mediaType": "text/html",
+          "path": "index.html",
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "sha256": "e70395579665dcc8ff151e6bc524915671337cfb134fd8b6d5a4b3e21e53fa26",
+          "size": 4074
+        },
+        {
+          "executionId": "a54698c6-16ca-468a-a1c9-d0806d6b8f1f",
+          "id": "artifact:a54698c6-16ca-468a-a1c9-d0806d6b8f1f:style.css",
+          "mediaType": "text/css",
+          "path": "style.css",
+          "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+          "sha256": "fe3c109af1e08be6ed35b3d30f0d03aaed2278fbe3f5359abd35ae2da8e19e06",
+          "size": 6478
+        }
+      ],
+      "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+      "sources": [
+        {
+          "path": "index.html",
+          "sha256": "e70395579665dcc8ff151e6bc524915671337cfb134fd8b6d5a4b3e21e53fa26",
+          "text": "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <meta name=\"description\" content=\"Stillwork is a small systems studio helping teams make sense of complexity and build better ways of working.\">\n  <meta name=\"theme-color\" content=\"#101b28\">\n  <title>Stillwork — Small systems studio</title>\n  <link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n  <a class=\"skip-link\" href=\"#main\">Skip to content</a>\n  <div class=\"page\">\n    <header class=\"site-header\">\n      <a class=\"wordmark\" href=\"#\" aria-label=\"Stillwork home\"><span class=\"mark\" aria-hidden=\"true\"><i></i><i></i><i></i></span>stillwork<span class=\"wordmark-dot\">.</span></a>\n      <span class=\"header-note\">Independent by design.</span>\n      <a class=\"contact-link\" href=\"#contact\">Let’s talk <span aria-hidden=\"true\">↗</span></a>\n    </header>\n\n    <main id=\"main\" class=\"studio-layout\">\n      <section class=\"introduction\" aria-labelledby=\"intro-heading\">\n        <p class=\"eyebrow\"><span class=\"status-dot\" aria-hidden=\"true\"></span> A small systems studio</p>\n        <h1 id=\"intro-heading\">Quiet systems,<br>clear decisions<span>.</span></h1>\n        <p class=\"intro-copy\">We turn tangled operations into thoughtful tools, useful structures, and calmer ways of working.</p>\n        <a class=\"text-link\" href=\"#approach\">A little structure goes a long way <span aria-hidden=\"true\">↘</span></a>\n        <div class=\"intro-bottom\"><span class=\"small-cross\" aria-hidden=\"true\">+</span><p>Small by choice.<br>Close to the work.</p></div>\n      </section>\n\n      <section class=\"features\" id=\"approach\" aria-label=\"How we work\">\n        <article class=\"feature-card\">\n          <div class=\"card-top\"><span class=\"eyebrow\">01 / Make sense</span><span class=\"card-tag\">Clarity first</span></div>\n          <div class=\"card-body\"><div class=\"card-copy\"><h2>Find the thread.</h2><p>Step back from the moving parts. We map what’s happening, ask better questions, and find the problem worth solving.</p></div><div class=\"diagram diagram-thread\" aria-hidden=\"true\"><span></span><span></span><span></span><b></b></div></div>\n          <p class=\"card-foot\">Systems mapping <span>·</span> Discovery <span>·</span> Direction</p>\n        </article>\n        <article class=\"feature-card\">\n          <div class=\"card-top\"><span class=\"eyebrow\">02 / Make it work</span><span class=\"card-tag\">Purpose over noise</span></div>\n          <div class=\"card-body\"><div class=\"card-copy\"><h2>Build the right thing.</h2><p>A focused tool. A simpler workflow. A well-placed automation. We make practical systems that fit the people using them.</p></div><div class=\"diagram diagram-blocks\" aria-hidden=\"true\"><span></span><span></span><span></span><span></span></div></div>\n          <p class=\"card-foot\">Internal tools <span>·</span> Workflows <span>·</span> Prototypes</p>\n        </article>\n        <article class=\"feature-card\">\n          <div class=\"card-top\"><span class=\"eyebrow\">03 / Make it last</span><span class=\"card-tag\">Built for everyday</span></div>\n          <div class=\"card-body\"><div class=\"card-copy\"><h2>Leave things clearer.</h2><p>Good systems keep working after we leave. We help your team understand, own, and evolve what we build together.</p></div><div class=\"diagram diagram-orbit\" aria-hidden=\"true\"><span></span><span></span><b></b></div></div>\n          <p class=\"card-foot\">Documentation <span>·</span> Handover <span>·</span> Ongoing care</p>\n        </article>\n      </section>\n    </main>\n\n    <section id=\"contact\" class=\"contact\" aria-labelledby=\"contact-heading\"><div><p class=\"eyebrow\">Start with a conversation</p><h2 id=\"contact-heading\">Something feeling more complicated than it should?</h2></div><a class=\"email-link\" href=\"mailto:hello@stillwork.studio\">hello@stillwork.studio <span aria-hidden=\"true\">↗</span></a></section>\n    <footer><span>© 2026 Stillwork Studio</span><span>Less friction. More room to think.</span><a href=\"#\">Back to top ↑</a></footer>\n  </div>\n</body>\n</html>\n"
+        },
+        {
+          "path": "style.css",
+          "sha256": "fe3c109af1e08be6ed35b3d30f0d03aaed2278fbe3f5359abd35ae2da8e19e06",
+          "text": ":root{color-scheme:dark;--background:#101b28;--foreground:#eef4ed;--accent:#f4b860;--muted:#a5b1b9;--line:#31404c;--card:#152330}\n*{box-sizing:border-box}\nhtml{scroll-behavior:smooth;scroll-padding-top:30px}\nbody{margin:0;background:var(--background);color:var(--foreground);font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased}\na{color:inherit;text-decoration:none}\na:focus-visible{outline:2px solid var(--accent);outline-offset:7px}\na:hover{color:var(--accent)}\n.page{max-width:1440px;margin:auto;padding:0 64px}\n.site-header{height:123px;display:flex;align-items:center;border-bottom:1px solid var(--line);gap:28px}\n.wordmark{font-size:29px;letter-spacing:-1.3px;font-weight:700;display:flex;align-items:center}\n.wordmark-dot{color:var(--accent)}\n.mark{display:flex;gap:3px;margin-right:12px;align-items:center;transform:rotate(-16deg)}\n.mark i{display:block;width:4px;height:22px;background:var(--accent)}\n.mark i:nth-child(2){height:30px}\n.header-note{font-size:12px;color:var(--muted);margin-left:auto}\n.contact-link{font-size:13px;border:1px solid #657079;border-radius:30px;padding:12px 19px;margin-left:28px}\n.contact-link span{padding-left:23px;color:var(--accent)}\n.studio-layout{display:grid;grid-template-columns:minmax(260px,.8fr) minmax(0,1.35fr);gap:74px;padding:69px 0 62px}\n.introduction{padding-top:6px;display:flex;flex-direction:column;align-items:flex-start}\n.eyebrow{text-transform:uppercase;letter-spacing:1.8px;font-size:10px;font-weight:600;line-height:1.6;margin:0}\n.introduction>.eyebrow{color:var(--accent);display:flex;align-items:center;gap:9px}\n.status-dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}\nh1{font-family:Georgia,'Times New Roman',serif;font-weight:400;font-size:clamp(43px,4.15vw,62px);line-height:1.09;letter-spacing:-2.2px;margin:34px 0 25px}\nh1 span{color:var(--accent)}\n.intro-copy{color:var(--muted);font-size:15px;line-height:1.85;max-width:310px;margin:0}\n.text-link{font-size:11px;margin-top:29px;padding-bottom:9px;border-bottom:1px solid #56606a;line-height:1.7}\n.text-link span{color:var(--accent);padding-left:13px}\n.intro-bottom{margin-top:auto;padding-top:72px;display:flex;gap:15px;align-items:center}\n.small-cross{font-size:31px;font-weight:300;color:var(--accent)}\n.intro-bottom p{font-size:11px;color:var(--muted);line-height:1.7;margin:0}\n.features{display:grid;gap:17px}\n.feature-card{border:1px solid var(--line);border-radius:3px;background:var(--card);padding:24px 27px 19px;overflow:hidden}\n.card-top{display:flex;align-items:center;justify-content:space-between;gap:10px}\n.card-top .eyebrow{color:var(--accent);font-size:9px}\n.card-tag{font-size:9px;color:var(--muted);border:1px solid var(--line);border-radius:20px;padding:5px 9px;white-space:nowrap}\n.card-body{display:flex;gap:20px;align-items:center;justify-content:space-between;margin:23px 0 21px}\nh2{font-family:Georgia,'Times New Roman',serif;font-weight:400;font-size:29px;letter-spacing:-.7px;margin:0 0 10px;line-height:1.2}\n.card-copy{max-width:345px}\n.card-copy p{color:var(--muted);font-size:12px;line-height:1.85;margin:0}\n.card-foot{border-top:1px solid var(--line);padding-top:13px;font-size:9px;color:var(--muted);margin:0;letter-spacing:.3px;line-height:1.7}\n.card-foot span{padding:0 7px;color:#677881}\n.diagram{position:relative;width:88px;height:83px;flex-shrink:0;margin-right:3px}\n.diagram-thread span{position:absolute;left:4px;top:9px;width:74px;height:53px;border:1px solid #65716f;border-radius:50%;transform:rotate(-38deg)}\n.diagram-thread span:nth-child(2){transform:rotate(22deg)}\n.diagram-thread span:nth-child(3){transform:rotate(82deg);border-color:var(--accent)}\n.diagram-thread b{position:absolute;background:var(--accent);width:7px;height:7px;border-radius:50%;left:39px;top:32px}\n.diagram-blocks{display:grid;grid-template-columns:30px 30px;grid-template-rows:30px 30px;gap:7px;justify-content:center;align-content:center;transform:rotate(-8deg)}\n.diagram-blocks span{border:1px solid #65716f;border-radius:2px}\n.diagram-blocks span:nth-child(2){background:var(--accent);border-color:var(--accent);transform:translate(5px,-5px)}\n.diagram-orbit span{position:absolute;width:70px;height:70px;border:1px solid #65716f;border-radius:50%;top:5px;left:2px}\n.diagram-orbit span:nth-child(2){width:48px;height:48px;top:16px;left:13px;border-color:var(--accent)}\n.diagram-orbit b{position:absolute;width:9px;height:9px;background:var(--accent);border:3px solid var(--card);box-sizing:content-box;border-radius:50%;top:3px;left:49px}\n.contact{display:flex;align-items:center;justify-content:space-between;gap:35px;padding:37px 0 39px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}\n.contact .eyebrow{font-size:9px;color:var(--muted);margin-bottom:12px}\n.contact h2{font-size:23px;max-width:420px;margin:0}\n.email-link{color:var(--accent);font-size:14px;white-space:nowrap;padding-bottom:7px;border-bottom:1px solid #776448}\n.email-link span{padding-left:20px}\nfooter{display:flex;justify-content:space-between;gap:20px;padding:26px 0 31px;font-size:10px;color:var(--muted)}\n.skip-link{position:absolute;top:-100px;left:20px;background:var(--accent);color:var(--background);padding:12px;z-index:2}\n.skip-link:focus{top:15px}\n@media(min-width:1400px){.studio-layout{gap:110px}}\n@media(max-width:1000px){.page{padding:0 32px}.studio-layout{gap:36px;grid-template-columns:minmax(230px,.8fr) minmax(0,1.35fr)}.feature-card{padding:20px}.diagram{width:74px;transform:scale(.85);margin-right:-5px}.card-body{gap:10px}.card-tag{font-size:8px}h1{font-size:45px}}\n@media(max-width:760px){.page{padding:0 24px}.site-header{height:90px}.header-note{display:none}.contact-link{margin-left:auto}.studio-layout{grid-template-columns:1fr;gap:38px;padding:43px 0}.introduction{max-width:480px}h1{font-size:54px;margin-top:26px}.intro-copy{max-width:370px}.intro-bottom{display:none}.card-copy{max-width:440px}.card-body{gap:20px}.diagram{margin:0 10px}.contact{align-items:flex-start;flex-direction:column;gap:25px}.contact h2{font-size:26px}footer{flex-wrap:wrap;line-height:1.6}footer span:nth-child(2){display:none}}\n@media(max-width:380px){.page{padding:0 18px}h1{font-size:47px}.feature-card{padding:19px 16px}.card-tag{display:none}.diagram{width:59px;margin-right:0;transform:scale(.75);transform-origin:left center}.card-body{gap:6px}h2{font-size:26px}.card-foot{font-size:8px}.card-foot span{padding:0 4px}}\n@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}\n"
+        }
+      ],
+      "startedAt": 1794189854167,
+      "state": "completed",
+      "updatedAt": 1794189963155
+    }
+  ]
+}

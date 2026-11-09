@@ -1,0 +1,15 @@
+{
+  "sessionId": "a23d79bd-691e-4d75-8144-8e3f4bbf8581",
+  "executionId": "e662e3d7-8f1f-43ec-bfe4-9089ffc7845c",
+  "followupId": "5463ac87-d225-4da9-857d-64ee74adc7bd",
+  "checks": [
+    "submit",
+    "events retry/conflict",
+    "receipt regression",
+    "artifact retry/conflict",
+    "preview",
+    "reload",
+    "native followup",
+    "owned stop"
+  ]
+}

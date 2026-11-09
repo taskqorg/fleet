@@ -20,6 +20,10 @@ The catalogue is an index of definitions, not another independently editable cop
 
 Prepare the selected agent definition and skill content from canonical files on every execution environment. The same selected configuration uses the same content across hosts; independently maintained machine copies are not configuration sources. Adapt local paths and supported harness/tool wiring without silently changing instructions.
 
+Fleet owns the execution configuration. Personal harness configuration, instructions, memory, skills, MCP servers and hooks must not enter implicitly. Record selected sources and effective settings, distinguishing supplied settings from observed application. Built-in harness behavior remains version-specific and must not be represented as Fleet-authored instructions.
+
+An installed harness executable may be reused. Account access is supplied independently from personal behavioral configuration; never publish credentials in profiles or history. Configuration independence does not imply an OS-enforced filesystem boundary.
+
 Record the actual prepared content and tool availability. Later launches use current definitions unless another version or draft is explicitly selected. Do not assume edits are injected into an already running session.
 
 Instructions guide the agent's actions, including whether and how to call pipelines. Review run history, tool calls, results and checks to assess adherence and improve the definition. Supplying an instruction does not prove it was followed, and identical content does not guarantee identical model behavior.

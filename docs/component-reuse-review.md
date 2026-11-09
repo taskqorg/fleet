@@ -35,3 +35,21 @@ Validate three connected parts before broad UI work: registered execution host a
 ## Follow-up decision
 
 [State ownership](state-ownership.md) now makes Fleet authoritative for work and external boards optional. The [delivery strategy](delivery-strategy.md) prioritizes web interfaces with independent native execution updates. Estimate concrete reuse changes against these contracts before assigning repository ownership; this does not authorize changing existing TaskQ work.
+
+## First-version inventory refresh
+
+Local checkout review on 2026-11-09 for the [first-version plan](first-version-plan.md). Read current manifests, product rules, AgentQ adapter declarations, CoreQ exports and selected executor/module declarations. These are local source revisions, not deployed versions or claims about the latest remote branches. Unrelated local modifications were preserved.
+
+| Component | Inspected HEAD | First-version assessment |
+|---|---|---|
+| AgentQ | `7c48127cd952d7b001207575f7c2ce7889c1ef51` | Strong reuse candidate: its runtime library separates native execution from product scheduling. Qualify configuration preparation, history, input and stop on the chosen harness. |
+| CoreQ | `bed3ab4e3682cd00483ef798d96628d04dc85dc9` | Selective library reuse: process, service, resource, enrollment and telemetry exports. Do not import board-token assumptions or make it another running service. |
+| TaskQ | `21d09b91dbeed82983135f6a4f19e40a9e555c2b` | Reference for balancing, host control and failure cases. Its board authority and fixed roles conflict with Fleet; do not adopt its whole coordinator. |
+| Pipe / AssetQ | `fd0c79e95f48978f05f619fcdfe4fab03e1c3196` | Reference for durable execution and output retention. Its mandatory pipeline treatment of external calls is not Fleet policy. Not required for Hello World. |
+| DashQ | `6916f30a1ab7cbcd1c09de937fff1d632e0882b9` | Reference for archive/accounting/resource views. Existing read-only projections do not supply Fleet's configuration or work authority. Not a required PoC control plane. |
+| ServerQ | `dc85cc2077e114d94436c6e5accd969a5c39666d` | Optional inventory source later. Its explicit absence of a command channel makes it unsuitable as the execution host itself. |
+| PilotQ | `400f0f5552cc74660bbff8124527902abc1e5518` | Reference for conversation/journal behavior. Telegram and TaskQ integration are not prerequisites for Fleet sessions. |
+
+Current manifests already share AgentQ/CoreQ dependencies, but not all pin identical releases. A dependency declaration is not integration evidence. Select compatible revisions during technical design and verify the exact combined build later.
+
+The recommended boundary is a Fleet-owned coordination design with selectively reused runtime/infrastructure mechanisms. New architecture does not imply rewriting every native adapter, importing all existing services or migrating their data in the first version.

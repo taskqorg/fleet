@@ -1,0 +1,22 @@
+# Fleet browser credential is injected only after owner JWT verification.
+fleet.ufobe.com {
+    tls internal
+    request_header -X-Dashq-Subject
+    route {
+        @machine {
+            method POST
+            path /api/hosts/poll /api/hosts/receipts /api/hosts/events /api/hosts/artifacts
+        }
+        handle @machine {
+            reverse_proxy 127.0.0.1:9470
+        }
+        request_header -Authorization
+        forward_auth 127.0.0.1:9471 {
+            uri /verify
+            copy_headers Authorization
+            header_up -Upgrade
+            header_up -Connection
+        }
+        reverse_proxy 127.0.0.1:9470
+    }
+}

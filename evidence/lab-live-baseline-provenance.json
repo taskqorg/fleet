@@ -1,0 +1,15 @@
+{
+  "thread": "01a1be0a-c60d-74b2-8864-4306b2401380",
+  "variant": "baseline",
+  "checks": {
+    "privateMemoryPointerAbsent": true,
+    "personalMemoryDirectoryAbsent": true,
+    "syntheticConflictAbsent": true,
+    "profileInstructionsPresent": true,
+    "baselineMcpNamespaceAbsent": true,
+    "modelEffortObserved": true,
+    "expectedToolEvidence": true
+  },
+  "rolloutSha256": "81e8c028a80157303eb417617ea30114358e821f7d23446040206db1b6b86a9d",
+  "scope": "Retained context inspection, not filesystem containment or model adherence guarantee"
+}

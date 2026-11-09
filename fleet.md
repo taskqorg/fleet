@@ -97,7 +97,7 @@ Neither pause nor cancellation rolls back completed external effects. Rollback r
 
 Run and control agents through their harnesses under the [runtime boundary](docs/runtime-integration.md). Preserve supported harness capabilities, including images, history and session controls, as harnesses evolve.
 
-An agent configuration combines a harness, model and settings, instructions, skills, tools and environment requirements.
+An agent configuration combines a harness, model and settings, instructions, skills, tools and environment requirements. Fleet prepares the harness configuration explicitly; personal host instructions, memory, tools, hooks and settings are not inherited.
 
 A role defines an agent's purpose through instructions and tools, not a hard-coded agent type. Provide standard roles, including PM, worker and reviewer; projects may adapt them or add their own.
 

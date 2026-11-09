@@ -1,0 +1,12 @@
+{
+  "fake": true,
+  "experimentId": "5afeceb7-8756-477a-955a-2579f67cf84c",
+  "checks": [
+    "independent pair",
+    "sequential poll",
+    "native-shaped preparation and call/result",
+    "relative CSS previews",
+    "note reload",
+    "desktop/mobile"
+  ]
+}

@@ -1,0 +1,54 @@
+[
+  {
+    "binding": "private-with-user",
+    "exitCode": 1,
+    "modelIds": [],
+    "authRequired": true,
+    "stdoutBytes": 0,
+    "stderrBytes": 122
+  },
+  {
+    "binding": "host-home-private-gemini",
+    "exitCode": 0,
+    "modelIds": [
+      "claude-opus-5-5-high",
+      "claude-opus-5-5-low",
+      "claude-opus-5-5-medium",
+      "claude-sonnet-5-5-high",
+      "claude-sonnet-5-5-low",
+      "claude-sonnet-5-5-medium",
+      "gemini-3.8-flash-high",
+      "gemini-3.8-flash-low",
+      "gemini-3.8-flash-medium",
+      "gemini-4-argon-high",
+      "gemini-4-argon-low",
+      "gemini-4-argon-medium",
+      "gpt-oss-120b-medium"
+    ],
+    "authRequired": false,
+    "stdoutBytes": 590,
+    "stderrBytes": 29
+  },
+  {
+    "binding": "native-current",
+    "exitCode": 0,
+    "modelIds": [
+      "claude-opus-5-5-high",
+      "claude-opus-5-5-low",
+      "claude-opus-5-5-medium",
+      "claude-sonnet-5-5-high",
+      "claude-sonnet-5-5-low",
+      "claude-sonnet-5-5-medium",
+      "gemini-3.8-flash-high",
+      "gemini-3.8-flash-low",
+      "gemini-3.8-flash-medium",
+      "gemini-4-argon-high",
+      "gemini-4-argon-low",
+      "gemini-4-argon-medium",
+      "gpt-oss-120b-medium"
+    ],
+    "authRequired": false,
+    "stdoutBytes": 590,
+    "stderrBytes": 29
+  }
+]
