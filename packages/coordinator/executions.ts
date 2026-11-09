@@ -33,7 +33,9 @@ export function executionModel(raw:Raw){
  // Links that the legacy record keeps elsewhere: the session's project and delivery, the handoff or fork source.
  const links=async(e:any)=>{const s=await optionalDoc(e.sessionId,'session');
   const handoff=e.handoffId?await optionalDoc(e.handoffId,'handoff'):undefined;
-  const parent=e.parentExecutionId??e.continuationOf??(e.pipelineRunId?e.pipelineRunId:undefined)??handoff?.turns?.at?.(-1)??(s?.forkOf?.executionId&&!(await one('SELECT 1 AS x FROM execution WHERE session_id=$1 AND id<>$2 AND legacy_kind=$3 LIMIT 1',[s.id,e.id,'execution']))?s.forkOf.executionId:undefined);
+  // Parent: the delegating, continued or pipeline execution, the handoff source, the agent execution that started the session
+  // (session_start from a host agent), or the source of a fork for the fork's first execution.
+  const parent=e.parentExecutionId??e.continuationOf??(e.pipelineRunId?e.pipelineRunId:undefined)??handoff?.turns?.at?.(-1)??s?.createdByExecutionId??(s?.forkOf?.executionId&&!(await one('SELECT 1 AS x FROM execution WHERE session_id=$1 AND id<>$2 AND legacy_kind=$3 LIMIT 1',[s.id,e.id,'execution']))?s.forkOf.executionId:undefined);
   return {projectId:e.projectId??s?.projectId??null,taskId:e.deliveryId??s?.deliveryId??null,parent:parent??null}};
 
  // Upsert of a legacy execution record. Typed-only columns (task_id once set, harness_version, problem, last_seen_at)
@@ -46,7 +48,8 @@ export function executionModel(raw:Raw){
    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'execution',$1,$18)
    ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,task_id=coalesce(execution.task_id,excluded.task_id),
     experiment_id=excluded.experiment_id,variant=excluded.variant,parent_execution_id=excluded.parent_execution_id,session_id=excluded.session_id,account_id=excluded.account_id,host_id=excluded.host_id,
-    harness=excluded.harness,model=excluded.model,config_ref=excluded.config_ref,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data`,
+    harness=excluded.harness,model=excluded.model,config_ref=excluded.config_ref,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
+    problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
    [e.id,kindOf(e),state,observation,l.projectId,l.taskId,e.experimentId??null,e.experimentId?e.agentConfig?.id??null:null,l.parent,e.sessionId??null,e.effectiveAccount?.accountId??e.accountId??null,e.hostId??null,harness,e.model??null,clean(config),ts(e.startedAt),ts(e.finishedAt),clean(e)]);
   if(TERMINAL.has(state)&&!(prev&&TERMINAL.has(prev)))await writeTotals(e.id);
  }
@@ -59,7 +62,7 @@ export function executionModel(raw:Raw){
    [run.id,state,observation,run.projectId??null,run.requestedBy?.deliveryId??null,ts(run.startedAt),ts(run.finishedAt),clean(rest),clean({method:run.selectedMethod??null,definitionSha256:run.definitionSha256??null})]);
   for(const [i,step] of steps.entries()){const s=mapLegacyState(step.state==='running'?'started':step.state);
    await raw.query(`INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,legacy_kind,legacy_id,data) VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,'pipeline-step',$7,$8)
-    ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,data=excluded.data`,
+    ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,data=excluded.data,problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
     [`${run.id}:step:${i}`,s.state,s.observation,run.projectId??null,run.id,ts(step.startedAt),step.id??String(i),clean({index:i,...step})])}
  }
  const withSteps=async(rows:any[])=>{if(!rows.length)return [];const steps=await raw.query("SELECT parent_execution_id AS run,data FROM execution WHERE legacy_kind='pipeline-step' AND parent_execution_id=ANY($1) ORDER BY (data->>'index')::int",[rows.map(r=>r.data.id)]);
@@ -109,7 +112,7 @@ export function executionModel(raw:Raw){
  async function transition(id:string,state:State){if(!EXECUTION_STATES.includes(state))throw Object.assign(Error('Unknown execution state '+state),{statusCode:400});
   const row=await one('SELECT state FROM execution WHERE id=$1',[id]);if(!row)notFound();
   if(row.state===state)return row;if(TERMINAL.has(row.state)||ORDER[state]<ORDER[row.state as State])throw Object.assign(Error(`Execution ${row.state} cannot become ${state}`),{statusCode:409});
-  await raw.query(`UPDATE execution SET state=$2,ended_at=CASE WHEN $3 THEN coalesce(ended_at,now()) ELSE ended_at END,started_at=CASE WHEN $2::execution_state IN ('running','waiting') THEN coalesce(started_at,now()) ELSE started_at END WHERE id=$1`,[id,state,TERMINAL.has(state)]);
+  await raw.query(`UPDATE execution SET state=$2,problem=CASE WHEN $2::execution_state='succeeded' THEN NULL ELSE problem END,ended_at=CASE WHEN $3 THEN coalesce(ended_at,now()) ELSE ended_at END,started_at=CASE WHEN $2::execution_state IN ('running','waiting') THEN coalesce(started_at,now()) ELSE started_at END WHERE id=$1`,[id,state,TERMINAL.has(state)]);
   if(TERMINAL.has(state))await writeTotals(id);return {state}}
  // Observation confidence: confirmed whenever the host reports for the execution, unconfirmed when contact is lost.
  async function markObservation(id:string,observation:'confirmed'|'unconfirmed'){await raw.query('UPDATE execution SET observation=$2::observation,last_seen_at=CASE WHEN $2::text=\'confirmed\' THEN now() ELSE last_seen_at END WHERE id=$1',[id,observation])}
@@ -124,6 +127,8 @@ export function executionModel(raw:Raw){
    ON CONFLICT(execution_id) DO UPDATE SET project_id=excluded.project_id,wall_ms=excluded.wall_ms,wall_ms_basis=excluded.wall_ms_basis,computed_at=excluded.computed_at`,[id])}
  const ended=async(id:string)=>!!(await one('SELECT 1 AS x FROM execution WHERE id=$1 AND ended_at IS NOT NULL',[id]));
  // Executions bound to a host, account or environment that nothing registered (example: 6b00f0fb waiting for host 'pds18').
+ // Rule (design §1): a problem explains why an open execution cannot run. It is set and cleared only while the execution is open;
+ // reaching succeeded clears it; failed and cancelled keep the last problem as the explanation.
  // One statement: registered hosts are the configured ones plus every host that has polled (host-observation), accounts are
  // the managed accounts, environments the hosts of each project's environments.
  async function detectProblems(registered:{hosts:string[],environments:Record<string,string[]>}){

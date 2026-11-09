@@ -32,13 +32,13 @@ p=pathlib.Path('output');p.mkdir(exist_ok=True);(p/'index.html').write_text('<ht
 print(json.dumps({'type':'thread.started','thread_id':'fake-thread'}),flush=True)
 print(json.dumps({'type':'item.completed','item':{'text':'partial'}}),flush=True)
 if 'lab-call' in __import__('sys').argv:
- for e in json.loads(pathlib.Path('/Users/kirs/orca/workspaces/fleet/goblin/tests/executor/lab-native-events.json').read_text()): print(json.dumps(e),flush=True)
+ for e in json.loads(pathlib.Path(LAB_NATIVE_EVENTS).read_text()): print(json.dumps(e),flush=True)
 if 'leaderonly' in __import__('sys').argv:time.sleep(120)
 if 'slow' in __import__('sys').argv or 'abnormal' in __import__('sys').argv:
  child=subprocess.Popen(['sleep','120'],start_new_session=True);pathlib.Path('child.pid').write_text(str(child.pid));time.sleep(3 if 'abnormal' in __import__('sys').argv else 120);os._exit(3)
 else:
  time.sleep(1);print(json.dumps({'type':'turn.completed','usage':{'input_tokens':1}}),flush=True)
-''');fake.chmod(0o700)
+'''.replace('LAB_NATIVE_EVENTS',json.dumps(str(pathlib.Path(__file__).resolve().parent/'lab-native-events.json'))));fake.chmod(0o700)
 commands=[];received=[];artifact_attempts=0;lock=threading.Lock()
 class Handler(BaseHTTPRequestHandler):
  def log_message(self,*a):pass
