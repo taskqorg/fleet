@@ -187,7 +187,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   const profileId=b.profileId??(b.role?project.roles?.[b.role]:undefined),profile=typeof profileId==='string'&&roleProfile(profileId)||fail(400,'Expected profileId or a role mapped to a profile');
   if(b.setup!==undefined&&!['run','skip'].includes(b.setup))fail(400,'Expected setup run|skip');
   const account=b.account??(await deps.pickAccount?.(profile.harness??'codex',projectId,b.hostId));
-  const s:any={id:randomUUID(),createdAt:Date.now(),projectId,agentConfig:profile,startRequest:key,...(b.role?{role:b.role}:{}),...(account?{account}:{}),...(b.setup?{setup:b.setup}:{}),...(typeof b.callerSessionId==='string'?{createdBySessionId:b.callerSessionId}:{})};
+  const s:any={id:randomUUID(),createdAt:Date.now(),projectId,agentConfig:profile,startRequest:key,...(b.role?{role:b.role}:{}),...(account?{account}:{}),...(b.setup?{setup:b.setup}:{}),...(typeof b.callerSessionId==='string'?{createdBySessionId:b.callerSessionId}:{}),...(typeof b.callerExecutionId==='string'?{createdByExecutionId:b.callerExecutionId}:{})};
   await put('session',s);const first=typeof b.text==='string'&&b.text?(await submit({sessionId:s.id,requestId:'start:'+requestId,text:b.text})):null;
   return {sessionId:s.id,projectId,role:b.role??null,profileId:profile.id,account:account??null,executionId:first&&!first.queued?first.id:null,hostId:first?.hostId??null}}
  const operations:Record<string,(b:any)=>Promise<any>>={
@@ -229,7 +229,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   else if(name==='reconcile')fail(403,'Not available to host agents');
   else if(name==='session_start'){
    // Host agents start sessions only in their own project, with a profile from its roles map and a registered account.
-   const p=(await get(own,'session')).projectId;if(!p||a.projectId!==undefined&&a.projectId!==p)fail(403,'Project belongs to another agent');a.projectId=p;a.callerSessionId=own;
+   const p=(await get(own,'session')).projectId;if(!p||a.projectId!==undefined&&a.projectId!==p)fail(403,'Project belongs to another agent');a.projectId=p;a.callerSessionId=own;a.callerExecutionId=executionId;
    const roles=Object.values((await deps.project?.(p))?.roles??{});if(a.profileId!==undefined&&!roles.includes(a.profileId))fail(403,'Profile not in project roles');
    if(a.account!==undefined&&!(await all('managed-account')).some(m=>m.enabled&&(m.id===a.account||m.name===a.account)))fail(403,'Account not available')}
   else{a.sessionId=a.sessionId??own;(await mine(a.sessionId));if(name==='session_fork')a.callerSessionId=own}

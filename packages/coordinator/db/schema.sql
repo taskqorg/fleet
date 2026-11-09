@@ -189,3 +189,12 @@ CREATE POLICY project_scope ON execution_totals USING (current_setting('fleet.pr
 ALTER TABLE question ENABLE ROW LEVEL SECURITY;
 ALTER TABLE question FORCE ROW LEVEL SECURITY;
 CREATE POLICY project_scope ON question USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')))
+
+-- migration 7: backfill after the first live Phase 2 run (idempotent; only fills NULL links and clears stale problems).
+-- A succeeded execution carries no problem (design §1).
+UPDATE execution SET problem = NULL WHERE state = 'succeeded' AND problem IS NOT NULL;
+-- Executions of a session started by a host agent (session_start: startRequest and createdBySessionId) link to the creator
+-- session's latest execution created at or before that session, the execution that called session_start.
+UPDATE execution c SET parent_execution_id = p.id FROM document s, LATERAL (SELECT e.id FROM execution e WHERE e.session_id = s.data->>'createdBySessionId' AND e.legacy_kind = 'execution' AND coalesce((e.data->>'createdAt')::bigint, 0) <= coalesce((s.data->>'createdAt')::bigint, 0) ORDER BY e.seq DESC LIMIT 1) p WHERE c.parent_execution_id IS NULL AND c.legacy_kind = 'execution' AND s.kind = 'session' AND s.id = c.session_id AND s.data ? 'startRequest' AND s.data ? 'createdBySessionId';
+-- Delegated children whose legacy record names the delegating execution.
+UPDATE execution SET parent_execution_id = data->>'parentExecutionId' WHERE parent_execution_id IS NULL AND legacy_kind = 'execution' AND data ? 'parentExecutionId'
