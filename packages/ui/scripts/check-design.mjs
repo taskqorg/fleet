@@ -1,0 +1,52 @@
+// Design report (D6): prints warnings, never fails. Reviewers and the owner read it.
+// Usage: npm run check:design [files or folders...]   (default: packages/ui)
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { build } from 'esbuild';
+import { contrastProblems } from './tokens.mjs';
+
+const root = new URL('../../..', import.meta.url).pathname;
+const targets = process.argv.slice(2).length ? process.argv.slice(2) : ['packages/ui'];
+const files = [];
+const walk = p => { const s = statSync(p); if (s.isDirectory()) { if (!/node_modules|dist/.test(p)) readdirSync(p).forEach(f => walk(join(p, f))); } else if (/\.(tsx?|css|html)$/.test(p)) files.push(p); };
+targets.forEach(t => walk(join(root, t)));
+
+// Each rule: id, what it looks for, where it applies, the advice.
+const RULES = [
+  { id: 'tokens', re: /#[0-9a-fA-F]{3,8}\b/g, where: f => !/tokens\.json$/.test(f) && /\.(tsx?|css)$/.test(f), say: 'raw colour; use a colour token (tokens.md)' },
+  { id: 'tokens', re: /style=\{\{[^}]*\b\d+px/g, where: f => /\.tsx$/.test(f), say: 'raw px in inline style; use a size token' },
+  { id: 'OR-8', re: /<svg\b/g, where: f => /\.tsx?$/.test(f), say: 'inline SVG; use <Icon name> from the registry' },
+  { id: 'OR-2', re: /\b(toLocaleDateString|toLocaleTimeString|Intl\.DateTimeFormat|Intl\.RelativeTimeFormat)\b|new Date\([^)]*\)\.(getHours|getDate|getMonth)/g, where: f => /\.tsx?$/.test(f) && !/src\/format\.ts$/.test(f), say: 'date formatting outside packages/ui/src/format.ts' },
+  { id: 'layout', re: /100vh/g, where: () => true, say: '100vh breaks inline viewing; size to content' },
+  { id: 'OR-7', re: /[↑↓▲▼⬆⬇]/g, where: f => /\.(tsx|html)$/.test(f), say: 'direction arrow; show change with the value tint' },
+  { id: 'OR-9', re: /<select\b/g, where: f => /\.tsx$/.test(f), say: 'select; long collections use VirtualList or a searchable scope control' },
+  { id: 'OR-15', re: /Back to /g, where: f => /\.(tsx|html)$/.test(f), say: 'text back link; use an icon, or rely on browser Back' },
+];
+const warn = [];
+for (const f of files) {
+  const text = readFileSync(f, 'utf8');
+  for (const r of RULES) if (r.where(f)) for (const m of text.matchAll(r.re)) {
+    const line = text.slice(0, m.index).split('\n').length;
+    warn.push(`${relative(root, f)}:${line}  ${r.id}  ${r.say}  [${m[0].slice(0, 30)}]`);
+  }
+}
+// OR-14: interactive elements inside floating layers (markup heuristic on tsx).
+for (const f of files.filter(f => /\.tsx$/.test(f))) {
+  const t = readFileSync(f, 'utf8');
+  for (const m of t.matchAll(/role="(tooltip|dialog)"|popover=/g)) warn.push(`${relative(root, f)}  OR-14  floating layer found; it may hold only information`);
+}
+for (const p of contrastProblems()) warn.push(`tokens.json  contrast  ${p} (needs 4.5:1)`);
+
+// Performance target: initial JavaScript of the UI package (D6: ≤ 200 KB, a target, not a stop).
+const ui = await build({ entryPoints: [join(root, 'packages/ui/src/index.ts')], bundle: true, minify: true, write: false, format: 'esm', jsx: 'automatic', jsxImportSource: 'preact', loader: { '.json': 'json' } });
+const kb = ui.outputFiles[0].contents.length / 1024;
+
+let tests = 'passed';
+try { execFileSync('npx', ['tsx', '--test', 'tests/ui/format.test.ts'], { cwd: root, stdio: 'pipe' }); } catch { tests = 'FAILED (run npx tsx --test tests/ui/format.test.ts)'; }
+
+console.log(`Design report for ${targets.join(', ')}: ${files.length} files`);
+console.log(`- packages/ui JavaScript: ${kb.toFixed(0)} KB minified (target ≤ 200 KB)${kb > 200 ? '  OVER TARGET' : ''}`);
+console.log(`- formatter tests: ${tests}`);
+console.log(warn.length ? `- ${warn.length} warnings:\n  ${warn.join('\n  ')}` : '- no warnings');
+console.log('Rules: docs/design-system/owner-rules.md. This report never fails the build.');

@@ -51,3 +51,20 @@ Append only. Each entry: date, question, options, choice, reason.
 * **D7 old specimens:** archived in `explorations/archive/`.
 * **D8 book role:** the book is the live demo page of `packages/ui`. There is no separate copy.
 * **Rejected:** blocking checks in `npm test` or CI (the reviewers' recommendation), and gates on the order of work.
+
+## 2026-11-09 D7: Stage 2 built as packages/ui (pending owner review)
+
+* **Built:**
+  * `packages/ui`: tokens, the icon registry (TaskQ Lucide set), the formatter, `VirtualList` on TanStack Virtual core, and 14 controls.
+  * `npm run book` builds [book/index.html](book/index.html) as one self-contained file.
+  * `npm run check:design` prints the warning report.
+* **Applied:**
+  * OR-7: the pill reads "12 new".
+  * OR-14: filters expand inline.
+  * OR-12: saved filters and rows can be pinned.
+  * OR-2: compact age chips.
+  * OR-18: the age chip turns red past a caller-supplied threshold.
+  * OR-6: changed values tint for 2 s.
+* **Open choices for the owner:**
+  * B1: state in task lists: icon and word, or icon only with the word in the tooltip.
+  * B2: row pin button: shown on hover and focus (always on touch), or always visible.

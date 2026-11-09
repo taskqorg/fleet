@@ -1,1 +1,28 @@
-{"name":"fleet","private":true,"type":"module","scripts":{"build":"tsc && node packages/coordinator/package-assets.mjs","start":"node dist/packages/coordinator/server.js","test":"tsx --test tests/coordinator/*.test.ts"},"dependencies":{"better-sqlite3":"12.4.1","fastify":"5.12.8"},"devDependencies":{"@types/better-sqlite3":"7.6.13","@types/node":"22.18.0","playwright":"^1.56.1","tsx":"4.20.6","typescript":"5.9.3"}}
+{
+  "name": "fleet",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc && node packages/coordinator/package-assets.mjs",
+    "start": "node dist/packages/coordinator/server.js",
+    "test": "tsx --test tests/coordinator/*.test.ts",
+    "book": "node packages/ui/scripts/build-book.mjs",
+    "check:design": "node packages/ui/scripts/check-design.mjs"
+  },
+  "dependencies": {
+    "@preact/signals": "2.11.4",
+    "@tanstack/virtual-core": "3.19.11",
+    "better-sqlite3": "12.4.1",
+    "fastify": "5.12.8",
+    "preact": "11.2.0",
+    "wouter-preact": "3.13.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "22.18.0",
+    "esbuild": "0.28.2",
+    "playwright": "^1.56.1",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  }
+}
