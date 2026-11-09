@@ -17,7 +17,7 @@
 
 **Change tint (OR-6).** A changed value tints for 2 s: green or red when the caller says what a rise means (`rise="good"|"bad"`), otherwise neutral. No arrow (OR-7). Reduced motion removes the fade, not the tint.
 
-**Age chip (OR-2, OR-18).** `AgeChip` shows compact age (`4m`, `2h`, `3d`, `12 Nov`) and turns to an attention or danger tone past a threshold the caller supplies (for example a task running over its expected time). Exact time on hover.
+**Age chip (OR-2, OR-18).** An alert chip is never shown by colour alone: it carries a warning icon, and its accessible name and tooltip state the meaning, for example "13 hours ago, running too long" (D14, WCAG 1.4.1). `AgeChip` shows compact age (`4m`, `2h`, `3d`, `12 Nov`) and turns to an attention or danger tone past a threshold the caller supplies (for example a task running over its expected time). Exact time on hover.
 
 **Behaviour.** Hover or focus shows the source: meter, estimate method, missing reason, time of measurement. Totals open their source records ([drill-down](../inventory.md#cross-cutting-needs)). Units are compact (`14m`, `1h 02m`, `182k`, `380 GB`) and the full value is in the tooltip. Live values change without animation.
 

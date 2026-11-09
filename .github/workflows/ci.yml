@@ -1,0 +1,71 @@
+# Build and test gate the job; the design report never does (D6, D14).
+# ubuntu-24.04 is pinned because Playwright has no Chromium build for ubuntu-latest (26.04) yet.
+# Least privilege: no token scopes by default; the build job reads only, and only the comment job,
+# which checks out no PR code, may write a PR comment.
+name: ci
+on:
+  pull_request:
+permissions: {}
+jobs:
+  build-test-design:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - name: Install Chromium for the design checks
+        if: always()
+        run: npx playwright install --with-deps chromium
+      - name: Design report (warnings only)
+        if: always()
+        continue-on-error: true
+        run: |
+          npm run book
+          npm run check:design
+          { echo '### Design report (warnings only)'; echo '```'; cat design-report/report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload design report and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: design-report
+          path: |
+            design-report/
+            docs/design-system/book/index.html
+            docs/design-system/pages/mockups.html
+          if-no-files-found: warn
+  comment:
+    needs: build-test-design
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: design-report
+      - name: Comment report summary on the PR
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let report = 'Design report not produced (see the job log).';
+            try { report = fs.readFileSync('design-report/report.txt', 'utf8'); } catch {}
+            const lines = report.split('\n');
+            const short = lines.length > 60 ? lines.slice(0, 60).join('\n') + '\n… (full report in the design-report artifact)' : report;
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `<!-- fleet-design-report -->\n**Design report** (warnings only, never blocks merge) · [run and artifacts](${run})\n\n\`\`\`\n${short}\n\`\`\``;
+            const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number });
+            const old = comments.find(c => c.body.includes('<!-- fleet-design-report -->'));
+            if (old) await github.rest.issues.updateComment({ ...context.repo, comment_id: old.id, body });
+            else await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });

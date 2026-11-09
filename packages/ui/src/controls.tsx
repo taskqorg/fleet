@@ -81,7 +81,7 @@ export function StateBadge<F extends Family>(p: BadgeProps<F>) {
       <span class={`badge t-${d.tone}${unconf ? ' unconf' : ''}${p.compact ? ' compact' : ''}`} role="img" aria-label={name} data-tip={p.compact || unconf ? name : undefined}>
         <Icon name={d.icon} />{!p.compact && <span>{d.label}</span>}
       </span>
-      {(unconf || p.reason) && <span class={`reason${unconf ? ' unconf' : ''}`} aria-hidden="true">{unconf ? `seen ${seen!.text}` : ''}{unconf && p.reason ? ' · ' : ''}{p.reason}</span>}
+      {(unconf || p.reason) && !p.compact && <span class={`reason${unconf ? ' unconf' : ''}`} aria-hidden="true">{unconf ? `seen ${seen!.text}` : ''}{unconf && p.reason ? ' · ' : ''}{p.reason}</span>}
     </span>
   );
 }
@@ -123,10 +123,12 @@ export function Totals({ items }: { items: { label: string; m: Measured; kind: K
 }
 
 /** Age chip with visual salience (OR-2, OR-18): turns to the given tone past the caller's threshold. */
-export function AgeChip({ t, now, alertAfter, tone = 'danger' }: { t: number; now: number; alertAfter?: number; tone?: Tone }) {
+export function AgeChip({ t, now, alertAfter, tone = 'danger', alertLabel = 'needs a look' }: { t: number; now: number; alertAfter?: number; tone?: Tone; alertLabel?: string }) {
   const a = age(t, now);
   const alert = alertAfter !== undefined && now - t >= alertAfter * 1000;
-  return <span data-ui="number" class={`chip-age${alert ? ` t-${tone} alert` : ''}`} aria-label={a.long}>{a.text}</span>;
+  // D14/M3: the alert is never colour only: icon + meaning in the name and tooltip.
+  return <span data-ui="number" class={`chip-age${alert ? ` t-${tone} alert` : ''}`} aria-label={alert ? `${a.long}, ${alertLabel}` : a.long} data-tip={alert ? alertLabel : undefined}>
+    {alert && <Icon name="triangle-alert" />}{a.text}</span>;
 }
 
 /* ---------- Fill bar (W9–W11) ---------- */
@@ -148,7 +150,7 @@ export function FillBar(p: FillProps) {
         {p.segments.map((s, i) => <i key={s.label} class={`d${i % 4 + 1}`} style={{ width: `${s.bytes / p.total! * 100}%` }} data-tip={`${s.label} ${p.unit === 'percent' ? percent(s.bytes, p.total!).text : bytes(s.bytes).text}`} />)}
         {p.warnAt !== undefined && <b class="mark" style={{ left: `${(1 - p.warnAt / p.total) * 100}%` }} />}
       </span>
-      <span class={`legend${state ? ` t-${state === 'full' ? 'danger' : 'attention'}` : ''}`}>{legend} · {freeText}{staleText}</span>
+      <span class={`legend${state ? ` t-${state === 'full' ? 'danger' : 'attention'}` : ''}`} data-important={state ? '' : undefined}>{state ? `${freeText} · ${legend}` : `${legend} · ${freeText}`}{staleText}</span>
     </span>
   );
 }
@@ -179,7 +181,7 @@ export function FilterBar(p: FilterBarProps) {
             <button type="button" aria-label={`Remove filter ${c.field}: ${c.value}`} onClick={() => p.onRemove(c)}><Icon name={actions.clear} /></button></span>
         ))}
         {p.chips.length > 0 && <Button label="Clear" kind="quiet" onClick={p.onClear} />}
-        <span class="count" aria-live="polite">{p.shown.toLocaleString('en')} of {p.total.toLocaleString('en')}</span>
+        <span class="count" aria-live="polite">{p.shown < p.total ? `${p.shown.toLocaleString('en')} of ${p.total.toLocaleString('en')}` : ''}</span>
       </div>
       {p.extra && <div class="fbar-line">{p.extra}</div>}
       {open !== null && (
@@ -246,7 +248,7 @@ export function DecisionBlock(p: DecisionProps) {
     <div class="decision" data-ui="decision-block" role="group" aria-label={p.question}
       onKeyDown={e => { if ((e.target as HTMLElement).tagName === 'INPUT') return; const o = p.options.find(o => o.kbd === e.key); if (o) send(o.label); }}>
       <div class="dq"><Icon name="bell" /><b>{p.question}</b></div>
-      <div class="meta">{p.askedBy} · for {p.addressedTo} · <AgeChip t={p.since} now={p.now} />{p.waits && <> · {p.waits}</>}</div>
+      <div class="meta">{p.askedBy}{p.addressedTo === 'you' ? '' : ` · for ${p.addressedTo}`} · <AgeChip t={p.since} now={p.now} />{p.waits && <> · {p.waits}</>}</div>
       {p.context && <div class="ctx">{p.context}</div>}
       <div class="answers">
         {p.options.map(o => <Button key={o.label} label={o.label} kbd={o.kbd} kind={o.primary ? 'primary' : 'default'} onClick={() => send(o.label)} />)}
@@ -320,7 +322,7 @@ export function ProblemRow({ title, facts, severity, actions: acts }: {
   return (
     <div data-ui="problem-row" class={`problem ${severity}`} role="group" aria-label={`${severity === 'failure' ? 'Failure' : 'Warning'}: ${title}`}>
       <Icon name={severity === 'failure' ? 'octagon-x' : 'triangle-alert'} />
-      <b>{title}</b><span class="facts">{facts}</span>
+      <b>{title}</b><span class="facts" data-important="">{facts}</span>
       <span class="acts">{acts.map(a => <Button key={a.label} label={a.label} icon={a.icon} kind={a.primary ? 'primary' : 'default'} />)}</span>
     </div>
   );

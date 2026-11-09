@@ -12,7 +12,7 @@
 
 | Inventory item | Shown by |
 |---|---|
-| Hosts: platform, last contact, observation state, harness versions, readiness | Table: name, platform, [state icon](../controls/state-badge.md) (unconfirmed overlay when offline), last contact [age chip](../controls/number.md) (attention past 15m) |
+| Hosts: platform, last contact, observation state, harness versions, readiness | Table: name (the platform shows only when the name does not already say it, OR-17), [state icon](../controls/state-badge.md) (unconfirmed overlay when offline), last contact [age chip](../controls/number.md) (attention past 15m) |
 | Environments and account users per host | Host detail: stacked [detail sections](../controls/detail-section.md) (C3) |
 | Stores: capacity, used, free, tunnel state, fill per project | [Fill bar](../controls/fill-bar.md) per host with project segments, free space and warning mark |
 | Store capacity, memory and CPU bounds, free-space warning | Setting fields with applied, pending or apply error |
