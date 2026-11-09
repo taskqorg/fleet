@@ -8,7 +8,9 @@ mod readiness;
 mod checkout_sync;
 mod git_access;
 mod worktree;
-use base64::Engine;
+mod upload;
+mod store;
+mod preview;
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -66,6 +68,10 @@ struct Executor {
     live: HashMap<String, Live>,
     sessions: PathBuf,
     harness_cache: HashMap<String, Value>,
+    // This host's artifact store (FLEET_STORE_CONFIG) and its last poll report, refreshed every 15 s.
+    store_cfg: Option<Value>,
+    declared: std::cell::RefCell<Vec<String>>,
+    store_report: std::cell::RefCell<(Option<std::time::Instant>, Value)>,
 }
 fn platform() -> &'static str {
     match env::consts::OS {
@@ -161,7 +167,8 @@ impl Executor {
         outbox::flush(&self.db, &self.url, &self.token, &self.host)
     }
     fn receipt(&self, c: &Value, status: &str, native: Option<&str>) -> Result<()> {
-        self.queue("/api/hosts/receipts",json!({"hostId":self.host,"commandId":c["id"],"executionId":c["executionId"],"status":status,"nativeSessionId":native}))
+        let declared = std::mem::take(&mut *self.declared.borrow_mut());
+        self.queue("/api/hosts/receipts",json!({"hostId":self.host,"commandId":c["id"],"executionId":c["executionId"],"status":status,"nativeSessionId":native,"artifacts":declared}))
     }
     fn run(&mut self, c: Value) -> Result<()> {
         let cid = id(&c, "id")?;
@@ -250,6 +257,15 @@ impl Executor {
             let seq = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1 << 40, |d| d.as_millis() as u64);
             self.event(&c, seq, "teardown", data)?;
             return self.finish(&c, if ok { "completed" } else { "failed" }, None);
+        }
+        if c["kind"] == "artifact-copy" || c["kind"] == "artifact-verify" {
+            // Long transfers run on the transfer worker, which sends the final receipt; the journal row resumes them.
+            let mut body = c["payload"].clone();
+            body["command"] = json!({"id":c["id"],"executionId":c["executionId"]});
+            body["spool"] = json!(self.root.join("spool"));
+            upload::enqueue(&self.db, &cid, if c["kind"] == "artifact-copy" { "copy" } else { "verify" }, &body)?;
+            self.db.execute("UPDATE commands SET terminal=1 WHERE id=?", [&cid])?;
+            return Ok(());
         }
         if c["kind"] != "start" && c["kind"] != "input" {
             return self.finish(&c, "failed", None);
@@ -345,6 +361,12 @@ impl Executor {
         if let Some(w) = &workdir {
             cmd.current_dir(w);
         }
+        // Output collected when the run ends, and the folder artifact_get downloads into (design §8).
+        let output_dir = workdir.as_ref().map(|w| w.join("output")).unwrap_or_else(|| dir.join("output"));
+        let input_dir = dir.join("input");
+        let _ = fs::create_dir_all(&output_dir);
+        let _ = fs::create_dir_all(&input_dir);
+        cmd.env("FLEET_OUTPUT_DIR", &output_dir).env("FLEET_INPUT_DIR", &input_dir);
         if p["project"].is_object() {
             // Repo of this host's environment (env.repo), else the project's single/first repo.
             let env_repo = p["project"]["environments"].as_array().into_iter().flatten().find(|e| e["hostId"] == self.host.as_str()).map_or(Value::Null, |e| e["repo"].clone());
@@ -362,13 +384,13 @@ impl Executor {
         let mut harness_observation = None;
         let mut fleet_mcp: Vec<&str> = vec![];
         if fleet_tools {
-            let context = json!({"hostId":self.host,"commandId":c["id"],"executionId":c["executionId"],"profiles":profiles,"projectId":p["projectId"]});
+            let context = json!({"hostId":self.host,"commandId":c["id"],"executionId":c["executionId"],"profiles":profiles,"projectId":p["projectId"],"workdir":workdir.clone().unwrap_or_else(|| dir.clone()),"inputDir":input_dir,"spool":self.root.join("spool")});
             let args = json!(["-c",include_str!("delegation.py"),self.root.join("journal.sqlite"),context.to_string()]);
             if matches!(harness::name(p), "claude" | "antigravity") {
                 claude_servers["fleet"] = json!({"command":"python3","args":args});
             } else {
                 cmd.args(["-c","mcp_servers.fleet.command=\"python3\"","-c",&format!("mcp_servers.fleet.args={args}"),"-c","mcp_servers.fleet.required=true"]);
-                let mut tools = vec!["session_start","session_deliver","session_transition","session_fork","session_resume","session_handoffs","message_send","queue_list","ask","reply","questions","worker_done","execution_status"];
+                let mut tools = vec!["session_start","session_deliver","session_transition","session_fork","session_resume","session_handoffs","message_send","queue_list","ask","reply","questions","worker_done","execution_status","artifact_save","artifact_list","artifact_get"];
                 if !profiles.is_empty() { tools.push("request_child"); }
                 if p["projectId"].is_string() { tools.extend(["project_context","catalogue","pipeline_run","direct_search","pipeline_history","pipeline_get","question_ask","question_history","account_list"]); }
                 cmd.args(["-c",&format!("mcp_servers.fleet.enabled_tools={}",json!(tools))]);
@@ -689,13 +711,16 @@ impl Executor {
                     let dir = self.session_dir(&id(&l.command, "sessionId")?);
                     // Project sessions run in their worktree, so the agent writes output/ there.
                     let output = [dir.join("worktree").join("output"), dir.join("output")].into_iter().find(|o| o.is_dir()).unwrap_or_else(|| dir.join("output"));
+                    let mut declared = vec![];
                     if output.is_dir() {
-                        if let Err(_) = self.artifacts(&output, &output, &execution) {
+                        if let Err(_) = self.artifacts(&output, &output, &execution, &mut declared) {
                             return self
                                 .finish(&l.command, "failed", l.native.as_deref())
                                 .map(|_| true);
                         }
                     }
+                    // The coordinator holds a completed run with required artifacts still uploading as waiting (P3-D2).
+                    *self.declared.borrow_mut() = declared;
                     self.finish(
                         &l.command,
                         if l.cleanup_unknown {
@@ -743,11 +768,14 @@ impl Executor {
     fn event(&self, c: &Value, seq: u64, kind: &str, data: Value) -> Result<()> {
         self.queue("/api/hosts/events",json!({"hostId":self.host,"executionId":c["executionId"],"events":[{"id":format!("{}-{seq}",c["id"].as_str().unwrap()),"seq":seq,"type":kind,"timestamp":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis(),"data":data}]}))
     }
+    /// Collects the output folder: each regular file (symlinks skipped, nothing outside the root) is copied into the spool, so
+    /// later edits and worktree cleanup cannot change what is uploaded, and queued for upload with its relative path as name.
     fn artifacts(
         &self,
         root: &std::path::Path,
         dir: &std::path::Path,
         execution: &str,
+        declared: &mut Vec<String>,
     ) -> Result<()> {
         if fs::symlink_metadata(root)?.file_type().is_symlink() {
             return Err("artifact root symlink".into());
@@ -759,61 +787,58 @@ impl Executor {
                 continue;
             }
             if t.is_dir() {
-                self.artifacts(root, &e.path(), execution)?
+                self.artifacts(root, &e.path(), execution, declared)?
             } else if t.is_file() {
                 let path = e.path();
-                let relative = path
-                    .strip_prefix(root)?
-                    .to_str()
-                    .ok_or("non utf8 artifact")?;
-                if !relative.split('/').all(|p| {
-                    !p.is_empty()
-                        && p != "."
-                        && p != ".."
-                        && p.bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
-                }) {
+                let relative = path.strip_prefix(root)?.to_str().ok_or("non utf8 artifact")?.to_string();
+                if relative.split('/').any(|p| p.is_empty() || p == "." || p == "..") {
                     return Err("artifact path invalid".into());
-                }
-                let media = match path.extension().and_then(|x| x.to_str()).unwrap_or("") {
-                    "html" => "text/html",
-                    "css" => "text/css",
-                    "js" => "text/javascript",
-                    "json" => "application/json",
-                    "svg" => "image/svg+xml",
-                    "png" => "image/png",
-                    "jpg" | "jpeg" => "image/jpeg",
-                    "webp" => "image/webp",
-                    "ico" => "image/x-icon",
-                    "txt" => "text/plain",
-                    "woff2" => "font/woff2",
-                    _ => return Err("unsupported static artifact type".into()),
-                };
-                let max = env::var("FLEET_MAX_ARTIFACT_BYTES")
-                    .unwrap_or("16777216".into())
-                    .parse::<u64>()?;
-                if e.metadata()?.len() > max {
-                    return Err("artifact too large".into());
                 }
                 use std::os::unix::fs::OpenOptionsExt;
                 if !path.canonicalize()?.starts_with(root.canonicalize()?) {
                     return Err("artifact escaped root".into());
                 }
-                let file = fs::OpenOptions::new()
-                    .read(true)
-                    .custom_flags(libc::O_NOFOLLOW)
-                    .open(&path)?;
-                let mut bytes = Vec::new();
-                file.take(max + 1).read_to_end(&mut bytes)?;
-                if bytes.len() as u64 > max {
-                    return Err("artifact grew beyond limit".into());
-                }
-                let sha = format!("{:x}", Sha256::digest(&bytes));
-                self.queue("/api/hosts/artifacts",json!({"hostId":self.host,"executionId":execution,"path":relative,"mediaType":media,"sha256":sha,"contentBase64":base64::engine::general_purpose::STANDARD.encode(bytes)}))?;
+                let mut file = fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(&path)?;
+                let id = new_id();
+                let spool = self.root.join("spool").join(&id);
+                std::io::copy(&mut file, &mut fs::File::create(&spool)?)?;
+                upload::enqueue(&self.db, &id, "upload", &json!({"path":spool,"spool":true,"previews":true,"name":relative,"mediaType":media_type(&relative),"executionId":execution,"required":false}))?;
+                declared.push(relative);
             }
         }
         Ok(())
     }
+    fn stores(&self) -> Value {
+        let Some(cfg) = &self.store_cfg else { return json!([]) };
+        let mut r = self.store_report.borrow_mut();
+        if r.0.is_none_or(|t| t.elapsed() >= Duration::from_secs(15)) { *r = (Some(std::time::Instant::now()), store::report(cfg)); }
+        r.1.clone()
+    }
+}
+fn capabilities() -> Vec<String> {
+    let mut c: Vec<String> = ["codex","gpt-6.1-sol","low","static-output","steer","native-fork","artifact-store"].map(String::from).to_vec();
+    if let Some(v) = preview::ffmpeg_version() { c.push(format!("ffmpeg:{v}")); }
+    c
+}
+/// Media type from the file extension; unknown types are stored as octet-stream.
+pub fn media_type(name: &str) -> &'static str {
+    match name.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str() {
+        "html" | "htm" => "text/html", "css" => "text/css", "js" | "mjs" => "text/javascript", "json" => "application/json",
+        "txt" | "md" | "log" => "text/plain", "csv" => "text/csv", "xml" => "application/xml", "pdf" => "application/pdf",
+        "svg" => "image/svg+xml", "png" => "image/png", "jpg" | "jpeg" => "image/jpeg", "webp" => "image/webp", "gif" => "image/gif", "ico" => "image/x-icon",
+        "mp4" => "video/mp4", "mov" => "video/quicktime", "webm" => "video/webm", "mkv" => "video/x-matroska",
+        "glb" => "model/gltf-binary", "gltf" => "model/gltf+json", "obj" => "model/obj", "stl" => "model/stl", "usdz" => "model/vnd.usdz+zip",
+        "woff2" => "font/woff2", "zip" => "application/zip", "jsonl" | "ndjson" => "application/x-ndjson",
+        _ => "application/octet-stream",
+    }
+}
+pub fn new_id() -> String {
+    let mut b = [0u8; 16];
+    if let Ok(mut f) = fs::File::open("/dev/urandom") { let _ = f.read_exact(&mut b); }
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
 }
 fn main() -> Result<()> {
     let root = PathBuf::from(env::var("FLEET_DATA_DIR")?);
@@ -839,8 +864,26 @@ fn main() -> Result<()> {
         live: HashMap::new(),
         sessions: env::var_os("FLEET_SESSIONS_ROOT").map(PathBuf::from).unwrap_or_else(|| root.join("sessions")),
         harness_cache: HashMap::new(),
+        store_cfg: store::config(),
+        declared: Default::default(),
+        store_report: std::cell::RefCell::new((None, json!([]))),
     };
     outbox::schema(&e.db)?;
+    upload::schema(&e.db)?;
+    fs::create_dir_all(root.join("spool"))?;
+    // Artifact transfers run on their own thread; Access token for store tunnels from FLEET_CF_ACCESS_FILE.
+    let access = env::var_os("FLEET_CF_ACCESS_FILE").map(PathBuf::from).or_else(|| env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/fleet/cf-access-machine.env"))).and_then(|f| upload::access_token(&f));
+    upload::spawn(root.join("journal.sqlite"), upload::Client::new(e.url.clone(), e.token.clone(), e.host.clone(), access), |_, db, body, response| {
+        if body["previews"] == true && response["state"] == "stored" {
+            preview::build(db, body, response);
+        }
+        if body["spool"] == true {
+            if let Some(p) = body["path"].as_str() { let _ = fs::remove_file(p); }
+        }
+    })?;
+    if let Some(r) = e.store_cfg.as_ref().and_then(|c| store::registration(c, &e.host)) {
+        outbox::queue(&e.db, "/api/hosts/stores", r)?;
+    }
     e.db.busy_timeout(Duration::from_secs(5))?;
     outbox::spawn(root.join("journal.sqlite"), e.url.clone(), e.token.clone(), e.host.clone())?;
     fs::create_dir_all(&e.sessions)?;
@@ -860,7 +903,7 @@ fn main() -> Result<()> {
         }
         e.tick()?;
         let result = (|| -> Result<()> {
-            let reply=e.post("/api/hosts/poll",json!({"hostId":e.host,"platform":platform(),"capabilities":["codex","gpt-6.1-sol","low","static-output","steer","native-fork"]}))?;
+            let reply=e.post("/api/hosts/poll",json!({"hostId":e.host,"platform":platform(),"capabilities":capabilities(),"stores":e.stores()}))?;
             for c in reply["commands"].as_array().ok_or("commands missing")? {
                 if e.run(c.clone()).is_err()
                     && !e.live.contains_key(c["executionId"].as_str().unwrap_or(""))
@@ -912,6 +955,9 @@ mod journal_tests {
             live: HashMap::new(),
             sessions: env::temp_dir(),
             harness_cache: HashMap::new(),
+            store_cfg: None,
+            declared: Default::default(),
+            store_report: std::cell::RefCell::new((None, json!([]))),
         };
         let c = json!({"id":"cmd1","executionId":"exec1","sessionId":"session1","kind":"unsupported","payload":{}});
         e.run(c.clone()).unwrap();
@@ -1109,6 +1155,9 @@ mod delegation_transport_tests {
             live: HashMap::new(),
             sessions: env::temp_dir(),
             harness_cache: HashMap::new(),
+            store_cfg: None,
+            declared: Default::default(),
+            store_report: std::cell::RefCell::new((None, json!([]))),
         };
         executor.queue("/api/hosts/receipts", value).unwrap();
         executor.flush().unwrap();
