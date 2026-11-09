@@ -36,22 +36,15 @@ Coordinator invariants: harness and account cannot change on resume (`409`), the
 
 ## Shortcomings
 
-1. No finite concurrency limit. One busy session cannot block another, but N sessions launch N native processes on one Mac, all against the same subscription accounts. Real per-account quota is unknown ([architecture-coverage](architecture-coverage.md)).
+1. Many sessions launch many native processes on one Mac against the same accounts; real per-account quota is unknown ([architecture-coverage](architecture-coverage.md)). Balancing is an owner setting, not a cap.
 2. `unknown` executions block their session with no supported resolution except the narrow closure-collision recovery. A live crash can leave the session stuck.
 3. Resume semantics differ per harness. Only Codex has proof for changed instructions. The Claude and Antigravity paths take the same branch with no qualification.
 4. Placement is the host from config, not a choice. When a second native host exists, there is no point where host plus account is decided.
 
 ## Next design decisions
 
-### D1. Independent-session concurrency limit
-- **Recommended:** a finite cap per native host and per account, applied at poll time. A command that is over the cap stays `pending` and is visible as queued, with its reason. It is not rejected. Start with host=2 (proven) and account=1 for subscription accounts. Keep the values in coordinator config, not in code.
-- Alternatives: reject when over the cap (this makes the user work around it); no limit (status quo).
-- **Changes it:** observed quota/429 behavior from a real account under 2 concurrent sessions, or host CPU/RSS data showing more is safe.
-
-### D2. Session blocked by `unknown`
-- **Recommended:** keep blocking the same session (no replay). Offer an explicit operator "fork session" that starts a new session from the retained history and leaves the unknown execution inspectable.
-- Alternative: let an operator mark it terminal. Rejected: it promotes unknown without host evidence.
-- **Changes it:** a native source that can verify the process/turn outcome after a crash (for example the Codex rollout end marker). Then an evidence-backed resolution for that one harness becomes possible.
+### D1–D2. Concurrency and `unknown`-blocked sessions
+- Withdrawn: no concurrency cap and no invented blocking/resolution rule. Fleet helps agents; balancing is an owner setting. Capabilities to copy (queue/steer, fork, handoff, reconcile) are in the [agent tools inventory](agent-tools-inventory.md).
 
 ### D3. Claude resume
 - **Recommended:** until qualified, treat Claude follow-ups as new native sessions with explicit carried context (history summary/result). Do not use `--resume`. Then run one bounded native A/B on Mac, mirroring the Codex repair test.
@@ -71,4 +64,4 @@ Coordinator invariants: harness and account cannot change on resume (`409`), the
 
 ## Code change
 
-None. No admission defect was clear enough to fix safely. A1–A5 match the documented intent (serial per session, unbounded otherwise). The missing cap is decision D1, not a bug.
+None. No admission defect was clear enough to fix safely. A1–A5 match the documented intent (serial per session, unbounded otherwise). See the [agent tools inventory](agent-tools-inventory.md).
