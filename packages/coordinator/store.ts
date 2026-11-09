@@ -24,19 +24,29 @@ export function createStore(url:string){
  // The current transaction follows the async call chain, so get/put/all inside tx(fn) join it without passing a client around.
  const current=new AsyncLocalStorage<{q:Query,done:boolean}>();
  const q:Query=(s,p)=>{const t=current.getStore();return t&&!t.done?t.q(s,p):db.query(s,p)};
+ // SERIALIZABLE; fn runs again after a serialization failure, so it must be safe to repeat.
+ // tx rolls back when fn throws. atomic commits what fn wrote before it threw: the isolation of a transaction with the
+ // write-as-you-go behaviour of a handler that ran outside a transaction on synchronous SQLite.
+ // A nested call runs in a savepoint, as nested better-sqlite3 transactions did: tx undoes its own writes on error, atomic keeps them.
+ // ponytail: retries until it commits; serialization failures clear once the competing transaction ends.
+ let savepoints=0;
+ const run=async<T>(fn:()=>Promise<T>|T,commitOnError:boolean):Promise<T>=>{
+  const t0=current.getStore();
+  if(t0&&!t0.done){if(commitOnError)return fn();const sp='s'+(++savepoints);await t0.q('SAVEPOINT '+sp);
+   try{const v=await fn();await t0.q('RELEASE SAVEPOINT '+sp);return v}catch(e){await t0.q('ROLLBACK TO SAVEPOINT '+sp);throw e}}
+  for(;;){const t={q:null as any as Query,done:false};
+   try{const out:{v?:T,e?:unknown}=await db.tx(async tq=>{t.q=tq;try{return {v:await current.run(t,fn)}}catch(e){if(commitOnError&&!retryable(e))return {e};throw e}finally{t.done=true}});
+    if('e' in out)throw out.e;return out.v as T}
+   catch(e){if(!retryable(e))throw e}}
+ };
  return {
   async get(id:string,kind:string):Promise<any>{const r=(await q('SELECT data FROM document WHERE id=$1 AND kind=$2',[id,kind])).rows[0];return r?r.data:notFound()},
   // An id that already exists under another kind is left unchanged, as with the SQLite records table.
   async put(kind:string,v:any):Promise<void>{await q('INSERT INTO document(kind,id,data,project_id) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET data=excluded.data,project_id=excluded.project_id,updated_at=now() WHERE document.kind=excluded.kind',[kind,v.id,JSON.stringify(v),typeof v.projectId==='string'?v.projectId:null])},
   // Insertion order (seq) as SQLite rowid gave it; filter is a jsonb containment match.
   async all(kind:string,filter?:object):Promise<any[]>{return (await q(`SELECT data FROM document WHERE kind=$1${filter?' AND data @> $2':''} ORDER BY seq`,filter?[kind,JSON.stringify(filter)]:[kind])).rows.map(r=>r.data)},
-  // SERIALIZABLE; fn runs again after a serialization failure, so it must be safe to repeat. Nested tx calls join the outer one.
-  // ponytail: retries until it commits; serialization failures clear once the competing transaction ends.
-  async tx<T>(fn:()=>Promise<T>|T):Promise<T>{
-   if(current.getStore()&&!current.getStore()!.done)return fn();
-   for(;;){const t={q:null as any as Query,done:false};
-    try{return await db.tx(async tq=>{t.q=tq;try{return await current.run(t,fn)}finally{t.done=true}})}catch(e){if(!retryable(e))throw e}}
-  },
+  tx:<T>(fn:()=>Promise<T>|T)=>run(fn,false),
+  atomic:<T>(fn:()=>Promise<T>|T)=>run(fn,true),
   query:(sql:string,params:any[]=[])=>q(sql,params).then(r=>r.rows),
   async migrate(){
    await db.exec('CREATE TABLE IF NOT EXISTS schema_migration(version int PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT now())');
@@ -48,7 +58,9 @@ export function createStore(url:string){
   close:()=>db.close(),
  };
 }
-export type Docs=Pick<Store,'get'|'put'|'all'>;
+export type Docs=Pick<Store,'get'|'put'|'all'|'tx'|'atomic'>;
+// Operations that wait on a pipeline run; they open short transactions around their own synchronous steps.
+export const LONG_OPERATIONS=new Set(['pipeline_run','direct_search','delivery_generate']);
 // Sequential async forms of the array methods, for callbacks that read the store; order of reads and writes stays as in the sync code.
 export const every=async<T>(xs:T[],f:(x:T)=>unknown)=>{for(const x of xs)if(!await f(x))return false;return true};
 export const some=async<T>(xs:T[],f:(x:T)=>unknown)=>{for(const x of xs)if(await f(x))return true;return false};

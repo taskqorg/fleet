@@ -1,3 +1,4 @@
+import {LONG_OPERATIONS} from './store.js';
 import {readFileSync,realpathSync,readdirSync,existsSync} from 'node:fs';
 import {resolve,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -5,7 +6,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import type {FastifyInstance} from 'fastify';
 import {projectUi} from './project-ui.js';
-type Store={all:(kind:string)=>Promise<any[]>,get:(id:string,kind:string)=>Promise<any>,put:(kind:string,value:any)=>Promise<unknown>};
+type Store={all:(kind:string)=>Promise<any[]>,get:(id:string,kind:string)=>Promise<any>,put:(kind:string,value:any)=>Promise<unknown>,atomic:<T>(fn:()=>Promise<T>|T)=>Promise<T>};
 const digest=(v:any)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const fail=(statusCode:number,message:string):never=>{throw Object.assign(Error(message),{statusCode})};
 function pipe(connection:string|undefined,run:string,args:any):Promise<any>{
@@ -34,20 +35,20 @@ export function projectSettings(p:any){
  return {settings:out,unknownKeys};
 }
 export function registerProjects(app:FastifyInstance,store:Store,config:{directory:string,pipeConnectionFile?:string,proxy?:boolean,searchHostId?:string}){
- const {all,get,put}=store;
+ const {all,get,put,atomic}=store;
  const read=(path:string)=>JSON.parse(readFileSync(path,'utf8'));
  const ids=()=>readdirSync(resolve(config.directory,'projects')).filter(n=>existsSync(resolve(config.directory,'projects',n,'project.json'))).sort();
  const project=(id:string)=>{if(typeof id!=='string'||!ids().includes(id))fail(404,'Unknown project');const root=resolve(config.directory,'projects',id),p=read(resolve(root,'project.json'));if(p.id!==id||!Array.isArray(p.contextFiles))fail(500,'Invalid project definition');return {...p,...projectSettings(p),context:p.contextFiles.map((name:any)=>{if(typeof name!=='string'||name.includes('..')||name.startsWith('/'))fail(500,'Invalid project context path');const path=realpathSync(resolve(root,name));if(!path.startsWith(realpathSync(root)+sep))fail(500,'Project context escapes repository');const text=readFileSync(path,'utf8');return {path:name,text,sha256:digest(text)}})}};
  const catalogue=async (id:string)=>{const p=project(id),c=read(resolve(config.directory,'catalogue.json'));return {projectId:id,capability:c.capability,sharedDefault:c.sharedDefault,recommendedMethod:(await all('project-recommendation')).find(r=>r.projectId===id)?.methodId??p.recommendedMethod??c.sharedDefault,recommendationSource:(await all('project-recommendation')).some(r=>r.projectId===id)?'project-selected':p.recommendedMethod?'project':'shared',methods:c.methods.filter((m:any)=>m.scope==='shared'||m.scope===id)}};
  app.addHook('onReady',async()=>{for(const run of (await all('pipeline-run')).filter(r=>r.state==='running')){run.state='unknown';run.steps[0].state='unknown';run.steps[0].error={code:'interrupted','message':'Original dispatch outcome unconfirmed; no replay'};run.durationMs=null;await put('pipeline-run',run)}});
  async function runPipeline(b:any,actor:any={kind:'operator'},started?:(run:any)=>void){
-  if(!b||Array.isArray(b)||Object.keys(b).some(k=>!['projectId','requestId','query','methodId','invocation'].includes(k))||typeof b.requestId!=='string'||!b.requestId||b.requestId.length>200||typeof b.query!=='string'||!b.query.trim()||b.query.length>2000||b.methodId!==undefined&&typeof b.methodId!=='string')fail(400,'Expected projectId, requestId, query and optional methodId');
-  const signature=digest({projectId:b.projectId,query:b.query,methodId:b.methodId??null,invocation:b.invocation??'pipeline'});const old=(await all('pipeline-run')).find(r=>r.projectId===b.projectId&&r.requestId===b.requestId);if(old){if(old.signature!==signature)fail(409,'Request identity conflict');return old}
+  const pre=await atomic(async()=>{if(!b||Array.isArray(b)||Object.keys(b).some(k=>!['projectId','requestId','query','methodId','invocation'].includes(k))||typeof b.requestId!=='string'||!b.requestId||b.requestId.length>200||typeof b.query!=='string'||!b.query.trim()||b.query.length>2000||b.methodId!==undefined&&typeof b.methodId!=='string')fail(400,'Expected projectId, requestId, query and optional methodId');
+  const signature=digest({projectId:b.projectId,query:b.query,methodId:b.methodId??null,invocation:b.invocation??'pipeline'});const old=(await all('pipeline-run')).find(r=>r.projectId===b.projectId&&r.requestId===b.requestId);if(old){if(old.signature!==signature)fail(409,'Request identity conflict');return {old}}
   if(b.invocation!==undefined&&!['direct','pipeline'].includes(b.invocation))fail(400,'Invalid invocation');
   const p=project(b.projectId),c=(await catalogue(b.projectId)),method=c.methods.find((m:any)=>m.id===(b.methodId??c.recommendedMethod));if(!method)fail(400,'Selected method unavailable for project');if(!/^[a-z0-9-]+\.json$/.test(method.pipeline))fail(500,'Invalid pipeline reference');const definition=read(resolve(config.directory,'pipelines',method.pipeline));
   if(definition.version!==1||definition.steps?.length!==1||definition.steps[0].tool!=='web_search'||definition.steps[0].connection!=='pipe-read'||definition.steps[0].arguments?.query!=='$input.query'||!Number.isInteger(definition.steps[0].arguments.max_results)||definition.steps[0].arguments.max_results<1||definition.steps[0].arguments.max_results>20||!['basic','advanced'].includes(definition.steps[0].arguments.search_depth))fail(500,'Unsupported pipeline subset');
   const startedAt=Date.now(),args={query:b.query,max_results:definition.steps[0].arguments.max_results,search_depth:definition.steps[0].arguments.search_depth};const run:any={id:randomUUID(),projectId:b.projectId,requestId:b.requestId,signature,requestedBy:actor,invocation:b.invocation??'pipeline',selectedMethod:method.id,selectionSource:b.methodId?'explicit':c.recommendationSource,context:p,definition,definitionSha256:digest(definition),state:'running',startedAt,durationMs:null,usage:null,steps:[{id:definition.steps[0].id,tool:'web_search',connection:'pipe-read',arguments:args,state:'running',startedAt,durationMs:null,usage:null}],result:null};
-  await put('pipeline-run',run);started?.(run);return (async()=>{let response:any;
+  await put('pipeline-run',run);return {run,args,startedAt}});if('old' in pre)return pre.old;const {run,args,startedAt}=pre;started?.(run);return (async()=>{let response:any;
   if(config.searchHostId){
    const sid=randomUUID(),eid=randomUUID(),cid=randomUUID();await put('session',{id:sid,createdAt:Date.now(),actor:'program-worker',projectId:b.projectId});await put('execution',{id:eid,executionId:eid,sessionId:sid,hostId:config.searchHostId,state:'queued',createdAt:Date.now(),actor:'program-worker',pipelineRunId:run.id});await put('command',{id:cid,executionId:eid,sessionId:sid,hostId:config.searchHostId,kind:'pipe-search',status:'pending',payload:{runId:run.id,arguments:args}});run.executionId=eid;await put('pipeline-run',run);
    const deadline=Date.now()+50000;
@@ -73,7 +74,7 @@ export function registerProjects(app:FastifyInstance,store:Store,config:{directo
  app.get('/api/projects/:id/runs',async(req:any)=>(await operations.pipeline_history({projectId:req.params.id})));
  app.post('/api/pipeline-runs',async(req:any)=>(await operations.pipeline_run(req.body)));
  app.get('/api/pipeline-runs/:id',async(req:any)=>(await operations.pipeline_get({runId:req.params.id})));
- app.post('/api/project-operations/:name',async(req:any)=>{const op=operations[req.params.name];if(!op)fail(404,'Unknown operation');return op(req.body)});
- app.post('/api/project-tools',async(req:any)=>{const q=req.body;if(q?.method==='initialize')return {jsonrpc:'2.0',id:q.id,result:{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fleet-projects',version:'1'}}};if(q?.method==='tools/list')return {jsonrpc:'2.0',id:q.id,result:{tools:Object.keys(operations).map(name=>({name,description:'Fleet shared '+name,inputSchema:{type:'object'}}))}};if(q?.method!=='tools/call'||!operations[q.params?.name])fail(400,'Unknown project operation');return {jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text:JSON.stringify(await operations[q.params.name](q.params.arguments??{}))}]}}});
+ app.post('/api/project-operations/:name',async(req:any)=>{const op=operations[req.params.name];if(!op)fail(404,'Unknown operation');return LONG_OPERATIONS.has(req.params.name)?op(req.body):atomic(()=>op(req.body))});
+ app.post('/api/project-tools',async(req:any)=>{const q=req.body;if(q?.method==='initialize')return {jsonrpc:'2.0',id:q.id,result:{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fleet-projects',version:'1'}}};if(q?.method==='tools/list')return {jsonrpc:'2.0',id:q.id,result:{tools:Object.keys(operations).map(name=>({name,description:'Fleet shared '+name,inputSchema:{type:'object'}}))}};if(q?.method!=='tools/call'||!operations[q.params?.name])fail(400,'Unknown project operation');return {jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text:JSON.stringify(await (LONG_OPERATIONS.has(q.params.name)?operations[q.params.name](q.params.arguments??{}):atomic(()=>operations[q.params.name](q.params.arguments??{}))))}]}}});
  return operations;
 }
