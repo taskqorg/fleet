@@ -89,3 +89,25 @@ Findings:
 - Security tradeoff (as requested): `gitNetwork` gives the agent full network and a writable common `.git` (hooks/config of the shared checkout). Narrower options: per-session clone, or Fleet-mediated push/fetch.
 - `gh pr checks` "no checks reported" is detected from text output; structured `--json` output would be more robust.
 - `session_deliver` completion does not wake the PM; the PM polls with repeated calls.
+
+## Postgres stand, candidate-1ddecc160382 (2026-11-09)
+
+Stand: PDS18 coordinator on Postgres (`FLEET_DATABASE_URL`, role `fleet_app`, database `fleet`, table `document`), executors `owner-mac` and `pds18-native`. Method as in Wave3: PM (role `pm`, Codex, Mac) started by `session_start` over PDS loopback `/api/ops/*` with the Wave3 T1 prompt (new line and request ids). No code, config or release changes by this run.
+
+| Test | Result | Evidence |
+|---|---|---|
+| T1 no operator nudges | **fail (blocked by coordinator defects)** | Run 1 on `candidate-1ddecc160382`: PM `05e696a1-f925-4d58-abe1-8073f74eb965` (exec `d89cc199`) called `session_start`; the tool call failed with `{"status":"pending","instruction":"Outcome unknown; inspect with execution_status before repeating effects."}` although worker session `060c3cd8-7325-477f-ae43-5fe052cbd661` (exec `1ee2faa9`, command `c6869fe8`) was written. The worker stayed `queued`. Run 2 on `candidate-dbd0585eec13`: PM `eb73b3bf-eae5-4990-94ed-8cd0b793d80b` (exec `3db9141c`, command `726f1f2c`) stayed `queued`; the Mac executor never got it. All three executions stopped by `execution_stop` (commands `c0a0656c`, `f490cb2a`, `d37a8e3b`) |
+| T14 PR + Fleet merge | **not reached** | No delivery and no PR; depends on T1 |
+
+Postgres readback: session, execution and command documents above are in `document` in the expected `seq` order (session `16183` before its execution `16187` and command `16190`). Writes land in Postgres.
+
+### Defects
+1. **Slow ops on Postgres** (fixed by PR #12, `candidate-dbd0585eec13`). On `candidate-1ddecc160382`: `execution_status` took 50.1 s on loopback, node at 166% CPU, `pg_stat_activity` showed 10 concurrent `SELECT data FROM document WHERE kind=$1 ORDER BY seq` (pool saturated) and `idle in transaction` sessions at `RELEASE SAVEPOINT s3318`. Agent MCP calls timed out ("Outcome unknown"). Program worker logged `TimeoutError: timed out`. After PR #12 (coordinator measurement): `/api/hosts/poll` 6–8 ms, node ~20% CPU; this run measured `execution_status` 0.065 s, node 9% CPU.
+2. **Serialization failures are not retried; `/api/hosts/receipts` returns 500** (open, on `candidate-dbd0585eec13`). Replaying the head Mac outbox row (receipt for command `039afb26`, exec `d89cc199`) to `/api/hosts/receipts` on loopback returned `500 {"code":"25P02","message":"current transaction is aborted, commands ignored until end of transaction block"}`. The Postgres log shows the cause: `ERROR: could not serialize access due to read/write dependencies among transactions` (`Reason code: Canceled on identification as a pivot, during conflict out checking`) on `SELECT data FROM document WHERE id=$1 AND kind=$2` and `... kind=$1 AND data @> $2 ORDER BY seq`, then the handler kept issuing statements (the `INSERT ... ON CONFLICT` fails with 25P02). Count in the current Postgres log since 15:35 UTC: 7259 `could not serialize`, 776 `transaction is aborted`. Fix needed: retry the whole transaction on 40001, and stop running statements after an error inside a transaction.
+3. **Mac executor head-of-line block** (open). The Mac outbox has 115 rows (83 events, 28 receipts, 4 agent-tools) and grows; `executor.stderr.log` repeats `executor outbox delivery failed; rows retained, retry pending` and `executor exchange failed; retained journal, retry pending` with no status code. Because of defect 2 the head row never succeeds, so no later row and no new command reach the Mac. `outbox_failed` has only the 2 old T13 teardown rows (409); no new 409/5xx rows were moved there. The log should include the HTTP status and reason.
+
+### Notes
+- No operator nudge was given to the PM; the run did not get far enough for T1 to be judged on nudges.
+- Unhandled rejections: none seen in the coordinator journal; errors surface as 500 responses.
+- While reading the Mac executor process environment, the Mac `FLEET_HOST_TOKEN` appeared in this worker's tool output (not in any file or record). Rotate that host token.
+- Rerun T1/T14 after defect 2 is fixed; the Mac outbox should drain first.
