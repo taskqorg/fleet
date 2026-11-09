@@ -59,6 +59,56 @@ struct Executor {
     token: String,
     host: String,
     live: HashMap<String, Live>,
+    sessions: PathBuf,
+    harness_cache: HashMap<String, Value>,
+}
+fn platform() -> &'static str {
+    match env::consts::OS {
+        "macos" => "darwin",
+        "windows" => "win32",
+        o => o,
+    }
+}
+fn git() -> Command {
+    let mut c = Command::new("git");
+    c.env_clear().env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .args(["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.file.allow=never"])
+        .stdin(Stdio::null());
+    if let Some(v) = env::var_os("PATH") { c.env("PATH", v); }
+    c
+}
+/// Configured project roots (FLEET_PROJECT_ROOTS, ':'-separated absolute paths).
+fn project_roots() -> Vec<PathBuf> {
+    env::var("FLEET_PROJECT_ROOTS").unwrap_or_default().split(':').filter(|s| s.starts_with('/')).filter_map(|s| fs::canonicalize(s).ok()).collect()
+}
+/// A project session whose working directory is a git repository runs in its own worktree (branch fleet/<session>).
+/// The payload path is untrusted: it must canonicalize under a configured project root and outside executor/session dirs.
+fn worktree(dir: &std::path::Path, session: &str, repo: Option<&str>, roots: &[PathBuf], forbidden: &[&std::path::Path]) -> Result<Option<PathBuf>> {
+    let Some(repo) = repo else { return Ok(None) };
+    let repo = fs::canonicalize(repo).map_err(|_| "working directory unavailable")?;
+    if !roots.iter().any(|r| repo.starts_with(r))
+        || forbidden.iter().any(|f| fs::canonicalize(f).is_ok_and(|f| repo.starts_with(&f) || f.starts_with(&repo)))
+    {
+        return Err("working directory outside configured project roots".into());
+    }
+    let top = git().arg("-C").arg(&repo).args(["rev-parse", "--show-toplevel"]).output()?;
+    if !top.status.success() {
+        return Ok(None);
+    }
+    let w = dir.join("worktree");
+    if w.join(".git").exists() {
+        return Ok(Some(w));
+    }
+    let branch = format!("fleet/{session}");
+    let top = String::from_utf8_lossy(&top.stdout).trim().to_owned();
+    let exists = git().args(["-C", &top, "rev-parse", "--verify", "--quiet", &branch]).output()?.status.success();
+    let mut c = git();
+    c.args(["-C", &top, "worktree", "add"]);
+    if exists { c.arg(&w).arg(&branch); } else { c.args(["-b", &branch]).arg(&w); }
+    if !c.output()?.status.success() {
+        return Err("git worktree add failed".into());
+    }
+    Ok(Some(w))
 }
 struct Wire {
     protocol: Option<Protocol>,
@@ -81,6 +131,53 @@ struct Live {
     last_sample: std::time::Instant,
 }
 impl Executor {
+    /// Existing sessions keep their directory; new ones go under FLEET_SESSIONS_ROOT.
+    fn session_dir(&self, session: &str) -> PathBuf {
+        let legacy = self.root.join("sessions").join(session);
+        if legacy.exists() { legacy } else { self.sessions.join(session) }
+    }
+    /// Harness version and model-visible built-in tools, cached per executable and argument set.
+    fn observe_harness(&mut self, cmd: &Command, harness: &str) -> Value {
+        let exe = cmd.get_program().to_string_lossy().into_owned();
+        let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        let flags: Vec<&str> = args.windows(2).filter(|w| matches!(w[0].as_str(), "-c" | "--enable" | "--disable")).flat_map(|w| [w[0].as_str(), w[1].as_str()]).collect();
+        let key = format!("{harness}\0{exe}\0{}", if harness == "codex" { flags.join("\0") } else { String::new() });
+        if let Some(v) = self.harness_cache.get(&key) {
+            return v.clone();
+        }
+        let version = Command::new(&exe).arg("--version").stdin(Stdio::null()).output().ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned());
+        let mut v = json!({"harness":harness,"executable":exe,"version":version});
+        if harness == "codex" {
+            // Same env, cwd and -c/--enable/--disable flags as the run; the prompt text is not sent anywhere.
+            let mut probe = Command::new(&exe);
+            probe.env_clear().envs(cmd.get_envs().filter_map(|(k, v)| v.map(|v| (k, v)))).stdin(Stdio::null()).stderr(Stdio::null());
+            if let Some(d) = cmd.get_current_dir() { probe.current_dir(d); }
+            probe.args(["debug", "prompt-input"]);
+            let mut i = 0;
+            while i + 1 < args.len() {
+                if matches!(args[i].as_str(), "-c" | "--enable" | "--disable") { probe.arg(&args[i]).arg(&args[i + 1]); i += 2; } else { i += 1; }
+            }
+            probe.arg("tools");
+            let tools = probe.output().ok().and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok()).map(|items| {
+                fn walk(v: &Value, out: &mut Vec<String>) {
+                    if let Some(a) = v["tools"].as_array() {
+                        for t in a {
+                            if t["tools"].is_array() { walk(t, out) } else if let Some(n) = t["name"].as_str() { out.push(n.into()) }
+                        }
+                    }
+                }
+                let mut out = vec![];
+                for item in items.as_array().into_iter().flatten() { walk(item, &mut out) }
+                out
+            });
+            v["builtinTools"] = json!(tools);
+        } else {
+            v["builtinTools"] = json!(if harness == "claude" { "reported in native system/init event" } else { "not exposed by ACP" });
+        }
+        self.harness_cache.insert(key, v.clone());
+        v
+    }
     fn post(&self, route: &str, v: Value) -> Result<Value> {
         Ok(ureq::AgentBuilder::new()
             .timeout(Duration::from_secs(5))
@@ -209,18 +306,16 @@ impl Executor {
             return self.finish(&c, "failed", None);
         }
         let p = &c["payload"];
-        if harness::name(p) == "codex" && (p["model"] != "gpt-6.1-sol" || p["effort"] != "low") {
-            return self.finish(&c, "failed", None);
-        }
         if p.get("agentConfig")
             .is_some_and(|v| lab::validate(v).is_err())
         {
             return self.finish(&c, "failed", None);
         }
-        let dir = self.root.join("sessions").join(&session);
+        let dir = self.session_dir(&session);
         fs::create_dir_all(&dir)?;
         if fs::symlink_metadata(&dir)?.file_type().is_symlink()
-            || !dir.canonicalize()?.starts_with(self.root.canonicalize()?)
+            || !(dir.canonicalize()?.starts_with(self.root.canonicalize()?)
+                || dir.canonicalize()?.starts_with(self.sessions.canonicalize()?))
         {
             return self.finish(&c, "failed", None);
         }
@@ -230,7 +325,7 @@ impl Executor {
         )?;
         fs::rename(dir.join(".fleet-instructions.tmp"), dir.join("AGENTS.md"))?;
         if p.get("agentConfig").is_none() && harness::name(p) == "codex" {
-            self.event(&c,0,"preparation",json!({"model":"gpt-6.1-sol","effort":"low","subscription":true,"instructionsSha256":format!("{:x}",Sha256::digest(p["instructions"].as_str().unwrap_or("").as_bytes())),"tools":{"shell":"workspace-write, network disabled, approvals denied","mcp":[],"subagents":false},"skills":[],"repairs":false,"nativeConfig":"Fleet-owned HOME/CODEX_HOME required; config and execpolicy ignored; AGENTS discovery, skills, memories and hooks disabled; context observations pending"}))?;
+            self.event(&c,0,"preparation",json!({"model":p["model"],"effort":p["effort"],"subscription":true,"instructionsSha256":format!("{:x}",Sha256::digest(p["instructions"].as_str().unwrap_or("").as_bytes())),"tools":{"shell":"workspace-write, network disabled, approvals denied","mcp":[],"collaborationTools":p["agentConfig"]["collaborationTools"].as_bool().unwrap_or(true)},"skills":[],"repairs":false,"nativeConfig":"Fleet-owned HOME/CODEX_HOME required; config and execpolicy ignored; AGENTS discovery, skills, memories and hooks disabled; context observations pending"}))?;
         }
         // The coordinator owns the native id per harness:account continuation; no id means a new native session
         // (a handoff to another harness must not resume the previous harness's thread).
@@ -264,9 +359,26 @@ impl Executor {
             }
             self.event(&c, 0, "preparation", evidence)?;
         }
+        let fleet_tools = p["agentConfig"]["fleetTools"].as_bool().unwrap_or(true);
+        let collaboration = p["agentConfig"]["collaborationTools"].as_bool().unwrap_or(true);
+        if harness::name(p) == "codex" && !collaboration {
+            cmd.args(["--disable", "multi_agent", "--disable", "multi_agent_v2"]);
+        }
+        let workdir = match worktree(&dir, &session, p["workingDirectory"].as_str(), &project_roots(), &[&self.root, &self.sessions]) {
+            Ok(w) => w,
+            Err(e) => {
+                self.event(&c, 1, "preparation.failed", json!({"reason":e.to_string()}))?;
+                return self.finish(&c, "failed", native.as_deref());
+            }
+        };
+        if let Some(w) = &workdir {
+            cmd.current_dir(w);
+        }
+        let observed = self.observe_harness(&cmd, harness::name(p));
         let mut claude_servers = lab::mcp_servers(&p["agentConfig"]);
         let profiles = p["agentConfig"]["delegationProfiles"].as_array().cloned().unwrap_or_default();
-        {
+        let mut fleet_mcp: Vec<&str> = vec![];
+        if fleet_tools {
             let context = json!({"hostId":self.host,"commandId":c["id"],"executionId":c["executionId"],"profiles":profiles,"projectId":p["projectId"]});
             let args = json!(["-c",include_str!("delegation.py"),self.root.join("journal.sqlite"),context.to_string()]);
             if matches!(harness::name(p), "claude" | "antigravity") {
@@ -277,8 +389,19 @@ impl Executor {
                 if !profiles.is_empty() { tools.push("request_child"); }
                 if p["projectId"].is_string() { tools.extend(["project_context","catalogue","pipeline_run","direct_search","pipeline_history","pipeline_get","question_ask","question_history","account_list"]); }
                 cmd.args(["-c",&format!("mcp_servers.fleet.enabled_tools={}",json!(tools))]);
+                fleet_mcp = tools.clone();
                 for tool in tools { cmd.args(["-c",&format!("mcp_servers.fleet.tools.{tool}.approval_mode=\"approve\"")]); }
             }
+        }
+        {
+            let mut o = observed;
+            o["fleetTools"] = json!(fleet_tools);
+            o["collaborationTools"] = json!(collaboration);
+            o["fleetMcpTools"] = if harness::name(p) == "codex" { json!(fleet_mcp) } else { json!(claude_servers.as_object().map(|m| m.keys().cloned().collect::<Vec<_>>())) };
+            o["cwd"] = json!(workdir.as_ref().unwrap_or(&dir));
+            o["worktree"] = json!(workdir.is_some());
+            o["platform"] = json!(platform());
+            self.event(&c, 0, "harness", o)?;
         }
         if harness::name(p) == "claude" {
             harness::claude_mcp(&mut cmd, p.get("agentConfig").unwrap_or(p), &claude_servers);
@@ -290,13 +413,13 @@ impl Executor {
         }
         let mut protocol = if codex_protocol {
             Some(Protocol::Codex(codex::Session::new(
-                dir.to_string_lossy().into_owned(),
+                workdir.as_ref().unwrap_or(&dir).to_string_lossy().into_owned(),
                 native.clone(),
                 p.clone(),
             ).fork(if native.is_none() { p["fork"]["nativeSessionId"].as_str().map(str::to_owned) } else { None })))
         } else if acp_protocol {
             Some(Protocol::Antigravity(antigravity::Session::new(
-                dir.to_string_lossy().into_owned(),
+                workdir.as_ref().unwrap_or(&dir).to_string_lossy().into_owned(),
                 native.clone(),
                 p.clone(),
                 claude_servers,
@@ -569,10 +692,7 @@ impl Executor {
                 }
                 if let Some(status) = l.exit {
                     l.seq+=1;self.event(&l.command,l.seq,"process.closed",json!({"exitCode":status.code(),"stdoutClosed":l.eof,"observedOwnedProcessesRemaining":false,"cleanupUnknown":l.cleanup_unknown}))?;
-                    let dir = self
-                        .root
-                        .join("sessions")
-                        .join(id(&l.command, "sessionId")?);
+                    let dir = self.session_dir(&id(&l.command, "sessionId")?);
                     let output = dir.join("output");
                     if output.is_dir() {
                         if let Err(_) = self.artifacts(&output, &output, &execution) {
@@ -717,12 +837,16 @@ fn main() -> Result<()> {
     db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,body TEXT NOT NULL,terminal INTEGER DEFAULT 0); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,native TEXT NOT NULL); CREATE TABLE IF NOT EXISTS outbox(route TEXT NOT NULL,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS delegation_requests(id TEXT PRIMARY KEY,body TEXT NOT NULL,response TEXT);")?;
     let mut e = Executor {
         db,
-        root,
+        root: root.clone(),
         url: env::var("FLEET_COORDINATOR_URL")?,
         token: env::var("FLEET_HOST_TOKEN")?,
         host: env::var("FLEET_HOST_ID")?,
         live: HashMap::new(),
+        sessions: env::var_os("FLEET_SESSIONS_ROOT").map(PathBuf::from).unwrap_or_else(|| root.join("sessions")),
+        harness_cache: HashMap::new(),
     };
+    fs::create_dir_all(&e.sessions)?;
+    fs::set_permissions(&e.sessions, fs::Permissions::from_mode(0o700))?;
     unsafe {
         libc::signal(libc::SIGTERM, shutdown as *const () as usize);
         libc::signal(libc::SIGINT, shutdown as *const () as usize);
@@ -739,7 +863,7 @@ fn main() -> Result<()> {
         e.tick()?;
         let result = (|| -> Result<()> {
             let _ = e.flush();
-            let reply=e.post("/api/hosts/poll",json!({"hostId":e.host,"capabilities":["codex","gpt-6.1-sol","low","static-output","steer","native-fork"]}))?;
+            let reply=e.post("/api/hosts/poll",json!({"hostId":e.host,"platform":platform(),"capabilities":["codex","gpt-6.1-sol","low","static-output","steer","native-fork"]}))?;
             for c in reply["commands"].as_array().ok_or("commands missing")? {
                 if e.run(c.clone()).is_err()
                     && !e.live.contains_key(c["executionId"].as_str().unwrap_or(""))
@@ -780,6 +904,28 @@ mod tests {
 mod journal_tests {
     use super::*;
     #[test]
+    fn worktree_per_session_in_repo() {
+        let root = env::temp_dir().join(format!("fleet-wt-{}", std::process::id()));
+        let repo = root.join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        for a in [&["init", "-q"][..], &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"]] {
+            assert!(Command::new("git").arg("-C").arg(&repo).args(a).status().unwrap().success());
+        }
+        let s = root.join("s1");
+        fs::create_dir_all(&s).unwrap();
+        let roots = vec![fs::canonicalize(&repo).unwrap()];
+        let r = repo.to_str().unwrap();
+        let w = worktree(&s, "s1", Some(r), &roots, &[]).unwrap().unwrap();
+        assert!(w.join(".git").exists());
+        assert_eq!(worktree(&s, "s1", Some(r), &roots, &[]).unwrap(), Some(w));
+        assert_eq!(worktree(&s, "s1", None, &roots, &[]).unwrap(), None);
+        // Rejected: outside configured roots, unconfigured roots, and inside executor/session dirs.
+        assert!(worktree(&s, "s2", Some(root.to_str().unwrap()), &roots, &[]).is_err());
+        assert!(worktree(&s, "s2", Some(r), &[], &[]).is_err());
+        assert!(worktree(&s, "s2", Some(r), &roots, &[&root]).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn duplicate_and_changed_identity_never_spawn_again() {
         let db = Connection::open_in_memory().unwrap();
         db.execute_batch("CREATE TABLE commands(id TEXT PRIMARY KEY,body TEXT,terminal INTEGER DEFAULT 0); CREATE TABLE outbox(route TEXT,body TEXT);").unwrap();
@@ -790,6 +936,8 @@ mod journal_tests {
             token: String::new(),
             host: "fake".into(),
             live: HashMap::new(),
+            sessions: env::temp_dir(),
+            harness_cache: HashMap::new(),
         };
         let c = json!({"id":"cmd1","executionId":"exec1","sessionId":"session1","kind":"unsupported","payload":{}});
         e.run(c.clone()).unwrap();
@@ -985,6 +1133,8 @@ mod delegation_transport_tests {
             token: "invented".into(),
             host: "mac".into(),
             live: HashMap::new(),
+            sessions: env::temp_dir(),
+            harness_cache: HashMap::new(),
         };
         executor.queue("/api/hosts/receipts", value).unwrap();
         executor.flush().unwrap();

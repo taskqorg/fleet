@@ -39,6 +39,8 @@ pub fn validate(v: &Value) -> Result<(), &'static str> {
                         | "tools"
                         | "delegationProfiles"
                         | "settings"
+                        | "fleetTools"
+                        | "collaborationTools"
                 )
             })
         }) {
@@ -85,6 +87,11 @@ pub fn validate(v: &Value) -> Result<(), &'static str> {
     if let Some(o) = base.as_object_mut() {
         o.remove("harness");
         o.remove("instructionRole");
+        for k in ["fleetTools", "collaborationTools"] {
+            if o.remove(k).is_some_and(|v| !v.is_boolean()) {
+                return Err("invalid tool setting");
+            }
+        }
     }
     if let Some(grants) = base
         .as_object_mut()
@@ -112,8 +119,8 @@ pub fn validate(v: &Value) -> Result<(), &'static str> {
     ) || v["id"]
         .as_str()
         .is_none_or(|s| s.is_empty() || s.len() > 80)
-        || v["model"] != "gpt-6.1-sol"
-        || v["effort"] != "low"
+        || v["model"].as_str().is_none_or(|s| s.is_empty() || s.starts_with('-'))
+        || v["effort"].as_str().is_none_or(|s| s.is_empty() || s.starts_with('-'))
         || v["instructions"].as_str().is_none_or(|s| s.len() > 16384)
     {
         return Err("unsupported agent profile");
@@ -241,7 +248,15 @@ mod tests {
         bad["mcpServers"][0]["command"] = json!("evil");
         assert!(validate(&bad).is_err());
         bad = v.clone();
-        bad["model"] = json!("other");
+        bad["model"] = json!("gpt-6.1");
+        bad["effort"] = json!("high");
+        bad["collaborationTools"] = json!(false);
+        bad["fleetTools"] = json!(true);
+        assert!(validate(&bad).is_ok());
+        bad["model"] = json!("--dangerous");
+        assert!(validate(&bad).is_err());
+        bad["model"] = json!("gpt-6.1");
+        bad["fleetTools"] = json!("yes");
         assert!(validate(&bad).is_err());
         let mut c = Command::new("unused");
         apply(&mut c, &v);
