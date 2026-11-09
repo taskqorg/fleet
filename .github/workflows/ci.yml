@@ -1,4 +1,5 @@
 # Build and test gate the job; the design report never does (D6, D14).
+# ubuntu-24.04 is pinned because Playwright has no Chromium build for ubuntu-latest (26.04) yet.
 # The job that runs PR code uses the default token, which this organisation sets to read-only
 # (an explicit `contents: read` block stopped the job from starting here). Only the comment job,
 # which checks out no code, asks for write access.
@@ -7,7 +8,7 @@ on:
   pull_request:
 jobs:
   build-test-design:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,7 +43,7 @@ jobs:
   comment:
     needs: build-test-design
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       pull-requests: write
     steps:
