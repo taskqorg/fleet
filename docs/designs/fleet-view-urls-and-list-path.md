@@ -170,7 +170,7 @@ The allowed keys, defaults and values per view are one constant table in the mod
 * **One mounted view.** `main.tsx` routes `/tasks/:id?` and `/conversations/:id?` as one route each, so focus changes never unmount the view. The list element is keyed by view only.
 * **Search.** The input updates its own text at once; the URL and the request follow after 300 ms without a key press.
 * **Visible states.** Pending: counters and rows keep their values and are dimmed with the existing muted text token, and the list header shows a thin progress bar. Error with rows: rows stay, an error banner says "Showing data from <time>". Answered and empty: the empty state.
-* **Checkboxes.** Task and conversation rows get a leading checkbox cell before the state badge (OR-22 keeps the state badge as the first data column); Space on a focused row toggles it. Checked rows are the URL's `sel`.
+* **Checkboxes.** Task and conversation rows get a checkbox in the last cell; the state badge stays the first cell (OR-22, checked by the trace check). It is a native checkbox (`RowCheck`), so Space toggles it when focused. Checked rows are the URL's `sel`.
 
 ### 3. `task_page` query: side table `task_derived`
 
