@@ -4,9 +4,13 @@
 #
 # ExecStartPre (root): validates the instance and creates the working area
 #   /srv/fleet/areas/<account-user>/<execution-id>, owned by the account user, mode 0700.
+#   The per-user parent /srv/fleet/areas/<account-user> is root:root 0711, so the account user cannot
+#   plant entries (for example a symlink named like a future execution id). mkdir without -p fails on
+#   any existing path, symlink included; only the new directory is chowned.
 #   /srv/fleet/areas itself is root-owned 0755, created once at install.
 # ExecStart (root until exec): checks /home/fleet/work/<execution-id>/run is a regular file owned by
-#   fleet and not a symlink, opens it as stdin, cd's into the area, then drops to the account user and
+#   fleet and not a symlink, and that the area is a directory (not a symlink) owned by the account user,
+#   opens it as stdin, cd's into the area, then drops to the account user and
 #   runs it with /bin/sh -s. The account user never needs access to /home/fleet (0750).
 #
 # Trust note: the fleet-* prefix check assumes no privileged system user is named fleet-*;
@@ -21,10 +25,14 @@ ExecStartPre=/bin/sh -eu -c 'inst="$$1"; user="$${inst%%%%:*}"; ex="$${inst#*:}"
   [ "$$user" != "$$inst" ] && [ -n "$$ex" ] || { echo "refused: instance must be <user>:<execution>" >&2; exit 64; }; \
   case "$$ex" in *[!A-Za-z0-9_-]*) echo "refused: bad execution id" >&2; exit 64;; esac; \
   uid=$$(id -u "$$user"); [ "$$uid" -ge 1000 ] || { echo "refused: uid $$uid < 1000" >&2; exit 64; }; \
-  install -d -o "$$user" -g "$$user" -m 0700 /srv/fleet/areas/"$$user" /srv/fleet/areas/"$$user"/"$$ex"' fleet-launch %i
+  install -d -o root -g root -m 0711 /srv/fleet/areas/"$$user"; area=/srv/fleet/areas/"$$user"/"$$ex"; \
+  mkdir -m 0700 "$$area" || { echo "refused: $$area already exists" >&2; exit 66; }; \
+  chown -h "$$user":"$$user" "$$area"' fleet-launch %i
 ExecStart=/bin/sh -eu -c 'inst="$$1"; user="$${inst%%%%:*}"; ex="$${inst#*:}"; run=/home/fleet/work/"$$ex"/run; \
   [ -f "$$run" ] && [ ! -L "$$run" ] && [ "$$(stat -c %%U "$$run")" = fleet ] || { echo "refused: $$run is not a regular fleet-owned file" >&2; exit 65; }; \
-  cd /srv/fleet/areas/"$$user"/"$$ex"; \
+  area=/srv/fleet/areas/"$$user"/"$$ex"; \
+  [ -d "$$area" ] && [ ! -L "$$area" ] && [ "$$(stat -c %%U "$$area")" = "$$user" ] || { echo "refused: $$area is not a directory owned by $$user" >&2; exit 66; }; \
+  cd "$$area"; \
   exec setpriv --reuid="$$user" --regid="$$user" --init-groups --reset-env -- /bin/sh -s < "$$run"' fleet-launch %i
 NoNewPrivileges=true
 PrivateTmp=true
