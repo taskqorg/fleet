@@ -9,11 +9,11 @@ A system for performing work through agents across projects. This specification 
 - **R3 System requirements.** [Reliability, authority and resources](#system-requirements) apply to every block.
 - **R4 Design depth.** Agree on each level's parts, responsibilities and relationships before detailing any part. Revisit earlier levels when needed. Existing product implementations and contracts are evidence to assess, not a template for Fleet's structure.
 - **R5 Observability.** Instrument every system component and operation, including agents, tools and infrastructure. Retain queryable history for diagnosis, resource attribution and improvement under [observation and evaluation](#observation-and-evaluation).
-- **R6 Minimal mechanisms.** Structure what Fleet must execute, route, observe and recover. Keep domain workflows and development methodologies in configurable instructions, tools and pipelines. Scenarios test the core's coverage; they do not require dedicated subsystems or screens.
+- **R6 Minimal mechanisms.** Agents act through supplied instructions, context and tools, invoking pipelines when useful. Fleet provides execution control, data access and observable history for improvement. Structure only what it must coordinate and recover; domain workflows and methodologies remain configurable, not mandatory system stages.
 
 ## Operator interface
 
-A desktop application for Windows, macOS and Linux and a web portal, used across all projects. Both use the same UI components.
+Deliver the operator and architect interfaces on the web first, across all projects. Later desktop applications for Windows, macOS and Linux reuse the web UI and shared operations. Follow the [delivery strategy](docs/delivery-strategy.md).
 
 Conversation with a product manager (PM) is the primary way to discuss and assign work. A PM is an ordinary session in a chosen agent with role-specific instructions, tools and project access. Sessions may span related projects; they are not permanent project channels. Conversation has no separate request object.
 
@@ -51,7 +51,7 @@ Configure these areas as needed, using shared defaults:
 - Execution: references to agent configurations, environments, tools and catalogue recommendations.
 - Delivery: result storage, merge, publication and deployment.
 
-A project may use several repositories or contain no code; repository, CI and deployment connections are independent. Inherit shared defaults; store project differences and references to shared capabilities. Selecting a capability does not grant access to it.
+A project may use several repositories or contain no code. Fleet owns task state and work history; issues and boards are optional integrations under [state ownership](docs/state-ownership.md). Inherit shared defaults and store project differences. Selecting a capability does not grant access to it.
 
 Own work from task creation to an accepted result:
 
@@ -103,7 +103,7 @@ A role defines an agent's purpose through instructions and tools, not a hard-cod
 
 An execution binds a configuration version and role to inputs, an environment, permissions, a session and a task when applicable.
 
-Resolve settings in order: selected agent configuration and role, project rules and settings, then task requirements and explicit tool or method choices. Task choices override defaults, not mandatory project requirements; conflicting requirements need resolution.
+Resolve defaults from the selected agent and role, project settings, then explicit task choices. Follow [configuration rules](docs/configuration.md) for requirements, authority, observations and effective settings. Task choices override defaults, not mandatory project requirements; conflicting requirements need resolution.
 
 Before launch, check environment compatibility and granted permissions. Resolve instructions, skills and configuration at execution start under the [source rules](#knowledge-and-rules); later repository edits affect only new executions. A run may pin one revision for all its steps; by default each step resolves current versions.
 

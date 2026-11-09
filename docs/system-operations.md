@@ -2,6 +2,8 @@
 
 Human interfaces, pipelines and agents use the [shared core](../fleet.md#principles) within their permissions. This contract defines operation groups and interaction semantics, not API names or transport.
 
+Agents choose operations according to their assignment and instructions. The groups below are capabilities, not a prescribed sequence. Expose relevant tools through supported harness integrations, including MCP, without requiring every tool call to become a task or pipeline.
+
 ## Operation groups
 
 | Group | Operations |
@@ -16,6 +18,14 @@ Human interfaces, pipelines and agents use the [shared core](../fleet.md#princip
 | Experiments and improvement | Create experiments from recorded work, compare variants, write assessments, set recommendations and apply selected improvements under project rules. |
 
 ## Method contracts
+
+### Data access
+
+Provide scoped search, summaries and detail retrieval for project context, configuration, methods, current work, results, history, resources and measurements. Return relevant facts with source references and explicit missing data; allow drill-down without loading whole histories or navigating human pages. Read-only queries do not initiate work or change configuration.
+
+Keep queries and action tools connected through the same object identities. An agent can find a method, invoke it, inspect the run and compare its results without separate copies of system state. No particular MCP server layout is required.
+
+### Action outcomes
 
 Define each method's authorized callers, inputs, outputs, state changes and how its outcome can be checked after lost contact.
 

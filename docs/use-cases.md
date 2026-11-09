@@ -4,6 +4,8 @@ Scenarios for the [system specification](../fleet.md). These describe accepted b
 
 ## UC1. Create a website page
 
+Use the [Hello World example](website-example.md) as the first representative design exercise, then progress to deployment, revisions, fixes and more complex pages. Its example exchanges are not a universal required workflow.
+
 An operator wants a new product page in an existing project. Project context and rules are available; the operator opens an ordinary agent session with the PM role.
 
 ### Work flow
