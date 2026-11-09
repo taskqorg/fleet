@@ -98,7 +98,11 @@ def main():
                     for f in p['files']:shutil.copyfile(workspace/f['path'],target/f['path'])
                     effect=True
                     link=root/('next-'+c['id']);link.symlink_to(target);os.replace(link,root/'current')
-                    with urllib.request.urlopen(project['checkUrl'],timeout=20) as response:observed=response.read()
+                    headers={}
+                    if config.get('siteReadSecretFile'):
+                        secret=next(line.split('=',1)[1].strip().strip('\"').strip("'") for line in pathlib.Path(config['siteReadSecretFile']).read_text().splitlines() if line.startswith('FLEET_BROWSER_SECRET='))
+                        headers={'Authorization':'Bearer '+secret}
+                    with urllib.request.urlopen(urllib.request.Request(project['checkUrl'],headers=headers),timeout=20) as response:observed=response.read()
                     if hashlib.sha256(observed).hexdigest()!=hashlib.sha256((target/'index.html').read_bytes()).hexdigest():raise RuntimeError('Published HTTP content readback mismatch')
                     result.update(url=project['publicUrl'],release=p['deliveryId'],httpVerified=True)
                 shutil.rmtree(workspace)
