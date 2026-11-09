@@ -101,3 +101,24 @@ test('review 4: a task missing its derived row still lists (empty values) and th
 test('review 10: group names are checked as own keys ("constructor" is a 400)',async()=>{const s=await fresh();
  for(const group of ['constructor','toString','__proto__'])await assert.rejects(s.read(()=>s.tasks.page({group})),(e:any)=>e.statusCode===400,group);
  await s.close()});
+
+// Review of PR #31.
+test('review #31-2/3: a scoped caller sees drift only for its own projects, and checked counts the same tasks',async()=>{const s=await fresh();
+ await s.tx(async()=>{await s.tasks.create({id:'tp',title:'p',projectId:'p'});await s.tasks.create({id:'tq',title:'q',projectId:'q'})});
+ await s.query("DELETE FROM task_derived");
+ await s.query("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='fleet_app_test') THEN CREATE ROLE fleet_app_test NOLOGIN NOBYPASSRLS; END IF; END $$");
+ await s.query('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO fleet_app_test');
+ const as=(scope:string,fn:()=>Promise<any>)=>s.tx(async()=>{await s.query('SET LOCAL ROLE fleet_app_test');await s.query("SELECT set_config('fleet.project_ids',$1,true)",[scope]);return fn()});
+ const r=await as('p',()=>s.tasks.derivedDrift());
+ assert.deepEqual([r.checked,r.drifted.map((d:any)=>d.taskId)],[1,['tp']]);
+ const all=await s.read(()=>s.tasks.derivedDrift());assert.deepEqual([all.checked,all.drifted.map((d:any)=>d.taskId)],[2,['tp','tq']]);
+ // task_derived_values sees every project: not callable by the app role.
+ await assert.rejects(as('p',()=>s.query("SELECT * FROM task_derived_values('tq')")),/permission denied/);
+ await s.close()});
+
+test('review #31-4: the backfill writes no change row per existing task',async()=>{const s=createStore('memory://');await s.migrate(9);
+ await s.tx(async()=>{for(let i=0;i<5;i++)await s.query("INSERT INTO task(id,title) VALUES($1,'x')",['b'+i])});
+ const [{n:before}]=await s.query('SELECT count(*)::int AS n FROM change');await s.migrate();
+ const [{n:after}]=await s.query('SELECT count(*)::int AS n FROM change');assert.equal(after,before);
+ assert.equal((await s.query('SELECT count(*)::int AS n FROM task_derived'))[0].n,5);
+ await s.close()});

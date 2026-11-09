@@ -43,8 +43,9 @@ const text = (field: 'q' | 'preset', list: boolean): Key => ({
   list,
 });
 const project: Key = {
-  parse: (v, raw) => { const xs = items(raw).map(x => x === NO_PROJECT ? null : x); if (xs.length) v.project = sortProjects([...(v.project ?? []), ...xs]); },
-  format: v => v.project?.length ? sortProjects(v.project).map(p => p === null ? NO_PROJECT : enc(p)).join(',') : undefined,
+  // A bare '-' is "no project"; a project whose id is '-' is written %2D, so the two never collide.
+  parse: (v, raw) => { const xs = raw.split(',').filter(Boolean).map(x => x === NO_PROJECT ? null : dec(x, true)).filter(x => x !== ''); if (xs.length) v.project = sortProjects([...(v.project ?? []), ...xs]); },
+  format: v => v.project?.length ? sortProjects(v.project).map(p => p === null ? NO_PROJECT : p === NO_PROJECT ? '%2D' : enc(p)).join(',') : undefined,
   list: true,
 };
 // null ("no project") sorts first, as '-' would; equal views give equal URLs and equal page params.
@@ -69,11 +70,16 @@ const DEFAULT_GROUP: Partial<Record<ViewName, string>> = { tasks: 'priority' };
 
 /**
  * Parses a path with query ('/tasks/a?state=failed') or a full URL (its pathname and search are used).
- * Returns null when the path is not an operator-app view, so callers can reject it.
+ * Returns null when the path is not an operator-app view, or when a full URL's origin is not opts.origin (when given;
+ * without opts.origin any origin is accepted), so callers can reject it.
  */
-export function parseView(input: string): View | null {
+export function parseView(input: string, opts: { origin?: string | null } = {}): View | null {
   let s = input;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) { try { const u = new URL(s); s = u.pathname + u.search; } catch { return null; } }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
+    let u: URL; try { u = new URL(s); } catch { return null; }
+    if (opts.origin !== undefined) { let want: string; try { want = new URL(opts.origin ?? '').origin; } catch { return null; } if (u.origin !== want) return null; }
+    s = u.pathname + u.search;
+  }
   s = s.split('#')[0];
   const qi = s.indexOf('?'), path = qi < 0 ? s : s.slice(0, qi), query = qi < 0 ? '' : s.slice(qi + 1);
   const seg = path.split('/');
