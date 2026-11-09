@@ -137,3 +137,10 @@ Append only. Each entry: date, question, options, choice, reason.
   * Results drifted: its copy state was in a middle column. It now starts with the copy state, and the Laboratory variants start with their run state.
   * The traceability check warns when a list row's first cell is not a state badge.
   * Verified: moving the Results state column back makes the report show `state not first column in list "Results"`.
+
+## 2026-11-10 D13: Owner approval of the book and mockups
+
+* **Approved:** the design book (`book/index.html`), the page mockups (`pages/mockups.html`), and the specs behind them as of D12.
+* **Still open:**
+  * (d) phone navigation; the interim icon rail stays.
+  * The control for editing priority from the Overview.
