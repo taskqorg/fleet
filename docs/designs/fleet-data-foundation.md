@@ -72,7 +72,7 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
 *   **G2. A task table owned by Fleet.**
     *   Tasks are flat and linked by dependencies.
     *   They use the task states from `fleet.md`. Questions, including operator decisions and acceptance, attach to them.
-    *   A task's progress, cost and latest result are derived from its linked executions, not stored twice. The stored `state` changes only through the transitions in Technical Plan §2.
+    *   A task's progress, cost and latest result are derived from its linked executions, not stored twice. The list values (current agent, last host, first start, open questions) are stored once, in `task_derived`, kept by triggers and checked for drift ([fleet-view-urls-and-list-path.md §3](fleet-view-urls-and-list-path.md)); no code writes them. The stored `state` changes only through the transitions in Technical Plan §2.
     *   A delivery is a task. Its merge and publication steps are executions of that task.
 *   **G3. An artifact store for any result type and size.**
     *   Artifacts are immutable objects keyed by their content hash.
@@ -386,6 +386,8 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
     *   Ops `entity.resolve(code)` returns `{id, type, current_code, superseded}`; `entity.resolve_many(text)` finds every code in free text. Unknown and forbidden codes both return `not_found`.
     *   Backfill: existing rows get codes in `created_at` order, filling only empty values.
 
+*   **Table `task_derived`** (migration 10): `task_id` (primary key, references `task`), `project_id` (copied from the task, for row-level security), `agent` (harness of the latest `preparing` or `running` execution), `host` (host of the latest execution), `started_at` (earliest execution start) and `open_questions`. Triggers on `execution`, `question` and `task` keep it current; the operator list (`task_page`) reads it instead of computing these per task. `task_derived_check` reports drift.
+
 ### 3. Artifact store
 
 The rules below were revised after the Phase 3 review (`docs/designs/fleet-data-foundation-review/phase3/`) and the cross-host store proof (`docs/infrastructure-build.md`, 2026-11-09). Decisions **P3-D1** to **P3-D4** were taken by the owner on 2026-11-10 (Decisions taken).
@@ -631,6 +633,7 @@ Phase 1 moved handlers written for synchronous SQLite onto Postgres. On SQLite o
     *   **Execution scope** `execution:<id>` is for host ingest of one execution.
     *   Inside the process, a queue per key orders waiters before they take a pool connection, so waiters hold no connection. The transaction then takes `pg_advisory_xact_lock` on the key, which also orders writers in other processes (the migration tool, a second coordinator during a deploy).
     *   Lock order is GLOBAL, then an execution scope. An execution-scope writer never takes GLOBAL, so the two scopes cannot deadlock.
+    *   An execution-scope writer never writes `task_id`, `state`, `host_id`, `harness`, `started_at` or `seq` of an execution, nor `task_id` or `state` of a question. Those columns fire the `task_derived` recompute (migration 10), so only GLOBAL writers, which run one at a time, recompute. The recompute also locks the task's `task_derived` row before reading (two task ids in ascending order) as a second guard if this rule is ever broken.
     *   A `put` outside a transaction is a one-statement GLOBAL write, so it never lands inside another writer's transaction.
     *   Deadlocks (40P01) are still retried with a short random backoff. A failure that handler code swallowed dooms the transaction, which is then rolled back and retried.
 
