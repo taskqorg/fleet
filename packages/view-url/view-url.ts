@@ -69,6 +69,32 @@ const TABLE: Record<ViewName, Record<string, Key>> = {
 const DEFAULT_GROUP: Partial<Record<ViewName, string>> = { tasks: 'priority' };
 
 /**
+ * Checks a view object from outside (an agent's view_link call): every field must be a known key of that view with a valid
+ * value. Returns the first problem, or null. Nothing is dropped silently: a bad value is an error, not a broader link.
+ */
+export function viewProblem(v: unknown): string | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return 'view must be an object';
+  const o = v as Record<string, unknown>;
+  if (!(VIEWS as string[]).includes(o.view as string)) return 'view.view must be one of ' + VIEWS.join(', ');
+  const name = o.view as ViewName, table = TABLE[name];
+  const strs = (x: unknown) => Array.isArray(x) && x.every(i => typeof i === 'string' && i !== '');
+  const states: readonly string[] = name === 'tasks' ? TASK_STATES : SESSION_STATES;
+  for (const [k, x] of Object.entries(o)) {
+    if (k === 'view' || x === undefined) continue;
+    if (k === 'focus') { if (typeof x !== 'string' || !x) return 'focus must be a non-empty string'; continue; }
+    if (k === 'extra') { if (!x || typeof x !== 'object' || Object.values(x).some(i => typeof i !== 'string')) return 'extra must map keys to strings'; continue; }
+    if (!Object.hasOwn(table, k)) return `${k} is not a key of the ${name} view`;
+    if (k === 'state') { if (!strs(x) || !(x as string[]).every(i => states.includes(i))) return 'state must be a list of: ' + states.join(', '); }
+    else if (k === 'group') { if (!(TASK_GROUPS as readonly unknown[]).includes(x)) return 'group must be one of ' + TASK_GROUPS.join(', '); }
+    else if (k === 'project') { if (!Array.isArray(x) || !x.every(i => i === null || (typeof i === 'string' && i !== ''))) return 'project must be a list of project ids or null'; }
+    else if (k === 'sel') { if (!strs(x)) return 'sel must be a list of ids'; }
+    else if (k === 'q' || k === 'preset') { if (typeof x !== 'string') return k + ' must be a string'; }
+    else if (k === 'archived') { if (typeof x !== 'boolean') return 'archived must be true or false'; }
+  }
+  return null;
+}
+
+/**
  * Parses a path with query ('/tasks/a?state=failed') or a full URL (its pathname and search are used).
  * Returns null when the path is not an operator-app view, or when a full URL's origin is not opts.origin (when given;
  * without opts.origin any origin is accepted), so callers can reject it.

@@ -259,7 +259,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   task_page:(b:any)=>store.tasks.page({filter:b?.filter,group:b?.group,limit:b?.limit,after:b?.after}),
   sessions_list:(b:any)=>sessionList.page({filter:b?.filter,limit:b?.limit,after:b?.after}),
   list_membership:async(b:any)=>{const ids=Array.isArray(b?.ids)&&b.ids.length<=1000?b.ids:fail(400,'Expected at most 1000 ids');if(!Array.isArray(b?.lists)||b.lists.length<1||b.lists.length>2)fail(400,'Expected one or two lists');
-   return {lists:await map(b.lists,async(l:any)=>l?.name==='tasks'?{name:'tasks',rows:await store.tasks.membership(l.filter??{},l.group,ids),...(({counts,groups})=>({counts,groups}))(await store.tasks.page({filter:l.filter,group:l.group,limit:1}))}
+   return {lists:await map(b.lists,async(l:any)=>l?.name==='tasks'?{name:'tasks',rows:await store.tasks.membership(l.filter??{},l.group,ids),...(await store.tasks.summary(l.filter??{},l.group))}
     :l?.name==='sessions'?{name:'sessions',rows:await sessionList.membership(l.filter??{},ids),counts:(await sessionList.page({filter:l.filter,limit:1})).counts}:fail(400,'Unknown list'))}},
   hosts_list:async()=>{const configured=[config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].filter(Boolean) as string[];
    const observed=await all('host-observation'),ids=[...new Set([...configured,...observed.map((h:any)=>h.id)])];

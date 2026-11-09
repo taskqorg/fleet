@@ -27,3 +27,11 @@ test('view_link builds and parses operator-app links; task_derived_check; list_m
  const bare=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac'});await bare.ready();
  assert.deepEqual((await bare.inject({method:'POST',url:'/api/ops/view_link',payload:{view:{view:'hosts',focus:'mac'}},headers:{authorization:'Bearer b'}})).json(),{url:null,path:'/hosts/mac'});
  await bare.close()});
+test('review #31-1: view_link rejects every invalid view field instead of dropping it',async()=>{
+ const app=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac'});await app.ready();
+ const op=(payload:any)=>app.inject({method:'POST',url:'/api/ops/view_link',payload,headers:{authorization:'Bearer b'}});
+ for(const view of [{view:'tasks',project:'fleet'},{view:'tasks',state:'failed'},{view:'tasks',state:['faild']},{view:'tasks',group:'agents'},{view:'tasks',sel:[1]},
+  {view:'tasks',q:5},{view:'conversations',group:'agent'},{view:'tasks',nope:1},{view:'tasks',focus:''},{view:'conversations',archived:'1'},'tasks',null])
+  assert.equal((await op({view})).statusCode,400,JSON.stringify(view));
+ assert.equal((await op({view:{view:'tasks',state:['failed'],project:[null,'fleet'],group:'agent',sel:['a'],q:'x',focus:'t'}})).statusCode,200);
+ await app.close()});
