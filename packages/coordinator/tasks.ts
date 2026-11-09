@@ -118,8 +118,10 @@ export function taskModel(raw:Raw,executions:Executions){
  // Operator app list (docs/designs/fleet-operator-app.md §6): one WHERE builder serves the page, the counts and membership, so the
  // client never decides membership. Order is (group key, newest first, id); the cursor is that triple. Grouping by priority puts
  // urgent, normal, background.
- const GROUPS:Record<string,string>={none:"left(t.id,0)",priority:"(CASE t.priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END)",project:"coalesce(t.project_id,'~')",agent:"coalesce(d.agent,'~')",host:"coalesce(d.host,'~')",
-  state:"(CASE t.state WHEN 'waiting' THEN '1' WHEN 'failed' THEN '2' WHEN 'in_progress' THEN '3' WHEN 'queued' THEN '4' WHEN 'paused' THEN '5' WHEN 'completed' THEN '6' ELSE '7' END)"};
+ // Group expression per grouping; derived says whether it reads task_derived (then the page must join it before ordering).
+ const GROUPS:Record<string,{sql:string,derived:boolean}>={none:{sql:"left(t.id,0)",derived:false},priority:{sql:"(CASE t.priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END)",derived:false},
+  project:{sql:"coalesce(t.project_id,'~')",derived:false},agent:{sql:"coalesce(d.agent,'~')",derived:true},host:{sql:"coalesce(d.host,'~')",derived:true},
+  state:{sql:"(CASE t.state WHEN 'waiting' THEN '1' WHEN 'failed' THEN '2' WHEN 'in_progress' THEN '3' WHEN 'queued' THEN '4' WHEN 'paused' THEN '5' WHEN 'completed' THEN '6' ELSE '7' END)",derived:false}};
  // Group label column per grouping (from this fixed map only; nothing from the request is interpolated).
  const LABELS:Record<string,string>={priority:'t.priority',state:'t.state::text',project:'t.project_id',agent:'d.agent',host:'d.host'};
  const STATES:string[]=[...TASK_STATES];
@@ -128,40 +130,38 @@ export function taskModel(raw:Raw,executions:Executions){
  // Derived values live in task_derived (migration 10), kept by triggers; the page joins it 1:1.
  const base='FROM task t LEFT JOIN task_derived d ON d.task_id=t.id';
  const where=(f:PageFilter,p:any[],withState=true)=>{const c:string[]=[];
-  if(f.projectId!==undefined){const ps=Array.isArray(f.projectId)?f.projectId:[f.projectId];if(!ps.every(x=>x===null||typeof x==='string'))throw Object.assign(Error('Invalid projectId'),{statusCode:400});
+  if(f.projectId!==undefined){const ps=Array.isArray(f.projectId)?f.projectId:[f.projectId];if(!ps.every(x=>x===null||typeof x==='string'))fail(400,'Invalid projectId');
    const ids=ps.filter((x):x is string=>typeof x==='string'),o:string[]=[];if(ids.length){p.push(ids);o.push(`t.project_id=ANY($${p.length})`)}if(ps.includes(null))o.push('t.project_id IS NULL');if(o.length)c.push(`(${o.join(' OR ')})`)}
-  if(withState&&Array.isArray(f.state)&&f.state.length){if(!f.state.every(x=>STATES.includes(x)))throw Object.assign(Error('Invalid state'),{statusCode:400});p.push(f.state);c.push(`t.state::text=ANY($${p.length})`)}
+  if(withState&&Array.isArray(f.state)&&f.state.length){if(!f.state.every(x=>STATES.includes(x)))fail(400,'Invalid state');p.push(f.state);c.push(`t.state::text=ANY($${p.length})`)}
   if(typeof f.search==='string'&&f.search.trim()){p.push('%'+f.search.trim().toLowerCase().replace(/[%_\\]/g,m=>'\\'+m)+'%');c.push(`(lower(t.title) LIKE $${p.length} OR lower(t.id) LIKE $${p.length})`)}
   return c};
  // A task without a derived row (only possible if a trigger was skipped) still lists, with empty values; the drift check reports it.
  const cols='t.id,t.project_id,t.title,t.state,t.wait_reason,t.priority,t.created_at,t.updated_at,t.seq,d.agent,d.host,d.started_at,coalesce(d.open_questions,0) AS open_questions';
  const listRow=(x:any)=>({id:x.id,projectId:x.project_id,title:x.title,state:x.state,waitReason:x.wait_reason,priority:x.priority,agent:x.agent,host:x.host,startedAt:x.started_at,createdAt:x.created_at,updatedAt:x.updated_at,openQuestions:Number(x.open_questions),sortKey:[x.g,-Number(x.seq),x.id]});
- const groupOf=(g:any)=>{if(g!==undefined&&!(typeof g==='string'&&Object.hasOwn(GROUPS,g)))throw Object.assign(Error('Invalid group'),{statusCode:400});return GROUPS[g??'none']};
+ const groupOf=(g:any)=>{if(g!==undefined&&!(typeof g==='string'&&Object.hasOwn(GROUPS,g)))fail(400,'Invalid group');return GROUPS[g??'none']};
  const W=(c:string[])=>c.length?' WHERE '+c.join(' AND '):'';
  async function page(b:{filter?:PageFilter,group?:string,limit?:number,after?:[string,number,string]}={}){
-  const f=b.filter??{},g=groupOf(b.group),limit=Math.max(1,Math.min(500,Math.floor(b.limit??100)));
+  const f=b.filter??{},G=groupOf(b.group),g=G.sql,limit=Math.max(1,Math.min(500,Math.floor(b.limit??100)));
   const p:any[]=[],c=where(f,p);
-  if(b.after){if(!Array.isArray(b.after)||b.after.length!==3)throw Object.assign(Error('Invalid after'),{statusCode:400});p.push(String(b.after[0]),Number(b.after[1]),String(b.after[2]));c.push(`(${g},-t.seq,t.id) > ($${p.length-2},$${p.length-1},$${p.length})`)}
+  if(b.after){if(!Array.isArray(b.after)||b.after.length!==3)fail(400,'Invalid after');p.push(String(b.after[0]),Number(b.after[1]),String(b.after[2]));c.push(`(${g},-t.seq,t.id) > ($${p.length-2},$${p.length-1},$${p.length})`)}
   // Join task_derived only where needed: agent/host grouping orders by it; otherwise the page is chosen on task alone and
   // only its rows are joined (the planner would otherwise join every matching task before the LIMIT). Counts never join.
-  const byD=g.includes('d.');
-  const rows=await raw.query(byD?`SELECT ${cols},${g} AS g ${base}${W(c)} ORDER BY ${g},t.seq DESC,t.id LIMIT ${limit+1}`
+  const rows=await raw.query(G.derived?`SELECT ${cols},${g} AS g ${base}${W(c)} ORDER BY ${g},t.seq DESC,t.id LIMIT ${limit+1}`
    :`SELECT ${cols},t.g FROM (SELECT t.*,${g} AS g FROM task t${W(c)} ORDER BY ${g},t.seq DESC,t.id LIMIT ${limit+1}) t LEFT JOIN task_derived d ON d.task_id=t.id ORDER BY t.g,t.seq DESC,t.id`,p);
   // Per-state counts leave the state filter out, so every counter keeps its number while one state is selected.
   const cp:any[]=[],cc=where(f,cp,false);
   const byState=Object.fromEntries(STATES.map(s=>[s,0]));for(const r of await raw.query(`SELECT t.state::text AS state,count(*) AS n FROM task t${W(cc)} GROUP BY 1`,cp))byState[r.state]=Number(r.n);
   const gp:any[]=[],gc=where(f,gp);
-  const groups=b.group&&b.group!=='none'?(await raw.query(`SELECT ${g} AS g,min(${LABELS[b.group]}) AS label,count(*) AS n ${byD?base:'FROM task t'}${W(gc)} GROUP BY 1 ORDER BY 1`,gp)).map(r=>({key:r.g,label:r.label,count:Number(r.n)})):[];
+  const groups=b.group&&b.group!=='none'?(await raw.query(`SELECT ${g} AS g,min(${LABELS[b.group]}) AS label,count(*) AS n ${G.derived?base:'FROM task t'}${W(gc)} GROUP BY 1 ORDER BY 1`,gp)).map(r=>({key:r.g,label:r.label,count:Number(r.n)})):[];
   const page=rows.slice(0,limit).map(listRow);
   return {tasks:page,nextAfter:rows.length>limit?page.at(-1)!.sortKey:null,counts:byState,total:Object.values(byState).reduce((a:number,n:any)=>a+n,0),groups}}
  // The ids among `ids` that match the filter, with the same row shape and sort key as page().
- async function membership(f:PageFilter,group:string|undefined,ids:string[]){const g=groupOf(group),p:any[]=[],c=where(f,p);p.push(ids.filter(x=>typeof x==='string').slice(0,1000));c.push(`t.id=ANY($${p.length})`);
+ async function membership(f:PageFilter,group:string|undefined,ids:string[]){const g=groupOf(group).sql,p:any[]=[],c=where(f,p);p.push(ids.filter(x=>typeof x==='string').slice(0,1000));c.push(`t.id=ANY($${p.length})`);
   return (await raw.query(`SELECT ${cols},${g} AS g ${base}${W(c)}`,p)).map(listRow)}
- // Drift check: recompute the derived values of every task and compare with task_derived (empty when the triggers are right).
- // Drift check: task_derived_drift() recomputes every task's values with all projects visible (SQL, migration 10), so a
- // scoped caller sees no false drift.
+ // Drift check: task_derived_drift() recomputes values with all projects visible (no false drift for a scoped caller) and
+ // returns only tasks the caller may see; checked counts the same tasks (row-level security on task, same rule).
  async function derivedDrift(){const [{n}]=await raw.query('SELECT count(*)::int AS n FROM task');
-  const drifted=(await raw.query('SELECT task_id,stored,expected FROM task_derived_drift()')).map((r:any)=>({taskId:r.task_id,stored:r.stored,expected:r.expected}));
+  const drifted=(await raw.query("SELECT task_id,stored,expected FROM task_derived_drift(current_setting('fleet.project_ids',true))")).map((r:any)=>({taskId:r.task_id,stored:r.stored,expected:r.expected}));
   return {checked:Number(n),drifted}}
 
  // Legacy delivery record <-> task row (§2 field mapping). The record stays whole in data for the delivery API.
