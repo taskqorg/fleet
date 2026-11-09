@@ -146,3 +146,24 @@ Not needed to freeze (deferred to V1): generic DAG engine performance, Windows h
 1. **Tech/infra decisions**: keep or replace SQLite single-coordinator, polling vs streaming, executor packaging per OS, environment provisioning (OS users/containers on Mac/PDS/Windows), secrets layout, observability store, CI and release flow.
 2. **Final software architecture**: module map (coordinator domains: config, sessions, work, pipelines, lab, allocation, recovery, observation; executor: adapters per harness, environment manager, worktree manager), one operation contract with generated MCP+web clients, data model, failure model.
 3. **V1 plan**: rebuild prototype paths onto the final modules in vertical slices (sessions+agent tools → tasks/projects → delivery/worktrees → lab/recommendations → allocation settings → recovery), each closing with the matching T1–T8 test re-run as acceptance.
+
+## 7. Project setup and access tests (added)
+
+From [project setup and access](project-setup-and-access.md). Real environments, no secret values in records or logs.
+
+### T9. Project readiness (B4 B2 B13)
+- Setup: project with one repo, a deploy-key or `gh` connection on Mac and PDS, worker profile bound to Codex accounts on both.
+- Steps: run `project_readiness`; then remove the credential path on PDS and rerun.
+- Pass: first run all `ok`; second run reports PDS repo access `failed` with reason and a question to the operator; no secret or raw stderr in output.
+- Turns: 0.
+
+### T10. Agent commit and push with project identity (B1 B4 B13)
+- Steps: worker session in its worktree edits a file, commits, pushes a branch; readback via `ls-remote`.
+- Pass: commit author = project identity; push used the project connection (not ambient); branch readback matches; worktree removed after.
+- Turns: ~2.
+
+### T11. Cross-project credential separation (B2 B13)
+- Setup: two projects on one environment with different repo connections.
+- Steps: session of project A tries `git ls-remote` on project B's repo.
+- Pass: refused for lack of credential; A's process env contains only A's connection paths.
+- Turns: ~1.
