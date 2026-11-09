@@ -3,7 +3,7 @@
 import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  ListDetail, ListFrame, FilterBar, StateCounters, VirtualList, StateBadge, HarnessMark, Button, Transcript, Composer, DecisionBlock,
+  ListDetail, ListFrame, FilterBar, StateCounters, RowCheck, VirtualList, StateBadge, HarnessMark, Button, Transcript, Composer, DecisionBlock,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Entry, type Harness, type StateOf,
 } from '../../../packages/ui/src/index';
 import tokens from '../../../packages/ui/tokens.json';
@@ -24,6 +24,7 @@ export function Conversations({ id }: { id?: string }) {
   const [failure, setFailure] = useState<string | null>(null);
   const list = useList('sessions', view);
   const rows = list.rows as SessionRow[];
+  const sel = view.sel ?? [], toggleSel = (x: string) => set({ sel: sel.includes(x) ? sel.filter(i => i !== x) : [...sel, x] });
   const now = Date.now();
   const create = async () => { try { const s = await op('session_create', {}); set({ focus: s.sessionId }); } catch (e: any) { setFailure(e.message); } };
   const pane = <>
@@ -31,21 +32,22 @@ export function Conversations({ id }: { id?: string }) {
       <Button label="New conversation" icon="plus" kind="primary" disabledReason={online.value ? undefined : 'offline'} onClick={create} /></header>
     {failure && <ErrorBanner text={failure} />}
     <section class="panel">
-      <ListFrame bar={<FilterBar query={query} placeholder="Search conversations" onQuery={setQuery} chips={[]} fields={[]} onAdd={() => {}} onRemove={() => {}} onClear={() => { setQuery(''); set({ q: undefined, state: [] }); }}
+      <ListFrame pending={list.pending} bar={<FilterBar query={query} placeholder="Search conversations" onQuery={setQuery} chips={[]} fields={[]} onAdd={() => {}} onRemove={() => {}} onClear={() => { setQuery(''); set({ q: undefined, state: [] }); }}
         shown={states.length ? states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total} total={list.total}
-        extra={<StateCounters family="session" label="Conversations by state" counts={list.counts as any} active={states} onAll={() => set({ state: [] })}
+        extra={<StateCounters family="session" label="Conversations by state" pending={list.pending} counts={list.counts as any} active={states} onAll={() => set({ state: [] })}
           onToggle={s => set({ state: states.includes(s) ? states.filter(x => x !== s) : [...states, s] })} />} />}>
         {list.error && !rows.length ? <ErrorBanner text={`Conversations did not load: ${list.error}`} onRetry={list.reload} />
           : list.shownKey === null || (!rows.length && list.pending) ? <Skeleton rows={8} />
           : !rows.length ? <Empty text="No conversations yet." action={<Button label="New conversation" onClick={create} />} />
           : <VirtualList items={rows} getKey={r => r.id} rowHeight={ROW} follow="top" label="Conversations" onEnd={list.more}
-            columns="1.25rem minmax(0,1fr) 1.25rem 2rem" rowClass={r => r.id === id ? 'sel' : ''}
-            header={<><span /><span>Conversation</span><span /><span class="r">Asks</span></>}
+            columns="1.25rem minmax(0,1fr) 1.25rem 2rem 1.25rem" rowClass={r => r.id === id ? 'sel' : ''}
+            header={<><span /><span>Conversation</span><span /><span class="r">Asks</span><span /></>}
             render={r => <>
               <span class="lead"><StateBadge family="session" state={r.state} compact /></span>
               <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.title ?? 'New conversation'}</a><span class="id">{r.id.slice(0, 8)}</span></span>
               <span>{isHarness(r.harness) && <HarnessMark h={r.harness} />}</span>
               <span class="r">{r.openQuestions ? <span class="chip-age t-attention alert" aria-label={`${r.openQuestions} open questions`}>{r.openQuestions}</span> : ''}</span>
+              <RowCheck checked={sel.includes(r.id)} label={'Select ' + (r.title ?? 'conversation')} onToggle={() => toggleSel(r.id)} />
             </>} />}
       </ListFrame>
     </section>

@@ -44,6 +44,22 @@ jobs:
             docs/design-system/book/index.html
             docs/design-system/pages/mockups.html
           if-no-files-found: warn
+  # The filter-path check (docs/designs/fleet-view-urls-and-list-path.md §4): its own job, so it does not slow build-test-design.
+  filter-check:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run check:filter
   comment:
     needs: build-test-design
     if: always()
