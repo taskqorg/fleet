@@ -162,6 +162,8 @@ Browser windows (one origin)                          Coordinator (Fastify)
 * **List state** (filters, grouping, search) lives in the URL query, as in [principles §4](../design-system/principles.md#4-filters-and-search). Per-person defaults and nav pins live in IndexedDB until Phase 6 adds people.
 * **Shell.** `AppShell` from `packages/ui`, with nav items built from the registry's `workspaces`.
 
+* **Codes.** Rows and details show the human code after the title through the `packages/ui` formatter (design-system D15). The UUID is only in a tooltip and "copy UUID". Search accepts a code, an alias or a UUID; a code goes through `entity.resolve`, and an alias opens the entity under its current code. Detail URLs keep the UUID (`/tasks/:id`); `/tasks/T-FLT-42` resolves and redirects.
+
 ### 3. Data loading and the entity store (D4)
 
 * **Rows.**
