@@ -1,1 +1,34 @@
-{"name":"fleet","private":true,"type":"module","scripts":{"build":"tsc && node packages/coordinator/package-assets.mjs","start":"node dist/packages/coordinator/server.js","test":"tsx --test tests/coordinator/*.test.ts"},"dependencies":{"@aws-sdk/client-s3":"3.1164.0","@aws-sdk/s3-request-presigner":"3.1164.0","@clickhouse/client":"1.25.0","better-sqlite3":"12.4.1","fastify":"5.12.8","pg":"8.23.1"},"devDependencies":{"@electric-sql/pglite":"0.5.15","@types/better-sqlite3":"7.6.13","@types/node":"22.18.0","@types/pg":"8.23.1","playwright":"^1.56.1","tsx":"4.20.6","typescript":"5.9.3"}}
+{
+  "name": "fleet",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc && node packages/coordinator/package-assets.mjs",
+    "start": "node dist/packages/coordinator/server.js",
+    "test": "tsx --test tests/coordinator/*.test.ts",
+    "book": "node packages/ui/scripts/build-book.mjs",
+    "check:design": "node packages/ui/scripts/check-design.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1164.0",
+    "@aws-sdk/s3-request-presigner": "3.1164.0",
+    "@clickhouse/client": "1.25.0",
+    "@preact/signals": "2.11.4",
+    "@tanstack/virtual-core": "3.19.11",
+    "better-sqlite3": "12.4.1",
+    "fastify": "5.12.8",
+    "pg": "8.23.1",
+    "preact": "11.2.0",
+    "wouter-preact": "3.13.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.15",
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "22.18.0",
+    "@types/pg": "8.23.1",
+    "esbuild": "0.28.2",
+    "playwright": "^1.56.1",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  }
+}
