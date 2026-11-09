@@ -64,3 +64,19 @@ test('readiness transitions keep prior ready binding, IDs and history across rel
  assert.equal(after.id,a.id);assert.deepEqual(after.inspections.map((i:any)=>i.id),before.inspections.map((i:any)=>i.id));assert.equal(after.checks.length,3);assert.equal(after.history.length,2);assert.equal(after.bindings[0].readiness,'ready');
  assert.equal((await f.op('account_list')).catalogues[0].bindings[0].name,'fleet-codex');
 }finally{await f.app.close()}});
+
+test('extra native host: accepted, account binding selects host, Claude rejected on linux',async()=>{const f=setup({nativeHostIds:['pds-native']});try{
+ await f.host('poll',{hostId:'pds-native',platform:'linux'});
+ const hs=await f.op('account_hosts',{harness:'codex'});assert.equal(hs.hosts.find((h:any)=>h.id==='pds-native').eligible,true);
+ assert.equal((await f.op('account_hosts',{harness:'claude'})).hosts.find((h:any)=>h.id==='pds-native').eligible,false);
+ const a=await f.op('account_create',{name:'fleet-codex-pds',harness:'codex'});
+ await f.host('accounts',{hostId:'pds-native',accountId:a.id,binding:'fleet-codex-pds',platform:'linux',readiness:'ready',reason:'ready'});
+ const c=await f.op('account_create',{name:'claude-pds',harness:'claude'});
+ await f.host('accounts',{hostId:'pds-native',accountId:c.id,binding:'fleet-claude-pds',platform:'linux',readiness:'ready'},403);
+ const s=(await f.call('/api/sessions',{})).json();
+ assert.equal((await f.call(`/api/sessions/${s.sessionId}/profile`,{profileId:'baseline',account:'fleet-codex-pds'})).statusCode,200);
+ const m=await f.call(`/api/sessions/${s.sessionId}/messages`,{requestId:'r1',text:'hi'});assert.equal(m.statusCode,200,m.body);
+ assert.equal(m.json().hostId,'pds-native');
+ const cmd=(await f.host('poll',{hostId:'pds-native',platform:'linux'})).commands.find((x:any)=>x.kind==='start');assert.equal(cmd.executionId,m.json().id);
+ assert.equal((await f.host('poll',{hostId:'mac',platform:'darwin'})).commands.filter((x:any)=>x.kind==='start').length,0);
+}finally{await f.app.close()}});

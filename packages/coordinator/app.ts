@@ -11,7 +11,7 @@ import {accounts} from './accounts.js';
 import {delivery} from './delivery.js';
 import {ui} from './ui.js';
 import {agentTools} from './agent-tools.js';
-export function createApp(config:{database:string,browserSecret:string,machineSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,maxArtifactBytes?:number,projectConfigDirectory?:string,pipeConnectionFile?:string,integrationHostId?:string,publicationHostId?:string,testSiteRoot?:string,defaultAccountBinding?:string}) {
+export function createApp(config:{nativeHostIds?:string[],database:string,browserSecret:string,machineSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,maxArtifactBytes?:number,projectConfigDirectory?:string,pipeConnectionFile?:string,integrationHostId?:string,publicationHostId?:string,testSiteRoot?:string,defaultAccountBinding?:string}) {
  if(!config.browserSecret||!config.machineSecret||config.browserSecret===config.machineSecret) throw Error('Distinct credentials required');
  if(config.browserProxyAuth&&!config.browserOrigin)throw Error('Proxy browser auth requires configured browser origin');
  mkdirSync(dirname(config.database),{recursive:true});
@@ -37,7 +37,7 @@ export function createApp(config:{database:string,browserSecret:string,machineSe
  });
  let deliveryRuntime:any,agent:any;
  const related=(d:any)=>({...d,parentState:get(d.parentExecutionId,'execution').state,childState:get(d.childExecutionId,'execution').state,continuationState:d.continuationExecutionId?get(d.continuationExecutionId,'execution').state:null});
- const owned=(b:any)=>{if(![config.hostId,config.integrationHostId,config.publicationHostId].filter(Boolean).includes(b.hostId)) fail(403,'Host rejected'); if(b.executionId&&get(b.executionId,'execution').hostId!==b.hostId) fail(403,'Execution rejected')};
+ const owned=(b:any)=>{if(![config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].filter(Boolean).includes(b.hostId)) fail(403,'Host rejected'); if(b.executionId&&get(b.executionId,'execution').hostId!==b.hostId) fail(403,'Execution rejected')};
  app.get('/',async(_,r)=>r.type('text/html').send(ui(config.browserProxyAuth)));
  app.get('/test-sites/:project/:file',async(req:any,r)=>{if(!config.testSiteRoot||!['hello-world','hello-world-alt'].includes(req.params.project)||!/^[a-zA-Z0-9_-]+\.(html|css)$/.test(req.params.file))fail(404,'Unknown test site');const root=realpathSync(resolve(config.testSiteRoot!,req.params.project)),path=realpathSync(resolve(root,'current',req.params.file));if(!path.startsWith(root+sep))fail(403,'Test-site path rejected');r.header('Content-Security-Policy',"sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src data:; frame-ancestors 'self'");return r.type(req.params.file.endsWith('.css')?'text/css':'text/html').send(readFileSync(path))});
  app.get('/api/profiles',async()=>({profiles:listProfiles(config.profilesDirectory||'config/agents')}));
@@ -73,13 +73,18 @@ export function createApp(config:{database:string,browserSecret:string,machineSe
  app.get('/api/executions/:id/events',async(req:any)=>{get(req.params.id,'execution');return {events:all('event').filter(x=>x.executionId===req.params.id).sort((a,b)=>a.seq-b.seq)}});
  const managed=accounts(app,{all,get,put},config);
  const enqueue=(s:any,input:string,requestId:string)=>{
-  const binding=managed.resolve(s.account,s.agentConfig?.harness??'codex',config.hostId);
-  const e={...(s.agentConfig?{agentConfig:s.agentConfig,profileSha256:profileDigest(s.agentConfig)}:{}),...(s.account||binding?{requestedAccount:s.account??null,effectiveAccount:binding??{binding:s.account,legacy:true}}:{}),id:randomUUID(),executionId:'',sessionId:s.id,hostId:config.hostId,state:'queued',createdAt:Date.now(),model:s.agentConfig?.model??'gpt-6.1-sol',effort:s.agentConfig?s.agentConfig.effort:'low'};e.executionId=e.id;
-  const command:any={id:randomUUID(),executionId:e.id,sessionId:s.id,hostId:config.hostId,kind:'start',payload:{harness:s.agentConfig?.harness??'codex',...(s.account||binding&&!s.nativeSessionId?{account:binding?.binding??s.account,...(binding?{managedAccount:binding}:{})}:{}),text:input,...(s.projectId?{projectId:s.projectId}:{}),model:e.model,effort:e.effort,...(s.agentConfig?{agentConfig:s.agentConfig}:{}),instructions:s.agentConfig?'':'Follow the user request and its scope. Discuss, answer questions, or review existing results when requested; do not create or modify a website unless requested. When creating a static website, deliver output/index.html and retain all source assets. Do not spawn subagents.',...(s.nativeSessionId?{nativeSessionId:s.nativeSessionId}:{})},status:'pending'};agent.decorate(s,e,command);
+  // Execution host follows the account binding: the session's last host first, then the default host, then extra native hosts.
+  const harness=s.agentConfig?.harness??'codex',last=all('execution').filter(x=>x.sessionId===s.id&&x.hostId).at(-1)?.hostId;
+  const candidates=[...new Set([last,config.hostId,...(config.nativeHostIds??[])].filter((h:any)=>h===config.hostId||(config.nativeHostIds??[]).includes(h)))];
+  let hostId=config.hostId,binding:any;const errors:any[]=[];
+  for(const h of candidates){try{binding=managed.resolve(s.account,harness,h);hostId=h;errors.length=0;break}catch(error){errors.push(error)}}
+  if(errors.length)throw errors.find((x:any)=>x.statusCode===403)??errors[candidates.indexOf(config.hostId)]??errors[0];
+  const e={...(s.agentConfig?{agentConfig:s.agentConfig,profileSha256:profileDigest(s.agentConfig)}:{}),...(s.account||binding?{requestedAccount:s.account??null,effectiveAccount:binding??{binding:s.account,legacy:true}}:{}),id:randomUUID(),executionId:'',sessionId:s.id,hostId,state:'queued',createdAt:Date.now(),model:s.agentConfig?.model??'gpt-6.1-sol',effort:s.agentConfig?s.agentConfig.effort:'low'};e.executionId=e.id;
+  const command:any={id:randomUUID(),executionId:e.id,sessionId:s.id,hostId,kind:'start',payload:{harness:s.agentConfig?.harness??'codex',...(s.account||binding&&!s.nativeSessionId?{account:binding?.binding??s.account,...(binding?{managedAccount:binding}:{})}:{}),text:input,...(s.projectId?{projectId:s.projectId}:{}),model:e.model,effort:e.effort,...(s.agentConfig?{agentConfig:s.agentConfig}:{}),instructions:s.agentConfig?'':'Follow the user request and its scope. Discuss, answer questions, or review existing results when requested; do not create or modify a website unless requested. When creating a static website, deliver output/index.html and retain all source assets. Do not spawn subagents.',...(s.nativeSessionId?{nativeSessionId:s.nativeSessionId}:{})},status:'pending'};agent.decorate(s,e,command);
   put('execution',e);put('message',{id:randomUUID(),sessionId:s.id,executionId:e.id,requestId:requestId,text:input});
   put('command',command);return e;
  };
- agent=agentTools({all,get,put},{directory:config.profilesDirectory||'config/agents',hostId:config.hostId,enqueue,resolveAccount:(account:string,harness:string)=>managed.resolve(account,harness,config.hostId)});
+ agent=agentTools({all,get,put},{directory:config.profilesDirectory||'config/agents',hostId:config.hostId,enqueue,resolveAccount:(account:string,harness:string)=>{let last:any;for(const h of [config.hostId,...(config.nativeHostIds??[])]){try{const r=managed.resolve(account,harness,h);if(r)return r}catch(e){last=e}}if(last)throw last}});
  const delegates=delegation({all,get,put},config.profilesDirectory||'config/agents',enqueue);
  app.get('/api/executions/:id/delegations',async(req:any)=>{get(req.params.id,'execution');return {delegations:all('delegation').filter(d=>d.parentExecutionId===req.params.id||d.childExecutionId===req.params.id||d.continuationExecutionId===req.params.id).map(related)}});
  app.post('/api/sessions/:id/messages',async(req:any)=>db.transaction(()=>{

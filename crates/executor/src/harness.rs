@@ -147,9 +147,10 @@ fn command_registry(
             .map(|p| json!(p))
             .unwrap_or(Value::Null);
     }
-    let marker = dir.join(".fleet-harness-account.json");
+    let marker = dir.join(format!(".fleet-harness-account.{h}.{account}.json"));
+    let legacy = dir.join(".fleet-harness-account.json");
     if native.is_some()
-        && std::fs::read(&marker)
+        && std::fs::read(&marker).or_else(|_| std::fs::read(&legacy))
             .ok()
             .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
             .as_ref()
@@ -246,6 +247,15 @@ fn command_registry(
         c.args(["--tools", &tools.join(",")]);
         if let Some(n) = native {
             c.args(["--resume", n]);
+        } else if let Some(src) = p["fork"]["nativeSessionId"].as_str().filter(|s| s.len() <= 64 && s.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-')) {
+            // Claude stores sessions per cwd project; copy the source transcript into this session's project, then fork it natively.
+            let file = format!("{src}.jsonl");
+            let found = std::fs::read_dir(nh.join("projects"))?.flatten().map(|d| d.path().join(&file)).find(|f| f.is_file()).ok_or(fail("native fork source not found"))?;
+            let enc: String = dir.canonicalize()?.to_string_lossy().chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' }).collect();
+            let target = nh.join("projects").join(enc);
+            std::fs::create_dir_all(&target)?;
+            if found.parent() != Some(target.as_path()) { std::fs::copy(&found, target.join(&file))?; }
+            c.args(["--resume", src, "--fork-session"]);
         }
         // Variadic native tool flags must never consume the user prompt.
         Ok((c, Some(format!("{text}\n").into_bytes())))
@@ -285,6 +295,7 @@ pub fn claude_mcp(c: &mut Command, profile: &Value, servers: &Value) {
         allowed.push("mcp__design-rules__get_design_rules".into());
     }
     if servers.get("fleet").is_some() {
+        for tool in ["session_transition","session_fork","session_resume","session_handoffs","message_send","queue_list","ask","reply","questions","worker_done","execution_status"] { allowed.push(format!("mcp__fleet__{tool}")); }
         if profile["delegationProfiles"].as_array().is_some_and(|p| !p.is_empty()) { allowed.push("mcp__fleet__request_child".into()); }
         let context = servers["fleet"]["args"].as_array().and_then(|a| a.last()).and_then(Value::as_str).and_then(|s| serde_json::from_str::<Value>(s).ok());
         if context.as_ref().is_some_and(|c| c["projectId"].is_string()) {

@@ -232,12 +232,9 @@ impl Executor {
         if p.get("agentConfig").is_none() && harness::name(p) == "codex" {
             self.event(&c,0,"preparation",json!({"model":"gpt-6.1-sol","effort":"low","subscription":true,"instructionsSha256":format!("{:x}",Sha256::digest(p["instructions"].as_str().unwrap_or("").as_bytes())),"tools":{"shell":"workspace-write, network disabled, approvals denied","mcp":[],"subagents":false},"skills":[],"repairs":false,"nativeConfig":"Fleet-owned HOME/CODEX_HOME required; config and execpolicy ignored; AGENTS discovery, skills, memories and hooks disabled; context observations pending"}))?;
         }
-        let native = self
-            .db
-            .query_row("SELECT native FROM sessions WHERE id=?", [&session], |r| {
-                r.get::<_, String>(0)
-            })
-            .ok();
+        // The coordinator owns the native id per harness:account continuation; no id means a new native session
+        // (a handoff to another harness must not resume the previous harness's thread).
+        let native = p["nativeSessionId"].as_str().map(str::to_owned);
         let lab_evidence = if let Some(config) = p.get("agentConfig") {
             match lab::prepare(&dir, config) {
                 Ok(e) => Some(e),
