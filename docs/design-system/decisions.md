@@ -31,3 +31,23 @@ Append only. Each entry: date, question, options, choice, reason.
 
 * **Options:** (a) every P-n becomes OR-n with a check or blocking review item; (b) only automatable rules become OR-n; (c) the owner decides per rule in one table.
 * **Choice:** (c). Table: [owner-rules-table.md](owner-rules-table.md). Conflicts with common practice are answered per row. Decisions 3–8 wait for the table.
+
+## 2026-11-09 D6: Method, owner rules table and decisions 3–8
+
+* **Principle (owner):** the method guides agents and never becomes a gate that stops work. Aim for 95% of the result with 20% of the effort; start simple and learn.
+* **Owner rules:** [owner-rules.md](owner-rules.md), OR-1 to OR-19, read first in every design or UI session. They are instructions, not gates.
+  * Accepted as instructions: P1, P2, P3, P5, P6, P8, P12, P13 (the rule part), P15, P16, plus OR-17 to OR-19.
+  * P7: the arrow is dropped from the new-rows pill.
+  * P11: infinite scroll, with a count and jump to start or end.
+  * P14: right-click and short context menus are allowed. Forms and working tools never float.
+  * P4, P10 and the gate part of P13: kept as the order of work, not as gates.
+  * P9: any collection longer than a screen uses the virtual list component. No 100k-item test.
+  * Precedence: the owner rule wins, except touch targets of 44 px on touch devices and the contrast minimums, which always hold.
+* **Consistency:** shared parts in `packages/ui` make the right way the easy way: formatter, icon registry (TaskQ icons), tokens, virtual list.
+* **D3 checks:** `npm run check:design` prints a warning report. It is not in `npm test` and never blocks a pull request.
+* **D4 performance:** measured targets, not stops: initial JavaScript ≤ 200 KB, interaction response ≤ 100 ms.
+* **D5 approval:** the owner says "ok" in chat, and the worker records it in `decisions.md`.
+* **D6 visual regression:** not now. Book screenshots are attached to the pull request.
+* **D7 old specimens:** archived in `explorations/archive/`.
+* **D8 book role:** the book is the live demo page of `packages/ui`. There is no separate copy.
+* **Rejected:** blocking checks in `npm test` or CI (the reviewers' recommendation), and gates on the order of work.

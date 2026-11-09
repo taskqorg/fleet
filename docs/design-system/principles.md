@@ -31,7 +31,7 @@ Lists of tasks, executions, events, transcript lines and results grow without li
 * **No jumps.** New or changed rows never move what the person is looking at:
   * When rows are inserted above the viewport, the list keeps the first visible row at the same screen position (anchor keeping). It never relies only on browser scroll anchoring.
   * When the person is at the top of a newest-first list, or at the bottom of a live transcript ("following"), new rows appear in place and the view follows.
-  * When the person has scrolled away, the view stays still and a pill shows "12 new ↑" (or ↓). Activating the pill jumps to the newest rows and resumes following.
+  * When the person has scrolled away, the view stays still and a pill shows "12 new". Activating the pill jumps to the newest rows and resumes following.
 * **Updates in place.** A row whose state changes updates its cells without re-sorting under the pointer. If the sort order would move the row, the move waits until the pointer leaves the list or the person scrolls, and a short highlight marks the changed row.
 * **Stable selection.** The selected row stays selected across updates, filters that still include it, and reloads.
 * **Position is kept.** Returning to a list (back button or tab switch) restores its scroll position, selection and filters.

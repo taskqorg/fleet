@@ -2,13 +2,21 @@
 
 This folder is the single knowledge base for Fleet's interface design. It plays the same role for design that `fleet.md` and `docs/designs/` play for architecture. Every design change starts here, and every page is built from what is recorded here.
 
+## Start here
+
+1. [owner-rules.md](owner-rules.md): the owner's rules, OR-1 to OR-19. Read first in every design or UI session.
+2. [methodology-brief.md](methodology-brief.md): how design work is done here.
+3. `packages/ui`: the shared parts (tokens, icons, formatter, virtual list, controls). Use them; do not write local variants.
+4. [book/index.html](book/index.html): the live demo of `packages/ui`. `npm run book` rebuilds it; `npm run check:design` prints the warning report.
+
 ## Files
 
 | File | Holds | Changes when |
 |---|---|---|
 | [inventory.md](inventory.md) | What the interface must let people see, configure, choose and decide. Grouped by workspace, with the data each item comes from. | The architecture adds, removes or changes something a person sees or controls. |
+| [owner-rules.md](owner-rules.md) | The owner's rules OR-1 to OR-19. | The owner changes a rule. |
 | `principles.md` | Usability rules that every screen follows: density, scrolling, filtering, keyboard, states, errors, empty states, motion, accessibility. | The owner approves a new rule. |
-| `tokens.md` (+ machine-readable tokens file) | Colour, type, spacing, radius, elevation, motion, in light and dark. | The owner approves a visual change. |
+| `tokens.md` + `packages/ui/tokens.json` | Colour, type, spacing, radius, elevation, motion, in light and dark. | The owner approves a visual change. |
 | `controls/<control>.md` | One file per control: purpose, anatomy, states, behaviour, keyboard, accessibility, do and don't, and where it is used. | A control is added or changed. |
 | `patterns/<pattern>.md` | Compositions of controls for recurring jobs, for example the decision block, the result viewer or the problem row. | A pattern is added or changed. |
 | `pages/<page>.md` | Each page: purpose, the inventory items it covers, the layout, and which controls and patterns it uses. | A page is added or changed. |
