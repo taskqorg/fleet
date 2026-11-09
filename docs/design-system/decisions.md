@@ -201,3 +201,11 @@ Each check was proven once with `UX_INJECT=<defect>`, which produced its warning
 * repeated "trials" and "log";
 * the Laboratory failed-trials chip, which used colour only;
 * the compact badge's hidden reason text.
+
+## 2026-11-10 D15: Human entity codes
+
+* **Question:** how operators read and recognise entities without UUIDs.
+* **Options:** `T-FLT-A-42` (optional section), `T-FLT-42`, `FLT-42`, `T-4217`, host plus base32.
+* **Choice:** `T-FLT-42` for tasks (`T`), questions (`Q`) and experiments (`E`); spec rules carry a mandatory section letter, `S-FLT-D3`. Scope `ALL` for general rules. Regex: `\b(?:([TQE])-([A-Z][A-Z0-9]{1,4})-([1-9][0-9]*)|S-([A-Z][A-Z0-9]{1,4})-([A-DF-PRU-Z])([1-9][0-9]*))\b`. Grammar and allocation: [data foundation §2](../designs/fleet-data-foundation.md#2-task-production-work-item).
+* **Display:** one formatter in `packages/ui` renders the code. The code sits directly after the title (OR-22), in monospace. The UUID is shown only in a tooltip and a "copy UUID" action, never as a second visible ID (OR-17). An entity without a code yet shows the short UUID. A section or area of a task is a chip, not part of the code. `packages/ui/book/open-questions.tsx` renders `T-{t.id}` today and moves to the formatter.
+* **Reason:** the type and project are visible outside the app (messengers, branches, prompts); hyphens and a leading letter keep codes apart from short SHAs and GitHub `#N`; no dots or slashes, so messengers do not auto-link them. Brief: [entity-ids-brief.md](../designs/entity-ids-brief.md).

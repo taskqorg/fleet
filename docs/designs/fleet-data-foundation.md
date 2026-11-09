@@ -365,6 +365,15 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
 
 *   **External boards.** None. A future export reads from this table.
 
+*   **Human codes.** Tasks, questions, experiments and spec rules carry a human code next to the UUID. The UUID stays the key; the code is for reading and recognition only. Brief: [entity-ids-brief.md](entity-ids-brief.md).
+    *   Format: `T-FLT-42` (type, project code, number) for `T` task, `Q` question, `E` experiment. Spec rules carry a mandatory section letter: `S-FLT-D3`. Hyphens, uppercase, no leading zeros, case-insensitive lookup. Regex: `\b(?:([TQE])-([A-Z][A-Z0-9]{1,4})-([1-9][0-9]*)|S-([A-Z][A-Z0-9]{1,4})-([A-DF-PRU-Z])([1-9][0-9]*))\b`.
+    *   Scope `ALL` is reserved for general rules and rows with no project (`S-ALL-C4`). Project codes are 2 to 5 characters, start with a letter, are not hex-only, avoid I, O, S, Z, B, and are never reused. Section letters never equal a type letter (T, Q, E, S).
+    *   Column `code text unique` on `task`, `question`, the experiment row and the spec rule row. Executions, artifacts, hosts and projects get no code.
+    *   Table `code_counter(scope, type, section, next)`: one row per (project, type) for `T`, `Q`, `E`, and per (scope, section) for `S`. Only the coordinator issues codes, with `UPDATE … RETURNING` in the same transaction as the insert. Gaps are allowed; numbers are never reused. Counters are per project so gaps reveal nothing across RLS boundaries.
+    *   Table `entity_code(code primary key, entity_id, type, issued_at, superseded_by)`. A code never changes. A moved entity, a renamed project or a changed type gets a new code; the old code stays as an alias that resolves to the entity. No move operation is built.
+    *   Ops `entity.resolve(code)` returns `{id, type, current_code, superseded}`; `entity.resolve_many(text)` finds every code in free text. Unknown and forbidden codes both return `not_found`.
+    *   Backfill: existing rows get codes in `created_at` order, filling only empty values.
+
 ### 3. Artifact store
 
 *   **Table `store`.** One row per host store: `id`, `kind` (`s3`), `endpoint` (the store's Cloudflare Tunnel hostname), `bucket`, `host_id`, `state` (`reachable`, `unreachable` or `full`), `capacity_bytes`, `used_bytes`, and the credentials reference. The credentials themselves stay in the coordinator's and executor's secret configuration, never in rows.
