@@ -199,7 +199,45 @@ UPDATE execution c SET parent_execution_id = p.id FROM document s, LATERAL (SELE
 -- Delegated children whose legacy record names the delegating execution.
 UPDATE execution SET parent_execution_id = data->>'parentExecutionId' WHERE parent_execution_id IS NULL AND legacy_kind = 'execution' AND data ? 'parentExecutionId'
 
--- migration 8: artifact store (design §3, Phase 3 item 21). Bytes live in the per-host S3 stores; rows hold metadata,
+-- migration 8: change log for the operator app's live feed (docs/designs/fleet-operator-app.md §4, D5).
+-- Triggers write one row per watched write, inside the writer's transaction, so a change is visible exactly when its data is.
+-- Readers order by (xid, seq) and return only rows of transactions older than every transaction still running
+-- (pg_snapshot_xmin), so a slow transaction that commits after a later one is never skipped. NOTIFY has a constant payload:
+-- Postgres folds duplicates within one transaction, so each commit wakes listeners once.
+CREATE TABLE change(
+ seq bigserial PRIMARY KEY,
+ xid xid8 NOT NULL DEFAULT pg_current_xact_id(),
+ kind text NOT NULL,
+ id text NOT NULL,
+ task_id text NULL,
+ session_id text NULL,
+ host_id text NULL,
+ project_id text NULL,
+ op char(1) NOT NULL,
+ at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX change_order ON change(xid, seq);
+CREATE INDEX change_at ON change(at);
+ALTER TABLE change ENABLE ROW LEVEL SECURITY;
+ALTER TABLE change FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON change USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')));
+-- Kind map (design §4): only kinds a view uses write rows; host polls that only move lastSeenAt are skipped. One line: the
+-- migration runner splits statements at a semicolon that ends a line.
+CREATE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'document' THEN IF r.kind = 'host-observation' AND TG_OP = 'UPDATE' AND (OLD.data - 'lastSeenAt') = (NEW.data - 'lastSeenAt') THEN RETURN NULL; END IF; IF r.kind = 'session' THEN k := 'session'; s := r.id; ELSIF r.kind IN ('event', 'message') THEN k := 'event'; s := r.data->>'sessionId'; ELSIF r.kind = 'host-observation' THEN k := 'host'; h := r.id; ELSIF r.kind = 'command' THEN k := 'command'; h := r.data->>'hostId'; s := r.data->>'sessionId'; ELSIF r.kind = 'artifact' THEN k := 'artifact'; s := r.data->>'sessionId'; SELECT e.task_id INTO t FROM execution e WHERE e.id = r.data->>'executionId'; ELSE RETURN NULL; END IF; i := r.id; ELSIF TG_TABLE_NAME = 'task' THEN k := 'task'; i := r.id; t := r.id; ELSIF TG_TABLE_NAME = 'task_dependency' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'execution' THEN k := 'execution'; i := r.id; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME = 'execution_totals' THEN k := 'execution'; i := r.execution_id; SELECT e.task_id, e.session_id, e.host_id INTO t, s, h FROM execution e WHERE e.id = r.execution_id; ELSIF TG_TABLE_NAME = 'question' THEN k := 'question'; i := r.id; t := r.task_id; s := r.session_id; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op) VALUES (k, i, t, s, h, r.project_id, left(TG_OP, 1)); PERFORM pg_notify('fleet_change', ''); RETURN NULL; END $$;
+CREATE TRIGGER document_change AFTER INSERT OR UPDATE OR DELETE ON document FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER task_change AFTER INSERT OR UPDATE OR DELETE ON task FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER task_dependency_change AFTER INSERT OR UPDATE OR DELETE ON task_dependency FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER execution_change AFTER INSERT OR UPDATE OR DELETE ON execution FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER execution_totals_change AFTER INSERT OR UPDATE OR DELETE ON execution_totals FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER question_change AFTER INSERT OR UPDATE OR DELETE ON question FOR EACH ROW EXECUTE FUNCTION fleet_change();
+-- Priority is a queue class, not a number (owner decision 2026-11-10, fleet-data-foundation §2): urgent runs first, normal is
+-- the default (first in, first out), background runs only when nothing else waits for the same resource. 0 and any other old
+-- number become normal.
+ALTER TABLE task ALTER COLUMN priority DROP DEFAULT;
+ALTER TABLE task ALTER COLUMN priority TYPE text USING 'normal';
+ALTER TABLE task ALTER COLUMN priority SET DEFAULT 'normal';
+ALTER TABLE task ADD CONSTRAINT task_priority_class CHECK (priority IN ('urgent', 'normal', 'background'));
+-- migration 9: artifact store (design §3, Phase 3 item 21). Bytes live in the per-host S3 stores; rows hold metadata,
 -- copies and upload state. An upload or copy in progress is its artifact_copy row (staging key, upload id, lease).
 CREATE TABLE store(
  id text PRIMARY KEY,
@@ -302,4 +340,11 @@ ALTER TABLE purged_hash FORCE ROW LEVEL SECURITY;
 CREATE POLICY project_scope ON purged_hash USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')));
 ALTER TABLE artifact_rule_confirmation ENABLE ROW LEVEL SECURITY;
 ALTER TABLE artifact_rule_confirmation FORCE ROW LEVEL SECURITY;
-CREATE POLICY project_scope ON artifact_rule_confirmation USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')))
+CREATE POLICY project_scope ON artifact_rule_confirmation USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')));
+-- Change feed for the artifact tables (operator app §4): an artifact or a copy of it is kind 'artifact' with its task and
+-- session (Results, Task detail); a store is kind 'host' of its host (Hosts). Store polls that only move observed_at or
+-- updated_at, and copy lease renewals, write no row. One line: the migration runner splits at a semicolon that ends a line.
+CREATE FUNCTION fleet_artifact_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; p text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'store' THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - 'observed_at' - 'updated_at') = (to_jsonb(NEW) - 'observed_at' - 'updated_at') THEN RETURN NULL; END IF; k := 'host'; i := r.host_id; h := r.host_id; ELSE IF TG_TABLE_NAME = 'artifact_copy' THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - 'lease_expires_at' - 'updated_at') = (to_jsonb(NEW) - 'lease_expires_at' - 'updated_at') THEN RETURN NULL; END IF; i := r.artifact_id; ELSE i := r.id; END IF; k := 'artifact'; p := r.project_id; SELECT coalesce(a.task_id, e.task_id), e.session_id INTO t, s FROM artifact a LEFT JOIN execution e ON e.id = a.execution_id WHERE a.id = i; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op) VALUES (k, i, t, s, h, p, left(TG_OP, 1)); PERFORM pg_notify('fleet_change', ''); RETURN NULL; END $$;
+CREATE TRIGGER store_change AFTER INSERT OR UPDATE OR DELETE ON store FOR EACH ROW EXECUTE FUNCTION fleet_artifact_change();
+CREATE TRIGGER artifact_change AFTER INSERT OR UPDATE OR DELETE ON artifact FOR EACH ROW EXECUTE FUNCTION fleet_artifact_change();
+CREATE TRIGGER artifact_copy_change AFTER INSERT OR UPDATE OR DELETE ON artifact_copy FOR EACH ROW EXECUTE FUNCTION fleet_artifact_change()

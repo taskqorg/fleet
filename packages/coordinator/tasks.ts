@@ -29,6 +29,9 @@ const TRANSITIONS:Record<Trigger,{from:TaskState[],to:TaskState|'previous'}>={
 // Legacy delivery state -> task state (§2 mapping). merged and published stay in_progress until acceptance.
 const DELIVERY_TARGET:Record<string,TaskState>={waiting:'waiting',researching:'in_progress',generating:'in_progress',integrating:'in_progress',publishing:'in_progress','pr-open':'in_progress',blocked:'in_progress',merged:'in_progress',published:'in_progress',unknown:'in_progress',failed:'failed',quota:'failed',unavailable:'failed'};
 
+// Priority classes; p0/p1/p2 are accepted as TaskQ synonyms for urgent/normal/background.
+const PRIORITY:Record<string,string>={urgent:'urgent',normal:'normal',background:'background',p0:'urgent',p1:'normal',p2:'background'};
+export const priorityClass=(v:unknown)=>typeof v==='string'&&PRIORITY[v]?PRIORITY[v]:(()=>{throw Object.assign(Error('Invalid priority: use urgent, normal or background'),{statusCode:400})})();
 export function taskModel(raw:Raw,executions:Executions){
  const one=async(sql:string,params:any[])=>(await raw.query(sql,params))[0];
  const taskRow=async(id:string)=>await one('SELECT * FROM task WHERE id=$1',[id])??notFound();
@@ -86,11 +89,13 @@ export function taskModel(raw:Raw,executions:Executions){
   return (await raw.query(`SELECT * FROM question${c.length?' WHERE '+c.join(' AND '):''} ORDER BY seq`,p)).map(questionView)};
 
  // Tasks.
- async function create(v:{id?:string,projectId?:string|null,title:string,expectedOutcome?:string|null,priority?:number,completionRequirements?:any,resultDestination?:string|null,deliveryMethod?:any,createdBy?:string,dependsOn?:string[],legacyKind?:string,data?:any,createdAt?:number}){
+ async function create(v:{id?:string,projectId?:string|null,title:string,expectedOutcome?:string|null,priority?:string,completionRequirements?:any,resultDestination?:string|null,deliveryMethod?:any,createdBy?:string,dependsOn?:string[],legacyKind?:string,data?:any,createdAt?:number}){
   if(typeof v.title!=='string'||!v.title.trim()||v.title.length>500)fail(400,'Expected task title');
-  const id=v.id??randomUUID();
-  await raw.query('INSERT INTO task(id,project_id,title,expected_outcome,priority,completion_requirements,result_destination,delivery_method,created_by,created_at,legacy_kind,legacy_id,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,coalesce($10::timestamptz,now()),$11,$12,$13)',
-   [id,v.projectId??null,v.title,v.expectedOutcome??null,v.priority??0,clean(v.completionRequirements??{}),v.resultDestination??null,v.deliveryMethod?clean(v.deliveryMethod):null,v.createdBy??null,ts(v.createdAt),v.legacyKind??null,v.legacyKind?id:null,clean(v.data??{})]);
+  const id=v.id??randomUUID(),priority=priorityClass(v.priority??'normal');
+  // priority is left to the column default ('normal'); before migration 8 (migration 6 replays legacy records) it is an integer.
+  await raw.query('INSERT INTO task(id,project_id,title,expected_outcome,completion_requirements,result_destination,delivery_method,created_by,created_at,legacy_kind,legacy_id,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,coalesce($9::timestamptz,now()),$10,$11,$12)',
+   [id,v.projectId??null,v.title,v.expectedOutcome??null,clean(v.completionRequirements??{}),v.resultDestination??null,v.deliveryMethod?clean(v.deliveryMethod):null,v.createdBy??null,ts(v.createdAt),v.legacyKind??null,v.legacyKind?id:null,clean(v.data??{})]);
+  if(priority!=='normal')await raw.query('UPDATE task SET priority=$2 WHERE id=$1',[id,priority]);
   for(const d of v.dependsOn??[])await depend(id,d,'blocks');
   return id}
  async function depend(id:string,on:string,kind:'blocks'|'revision_of'){const t=await one('SELECT project_id FROM task WHERE id=$1',[id]);
@@ -99,7 +104,7 @@ export function taskModel(raw:Raw,executions:Executions){
  async function update(b:any){const t=await taskRow(b?.taskId);
   const action=b.action;if(action!==undefined){const map:Record<string,Trigger>={pause:'pause',resume:'resume',cancel:'cancel',fail:'operator_fail'};if(!map[action])fail(400,'Unknown task action');await transition(t.id,map[action],{by:'operator'})}
   for(const [k,col] of [['title','title'],['expectedOutcome','expected_outcome'],['priority','priority'],['resultDestination','result_destination']] as const)if(b[k]!==undefined){
-   if(k==='priority'?!Number.isSafeInteger(b[k]):typeof b[k]!=='string'||b[k].length>4000)fail(400,'Invalid '+k);await raw.query(`UPDATE task SET ${col}=$2,updated_at=now() WHERE id=$1`,[t.id,b[k]])}
+   if(k!=='priority'&&(typeof b[k]!=='string'||b[k].length>4000))fail(400,'Invalid '+k);await raw.query(`UPDATE task SET ${col}=$2,updated_at=now() WHERE id=$1`,[t.id,k==='priority'?priorityClass(b[k]):b[k]])}
   return get(t.id)}
  const view=(t:any)=>({id:t.id,projectId:t.project_id,title:t.title,expectedOutcome:t.expected_outcome,state:t.state,waitReason:t.wait_reason,priority:t.priority,completionRequirements:t.completion_requirements,resultDestination:t.result_destination,deliveryMethod:t.delivery_method,acceptedBy:t.accepted_by,acceptedAt:t.accepted_at,acceptedArtifactIds:t.accepted_artifact_ids,createdBy:t.created_by,createdAt:t.created_at,updatedAt:t.updated_at,legacyKind:t.legacy_kind,legacyId:t.legacy_id});
  // tasks.get: the stored task with its derived progress, cost and latest result (task_view), executions, dependencies, questions.
@@ -108,6 +113,40 @@ export function taskModel(raw:Raw,executions:Executions){
    executions:await executions.list({taskId:id}),dependencies:(await raw.query('SELECT depends_on_task_id AS id,kind FROM task_dependency WHERE task_id=$1',[id])),questions:await questions({taskId:id})}}
  async function list(f:{projectId?:string,state?:string}={}){const c:string[]=[],p:any[]=[];if(f.projectId){p.push(f.projectId);c.push(`t.project_id=$${p.length}`)}if(f.state){p.push(f.state);c.push(`t.state=$${p.length}`)}
   return (await raw.query(`SELECT t.*,v.execution_count,v.executions_by_state,v.open_questions FROM task t JOIN task_view v ON v.task_id=t.id${c.length?' WHERE '+c.join(' AND '):''} ORDER BY t.seq`,p)).map(t=>({...view(t),progress:{executions:Number(t.execution_count),byState:t.executions_by_state},openQuestions:t.open_questions}))}
+
+ // Operator app list (docs/designs/fleet-operator-app.md §6): one WHERE builder serves the page, the counts and membership, so the
+ // client never decides membership. Order is (group key, newest first, id); the cursor is that triple. Grouping by priority puts
+ // urgent, normal, background.
+ const GROUPS:Record<string,string>={none:"left(x.id,0)",priority:"(CASE x.priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END)",project:"coalesce(x.project_id,'~')",agent:"coalesce(x.agent,'~')",host:"coalesce(x.host,'~')",
+  state:"(CASE x.state WHEN 'waiting' THEN '1' WHEN 'failed' THEN '2' WHEN 'in_progress' THEN '3' WHEN 'queued' THEN '4' WHEN 'paused' THEN '5' WHEN 'completed' THEN '6' ELSE '7' END)"};
+ const STATES=['queued','in_progress','waiting','paused','completed','failed','cancelled'];
+ type PageFilter={projectId?:string|null,state?:string[],search?:string};
+ const base=`WITH x AS (SELECT t.id,t.project_id,t.title,t.state,t.wait_reason,t.priority,t.created_at,t.updated_at,t.seq,
+  (SELECT e.harness FROM execution e WHERE e.task_id=t.id AND e.state IN ('preparing','running') ORDER BY e.seq DESC LIMIT 1) AS agent,
+  (SELECT e.host_id FROM execution e WHERE e.task_id=t.id ORDER BY e.seq DESC LIMIT 1) AS host,
+  (SELECT min(e.started_at) FROM execution e WHERE e.task_id=t.id) AS started_at,
+  (SELECT count(*) FROM question q WHERE q.task_id=t.id AND q.state='open') AS open_questions FROM task t)`;
+ const where=(f:PageFilter,p:any[],withState=true)=>{const c:string[]=[];
+  if(typeof f.projectId==='string'){p.push(f.projectId);c.push(`x.project_id=$${p.length}`)}else if(f.projectId===null)c.push('x.project_id IS NULL');
+  if(withState&&Array.isArray(f.state)&&f.state.length){if(!f.state.every(x=>STATES.includes(x)))throw Object.assign(Error('Invalid state'),{statusCode:400});p.push(f.state);c.push(`x.state::text=ANY($${p.length})`)}
+  if(typeof f.search==='string'&&f.search.trim()){p.push('%'+f.search.trim().toLowerCase().replace(/[%_\\]/g,m=>'\\'+m)+'%');c.push(`(lower(x.title) LIKE $${p.length} OR lower(x.id) LIKE $${p.length})`)}
+  return c};
+ const listRow=(x:any)=>({id:x.id,projectId:x.project_id,title:x.title,state:x.state,waitReason:x.wait_reason,priority:x.priority,agent:x.agent,host:x.host,startedAt:x.started_at,createdAt:x.created_at,updatedAt:x.updated_at,openQuestions:Number(x.open_questions),sortKey:[x.g,-Number(x.seq),x.id]});
+ const groupOf=(g:any)=>{if(g!==undefined&&!(g in GROUPS))throw Object.assign(Error('Invalid group'),{statusCode:400});return GROUPS[g??'none']};
+ async function page(b:{filter?:PageFilter,group?:string,limit?:number,after?:[string,number,string]}={}){
+  const f=b.filter??{},g=groupOf(b.group),limit=Math.max(1,Math.min(500,Math.floor(b.limit??100)));
+  const p:any[]=[],c=where(f,p);
+  if(b.after){if(!Array.isArray(b.after)||b.after.length!==3)throw Object.assign(Error('Invalid after'),{statusCode:400});p.push(String(b.after[0]),Number(b.after[1]),String(b.after[2]));c.push(`(${g},-x.seq,x.id) > ($${p.length-2},$${p.length-1},$${p.length})`)}
+  const rows=await raw.query(`${base} SELECT x.*,${g} AS g FROM x${c.length?' WHERE '+c.join(' AND '):''} ORDER BY ${g},-x.seq,x.id LIMIT ${limit+1}`,p);
+  const cp:any[]=[],cc=where(f,cp,false);
+  const byState=Object.fromEntries(STATES.map(s=>[s,0]));for(const r of await raw.query(`${base} SELECT x.state::text AS state,count(*) AS n FROM x${cc.length?' WHERE '+cc.join(' AND '):''} GROUP BY 1`,cp))byState[r.state]=Number(r.n);
+  const gp:any[]=[],gc=where(f,gp);
+  const groups=b.group&&b.group!=='none'?(await raw.query(`${base} SELECT ${g} AS g,min(CASE '${b.group}' WHEN 'priority' THEN x.priority WHEN 'state' THEN x.state::text WHEN 'project' THEN x.project_id WHEN 'agent' THEN x.agent ELSE x.host END) AS label,count(*) AS n FROM x${gc.length?' WHERE '+gc.join(' AND '):''} GROUP BY 1 ORDER BY 1`,gp)).map(r=>({key:r.g,label:r.label,count:Number(r.n)})):[];
+  const page=rows.slice(0,limit).map(listRow);
+  return {tasks:page,nextAfter:rows.length>limit?page.at(-1)!.sortKey:null,counts:byState,total:Object.values(byState).reduce((a:number,n:any)=>a+n,0),groups}}
+ // The ids among `ids` that match the filter, with the same row shape and sort key as page().
+ async function membership(f:PageFilter,group:string|undefined,ids:string[]){const g=groupOf(group),p:any[]=[],c=where(f,p);p.push(ids.filter(x=>typeof x==='string').slice(0,1000));c.push(`x.id=ANY($${p.length})`);
+  return (await raw.query(`${base} SELECT x.*,${g} AS g FROM x WHERE ${c.join(' AND ')}`,p)).map(listRow)}
 
  // Legacy delivery record <-> task row (§2 field mapping). The record stays whole in data for the delivery API.
  async function putDelivery(r:any){
@@ -124,7 +163,7 @@ export function taskModel(raw:Raw,executions:Executions){
   const target=DELIVERY_TARGET[r.state];if(target)await settle(r.id,target);
   // A merged or published result waits for the operator's acceptance; one acceptance question per round.
   if(['merged','published'].includes(r.state)&&!(await one("SELECT 1 AS x FROM question WHERE task_id=$1 AND kind='acceptance' AND state='open'",[r.id]))&&(await one('SELECT state FROM task WHERE id=$1',[r.id])).state==='in_progress'&&!(await one("SELECT 1 AS x FROM question WHERE task_id=$1 AND kind='acceptance' AND data->>'round'=$2",[r.id,r.state]))){
-   // Before migration 8 (artifact table) only documents hold artifacts.
+   // Before migration 9 (artifact table) only documents hold artifacts.
    const typed=(await raw.query("SELECT to_regclass('artifact') IS NOT NULL AS t"))[0].t;
    const artifactIds=(await raw.query(typed?"SELECT coalesce(legacy_id,id) AS id,seq FROM artifact WHERE state='stored' AND role='original' AND execution_id=ANY($1) UNION ALL SELECT id,seq FROM document WHERE kind='artifact' AND data->>'executionId'=ANY($1) ORDER BY seq":"SELECT id FROM document WHERE kind='artifact' AND data->>'executionId'=ANY($1) ORDER BY seq",[steps])).map(a=>a.id);
    await ask({kind:'acceptance',taskId:r.id,projectId:r.projectId??null,text:`Accept the ${r.state} result of: ${title}`,options:['accepted','rejected'],askedBy:'coordinator',data:{artifactIds,round:r.state}})}
@@ -155,6 +194,6 @@ export function taskModel(raw:Raw,executions:Executions){
   question:questionAdapter('question'),
   'project-question':questionAdapter('project-question'),
  };
- return {adapters,create,update,get,list,transition,settle,depend,ask,answer,questions};
+ return {adapters,create,update,get,list,page,membership,transition,settle,depend,ask,answer,questions};
 }
 export type Tasks=ReturnType<typeof taskModel>;

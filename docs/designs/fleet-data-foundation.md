@@ -322,6 +322,14 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
     *   `id`, `project_id`, `title`, `expected_outcome`;
     *   `state`: `queued`, `in_progress`, `waiting`, `paused`, `completed`, `failed` or `cancelled`;
     *   `wait_reason`, `priority`;
+    *   `priority` is a queue class (owner decision, 2026-11-10), not a number:
+        *   `urgent` runs first. It may use accounts the operator marked "reserve for urgent". It shows a red chip.
+        *   `normal` is the default. Tasks run first in, first out within the class, and the operator can move a task up or down by hand. Rows show no chip.
+        *   `background` covers tests, lab work and experiments. It runs only when no urgent or normal work is waiting for the same resource. It shows a grey chip.
+        *   The API takes the names and also accepts `p0`, `p1` and `p2` as synonyms (TaskQ vocabulary).
+        *   What background work may use, for example a share of an account window or nights only, is an operator setting with no built-in cap.
+        *   Old integers migrate to `normal` (migration 8).
+        *   The scheduler behaviour and the per-class queue view are planned work; see [fleet-operator-app.md](fleet-operator-app.md#future-improvements).
     *   `completion_requirements` (JSONB), `result_destination`;
     *   `created_by`, timestamps.
 *   **Table `task_dependency`.** `task_id`, `depends_on_task_id` and `kind`. Tasks are flat; there is no hierarchy. Only `blocks` dependencies gate transitions. `revision_of` records a delivery that revises an earlier one (legacy `previousDeliveryId`) without waiting for it, as the legacy flow never waited for acceptance.
@@ -368,6 +376,15 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
     | state `unknown` | task `in_progress`; its latest execution is `unconfirmed` |
 
 *   **External boards.** None. A future export reads from this table.
+
+*   **Human codes.** Tasks, questions, experiments and spec rules carry a human code next to the UUID. The UUID stays the key; the code is for reading and recognition only. Brief: [entity-ids-brief.md](entity-ids-brief.md).
+    *   Format: `T-FLT-42` (type, project code, number) for `T` task, `Q` question, `E` experiment. Spec rules carry a mandatory section letter: `S-FLT-D3`. Hyphens, uppercase, no leading zeros, case-insensitive lookup. Regex: `\b(?:([TQE])-([A-Z][A-Z0-9]{1,4})-([1-9][0-9]*)|S-([A-Z][A-Z0-9]{1,4})-([A-DF-PRU-Z])([1-9][0-9]*))\b`.
+    *   Scope `ALL` is reserved for general rules and rows with no project (`S-ALL-C4`). Project codes are 2 to 5 characters, start with a letter, are not hex-only, avoid I, O, S, Z, B, and are never reused. Any uppercase letter may be a section letter; positions are fixed, so `S-FLT-S5` is unambiguous.
+    *   Column `code text unique` on `task`, `question`, the experiment row and the spec rule row. Executions, artifacts, hosts and projects get no code.
+    *   Table `code_counter(scope, type, section, next)`: one row per (project, type) for `T`, `Q`, `E`, and per (scope, section) for `S`. Only the coordinator issues codes, with `UPDATE … RETURNING` in the same transaction as the insert. Gaps are allowed; numbers are never reused. Counters are per project so gaps reveal nothing across RLS boundaries.
+    *   Table `entity_code(code primary key, entity_id, type, issued_at, superseded_by)`. A code never changes. A moved entity, a renamed project or a changed type gets a new code; the old code stays as an alias that resolves to the entity. No move operation is built.
+    *   Ops `entity.resolve(code)` returns `{id, type, current_code, superseded}`; `entity.resolve_many(text)` finds every code in free text. Unknown and forbidden codes both return `not_found`.
+    *   Backfill: existing rows get codes in `created_at` order, filling only empty values.
 
 ### 3. Artifact store
 

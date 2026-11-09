@@ -1,7 +1,7 @@
 // Design report (D6): prints warnings, never fails. Reviewers and the owner read it.
 // Run npm run book first so the scroll check uses the current book.
 // Usage: npm run check:design [files or folders...]   (default: packages/ui)
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, appendFileSync, writeFileSync } from 'node:fs';
@@ -15,7 +15,7 @@ const reportFile = join(root, 'design-report/report.txt');
 writeFileSync(reportFile, '');
 const log = console.log;
 console.log = (...a) => { log(...a); appendFileSync(reportFile, a.join(' ') + '\n'); };
-const targets = process.argv.slice(2).length ? process.argv.slice(2) : ['packages/ui'];
+const targets = process.argv.slice(2).length ? process.argv.slice(2) : ['packages/ui', 'app'];
 const files = [];
 const walk = p => { const s = statSync(p); if (s.isDirectory()) { if (!/node_modules|dist/.test(p)) readdirSync(p).forEach(f => walk(join(p, f))); } else if (/\.(tsx?|css|html)$/.test(p)) files.push(p); };
 targets.forEach(t => walk(join(root, t)));
@@ -62,6 +62,8 @@ let scroll;
 try { scroll = execFileSync('node', ['tests/ui/scroll.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim(); } catch (e) { scroll = `not run (${String(e.message).split('\n')[0]})`; }
 let ux;
 try { ux = execFileSync('node', ['tests/ui/ux.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim(); } catch (e) { ux = `- UX checks not run (${String(e.message).split('\n')[0]})`; }
+let appCheck;
+try { appCheck = existsSync(join(root, 'dist/app/index.html')) ? execFileSync('npx', ['tsx', 'tests/ui/app.check.ts'], { cwd: root, stdio: 'pipe', timeout: 300000 }).toString().trimEnd() : '    not run (run npm run build first)'; } catch (e) { appCheck = `    not run (${String(e.message).split('\n')[0]})`; }
 let trace;
 try { trace = execFileSync('node', ['tests/ui/trace.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim().replace(/\n/g, '\n    '); } catch (e) { trace = `not run (${String(e.message).split('\n')[0]})`; }
 console.log(`Design report for ${targets.join(', ')}: ${files.length} files`);
@@ -70,5 +72,6 @@ console.log(`- formatter tests: ${tests}`);
 console.log(`- scroll anchor on insert (book list): ${scroll}`);
 console.log(`- page specs against mockups:\n    ${trace}`);
 console.log(ux);
+console.log(`- operator app (dist/app, coordinator on PGlite):\n${appCheck}`);
 console.log(warn.length ? `- ${warn.length} source warnings:\n  ${warn.join('\n  ')}` : '- source checks: no warnings');
 console.log('Rules: docs/design-system/owner-rules.md. This report never fails the build.');

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'preact/hooks';
 import {
   Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, ExecTree, DecisionBlock, ResultViewer, SplitButton, NavRail, StatStrip,
   SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Transcript, TaskListView, workspaces, states, actions,
-  HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages,
+  Composer, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages,
   type Entry, type Family, type Stage,
 } from '../src/index';
 import { NAV } from './nav';
@@ -257,6 +257,8 @@ const SECTIONS: [string, string, string | undefined, () => ComponentChildren, Co
   ['decision-block', 'Decision block', 'decision-block', () => <DecisionDemo />, <>Click Accept or press a while the block has focus: the block collapses to the answered line.</>],
   ['result-viewer', 'Result viewer shell', 'result-viewer', () => <ResultDemo />],
   ['setting-field', 'Setting field', 'setting-field', () => <SettingsDemo />, <>Click a value to edit it inline.</>],
+  ['composer', 'Composer', 'composer', () => <div class="pane"><Composer draftKey="book" onSend={() => {}} /></div>, <>Enter sends, Shift+Enter adds a line; the draft is kept per conversation.</>],
+  ['offline-marker', 'Offline marker', 'offline-marker', () => <div class="row"><OfflineMarker state="updating" since={NOW - 18 * hr} now={NOW} /><OfflineMarker state="offline" since={NOW - 18 * hr} now={NOW} /><OfflineMarker state="signed-out" now={NOW} /></div>, <>Stored data is never shown as current (D3).</>],
   ['problem-row', 'Problem row', 'problem-row', () => <ProblemDemo />],
   ['status-states', 'Loading, empty, error, stale', 'status-states', () => <StatesDemo />],
 ];

@@ -22,6 +22,8 @@ export type VirtualListProps<T> = {
   class?: string;
   /** Extra class per row, e.g. group headers. */
   rowClass?: (item: T) => string;
+  /** Infinite scroll (OR-11): called once per list length when the last rows come into view. */
+  onEnd?: () => void;
 };
 
 // Touch devices get the 44 px row (owner exception to density, D14/M2).
@@ -92,6 +94,10 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     if (p.follow === 'top') scroller.current?.scrollTo({ top: 0 });
     else if (p.items.length) v.scrollToIndex(p.items.length - 1, { align: 'end' });
   };
+
+  const endFor = useRef(-1);
+  const lastVisible = v.getVirtualItems().at(-1)?.index ?? -1;
+  useLayoutEffect(() => { if (p.onEnd && p.items.length && lastVisible >= p.items.length - 5 && endFor.current !== p.items.length) { endFor.current = p.items.length; p.onEnd(); } });
 
   const style = p.columns ? { '--cols': p.columns } : undefined;
   return (

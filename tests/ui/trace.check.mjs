@@ -15,6 +15,7 @@ try {
     const md = readFileSync(new URL(f, dir), 'utf8');
     const routes = [...(md.match(/\*\*Mockup routes:\*\*([^\n]*)/)?.[1] ?? '').matchAll(/`#(\/[^`]*)`/g)].map(m => m[1]);
     const want = new Set(['app-shell', 'nav-rail', ...[...md.matchAll(/\]\(\.\.\/(?:controls|patterns)\/([a-z-]+)\.md/g)].map(m => m[1])]);
+    if (!routes.length && md.includes('**App routes:**')) { lines.push(`${f}: app-only page, checked by tests/ui/app.check.ts`); continue; }
     if (!routes.length) { lines.push(`${f}: no "Mockup routes" line`); missingTotal++; continue; }
     const seen = new Set();
     const badLists = new Set();

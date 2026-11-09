@@ -458,7 +458,7 @@ export function NavRail({ items, pinned, current, onPin, onGo }: {
     </li>;
   };
   const found = items.filter(i => i.label.toLowerCase().includes(q.toLowerCase()));
-  const groups = [...new Set(found.map(i => i.group))];
+  const groups = [...new Set(found.filter(i => !pinned.includes(i.id)).map(i => i.group))];
   return (
     <nav class="rail" data-ui="nav-rail" aria-label="Sections">
       {pinned.length > 0 && <ul class="rail-g pinned" aria-label="Pinned">{pinned.map(id => items.find(i => i.id === id)).filter(Boolean).map(i => item(i!))}</ul>}
@@ -527,3 +527,41 @@ export const DetailSection = ({ title, children }: { title: string; children: Co
   <section class="dsec" data-ui="detail-section"><h3>{title}</h3>{children}</section>;
 export const KvRow = ({ icon, label, meta, value }: { icon: IconName; label: string; meta?: ComponentChildren; value?: ComponentChildren }) =>
   <div class="kv-row"><Icon name={icon} /><b>{label}</b>{meta && <span class="muted">{meta}</span>}<span class="grow" />{value}</div>;
+
+/* ---------- Composer (controls/composer.md) ---------- */
+
+/** Message input for a conversation: Enter sends, Shift+Enter adds a line; the draft survives updates and is kept per session. */
+export function Composer({ onSend, disabledReason, placeholder = 'Message', draftKey }: { onSend: (text: string) => Promise<void> | void; disabledReason?: string; placeholder?: string; draftKey?: string }) {
+  const read = () => { try { return draftKey ? localStorage.getItem('draft:' + draftKey) ?? '' : ''; } catch { return ''; } };
+  const [text, setText] = useState(read);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setText(read()); }, [draftKey]);
+  const keep = (v: string) => { setText(v); try { if (draftKey) localStorage.setItem('draft:' + draftKey, v); } catch { /* storage unavailable */ } };
+  const send = async () => {
+    const v = text.trim(); if (!v || busy || disabledReason) return;
+    // The draft is cleared only after a successful send; on failure it stays for another try.
+    setBusy(true); try { await onSend(v); keep(''); } catch { /* caller shows the error */ } finally { setBusy(false); }
+  };
+  return (
+    <div class="composer" data-ui="composer">
+      <textarea value={text} placeholder={placeholder} aria-label={placeholder} rows={2} disabled={!!disabledReason}
+        onInput={e => keep((e.target as HTMLTextAreaElement).value)}
+        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
+      <Button label="Send" kind="primary" busy={busy} disabledReason={disabledReason} onClick={send} />
+    </div>
+  );
+}
+
+/* ---------- Offline marker (controls/offline-marker.md) ---------- */
+
+/** Says whether shown data is current: offline, updating (stale but online) or signed out; hidden when current. */
+export function OfflineMarker({ state, since, now }: { state: 'current' | 'offline' | 'updating' | 'signed-out'; since?: number; now: number }) {
+  if (state === 'current') return null;
+  const a = since ? age(since, now) : null;
+  const word = state === 'offline' ? 'offline' : state === 'updating' ? 'updating' : 'signed out';
+  const long = state === 'signed-out' ? 'Session expired. Sign in again.' : `${word}${a ? `, last updated ${a.long}` : ''}`;
+  return <span class={`offline-marker t-${state === 'signed-out' ? 'danger' : state === 'offline' ? 'attention' : 'neutral'}`} data-ui="offline-marker" role="status" aria-label={long}>
+    <Icon name={state === 'updating' ? 'rotate-cw' : state === 'offline' ? 'circle-slash' : 'circle-alert'} />{word}{a && state !== 'signed-out' ? ` · ${a.text}` : ''}
+    {state === 'signed-out' && <a href={location.pathname}>Sign in again</a>}
+  </span>;
+}
