@@ -1,0 +1,109 @@
+{
+  "nativeTestedExecutorSha256": "1461d15342a3dd006ec73e4ea36fdf3b546c133b7322938151b7740025efc484",
+  "modelTurns": 1,
+  "executionId": "antigravity-native-one",
+  "nativeSessionId": "ffccb80a-d923-4890-8376-6252e4e19df6",
+  "accountAlias": "fleet-antigravity-current",
+  "credentialAuthority": "native-current",
+  "credentialAuthorityHomeIsHostHome": true,
+  "privateBehaviorRoot": true,
+  "explicitNativeRootFlagsAndDefaultCustomizationsDisabled": true,
+  "nativeHistoryUnderPrivateBehaviorRoot": true,
+  "requestedModel": "gemini-3.8-flash-low",
+  "nativeEffectiveConfigOptions": [
+    {
+      "id": "model",
+      "value": "gemini-3.8-flash"
+    },
+    {
+      "id": "thought_level",
+      "value": "low"
+    },
+    {
+      "id": "mode",
+      "value": "accept-edits"
+    }
+  ],
+  "inputRole": "user",
+  "profileInstructionsAndTaskSeparateInRecordedInputs": true,
+  "profileSha256": "b45f6c4dd635a8093361a4f1cf59a64731a59a1cec27115b51a1c5f11279d53d",
+  "outboundMethods": [
+    "initialize",
+    "session/new",
+    "session/set_model",
+    "session/set_mode",
+    "session/prompt"
+  ],
+  "authenticationOrLoginInvoked": false,
+  "registeredMcpServers": [
+    "design-rules"
+  ],
+  "completedNativeTools": [
+    {
+      "id": "call_17039051890944480959",
+      "title": "Run mcp_design-rules_get_design_rules",
+      "kind": "other",
+      "status": "completed",
+      "nativeInputFields": [
+        "toolSummary"
+      ],
+      "clientResultExposed": false
+    },
+    {
+      "id": "call_10795919154458485593",
+      "title": "File output/marker.txt",
+      "kind": "edit",
+      "status": "completed",
+      "nativeInputFields": [
+        "Content",
+        "Overwrite",
+        "Path"
+      ],
+      "clientResultExposed": true
+    },
+    {
+      "id": "call_9834994497713320168",
+      "title": "File output/marker.txt",
+      "kind": "read",
+      "status": "completed",
+      "nativeInputFields": [
+        "Path"
+      ],
+      "clientResultExposed": false
+    }
+  ],
+  "mcpStructuredArgumentsExposed": false,
+  "mcpExactConfiguredResultJsonRetainedInNativeDb": true,
+  "mcpNativeResultProof": [
+    {
+      "stepIndex": 2,
+      "payloadSha256": "3538a3c46b8b87c029cf9435434c7db1d7c9bfe63b27dbed711fda1ac833f26b"
+    }
+  ],
+  "mcpClientResultExposed": false,
+  "fileBytes": "AGY_NATIVE_ONE",
+  "finalAnswer": "AGY_NATIVE_ONE",
+  "nativeUsage": {
+    "inputTokens": 31012,
+    "outputTokens": 223,
+    "cachedReadTokens": 4046,
+    "cachedWriteTokens": 0,
+    "thoughtTokens": 0,
+    "totalTokens": 35281
+  },
+  "usageScope": "native ACP prompt result; native cache categories, no sum across events",
+  "completedReceipt": {
+    "commandId": "antigravity-native-one",
+    "executionId": "antigravity-native-one",
+    "hostId": "qualification",
+    "nativeSessionId": "ffccb80a-d923-4890-8376-6252e4e19df6",
+    "status": "completed"
+  },
+  "rootExitStdoutEofAndOwnedCleanupRequiredByCompletedReceipt": true,
+  "permissionRequests": 0,
+  "rawFrames": 22,
+  "privateRawSha256": {
+    "incoming": "8afcbcf28ff1c911e7a033106c88806cab463c9fa0b835f0fc026fbada0ce3ba",
+    "outgoing": "8a921dfad99b5a404b40b7dba708ecff8448eafe5cd6a38f0a0b2cf032a14930"
+  }
+}

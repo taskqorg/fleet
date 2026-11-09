@@ -1,0 +1,32 @@
+[
+  {
+    "command": "models",
+    "exitCode": 1,
+    "modelIds": [],
+    "sentinelPresent": false,
+    "emptyMcpIndication": false,
+    "authRequiredIndication": true,
+    "stdoutBytes": 0,
+    "stderrBytes": 122
+  },
+  {
+    "command": "mcp-default",
+    "exitCode": 0,
+    "modelIds": [],
+    "sentinelPresent": false,
+    "emptyMcpIndication": true,
+    "authRequiredIndication": false,
+    "stdoutBytes": 27,
+    "stderrBytes": 0
+  },
+  {
+    "command": "mcp-override",
+    "exitCode": 1,
+    "modelIds": [],
+    "sentinelPresent": false,
+    "emptyMcpIndication": false,
+    "authRequiredIndication": false,
+    "stdoutBytes": 0,
+    "stderrBytes": 48
+  }
+]

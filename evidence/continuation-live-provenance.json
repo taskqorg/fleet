@@ -1,0 +1,20 @@
+[
+  {
+    "sessionId": "e34dc43f-2f0f-454c-96f8-c1f1afc8c8b1",
+    "nativeThread": "01a1be0c-82b4-7843-8394-f12a1c5dd543",
+    "profileInstructionsObserved": false,
+    "latestModel": "gpt-6.1-sol",
+    "latestEffort": "low",
+    "privateMemoryPointerAbsent": true,
+    "rolloutSha256": "18501d7b005d364d4ef3ea77cd8d4f974814141dce3d7b761d2984013dd16b29"
+  },
+  {
+    "sessionId": "2d471866-0c53-428e-a206-4eb344547f32",
+    "nativeThread": "01a1be29-0735-7f91-9c6b-08fe946f82e3",
+    "profileInstructionsObserved": true,
+    "latestModel": "gpt-6.1-sol",
+    "latestEffort": "low",
+    "privateMemoryPointerAbsent": true,
+    "rolloutSha256": "cd63d416522fccfe22d05cdde42bfdb4e10339f0f329decbb771bd0ecf586d58"
+  }
+]

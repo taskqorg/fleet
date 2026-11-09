@@ -1,0 +1,3 @@
+378dd63571239b274ea80384fd0dbd8f2845fe793629bb2b215486e0d9285378  target/release/fleet-executor
+896a6fb773921b1593c0bae76fac5c9e1edfa03ac79c7b521440f80392ed9ab5  crates/executor/src/main.rs
+ecbd3820e421936dd156aa67ec6aca7040d0818cda32f93002d8314458099f96  crates/executor/src/delegation.py

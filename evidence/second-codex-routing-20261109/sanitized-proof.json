@@ -1,0 +1,61 @@
+{
+  "candidateSha256": "901d7df3e42fc1b723ef80bdf3572cb1442e44dbd59ea24ccca3863ad0f941a6",
+  "differsFromAcceptedRepairedB": true,
+  "nativeModelTurns": 1,
+  "executionId": "second-account-routing-one",
+  "threadId": "01a1be7a-9709-7592-ae84-1bdd9d098b62",
+  "freshThreadStart": true,
+  "crossAccountResumeAttempted": false,
+  "requestedAccount": "fleet-codex-second",
+  "effectiveHomeMatchesSelectedRegistry": true,
+  "nativeHistoryUnderSelectedNativeHome": true,
+  "selectedNativeHomeRelativeToFleet": "accounts/codex-second/native",
+  "actualHistoryFilename": "rollout-2026-11-09T11-04-28-01a1be7a-9709-7592-ae84-1bdd9d098b62.jsonl",
+  "model": "gpt-6.1-sol",
+  "effort": "low",
+  "profileId": "baseline",
+  "profileSha256": "9d23f7fde668430ab9d50cb6db6fdcb3d92523b51f21c820f9e9d270825e8fd2",
+  "sameCanonicalBaselineAvailableToFirstAccount": true,
+  "nativeDeveloperContainsCanonicalProfileInstructions": true,
+  "completedReceipt": {
+    "commandId": "second-account-routing-one",
+    "executionId": "second-account-routing-one",
+    "hostId": "qualification",
+    "nativeSessionId": "01a1be7a-9709-7592-ae84-1bdd9d098b62",
+    "status": "completed"
+  },
+  "nativeExitAndStdoutEofRequiredByCompletedReceipt": true,
+  "fileReadback": "ROUTING_SECOND",
+  "finalAnswer": "ROUTING_SECOND",
+  "normalizedTools": [
+    {
+      "arguments": "/bin/zsh -lc \"mkdir -p output && printf %s ROUTING_SECOND > output/account-marker.txt && python3 -c 'from pathlib import Path; data = Path(\\\"output/account-marker.txt\\\").read_bytes(); assert data == b\\\"ROUTING_SECOND\\\"; print(data.decode())'\"",
+      "exitCode": 0,
+      "id": "exec-28ee535d-3283-422c-bc3f-7bffa7d22330",
+      "name": "commandExecution",
+      "result": "ROUTING_SECOND\n",
+      "status": "completed"
+    }
+  ],
+  "latestNormalizedUsage": {
+    "cache_write_input_tokens": 0,
+    "cached_input_tokens": 24704,
+    "input_tokens": 26683,
+    "output_tokens": 109,
+    "reasoning_output_tokens": 0,
+    "total_tokens": 26792
+  },
+  "usageScope": "native thread cumulative total; not additive",
+  "rawFrameCount": 45,
+  "outboundMethods": [
+    "initialize",
+    "initialized",
+    "thread/start",
+    "turn/start"
+  ],
+  "privateRawHashes": {
+    "incoming": "0e8cfadbe26a6740a4bfa03ffabc75d75c025779da707ba8d6aaa4f77b980053",
+    "outgoing": "ebbec6b16cd7f43f0cd28bfaab60f1f70e18a58e1caa25c04f216e171565ddfa"
+  },
+  "actualHostBindingAliasMatchesRequest": true
+}

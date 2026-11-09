@@ -1,0 +1,75 @@
+{
+  "candidateSha256": "5eece6b61e3d9421ea4cbc31863a1dc5dd68afe7cac2e80e0a6c398f14e89d5b",
+  "modelTurnsSubmitted": 1,
+  "executionId": "qualification-repaired-B",
+  "nativeThreadId": "01a1be51-c6cf-7430-85be-4745759a09bf",
+  "sameSavedWorkspace": true,
+  "model": "gpt-6.1-sol",
+  "effort": "low",
+  "outboundMode": "0o600",
+  "outboundMethods": [
+    "initialize",
+    "initialized",
+    "thread/resume",
+    "thread/inject_items",
+    "turn/start"
+  ],
+  "resumeAndInjectionTextIdentical": true,
+  "instructionMarker": "B",
+  "instructionSha256": "49c4d2ec71228040cd92af4560eedaf5648456f20110504a2d5a8ebbc85278da",
+  "injectionRole": "developer",
+  "injectionAck": {
+    "id": 4,
+    "result": {}
+  },
+  "injectBeforeSoleTurn": true,
+  "ackBeforeTurnEnforcedByCandidateStateMachine": true,
+  "developerMessagePersistedAt": "2026-11-09T03:35:44.043Z",
+  "turnContextPersistedAt": "2026-11-09T03:35:45.167Z",
+  "userTask": "Perform the small local file task required by the current developer instructions. Do not use network or subagents.",
+  "userTaskContainsExpectedMarker": false,
+  "fileReadback": "B",
+  "finalAnswer": "B",
+  "completedReceipt": {
+    "commandId": "qualification-repaired-B",
+    "executionId": "qualification-repaired-B",
+    "hostId": "qualification",
+    "nativeSessionId": "01a1be51-c6cf-7430-85be-4745759a09bf",
+    "status": "completed"
+  },
+  "rawNativeFrameCount": 49,
+  "rawHashes": {
+    "outbound": "7dc70a3ce945fd9d0d74b54d046ba9a40aab8261863f4ad5b3972a2eeb9ad521",
+    "incoming": "d2108f58cbb3d96b5dca9e90bf12e15ea9f7dc248f2a4af377ea98d6e7ceb271"
+  },
+  "localTools": [
+    {
+      "command": "/bin/zsh -lc 'mkdir -p output && printf B > output/marker.txt'",
+      "result": null,
+      "exitCode": 0
+    },
+    {
+      "command": "/bin/zsh -lc \"python3 -c \\\"from pathlib import Path; data = Path('output/marker.txt').read_bytes(); assert data == b'B'; print(data.decode())\\\"\"",
+      "result": "B\n",
+      "exitCode": 0
+    }
+  ],
+  "normalizedUsage": {
+    "cache_write_input_tokens": 0,
+    "cached_input_tokens": 74624,
+    "input_tokens": 81790,
+    "output_tokens": 347,
+    "reasoning_output_tokens": 0,
+    "total_tokens": 82137
+  },
+  "usageScope": "native thread cumulative total; not additive",
+  "observedExecutorChildrenAllGone": true,
+  "rootExitAndStdoutEofRequiredByCompletedReceipt": true,
+  "priorDeveloperHistoryPreserved": true,
+  "nativeAckBeforeTurnStarted": {
+    "ackFrameIndex": 11,
+    "turnStartedFrameIndex": 14
+  },
+  "observedNativeTurnsStarted": 1,
+  "observedNativeTurnsCompleted": 1
+}

@@ -1,0 +1,11 @@
+{
+  "allStagesCompleted": true,
+  "sameNativeThread": true,
+  "sameFleetSession": true,
+  "exactResultDelivered": true,
+  "sourceHashesMatch": true,
+  "allRetainedArtifactHashesMatch": true,
+  "sequential": true,
+  "originalHtmlUnchanged": true,
+  "cssFixPresent": true
+}
