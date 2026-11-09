@@ -120,6 +120,13 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
     *   Their instructions load on demand, and a test enforces a byte budget on them.
     *   The shapes are copied from t3code and Orca.
 
+*   **G10. People and access.**
+    *   Fleet keeps the list of people who use it: the owner, Alina and Simon to start.
+    *   Any email can be given access to a project, a task or a single artifact.
+    *   Cloudflare Access stays the outer wall, so an email Fleet does not know never reaches Fleet.
+    *   Fleet checks access again on every operation.
+    *   Fleet shows the state of access and onboarding: who has access, to what, since when, and whether Cloudflare matches Fleet's list.
+
 ## Non-Goals
 
 *   The laboratory ladder logic: N variants, interleaved trials, judges, assessments and promotion. This foundation only stores what the ladder needs.
@@ -509,6 +516,29 @@ The shapes are copied from t3code (`apps/server/src/mcp/toolkits/attachment/tool
 *   **Working area.** Each execution writes to its own working area. The shared `.git` is read-only to agents, and writes go through the delivery path. Host-side git runs with hooks and fsmonitor disabled, so files an agent planted in a checkout never run on the host.
 *   **Network.** Network access is a setting per project or profile, not a fixed rule.
 *   **Observation.** A person can log in to the boundary, or attach to it, and watch the agent.
+
+### 10. People and access
+
+*   **Table `person`.**
+    *   Columns: `email` (unique), `name`, `roles` (`operator`, `architect`), `state` (`invited`, `active` or `disabled`), `created_by` and timestamps.
+    *   Project grants live in `person_grant(person_email, project_id, role)`.
+    *   The first rows are the owner, Alina and Simon.
+*   **Table `share`.**
+    *   Columns: `email`, `object_kind` (`project`, `task` or `artifact`), `object_id`, `expires_at` (optional), `granted_by`, `revoked_at`.
+    *   A share gives read access to that object only.
+*   **Cloudflare Access is kept in sync by Fleet.**
+    *   The Access policies for the Fleet site and the store tunnels allow one Access group, `fleet-people`.
+    *   When a person is activated or a share is created, Fleet adds the email to that group through the Cloudflare API.
+    *   When a person is disabled, or an email's last live share is revoked or expires, Fleet removes the email.
+    *   The Cloudflare API token, limited to editing this group, is a connection of the coordinator. It is never visible to agents.
+*   **Fleet authorizes too.**
+    *   The access guard (`deploy/infrastructure/origin_guard.py`) still verifies the Access JWT, but passes the email to Fleet instead of matching one owner.
+    *   Fleet maps the email to a `person` or a live `share`, and then applies the grants inside each operation. An email Fleet does not know gets 403 even if Cloudflare let it through.
+*   **Access state and onboarding are Fleet work.**
+    *   `access.status` lists people, grants, shares and expiry dates.
+    *   It compares the `fleet-people` group with Fleet's list and reports every difference as a problem with an action: add, remove or ignore.
+    *   Inviting a person is a normal Fleet operation, `people.invite`. People and agents use the same operations, within their permissions.
+*   **Agents.** An agent acts with its execution's permissions, never with a person's. Sharing with a new email is an operator action. An agent can only propose it as an `operator_decision` question.
 
 ## Alternatives Considered
 
@@ -1213,6 +1243,40 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
     *   **redaction:** every injected secret is removed from the outbox rows and from the uploaded transcript.
     *   **preview:** a PNG and an MP4 fixture produce a thumbnail and a poster linked by `derived_from_artifact_id`; without `ffmpeg`, the result is `unavailable` and the execution still succeeds.
     *   **isolation:** an agent cannot read another account's `HOME`, the shared key directory, or the machine token; a hook or `core.fsmonitor` that an agent planted in a checkout does not run during host-side git; the key file is gone after the run; the Linux cgroup reports usage; the `fleet` user cannot start `fleet-launch@` for a user outside `fleet-*`.
+
+#### People and access (with Phase 6)
+
+##### 55. `packages/coordinator/db/schema.sql` and `packages/coordinator/people.ts` (Modify / Create)
+
+*   **Type / Scope**: Schema migration and TypeScript operations.
+*   **Proposed Changes**:
+    *   Add the `person`, `person_grant` and `share` tables from Technical Plan §10.
+    *   Add the operations `people.invite`, `people.update`, `people.disable`, `shares.create`, `shares.revoke` and `access.status`.
+    *   Seed the owner, Alina and Simon from a host-only file, so that no email is stored in the repository.
+*   **Why**: G10.
+
+##### 56. `packages/coordinator/access-sync.ts` (Create)
+
+*   **Type / Scope**: Cloudflare Access group sync.
+*   **Proposed Changes**:
+    *   Add or remove an email in the `fleet-people` group through the Cloudflare API whenever a person or a share changes. A periodic reconcile reports every difference to `access.status`.
+    *   The token comes from the coordinator's connection file.
+*   **Why**: Cloudflare stays the outer wall, and Fleet's list stays the source of truth.
+
+##### 57. `deploy/infrastructure/origin_guard.py` and `test_origin_guard.py` (Modify)
+
+*   **Type / Scope**: Access guard.
+*   **Proposed Changes**: Replace the single-owner email match with JWT verification only, and forward the verified email to the coordinator in an internal header. Tests cover a forged header, a missing JWT and an unknown email.
+*   **Why**: Fleet authorizes by its own tables.
+
+##### 58. `tests/coordinator/people.test.ts` (Create)
+
+*   **Type / Scope**: Unit tests.
+*   **Proposed Changes**: These tests cover:
+    *   An unknown email gets 403.
+    *   An artifact share grants that artifact only.
+    *   An expired share removes the email from the group when no other share remains.
+    *   A drift between the group and the table appears in `access.status`.
 
 ### Verification Plan
 
