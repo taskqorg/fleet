@@ -33,7 +33,8 @@ export function delegation(store:{all:(k:string,filter?:object,omit?:string[])=>
    const history=runs.slice(0,runs.findIndex(x=>x.id===parent.id)+1).reverse();
    const withArtifacts=new Set((await store.query("SELECT DISTINCT data->>'executionId' AS id FROM document WHERE kind='artifact' AND data->>'executionId'=ANY($1)",[history.map(run=>run.id)])).map((r:any)=>r.id));
    const sourceRun=history.find(run=>withArtifacts.has(run.id));
-   const latest=new Map<string,any>();for(const a of (await all('artifact',{executionId:sourceRun?.id})).filter(a=>a.executionId===sourceRun?.id))latest.set(a.path,a);
+   const latest=new Map<string,any>();// Every artifact has an executionId (the artifact route sets it), so no source run means no artifacts, not a scan of all of them.
+   for(const a of sourceRun?(await all('artifact',{executionId:sourceRun.id})).filter(a=>a.executionId===sourceRun.id):[])latest.set(a.path,a);
    const sources=[...latest.values()].filter(a=>/\.(html|css)$/i.test(a.path)).map(a=>({path:a.path,executionId:a.executionId,sha256:a.sha256,text:Buffer.from(a.contentBase64,'base64').toString('utf8')}));
    if((!sources.length&&d.request.profileId==='website-reviewer')||JSON.stringify(sources).length>128000){d.routingError='Website text inputs unavailable or exceed 128000 characters';await put('delegation',d);return false}
    const parentMessages=(await all('event',{executionId:parent.id})).filter(e=>e.executionId===parent.id).flatMap(e=>e.data?.fleetNormalized?.messages??(e.data?.item?.type==='agent_message'?[{role:'assistant',text:e.data.item.text}]:[]));
@@ -44,7 +45,8 @@ export function delegation(store:{all:(k:string,filter?:object,omit?:string[])=>
   }
   return true;
  },
- async reconcile(){const ds=await all('delegation'),open=ds.filter(d=>!d.continuationExecutionId&&d.state!=='suppressed');
+ // Open delegations only (partial index, migration 5): the same test as the skip below, done in SQL.
+ async reconcile(){const ds=(await store.query("SELECT data FROM document WHERE kind='delegation' AND coalesce(data->>'continuationExecutionId','')='' AND coalesce(data->>'state','')<>'suppressed' ORDER BY seq")).map((r:any)=>r.data),open=ds.filter(d=>!d.continuationExecutionId&&d.state!=='suppressed');
   // Executions and sessions read once per poll; dropped after an enqueue, which writes them.
   let executions=await store.many(open.flatMap(d=>[d.parentExecutionId,d.childExecutionId]),'execution'),sessions=await store.many([...executions.values()].map(e=>e.sessionId),'session');
   for(const d of ds){

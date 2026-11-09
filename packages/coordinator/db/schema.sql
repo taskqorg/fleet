@@ -24,3 +24,6 @@ ALTER INDEX document_data SET (fastupdate = off);
 -- migration 4: per-execution and per-session reads (store.all) lock only that execution's or session's index range.
 CREATE INDEX document_execution ON document(kind, (data->>'executionId'), seq);
 CREATE INDEX document_session ON document(kind, (data->>'sessionId'), seq);
+
+-- migration 5: delegations still open (delegates.reconcile on every poll)
+CREATE INDEX document_open_delegation ON document(seq) WHERE kind = 'delegation' AND coalesce(data->>'continuationExecutionId', '') = '' AND coalesce(data->>'state', '') <> 'suppressed';
