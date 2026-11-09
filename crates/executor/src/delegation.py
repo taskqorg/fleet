@@ -36,11 +36,24 @@ def transfer(kind, body, wait, until):
     return {'state': 'pending', 'transferId': key, 'instruction': 'Still in progress on this host; list artifacts later.'}
 def artifact_tool(name, q):
     if name == 'artifact_save':
-        root = os.path.realpath(context['workdir'])
-        path = os.path.realpath(os.path.join(root, q['path']))
-        if not path.startswith(root + os.sep) or not os.path.isfile(path) or os.path.islink(os.path.join(root, q['path'])): raise ValueError('path must be a file inside your working area')
-        key = str(uuid.uuid4()); os.makedirs(context['spool'], exist_ok=True); spool = os.path.join(context['spool'], key)
-        shutil.copyfile(path, spool)
+        # Open component by component from the working area, never following a link, and copy from that open file.
+        parts = [p for p in q['path'].split('/') if p not in ('', '.')]
+        if not parts or '..' in parts: raise ValueError('path must be a file inside your working area')
+        fd = os.open(context['workdir'], os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for p in parts[:-1]:
+                nxt = os.open(p, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd); os.close(fd); fd = nxt
+            src = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+        finally:
+            os.close(fd)
+        try:
+            import stat as _stat
+            if not _stat.S_ISREG(os.fstat(src).st_mode): raise ValueError('path must be a regular file')
+            key = str(uuid.uuid4()); os.makedirs(context['spool'], exist_ok=True); spool = os.path.join(context['spool'], key)
+            with os.fdopen(os.dup(src), 'rb') as fin, open(spool, 'xb') as fout: shutil.copyfileobj(fin, fout)
+        finally:
+            os.close(src)
+        path = os.path.join(context['workdir'], *parts); root = context['workdir']
         body = {'path': spool, 'spool': True, 'previews': True, 'name': q.get('name') or os.path.relpath(path, root), 'mediaType': q.get('media_type') or mimetypes.guess_type(path)[0] or 'application/octet-stream', 'executionId': context['executionId'], 'required': q.get('required') is True}
         with db:
             db.execute("INSERT INTO transfers(id,kind,body,created_at) VALUES(?,?,?,?)", (key, 'upload', json.dumps(body), int(time.time() * 1000)))
@@ -96,7 +109,10 @@ for line in sys.stdin:
             q = req['params'].get('arguments') or {}
             spec = ARTIFACT_TOOLS[req['params']['name']]
             if not isinstance(q, dict) or set(q) - set(spec['properties']) or any(k not in q for k in spec['required']) or any(not isinstance(v, (str, bool)) for v in q.values()): raise ValueError('Invalid artifact tool arguments')
-            result = {'content': [{'type': 'text', 'text': json.dumps(artifact_tool(req['params']['name'], q))}]}
+            try:
+                result = {'content': [{'type': 'text', 'text': json.dumps(artifact_tool(req['params']['name'], q))}]}
+            except (OSError, ValueError) as error:
+                result = {'content': [{'type': 'text', 'text': json.dumps({'error': 'artifact tool refused: ' + (str(error) if isinstance(error, ValueError) else 'path must be a regular file inside your working area, not a link')})}], 'isError': True}
         elif method == 'ping':
             result = {}
         elif method == 'tools/call' and (req['params'].get('name') == 'request_child' or context.get('projectId') and req['params'].get('name') in ['project_context','catalogue','pipeline_run','direct_search','pipeline_history','pipeline_get','question_ask','question_history','account_list']):

@@ -208,11 +208,17 @@ fn run_job(c: &Client, db: &Connection, id: &str, kind: &str, body: &Value) -> s
             // artifact_get: download into the execution's input folder (inside its working area).
             let r = c.post("/api/hosts/artifacts/get", json!({"hostId":c.host,"executionId":body["executionId"],"artifactId":body["artifactId"]}))?;
             let url = r["url"].as_str().ok_or(Failure::Permanent(format!("artifact {}", r["availability"].as_str().unwrap_or("unavailable"))))?;
-            let name = r["name"].as_str().unwrap_or("artifact").rsplit('/').next().unwrap_or("artifact").to_string();
+            // The input folder must be a real directory (never a symlink); the file is created new, without following links.
+            let name: String = r["name"].as_str().unwrap_or("artifact").rsplit('/').next().unwrap_or("artifact").chars().map(|ch| if ch.is_ascii_alphanumeric() || "._-".contains(ch) { ch } else { '_' }).collect();
             let dir = PathBuf::from(body["inputDir"].as_str().unwrap_or(""));
             std::fs::create_dir_all(&dir)?;
-            let target = dir.join(format!("{}-{name}", &r["id"].as_str().unwrap_or("x")[..8.min(r["id"].as_str().unwrap_or("x").len())]));
-            let mut out = std::fs::File::create(&target)?;
+            if std::fs::symlink_metadata(&dir)?.file_type().is_symlink() || !dir.is_dir() { return Err(Failure::Permanent("input folder is not a directory".into())) }
+            let tag: String = r["id"].as_str().unwrap_or("x").chars().take(8).collect();
+            use std::os::unix::fs::OpenOptionsExt;
+            let (target, mut out) = (0..1000).find_map(|n| {
+                let t = dir.join(if n == 0 { format!("{tag}-{name}") } else { format!("{tag}-{n}-{name}") });
+                std::fs::OpenOptions::new().write(true).create_new(true).custom_flags(libc::O_NOFOLLOW).open(&t).ok().map(|f| (t, f))
+            }).ok_or(Failure::Permanent("cannot create the input file".into()))?;
             std::io::copy(&mut c.get(url)?, &mut out)?;
             Ok(json!({"artifactId":r["id"],"path":target,"mediaType":r["mediaType"],"size":r["size"]}))
         }

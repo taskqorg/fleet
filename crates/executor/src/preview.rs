@@ -23,8 +23,13 @@ fn setting(name: &str, default: u64) -> u64 {
     std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 /// The ffmpeg command line for one preview, wrapped for low priority and no network.
-pub fn command(src: &Path, out: &Path, poster: bool) -> Command {
-    let mut args: Vec<String> = vec!["-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(), "-i".into(), src.display().to_string()];
+/// The demuxer for a media type; anything else gets no preview. Forcing it (with the file protocol only) keeps agent-made
+/// playlists and concat lists from making ffmpeg read other files.
+pub fn demuxer(media: &str) -> Option<&'static str> {
+    Some(match media { "image/png" => "png_pipe", "image/jpeg" => "jpeg_pipe", "image/webp" => "webp_pipe", "image/gif" => "gif", "video/mp4" | "video/quicktime" => "mov", "video/webm" | "video/x-matroska" => "matroska", _ => return None })
+}
+pub fn command(src: &Path, out: &Path, poster: bool, format: &str) -> Command {
+    let mut args: Vec<String> = vec!["-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(), "-protocol_whitelist".into(), "file".into(), "-f".into(), format.into(), "-i".into(), format!("file:{}", src.display())];
     if !poster { args.extend(["-vf".into(), "scale='min(512,iw)':-2".into()]) }
     args.extend(["-frames:v".into(), "1".into(), out.display().to_string()]);
     let mut c = if cfg!(target_os = "macos") {
@@ -72,14 +77,15 @@ fn run(mut c: Command) -> Result<(), String> {
 pub fn build(db: &Connection, body: &Value, response: &Value) {
     let media = body["mediaType"].as_str().unwrap_or("");
     let video = media.starts_with("video/");
-    if !(video || media.starts_with("image/") && media != "image/svg+xml" && media != "image/x-icon") || ffmpeg_version().is_none() { return }
+    let Some(format) = demuxer(media) else { return };
+    if ffmpeg_version().is_none() { return }
     let Some(src) = body["path"].as_str().map(PathBuf::from) else { return };
     let spool = src.parent().map(Path::to_path_buf).unwrap_or_default();
     let name = body["name"].as_str().unwrap_or("artifact");
     for (role, poster) in if video { vec![("poster", true), ("thumbnail", false)] } else { vec![("thumbnail", false)] } {
         let id = crate::new_id();
         let out = spool.join(format!("{id}.jpg"));
-        match run(command(&src, &out, poster)) {
+        match run(command(&src, &out, poster, format)) {
             Ok(()) => { let _ = upload::enqueue(db, &id, "upload", &json!({"path":out,"spool":true,"previews":false,"name":format!("{name}.{role}.jpg"),"mediaType":"image/jpeg","executionId":body["executionId"],"required":false,"derivedFrom":response["artifactId"],"role":role})); }
             Err(e) => eprintln!("preview error for {name}: {e}"),
         }
@@ -91,11 +97,13 @@ mod tests {
     use super::*;
     #[test]
     fn command_runs_at_low_priority_without_network() {
-        let c = command(Path::new("/tmp/in.png"), Path::new("/tmp/out.jpg"), false);
+        let c = command(Path::new("/tmp/in.png"), Path::new("/tmp/out.jpg"), false, "png_pipe");
         let args: Vec<String> = std::iter::once(c.get_program().to_string_lossy().into_owned()).chain(c.get_args().map(|a| a.to_string_lossy().into_owned())).collect();
         assert_eq!(&args[..3], ["nice", "-n", "19"]);
         if cfg!(target_os = "macos") { assert!(args.iter().any(|a| a.contains("deny network"))) }
         assert!(args.iter().any(|a| a.starts_with("scale=")));
+        assert!(args.windows(2).any(|w| w[0] == "-protocol_whitelist" && w[1] == "file"));
+        assert_eq!(demuxer("application/vnd.apple.mpegurl"), None);
     }
     #[test]
     fn builds_a_thumbnail_when_ffmpeg_is_present() {
@@ -104,7 +112,7 @@ mod tests {
         std::fs::create_dir_all(&d).unwrap();
         let src = d.join("in.png");
         assert!(Command::new("ffmpeg").args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=1024x768", "-frames:v", "1"]).arg(&src).status().unwrap().success());
-        run(command(&src, &d.join("out.jpg"), false)).unwrap();
+        run(command(&src, &d.join("out.jpg"), false, "png_pipe")).unwrap();
         assert!(std::fs::metadata(d.join("out.jpg")).unwrap().len() > 0);
     }
 }
