@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import stat
 import sys
+sys.dont_write_bytecode = True
 
 def private(path):
     p=Path(path)

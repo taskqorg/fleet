@@ -28,7 +28,7 @@ export function delivery(store:any,config:any,enqueue:any,projects:any,resolveAc
    if(r.previousDeliveryId){const prior=reconcile(get(r.previousDeliveryId,'delivery')),generation=prior.steps.find((s:any)=>s.kind==='generate');previousSources=all('artifact').filter((a:any)=>a.executionId===generation.executionId&&/^(?:output\/)?[a-zA-Z0-9_-]+\.(html|css)$/.test(a.path)).map((a:any)=>({artifactId:a.id,path:a.path.replace(/^output\//,''),sha256:a.sha256,text:Buffer.from(a.contentBase64,'base64').toString('utf8')}));if(JSON.stringify(previousSources).length>128000||!previousSources.some(a=>a.path==='index.html'))fail(409,'Prior sources unavailable or exceed bounded text context');}
    // Persist external intent before dispatch. Unknown work is reconciled, never replayed.
    r.state='researching';save(r);
-   const research=r.sourceRunId?get(r.sourceRunId,'pipeline-run'):await (r.invocation==='direct'?projects.direct_search:projects.pipeline_run)({projectId:r.projectId,requestId:'delivery:'+r.id,query:r.task,methodId:r.methodId});r.researchRunId=research.id;
+   const research=r.sourceRunId?get(r.sourceRunId,'pipeline-run'):await (r.invocation==='direct'?projects.direct_search:projects.pipeline_run)({projectId:r.projectId,requestId:'delivery:'+r.id,query:r.task,methodId:r.methodId},{kind:'coordinator',deliveryId:r.id});r.researchRunId=research.id;
    if(research.state!=='completed'){r.state=research.state;r.error=research.result.error;return save(r)}
    const profile=requestedProfile;
    const s={id:randomUUID(),createdAt:Date.now(),agentConfig:profile,account:r.account,projectId:r.projectId,deliveryId:r.id};put('session',s);

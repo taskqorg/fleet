@@ -249,7 +249,7 @@ impl Executor {
                 cmd.args(["-c","mcp_servers.fleet.command=\"python3\"","-c",&format!("mcp_servers.fleet.args={args}"),"-c","mcp_servers.fleet.required=true"]);
                 let mut tools = Vec::new();
                 if !profiles.is_empty() { tools.push("request_child"); }
-                if p["projectId"].is_string() { tools.extend(["project_context","catalogue","pipeline_run","direct_search","pipeline_history","question_ask","question_history","account_list"]); }
+                if p["projectId"].is_string() { tools.extend(["project_context","catalogue","pipeline_run","direct_search","pipeline_history","pipeline_get","question_ask","question_history","account_list"]); }
                 cmd.args(["-c",&format!("mcp_servers.fleet.enabled_tools={}",json!(tools))]);
                 for tool in tools { cmd.args(["-c",&format!("mcp_servers.fleet.tools.{tool}.approval_mode=\"approve\"")]); }
             }

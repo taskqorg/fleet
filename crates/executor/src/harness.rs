@@ -288,7 +288,7 @@ pub fn claude_mcp(c: &mut Command, profile: &Value, servers: &Value) {
         if profile["delegationProfiles"].as_array().is_some_and(|p| !p.is_empty()) { allowed.push("mcp__fleet__request_child".into()); }
         let context = servers["fleet"]["args"].as_array().and_then(|a| a.last()).and_then(Value::as_str).and_then(|s| serde_json::from_str::<Value>(s).ok());
         if context.as_ref().is_some_and(|c| c["projectId"].is_string()) {
-            for tool in ["project_context","catalogue","pipeline_run","direct_search","pipeline_history","question_ask","question_history","account_list"] { allowed.push(format!("mcp__fleet__{tool}")); }
+            for tool in ["project_context","catalogue","pipeline_run","direct_search","pipeline_history","pipeline_get","question_ask","question_history","account_list"] { allowed.push(format!("mcp__fleet__{tool}")); }
         }
     }
     c.args([
