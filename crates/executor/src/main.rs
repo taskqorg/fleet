@@ -3,6 +3,7 @@ mod codex;
 mod harness;
 mod lab;
 mod native;
+mod outbox;
 use base64::Engine;
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
@@ -184,81 +185,14 @@ impl Executor {
         v
     }
     fn post(&self, route: &str, v: Value) -> Result<Value> {
-        // One pooled agent: keep-alive avoids a TLS handshake per outbox row.
-        static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
-        Ok(AGENT
-            .get_or_init(|| ureq::AgentBuilder::new().timeout(Duration::from_secs(5)).build())
-            .post(&format!("{}{route}", self.url))
-            .set("Authorization", &format!("Bearer {}", self.token))
-            .send_json(v)?
-            .into_json()?)
+        outbox::post(&self.url, &self.token, route, v)
     }
     fn queue(&self, route: &str, v: Value) -> Result<()> {
-        self.db.execute(
-            "INSERT INTO outbox(route,body) VALUES(?1,?2)",
-            params![route, v.to_string()],
-        )?;
-        Ok(())
+        outbox::queue(&self.db, route, v)
     }
+    #[cfg(test)]
     fn flush(&self) -> Result<()> {
-        let mut stmt = self
-            .db
-            .prepare("SELECT rowid,route,body FROM outbox ORDER BY rowid")?;
-        let rows = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-            ))
-        })?;
-        let rows: Vec<(i64, String, String)> = rows.collect::<std::result::Result<_, _>>()?;
-        drop(stmt);
-        let mut i = 0;
-        while i < rows.len() {
-            let (n, p, b) = rows[i].clone();
-            let mut value: Value = serde_json::from_str(&b)?;
-            // Consecutive event rows of one execution go in one request (coordinator validates the whole batch).
-            let mut batch = vec![n];
-            if p == "/api/hosts/events" {
-                while let Some((m, q, c)) = rows.get(i + batch.len()) {
-                    let next: Value = serde_json::from_str(c)?;
-                    if q != &p || next["executionId"] != value["executionId"] || value["events"].as_array().map_or(0, |a| a.len()) >= 500 { break; }
-                    let more = next["events"].as_array().cloned().unwrap_or_default();
-                    value["events"].as_array_mut().ok_or("events missing")?.extend(more);
-                    batch.push(*m);
-                }
-            }
-            i += batch.len();
-            let response = match self.post(&p, value.clone()) {
-                Ok(response) => response,
-                Err(error) => {
-                    if (value.get("delegation").is_some() || value.get("agentToolKey").is_some()) && error.downcast_ref::<ureq::Error>().is_some_and(|e| matches!(e, ureq::Error::Status(code, _) if (400..500).contains(code))) {
-                        json!({"error":"Coordinator rejected delegation; inspect retained command and grant"})
-                    } else { return Err(error); }
-                }
-            };
-            if let Some(k) = value["agentToolKey"].as_str() {
-                self.db.execute(
-                    "UPDATE delegation_requests SET response=? WHERE id=?",
-                    params![response.to_string(), k],
-                )?;
-            }
-            if let Some(q) = value.get("delegation") {
-                let key = format!(
-                    "{}:{}",
-                    value["commandId"].as_str().unwrap_or(""),
-                    q["requestId"].as_str().unwrap_or("")
-                );
-                self.db.execute(
-                    "UPDATE delegation_requests SET response=? WHERE id=?",
-                    params![response.to_string(), key],
-                )?;
-            }
-            for n in batch {
-                self.db.execute("DELETE FROM outbox WHERE rowid=?", [n])?;
-            }
-        }
-        Ok(())
+        outbox::flush(&self.db, &self.url, &self.token, &self.host)
     }
     fn receipt(&self, c: &Value, status: &str, native: Option<&str>) -> Result<()> {
         self.queue("/api/hosts/receipts",json!({"hostId":self.host,"commandId":c["id"],"executionId":c["executionId"],"status":status,"nativeSessionId":native}))
@@ -864,7 +798,7 @@ fn main() -> Result<()> {
         return Err("executor already running".into());
     }
     let db = Connection::open(root.join("journal.sqlite"))?;
-    db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,body TEXT NOT NULL,terminal INTEGER DEFAULT 0); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,native TEXT NOT NULL); CREATE TABLE IF NOT EXISTS outbox(route TEXT NOT NULL,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS delegation_requests(id TEXT PRIMARY KEY,body TEXT NOT NULL,response TEXT);")?;
+    db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,body TEXT NOT NULL,terminal INTEGER DEFAULT 0); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,native TEXT NOT NULL); CREATE TABLE IF NOT EXISTS delegation_requests(id TEXT PRIMARY KEY,body TEXT NOT NULL,response TEXT);")?;
     let mut e = Executor {
         db,
         root: root.clone(),
@@ -875,6 +809,9 @@ fn main() -> Result<()> {
         sessions: env::var_os("FLEET_SESSIONS_ROOT").map(PathBuf::from).unwrap_or_else(|| root.join("sessions")),
         harness_cache: HashMap::new(),
     };
+    outbox::schema(&e.db)?;
+    e.db.busy_timeout(Duration::from_secs(5))?;
+    outbox::spawn(root.join("journal.sqlite"), e.url.clone(), e.token.clone(), e.host.clone())?;
     fs::create_dir_all(&e.sessions)?;
     fs::set_permissions(&e.sessions, fs::Permissions::from_mode(0o700))?;
     unsafe {
@@ -892,7 +829,6 @@ fn main() -> Result<()> {
         }
         e.tick()?;
         let result = (|| -> Result<()> {
-            let _ = e.flush();
             let reply=e.post("/api/hosts/poll",json!({"hostId":e.host,"platform":platform(),"capabilities":["codex","gpt-6.1-sol","low","static-output","steer","native-fork"]}))?;
             for c in reply["commands"].as_array().ok_or("commands missing")? {
                 if e.run(c.clone()).is_err()
@@ -909,7 +845,6 @@ fn main() -> Result<()> {
                         e.finish(c, "failed", None)?;
                     }
                 }
-                let _ = e.flush();
             }
             Ok(())
         })();
