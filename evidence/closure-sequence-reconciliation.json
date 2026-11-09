@@ -1,0 +1,22 @@
+{
+  "executionId": "fa34505e-c55f-445f-afc5-2ae6b52705f6",
+  "cause": "process.closed reused final resource observation sequence; server correctly rejected conflicting event",
+  "previousSequence": 61,
+  "serverMaxSequenceObserved": 61,
+  "correctedSequence": 62,
+  "changedFields": [
+    "Fleet transport event seq",
+    "Fleet transport event id"
+  ],
+  "originalOutboxSha256": "fabbe18e68b6a69fa79c4974b3084ff842d5ef4c311a0a5ca36fe5825875e054",
+  "originalRetainedHostPrivate": true,
+  "pendingOutboxBefore": 4,
+  "nativeCommandAlreadyTerminal": true,
+  "activeNativeChildrenBeforeRepair": 0,
+  "nativeRolloutChanged": false,
+  "nativeTurnReplayed": false,
+  "modelTurnsForRepair": 0,
+  "previousExecutorSha256": "a879fec8c941b4dbdd222192c9a9a4653f83978b30c05ea3e3d66020393dbe54",
+  "fixedExecutorSha256": "6eee0f106f6f5658eb624e311ba3501689caab95524b26eae4096327cca7a405",
+  "pendingOutboxAfter": 0
+}

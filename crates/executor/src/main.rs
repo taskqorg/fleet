@@ -525,7 +525,7 @@ impl Executor {
                     return Ok(false);
                 }
                 if let Some(status) = l.exit {
-                    self.event(&l.command,l.seq,"process.closed",json!({"exitCode":status.code(),"stdoutClosed":l.eof,"observedOwnedProcessesRemaining":false,"cleanupUnknown":l.cleanup_unknown}))?;l.seq+=1;
+                    l.seq+=1;self.event(&l.command,l.seq,"process.closed",json!({"exitCode":status.code(),"stdoutClosed":l.eof,"observedOwnedProcessesRemaining":false,"cleanupUnknown":l.cleanup_unknown}))?;
                     let dir = self
                         .root
                         .join("sessions")

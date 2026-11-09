@@ -60,6 +60,7 @@ try:
   else:assert 'thread/inject_items' in methods
   assert methods.count('turn/start')==(0 if letter=='C' else 1)
   if letter=='B':assert methods.index('thread/inject_items')<methods.index('turn/start')
+  emitted_events=[e for route,b in received if route.endswith('/events') and b['executionId']==letter for e in b['events']];assert len({e['seq'] for e in emitted_events})==len(emitted_events),'Duplicate sequence';assert len({e['id'] for e in emitted_events})==len(emitted_events),'Duplicate event ID'
   closed=[e['data'] for route,b in received if route.endswith('/events') and b['executionId']==letter for e in b['events'] if e['type']=='process.closed'];assert closed and closed[-1]['stdoutClosed'] is True and closed[-1]['exitCode']==0
   metadata=[e['data'] for route,b in received if route.endswith('/events') and b['executionId']==letter for e in b['events'] if e['type']=='protocol.write'];assert metadata
   for m in metadata:assert 'params' not in m and 'marker ' not in json.dumps(m) and 'sha256' in m
