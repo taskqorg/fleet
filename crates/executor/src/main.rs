@@ -220,12 +220,13 @@ impl Executor {
             let p = &c["payload"];
             let dir = self.session_dir(&session);
             let repo = worktree::repo_path(p, &self.host);
-            let data = match worktree::worktree(&dir, &session, repo.as_deref(), &worktree::project_roots(&p["project"], &self.host), &[&self.root, &self.sessions], &p["project"]) {
+            // Lookup only: never create a worktree; session dir must be a real dir under executor/session roots.
+            let safe = fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) && dir.canonicalize().is_ok_and(|d| self.root.canonicalize().is_ok_and(|r| d.starts_with(r)) || self.sessions.canonicalize().is_ok_and(|r| d.starts_with(r)));
+            let data = if !safe || !dir.join("worktree").join(".git").exists() { json!({"removed":false,"reason":"no-worktree"}) } else { match worktree::worktree(&dir, &session, repo.as_deref(), &worktree::project_roots(), &[&self.root, &self.sessions], &p["project"]) {
                 Ok(Some((_, top, false))) => worktree::teardown(&dir, &session, &top, &p["project"]),
-                Ok(Some((w, top, true))) => { let _ = git().arg("-C").arg(&top).args(["worktree", "remove"]).arg(&w).output(); json!({"removed":false,"reason":"no-worktree"}) }
-                Ok(None) => json!({"removed":false,"reason":"no-worktree"}),
+                Ok(_) => json!({"removed":false,"reason":"no-worktree"}),
                 Err(e) => json!({"removed":false,"reason":e.to_string()}),
-            };
+            } };
             let ok = data["removed"] == true || data["reason"] == "uncommitted" || data["reason"] == "no-worktree";
             self.event(&c, 0, "teardown", data)?;
             return self.finish(&c, if ok { "completed" } else { "failed" }, None);
@@ -300,7 +301,7 @@ impl Executor {
             cmd.args(["--disable", "multi_agent", "--disable", "multi_agent_v2"]);
         }
         let repo = worktree::repo_path(p, &self.host);
-        let workdir = match worktree::worktree(&dir, &session, repo.as_deref(), &worktree::project_roots(&p["project"], &self.host), &[&self.root, &self.sessions], &p["project"]) {
+        let workdir = match worktree::worktree(&dir, &session, repo.as_deref(), &worktree::project_roots(), &[&self.root, &self.sessions], &p["project"]) {
             Ok(Some((w, top, created))) => {
                 if let (true, Some(script), false) = (created, p["project"]["scripts"]["setup"].as_str(), p["setup"] == "skip") {
                     let e = worktree::script("setup", script, &top, &w, &session);

@@ -3,12 +3,9 @@ use crate::{Result, git};
 use serde_json::{Value, json};
 use std::{env, fs, path::{Path, PathBuf}, process::{Command, Stdio}};
 
-/// FLEET_PROJECT_ROOTS (':'-separated absolute paths) plus this host's `environments[].checkoutPath`.
-pub fn project_roots(project: &Value, host: &str) -> Vec<PathBuf> {
-    let env_roots = env::var("FLEET_PROJECT_ROOTS").unwrap_or_default();
-    let mut v: Vec<String> = env_roots.split(':').map(str::to_owned).collect();
-    v.extend(checkouts(project, host));
-    v.iter().filter(|s| s.starts_with('/')).filter_map(|s| fs::canonicalize(s).ok()).collect()
+/// Host-trusted roots only (FLEET_PROJECT_ROOTS, ':'-separated absolute paths); payload checkoutPath must sit under one.
+pub fn project_roots() -> Vec<PathBuf> {
+    env::var("FLEET_PROJECT_ROOTS").unwrap_or_default().split(':').filter(|s| s.starts_with('/')).filter_map(|s| fs::canonicalize(s).ok()).collect()
 }
 fn checkouts(project: &Value, host: &str) -> Vec<String> {
     project["environments"].as_array().into_iter().flatten()
@@ -23,9 +20,15 @@ fn tail(b: &[u8]) -> String {
     let n = s.len().saturating_sub(4000);
     s[s.char_indices().map(|(i, _)| i).find(|&i| i >= n).unwrap_or(0)..].to_owned()
 }
-/// Fetch uses the inherited environment (credentials come from the host / W4), with hooks off.
+/// Child env: allowlist only, never executor secrets (FLEET_HOST_TOKEN etc.).
+fn clean(mut c: Command) -> Command {
+    c.env_clear();
+    for k in ["PATH", "HOME", "SSH_AUTH_SOCK", "LANG"] { if let Some(v) = env::var_os(k) { c.env(k, v); } }
+    c
+}
+/// Fetch with hooks off; ssh agent / HOME credentials only (W4 replaces with per-project connection).
 fn fetch(top: &str) -> bool {
-    Command::new("git").args(["-c", "core.hooksPath=/dev/null", "-C", top, "fetch", "--quiet", "origin"])
+    clean(Command::new("git")).args(["-c", "core.hooksPath=/dev/null", "-C", top, "fetch", "--quiet", "origin"])
         .stdin(Stdio::null()).output().is_ok_and(|o| o.status.success())
 }
 /// A project session whose working directory is a git repository runs in its own worktree (branch <prefix>/<session>).
@@ -78,7 +81,10 @@ pub fn worktree(dir: &Path, session: &str, repo: Option<&str>, roots: &[PathBuf]
         if rel.starts_with('/') || rel.split('/').any(|s| s == "..") { continue; }
         let (src, dst) = (top.join(rel), w.join(rel));
         if src.exists() && !dst.exists() {
-            if let Some(d) = dst.parent() { fs::create_dir_all(d)?; }
+            let Some(d) = dst.parent() else { continue };
+            fs::create_dir_all(d)?;
+            // Intermediate symlinks must not move either end outside its tree.
+            if !fs::canonicalize(d)?.starts_with(fs::canonicalize(&w)?) || !fs::canonicalize(&src)?.starts_with(&top) { continue; }
             std::os::unix::fs::symlink(&src, &dst)?;
         }
     }
@@ -86,7 +92,7 @@ pub fn worktree(dir: &Path, session: &str, repo: Option<&str>, roots: &[PathBuf]
 }
 /// Runs a project script in the worktree and waits; returns event data with exit code and truncated output.
 pub fn script(name: &str, cmd: &str, top: &Path, w: &Path, session: &str) -> Value {
-    let o = Command::new("sh").args(["-c", cmd]).current_dir(w).stdin(Stdio::null())
+    let o = clean(Command::new("sh")).args(["-c", cmd]).current_dir(w).stdin(Stdio::null())
         .env("FLEET_ROOT_PATH", top).env("FLEET_WORKTREE_PATH", w).env("FLEET_SESSION_ID", session).output();
     match o {
         Ok(o) => json!({"script":name,"exitCode":o.status.code(),"ok":o.status.success(),"stdout":tail(&o.stdout),"stderr":tail(&o.stderr)}),
