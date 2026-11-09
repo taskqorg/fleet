@@ -34,12 +34,15 @@ export function registerStream(app:FastifyInstance,store:Store,config:{retention
   if(cursor!==null&&(!Number.isSafeInteger(cursor)||cursor<0))return reply.code(400).send({error:'Invalid cursor'});
   reply.hijack();
   const res=reply.raw;
+  // Register the close handler before any await, so a client that leaves early is never added or drained afterwards.
+  let gone=closed;req.raw.on('close',()=>{gone=true;open.delete(o)});
   res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','X-Accel-Buffering':'no','Connection':'keep-alive','X-Content-Type-Options':'nosniff'});
-  const o:Open={write:s=>{res.write(s)},end:()=>res.end(),cursor:0,busy:false,again:false};
-  if(cursor===null){const head=await store.read(()=>store.changes.since(null));o.cursor=head.cursor;send(o,'ready',{cursor:o.cursor})}
-  else{o.cursor=cursor;send(o,'ready',{cursor});await drain(o)}
-  open.add(o);
-  req.raw.on('close',()=>open.delete(o));
+  const o:Open={write:s=>{if(!gone)res.write(s)},end:()=>res.end(),cursor:0,busy:false,again:false};
+  try{
+   if(cursor===null){const head=await store.read(()=>store.changes.since(null));o.cursor=head.cursor;send(o,'ready',{cursor:o.cursor})}
+   else{o.cursor=cursor;send(o,'ready',{cursor});await drain(o)}
+  }catch{res.end();return}
+  if(!gone&&!closed)open.add(o);else res.end();
  });
  return {wake,openStreams:()=>open.size};
 }

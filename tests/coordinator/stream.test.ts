@@ -78,4 +78,6 @@ test('routes: / opens the app, old pages redirect to /legacy, app files need no 
  assert.equal((await app.inject({url:'/legacy',headers:{authorization:'Bearer b'}})).statusCode,200);
  assert.notEqual((await app.inject({url:'/tasks'})).statusCode,401);
  assert.equal((await app.inject({method:'POST',url:'/api/ops/me',payload:{}})).statusCode,401);
+ // Fail closed: unknown and disguised paths need the Bearer; list_membership bounds its input.
+ for(const url of ['/unknown','/tasks/../api/stream','/%61pi/stream','/assets/../api/ops/me'])assert.equal((await app.inject({url})).statusCode,401,url);
  await app.close()});

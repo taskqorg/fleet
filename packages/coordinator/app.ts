@@ -20,6 +20,8 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  const ownStore=!config.store,store=config.store??createStore(config.database),{all,get,put}=store;
  const maxArtifactBytes=config.maxArtifactBytes??16*1024*1024;
  const retentionDays=config.changeLogRetentionDays??7;if(!(retentionDays>0))throw Error('Invalid change log retention');
+ const PUBLIC_ROUTES=new Set(['/','/overview','/tasks','/tasks/:id','/conversations','/conversations/:id','/hosts','/hosts/:id','/assets/*','/sw.js','/manifests/:name','/icons/:name','/lab','/projects','/recovery','/accounts']);
+ const LEGACY_ROUTES=new Set(['/legacy','/legacy/lab','/legacy/projects','/legacy/recovery','/legacy/accounts']);
  const sessionList=sessionModel({query:(s:string,p?:any[])=>store.query(s,p??[])});
  if(!Number.isSafeInteger(maxArtifactBytes)||maxArtifactBytes<1)throw Error('Invalid artifact bound');
  const app=Fastify({bodyLimit:Math.ceil(maxArtifactBytes*4/3)+65536});
@@ -45,11 +47,11 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  const equal=(a:string,b:string)=>Buffer.byteLength(a)===Buffer.byteLength(b)&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
  app.addHook('onRequest',async(req,reply)=>{
   reply.header('X-Content-Type-Options','nosniff').header('Referrer-Policy','no-referrer');
-  // Bearer only for /api/* and /test-sites/*. App files and app routes are public: Cloudflare Access and the guard stand in
-  // front of the whole site, and the data they show comes through /api/*. Legacy pages keep today's rule (public outside proxy mode).
-  const path=req.url.split('?')[0],legacy=path==='/legacy'||path.startsWith('/legacy/');
-  if(!path.startsWith('/api/')&&!path.startsWith('/test-sites/')&&(!legacy||!config.browserProxyAuth)) return;
-  const machine=req.url.startsWith('/api/hosts/');
+  // Fail closed on the matched route, not the raw URL: only the app shell routes (data comes through /api/*, behind Access and
+  // the guard) and, outside proxy mode, the legacy pages skip the Bearer. Unknown routes and everything else need it.
+  const route=req.routeOptions?.url;
+  if(route&&req.method==='GET'&&(PUBLIC_ROUTES.has(route)||(!config.browserProxyAuth&&LEGACY_ROUTES.has(route)))) return;
+  const machine=typeof route==='string'&&route.startsWith('/api/hosts/');
   const supplied=(req.headers.authorization||'').replace(/^Bearer /,'');
   if(!equal(supplied,machine?config.machineSecret:config.browserSecret)) fail(401,'Unauthorized');
   if(!machine&&config.browserProxyAuth&&!['GET','HEAD','OPTIONS'].includes(req.method)&&req.headers.origin!==config.browserOrigin)fail(403,'Origin required');
@@ -176,7 +178,7 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
   changes_since:(b:any)=>{const c=b?.cursor;if(c!==null&&c!==undefined&&(!Number.isSafeInteger(c)||c<0))fail(400,'Invalid cursor');return store.changes.since(c??null,b?.limit??500)},
   task_page:(b:any)=>store.tasks.page({filter:b?.filter,group:b?.group,limit:b?.limit,after:b?.after}),
   sessions_list:(b:any)=>sessionList.page({filter:b?.filter,limit:b?.limit,after:b?.after}),
-  list_membership:async(b:any)=>{const ids=Array.isArray(b?.ids)?b.ids:fail(400,'Expected ids');if(!Array.isArray(b?.lists))fail(400,'Expected lists');
+  list_membership:async(b:any)=>{const ids=Array.isArray(b?.ids)&&b.ids.length<=1000?b.ids:fail(400,'Expected at most 1000 ids');if(!Array.isArray(b?.lists)||b.lists.length<1||b.lists.length>2)fail(400,'Expected one or two lists');
    return {lists:await map(b.lists,async(l:any)=>l?.name==='tasks'?{name:'tasks',rows:await store.tasks.membership(l.filter??{},l.group,ids),counts:(await store.tasks.page({filter:l.filter,group:l.group,limit:1})).counts}
     :l?.name==='sessions'?{name:'sessions',rows:await sessionList.membership(l.filter??{},ids),counts:(await sessionList.page({filter:l.filter,limit:1})).counts}:fail(400,'Unknown list'))}},
   hosts_list:async()=>{const configured=[config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].filter(Boolean) as string[];
