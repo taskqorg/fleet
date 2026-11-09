@@ -4,10 +4,17 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { mkdirSync, appendFileSync, writeFileSync } from 'node:fs';
 import { build } from 'esbuild';
 import { contrastProblems } from './tokens.mjs';
 
 const root = new URL('../../..', import.meta.url).pathname;
+// Everything printed also goes to design-report/report.txt (CI uploads it).
+mkdirSync(join(root, 'design-report'), { recursive: true });
+const reportFile = join(root, 'design-report/report.txt');
+writeFileSync(reportFile, '');
+const log = console.log;
+console.log = (...a) => { log(...a); appendFileSync(reportFile, a.join(' ') + '\n'); };
 const targets = process.argv.slice(2).length ? process.argv.slice(2) : ['packages/ui'];
 const files = [];
 const walk = p => { const s = statSync(p); if (s.isDirectory()) { if (!/node_modules|dist/.test(p)) readdirSync(p).forEach(f => walk(join(p, f))); } else if (/\.(tsx?|css|html)$/.test(p)) files.push(p); };
@@ -53,6 +60,8 @@ try { execFileSync('npx', ['tsx', '--test', 'tests/ui/format.test.ts'], { cwd: r
 
 let scroll;
 try { scroll = execFileSync('node', ['tests/ui/scroll.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim(); } catch (e) { scroll = `not run (${String(e.message).split('\n')[0]})`; }
+let ux;
+try { ux = execFileSync('node', ['tests/ui/ux.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim(); } catch (e) { ux = `- UX checks not run (${String(e.message).split('\n')[0]})`; }
 let trace;
 try { trace = execFileSync('node', ['tests/ui/trace.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim().replace(/\n/g, '\n    '); } catch (e) { trace = `not run (${String(e.message).split('\n')[0]})`; }
 console.log(`Design report for ${targets.join(', ')}: ${files.length} files`);
@@ -60,5 +69,6 @@ console.log(`- packages/ui JavaScript: ${kb.toFixed(0)} KB minified (target ≤ 
 console.log(`- formatter tests: ${tests}`);
 console.log(`- scroll anchor on insert (book list): ${scroll}`);
 console.log(`- page specs against mockups:\n    ${trace}`);
-console.log(warn.length ? `- ${warn.length} warnings:\n  ${warn.join('\n  ')}` : '- no warnings');
+console.log(ux);
+console.log(warn.length ? `- ${warn.length} source warnings:\n  ${warn.join('\n  ')}` : '- source checks: no warnings');
 console.log('Rules: docs/design-system/owner-rules.md. This report never fails the build.');

@@ -144,3 +144,60 @@ Append only. Each entry: date, question, options, choice, reason.
 * **Still open:**
   * (d) phone navigation; the interim icon rail stays.
   * The control for editing priority from the Overview.
+
+## 2026-11-10 D14: Review fixes and automatic checks
+
+Source: the [independent review](reviews/2026-11-10/SUMMARY.md) found 0 blockers, 11 majors and 21 nits. `check:design` caught none of them.
+
+**Majors fixed**
+
+| ID | Problem | Fix |
+|---|---|---|
+| M1 | At 1100 px and below, the opened task's detail was off-screen. | The detail now comes first and takes focus ([list-detail](patterns/list-detail.md)). |
+| M2 | Touch targets were under 44 px. | 44 px with a coarse pointer for row pins, row links, nav links, chips, tabs, stat links and inputs; 44 px list rows on touch ([principles §10](principles.md#10-accessibility)). |
+| M3 | The overrun age chip used colour only. | It now has a warning icon, and its name and tooltip say "running too long". |
+| M4 | Hosts repeated words ("windows windows"). | The platform is shown only when the host name does not already say it; the detail heading is the name only. |
+| M5 | Overview said "need you" several times. | The chip is hidden on the Overview, the "need you" stat tile is gone, and "for you" is dropped when the addressee is you. |
+| M6 | The Accounts warning was truncated. | The fill-bar legend wraps and puts the warning first; it is marked `data-important`. |
+| M7 | The brief and README cited stale rule ranges and a wrong check list. | Both now link [owner-rules.md](owner-rules.md) and `check-design.mjs` and copy neither. |
+| M8 | The report never reached the pull request. | CI ([ci.yml](../../.github/workflows/ci.yml)) posts the summary and uploads the report and screenshots. The work loop has a manual fallback. |
+| M9 | The 200 KB and 100 ms targets were not measured. | Both are now measured and labelled: bundle and page JS, raw and gzip; task row to detail heading latency in headless Chromium. |
+| M10 | The brief used undefined terms. | A Terms paragraph was added and dead references removed. |
+| M11 | The brief had no risks. | A Risks section was added; Status links D7–D14. |
+
+**Nits fixed**
+* N1: the "N of M" count shows only while filtered.
+* N2: the Laboratory recommendation is worded once.
+* N3: scores show two fixed decimals.
+* N4: the Results Type column is removed, because the type is in the file name.
+* N5: no double gap in "18 GB".
+* N6: the narrow-rail badge no longer overlaps the icon.
+* N8: the Results viewer is marked as a stub.
+* N9: the "Group" label is aligned.
+* N12: a skip link was added.
+* N13: the "N new" pill is in a polite live region.
+* N16–N21: the brief was rewritten.
+
+**Nits left**
+* N7: the list card height at 1440×900 (a fixed token, no `100vh`).
+* N10: the book's side-by-side theme frames at about 640 px.
+* N11: the tooltip cannot be hovered and does not show on touch (WCAG 1.4.13); this needs a tap-to-show design choice.
+* N14: group headers are not headings or labelled row groups.
+* N15: non-text contrast of fill bars is not machine-checked.
+
+**New checks**
+
+`tests/ui/ux.check.mjs` is part of `check:design` and only warns. It covers:
+* repeated words in one region (OR-17);
+* touch targets under 44 px with an emulated coarse pointer;
+* status shown by colour only;
+* truncated `data-important` text;
+* `[data-ui=detail]` outside the viewport at 600 and 1100 px;
+* page JS size and the latency from click to detail.
+
+Each check was proven once with `UX_INJECT=<defect>`, which produced its warning; the defect was then removed. The first real run also found further problems, which were fixed:
+* nav and chip targets under 44 px;
+* repeated "glb" in Results rows;
+* repeated "trials" and "log";
+* the Laboratory failed-trials chip, which used colour only;
+* the compact badge's hidden reason text.

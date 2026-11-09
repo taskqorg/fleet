@@ -320,3 +320,27 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .stack-pad{padding:0 var(--space-4) var(--space-2)}
 .counter.sigma .sig{font-weight:var(--font-weight-bold)}
 .counter.sigma{margin-right:var(--space-1)}
+
+/* D14 review fixes */
+.legend{white-space:normal}
+.kv .k{white-space:nowrap}
+.chip-age .icon{width:var(--size-icon-sm);height:var(--size-icon-sm);margin-right:var(--space-1);vertical-align:-2px}
+.chip-age.alert{display:inline-flex;align-items:center}
+.seg-group{align-items:center}.seg-label{font-size:var(--font-size-sm);color:var(--fg-muted);margin-right:var(--space-1)}
+.skip{position:absolute;left:var(--space-2);top:-100px;z-index:20;padding:var(--space-2) var(--space-3);background:var(--accent);color:var(--on-accent);border-radius:var(--radius-md)}
+.skip:focus{top:var(--space-2)}
+.shell-main:focus{outline:none}
+.detail:focus{outline:none}
+@media (max-width:1100px){.split-view.has-detail>.detail{order:-1}}
+@media (max-width:760px){.rail .nav-count{top:calc(-1 * var(--space-1));right:calc(-1 * var(--space-1))}}
+/* M2: 44 px targets on touch for row pins, row links, nav links (owner exception) */
+@media (pointer:coarse){
+  .vl-row .btn.icon-only,.nav-i a,.nav-pin,.counter,.seg,.preset button,.saved-chip,.tabs button,.menu button{min-height:var(--size-hit-phone);min-width:var(--size-hit-phone)}
+  .row-link{display:inline-flex;align-items:center;min-height:var(--size-hit-phone)}
+  .vl-row.static,.vl-head{height:auto;min-height:var(--size-row-phone)}
+}
+@media (pointer:coarse){
+  .stat>a,.waiting,.nav-count.waiting{display:inline-flex;align-items:center;min-height:var(--size-hit-phone)}
+  .search{min-height:var(--size-hit-phone)}.search input{align-self:stretch}
+  .answers input,.setting input,.naming input,.setting .value{min-height:var(--size-hit-phone)}
+}

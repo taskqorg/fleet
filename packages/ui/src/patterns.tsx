@@ -1,6 +1,6 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import type { ComponentChildren } from 'preact';
-import { useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Button, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, NavRail, TooltipLayer, HarnessMark, StageChip, type Chip, type FilterField, type NavItem } from './controls';
 import { VirtualList } from './virtual-list';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry';
@@ -85,7 +85,7 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height }: {
           <span class="grow" />
           <StateCounters family="task" label="Tasks by state" counts={counts} active={view.states} onAll={() => edit({ states: [] })}
             onToggle={s => edit({ states: view.states.includes(s) ? view.states.filter(x => x !== s) : [...view.states, s] })} />
-          <span class="seg-group" role="group" aria-label="Group by"><span class="muted type-sm">Group</span>
+          <span class="seg-group" role="group" aria-label="Group by"><span class="seg-label">Group</span>
             {GROUPS.map(g => <button type="button" key={g.id} class={`seg${view.group === g.id ? ' on' : ''}`} aria-pressed={view.group === g.id} onClick={() => edit({ group: g.id })}>{g.label}</button>)}
           </span>
         </>} />
@@ -108,7 +108,7 @@ function TaskCells({ t, now, onPin, onOpen, showPriority }: { t: TaskRow; now: n
     <span class="tt">{showPriority && t.priority === 0 && <span class="p0" aria-label="priority 0">p0</span>}<a class="title row-link" href={`#/tasks/${t.id}`} onClick={e => { if (onOpen) { e.preventDefault(); onOpen(t); } }}>{t.title}</a><span class="id">T-{t.id}</span></span>
     <span>{t.state === 'in_progress' && <HarnessMark h={t.agent} />}</span>
     <span>{t.stage && <StageChip stage={t.stage} />}</span>
-    <span class="r"><AgeChip t={t.started} now={now} alertAfter={t.state === 'in_progress' ? 2 * 3600 : undefined} /></span>
+    <span class="r"><AgeChip t={t.started} now={now} alertAfter={t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" /></span>
     <span class="r"><Num m={t.cost === null ? { value: null, basis: 'unavailable', reason: 'no meter' } : { value: t.cost, basis: t.est ? 'estimated' : 'measured' }} kind="money" rise="bad" /></span>
     <Button label={t.pinned ? 'Unpin' : 'Pin'} icon={t.pinned ? actions.unpin : actions.pin} iconOnly pressed={t.pinned} onClick={() => onPin(t.id)} />
   </>;
@@ -122,14 +122,15 @@ export function AppShell({ nav, current, onGo, waiting, children }: {
   const [pinned, setPinned] = useState<string[]>(['tasks', 'hosts']);
   return (
     <div class="shell" data-ui="app-shell">
+      <a class="skip" href="#main" onClick={e => { e.preventDefault(); document.getElementById('main')?.focus(); }}>Skip to content</a>
       <header class="topbar">
         <b class="brand">Fleet</b>
         <span class="grow" />
-        {waiting > 0 && <a class="nav-count t-attention waiting" href="#/overview" onClick={e => { e.preventDefault(); onGo('overview'); }}>{waiting} need you</a>}
+        {waiting > 0 && current !== 'overview' && <a class="nav-count t-attention waiting" href="#/overview" onClick={e => { e.preventDefault(); onGo('overview'); }}>{waiting} need you</a>}
       </header>
       <div class="shell-body">
         <NavRail items={nav} pinned={pinned} current={current} onGo={onGo} onPin={(id, p) => setPinned(p ? [...pinned, id] : pinned.filter(x => x !== id))} />
-        <main class="shell-main">{children}</main>
+        <main class="shell-main" id="main" tabIndex={-1}>{children}</main>
       </div>
       <TooltipLayer />
     </div>
@@ -139,9 +140,18 @@ export function AppShell({ nav, current, onGo, waiting, children }: {
 /* ---------- Layout patterns used by pages ---------- */
 
 /** List on the left, detail on the right; stacks when narrow (patterns/list-detail.md). */
-export const ListDetail = ({ list, detail }: { list: ComponentChildren; detail?: ComponentChildren }) => (
-  <div data-ui="list-detail" class={`split-view${detail ? ' has-detail' : ''}`}><div class="split-list">{list}</div>{detail}</div>
-);
+// D14/M1: when narrow, the detail comes first (CSS order) and takes focus, so opening an item always shows it.
+export function ListDetail({ list, detail, detailKey }: { list: ComponentChildren; detail?: ComponentChildren; detailKey?: string | number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (detailKey === undefined) return;
+    const d = ref.current?.querySelector<HTMLElement>('[data-ui=detail]');
+    if (!d) return;
+    d.focus({ preventScroll: true });
+    if (d.getBoundingClientRect().top > window.innerHeight * 0.5 || d.getBoundingClientRect().top < 0) d.scrollIntoView({ block: 'start' });
+  }, [detailKey]);
+  return <div ref={ref} data-ui="list-detail" class={`split-view${detail ? ' has-detail' : ''}`}><div class="split-list">{list}</div>{detail}</div>;
+}
 /** Everything waiting for a person, answered in place (patterns/needs-you.md). */
 export const NeedsYou = ({ children }: { children: ComponentChildren }) => (
   <section data-ui="needs-you" class="panel wide"><header class="panel-h"><h2>Needs you</h2></header><div class="stack">{children}</div></section>

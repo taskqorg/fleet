@@ -2,6 +2,7 @@
 // Rendering window from TanStack Virtual core; anchor keeping and the new-rows pill are ours.
 import type { ComponentChildren } from 'preact';
 import { useLayoutEffect, useReducer, useRef, useState } from 'preact/hooks';
+import tokens from '../tokens.json';
 import { Virtualizer, elementScroll, observeElementOffset, observeElementRect } from '@tanstack/virtual-core';
 
 export type VirtualListProps<T> = {
@@ -23,7 +24,12 @@ export type VirtualListProps<T> = {
   rowClass?: (item: T) => string;
 };
 
-export function VirtualList<T>(p: VirtualListProps<T>) {
+// Touch devices get the 44 px row (owner exception to density, D14/M2).
+const TOUCH_ROW = parseInt(tokens.size['row-phone']);
+const coarse = () => typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+
+export function VirtualList<T>(props: VirtualListProps<T>) {
+  const p = coarse() ? { ...props, rowHeight: Math.max(props.rowHeight, TOUCH_ROW) } : props;
   const scroller = useRef<HTMLDivElement>(null);
   const [, rerender] = useReducer((x: number) => x + 1, 0);
   const [unseen, setUnseen] = useState(0);
@@ -101,7 +107,7 @@ export function VirtualList<T>(p: VirtualListProps<T>) {
           ))}
         </div>
       </div>
-      {unseen > 0 && <button type="button" class={`pill pill-${p.follow}`} onClick={jump}>{unseen} new</button>}
+      <span aria-live="polite">{unseen > 0 && <button type="button" class={`pill pill-${p.follow}`} onClick={jump}>{unseen} new</button>}</span>
     </div>
   );
 }
