@@ -39,6 +39,15 @@ export const states = {
     pending: { label: 'Pending', tone: 'neutral', icon: 'history' },
     apply_error: { label: 'Apply error', tone: 'danger', icon: 'triangle-alert' },
   },
+  session: {
+    idle: { label: 'Idle', tone: 'neutral', icon: 'messages-square' },
+    preparing: { label: 'Preparing', tone: 'running', icon: 'rotate-cw' },
+    running: { label: 'Running', tone: 'running', icon: 'activity' },
+    waiting: { label: 'Waiting', tone: 'attention', icon: 'bell' },
+    succeeded: { label: 'Done', tone: 'success', icon: 'circle-check' },
+    failed: { label: 'Failed', tone: 'danger', icon: 'octagon-x' },
+    cancelled: { label: 'Stopped', tone: 'neutral', icon: 'circle-slash' },
+  },
   host: {
     online: { label: 'Online', tone: 'success', icon: 'circle-check' },
     offline: { label: 'Offline', tone: 'danger', icon: 'circle-slash' },

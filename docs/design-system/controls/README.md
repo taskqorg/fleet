@@ -24,5 +24,7 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [stage-chip](stage-chip.md) | Delivery stage of a task |
 | [outcome-block](outcome-block.md) | Task outcome, requirements and inputs |
 | [detail-section](detail-section.md) | Stacked detail areas |
+| [composer](composer.md) | Message an agent |
+| [offline-marker](offline-marker.md) | Data freshness: offline, updating, signed out |
 | [problem-row](problem-row.md) | Signals with cause and actions |
 | [status-states](status-states.md) | Empty, loading, error and stale |

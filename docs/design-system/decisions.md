@@ -202,7 +202,42 @@ Each check was proven once with `UX_INJECT=<defect>`, which produced its warning
 * the Laboratory failed-trials chip, which used colour only;
 * the compact badge's hidden reason text.
 
-## 2026-11-10 D15: Human entity codes
+## 2026-11-10 D15: Operator app first slice
+
+* **Design:** [fleet-operator-app.md](../designs/fleet-operator-app.md), owner-approved, decisions D1–D5 there.
+* **Built:** the operator app in `app/`: Overview, Tasks (list and detail), Conversations, Hosts.
+* **New controls:**
+  * [Composer](controls/composer.md).
+  * [Offline marker](controls/offline-marker.md).
+  * The `session` state family ([state badge](controls/state-badge.md)).
+  * `VirtualList` gains `onEnd` for infinite scroll (OR-11).
+* **Conversations** is an app-only page spec ([pages/conversations.md](pages/conversations.md)). It is checked by the app check, not by a mockup.
+* **Differences from the design doc,** kept deliberately simpler:
+  * The paged task list is a new read op, `task_page`. `task_list` keeps its existing shape for agents.
+  * Resync is detected by looking up the cursor's own change row: a missing row means it was pruned or is unknown. This replaces a separate floor table.
+  * Change rows use the client kinds (`task`, `execution`, `question`, `session`, `event`, `host`), not legacy kinds.
+  * The list order is group key, then newest first, then id. There is no separate sort option.
+  * Priority grouping shows higher numbers first. Which way priority should run is an open question for the owner.
+
+## 2026-11-10 D16: Priority is a queue class
+
+* **Choice (owner):** `urgent`, `normal` (the default) or `background`, with `p0`, `p1` and `p2` accepted as synonyms. Recorded in [data foundation §2](../designs/fleet-data-foundation.md).
+* **In the app:**
+  * Urgent has a red chip and background a grey chip. Normal has no chip (OR-17).
+  * Grouping by priority orders urgent, normal, background, and the rows inside a group carry no chip.
+* **Planned:** the scheduler behaviour and the per-class queue view, in [fleet-operator-app.md](../designs/fleet-operator-app.md#future-improvements).
+* **Review fixes to PR #24 also in this change:**
+  * Hosts and Overview re-read hosts every 5 s and use the server clock.
+  * The draft is kept when a send fails.
+  * The IndexedDB clear closes connections and cancels pending writes.
+  * List updates are ordered by request sequence and sent in chunks of at most 1000 ids; a failed update falls back to a reload.
+  * The stream drains again after joining.
+  * Tasks without a project have their own filter.
+  * Durations use `endedAt`.
+  * Totals, artifacts and commands carry parent ids.
+  * The service worker caches only app routes, each under its own path.
+
+## 2026-11-10 D17: Human entity codes
 
 * **Question:** how operators read and recognise entities without UUIDs.
 * **Options:** `T-FLT-A-42` (optional section), `T-FLT-42`, `FLT-42`, `T-4217`, host plus base32.
