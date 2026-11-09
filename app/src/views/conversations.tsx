@@ -1,6 +1,6 @@
 // Conversations (docs/design-system/pages/conversations.md): sessions list and one conversation with its live transcript.
 // Actions use the same operations agents use: session_create, message_send, execution_stop, session_fork.
-import { useMemo, useState } from 'preact/hooks';
+import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
   ListDetail, ListFrame, FilterBar, StateCounters, VirtualList, StateBadge, HarnessMark, Button, Transcript, Composer, DecisionBlock,
@@ -8,7 +8,8 @@ import {
 } from '../../../packages/ui/src/index';
 import tokens from '../../../packages/ui/tokens.json';
 import { op, online } from '../api';
-import { useLiveList, useLiveRecord } from '../live';
+import { useList, useDoc } from '../store';
+import { useUrlView, useSearchBox, nextUrl } from '../url';
 
 const ROW = parseInt(tokens.size.row);
 type SessionRow = { id: string; title: string | null; state: StateOf<'session'>; harness: string | null; openQuestions: number; sortKey: (string | number)[] };
@@ -17,39 +18,39 @@ const reqId = () => crypto.randomUUID();
 
 export function Conversations({ id }: { id?: string }) {
   const [, go] = useLocation();
-  const [query, setQuery] = useState('');
-  const [states, setStates] = useState<StateOf<'session'>[]>([]);
+  const { view, set, href } = useUrlView('conversations');
+  const [query, setQuery] = useSearchBox(view.q, q => set({ q: q || undefined }, 'type'));
+  const states = (view.state ?? []) as StateOf<'session'>[];
   const [failure, setFailure] = useState<string | null>(null);
-  const params = useMemo(() => ({ filter: { search: query || undefined, state: states } }), [query, states.join()]);
-  const list = useLiveList('sessions', params);
+  const list = useList('sessions', view);
   const rows = list.rows as SessionRow[];
   const now = Date.now();
-  const create = async () => { try { const s = await op('session_create', {}); go('/conversations/' + s.sessionId); } catch (e: any) { setFailure(e.message); } };
+  const create = async () => { try { const s = await op('session_create', {}); set({ focus: s.sessionId }); } catch (e: any) { setFailure(e.message); } };
   const pane = <>
     <header class="page-h"><h1>Conversations</h1><OfflineMarker state={list.state} now={now} /><span class="grow" />
       <Button label="New conversation" icon="plus" kind="primary" disabledReason={online.value ? undefined : 'offline'} onClick={create} /></header>
     {failure && <ErrorBanner text={failure} />}
     <section class="panel">
-      <ListFrame bar={<FilterBar query={query} placeholder="Search conversations" onQuery={setQuery} chips={[]} fields={[]} onAdd={() => {}} onRemove={() => {}} onClear={() => { setQuery(''); setStates([]); }}
+      <ListFrame bar={<FilterBar query={query} placeholder="Search conversations" onQuery={setQuery} chips={[]} fields={[]} onAdd={() => {}} onRemove={() => {}} onClear={() => { setQuery(''); set({ q: undefined, state: [] }); }}
         shown={states.length ? states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total} total={list.total}
-        extra={<StateCounters family="session" label="Conversations by state" counts={list.counts as any} active={states} onAll={() => setStates([])}
-          onToggle={s => setStates(v => v.includes(s) ? v.filter(x => x !== s) : [...v, s])} />} />}>
+        extra={<StateCounters family="session" label="Conversations by state" counts={list.counts as any} active={states} onAll={() => set({ state: [] })}
+          onToggle={s => set({ state: states.includes(s) ? states.filter(x => x !== s) : [...states, s] })} />} />}>
         {list.error && !rows.length ? <ErrorBanner text={`Conversations did not load: ${list.error}`} onRetry={list.reload} />
-          : !list.at ? <Skeleton rows={8} />
+          : list.shownKey === null || (!rows.length && list.pending) ? <Skeleton rows={8} />
           : !rows.length ? <Empty text="No conversations yet." action={<Button label="New conversation" onClick={create} />} />
           : <VirtualList items={rows} getKey={r => r.id} rowHeight={ROW} follow="top" label="Conversations" onEnd={list.more}
             columns="1.25rem minmax(0,1fr) 1.25rem 2rem" rowClass={r => r.id === id ? 'sel' : ''}
             header={<><span /><span>Conversation</span><span /><span class="r">Asks</span></>}
             render={r => <>
               <span class="lead"><StateBadge family="session" state={r.state} compact /></span>
-              <span class="tt"><a class="title row-link" href={`/conversations/${r.id}`} onClick={e => { e.preventDefault(); go(`/conversations/${r.id}`); }}>{r.title ?? 'New conversation'}</a><span class="id">{r.id.slice(0, 8)}</span></span>
+              <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.title ?? 'New conversation'}</a><span class="id">{r.id.slice(0, 8)}</span></span>
               <span>{isHarness(r.harness) && <HarnessMark h={r.harness} />}</span>
               <span class="r">{r.openQuestions ? <span class="chip-age t-attention alert" aria-label={`${r.openQuestions} open questions`}>{r.openQuestions}</span> : ''}</span>
             </>} />}
       </ListFrame>
     </section>
   </>;
-  return <ListDetail list={pane} detail={id ? <Conversation id={id} onClose={() => go('/conversations')} /> : undefined} detailKey={id} />;
+  return <ListDetail list={pane} detail={id ? <Conversation id={id} onClose={() => set({ focus: undefined })} /> : undefined} detailKey={id} />;
 }
 
 // Transcript entries in execution order: the operator's message, then that execution's agent messages and tool calls.
@@ -72,7 +73,7 @@ function entries(s: any): Entry[] {
 
 function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const [, go] = useLocation();
-  const { data: s, error, state } = useLiveRecord<any>(`session:${id}`, () => op('session_get', { sessionId: id }), c => c.sessionId === id);
+  const { data: s, error, state } = useDoc<any>(`session:${id}`, () => op('session_get', { sessionId: id }), c => c.sessionId === id);
   const [failure, setFailure] = useState<string | null>(null);
   const now = Date.now(), off = !online.value;
   const run = async (fn: () => Promise<unknown>) => { setFailure(null); try { await fn(); } catch (e: any) { setFailure(e.message); } };
@@ -86,7 +87,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
       <span class="muted mono">{id.slice(0, 8)}{s.agentConfig?.id ? ` · ${s.agentConfig.id}` : ''}</span><span class="grow" />
       <OfflineMarker state={state} now={now} />
       {active && <Button label="Stop" icon="pause" disabledReason={off ? 'offline' : undefined} onClick={() => run(() => op('execution_stop', { executionId: active.id }))} />}
-      <Button label="Fork" icon="copy" iconOnly disabledReason={off ? 'offline' : undefined} onClick={() => run(async () => { const f = await op('session_fork', { sessionId: id, requestId: reqId() }); go('/conversations/' + f.sessionId); })} />
+      <Button label="Fork" icon="copy" iconOnly disabledReason={off ? 'offline' : undefined} onClick={() => run(async () => { const f = await op('session_fork', { sessionId: id, requestId: reqId() }); go(nextUrl(location.pathname + location.search, 'conversations', { focus: f.sessionId })); })} />
     </header>
     {failure && <ErrorBanner text={failure} />}
     {open.map((q: any) => <DecisionBlock key={q.id} question={q.question ?? q.text} askedBy="agent" addressedTo="you" since={q.askedAt ? Date.parse(q.askedAt) || now : now} now={now}

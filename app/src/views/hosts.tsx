@@ -4,7 +4,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import { ListDetail, StatStrip, StateBadge, HarnessCounts, AgeChip, Num, FillBar, DetailSection, KvRow, Empty, OfflineMarker, Button } from '../../../packages/ui/src/index';
 import { op } from '../api';
-import { useLiveRecord } from '../live';
+import { useDoc } from '../store';
 
 const useTick = (msTick: number) => { const [, set] = useState(0); useEffect(() => { const t = setInterval(() => set(n => n + 1), msTick); return () => clearInterval(t); }, [msTick]); };
 
@@ -13,7 +13,7 @@ export function Hosts({ id }: { id?: string }) {
   useTick(5000);
   // Liveness comes from lastSeenAt, which polls move without a change row; re-read every 5 s (D11 CUJ 5) and judge age on the
   // server's clock (serverNow) so a skewed browser clock does not mark hosts offline.
-  const { data, state } = useLiveRecord<any>('hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
+  const { data, state } = useDoc<any>('hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
   const now = data ? data.serverNow + (Date.now() - data.fetchedAt) : Date.now();
   if (!data) return <><header class="page-h"><h1>Hosts</h1></header><Empty text="Loading…" /></>;
   const fresh = (h: any) => !!h.lastSeenAt && now - h.lastSeenAt < data.staleAfterMs;

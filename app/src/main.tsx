@@ -5,6 +5,7 @@ import { Router, Route, Switch, Redirect, useLocation } from 'wouter-preact';
 import { AppShell, Empty, Button, type NavItem } from '../../packages/ui/src/index';
 import { op, signedOut } from './api';
 import { startFeed } from './feed';
+import { startStore } from './store';
 import { checkGrants, clearAll, lowestCursor } from './offline';
 import { Overview } from './views/overview';
 import { Tasks } from './views/tasks';
@@ -27,7 +28,7 @@ function App() {
     // Identity and grants (D3): a changed grants version clears stored data. Re-read on focus too.
     const me = () => op('me').then(m => checkGrants(m.grantsVersion)).catch(() => {});
     me(); addEventListener('focus', me);
-    lowestCursor().then(c => startFeed(c));
+    startStore(); lowestCursor().then(c => startFeed(c));
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').then(r => r.addEventListener('updatefound', () => { if (navigator.serviceWorker.controller) setUpdate(true); })).catch(() => {});
     return () => removeEventListener('focus', me);
   }, []);
@@ -38,10 +39,9 @@ function App() {
     <Switch>
       <Route path="/"><Redirect to="/overview" /></Route>
       <Route path="/overview"><Overview /></Route>
-      <Route path="/tasks/:id">{(p: { id: string }) => <Tasks id={p.id} />}</Route>
-      <Route path="/tasks"><Tasks /></Route>
-      <Route path="/conversations/:id">{(p: { id: string }) => <Conversations id={p.id} />}</Route>
-      <Route path="/conversations"><Conversations /></Route>
+      {/* One route per list view with an optional focus segment, so focusing a row never unmounts the list. */}
+      <Route path="/tasks/:id?">{(p: { id?: string }) => <Tasks id={p.id} />}</Route>
+      <Route path="/conversations/:id?">{(p: { id?: string }) => <Conversations id={p.id} />}</Route>
       <Route path="/hosts/:id">{(p: { id: string }) => <Hosts id={p.id} />}</Route>
       <Route path="/hosts"><Hosts /></Route>
       <Route><Empty text="This page does not exist." action={<Button label="Overview" icon="house" onClick={() => go('/overview')} />} /></Route>

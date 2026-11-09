@@ -1,7 +1,6 @@
 // Tasks list and detail (docs/design-system/pages/tasks.md). Server-ordered list with views, state counters, grouping and
 // search (list-view pattern); the detail shows outcome, totals, open decisions and the execution tree.
-import { useMemo, useState } from 'preact/hooks';
-import { useLocation, useSearch } from 'wouter-preact';
+import { useState } from 'preact/hooks';
 import {
   ListDetail, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, VirtualList, StateBadge, HarnessMark, AgeChip, Button,
   SplitButton, Totals, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
@@ -9,8 +8,10 @@ import {
 } from '../../../packages/ui/src/index';
 import tokens from '../../../packages/ui/tokens.json';
 import { op, online } from '../api';
-import { useLiveList, useLiveRecord } from '../live';
-import { usePins, useViews, type SavedView } from '../prefs';
+import { useList, useDoc } from '../store';
+import { listKey, type View } from '../../../packages/view-url/view-url';
+import { useUrlView, useSearchBox } from '../url';
+import { usePins, useViews } from '../prefs';
 
 const ROW = parseInt(tokens.size.row);
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
@@ -19,27 +20,14 @@ type Item = { kind: 'group'; key: string; label: string; count: number } | { kin
 const ms = (v: string | number | null | undefined) => (v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v));
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
 
-function useView() {
-  const search = useSearch(), [, go] = useLocation();
-  const q = new URLSearchParams(search);
-  const view = { states: (q.get('state') ?? '').split(',').filter(Boolean) as StateOf<'task'>[], group: q.get('group') ?? 'priority', search: q.get('q') ?? '' };
-  const set = (v: Partial<typeof view>, path = location.pathname) => {
-    const n = { ...view, ...v }, p = new URLSearchParams();
-    if (n.states.length) p.set('state', n.states.join(',')); if (n.group !== 'priority') p.set('group', n.group); if (n.search) p.set('q', n.search);
-    go(path + (p.toString() ? '?' + p : ''), { replace: true });
-  };
-  return { view, set };
-}
-
 export function Tasks({ id }: { id?: string }) {
-  const { view, set } = useView();
-  const [, go] = useLocation();
+  const { view, set, href } = useUrlView('tasks');
   const [closed, setClosed] = useState<string[]>([]);
-  const [query, setQuery] = useState(view.search);
+  const [query, setQuery] = useSearchBox(view.q, q => set({ q: q || undefined }, 'type'));
   const pins = usePins('tasks');
-  const views = useViews('tasks', [{ name: 'Needs me', states: ['waiting', 'failed'], group: 'priority' }, { name: 'Running', states: ['in_progress', 'queued'], group: 'agent' }]);
-  const params = useMemo(() => ({ filter: { state: view.states, search: view.search || undefined }, group: view.group }), [view.states.join(), view.group, view.search]);
-  const list = useLiveList('tasks', params);
+  const views = useViews('tasks', [{ name: 'Needs me', view: { view: 'tasks', state: ['failed', 'waiting'] } }, { name: 'Running', view: { view: 'tasks', state: ['in_progress', 'queued'], group: 'agent' } }]);
+  const list = useList('tasks', view);
+  const group = view.group ?? 'priority', states = (view.state ?? []) as StateOf<'task'>[];
   const rows = list.rows as TaskRow[];
   const pinned = rows.filter(r => pins.has(r.id)), rest = rows.filter(r => !pins.has(r.id));
   const groupOf = (r: TaskRow) => String(r.sortKey[0]);
@@ -48,37 +36,40 @@ export function Tasks({ id }: { id?: string }) {
   let last: string | null = null;
   for (const t of rest) {
     const g = groupOf(t);
-    if (view.group !== 'none' && g !== last) { const meta = list.groups.find(x => x.key === g); items.push({ kind: 'group', key: g, label: groupLabel(view.group, meta?.label ?? null), count: meta?.count ?? 0 }); last = g; }
+    if (group !== 'none' && g !== last) { const meta = list.groups.find(x => x.key === g); items.push({ kind: 'group', key: g, label: groupLabel(group, meta?.label ?? null), count: meta?.count ?? 0 }); last = g; }
     if (!closed.includes(g)) items.push({ kind: 'task', t });
   }
-  const shown = view.states.length ? view.states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total;
+  const shown = states.length ? states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total;
   const now = Date.now();
+  const filtered = !!(states.length || view.q || view.project?.length);
+  const presetKey = (v: View) => listKey({ ...v, view: 'tasks' });
+  const activePreset = views.list.find(v => presetKey(v.view) === listKey(view))?.name ?? null;
   const listPane = <>
     <header class="page-h"><h1>Tasks</h1><OfflineMarker state={list.state} since={list.at || undefined} now={now} /></header>
     <section class="panel">
-      <ListFrame bar={<FilterBar query={query} placeholder="Search tasks" onQuery={v => { setQuery(v); set({ search: v }); }} chips={[]} fields={[]} onAdd={() => {}} onRemove={() => {}} onClear={() => set({ states: [], search: '' })}
+      <ListFrame bar={<FilterBar query={query} placeholder="Search tasks" onQuery={setQuery} chips={[]} fields={[]} onAdd={() => {}} onRemove={() => {}} onClear={() => { setQuery(''); set({ state: [], q: undefined, project: [], preset: undefined }); }}
         shown={shown} total={list.total}
         extra={<>
-          <Presets presets={views.list.map(v => v.name)} active={views.list.find(v => v.states.join() === view.states.join() && v.group === view.group)?.name ?? null}
-            onPick={n => { const v = views.list.find(x => x.name === n)!; set({ states: v.states as StateOf<'task'>[], group: v.group }); }}
-            onSave={n => views.save({ name: n, states: view.states, group: view.group } as SavedView)} onUnpin={views.remove} />
+          <Presets presets={views.list.map(v => v.name)} active={activePreset}
+            onPick={n => { const p = views.list.find(x => x.name === n)!; set({ state: p.view.state ?? [], group: p.view.group, project: p.view.project ?? [], q: p.view.q, preset: n }); }}
+            onSave={n => views.save({ name: n, view: { view: 'tasks', state: view.state, group: view.group, project: view.project, q: view.q } })} onUnpin={views.remove} />
           <span class="grow" />
-          <StateCounters family="task" label="Tasks by state" counts={list.counts as any} active={view.states} onAll={() => set({ states: [] })}
-            onToggle={s => set({ states: view.states.includes(s) ? view.states.filter(x => x !== s) : [...view.states, s] })} />
+          <StateCounters family="task" label="Tasks by state" counts={list.counts as any} active={states} onAll={() => set({ state: [], preset: undefined })}
+            onToggle={s => set({ state: states.includes(s) ? states.filter(x => x !== s) : [...states, s], preset: undefined })} />
           <span class="seg-group" role="group" aria-label="Group by"><span class="seg-label">Group</span>
-            {GROUPS.map(([g, l]) => <button type="button" key={g} class={`seg${view.group === g ? ' on' : ''}`} aria-pressed={view.group === g} onClick={() => set({ group: g })}>{l}</button>)}</span>
+            {GROUPS.map(([g, l]) => <button type="button" key={g} class={`seg${group === g ? ' on' : ''}`} aria-pressed={group === g} onClick={() => set({ group: g, preset: undefined })}>{l}</button>)}</span>
         </>} />}>
         {list.error && !rows.length ? <ErrorBanner text={`Tasks did not load: ${list.error}`} onRetry={list.reload} />
-          : !list.at ? <Skeleton rows={8} />
-          : !rows.length ? <Empty text={view.states.length || view.search ? 'No tasks match these filters.' : 'No tasks yet.'} action={view.states.length || view.search ? <Button label="Clear filters" onClick={() => set({ states: [], search: '' })} /> : undefined} />
+          : list.shownKey === null ? <Skeleton rows={8} />
+          : !rows.length ? (list.pending ? <Skeleton rows={8} /> : <Empty text={filtered ? 'No tasks match these filters.' : 'No tasks yet.'} action={filtered ? <Button label="Clear filters" onClick={() => { setQuery(''); set({ state: [], q: undefined, project: [] }); }} /> : undefined} />)
           : <VirtualList items={items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.t.id} rowHeight={ROW} follow="top" label="Tasks" onEnd={list.more}
             columns="1.25rem minmax(0,1fr) 1.25rem 2.75rem 1.75rem" rowClass={i => i.kind === 'group' ? 'grp' : i.t.id === id ? 'sel' : ''}
             header={<><span /><span>Task</span><span /><span class="r">Age</span><span /></>}
             render={i => i.kind === 'group'
-              ? <GroupHeader icon={view.group === 'priority' ? 'list-ordered' : 'folder-open'} label={i.label} count={i.count} open={!closed.includes(i.key)} onToggle={() => setClosed(c => c.includes(i.key) ? c.filter(x => x !== i.key) : [...c, i.key])} />
+              ? <GroupHeader icon={group === 'priority' ? 'list-ordered' : 'folder-open'} label={i.label} count={i.count} open={!closed.includes(i.key)} onToggle={() => setClosed(c => c.includes(i.key) ? c.filter(x => x !== i.key) : [...c, i.key])} />
               : <>
                 <span class="lead"><StateBadge family="task" state={i.t.state} reason={i.t.waitReason ?? undefined} compact /></span>
-                <span class="tt">{view.group !== 'priority' && <PriorityChip p={i.t.priority} />}<a class="title row-link" href={`/tasks/${i.t.id}${location.search}`} onClick={e => { e.preventDefault(); go(`/tasks/${i.t.id}${location.search}`); }}>{i.t.title}</a><span class="id">{i.t.id.slice(0, 8)}</span></span>
+                <span class="tt">{group !== 'priority' && <PriorityChip p={i.t.priority} />}<a class="title row-link" href={href({ focus: i.t.id })} onClick={e => { e.preventDefault(); set({ focus: i.t.id }); }}>{i.t.title}</a><span class="id">{i.t.id.slice(0, 8)}</span></span>
                 <span>{i.t.state === 'in_progress' && isHarness(i.t.agent) && <HarnessMark h={i.t.agent} />}</span>
                 <span class="r">{ms(i.t.startedAt ?? i.t.createdAt) && <AgeChip t={ms(i.t.startedAt ?? i.t.createdAt)!} now={now} alertAfter={i.t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" />}</span>
                 <Button label={pins.has(i.t.id) ? 'Unpin' : 'Pin'} icon={pins.has(i.t.id) ? 'pin-off' : 'pin'} iconOnly pressed={pins.has(i.t.id)} onClick={() => pins.toggle(i.t.id)} />
@@ -86,7 +77,7 @@ export function Tasks({ id }: { id?: string }) {
       </ListFrame>
     </section>
   </>;
-  return <ListDetail list={listPane} detail={id ? <TaskDetail id={id} onClose={() => go('/tasks' + location.search)} /> : undefined} detailKey={id} />;
+  return <ListDetail list={listPane} detail={id ? <TaskDetail id={id} onClose={() => set({ focus: undefined })} /> : undefined} detailKey={id} />;
 }
 
 /** Priority class chip (owner decision): urgent red, background grey, normal none (OR-17). */
@@ -106,7 +97,7 @@ const EXEC_STATE: Record<string, StateOf<'execution'>> = { completed: 'succeeded
 const execState = (s: string): StateOf<'execution'> => (EXEC_STATE[s] ?? (['preparing', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'].includes(s) ? s : 'running')) as StateOf<'execution'>;
 
 function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
-  const { data: t, error, state } = useLiveRecord<any>(`task:${id}`, () => op('task_get', { taskId: id }), c => c.taskId === id || c.id === id);
+  const { data: t, error, state } = useDoc<any>(`task:${id}`, () => op('task_get', { taskId: id }), c => c.taskId === id || c.id === id);
   const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);

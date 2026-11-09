@@ -14,23 +14,25 @@ export function compareKeys(a: SortKey, b: SortKey): number {
 }
 
 /**
- * Merge a membership answer into a loaded list.
+ * Merge a membership answer into a loaded list of ids (records live in the store; sort keys are per list, because the key
+ * depends on the grouping):
  * - changed ids that no longer match are removed;
- * - matching rows are replaced (fresh data) and placed by sort key;
- * - a new row beyond the loaded window (list not complete and key after the last loaded key) is left for paging.
+ * - matching ids are placed by their new sort key;
+ * - a new id beyond the loaded window (list not complete and key after the last loaded key) is left for paging.
  */
-export function applyMembership(rows: Row[], changed: Iterable<string>, matched: Row[], complete: boolean): Row[] {
-  const ids = new Set(changed);
-  const fresh = new Map(matched.map(r => [r.id, r]));
-  const last = rows.at(-1)?.sortKey;
-  const kept = rows.filter(r => !ids.has(r.id));
-  for (const r of fresh.values()) {
+export function applyMembership(ids: string[], keys: Record<string, SortKey>, changed: Iterable<string>, matched: Row[], complete: boolean): { ids: string[]; keys: Record<string, SortKey> } {
+  const gone = new Set(changed);
+  const last = ids.length ? keys[ids[ids.length - 1]] : undefined;
+  const kept = ids.filter(id => !gone.has(id));
+  const nextKeys: Record<string, SortKey> = {};
+  for (const id of kept) nextKeys[id] = keys[id];
+  for (const r of matched) {
     if (!complete && last && compareKeys(r.sortKey, last) > 0) continue;
     let lo = 0, hi = kept.length;
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (compareKeys(kept[mid].sortKey, r.sortKey) < 0) lo = mid + 1; else hi = mid; }
-    kept.splice(lo, 0, r);
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (compareKeys(nextKeys[kept[mid]], r.sortKey) < 0) lo = mid + 1; else hi = mid; }
+    kept.splice(lo, 0, r.id); nextKeys[r.id] = r.sortKey;
   }
-  return kept;
+  return { ids: kept, keys: nextKeys };
 }
 
 /** Ids of rows touched by a batch of changes, for one list kind. */
