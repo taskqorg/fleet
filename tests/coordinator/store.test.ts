@@ -16,3 +16,7 @@ test('atomic keeps writes made before an error; a nested tx undoes only its own 
  assert.deepEqual((await s.all('x')).map(d=>d.id),['kept','after']);
  let runs=0;await s.atomic(async()=>{runs++;await s.put('x',{id:'retry'+runs});if(runs<2)throw Object.assign(Error('serialize'),{code:'40001'})});
  assert.deepEqual((await s.all('x')).map(d=>d.id),['kept','after','retry2']);await s.close()});
+test('nested reads open no savepoint; the first nested write opens one per open frame',async()=>{const s=await fresh();await s.put('x',{id:'a'});
+ s.stats.clear();await s.tx(async()=>{for(let i=0;i<5;i++)await s.tx(()=>s.get('a','x'))});assert.equal(s.stats.get('SAVEPOINT')??0,0);
+ s.stats.clear();await s.tx(()=>s.tx(()=>s.tx(async()=>{await s.put('x',{id:'b'});await s.put('x',{id:'c'})})));assert.equal(s.stats.get('SAVEPOINT'),2);
+ assert.deepEqual((await s.many(['c','a','missing'],'x')).size,2);await s.close()});
