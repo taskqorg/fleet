@@ -102,3 +102,21 @@ Live: release `candidate-26f931dffcbc` (archive `26f931df…`), Mac executor SHA
 | Resume of fork | completed, same thread `01a1bfc6-ead1-…`, reply `RESUMED` |
 
 Not exercised live: agent MCP forwarding from inside a native turn, Claude/Antigravity steer/fork. Rollback: `ln -sfn candidate-98cb004796a3 /home/fleet/releases/current` + restart `fleet.service`, `fleet-program-worker.service`; Mac `cp ~/.local/share/fleet-prototype/bin/fleet-executor.proven-21aa1379 …/fleet-executor` + `launchctl kickstart -k gui/$(id -u)/com.ufobe.fleet.executor` (when idle).
+
+## Cross-harness live results (2026-11-09, Mac)
+
+Commits `ea74c4c` (Claude fork, per-harness continuation, extra native hosts) + `66f678a` (native id allowlist `--resume=<id>`, receipt-only native capture, agent tool schemas). Release `candidate-66f678a9de83`, Mac executor SHA256 `eb12ca24a4731c677c84951e7bf49c86c88655d07917652e5de78db7c118f1e8`, deployed at 0 unfinished. Tests: cargo 20 pass, npm 24/24.
+
+| Check | Result |
+|---|---|
+| Native Codex → Fleet MCP `execution_status` via `/api/hosts/agent-tools` | ok, returned its own execution `948b4551-…` (session binding) |
+| Native Codex → `ask` | ok after schema fix: question `eb51cb8d-…` open, bound to execution `b632fdc5-…` / session `61e012a8-…` |
+| Handoff Codex → Claude → Antigravity → Codex, session `132abfdb-c929-48e9-b903-6eb8e2d47f95` | all `create_with_handoff`, handoffs `delivered`; replies `AMBER CLAUDE`, `AMBER GEMINI`, final Codex (delta, same thread `01a1bfde-77b9-…`) `AMBER CLAUDE; AMBER GEMINI` |
+| Claude native fork (`--resume=<id> --fork-session`) | strategy `native`, source `15a40811-…`, new `aec66012-…`, reply `AMBER FORKED` |
+| Claude steer | unsupported (`-p` stream-json turn has no mid-turn input); a steer fails and the message is requeued |
+
+Defects fixed: Access/Caddy did not route `/api/hosts/agent-tools` as a machine path (302 to login stalled the outbox) — added Cloudflare bypass app `Fleet machine agent-tools` and Caddy `@machine` path (backup `/root/fleet.caddy.pre-agent-tools`; not in repo); executor resumed the previous harness's thread after a handoff (`native account/session binding mismatch`) — native id now comes from the coordinator per harness:account, marker per harness/account; Claude allowedTools lacked Fleet agent tools; agent MCP tools had no argument schema.
+
+Native hosts: `FLEET_NATIVE_HOST_IDS=pds18-native` (coordinator.env, backup `.pre-ea74c4c`) accepted in `owned()`/host reports; the execution host follows the account binding (session's last host, default host, extra hosts); Claude stays rejected on linux. Managed accounts `fleet-codex-pds`, `fleet-antigravity-pds` registered with binding on `pds18-native`, readiness `unavailable` (`binding-unprovisioned`) until login; after login post a `ready` host observation. PDS executor not started.
+
+Rollback: `ln -sfn candidate-26f931dffcbc /home/fleet/releases/current` + restart `fleet.service`, `fleet-program-worker.service` (drop `FLEET_NATIVE_HOST_IDS`); Mac `cp ~/.local/share/fleet-prototype/bin/fleet-executor.proven-61537ed9 …/fleet-executor` + kickstart when idle. Gaps: Antigravity native fork/steer not implemented; Windows unprovisioned.
