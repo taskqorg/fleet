@@ -91,3 +91,17 @@ test('review 7: every codec grouping is accepted by task_page (one list of group
   for (const group of TASK_GROUPS) await s.read(() => s.tasks.page({ group, limit: 1 }));
   await s.close();
 });
+
+test("review #31-7: a project named '-' does not collide with the no-project marker", () => {
+  const v: View = { view: 'tasks', project: ['-', null, 'a'] };
+  assert.equal(formatView(v), '/tasks?project=-,%2D,a');
+  assert.deepEqual(p(formatView(v)).project, [null, '-', 'a']);
+  assert.deepEqual(p('/tasks?project=-').project, [null]);
+});
+
+test('review #31-10: a full URL is accepted only on the given origin', () => {
+  assert.ok(parseView('https://fleet.example/tasks', { origin: 'https://fleet.example' }));
+  assert.equal(parseView('https://evil.example/tasks', { origin: 'https://fleet.example' }), null);
+  assert.equal(parseView('https://fleet.example/tasks', { origin: null }), null);
+  assert.ok(parseView('/tasks', { origin: null }));
+});

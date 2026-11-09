@@ -8,9 +8,11 @@ export type View = {
 export type PageParams = { filter: { state?: string[]; search?: string; projectId?: (string | null)[]; archived?: boolean }; group?: string };
 
 // The one source of these lists: the coordinator's task_page and sessions_list import them.
-export const TASK_STATES = ['queued', 'in_progress', 'waiting', 'paused', 'completed', 'failed', 'cancelled'];
-export const SESSION_STATES = ['idle', 'preparing', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'];
-export const TASK_GROUPS = ['priority', 'state', 'project', 'agent', 'host', 'none'];
+export const TASK_STATES = ['queued', 'in_progress', 'waiting', 'paused', 'completed', 'failed', 'cancelled'] as const;
+export type TaskState = typeof TASK_STATES[number];
+export const SESSION_STATES = ['idle', 'preparing', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'] as const;
+export type SessionState = typeof SESSION_STATES[number];
+export const TASK_GROUPS = ['priority', 'state', 'project', 'agent', 'host', 'none'] as const;
 export const VIEWS: ViewName[] = ['tasks', 'conversations', 'hosts', 'overview'];
 const NO_PROJECT = '-';
 
@@ -30,7 +32,7 @@ type Key = {
   list: boolean;
 };
 const items = (raw: string) => raw.split(',').map(x => dec(x, true)).filter(Boolean);
-const listKey_ = (field: 'state' | 'sel', allowed?: string[]): Key => ({
+const listKey_ = (field: 'state' | 'sel', allowed?: readonly string[]): Key => ({
   parse: (v, raw) => { const xs = items(raw).filter(x => !allowed || allowed.includes(x)); if (xs.length) v[field] = sorted([...(v[field] ?? []), ...xs]); },
   format: v => v[field]?.length ? sorted(v[field]!).map(enc).join(',') : undefined,
   list: field !== 'sel',
@@ -41,8 +43,9 @@ const text = (field: 'q' | 'preset', list: boolean): Key => ({
   list,
 });
 const project: Key = {
-  parse: (v, raw) => { const xs = items(raw).map(x => x === NO_PROJECT ? null : x); if (xs.length) v.project = sortProjects([...(v.project ?? []), ...xs]); },
-  format: v => v.project?.length ? sortProjects(v.project).map(p => p === null ? NO_PROJECT : enc(p)).join(',') : undefined,
+  // A bare '-' is "no project"; a project whose id is '-' is written %2D, so the two never collide.
+  parse: (v, raw) => { const xs = raw.split(',').filter(Boolean).map(x => x === NO_PROJECT ? null : dec(x, true)).filter(x => x !== ''); if (xs.length) v.project = sortProjects([...(v.project ?? []), ...xs]); },
+  format: v => v.project?.length ? sortProjects(v.project).map(p => p === null ? NO_PROJECT : p === NO_PROJECT ? '%2D' : enc(p)).join(',') : undefined,
   list: true,
 };
 // null ("no project") sorts first, as '-' would; equal views give equal URLs and equal page params.
@@ -54,7 +57,7 @@ function sortProjects(ps: (string | null)[]): (string | null)[] {
 // One table per view: every key the view understands, with its parse and canonical format. Anything else goes to extra.
 const TABLE: Record<ViewName, Record<string, Key>> = {
   tasks: {
-    group: { parse: (v, raw) => { const g = dec(raw, true); if (TASK_GROUPS.includes(g)) v.group = g; }, format: v => v.group && v.group !== 'priority' ? v.group : undefined, list: true },
+    group: { parse: (v, raw) => { const g = dec(raw, true); if ((TASK_GROUPS as readonly string[]).includes(g)) v.group = g; }, format: v => v.group && v.group !== 'priority' ? v.group : undefined, list: true },
     preset: text('preset', false), project, q: text('q', true), sel: listKey_('sel'), state: listKey_('state', TASK_STATES),
   },
   conversations: {
@@ -67,11 +70,16 @@ const DEFAULT_GROUP: Partial<Record<ViewName, string>> = { tasks: 'priority' };
 
 /**
  * Parses a path with query ('/tasks/a?state=failed') or a full URL (its pathname and search are used).
- * Returns null when the path is not an operator-app view, so callers can reject it.
+ * Returns null when the path is not an operator-app view, or when a full URL's origin is not opts.origin (when given;
+ * without opts.origin any origin is accepted), so callers can reject it.
  */
-export function parseView(input: string): View | null {
+export function parseView(input: string, opts: { origin?: string | null } = {}): View | null {
   let s = input;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) { try { const u = new URL(s); s = u.pathname + u.search; } catch { return null; } }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
+    let u: URL; try { u = new URL(s); } catch { return null; }
+    if (opts.origin !== undefined) { let want: string; try { want = new URL(opts.origin ?? '').origin; } catch { return null; } if (u.origin !== want) return null; }
+    s = u.pathname + u.search;
+  }
   s = s.split('#')[0];
   const qi = s.indexOf('?'), path = qi < 0 ? s : s.slice(0, qi), query = qi < 0 ? '' : s.slice(qi + 1);
   const seg = path.split('/');
