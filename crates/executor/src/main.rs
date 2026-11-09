@@ -60,7 +60,13 @@ struct Executor {
     host: String,
     live: HashMap<String, Live>,
 }
+struct Wire {
+    protocol: Option<Protocol>,
+    stdin: Option<std::process::ChildStdin>,
+    log: Option<fs::File>,
+}
 struct Live {
+    wire: Option<std::sync::Arc<std::sync::Mutex<Wire>>>,
     child: std::process::Child,
     command: Value,
     native: Option<String>,
@@ -108,11 +114,17 @@ impl Executor {
             let response = match self.post(&p, value.clone()) {
                 Ok(response) => response,
                 Err(error) => {
-                    if value.get("delegation").is_some() && error.downcast_ref::<ureq::Error>().is_some_and(|e| matches!(e, ureq::Error::Status(code, _) if (400..500).contains(code))) {
+                    if (value.get("delegation").is_some() || value.get("agentToolKey").is_some()) && error.downcast_ref::<ureq::Error>().is_some_and(|e| matches!(e, ureq::Error::Status(code, _) if (400..500).contains(code))) {
                         json!({"error":"Coordinator rejected delegation; inspect retained command and grant"})
                     } else { return Err(error); }
                 }
             };
+            if let Some(k) = value["agentToolKey"].as_str() {
+                self.db.execute(
+                    "UPDATE delegation_requests SET response=? WHERE id=?",
+                    params![response.to_string(), k],
+                )?;
+            }
             if let Some(q) = value.get("delegation") {
                 let key = format!(
                     "{}:{}",
@@ -172,6 +184,19 @@ impl Executor {
                     .execute("UPDATE commands SET terminal=1 WHERE id=?", [cid])?;
             }
             return Ok(());
+        }
+        if c["kind"] == "steer" {
+            let sent = self.live.get(&execution).and_then(|l| l.wire.clone()).and_then(|w| {
+                let mut w = w.lock().ok()?;
+                let Wire { protocol, stdin, log } = &mut *w;
+                let Some(Protocol::Codex(s)) = protocol.as_mut() else { return None };
+                let frame = s.steer(c["payload"]["text"].as_str()?, &cid)?;
+                codex::write_frame(stdin.as_mut()?, log.as_mut()?, &frame).ok()
+            });
+            return match sent {
+                Some(_) => Ok(()),
+                None => self.finish(&c, "failed", None),
+            };
         }
         if c["kind"] != "start" && c["kind"] != "input" {
             return self.finish(&c, "failed", None);
@@ -240,14 +265,14 @@ impl Executor {
         }
         let mut claude_servers = lab::mcp_servers(&p["agentConfig"]);
         let profiles = p["agentConfig"]["delegationProfiles"].as_array().cloned().unwrap_or_default();
-        if !profiles.is_empty() || p["projectId"].is_string() {
+        {
             let context = json!({"hostId":self.host,"commandId":c["id"],"executionId":c["executionId"],"profiles":profiles,"projectId":p["projectId"]});
             let args = json!(["-c",include_str!("delegation.py"),self.root.join("journal.sqlite"),context.to_string()]);
             if matches!(harness::name(p), "claude" | "antigravity") {
                 claude_servers["fleet"] = json!({"command":"python3","args":args});
             } else {
                 cmd.args(["-c","mcp_servers.fleet.command=\"python3\"","-c",&format!("mcp_servers.fleet.args={args}"),"-c","mcp_servers.fleet.required=true"]);
-                let mut tools = Vec::new();
+                let mut tools = vec!["session_transition","session_fork","session_resume","session_handoffs","message_send","queue_list","ask","reply","questions","worker_done","execution_status"];
                 if !profiles.is_empty() { tools.push("request_child"); }
                 if p["projectId"].is_string() { tools.extend(["project_context","catalogue","pipeline_run","direct_search","pipeline_history","pipeline_get","question_ask","question_history","account_list"]); }
                 cmd.args(["-c",&format!("mcp_servers.fleet.enabled_tools={}",json!(tools))]);
@@ -267,7 +292,7 @@ impl Executor {
                 dir.to_string_lossy().into_owned(),
                 native.clone(),
                 p.clone(),
-            )))
+            ).fork(if native.is_none() { p["fork"]["nativeSessionId"].as_str().map(str::to_owned) } else { None })))
         } else if acp_protocol {
             Some(Protocol::Antigravity(antigravity::Session::new(
                 dir.to_string_lossy().into_owned(),
@@ -343,6 +368,14 @@ impl Executor {
             }
         }
         let stdout = child.stdout.take().ok_or("stdout missing")?;
+        let wire = (codex_protocol || acp_protocol).then(|| {
+            std::sync::Arc::new(std::sync::Mutex::new(Wire {
+                protocol: protocol.take(),
+                stdin: protocol_stdin.take(),
+                log: outbound_log.take(),
+            }))
+        });
+        let reader_wire = wire.clone();
         std::thread::spawn(move || {
             let mut acp_complete = false;
             for line in BufReader::new(stdout).lines() {
@@ -354,9 +387,12 @@ impl Executor {
                         {
                             break;
                         }
-                        if let (Some(protocol), Some(stdin)) =
-                            (protocol.as_mut(), protocol_stdin.as_mut())
-                        {
+                        if let Some(w) = reader_wire.as_ref() {
+                            let mut guard = w.lock().unwrap();
+                            let Wire { protocol, stdin: protocol_stdin, log: outbound_log } = &mut *guard;
+                            let (Some(protocol), Some(stdin)) = (protocol.as_mut(), protocol_stdin.as_mut()) else {
+                                continue;
+                            };
                             let result = serde_json::from_str::<Value>(&s)
                                 .map_err(|e| e.to_string())
                                 .and_then(|v| protocol.receive(&v));
@@ -424,6 +460,7 @@ impl Executor {
                 rx,
                 eof: false,
                 last_sample: std::time::Instant::now(),
+                wire,
             },
         );
         self.receipt(&c, "started", native.as_deref())?;
@@ -480,6 +517,11 @@ impl Executor {
                                 )?;
                                 l.native = Some(n.into());
                                 self.receipt(&l.command, "started", Some(n))?;
+                            }
+                            if event["type"] == "steer.result" {
+                                if let Ok(body) = self.db.query_row("SELECT body FROM commands WHERE id=? AND terminal=0", [event["commandId"].as_str().unwrap_or("")], |r| r.get::<_, String>(0)) {
+                                    self.finish(&serde_json::from_str::<Value>(&body)?, if event["ok"] == true { "completed" } else { "failed" }, None)?;
+                                }
                             }
                             if event["type"] == "protocol.failed" && !l.stopped {
                                 l.cleanup_unknown = true;
@@ -696,7 +738,7 @@ fn main() -> Result<()> {
         e.tick()?;
         let result = (|| -> Result<()> {
             let _ = e.flush();
-            let reply=e.post("/api/hosts/poll",json!({"hostId":e.host,"capabilities":["codex","gpt-6.1-sol","low","static-output"]}))?;
+            let reply=e.post("/api/hosts/poll",json!({"hostId":e.host,"capabilities":["codex","gpt-6.1-sol","low","static-output","steer","native-fork"]}))?;
             for c in reply["commands"].as_array().ok_or("commands missing")? {
                 if e.run(c.clone()).is_err()
                     && !e.live.contains_key(c["executionId"].as_str().unwrap_or(""))

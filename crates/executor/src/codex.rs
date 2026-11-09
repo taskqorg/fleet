@@ -44,6 +44,9 @@ pub struct Session {
     profile: Value,
     root: String,
     resume: Option<String>,
+    fork: Option<String>,
+    steers: Vec<(u64, String)>,
+    next_id: u64,
 }
 impl Session {
     pub fn new(root: String, resume: Option<String>, p: Value) -> Self {
@@ -54,7 +57,24 @@ impl Session {
             profile: p,
             root,
             resume,
+            fork: None,
+            steers: Vec::new(),
+            next_id: 100,
         }
+    }
+    pub fn fork(mut self, source: Option<String>) -> Self {
+        self.fork = source;
+        self
+    }
+    /// T3 CodexAdapterV2 steer: `turn/steer` with `expectedTurnId` of the active turn.
+    pub fn steer(&mut self, text: &str, command: &str) -> Option<Value> {
+        if self.stage != 3 {
+            return None;
+        }
+        let (thread, turn) = (self.thread.clone()?, self.turn.clone()?);
+        self.next_id += 1;
+        self.steers.push((self.next_id, command.to_owned()));
+        Some(json!({"id":self.next_id,"method":"turn/steer","params":{"threadId":thread,"expectedTurnId":turn,"input":[{"type":"text","text":text,"text_elements":[]}]}}))
     }
     fn turn_request(&self) -> Value {
         json!({"id":3,"method":"turn/start","params":{"threadId":self.thread,"model":self.profile["model"],"effort":self.profile["effort"],"input":[{"type":"text","text":self.profile["text"],"text_elements":[]}]}})
@@ -72,6 +92,10 @@ impl Session {
                 false,
             ));
         }
+        if let Some(i) = v["id"].as_u64().and_then(|id| self.steers.iter().position(|(n, _)| *n == id)) {
+            let (_, command) = self.steers.remove(i);
+            return Ok((vec![], Some(json!({"type":"steer.result","commandId":command,"ok":v.get("error").is_none(),"native":v})), false));
+        }
         if v.get("error").is_some() {
             return Err(format!(
                 "native protocol request failed: {}",
@@ -83,13 +107,13 @@ impl Session {
             let p = &self.profile;
             let profile = p.get("agentConfig").unwrap_or(p);
             let mut params = json!({"cwd":self.root,"model":p["model"],"approvalPolicy":"never","sandbox":"workspace-write","developerInstructions":profile["instructions"].as_str().unwrap_or(""),"config":{"model_reasoning_effort":p["effort"],"sandbox_workspace_write.network_access":false}});
-            if let Some(n) = &self.resume {
+            if let Some(n) = self.resume.as_ref().or(self.fork.as_ref()) {
                 params["threadId"] = json!(n);
             }
             return Ok((
                 vec![
                     json!({"method":"initialized"}),
-                    json!({"id":2,"method":if self.resume.is_some(){"thread/resume"}else{"thread/start"},"params":params}),
+                    json!({"id":2,"method":if self.resume.is_some(){"thread/resume"}else if self.fork.is_some(){"thread/fork"}else{"thread/start"},"params":params}),
                 ],
                 None,
                 false,
@@ -109,7 +133,7 @@ impl Session {
                 {
                     let profile = self.profile.get("agentConfig").unwrap_or(&self.profile);
                     let instructions = profile["instructions"].as_str().unwrap_or("");
-                    if self.resume.is_some() && !instructions.is_empty() {
+                    if (self.resume.is_some() || self.fork.is_some()) && !instructions.is_empty() {
                         self.stage = 4;
                         vec![
                             json!({"id":4,"method":"thread/inject_items","params":{"threadId":thread,"items":[{"type":"message","role":"developer","content":[{"type":"input_text","text":instructions}]}]}}),
@@ -184,6 +208,22 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fork_and_steer() {
+        let mut s = Session::new("/w".into(), None, json!({"model":"gpt-6.1-sol","effort":"low","text":"t"})).fork(Some("src".into()));
+        let (r, _, _) = s.receive(&json!({"id":1,"result":{}})).unwrap();
+        assert_eq!(r[1]["method"], "thread/fork");
+        assert_eq!(r[1]["params"]["threadId"], "src");
+        s.receive(&json!({"id":2,"result":{"thread":{"id":"forked"}}})).unwrap();
+        assert!(s.steer("x", "c").is_none());
+        s.receive(&json!({"id":3,"result":{"turn":{"id":"turn"}}})).unwrap();
+        let f = s.steer("more", "cmd").unwrap();
+        assert_eq!(f["method"], "turn/steer");
+        assert_eq!(f["params"]["expectedTurnId"], "turn");
+        let (_, e, done) = s.receive(&json!({"id":f["id"],"error":{"code":-1}})).unwrap();
+        assert_eq!(e.unwrap()["ok"], false);
+        assert!(!done);
+    }
     #[test]
     fn pending_and_approval_refusal() {
         let mut s = Session::new(

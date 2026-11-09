@@ -44,7 +44,11 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
  const handoff=(s:any,turns:any[],strategy:string,source:string)=>{if(!turns.length)return null;const h={id:randomUUID(),sessionId:s.id,strategy,source,toKey:keyOf(s),turns:turns.map(t=>t.executionId),text:render(turns,strategy,source),state:'pending',createdAt:Date.now()};put('handoff',h);s.pendingHandoffId=h.id;return h};
 
  function transition(b:any){
-  const s=get(str(b?.sessionId,'sessionId'),'session'),profile=readTrustedProfile(deps.directory,str(b.profileId,'profileId'));
+  if(!b||typeof b!=='object'||Object.keys(b).some(k=>!['sessionId','profileId','account','callerSessionId'].includes(k)))fail(400,'Expected sessionId, profileId, account');
+  const s=get(str(b.sessionId,'sessionId'),'session');str(b.profileId,'profileId');
+  if(b.account!==undefined&&b.account!==null&&(typeof b.account!=='string'||!/^(?:[a-z][a-z0-9-]{0,79}|[a-f0-9-]{36})$/.test(b.account)))fail(400,'Invalid named host account');
+  if(activeOf(s.id))fail(409,'Execution active');
+  const profile=readTrustedProfile(deps.directory,b.profileId);
   const fromKey=keyOf(s),from=s.nativeSessionId?side(fromKey,s.agentConfig):null;
   const nativeSessions={...(s.nativeSessions??{})};if(s.nativeSessionId)nativeSessions[fromKey]={...nativeSessions[fromKey],nativeSessionId:s.nativeSessionId,seen:executions(s.id).length};
   const next={...s,agentConfig:profile,account:b.account===undefined?s.account:b.account??undefined,nativeSessions};const toKey=keyOf(next);
@@ -64,7 +68,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   const last=executions(source.id).at(-1),harness=harnessOf(source);
   const nativeOk=!!source.nativeSessionId&&(!last||terminal(last))&&!!forkArgv(harness,{id:source.nativeSessionId})&&capable('native-fork');
   const strategy=b.strategy==='context'||!nativeOk?'context_transfer':'native';
-  const s:any={id:randomUUID(),createdAt:Date.now(),...(source.agentConfig?{agentConfig:source.agentConfig}:{}),...(source.account?{account:source.account}:{}),...(source.projectId?{projectId:source.projectId}:{}),forkOf:{sessionId:source.id,executionId:last?.id??null,sourceState:last?.state??null}};
+  const s:any={id:randomUUID(),createdAt:Date.now(),...(source.agentConfig?{agentConfig:source.agentConfig}:{}),...(source.account?{account:source.account}:{}),...(source.projectId?{projectId:source.projectId}:{}),forkOf:{sessionId:source.id,executionId:last?.id??null,sourceState:last?.state??null},...(typeof b.callerSessionId==='string'?{createdBySessionId:b.callerSessionId}:{})};
   if(strategy==='native')s.forkNativeSessionId=source.nativeSessionId;else handoff(s,transcript(source.id),'fork_summary','session '+source.id);
   put('session',s);const f={id:randomUUID(),requestId,sourceSessionId:source.id,sessionId:s.id,strategy,handoffId:s.pendingHandoffId??null,at:Date.now()};put('session-fork',f);
   if(typeof b.text==='string'&&b.text)submit({sessionId:s.id,requestId:'fork:'+requestId,text:b.text});
@@ -114,7 +118,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
  // Orca ask-methods/reply-method: non-blocking question; `resume` reads it back. The reply reaches the asker as its
  // next message (queued while it is busy, a follow-up turn when it already finished).
  function ask(b:any){const e=get(str(b?.executionId,'executionId'),'execution');
-  if(b.resume)return get(str(b.resume,'resume'),'question');
+  if(b.resume){const q=get(str(b.resume,'resume'),'question');if(q.executionId!==e.id&&q.sessionId!==e.sessionId)fail(403,'Question belongs to another session');return q}
   const requestId=str(b.requestId,'requestId'),question=str(b.question,'question');
   const old=all('question').find(q=>q.executionId===e.id&&q.requestId===requestId);if(old){if(old.question!==question)fail(409,'Question identity conflict');return old}
   const q={id:randomUUID(),executionId:e.id,sessionId:e.sessionId,requestId,question,state:'open',createdAt:Date.now()};put('question',q);return q}
@@ -180,5 +184,17 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   if(q?.method!=='tools/call'||!operations[q.params?.name])fail(400,'Unknown agent tool');
   return {jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text:JSON.stringify(await call(q.params.name,q.params.arguments??{}))}]}};
  };
- return {operations,decorate,captureNative,knownNative,onReceipt,promote,ready,reconcile,stopOutcome,sessionView,transition,submit,mcp};
+ // Host-run agents (/api/hosts/agent-tools): every call is bound to the calling execution's session. Targets other
+ // than the caller's own session (or a session it forked) are rejected; lists never default to all sessions.
+ function bound(name:string,args:any,executionId:string){
+  const e=get(executionId,'execution'),own=e.sessionId,a={...(args??{})};
+  const mine=(id:any)=>typeof id==='string'&&(id===own||get(id,'session').createdBySessionId===own)||fail(403,'Session belongs to another agent');
+  if(['ask','worker_done','execution_status'].includes(name))a.executionId=executionId;
+  else if(name==='reply')mine(get(str(a.questionId,'questionId'),'question').sessionId);
+  else if(name==='reconcile')fail(403,'Not available to host agents');
+  else{a.sessionId=a.sessionId??own;mine(a.sessionId);if(name==='session_fork')a.callerSessionId=own}
+  if(name==='execution_status'&&e.sessionId!==own)fail(403,'Execution rejected');
+  return operations[name](a);
+ }
+ return {operations,bound,decorate,captureNative,knownNative,onReceipt,promote,ready,reconcile,stopOutcome,sessionView,transition,submit,mcp};
 }

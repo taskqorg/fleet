@@ -9,6 +9,7 @@ journal, context_json = sys.argv[1:]
 context = json.loads(context_json)
 db = sqlite3.connect(journal, timeout=5)
 db.execute('PRAGMA synchronous=FULL')
+AGENT_TOOLS = ['session_transition', 'session_fork', 'session_resume', 'session_handoffs', 'message_send', 'queue_list', 'ask', 'reply', 'questions', 'worker_done', 'execution_status']
 for line in sys.stdin:
     req = {}
     try:
@@ -25,6 +26,25 @@ for line in sys.stdin:
                 for name in ['project_context','catalogue','pipeline_run','direct_search','pipeline_history','pipeline_get','question_ask','question_history','account_list']:
                     props = {'requestId': {'type':'string'}, 'query': {'type':'string'}, 'methodId': {'type':'string'}, 'text': {'type':'string'}, 'runId': {'type':'string'}}
                     result['tools'].append({'name':name,'annotations':{'readOnlyHint':name not in ['pipeline_run','direct_search','question_ask'],'destructiveHint':False,'idempotentHint':True,'openWorldHint':name in ['pipeline_run','direct_search']},'description':'Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.','inputSchema':{'type':'object','additionalProperties':False,'properties':props}})
+            for name in AGENT_TOOLS:
+                result['tools'].append({'name': name, 'description': 'Fleet agent session tool ' + name + ' (bound to this session by the host)', 'inputSchema': {'type': 'object'}})
+        elif method == 'tools/call' and req['params'].get('name') in AGENT_TOOLS:
+            key = context['commandId'] + ':agent:' + str(uuid.uuid4())
+            body = json.dumps({k: context[k] for k in ['hostId', 'commandId', 'executionId']} | {'agentToolKey': key, 'request': {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': req['params']['name'], 'arguments': req['params'].get('arguments') or {}}}}, sort_keys=True)
+            with db:
+                db.execute('INSERT INTO delegation_requests(id,body) VALUES(?,?)', (key, body))
+                db.execute('INSERT INTO outbox(route,body) VALUES(?,?)', ('/api/hosts/agent-tools', body))
+            deadline = time.monotonic() + 20
+            response = None
+            while time.monotonic() < deadline:
+                row = db.execute('SELECT response FROM delegation_requests WHERE id=?', (key,)).fetchone()
+                if row and row[0]:
+                    response = json.loads(row[0]); break
+                time.sleep(.05)
+            if response and 'result' in response:
+                result = response['result']
+            else:
+                result = {'content': [{'type': 'text', 'text': json.dumps(response or {'status': 'pending', 'instruction': 'Outcome unknown; inspect with execution_status before repeating effects.'})}], 'isError': True}
         elif method == 'ping':
             result = {}
         elif method == 'tools/call' and (req['params'].get('name') == 'request_child' or context.get('projectId') and req['params'].get('name') in ['project_context','catalogue','pipeline_run','direct_search','pipeline_history','pipeline_get','question_ask','question_history','account_list']):

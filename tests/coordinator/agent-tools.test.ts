@@ -22,6 +22,11 @@ test('agent tools: queue, handoff, fork, resume, ask/reply, worker_done, stop ou
  // 4) ask/reply + worker_done
  const asked=(await call('/api/hosts/agent-tools',{hostId:'mac',commandId:c.id,executionId:c.executionId,request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'ask',arguments:{requestId:'q1',question:'Colors?'}}}},true)).json();
  const question=JSON.parse(asked.result.content[0].text);assert.equal(question.state,'open');
+ const other=(await call('/api/sessions',{})).json().sessionId;
+ for(const [name,args] of [['message_send',{sessionId:other,requestId:'x',text:'x'}],['session_transition',{sessionId:other,profileId:'baseline'}],['session_fork',{sessionId:other,requestId:'x'}],['reconcile',{}]] as const)
+  assert.equal((await call('/api/hosts/agent-tools',{hostId:'mac',commandId:c.id,executionId:c.executionId,request:{jsonrpc:'2.0',id:2,method:'tools/call',params:{name,arguments:args}}},true)).statusCode,403,name);
+ const ownQueue=JSON.parse((await call('/api/hosts/agent-tools',{hostId:'mac',commandId:c.id,executionId:c.executionId,request:{jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'queue_list',arguments:{}}}},true)).json().result.content[0].text);
+ assert.ok(ownQueue.queued.every((x:any)=>x.sessionId===s));
  const replied=await op('reply',{questionId:question.id,answer:'Blue'});assert.equal(replied.delivery.state,'queued');
  assert.equal((await op('worker_done',{executionId:first.id,outcome:'maybe'})).code,'invalid_outcome');
  assert.equal((await op('worker_done',{executionId:first.id,outcome:'succeeded',summary:'ok'})).action,'accepted');
