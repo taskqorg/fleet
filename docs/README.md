@@ -32,3 +32,5 @@ The [architecture baseline and first working slice](delivery-strategy.md#archite
 
 - [Connected projects, catalogue and pipeline prototype](project-pipeline-prototype.md)
 - [Architecture coverage and evidence](architecture-coverage.md)
+
+- [Next-stage plan and bounded recovery contract](next-stage-plan.md)
