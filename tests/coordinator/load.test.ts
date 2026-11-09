@@ -5,7 +5,7 @@ const url=process.env.FLEET_TEST_DATABASE_URL;
 const EXECUTOR_HTTP_TIMEOUT_MS=5000; // crates/executor/src/outbox.rs: ureq AgentBuilder timeout(5 s)
 const hosts=['owner-mac','owner-mac-program','pds18-native','pds18-program'];
 test('four pollers and two outbox replays: p95 under the executor timeout, no lost or regressed write',async()=>{
- if(url){const s=createStore(url);await s.query('DROP TABLE IF EXISTS document, schema_migration');await s.close()}
+ if(url){const s=createStore(url);await s.query('DROP SCHEMA public CASCADE');await s.query('CREATE SCHEMA public');await s.close()}
  const app=createApp({database:url??'memory://',browserSecret:'b',machineSecret:'m',hostId:'owner-mac',integrationHostId:'owner-mac-program',publicationHostId:'pds18-program',nativeHostIds:['pds18-native']});await app.ready();const store=(app as any).store;
  const {docs}=volume('owner-mac');
  // Ten replayed executions: 0-4 on the Mac, 5-9 on PDS18 native; each has a start command the host already accepted.
