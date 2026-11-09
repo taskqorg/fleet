@@ -1,5 +1,5 @@
 // Read-only IndexedDB mirror of what open views last showed (D3). Writes are never queued. Cleared on sign-out and when the
-// grants version changes; the restore cursor is the lowest one among the restored views.
+// grants version changes. Stored data only fills the first frame: every view loads fresh data on mount.
 const DB = 'fleet-app', STORE = 'views';
 let dbp: Promise<IDBDatabase> | null = null;
 let cleared = false;
@@ -16,17 +16,13 @@ const tx = async <T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBReq
 };
 export type Saved<T> = { data: T; cursor: number | null; at: number };
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
-export function save<T>(key: string, data: T, cursor: number | null) {
+/** data may be a function: it is called when the write happens (once per second at most), so a snapshot is built lazily. */
+export function save<T>(key: string, data: T | (() => T), cursor: number | null) {
   if (cleared) return; // after sign-out nothing is stored again in this page
   clearTimeout(timers.get(key));
-  timers.set(key, setTimeout(() => { timers.delete(key); tx('readwrite', s => s.put({ data, cursor, at: Date.now() } satisfies Saved<T>, key)); }, 1000));
+  timers.set(key, setTimeout(() => { timers.delete(key); const value = typeof data === 'function' ? (data as () => T)() : data; tx('readwrite', s => s.put({ data: value, cursor, at: Date.now() } satisfies Saved<T>, key)); }, 1000));
 }
 export const load = <T>(key: string) => tx<Saved<T> | undefined>('readonly', s => s.get(key));
-export async function lowestCursor(): Promise<number | null> {
-  const all = await tx<Saved<unknown>[]>('readonly', s => s.getAll());
-  const cs = (all ?? []).map(v => v.cursor).filter((c): c is number => typeof c === 'number');
-  return cs.length ? Math.min(...cs) : null;
-}
 /** Called when everything stored is deleted (the store forgets what it holds in memory too). */
 export const onClear = new Set<() => void>();
 /** Delete stored keys that keep() rejects (keys of an older layout); their cursors would hold the feed back. */

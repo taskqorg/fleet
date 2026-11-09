@@ -193,7 +193,7 @@ export function agentTools(store:Store,deps:{browserOrigin?:string,directory:str
   return {sessionId:s.id,projectId,role:b.role??null,profileId:profile.id,account:account??null,executionId:first&&!first.queued?first.id:null,hostId:first?.hostId??null}}
  // Operator-app links (docs/designs/fleet-view-urls-and-list-path.md §1): the same codec the app uses; no database access.
  const viewLink=async(b:any)=>{const hasView=b?.view!==undefined,hasUrl=b?.url!==undefined;if(hasView===hasUrl)fail(400,'Expected view or url');
-  if(hasUrl){if(typeof b.url!=='string')fail(400,'Expected url');const view=parseView(b.url,{origin:deps.browserOrigin??null});if(!view)fail(400,'Not a Fleet view URL');return {view}}
+  if(hasUrl){if(typeof b.url!=='string')fail(400,'Expected url');const view=parseView(b.url,deps.browserOrigin?{origin:deps.browserOrigin}:{}); /* no configured origin: any origin */if(!view)fail(400,'Not a Fleet view URL');return {view}}
   const problem=viewProblem(b.view);if(problem)fail(400,'Invalid view: '+problem);
   const path=formatView(b.view);return {url:deps.browserOrigin?new URL(path,deps.browserOrigin).href:null,path}};
  const operations:Record<string,(b:any)=>Promise<any>>={

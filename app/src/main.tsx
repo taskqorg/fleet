@@ -6,7 +6,7 @@ import { AppShell, Empty, Button, type NavItem } from '../../packages/ui/src/ind
 import { op, signedOut } from './api';
 import { startFeed } from './feed';
 import { startStore } from './store';
-import { checkGrants, clearAll, lowestCursor } from './offline';
+import { checkGrants, clearAll } from './offline';
 import { Overview } from './views/overview';
 import { Tasks } from './views/tasks';
 import { Conversations } from './views/conversations';
@@ -28,7 +28,9 @@ function App() {
     // Identity and grants (D3): a changed grants version clears stored data. Re-read on focus too.
     const me = () => op('me').then(m => checkGrants(m.grantsVersion)).catch(() => {});
     me(); addEventListener('focus', me);
-    startStore(); lowestCursor().then(c => startFeed(c));
+    // The feed starts at the server head: every mounted list loads a fresh page (restored rows only fill the first frame),
+    // and lists shown from storage or after a failed load reload when the feed comes back (store.ts).
+    startStore(); startFeed(null);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').then(r => r.addEventListener('updatefound', () => { if (navigator.serviceWorker.controller) setUpdate(true); })).catch(() => {});
     return () => removeEventListener('focus', me);
   }, []);

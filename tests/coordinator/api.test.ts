@@ -26,6 +26,8 @@ test('view_link builds and parses operator-app links; task_derived_check; list_m
  // Without a configured origin the path is still returned.
  const bare=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac'});await bare.ready();
  assert.deepEqual((await bare.inject({method:'POST',url:'/api/ops/view_link',payload:{view:{view:'hosts',focus:'mac'}},headers:{authorization:'Bearer b'}})).json(),{url:null,path:'/hosts/mac'});
+ // review #34-9: without a configured origin, a full URL on any origin parses.
+ assert.deepEqual((await bare.inject({method:'POST',url:'/api/ops/view_link',payload:{url:'https://anywhere.example/tasks?state=failed'},headers:{authorization:'Bearer b'}})).json(),{view:{view:'tasks',state:['failed']}});
  await bare.close()});
 test('review #31-1: view_link rejects every invalid view field instead of dropping it',async()=>{
  const app=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac'});await app.ready();

@@ -12,11 +12,15 @@ const here = () => location.pathname + location.search;
 export function useUrlView(name: ViewName) {
   const search = useSearch(), [loc, go] = useLocation();
   const view: View = parseView(loc + (search ? '?' + search : '')) ?? { view: name };
-  const typing = useRef(false);
+  // typing: the last change was a search commit made here, so the next one replaces it. Any other navigation (Back, Forward,
+  // a link) moves the URL away from what we wrote and ends the search session.
+  const typing = useRef(false), wrote = useRef<string | null>(null);
+  const url = loc + (search ? '?' + search : '');
+  if (wrote.current !== null && url !== wrote.current) { typing.current = false; wrote.current = null; }
   const set = (patch: Partial<View>, how: 'push' | 'type' = 'push') => {
     const cur = here(), next = nextUrl(cur, name, patch);
     if (next !== formatView(parseView(cur) ?? { view: name })) go(next, { replace: how === 'type' && typing.current });
-    typing.current = how === 'type';
+    typing.current = how === 'type'; wrote.current = how === 'type' ? next : null;
   };
   return { view, set, href: (patch: Partial<View>) => formatView({ ...view, ...patch }) };
 }

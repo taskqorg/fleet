@@ -28,6 +28,8 @@ export function Tasks({ id }: { id?: string }) {
   const views = useViews('tasks', [{ name: 'Needs me', view: { view: 'tasks', state: ['failed', 'waiting'] } }, { name: 'Running', view: { view: 'tasks', state: ['in_progress', 'queued'], group: 'agent' } }]);
   const list = useList('tasks', view);
   const group = view.group ?? 'priority', states = (view.state ?? []) as StateOf<'task'>[];
+  // Rows on screen may still be the previous list (pending): headers and chips follow that list's own grouping.
+  const rowsGroup = list.shownView.group ?? 'priority';
   const rows = list.rows as TaskRow[];
   const sel = view.sel ?? [], toggleSel = (x: string) => set({ sel: sel.includes(x) ? sel.filter(i => i !== x) : [...sel, x] });
   const pinned = rows.filter(r => pins.has(r.id)), rest = rows.filter(r => !pins.has(r.id));
@@ -37,7 +39,7 @@ export function Tasks({ id }: { id?: string }) {
   let last: string | null = null;
   for (const t of rest) {
     const g = groupOf(t);
-    if (group !== 'none' && g !== last) { const meta = list.groups.find(x => x.key === g); items.push({ kind: 'group', key: g, label: groupLabel(group, meta?.label ?? null), count: meta?.count ?? 0 }); last = g; }
+    if (rowsGroup !== 'none' && g !== last) { const meta = list.groups.find(x => x.key === g); items.push({ kind: 'group', key: g, label: groupLabel(rowsGroup, meta?.label ?? null), count: meta?.count ?? 0 }); last = g; }
     if (!closed.includes(g)) items.push({ kind: 'task', t });
   }
   const shown = states.length ? states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total;
@@ -67,10 +69,10 @@ export function Tasks({ id }: { id?: string }) {
             columns="1.25rem minmax(0,1fr) 1.25rem 2.75rem 1.75rem 1.25rem" rowClass={i => i.kind === 'group' ? 'grp' : i.t.id === id ? 'sel' : ''}
             header={<><span /><span>Task</span><span /><span class="r">Age</span><span /><span /></>}
             render={i => i.kind === 'group'
-              ? <GroupHeader icon={group === 'priority' ? 'list-ordered' : 'folder-open'} label={i.label} count={i.count} open={!closed.includes(i.key)} onToggle={() => setClosed(c => c.includes(i.key) ? c.filter(x => x !== i.key) : [...c, i.key])} />
+              ? <GroupHeader icon={rowsGroup === 'priority' ? 'list-ordered' : 'folder-open'} label={i.label} count={i.count} open={!closed.includes(i.key)} onToggle={() => setClosed(c => c.includes(i.key) ? c.filter(x => x !== i.key) : [...c, i.key])} />
               : <>
                 <span class="lead"><StateBadge family="task" state={i.t.state} reason={i.t.waitReason ?? undefined} compact /></span>
-                <span class="tt">{group !== 'priority' && <PriorityChip p={i.t.priority} />}<a class="title row-link" href={href({ focus: i.t.id })} onClick={e => { e.preventDefault(); set({ focus: i.t.id }); }}>{i.t.title}</a><span class="id">{i.t.id.slice(0, 8)}</span></span>
+                <span class="tt">{rowsGroup !== 'priority' && <PriorityChip p={i.t.priority} />}<a class="title row-link" href={href({ focus: i.t.id })} onClick={e => { e.preventDefault(); set({ focus: i.t.id }); }}>{i.t.title}</a><span class="id">{i.t.id.slice(0, 8)}</span></span>
                 <span>{i.t.state === 'in_progress' && isHarness(i.t.agent) && <HarnessMark h={i.t.agent} />}</span>
                 <span class="r">{ms(i.t.startedAt ?? i.t.createdAt) && <AgeChip t={ms(i.t.startedAt ?? i.t.createdAt)!} now={now} alertAfter={i.t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" />}</span>
                 <Button label={pins.has(i.t.id) ? 'Unpin' : 'Pin'} icon={pins.has(i.t.id) ? 'pin-off' : 'pin'} iconOnly pressed={pins.has(i.t.id)} onClick={() => pins.toggle(i.t.id)} />
