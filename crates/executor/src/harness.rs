@@ -353,6 +353,7 @@ fn tools(h: &str, v: &Value) -> Vec<Value> {
                     | "function_call_output"
                     | "commandExecution"
                     | "mcpToolCall"
+                    | "collabAgentToolCall"
             )
         )
     {

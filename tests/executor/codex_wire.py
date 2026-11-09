@@ -22,6 +22,7 @@ for raw in sys.stdin.buffer:
   assert q['params']['input'][0]['text']=='task separate from instructions';assert q['params']['effort']=='low'
   assert instructions=='marker A' or injected
   print(json.dumps({'id':q['id'],'result':{'turn':{'id':'wire-turn'}}}),flush=True)
+  print(json.dumps({'method':'item/completed','params':{'threadId':'wire-thread','turnId':'wire-turn','item':{'id':'collab','type':'collabAgentToolCall','tool':'spawnAgent','receiverThreadIds':['child-thread'],'agentsStates':{}}}}),flush=True)
   print(json.dumps({'method':'turn/completed','params':{'threadId':'wire-thread','turn':{'id':'wire-turn','status':'completed'}}}),flush=True)
 ''');fake.chmod(0o700)
 for name in ['home','native']: (root/name).mkdir(mode=0o700)
@@ -43,7 +44,7 @@ try:
  previous_wire=b''
  for letter in ['A','B','C']:
   profile={'id':'wire','model':'gpt-6.1-sol','effort':'low','instructions':'marker '+letter,'mcpServers':[]}
-  commands.append({'id':letter,'executionId':letter,'sessionId':'wire-session','kind':'start','payload':{'model':'gpt-6.1-sol','effort':'low','instructions':'','agentConfig':profile,'text':'task separate from instructions'}})
+  commands.append({'id':letter,'executionId':letter,'sessionId':'wire-session','kind':'start','payload':{'model':'gpt-6.1-sol','effort':'low','instructions':'','agentConfig':profile,'text':'task separate from instructions',**({} if letter=='A' else {'nativeSessionId':'wire-thread'})}})
   end=time.monotonic()+20
   while time.monotonic()<end:
    done=[b for route,b in received if route.endswith('/receipts') and b['commandId']==letter and b['status'] in ['completed','failed','unknown']]
@@ -62,6 +63,7 @@ try:
   if letter=='B':assert methods.index('thread/inject_items')<methods.index('turn/start')
   emitted_events=[e for route,b in received if route.endswith('/events') and b['executionId']==letter for e in b['events']];assert len({e['seq'] for e in emitted_events})==len(emitted_events),'Duplicate sequence';assert len({e['id'] for e in emitted_events})==len(emitted_events),'Duplicate event ID'
   closed=[e['data'] for route,b in received if route.endswith('/events') and b['executionId']==letter for e in b['events'] if e['type']=='process.closed'];assert closed and closed[-1]['stdoutClosed'] is True and closed[-1]['exitCode']==0
+  if letter!='C':assert any(c['threadId']=='child-thread' and c['parentThreadId']=='wire-thread' and c['binding']['model']=='gpt-6.1-sol' for e in emitted_events for c in json.loads(json.dumps(e)).get('data',{}).get('native',{}).get('children') or e['data'].get('children') or []),'child not recorded'
   metadata=[e['data'] for route,b in received if route.endswith('/events') and b['executionId']==letter for e in b['events'] if e['type']=='protocol.write'];assert metadata
   for m in metadata:assert 'params' not in m and 'marker ' not in json.dumps(m) and 'sha256' in m
  print(json.dumps({'result':'passed','root':str(root),'checks':['actual A/B emitted bytes','private persisted wire equals fake read bytes','developer injection before resumed turn','task input separate','refusal blocks turn without replay','safe projected metadata']}))

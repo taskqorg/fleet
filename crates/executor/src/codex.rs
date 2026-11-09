@@ -47,6 +47,7 @@ pub struct Session {
     fork: Option<String>,
     steers: Vec<(u64, String)>,
     next_id: u64,
+    harness_version: Option<String>,
 }
 impl Session {
     pub fn new(root: String, resume: Option<String>, p: Value) -> Self {
@@ -60,6 +61,7 @@ impl Session {
             fork: None,
             steers: Vec::new(),
             next_id: 100,
+            harness_version: None,
         }
     }
     pub fn fork(mut self, source: Option<String>) -> Self {
@@ -104,6 +106,7 @@ impl Session {
         }
         if v["id"] == 1 && self.stage == 0 {
             self.stage = 1;
+            self.harness_version = v["result"]["userAgent"].as_str().map(str::to_owned);
             let p = &self.profile;
             let profile = p.get("agentConfig").unwrap_or(p);
             let mut params = json!({"cwd":self.root,"model":p["model"],"approvalPolicy":"never","sandbox":"workspace-write","developerInstructions":profile["instructions"].as_str().unwrap_or(""),"config":{"model_reasoning_effort":p["effort"],"sandbox_workspace_write.network_access":false}});
@@ -142,7 +145,7 @@ impl Session {
                         vec![self.turn_request()]
                     }
                 },
-                Some(json!({"type":"thread.started","thread_id":thread,"native":v})),
+                Some(json!({"type":"thread.started","thread_id":thread,"harnessVersion":self.harness_version,"native":v})),
                 false,
             ));
         }
@@ -176,9 +179,13 @@ impl Session {
             if item["type"] == "agentMessage" {
                 item["type"] = json!("agent_message");
             }
+            // Codex collab (spawn_agent etc.): child threads are accounted under this parent execution.
+            let children: Vec<Value> = if item["type"] == "collabAgentToolCall" {
+                item["receiverThreadIds"].as_array().into_iter().flatten().map(|c| json!({"threadId":c,"parentThreadId":self.thread,"tool":item["tool"],"binding":{"model":item.get("model").filter(|m|!m.is_null()).unwrap_or(&self.profile["model"]),"account":"parent"},"state":item["agentsStates"].get(c.as_str().unwrap_or(""))})).collect()
+            } else { vec![] };
             return Ok((
                 vec![],
-                Some(json!({"type":"item.completed","item":item,"native":v})),
+                Some(json!({"type":"item.completed","item":item,"children":children,"native":v})),
                 false,
             ));
         }
@@ -208,6 +215,17 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn collab_child_recorded_on_parent() {
+        let mut s = Session::new("/r".into(), None, json!({"model":"m"}));
+        s.receive(&json!({"id":1,"result":{"userAgent":"codex/9"}})).unwrap();
+        let (_, e, _) = s.receive(&json!({"id":2,"result":{"thread":{"id":"p"}}})).unwrap();
+        assert_eq!(e.unwrap()["harnessVersion"], "codex/9");
+        s.receive(&json!({"id":3,"result":{"turn":{"id":"t"}}})).unwrap();
+        let (_, e, _) = s.receive(&json!({"method":"item/completed","params":{"threadId":"p","turnId":"t","item":{"type":"collabAgentToolCall","tool":"spawnAgent","receiverThreadIds":["c"],"agentsStates":{"c":{"status":"running"}}}}})).unwrap();
+        let c = &e.unwrap()["children"][0];
+        assert_eq!((c["threadId"].as_str(), c["parentThreadId"].as_str(), c["binding"]["model"].as_str()), (Some("c"), Some("p"), Some("m")));
+    }
     #[test]
     fn fork_and_steer() {
         let mut s = Session::new("/w".into(), None, json!({"model":"gpt-6.1-sol","effort":"low","text":"t"})).fork(Some("src".into()));
