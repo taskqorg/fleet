@@ -2,7 +2,7 @@
 import { useLocation } from 'wouter-preact';
 import { OpsSummary, NeedsYou, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton } from '../../../packages/ui/src/index';
 import { op, online } from '../api';
-import { useLiveRecord } from '../live';
+import { useDoc } from '../store';
 
 type Overview = { questions: any[]; problems: any[]; counts: Record<string, number>; hosts: null; projects: { id: string; counts: Record<string, number> }[] };
 async function fetchOverview(): Promise<Overview> {
@@ -14,8 +14,8 @@ async function fetchOverview(): Promise<Overview> {
 
 export function Overview() {
   const [, go] = useLocation();
-  const { data, state, error } = useLiveRecord<Overview>('overview', fetchOverview, c => ['task', 'question', 'execution'].includes(c.kind));
-  const hostsRec = useLiveRecord<any>('overview-hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
+  const { data, state, error } = useDoc<Overview>('overview', fetchOverview, c => ['task', 'question', 'execution'].includes(c.kind));
+  const hostsRec = useDoc<any>('overview-hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
   const now = Date.now();
   const hosts = hostsRec.data, hostNow = hosts ? hosts.serverNow + (now - hosts.fetchedAt) : now;
   if (!data) return <><header class="page-h"><h1>Overview</h1></header>{error ? <ErrorBanner text={`Overview did not load: ${error}`} /> : <Skeleton rows={6} />}</>;
