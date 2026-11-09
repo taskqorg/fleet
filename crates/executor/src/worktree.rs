@@ -26,9 +26,12 @@ pub fn clean(mut c: Command) -> Command {
     for k in ["PATH", "HOME", "SSH_AUTH_SOCK", "LANG"] { if let Some(v) = env::var_os(k) { c.env(k, v); } }
     c
 }
-/// Fetch with hooks off; ssh agent / HOME credentials only (W4 replaces with per-project connection).
-fn fetch(top: &str) -> bool {
-    clean(Command::new("git")).args(["-c", "core.hooksPath=/dev/null", "-C", top, "fetch", "--quiet", "origin"])
+/// Fetch with hooks off, credentials from the project connection only (W4).
+fn fetch(top: &str, project: &Value) -> bool {
+    let Ok(access) = crate::git_access::env(project, crate::git_access::repo(project, &Value::Null), crate::git_access::dir().as_deref()) else { return false };
+    let mut c = clean(Command::new("git"));
+    crate::git_access::apply(&mut c, &access);
+    c.args(["-c", "core.hooksPath=/dev/null", "-C", top, "fetch", "--quiet", "origin"])
         .stdin(Stdio::null()).output().is_ok_and(|o| o.status.success())
 }
 /// A project session whose working directory is a git repository runs in its own worktree (branch <prefix>/<session>).
@@ -67,7 +70,7 @@ pub fn worktree(dir: &Path, session: &str, repo: Option<&str>, roots: &[PathBuf]
         c.args(["--no-track", "-b", &branch]).arg(&w);
         // Base: explicit baseRef, else fresh origin/<defaultBranch> when startFromOrigin (default), else HEAD.
         let base = wt["baseRef"].as_str().map(str::to_owned).or_else(|| {
-            (wt["startFromOrigin"].as_bool().unwrap_or(false) && fetch(&t))
+            (wt["startFromOrigin"].as_bool().unwrap_or(false) && fetch(&t, project))
                 .then(|| format!("origin/{}", project["repos"][0]["defaultBranch"].as_str().unwrap_or("main")))
         });
         if let Some(b) = base { c.arg(b); }

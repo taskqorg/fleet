@@ -25,10 +25,12 @@ pub fn run(project: &Value, host: &str, registry: Option<&Path>) -> Value {
         checks.push(check("checkout", path, (!present).then(|| "checkout-missing".into())));
         for r in repos.iter().filter(|r| env["repo"].is_null() || env["repo"] == r["id"]) {
             let remote = r["remote"].as_str().unwrap_or("");
-            let failed = if !valid_remote(remote) { Some("invalid-remote".into()) } else {
-                let o = crate::worktree::clean(Command::new("git"))
+            let access = crate::git_access::env(project, r, crate::git_access::dir().as_deref());
+            let failed = if !valid_remote(remote) { Some("invalid-remote".into()) } else if let Err(e) = access { Some(e.into()) } else {
+                let mut g = crate::worktree::clean(Command::new("git"));
+                crate::git_access::apply(&mut g, &access.unwrap_or_default());
+                let o = g
                     .args(["-c", "core.hooksPath=/dev/null", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always", "ls-remote", "--exit-code", "--", remote, "HEAD"])
-                    .env("GIT_TERMINAL_PROMPT", "0").env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
                     .stdin(Stdio::null()).output();
                 match o { Ok(o) if o.status.success() => None, Ok(o) => Some(format!("ls-remote-exit-{}", o.status.code().unwrap_or(-1))), Err(_) => Some("git-unavailable".into()) }
             };
