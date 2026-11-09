@@ -27,13 +27,22 @@ export async function lowestCursor(): Promise<number | null> {
   const cs = (all ?? []).map(v => v.cursor).filter((c): c is number => typeof c === 'number');
   return cs.length ? Math.min(...cs) : null;
 }
+/** Called when everything stored is deleted (the store forgets what it holds in memory too). */
+export const onClear = new Set<() => void>();
+/** Delete stored keys that keep() rejects (keys of an older layout); their cursors would hold the feed back. */
+export async function pruneKeys(keep: (key: string) => boolean) {
+  const keys = await tx<IDBValidKey[]>('readonly', s => s.getAllKeys());
+  for (const k of keys ?? []) if (typeof k !== 'string' || !keep(k)) await tx('readwrite', s => s.delete(k));
+}
 /** Delete everything: cancel pending writes, close this page's connection, and wait for the delete to finish. */
 export async function clearAll(stopSaving = false) {
   if (stopSaving) cleared = true;
+  for (const f of onClear) f();
   for (const t of timers.values()) clearTimeout(t);
   timers.clear();
   const db = dbp ? await dbp.catch(() => null) : null;
   db?.close(); dbp = null;
+  if (typeof indexedDB === 'undefined') return; // storage unavailable: nothing to delete
   await new Promise<void>(r => { const q = indexedDB.deleteDatabase(DB); q.onsuccess = q.onerror = () => r(); q.onblocked = () => { /* other windows close on versionchange */ }; });
 }
 export async function checkGrants(version: string) {
