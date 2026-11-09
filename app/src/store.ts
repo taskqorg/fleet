@@ -1,15 +1,15 @@
 // Entity store (operator-app D4; docs/designs/fleet-view-urls-and-list-path.md §2). Records by id are shared by every list;
 // lists hold ordered ids and their own sort keys per canonical list key; docs hold detail reads. Nothing is ever reset:
-// a view keeps showing what it has while the next answer loads, and swaps it in place. IndexedDB (D3) restores lists and
-// docs on first use. One feed subscription asks list_membership about changed ids for every mounted list.
+// a view keeps showing what it has while the next answer loads, and swaps it in place. IndexedDB (D3) fills the first
+// frame; every mounted list and doc then loads fresh data. One feed subscription asks list_membership about changed ids.
 //
-// Order: every record remembers the change cursor its data reflects. A page answer is applied at the cursor its request
-// started from, a membership answer at the cursor of its change batch; an older answer never overwrites a newer record.
-// Changes that arrive while a list's page is loading are kept and asked about once the page has landed.
-import { signal, type Signal } from '@preact/signals';
+// Order: every record and every list remembers the change cursor its data reflects. A page answer is applied at the cursor
+// its request started from, a membership answer at the cursor of its change batch; an older answer never overwrites a
+// newer record or list. Changes that arrive while a list's page is loading are asked about once the page has landed.
+import { signal, effect, type Signal } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { op, online, signedOut, OpError } from './api';
-import { subscribe, currentCursor, type Change } from './feed';
+import { subscribe, currentCursor, feedState, type Change } from './feed';
 import { applyMembership, chunks, touched, type Row, type SortKey } from './lists';
 import { save, load, onClear, pruneKeys } from './offline';
 import { listKey, toPageParams, type View } from '../../packages/view-url/view-url';
@@ -22,66 +22,89 @@ type Params = ReturnType<typeof toPageParams>;
 type Group = { key: string; label: string; count: number };
 export type ListState = { ids: string[]; keys: Record<string, SortKey>; counts: Record<string, number>; total: number; groups: Group[]; nextAfter: unknown; at: number; restored: boolean; error: string | null };
 type Saved = Omit<ListState, 'restored' | 'error'> & { rows: Row[] };
-type Entry = { kind: Kind; params: Params; state: Signal<ListState | null>; busy: Signal<boolean>; mounted: number; loading: number; touchedWhileLoading: Set<string>; paging: boolean };
+type Entry = { kind: Kind; view: View; params: Params; state: Signal<ListState | null>; busy: Signal<boolean>; seq: number; mounted: number; loading: number; touchedWhileLoading: Set<string>; touchedSeq: number; paging: boolean };
+type Doc = { data: unknown; restored: boolean; error: string | null };
 
 const records = new Map<string, { row: Row; seq: number }>();
 const lists = new Map<string, Entry>();
-const docs = new Map<string, Signal<{ data: unknown; restored: boolean; error: string | null } | null>>();
+/** id -> keys of the lists that hold it, so a changed record re-renders only those lists. */
+const holders = new Map<string, Set<string>>();
+const docs = new Map<string, Signal<Doc | null>>();
+/** Bumped when stored data is cleared: mounted docs re-read. */
+const generation = signal(0);
 const MEMBERSHIP_IDS = 1000, MEMBERSHIP_LISTS = 2; // the server's per-call bounds
 const cursorNow = () => currentCursor() ?? 0;
 
-/** Forget everything held in memory (sign-out, grants change): IndexedDB is cleared by offline.ts at the same time. */
-export function clearMemory() { records.clear(); lists.clear(); docs.clear(); }
+/**
+ * Forget everything held in memory (sign-out, grants change; offline.ts clears IndexedDB at the same time). Entries and doc
+ * signals stay, because mounted hooks hold them; their values are reset and mounted lists and docs load again.
+ */
+export function clearMemory() {
+  records.clear(); holders.clear();
+  for (const [key, e] of lists) { e.state.value = null; e.seq = 0; e.touchedWhileLoading.clear(); if (e.mounted) loadList(e.kind, key, e.view); else lists.delete(key); }
+  for (const s of docs.values()) s.value = null;
+  generation.value++;
+}
 onClear.add(clearMemory);
 
-function entry(kind: Kind, key: string, params: Params): Entry {
+function entry(kind: Kind, key: string, view: View): Entry {
   let e = lists.get(key);
-  if (!e) lists.set(key, e = { kind, params, state: signal(null), busy: signal(false), mounted: 0, loading: 0, touchedWhileLoading: new Set(), paging: false });
+  if (!e) lists.set(key, e = { kind, view, params: toPageParams(view), state: signal(null), busy: signal(false), seq: 0, mounted: 0, loading: 0, touchedWhileLoading: new Set(), touchedSeq: 0, paging: false });
   return e;
 }
-
-/** Store rows at a cursor; rows already newer are kept. Re-renders every list holding a changed id. */
+/** Set a list's state and keep the id -> lists index right. */
+function setList(key: string, e: Entry, next: ListState) {
+  for (const id of e.state.value?.ids ?? []) holders.get(id)?.delete(key);
+  for (const id of next.ids) { let h = holders.get(id); if (!h) holders.set(id, h = new Set()); h.add(key); }
+  e.state.value = next;
+}
+/** Store rows at a cursor; rows already newer are kept. Re-renders the lists holding a changed id. */
 function putRows(rows: Row[], seq: number) {
-  const changed = new Set<string>();
-  for (const r of rows) { const cur = records.get(r.id); if (cur && cur.seq > seq) continue; records.set(r.id, { row: r, seq }); changed.add(r.id); }
-  if (!changed.size) return;
-  for (const e of lists.values()) { const s = e.state.value; if (s && s.ids.some(id => changed.has(id))) e.state.value = { ...s }; }
+  const touchedLists = new Set<string>();
+  for (const r of rows) {
+    const cur = records.get(r.id); if (cur && cur.seq > seq) continue;
+    records.set(r.id, { row: r, seq });
+    for (const k of holders.get(r.id) ?? []) touchedLists.add(k);
+  }
+  for (const k of touchedLists) { const e = lists.get(k), s = e?.state.value; if (e && s) e.state.value = { ...s }; }
 }
 /** Drop records no list holds any more. */
-function pruneRecords() {
-  const held = new Set<string>(); for (const e of lists.values()) for (const id of e.state.value?.ids ?? []) held.add(id);
-  for (const id of records.keys()) if (!held.has(id)) records.delete(id);
-}
+function pruneRecords() { for (const id of records.keys()) if (!holders.get(id)?.size) { records.delete(id); holders.delete(id); } }
 const rowsOf = (r: any): Row[] => r.tasks ?? r.sessions;
 const opName = (k: Kind) => k === 'tasks' ? 'task_page' : 'sessions_list';
-const persist = (key: string, s: ListState) => save<Saved>('list:' + key, { ids: s.ids, keys: s.keys, counts: s.counts, total: s.total, groups: s.groups, nextAfter: s.nextAfter, at: s.at, rows: s.ids.map(id => records.get(id)?.row).filter((r): r is Row => !!r) }, currentCursor());
+// The snapshot is built when the write happens (offline.save calls it at most once a second).
+const persist = (key: string, e: Entry) => save<Saved>('list:' + key, () => { const s = e.state.value!; return { ids: s.ids, keys: s.keys, counts: s.counts, total: s.total, groups: s.groups, nextAfter: s.nextAfter, at: s.at, rows: s.ids.map(id => records.get(id)?.row).filter((r): r is Row => !!r) }; }, currentCursor());
 const idsAndKeys = (rows: Row[]) => ({ ids: rows.map(x => x.id), keys: Object.fromEntries(rows.map(x => [x.id, x.sortKey])) });
 
+/** Fill the first frame from IndexedDB unless the server has already answered (a failed load still restores). */
 async function restore(key: string, e: Entry) {
-  if (e.state.value) return;
+  if (e.state.value?.at) return;
   const saved = await load<Saved>('list:' + key);
-  if (e.state.value || !saved) return; // the server answered first, or nothing stored
-  putRows(saved.data.rows, saved.cursor ?? 0);
+  if (!saved || e.state.value?.at) return;
+  const error = e.state.value?.error ?? null;
+  putRows(saved.data.rows, -1); // stored rows never win over anything the server sends
   const { rows: _, ...rest } = saved.data;
-  e.state.value = { ...rest, restored: true, error: null };
+  setList(key, e, { ...rest, at: 0, restored: true, error });
 }
 
-/** Load the first page of a list. A superseded request is aborted through signal and leaves the list as it was. */
-export async function loadList(kind: Kind, key: string, params: Params, abort?: AbortSignal) {
-  const e = entry(kind, key, params), from = cursorNow();
+/** Load the first page of a list. A superseded request is aborted through abort and leaves the list as it was. */
+export async function loadList(kind: Kind, key: string, view: View, abort?: AbortSignal) {
+  const e = entry(kind, key, view), from = cursorNow();
   e.loading++; e.busy.value = true;
   try {
-    const r = await op(opName(kind), { ...params, limit: 100 }, { signal: abort });
-    const rows = rowsOf(r); putRows(rows, from);
-    const next: ListState = { ...idsAndKeys(rows), counts: r.counts, total: r.total, groups: r.groups ?? [], nextAfter: r.nextAfter, at: Date.now(), restored: false, error: null };
-    e.state.value = next; persist(key, next); pruneRecords();
+    const r = await op(opName(kind), { ...e.params, limit: 100 }, { signal: abort });
+    if (from < e.seq) return; // a newer membership answer already updated this list
+    const rows = rowsOf(r);
+    setList(key, e, { ...idsAndKeys(rows), counts: r.counts, total: r.total, groups: r.groups ?? [], nextAfter: r.nextAfter, at: Date.now(), restored: false, error: null });
+    putRows(rows, from); e.seq = from; persist(key, e); pruneRecords();
   } catch (err: any) {
     if (err instanceof OpError && err.message === 'aborted') return;
     const s = e.state.value;
-    e.state.value = s ? { ...s, error: err.message } : { ids: [], keys: {}, counts: {}, total: 0, groups: [], nextAfter: null, at: 0, restored: false, error: err.message };
+    setList(key, e, s ? { ...s, error: err.message } : { ids: [], keys: {}, counts: {}, total: 0, groups: [], nextAfter: null, at: 0, restored: false, error: err.message });
+    if (!s?.ids.length) restore(key, e); // offline: show what was stored, marked as not loaded
   } finally {
     e.loading--; e.busy.value = e.loading > 0;
-    if (!e.loading && e.touchedWhileLoading.size) { const ids = [...e.touchedWhileLoading]; e.touchedWhileLoading.clear(); await ask(e.kind, ids, [[key, e]], cursorNow()); }
+    if (!e.loading && e.touchedWhileLoading.size) { const ids = [...e.touchedWhileLoading]; e.touchedWhileLoading.clear(); await ask(e.kind, ids, [[key, e]], Math.max(e.touchedSeq, cursorNow())); }
   }
 }
 
@@ -94,11 +117,10 @@ export async function nextPage(key: string) {
     const r = await op(opName(e.kind), { ...e.params, limit: 100, after: st.nextAfter });
     const now = e.state.value;
     if (!now || now.nextAfter !== st.nextAfter) return; // a reload or another page got there first
-    const rows = rowsOf(r); putRows(rows, from);
-    const have = new Set(now.ids), add = idsAndKeys(rows.filter(x => !have.has(x.id)));
-    const next = { ...e.state.value!, ids: [...now.ids, ...add.ids], keys: { ...now.keys, ...add.keys }, nextAfter: r.nextAfter };
-    e.state.value = next; persist(key, next);
-  } catch (err: any) { if (e.state.value) e.state.value = { ...e.state.value, error: err.message }; } finally { e.paging = false; }
+    const rows = rowsOf(r), have = new Set(now.ids), add = idsAndKeys(rows.filter(x => !have.has(x.id)));
+    setList(key, e, { ...now, ids: [...now.ids, ...add.ids], keys: { ...now.keys, ...add.keys }, nextAfter: r.nextAfter });
+    putRows(rows, from); persist(key, e);
+  } catch (err: any) { if (e.state.value) setList(key, e, { ...e.state.value, error: err.message }); } finally { e.paging = false; }
 }
 
 /** Ask list_membership about ids for the given lists (two lists per call), at the cursor of the changes. */
@@ -111,13 +133,13 @@ async function ask(kind: Kind, ids: string[], targets: [string, Entry][], seq: n
         r.lists.forEach((l: any, i: number) => { answers[i].rows.push(...l.rows); answers[i].counts = l.counts; answers[i].groups = l.groups ?? null; });
       }
       pair.forEach(([key, e], i) => {
-        const a = answers[i]; putRows(a.rows, seq);
-        const cur = e.state.value; if (!cur) return;
+        const a = answers[i], cur = e.state.value;
+        if (!cur || seq < e.seq) return; // this list already reflects a newer change or page
         const placed = applyMembership(cur.ids, cur.keys, ids, a.rows, cur.nextAfter === null);
-        const next = { ...cur, ...placed, counts: a.counts ?? cur.counts, total: a.counts ? Object.values(a.counts).reduce((x, n) => x + n, 0) : cur.total, groups: a.groups ?? cur.groups, at: Date.now() };
-        e.state.value = next; persist(key, next);
+        setList(key, e, { ...cur, ...placed, counts: a.counts ?? cur.counts, total: a.counts ? Object.values(a.counts).reduce((x, n) => x + n, 0) : cur.total, groups: a.groups ?? cur.groups, at: Date.now() });
+        putRows(a.rows, seq); e.seq = seq; persist(key, e);
       });
-    } catch { for (const [key, e] of pair) loadList(kind, key, e.params); } // never stop updating silently: full reload
+    } catch { for (const [key, e] of pair) loadList(kind, key, e.view); } // never stop updating silently: full reload
   }
 }
 
@@ -129,7 +151,7 @@ export async function applyChanges(cs: Change[]) {
     const targets: [string, Entry][] = [];
     for (const [key, e] of lists) {
       if (e.kind !== kind || !e.mounted) continue;
-      if (e.loading || !e.state.value) { ids.forEach(id => e.touchedWhileLoading.add(id)); continue; }
+      if (e.loading || !e.state.value) { ids.forEach(id => e.touchedWhileLoading.add(id)); e.touchedSeq = Math.max(e.touchedSeq, seq); continue; }
       targets.push([key, e]);
     }
     if (targets.length) await ask(kind, ids, targets, seq);
@@ -141,30 +163,35 @@ let started = false;
 export function startStore() {
   if (started) return; started = true;
   pruneKeys(k => k.startsWith('list:') || k.startsWith('doc:'));
-  subscribe({ resync: () => { for (const [key, e] of lists) if (e.mounted) loadList(e.kind, key, e.params); }, changes: applyChanges });
+  const reloadMounted = (only?: (s: ListState | null) => boolean) => { for (const [key, e] of lists) if (e.mounted && (!only || only(e.state.value))) loadList(e.kind, key, e.view); };
+  subscribe({ resync: () => reloadMounted(), changes: applyChanges });
+  // Back from offline: lists still showing stored rows or a failed load fetch fresh pages.
+  effect(() => { if (feedState.value === 'live') reloadMounted(s => !s || s.restored || !!s.error); });
 }
 
 /**
  * A server-ordered list for a view. `rows` are the rows of the shown list; while the wanted list (from the URL) has no data
- * yet the previous list stays on screen and `pending` is true. The skeleton is only for a view that never showed anything.
+ * yet the previous list stays on screen and `pending` is true. `shownView` is the view those rows belong to (headers use it).
+ * The skeleton is only for a view that never showed anything.
  */
 export function useList(kind: Kind, view: View) {
-  const key = listKey(view), e = entry(kind, key, toPageParams(view));
-  const [shown, setShown] = useState<string | null>(() => e.state.value ? key : null);
+  const key = listKey(view), e = entry(kind, key, view);
+  const [last, setLast] = useState<string | null>(() => e.state.value ? key : null);
   const ctrl = useRef<AbortController | null>(null);
-  const wanted = e.state.value;
-  useEffect(() => { if (wanted && shown !== key) setShown(key); }, [wanted, key]);
+  const shown = e.state.value ? key : last; // derived during render: no stale frame when the wanted list is in memory
+  useEffect(() => { if (shown !== last) setLast(shown); }, [shown]);
   useEffect(() => {
     e.mounted++;
     ctrl.current?.abort(); const c = ctrl.current = new AbortController();
-    restore(key, e); loadList(kind, key, e.params, c.signal);
+    restore(key, e); loadList(kind, key, view, c.signal);
     return () => { e.mounted--; };
   }, [key]);
   const se = shown ? lists.get(shown) : undefined, cur = se?.state.value ?? null;
   const rows = cur ? cur.ids.map(id => records.get(id)?.row).filter((r): r is Row => !!r) : [];
   return {
     rows, counts: cur?.counts ?? {}, total: cur?.total ?? 0, groups: cur?.groups ?? [], at: cur?.at ?? 0, error: cur?.error ?? null,
-    pending: shown !== key || e.busy.value, shownKey: shown, more: () => shown ? nextPage(shown) : Promise.resolve(), reload: () => loadList(kind, key, e.params),
+    pending: shown !== key || e.busy.value, shownKey: shown, shownView: se?.view ?? view,
+    more: () => shown ? nextPage(shown) : Promise.resolve(), reload: () => loadList(kind, key, view),
     state: freshness(!!cur?.restored),
   };
 }
@@ -174,23 +201,29 @@ export function useDoc<T>(name: string | null, fetch: () => Promise<T>, touches:
   const fetchRef = useRef(fetch); fetchRef.current = fetch;
   const touchRef = useRef(touches); touchRef.current = touches;
   const s = name ? (docs.get(name) ?? (docs.set(name, signal(null)), docs.get(name)!)) : null;
+  const gen = generation.value;
   useEffect(() => {
     if (!name || !s) return;
     let live = true, seq = 0;
     const get = async () => {
       const mine = ++seq;
       try { const d = await fetchRef.current(); if (live && mine === seq) { s.value = { data: d, restored: false, error: null }; save('doc:' + name, d, currentCursor()); } }
-      catch (e: any) { if (live && mine === seq) s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: e.message }; }
+      catch (e: any) {
+        if (!live || mine !== seq) return;
+        s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: e.message };
+        if (s.value.data === null) restoreDoc(); // offline: show what was stored
+      }
     };
-    if (!s.value) load<T>('doc:' + name).then(v => { if (live && v && !s.value) s.value = { data: v.data, restored: true, error: null }; });
+    const restoreDoc = () => load<T>('doc:' + name).then(v => { if (live && v && s.value?.data == null) s.value = { data: v.data, restored: true, error: s.value?.error ?? null }; });
+    if (!s.value?.data) restoreDoc();
     get();
     const off = subscribe({ resync: get, changes: cs => { if (cs.some(c => touchRef.current(c))) get(); } });
     const timer = refreshMs ? setInterval(get, refreshMs) : 0;
     return () => { live = false; off(); clearInterval(timer); };
-  }, [name, refreshMs]);
+  }, [name, refreshMs, gen]);
   const v = s?.value ?? null;
   return { data: (v?.data ?? null) as T | null, restored: !!v?.restored, error: v?.error ?? null, state: freshness(!!v?.restored) };
 }
 
 /** For tests: the stored list under key and a record. */
-export const peek = { list: (key: string) => lists.get(key)?.state.value ?? null, record: (id: string) => records.get(id) ?? null, mount: (kind: Kind, key: string, params: Params) => { entry(kind, key, params).mounted++; } };
+export const peek = { generation: () => generation.value, list: (key: string) => lists.get(key)?.state.value ?? null, record: (id: string) => records.get(id) ?? null, mount: (kind: Kind, key: string, view: View) => { entry(kind, key, view).mounted++; } };

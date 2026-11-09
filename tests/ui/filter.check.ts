@@ -112,6 +112,10 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     rule(N, pages === 1, `typing "hero" sent ${pages} task_page requests`);
     await page.goBack(); await page.waitForTimeout(300);
     rule(N, (await url()) === '/tasks', `one Back after a search should return to /tasks, got ${await url()}`);
+    // After Back, a new search starts a new history entry instead of replacing the one Back returned to.
+    await page.locator('.fbar input').first().fill(''); await page.locator('.fbar input').first().pressSequentially('copy', { delay: 60 }); await page.waitForTimeout(800);
+    await page.goBack(); await page.waitForTimeout(300);
+    rule(N, (await url()) === '/tasks', `a search after Back replaced the entry Back returned to (Back now at ${await url()})`);
   } finally { await page.close(); await app.close(); proxy.close(); }
 }
 
