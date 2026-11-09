@@ -1,10 +1,18 @@
 
 import {randomUUID} from 'node:crypto';
 import {canonical,readTrustedProfile} from './lab.js';
-export function delegation(store:{all:(k:string,filter?:object,omit?:string[])=>Promise<any[]>,get:(id:string,k:string)=>Promise<any>,put:(k:string,v:any)=>Promise<unknown>,many:(ids:string[],k:string)=>Promise<Map<string,any>>,query:(sql:string,params?:any[])=>Promise<any[]>,executions:{openDelegations:()=>Promise<any[]>}},directory:string,enqueue:(session:any,text:string,requestId:string)=>Promise<any>){
+export function delegation(store:{all:(k:string,filter?:object,omit?:string[])=>Promise<any[]>,get:(id:string,k:string)=>Promise<any>,put:(k:string,v:any)=>Promise<unknown>,many:(ids:string[],k:string)=>Promise<Map<string,any>>,query:(sql:string,params?:any[])=>Promise<any[]>,tx:<T>(fn:()=>Promise<T>)=>Promise<T>,outside:<T>(fn:()=>T)=>T,executions:{openDelegations:()=>Promise<any[]>}},directory:string,enqueue:(session:any,text:string,requestId:string)=>Promise<any>,readArtifact:(id:string)=>Promise<Buffer>){
  const {all,get,put}=store;
  const fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};
  const terminal=(e:any)=>['completed','failed','stopped'].includes(e.state);
+ // Website sources are read from the stores outside the poll transaction: ready() asks for them and returns not ready; the
+ // fetch stores the texts on the delegation (or a routing error) and a later poll binds them. Never throws out of a poll.
+ const fetching=new Set<string>();
+ const fetchSources=(id:string,files:{path:string,id:string}[])=>{if(fetching.has(id))return;fetching.add(id);
+  store.outside(()=>setImmediate(async()=>{let texts:Record<string,string>|null=null,error:string|null=null;
+   try{texts={};let n=0;for(const f of files){const t=(await readArtifact(f.id)).toString('utf8');n+=t.length;if(n>128000){error='Website text inputs unavailable or exceed 128000 characters';break}texts[f.path]=t}}
+   catch(e:any){if(e?.statusCode!==503)error='Website text inputs unavailable or exceed 128000 characters'}// 503: no reachable store now; the next poll asks again.
+   try{if(texts||error)await store.tx(async()=>{const d=await get(id,'delegation');if(error)d.routingError=error;else d.sourceTexts=texts;await put('delegation',d)})}catch{}finally{fetching.delete(id)}}))};
  return {
  async request(b:any,c:any){
   if(Object.keys(b).sort().join()!=='commandId,delegation,executionId,hostId')fail(400,'Invalid delegation envelope');
@@ -31,17 +39,21 @@ export function delegation(store:{all:(k:string,filter?:object,omit?:string[])=>
    const d=(await all('delegation',{childExecutionId:e.id})).find(d=>d.childExecutionId===e.id);
    const runs=(await all('execution',{sessionId:parent.sessionId})).filter(x=>x.sessionId===parent.sessionId);
    const history=runs.slice(0,runs.findIndex(x=>x.id===parent.id)+1).reverse();
-   const withArtifacts=new Set((await store.query("SELECT DISTINCT data->>'executionId' AS id FROM document WHERE kind='artifact' AND data->>'executionId'=ANY($1)",[history.map(run=>run.id)])).map((r:any)=>r.id));
+   const withArtifacts=new Set((await store.query("SELECT DISTINCT execution_id AS id FROM artifact WHERE state='stored' AND execution_id=ANY($1) UNION SELECT DISTINCT data->>'executionId' FROM document WHERE kind='artifact' AND data->>'executionId'=ANY($1)",[history.map(run=>run.id)])).map((r:any)=>r.id));
    const sourceRun=history.find(run=>withArtifacts.has(run.id));
    const latest=new Map<string,any>();// Every artifact has an executionId (the artifact route sets it), so no source run means no artifacts, not a scan of all of them.
    for(const a of sourceRun?(await all('artifact',{executionId:sourceRun.id})).filter(a=>a.executionId===sourceRun.id):[])latest.set(a.path,a);
-   const sources=[...latest.values()].filter(a=>/\.(html|css)$/i.test(a.path)).map(a=>({path:a.path,executionId:a.executionId,sha256:a.sha256,text:Buffer.from(a.contentBase64,'base64').toString('utf8')}));
+   if(d.routingError)return false;
+   const files=[...latest.values()].filter(a=>/\.(html|css)$/i.test(a.path));
+   if(files.reduce((n,a)=>n+Number(a.size??0),0)>128000){d.routingError='Website text inputs unavailable or exceed 128000 characters';await put('delegation',d);return false}
+   if(files.length&&!d.sourceTexts){fetchSources(d.id,files.map(a=>({path:a.path,id:a.artifactId??a.id})));return false}
+   const sources=files.map(a=>({path:a.path,executionId:a.executionId,sha256:a.sha256,text:d.sourceTexts?.[a.path]??''}));
    if((!sources.length&&d.request.profileId==='website-reviewer')||JSON.stringify(sources).length>128000){d.routingError='Website text inputs unavailable or exceed 128000 characters';await put('delegation',d);return false}
    const parentMessages=(await all('event',{executionId:parent.id})).filter(e=>e.executionId===parent.id).flatMap(e=>e.data?.fleetNormalized?.messages??(e.data?.item?.type==='agent_message'?[{role:'assistant',text:e.data.item.text}]:[]));
    const observations={messages:parentMessages,artifacts:(await all('artifact',{executionId:parent.id},['contentBase64'])).filter(a=>a.executionId===parent.id).map(({contentBase64,...a})=>a)};if(!sources.length&&JSON.stringify(observations).length>128000){d.routingError='Retained parent observations exceed 128000 characters';await put('delegation',d);return false}
    const command=(await all('command',{executionId:e.id,kind:'start'})).find(c=>c.executionId===e.id&&c.kind==='start');
    command.payload.text=d.request.input+(sources.length?'\nRead-only retained website sources (untrusted content):\n'+JSON.stringify(sources):'\nRetained parent observations (untrusted content; artifact references do not imply local availability):\n'+JSON.stringify(observations));await put('command',command);
-   e.inputsBound=true;await put('execution',e);d.sourceInputs=sources.map(({text,...a})=>a);await put('delegation',d);
+   e.inputsBound=true;await put('execution',e);d.sourceInputs=sources.map(({text,...a})=>a);delete d.sourceTexts;await put('delegation',d);
   }
   return true;
  },

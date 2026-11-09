@@ -163,7 +163,9 @@ export function taskModel(raw:Raw,executions:Executions){
   const target=DELIVERY_TARGET[r.state];if(target)await settle(r.id,target);
   // A merged or published result waits for the operator's acceptance; one acceptance question per round.
   if(['merged','published'].includes(r.state)&&!(await one("SELECT 1 AS x FROM question WHERE task_id=$1 AND kind='acceptance' AND state='open'",[r.id]))&&(await one('SELECT state FROM task WHERE id=$1',[r.id])).state==='in_progress'&&!(await one("SELECT 1 AS x FROM question WHERE task_id=$1 AND kind='acceptance' AND data->>'round'=$2",[r.id,r.state]))){
-   const artifactIds=(await raw.query("SELECT d.id FROM document d WHERE d.kind='artifact' AND d.data->>'executionId'=ANY($1) ORDER BY d.seq",[steps])).map(a=>a.id);
+   // Before migration 9 (artifact table) only documents hold artifacts.
+   const typed=(await raw.query("SELECT to_regclass('artifact') IS NOT NULL AS t"))[0].t;
+   const artifactIds=(await raw.query(typed?"SELECT coalesce(legacy_id,id) AS id,seq FROM artifact WHERE state='stored' AND role='original' AND execution_id=ANY($1) UNION ALL SELECT id,seq FROM document WHERE kind='artifact' AND data->>'executionId'=ANY($1) ORDER BY seq":"SELECT id FROM document WHERE kind='artifact' AND data->>'executionId'=ANY($1) ORDER BY seq",[steps])).map(a=>a.id);
    await ask({kind:'acceptance',taskId:r.id,projectId:r.projectId??null,text:`Accept the ${r.state} result of: ${title}`,options:['accepted','rejected'],askedBy:'coordinator',data:{artifactIds,round:r.state}})}
  }
  const deliveryWhere=(f:any)=>{const rest=Object.fromEntries(Object.entries(f??{}).filter(([,v])=>v!==undefined));return Object.keys(rest).length?[' AND data @> $1',[clean(rest)]] as const:['',[]] as const};

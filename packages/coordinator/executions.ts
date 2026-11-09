@@ -16,6 +16,7 @@ export function mapLegacyState(legacy:string|undefined,previous?:State):{state:S
  switch(legacy){
   case 'queued':case 'accepted':case 'pending':return {state:'preparing',observation:'confirmed'};
   case 'started':case 'running':return {state:'running',observation:'confirmed'};
+  case 'waiting':return {state:'waiting',observation:'confirmed'};
   case 'completed':return {state:'succeeded',observation:'confirmed'};
   case 'failed':case 'quota':case 'unavailable':return {state:'failed',observation:'confirmed'};
   case 'stopped':return {state:'cancelled',observation:'confirmed'};

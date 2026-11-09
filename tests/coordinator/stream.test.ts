@@ -106,3 +106,18 @@ test('priority is a queue class: names and p0/p1/p2 synonyms, default normal, in
   await s.tasks.update({taskId:b,priority:'p2'});assert.equal((await s.tasks.get(b)).priority,'background');
   await assert.rejects(s.tasks.update({taskId:b,priority:3}),(e:any)=>e.statusCode===400)});
  await s.close()});
+
+test('artifact tables: artifacts and copies carry task and session; stores map to their host; polls and lease renewals skip',async()=>{const s=await fresh();
+ let task='';await s.tx(async()=>{task=await s.tasks.create({title:'T',projectId:'p'});await s.executions.createExecution({id:'e1',kind:'agent_run',taskId:task,sessionId:'s1',hostId:'mac',harness:'codex',projectId:'p',state:'running'})});
+ const start=(await read(s,null)).cursor;
+ await s.query("INSERT INTO store(id,host_id,bucket,endpoint) VALUES('st1','mac','fleet','https://x')");
+ await s.query("UPDATE store SET observed_at=now(), updated_at=now() WHERE id='st1'");
+ await s.query("UPDATE store SET state='reachable' WHERE id='st1'");
+ await s.query("INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id) VALUES('a1','p','prod','h',1,'text/plain','a.txt','e1')");
+ await s.query("INSERT INTO artifact_copy(artifact_id,store_id,project_id) VALUES('a1','st1','p')");
+ await s.query("UPDATE artifact_copy SET lease_expires_at=now() WHERE artifact_id='a1'");
+ await s.query("UPDATE artifact_copy SET state='verified' WHERE artifact_id='a1'");
+ const r=await read(s,start);
+ assert.deepEqual(r.changes.map((c:any)=>[c.kind,c.id,c.taskId,c.sessionId,c.hostId,c.op]),[
+  ['host','mac',null,null,'mac','I'],['host','mac',null,null,'mac','U'],['artifact','a1',task,'s1',null,'I'],['artifact','a1',task,'s1',null,'I'],['artifact','a1',task,'s1',null,'U']]);
+ await s.close()});

@@ -122,6 +122,10 @@ export function createStore(url:string,opts:{scope?:string}={}){
      if(version===6)await moveLegacyDocuments();
      await q('INSERT INTO schema_migration(version) VALUES($1)',[version])},'write',false)}
   },
+  // Serves a legacy kind from a typed module (Phase 3: artifact from artifacts.ts).
+  registerKind:(kind:string,adapter:Adapter)=>{kinds.set(kind,adapter)},
+  // Runs fn outside the caller's transaction (for work scheduled from inside one, such as store reads after a poll).
+  outside:<T>(fn:()=>T):T=>current.exit(fn),
   stats,
   close:()=>db.close(),
   // Change feed (docs/designs/fleet-operator-app.md §4). Rows are read in (xid, seq) order and only from transactions older
@@ -143,6 +147,9 @@ export function createStore(url:string,opts:{scope?:string}={}){
  };
  const executions=executionModel(api),tasks=taskModel(api,executions);
  for(const [k,a] of Object.entries({...executions.adapters,...tasks.adapters}))kinds.set(k,a);
+ // An execution of a task settles the task (design §2: queued -> in_progress when its first execution starts).
+ {const ex=kinds.get('execution')!;kinds.set('execution',{...ex,put:async(v:any)=>{await ex.put(v);// A step can be written before its task in the same transaction (the task_id foreign key is deferred): skip until it exists.
+  const t=(await q('SELECT e.task_id FROM execution e JOIN task k ON k.id=e.task_id WHERE e.id=$1',[v.id])).rows[0]?.task_id;if(t)await tasks.settle(t)}})}
  // Migration 6: legacy documents of the typed kinds move to their tables in insertion order and keep their seq.
  // A delegation lives on its child execution's row, so it follows the executions.
  async function moveLegacyDocuments(){const rows=(await q("SELECT kind,id,data,seq FROM document WHERE kind = ANY($1) ORDER BY (kind='delegation'), seq",[TYPED_KINDS])).rows;
@@ -160,7 +167,7 @@ const TABLE_OF:Record<string,string>={execution:'execution','pipeline-run':'exec
 export type Docs=Pick<Store,'get'|'put'|'all'|'tx'|'atomic'|'read'|'lock'>;
 // Operations that wait on a pipeline run; they open short transactions around their own synchronous steps.
 // Operations that only read: they run in a read-only snapshot (a write inside one fails loudly).
-export const READ_OPERATIONS=new Set(['task_page','changes_since','list_membership','sessions_list','hosts_list','me','task_get','task_list','questions_list','executions_list','question_history','project_context','catalogue','pipeline_get','pipeline_history','project_list','account_list','account_hosts','account_login_handoff','transport_inspect','session_handoffs','queue_list','questions','execution_status','session_get','execution_differences','execution_events','profiles_list']);
+export const READ_OPERATIONS=new Set(['artifact_list','artifact_get','stores_list','artifact_rule_preview','task_page','changes_since','list_membership','sessions_list','hosts_list','me','task_get','task_list','questions_list','executions_list','question_history','project_context','catalogue','pipeline_get','pipeline_history','project_list','account_list','account_hosts','account_login_handoff','transport_inspect','session_handoffs','queue_list','questions','execution_status','session_get','execution_differences','execution_events','profiles_list']);
 export const LONG_OPERATIONS=new Set(['pipeline_run','direct_search','delivery_generate']);
 // Sequential async forms of the array methods, for callbacks that read the store; order of reads and writes stays as in the sync code.
 export const every=async<T>(xs:T[],f:(x:T)=>unknown)=>{for(const x of xs)if(!await f(x))return false;return true};

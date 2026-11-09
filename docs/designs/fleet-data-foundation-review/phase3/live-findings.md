@@ -1,0 +1,12 @@
+# Live findings to review the Phase 3 artifact design against (2026-11-09/10)
+
+Sources: `docs/infrastructure-build.md`, section "Mac and Windows stores, and the cross-host proof"; owner notes from the Phase 0 store proof.
+
+1. Cloudflare Access strips `CF-Access-Client-Id` and `CF-Access-Client-Secret` before the request reaches the store. These headers must be added after S3 SigV4 signing and must never be part of the signed headers; otherwise Garage answers `signed header cf-access-client-id is not present`.
+2. Control-plane calls to another host's store (CreateMultipartUpload, CompleteMultipartUpload, AbortMultipartUpload, HEAD, DELETE) go through that store's Cloudflare tunnel hostname. Presigned part URLs may target the local `127.0.0.1` endpoint of the executor that uses them (an executor uploads to its own store over loopback).
+3. Store credentials (S3 keys of the coordinator role) must reach the coordinator directly from the store's host, never relayed through another server. In the design this happens when the executor registers its store through the outbox.
+4. The Windows store lives in WSL2 and runs only while the user is logged in (WSL is started by a logon task). Its real capacity is bounded by free space on the Windows system drive (73 GB at the time), because the WSL disk image lives there.
+5. AWS SDK v3 S3 clients must set `requestChecksumCalculation: 'WHEN_REQUIRED'` (and response validation likewise) for Garage: the SDK's default CRC32 checksum headers on every PUT/part are not accepted the same way by Garage.
+6. Measured: an 80 MiB object uploaded from PDS18 to the Windows store through its tunnel as 3 parts of 32 MiB took 19.4 s; the Mac downloaded it from the Windows tunnel in 2.3 s and uploaded the 3 parts to its own store on 127.0.0.1 with presigned part URLs in 0.5 s; PDS18 read the Mac copy through the Mac tunnel in 5.8 s with a matching SHA-256.
+7. Stores today: PDS18 (Garage in a Podman Quadlet, loopback 9490, tunnel), Mac (Homebrew Garage under launchd, zone `mac`, 200 GB, tunnel `fleet-store-mac.ufobe.com`), Windows (Garage static binary in WSL, zone `windows`, 60 GB, tunnel `fleet-store-windows.ufobe.com`). Each has bucket `fleet` and keys `fleet-coordinator` (rw) and `fleet-backup` (ro). Access admits group `fleet-people` and service token `fleet-machines`.
+8. On the Mac, python.org Python has no CA bundle: use `curl` or system trust for HTTPS from scripts.

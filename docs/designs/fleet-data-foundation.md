@@ -149,7 +149,7 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
 
 Open questions come first; answered ones follow with their evidence.
 
-*   **Q2. S3 store on Windows.** Garage officially targets Linux. Decide whether the Windows store is Garage under WSL2 or another S3 server with a native Windows build. Placement does not depend on this choice, because each store is independent.
+*   **Q2. S3 store on Windows (answered 2026-11-09).** Garage under WSL2, as a systemd user unit, published through its own tunnel; it runs only while the user is logged in. See Proof results below and `docs/infrastructure-build.md`.
 *   **Q7. Backup and durability.** Is one storage node on PDS18 with backups enough, or is replication needed? What is the backup target?
 *   **Q9. Connection gateway.** How agents call third-party APIs without seeing keys, and how each call's cost reaches its execution. The gateway is a separate design, and it must use the `connection_cost` record defined here.
 *   **Q8. tight amendments.** Two tight rules must change before Phase 0 and Phase 5:
@@ -259,11 +259,15 @@ Open questions come first; answered ones follow with their evidence.
 | # | Question | Decision |
 |---|---|---|
 | FD1 | Core database | Postgres: role and database `fleet` in the existing system PostgreSQL 18 cluster on PDS18 (tight-D6), with local peer authentication and the existing nightly `pg_dump` |
-| FD2 | Object store and placement | An independent single-node S3 store on each host (Garage; on Windows, Garage under WSL2 or another S3 server, see Q2). Each store is published through Cloudflare Tunnel behind Cloudflare Access, as Fleet and Dash are. Fleet manages placement: each project lists the locations that must hold its artifacts, and Fleet copies objects between stores and checks their hashes |
+| FD2 | Object store and placement | An independent single-node S3 store on each host (Garage; on Windows, Garage under WSL2, Q2). Each store is published through Cloudflare Tunnel behind Cloudflare Access, as Fleet and Dash are. Fleet manages placement: each project lists the locations that must hold its artifacts, and Fleet copies objects between stores and checks their hashes |
 | FD3 | Events, spans and measurements | ClickHouse next to Postgres, as a rootless Podman Quadlet unit of the `fleet` user (tight-D4 and tight-D5). Separate from the ClickHouse that belongs to Langfuse |
 | FD4 | Getting history off the hosts | Extend the executor outbox. Raw transcripts and artifacts upload directly to the store with presigned URLs. No collector process on the hosts |
 | FD5 | Isolation boundary | One OS user per harness account, with the harness sandbox inside. Project keys are issued for each execution and never stored with the account user. On Linux, each execution runs in its own systemd scope, started through the root-owned `fleet-launch@.service` template |
 | FD6 | Running the services on PDS18 | Follow tight: one Unix user `fleet`, user systemd units with linger, no Docker and no sudo except the one launch helper in Q8, containers only as rootless Podman Quadlet. Garage on PDS18 also runs as a Podman Quadlet of `fleet`. Hosts other than PDS18 follow the same pattern with their native service manager |
+| P3-D1 | Whole-file hash check of a multipart upload or copy | The store host's executor re-hashes the staging object over loopback and reports the digest; the coordinator promotes on a match (owner, 2026-11-10). |
+| P3-D2 | Execution state while required uploads continue after the agent exits | `waiting` with reason `artifacts`; the agent slot is released and no active time accrues (owner, 2026-11-10). |
+| P3-D3 | Where required artifacts are declared | Both: the task's `completion_requirements.artifacts` sets the minimum, and an agent may only add required artifacts through `artifact_save` (owner, 2026-11-10). |
+| P3-D4 | Previews and retention rules | Both in Phase 3. `ffmpeg` runs sandboxed as the account user without network; its time and memory bounds are operator settings, not built-in limits (owner, 2026-11-10). |
 
 The principle behind FD4 is that the layer between Fleet and the harnesses belongs to Fleet. That layer covers how each harness is configured, how its output is read, and how Fleet interacts with it. Fleet has to write it in any case, so history passes through that layer and nothing writes into Fleet's stores around it. Native OpenTelemetry output from a harness, where it exists, becomes one more input to the same executor adapter. It is not a separate path.
 
@@ -384,54 +388,60 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
 
 ### 3. Artifact store
 
-*   **Table `store`.** One row per host store: `id`, `kind` (`s3`), `endpoint` (the store's Cloudflare Tunnel hostname), `bucket`, `host_id`, `state` (`reachable`, `unreachable` or `full`), `capacity_bytes`, `used_bytes`, and the credentials reference. The credentials themselves stay in the coordinator's and executor's secret configuration, never in rows.
-*   **Project setting `artifact_locations`.** A list of hosts that must hold the project's artifacts, for example `[windows]`, `[mac]` or `[windows, mac]`. The default is the PDS18 host ID. Optionally, a separate list can be set for lab output and for production output. The setting changes only placement. It never limits who may read the artifacts, which follows project grants.
-*   **Table `artifact_copy`.** `artifact_id`, `store_id`, `state` (`pending`, `copying`, `verified`, `failed` or `deleted`), `verified_at`, `last_error`. An artifact is `stored` once one copy is `verified`. It is `placed` once every location in the project's list holds a verified copy. The task and result views show both states.
-*   **Store connectivity.** Each host store listens on loopback and is published through Cloudflare Tunnel (`cloudflared`) under its own hostname, behind Cloudflare Access, the same way Fleet and Dash are published. Executors and the coordinator pass Access with a service token. Operators pass Access with their normal login. Presigned URLs are signed for the tunnel hostname.
-*   **Transfers.** Every upload and copy uses S3 multipart with 32 MiB parts, below the Cloudflare request-body limit. A file of 32 MiB or less is one part. Each part is retried on its own. A pending upload, with its upload ID and finished parts, is kept on disk, so it resumes after a restart.
-*   **Placement worker.** It runs in the coordinator. For each artifact with missing copies, it queues a `copy` command to the executor of the target host. That executor downloads from a verified store and uploads to its local store, both through the tunnels, then the coordinator checks the hash and marks the copy `verified`. The copy never passes through an operator's machine.
-    *   A store that is offline (a sleeping Mac, a Windows reboot) leaves its copies `pending`. They resume when its host reports the store reachable again.
-    *   Objects are immutable and keyed by hash, so a repeated copy is safe and there are no version conflicts.
-    *   Changing a project's locations schedules new copies. Removing a location deletes copies there only after the other locations hold verified copies.
-*   **Shared objects.** Several `artifact` rows in one project can point to the same object, because the key is the content hash. A store copy of an object is deleted only when no live (not deleted) `artifact` row with that `content_hash` in that project needs that store. Deleting one row otherwise only writes its tombstone.
-*   **Forced purge.** `artifacts.purge(content_hash, reason)` removes an object that contains a leaked secret from every store at once, whatever rows still point to it. It marks every such row `deleted` with `deleted_by = purge:<reason>`. Only the operator may run it, and it is logged as an event.
-*   **Local first.** A worker writes to the store on its own host when that host is in the project's list. Otherwise it writes to the first store in the list that is `reachable`. Files that must stay on one machine therefore never leave it (CUJ 5).
-*   **Previews.**
-    *   After an image or video artifact is committed, the executor that uploaded it builds previews with `ffmpeg`, if `ffmpeg` is present on that host:
+The rules below were revised after the Phase 3 review (`docs/designs/fleet-data-foundation-review/phase3/`) and the cross-host store proof (`docs/infrastructure-build.md`, 2026-11-09). Decisions **P3-D1** to **P3-D4** were taken by the owner on 2026-11-10 (Decisions taken).
+
+*   **Table `artifact`.**
+    *   `id`, `project_id`, `scope` (`lab` or `prod`, from whether the execution has an `experiment_id`), `content_hash` (SHA-256 of the whole file), `size`, `media_type`, `name`;
+    *   `execution_id`, `task_id`;
+    *   `required`, `previous_artifact_id`;
+    *   `derived_from_artifact_id` and `role` (`original`, `thumbnail` or `poster`). A preview is an ordinary artifact that points to its original;
+    *   `state`: `pending`, `stored`, `failed` or `deleted` (who sets each: Write protocol and Forced purge below);
+    *   `lease_expires_at` while `pending`;
+    *   `deleted_at` and `deleted_by`, which form the tombstone;
+    *   `legacy_id` for artifacts migrated from base64 documents (`artifact:<execution>:<path>`), so existing links and acceptance answers keep resolving.
+
+    Which store holds the bytes is not a column of `artifact`; it is the set of `artifact_copy` rows.
+*   **Object keys.** `<project>/<scope>/<sha256>` in each store. Uploads go first to `<project>/<scope>/.pending/<artifact_id>` and are promoted to the hash key only after verification (Write protocol).
+*   **Table `store`.** One row per host store: `id`, `kind` (`s3`), `host_id`, `zone`, `bucket`, `endpoint` (the store's Cloudflare Tunnel hostname), `local_endpoint` (the loopback URL that only the store's own host can use), `state` (`reachable`, `unreachable` or `full`), `capacity_bytes`, `used_bytes`, `requires_logon` (true for the Windows store), `registered_at`. Credentials are never in rows.
+*   **Store registration.** The executor on a store's host registers its store through its outbox: endpoints, bucket, zone, the coordinator role's S3 key, `capacity_bytes` and `used_bytes`. The coordinator writes the key to its own secret directory (`/home/fleet/.config/fleet/stores/<store>.key`, mode 0600) and upserts the row. Only the authenticated executor of that host may register or replace its store. Every endpoint must be on the operator's allowlist `FLEET_STORE_ENDPOINT_HOSTS` (exact hosts or `.suffix`); a local endpoint must be loopback; Access headers go only to allowlisted tunnel hosts. All hosts share one machine secret today, so the allowlist is what keeps a registering host from pointing the coordinator elsewhere; per-host credentials come with the isolation boundary (§9). The key thus reaches the coordinator directly from the store's host and is never relayed through another server. Executors hold no S3 keys: they use presigned URLs plus the Cloudflare Access service token.
+*   **Capacity and availability.** `capacity_bytes` is the smaller of the store's configured capacity and the free space of the disk behind it. For the Windows store that disk is the system drive holding the WSL image. Each poll reports the store's reachability and the remaining capacity (the smaller of the two values) as `capacityBytes`. Every store host runs an executor: it registers the store, verifies uploads and copies (P3-D1). The Windows store therefore needs an executor in WSL. `full` is set when free capacity falls below the `store.free_space_warning` host setting (§11); a `full` store accepts no new uploads and is skipped by store selection. A store whose host has not reported it reachable for 2 minutes is `unreachable`. The Windows store runs only while its user is logged in, because WSL is started by a logon task; readiness shows `requires logon` for it.
+*   **Table `artifact_copy`.** `artifact_id`, `store_id`, `state` (`pending`, `copying`, `verified`, `failed`, `purge_pending` or `deleted`), `verified_at`, `last_error`; one row per (artifact, store). An artifact is `stored` once one copy is `verified`. It is `placed` when every location in the project's list holds a verified copy; `placed` is computed, not stored. The task and result views show both.
+*   **Store protocol rules.**
+    *   Control-plane calls to a store (create, complete or abort a multipart upload, `HEAD`, copy, delete) use its tunnel `endpoint`. The coordinator makes them.
+    *   Presigned part URLs and presigned GETs target the store's `local_endpoint` when the host that will use them is the store's host, and the tunnel `endpoint` otherwise.
+    *   Requests to a tunnel `endpoint` carry the Cloudflare Access service-token headers. They are added after SigV4 signing and are never signed headers; otherwise Garage answers `signed header cf-access-client-id is not present`. Loopback requests carry no Access headers.
+    *   S3 clients set `requestChecksumCalculation` and `responseChecksumValidation` to `WHEN_REQUIRED`.
+*   **Transfers.** Uploads and copies use S3 multipart in parts of 32 MiB, under Cloudflare's 100 MB request-body limit; a file of 32 MiB or less is one part. Part URLs are presigned on demand, a batch at a time with a 15-minute expiry, so a long or resumed upload never holds expired URLs. Each part is retried on its own. A pending upload keeps only its upload ID and the finished parts' ETags on disk, so it resumes after a restart.
+*   **Write protocol.**
+    1.  The executor hashes the file (streaming SHA-256) and asks the coordinator to reserve an artifact with name, size, media type and hash.
+    2.  The coordinator selects the store (Store selection). If that store already holds a verified copy of the same project, scope and hash, it records a new `artifact` row as `stored` at once and returns `{state: stored}`: nothing is uploaded. Otherwise it starts a multipart upload on the staging key and records the artifact as `pending` with a lease (`lease_expires_at`, 1 hour, renewed by each part request).
+    3.  The executor requests part URLs and uploads the parts.
+    4.  The executor commits through a synchronous route; its transfer worker retries the commit until it gets an answer. The completion receipt of a run lists the names it collected, so a required file still on its way counts as pending, not missing.
+    5.  The coordinator completes the upload, checks the size with `HEAD`, and has the hash verified (**P3-D1**, default: the store host's executor re-hashes the staging object over loopback and reports the digest; when the writer is that host, it does so at once). On a match it copies the staging object to the hash key if that key is absent, deletes the staging key, and marks the artifact `stored` and its copy `verified`. On a mismatch it deletes the staging key and marks the artifact `failed`. A verified object is never overwritten.
+    6.  An artifact whose lease expires before commit is aborted on the store and marked `failed`.
+*   **Store selection (the coordinator decides).** The writer's own host when it is in the project's list. Otherwise the first host in the list whose store is `reachable` and not `full`. If none qualifies, the upload waits and retries (Success rule); Fleet never writes outside the project's list.
+*   **Success rule.** An execution cannot reach `succeeded` while an artifact it requires is not `stored`. Required artifacts are declared by the task (`task.completion_requirements.artifacts`: names or patterns in the output folder), which sets the minimum; an agent may only add required artifacts, through `artifact_save` with `required: true` (**P3-D3**). After the agent process ends with uploads still pending, the execution is `waiting` with reason `artifacts` (**P3-D2**): its account slot is released and no active time accrues while the executor's outbox keeps uploading. After the operator setting `artifact_retry_window` (default 24 hours, §11) it becomes `failed` with the upload error. This replaces today's behaviour, where a run succeeds after a 4xx.
+*   **Reading.** `artifacts.get` returns metadata and a presigned GET for a verified copy, choosing the reader's own host's store when it holds one (then on its `local_endpoint`). When no store holding a verified copy is reachable, the artifact is shown as `unavailable`, not lost. Coordinator code that needs the bytes (delivery results, website sources, pipe responses, differences) reads them through `artifacts.read(id)`, which streams from such a copy, with a byte bound per caller checked before reading. `/api/results/:id` streams the same way with the sandbox headers it always had. A host reads an artifact only for its own command in progress that names it (`payload.artifactId` of a copy or verify command, `payload.files[].artifactId` of a delivery step) or for its own execution in the artifact's project. §6 and §8 use this rule.
+*   **Project setting `artifact_locations`.** A list of hosts that must hold the project's artifacts, for example `[windows]`, `[mac]` or `[windows, mac]`. The default is the PDS18 host ID. Every listed host must have a registered store; a project naming one without it is rejected when the project loads. The setting changes only placement; it never limits who may read the artifacts, which follows project grants. A project whose list holds one host keeps its files on that host (CUJ 5).
+*   **Placement worker.** It runs in the coordinator every `placement_interval_seconds` (default 60). For each stored artifact missing a verified copy at a reachable listed location, it queues a `copy` command to the executor of the target host. That executor downloads from a store holding a verified copy (through that store's tunnel, or over loopback when it is its own) and uploads to its own store over loopback, through the same staging, verification and promotion steps. The copy never passes through an operator's machine.
+    *   A store that is offline (a sleeping Mac; Windows while no user is logged in) leaves its copies `pending`. They resume when its host reports the store reachable again.
+    *   Changing a project's locations schedules new copies. Removing a location deletes copies there only after the remaining locations hold verified copies, and only after a `HEAD` shows a surviving copy on a reachable store matches its size. The last copy of an artifact is never deleted outside a purge.
+*   **Shared objects.** Several `artifact` rows of one project and scope can point to the same object, because the key is the content hash. A store copy of an object is deleted only when no `artifact` row with that project, scope and `content_hash` in state `stored` still needs that store (its store's host is in the row's project list). Deleting one row otherwise only writes its tombstone.
+*   **Forced purge.** `artifacts.purge(content_hash, reason)` removes an object that contains a leaked secret from every store, whatever rows still point to it. It marks every such row `deleted` with `deleted_by = purge:<reason>` and adds the hash to a purge list, which reserve and placement refuse. Copies on unreachable stores become `purge_pending` and are deleted when the store is reachable again, before that store serves any read or copy. Only the operator may run it, and it is logged as an event.
+*   **Previews (P3-D4).**
+    *   After an image or video artifact is stored, the executor that uploaded it builds previews with `ffmpeg`, if present on that host:
         *   a 512 px `thumbnail` for an image;
         *   a `poster` frame plus a 512 px `thumbnail` for a video.
-    *   Previews are stored as artifacts with `derived_from_artifact_id`, follow the project's placement, and can be deleted and rebuilt at any time.
-    *   Preview work runs at the lowest CPU priority (`nice 19` on macOS and Linux, idle priority on Windows), so it does not slow agents on the same host.
-    *   A host without `ffmpeg` reports this in its readiness, and the preview shows as `unavailable`.
-    *   3D models get no preview in this design.
-*   **Retention rules (optional, set per project).** A project may add rules to `artifact_rules`, for example:
-    *   `{scope: lab, older_than_days: 30, action: move, to: [nas]}`;
-    *   `{scope: lab, older_than_days: 180, action: delete}`.
-
-    How the rules run:
-    *   The placement worker carries out a rule as ordinary copies and deletions, under the same safety rules: delete only after the target holds verified copies, and only when no live row still needs the object.
+    *   `ffmpeg` decodes untrusted agent output, so it runs as the execution's account user (§9; until Phase 5 adds account users, as the user that runs the agents on that host), with no network access, under the time and memory bounds of the operator settings `preview_timeout_seconds` and `preview_memory_bytes` (defaults 120 s and 1 GiB), at the lowest CPU priority (`nice -n 19` on macOS and Linux, idle priority on Windows); agents on the same host get the CPU first.
+    *   Previews are stored as artifacts with `derived_from_artifact_id`, `required = false` and the source's `execution_id`; they follow the project's placement and can be deleted and rebuilt at any time.
+    *   A host without `ffmpeg` reports it in its capabilities, and the preview shows as `unavailable`. 3D models get no preview in this design.
+*   **Retention rules (optional, set per project; P3-D4).** A project may add rules to `artifact_rules`, for example `{scope: lab, older_than_days: 30, action: move, to: [windows]}` or `{scope: lab, older_than_days: 180, action: delete}`. `to` names hosts with registered stores, is required for `move` and forbidden for `delete`.
+    *   The placement worker carries out a rule as ordinary copies and deletions, under the same safety rules.
     *   Deletion keeps the `artifact` row as a tombstone (`state = deleted`, `deleted_at`, `deleted_by = rule:<id>`).
-    *   A new or changed rule runs only after the operator reviews a preview. The preview lists the count, total size and a sample of the affected artifacts, and the operator confirms it.
+    *   A new or changed rule runs only after the operator confirms a preview listing the count, total size and a sample of the affected artifacts; editing a rule clears its confirmation.
     *   Without rules, nothing moves or expires. History in ClickHouse is not affected by artifact rules.
-*   **Reading.** `artifacts.get` returns a presigned link to a verified copy on its store's tunnel hostname, preferring the reader's own host. When no listed store is reachable, the artifact is shown as unavailable, not lost.
-*   **Table `artifact`.**
-    *   `id`, `content_hash` (sha256), `size`, `media_type`, `name`;
-    *   `store_id`, `object_key`;
-    *   `execution_id`, `project_id`, `task_id`;
-    *   `required`, `previous_artifact_id`;
-    *   `derived_from_artifact_id` and `role` (`original`, `thumbnail`, `poster` or `web`). A preview is an ordinary artifact that points to its original;
-    *   `state`: `pending`, `stored`, `failed` or `deleted`;
-    *   `deleted_at` and `deleted_by`, which form the tombstone.
-*   **Object keys.** `<project>/<lab|prod>/<sha256>` in each store. The same content in the same project is stored once per store (see Shared objects).
-*   **Write protocol.**
-    1.  The executor asks the coordinator to reserve an artifact, sending name, size, type and hash.
-    2.  The coordinator starts a multipart upload on the chosen store in the project's list and returns presigned part URLs.
-    3.  The executor uploads the 32 MiB parts directly to the store through its tunnel hostname.
-    4.  The executor confirms through the outbox.
-    5.  The coordinator checks the object's size and hash on the store, then marks it `stored`.
-*   **Success rule.** An execution with a `required` artifact that is not `stored` cannot move to `succeeded`. It stays `running` while retries continue, for up to the operator setting `artifact_retry_window` (default 24 hours), then becomes `failed` with the upload error. This replaces today's behaviour, where a run succeeds after a 4xx.
-*   **Raw transcripts.** These are artifacts with `media_type` set to the harness log format. They are uploaded when the run ends, and in chunks during long runs. This protects them against local cleanup (CUJ 6).
-*   **No size limit in Fleet.** The base64 path and `FLEET_MAX_ARTIFACT_BYTES` are removed, in the coordinator and in the executor. Limits are the store's disk, and they show as store capacity.
+*   **Output and transcript collection.** In Phase 3 the executor collects `FLEET_OUTPUT_DIR` and the harness transcript once, when the run ends; a later run of the same path creates a new artifact with `previous_artifact_id`. Collection during long runs, with a rule for files still being written, comes with the CUJ 6 work. A transcript is uploaded after the executor's exact-value masking (§5); pattern masking in the coordinator applies when it is read.
+*   **No size limit in Fleet.** The base64 path and `FLEET_MAX_ARTIFACT_BYTES` are removed, in the coordinator and in the executor. The limit is the free space behind each store, shown as store capacity.
 
 ### 4. ClickHouse: events, spans, measurements
 
@@ -512,15 +522,14 @@ The shapes are copied from t3code (`apps/server/src/mcp/toolkits/attachment/tool
 
 *   **Output folder, the default path.**
     *   Each execution gets `FLEET_OUTPUT_DIR`, a folder inside its working area.
-    *   Anything the agent writes there is collected by the executor when the run ends, and in chunks during long runs. It is stored as artifacts of that execution.
+    *   Anything the agent writes there is collected by the executor when the run ends (§3, Output and transcript collection) and stored as artifacts of that execution.
     *   This extends the worktree output collection added in commit `23c5418`.
     *   The agent needs no tool call and no knowledge of storage.
 *   **Explicit tools.** MCP tools on the existing `/api/tools` surface:
-    *   `artifact_prepare_upload({name, media_type, size, sha256, required?})` returns `{artifact_id, upload: {url | parts[]}, expires_at}`. Use it for files larger than a single request, or to store a file now rather than at the end.
-    *   `artifact_commit({artifact_id})` returns `{artifact_id, state}`. The coordinator checks size and hash on the store.
-    *   `artifact_discard({artifact_id})`.
+    *   `artifact_save({path, name?, media_type?, required?})` stores a file of the agent's working area now, rather than at the end. The executor uploads it through its own transfer path (§3 Write protocol) and returns `{artifact_id, state}`. Agents never receive store URLs or the Access token: the store hostnames sit behind Cloudflare Access, whose service token is a credential (G3, G8). Reserve, part URLs, commit and discard are routes between executor and coordinator only.
     *   `artifact_list({execution_id? | task_id?, media_type?})` returns metadata only.
-    *   `artifact_get({artifact_id})` returns metadata plus a local path when the file is already on this host, or a short-lived URL otherwise. It never returns the file content inline.
+    *   `artifact_get({artifact_id})` returns metadata, and the executor downloads the file into the execution's input folder (`FLEET_INPUT_DIR`, inside the working area, readable by the account user) and returns that path. The copy lives only as long as the working area. It never returns the file content inline.
+    *   An agent acts only on its own execution's artifacts for writes; reads follow the project grant (§6). The task sets the minimum of required artifacts (§3 Success rule); an agent may mark more as required through `artifact_save`, never fewer.
     *   `history_query({filters, group_by?})` maps to `usage.summary` and `executions.query`.
     *   `transcript_read({execution_id, range? | search?})` returns redacted text marked as data, with paging (`cursor`, `limit`).
     *   `task_list({project_id?, state?})`, `task_get({task_id})`, `task_create({project_id, title, expected_outcome, depends_on?})` and `task_update({task_id, ...})` map to the `tasks.*` operations.
@@ -655,6 +664,14 @@ Throughput is not the constraint. A write transaction takes a few milliseconds (
 | Typed writes inside receipts and poll (execution rows, task state from delivery, `detectProblems`) | Same as their handler. | GLOBAL write |
 | Typed writes inside host ingest (observation and `last_seen_at`, `harness_version`, `child_agent` rows of the execution, `execution_totals`) | Columns that no GLOBAL writer sets. Totals are recomputed from the row, so a recomputation from either scope gives the same value. | Execution scope. A GLOBAL writer that updates the same execution row waits for its row lock. |
 | Migration 6 (documents to typed tables) | Runs once, alone. | One GLOBAL write |
+
+**Phase 3 additions.**
+
+| Group | Invariant it needs | Mechanism |
+|---|---|---|
+| Artifact routes (`reserve`, `parts`, `commit`, `verified`) | One artifact row per reservation; a verified object is never overwritten; promotion happens once. | Execution scope for short transactions around store calls; the store calls themselves run outside any transaction. |
+| `POST /api/hosts/stores` and store fields of poll | Only the store's own host registers or updates it. | GLOBAL write |
+| Placement worker, lease expiry, purge reconciliation | Copy, delete and purge decisions see current rows; never delete a last copy. | GLOBAL write per decision; store calls between transactions |
 
 **Whole-kind reads on write paths.**
 
@@ -820,6 +837,10 @@ Throughput is not the constraint. A write transaction takes a few milliseconds (
 
 ## Risks & Mitigations
 
+*   **The Windows store is offline while no user is logged in.** Mitigation: copies stay `pending` and resume at logon; readiness shows `requires logon`; a `[windows]`-only project accepts this, and its uploads wait under `artifact_retry_window` (§3).
+*   **One coordinator key opens every store.** The coordinator holds the read-write key of each store; a leaked coordinator secret allows writes and deletes everywhere. Mitigation: keys live only in the coordinator's 0600 secret directory, executors hold none, and a store's host can replace its key by registering again.
+*   **A verified copy rots on disk.** The daily re-hash audit is deferred past Phase 3. Mitigation until then: copies verify at write and copy time, and reads stream through a verified copy whose size is checked.
+*   **Abandoned multipart uploads keep space.** Mitigation: leases abort uploads the coordinator knows; a periodic `ListMultipartUploads` sweep for unknown ones is a follow-up.
 *   **ClickHouse returns duplicates before a merge.** Mitigation: every summing query uses `FINAL` or `argMax` by `seq` (§4); a test feeds a duplicate batch and checks totals.
 *   **A cross-host transfer stops halfway.** Mitigation: 32 MiB multipart parts, each retried on its own, with the upload state kept on disk (§3).
 *   **A store host is offline.** Mitigation: copies stay `pending` and resume; the artifact shows as unavailable, not lost.
@@ -907,7 +928,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Type / Scope**: Store on the other hosts.
 *   **Proposed Changes**:
     *   macOS: a launchd agent running Garage single-node under the executor service user, listening on loopback.
-    *   Windows: an install note that stays open until Q2 is answered (WSL2 or a native S3 server).
+    *   Windows: Garage under WSL2 (Q2, answered 2026-11-09).
     *   Each host's store gets an ingress hostname in that host's `cloudflared` configuration, behind the same Cloudflare Access policy as item 2.
 *   **Why**: FD2, local stores.
 
@@ -1055,105 +1076,129 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 
 #### Phase 3: artifacts and placement
 
+Order: 21, 22, 24 (with its legacy adapter), 26c (backfill), 26b and the other readers, 26 (base64 removal), 25, 27-28b, 29, 30. Each step keeps delivery working.
+
 ##### 21. `packages/coordinator/db/schema.sql` (Modify)
 
-*   **Type / Scope**: Migration 3.
-*   **Proposed Changes**: The `store`, `artifact` and `artifact_copy` tables from Technical Plan §3, with indexes on `content_hash`, `execution_id`, `task_id` and (`store_id`, `state`).
+*   **Type / Scope**: Migration 8 (migrations 1-7 exist).
+*   **Proposed Changes**:
+    *   `store(id text PK, kind text, host_id text, zone text, bucket text, endpoint text, local_endpoint text, state text CHECK IN ('reachable','unreachable','full'), capacity_bytes bigint, used_bytes bigint, requires_logon boolean, registered_at timestamptz, updated_at timestamptz)`.
+    *   `artifact(id text PK, project_id text, scope text CHECK IN ('lab','prod'), content_hash text, size bigint, media_type text, name text, execution_id text, task_id text REFERENCES task DEFERRABLE INITIALLY DEFERRED, required boolean, previous_artifact_id text, derived_from_artifact_id text, role text CHECK IN ('original','thumbnail','poster'), state text CHECK IN ('pending','stored','failed','deleted'), lease_expires_at timestamptz, upload_id text, staging_store_id text, deleted_at timestamptz, deleted_by text, legacy_id text UNIQUE, created_at, updated_at, seq bigint DEFAULT nextval(document seq))`.
+    *   `artifact_copy(artifact_id text REFERENCES artifact, store_id text REFERENCES store, state text CHECK IN ('pending','copying','verified','failed','purge_pending','deleted'), verified_at timestamptz, last_error text, PRIMARY KEY (artifact_id, store_id))`.
+    *   `purged_hash(project_id text, scope text, content_hash text, reason text, purged_at timestamptz, PRIMARY KEY (project_id, scope, content_hash))` and `artifact_rule_confirmation(project_id text, rule_hash text, confirmed_by text, confirmed_at timestamptz, PRIMARY KEY (project_id, rule_hash))`.
+    *   Indexes on `artifact(project_id, scope, content_hash)`, `artifact(execution_id)`, `artifact(task_id)`, `artifact(state, lease_expires_at)`, `artifact_copy(store_id, state)`.
+    *   `ENABLE` and `FORCE ROW LEVEL SECURITY` with the `project_scope` policy of migration 6 on `artifact`, `artifact_copy` (through its artifact) and `purged_hash`; `store` carries no project and gets an operator-scope policy.
+    *   `task_view.latest_result` reads the latest `stored` row of `artifact` instead of `document` rows of kind `artifact`.
 *   **Why**: G3 and FD2.
 
-##### 22. `config/stores.example.json` (Create)
+##### 22. Store registration (`crates/executor/src/store.rs` Create, `packages/coordinator/stores.ts` Create)
 
-*   **Type / Scope**: Store registry example.
-*   **Proposed Changes**: One entry per host: `{id, host_id, endpoint, bucket, credentials_ref}`. Real values stay in the host-only file named by `FLEET_STORES_FILE`.
-*   **Why**: Keeps credentials out of the repository.
+*   **Type / Scope**: Replaces the planned `config/stores.example.json` and `FLEET_STORES_FILE`, which live finding 3 rules out.
+*   **Proposed Changes**:
+    *   Executor configuration gains an optional `store: {id, zone, bucket, local_endpoint, endpoint, key_file, capacity_bytes, backing_path}`. At start and when it changes, the executor queues an outbox row to `POST /api/hosts/stores` with these values, the key read from `key_file`, and the effective capacity (smaller of `capacity_bytes` and free space at `backing_path`).
+    *   Each poll body gains `stores: [{id, reachable, capacity_bytes, used_bytes}]` (used bytes from the Garage admin API on loopback).
+    *   `stores.ts`: `register(hostId, body)` checks that `hostId` owns the store id (first registration binds it; replacing needs the same host), writes the key to `<FLEET_STORE_SECRETS>/<id>.key` (0600, default `/home/fleet/.config/fleet/stores`), upserts `store`; `observe(hostId, stores)` updates state, capacity and used bytes; a store unseen for 2 minutes is `unreachable`; `full` below `store.free_space_warning`.
+    *   The Access service token for the coordinator is read from `FLEET_CF_ACCESS_FILE` (default `~/.config/fleet/cf-access-machine.env`), the same file format as on the hosts.
+*   **Why**: G11 and live finding 3.
 
 ##### 23. `config/projects/*/project.json` and `packages/coordinator/projects.ts` (Modify)
 
 *   **Type / Scope**: Project settings.
 *   **Proposed Changes**:
-    *   Add an optional `artifact_locations: string[]` (host IDs), with optional `lab` and `production` overrides. The default is `["pds18"]`.
-    *   Add an optional `artifact_rules` list (`scope`, `older_than_days`, `action: move|delete`, `to?`). It is empty by default.
-    *   `projects.ts` checks that each host has a registered store.
+    *   Optional `artifact_locations: string[]` (host IDs). The default is `["pds18"]`. On project load each host must have a registered store; otherwise the project is reported invalid with the missing host, and reserve refuses it.
+    *   Optional `artifact_rules` (P3-D4): `{scope: 'lab'|'prod', older_than_days: number, action: 'move'|'delete', to?: string[]}`; `to` required for `move`, forbidden for `delete`, each a host with a store.
 *   **Why**: Placement per project.
 
 ##### 24. `packages/coordinator/artifacts.ts` (Create)
 
-*   **Type / Scope**: Artifact operations.
+*   **Type / Scope**: Artifact operations. Uses the existing `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner` (no new dependency).
 *   **Proposed Changes**:
-    *   The S3 client sets `requestChecksumCalculation: 'WHEN_REQUIRED'` (see Q1). Single-part uploads are presigned with `x-amz-checksum-sha256`, so the store itself rejects a wrong hash.
-    *   `reserve({execution_id, name, media_type, size, sha256, required})` picks the store: the writer's host if it is in the list, otherwise the first host in the list whose store is `reachable`. It starts a multipart upload and returns presigned URLs for 32 MiB parts.
-    *   `commit(id)` completes the multipart upload, checks the object's size and hash on the store with `HEAD` plus a stored checksum, then marks the artifact `stored` and its first `artifact_copy` `verified`.
-    *   `purge(content_hash, reason)`: the forced purge from Technical Plan §3, operator only.
-    *   `discard(id)`, `list(filter)` and `get(id)`. `get` returns metadata and a presigned GET for a verified copy, preferring the reader's host.
-    *   The success rule: `executions.transition(id, 'succeeded')` refuses while any `required` artifact is not `stored`.
+    *   `s3For(store, via: 'tunnel'|'local')`: a client per store and endpoint with `requestChecksumCalculation` and `responseChecksumValidation` `WHEN_REQUIRED`; for `tunnel`, a middleware at the `finalizeRequest` step, after signing, adds `CF-Access-Client-Id` and `CF-Access-Client-Secret`. Presigned URLs for a host other than the store's are post-processed the same way by the executor (it adds the headers, never signs them).
+    *   `reserve({executionId, hostId, name, mediaType, size, sha256}) -> {artifactId, state} | {artifactId, state:'pending', uploadId, partSize}`: rejects a purged hash; store selection per §3; dedupe to an existing verified copy; else `CreateMultipartUpload` on the staging key and a `pending` row with a 1-hour lease. Errors: `no_store` (409, nothing reachable in the list), `project_invalid` (409).
+    *   `parts({artifactId, hostId, partNumbers[]}) -> [{partNumber, url}]`, 15-minute presigned `UploadPart` URLs for `local_endpoint` when `hostId` is the store's host, else the tunnel; renews the lease.
+    *   `commit({artifactId, parts:[{partNumber, etag}]})`: `CompleteMultipartUpload`, `HEAD` size check, then queues a `verify` command to the store host's executor (P3-D1 default) and returns `{state:'pending'}`; `verified({artifactId, sha256})` from that executor promotes (`CopyObject` to the hash key if absent, delete staging), marks the artifact `stored` and its copy `verified`, or marks it `failed`.
+    *   `read(id): Readable` streams a verified copy for coordinator code; `get(id)` returns metadata and a presigned GET (§3 Reading) with `ResponseContentDisposition: attachment` and `ResponseContentType` forced for HTML, so results stay sandboxed off the coordinator origin; `list(filter)`; `purge(contentHash, reason)` (operator role); `expireLeases()` aborts and fails expired `pending` rows.
+    *   S3 calls run outside the write transaction: each operation takes a short GLOBAL transaction to read and reserve rows, calls the store, then a second short transaction to record the result (§12, like `LONG_OPERATIONS`).
+    *   A legacy adapter for kind `artifact` in `store.ts` `TYPED_KINDS` serves existing `all('artifact')` readers (`app.ts`, `recovery.ts`, `lab.ts`, `delegation.ts`, `agent-tools.ts`) from the `artifact` table in their record shape (`id` = `legacy_id` when set, `path` = `name`, without `contentBase64`), so they need no change for metadata.
+    *   The success rule lives where execution states are written: `executions.putExecution` and the receipts handler refuse `succeeded` while a required artifact of the execution is not `stored`, and write `waiting` with reason `artifacts` (P3-D2) instead; `expireLeases` and a check in `runPlacement` fail executions past `artifact_retry_window`.
 *   **Why**: G3.
 
 ##### 25. `packages/coordinator/placement.ts` (Create)
 
-*   **Type / Scope**: Placement worker and audit.
+*   **Type / Scope**: Placement worker.
 *   **Proposed Changes**:
-    *   `runPlacement()` repeats every 60 seconds (an operator setting). A store is `reachable` when its host's last observation is under 2 minutes old and reports the store reachable. For each artifact missing a verified copy at a reachable listed location, it queues a `copy` command to the target host's executor, then verifies the hash.
-    *   `runAudit()` re-hashes 100 copies per store every day (an operator setting) and marks missing or corrupt copies `failed`, which schedules a new copy.
-    *   Removing a location deletes copies there only after the remaining locations hold verified copies.
-    *   A store copy is deleted only when no live `artifact` row with that `content_hash` in the project needs that store.
-*   **Why**: FD2. The audit detects a false `placed` state.
-*   **Retention rules**: `previewRule(projectId, rule)` returns the count, the bytes and a sample of affected artifacts. `confirmRule` stores the confirmation. `runRules()` applies only confirmed rules, through the same copy-then-delete path.
+    *   `runPlacement()` every `placement_interval_seconds` (default 60): for each `stored` artifact missing a verified copy at a reachable, not full, listed store, queue `{kind:'artifact-copy', payload:{artifactId, source:{storeId, url}, target:{storeId}}}` to the target host's executor (source URL presigned for that host); its result receipt goes through `commit`/`verified` as for an upload.
+    *   Delete safety (§3): `HEAD` a surviving copy first; never the last copy outside a purge.
+    *   `purge_pending` copies are deleted first when their store becomes reachable; reads and copies skip a store with any.
+    *   `expireLeases()` and the `artifact_retry_window` check.
+    *   Retention rules (P3-D4): `previewRule(projectId, rule)` returns count, bytes and a sample; `confirmRule` records `artifact_rule_confirmation` (keyed by a hash of the rule, so editing clears it); `runRules()` applies confirmed rules through the same copy-then-delete path.
+    *   The daily re-hash audit is deferred; noted in Risks.
+*   **Why**: FD2 and CUJ 5.
 
-##### 26. `packages/coordinator/app.ts` (Modify)
+##### 26. `packages/coordinator/app.ts` and `server.ts` (Modify)
 
-*   **Type / Scope**: Routes.
+*   **Type / Scope**: Routes and configuration.
 *   **Proposed Changes**:
-    *   Replace `POST /api/hosts/artifacts` (base64 at line 118) with `POST /api/hosts/artifacts/reserve` and `POST /api/hosts/artifacts/commit`.
-    *   Remove `maxArtifactBytes`, the body limit derived from it, and `FLEET_MAX_ARTIFACT_BYTES`.
-    *   `GET /api/results/:id` redirects to a presigned GET.
-
-##### 26b. `packages/coordinator/delivery.ts` (Modify)
-
-*   **Type / Scope**: Delivery result reading.
-*   **Proposed Changes**: `reconcile` (line 11) reads `delivery-result.json` through `artifacts.get` instead of decoding `contentBase64`. The base64 documents are removed only after this change ships.
-*   **Why**: Phase 3 must not break delivery.
+    *   Replace `POST /api/hosts/artifacts` (the base64 route) with `POST /api/hosts/artifacts/reserve`, `/parts`, `/commit` and `/verified`; add `POST /api/hosts/stores`. They are long routes (not wrapped in one transaction) and take the execution scope for their short transactions; `ingestRoutes` drops `/api/hosts/artifacts`.
+    *   Remove `maxArtifactBytes`, the body limit derived from it (Fastify's default 1 MiB applies), and `FLEET_MAX_ARTIFACT_BYTES` in `server.ts`; `server.ts` reads `FLEET_STORE_SECRETS` and `FLEET_CF_ACCESS_FILE`.
+    *   `GET /api/results/:id` streams through `artifacts.read` with its sandbox headers; `execution_differences` reads bytes through `artifacts.read`; `/api/hosts/artifacts/get`, `/read` and `/list` serve hosts under the read rule of §3.
+    *   The executor-facing tool `artifact_save` is served by the executor's tool proxy (item 28) and maps to reserve/parts/commit; `artifact_list` and `artifact_get` are agent operations with schemas.
 *   **Why**: G3, no size limit inside Fleet.
+
+##### 26b. Readers of base64 content (Modify)
+
+*   **Type / Scope**: Every reader of `contentBase64`, moved to `artifacts.read(id)` in the same change:
+    *   `delivery.ts`: `delivery_step` sends `files:[{path, artifactId, sha256}]` in the `delivery-step` command instead of `contentBase64`; the static-site bound keeps using `size`; `reconcile` reads `delivery-result.json` through `artifacts.read`.
+    *   `delivery_worker.py`: fetches `files[]` with presigned GETs it requests from `POST /api/hosts/artifacts/get`, and uploads its own outputs (`delivery-result.json`, `account-readiness.json`, `pipe-response.json`) through reserve/parts/commit.
+    *   `delegation.ts` (website sources), `projects.ts` (pipe response), `app.ts` (differences, results).
+*   **Why**: Phase 3 must not break delivery.
+
+##### 26c. Backfill of base64 artifacts (part of migration 8 and `migrate-sqlite.ts`)
+
+*   **Type / Scope**: One-time move.
+*   **Proposed Changes**: The placement loop decodes up to 50 `artifact` documents per pass once a store of the project's locations is reachable (until then they keep serving their readers), uploads it to the PDS18 store under its project, scope and hash (skipping existing verified copies), writes the `artifact` row with `legacy_id` and a verified copy, then deletes the document; it is idempotent (rows already moved are skipped). Placement then copies to the project's locations. `migrate-sqlite forward` does the same for SQLite records; `reverse` writes `artifact` rows back as base64 documents, reading the bytes through `artifacts.read`.
+*   **Why**: §7.
 
 ##### 27. `crates/executor/src/upload.rs` (Create)
 
-*   **Type / Scope**: Rust module.
+*   **Type / Scope**: Rust module (existing `ureq` and `sha2`, no new crate).
 *   **Proposed Changes**:
-    *   Hash a file with streaming SHA256.
-    *   Call reserve, then PUT each 32 MiB part to its presigned URL on the store's tunnel hostname with `ureq`, then commit.
-    *   Retry each part on its own, with backoff.
-    *   Keep the pending upload (upload ID and finished parts) in the existing `journal.sqlite`, so it resumes after an executor restart.
-    *   Send the Cloudflare Access service token headers on every store request.
-    *   It also serves the `copy` command from `placement.ts`: it downloads from the source presigned GET and uploads to its local store in the same parts.
+    *   `upload(path, meta) -> artifact_id`: streaming SHA-256; `reserve` through the synchronous coordinator call (`outbox::post`); parts in batches through `/parts`; PUTs with a separate `ureq::Agent` (120 s timeout per part); Access headers added only for tunnel URLs; each part retried up to 5 times with backoff 2 s to 60 s; commit queued through the outbox.
+    *   Journal table `uploads(artifact_id TEXT PK, path TEXT, upload_id TEXT, part_size INTEGER, parts TEXT /* json of finished {partNumber, etag} */, created_at INTEGER)` in `journal.sqlite`, so an upload resumes after a restart.
+    *   Commands `artifact-copy` (download from the given URL, upload over loopback through `/parts`, commit) and `artifact-verify` (stream the staging object from `local_endpoint`, report the SHA-256 to `/verified`).
 *   **Why**: G3 and FD4. Files go directly to the store.
 
 ##### 28. `crates/executor/src/main.rs` (Modify)
 
 *   **Type / Scope**: Executor core.
 *   **Proposed Changes**:
-    *   Replace the base64 artifact queue at line 812 with `upload.rs`.
-    *   Remove the executor's own `FLEET_MAX_ARTIFACT_BYTES` check (lines 792-810, 16 MiB default).
-    *   Create `FLEET_OUTPUT_DIR` inside each execution's working area, and collect it when the run ends and in chunks during long runs, extending `23c5418`.
-    *   Upload the redacted raw transcript as an artifact.
-    *   Remove `use base64`.
+    *   Replace the base64 artifact queue (`artifacts()`) with `upload.rs`, and remove the executor's `FLEET_MAX_ARTIFACT_BYTES` check (16 MiB default).
+    *   Collection keeps the symlink, escape and `O_NOFOLLOW` checks; it drops the static extension list and name pattern; the media type comes from the file extension with `application/octet-stream` as fallback. An upload error no longer fails the run at once: the success rule decides.
+    *   Create `FLEET_OUTPUT_DIR` and `FLEET_INPUT_DIR` inside each execution's working area; collect the output folder and the masked transcript (`media_type` of the harness log, for example `application/x-ndjson`) when the run ends.
+    *   Serve `artifact_save`, `artifact_list` and `artifact_get` in the executor's tool proxy for the agent.
+    *   Dispatch the `artifact-copy` and `artifact-verify` commands; report `stores` in each poll; register the store (item 22).
+    *   Remove `use base64` (used only by the artifact queue).
 *   **Why**: G3, G4 and G9.
 
-##### 28b. `crates/executor/src/preview.rs` (Create)
+##### 28b. `crates/executor/src/preview.rs` (Create, P3-D4)
 
 *   **Type / Scope**: Rust module.
-*   **Proposed Changes**:
-    *   `build_previews(artifact)` runs on image and video media types after commit:
-        *   it calls `ffmpeg` at the lowest CPU priority;
-        *   it writes the thumbnail or poster into a temporary folder;
-        *   it uploads each one through `upload.rs` with `derived_from_artifact_id` and `role`.
-    *   Readiness reports whether `ffmpeg` is present and its version.
-    *   A failure is logged as a preview error. It never fails the execution.
-*   **Why**: Basic previews (owner decision). There is no new crate dependency, because `ffmpeg` is an external program on the host.
+*   **Proposed Changes**: After an image or video artifact is stored, `build_previews` runs `ffmpeg` as the account user with no network, within `preview_timeout_seconds` and `preview_memory_bytes`, under `nice -n 19` (idle priority on Windows), writes the thumbnail or poster into a temporary folder and uploads it through `upload.rs` with `derived_from_artifact_id`, `role`, `required = false` and the source's `execution_id`. The host reports `ffmpeg:<version>` in its poll capabilities. A failure is logged as a preview error and never fails the execution.
+*   **Why**: Basic previews (owner decision).
 
 ##### 29. `crates/executor/Cargo.toml` (Modify)
 
-*   **Type / Scope**: Dependencies.
-*   **Proposed Changes**: Remove `base64` if nothing else uses it.
+*   **Proposed Changes**: Remove `base64` (used only at the two places item 28 removes).
 *   **Why**: Dead dependency.
+
+##### 30. Tests (Create)
+
+*   `tests/coordinator/artifacts.test.ts` (PGlite plus an in-process S3 fake that enforces staging, multipart and checksum rules): reserve, parts, commit, verified; wrong hash marks `failed` and leaves an existing verified object byte-identical; dedupe without upload; lease expiry aborts; full store and unreachable store refuse; purge and the purge list; Access headers present on tunnel requests and absent from `X-Amz-SignedHeaders`; legacy adapter shape; success rule (`waiting` with reason `artifacts`, then `failed` after the window).
+*   `tests/coordinator/placement.test.ts`: copies to a reachable listed store; never to a store outside the list; removing a location deletes only after a verified surviving copy; the last copy is kept; rule preview and confirmation.
+*   `tests/coordinator/delivery.test.ts` keeps passing with artifacts in the store (fake), including the program workers.
+*   `tests/executor`: upload resume after a restart in the middle of an upload; part retry; copy and verify commands against a local Garage when present.
+*   Live proof (on the real stores, with the operator's approval for each host change): CUJ 3, a `.glb` of at least 400 MB saved with `artifact_save`, `stored` with a matching SHA-256 read back through `artifacts.get`, and accepted through the task's acceptance question; CUJ 5, a project with `artifact_locations: [windows]` whose artifact has no copy outside Windows (bucket listing on PDS18 and the Mac shows none), and a `[windows, mac]` project reaching `placed`; Windows logged out leaves copies `pending`, and they resume at logon.
+*   **Why**: Evidence for G3, FD2, CUJ 3 and CUJ 5.
 
 #### Phase 4: ingest, adapters, redaction
 
@@ -1446,7 +1491,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **E2E/Integration**: After each phase, run live on PDS18 and the Mac:
     *   **Phase 1:** T1 and T14 from `docs/test-results-T1-T16.md` pass again on Postgres, and `migrate-sqlite verify` reports no difference.
     *   **Phase 2:** CUJ 1 and CUJ 2.
-    *   **Phase 3:** CUJ 3 with a file of at least 400 MB, and CUJ 5 with a Mac and PDS18 pair (Windows once Q2 is answered).
+    *   **Phase 3:** item 30: CUJ 3 with a `.glb` of at least 400 MB, and CUJ 5 with a `[windows]` project and a `[windows, mac]` project.
     *   **Phase 4:** CUJ 4 and CUJ 6, and a seeded fake token never reaches ClickHouse or Garage.
     *   **Phase 5:** `isolation_probe.py` passes on the Mac and PDS18.
     *   **Phase 6:** an agent answers the CUJ 4 question by citing execution IDs.

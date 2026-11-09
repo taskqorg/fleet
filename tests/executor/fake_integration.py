@@ -52,9 +52,11 @@ class Handler(BaseHTTPRequestHandler):
     received.append((self.path,b));reply={'ok':True}
     if self.path.endswith('/receipts'):
      commands[:]=[c for c in commands if c['id']!=b['commandId']]
-    if self.path.endswith('/artifacts'):
+    if self.path.endswith('/artifacts/reserve'):
+     # The first reservation fails like an unreachable coordinator; the transfer worker retries the same reservation.
      artifact_attempts+=1
      if artifact_attempts==1:self.send_response(503);self.end_headers();return
+     reply={'artifactId':b['artifactId'],'state':'stored'}
   self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(json.dumps(reply).encode())
 srv=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=srv.serve_forever,daemon=True).start()
 env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}','FLEET_HOST_ID':'fake','FLEET_HOST_TOKEN':'invented-test','FLEET_DATA_DIR':str(root/'data'),'FLEET_CODEX_BIN':str(fake),'OPENAI_API_KEY':'invented-excluded'}
@@ -95,9 +97,9 @@ try:
  assert not state or state.startswith('Z'),state
  assert unrelated.poll() is None
  wait(lambda:artifact_attempts>=2)
- artifacts=[b for route,b in received if route.endswith('/artifacts')]
+ artifacts=[b for route,b in received if route.endswith('/artifacts/reserve')]
  assert artifacts[0]==artifacts[1]
- assert artifacts[0]['sha256']==hashlib.sha256(base64.b64decode(artifacts[0]['contentBase64'])).hexdigest()
+ assert artifacts[0]['name']=='index.html' and artifacts[0]['sha256']==hashlib.sha256(b'<html>fake</html>').hexdigest()
  commands.append(command('two','start','quick'))
  wait(lambda:status('two','completed'))
  # Kill executor after native spawn; reconciliation must not replay native work.

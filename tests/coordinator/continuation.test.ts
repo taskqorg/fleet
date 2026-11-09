@@ -3,14 +3,15 @@ import assert from 'node:assert/strict';
 import {mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {createApp} from '../../packages/coordinator/app.js';
+import {attachStores,upload} from './artifact-helpers.js';
 test('retained artifact differences survive restart and enforce session boundary',async()=>{
- const config={database:mkdtempSync(tmpdir()+'/fleet-diff-')+'/db',browserSecret:'browser',machineSecret:'machine',hostId:'mac'};
- let app=createApp(config);
+ const config={database:mkdtempSync(tmpdir()+'/fleet-diff-')+'/db',browserSecret:'browser',machineSecret:'machine',hostId:'mac',storeEndpointHosts:['127.0.0.1']};
+ let app=createApp(config);await attachStores(app,'machine',['mac']);
  const call=(url:string,payload?:any,machine=false)=>app.inject({method:payload?'POST':'GET',url,headers:{authorization:'Bearer '+(machine?'machine':'browser')},payload});
  const session=(await call('/api/sessions',{})).json().id;
  const first=(await call(`/api/sessions/${session}/messages`,{requestId:'1',text:'first'})).json();
  const command=(await call('/api/hosts/poll',{hostId:'mac'},true)).json().commands[0];
- const artifact=async(executionId:string,path:string,content:string)=>{assert.equal((await call('/api/hosts/artifacts',{hostId:'mac',executionId,path,contentBase64:Buffer.from(content).toString('base64')},true)).statusCode,200)};
+ const artifact=async(executionId:string,path:string,content:string)=>{assert.ok(await upload(app,'machine',{hostId:'mac',executionId,path,content}))};
  await artifact(first.id,'index.html','old');await artifact(first.id,'old.txt','removed');
  await call('/api/hosts/receipts',{hostId:'mac',commandId:command.id,executionId:first.id,status:'completed'},true);
  const second=(await call(`/api/sessions/${session}/messages`,{requestId:'2',text:'second'})).json();
