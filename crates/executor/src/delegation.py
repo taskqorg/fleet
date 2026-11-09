@@ -48,7 +48,9 @@ def artifact_tool(name, q):
             os.close(fd)
         try:
             import stat as _stat
-            if not _stat.S_ISREG(os.fstat(src).st_mode): raise ValueError('path must be a regular file')
+            st = os.fstat(src)
+            # A hard link could name a file from outside the working area; only single-link regular files are saved.
+            if not _stat.S_ISREG(st.st_mode) or st.st_nlink != 1: raise ValueError('path must be a regular file with one link')
             key = str(uuid.uuid4()); os.makedirs(context['spool'], exist_ok=True); spool = os.path.join(context['spool'], key)
             with os.fdopen(os.dup(src), 'rb') as fin, open(spool, 'xb') as fout: shutil.copyfileobj(fin, fout)
         finally:

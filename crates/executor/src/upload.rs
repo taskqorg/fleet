@@ -212,13 +212,21 @@ fn run_job(c: &Client, db: &Connection, id: &str, kind: &str, body: &Value) -> s
             let name: String = r["name"].as_str().unwrap_or("artifact").rsplit('/').next().unwrap_or("artifact").chars().map(|ch| if ch.is_ascii_alphanumeric() || "._-".contains(ch) { ch } else { '_' }).collect();
             let dir = PathBuf::from(body["inputDir"].as_str().unwrap_or(""));
             std::fs::create_dir_all(&dir)?;
-            if std::fs::symlink_metadata(&dir)?.file_type().is_symlink() || !dir.is_dir() { return Err(Failure::Permanent("input folder is not a directory".into())) }
             let tag: String = r["id"].as_str().unwrap_or("x").chars().take(8).collect();
-            use std::os::unix::fs::OpenOptionsExt;
-            let (target, mut out) = (0..1000).find_map(|n| {
-                let t = dir.join(if n == 0 { format!("{tag}-{name}") } else { format!("{tag}-{n}-{name}") });
-                std::fs::OpenOptions::new().write(true).create_new(true).custom_flags(libc::O_NOFOLLOW).open(&t).ok().map(|f| (t, f))
-            }).ok_or(Failure::Permanent("cannot create the input file".into()))?;
+            // The folder is opened once without following a link, and the file is created relative to that descriptor.
+            use std::os::unix::ffi::OsStrExt;
+            use std::os::fd::FromRawFd;
+            let cdir = std::ffi::CString::new(dir.as_os_str().as_bytes()).map_err(|_| Failure::Permanent("input folder".into()))?;
+            let dfd = unsafe { libc::open(cdir.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+            if dfd < 0 { return Err(Failure::Permanent("input folder is not a directory".into())) }
+            let created = (0..1000).find_map(|n| {
+                let file = if n == 0 { format!("{tag}-{name}") } else { format!("{tag}-{n}-{name}") };
+                let c = std::ffi::CString::new(file.clone()).ok()?;
+                let fd = unsafe { libc::openat(dfd, c.as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC, 0o600) };
+                (fd >= 0).then(|| (dir.join(file), unsafe { std::fs::File::from_raw_fd(fd) }))
+            });
+            unsafe { libc::close(dfd) };
+            let (target, mut out) = created.ok_or(Failure::Permanent("cannot create the input file".into()))?;
             std::io::copy(&mut c.get(url)?, &mut out)?;
             Ok(json!({"artifactId":r["id"],"path":target,"mediaType":r["mediaType"],"size":r["size"]}))
         }
