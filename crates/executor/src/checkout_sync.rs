@@ -17,7 +17,15 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 fn allowed(dir: &str, roots: &[PathBuf], forbidden: &[&Path]) -> Option<PathBuf> {
     let p = std::fs::canonicalize(dir).ok()?;
     if forbidden.iter().any(|f| std::fs::canonicalize(f).is_ok_and(|f| p.starts_with(&f) || f.starts_with(&p))) { return None }
-    roots.iter().any(|r| p.starts_with(r)).then_some(p)
+    let root = roots.iter().find(|r| p.starts_with(r))?;
+    let inside = |q: &Path| !forbidden.iter().any(|f| std::fs::canonicalize(f).is_ok_and(|f| q.starts_with(&f) || f.starts_with(q))) && q.starts_with(root);
+    // .git may be a gitfile: toplevel must be the checkout itself, git dirs under the same root.
+    for (arg, exact) in [("--show-toplevel", true), ("--git-common-dir", false), ("--absolute-git-dir", false)] {
+        let o = crate::git().env("GIT_CEILING_DIRECTORIES", root).arg("-C").arg(&p).args(["rev-parse", "--path-format=absolute", arg]).output().ok()?;
+        let q = std::fs::canonicalize(String::from_utf8_lossy(&o.stdout).trim()).ok().filter(|_| o.status.success())?;
+        if !inside(&q) || exact && q != p { return None }
+    }
+    Some(p)
 }
 
 fn sync(dir: &Path, sha: &str) -> Result<(), &'static str> {
