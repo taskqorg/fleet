@@ -1,0 +1,26 @@
+{
+  "account": "fleet-primary",
+  "enabledRestored": true,
+  "probes": [
+    {
+      "cause": {
+        "error": "Conflict",
+        "message": "Selected account is disabled for new work",
+        "statusCode": 409
+      },
+      "selection": "default",
+      "sessionId": "d86ae01c-b79f-4b7f-a9f5-beb12023580f",
+      "status": 409
+    },
+    {
+      "cause": {
+        "error": "Conflict",
+        "message": "Selected account is disabled for new work",
+        "statusCode": 409
+      },
+      "selection": "fleet-codex",
+      "sessionId": "85f99859-ea49-4456-aa25-5717896e40f3",
+      "status": 409
+    }
+  ]
+}

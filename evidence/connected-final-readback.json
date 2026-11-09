@@ -1,0 +1,87 @@
+{
+  "release": "candidate-236931ff00c2",
+  "manifest": {
+    "sourceCommit": "cde6b4904c91d35f9e68f0fdbfde4c129ac660fe",
+    "executorSha256": "21aa1379f58ff7ad80f0c11638cc2283d78d6ee48577947789aa2a072a0834fb",
+    "coordinatorFiles": {
+      "dist/packages/coordinator/ui.js": "e956c23a1d8acfbc726bfb2190c0813fd421c238fc4ddb6d59c07aa20951f2f6",
+      "dist/packages/coordinator/lab-ui.js": "44ad3edbe71ad667f8b252b3c73e709418ba511bb2f8320db25903e1742a7c58",
+      "dist/packages/coordinator/server.js": "f140293e7c699b768aabfd3bd6b873c8946952eec25247d4db646bb5df708ddc",
+      "dist/packages/coordinator/delivery.js": "a59b874a707c203faf85a8d9d5c486ba54792ef3ef157208997069701bad2f9a",
+      "dist/packages/coordinator/delivery_worker.py": "e8714d7d68c5d68e3d81707b607f01285413afdeee6148523cc625dc39575d83",
+      "dist/packages/coordinator/accounts.js": "c135adb902ecbdd9296c59a004cadee710a094ee72a449eb21faa63266b581ca",
+      "dist/packages/coordinator/delegation.js": "bdda28413d62e389c43bc6a467434016f04bdcb39e5dd8ccbf6dd3634807dae3",
+      "dist/packages/coordinator/projects.js": "49a260f9dce676d8a85dee5580ecd5cfe512dcf018aa5d43a73ba43eb356c113",
+      "dist/packages/coordinator/pipe_search.py": "91586a04859fd7bd80e00bdca1d1e14cc3fc556891c90bbc917372a3a0930faf",
+      "dist/packages/coordinator/lab.js": "4def9c7d2350cd57980047fe93090310225f88b4e3a5ef1ca018c8255b3e04cc",
+      "dist/packages/coordinator/project-ui.js": "c8e7a1b62b2938e7805e884466d60fac37171d5df6253c40cce3ed7119d2e82c",
+      "dist/packages/coordinator/app.js": "5c83d18436902676f516d0785602d795d4269b5500ca7721c61fb0fa0ad3e5ca"
+    }
+  },
+  "services": {
+    "fleet.service": {
+      "ActiveState": "active",
+      "SubState": "running",
+      "MainPID": "1546431",
+      "NRestarts": "0"
+    },
+    "fleet-program-worker.service": {
+      "ActiveState": "active",
+      "SubState": "running",
+      "MainPID": "1546610",
+      "NRestarts": "1"
+    }
+  },
+  "pendingExecutions": 0,
+  "disabledAliasProbeExecutionCount": 0,
+  "sites": {
+    "hello-world": {
+      "current": "fd32b5ae-676f-448b-a90e-9f5e34b66711",
+      "retainedReleases": [
+        "b7dbd6ab-ffe9-414f-97ae-1aac5bb58915",
+        "d95e56ac-b4ec-40dc-bf23-b1d8c9faf046",
+        "fd32b5ae-676f-448b-a90e-9f5e34b66711"
+      ],
+      "files": {
+        "index.html": "5de6465515bbf95c47be96edb8be4e946c84891ff2556b77db348ed234e2ff44",
+        "style.css": "1b87ecb63a02f19c95df0db1cb6103bd0e2f829208f4d0893cb162f3a42c1660"
+      }
+    },
+    "hello-world-alt": {
+      "current": "33596343-9825-4e90-8637-1ed2b943ad0c",
+      "retainedReleases": [
+        "33596343-9825-4e90-8637-1ed2b943ad0c"
+      ],
+      "files": {
+        "index.html": "73dfb10909c46f2ecf7c2e27ac31af500c866069bf7cf2537409adf711732b41",
+        "style.css": "87e80bcd20e8bb76c6cd60aa5c1cec161d000233f1c582286c00f87c859cc195"
+      }
+    }
+  },
+  "claudeLinuxExecutions": 0,
+  "macNativeJournal": {
+    "unfinished": 0,
+    "outbox": 0
+  },
+  "executorSha256": "21aa1379f58ff7ad80f0c11638cc2283d78d6ee48577947789aa2a072a0834fb",
+  "macServices": {
+    "executor": {
+      "state": "running",
+      "pid": "38850",
+      "runs": "1",
+      "last exit code": "(never exited)"
+    },
+    "program-worker": {
+      "state": "running",
+      "pid": "70691",
+      "runs": "2",
+      "last exit code": "1"
+    }
+  },
+  "repositoryRemoteHeads": {
+    "fleet": "cde6b4904c91d35f9e68f0fdbfde4c129ac660fe",
+    "fleet-hello-world": "0038aa9eee15c755bbf5a8c86107b2f69de50436",
+    "fleet-hello-world-alt": "c600ca079b34b3c0346e2395922813226bed4237"
+  },
+  "archiveSha256": "236931ff00c2294b105358913367fe0f9e49887ee5b51460f9699b90e173ef1d"
+}
