@@ -57,13 +57,15 @@ impl Client {
     pub fn new(url: String, token: String, host: String, access: Option<(String, String)>) -> Self {
         Client {
             url, token, host, access,
-            coordinator: ureq::AgentBuilder::new().timeout(Duration::from_secs(60)).build(),
+            coordinator: ureq::AgentBuilder::new().timeout(Duration::from_secs(60)).redirects(0).build(),
             // Parts are 32 MiB; a slow tunnel needs more than the outbox's 5 s.
             store: ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(20)).timeout_read(Duration::from_secs(300)).timeout_write(Duration::from_secs(300)).build(),
         }
     }
     pub fn post(&self, route: &str, body: Value) -> std::result::Result<Value, Failure> {
         match self.coordinator.post(&format!("{}{route}", self.url)).set("Authorization", &format!("Bearer {}", self.token)).send_json(body) {
+            // The coordinator never redirects a machine route: a redirect (an edge login page) is permanent.
+            Ok(r) if (300..400).contains(&r.status()) => Err(Failure::Permanent(format!("coordinator redirected with {}", r.status()))),
             Ok(r) => r.into_json::<Value>().map_err(|e| Failure::Retry(e.to_string())),
             Err(ureq::Error::Status(code, r)) => {
                 let text = r.into_string().unwrap_or_default();

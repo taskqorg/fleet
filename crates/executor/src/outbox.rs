@@ -10,15 +10,29 @@ pub fn schema(db: &Connection) -> rusqlite::Result<()> {
     db.execute_batch("CREATE TABLE IF NOT EXISTS outbox(route TEXT NOT NULL,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS outbox_failed(route TEXT NOT NULL,body TEXT NOT NULL,status INTEGER NOT NULL,reason TEXT NOT NULL,failed_at INTEGER NOT NULL);")
 }
 
+/// A coordinator answer that redirects (an edge login page, a misrouted path): the coordinator never redirects machine
+/// routes, so the row is set aside like a 4xx instead of being retried forever ahead of every later row.
+#[derive(Debug)]
+pub struct Redirected(pub u16, pub String);
+impl std::fmt::Display for Redirected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "coordinator redirected with {} to {}", self.0, self.1) }
+}
+impl std::error::Error for Redirected {}
+
 pub fn post(url: &str, token: &str, route: &str, v: Value) -> Result<Value> {
-    // One pooled agent: keep-alive avoids a TLS handshake per outbox row.
+    // One pooled agent: keep-alive avoids a TLS handshake per outbox row. Redirects are not followed.
     static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
-    Ok(AGENT
-        .get_or_init(|| ureq::AgentBuilder::new().timeout(Duration::from_secs(5)).build())
+    let r = AGENT
+        .get_or_init(|| ureq::AgentBuilder::new().timeout(Duration::from_secs(5)).redirects(0).build())
         .post(&format!("{url}{route}"))
         .set("Authorization", &format!("Bearer {token}"))
-        .send_json(v)?
-        .into_json()?)
+        .send_json(v)?;
+    if (300..400).contains(&r.status()) {
+        // Only the location's origin and path: an edge login URL can carry query parameters.
+        let to = r.header("Location").unwrap_or("").split(['?', '#']).next().unwrap_or("").to_string();
+        return Err(Box::new(Redirected(r.status(), to)));
+    }
+    Ok(r.into_json()?)
 }
 
 pub fn queue(db: &Connection, route: &str, v: Value) -> Result<()> {
@@ -27,6 +41,7 @@ pub fn queue(db: &Connection, route: &str, v: Value) -> Result<()> {
 }
 
 fn rejected(error: &(dyn std::error::Error + 'static)) -> Option<(u16, String)> {
+    if let Some(r) = error.downcast_ref::<Redirected>() { return Some((r.0, r.to_string())) }
     match error.downcast_ref::<ureq::Error>() {
         Some(ureq::Error::Status(code, _)) if (400..500).contains(code) => Some((*code, error.to_string())),
         _ => None,
@@ -113,7 +128,10 @@ mod tests {
     use super::*;
     use std::io::{BufRead, BufReader, Read, Write};
     #[test]
-    fn poisoned_row_does_not_block_next_rows() {
+    fn poisoned_row_does_not_block_next_rows() { poisoned("bad", 400) }
+    #[test]
+    fn redirected_row_is_set_aside_and_does_not_block_next_rows() { poisoned("redirected", 302) }
+    fn poisoned(first: &'static str, code: i64) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
@@ -134,16 +152,20 @@ mod tests {
                 reader.read_exact(&mut body).unwrap();
                 let v: Value = serde_json::from_slice(&body).unwrap();
                 let bad = v["commandId"] == "bad";
+                let redirected = v["commandId"] == "redirected";
                 seen.push(v);
                 let (status, text) = if bad { ("400 Bad Request", "{}") } else { ("200 OK", "{}") };
-                write!(socket, "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}", text.len()).unwrap();
+                // A redirect (an edge login page) is set aside like a 4xx.
+                let extra = if redirected { "Location: https://login.example/cdn-cgi/access/login?token=x\r\n" } else { "" };
+                let status = if redirected { "302 Found" } else { status };
+                write!(socket, "HTTP/1.1 {status}\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{text}", text.len()).unwrap();
             }
             seen
         });
         let db = Connection::open_in_memory().unwrap();
         schema(&db).unwrap();
         db.execute_batch("CREATE TABLE delegation_requests(id TEXT PRIMARY KEY,body TEXT,response TEXT);").unwrap();
-        queue(&db, "/api/hosts/receipts", json!({"commandId":"bad","executionId":"e1"})).unwrap();
+        queue(&db, "/api/hosts/receipts", json!({"commandId":first,"executionId":"e1"})).unwrap();
         queue(&db, "/api/hosts/receipts", json!({"commandId":"good","executionId":"e1"})).unwrap();
         // Second flush delivers the outbox.failed event queued by the first.
         for _ in 0..2 { flush(&db, &format!("http://{address}"), "t", "mac").unwrap(); }
@@ -152,5 +174,9 @@ mod tests {
         assert_eq!(seen[2]["events"][0]["type"], "outbox.failed");
         let count = |t: &str| db.query_row(&format!("SELECT count(*) FROM {t}"), [], |r| r.get::<_, i64>(0)).unwrap();
         assert_eq!((count("outbox"), count("outbox_failed")), (0, 1));
+        let (status, reason): (i64, String) = db.query_row("SELECT status,reason FROM outbox_failed", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(status, code);
+        assert!(!reason.contains("token=x"), "{reason}");
+        assert_eq!(seen[2]["events"][0]["data"]["status"], code);
     }
 }
