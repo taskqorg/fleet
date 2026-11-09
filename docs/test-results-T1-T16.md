@@ -124,3 +124,25 @@ PR #16 runs reads in `READ ONLY REPEATABLE READ` snapshots and writes in `READ C
 | T14 PR + Fleet merge | **pass** | Delivery `a5738152-f323-4bab-9af2-ddf0b68696bb` is `merged` (program exec `c81ead8d` on `owner-mac-program`). https://github.com/taskqorg/fleet-hello-world/pull/3: GitHub reads back `MERGED` at 2026-11-09T17:48:11Z, merge commit `cf85b6b98c76631b0ad4f112a34a7300ee5fbfaf`. Base-updated execs `ac5829b2` (Mac) and `e54353b5` (PDS) completed |
 
 Postgres readback: every document above is in `document`, in causal `seq` order: PM exec 167841, worker session 168072, worker exec 168073, worker-done 168670, reviewer session 169030, reviewer worker-done 169395, delivery program exec 169611, delivery 169613, base-updated execs 169909/169911, PM worker-done 170225.
+
+## Phase 2 stand, candidate-0031308b2fef (2026-11-09)
+
+Stand: PDS18 release `candidate-0031308b2fef` (main 0031308, PR #19): typed `execution`, `task`, `task_dependency` and `question` tables, `task_view`, FORCE RLS, migration 6. Method as in the Postgres rerun: PM (role `pm`) started by `session_start` over PDS loopback `/api/ops/*`, with a new README line `Phase2: PM-driven change.`. No code, config or release changes.
+
+| Test | Result | Evidence |
+|---|---|---|
+| T1 no operator nudges | **pass** | PM session `ee6c2331-7008-4741-b7a6-1a7c1818b16d` (codex, Mac; executions `59293a35`, `d8f341a2`, `91abb5fb`). It started worker `3889278f-d39b-4b68-9be8-305a2346d70a` (Claude, Mac, execution `c3298fc8`), which pushed `649726cb9474fc842e35b85fc7a308e00d366ece` and verified it with `ls-remote` (worker-done `fc0abd83`). Woken, the PM started reviewer `9bc9c448-a519-497a-aa45-4b0e5d1c3a58` (codex, PDS, execution `fb8fce8d`): APPROVE against origin/main `cf85b6b`, worker-done `2c883e80`. Woken again, the PM called `session_deliver` and finished (worker-done `e04fb630`). The PM session has 3 messages: the operator's first message and two Fleet wakes |
+| T14 PR + Fleet merge | **pass** | Delivery task `9ad781be-566a-425f-8422-2fe97a652a22`. https://github.com/taskqorg/fleet-hello-world/pull/4: GitHub reads back `MERGED`, merge commit `b4c829d12eac341aecd3de6c3d3d4aac122b9ea0` |
+| Acceptance | **fail** | Acceptance question `002ee632-6bf9-410e-9f95-145f846d62ec` (`open`, options `accepted`/`rejected`, `task_id` = delivery task). `question_answer {questionId, answer:"accepted"}` returned `404 {"message":"Not found"}`. The question stayed `open`; the task stayed `in_progress` with no `accepted_by` |
+
+### Typed tables readback
+- `task`: the delivery is row `9ad781be…`, `legacy_kind=delivery`, title `Deliver session 3889278f-…`. Its state is still `in_progress` after the merge because it waits for acceptance. No `task_dependency` rows exist for it.
+- `execution`: the delivery steps are `pipeline_step` rows with `task_id=9ad781be…`. They are `f2df26fe` (`owner-mac-program`), then base-updated `9d09ead3` (Mac) and `92d68b64` (PDS), all `succeeded`. The PM, worker and reviewer runs are `agent_run` rows with the correct `session_id` and `host_id`, in `seq` order.
+- `question`: the acceptance question landed in `question` with `kind=acceptance` and `task_id` set.
+- Postgres log: 0 `ERROR` lines after 18:40 UTC.
+
+### Defects
+1. **`question_answer` cannot answer typed questions** (blocks acceptance). `packages/coordinator/projects.ts:67` still reads the question with `get(b.questionId,'project-question')` from `document`. Migration 6 moved questions to `question`, and `document` now holds 0 `project-question` rows, so the op returns 404. `question_history` reads the new table correctly.
+2. **Missing parent links** (open). The worker and reviewer `agent_run` rows (`c3298fc8`, `fb8fce8d`) have `parent_execution_id` NULL, although the PM executions `59293a35` and `d8f341a2` created them through `session_start`. Delivery `pipeline_step` rows also have no parent.
+3. **`problem` set on a succeeded step** (minor). `pipeline_step` `f2df26fe` is `succeeded`, yet its `problem` column says `no registered environment of project fleet-hello-world on host owner-mac-program`.
+4. **Earlier delivery tasks never closed** (follow-up of defect 1). The merged deliveries from the earlier runs, `a5738152` and `58a7baf4`, are still `in_progress`. Their acceptance questions (7 total) are `open`, and nobody can answer them until defect 1 is fixed.
