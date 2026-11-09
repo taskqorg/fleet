@@ -68,3 +68,17 @@ Append only. Each entry: date, question, options, choice, reason.
 * **Open choices for the owner:**
   * B1: state in task lists: icon and word, or icon only with the word in the tooltip.
   * B2: row pin button: shown on hover and focus (always on touch), or always visible.
+
+## 2026-11-10 D8: Stage 2 review: B1, B2, OR-20, OR-21
+
+* **B1 (state in lists):** icon only. Writing the word next to an icon that already shows the state is redundant. The name and reason appear in a tooltip only where they help.
+* **B2 (row pin):** always visible.
+* **New owner rules:**
+  * OR-20: tooltip discipline.
+  * OR-21: visual hierarchy by importance.
+
+  Both are in [owner-rules.md](owner-rules.md).
+* **Applied:**
+  * Task list: the title gets the most space; ID, state icon, agent, age, cost and pin sit in one zone on the right.
+  * Tooltips: one `TooltipLayer` that is small, delayed and hidden while typing. Elements opt in with `data-tip`, and `title` tooltips were removed where they added nothing (age chips, measured numbers, clock times).
+  * The scroll-anchor bug found by the new behaviour check is fixed.

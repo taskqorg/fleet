@@ -12,6 +12,8 @@ The main user is an operator who handles dozens of tasks a day, and an architect
 * **Numbers are tabular.** Numbers use tabular figures and right alignment in columns, so they line up and do not shift while they update.
 * **Plain words.** Labels are short nouns and verbs from the inventory (task, execution, store, accept, retry). No internal identifiers as the main label; IDs appear secondary and copyable.
 
+* **Tooltips** follow [OR-20](owner-rules.md): only where they add value, small, delayed, never over a field being typed in.
+
 ## 2. Measurement basis
 
 Every number shows its basis (inventory, "Measurement basis"):

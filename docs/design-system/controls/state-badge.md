@@ -18,7 +18,7 @@
 
 **Observation overlay.** Unconfirmed state keeps the last known state word and adds a dashed outline and a hollow dot: "Running, seen 4m" (OR-2). It never turns into Failed.
 
-**Compact.** Icon only, word in the tooltip and accessible name (OR-1). Used in dense columns and the execution tree. Which variant task lists use is open choice B1.
+**Compact.** Icon only, word in the tooltip and accessible name (OR-1). Used in dense columns and the execution tree. Lists use the compact form (B1, [D8](../decisions.md)); the word next to the icon is for detail views only. The tooltip follows OR-20.
 
 **Behaviour.** A change fades in over `motion-fast`. The reason comes from the record; when none is recorded, the badge shows no reason rather than inventing one.
 

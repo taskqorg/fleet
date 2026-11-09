@@ -27,3 +27,5 @@ If an owner rule conflicts with common practice, the owner rule wins. Two except
 | **OR-17 No repeated words** | A word appears once per region. Let position, headings and icons carry repeated meaning. |
 | **OR-18 Visual salience** | A small chip changes colour when something needs a look. Example: `2h` turns red when a task has run too long. Hover gives details, following the same rules. |
 | **OR-19 Never hide what matters** | Use the fewest elements, but important information that can be shown stays visible. |
+| **OR-20 Tooltip discipline** | Add a tooltip only where it gives the operator real value, and decide this per element. Clear notation such as `2h` needs none. A tooltip describes that one element. It appears after a delay, stays small, and never covers a field being typed in. No large combined tooltips. Use `data-tip` with the shared `TooltipLayer`. |
+| **OR-21 Hierarchy by importance** | A row's main content (for a task, its title) gets the most space and weight; never squeeze it to two words beside equal-width columns. Service fields (id, state icon, agent, time, counters, actions) are compact and grouped in one zone on the right. |

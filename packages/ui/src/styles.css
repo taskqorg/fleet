@@ -102,9 +102,10 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .pill-bottom{bottom:var(--space-3)}
 @keyframes changed{from{background:var(--attention-soft)}to{background:transparent}}
 .changed{animation:changed var(--motion-highlight) var(--motion-ease)}
-.title{font-weight:var(--font-weight-medium)}
+.title{font-weight:var(--font-weight-medium);color:var(--fg)}
+.svc{color:var(--fg-muted);font-size:var(--font-size-sm)}
 .id{margin-left:var(--space-3);font-family:var(--font-mono);font-size:var(--font-size-sm);color:var(--fg-muted)}
-.pin{opacity:0}.vl-row:hover .pin,.pin[aria-pressed=true],.pin:focus-visible{opacity:1}
+
 
 /* Tree */
 .tree,.tree ul{list-style:none;margin:0;padding:0}
@@ -180,5 +181,11 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
   .btn,.chip,.saved-chip,.seg,.tabs button{min-height:var(--size-hit-phone)}
   .setting{grid-template-columns:1fr}.setting .help{grid-column:1}
 }
-@media (pointer:coarse){.btn,.chip button,.tw,.pill{min-height:var(--size-hit-phone);min-width:var(--size-hit-phone)}.pin{opacity:1}}
+@media (pointer:coarse){.btn,.chip button,.tw,.pill{min-height:var(--size-hit-phone);min-width:var(--size-hit-phone)}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* Tooltip (OR-20): small, contextual, distinct floating surface (OR-16) */
+.tooltip{position:fixed;z-index:10;max-width:var(--size-tip);transform:translate(-50%,calc(-100% - var(--space-2)));padding:var(--space-1) var(--space-2);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--float);color:var(--fg);box-shadow:var(--elevation-popover);font-size:var(--font-size-sm);line-height:var(--font-line);pointer-events:none}
+.tooltip.below{transform:translate(-50%,var(--space-2))}
+.vl-row .id{margin-left:0}
+.vl-row .btn.icon-only{border-color:transparent;background:none}.vl-row .btn.icon-only:hover{background:var(--hover)}

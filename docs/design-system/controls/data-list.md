@@ -4,7 +4,7 @@
 
 **Purpose.** Shows long, growing lists: tasks, executions, events, results, hosts. The main control of every workspace.
 
-**Anatomy.** Sticky header row with column heads (sortable ones show ▲▼); body of fixed-height rows; optional group headers; new-rows pill ("12 new", no arrow, OR-7); pin button per row (OR-12, visible on hover, focus and touch); footer count is in the [filter bar](filter-bar.md). A row: primary cell (title + secondary ID in `font-mono` `fg-muted`), state cell ([state badge](state-badge.md) + reason), value cells ([number](number.md), right aligned).
+**Anatomy.** Sticky header row with column heads (sortable ones show ▲▼); body of fixed-height rows; optional group headers; new-rows pill ("12 new", no arrow, OR-7); pin button per row (OR-12, visible on hover, focus and touch); footer count is in the [filter bar](filter-bar.md). A row (OR-21): the title takes the free width at medium weight; then one compact service zone on the right: ID (`font-mono`, `fg-muted`), state as an icon-only [state badge](state-badge.md) (name and reason in its tooltip, B1), agent, [age chip](number.md), value cells ([number](number.md), right aligned), and the pin button (always visible, B2).
 
 **Sizes.** Row `size-row` (32 px), compact `size-row-compact` per person, phone `size-row-phone` with two lines: title on line 1, state and one key value on line 2.
 

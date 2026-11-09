@@ -2,7 +2,7 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, iconSvg, states, actions } from './registry';
-import { type Measured, type Kind, measured, age, exact, bytes, clock } from './format';
+import { type Measured, type Kind, measured, age, bytes, clock } from './format';
 import { VirtualList } from './virtual-list';
 import tokens from '../tokens.json';
 
@@ -12,7 +12,7 @@ const ROW = parseInt(tokens.size.row);
 
 /** Registry icon. With `label` it is meaningful (tooltip + accessible name); without, decorative. */
 export function Icon({ name, label }: { name: IconName; label?: string }) {
-  return <span class="icon" role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : true} title={label}
+  return <span class="icon" role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : true}
     dangerouslySetInnerHTML={{ __html: iconSvg(name) }} />;
 }
 
@@ -24,13 +24,40 @@ export function Button(p: ButtonProps) {
   const disabled = p.busy || !!p.disabledReason;
   return (
     <button type="button" class={`btn ${p.kind ?? 'default'}${p.iconOnly ? ' icon-only' : ''}${p.busy ? ' busy' : ''}`}
-      aria-label={p.iconOnly ? p.label : undefined} title={p.disabledReason ?? (p.iconOnly ? p.label : undefined)}
+      aria-label={p.iconOnly ? p.label : undefined} data-tip={p.disabledReason ?? (p.iconOnly ? p.label : undefined)}
       aria-disabled={disabled || undefined} aria-pressed={p.pressed} onClick={disabled ? undefined : p.onClick}>
       {p.icon && <Icon name={p.icon} />}
       {!p.iconOnly && <span>{p.label}</span>}
       {p.kbd && <kbd>{p.kbd}</kbd>}
     </button>
   );
+}
+
+/* ---------- Tooltip (OR-20) ---------- */
+
+/** One small tooltip for the whole app, for elements with data-tip. Shows after a delay on hover or focus,
+ *  about that element only, never over a field being typed in, hidden on any key press or scroll. Mount once. */
+export function TooltipLayer({ delay = 600 }: { delay?: number }) {
+  const [tip, setTip] = useState<{ text: string; x: number; y: number; below: boolean } | null>(null);
+  useEffect(() => {
+    let timer = 0;
+    const hide = () => { clearTimeout(timer); setTip(null); };
+    const show = (e: Event) => {
+      const el = (e.target as HTMLElement).closest?.('[data-tip]') as HTMLElement | null;
+      hide();
+      if (!el || document.activeElement?.matches('input,textarea,[contenteditable]')) return;
+      timer = window.setTimeout(() => {
+        const r = el.getBoundingClientRect(), below = r.top < 48;
+        setTip({ text: el.dataset.tip!, x: r.left + r.width / 2, y: below ? r.bottom : r.top, below });
+      }, delay);
+    };
+    const opts = { capture: true, passive: true };
+    document.addEventListener('pointerover', show, opts); document.addEventListener('focusin', show, opts);
+    for (const ev of ['pointerout', 'focusout', 'keydown', 'scroll', 'input', 'pointerdown']) document.addEventListener(ev, hide, opts);
+    return () => { hide(); document.removeEventListener('pointerover', show, opts); document.removeEventListener('focusin', show, opts);
+      for (const ev of ['pointerout', 'focusout', 'keydown', 'scroll', 'input', 'pointerdown']) document.removeEventListener(ev, hide, opts); };
+  }, [delay]);
+  return tip && <div class={`tooltip${tip.below ? ' below' : ''}`} role="tooltip" style={{ left: `${tip.x}px`, top: `${tip.y}px` }}>{tip.text}</div>;
 }
 
 /* ---------- State badge (OR-1, D7) ---------- */
@@ -49,7 +76,7 @@ export function StateBadge<F extends Family>(p: BadgeProps<F>) {
   const name = [d.label, unconf && `unconfirmed, last seen ${seen!.long}`, p.reason].filter(Boolean).join(', ');
   return (
     <span class="state">
-      <span class={`badge t-${d.tone}${unconf ? ' unconf' : ''}${p.compact ? ' compact' : ''}`} role="img" aria-label={name} title={name}>
+      <span class={`badge t-${d.tone}${unconf ? ' unconf' : ''}${p.compact ? ' compact' : ''}`} role="img" aria-label={name} data-tip={p.compact || unconf ? name : undefined}>
         <Icon name={d.icon} />{!p.compact && <span>{d.label}</span>}
       </span>
       {(unconf || p.reason) && <span class={`reason${unconf ? ' unconf' : ''}`} aria-hidden="true">{unconf ? `seen ${seen!.text}` : ''}{unconf && p.reason ? ' · ' : ''}{p.reason}</span>}
@@ -76,7 +103,7 @@ export function Num({ m, kind, rise = 'neutral' }: NumProps) {
     const t = setTimeout(() => setTint(''), 2000);
     return () => clearTimeout(t);
   }, [m.value]);
-  return <span class={`num b-${m.basis}${m.partial ? ' partial' : ''} ${tint}`} title={f.long} aria-label={f.long} tabIndex={m.basis === 'measured' && !m.partial ? undefined : 0}>{f.text}</span>;
+  return <span class={`num b-${m.basis}${m.partial ? ' partial' : ''} ${tint}`} data-tip={m.basis === 'measured' && !m.partial ? undefined : f.long} aria-label={f.long} tabIndex={m.basis === 'measured' && !m.partial ? undefined : 0}>{f.text}</span>;
 }
 
 export function Totals({ items }: { items: { label: string; m: Measured; kind: Kind; note?: string }[] }) {
@@ -97,7 +124,7 @@ export function Totals({ items }: { items: { label: string; m: Measured; kind: K
 export function AgeChip({ t, now, alertAfter, tone = 'danger' }: { t: number; now: number; alertAfter?: number; tone?: Tone }) {
   const a = age(t, now);
   const alert = alertAfter !== undefined && now - t >= alertAfter * 1000;
-  return <span class={`chip-age${alert ? ` t-${tone} alert` : ''}`} title={`${a.long} · ${exact(t)}`} aria-label={a.long}>{a.text}</span>;
+  return <span class={`chip-age${alert ? ` t-${tone} alert` : ''}`} aria-label={a.long}>{a.text}</span>;
 }
 
 /* ---------- Fill bar (W9–W11) ---------- */
@@ -113,7 +140,7 @@ export function FillBar(p: FillProps) {
   return (
     <span class="fill-wrap">
       <span class={`fill ${state}${p.stale !== undefined ? ' stale' : ''}`} role="img" aria-label={`${legend}; ${freeText}${staleText}`}>
-        {p.segments.map((s, i) => <i key={s.label} class={`d${i % 4 + 1}`} style={{ width: `${s.bytes / p.total! * 100}%` }} title={`${s.label} ${bytes(s.bytes).text}`} />)}
+        {p.segments.map((s, i) => <i key={s.label} class={`d${i % 4 + 1}`} style={{ width: `${s.bytes / p.total! * 100}%` }} data-tip={`${s.label} ${bytes(s.bytes).text}`} />)}
         {p.warnAt !== undefined && <b class="mark" style={{ left: `${(1 - p.warnAt / p.total) * 100}%` }} />}
       </span>
       <span class={`legend${state ? ` t-${state === 'full' ? 'danger' : 'attention'}` : ''}`}>{legend} · {freeText}{staleText}</span>
@@ -308,7 +335,7 @@ export const ErrorBanner = ({ text, onRetry }: { text: string; onRetry?: () => v
   <div class="err-banner" role="alert"><Icon name="circle-alert" /><span>{text}</span><span class="grow" /><Button label="Retry" icon={actions.retry} onClick={onRetry} /></div>
 );
 export const Stale = ({ at, now, onRefresh }: { at: number; now: number; onRefresh?: () => void }) => (
-  <span class="stale" title={exact(at)}>updated {age(at, now).text} <Button label="Refresh" icon={actions.retry} iconOnly onClick={onRefresh} /></span>
+  <span class="stale">updated {age(at, now).text} <Button label="Refresh" icon={actions.retry} iconOnly onClick={onRefresh} /></span>
 );
 
 /* ---------- Live transcript (transcript-viewer.md) ---------- */
@@ -323,7 +350,7 @@ export function Transcript({ entries, label }: { entries: Entry[]; label: string
         onInput={e => setQ((e.target as HTMLInputElement).value)} /></label><span class="count">{shown.length} of {entries.length}</span></div>
       <VirtualList class="tr-body" items={shown} getKey={e => e.id} rowHeight={ROW} dynamic follow="bottom" label={label} render={e => (
         e.gap ? <div class="tr-gap"><Icon name="triangle-alert" />{e.gap}</div>
-          : <div class="tr-e"><time title={exact(e.t)}>{clock(e.t)}</time>{e.call
+          : <div class="tr-e"><time>{clock(e.t)}</time>{e.call
             ? <span class="call"><Icon name="square" />{e.call.name} · {e.call.state} · {e.call.secs}s</span>
             : <span><b>{e.who}</b> {e.text}</span>}</div>
       )} />

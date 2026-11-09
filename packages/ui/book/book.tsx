@@ -3,7 +3,7 @@ import { render, type ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import {
   Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, FilterBar, ExecTree, DecisionBlock, ResultViewer,
-  SettingField, ProblemRow, Skeleton, Empty, ErrorBanner, Stale, Transcript, VirtualList, workspaces, states, actions,
+  SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Transcript, VirtualList, workspaces, states, actions,
   type Chip, type TreeNode, type Entry, type Family,
 } from '../src/index';
 import tokens from '../tokens.json';
@@ -110,7 +110,7 @@ type Task = { id: number; title: string; state: keyof typeof states.task; agent:
 const AGENTS = ['codex', 'claude', 'pipeline'];
 const STATES = Object.keys(states.task) as Task['state'][];
 const WORDS = ['Render prop batch', 'Fix CI cache key', 'Rework hero copy', 'Compare 3D methods', 'Investigate disk alert', 'Write release notes', 'Character hands rework', 'Migrate store layout'];
-const mkTask = (id: number): Task => ({ id, title: `${WORDS[id % WORDS.length]} ${id % 97}`, state: STATES[id % 7], agent: AGENTS[id % 3], started: NOW - (id % 300) * min, cost: id % 11 === 0 ? null : (id % 130) / 10, est: id % 4 === 0 });
+const mkTask = (id: number): Task => ({ id, title: `${WORDS[id % WORDS.length]} ${id % 97}`, state: STATES[id % 7], agent: AGENTS[id % 3], started: NOW - (id * 37 % 900) * min, cost: id % 11 === 0 ? null : (id % 130) / 10, est: id % 4 === 0 });
 
 function ListDemo() {
   const [items, setItems] = useState(() => Array.from({ length: 10000 }, (_, i) => mkTask(10000 - i)));
@@ -136,15 +136,16 @@ function ListDemo() {
       saved={['My waiting', 'Failed today', 'dashq open'].map(n => ({ name: n, pinned: true, active: n === saved }))} onSaved={setSaved}
       shown={ordered.length} total={items.length} />
     <VirtualList items={ordered} getKey={x => String(x.id)} rowHeight={ROW} follow="top" label="Tasks"
-      columns="minmax(0,1fr) 9.5rem 4rem 3rem 4.5rem 1.75rem"
-      header={<><span>Task</span><span>State</span><span>Agent</span><span class="r">Age</span><span class="r">Cost</span><span /></>}
+      columns="minmax(0,1fr) 4.5rem 1.25rem 4rem 2.75rem 4.5rem 1.75rem"
+      header={<><span>Task</span><span>ID</span><span /><span>Agent</span><span class="r">Age</span><span class="r">Cost</span><span /></>}
       render={x => <>
-        <span><span class="title">{x.title}</span><span class="id">T-{x.id}</span></span>
-        <StateBadge family="task" state={x.state} reason={x.state === 'waiting' ? 'you' : x.state === 'failed' ? 'exit 1' : undefined} />
-        <span class="muted">{x.agent}</span>
+        <span class="title">{x.title}</span>
+        <span class="id svc">T-{x.id}</span>
+        <StateBadge family="task" state={x.state} reason={x.state === 'waiting' ? 'acceptance by you' : x.state === 'failed' ? 'render step exit 1' : undefined} compact />
+        <span class="svc">{x.agent}</span>
         <span class="r"><AgeChip t={x.started} now={NOW} alertAfter={x.state === 'in_progress' ? 2 * 3600 : undefined} /></span>
         <span class="r"><Num m={x.cost === null ? { value: null, basis: 'unavailable', reason: 'no meter' } : { value: x.cost, basis: x.est ? 'estimated' : 'measured' }} kind="money" rise="bad" /></span>
-        <span class="pin"><Button label={x.pinned ? 'Unpin' : 'Pin'} icon={x.pinned ? actions.unpin : actions.pin} iconOnly pressed={x.pinned} onClick={() => pin(x.id)} /></span>
+        <Button label={x.pinned ? 'Unpin' : 'Pin'} icon={x.pinned ? actions.unpin : actions.pin} iconOnly pressed={x.pinned} onClick={() => pin(x.id)} />
       </>} />
     <div class="bar">
       <Button label="Insert 5 above" icon="plus" onClick={insert} />
@@ -248,10 +249,10 @@ const SECTIONS: [string, string, string | undefined, () => ComponentChildren, Co
   ['tokens', 'Tokens', undefined, () => <TokensDemo />, <>Colour carries meaning only. Numbers and IDs use the monospace stack.</>],
   ['navigation', 'Navigation anchors', undefined, () => <NavDemo />, <>OR-3: one stable icon per workspace, from the registry.</>],
   ['button', 'Button', 'button', () => <ButtonsDemo />],
-  ['state-badge', 'State badge', 'state-badge', () => <BadgesDemo />, <>Left: icon and word. Right: compact icon-only with the word in the tooltip. <b>Open choice B1:</b> which one task lists use.</>],
+  ['state-badge', 'State badge', 'state-badge', () => <BadgesDemo />, <>Left: icon and word, for detail views. Right: icon only, the form lists use (B1); hover or focus for the name and reason.</>],
   ['number', 'Numbers, totals, age chips', 'number', () => <NumbersDemo />, <>Measured, estimated (≈), unavailable (—), partial (≥). "Change values" shows the brief tint (OR-6): cost rising tints red, tokens neutral. The 2h chip is red (OR-18).</>],
   ['fill-bar', 'Fill bar', 'fill-bar', () => <FillDemo />],
-  ['data-list', 'Task list: filter bar, search, saved filters, virtual list', 'data-list', () => <ListDemo />, <>Filters expand inline, never in a popup (OR-14). Saved filters are pinned chips (OR-12). The new-rows pill has no arrow (OR-7). Hover a row to pin it.</>],
+  ['data-list', 'Task list: filter bar, search, saved filters, virtual list', 'data-list', () => <ListDemo />, <>Filters expand inline, never in a popup (OR-14). Saved filters are pinned chips (OR-12). The new-rows pill has no arrow (OR-7). Title takes the space; service fields sit in one compact zone on the right (OR-21). State is an icon; its name and reason appear in a delayed tooltip (B1, OR-20). Pin is always visible (B2).</>],
   ['execution-tree', 'Execution tree', 'execution-tree', () => <ExecTree nodes={TREE} now={NOW} label="Executions" />],
   ['transcript-viewer', 'Live transcript', 'transcript-viewer', () => <TranscriptDemo />],
   ['decision-block', 'Decision block', 'decision-block', () => <DecisionDemo />, <>Click Accept or press a while the block has focus: the block collapses to the answered line.</>],
@@ -270,6 +271,7 @@ function Book() {
     </header>
     <nav class="toc" aria-label="Contents">{SECTIONS.map(s => <a key={s[0]} href={`#${s[0]}`}>{s[1]}</a>)}</nav>
     {SECTIONS.map(([id, title, spec, demo, note]) => <Section key={id} id={id} title={title} spec={spec} note={note}>{demo}</Section>)}
+    <TooltipLayer />
   </div>;
 }
 

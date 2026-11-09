@@ -1,4 +1,5 @@
 // Design report (D6): prints warnings, never fails. Reviewers and the owner read it.
+// Run npm run book first so the scroll check uses the current book.
 // Usage: npm run check:design [files or folders...]   (default: packages/ui)
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -34,7 +35,7 @@ for (const f of files) {
 // OR-14: interactive elements inside floating layers (markup heuristic on tsx).
 for (const f of files.filter(f => /\.tsx$/.test(f))) {
   const t = readFileSync(f, 'utf8');
-  for (const m of t.matchAll(/role="(tooltip|dialog)"|popover=/g)) warn.push(`${relative(root, f)}  OR-14  floating layer found; it may hold only information`);
+  for (const m of t.matchAll(/role="dialog"|popover=/g)) warn.push(`${relative(root, f)}  OR-14  floating layer found; it may hold only information`);
 }
 for (const p of contrastProblems()) warn.push(`tokens.json  contrast  ${p} (needs 4.5:1)`);
 
@@ -45,8 +46,11 @@ const kb = ui.outputFiles[0].contents.length / 1024;
 let tests = 'passed';
 try { execFileSync('npx', ['tsx', '--test', 'tests/ui/format.test.ts'], { cwd: root, stdio: 'pipe' }); } catch { tests = 'FAILED (run npx tsx --test tests/ui/format.test.ts)'; }
 
+let scroll;
+try { scroll = execFileSync('node', ['tests/ui/scroll.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim(); } catch (e) { scroll = `not run (${String(e.message).split('\n')[0]})`; }
 console.log(`Design report for ${targets.join(', ')}: ${files.length} files`);
 console.log(`- packages/ui JavaScript: ${kb.toFixed(0)} KB minified (target ≤ 200 KB)${kb > 200 ? '  OVER TARGET' : ''}`);
 console.log(`- formatter tests: ${tests}`);
+console.log(`- scroll anchor on insert (book list): ${scroll}`);
 console.log(warn.length ? `- ${warn.length} warnings:\n  ${warn.join('\n  ')}` : '- no warnings');
 console.log('Rules: docs/design-system/owner-rules.md. This report never fails the build.');

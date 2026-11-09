@@ -52,7 +52,7 @@ export function VirtualList<T>(p: VirtualListProps<T>) {
   };
   const capture = () => {
     const el = scroller.current;
-    const first = v.getVirtualItems().find(i => i.end > (el?.scrollTop ?? 0));
+    const first = el ? v.getVirtualItemForOffset(el.scrollTop) : undefined;
     if (el && first) anchor.current = { key: String(first.key), delta: first.start - el.scrollTop };
     prev.current.atEdge = atEdge();
     if (prev.current.atEdge && unseen) setUnseen(0);
