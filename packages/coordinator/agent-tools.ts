@@ -146,7 +146,8 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   return terminal(e)?{outcome:'proven',detail:e.stopRequested&&(e.state==='stopped'||stop?.status==='stopped')?'stopped':'already_finished',state:e.state}:{outcome:'unknown',detail:'unconfirmed',state:e.state,stopCommand:stop?{id:stop.id,status:stop.status}:null}};
  function status(b:any){const e=get(str(b?.executionId,'executionId'),'execution'),s=get(e.sessionId,'session');
   const next=terminal(e)?'message':e.state==='unknown'?'session_fork':e.stopRequested?'execution_status':'wait_or_steer';
-  return {executionId:e.id,sessionId:e.sessionId,state:e.state,report:e.report??null,stop:e.stopRequested?stopOutcome(e):null,next,resume:resume({sessionId:s.id})}}
+  const readiness=all('event').filter((x:any)=>x.executionId===e.id&&x.type==='readiness').map((x:any)=>x.data);
+  return {executionId:e.id,sessionId:e.sessionId,state:e.state,report:e.report??null,...(readiness.length?{readiness}:{}),stop:e.stopRequested?stopOutcome(e):null,next,resume:resume({sessionId:s.id})}}
  function resume(b:any){const s=get(str(b?.sessionId,'sessionId'),'session'),harness=harnessOf(s);
   const native=(id:string)=>({key:keyFor(harness),id,resumeArgv:resumeArgv(harness,{id,effort:s.agentConfig?.effort}),forkArgv:forkArgv(harness,{id})});
   return {sessionId:s.id,harness,account:s.account??null,native:s.nativeSessionId?native(s.nativeSessionId):null,nativeSessions:s.nativeSessions??{},forkOf:s.forkOf??null}}

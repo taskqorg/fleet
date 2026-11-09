@@ -27,3 +27,42 @@ Stand: coordinator `candidate-28517364d2bd` (PDS, port 9470), executors `owner-m
 - No operation binds a new session to a project. `session_create`/`session_profile` ignore `projectId`. The only entry is `delivery_create`, then `session_fork` (fork inherits `projectId`). A project-session start op is missing.
 - Host agents have no delivery/PR op (`delivery_*`, `session_archive` are not in the bound tool set). The agent path (worker pushes a branch) and the delivery path (program worker commits artifacts) are two different integration routes. The PM cannot ask Fleet to open or merge a PR from the worker branch.
 - There is no completion wake: the worker's finish does not notify the session that created it. The PM must poll.
+
+## Worker goblin-2: T2, T9, T11 on fleet-hello-world-alt (2026-11-09)
+
+Stand candidate-28517364d2bd, executors owner-mac and pds18-native. Operations called on PDS loopback `/api/ops/*` (browser secret read from the process env in memory, never printed). Evidence: `evidence/t2-t9-t11-goblin/`.
+
+| Test | Result | Evidence |
+|---|---|---|
+| T2 web uses same operations | Partial pass | `t2-ui-calls.json`, `t2-sessions-{desktop,mobile}.png`, `t2-projects-{desktop,mobile}.png`; session via UI, delivery `03b67fc0-e042-4b22-b5e4-4e8ebe84730c`, execution `ad0b0ef4-2ceb-43b2-a2ed-36edfc8be4e6` |
+| T9 readiness | Pass (one criterion gap) | ok: executions `77876b05…` (mac), `fe25c898…` (pds); negative throwaway project: `f60c0a98…` (mac, bad remote), `9ea3f389…` (pds, missing checkout + bad remote) |
+| T11 credential separation | Pass (env/connection level) | agent env check in execution `ad0b0ef4…`; cross-connection readiness `585218b4…` (mac), `ce82ad22…` (pds) failed; control `fleet-hello-world` readiness `5574ff81…`, `04c30035…` ok |
+
+### T2
+- Every UI write went to `/api/ops/<name>`: `session_create`, `message_send` (sessions page); `delivery_create`, `question_answer`, `delivery_generate`, `delivery_history`, `question_history` (projects page). These are the same names served as MCP tools. A codex turn started from the UI completed.
+- UI reads use non-op GET routes (`/api/sessions/:id` ×109 polls, `/api/projects/:id`, `/catalogue`, `/runs`, `/api/accounts`, `/api/profiles`) while agents read via `project_context`, `catalogue`, `account_list`, `execution_status`. Read surface is not unified.
+- Not drivable from the UI: fork, handoff, steer of a running turn (only via message while busy), ask/reply, `project_readiness`. The session UI cannot start a project-bound worker; the only project session path is delivery.
+- The projects page select was hard-coded to `hello-world`/`hello-world-alt`; the run injected the `fleet-hello-world-alt` option (fixed in this branch).
+- Delivery ended `blocked: Expected bounded static HTML/CSS artifacts`: `output/index.html` was written in the session worktree but not uploaded. Already fixed by 23c5418 (worktree output collection), not deployed.
+
+### T9
+- Positive: both hosts `checkout ok`, `remote ok`. This project declares no setup script or account bindings, so those checks are absent (fleet-hello-world control shows `setup` and `account` checks ok).
+- Negative (throwaway `t9-goblin-negative`, removed after): mac `remote failed ls-remote-exit-128`; pds `checkout failed checkout-missing` + `remote failed`; plus a `readiness.failed` event; execution state `failed`. No secret or raw stderr in output.
+- Gap: no operator question is created on failure (plan criterion "a question to the operator").
+- Defect: tool description says "read results with execution_status", but it returned no readiness data; results were only in `/api/executions/:id/events`. Fixed in this branch (`execution_status` returns `readiness`).
+
+### T11
+- Agent session of `fleet-hello-world-alt` (codex, owner-mac, from the web delivery): `GIT_SSH_COMMAND` contains own connection `yes`, other project's connection `no`.
+- In that session both `ls-remote` calls exited 128, including its own repo (agent sandbox/no-network), so the agent-side refusal does not prove the credential. The credential proof is the executor path: a throwaway project pointing at `fleet-hello-world` with connection `fleet-hello-world-alt` failed `ls-remote` on both hosts, while `fleet-hello-world` with its own connection passed.
+
+### Defects
+1. `execution_status` hides readiness results — fixed (packages/coordinator/agent-tools.ts, test in agent-tools.test.ts).
+2. Projects page select hard-coded — fixed: options loaded from `/api/projects` (project-ui.ts; projects-browser passes).
+3. Delivery artifacts from worktree not uploaded — fixed by 23c5418 (other worker). Needs coordinator + executor deploy.
+
+### Architecture findings
+- Credential isolation is environment-only: both deploy keys are readable by the same OS user (`fleet` on PDS, owner on Mac). An agent of project A can read B's key file directly. Real isolation needs a per-project OS user or a credential broker that does not expose key files.
+- Readiness reason `ls-remote-exit-128` does not distinguish auth denied, missing repo, and network failure.
+- Readiness failure needs an operator question/notification, not only an event.
+- The codex sandbox blocks network for the agent, so agent-side git push/ls-remote depends on executor-run steps (delivery), not on the agent.
+- R2: read operations are not in the op table; the UI polls REST reads. Either add the reads to the op table or document reads as exempt.

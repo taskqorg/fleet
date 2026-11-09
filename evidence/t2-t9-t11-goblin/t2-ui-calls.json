@@ -1,0 +1,578 @@
+{
+ "calls": [
+  {
+   "method": "GET",
+   "path": "/api/profiles"
+  },
+  {
+   "method": "POST",
+   "path": "/api/ops/session_create"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "POST",
+   "path": "/api/ops/message_send"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/accounts"
+  },
+  {
+   "method": "GET",
+   "path": "/api/projects/hello-world"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/projects/hello-world/catalogue"
+  },
+  {
+   "method": "GET",
+   "path": "/api/profiles"
+  },
+  {
+   "method": "GET",
+   "path": "/api/projects/hello-world/runs"
+  },
+  {
+   "method": "POST",
+   "path": "/api/ops/delivery_history"
+  },
+  {
+   "method": "GET",
+   "path": "/api/accounts"
+  },
+  {
+   "method": "POST",
+   "path": "/api/ops/question_history"
+  },
+  {
+   "method": "GET",
+   "path": "/api/projects/fleet-hello-world-alt"
+  },
+  {
+   "method": "GET",
+   "path": "/api/projects/fleet-hello-world-alt/catalogue"
+  },
+  {
+   "method": "GET",
+   "path": "/api/profiles"
+  },
+  {
+   "method": "GET",
+   "path": "/api/projects/fleet-hello-world-alt/runs"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "POST",
+   "path": "/api/ops/delivery_history"
+  },
+  {
+   "method": "POST",
+   "path": "/api/ops/question_history"
+  },
+  {
+   "method": "POST",
+   "path": "/api/ops/delivery_create"
+  },
+  {
+   "method": "GET",
+   "path": "/api/accounts"
+  },
+  {
+   "method": "GET",
+   "path": "/api/projects/fleet-hello-world-alt"
+  },
+  {
+   "method": "GET",
+   "path": "/api/projects/fleet-hello-world-alt/catalogue"
+  },
+  {
+   "method": "GET",
+   "path": "/api/profiles"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/projects/fleet-hello-world-alt/runs"
+  },
+  {
+   "method": "POST",
+   "path": "/api/ops/delivery_history"
+  },
+  {
+   "method": "POST",
+   "path": "/api/ops/question_history"
+  },
+  {
+   "method": "POST",
+   "path": "/api/ops/question_answer"
+  },
+  {
+   "method": "GET",
+   "path": "/api/accounts"
+  },
+  {
+   "method": "GET",
+   "path": "/api/projects/fleet-hello-world-alt"
+  },
+  {
+   "method": "GET",
+   "path": "/api/projects/fleet-hello-world-alt/catalogue"
+  },
+  {
+   "method": "GET",
+   "path": "/api/profiles"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/projects/fleet-hello-world-alt/runs"
+  },
+  {
+   "method": "POST",
+   "path": "/api/ops/delivery_history"
+  },
+  {
+   "method": "POST",
+   "path": "/api/ops/question_history"
+  },
+  {
+   "method": "POST",
+   "path": "/api/ops/delivery_generate"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  },
+  {
+   "method": "GET",
+   "path": "/api/sessions/:id"
+  }
+ ],
+ "status": "Сохранённая история проекта",
+ "sessionTail": "· инструкции: developer\n\nВы: Reply with the single word OK. Do not run tools.\n\nd2cf810c-468e-44aa-ac2f-ec9ee8978cb7 · Завершено · gpt-6.1-sol / low\n\nЗапрошено / отображение native конфигурации\nМодель native: gpt-6.1-sol\nАссистент: OK\n\nТокены (native thread cumulative total; not additive): cache_write_input_tokens: 0 · из кэша: 11520 · вход: 13194 · выход: 5 · reasoning_output_tokens: 0 · total_tokens: 13199 · Стоимость: неизвестно · CPU: 0.0% · RSS: 120.0 MiB · Диск всего executor: 4.1 MiB (не на задачу). CPU/RSS: только основной процесс.\n\nИсходные события (13)\nСообщение или уточнениеОтправить"
+}

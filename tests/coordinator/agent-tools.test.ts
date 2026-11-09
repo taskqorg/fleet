@@ -69,6 +69,8 @@ test('readiness per environment host; start carries setup; archive sends teardow
  const poll=async(hostId='mac')=>(await call('/api/hosts/poll',{hostId},true)).json().commands;
  const r=await op('project_readiness',{projectId:'p1'});assert.deepEqual(r.hosts.map((h:any)=>h.hostId),['mac','pds']);
  const [rc]=await poll();assert.equal(rc.kind,'readiness');assert.equal(rc.payload.project.repos[0].id,'main');
+ await call('/api/hosts/events',{hostId:'mac',executionId:rc.executionId,events:[{id:'r',seq:0,type:'readiness',data:{hostId:'mac',ok:false,checks:[{check:'remote',status:'failed',reason:'ls-remote-exit-128'}]}}]},true);
+ assert.equal((await op('execution_status',{executionId:rc.executionId})).readiness[0].checks[0].reason,'ls-remote-exit-128');
  const s=(await op('session_create',{})).sessionId;
  await op('message_send',{sessionId:s,requestId:'one',text:'Go',setup:'skip'});
  const start=(await poll()).find((x:any)=>x.kind==='start');assert.equal(start.payload.setup,'skip');
