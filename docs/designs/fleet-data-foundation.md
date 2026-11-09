@@ -187,6 +187,8 @@ Open questions come first; answered ones follow with their evidence.
     *   Evidence: read from the strings in the installed Claude Code 2.1.319 binary, as in Q4.
     *   The risk remains for sessions launched without that flag, and for any future change to that behaviour. Copying transcripts when a run ends (G4) is still required, but it is not urgent.
 
+*   **Proof results (2026-11-09).** Q2 is answered: the Windows store is Garage under WSL2. A cross-host proof passed: an 80 MiB multipart upload to the Windows store went through its tunnel, the Mac executor copied it to its own store, and PDS18 read it back with a matching SHA-256. Details and findings are in `docs/infrastructure-build.md`. The main finding: Access headers are added after S3 signing, because Cloudflare strips them before the origin.
+
 ## Critical User Journeys (CUJs)
 
 ### CUJ 1: Operator sees what a task cost and where it stands
