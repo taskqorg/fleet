@@ -1,7 +1,7 @@
 
 import {randomUUID} from 'node:crypto';
 import {canonical,readTrustedProfile} from './lab.js';
-export function delegation(store:{all:(k:string,filter?:object,omit?:string[])=>Promise<any[]>,get:(id:string,k:string)=>Promise<any>,put:(k:string,v:any)=>Promise<unknown>,many:(ids:string[],k:string)=>Promise<Map<string,any>>,query:(sql:string,params?:any[])=>Promise<any[]>},directory:string,enqueue:(session:any,text:string,requestId:string)=>Promise<any>){
+export function delegation(store:{all:(k:string,filter?:object,omit?:string[])=>Promise<any[]>,get:(id:string,k:string)=>Promise<any>,put:(k:string,v:any)=>Promise<unknown>,many:(ids:string[],k:string)=>Promise<Map<string,any>>,query:(sql:string,params?:any[])=>Promise<any[]>,executions:{openDelegations:()=>Promise<any[]>}},directory:string,enqueue:(session:any,text:string,requestId:string)=>Promise<any>){
  const {all,get,put}=store;
  const fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};
  const terminal=(e:any)=>['completed','failed','stopped'].includes(e.state);
@@ -45,8 +45,8 @@ export function delegation(store:{all:(k:string,filter?:object,omit?:string[])=>
   }
   return true;
  },
- // Open delegations only (partial index, migration 5): the same test as the skip below, done in SQL.
- async reconcile(){const ds=(await store.query("SELECT data FROM document WHERE kind='delegation' AND coalesce(data->>'continuationExecutionId','')='' AND coalesce(data->>'state','')<>'suppressed' ORDER BY seq")).map((r:any)=>r.data),open=ds.filter(d=>!d.continuationExecutionId&&d.state!=='suppressed');
+ // Open delegations only (partial index on execution.delegation, migration 6): the same test as the skip below, done in SQL.
+ async reconcile(){const ds=await store.executions.openDelegations(),open=ds.filter(d=>!d.continuationExecutionId&&d.state!=='suppressed');
   // Executions and sessions read once per poll; dropped after an enqueue, which writes them.
   let executions=await store.many(open.flatMap(d=>[d.parentExecutionId,d.childExecutionId]),'execution'),sessions=await store.many([...executions.values()].map(e=>e.sessionId),'session');
   for(const d of ds){
