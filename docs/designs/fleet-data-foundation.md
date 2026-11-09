@@ -189,6 +189,20 @@ Open questions come first; answered ones follow with their evidence.
 
 *   **Proof results (2026-11-09).** Q2 is answered: the Windows store is Garage under WSL2. A cross-host proof passed: an 80 MiB multipart upload to the Windows store went through its tunnel, the Mac executor copied it to its own store, and PDS18 read it back with a matching SHA-256. Details and findings are in `docs/infrastructure-build.md`. The main finding: Access headers are added after S3 signing, because Cloudflare strips them before the origin.
 
+*   **Q10. Executor lifecycle through CoreQ (candidate, not decided).** CoreQ at `2f141a7` is the shared Rust library already used by taskq, DashQ and ServerQ. It ships, with tests on macOS, Linux and Windows, three things that Fleet now does by hand:
+    *   Service units: `service::host_unit` writes a launchd agent, a systemd user unit or a Windows Scheduled Task.
+    *   A launcher with crash rollback: `launcher::launch` rolls back after three unhealthy starts.
+    *   Atomic self-update: `update::prepare_install` and `activate_install` gate a release on SHA256SUMS and a `selftest` run, then switch `current` and `previous`.
+
+    It also provides `write_durable` (fsync before success) and a `status.json` freshness check.
+
+    Costs and limits:
+    *   Releases must be published as GitHub releases in CoreQ's naming (`latest.json`, `SHA256SUMS`).
+    *   It fits the Rust executor. It does not fit the TypeScript coordinator, which uses a `current` symlink.
+    *   Its telemetry shipper and enrollment speak DashQ's wire protocol and allow only fixed codes, so they do not replace Fleet's outbox.
+
+    Decide when executor packaging is designed (Windows executor, auto-update).
+
 ## Critical User Journeys (CUJs)
 
 ### CUJ 1: Operator sees what a task cost and where it stands
@@ -571,6 +585,57 @@ The shapes are copied from t3code (`apps/server/src/mcp/toolkits/attachment/tool
     *   When free space drops below `store.free_space_warning`, `hosts.list` and the problem view show the store, its fill per project, and the available actions: raise capacity, change a project's `artifact_locations`, or add a retention rule.
     *   A full store stops new uploads with a visible reason. It never fails runs silently.
 *   **Agents** read `hosts.list` within their permissions. Changing a setting is an operator action, which an agent can only propose as an `operator_decision` question.
+
+### 12. Document store concurrency model
+
+Phase 1 moved handlers written for synchronous SQLite onto Postgres. On SQLite one writer ran at a time, and every handler was one atomic, isolated step. The handlers rely on that implicitly. Many of them read several documents, decide, and write others: "no active execution in this session, so start the queued message"; "this receipt does not regress the command"; "this event sequence is not taken". Running them under SERIALIZABLE gave the right answers but failed constantly. Live PDS18 logged 3553 serialization failures in about 4 minutes. A one-table store makes SSI predicate locks coarse (kind ranges, shared index pages), so unrelated documents conflict. Retries piled up until executor requests passed the executor's 5 s HTTP timeout (`crates/executor/src/outbox.rs`).
+
+**Model.** Two transaction kinds and two lock scopes, in `packages/coordinator/store.ts`:
+
+*   **Read** (`store.read`): `READ ONLY, REPEATABLE READ`. One consistent snapshot. It never blocks writers and never fails to serialize. A write inside it fails with 25006, so a handler classified as read-only by mistake fails loudly instead of corrupting data.
+*   **Write** (`store.tx` and `store.atomic`): `READ COMMITTED` inside a **scope lock** held for the whole transaction. Each statement sees the latest committed data. Writers in the same scope run one at a time, so a handler's read, decide and write is as atomic and isolated as it was on SQLite.
+    *   **GLOBAL** is the default scope.
+    *   **Execution scope** `execution:<id>` is for host ingest of one execution.
+    *   Inside the process, a queue per key orders waiters before they take a pool connection, so waiters hold no connection. The transaction then takes `pg_advisory_xact_lock` on the key, which also orders writers in other processes (the migration tool, a second coordinator during a deploy).
+    *   Lock order is GLOBAL, then an execution scope. An execution-scope writer never takes GLOBAL, so the two scopes cannot deadlock.
+    *   A `put` outside a transaction is a one-statement GLOBAL write, so it never lands inside another writer's transaction.
+    *   Deadlocks (40P01) are still retried with a short random backoff. A failure that handler code swallowed dooms the transaction, which is then rolled back and retried.
+
+**Why not the alternatives.**
+
+*   *SERIALIZABLE everywhere* (Phase 1 to PR #15): correct, but it generated the failure storm described above. Narrow indexes cut the conflicts by about 3 times; the rest are page-level false sharing between neighbouring ids.
+*   *READ COMMITTED or REPEATABLE READ with row locks (`FOR UPDATE`) and per-session advisory locks*: row locks protect the documents a handler changes, not the conditions it checks. For example, "no other queued message of this session is earlier" or "no event of this execution has this sequence" are conditions over many rows. That needs a scope lock anyway. The hot write paths, poll and receipts, run `promote`, `delegates.reconcile` and delivery `advance`. These loops read across every session and every delegation and enqueue work into any of them, so their scope is every session, which is GLOBAL.
+*   *SERIALIZABLE only for a few handlers*: under SSI, conflicts are detected only between SERIALIZABLE transactions. Mixing levels gives the SERIALIZABLE handlers no protection against the others.
+
+Throughput is not the constraint. A write transaction takes a few milliseconds (poll: 21 statements). Live traffic is 4 pollers at about 1 per second plus executor outboxes, so one writer at a time is far from saturated. Execution-scope ingest runs in parallel with GLOBAL writers and with other executions.
+
+**Handler groups.**
+
+| Group | Invariant it needs | Mechanism |
+|---|---|---|
+| Poll `/api/hosts/poll` | One host observation per host. `delegates.reconcile` delivers each child result once. `promote` starts only the earliest queued message of an idle session. A pending command is returned only when its execution and delegation inputs are ready. | GLOBAL write (the loops span all sessions) |
+| Receipts `/api/hosts/receipts` | Command status never regresses. Native identity is set once. The execution state follows the command. `onReceipt`, `promote` and `advance` see the new state. | GLOBAL write. Account observations and native project tools are GLOBAL too; pipeline runs open their own short GLOBAL transactions. |
+| Events `/api/hosts/events` | A batch is validated whole. An event id is immutable and a sequence number is used once per execution. A colliding frame becomes one transport conflict. | Execution scope. Only ingest and `transport_authorize` write `event`, `transport-conflict` and `transport-audit`; `transport_authorize` runs GLOBAL and also takes the execution scope. |
+| Artifacts `/api/hosts/artifacts` | An artifact id never changes content. | Execution scope. Only this route writes `artifact`. |
+| Agent tools `/api/agent-tools`, `/api/hosts/agent-tools` | Session invariants (`message_send` queue order, `session_fork`, `worker_done` accepted once, and so on). | Each tool call is its own GLOBAL write, or a read when the operation is in `READ_OPERATIONS`. |
+| Ops `/api/ops/:name`, MCP `/api/tools`, project and recovery routes | Same as the operation's own group. | `READ_OPERATIONS` run as reads. `LONG_OPERATIONS` (pipeline and delivery generation) open short GLOBAL transactions around their synchronous steps. All others are one GLOBAL write. |
+| UI reads (every GET and HEAD) | A consistent view. | Read snapshot. A static scan and the read-only transaction both confirm that none of them writes. |
+| Startup recovery (`onReady`) | Runs once, before traffic. | GLOBAL write |
+
+**Whole-kind reads on write paths.**
+
+*   `delegates.reconcile` now reads open delegations through a partial index (migration 5) instead of all delegations.
+*   `delegates.ready` no longer scans every artifact when the parent has no source run.
+*   Filters with `id`, `executionId` or `sessionId` use btree indexes (migration 4). Other equality filters use the GIN index.
+*   Delivery `advance` still reads every delivery. It recomputes each delivery's state from its step executions before it decides to skip, so no stored field predicts which deliveries it touches. The kind holds one record per delivery request.
+
+**Measured** on local PostgreSQL 17 with the live-volume fixture (`tests/coordinator/load.test.ts`: 4 pollers, two executor outboxes replaying 100 events and 10 receipts):
+
+| Load | Before (main f22ea6b) | After (this model) |
+|---|---|---|
+| Live shape | 11–17 retries per run; max 153–198 ms; the owner-mac poller finished 1 poll | 0 retries; p95 19–22 ms; max 22–25 ms |
+| Single-event rows, pollers without pause (150 requests) | 36–41 retries; max 168–265 ms | 0 retries; p95 12–13 ms; max 24–28 ms |
+| 81 concurrent host requests (`concurrency.test.ts`) | 125–127 retries; 300 ms | 0 retries; 112–115 ms |
 
 ## Alternatives Considered
 
