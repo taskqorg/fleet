@@ -903,9 +903,9 @@ fn main() -> Result<()> {
         }
         e.tick()?;
         let result = (|| -> Result<()> {
-            // A poll the edge answered waits for its backoff, like any edge-held route.
-            if outbox::edge_wait("/api/hosts/poll") { return Ok(()) }
-            let reply=e.post("/api/hosts/poll",json!({"hostId":e.host,"platform":platform(),"capabilities":capabilities(),"stores":e.stores(),"problems":outbox::edge_problems("/api/hosts/poll")}))?;
+            // A poll the edge answered is asked again every 2 s (outbox::edge_redirect), not every 100 ms.
+            if outbox::edge_wait(outbox::POLL) { return Ok(()) }
+            let reply=e.post("/api/hosts/poll",json!({"hostId":e.host,"platform":platform(),"capabilities":capabilities(),"stores":e.stores(),"problems":outbox::edge_problems(outbox::POLL)}))?;
             for c in reply["commands"].as_array().ok_or("commands missing")? {
                 if e.run(c.clone()).is_err()
                     && !e.live.contains_key(c["executionId"].as_str().unwrap_or(""))

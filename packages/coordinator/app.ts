@@ -154,7 +154,8 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  app.get('/api/reconciliation',async()=>({reconciliation:(await all('reconciliation')).at(-1)??null}));
  // Host problems the executor reports with each poll (edge-redirect: the edge answers one of its routes with a login page or redirect); the list is
  // replaced on every poll, so a recovered route clears itself.
- const hostProblems=(v:any)=>Array.isArray(v)?{problems:v.filter((p:any)=>p?.kind==='edge-redirect'&&typeof p.route==='string'&&Number.isSafeInteger(p.status)).slice(0,20).map((p:any)=>({kind:'edge-redirect',route:p.route.slice(0,200),status:p.status,location:typeof p.location==='string'?p.location.slice(0,500):null}))}:{};
+ const HOST_STALE_MS=30000;
+ const hostProblems=(v:any)=>Array.isArray(v)?{problems:v.filter((p:any)=>p?.kind==='edge-redirect'&&typeof p.route==='string'&&Number.isSafeInteger(p.status)).slice(0,20).map((p:any)=>({kind:'edge-redirect',route:p.route.slice(0,200),status:p.status,location:typeof p.location==='string'?p.location.slice(0,500):null,detail:typeof p.detail==='string'?p.detail.slice(0,500):null}))}:{};
  app.post('/api/hosts/poll',async(req:any)=>(await store.tx(async ()=>{(await owned(req.body));await stores.observe(req.body.hostId,req.body.stores);await put('host-observation',{id:req.body.hostId,lastSeenAt:Date.now(),...( ['darwin','win32','linux'].includes(req.body.platform)?{platform:req.body.platform}:{} ),...(Array.isArray(req.body.capabilities)&&req.body.capabilities.every((x:any)=>typeof x==='string')?{capabilities:req.body.capabilities}:{}),...hostProblems(req.body.problems)});(await delegates.reconcile());await detectProblems();(await agent.promote());const pending=await filter(await all('command',{hostId:req.body.hostId,status:'pending'}),(x:any)=>x.hostId===req.body.hostId&&x.status==='pending');
   // ponytail: executions read once for all pending commands; delegates.ready only rewrites the execution of its own start command.
   const executions=await store.many(pending.map((c:any)=>c.executionId),'execution');
@@ -264,9 +265,9 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
    const observed=await all('host-observation'),ids=[...new Set([...configured,...observed.map((h:any)=>h.id)])];
    const running=await store.query("SELECT host_id,harness,count(*)::int AS n FROM execution WHERE state IN ('preparing','running') AND host_id IS NOT NULL GROUP BY 1,2");
    const queued=await store.query("SELECT data->>'hostId' AS host_id,count(*)::int AS n FROM document WHERE kind='command' AND data->>'status'='pending' GROUP BY 1");
-   return {staleAfterMs:30000,serverNow:Date.now(),hosts:ids.map(id=>{const o:any=observed.find((h:any)=>h.id===id);const by:Record<string,number>={};for(const r of running)if(r.host_id===id)by[r.harness??'unknown']=r.n;
+   return {staleAfterMs:HOST_STALE_MS,serverNow:Date.now(),hosts:ids.map(id=>{const o:any=observed.find((h:any)=>h.id===id);const by:Record<string,number>={};for(const r of running)if(r.host_id===id)by[r.harness??'unknown']=r.n;
     return {id,configured:configured.includes(id),platform:o?.platform??null,lastSeenAt:o?.lastSeenAt??null,capabilities:o?.capabilities??[],// A host that stopped polling shows no problems: its staleness is the signal, not a report that may be days old.
-    problems:o?.lastSeenAt&&Date.now()-o.lastSeenAt<30000?o?.problems??[]:[],runningByHarness:by,running:Object.values(by).reduce((a,n)=>a+n,0),slots:null,queued:queued.find((q:any)=>q.host_id===id)?.n??0,stores:'unavailable'}})}},
+    problems:o?.lastSeenAt&&Date.now()-o.lastSeenAt<HOST_STALE_MS?o?.problems??[]:[],runningByHarness:by,running:Object.values(by).reduce((a,n)=>a+n,0),slots:null,queued:queued.find((q:any)=>q.host_id===id)?.n??0,stores:'unavailable'}})}},
   me:async()=>({email:config.ownerEmail??null,roles:['operator','architect'],grantsVersion:'1',changeLogRetentionDays:retentionDays}),
  };
  const ops:Record<string,(b:any)=>any>={...typedOps,...projects,...transportRecovery.operations,...agent.operations,session_create,session_profile,session_archive,execution_stop,session_get,execution_differences,execution_events,profiles_list};

@@ -61,6 +61,6 @@ test('a failed copy waits for its backoff and an operator retry; an invalid rule
 test('a host reports edge redirects with its poll; hosts_list shows them until a poll without them',async()=>{const {app,call,op}=await setup();
  const hosts=async()=>(await (await op('hosts_list',{})).json()).hosts.find((h:any)=>h.id==='mac').problems;
  await call('/api/hosts/poll',{hostId:'mac',problems:[{kind:'edge-redirect',route:'/api/hosts/stores',status:302,location:'https://login.example/cdn-cgi/access/login'},{kind:'other'}]});
- assert.deepEqual(await hosts(),[{kind:'edge-redirect',route:'/api/hosts/stores',status:302,location:'https://login.example/cdn-cgi/access/login'}]);
+ assert.deepEqual(await hosts(),[{kind:'edge-redirect',route:'/api/hosts/stores',status:302,location:'https://login.example/cdn-cgi/access/login',detail:null}]);
  await call('/api/hosts/poll',{hostId:'mac',problems:[]});assert.deepEqual(await hosts(),[]);
  await app.close()});

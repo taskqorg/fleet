@@ -14,9 +14,7 @@ use std::time::Duration;
 pub fn schema(db: &Connection) -> rusqlite::Result<()> {
     db.execute_batch("CREATE TABLE IF NOT EXISTS transfers(id TEXT PRIMARY KEY,kind TEXT NOT NULL,body TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'queued',response TEXT,attempts INTEGER NOT NULL DEFAULT 0,next_at INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL);")
 }
-fn now_ms() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
-}
+use crate::outbox::now_ms;
 /// Queues a job; `id` is also the artifact id of an upload, so a repeated reserve after a restart is the same reservation.
 pub fn enqueue(db: &Connection, id: &str, kind: &str, body: &Value) -> rusqlite::Result<()> {
     db.execute("INSERT OR IGNORE INTO transfers(id,kind,body,created_at) VALUES(?1,?2,?3,?4)", params![id, kind, body.to_string(), now_ms()])?;
@@ -64,16 +62,17 @@ impl Client {
         }
     }
     pub fn post(&self, route: &str, body: Value) -> std::result::Result<Value, Failure> {
-        // Same classification and edge state as the outbox (outbox::classify): an edge answer is retried after its backoff
-        // and signalled once.
-        if outbox::edge_wait(route) { return Err(Failure::Retry(format!("edge backoff for {route}"))) }
-        match outbox::classify(self.coordinator.post(&format!("{}{route}", self.url)).set("Authorization", &format!("Bearer {}", self.token)).send_json(body)) {
-            outbox::Answer::Ok(v) => { outbox::edge_ok(route); Ok(v) }
-            outbox::Answer::Edge(status, detail) => { outbox::edge_redirect(route, status, &detail); Err(Failure::Retry(format!("coordinator edge answered {status} ({detail})"))) }
+        // Same classification and edge state as the outbox (outbox::classify, outbox::observe); the job's own backoff paces
+        // the retry of an edge answer.
+        let a = outbox::classify(self.coordinator.post(&format!("{}{route}", self.url)).set("Authorization", &format!("Bearer {}", self.token)).send_json(body));
+        outbox::observe(route, &a);
+        match a {
+            outbox::Answer::Ok(v) => Ok(v),
+            outbox::Answer::Edge(status, detail) => Err(Failure::Retry(format!("coordinator edge answered {status} ({detail})"))),
             outbox::Answer::Retry(e) => Err(Failure::Retry(e)),
             // 409 no_store: no listed store is reachable now (a sleeping Mac, Windows logged out): wait and retry.
-            outbox::Answer::Reject(409, text) if text.contains("No reachable store") => { outbox::edge_ok(route); Err(Failure::Retry(format!("409 {text}"))) }
-            outbox::Answer::Reject(code, text) => { outbox::edge_ok(route); Err(Failure::Permanent(format!("{code} {text}"))) }
+            outbox::Answer::Reject(409, text) if text.contains("No reachable store") => Err(Failure::Retry(format!("409 {text}"))),
+            outbox::Answer::Reject(code, text) => Err(Failure::Permanent(format!("{code} {text}"))),
         }
     }
     /// A request to a store URL: the Access headers are added (never signed) unless it targets loopback.
@@ -250,6 +249,8 @@ fn run_job(c: &Client, db: &Connection, id: &str, kind: &str, body: &Value) -> s
     }
 }
 
+/// Coordinator routes only transfers call (not the outbox's /api/hosts/artifacts/declare).
+const TRANSFER_ROUTES: &[&str] = &["/api/hosts/artifacts/reserve", "/api/hosts/artifacts/parts", "/api/hosts/artifacts/commit", "/api/hosts/artifacts/verified", "/api/hosts/artifacts/get", "/api/hosts/artifacts/list", "/api/hosts/artifacts/renew"];
 /// The artifact a queued job holds a coordinator lease on, with its store when known.
 fn leased(kind: &str, id: &str, body: &Value) -> Option<(String, Option<String>)> {
     match kind {
@@ -275,7 +276,7 @@ pub fn spawn(journal: PathBuf, client: Client, after: impl Fn(&Client, &Connecti
             std::thread::sleep(Duration::from_secs(600));
             let jobs: Vec<(String, String, String)> = db.prepare("SELECT id,kind,body FROM transfers WHERE state IN ('queued','running')").and_then(|mut s| s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect()).unwrap_or_default();
             // Nothing left to transfer: idle transfer and store routes are not asked again, so their edge signals end here.
-            if jobs.is_empty() { outbox::edge_clear("/api/hosts/artifacts/"); outbox::edge_clear("store ") }
+            if jobs.is_empty() { outbox::edge_clear_idle(TRANSFER_ROUTES) }
             for (id, kind, body) in jobs {
                 let body: Value = serde_json::from_str(&body).unwrap_or(json!({}));
                 if let Some((artifact, store)) = leased(&kind, &id, &body) {
@@ -303,7 +304,7 @@ fn work(journal: PathBuf, client: Client, lane: &str, after: &(dyn Fn(&Client, &
                     after(&client, &db, &body, &v);
                 }
                 Err(Failure::Retry(e)) => {
-                    let wait = 2000i64.saturating_mul(1 << attempts.min(8)).min(300_000);
+                    let wait = outbox::backoff(attempts);
                     let _ = db.execute("UPDATE transfers SET attempts=attempts+1,next_at=?2,response=?3 WHERE id=?1", params![id, now_ms() + wait, json!({"state":"retrying","error":e}).to_string()]);
                 }
                 Err(Failure::Permanent(e)) => {

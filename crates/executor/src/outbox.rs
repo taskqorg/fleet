@@ -48,35 +48,47 @@ impl std::fmt::Display for Redirected {
 impl std::error::Error for Redirected {}
 
 /// Edge conditions in progress, by route (a coordinator route, or `store <host>`): one log line when a route starts and one
-/// when it recovers; a host problem `edge-redirect` reported with every poll until then; and a backoff (2 s doubling to
-/// 5 min, as for transfers) before the route is asked again.
+/// when it recovers, and a host problem `edge-redirect` reported with every poll until then. Outbox routes also wait for a
+/// backoff before they are asked again (`edge_wait`); transfers and store requests keep their own job backoff, and the poll
+/// retries every 2 s so the host is seen again soon after the edge recovers.
 struct Edge { status: u16, detail: String, attempts: u32, next_at: i64 }
 static EDGE: std::sync::Mutex<std::collections::BTreeMap<String, Edge>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
-fn now_ms() -> i64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64) }
+pub fn now_ms() -> i64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64) }
+/// Retry backoff of transfers and edge-held routes: 2 s doubling to 5 min.
+pub fn backoff(attempts: i64) -> i64 { 2000i64.saturating_mul(1 << attempts.clamp(0, 8)).min(300_000) }
+pub const POLL: &str = "/api/hosts/poll";
 pub fn edge_redirect(route: &str, status: u16, detail: &str) {
     let mut m = EDGE.lock().unwrap_or_else(|e| e.into_inner());
     let attempts = m.get(route).map_or(0, |e| e.attempts + 1);
     if attempts == 0 { eprintln!("executor: the edge answers {route} with {status} ({detail}); rows stay queued and are retried") }
-    let wait = 2000i64.saturating_mul(1 << attempts.min(8)).min(300_000);
+    let wait = if route == POLL { 2000 } else { backoff(attempts as i64) };
     m.insert(route.to_string(), Edge { status, detail: detail.to_string(), attempts, next_at: now_ms() + wait });
 }
 pub fn edge_ok(route: &str) {
     let mut m = EDGE.lock().unwrap_or_else(|e| e.into_inner());
     if m.remove(route).is_some() { eprintln!("executor: the edge delivers {route} again") }
 }
-/// Clears the routes under `prefix` once nothing is left to send there (an idle transfer route is not asked again).
-pub fn edge_clear(prefix: &str) {
+/// Records a coordinator answer in the edge state; the outbox and the transfer client both call it.
+pub fn observe(route: &str, a: &Answer) {
+    match a { Answer::Edge(s, d) => edge_redirect(route, *s, d), Answer::Retry(_) => {}, _ => edge_ok(route) }
+}
+/// Clears the given routes (and `store ` keys) once no transfer is left to ask them again.
+pub fn edge_clear_idle(routes: &[&str]) {
     let mut m = EDGE.lock().unwrap_or_else(|e| e.into_inner());
-    m.retain(|r, _| if r.starts_with(prefix) { eprintln!("executor: nothing left for {r}; edge signal cleared"); false } else { true });
+    m.retain(|r, _| if routes.contains(&r.as_str()) || r.starts_with("store ") { eprintln!("executor: nothing left for {r}; edge signal cleared"); false } else { true });
 }
 /// True while a route waits for its backoff.
 pub fn edge_wait(route: &str) -> bool {
     EDGE.lock().unwrap_or_else(|e| e.into_inner()).get(route).is_some_and(|e| now_ms() < e.next_at)
 }
-/// The host problems for a poll; the poll's own route is left out (a poll that is delivered proves it works).
+/// The host problems for a poll; the poll's own route is left out (a poll that is delivered proves it works). `location` is
+/// set for a redirect; `detail` describes any edge answer.
 pub fn edge_problems(except: &str) -> Value {
     let m = EDGE.lock().unwrap_or_else(|e| e.into_inner());
-    Value::Array(m.iter().filter(|(r, _)| r.as_str() != except).map(|(route, e)| json!({"kind":"edge-redirect","route":route,"status":e.status,"location":e.detail})).collect())
+    Value::Array(m.iter().filter(|(r, _)| r.as_str() != except).map(|(route, e)| {
+        let redirect = (300..400).contains(&e.status);
+        json!({"kind":"edge-redirect","route":route,"status":e.status,"location":if redirect { json!(e.detail) } else { Value::Null },"detail":if redirect { format!("redirect to {}", e.detail) } else { e.detail.clone() }})
+    }).collect())
 }
 
 /// One coordinator request on the pooled agent (keep-alive avoids a TLS handshake per row; redirects are not followed).
@@ -87,7 +99,7 @@ pub fn send(url: &str, token: &str, route: &str, v: Value) -> Answer {
         .post(&format!("{url}{route}"))
         .set("Authorization", &format!("Bearer {token}"))
         .send_json(v));
-    match &a { Answer::Edge(s, d) => edge_redirect(route, *s, d), Answer::Retry(_) => {}, _ => edge_ok(route) }
+    observe(route, &a);
     a
 }
 pub fn post(url: &str, token: &str, route: &str, v: Value) -> Result<Value> {
@@ -117,13 +129,16 @@ pub fn flush(db: &Connection, url: &str, token: &str, host: &str) -> Result<()> 
     drop(stmt);
     let mut i = 0;
     let mut single = false;
-    let (mut routes, mut executions) = (std::collections::HashSet::new(), std::collections::HashSet::new());
+    let (mut routes, mut executions) = (std::collections::HashSet::new(), std::collections::HashSet::<String>::new());
+    let (mut held, mut sent) = (false, false);
     while i < rows.len() {
         let (n, p, b) = rows[i].clone();
         let mut value: Value = serde_json::from_str(&b)?;
         let execution = value["executionId"].as_str().map(str::to_owned);
-        let hold = |routes: &mut std::collections::HashSet<String>, executions: &mut std::collections::HashSet<String>| { routes.insert(p.clone()); if let Some(e) = &execution { executions.insert(e.clone()); } };
-        if routes.contains(&p) || execution.as_ref().is_some_and(|e| executions.contains(e)) || edge_wait(&p) { hold(&mut routes, &mut executions); i += 1; continue }
+        // A row behind a held execution waits without holding its route (only an edge answer holds a route), so one
+        // blocked route never spreads to the other executions.
+        if execution.as_ref().is_some_and(|e| executions.contains(e)) { i += 1; continue }
+        if routes.contains(&p) || edge_wait(&p) { routes.insert(p.clone()); if let Some(e) = &execution { executions.insert(e.clone()); } held = true; i += 1; continue }
         // Consecutive event rows of one execution go in one request (coordinator validates the whole batch).
         let mut batch = vec![(n, b.clone())];
         if p == "/api/hosts/events" && !single {
@@ -137,7 +152,7 @@ pub fn flush(db: &Connection, url: &str, token: &str, host: &str) -> Result<()> 
         let response = match send(url, token, &p, value.clone()) {
             Answer::Ok(response) => response,
             Answer::Retry(e) => return Err(e.into()),
-            Answer::Edge(..) => { hold(&mut routes, &mut executions); i += 1; continue }
+            Answer::Edge(..) => { routes.insert(p.clone()); if let Some(e) = &execution { executions.insert(e.clone()); } held = true; i += 1; continue }
             Answer::Reject(status, text) => {
                 let reason = format!("coordinator {status} {text}");
                 if value.get("delegation").is_some() || value.get("agentToolKey").is_some() {
@@ -164,6 +179,7 @@ pub fn flush(db: &Connection, url: &str, token: &str, host: &str) -> Result<()> 
             }
         };
         i += batch.len();
+        sent = true;
         let key = value["agentToolKey"].as_str().map(str::to_owned).or_else(|| value.get("delegation").map(|q| format!("{}:{}", value["commandId"].as_str().unwrap_or(""), q["requestId"].as_str().unwrap_or(""))));
         if let Some(k) = key {
             db.execute("UPDATE delegation_requests SET response=? WHERE id=?", params![response.to_string(), k])?;
@@ -172,8 +188,11 @@ pub fn flush(db: &Connection, url: &str, token: &str, host: &str) -> Result<()> 
             db.execute("DELETE FROM outbox WHERE rowid=?", [n])?;
         }
     }
+    // Only held rows left: the delivery thread waits longer than its usual 100 ms before the next pass.
+    HELD_ONLY.store(held && !sent, std::sync::atomic::Ordering::Relaxed);
     Ok(())
 }
+static HELD_ONLY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Runs delivery on its own connection and thread until the process exits.
 pub fn spawn(path: std::path::PathBuf, url: String, token: String, host: String) -> Result<()> {
@@ -183,7 +202,8 @@ pub fn spawn(path: std::path::PathBuf, url: String, token: String, host: String)
         if flush(&db, &url, &token, &host).is_err() {
             eprintln!("executor outbox delivery failed; rows retained, retry pending");
         }
-        std::thread::sleep(Duration::from_millis(100));
+        let idle = HELD_ONLY.load(std::sync::atomic::Ordering::Relaxed);
+        std::thread::sleep(Duration::from_millis(if idle { 2000 } else { 100 }));
     });
     Ok(())
 }
@@ -266,20 +286,21 @@ pub mod tests {
     }
     #[test]
     fn a_redirect_on_one_route_does_not_block_other_routes() {
-        let (url, server) = serve(3, |path, _| if path == "/api/hosts/artifacts/declare" { ("302 Found", LOGIN) } else { ("200 OK", "") });
+        let (url, server) = serve(4, |path, _| if path == "/api/hosts/artifacts/declare" { ("302 Found", LOGIN) } else { ("200 OK", "") });
         let db = journal();
         queue(&db, "/api/hosts/artifacts/declare", json!({"name":"a","executionId":"e1"})).unwrap();
         queue(&db, "/api/hosts/artifacts/declare", json!({"name":"b","executionId":"e2"})).unwrap();
-        // e1's receipt waits for e1's declaration (its required artifact must be known first), and holds the receipts route
-        // behind it; e3's receipt, queued before it, and e3's events flow.
+        // e1's receipt waits for e1's declaration (its required artifact must be known first) without holding the receipts
+        // route: e3's and e4's receipts and e3's events flow.
         queue(&db, "/api/hosts/receipts", json!({"commandId":"c3","executionId":"e3"})).unwrap();
         queue(&db, "/api/hosts/receipts", json!({"commandId":"c1","executionId":"e1"})).unwrap();
+        queue(&db, "/api/hosts/receipts", json!({"commandId":"c4","executionId":"e4"})).unwrap();
         queue(&db, "/api/hosts/events", json!({"executionId":"e3","events":[{"id":"1"}]})).unwrap();
         flush(&db, &url, "t", "mac").unwrap();
         let seen = server.join().unwrap();
         // The second declare row is not posted after the first redirect (order within a route), nor e1's receipt (order
         // within an execution); e3's rows on the other routes are.
-        assert_eq!(seen.iter().map(|(p, v)| format!("{p} {}", v["executionId"].as_str().unwrap_or(""))).collect::<Vec<_>>(), ["/api/hosts/artifacts/declare e1", "/api/hosts/receipts e3", "/api/hosts/events e3"]);
+        assert_eq!(seen.iter().map(|(p, v)| format!("{p} {}", v["executionId"].as_str().unwrap_or(""))).collect::<Vec<_>>(), ["/api/hosts/artifacts/declare e1", "/api/hosts/receipts e3", "/api/hosts/receipts e4", "/api/hosts/events e3"]);
         let left: Vec<String> = db.prepare("SELECT route FROM outbox ORDER BY rowid").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
         assert_eq!(left, ["/api/hosts/artifacts/declare", "/api/hosts/artifacts/declare", "/api/hosts/receipts"]);
         assert_eq!(count(&db, "outbox_failed"), 0);
