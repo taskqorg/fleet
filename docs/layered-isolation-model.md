@@ -74,3 +74,38 @@ Method: exact `native.rs` env and flags (`codex exec --json`, `gpt-6.1-sol` low)
 5. Forced refresh: N parallel runs while the token is due for refresh; check every run keeps working and `auth.json` stays valid.
 6. Antigravity per container/OS user on PDS: two principals concurrently, each with its own executor.
 7. Worktree collision: two sessions on one repository with per-session worktrees, including cleanup.
+
+## Implementation and live load (2026-11-09, through the real coordinator and executors)
+
+Code (`crates/executor/src/{main,lab,native,harness}.rs`, `packages/coordinator/{app,lab}.ts`), commits `ccc2d24e023d`, `ffb1caf88e56`, `021ecc523468`, `3310458e3b41`, `4d3c16b2b686`:
+
+- Proposal 3: Codex model/effort come from the profile/payload (`thread/start`, `turn/start`); the fixed `gpt-6.1-sol`/`low` check and `-m`/effort args are gone. Profiles accept any model/effort string not starting with `-`. The default without a profile stays `gpt-6.1-sol`/`low`.
+- Proposal 2: `FLEET_SESSIONS_ROOT` puts new session dirs outside `/Users/<u>` (Mac: `/Users/Shared/fleet/owner-mac/sessions`, 0700). Existing sessions keep their old dir, so resume markers still match. `HOME` stays the credential home only for Claude/agy `native-current` (Keychain). Live: Claude `fleet-claude` and agy `fleet-antigravity-current` completed turns from the new root (Claude reported no CLAUDE.md or user skills in context; its init tool list is only the granted tools plus `mcp__fleet__*`).
+- Proposal 4: optional session `workingDirectory` (`POST /api/sessions/:id/profile`). When it is a git repo, the executor creates `<session>/worktree` on branch `fleet/<session>` and runs the harness there. The path is untrusted. It is canonicalized and must sit under `FLEET_PROJECT_ROOTS` (unset means no worktrees). It must not overlap the executor or session dirs, and the git toplevel and common dir get the same check. git runs with a cleared env, no system/global config, `core.hooksPath=/dev/null`, `core.fsmonitor=false`, `protocol.file.allow=never` and `GIT_CEILING_DIRECTORIES` set to the matched root. Worktree removal is not implemented.
+- Proposal 1: every run emits a `harness` event with the version, the actual built-in tool list (Codex: `codex debug prompt-input` with the run's env and flags, cached per flag set), the Fleet MCP tools, cwd, worktree and platform. Profile booleans `fleetTools` and `collaborationTools` both default to true. `collaborationTools:false` adds `--disable multi_agent --disable multi_agent_v2`, and the recorded tool list shows whether that worked.
+- The executor poll sends `platform` (`darwin`/`linux`). The coordinator now shows `pds18-native` as `linux`.
+- Executor outbox: one pooled HTTP agent (keep-alive) and consecutive events of one execution posted as one batch.
+- PDS tests: the build archive is now `git archive HEAD Cargo.toml Cargo.lock crates config/agents`. Tests ran on PDS: 21 pass (the fake-launch test asserts the Claude refusal on Linux).
+- PDS infra: `codex-code-mode-host` 0.162.0 was missing, so PDS Codex had no shell tool. It was copied from the hermes 0.162.0 release dir, which has a byte-identical `codex` (SHA256 `4c1984f4…`).
+
+Load: Codex turns ask "pwd; echo $HOME $CODEX_HOME; reply MARKER ...". Each run has its own session, marker and new thread. Driver: `/root/fleet-load.py` on PDS against the local coordinator. Latency is from session create to terminal state, as seen by the coordinator. "Turn" is the native `turn.durationMs`.
+
+| Run | OK | Wall s | Latency p50 / max s | Turn p50 / max s | Max time to start s | 429 | Distinct threads | Isolation |
+|---|---|---|---|---|---|---|---|---|
+| Mac 5, 2 accounts (before batching) | 5/5 | 50.3 | 42.5 / 50.3 | 8.6 / 9.8 | 11.0 | 0 | 5 | own marker, own session cwd, HOME/CODEX_HOME of its own account |
+| Mac 10, 2 accounts (before) | 10/10 | 100.0 | 78.2 / 100.0 | 8.6 / 10.6 | 22.6 | 0 | 10 | same |
+| PDS 5 `fleet-codex-pds` (before) | 5/5 | 18.4 | 17.4 / 18.4 | 6.1 / 7.5 | 7.6 | 0 | 5 | same |
+| PDS 10 (before) | 10/10 | 40.3 | 34.0 / 40.3 | 6.7 / 9.1 | 16.0 | 0 | 10 | same |
+| Mixed 10 (4+3 Mac, 3 PDS) (before) | 10/10 | 72.7 | 32.1 / 72.7 | 7.8 / 11.2 | 45.5 | 0 | 10 | same, correct host per binding |
+| Mac 5 (after batching) | 5/5 | 33.0 | 29.8 / 33.0 | 8.1 / 10.1 | 11.9 | 0 | 5 | same |
+| Mac 10 (after) | 10/10 | 64.1 | 51.5 / 64.1 | 8.2 / 9.8 | 28.0 | 0 | 10 | same |
+| PDS 10 (after) | 10/10* | 48.2 | 43.4 / 48.1 | 6.5 / 7.7 | 29.3 | 0 | 10 | same |
+| Mixed 10 (after) | 10/10 | 58.3 | 34.9 / 58.3 | 8.5 / 11.0 | 44.9 | 0 | 10 | same |
+
+\* The driver missed 2 final answers because of a read race. The native logs have the correct marker, cwd and home for both.
+
+Findings:
+- No 429 or throttling at 10 parallel turns on one or two subscriptions. Native turn time stays flat (about 6–11 s).
+- The bottleneck is the executor's single loop, not the vendor. Starts come out about 2–2.5 s apart or in waves (PDS: 5 at once, then the rest after about 20 s). Each executor delivers events serially to the coordinator. Batching and keep-alive cut Mac 10 from 100 s to 64 s. Next fix: deliver events on a separate thread and accept all polled commands before flushing. No cap is needed.
+- An event with a duplicate `seq` (first `harness` build used seq 0) blocks that executor's outbox for every session (409 retained forever). This was fixed and the one stuck row was removed. The outbox is still all-or-nothing per row order.
+- Child agent (`spawn_agent`, Mac `fleet-codex`, profile `website-review`, collaboration on): parent thread `01a1c013-bb9a-7c91-a016-51486df5ffb2`, child thread `01a1c013-ce7b-7d13-820c-c82660e24fce`. The child has its rollout in the same `CODEX_HOME` (`fleet-codex`), the same session cwd and the same `HOME`. Nothing appears in the second account or in `~/.codex`. Fleet sees it only inside the parent's events: no separate execution and no accounting. With profile `baseline` the model refused, because its instructions say not to use subagents.
