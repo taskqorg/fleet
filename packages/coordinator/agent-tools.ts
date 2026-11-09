@@ -5,7 +5,7 @@ import {map} from './store.js';
 // ContextHandoffDelivery, ThreadForkService, ProviderTurnControlService, QueuedRunOrder,
 // ProviderRuntimeRecoveryService) and Orca orchestration (agent-resume-argv, worker-resume-session-capture,
 // ask-methods, reply-method, lifecycle-reconciliation, worker-stop). No caps or admission rules are added.
-import {parseView,formatView,VIEWS} from '../view-url/view-url.js';
+import {parseView,formatView,viewProblem} from '../view-url/view-url.js';
 import {randomUUID} from 'node:crypto';
 import {canonical,readTrustedProfile} from './lab.js';
 import {forkArgv,keyFor,resumeArgv} from './resume-argv.js';
@@ -193,11 +193,9 @@ export function agentTools(store:Store,deps:{browserOrigin?:string,directory:str
   return {sessionId:s.id,projectId,role:b.role??null,profileId:profile.id,account:account??null,executionId:first&&!first.queued?first.id:null,hostId:first?.hostId??null}}
  // Operator-app links (docs/designs/fleet-view-urls-and-list-path.md §1): the same codec the app uses; no database access.
  const viewLink=async(b:any)=>{const hasView=b?.view!==undefined,hasUrl=b?.url!==undefined;if(hasView===hasUrl)fail(400,'Expected view or url');
-  if(hasUrl){if(typeof b.url!=='string')fail(400,'Expected url');let u=b.url;
-   if(/^[a-z][a-z0-9+.-]*:\/\//i.test(u)){let o:string;try{o=new URL(u).origin}catch{return fail(400,'Not a Fleet view URL')}if(!deps.browserOrigin||o!==new URL(deps.browserOrigin).origin)fail(400,'Not a Fleet view URL')}
-   const view=parseView(u);if(!view)fail(400,'Not a Fleet view URL');return {view}}
-  const v=b.view;if(!v||typeof v!=='object'||!VIEWS.includes(v.view))fail(400,'Expected view.view one of '+VIEWS.join(', '));
-  const path=formatView(parseView(formatView(v))!);return {url:deps.browserOrigin?new URL(path,deps.browserOrigin).href:null,path}};
+  if(hasUrl){if(typeof b.url!=='string')fail(400,'Expected url');const view=parseView(b.url,{origin:deps.browserOrigin??null});if(!view)fail(400,'Not a Fleet view URL');return {view}}
+  const problem=viewProblem(b.view);if(problem)fail(400,'Invalid view: '+problem);
+  const path=formatView(b.view);return {url:deps.browserOrigin?new URL(path,deps.browserOrigin).href:null,path}};
  const operations:Record<string,(b:any)=>Promise<any>>={
   view_link:viewLink,
   session_start:start,session_deliver:async b=>(await deps.deliver?.(b))??fail(503,'Delivery unavailable'),
