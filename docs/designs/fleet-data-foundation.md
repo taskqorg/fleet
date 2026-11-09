@@ -519,17 +519,17 @@ The shapes are copied from t3code (`apps/server/src/mcp/toolkits/attachment/tool
 
 ### 10. People and access
 
-*   **Table `person`.**
-    *   Columns: `email` (unique), `name`, `roles` (`operator`, `architect`), `state` (`invited`, `active` or `disabled`), `created_by` and timestamps.
-    *   Project grants live in `person_grant(person_email, project_id, role)`.
-    *   The first rows are the owner, Alina and Simon.
+*   **People: a host-only file, not an operation.** There will be at most about 10 people, and adding one is rare.
+    *   People and their grants live in a host-only file, `people.json`, with `email`, `name`, `roles` (`operator`, `architect`) and project grants. The file stays outside the repository. The coordinator loads it into table `person` on start and when the file changes.
+    *   Adding a person means editing that file and adding the email to the Access group `fleet-people` by hand. There is no invite workflow.
+    *   The first entries are the owner, Alina and Simon.
 *   **Table `share`.**
     *   Columns: `email`, `object_kind` (`project`, `task` or `artifact`), `object_id`, `expires_at` (optional), `granted_by`, `revoked_at`.
     *   A share gives read access to that object only.
 *   **Cloudflare Access is kept in sync by Fleet.**
     *   The Access policies for the Fleet site and the store tunnels allow one Access group, `fleet-people`.
-    *   When a person is activated or a share is created, Fleet adds the email to that group through the Cloudflare API.
-    *   When a person is disabled, or an email's last live share is revoked or expires, Fleet removes the email.
+    *   People are added to the group by hand, as above.
+    *   Shares are kept in sync by Fleet. When a share is created, Fleet adds the email to the group through the Cloudflare API. When an email's last live share is revoked or expires, Fleet removes it, unless the email belongs to a person.
     *   The Cloudflare API token, limited to editing this group, is a connection of the coordinator. It is never visible to agents.
 *   **Fleet authorizes too.**
     *   The access guard (`deploy/infrastructure/origin_guard.py`) still verifies the Access JWT, but passes the email to Fleet instead of matching one owner.
@@ -537,7 +537,7 @@ The shapes are copied from t3code (`apps/server/src/mcp/toolkits/attachment/tool
 *   **Access state and onboarding are Fleet work.**
     *   `access.status` lists people, grants, shares and expiry dates.
     *   It compares the `fleet-people` group with Fleet's list and reports every difference as a problem with an action: add, remove or ignore.
-    *   Inviting a person is a normal Fleet operation, `people.invite`. People and agents use the same operations, within their permissions.
+    *   `access.status` also lists the hand edits still needed, for example a person in `people.json` who is missing from the group.
 *   **Agents.** An agent acts with its execution's permissions, never with a person's. Sharing with a new email is an operator action. An agent can only propose it as an `operator_decision` question.
 
 ## Alternatives Considered
@@ -1251,15 +1251,15 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Type / Scope**: Schema migration and TypeScript operations.
 *   **Proposed Changes**:
     *   Add the `person`, `person_grant` and `share` tables from Technical Plan §10.
-    *   Add the operations `people.invite`, `people.update`, `people.disable`, `shares.create`, `shares.revoke` and `access.status`.
-    *   Seed the owner, Alina and Simon from a host-only file, so that no email is stored in the repository.
+    *   Load `person` and `person_grant` from the host-only `people.json`, so that no email is stored in the repository.
+    *   Add the operations `shares.create`, `shares.revoke` and `access.status`. People have no operations: their file is edited by hand.
 *   **Why**: G10.
 
 ##### 56. `packages/coordinator/access-sync.ts` (Create)
 
 *   **Type / Scope**: Cloudflare Access group sync.
 *   **Proposed Changes**:
-    *   Add or remove an email in the `fleet-people` group through the Cloudflare API whenever a person or a share changes. A periodic reconcile reports every difference to `access.status`.
+    *   Add or remove a share's email in the `fleet-people` group through the Cloudflare API. A periodic reconcile reports every difference between the group and Fleet (people plus live shares) to `access.status`.
     *   The token comes from the coordinator's connection file.
 *   **Why**: Cloudflare stays the outer wall, and Fleet's list stays the source of truth.
 
