@@ -1,0 +1,10 @@
+# User unit of fleet: /home/fleet/.config/systemd/user/fleet-backup.service
+[Unit]
+Description=Fleet nightly backup (ClickHouse and Garage)
+After=fleet-clickhouse.service fleet-garage.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/fleet/runtime/fleet-backup.sh
+Nice=19
+IOSchedulingClass=idle

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Fleet Mac store tunnel: fleet-store-mac.ufobe.com -> Garage S3 on 127.0.0.1:9490, behind Cloudflare Access (tight D8).
+  LaunchAgent of the executor service user. Replace FLEET_HOME as in fleet-garage.plist.
+  Binary: Homebrew cloudflared. Credentials file is host-only (0600, never committed):
+  FLEET_HOME/.config/fleet/cloudflared/fleet-store-mac.json
+  Operator creates and routes the tunnel: cloudflared tunnel create fleet-store-mac;
+  cloudflared tunnel route dns fleet-store-mac fleet-store-mac.ufobe.com
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.ufobe.fleet-cloudflared</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/cloudflared</string>
+    <string>tunnel</string>
+    <string>--no-autoupdate</string>
+    <string>run</string>
+    <string>--credentials-file</string>
+    <string>FLEET_HOME/.config/fleet/cloudflared/fleet-store-mac.json</string>
+    <string>--url</string>
+    <string>http://127.0.0.1:9490</string>
+    <string>fleet-store-mac</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ProcessType</key><string>Background</string>
+  <key>Umask</key><integer>63</integer>
+  <key>StandardOutPath</key><string>FLEET_HOME/Library/Logs/fleet-cloudflared.log</string>
+  <key>StandardErrorPath</key><string>FLEET_HOME/Library/Logs/fleet-cloudflared.log</string>
+</dict>
+</plist>

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Fleet Garage store on the Mac (design FD2). LaunchAgent of the executor service user.
+  Install: replace FLEET_HOME with that user's home, copy to FLEET_HOME/Library/LaunchAgents/com.ufobe.fleet-garage.plist,
+  then: launchctl bootstrap gui/$(id -u) <plist>.
+  Binary: Homebrew garage 2.5.0 (brew install garage; check: garage --version).
+  Config: FLEET_HOME/.config/fleet/garage.toml from deploy/infrastructure/garage.toml.candidate with /home/fleet
+  replaced by FLEET_HOME. Binds 127.0.0.1 only. Secret files stay host-only under FLEET_HOME/.config/fleet/garage/.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.ufobe.fleet-garage</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/garage</string>
+    <string>-c</string>
+    <string>FLEET_HOME/.config/fleet/garage.toml</string>
+    <string>server</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ProcessType</key><string>Background</string>
+  <key>Umask</key><integer>63</integer>
+  <key>StandardOutPath</key><string>FLEET_HOME/Library/Logs/fleet-garage.log</string>
+  <key>StandardErrorPath</key><string>FLEET_HOME/Library/Logs/fleet-garage.log</string>
+</dict>
+</plist>
