@@ -10,9 +10,9 @@ pub fn dir() -> Option<PathBuf> {
     std::env::var_os("FLEET_CONNECTIONS_DIR").map(PathBuf::from).filter(|p| p.is_absolute())
 }
 
-/// Repo by id, else the project's first repo (single-repo projects; environments may name one).
+/// Repo by id; no id means the project's first repo (single-repo projects). An unknown id resolves to nothing.
 pub fn repo<'a>(project: &'a Value, id: &Value) -> &'a Value {
-    project["repos"].as_array().and_then(|r| r.iter().find(|r| !id.is_null() && r["id"] == *id).or(r.first())).unwrap_or(&Value::Null)
+    project["repos"].as_array().and_then(|r| if id.is_null() { r.first() } else { r.iter().find(|r| r["id"] == *id) }).unwrap_or(&Value::Null)
 }
 
 pub fn env(project: &Value, repo: &Value, dir: Option<&Path>) -> Result<Vec<(String, String)>, &'static str> {
@@ -23,6 +23,8 @@ pub fn env(project: &Value, repo: &Value, dir: Option<&Path>) -> Result<Vec<(Str
             v.push((format!("GIT_{who}_EMAIL"), e.to_owned()));
         }
     }
+    // Unknown repo id never borrows another repo's key. ponytail: repos without `connection` (cs, dashq, specq)
+    // keep host ssh; fail closed once all projects declare one.
     let Some(name) = repo["connection"].as_str() else { return Ok(v) };
     if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') { return Err("connection-invalid") }
     let d = dir.ok_or("connections-unconfigured")?;
@@ -60,6 +62,7 @@ mod tests {
         assert_eq!(env(&p, repo(&p, &json!("o")), Some(&d)), Err("connection-missing"));
         assert_eq!(env(&p, repo(&p, &json!("bad")), Some(&d)), Err("connection-invalid"));
         assert_eq!(env(&p, repo(&p, &json!("main")), None), Err("connections-unconfigured"));
+        assert_eq!(env(&p, repo(&p, &json!("nope")), Some(&d)), Ok(v[..4].to_vec()));
         assert_eq!(env(&json!({}), &json!({}), None).unwrap().len(), 0);
     }
 }

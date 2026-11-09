@@ -342,7 +342,9 @@ impl Executor {
             cmd.current_dir(w);
         }
         if p["project"].is_object() {
-            match git_access::env(&p["project"], git_access::repo(&p["project"], &Value::Null), git_access::dir().as_deref()) {
+            // Repo of this host's environment (env.repo), else the project's single/first repo.
+            let env_repo = p["project"]["environments"].as_array().into_iter().flatten().find(|e| e["hostId"] == self.host.as_str()).map_or(Value::Null, |e| e["repo"].clone());
+            match git_access::env(&p["project"], git_access::repo(&p["project"], &env_repo), git_access::dir().as_deref()) {
                 Ok(v) => git_access::apply(&mut cmd, &v),
                 Err(e) => {
                     self.event(&c, 1, "preparation.failed", json!({"reason":e}))?;
