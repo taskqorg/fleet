@@ -9,7 +9,7 @@ import {randomUUID} from 'node:crypto';
 import {canonical,readTrustedProfile} from './lab.js';
 import {forkArgv,keyFor,resumeArgv} from './resume-argv.js';
 
-type Store={all:(k:string)=>Promise<any[]>,get:(id:string,k:string)=>Promise<any>,put:(k:string,v:any)=>Promise<unknown>};
+type Store={all:(k:string,filter?:object,omit?:string[])=>Promise<any[]>,get:(id:string,k:string)=>Promise<any>,put:(k:string,v:any)=>Promise<unknown>};
 const fail=(statusCode:number,message:string):never=>{throw Object.assign(Error(message),{statusCode})};
 const terminal=(e:any)=>['completed','failed','stopped'].includes(e.state);
 const str=(v:any,name:string)=>typeof v==='string'&&v.length>0?v:fail(400,`Expected ${name}`);
@@ -30,8 +30,8 @@ const side=(key:string,cfg:any):Side=>{const {model,effort,id,...rest}=cfg??{};r
 
 export function agentTools(store:Store,deps:{directory:string,hostId:string,enqueue:(s:any,text:string,requestId:string)=>Promise<any>,resolveAccount?:(account:string,harness:string)=>Promise<any>,project?:(projectId:string)=>Promise<any>,pickAccount?:(harness:string,projectId:string,hostId?:string)=>Promise<string|undefined>,deliver?:(b:any)=>Promise<any>}){
  const {all,get,put}=store;
- const capable=async (name:string)=>{const h=(await all('host-observation')).find(x=>x.id===deps.hostId);return Array.isArray(h?.capabilities)&&h.capabilities.includes(name)};
- const executions=async (sessionId:string)=>(await all('execution')).filter(e=>e.sessionId===sessionId);
+ const capable=async (name:string)=>{const h=(await all('host-observation',{id:deps.hostId})).find(x=>x.id===deps.hostId);return Array.isArray(h?.capabilities)&&h.capabilities.includes(name)};
+ const executions=async (sessionId:string)=>(await all('execution',{sessionId:sessionId})).filter(e=>e.sessionId===sessionId);
  const activeOf=async (sessionId:string)=>(await executions(sessionId)).find(e=>!terminal(e));
 
  // Retained turns as untrusted context (T3 ContextHandoffService renderHistory / makeForkDeltaSummary).
@@ -65,7 +65,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
  // never changed, so an `unknown` original stays inspectable while work continues in the fork.
  async function fork(b:any){
   const source=(await get(str(b?.sessionId,'sessionId'),'session')),requestId=str(b.requestId,'requestId');
-  const old=(await all('session-fork')).find(f=>f.sourceSessionId===source.id&&f.requestId===requestId);if(old)return old;
+  const old=(await all('session-fork',{sourceSessionId:source.id,requestId:requestId})).find(f=>f.sourceSessionId===source.id&&f.requestId===requestId);if(old)return old;
   const last=(await executions(source.id)).at(-1),harness=harnessOf(source);
   const nativeOk=!!source.nativeSessionId&&(!last||terminal(last))&&!!forkArgv(harness,{id:source.nativeSessionId})&&(await capable('native-fork'));
   const strategy=b.strategy==='context'||!nativeOk?'context_transfer':'native';
@@ -92,22 +92,23 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
  async function submit(b:any){
   const s=(await get(str(b?.sessionId,'sessionId'),'session')),requestId=str(b.requestId,'requestId'),text=str(b.text,'text');
   if(b.setup!==undefined){if(!['run','skip'].includes(b.setup))fail(400,'Expected setup run|skip');s.setup=b.setup;await put('session',s)}
-  const sent=(await all('message')).find(m=>m.sessionId===s.id&&m.requestId===requestId);if(sent){if(sent.text!==text)fail(409,'Request identity conflict');return (await get(sent.executionId,'execution'))}
-  const queued=(await all('queued-message')).find(q=>q.sessionId===s.id&&q.requestId===requestId);if(queued){if(queued.text!==text)fail(409,'Request identity conflict');return (await view(queued))}
+  const sent=(await all('message',{sessionId:s.id,requestId:requestId})).find(m=>m.sessionId===s.id&&m.requestId===requestId);if(sent){if(sent.text!==text)fail(409,'Request identity conflict');return (await get(sent.executionId,'execution'))}
+  const queued=(await all('queued-message',{sessionId:s.id,requestId:requestId})).find(q=>q.sessionId===s.id&&q.requestId===requestId);if(queued){if(queued.text!==text)fail(409,'Request identity conflict');return (await view(queued))}
   const active=(await activeOf(s.id));
-  if(!active&&!(await all('queued-message')).some(q=>q.sessionId===s.id&&q.state==='queued')){if(s.agentConfig)s.agentConfig=readTrustedProfile(deps.directory,s.agentConfig.id);return (await deps.enqueue(s,text,requestId))}
+  if(!active&&!(await all('queued-message',{sessionId:s.id,state:'queued'})).some(q=>q.sessionId===s.id&&q.state==='queued')){if(s.agentConfig)s.agentConfig=readTrustedProfile(deps.directory,s.agentConfig.id);return (await deps.enqueue(s,text,requestId))}
   const q:any={id:randomUUID(),sessionId:s.id,requestId,text,state:'queued',createdAt:Date.now(),...(b.source?{source:b.source}:{})};
   if(b.delivery==='steer'&&active&&active.state==='started'&&(await capable('steer'))){const c={id:randomUUID(),executionId:active.id,sessionId:s.id,hostId:active.hostId,kind:'steer',payload:{text,...(s.nativeSessionId?{nativeSessionId:s.nativeSessionId}:{})},status:'pending'};await put('command',c);q.state='steering';q.steerCommandId=c.id;q.executionId=active.id}
   await put('queued-message',q);return (await view(q));
  }
- const view=async (q:any)=>({...q,queued:true,position:(await all('queued-message')).filter(x=>x.sessionId===q.sessionId&&x.state==='queued').findIndex(x=>x.id===q.id)+1||null});
- async function promote(){for(const q of (await all('queued-message')).filter(q=>q.state==='queued')){
-  if((await activeOf(q.sessionId))||(await all('queued-message')).some(x=>x.sessionId===q.sessionId&&x.state==='queued'&&x.createdAt<q.createdAt))continue;
+ const view=async (q:any)=>({...q,queued:true,position:(await all('queued-message',{sessionId:q.sessionId,state:'queued'})).filter(x=>x.sessionId===q.sessionId&&x.state==='queued').findIndex(x=>x.id===q.id)+1||null});
+ // The earlier-sibling check reads the loop's own list: its objects carry the states this loop has written.
+ async function promote(){const queued=(await all('queued-message',{state:'queued'})).filter(q=>q.state==='queued');for(const q of queued){
+  if(queued.some(x=>x.sessionId===q.sessionId&&x.state==='queued'&&x.createdAt<q.createdAt)||(await activeOf(q.sessionId)))continue;
   try{const s=(await get(q.sessionId,'session'));if(s.agentConfig)s.agentConfig=readTrustedProfile(deps.directory,s.agentConfig.id);const e=(await deps.enqueue(s,q.text,q.requestId));q.state='started';q.executionId=e.id;delete q.error}catch(error){q.error=String(error)}
   await put('queued-message',q)}}
 
  async function onReceipt(c:any,e:any,status:string){
-  if(c.kind==='steer'){const q=(await all('queued-message')).find(x=>x.steerCommandId===c.id);if(q){q.state=status==='completed'?'steered':status==='failed'?'queued':status==='unknown'?'steer_unknown':q.state;if(q.state==='queued')delete q.steerCommandId;await put('queued-message',q)}return}
+  if(c.kind==='steer'){const q=(await all('queued-message',{steerCommandId:c.id})).find(x=>x.steerCommandId===c.id);if(q){q.state=status==='completed'?'steered':status==='failed'?'queued':status==='unknown'?'steer_unknown':q.state;if(q.state==='queued')delete q.steerCommandId;await put('queued-message',q)}return}
   if(c.kind==='start'&&['completed','failed','stopped'].includes(status))(await wake(e,status));
   if(c.kind!=='start'||!e.handoffId)return;
   const h=(await get(e.handoffId,'handoff'));if(h.state!=='sent')return;
@@ -128,7 +129,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
  async function ask(b:any){const e=(await get(str(b?.executionId,'executionId'),'execution'));
   if(b.resume){const q=(await get(str(b.resume,'resume'),'question'));if(q.executionId!==e.id&&q.sessionId!==e.sessionId)fail(403,'Question belongs to another session');return q}
   const requestId=str(b.requestId,'requestId'),question=str(b.question,'question');
-  const old=(await all('question')).find(q=>q.executionId===e.id&&q.requestId===requestId);if(old){if(old.question!==question)fail(409,'Question identity conflict');return old}
+  const old=(await all('question',{executionId:e.id,requestId:requestId})).find(q=>q.executionId===e.id&&q.requestId===requestId);if(old){if(old.question!==question)fail(409,'Question identity conflict');return old}
   const q={id:randomUUID(),executionId:e.id,sessionId:e.sessionId,requestId,question,state:'open',createdAt:Date.now()};await put('question',q);return q}
  async function reply(b:any){const q=(await get(str(b?.questionId,'questionId'),'question')),answer=str(b.answer,'answer');
   if(q.state==='answered'){if(q.answer!==answer)fail(409,'Question already answered differently');return q}
@@ -145,15 +146,15 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   if(e.report){if(e.report.outcome===b.outcome&&e.report.summary===(b.summary??null))return {action:'accepted',executionId:e.id,report:e.report,duplicate:true};return (await reject('already_reported','A different worker_done was already accepted for this execution.'))}
   if(typeof b.nativeSessionId==='string'&&b.nativeSessionId){const known=(await knownNative(e));if(known&&known!==b.nativeSessionId)return (await reject('native_identity_conflict','Reported native session differs from the captured one.'))}// only executor receipts set native ids
   const fresh=(await get(e.id,'execution'));fresh.report={outcome:b.outcome,summary:typeof b.summary==='string'?b.summary:null,at:Date.now()};await put('execution',fresh);
-  const d=(await all('delegation')).find(x=>x.childExecutionId===e.id);if(d){d.report=fresh.report;await put('delegation',d)}
+  const d=(await all('delegation',{childExecutionId:e.id})).find(x=>x.childExecutionId===e.id);if(d){d.report=fresh.report;await put('delegation',d)}
   const r={id:randomUUID(),executionId:e.id,action:'accepted',report:fresh.report,at:Date.now()};await put('worker-done',r);return r}
 
  // Orca worker-stop: proven only when a host receipt ended the execution; otherwise unknown. Silence proves nothing.
- const stopOutcome=async (e:any)=>{const stop=(await all('command')).find(c=>c.executionId===e.id&&c.kind==='stop');
+ const stopOutcome=async (e:any)=>{const stop=(await all('command',{executionId:e.id,kind:'stop'})).find(c=>c.executionId===e.id&&c.kind==='stop');
   return terminal(e)?{outcome:'proven',detail:e.stopRequested&&(e.state==='stopped'||stop?.status==='stopped')?'stopped':'already_finished',state:e.state}:{outcome:'unknown',detail:'unconfirmed',state:e.state,stopCommand:stop?{id:stop.id,status:stop.status}:null}};
  async function status(b:any){const e=(await get(str(b?.executionId,'executionId'),'execution')),s=(await get(e.sessionId,'session'));
   const next=terminal(e)?'message':e.state==='unknown'?'session_fork':e.stopRequested?'execution_status':'wait_or_steer';
-  const readiness=(await all('event')).filter((x:any)=>x.executionId===e.id&&x.type==='readiness').map((x:any)=>x.data);
+  const readiness=(await all('event',{executionId:e.id,type:'readiness'})).filter((x:any)=>x.executionId===e.id&&x.type==='readiness').map((x:any)=>x.data);
   return {executionId:e.id,sessionId:e.sessionId,state:e.state,report:e.report??null,...(readiness.length?{readiness}:{}),stop:e.stopRequested?(await stopOutcome(e)):null,next,resume:(await resume({sessionId:s.id}))}}
  async function resume(b:any){const s=(await get(str(b?.sessionId,'sessionId'),'session')),harness=harnessOf(s);
   const native=(id:string)=>({key:keyFor(harness),id,resumeArgv:resumeArgv(harness,{id,effort:s.agentConfig?.effort}),forkArgv:forkArgv(harness,{id})});
@@ -162,15 +163,15 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
  // T3 ProviderRuntimeRecoveryService (startup): settle what the coordinator itself owns, and report the rest.
  // No execution is promoted, failed or replayed without a host receipt.
  async function reconcile(){const items:any[]=[];
-  for(const q of (await all('queued-message')).filter(q=>q.state==='steering')){const c=(await get(q.steerCommandId,'command')),e=(await get(q.executionId,'execution'));if(terminal(e)&&c.status==='pending'){q.state='queued';delete q.steerCommandId;await put('queued-message',q);items.push({kind:'steer_requeued',queueId:q.id})}}
-  for(const h of (await all('handoff')).filter(h=>h.state==='sent')){const e=(await get(h.executionId,'execution'));if(terminal(e)&&!e.startedAt){h.state='pending';await put('handoff',h);const s=(await get(h.sessionId,'session'));if(!s.pendingHandoffId){s.pendingHandoffId=h.id;await put('session',s)}items.push({kind:'handoff_repending',handoffId:h.id})}}
+  for(const q of (await all('queued-message',{state:'steering'})).filter(q=>q.state==='steering')){const c=(await get(q.steerCommandId,'command')),e=(await get(q.executionId,'execution'));if(terminal(e)&&c.status==='pending'){q.state='queued';delete q.steerCommandId;await put('queued-message',q);items.push({kind:'steer_requeued',queueId:q.id})}}
+  for(const h of (await all('handoff',{state:'sent'})).filter(h=>h.state==='sent')){const e=(await get(h.executionId,'execution'));if(terminal(e)&&!e.startedAt){h.state='pending';await put('handoff',h);const s=(await get(h.sessionId,'session'));if(!s.pendingHandoffId){s.pendingHandoffId=h.id;await put('session',s)}items.push({kind:'handoff_repending',handoffId:h.id})}}
   (await promote());
-  for(const e of (await all('execution')).filter(e=>!terminal(e))){const start=(await all('command')).find(c=>c.executionId===e.id&&c.kind==='start');
+  for(const e of (await all('execution')).filter(e=>!terminal(e))){const start=(await all('command',{executionId:e.id,kind:'start'})).find(c=>c.executionId===e.id&&c.kind==='start');
    items.push({kind:'execution',executionId:e.id,sessionId:e.sessionId,state:e.state,classification:e.state==='unknown'?'unknown':!start||start.status==='pending'?'awaiting_host':'in_flight_unproven',next:e.state==='unknown'?'session_fork':'wait'})}
-  for(const q of (await all('question')).filter(q=>q.state==='open'))items.push({kind:'question_open',questionId:q.id,askerState:(await get(q.executionId,'execution')).state});
+  for(const q of (await all('question',{state:'open'})).filter(q=>q.state==='open'))items.push({kind:'question_open',questionId:q.id,askerState:(await get(q.executionId,'execution')).state});
   const r={id:'reconcile:'+randomUUID(),at:Date.now(),items};await put('reconciliation',r);return r}
 
- const sessionView=async (sessionId:string)=>({queued:(await map((await all('queued-message')).filter(q=>q.sessionId===sessionId),view)),questions:(await all('question')).filter(q=>q.sessionId===sessionId),handoffs:(await all('handoff')).filter(h=>h.sessionId===sessionId).map(({text,...h})=>h),transitions:(await all('session-transition')).filter(t=>t.sessionId===sessionId),forks:(await all('session-fork')).filter(f=>f.sourceSessionId===sessionId)});
+ const sessionView=async (sessionId:string)=>({queued:(await map((await all('queued-message',{sessionId:sessionId})).filter(q=>q.sessionId===sessionId),view)),questions:(await all('question',{sessionId:sessionId})).filter(q=>q.sessionId===sessionId),handoffs:(await all('handoff',{sessionId:sessionId})).filter(h=>h.sessionId===sessionId).map(({text,...h})=>h),transitions:(await all('session-transition',{sessionId:sessionId})).filter(t=>t.sessionId===sessionId),forks:(await all('session-fork',{sourceSessionId:sessionId})).filter(f=>f.sourceSessionId===sessionId)});
  // W5: one readiness command per environment host; results arrive as 'readiness' events on its program-worker execution.
  async function readiness(b:any){const projectId=str(b?.projectId,'projectId'),project=(await deps.project?.(projectId))??fail(404,'Unknown project');
   return {projectId,hosts:(await map([...new Set<string>((project.environments??[]).map((e:any)=>e.hostId))],async hostId=>{const sessionId=randomUUID(),id=randomUUID();
@@ -182,7 +183,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
  // Start a new session bound to a project: profile from the role (or profileId), account from the project
  // binding (picks the host). Idempotent per (projectId, requestId). Optional text starts the first turn.
  async function start(b:any){const projectId=str(b?.projectId,'projectId'),requestId=str(b.requestId,'requestId'),project=(await deps.project?.(projectId))??fail(404,'Unknown project');
-  const key=projectId+':'+requestId,old=(await all('session')).find(s=>s.startRequest===key);if(old)return {sessionId:old.id,projectId,role:old.role??null,profileId:old.agentConfig?.id,account:old.account??null,existing:true};
+  const key=projectId+':'+requestId,old=(await all('session',{startRequest:key})).find(s=>s.startRequest===key);if(old)return {sessionId:old.id,projectId,role:old.role??null,profileId:old.agentConfig?.id,account:old.account??null,existing:true};
   const profileId=b.profileId??(b.role?project.roles?.[b.role]:undefined),profile=typeof profileId==='string'&&roleProfile(profileId)||fail(400,'Expected profileId or a role mapped to a profile');
   if(b.setup!==undefined&&!['run','skip'].includes(b.setup))fail(400,'Expected setup run|skip');
   const account=b.account??(await deps.pickAccount?.(profile.harness??'codex',projectId,b.hostId));
@@ -193,7 +194,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   session_start:start,session_deliver:async b=>(await deps.deliver?.(b))??fail(503,'Delivery unavailable'),
   project_readiness:readiness,
   session_transition:transition,session_fork:fork,session_resume:resume,
-  session_handoffs:async b=>({handoffs:(await all('handoff')).filter(h=>h.sessionId===str(b?.sessionId,'sessionId'))}),
+  session_handoffs:async b=>({handoffs:(await all('handoff',{sessionId:str(b?.sessionId,'sessionId')})).filter(h=>h.sessionId===str(b?.sessionId,'sessionId'))}),
   message_send:submit,queue_list:async b=>({queued:(await map((await all('queued-message')).filter(q=>!b?.sessionId||q.sessionId===b.sessionId),view))}),
   ask,reply,questions:async b=>({questions:(await all('question')).filter(q=>(!b?.sessionId||q.sessionId===b.sessionId)&&(!b?.state||q.state===b.state))}),
   worker_done:workerDone,execution_status:status,reconcile,

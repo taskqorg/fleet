@@ -13,3 +13,6 @@ CREATE TABLE document(
 );
 CREATE INDEX document_kind_seq ON document(kind, seq);
 CREATE INDEX document_project ON document(project_id) WHERE project_id IS NOT NULL;
+
+-- migration 2: per-request reads filter documents by jsonb containment (store.all with a filter)
+CREATE INDEX document_data ON document USING gin (data jsonb_path_ops);

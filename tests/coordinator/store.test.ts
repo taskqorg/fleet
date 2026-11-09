@@ -4,7 +4,7 @@ test('all() keeps insertion order; updates keep their place; put never changes k
  for(const id of ['c','a','b'])await s.put('x',{id,n:1});await s.put('x',{id:'c',n:2});await s.put('other',{id:'a',stolen:true});
  assert.deepEqual((await s.all('x')).map(d=>d.id+d.n),['c2','a1','b1']);assert.deepEqual(await s.all('other'),[]);assert.deepEqual(await s.get('a','x'),{id:'a',n:1});
  await assert.rejects(s.get('a','other'),(e:any)=>e.statusCode===404);assert.deepEqual((await s.all('x',{n:1})).map(d=>d.id),['a','b']);
- await s.migrate();assert.equal((await s.query('SELECT count(*)::int AS n FROM schema_migration'))[0].n,1);await s.close()});
+ const applied=(await s.query('SELECT count(*)::int AS n FROM schema_migration'))[0].n;await s.migrate();assert.equal((await s.query('SELECT count(*)::int AS n FROM schema_migration'))[0].n,applied);await s.close()});
 test('tx commits together, rolls back on error, joins nested calls, and retries serialization failures',async()=>{const s=await fresh();
  await assert.rejects(s.tx(async()=>{await s.put('x',{id:'gone'});throw Error('boom')}),/boom/);await assert.rejects(s.get('gone','x'));
  let runs=0;const r=await s.tx(async()=>{runs++;await s.put('x',{id:'r'+runs});await s.tx(()=>s.put('x',{id:'inner'+runs}));if(runs<3)throw Object.assign(Error('could not serialize access'),{code:'40001'});return runs});
