@@ -382,6 +382,7 @@ impl Executor {
         let observed = self.observe_harness(&cmd, harness::name(p));
         let mut claude_servers = lab::mcp_servers(&p["agentConfig"]);
         let profiles = p["agentConfig"]["delegationProfiles"].as_array().cloned().unwrap_or_default();
+        let mut harness_observation = None;
         let mut fleet_mcp: Vec<&str> = vec![];
         if fleet_tools {
             let context = json!({"hostId":self.host,"commandId":c["id"],"executionId":c["executionId"],"profiles":profiles,"projectId":p["projectId"]});
@@ -406,7 +407,7 @@ impl Executor {
             o["cwd"] = json!(workdir.as_ref().unwrap_or(&dir));
             o["worktree"] = json!(workdir.is_some());
             o["platform"] = json!(platform());
-            self.event(&c, 0, "harness", o)?;
+            harness_observation = Some(o);
         }
         if harness::name(p) == "claude" {
             harness::claude_mcp(&mut cmd, p.get("agentConfig").unwrap_or(p), &claude_servers);
@@ -592,6 +593,12 @@ impl Executor {
                 wire,
             },
         );
+        if let (Some(o), Some(l)) = (harness_observation, self.live.get_mut(&id(&c, "executionId")?)) {
+            // Live sequence numbers start after the preparation events; reuse them so no sequence collides.
+            l.seq += 1;
+            let seq = l.seq;
+            self.event(&c, seq, "harness", o)?;
+        }
         self.receipt(&c, "started", native.as_deref())?;
         Ok(())
     }
