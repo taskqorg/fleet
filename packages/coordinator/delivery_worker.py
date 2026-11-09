@@ -7,6 +7,34 @@ def run(argv, cwd=None):
     if result.returncode: raise RuntimeError('Program command failed: '+argv[0]+' exit '+str(result.returncode))
     return result.stdout.decode().strip()
 
+def account_environment(binding,harness):
+    env={'HOME':binding.get('credentialHome') if binding.get('credentialAuthority')=='native-current' else binding['home']}
+    env[{'codex':'CODEX_HOME','claude':'CLAUDE_CONFIG_DIR','antigravity':'GEMINI_HOME'}[harness]]=binding['nativeHome']
+    if any(not isinstance(v,str) or not pathlib.Path(v).is_absolute() for v in env.values()):raise RuntimeError('Invalid host-owned account roots')
+    return env
+
+def account_status(binding,harness):
+    roots={k:binding[k] for k in ['home','nativeHome','credentialHome','credentialAuthority','executable'] if isinstance(binding.get(k),str)}
+    result={'roots':roots,'readiness':'unknown','nativeLoginObserved':None,'quota':'unknown','reason':'status-unknown'}
+    if not os.path.isfile(binding['executable']) or not os.access(binding['executable'],os.X_OK):return {**result,'readiness':'unavailable','reason':'executable-missing'}
+    env={'PATH':os.environ['PATH'],**account_environment(binding,harness)}
+    if harness=='claude':env.update(USER=pwd.getpwuid(os.geteuid()).pw_name,LOGNAME=pwd.getpwuid(os.geteuid()).pw_name)
+    args=['login','status'] if harness=='codex' else ['auth','status','--json'] if harness=='claude' else ['models']
+    try:observed=subprocess.run([binding['executable'],*args],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
+    except (OSError,subprocess.TimeoutExpired):return result
+    if harness=='antigravity':return {**result,'reason':'catalogue-only' if observed.returncode==0 and b'gemini-' in observed.stdout else 'status-unknown'}
+    if harness=='claude':
+        try:login=json.loads(observed.stdout).get('loggedIn')
+        except (ValueError,AttributeError):return result
+        if not isinstance(login,bool):return result
+    else:
+        out=observed.stdout+observed.stderr
+        if observed.returncode==0 and b'Logged in using' in out:login=True
+        elif b'Not logged in' in out:login=False
+        else:return result
+    approved=binding.get('readiness')=='ready'
+    return {**result,'nativeLoginObserved':login,'readiness':'ready' if login and approved else 'unavailable','reason':'ready' if login and approved else 'binding-unprovisioned' if login else 'login-absent'}
+
 def main():
     path=pathlib.Path(sys.argv[1]); st=path.stat()
     if path.is_symlink() or st.st_uid!=os.getuid() or st.st_mode&0o077: raise RuntimeError('Private owned worker configuration required')
@@ -21,7 +49,7 @@ def main():
         req=urllib.request.Request(config['coordinator']+'/api/hosts/'+route,data=json.dumps(body).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','User-Agent':'Fleet-ProgramWorker/1'})
         with urllib.request.urlopen(req,timeout=30,context=ssl.create_default_context(cafile='/etc/ssl/cert.pem' if os.path.exists('/etc/ssl/cert.pem') else None)) as r:return json.load(r)
     while True:
-        commands=api('poll',{'hostId':config['hostId']})['commands']
+        commands=api('poll',{'hostId':config['hostId'],'platform':sys.platform})['commands']
         for c in commands:
             if c['kind'] not in ['delivery-step','pipe-search','account-inspect']: raise RuntimeError('Unexpected command kind')
             body={'hostId':config['hostId'],'executionId':c['executionId'],'commandId':c['id']}
@@ -39,21 +67,17 @@ def main():
                 if c['kind']=='account-inspect':
                     registry_path=pathlib.Path(config['nativeAccounts']);metadata=registry_path.stat()
                     if registry_path.is_symlink() or metadata.st_uid!=os.getuid() or metadata.st_mode&0o077:raise RuntimeError('Private owned native registry required')
-                    binding=json.loads(registry_path.read_text()).get(p['binding'])
-                    if not binding or binding['harness']!=p['harness']:raise RuntimeError('Named host binding absent or harness mismatch')
-                    harness=p['harness']
+                    registry=json.loads(registry_path.read_text());harness=p['harness']
                     if harness=='claude' and sys.platform not in ['darwin','win32']:raise RuntimeError('Claude placement denied')
-                    env={'PATH':os.environ['PATH'],'HOME':binding.get('credentialHome') if binding.get('credentialAuthority')=='native-current' else binding['home']}
-                    if harness=='claude':env.update(USER=pwd.getpwuid(os.geteuid()).pw_name,LOGNAME=pwd.getpwuid(os.geteuid()).pw_name)
-                    env[{'codex':'CODEX_HOME','claude':'CLAUDE_CONFIG_DIR','antigravity':'GEMINI_HOME'}[harness]]=binding['nativeHome']
-                    args=['login','status'] if harness=='codex' else ['auth','status','--json'] if harness=='claude' else ['models']
-                    observed=subprocess.run([binding['executable'],*args],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
-                    ready=observed.returncode==0
-                    if harness=='claude':ready=ready and json.loads(observed.stdout).get('loggedIn') is True
-                    if harness=='antigravity':ready=ready and b'gemini-' in observed.stdout
-                    readiness='ready' if ready and binding.get('readiness')=='ready' else 'unavailable'
-                    api('receipts',{'hostId':config['hostId'],'accountObservation':{'accountId':p['accountId'],'binding':p['binding'],'platform':sys.platform,'readiness':readiness}})
-                    result={'accountId':p['accountId'],'binding':p['binding'],'readiness':readiness,'nativeLoginObserved':ready,'behaviorBindingApproved':binding.get('readiness')=='ready','authChanged':False}
+                    if p.get('mode')=='catalogue':
+                        bindings=[{'name':name,'executable':b['executable'],'environment':account_environment(b,harness),'behaviorApproved':b.get('readiness')=='ready'} for name,b in registry.items() if b.get('harness')==harness]
+                        api('receipts',{**body,'accountCatalogue':{'accountId':p['accountId'],'bindings':bindings}})
+                        result={'bindingCount':len(bindings),'authChanged':False}
+                    else:
+                        binding=registry.get(p['binding'])
+                        result=account_status(binding,harness) if binding and binding.get('harness')==harness else {'readiness':'unavailable','reason':'binding-absent','nativeLoginObserved':None,'quota':'unknown'}
+                        api('receipts',{**body,'accountObservation':{'accountId':p['accountId'],'binding':p['binding'],'platform':sys.platform,**result}})
+                        result={**result,'accountId':p['accountId'],'binding':p['binding'],'authChanged':False}
                     data=json.dumps(result).encode();api('artifacts',{**body,'path':'account-readiness.json','mediaType':'application/json','sha256':hashlib.sha256(data).hexdigest(),'contentBase64':base64.b64encode(data).decode()})
                     shutil.rmtree(workspace);state.write_text(json.dumps({'state':'completed'}));api('receipts',{**body,'status':'completed'});continue
                 if c['kind']=='pipe-search':
