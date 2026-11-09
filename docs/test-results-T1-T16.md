@@ -66,3 +66,26 @@ Stand candidate-28517364d2bd, executors owner-mac and pds18-native. Operations c
 - Readiness failure needs an operator question/notification, not only an event.
 - The codex sandbox blocks network for the agent, so agent-side git push/ls-remote depends on executor-run steps (delivery), not on the agent.
 - R2: read operations are not in the op table; the UI polls REST reads. Either add the reads to the op table or document reads as exempt.
+
+## Wave3 status (goblin, 2026-11-09)
+
+Live release `candidate-b02670f3cddf` (source `b02670f3cddf`, archive SHA256 `f35e19544c79b36b7f49f852debabde63bea11b9b8b7926d50bbc708cb94578d`). PDS executor `executor-b02670f3cddf` (SHA256 `a6633a93…`), Mac executor SHA256 `ad16b785…`, both program workers updated. Deployed from a clean `git archive` at 0 unfinished (only the known stuck `6b00f0fb` on `pds18`). Readback: 4 hosts heartbeat, roles and profiles served, readiness ok on both hosts.
+
+Rollback: `ln -sfn candidate-28517364d2bd /home/fleet/releases/current`, `ln -sfn /home/fleet/runtime/executor-28517364d2bd /home/fleet/runtime/current-executor`, restart the three user services. Mac: restore `bin/fleet-executor.pre-b02670f3cddf`, `program-worker/delivery_worker.py.pre-b02670f3cddf`, `~/.config/fleet/program-worker.prototype.json.pre-b02670f3cddf`, then kickstart both agents.
+
+Code (commits `94c2da0`, `b02670f`): `session_start` (project + role/profile; the binding picks account and host), `session_deliver` (host agent asks Fleet to open a PR from its session branch and merge it after checks), completion wake (a finished child turn is queued as the creator's next message), `gitNetwork` (Codex network + writable checkout `.git`, default on for pm/reviewer/worker of git projects), web reads via `/api/ops` (session_get, execution_differences, profiles_list, project_list, account_list, project_context, catalogue, pipeline_history), UI fork/handoff/reply/readiness/start, classified ls-remote reasons. cargo 28 pass, npm 28 pass, browser checks pass.
+
+| Test | Result | Evidence |
+|---|---|---|
+| T1 no operator nudges | **pass** | PM `68e0b116` (codex, Mac) started worker `1b116f69` (Claude, Mac, pushed `58afa67e`), woken, started reviewer `e30da2b0` (codex, PDS, APPROVE after `git fetch`), woken, called `session_deliver`, reported the merge. Only the first message came from the operator |
+| T14 PR + Fleet merge | **pass** | Delivery `cda09060` state `merged`, https://github.com/taskqorg/fleet-hello-world/pull/1 |
+| T15 checkout sync | **likely pass, not read back** | base-updated executions `1dbc87a2` (Mac) and `730cbb98` (PDS) completed; checkout HEADs not checked |
+| setup:skip | pending | not run (session stopped) |
+| T2 web delivery on alt | pending | not run |
+| ls-remote negative reasons | unit-tested only | |
+
+Findings:
+- ARCHITECTURE: credential isolation is env-only. One OS user (`fleet` on PDS, owner on Mac) can read every project's deploy key, so an agent of project A can read B's key file. Not fixed.
+- Security tradeoff (as requested): `gitNetwork` gives the agent full network and a writable common `.git` (hooks/config of the shared checkout). Narrower options: per-session clone, or Fleet-mediated push/fetch.
+- `gh pr checks` "no checks reported" is detected from text output; structured `--json` output would be more robust.
+- `session_deliver` completion does not wake the PM; the PM polls with repeated calls.
