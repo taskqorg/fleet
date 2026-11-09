@@ -1,13 +1,13 @@
 # Build and test gate the job; the design report never does (D6, D14).
-# The job that runs PR code has a read-only token; only the comment job (no checkout) may write.
+# The job that runs PR code uses the default token, which this organisation sets to read-only
+# (an explicit `contents: read` block stopped the job from starting here). Only the comment job,
+# which checks out no code, asks for write access.
 name: ci
 on:
   pull_request:
 jobs:
   build-test-design:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
