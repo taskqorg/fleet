@@ -41,6 +41,7 @@ export function Hosts({ id }: { id?: string }) {
     <DetailSection title="State"><KvRow icon="activity" label="Last seen" meta={sel.lastSeenAt ? undefined : 'never'} value={sel.lastSeenAt ? <AgeChip t={sel.lastSeenAt} now={now} /> : undefined} />
       <KvRow icon="panels-top-left" label="Platform" meta={sel.platform ?? 'unknown'} /></DetailSection>
     <DetailSection title="Workers"><KvRow icon="activity" label="Running" value={<HarnessCounts counts={sel.runningByHarness} label="by harness" />} /><KvRow icon="list-ordered" label="Queued commands" value={<Num m={{ value: sel.queued, basis: 'measured' }} kind="count" />} /></DetailSection>
+    {fresh(sel) && sel.problems?.length > 0 && <DetailSection title="Problems">{sel.problems.map((p: any) => <KvRow key={p.route} icon="activity" label={`Edge answers ${p.route} with ${p.status}`} meta={p.detail || p.location || undefined} />)}</DetailSection>}
     <DetailSection title="Capabilities">{sel.capabilities.length ? sel.capabilities.map((c: string) => <KvRow key={c} icon="check" label={c} />) : <span class="muted">none reported</span>}</DetailSection>
     <DetailSection title="Store"><KvRow icon="save" label="Store" value={<FillBar total={null} segments={[]} />} /></DetailSection>
   </article>;

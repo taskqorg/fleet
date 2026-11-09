@@ -14,9 +14,7 @@ use std::time::Duration;
 pub fn schema(db: &Connection) -> rusqlite::Result<()> {
     db.execute_batch("CREATE TABLE IF NOT EXISTS transfers(id TEXT PRIMARY KEY,kind TEXT NOT NULL,body TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'queued',response TEXT,attempts INTEGER NOT NULL DEFAULT 0,next_at INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL);")
 }
-fn now_ms() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
-}
+use crate::outbox::now_ms;
 /// Queues a job; `id` is also the artifact id of an upload, so a repeated reserve after a restart is the same reservation.
 pub fn enqueue(db: &Connection, id: &str, kind: &str, body: &Value) -> rusqlite::Result<()> {
     db.execute("INSERT OR IGNORE INTO transfers(id,kind,body,created_at) VALUES(?1,?2,?3,?4)", params![id, kind, body.to_string(), now_ms()])?;
@@ -57,20 +55,24 @@ impl Client {
     pub fn new(url: String, token: String, host: String, access: Option<(String, String)>) -> Self {
         Client {
             url, token, host, access,
-            coordinator: ureq::AgentBuilder::new().timeout(Duration::from_secs(60)).build(),
+            coordinator: ureq::AgentBuilder::new().timeout(Duration::from_secs(60)).redirects(0).build(),
             // Parts are 32 MiB; a slow tunnel needs more than the outbox's 5 s.
-            store: ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(20)).timeout_read(Duration::from_secs(300)).timeout_write(Duration::from_secs(300)).build(),
+            // Never follows a redirect: requests carry the Access service token headers, which a redirect would hand on.
+            store: ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(20)).timeout_read(Duration::from_secs(300)).timeout_write(Duration::from_secs(300)).redirects(0).build(),
         }
     }
     pub fn post(&self, route: &str, body: Value) -> std::result::Result<Value, Failure> {
-        match self.coordinator.post(&format!("{}{route}", self.url)).set("Authorization", &format!("Bearer {}", self.token)).send_json(body) {
-            Ok(r) => r.into_json::<Value>().map_err(|e| Failure::Retry(e.to_string())),
-            Err(ureq::Error::Status(code, r)) => {
-                let text = r.into_string().unwrap_or_default();
-                // 409 no_store: no listed store is reachable now (a sleeping Mac, Windows logged out): wait and retry.
-                if code >= 500 || code == 409 && text.contains("No reachable store") || code == 429 { Err(Failure::Retry(format!("{code} {text}"))) } else { Err(Failure::Permanent(format!("{code} {text}"))) }
-            }
-            Err(e) => Err(Failure::Retry(e.to_string())),
+        // Same classification and edge state as the outbox (outbox::classify, outbox::observe); the job's own backoff paces
+        // the retry of an edge answer.
+        let a = outbox::classify(self.coordinator.post(&format!("{}{route}", self.url)).set("Authorization", &format!("Bearer {}", self.token)).send_json(body));
+        outbox::observe(route, &a);
+        match a {
+            outbox::Answer::Ok(v) => Ok(v),
+            outbox::Answer::Edge(status, detail) => Err(Failure::Retry(format!("coordinator edge answered {status} ({detail})"))),
+            outbox::Answer::Retry(e) => Err(Failure::Retry(e)),
+            // 409 no_store: no listed store is reachable now (a sleeping Mac, Windows logged out): wait and retry.
+            outbox::Answer::Reject(409, text) if text.contains("No reachable store") => Err(Failure::Retry(format!("409 {text}"))),
+            outbox::Answer::Reject(code, text) => Err(Failure::Permanent(format!("{code} {text}"))),
         }
     }
     /// A request to a store URL: the Access headers are added (never signed) unless it targets loopback.
@@ -83,19 +85,22 @@ impl Client {
         }
         r
     }
-    pub fn put_part(&self, url: &str, bytes: &[u8]) -> std::result::Result<String, Failure> {
-        match self.store_request("PUT", url).send_bytes(bytes) {
-            Ok(r) => r.header("ETag").map(str::to_owned).ok_or_else(|| Failure::Retry("part without ETag".into())),
-            Err(ureq::Error::Status(code, r)) if code < 500 && code != 429 => Err(Failure::Permanent(format!("store {code} {}", r.into_string().unwrap_or_default()))),
+    /// One classification of store answers: a redirect is an edge condition of that store (signalled as `store <host>`, the
+    /// redirect is never followed since requests carry the Access headers) and is retried; 4xx is permanent.
+    fn store_answer(url: &str, r: std::result::Result<ureq::Response, ureq::Error>) -> std::result::Result<ureq::Response, Failure> {
+        let key = format!("store {}", url.split_once("://").map_or(url, |(_, r)| r).split(['/', '?']).next().unwrap_or(""));
+        match r {
+            Ok(r) if (300..400).contains(&r.status()) => { let (s, to) = (r.status(), outbox::location(&r)); let _ = r.into_string(); outbox::edge_redirect(&key, s, &to); Err(Failure::Retry(format!("store redirected with {s} to {to}"))) }
+            Ok(r) => { outbox::edge_ok(&key); Ok(r) }
+            Err(ureq::Error::Status(code, r)) if code < 500 && code != 429 => { outbox::edge_ok(&key); Err(Failure::Permanent(format!("store {code} {}", r.into_string().unwrap_or_default()))) }
             Err(e) => Err(Failure::Retry(e.to_string())),
         }
     }
+    pub fn put_part(&self, url: &str, bytes: &[u8]) -> std::result::Result<String, Failure> {
+        Self::store_answer(url, self.store_request("PUT", url).send_bytes(bytes))?.header("ETag").map(str::to_owned).ok_or_else(|| Failure::Retry("part without ETag".into()))
+    }
     pub fn get(&self, url: &str) -> std::result::Result<Box<dyn Read + Send + Sync>, Failure> {
-        match self.store_request("GET", url).call() {
-            Ok(r) => Ok(r.into_reader()),
-            Err(ureq::Error::Status(code, _)) if code < 500 && code != 429 => Err(Failure::Permanent(format!("store GET {code}"))),
-            Err(e) => Err(Failure::Retry(e.to_string())),
-        }
+        Ok(Self::store_answer(url, self.store_request("GET", url).call())?.into_reader())
     }
 }
 #[derive(Debug)]
@@ -244,6 +249,8 @@ fn run_job(c: &Client, db: &Connection, id: &str, kind: &str, body: &Value) -> s
     }
 }
 
+/// Coordinator routes only transfers call (not the outbox's /api/hosts/artifacts/declare).
+const TRANSFER_ROUTES: &[&str] = &["/api/hosts/artifacts/reserve", "/api/hosts/artifacts/parts", "/api/hosts/artifacts/commit", "/api/hosts/artifacts/verified", "/api/hosts/artifacts/get", "/api/hosts/artifacts/list", "/api/hosts/artifacts/renew"];
 /// The artifact a queued job holds a coordinator lease on, with its store when known.
 fn leased(kind: &str, id: &str, body: &Value) -> Option<(String, Option<String>)> {
     match kind {
@@ -268,6 +275,8 @@ pub fn spawn(journal: PathBuf, client: Client, after: impl Fn(&Client, &Connecti
         loop {
             std::thread::sleep(Duration::from_secs(600));
             let jobs: Vec<(String, String, String)> = db.prepare("SELECT id,kind,body FROM transfers WHERE state IN ('queued','running')").and_then(|mut s| s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect()).unwrap_or_default();
+            // Nothing left to transfer: idle transfer and store routes are not asked again, so their edge signals end here.
+            if jobs.is_empty() { outbox::edge_clear_idle(TRANSFER_ROUTES) }
             for (id, kind, body) in jobs {
                 let body: Value = serde_json::from_str(&body).unwrap_or(json!({}));
                 if let Some((artifact, store)) = leased(&kind, &id, &body) {
@@ -295,7 +304,7 @@ fn work(journal: PathBuf, client: Client, lane: &str, after: &(dyn Fn(&Client, &
                     after(&client, &db, &body, &v);
                 }
                 Err(Failure::Retry(e)) => {
-                    let wait = 2000i64.saturating_mul(1 << attempts.min(8)).min(300_000);
+                    let wait = outbox::backoff(attempts);
                     let _ = db.execute("UPDATE transfers SET attempts=attempts+1,next_at=?2,response=?3 WHERE id=?1", params![id, now_ms() + wait, json!({"state":"retrying","error":e}).to_string()]);
                 }
                 Err(Failure::Permanent(e)) => {
@@ -333,6 +342,18 @@ mod tests {
         assert_eq!(leased("upload", "a1", &json!({})), Some(("a1".into(), None)));
         assert_eq!(leased("verify", "j", &json!({"artifactId":"a2","storeId":"s"})), Some(("a2".into(), Some("s".into()))));
         assert_eq!(leased("get", "j", &json!({"artifactId":"a3"})), None);
+    }
+    #[test]
+    fn the_store_agent_does_not_follow_redirects() {
+        // The redirect target would see the Access headers; it must never be asked.
+        let target = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        target.set_nonblocking(true).unwrap();
+        let location: &'static str = Box::leak(format!("Location: http://{}/leak\r\n", target.local_addr().unwrap()).into_boxed_str());
+        let (url, server) = crate::outbox::tests::serve(1, move |_, _| ("302 Found", location));
+        let c = Client::new("http://127.0.0.1:1".into(), "t".into(), "h".into(), Some(("id".into(), "secret".into())));
+        assert!(matches!(c.get(&format!("{url}/object")), Err(Failure::Retry(_))));
+        server.join().unwrap();
+        assert!(matches!(target.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock), "redirect target was contacted");
     }
     #[test]
     fn hash_streams() {

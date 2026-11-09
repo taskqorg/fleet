@@ -903,7 +903,9 @@ fn main() -> Result<()> {
         }
         e.tick()?;
         let result = (|| -> Result<()> {
-            let reply=e.post("/api/hosts/poll",json!({"hostId":e.host,"platform":platform(),"capabilities":capabilities(),"stores":e.stores()}))?;
+            // A poll the edge answered is asked again every 2 s (outbox::edge_redirect), not every 100 ms.
+            if outbox::edge_wait(outbox::POLL) { return Ok(()) }
+            let reply=e.post("/api/hosts/poll",json!({"hostId":e.host,"platform":platform(),"capabilities":capabilities(),"stores":e.stores(),"problems":outbox::edge_problems(outbox::POLL)}))?;
             for c in reply["commands"].as_array().ok_or("commands missing")? {
                 if e.run(c.clone()).is_err()
                     && !e.live.contains_key(c["executionId"].as_str().unwrap_or(""))
@@ -922,8 +924,9 @@ fn main() -> Result<()> {
             }
             Ok(())
         })();
-        if result.is_err() {
-            eprintln!("executor exchange failed; retained journal, retry pending");
+        // A redirected poll is already signalled once by the edge state (outbox::edge_redirect); other failures log here.
+        if let Err(err) = &result {
+            if err.downcast_ref::<outbox::Redirected>().is_none() { eprintln!("executor exchange failed; retained journal, retry pending") }
         }
         std::thread::sleep(Duration::from_millis(100));
     }
