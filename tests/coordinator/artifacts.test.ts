@@ -88,6 +88,13 @@ test('success rule: a completed run waits for its required artifacts, then compl
   await s.put('execution',{id:'e2',executionId:'e2',sessionId:'s2',hostId:'mac',state:'started',createdAt:1});await s.put('command',{id:'c2',executionId:'e2',sessionId:'s2',hostId:'mac',kind:'start',status:'started',payload:{}})});
  await call('/api/hosts/receipts',{hostId:'mac',commandId:'c2',executionId:'e2',status:'completed'});
  e=await s.get('e2','execution');assert.equal(e.state,'failed');assert.deepEqual(e.error.missing,['*.glb']);
+ // An operator acceptance of a task's stored model completes the task.
+ await s.tx(async()=>{await s.put('session',{id:'s4',createdAt:1,projectId:'p1',deliveryId:'t1'});await s.put('execution',{id:'e4',executionId:'e4',sessionId:'s4',hostId:'mac',state:'started',createdAt:1,startedAt:1});await s.put('command',{id:'c4',executionId:'e4',sessionId:'s4',hostId:'mac',kind:'start',status:'started',payload:{}})});
+ const glb=await upload(app,'m',{hostId:'mac',executionId:'e4',path:'model.glb',content:Buffer.alloc(1024,3),mediaType:'model/gltf-binary'});
+ await call('/api/hosts/receipts',{hostId:'mac',commandId:'c4',executionId:'e4',status:'completed',artifacts:['model.glb']});assert.equal((await s.get('e4','execution')).state,'completed');
+ const ask=await (await app.inject({method:'POST',url:'/api/ops/task_request_acceptance',headers:{authorization:'Bearer b'},payload:{taskId:'t1'}})).json();assert.deepEqual(ask.artifactIds,[glb]);
+ await app.inject({method:'POST',url:'/api/ops/questions_answer',headers:{authorization:'Bearer b'},payload:{questionId:ask.id,answer:'accepted'}});
+ const task=await s.tasks.get('t1');assert.deepEqual([task.state,task.acceptedArtifactIds],['completed',[glb]]);
  await s.tx(async()=>{await s.put('execution',{id:'e3',executionId:'e3',sessionId:'s1',hostId:'mac',state:'started',createdAt:1});await s.put('command',{id:'c3',executionId:'e3',sessionId:'s1',hostId:'mac',kind:'start',status:'started',payload:{}})});
  await call('/api/hosts/artifacts/reserve',{hostId:'mac',executionId:'e3',name:'late.bin',size:3,sha256:sha(Buffer.from('abc')),required:true});
  await call('/api/hosts/receipts',{hostId:'mac',commandId:'c3',executionId:'e3',status:'completed'});assert.equal((await s.get('e3','execution')).state,'waiting');

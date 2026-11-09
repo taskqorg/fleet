@@ -125,6 +125,8 @@ export function createStore(url:string,opts:{scope?:string}={}){
  };
  const executions=executionModel(api),tasks=taskModel(api,executions);
  for(const [k,a] of Object.entries({...executions.adapters,...tasks.adapters}))kinds.set(k,a);
+ // An execution of a task settles the task (design §2: queued -> in_progress when its first execution starts).
+ {const ex=kinds.get('execution')!;kinds.set('execution',{...ex,put:async(v:any)=>{await ex.put(v);const t=(await q('SELECT task_id FROM execution WHERE id=$1',[v.id])).rows[0]?.task_id;if(t)await tasks.settle(t)}})}
  // Migration 6: legacy documents of the typed kinds move to their tables in insertion order and keep their seq.
  // A delegation lives on its child execution's row, so it follows the executions.
  async function moveLegacyDocuments(){const rows=(await q("SELECT kind,id,data,seq FROM document WHERE kind = ANY($1) ORDER BY (kind='delegation'), seq",[TYPED_KINDS])).rows;

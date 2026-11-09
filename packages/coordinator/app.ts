@@ -214,6 +214,11 @@ export function createApp(config:{nativeHostIds?:string[],database:string,store?
   task_create:async(b:any)=>{const id=await store.tasks.create({projectId:b.projectId??null,title:str(b.title,'title',500),expectedOutcome:b.expectedOutcome??null,priority:b.priority,completionRequirements:b.completionRequirements,resultDestination:b.resultDestination??null,createdBy:'operator',dependsOn:Array.isArray(b.dependsOn)?b.dependsOn.map((x:any)=>str(x,'dependsOn',200)):[]});return store.tasks.get(id)},
   task_update:(b:any)=>store.tasks.update({...b,taskId:str(b?.taskId,'taskId',200)}),
   task_get:(b:any)=>store.tasks.get(str(b?.taskId,'taskId',200)),
+  // Asks the operator to accept a task's stored results (design §2 Acceptance); the default artifacts are the task's stored originals.
+  task_request_acceptance:async(b:any)=>{const t=await store.tasks.get(str(b?.taskId,'taskId',200));if(t.state!=='in_progress')fail(409,'Task is not in progress');
+   const ids=Array.isArray(b.artifactIds)?b.artifactIds:(await artifacts.list({taskId:t.id})).filter((a:any)=>a.state==='stored'&&a.role==='original').map((a:any)=>a.id);
+   const id=await store.tasks.ask({kind:'acceptance',taskId:t.id,projectId:t.projectId,text:typeof b.text==='string'?b.text.slice(0,2000):'Accept the result of: '+t.title,options:['accepted','rejected'],askedBy:'operator',data:{artifactIds:ids}});
+   return (await store.tasks.questions({taskId:t.id})).find((q:any)=>q.id===id)},
   task_list:async(b:any)=>({tasks:await store.tasks.list({projectId:b?.projectId,state:b?.state})}),
   questions_list:async(b:any)=>({questions:await store.tasks.questions({taskId:b?.taskId,state:b?.state,kind:b?.kind})}),
   questions_answer:async(b:any)=>{const q=await store.tasks.answer(str(b?.questionId,'questionId',200),{answer:str(b.answer,'answer'),by:'operator',artifactIds:Array.isArray(b.artifactIds)?b.artifactIds:undefined});return (await store.tasks.questions({})).find(x=>x.id===q.id)},

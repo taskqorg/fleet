@@ -21,6 +21,9 @@ pub fn read_key(path: &Path) -> Option<(String, String)> {
     let mut secret = None;
     for line in text.lines() {
         let line = line.trim().trim_start_matches("export ");
+        // `garage key info --show-secret` output: "Key ID: GK..." and "Secret key: ...".
+        if let Some(v) = line.strip_prefix("Key ID:") { id = Some(v.trim().to_string()); continue }
+        if let Some(v) = line.strip_prefix("Secret key:") { secret = Some(v.trim().to_string()); continue }
         if let Some((k, v)) = line.split_once('=') {
             let v = v.trim().trim_matches('\'').trim_matches('"').to_string();
             if k == "AWS_ACCESS_KEY_ID" { id = Some(v) } else if k == "AWS_SECRET_ACCESS_KEY" { secret = Some(v) }
@@ -73,7 +76,7 @@ mod tests {
     fn key_formats() {
         let d = std::env::temp_dir().join(format!("fleet-keys-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
-        for (name, text) in [("a", r#"{"accessKeyId":"GK1","secretAccessKey":"s1"}"#), ("b", "export AWS_ACCESS_KEY_ID=GK1\nAWS_SECRET_ACCESS_KEY='s1'\n"), ("c", "GK1\ns1\n")] {
+        for (name, text) in [("a", r#"{"accessKeyId":"GK1","secretAccessKey":"s1"}"#), ("b", "export AWS_ACCESS_KEY_ID=GK1\nAWS_SECRET_ACCESS_KEY='s1'\n"), ("c", "GK1\ns1\n"), ("d", "==== ACCESS KEY INFORMATION ====\nKey ID:              GK1\nKey name:            fleet-coordinator\nSecret key:          s1\nCreated:             2026-11-09\n")] {
             std::fs::write(d.join(name), text).unwrap();
             assert_eq!(read_key(&d.join(name)), Some(("GK1".into(), "s1".into())), "{name}");
         }
