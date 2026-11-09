@@ -21,7 +21,8 @@ export async function op<T = any>(name: string, body: unknown = {}, opts: { sign
   }
   online.value = true;
   if (r.type === 'opaqueredirect' || r.status === 401 || r.status === 403) { signedOut.value = true; throw new OpError('signed out', r.status); }
-  const data = await r.json().catch(() => ({}));
+  // An abort while the body is read is an abort, not an empty success.
+  const data = await r.json().catch(() => { if (opts.signal?.aborted) throw new OpError('aborted', 0); return {}; });
   if (!r.ok) throw new OpError(data.message || r.statusText, r.status);
   return data as T;
 }

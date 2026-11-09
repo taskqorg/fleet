@@ -9,7 +9,7 @@ import {
 import tokens from '../../../packages/ui/tokens.json';
 import { op, online } from '../api';
 import { useList, useDoc } from '../store';
-import { useUrlView, useSearchBox } from './tasks';
+import { useUrlView, useSearchBox, nextUrl } from '../url';
 
 const ROW = parseInt(tokens.size.row);
 type SessionRow = { id: string; title: string | null; state: StateOf<'session'>; harness: string | null; openQuestions: number; sortKey: (string | number)[] };
@@ -25,7 +25,7 @@ export function Conversations({ id }: { id?: string }) {
   const list = useList('sessions', view);
   const rows = list.rows as SessionRow[];
   const now = Date.now();
-  const create = async () => { try { const s = await op('session_create', {}); go('/conversations/' + s.sessionId); } catch (e: any) { setFailure(e.message); } };
+  const create = async () => { try { const s = await op('session_create', {}); set({ focus: s.sessionId }); } catch (e: any) { setFailure(e.message); } };
   const pane = <>
     <header class="page-h"><h1>Conversations</h1><OfflineMarker state={list.state} now={now} /><span class="grow" />
       <Button label="New conversation" icon="plus" kind="primary" disabledReason={online.value ? undefined : 'offline'} onClick={create} /></header>
@@ -87,7 +87,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
       <span class="muted mono">{id.slice(0, 8)}{s.agentConfig?.id ? ` · ${s.agentConfig.id}` : ''}</span><span class="grow" />
       <OfflineMarker state={state} now={now} />
       {active && <Button label="Stop" icon="pause" disabledReason={off ? 'offline' : undefined} onClick={() => run(() => op('execution_stop', { executionId: active.id }))} />}
-      <Button label="Fork" icon="copy" iconOnly disabledReason={off ? 'offline' : undefined} onClick={() => run(async () => { const f = await op('session_fork', { sessionId: id, requestId: reqId() }); go('/conversations/' + f.sessionId); })} />
+      <Button label="Fork" icon="copy" iconOnly disabledReason={off ? 'offline' : undefined} onClick={() => run(async () => { const f = await op('session_fork', { sessionId: id, requestId: reqId() }); go(nextUrl(location.pathname + location.search, 'conversations', { focus: f.sessionId })); })} />
     </header>
     {failure && <ErrorBanner text={failure} />}
     {open.map((q: any) => <DecisionBlock key={q.id} question={q.question ?? q.text} askedBy="agent" addressedTo="you" since={q.askedAt ? Date.parse(q.askedAt) || now : now} now={now}

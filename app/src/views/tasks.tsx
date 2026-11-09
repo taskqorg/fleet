@@ -1,7 +1,6 @@
 // Tasks list and detail (docs/design-system/pages/tasks.md). Server-ordered list with views, state counters, grouping and
 // search (list-view pattern); the detail shows outcome, totals, open decisions and the execution tree.
-import { useEffect, useRef, useState } from 'preact/hooks';
-import { useLocation, useSearch } from 'wouter-preact';
+import { useState } from 'preact/hooks';
 import {
   ListDetail, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, VirtualList, StateBadge, HarnessMark, AgeChip, Button,
   SplitButton, Totals, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
@@ -10,7 +9,8 @@ import {
 import tokens from '../../../packages/ui/tokens.json';
 import { op, online } from '../api';
 import { useList, useDoc } from '../store';
-import { parseView, formatView, listKey, type View } from '../../../packages/view-url/view-url';
+import { listKey, type View } from '../../../packages/view-url/view-url';
+import { useUrlView, useSearchBox } from '../url';
 import { usePins, useViews } from '../prefs';
 
 const ROW = parseInt(tokens.size.row);
@@ -19,33 +19,6 @@ type TaskRow = { id: string; title: string; state: StateOf<'task'>; waitReason: 
 type Item = { kind: 'group'; key: string; label: string; count: number } | { kind: 'task'; t: TaskRow };
 const ms = (v: string | number | null | undefined) => (v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v));
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
-
-/** The view state lives in the URL (docs/designs/fleet-view-urls-and-list-path.md §1). Discrete changes push a history entry;
- * a search pushes once when typing starts and replaces while typing goes on, so one Back leaves the search. */
-export function useUrlView(name: 'tasks' | 'conversations') {
-  const search = useSearch(), [loc, go] = useLocation();
-  const view: View = parseView(loc + (search ? '?' + search : '')) ?? { view: name };
-  const typing = useRef(false);
-  const set = (v: Partial<View>, how: 'push' | 'type' = 'push') => {
-    const next = formatView({ ...view, ...v });
-    if (next !== formatView(view)) go(next, { replace: how === 'type' && typing.current });
-    typing.current = how === 'type';
-  };
-  return { view, set, href: (v: Partial<View>) => formatView({ ...view, ...v }) };
-}
-
-/** Search box text: updates at once; the URL (and so the request) follows after 300 ms without a key press. */
-export function useSearchBox(q: string | undefined, commit: (q: string) => void) {
-  const [text, setText] = useState(q ?? '');
-  const last = useRef(q ?? '');
-  if ((q ?? '') !== last.current) { last.current = q ?? ''; if (text !== last.current) setText(last.current); } // Back/Forward
-  useEffect(() => {
-    if (text === (q ?? '')) return;
-    const t = setTimeout(() => { last.current = text; commit(text); }, 300);
-    return () => clearTimeout(t);
-  }, [text]);
-  return [text, setText] as const;
-}
 
 export function Tasks({ id }: { id?: string }) {
   const { view, set, href } = useUrlView('tasks');
