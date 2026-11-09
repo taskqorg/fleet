@@ -14,7 +14,8 @@ test('triggers map writes to change rows; rollbacks and unmapped kinds leave non
  const r=await read(s,start);
  assert.deepEqual(r.changes.map((c:any)=>[c.kind,c.id,c.sessionId,c.hostId,c.taskId]),[
   ['session','s1','s1',null,null],['event','m1','s1',null,null],['host','mac',null,'mac',null],['host','mac',null,'mac',null],
-  ['task',task,null,null,task],['execution','e1','s1','mac',task]]);
+  // task_derived (migration 10) adds a task-kind row when the task is created and when its derived values change.
+  ['task',task,null,null,task],['task',task,null,null,task],['execution','e1','s1','mac',task],['task',task,null,null,task]]);
  await s.close()});
 
 test('cursor resumes in (xid, seq) order; unknown or pruned cursors resync; change rows carry the RLS policy',async()=>{const s=await fresh();
@@ -25,7 +26,7 @@ test('cursor resumes in (xid, seq) order; unknown or pruned cursors resync; chan
  await s.close();
  // Row-level security: a store scoped to project p sees only p's change rows (rows without a project are visible to '*' only).
  const w=await fresh();await w.tx(async()=>{await w.tasks.create({title:'in p',projectId:'p'});await w.tasks.create({title:'in q',projectId:'q'})});
- assert.equal((await read(w,0)).changes.length,2);
+ assert.equal((await read(w,0)).changes.length,4); // each task: its own row and its task_derived row
  // PGlite runs as a superuser, which bypasses row-level security; the change table carries the same project_scope policy as
  // every other table (migration 8), checked on Postgres under the fleet_app role.
  assert.ok((await w.query("SELECT 1 FROM pg_policies WHERE tablename='change' AND policyname='project_scope'")).length===1);await w.close()});

@@ -63,3 +63,39 @@ test('row-level security: forced on the owner, scoped by fleet.project_ids',asyn
 test('a task moves to in_progress when its first execution starts, without any delivery',async()=>{const s=await fresh();
  await s.tx(async()=>{await s.tasks.create({id:'t',title:'model',projectId:'p'});await s.put('session',{id:'ss',createdAt:1,projectId:'p',deliveryId:'t'});await s.put('execution',{id:'x',executionId:'x',sessionId:'ss',hostId:'h',state:'queued'})});
  assert.equal(await state(s,'t'),'queued');await s.put('execution',{id:'x',executionId:'x',sessionId:'ss',hostId:'h',state:'started',startedAt:1});assert.equal(await state(s,'t'),'in_progress');await s.close()});
+
+// task_page after migration 10 (docs/designs/fleet-view-urls-and-list-path.md §3): same rows, order, counts and groups as the
+// query it replaced. The old query is kept here as the reference.
+test('task_page on task_derived matches the old per-task subquery query for every group and filter',async()=>{const s=await fresh();
+ await s.tx(async()=>{for(let i=0;i<60;i++){const id=await s.tasks.create({id:'t'+String(i).padStart(2,'0'),title:['Render','Fix CI','Hero copy'][i%3]+' '+i,projectId:[null,'dashq','game'][i%3],priority:['urgent','normal','background'][i%3]});
+  if(i%4===0)await s.executions.createExecution({id:'e'+i,kind:'agent_run',taskId:id,projectId:[null,'dashq','game'][i%3],hostId:['mac','pds18'][i%2],harness:['codex','claude'][i%2],state:i%8?'running':'succeeded'});
+  if(i%5===0)await s.tasks.ask({kind:'operator_decision',taskId:id,text:'q'+i,options:['a']})}});
+ const G:Record<string,string>={none:"left(x.id,0)",priority:"(CASE x.priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END)",project:"coalesce(x.project_id,'~')",agent:"coalesce(x.agent,'~')",host:"coalesce(x.host,'~')",
+  state:"(CASE x.state WHEN 'waiting' THEN '1' WHEN 'failed' THEN '2' WHEN 'in_progress' THEN '3' WHEN 'queued' THEN '4' WHEN 'paused' THEN '5' WHEN 'completed' THEN '6' ELSE '7' END)"};
+ const base=`WITH x AS (SELECT t.id,t.project_id,t.state,t.priority,t.seq,
+  (SELECT e.harness FROM execution e WHERE e.task_id=t.id AND e.state IN ('preparing','running') ORDER BY e.seq DESC LIMIT 1) AS agent,
+  (SELECT e.host_id FROM execution e WHERE e.task_id=t.id ORDER BY e.seq DESC LIMIT 1) AS host,
+  (SELECT count(*) FROM question q WHERE q.task_id=t.id AND q.state='open') AS open_questions FROM task t)`;
+ const old=async(group:string,f:{state?:string[],search?:string,projectId?:string|null})=>{const c:string[]=[],cs:string[]=[],p:any[]=[];
+  if(f.projectId!==undefined){if(f.projectId===null)c.push('x.project_id IS NULL');else{p.push(f.projectId);c.push(`x.project_id=$${p.length}`)}}
+  if(f.search){p.push('%'+f.search.toLowerCase()+'%');c.push(`lower((SELECT title FROM task WHERE id=x.id)) LIKE $${p.length}`)}
+  cs.push(...c);if(f.state?.length){p.push(f.state);c.push(`x.state::text=ANY($${p.length})`)}
+  const W=(w:string[])=>w.length?' WHERE '+w.join(' AND '):'';
+  const rows=(await s.query(`${base} SELECT x.id,x.agent,x.host,x.open_questions FROM x${W(c)} ORDER BY ${G[group]},-x.seq,x.id`,p)).map((r:any)=>[r.id,r.agent,r.host,Number(r.open_questions)]);
+  const counts=Object.fromEntries((await s.query(`${base} SELECT x.state::text AS s,count(*) AS n FROM x${W(cs)} GROUP BY 1`,p.slice(0,p.length-(f.state?.length?1:0)))).map((r:any)=>[r.s,Number(r.n)]));
+  const groups=group==='none'?[]:(await s.query(`${base} SELECT ${G[group]} AS g,count(*) AS n FROM x${W(c)} GROUP BY 1 ORDER BY 1`,p)).map((r:any)=>[r.g,Number(r.n)]);
+  return {rows,counts,groups}};
+ for(const group of Object.keys(G))for(const f of [{},{state:['in_progress']},{search:'hero'},{projectId:'game'},{projectId:null},{state:['queued','in_progress'],projectId:'dashq'}]){
+  const n=await s.read(()=>s.tasks.page({filter:f,group,limit:500}));const o=await old(group,f);
+  assert.deepEqual(n.tasks.map((t:any)=>[t.id,t.agent,t.host,t.openQuestions]),o.rows,`rows ${group} ${JSON.stringify(f)}`);
+  assert.deepEqual(Object.fromEntries(Object.entries(n.counts).filter(([,v])=>v)),o.counts,`counts ${group} ${JSON.stringify(f)}`);
+  assert.deepEqual(n.groups.map((g:any)=>[g.key,g.count]),o.groups,`groups ${group} ${JSON.stringify(f)}`)}
+ await s.close()});
+
+test('task_page takes the view codec page params: project lists with "no project"',async()=>{const s=await fresh();
+ const {parseView,toPageParams}=await import('../../packages/view-url/view-url.js');
+ await s.tx(async()=>{await s.tasks.create({id:'a',title:'a',projectId:'p'});await s.tasks.create({id:'b',title:'b',projectId:'q'});await s.tasks.create({id:'c',title:'c'})});
+ const ids=async(url:string)=>(await s.read(()=>s.tasks.page({...toPageParams(parseView(url)!),limit:50}))).tasks.map((t:any)=>t.id).sort();
+ assert.deepEqual(await ids('/tasks?project=p'),['a']);assert.deepEqual(await ids('/tasks?project=-,p'),['a','c']);
+ assert.deepEqual(await ids('/tasks?project=p,q'),['a','b']);assert.deepEqual(await ids('/tasks'),['a','b','c']);
+ await s.close()});
