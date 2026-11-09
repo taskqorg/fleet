@@ -96,7 +96,7 @@ export function createApp(config:{database:string,browserSecret:string,machineSe
  app.get('/api/results/:id',async(req:any,r)=>{const a=get(req.params.id,'artifact');r.header('Content-Security-Policy',"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:");return r.type(a.mediaType||'application/octet-stream').send(Buffer.from(a.contentBase64,'base64'))});
  const projects=registerProjects(app,{all,get,put},{directory:config.projectConfigDirectory||'config',pipeConnectionFile:config.pipeConnectionFile,proxy:config.browserProxyAuth,searchHostId:config.integrationHostId});
  Object.assign(projects,managed.operations);
- deliveryRuntime=delivery({all,get,put},config,enqueue,projects,managed.resolve);
+ deliveryRuntime=delivery({all,get,put},config,enqueue,projects,managed.resolve,managed.preferred);
  Object.assign(projects,deliveryRuntime.operations);
  registerLab(app,{all,get,put,transaction:fn=>db.transaction(fn)()},{hostId:config.hostId,profilesDirectory:config.profilesDirectory||'config/agents',browserProxyAuth:config.browserProxyAuth});
  app.addHook('onClose',async()=>{db.close()});return app;

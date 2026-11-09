@@ -1,7 +1,7 @@
 import {randomUUID,createHash} from 'node:crypto';
 import {readTrustedProfile} from './lab.js';
 // shortcut: static-site delivery only; add other worker kinds after a real consumer exists.
-export function delivery(store:any,config:any,enqueue:any,projects:any,resolveAccount:any){
+export function delivery(store:any,config:any,enqueue:any,projects:any,resolveAccount:any,preferredAccount:any){
  const {all,get,put}=store;
  const fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};
  const save=(r:any)=>{put('delivery',r);return r};
@@ -10,10 +10,10 @@ export function delivery(store:any,config:any,enqueue:any,projects:any,resolveAc
   delivery_create:async(b:any)=>{
    if(!b||Array.isArray(b)||Object.keys(b).some(k=>!['projectId','requestId','task','methodId','invocation','profileId','account'].includes(k))||typeof b.requestId!=='string'||!b.requestId||b.requestId.length>200||b.invocation!==undefined&&!['direct','pipeline'].includes(b.invocation)||b.account!==undefined&&(typeof b.account!=='string'||!/^(?:[a-z][a-z0-9-]{0,79}|[a-f0-9-]{36})$/.test(b.account))||typeof b.task!=='string'||!b.task.trim()||b.task.length>4000)fail(400,'Expected requestId and task');
    const signature=JSON.stringify(b),old=all('delivery').find((r:any)=>r.projectId===b.projectId&&r.requestId===b.requestId);if(old){if(old.signature!==signature)fail(409,'Delivery identity conflict');return reconcile(old)}
-   resolveAccount(b.account??'fleet-codex','codex',config.hostId);readTrustedProfile(config.profilesDirectory||'config/agents',b.profileId??'baseline');
+   resolveAccount(b.account??preferredAccount(b.projectId)??'fleet-codex','codex',config.hostId);readTrustedProfile(config.profilesDirectory||'config/agents',b.profileId??'baseline');
    const context=projects.project_context(b),catalogue=projects.catalogue(b);if(!catalogue.methods.some((m:any)=>m.id===(b.methodId??catalogue.recommendedMethod)))fail(400,'Method unavailable');
    const q=projects.question_ask({projectId:b.projectId,requestId:'delivery:'+b.requestId,text:'Confirm the dedicated test-site task and any wording changes before generation: '+b.task});
-   return save({id:randomUUID(),projectId:b.projectId,requestId:b.requestId,signature,task:b.task,context,methodId:b.methodId??catalogue.recommendedMethod,selectionSource:b.methodId?'explicit':catalogue.recommendationSource,invocation:b.invocation??'pipeline',profileId:b.profileId??'baseline',account:b.account??'fleet-codex',questionId:q.id,createdAt:Date.now(),state:'waiting',steps:[]});
+   return save({id:randomUUID(),projectId:b.projectId,requestId:b.requestId,signature,task:b.task,context,methodId:b.methodId??catalogue.recommendedMethod,selectionSource:b.methodId?'explicit':catalogue.recommendationSource,invocation:b.invocation??'pipeline',profileId:b.profileId??'baseline',account:b.account??preferredAccount(b.projectId)??'fleet-codex',accountSelectionSource:b.account?'explicit':preferredAccount(b.projectId)?'project-preference':'legacy-default',questionId:q.id,createdAt:Date.now(),state:'waiting',steps:[]});
   },
   delivery_generate:async(b:any)=>{
    const r=get(b.deliveryId,'delivery');if(r.steps.length||r.state!=='waiting')return reconcile(r);const q=get(r.questionId,'project-question');if(q.state!=='answered')fail(409,'Operator answer required');
