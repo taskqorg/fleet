@@ -201,3 +201,20 @@ Each check was proven once with `UX_INJECT=<defect>`, which produced its warning
 * repeated "trials" and "log";
 * the Laboratory failed-trials chip, which used colour only;
 * the compact badge's hidden reason text.
+
+## 2026-11-10 D15: Operator app first slice
+
+* **Design:** [fleet-operator-app.md](../designs/fleet-operator-app.md), owner-approved, decisions D1–D5 there.
+* **Built:** the operator app in `app/`: Overview, Tasks (list and detail), Conversations, Hosts.
+* **New controls:**
+  * [Composer](controls/composer.md).
+  * [Offline marker](controls/offline-marker.md).
+  * The `session` state family ([state badge](controls/state-badge.md)).
+  * `VirtualList` gains `onEnd` for infinite scroll (OR-11).
+* **Conversations** is an app-only page spec ([pages/conversations.md](pages/conversations.md)). It is checked by the app check, not by a mockup.
+* **Differences from the design doc,** kept deliberately simpler:
+  * The paged task list is a new read op, `task_page`. `task_list` keeps its existing shape for agents.
+  * Resync is detected by looking up the cursor's own change row: a missing row means it was pruned or is unknown. This replaces a separate floor table.
+  * Change rows use the client kinds (`task`, `execution`, `question`, `session`, `event`, `host`), not legacy kinds.
+  * The list order is group key, then newest first, then id. There is no separate sort option.
+  * Priority grouping shows higher numbers first. Which way priority should run is an open question for the owner.

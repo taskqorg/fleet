@@ -14,7 +14,7 @@ export function registerLab(app:FastifyInstance,store:{all:(k:string,filter?:obj
  const {all,get,put}=store;const fail=(code:number,msg:string)=>{throw Object.assign(Error(msg),{statusCode:code})};
  const profile=(id:string)=>readTrustedProfile(config.profilesDirectory,id);
  const exact=(b:any,keys:string[])=>{if(!b||typeof b!=='object'||Array.isArray(b)||Object.keys(b).sort().join()!==keys.sort().join())fail(400,'Invalid body')};
- app.get('/lab',async(_,r)=>r.type('text/html').send(labUi(config.browserProxyAuth)));
+ app.get('/legacy/lab',async(_,r)=>r.type('text/html').send(labUi(config.browserProxyAuth)));
  app.get('/api/lab/profiles',async()=>({profiles:listProfiles(config.profilesDirectory)}));
  app.get('/api/experiments',async()=>({experiments:(await all('experiment'))}));
  app.get('/api/lab/executions',async()=>({executions:(await all('execution'))}));

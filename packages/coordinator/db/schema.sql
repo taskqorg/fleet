@@ -198,3 +198,35 @@ UPDATE execution SET problem = NULL WHERE state = 'succeeded' AND problem IS NOT
 UPDATE execution c SET parent_execution_id = p.id FROM document s, LATERAL (SELECT e.id FROM execution e WHERE e.session_id = s.data->>'createdBySessionId' AND e.legacy_kind = 'execution' AND coalesce((e.data->>'createdAt')::bigint, 0) <= coalesce((s.data->>'createdAt')::bigint, 0) ORDER BY e.seq DESC LIMIT 1) p WHERE c.parent_execution_id IS NULL AND c.legacy_kind = 'execution' AND s.kind = 'session' AND s.id = c.session_id AND s.data ? 'startRequest' AND s.data ? 'createdBySessionId';
 -- Delegated children whose legacy record names the delegating execution.
 UPDATE execution SET parent_execution_id = data->>'parentExecutionId' WHERE parent_execution_id IS NULL AND legacy_kind = 'execution' AND data ? 'parentExecutionId'
+
+-- migration 8: change log for the operator app's live feed (docs/designs/fleet-operator-app.md §4, D5).
+-- Triggers write one row per watched write, inside the writer's transaction, so a change is visible exactly when its data is.
+-- Readers order by (xid, seq) and return only rows of transactions older than every transaction still running
+-- (pg_snapshot_xmin), so a slow transaction that commits after a later one is never skipped. NOTIFY has a constant payload:
+-- Postgres folds duplicates within one transaction, so each commit wakes listeners once.
+CREATE TABLE change(
+ seq bigserial PRIMARY KEY,
+ xid xid8 NOT NULL DEFAULT pg_current_xact_id(),
+ kind text NOT NULL,
+ id text NOT NULL,
+ task_id text NULL,
+ session_id text NULL,
+ host_id text NULL,
+ project_id text NULL,
+ op char(1) NOT NULL,
+ at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX change_order ON change(xid, seq);
+CREATE INDEX change_at ON change(at);
+ALTER TABLE change ENABLE ROW LEVEL SECURITY;
+ALTER TABLE change FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON change USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')));
+-- Kind map (design §4): only kinds a view uses write rows; host polls that only move lastSeenAt are skipped. One line: the
+-- migration runner splits statements at a semicolon that ends a line.
+CREATE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'document' THEN IF r.kind = 'host-observation' AND TG_OP = 'UPDATE' AND (OLD.data - 'lastSeenAt') = (NEW.data - 'lastSeenAt') THEN RETURN NULL; END IF; IF r.kind = 'session' THEN k := 'session'; s := r.id; ELSIF r.kind IN ('event', 'message') THEN k := 'event'; s := r.data->>'sessionId'; ELSIF r.kind = 'host-observation' THEN k := 'host'; h := r.id; ELSE RETURN NULL; END IF; i := r.id; ELSIF TG_TABLE_NAME = 'task' THEN k := 'task'; i := r.id; t := r.id; ELSIF TG_TABLE_NAME = 'task_dependency' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'execution' THEN k := 'execution'; i := r.id; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME = 'execution_totals' THEN k := 'execution'; i := r.execution_id; ELSIF TG_TABLE_NAME = 'question' THEN k := 'question'; i := r.id; t := r.task_id; s := r.session_id; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op) VALUES (k, i, t, s, h, r.project_id, left(TG_OP, 1)); PERFORM pg_notify('fleet_change', ''); RETURN NULL; END $$;
+CREATE TRIGGER document_change AFTER INSERT OR UPDATE OR DELETE ON document FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER task_change AFTER INSERT OR UPDATE OR DELETE ON task FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER task_dependency_change AFTER INSERT OR UPDATE OR DELETE ON task_dependency FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER execution_change AFTER INSERT OR UPDATE OR DELETE ON execution FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER execution_totals_change AFTER INSERT OR UPDATE OR DELETE ON execution_totals FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER question_change AFTER INSERT OR UPDATE OR DELETE ON question FOR EACH ROW EXECUTE FUNCTION fleet_change();

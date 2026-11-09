@@ -8,4 +8,7 @@ Page specs map [inventory](../inventory.md) items to patterns and controls. The 
 | Tasks (list and detail) | Operator | [tasks.md](tasks.md) |
 | Results | Operator | [results.md](results.md) |
 | Hosts, environments and stores | Architect | [hosts.md](hosts.md) |
+| Conversations | Operator | [conversations.md](conversations.md) (app only) |
 | Laboratory | Architect | [laboratory.md](laboratory.md) |
+
+The operator app (`app/`, [design](../../designs/fleet-operator-app.md)) builds the Overview, Tasks, Conversations and Hosts pages for real. `npm run check:design` runs `tests/ui/app.check.ts` on it.

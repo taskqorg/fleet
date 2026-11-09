@@ -109,6 +109,40 @@ export function taskModel(raw:Raw,executions:Executions){
  async function list(f:{projectId?:string,state?:string}={}){const c:string[]=[],p:any[]=[];if(f.projectId){p.push(f.projectId);c.push(`t.project_id=$${p.length}`)}if(f.state){p.push(f.state);c.push(`t.state=$${p.length}`)}
   return (await raw.query(`SELECT t.*,v.execution_count,v.executions_by_state,v.open_questions FROM task t JOIN task_view v ON v.task_id=t.id${c.length?' WHERE '+c.join(' AND '):''} ORDER BY t.seq`,p)).map(t=>({...view(t),progress:{executions:Number(t.execution_count),byState:t.executions_by_state},openQuestions:t.open_questions}))}
 
+ // Operator app list (docs/designs/fleet-operator-app.md §6): one WHERE builder serves the page, the counts and membership, so the
+ // client never decides membership. Order is (group key, newest first, id); the cursor is that triple. Grouping by priority puts
+ // higher numbers first.
+ const GROUPS:Record<string,string>={none:"left(x.id,0)",priority:"lpad((1000000000-x.priority)::text,12,'0')",project:"coalesce(x.project_id,'~')",agent:"coalesce(x.agent,'~')",host:"coalesce(x.host,'~')",
+  state:"(CASE x.state WHEN 'waiting' THEN '1' WHEN 'failed' THEN '2' WHEN 'in_progress' THEN '3' WHEN 'queued' THEN '4' WHEN 'paused' THEN '5' WHEN 'completed' THEN '6' ELSE '7' END)"};
+ const STATES=['queued','in_progress','waiting','paused','completed','failed','cancelled'];
+ type PageFilter={projectId?:string,state?:string[],search?:string};
+ const base=`WITH x AS (SELECT t.id,t.project_id,t.title,t.state,t.wait_reason,t.priority,t.created_at,t.updated_at,t.seq,
+  (SELECT e.harness FROM execution e WHERE e.task_id=t.id AND e.state IN ('preparing','running') ORDER BY e.seq DESC LIMIT 1) AS agent,
+  (SELECT e.host_id FROM execution e WHERE e.task_id=t.id ORDER BY e.seq DESC LIMIT 1) AS host,
+  (SELECT min(e.started_at) FROM execution e WHERE e.task_id=t.id) AS started_at,
+  (SELECT count(*) FROM question q WHERE q.task_id=t.id AND q.state='open') AS open_questions FROM task t)`;
+ const where=(f:PageFilter,p:any[],withState=true)=>{const c:string[]=[];
+  if(typeof f.projectId==='string'){p.push(f.projectId);c.push(`x.project_id=$${p.length}`)}
+  if(withState&&Array.isArray(f.state)&&f.state.length){if(!f.state.every(x=>STATES.includes(x)))throw Object.assign(Error('Invalid state'),{statusCode:400});p.push(f.state);c.push(`x.state::text=ANY($${p.length})`)}
+  if(typeof f.search==='string'&&f.search.trim()){p.push('%'+f.search.trim().toLowerCase().replace(/[%_\\]/g,m=>'\\'+m)+'%');c.push(`(lower(x.title) LIKE $${p.length} OR lower(x.id) LIKE $${p.length})`)}
+  return c};
+ const listRow=(x:any)=>({id:x.id,projectId:x.project_id,title:x.title,state:x.state,waitReason:x.wait_reason,priority:x.priority,agent:x.agent,host:x.host,startedAt:x.started_at,createdAt:x.created_at,updatedAt:x.updated_at,openQuestions:Number(x.open_questions),sortKey:[x.g,-Number(x.seq),x.id]});
+ const groupOf=(g:any)=>{if(g!==undefined&&!(g in GROUPS))throw Object.assign(Error('Invalid group'),{statusCode:400});return GROUPS[g??'none']};
+ async function page(b:{filter?:PageFilter,group?:string,limit?:number,after?:[string,number,string]}={}){
+  const f=b.filter??{},g=groupOf(b.group),limit=Math.max(1,Math.min(500,Math.floor(b.limit??100)));
+  const p:any[]=[],c=where(f,p);
+  if(b.after){if(!Array.isArray(b.after)||b.after.length!==3)throw Object.assign(Error('Invalid after'),{statusCode:400});p.push(String(b.after[0]),Number(b.after[1]),String(b.after[2]));c.push(`(${g},-x.seq,x.id) > ($${p.length-2},$${p.length-1},$${p.length})`)}
+  const rows=await raw.query(`${base} SELECT x.*,${g} AS g FROM x${c.length?' WHERE '+c.join(' AND '):''} ORDER BY ${g},-x.seq,x.id LIMIT ${limit+1}`,p);
+  const cp:any[]=[],cc=where(f,cp,false);
+  const byState=Object.fromEntries(STATES.map(s=>[s,0]));for(const r of await raw.query(`${base} SELECT x.state::text AS state,count(*) AS n FROM x${cc.length?' WHERE '+cc.join(' AND '):''} GROUP BY 1`,cp))byState[r.state]=Number(r.n);
+  const gp:any[]=[],gc=where(f,gp);
+  const groups=b.group&&b.group!=='none'?(await raw.query(`${base} SELECT ${g} AS g,min(CASE '${b.group}' WHEN 'priority' THEN x.priority::text WHEN 'state' THEN x.state::text WHEN 'project' THEN x.project_id WHEN 'agent' THEN x.agent ELSE x.host END) AS label,count(*) AS n FROM x${gc.length?' WHERE '+gc.join(' AND '):''} GROUP BY 1 ORDER BY 1`,gp)).map(r=>({key:r.g,label:r.label,count:Number(r.n)})):[];
+  const page=rows.slice(0,limit).map(listRow);
+  return {tasks:page,nextAfter:rows.length>limit?page.at(-1)!.sortKey:null,counts:byState,total:Object.values(byState).reduce((a:number,n:any)=>a+n,0),groups}}
+ // The ids among `ids` that match the filter, with the same row shape and sort key as page().
+ async function membership(f:PageFilter,group:string|undefined,ids:string[]){const g=groupOf(group),p:any[]=[],c=where(f,p);p.push(ids.filter(x=>typeof x==='string').slice(0,1000));c.push(`x.id=ANY($${p.length})`);
+  return (await raw.query(`${base} SELECT x.*,${g} AS g FROM x WHERE ${c.join(' AND ')}`,p)).map(listRow)}
+
  // Legacy delivery record <-> task row (§2 field mapping). The record stays whole in data for the delivery API.
  async function putDelivery(r:any){
   const exists=await one('SELECT id,state FROM task WHERE id=$1',[r.id]);
@@ -153,6 +187,6 @@ export function taskModel(raw:Raw,executions:Executions){
   question:questionAdapter('question'),
   'project-question':questionAdapter('project-question'),
  };
- return {adapters,create,update,get,list,transition,settle,depend,ask,answer,questions};
+ return {adapters,create,update,get,list,page,membership,transition,settle,depend,ask,answer,questions};
 }
 export type Tasks=ReturnType<typeof taskModel>;
