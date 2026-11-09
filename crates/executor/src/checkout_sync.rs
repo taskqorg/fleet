@@ -3,13 +3,13 @@
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
-fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    // Cleared env + hardened config (crate::git); ambient ssh agent/HOME credentials until W4 sets per-project connections.
+fn git(dir: &Path, access: &[(String, String)], args: &[&str]) -> Option<String> {
+    // Cleared env + hardened config (crate::git); credentials only from the project connection (W4).
     let mut c = crate::git();
-    for k in ["HOME", "SSH_AUTH_SOCK"] { if let Some(v) = std::env::var_os(k) { c.env(k, v); } }
+    if let Some(v) = std::env::var_os("HOME") { c.env("HOME", v); }
+    crate::git_access::apply(&mut c, access);
     #[cfg(test)] c.args(["-c", "protocol.file.allow=always"]);
-    let o = c.args(["-c", "core.sshCommand=ssh -o BatchMode=yes"]).arg("-C").arg(dir).args(args)
-        .env("GIT_TERMINAL_PROMPT", "0").output().ok()?;
+    let o = c.arg("-C").arg(dir).args(args).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_owned())
 }
 
@@ -28,11 +28,12 @@ fn allowed(dir: &str, roots: &[PathBuf], forbidden: &[&Path]) -> Option<PathBuf>
     Some(p)
 }
 
-fn sync(dir: &Path, sha: &str) -> Result<(), &'static str> {
+fn sync(dir: &Path, sha: &str, access: &[(String, String)]) -> Result<(), &'static str> {
+    let git = |args: &[&str]| git(dir, access, args);
     if !dir.join(".git").exists() { return Err("checkout-missing") }
-    if git(dir, &["status", "--porcelain"]).ok_or("status-failed")? != "" { return Err("checkout-dirty") }
-    git(dir, &["fetch", "--quiet", "origin"]).ok_or("fetch-failed")?;
-    git(dir, &["merge", "--ff-only", "--quiet", sha]).ok_or("not-fast-forward")?;
+    if git(&["status", "--porcelain"]).ok_or("status-failed")? != "" { return Err("checkout-dirty") }
+    git(&["fetch", "--quiet", "origin"]).ok_or("fetch-failed")?;
+    git(&["merge", "--ff-only", "--quiet", sha]).ok_or("not-fast-forward")?;
     Ok(())
 }
 
@@ -42,8 +43,11 @@ pub fn run(p: &Value, host: &str, roots: &[PathBuf], forbidden: &[&Path]) -> (Va
     let valid = sha.len() >= 7 && sha.bytes().all(|b| b.is_ascii_hexdigit());
     let results: Vec<Value> = p["project"]["environments"].as_array().into_iter().flatten()
         .filter(|e| e["hostId"] == host && (e["repo"].is_null() || p["repo"].is_null() || e["repo"] == p["repo"]))
-        .filter_map(|e| e["checkoutPath"].as_str())
-        .map(|dir| match if !valid { Err("invalid-sha") } else { allowed(dir, roots, forbidden).ok_or("checkout-denied").and_then(|d| sync(&d, sha)) } {
+        .filter_map(|e| e["checkoutPath"].as_str().map(|d| (d, &e["repo"])))
+        .map(|(dir, repo)| match if !valid { Err("invalid-sha") } else {
+            let access = crate::git_access::env(&p["project"], crate::git_access::repo(&p["project"], repo), crate::git_access::dir().as_deref());
+            allowed(dir, roots, forbidden).ok_or("checkout-denied").and_then(|d| sync(&d, sha, &access?))
+        } {
             Ok(()) => json!({"checkoutPath":dir,"status":"synced","sha":sha}),
             Err(r) => json!({"checkoutPath":dir,"status":"failed","reason":r}),
         }).collect();
@@ -70,13 +74,13 @@ mod tests {
         s(&d, &["clone", "-q", "origin.git", "dirty"]);
         std::fs::write(d.join("dirty/x"), "x").unwrap();
         c("two"); s(&up, &["push", "-q", "origin", "HEAD:main"]);
-        let sha = git(&up, &["rev-parse", "HEAD"]).unwrap();
+        let sha = git(&up, &[], &["rev-parse", "HEAD"]).unwrap();
         let env = |n: &str| json!({"hostId":"h","checkoutPath":d.join(n).to_str()});
         let (r, ok) = run(&json!({"sha":sha,"project":{"environments":[env("clean"), env("dirty"), {"hostId":"x","checkoutPath":"/none"}]}}), "h", &[d.canonicalize().unwrap()], &[]);
         assert_eq!(run(&json!({"sha":sha,"project":{"environments":[env("clean")]}}), "h", &[], &[]).0["checkouts"][0]["reason"], "checkout-denied");
         assert!(!ok);
         assert_eq!(r["checkouts"][0]["status"], "synced");
-        assert_eq!(git(&d.join("clean"), &["rev-parse", "HEAD"]).unwrap(), sha);
+        assert_eq!(git(&d.join("clean"), &[], &["rev-parse", "HEAD"]).unwrap(), sha);
         assert_eq!(r["checkouts"][1]["reason"], "checkout-dirty");
         assert_eq!(r["checkouts"].as_array().unwrap().len(), 2);
     }
