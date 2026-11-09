@@ -1,4 +1,4 @@
-import {LONG_OPERATIONS} from './store.js';
+import {LONG_OPERATIONS,READ_OPERATIONS} from './store.js';
 import {readFileSync,realpathSync,readdirSync,existsSync} from 'node:fs';
 import {resolve,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -6,7 +6,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import type {FastifyInstance} from 'fastify';
 import {projectUi} from './project-ui.js';
-type Store={all:(kind:string,filter?:object,omit?:string[])=>Promise<any[]>,get:(id:string,kind:string)=>Promise<any>,put:(kind:string,value:any)=>Promise<unknown>,atomic:<T>(fn:()=>Promise<T>|T)=>Promise<T>};
+type Store={all:(kind:string,filter?:object,omit?:string[])=>Promise<any[]>,get:(id:string,kind:string)=>Promise<any>,put:(kind:string,value:any)=>Promise<unknown>,atomic:<T>(fn:()=>Promise<T>|T)=>Promise<T>,read:<T>(fn:()=>Promise<T>|T)=>Promise<T>};
 const digest=(v:any)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const fail=(statusCode:number,message:string):never=>{throw Object.assign(Error(message),{statusCode})};
 function pipe(connection:string|undefined,run:string,args:any):Promise<any>{
@@ -35,7 +35,7 @@ export function projectSettings(p:any){
  return {settings:out,unknownKeys};
 }
 export function registerProjects(app:FastifyInstance,store:Store,config:{directory:string,pipeConnectionFile?:string,proxy?:boolean,searchHostId?:string}){
- const {all,get,put,atomic}=store;
+ const {all,get,put,atomic}=store,snapshot=store.read;
  const read=(path:string)=>JSON.parse(readFileSync(path,'utf8'));
  const ids=()=>readdirSync(resolve(config.directory,'projects')).filter(n=>existsSync(resolve(config.directory,'projects',n,'project.json'))).sort();
  const project=(id:string)=>{if(typeof id!=='string'||!ids().includes(id))fail(404,'Unknown project');const root=resolve(config.directory,'projects',id),p=read(resolve(root,'project.json'));if(p.id!==id||!Array.isArray(p.contextFiles))fail(500,'Invalid project definition');return {...p,...projectSettings(p),context:p.contextFiles.map((name:any)=>{if(typeof name!=='string'||name.includes('..')||name.startsWith('/'))fail(500,'Invalid project context path');const path=realpathSync(resolve(root,name));if(!path.startsWith(realpathSync(root)+sep))fail(500,'Project context escapes repository');const text=readFileSync(path,'utf8');return {path:name,text,sha256:digest(text)}})}};
@@ -74,7 +74,7 @@ export function registerProjects(app:FastifyInstance,store:Store,config:{directo
  app.get('/api/projects/:id/runs',async(req:any)=>(await operations.pipeline_history({projectId:req.params.id})));
  app.post('/api/pipeline-runs',async(req:any)=>(await operations.pipeline_run(req.body)));
  app.get('/api/pipeline-runs/:id',async(req:any)=>(await operations.pipeline_get({runId:req.params.id})));
- app.post('/api/project-operations/:name',async(req:any)=>{const op=operations[req.params.name];if(!op)fail(404,'Unknown operation');return LONG_OPERATIONS.has(req.params.name)?op(req.body):atomic(()=>op(req.body))});
- app.post('/api/project-tools',async(req:any)=>{const q=req.body;if(q?.method==='initialize')return {jsonrpc:'2.0',id:q.id,result:{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fleet-projects',version:'1'}}};if(q?.method==='tools/list')return {jsonrpc:'2.0',id:q.id,result:{tools:Object.keys(operations).map(name=>({name,description:'Fleet shared '+name,inputSchema:{type:'object'}}))}};if(q?.method!=='tools/call'||!operations[q.params?.name])fail(400,'Unknown project operation');return {jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text:JSON.stringify(await (LONG_OPERATIONS.has(q.params.name)?operations[q.params.name](q.params.arguments??{}):atomic(()=>operations[q.params.name](q.params.arguments??{}))))}]}}});
+ app.post('/api/project-operations/:name',async(req:any)=>{const op=operations[req.params.name];if(!op)fail(404,'Unknown operation');return READ_OPERATIONS.has(req.params.name)?snapshot(()=>op(req.body)):LONG_OPERATIONS.has(req.params.name)?op(req.body):atomic(()=>op(req.body))});
+ app.post('/api/project-tools',async(req:any)=>{const q=req.body;if(q?.method==='initialize')return {jsonrpc:'2.0',id:q.id,result:{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fleet-projects',version:'1'}}};if(q?.method==='tools/list')return {jsonrpc:'2.0',id:q.id,result:{tools:Object.keys(operations).map(name=>({name,description:'Fleet shared '+name,inputSchema:{type:'object'}}))}};if(q?.method!=='tools/call'||!operations[q.params?.name])fail(400,'Unknown project operation');return {jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text:JSON.stringify(await (READ_OPERATIONS.has(q.params.name)?snapshot(()=>operations[q.params.name](q.params.arguments??{})):LONG_OPERATIONS.has(q.params.name)?operations[q.params.name](q.params.arguments??{}):atomic(()=>operations[q.params.name](q.params.arguments??{}))))}]}}});
  return operations;
 }

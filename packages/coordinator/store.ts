@@ -3,22 +3,28 @@ import {readFileSync} from 'node:fs';
 import pg from 'pg';
 
 type Query=(sql:string,params?:any[])=>Promise<{rows:any[]}>;
-type Backend={query:Query,exec:(sql:string)=>Promise<unknown>,tx:<T>(fn:(q:Query)=>Promise<T>,lock?:string)=>Promise<T>,close:()=>Promise<void>};
+export type Mode='read'|'write';
+type Backend={query:Query,exec:(sql:string)=>Promise<unknown>,tx:<T>(fn:(q:Query)=>Promise<T>,mode:Mode)=>Promise<T>,close:()=>Promise<void>};
 export type Store=ReturnType<typeof createStore>;
+// read: one consistent snapshot, never blocks writers and never fails to serialize. write: each statement sees the latest
+// committed data; the scope lock (below) makes writers of one scope run one at a time.
+const BEGIN={read:'BEGIN READ ONLY ISOLATION LEVEL REPEATABLE READ',write:'BEGIN ISOLATION LEVEL READ COMMITTED'};
 
 // Postgres when the URL is postgres:// or postgresql://, otherwise an embedded PGlite data directory (tests; 'memory://' for no files).
 const backend=(url:string):Backend=>{
  if(/^postgres(ql)?:\/\//.test(url)){
   const pool=new pg.Pool({connectionString:url});
-  return {query:(s,p)=>pool.query(s,p),exec:s=>pool.query(s),close:()=>pool.end(),tx:async(fn,lock)=>{const c=await pool.connect();let broken=false;
-   // The lock is a session lock taken before BEGIN, so the SERIALIZABLE snapshot starts after the wait.
-   try{if(lock)await c.query('SELECT pg_advisory_lock(hashtext($1))',[lock]);try{await c.query('BEGIN ISOLATION LEVEL SERIALIZABLE');const r=await fn((s,p)=>c.query(s,p));await c.query('COMMIT');return r}catch(e){await c.query('ROLLBACK').catch(()=>{});throw e}
-    finally{if(lock)await c.query('SELECT pg_advisory_unlock(hashtext($1))',[lock]).catch(()=>{broken=true})}}finally{c.release(broken)}}};
+  return {query:(s,p)=>pool.query(s,p),exec:s=>pool.query(s),close:()=>pool.end(),tx:async(fn,mode)=>{const c=await pool.connect();
+   try{await c.query(BEGIN[mode]);const r=await fn((s,p)=>c.query(s,p));await c.query('COMMIT');return r}catch(e){await c.query('ROLLBACK').catch(()=>{});throw e}finally{c.release()}}};
  }
  let db:any;const ready=import('@electric-sql/pglite').then(m=>db=new m.PGlite(url));
- return {query:async(s,p)=>(await ready,db.query(s,p)),exec:async s=>(await ready,db.exec(s)),close:async()=>{await ready;await db.close()},tx:async fn=>(await ready,db.transaction(async(t:any)=>{await t.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');return fn((s,p)=>t.query(s,p))}))};
+ return {query:async(s,p)=>(await ready,db.query(s,p)),exec:async s=>(await ready,db.exec(s)),close:async()=>{await ready;await db.close()},
+  tx:async(fn,mode)=>(await ready,db.transaction(async(t:any)=>{await t.query(BEGIN[mode].replace('BEGIN','SET TRANSACTION'));return fn((s,p)=>t.query(s,p))}))};
 };
 
+// Scope keys. Lock order: GLOBAL before any execution scope; an execution-scope writer never takes GLOBAL.
+export const GLOBAL='fleet:write';
+export const executionScope=(id:string)=>'execution:'+id;
 const retryable=(e:any)=>e?.code==='40001'||e?.code==='40P01';
 // Short randomized backoff before a retry, growing with the attempt (5 ms .. 200 ms).
 const backoff=(attempt:number)=>new Promise(r=>setTimeout(r,Math.random()*Math.min(200,5*2**attempt)));
@@ -30,41 +36,52 @@ export function createStore(url:string){
  const db=backend(url);
  // The current transaction follows the async call chain, so get/put/all inside tx(fn) join it without passing a client around.
  type Frame={sp:string|null,parent:Frame|null};
- // doomed: the first serialization failure seen in this transaction. Later queries rethrow it and the transaction never commits,
- // even when handler code caught the error (Postgres then answers 25P02 to everything until rollback).
- type Tx={q:Query,done:boolean,doomed?:unknown};
+ // doomed: the first retryable failure (deadlock, or a serialization failure from a concurrent update) seen in this transaction.
+ // Later queries rethrow it and the transaction never commits, even when handler code caught the error.
+ // held: scope locks this transaction holds; release runs when it ends.
+ type Tx={q:Query,done:boolean,mode:Mode,doomed?:unknown,held:Set<string>,release:(()=>void)[]};
  const current=new AsyncLocalStorage<{t:Tx,frame?:Frame}>();
  // Query counts by SQL text, for profiling and the poll query budget test.
- const stats=new Map<string,number>();
- const q:Query=async(s,p)=>{stats.set(s,(stats.get(s)??0)+1);const c=current.getStore(),t=c?.t;if(!t||t.done)return db.query(s,p);
+ const stats=new Map<string,number>();const count=(k:string)=>stats.set(k,(stats.get(k)??0)+1);
+ let savepoints=0;
+ const q:Query=async(s,p)=>{count(s);const c=current.getStore(),t=c?.t;if(!t||t.done)return db.query(s,p);
   // A savepoint is opened lazily, just before the first write inside a nested tx: reads never pay for one, and the state
   // before the first write equals the state at the start of the nested call. Outer frames get theirs first.
-  if(c!.frame&&!/^\s*SELECT/i.test(s)){const chain:Frame[]=[];for(let f:Frame|null=c!.frame;f&&!f.sp;f=f.parent)chain.unshift(f);for(const f of chain){f.sp='s'+(++savepoints);stats.set('SAVEPOINT',(stats.get('SAVEPOINT')??0)+1);await t.q('SAVEPOINT '+f.sp)}}
+  if(c!.frame&&!/^\s*SELECT/i.test(s)){const chain:Frame[]=[];for(let f:Frame|null=c!.frame;f&&!f.sp;f=f.parent)chain.unshift(f);for(const f of chain){f.sp='s'+(++savepoints);count('SAVEPOINT');await t.q('SAVEPOINT '+f.sp)}}
   return t.q(s,p)};
- // SERIALIZABLE; fn runs again after a serialization failure, so it must be safe to repeat.
- // tx rolls back when fn throws. atomic commits what fn wrote before it threw: the isolation of a transaction with the
- // write-as-you-go behaviour of a handler that ran outside a transaction on synchronous SQLite.
- // A nested tx undoes its own writes on error, as nested better-sqlite3 transactions did (savepoint opened on first write); atomic keeps them.
- // ponytail: retries until it commits; serialization failures clear once the competing transaction ends.
- let savepoints=0;
- const run=async<T>(fn:()=>Promise<T>|T,commitOnError:boolean,lock?:string):Promise<T>=>{
+ // Scope locks. A writer holds the lock of its scope for its whole transaction: GLOBAL by default, or one execution's scope for
+ // host ingest. Inside this process a queue per key orders waiters before they take a pool connection; the transaction then takes
+ // pg_advisory_xact_lock on the same key, which also orders writers in other processes (the migration tool, a second coordinator).
+ const queues=new Map<string,Promise<void>>();
+ const enqueue=async(key:string)=>{const prev=queues.get(key)??Promise.resolve();let release!:()=>void;const mine=new Promise<void>(r=>release=r),tail=prev.then(()=>mine);queues.set(key,tail);
+  await prev;return ()=>{release();if(queues.get(key)===tail)queues.delete(key)}};
+ const lockIn=async(t:Tx,key:string)=>{if(t.held.has(key))return;t.held.add(key);t.release.push(await enqueue(key));count('LOCK '+key.split(':')[0]);await t.q('SELECT pg_advisory_xact_lock(hashtext($1))',[key])};
+ // tx rolls back when fn throws. atomic commits what fn wrote before it threw: a handler on synchronous SQLite kept every write
+ // it made before an error. A nested call joins the outer transaction (its mode and locks); a nested tx undoes its own writes on
+ // error through a savepoint opened on its first write. Deadlocks (40P01) are retried with a short randomized backoff.
+ const run=async<T>(fn:()=>Promise<T>|T,mode:Mode,commitOnError:boolean,lock?:string):Promise<T>=>{
   const c0=current.getStore(),t0=c0?.t;
-  if(t0&&!t0.done){if(commitOnError)return fn();const frame:Frame={sp:null,parent:c0!.frame??null};
+  if(t0&&!t0.done){if(mode==='write'&&t0.mode==='read')throw Error('Write transaction requested inside a read-only transaction');
+   if(lock)await lockIn(t0,lock);if(commitOnError)return fn();const frame:Frame={sp:null,parent:c0!.frame??null};
    try{const v=await current.run({t:t0,frame},fn);if(frame.sp)await t0.q('RELEASE SAVEPOINT '+frame.sp);return v}catch(e){if(t0.doomed)throw t0.doomed;if(frame.sp)await t0.q('ROLLBACK TO SAVEPOINT '+frame.sp);throw e}}
-  for(let attempt=0;;attempt++){const t:Tx={q:null as any as Query,done:false};
+  for(let attempt=0;;attempt++){const t:Tx={q:null as any as Query,done:false,mode,held:new Set(),release:[]};
    try{const out:{v?:T,e?:unknown}=await db.tx(async tq=>{
      t.q=async(s,p)=>{if(t.doomed)throw t.doomed;try{return await tq(s,p)}catch(e){if(retryable(e))t.doomed=e;throw t.doomed??e}};
-     try{const v=await current.run({t},fn);if(t.doomed)throw t.doomed;return {v}}
-     catch(e){if(t.doomed)throw t.doomed;if(commitOnError&&!retryable(e))return {e};throw e}finally{t.done=true}},lock);
+     try{if(mode==='write')await lockIn(t,lock??GLOBAL);const v=await current.run({t},fn);if(t.doomed)throw t.doomed;return {v}}
+     catch(e){if(t.doomed)throw t.doomed;if(commitOnError&&!retryable(e))return {e};throw e}finally{t.done=true}},mode);
     if('e' in out)throw out.e;return out.v as T}
-   catch(e){if(!retryable(e))throw e;stats.set('RETRY',(stats.get('RETRY')??0)+1);await backoff(attempt)}}
+   catch(e){if(!retryable(e))throw e;count('RETRY');await backoff(attempt)}
+   finally{for(const r of t.release.reverse())r()}}
  };
+ const put=async(kind:string,v:any):Promise<void>=>{if(!inWrite())return run(()=>put(kind,v),'write',false);await q('INSERT INTO document(kind,id,data,project_id) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET data=excluded.data,project_id=excluded.project_id,updated_at=now() WHERE document.kind=excluded.kind',[kind,v.id,JSON.stringify(v),typeof v.projectId==='string'?v.projectId:null])};
+ const inWrite=()=>{const t=current.getStore()?.t;return !!t&&!t.done};
  return {
   async get(id:string,kind:string):Promise<any>{const r=(await q('SELECT data FROM document WHERE id=$1 AND kind=$2',[id,kind])).rows[0];return r?r.data:notFound()},
   // Several documents of one kind in one query, keyed by id; missing ids are absent (callers fall back to get for its 404).
   async many(ids:string[],kind:string):Promise<Map<string,any>>{const rows=(await q('SELECT data FROM document WHERE kind=$1 AND id=ANY($2)',[kind,[...new Set(ids.filter(x=>typeof x==='string'))]])).rows;return new Map(rows.map(r=>[r.data.id,r.data]))},
   // An id that already exists under another kind is left unchanged, as with the SQLite records table.
-  async put(kind:string,v:any):Promise<void>{await q('INSERT INTO document(kind,id,data,project_id) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET data=excluded.data,project_id=excluded.project_id,updated_at=now() WHERE document.kind=excluded.kind',[kind,v.id,JSON.stringify(v),typeof v.projectId==='string'?v.projectId:null])},
+  // Outside a transaction a put is a one-statement global write, so it never lands inside another writer's transaction.
+  put,
   // Insertion order (seq) as SQLite rowid gave it; filter is a jsonb containment match ({} matches all).
   // omit drops top-level keys in SQL, for reads that never use them (artifact bodies).
   // A filter with id, executionId or sessionId reads through btree indexes only (primary key, migration 4); the other keys are
@@ -76,23 +93,29 @@ export function createStore(url:string){
    if(omit)params.push(omit);
    const rows=(await q(`SELECT data${omit?` - $${params.length}::text[]`:''} AS data FROM document WHERE ${where.join(' AND ')} ORDER BY seq`,params)).rows.map(r=>r.data);
    return inJs?rows.filter(d=>contains(d,rest)):rows},
-  // lock: serialize transactions on one key (e.g. one execution's host traffic); ignored inside an outer transaction and on PGlite.
-  tx:<T>(fn:()=>Promise<T>|T,lock?:string)=>run(fn,false,lock),
-  atomic:<T>(fn:()=>Promise<T>|T,lock?:string)=>run(fn,true,lock),
+  // Write transactions: lock is a scope key (default GLOBAL); see the store model in docs/designs/fleet-data-foundation.md.
+  tx:<T>(fn:()=>Promise<T>|T,lock?:string)=>run(fn,'write',false,lock),
+  atomic:<T>(fn:()=>Promise<T>|T,lock?:string)=>run(fn,'write',true,lock),
+  // Read-only snapshot for handlers that only read; a write inside it fails.
+  read:<T>(fn:()=>Promise<T>|T)=>run(fn,'read',false),
+  // Takes one more scope inside the current write transaction (for example GLOBAL writer touching one execution's ingest scope).
+  lock:async(key:string)=>{const t=current.getStore()?.t;if(!t||t.done||t.mode!=='write')throw Error('lock() needs a write transaction');await lockIn(t,key)},
   query:(sql:string,params:any[]=[])=>q(sql,params).then(r=>r.rows),
   async migrate(){
    await db.exec('CREATE TABLE IF NOT EXISTS schema_migration(version int PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT now())');
    const done=new Set((await db.query('SELECT version FROM schema_migration')).rows.map(r=>r.version));
    const file=readFileSync(new URL('./db/schema.sql',import.meta.url),'utf8');
    for(const part of file.split(/^-- migration (?=\d+)/m).slice(1)){const version=Number(part.match(/^\d+/)![0]);if(done.has(version))continue;
-    await db.tx(async tq=>{for(const s of part.replace(/^\d+.*\n/,'').split(/;\s*$/m).map(x=>x.trim()).filter(Boolean))await tq(s);await tq('INSERT INTO schema_migration(version) VALUES($1)',[version])});}
+    await db.tx(async tq=>{await tq('SELECT pg_advisory_xact_lock(hashtext($1))',[GLOBAL]);for(const s of part.replace(/^\d+.*\n/,'').split(/;\s*$/m).map(x=>x.trim()).filter(Boolean))await tq(s);await tq('INSERT INTO schema_migration(version) VALUES($1)',[version])},'write');}
   },
   stats,
   close:()=>db.close(),
  };
 }
-export type Docs=Pick<Store,'get'|'put'|'all'|'tx'|'atomic'>;
+export type Docs=Pick<Store,'get'|'put'|'all'|'tx'|'atomic'|'read'|'lock'>;
 // Operations that wait on a pipeline run; they open short transactions around their own synchronous steps.
+// Operations that only read: they run in a read-only snapshot (a write inside one fails loudly).
+export const READ_OPERATIONS=new Set(['question_history','project_context','catalogue','pipeline_get','pipeline_history','project_list','account_list','account_hosts','account_login_handoff','transport_inspect','session_handoffs','queue_list','questions','execution_status','session_get','execution_differences','execution_events','profiles_list']);
 export const LONG_OPERATIONS=new Set(['pipeline_run','direct_search','delivery_generate']);
 // Sequential async forms of the array methods, for callbacks that read the store; order of reads and writes stays as in the sync code.
 export const every=async<T>(xs:T[],f:(x:T)=>unknown)=>{for(const x of xs)if(!await f(x))return false;return true};
