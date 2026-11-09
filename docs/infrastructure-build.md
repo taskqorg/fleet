@@ -85,3 +85,28 @@ Observed by readback after each step. Secret values stay in host files under `/h
 | 7. Backup | `fleet-backup.sh` root-owned in `/home/fleet/runtime`; timer enabled (03:30 UTC). First run wrote `clickhouse` and `garage` under `/backup/fleet/<day>/`; no service restarts. Restore proof: ClickHouse probe table backed up and restored (1000 rows, sums match); Garage mirror of a 3 MB object matches by SHA-256. |
 
 Not done yet: a Fleet service token for machine access to the store tunnel (needed in Phase 3), the macOS store (step 8), the Windows store (Q2), and coordinator wiring (item 5).
+
+## Mac and Windows stores, and the cross-host proof, 2026-11-09
+
+| Host | Store | Tunnel |
+|---|---|---|
+| Mac (`owner-mac`, user `kirs`) | Homebrew `garage` 2.5.0 under launchd `com.ufobe.fleet-garage`; data in `~/.local/share/fleet/garage`; zone `mac`, starting capacity 200 GB; bucket `fleet`, keys `fleet-coordinator` (rw) and `fleet-backup` (ro). 1 MiB put and get match. | `fleet-store-mac.ufobe.com`, launchd `com.ufobe.fleet-cloudflared` (`cloudflared` 2026.10.4, `--token-file`), 4 connections, unauthenticated 302. |
+| Windows (`desktop`, WSL2 Ubuntu, user `alexk`) | `garage` 2.5.0 static binary (SHA-256 equals the binary in the image pinned on PDS18) as a systemd user unit in WSL; zone `windows`, starting capacity 60 GB; bucket and keys as above. | `fleet-store-windows.ufobe.com`, `cloudflared` 2026.10.7 user unit in WSL, 4 connections, unauthenticated 302. |
+
+Access: each store app allows group `fleet-people` and, for machines, the service token `fleet-machines` (`non_identity`). The token is in `~/.config/fleet/cf-access-machine.env` (0600) on every host. Store keys for the coordinator role are in `/home/fleet/.config/fleet/stores/<host>.key` on PDS18 (0600). The Windows key was copied directly from WSL to PDS18. A Mac hook blocks relaying data between servers through the Mac.
+
+Cross-host proof (PDS18 acting as coordinator, presigning for every store):
+
+1. An 80 MiB object was uploaded from PDS18 to the Windows store through its tunnel, as a multipart upload in 3 parts of 32 MiB. It took 19.4 s.
+2. The Mac, acting as the target executor, downloaded it from the Windows tunnel (2.3 s). It then uploaded the 3 parts to its own store on `127.0.0.1` with presigned part URLs (0.5 s).
+3. PDS18 read the Mac copy through the Mac tunnel (5.8 s). The SHA-256 matches the original.
+
+The test objects were deleted afterwards.
+
+Findings to carry into Phase 3:
+
+* Cloudflare Access removes the `CF-Access-Client-*` headers before the request reaches the origin. These headers must be added after S3 signing and must never be signed. Otherwise Garage returns `signed header cf-access-client-id is not present`.
+* Control-plane calls to another host's store (create, complete or abort a multipart upload, `HEAD`, delete) go through that store's tunnel. Presigned part URLs can target the local `127.0.0.1` endpoint of the executor that uses them.
+* Store credentials must reach the coordinator directly from the store's host. In the design this happens when the executor registers its store through the outbox.
+* On this Mac, Python from python.org has no CA bundle, so use `curl` or the system trust for HTTPS.
+* The Windows store runs only while the user is logged in: WSL is started by the `wsl-keepalive` logon task. Its real capacity is bounded by free space on `C:` (73 GB), because the WSL disk image lives there.
