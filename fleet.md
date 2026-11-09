@@ -208,3 +208,5 @@ Routine work advances automatically. People resolve substantive decisions and ex
 - [Experiments](docs/experiments.md): reproduce recorded work, compare changes and apply improvements to products.
 - [Interface workflows](docs/interfaces.md): operator and architect activities and contextual actions.
 - [Capabilities and pipelines](docs/capabilities-and-pipelines.md): callable outcomes, alternative methods and system-executed workflows.
+
+The connected delivery prototype uses repository project context, shared catalogue/search operations, durable operator decisions, managed account metadata and tracked native/program workers; [the slice contract](docs/project-pipeline-prototype.md) defines its supported subset. Source integration, task completion and publication remain separate observations.

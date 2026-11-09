@@ -29,3 +29,6 @@ The [architecture baseline and first working slice](delivery-strategy.md#archite
 - [Prototype gap review](prototype-gap-review.md) and [simplification review](architecture-review.md): dated observations; canonical detail takes precedence over their snapshots.
 - [Session handoff](session-handoff.md): historical conversation context, not current work instructions.
 - [Character storyboard](prototypes/csgo-workflow.html): unapproved synthetic navigation study; not the accepted interaction design.
+
+- [Connected projects, catalogue and pipeline prototype](project-pipeline-prototype.md)
+- [Architecture coverage and evidence](architecture-coverage.md)

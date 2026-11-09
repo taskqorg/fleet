@@ -1,0 +1,7 @@
+{
+  "id": "baseline",
+  "model": "gpt-6.1-sol",
+  "effort": "low",
+  "instructions": "Create the requested files in output/. Do not use subagents.",
+  "mcpServers": []
+}

@@ -1,0 +1,11 @@
+[package]
+name = "fleet-executor"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+serde_json = "1"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+ureq = { version = "2.12", features = ["json"] }
+base64 = "0.22"
+libc = "0.2"
+sha2 = "0.10"

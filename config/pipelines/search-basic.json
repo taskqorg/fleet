@@ -1,0 +1,1 @@
+{"version":1,"id":"search-basic","steps":[{"id":"search","tool":"web_search","connection":"pipe-read","arguments":{"query":"$input.query","max_results":3,"search_depth":"basic"}}]}

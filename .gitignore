@@ -1,0 +1,14 @@
+node_modules/
+dist/
+target/
+.env
+.env.*
+!.env.example
+var/
+runtime/
+.private/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+__pycache__/
