@@ -1,1 +1,25 @@
-{"capability":"web-research","sharedDefault":"search-basic","methods":[{"id":"search-basic","name":"Basic source discovery","scope":"shared","pipeline":"search-basic.json"},{"id":"hello-search","name":"Hello World source discovery","scope":"hello-world","pipeline":"hello-search.json"}]}
+{
+  "capability": "web-research",
+  "sharedDefault": "search-basic",
+  "methods": [
+    {
+      "id": "search-basic",
+      "name": "Basic source discovery",
+      "scope": "shared",
+      "pipeline": "search-basic.json"
+    },
+    {
+      "id": "hello-search",
+      "name": "Hello World source discovery",
+      "scope": "hello-world",
+      "pipeline": "hello-search.json"
+    },
+    {
+      "id": "hello-guided",
+      "name": "Guided Hello World delivery",
+      "scope": "hello-world",
+      "pipeline": "hello-search.json",
+      "agentProfile": "design-rules"
+    }
+  ]
+}

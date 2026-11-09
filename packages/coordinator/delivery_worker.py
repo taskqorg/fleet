@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Scoped Fleet static-site program worker. Host destinations never come from model input."""
-import base64, hashlib, json, os, pathlib, re, shutil, ssl, subprocess, sys, time, urllib.request
+import base64, hashlib, json, os, pathlib, pwd, re, shutil, ssl, subprocess, sys, time, urllib.request
 
 def run(argv, cwd=None):
     result=subprocess.run(argv,cwd=cwd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=90)
@@ -44,6 +44,7 @@ def main():
                     harness=p['harness']
                     if harness=='claude' and sys.platform not in ['darwin','win32']:raise RuntimeError('Claude placement denied')
                     env={'PATH':os.environ['PATH'],'HOME':binding.get('credentialHome') if binding.get('credentialAuthority')=='native-current' else binding['home']}
+                    if harness=='claude':env.update(USER=pwd.getpwuid(os.geteuid()).pw_name,LOGNAME=pwd.getpwuid(os.geteuid()).pw_name)
                     env[{'codex':'CODEX_HOME','claude':'CLAUDE_CONFIG_DIR','antigravity':'GEMINI_HOME'}[harness]]=binding['nativeHome']
                     args=['login','status'] if harness=='codex' else ['auth','status','--json'] if harness=='claude' else ['models']
                     observed=subprocess.run([binding['executable'],*args],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)

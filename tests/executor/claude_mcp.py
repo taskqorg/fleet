@@ -9,6 +9,7 @@ args=sys.argv[1:];get=lambda k:args[args.index(k)+1]
 assert get('--permission-mode')=='dontAsk' and '--strict-mcp-config' in args
 assert get('--setting-sources')=='' and get('--tools')=='Read'
 assert 'FLEET_HOST_TOKEN' not in os.environ and 'ANTHROPIC_API_KEY' not in os.environ
+assert os.environ.get('USER') and os.environ.get('LOGNAME')==os.environ['USER']
 assert get('--system-prompt')=='explicit system'
 servers=json.loads(get('--mcp-config'))['mcpServers'];assert set(servers)=={'design-rules','fleet'}
 allowed=get('--allowedTools').split(',');assert set(allowed)=={'Read','mcp__design-rules__get_design_rules','mcp__fleet__request_child'}

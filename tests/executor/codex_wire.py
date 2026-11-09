@@ -60,6 +60,7 @@ try:
   else:assert 'thread/inject_items' in methods
   assert methods.count('turn/start')==(0 if letter=='C' else 1)
   if letter=='B':assert methods.index('thread/inject_items')<methods.index('turn/start')
+  closed=[e['data'] for route,b in received if route.endswith('/events') and b['executionId']==letter for e in b['events'] if e['type']=='process.closed'];assert closed and closed[-1]['stdoutClosed'] is True and closed[-1]['exitCode']==0
   metadata=[e['data'] for route,b in received if route.endswith('/events') and b['executionId']==letter for e in b['events'] if e['type']=='protocol.write'];assert metadata
   for m in metadata:assert 'params' not in m and 'marker ' not in json.dumps(m) and 'sha256' in m
  print(json.dumps({'result':'passed','root':str(root),'checks':['actual A/B emitted bytes','private persisted wire equals fake read bytes','developer injection before resumed turn','task input separate','refusal blocks turn without replay','safe projected metadata']}))

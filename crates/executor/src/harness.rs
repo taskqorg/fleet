@@ -206,6 +206,10 @@ fn command_registry(
     let text = p["text"].as_str().ok_or(fail("missing text"))?;
     let instructions = p["instructions"].as_str().unwrap_or("");
     if h == "claude" {
+        let passwd = unsafe { libc::getpwuid(libc::geteuid()) };
+        if passwd.is_null() { return Err(fail("host user metadata unavailable")); }
+        let user = unsafe { std::ffi::CStr::from_ptr((*passwd).pw_name) }.to_str().map_err(|_| fail("invalid host user metadata"))?;
+        c.env("USER", user).env("LOGNAME", user);
         if let Some(credential_home) = credential_home { c.env("HOME", credential_home); }
         c.env("CLAUDE_CONFIG_DIR", nh).args([
             "--disable-slash-commands",
