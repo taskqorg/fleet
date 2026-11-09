@@ -68,3 +68,20 @@ Install order. Each step passes its readback before the next starts.
    - Rollback: `launchctl bootout` both agents, remove plists, delete tunnel and route.
 
 Coordinator wiring (`fleet.service.candidate` After/Wants, `coordinator.env` URLs) is Phase 0 item 5 and not in this candidate.
+
+## Phase 0 installed on PDS18, 2026-11-09
+
+Observed by readback after each step. Secret values stay in host files under `/home/fleet/.config/fleet/`, mode 0600.
+
+| Step | Result |
+|---|---|
+| 0. `rclone` | Installed from Ubuntu (`rclone v1.60.1-DEV`), declared in tight `packages.txt` (MR 19). |
+| 1. Postgres | `pg_ident.conf` map `fleet` and `pg_hba.conf` line `local fleet fleet,fleet_app peer map=fleet` added before the general local line (backups `*.pre-fleet-<timestamp>`), reload. Unix user `fleet` connects as `fleet` and `fleet_app`; database `fleet` owned by `fleet`; neither role is superuser or BYPASSRLS; `hermes` is refused. |
+| 2. Directories | Data, config, work and `/backup/fleet` directories owned by `fleet`, 0700. |
+| 3. ClickHouse | Image digest matches the pin; `fleet-clickhouse.service` active; listens on `127.0.0.1:9480` only; `select version()` returns 26.8.36.3; data owned by `fleet`; NRestarts 0. |
+| 4. Garage | Image digest matches the pin; `fleet-garage.service` active; 9490-9492 on `127.0.0.1` only; one node in zone `pds18`, starting capacity 200 GB (an operator setting, to be managed through Fleet); bucket `fleet`; key `fleet-coordinator` read-write, key `fleet-backup` read-only (write refused); 1 MiB put, get and delete with matching SHA-256. |
+| 5. Tunnel | `cloudflared` 2026.10.7 in `/home/fleet/runtime` (root-owned, SHA-256 matches the release notes). Remote-managed tunnel `fleet-store-pds18` (status healthy, 4 connections), ingress `fleet-store-pds18.ufobe.com` to `http://127.0.0.1:9490`, proxied CNAME. Access app `Fleet store pds18` allows group `fleet-people` (include copied from the Fleet owner policy). Unauthenticated request returns 302 to Access login. No new public listener; cloudflared metrics on `127.0.0.1:20241`. The unit runs with `--token-file`; the token passed once through the operator session log. |
+| 6. Launch helper | `fleet-launch@.service` and `50-fleet-launch.rules` installed; `systemd-analyze verify` clean. Probe user (uid 2000): run as that user in `/srv/fleet/areas/<user>/<execution>` (0700); same execution id again refused (area exists); `hermes:` instance and `caddy.service` denied by polkit; symlinked run file refused. Probe user and areas removed. |
+| 7. Backup | `fleet-backup.sh` root-owned in `/home/fleet/runtime`; timer enabled (03:30 UTC). First run wrote `clickhouse` and `garage` under `/backup/fleet/<day>/`; no service restarts. Restore proof: ClickHouse probe table backed up and restored (1000 rows, sums match); Garage mirror of a 3 MB object matches by SHA-256. |
+
+Not done yet: a Fleet service token for machine access to the store tunnel (needed in Phase 3), the macOS store (step 8), the Windows store (Q2), and coordinator wiring (item 5).
