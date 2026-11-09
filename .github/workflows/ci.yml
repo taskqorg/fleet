@@ -60,6 +60,33 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run check:filter
+  # Every migration and the task-derived tests on real PostgreSQL 18 with the PDS18 roles (tests/coordinator/pg-test.ts):
+  # migrations as the owner fleet (no superuser, no BYPASSRLS), the store as fleet_app. PGlite runs as a superuser and
+  # cannot catch privilege errors (the 426d1e2 deploy failed on one).
+  postgres-roles:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsx --test tests/coordinator/task-derived.test.ts
+        env:
+          FLEET_TEST_PG: postgresql://postgres:postgres@localhost:5432
   comment:
     needs: build-test-design
     if: always()

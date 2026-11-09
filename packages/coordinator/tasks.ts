@@ -165,7 +165,7 @@ export function taskModel(raw:Raw,executions:Executions){
  // Drift check: task_derived_drift() recomputes values with all projects visible (no false drift for a scoped caller) and
  // returns only tasks the caller may see; checked counts the same tasks (row-level security on task, same rule).
  async function derivedDrift(){const [{n}]=await raw.query('SELECT count(*)::int AS n FROM task');
-  const drifted=(await raw.query("SELECT task_id,stored,expected FROM task_derived_drift(current_setting('fleet.project_ids',true))")).map((r:any)=>({taskId:r.task_id,stored:r.stored,expected:r.expected}));
+  const drifted=(await raw.query("SELECT task_id,stored,expected FROM task_derived_drift()")).map((r:any)=>({taskId:r.task_id,stored:r.stored,expected:r.expected}));
   return {checked:Number(n),drifted}}
 
  // Legacy delivery record <-> task row (§2 field mapping). The record stays whole in data for the delivery API.

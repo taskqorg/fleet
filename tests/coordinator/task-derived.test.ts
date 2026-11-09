@@ -1,8 +1,9 @@
 // Derived task values (docs/designs/fleet-view-urls-and-list-path.md §3, migration 10): triggers keep task_derived current on
 // every write path, emit task-kind change rows, follow project moves, and the drift check agrees.
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {createStore} from '../../packages/coordinator/store.js';
-const fresh=async()=>{const s=createStore('memory://');await s.migrate();return s};
+import {freshDb} from './pg-test.js';
+// PGlite by default; with FLEET_TEST_PG the same tests run on PostgreSQL with the PDS18 roles (CI job postgres-roles).
+const fresh=async()=>(await freshDb()).s;
 const derived=async(s:any,id:string)=>{const [r]=await s.query('SELECT project_id,agent,host,started_at,open_questions FROM task_derived WHERE task_id=$1',[id]);
  return r?{projectId:r.project_id,agent:r.agent,host:r.host,started:r.started_at!==null,open:Number(r.open_questions)}:null};
 const noDrift=async(s:any)=>assert.deepEqual((await s.read(()=>s.tasks.derivedDrift())).drifted,[]);
@@ -48,22 +49,19 @@ test('project moves follow the task; an execution inserted before its task gets 
  assert.deepEqual(await derived(s,'later'),{projectId:'p',agent:'codex',host:'mac',started:false,open:0});await noDrift(s);
  await s.close()});
 
-test('row-level security: a narrowly scoped writer still stores the full count; readers see task_derived by project',async()=>{const s=await fresh();
+test('row-level security: a narrowly scoped writer still stores the full count; readers see task_derived by project',async()=>{const {s,scoped}=await freshDb();
  let t='';await s.tx(async()=>{t=await s.tasks.create({id:'tp',title:'p task',projectId:'p'});await s.tasks.ask({kind:'operator_decision',taskId:t,text:'other project q',options:['a']})});
  await s.query("UPDATE question SET project_id='q' WHERE task_id='tp'");
- await s.query("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='fleet_app_test') THEN CREATE ROLE fleet_app_test NOLOGIN NOBYPASSRLS; END IF; END $$");
- await s.query('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO fleet_app_test');await s.query('GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO fleet_app_test');
- const as=(scope:string,fn:()=>Promise<any>)=>s.tx(async()=>{await s.query('SET LOCAL ROLE fleet_app_test');await s.query("SELECT set_config('fleet.project_ids',$1,true)",[scope]);return fn()});
- await as('p',()=>s.query("INSERT INTO question(id,kind,project_id,task_id,text) VALUES('q2','agent_question','p','tp','in p')"));
+ await scoped('p',st=>st.query("INSERT INTO question(id,kind,project_id,task_id,text) VALUES('q2','agent_question','p','tp','in p')"));
  assert.equal((await derived(s,t))!.open,2); // the question in project q counts although the writer sees only p
- assert.equal((await as('p',()=>s.query("SELECT task_id FROM task_derived"))).length,1);
- assert.equal((await as('q',()=>s.query("SELECT task_id FROM task_derived"))).length,0);
+ assert.equal((await scoped('p',st=>st.query("SELECT task_id FROM task_derived"))).length,1);
+ assert.equal((await scoped('q',st=>st.query("SELECT task_id FROM task_derived"))).length,0);
  await s.close()});
 
-test('backfill: tasks written before migration 10 get their derived row',async()=>{const s=createStore('memory://');await s.migrate(9);
+test('backfill: tasks written before migration 10 get their derived row',async()=>{const {s,migrate}=await freshDb(9);
  await s.tx(async()=>{await s.query("INSERT INTO task(id,title,project_id) VALUES('old','Old','p')");
   await s.query("INSERT INTO execution(id,kind,state,task_id,host_id,harness,started_at) VALUES('oe','agent_run','running','old','mac','codex',now())")});
- await s.migrate();
+ await migrate();
  assert.deepEqual(await derived(s,'old'),{projectId:'p',agent:'codex',host:'mac',started:true,open:0});await noDrift(s);
  await s.close()});
 
@@ -82,12 +80,10 @@ test('review 2: deleting a task and then its executions in one transaction commi
  assert.equal(await derived(s,t),null);await noDrift(s);
  await s.close()});
 
-test('review 3: the drift check run by a scoped caller sees all of each task and reports no false drift',async()=>{const s=await fresh();
+test('review 3: the drift check run by a scoped caller sees all of each task and reports no false drift',async()=>{const {s,scoped}=await freshDb();
  await s.tx(async()=>{await s.tasks.create({id:'tp',title:'p task',projectId:'p'});await s.tasks.ask({kind:'operator_decision',taskId:'tp',text:'q',options:['a']})});
  await s.query("UPDATE question SET project_id='q' WHERE task_id='tp'");
- await s.query("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='fleet_app_test') THEN CREATE ROLE fleet_app_test NOLOGIN NOBYPASSRLS; END IF; END $$");
- await s.query('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO fleet_app_test');
- const r=await s.tx(async()=>{await s.query('SET LOCAL ROLE fleet_app_test');await s.query("SELECT set_config('fleet.project_ids','p',true)");return s.tasks.derivedDrift()});
+ const r=await scoped('p',st=>st.tasks.derivedDrift());
  assert.deepEqual(r.drifted,[]);
  await s.close()});
 
@@ -103,22 +99,29 @@ test('review 10: group names are checked as own keys ("constructor" is a 400)',a
  await s.close()});
 
 // Review of PR #31.
-test('review #31-2/3: a scoped caller sees drift only for its own projects, and checked counts the same tasks',async()=>{const s=await fresh();
+test('review #31-2/3: a scoped caller sees drift only for its own projects, and checked counts the same tasks',async()=>{const {s,scoped}=await freshDb();
  await s.tx(async()=>{await s.tasks.create({id:'tp',title:'p',projectId:'p'});await s.tasks.create({id:'tq',title:'q',projectId:'q'})});
  await s.query("DELETE FROM task_derived");
- await s.query("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='fleet_app_test') THEN CREATE ROLE fleet_app_test NOLOGIN NOBYPASSRLS; END IF; END $$");
- await s.query('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO fleet_app_test');
- const as=(scope:string,fn:()=>Promise<any>)=>s.tx(async()=>{await s.query('SET LOCAL ROLE fleet_app_test');await s.query("SELECT set_config('fleet.project_ids',$1,true)",[scope]);return fn()});
- const r=await as('p',()=>s.tasks.derivedDrift());
+ const r=await scoped('p',st=>st.tasks.derivedDrift());
  assert.deepEqual([r.checked,r.drifted.map((d:any)=>d.taskId)],[1,['tp']]);
  const all=await s.read(()=>s.tasks.derivedDrift());assert.deepEqual([all.checked,all.drifted.map((d:any)=>d.taskId)],[2,['tp','tq']]);
  // task_derived_values sees every project: not callable by the app role.
- await assert.rejects(as('p',()=>s.query("SELECT * FROM task_derived_values('tq')")),/permission denied/);
+ await assert.rejects(scoped('p',st=>st.query("SELECT * FROM task_derived_values('tq')")),/permission denied/);
  await s.close()});
 
-test('review #31-4: the backfill writes no change row per existing task',async()=>{const s=createStore('memory://');await s.migrate(9);
+test('review #31-4: the backfill writes no change row per existing task',async()=>{const {s,migrate}=await freshDb(9);
  await s.tx(async()=>{for(let i=0;i<5;i++)await s.query("INSERT INTO task(id,title) VALUES($1,'x')",['b'+i])});
- const [{n:before}]=await s.query('SELECT count(*)::int AS n FROM change');await s.migrate();
+ const [{n:before}]=await s.query('SELECT count(*)::int AS n FROM change');await migrate();
  const [{n:after}]=await s.query('SELECT count(*)::int AS n FROM change');assert.equal(after,before);
  assert.equal((await s.query('SELECT count(*)::int AS n FROM task_derived'))[0].n,5);
+ await s.close()});
+
+// Deploy of 426d1e2: the recompute switches fleet.project_ids to '*' with set_config(..., true) and must set the caller's
+// value back, so a scoped writer's later statements in the same transaction stay scoped.
+test('the recompute and the drift check leave the caller\'s fleet.project_ids as it was',async()=>{const {s,scoped}=await freshDb();
+ await s.tx(async()=>{await s.tasks.create({id:'tp',title:'p',projectId:'p'})});
+ const after=await scoped('p',st=>st.tx(async()=>{await st.query("INSERT INTO question(id,kind,project_id,task_id,text) VALUES('qx','agent_question','p','tp','x')");await st.tasks.derivedDrift();
+  const [{v}]=await st.query("SELECT current_setting('fleet.project_ids',true) AS v");return v}));
+ assert.equal(after,'p');
+ assert.equal((await s.query("SELECT open_questions FROM task_derived WHERE task_id='tp'"))[0].open_questions,1);
  await s.close()});
