@@ -21,7 +21,9 @@ set +a
 
 # ClickHouse writes to /backups/<day>/clickhouse inside its container (host $dest/clickhouse).
 # A second run on the same day fails here on purpose: BACKUP refuses an existing target.
-curl -fsS --user "$CLICKHOUSE_USER:$CLICKHOUSE_PASSWORD" http://127.0.0.1:9480/ \
+# Credentials go in headers read from stdin, never in argv.
+printf 'X-ClickHouse-User: %s\nX-ClickHouse-Key: %s\n' "$CLICKHOUSE_USER" "$CLICKHOUSE_PASSWORD" |
+curl -fsS -H @- http://127.0.0.1:9480/ \
   --data-binary "BACKUP DATABASE fleet TO File('$day/clickhouse')"
 
 # Garage: copy the fleet bucket over loopback S3. Objects are immutable and hash-keyed.
