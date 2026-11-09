@@ -167,3 +167,37 @@ From [project setup and access](project-setup-and-access.md). Real environments,
 - Steps: session of project A tries `git ls-remote` on project B's repo.
 - Pass: refused for lack of credential; A's process env contains only A's connection paths.
 - Turns: ~1.
+
+## 8. Project settings tests (added)
+
+From [project settings matrix](project-settings-matrix.md). Real repos `taskqorg/fleet-hello-world*`, real executors, settings only from `project.json`.
+
+### T12. Worktree setup script runs a build (B1 B13)
+- Setup: repo with `scripts.setup` = install + build that writes `dist/marker`; `setupStart: wait-for-setup`; `startFromOrigin: true`.
+- Steps: start a worker session; worker reads `dist/marker`.
+- Pass: worktree base = fresh `origin/<default>`; setup ran once in the worktree with `FLEET_WORKTREE_PATH`; agent started after setup exit; setup exit/output recorded; `setup: skip` start has no marker.
+- Turns: ~1.
+
+### T13. Teardown hook on worktree removal (B1 B13)
+- Setup: `scripts.teardown` writes a marker outside the worktree; `cleanup.keepWhen: uncommitted-changes`.
+- Steps: finish a session with committed work, then one with an uncommitted file.
+- Pass: first worktree: teardown ran, worktree removed, branch deleted only if merged; second worktree kept with reason recorded.
+- Turns: ~2.
+
+### T14. Per-project merge policy (B1 B4 B13)
+- Setup: `fleet-hello-world` with `integration.mode: pr`, `mergeMethod: squash`; `fleet-hello-world-alt` with `mode: direct`.
+- Steps: same small task delivered in both projects.
+- Pass: first: branch pushed, PR opened, merged by squash (one commit on main); second: commit pushed to default branch, no PR; both with project identity.
+- Turns: ~2.
+
+### T15. Main checkout updated after merge (B1 B13)
+- Setup: `syncCheckoutAfterMerge: true`.
+- Steps: after T14 merge, start a new session in the same project.
+- Pass: environment checkout fast-forwarded to merged main; new worktree contains the merged change; local changes in the checkout, if any, are not overwritten (sync recorded as `failed`).
+- Turns: ~1.
+
+### T16. Linked ignored files (B1 B13)
+- Setup: checkout has ignored `.env.local` and `node_modules/`; `linkPaths: [".env.local"]`, `sharedDirectories: ["node_modules"]`.
+- Steps: start a session; worker reads `.env.local` presence and runs a node script.
+- Pass: both present in the worktree without copy-install; nothing from them in records or logs.
+- Turns: ~1.
