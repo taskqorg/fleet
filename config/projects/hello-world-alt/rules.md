@@ -1,0 +1,1 @@
+Create a light, single-column field-notes website. Use repository reference data and retained search sources. Include a visible Sources section. No external scripts or network requests. Deliver static output/index.html and optional local CSS. Keep task completion, source integration and publication separate. Do not deploy or commit from the native agent.

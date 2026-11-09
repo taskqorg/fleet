@@ -1,0 +1,1 @@
+{"proof": "isolated actual program-worker process and fake HTTP transport", "platform": "Darwin", "killedAfterStartedRequestBeforeEffect": true, "statuses": ["accepted", "started", "unknown"], "effectReplayCount": 0, "workAreaAbsent": true, "priorResultSurvived": true, "liveServiceDisrupted": false, "nativeModelCalls": 0, "providerCalls": 0}

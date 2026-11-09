@@ -1,0 +1,1714 @@
+{
+  "deliveries": [
+    {
+      "id": "d95e56ac-b4ec-40dc-bf23-b1d8c9faf046",
+      "projectId": "hello-world",
+      "task": "Create a small accessible Hello World website using the project's repository heading, purpose and accent. Include three concise feature cards explaining project context, retained sources and observable delivery; use local HTML/CSS only, with a visible Sources section. Verify the page locally.",
+      "state": "published",
+      "methodId": "hello-search",
+      "selectionSource": "project",
+      "profileId": "baseline",
+      "profileSelectionSource": null,
+      "account": "fleet-primary",
+      "accountSelectionSource": "explicit",
+      "sourceRunId": null,
+      "researchRunId": "55ccc324-f879-4b97-8cd0-31fa993cc4cd",
+      "previousDeliveryId": null,
+      "observations": [
+        {
+          "at": 1794202617746,
+          "kind": "prior-block",
+          "error": {
+            "code": "delivery-blocked",
+            "message": "Expected bounded static HTML/CSS artifacts"
+          }
+        }
+      ],
+      "error": null,
+      "question": {
+        "id": "f97b2aaf-25e8-4c5f-9d11-267035873c2d",
+        "state": "answered",
+        "createdAt": 1794202248547,
+        "answeredAt": 1794202281061,
+        "answerSha256": "163aeb73ad250de535a576b5487f3edb77c229eb6707b11e1fd5deccfbe2f95f"
+      },
+      "steps": [
+        {
+          "kind": "generate",
+          "execution": {
+            "id": "b010787a-48ee-47cc-ad6b-879a25b955c0",
+            "sessionId": "af2976ef-42c5-40c1-814f-94662bcc4e33",
+            "nativeSessionId": "01a1beca-51e3-77b1-a608-91a31749cdcb",
+            "hostId": "owner-mac",
+            "state": "completed",
+            "actor": "native-agent",
+            "profileId": "baseline",
+            "profileSha256": "9d23f7fde668430ab9d50cb6db6fdcb3d92523b51f21c820f9e9d270825e8fd2",
+            "requestedModel": "gpt-6.1-sol",
+            "requestedEffort": "low",
+            "requestedAccount": "fleet-primary",
+            "effectiveAccount": {
+              "accountId": "4b144fe2-154e-4753-a6e3-f1a9c6993d0a",
+              "accountName": "fleet-primary",
+              "binding": "fleet-codex",
+              "hostId": "owner-mac",
+              "observedAt": 1794202216004
+            },
+            "startedAt": 1794202294075,
+            "finishedAt": 1794202369843,
+            "receiptDurationMs": 75768,
+            "nativeObservedDurationMs": 73317,
+            "error": null,
+            "normalizedToolEvents": [
+              {
+                "id": "exec-23f16104-2534-44d4-8ec9-fac1e09a2f8a",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "6e97f79b2e83a09dd9f6c541ce56eac203f001be6a23767523dcb5cc4fbf67b1",
+                "resultSha256": "bab17b41113542cb2edaa737a8746d509b06c46b5caa322d73acc4acb6c76eac"
+              },
+              {
+                "id": "exec-ff9c9458-651b-4547-871a-bff9171f1a25",
+                "name": "project_context",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                "resultSha256": "ec985ae2244f06b40cf855f0f6c46440f45ef146def711af4bdf7b9e2d98dedb"
+              },
+              {
+                "id": "exec-bb8375e5-9d2c-4514-a27a-72fd861c9848",
+                "name": "catalogue",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                "resultSha256": "2255782036c5d63088875d6a85e86e57598c9567acfbcef818a1d9d93d6c09d6"
+              },
+              {
+                "id": "exec-f1ed23c4-58d9-4739-8644-aa8d2b4c69da",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "5aef4e6ee7fe8fbddc1135d2d0f60eb7a3e759b25c4cb9fb7078601784a72e8f",
+                "resultSha256": "a42f922ca5fe6c1a1e239da3b4821fd9a09d1aef28b4719074e40c9891bd3e1b"
+              },
+              {
+                "id": "exec-dd7d4e46-0305-4d40-8a09-11e4f0ee3415",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "c45616c2ab24d158068da4950e68473738bec28eb3a60b487ca89158ead30c40",
+                "resultSha256": "9b6ef2e2343210875e3690231e6c1996010a33d1e2a1ccb9b1e406e08cb2e7b8"
+              }
+            ],
+            "latestUsage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 60672,
+              "input_tokens": 65915,
+              "output_tokens": 3191,
+              "reasoning_output_tokens": 12,
+              "total_tokens": 69106
+            },
+            "usageScope": "native thread cumulative total; not additive",
+            "lastResourceObservation": {
+              "cost": null,
+              "coverage": {
+                "cost": "unknown subscription allocation",
+                "cpu": "native leader ps lifetime average, excludes descendants",
+                "disk": "entire executor data directory allocated bytes; not per execution",
+                "io": "unknown",
+                "ram": "native leader rss only"
+              },
+              "cpuPercent": 1,
+              "diskBytes": 1437696,
+              "ioBytes": null,
+              "residentBytes": 121323520
+            },
+            "processClosed": [],
+            "eventCount": 51,
+            "uniqueEventSequences": true,
+            "results": [
+              {
+                "id": "artifact:b010787a-48ee-47cc-ad6b-879a25b955c0:index.html",
+                "path": "index.html",
+                "sha256": "20ba9b08e7ce9b18fc8c6a253cdbe4c3009cf0692af89cbfe9c07a37b5246500",
+                "size": 4320,
+                "mediaType": "text/html"
+              },
+              {
+                "id": "artifact:b010787a-48ee-47cc-ad6b-879a25b955c0:style.css",
+                "path": "style.css",
+                "sha256": "1b87ecb63a02f19c95df0db1cb6103bd0e2f829208f4d0893cb162f3a42c1660",
+                "size": 3914,
+                "mediaType": "text/css"
+              }
+            ],
+            "programResults": []
+          }
+        },
+        {
+          "kind": "integrate",
+          "execution": {
+            "id": "624b38b8-5b02-4af2-aa15-58770d74f736",
+            "sessionId": "af2976ef-42c5-40c1-814f-94662bcc4e33",
+            "nativeSessionId": "01a1beca-51e3-77b1-a608-91a31749cdcb",
+            "hostId": "owner-mac-program",
+            "state": "completed",
+            "actor": "program-worker",
+            "profileId": null,
+            "profileSha256": null,
+            "requestedModel": null,
+            "requestedEffort": null,
+            "requestedAccount": null,
+            "effectiveAccount": null,
+            "startedAt": 1794202618780,
+            "finishedAt": 1794202624238,
+            "receiptDurationMs": 5458,
+            "nativeObservedDurationMs": null,
+            "error": null,
+            "normalizedToolEvents": [],
+            "latestUsage": null,
+            "usageScope": "unknown",
+            "lastResourceObservation": null,
+            "processClosed": [],
+            "eventCount": 1,
+            "uniqueEventSequences": true,
+            "results": [
+              {
+                "id": "artifact:624b38b8-5b02-4af2-aa15-58770d74f736:delivery-result.json",
+                "path": "delivery-result.json",
+                "sha256": "544a873d4663afc6e9c7dc0433fe79267dbe7525bcbf578c9e9afea234c3b5ce",
+                "size": 589,
+                "mediaType": "application/json"
+              }
+            ],
+            "programResults": [
+              {
+                "kind": "integrate",
+                "projectId": "hello-world",
+                "deliveryId": "d95e56ac-b4ec-40dc-bf23-b1d8c9faf046",
+                "files": [
+                  {
+                    "path": "index.html",
+                    "sha256": "20ba9b08e7ce9b18fc8c6a253cdbe4c3009cf0692af89cbfe9c07a37b5246500"
+                  },
+                  {
+                    "path": "style.css",
+                    "sha256": "1b87ecb63a02f19c95df0db1cb6103bd0e2f829208f4d0893cb162f3a42c1660"
+                  }
+                ],
+                "commit": "d9a95ff2d32a48827ed883b0eddb97dc49da3c4f",
+                "repository": "https://github.com/taskqorg/fleet-hello-world.git",
+                "verified": true,
+                "durationMs": 4106,
+                "usage": null,
+                "workingAreaRemoved": true
+              }
+            ]
+          }
+        },
+        {
+          "kind": "publish",
+          "execution": {
+            "id": "b743073b-d5d8-4f93-b6f1-7615b953a9c7",
+            "sessionId": "af2976ef-42c5-40c1-814f-94662bcc4e33",
+            "nativeSessionId": "01a1beca-51e3-77b1-a608-91a31749cdcb",
+            "hostId": "pds18-program",
+            "state": "completed",
+            "actor": "program-worker",
+            "profileId": null,
+            "profileSha256": null,
+            "requestedModel": null,
+            "requestedEffort": null,
+            "requestedAccount": null,
+            "effectiveAccount": null,
+            "startedAt": 1794202624990,
+            "finishedAt": 1794202625123,
+            "receiptDurationMs": 133,
+            "nativeObservedDurationMs": null,
+            "error": null,
+            "normalizedToolEvents": [],
+            "latestUsage": null,
+            "usageScope": "unknown",
+            "lastResourceObservation": null,
+            "processClosed": [],
+            "eventCount": 1,
+            "uniqueEventSequences": true,
+            "results": [
+              {
+                "id": "artifact:b743073b-d5d8-4f93-b6f1-7615b953a9c7:delivery-result.json",
+                "path": "delivery-result.json",
+                "sha256": "e33a7b1964069db352e1d2e641aa6dda05968b3f898769550f92b0d419c15705",
+                "size": 587,
+                "mediaType": "application/json"
+              }
+            ],
+            "programResults": [
+              {
+                "kind": "publish",
+                "projectId": "hello-world",
+                "deliveryId": "d95e56ac-b4ec-40dc-bf23-b1d8c9faf046",
+                "files": [
+                  {
+                    "path": "index.html",
+                    "sha256": "20ba9b08e7ce9b18fc8c6a253cdbe4c3009cf0692af89cbfe9c07a37b5246500"
+                  },
+                  {
+                    "path": "style.css",
+                    "sha256": "1b87ecb63a02f19c95df0db1cb6103bd0e2f829208f4d0893cb162f3a42c1660"
+                  }
+                ],
+                "url": "https://fleet.ufobe.com/test-sites/hello-world/index.html",
+                "release": "d95e56ac-b4ec-40dc-bf23-b1d8c9faf046",
+                "httpVerified": true,
+                "durationMs": 22,
+                "usage": null,
+                "workingAreaRemoved": true
+              }
+            ]
+          }
+        },
+        {
+          "kind": "publish-failure",
+          "execution": {
+            "id": "9f70e359-4350-4801-a070-c0f11e4d16ba",
+            "sessionId": "af2976ef-42c5-40c1-814f-94662bcc4e33",
+            "nativeSessionId": "01a1beca-51e3-77b1-a608-91a31749cdcb",
+            "hostId": "pds18-program",
+            "state": "failed",
+            "actor": "program-worker",
+            "profileId": null,
+            "profileSha256": null,
+            "requestedModel": null,
+            "requestedEffort": null,
+            "requestedAccount": null,
+            "effectiveAccount": null,
+            "startedAt": 1794202681915,
+            "finishedAt": 1794202681989,
+            "receiptDurationMs": 74,
+            "nativeObservedDurationMs": null,
+            "error": "Controlled publication refusal: acceptance failure fixture; current version unchanged",
+            "normalizedToolEvents": [],
+            "latestUsage": null,
+            "usageScope": "unknown",
+            "lastResourceObservation": null,
+            "processClosed": [],
+            "eventCount": 0,
+            "uniqueEventSequences": true,
+            "results": [],
+            "programResults": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "33596343-9825-4e90-8637-1ed2b943ad0c",
+      "projectId": "hello-world-alt",
+      "task": "Create a small accessible Hello World website using the project's repository heading, purpose and accent. Include three concise feature cards explaining project context, retained sources and observable delivery; use local HTML/CSS only, with a visible Sources section. Verify the page locally.",
+      "state": "published",
+      "methodId": "search-basic",
+      "selectionSource": "explicit",
+      "profileId": "baseline",
+      "profileSelectionSource": null,
+      "account": "fleet-secondary",
+      "accountSelectionSource": "explicit",
+      "sourceRunId": null,
+      "researchRunId": "5b9e865f-05d5-477a-bdb9-fa5de9eb59fb",
+      "previousDeliveryId": null,
+      "observations": null,
+      "error": null,
+      "question": {
+        "id": "be5293b3-7094-4ec8-86e8-c7e8fdce0ed4",
+        "state": "answered",
+        "createdAt": 1794202757572,
+        "answeredAt": 1794202777673,
+        "answerSha256": "163aeb73ad250de535a576b5487f3edb77c229eb6707b11e1fd5deccfbe2f95f"
+      },
+      "steps": [
+        {
+          "kind": "generate",
+          "execution": {
+            "id": "f60425e1-a1af-4959-8c07-bb288e4e39dc",
+            "sessionId": "2bf4b27c-2a7d-4be7-8cdb-9a8351b18890",
+            "nativeSessionId": "01a1bed1-d7fa-7a62-a216-14698f9afea5",
+            "hostId": "owner-mac",
+            "state": "completed",
+            "actor": "native-agent",
+            "profileId": "baseline",
+            "profileSha256": "9d23f7fde668430ab9d50cb6db6fdcb3d92523b51f21c820f9e9d270825e8fd2",
+            "requestedModel": "gpt-6.1-sol",
+            "requestedEffort": "low",
+            "requestedAccount": "fleet-secondary",
+            "effectiveAccount": {
+              "accountId": "91be7eb4-2106-4cef-8355-0564b050a973",
+              "accountName": "fleet-secondary",
+              "binding": "fleet-codex-second",
+              "hostId": "owner-mac",
+              "observedAt": 1794202699153
+            },
+            "startedAt": 1794202786625,
+            "finishedAt": 1794202883528,
+            "receiptDurationMs": 96903,
+            "nativeObservedDurationMs": 94215,
+            "error": null,
+            "normalizedToolEvents": [
+              {
+                "id": "exec-6f0e8a73-abd8-4b10-af55-248da91083db",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "90abdca9c4be34221d29ddbb43fcd64db03cad595af429e63585cb0fddbe0187",
+                "resultSha256": "ba4b4867020b76531b7294ee67a0629de07b8facb9c64994aca26ac467d6b72b"
+              },
+              {
+                "id": "exec-a54e1e37-2d52-4f2f-94ea-fda841980874",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": false,
+                "argumentsSha256": "556edd2f044baa660045bb4865dc8e4ae875e8c17d5804a230d2d69ec1f2c369",
+                "resultSha256": null
+              },
+              {
+                "id": "exec-7ff008dc-74a4-47d5-b1d1-8f63903184c5",
+                "name": "catalogue",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                "resultSha256": "f24ae32f35a2eb43aba0704aeefc59686fb63c7da95da0fedba6665bc437a062"
+              },
+              {
+                "id": "exec-e6decb90-79c4-411c-834e-12799c024680",
+                "name": "project_context",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                "resultSha256": "e71fd43494019dd1d4eb4023bda0b68377866b77f76e36cd73300bfc65e02842"
+              },
+              {
+                "id": "exec-023e7a2d-4780-46fd-9107-f4219ca60c01",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "b758104585e1ff97843891f98175e42a3e3d8d9f975fe6fb6c68434e4d318c8a",
+                "resultSha256": "cf06cd2ba935772eecd68660976f3a43f04492c961910e524b67f9b331bfeb8a"
+              }
+            ],
+            "latestUsage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 58112,
+              "input_tokens": 62445,
+              "output_tokens": 2614,
+              "reasoning_output_tokens": 0,
+              "total_tokens": 65059
+            },
+            "usageScope": "native thread cumulative total; not additive",
+            "lastResourceObservation": {
+              "cost": null,
+              "coverage": {
+                "cost": "unknown subscription allocation",
+                "cpu": "native leader ps lifetime average, excludes descendants",
+                "disk": "entire executor data directory allocated bytes; not per execution",
+                "io": "unknown",
+                "ram": "native leader rss only"
+              },
+              "cpuPercent": null,
+              "diskBytes": 2850816,
+              "ioBytes": null,
+              "residentBytes": null
+            },
+            "processClosed": [],
+            "eventCount": 58,
+            "uniqueEventSequences": true,
+            "results": [
+              {
+                "id": "artifact:f60425e1-a1af-4959-8c07-bb288e4e39dc:index.html",
+                "path": "index.html",
+                "sha256": "73dfb10909c46f2ecf7c2e27ac31af500c866069bf7cf2537409adf711732b41",
+                "size": 3823,
+                "mediaType": "text/html"
+              },
+              {
+                "id": "artifact:f60425e1-a1af-4959-8c07-bb288e4e39dc:style.css",
+                "path": "style.css",
+                "sha256": "87e80bcd20e8bb76c6cd60aa5c1cec161d000233f1c582286c00f87c859cc195",
+                "size": 3108,
+                "mediaType": "text/css"
+              }
+            ],
+            "programResults": []
+          }
+        },
+        {
+          "kind": "integrate",
+          "execution": {
+            "id": "55c95eb6-d0b3-4ef5-ac33-dfbbb0885896",
+            "sessionId": "2bf4b27c-2a7d-4be7-8cdb-9a8351b18890",
+            "nativeSessionId": "01a1bed1-d7fa-7a62-a216-14698f9afea5",
+            "hostId": "owner-mac-program",
+            "state": "completed",
+            "actor": "program-worker",
+            "profileId": null,
+            "profileSha256": null,
+            "requestedModel": null,
+            "requestedEffort": null,
+            "requestedAccount": null,
+            "effectiveAccount": null,
+            "startedAt": 1794202885404,
+            "finishedAt": 1794202891264,
+            "receiptDurationMs": 5860,
+            "nativeObservedDurationMs": null,
+            "error": null,
+            "normalizedToolEvents": [],
+            "latestUsage": null,
+            "usageScope": "unknown",
+            "lastResourceObservation": null,
+            "processClosed": [],
+            "eventCount": 1,
+            "uniqueEventSequences": true,
+            "results": [
+              {
+                "id": "artifact:55c95eb6-d0b3-4ef5-ac33-dfbbb0885896:delivery-result.json",
+                "path": "delivery-result.json",
+                "sha256": "c28dd88bc7c4566b7c72379d0b1c0b9f7251846de0eb86c95f7fb35399fd7ab6",
+                "size": 597,
+                "mediaType": "application/json"
+              }
+            ],
+            "programResults": [
+              {
+                "kind": "integrate",
+                "projectId": "hello-world-alt",
+                "deliveryId": "33596343-9825-4e90-8637-1ed2b943ad0c",
+                "files": [
+                  {
+                    "path": "index.html",
+                    "sha256": "73dfb10909c46f2ecf7c2e27ac31af500c866069bf7cf2537409adf711732b41"
+                  },
+                  {
+                    "path": "style.css",
+                    "sha256": "87e80bcd20e8bb76c6cd60aa5c1cec161d000233f1c582286c00f87c859cc195"
+                  }
+                ],
+                "commit": "c600ca079b34b3c0346e2395922813226bed4237",
+                "repository": "https://github.com/taskqorg/fleet-hello-world-alt.git",
+                "verified": true,
+                "durationMs": 4501,
+                "usage": null,
+                "workingAreaRemoved": true
+              }
+            ]
+          }
+        },
+        {
+          "kind": "publish",
+          "execution": {
+            "id": "36cf1beb-2c14-4306-bd6f-7b33d0144774",
+            "sessionId": "2bf4b27c-2a7d-4be7-8cdb-9a8351b18890",
+            "nativeSessionId": "01a1bed1-d7fa-7a62-a216-14698f9afea5",
+            "hostId": "pds18-program",
+            "state": "completed",
+            "actor": "program-worker",
+            "profileId": null,
+            "profileSha256": null,
+            "requestedModel": null,
+            "requestedEffort": null,
+            "requestedAccount": null,
+            "effectiveAccount": null,
+            "startedAt": 1794202892504,
+            "finishedAt": 1794202892636,
+            "receiptDurationMs": 132,
+            "nativeObservedDurationMs": null,
+            "error": null,
+            "normalizedToolEvents": [],
+            "latestUsage": null,
+            "usageScope": "unknown",
+            "lastResourceObservation": null,
+            "processClosed": [],
+            "eventCount": 1,
+            "uniqueEventSequences": true,
+            "results": [
+              {
+                "id": "artifact:36cf1beb-2c14-4306-bd6f-7b33d0144774:delivery-result.json",
+                "path": "delivery-result.json",
+                "sha256": "3002fad79fd1e505dd2131b187bd0333deeba74209583d7804ddebdc68371a76",
+                "size": 594,
+                "mediaType": "application/json"
+              }
+            ],
+            "programResults": [
+              {
+                "kind": "publish",
+                "projectId": "hello-world-alt",
+                "deliveryId": "33596343-9825-4e90-8637-1ed2b943ad0c",
+                "files": [
+                  {
+                    "path": "index.html",
+                    "sha256": "73dfb10909c46f2ecf7c2e27ac31af500c866069bf7cf2537409adf711732b41"
+                  },
+                  {
+                    "path": "style.css",
+                    "sha256": "87e80bcd20e8bb76c6cd60aa5c1cec161d000233f1c582286c00f87c859cc195"
+                  }
+                ],
+                "url": "https://fleet.ufobe.com/test-sites/hello-world-alt/index.html",
+                "release": "33596343-9825-4e90-8637-1ed2b943ad0c",
+                "httpVerified": true,
+                "durationMs": 3,
+                "usage": null,
+                "workingAreaRemoved": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "b7dbd6ab-ffe9-414f-97ae-1aac5bb58915",
+      "projectId": "hello-world",
+      "task": "Create a small accessible Hello World website using the project's repository heading, purpose and accent. Include three concise feature cards explaining project context, retained sources and observable delivery; use local HTML/CSS only, with a visible Sources section. Verify the page locally.",
+      "state": "published",
+      "methodId": "hello-guided",
+      "selectionSource": "explicit",
+      "profileId": "design-rules",
+      "profileSelectionSource": "method",
+      "account": "fleet-primary",
+      "accountSelectionSource": "explicit",
+      "sourceRunId": "55ccc324-f879-4b97-8cd0-31fa993cc4cd",
+      "researchRunId": "55ccc324-f879-4b97-8cd0-31fa993cc4cd",
+      "previousDeliveryId": null,
+      "observations": null,
+      "error": null,
+      "question": {
+        "id": "54719399-162e-4de8-b442-aeb462f270e4",
+        "state": "answered",
+        "createdAt": 1794203969280,
+        "answeredAt": 1794204012906,
+        "answerSha256": "163aeb73ad250de535a576b5487f3edb77c229eb6707b11e1fd5deccfbe2f95f"
+      },
+      "steps": [
+        {
+          "kind": "generate",
+          "execution": {
+            "id": "fa34505e-c55f-445f-afc5-2ae6b52705f6",
+            "sessionId": "ff834715-4a99-4b86-9526-30bcfa34cba0",
+            "nativeSessionId": "01a1bee6-37d9-71d2-be68-f07019772c56",
+            "hostId": "owner-mac",
+            "state": "completed",
+            "actor": "native-agent",
+            "profileId": "design-rules",
+            "profileSha256": "34c2bf91daf333a39d3c23afc95651111310b2d15c58d08c30942ae6808943d3",
+            "requestedModel": "gpt-6.1-sol",
+            "requestedEffort": "low",
+            "requestedAccount": "fleet-primary",
+            "effectiveAccount": {
+              "accountId": "4b144fe2-154e-4753-a6e3-f1a9c6993d0a",
+              "accountName": "fleet-primary",
+              "binding": "fleet-codex",
+              "hostId": "owner-mac",
+              "observedAt": 1794202216004
+            },
+            "startedAt": 1794204121910,
+            "finishedAt": 1794204683570,
+            "receiptDurationMs": 561660,
+            "nativeObservedDurationMs": 87981,
+            "error": null,
+            "normalizedToolEvents": [
+              {
+                "id": "exec-507dc6af-6b9b-474e-bf25-0baef0a4c459",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "2f2ac814e86103a6d1ccb7db4e1bacf9847fa5120a14030a56996a2deeefc975",
+                "resultSha256": "d763fba243a32ddf8ad171446b25203be5a85c277c8ea7022a7beef188a6c1f7"
+              },
+              {
+                "id": "exec-42274b7f-bd89-4c1c-88a5-be2bcebd8b98",
+                "name": "project_context",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                "resultSha256": "ec985ae2244f06b40cf855f0f6c46440f45ef146def711af4bdf7b9e2d98dedb"
+              },
+              {
+                "id": "exec-85b8298d-143d-44cb-975d-803b08b424de",
+                "name": "catalogue",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                "resultSha256": "ee5df4a1a19ae6cd84a4cf46aa106d86bc803dc47b4e022a13c8c58f905a393a"
+              },
+              {
+                "id": "exec-9ac9df39-0b1e-46ed-b00f-6afb3de0a680",
+                "name": "get_design_rules",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                "resultSha256": "503bd91728e7e7e718003ee22468b58587b5765b3ea7eccbdb53462c48b90466"
+              },
+              {
+                "id": "exec-478282ab-d12e-42d3-b4b8-e46713729fc1",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": false,
+                "argumentsSha256": "556edd2f044baa660045bb4865dc8e4ae875e8c17d5804a230d2d69ec1f2c369",
+                "resultSha256": null
+              },
+              {
+                "id": "exec-198a1e8e-ad7f-49ef-84f6-df3996135d5f",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": false,
+                "argumentsSha256": "d97cdcfc4825eefb8767be0fb213853a2718011b8480e77c8c8bbf4de0289f66",
+                "resultSha256": null
+              },
+              {
+                "id": "exec-c3c88257-ab05-44bb-ba57-21fd8b288309",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "55477ab61dfc39d25f6bb088a0936ccbe979ebfd5e3a849f6cc9a82d64ded807",
+                "resultSha256": "0d6a82012d92148cb67a23865a79a1a65953d34454b76d5fa5f8096220ce50b7"
+              }
+            ],
+            "latestUsage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 80384,
+              "input_tokens": 85935,
+              "output_tokens": 3747,
+              "reasoning_output_tokens": 47,
+              "total_tokens": 89682
+            },
+            "usageScope": "native thread cumulative total; not additive",
+            "lastResourceObservation": {
+              "cost": null,
+              "coverage": {
+                "cost": "unknown subscription allocation",
+                "cpu": "native leader ps lifetime average, excludes descendants",
+                "disk": "entire executor data directory allocated bytes; not per execution",
+                "io": "unknown",
+                "ram": "native leader rss only"
+              },
+              "cpuPercent": null,
+              "diskBytes": 3170304,
+              "ioBytes": null,
+              "residentBytes": null
+            },
+            "processClosed": [
+              {
+                "cleanupUnknown": false,
+                "exitCode": 0,
+                "observedOwnedProcessesRemaining": false,
+                "stdoutClosed": true
+              }
+            ],
+            "eventCount": 63,
+            "uniqueEventSequences": true,
+            "results": [
+              {
+                "id": "artifact:fa34505e-c55f-445f-afc5-2ae6b52705f6:index.html",
+                "path": "index.html",
+                "sha256": "129edefc5a638ed3cef38570cbe1646c384ecd87b3b6772eed140855bb780c5f",
+                "size": 4681,
+                "mediaType": "text/html"
+              },
+              {
+                "id": "artifact:fa34505e-c55f-445f-afc5-2ae6b52705f6:styles.css",
+                "path": "styles.css",
+                "sha256": "2e272db612a871c8bf15cd1e517e8537bffae92e632713ef33df7f471ed21d7c",
+                "size": 4720,
+                "mediaType": "text/css"
+              }
+            ],
+            "programResults": []
+          }
+        },
+        {
+          "kind": "integrate",
+          "execution": {
+            "id": "35b2dfa5-486e-408a-ad2e-eec615df2c76",
+            "sessionId": "ff834715-4a99-4b86-9526-30bcfa34cba0",
+            "nativeSessionId": "01a1bee6-37d9-71d2-be68-f07019772c56",
+            "hostId": "owner-mac-program",
+            "state": "completed",
+            "actor": "program-worker",
+            "profileId": null,
+            "profileSha256": null,
+            "requestedModel": null,
+            "requestedEffort": null,
+            "requestedAccount": null,
+            "effectiveAccount": null,
+            "startedAt": 1794204685035,
+            "finishedAt": 1794204691159,
+            "receiptDurationMs": 6124,
+            "nativeObservedDurationMs": null,
+            "error": null,
+            "normalizedToolEvents": [],
+            "latestUsage": null,
+            "usageScope": "unknown",
+            "lastResourceObservation": null,
+            "processClosed": [],
+            "eventCount": 1,
+            "uniqueEventSequences": true,
+            "results": [
+              {
+                "id": "artifact:35b2dfa5-486e-408a-ad2e-eec615df2c76:delivery-result.json",
+                "path": "delivery-result.json",
+                "sha256": "4633a6643204bbb07d0cb0ba9ebaecad81b892a4468fb4a7e18bcbe3828d8b7a",
+                "size": 590,
+                "mediaType": "application/json"
+              }
+            ],
+            "programResults": [
+              {
+                "kind": "integrate",
+                "projectId": "hello-world",
+                "deliveryId": "b7dbd6ab-ffe9-414f-97ae-1aac5bb58915",
+                "files": [
+                  {
+                    "path": "index.html",
+                    "sha256": "129edefc5a638ed3cef38570cbe1646c384ecd87b3b6772eed140855bb780c5f"
+                  },
+                  {
+                    "path": "styles.css",
+                    "sha256": "2e272db612a871c8bf15cd1e517e8537bffae92e632713ef33df7f471ed21d7c"
+                  }
+                ],
+                "commit": "2dd7211e9197f45f0e7f758f3d9c98a193d12e62",
+                "repository": "https://github.com/taskqorg/fleet-hello-world.git",
+                "verified": true,
+                "durationMs": 4458,
+                "usage": null,
+                "workingAreaRemoved": true
+              }
+            ]
+          }
+        },
+        {
+          "kind": "publish",
+          "execution": {
+            "id": "3e48e662-7b09-491d-b8d3-9e3340ace7c8",
+            "sessionId": "ff834715-4a99-4b86-9526-30bcfa34cba0",
+            "nativeSessionId": "01a1bee6-37d9-71d2-be68-f07019772c56",
+            "hostId": "pds18-program",
+            "state": "completed",
+            "actor": "program-worker",
+            "profileId": null,
+            "profileSha256": null,
+            "requestedModel": null,
+            "requestedEffort": null,
+            "requestedAccount": null,
+            "effectiveAccount": null,
+            "startedAt": 1794204692040,
+            "finishedAt": 1794204692284,
+            "receiptDurationMs": 244,
+            "nativeObservedDurationMs": null,
+            "error": null,
+            "normalizedToolEvents": [],
+            "latestUsage": null,
+            "usageScope": "unknown",
+            "lastResourceObservation": null,
+            "processClosed": [],
+            "eventCount": 1,
+            "uniqueEventSequences": true,
+            "results": [
+              {
+                "id": "artifact:3e48e662-7b09-491d-b8d3-9e3340ace7c8:delivery-result.json",
+                "path": "delivery-result.json",
+                "sha256": "b8f40a34d6b650bdfbcc4d9d1791ee16999201be8fa3b65379b6dfae61548727",
+                "size": 588,
+                "mediaType": "application/json"
+              }
+            ],
+            "programResults": [
+              {
+                "kind": "publish",
+                "projectId": "hello-world",
+                "deliveryId": "b7dbd6ab-ffe9-414f-97ae-1aac5bb58915",
+                "files": [
+                  {
+                    "path": "index.html",
+                    "sha256": "129edefc5a638ed3cef38570cbe1646c384ecd87b3b6772eed140855bb780c5f"
+                  },
+                  {
+                    "path": "styles.css",
+                    "sha256": "2e272db612a871c8bf15cd1e517e8537bffae92e632713ef33df7f471ed21d7c"
+                  }
+                ],
+                "url": "https://fleet.ufobe.com/test-sites/hello-world/index.html",
+                "release": "b7dbd6ab-ffe9-414f-97ae-1aac5bb58915",
+                "httpVerified": true,
+                "durationMs": 25,
+                "usage": null,
+                "workingAreaRemoved": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "fd32b5ae-676f-448b-a90e-9f5e34b66711",
+      "projectId": "hello-world",
+      "task": "Use the retained prior website as the base. Add a small visible footer note: Version 2 \u2014 project method selected. Keep every other section, source link and style intact. Verify the note and HTML locally. No external network, subagents, git or deployment.",
+      "state": "published",
+      "methodId": "hello-search",
+      "selectionSource": "project-selected",
+      "profileId": "baseline",
+      "profileSelectionSource": "legacy-default",
+      "account": "fleet-primary",
+      "accountSelectionSource": "project-preference",
+      "sourceRunId": "55ccc324-f879-4b97-8cd0-31fa993cc4cd",
+      "researchRunId": "55ccc324-f879-4b97-8cd0-31fa993cc4cd",
+      "previousDeliveryId": "d95e56ac-b4ec-40dc-bf23-b1d8c9faf046",
+      "observations": null,
+      "error": null,
+      "question": {
+        "id": "2f86dfdf-cd9e-4d95-b700-ed804468efa5",
+        "state": "answered",
+        "createdAt": 1794205343604,
+        "answeredAt": 1794207593125,
+        "answerSha256": "a1bed231a53c09720d18badcf538318b0e3202137c5395e06a6fcef92f2e456c"
+      },
+      "steps": [
+        {
+          "kind": "generate",
+          "execution": {
+            "id": "20dd490e-fa78-4001-a584-ded45e0a1280",
+            "sessionId": "17567400-26bc-4150-ae51-61768529d159",
+            "nativeSessionId": "01a1bf1b-3ffb-74a1-8205-6ce83d06e547",
+            "hostId": "owner-mac",
+            "state": "completed",
+            "actor": "native-agent",
+            "profileId": "baseline",
+            "profileSha256": "9d23f7fde668430ab9d50cb6db6fdcb3d92523b51f21c820f9e9d270825e8fd2",
+            "requestedModel": "gpt-6.1-sol",
+            "requestedEffort": "low",
+            "requestedAccount": "fleet-primary",
+            "effectiveAccount": {
+              "accountId": "4b144fe2-154e-4753-a6e3-f1a9c6993d0a",
+              "accountName": "fleet-primary",
+              "binding": "fleet-codex",
+              "hostId": "owner-mac",
+              "observedAt": 1794202216004
+            },
+            "startedAt": 1794207597513,
+            "finishedAt": 1794207652933,
+            "receiptDurationMs": 55420,
+            "nativeObservedDurationMs": 51895,
+            "error": null,
+            "normalizedToolEvents": [
+              {
+                "id": "exec-a21abae7-47e7-43cb-899d-c9ab1b34ba38",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "f2c975848040c94763861b51ac1f926f96a48bc855126379eaf810bc8c3381d0",
+                "resultSha256": "2a1327c9c0c6fcc21e5626887cf62bca8285041cc3368eaf2d505e79c3a07028"
+              },
+              {
+                "id": "exec-9ad33b9a-6831-408f-a8cf-256c8a5836bf",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": false,
+                "argumentsSha256": "556edd2f044baa660045bb4865dc8e4ae875e8c17d5804a230d2d69ec1f2c369",
+                "resultSha256": null
+              },
+              {
+                "id": "exec-30407d6e-5c46-409e-bcfc-c429dde85b0b",
+                "name": "catalogue",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                "resultSha256": "2bf5119e15aab533ae605238ddaadfc20b67984ceb6eed14f049df6a0182b51b"
+              },
+              {
+                "id": "exec-049858cd-ee2c-4afd-9850-0fd29354841f",
+                "name": "project_context",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                "resultSha256": "ec985ae2244f06b40cf855f0f6c46440f45ef146def711af4bdf7b9e2d98dedb"
+              },
+              {
+                "id": "exec-a0105445-829a-4e0e-af1a-cc4a2ae2198c",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "f58eb7ab765db40eab066ac9f7c65a3a11c5a3f73c7d24f80bb42e4f2c8d5eab",
+                "resultSha256": "e871ff87d6c48901fca11096df7ca7148fce3f1f83c307316f1c2be91aa0d339"
+              },
+              {
+                "id": "exec-4d5fe1d8-30ea-43a8-b520-3d3a9e5119dd",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "2c959c5d082958d0d350fbbc6c50e9cacab7d4d30b3c12688fc582dc906f5785",
+                "resultSha256": "5682573fc916a674a7e5d8ad26149f4f85b142dfd975270b4ad259e5293f251b"
+              },
+              {
+                "id": "exec-51848112-2be3-4621-853d-6cd068e130db",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "249fb5e5ec754fc1a6ca147930661f02d08462032ba07d1bdb838cb0ffad2246",
+                "resultSha256": "def1e1544a05275057d85cdb11b240635e9d94aec2204419e7c2f46da0940d2e"
+              },
+              {
+                "id": "exec-20436a08-6fc5-44ef-863d-d4b5768bd55a",
+                "name": "commandExecution",
+                "status": "completed",
+                "argumentsPresent": true,
+                "resultPresent": true,
+                "argumentsSha256": "4a6a860cdfcb04cc4d47792ee3d10481a51d738712cfa85fae7cfa932279aa16",
+                "resultSha256": "ffa29f2c188749b4aaa955609e6cbe131ecf4cc9840564a900b7bb2fe1522092"
+              }
+            ],
+            "latestUsage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 124416,
+              "input_tokens": 133049,
+              "output_tokens": 1358,
+              "reasoning_output_tokens": 35,
+              "total_tokens": 134407
+            },
+            "usageScope": "native thread cumulative total; not additive",
+            "lastResourceObservation": {
+              "cost": null,
+              "coverage": {
+                "cost": "unknown subscription allocation",
+                "cpu": "native leader ps lifetime average, excludes descendants",
+                "disk": "entire executor data directory allocated bytes; not per execution",
+                "io": "unknown",
+                "ram": "native leader rss only"
+              },
+              "cpuPercent": 1.1,
+              "diskBytes": 2387968,
+              "ioBytes": null,
+              "residentBytes": 132759552
+            },
+            "processClosed": [
+              {
+                "cleanupUnknown": false,
+                "exitCode": 0,
+                "observedOwnedProcessesRemaining": false,
+                "stdoutClosed": true
+              }
+            ],
+            "eventCount": 48,
+            "uniqueEventSequences": true,
+            "results": [
+              {
+                "id": "artifact:20dd490e-fa78-4001-a584-ded45e0a1280:index.html",
+                "path": "index.html",
+                "sha256": "5de6465515bbf95c47be96edb8be4e946c84891ff2556b77db348ed234e2ff44",
+                "size": 4371,
+                "mediaType": "text/html"
+              },
+              {
+                "id": "artifact:20dd490e-fa78-4001-a584-ded45e0a1280:style.css",
+                "path": "style.css",
+                "sha256": "1b87ecb63a02f19c95df0db1cb6103bd0e2f829208f4d0893cb162f3a42c1660",
+                "size": 3914,
+                "mediaType": "text/css"
+              }
+            ],
+            "programResults": []
+          }
+        },
+        {
+          "kind": "integrate",
+          "execution": {
+            "id": "7462b6d9-9ea5-4dc0-b98c-39397f26caf2",
+            "sessionId": "17567400-26bc-4150-ae51-61768529d159",
+            "nativeSessionId": "01a1bf1b-3ffb-74a1-8205-6ce83d06e547",
+            "hostId": "owner-mac-program",
+            "state": "completed",
+            "actor": "program-worker",
+            "profileId": null,
+            "profileSha256": null,
+            "requestedModel": null,
+            "requestedEffort": null,
+            "requestedAccount": null,
+            "effectiveAccount": null,
+            "startedAt": 1794207655017,
+            "finishedAt": 1794207661418,
+            "receiptDurationMs": 6401,
+            "nativeObservedDurationMs": null,
+            "error": null,
+            "normalizedToolEvents": [],
+            "latestUsage": null,
+            "usageScope": "unknown",
+            "lastResourceObservation": null,
+            "processClosed": [],
+            "eventCount": 1,
+            "uniqueEventSequences": true,
+            "results": [
+              {
+                "id": "artifact:7462b6d9-9ea5-4dc0-b98c-39397f26caf2:delivery-result.json",
+                "path": "delivery-result.json",
+                "sha256": "cea69aff544d0618ff5d20f7fea0a83022cf6d85505317ae032a0b14389414b2",
+                "size": 589,
+                "mediaType": "application/json"
+              }
+            ],
+            "programResults": [
+              {
+                "kind": "integrate",
+                "projectId": "hello-world",
+                "deliveryId": "fd32b5ae-676f-448b-a90e-9f5e34b66711",
+                "files": [
+                  {
+                    "path": "index.html",
+                    "sha256": "5de6465515bbf95c47be96edb8be4e946c84891ff2556b77db348ed234e2ff44"
+                  },
+                  {
+                    "path": "style.css",
+                    "sha256": "1b87ecb63a02f19c95df0db1cb6103bd0e2f829208f4d0893cb162f3a42c1660"
+                  }
+                ],
+                "commit": "0038aa9eee15c755bbf5a8c86107b2f69de50436",
+                "repository": "https://github.com/taskqorg/fleet-hello-world.git",
+                "verified": true,
+                "durationMs": 4563,
+                "usage": null,
+                "workingAreaRemoved": true
+              }
+            ]
+          }
+        },
+        {
+          "kind": "publish",
+          "execution": {
+            "id": "47896dc3-f82e-4de2-894d-62b6614b5bf4",
+            "sessionId": "17567400-26bc-4150-ae51-61768529d159",
+            "nativeSessionId": "01a1bf1b-3ffb-74a1-8205-6ce83d06e547",
+            "hostId": "pds18-program",
+            "state": "completed",
+            "actor": "program-worker",
+            "profileId": null,
+            "profileSha256": null,
+            "requestedModel": null,
+            "requestedEffort": null,
+            "requestedAccount": null,
+            "effectiveAccount": null,
+            "startedAt": 1794207663077,
+            "finishedAt": 1794207663390,
+            "receiptDurationMs": 313,
+            "nativeObservedDurationMs": null,
+            "error": null,
+            "normalizedToolEvents": [],
+            "latestUsage": null,
+            "usageScope": "unknown",
+            "lastResourceObservation": null,
+            "processClosed": [],
+            "eventCount": 1,
+            "uniqueEventSequences": true,
+            "results": [
+              {
+                "id": "artifact:47896dc3-f82e-4de2-894d-62b6614b5bf4:delivery-result.json",
+                "path": "delivery-result.json",
+                "sha256": "fd89fce1ff072ed312ea86bc4c9ae4e336e71cb9d79eb45ed4217e195d6dabe5",
+                "size": 587,
+                "mediaType": "application/json"
+              }
+            ],
+            "programResults": [
+              {
+                "kind": "publish",
+                "projectId": "hello-world",
+                "deliveryId": "fd32b5ae-676f-448b-a90e-9f5e34b66711",
+                "files": [
+                  {
+                    "path": "index.html",
+                    "sha256": "5de6465515bbf95c47be96edb8be4e946c84891ff2556b77db348ed234e2ff44"
+                  },
+                  {
+                    "path": "style.css",
+                    "sha256": "1b87ecb63a02f19c95df0db1cb6103bd0e2f829208f4d0893cb162f3a42c1660"
+                  }
+                ],
+                "url": "https://fleet.ufobe.com/test-sites/hello-world/index.html",
+                "release": "fd32b5ae-676f-448b-a90e-9f5e34b66711",
+                "httpVerified": true,
+                "durationMs": 24,
+                "usage": null,
+                "workingAreaRemoved": true
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "research": [
+    {
+      "id": "55ccc324-f879-4b97-8cd0-31fa993cc4cd",
+      "projectId": "hello-world",
+      "state": "completed",
+      "selectedMethod": "hello-search",
+      "selectionSource": "explicit",
+      "invocation": "pipeline",
+      "definitionSha256": "113a6e4c7cbff99926f7791507b6ab5b67ff47a0b8e21bcdfb9ade4b02145d73",
+      "startedAt": 1794202284022,
+      "finishedAt": 1794202292063,
+      "durationMs": 8041,
+      "usage": {
+        "credits": 1
+      },
+      "executionId": "f4df3b7e-6765-4987-b02b-b7033c7b376c",
+      "requestedBy": null,
+      "sourceCount": 5,
+      "sourceUrls": [
+        "https://tavily.com/knowledge/company/I11st6EDOoJt",
+        "https://www.youtube.com/watch?v=ZPMtug9qExk&vl=en",
+        "https://tavily.com/knowledge/company/ieTmVAf49u9U",
+        "https://www.codecademy.com/article/f1-u2-create-first-prj",
+        "https://learn.shayhowe.com/html-css/building-your-first-web-page"
+      ]
+    },
+    {
+      "id": "5b9e865f-05d5-477a-bdb9-fa5de9eb59fb",
+      "projectId": "hello-world-alt",
+      "state": "completed",
+      "selectedMethod": "search-basic",
+      "selectionSource": "explicit",
+      "invocation": "direct",
+      "definitionSha256": "4fe421ca6f0de959c0efd47c3647f8c3e1e5d73db1acaa39a1db58e70904efa9",
+      "startedAt": 1794202780764,
+      "finishedAt": 1794202784611,
+      "durationMs": 3847,
+      "usage": {
+        "credits": 1
+      },
+      "executionId": "5ff17ea1-ed3d-4e46-a64f-0fdb50ead512",
+      "requestedBy": null,
+      "sourceCount": 3,
+      "sourceUrls": [
+        "https://tavily.com/knowledge/company/I11st6EDOoJt",
+        "https://www.youtube.com/watch?v=ZPMtug9qExk&vl=en",
+        "https://tavily.com/knowledge/company/ieTmVAf49u9U"
+      ]
+    }
+  ],
+  "claude": [
+    {
+      "id": "b89f88cc-d548-4223-bedb-b95f23e3fb0a",
+      "sessionId": "0bf1157b-cca6-46f0-8ff6-7f972c68c012",
+      "nativeSessionId": "6bfcc5e9-9598-4dd8-bcc5-e94f3e275cc3",
+      "hostId": "owner-mac",
+      "state": "failed",
+      "actor": "native-agent",
+      "profileId": "claude-design-rules",
+      "profileSha256": "7fcd8ba19210c5fb05beb5c42ce66c4916e8df653fa1d44b210caf212f33ca87",
+      "requestedModel": "sonnet",
+      "requestedEffort": null,
+      "requestedAccount": "claude-owner",
+      "effectiveAccount": {
+        "accountId": "22231e60-d941-4309-97eb-21a80575c08e",
+        "accountName": "claude-owner",
+        "binding": "fleet-claude",
+        "hostId": "owner-mac",
+        "observedAt": 1794204106721
+      },
+      "startedAt": 1794208181823,
+      "finishedAt": 1794208183700,
+      "receiptDurationMs": 1877,
+      "nativeObservedDurationMs": null,
+      "error": null,
+      "normalizedToolEvents": [],
+      "latestUsage": null,
+      "usageScope": "unknown",
+      "lastResourceObservation": {
+        "cost": null,
+        "coverage": {
+          "cost": "unknown subscription allocation",
+          "cpu": "native leader ps lifetime average, excludes descendants",
+          "disk": "entire executor data directory allocated bytes; not per execution",
+          "io": "unknown",
+          "ram": "native leader rss only"
+        },
+        "cpuPercent": null,
+        "diskBytes": 3493888,
+        "ioBytes": null,
+        "residentBytes": null
+      },
+      "processClosed": [
+        {
+          "cleanupUnknown": false,
+          "exitCode": 1,
+          "observedOwnedProcessesRemaining": false,
+          "stdoutClosed": true
+        }
+      ],
+      "eventCount": 4,
+      "uniqueEventSequences": true,
+      "results": [],
+      "programResults": []
+    },
+    {
+      "id": "4474aff0-bf92-4e4a-ad04-20d514339fbd",
+      "sessionId": "0bf1157b-cca6-46f0-8ff6-7f972c68c012",
+      "nativeSessionId": "6bfcc5e9-9598-4dd8-bcc5-e94f3e275cc3",
+      "hostId": "owner-mac",
+      "state": "completed",
+      "actor": "native-agent",
+      "profileId": "claude-design-rules",
+      "profileSha256": "7fcd8ba19210c5fb05beb5c42ce66c4916e8df653fa1d44b210caf212f33ca87",
+      "requestedModel": "sonnet",
+      "requestedEffort": null,
+      "requestedAccount": "claude-owner",
+      "effectiveAccount": {
+        "accountId": "22231e60-d941-4309-97eb-21a80575c08e",
+        "accountName": "claude-owner",
+        "binding": "fleet-claude",
+        "hostId": "owner-mac",
+        "observedAt": 1794204106721
+      },
+      "startedAt": 1794209322172,
+      "finishedAt": 1794209338833,
+      "receiptDurationMs": 16661,
+      "nativeObservedDurationMs": null,
+      "error": null,
+      "normalizedToolEvents": [
+        {
+          "id": "toolu_01UzMogCrj3FhrQSqoqTUB2T",
+          "name": "mcp__design-rules__get_design_rules",
+          "status": null,
+          "argumentsPresent": true,
+          "resultPresent": false,
+          "argumentsSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "resultSha256": null
+        },
+        {
+          "id": "toolu_01UzMogCrj3FhrQSqoqTUB2T",
+          "name": null,
+          "status": null,
+          "argumentsPresent": false,
+          "resultPresent": true,
+          "argumentsSha256": null,
+          "resultSha256": "9945e005e0f114d8f2234c13abdf6ac41b33474096562481b04bcf067a8ac047"
+        },
+        {
+          "id": "toolu_013p6UZE1o8aQ4n1o547AhZ1",
+          "name": "Write",
+          "status": null,
+          "argumentsPresent": true,
+          "resultPresent": false,
+          "argumentsSha256": "b30fad83c680b32dcbb1b7043f6ad657f3222419be15048d7b3e7c53295666b3",
+          "resultSha256": null
+        },
+        {
+          "id": "toolu_013p6UZE1o8aQ4n1o547AhZ1",
+          "name": null,
+          "status": null,
+          "argumentsPresent": false,
+          "resultPresent": true,
+          "argumentsSha256": null,
+          "resultSha256": "c4a6e51156a72a0abc6be9644a2bacb9578702d8a7d8bfbd522a22932fd2aa72"
+        },
+        {
+          "id": "toolu_01Rgwm94WwGwMrGz8AKHxaWx",
+          "name": "Read",
+          "status": null,
+          "argumentsPresent": true,
+          "resultPresent": false,
+          "argumentsSha256": "e29a50cdb472e260aa7878d431685014e72490fc60c0cbb45dc78193dddb02e6",
+          "resultSha256": null
+        },
+        {
+          "id": "toolu_01Rgwm94WwGwMrGz8AKHxaWx",
+          "name": null,
+          "status": null,
+          "argumentsPresent": false,
+          "resultPresent": true,
+          "argumentsSha256": null,
+          "resultSha256": "66b8e62d614cf86d68838c6891ed983dbeff6381825df7b84975f34f27e30f09"
+        }
+      ],
+      "latestUsage": {
+        "input_tokens": 8,
+        "output_tokens": 387
+      },
+      "usageScope": "native report; scope unknown, may be cumulative; not additive",
+      "lastResourceObservation": {
+        "cost": null,
+        "coverage": {
+          "cost": "unknown subscription allocation",
+          "cpu": "native leader ps lifetime average, excludes descendants",
+          "disk": "entire executor data directory allocated bytes; not per execution",
+          "io": "unknown",
+          "ram": "native leader rss only"
+        },
+        "cpuPercent": null,
+        "diskBytes": 1941504,
+        "ioBytes": null,
+        "residentBytes": null
+      },
+      "processClosed": [
+        {
+          "cleanupUnknown": false,
+          "exitCode": 0,
+          "observedOwnedProcessesRemaining": false,
+          "stdoutClosed": true
+        }
+      ],
+      "eventCount": 15,
+      "uniqueEventSequences": true,
+      "results": [
+        {
+          "id": "artifact:4474aff0-bf92-4e4a-ad04-20d514339fbd:claude-native-check.txt",
+          "path": "claude-native-check.txt",
+          "sha256": "44405914311858f91860b80f62381f5d21b6c3d199f1871f01839653cec36c63",
+          "size": 31,
+          "mediaType": "text/plain"
+        }
+      ],
+      "programResults": []
+    }
+  ],
+  "accounts": [
+    {
+      "id": "4b144fe2-154e-4753-a6e3-f1a9c6993d0a",
+      "name": "fleet-primary",
+      "harness": "codex",
+      "enabled": true,
+      "bindings": [
+        {
+          "hostId": "owner-mac",
+          "binding": "fleet-codex",
+          "platform": "darwin",
+          "readiness": "ready",
+          "observedAt": 1794202216004,
+          "authority": "host-owned native registry; no credentials transferred"
+        }
+      ],
+      "createdAt": 1794202196253
+    },
+    {
+      "id": "91be7eb4-2106-4cef-8355-0564b050a973",
+      "name": "fleet-secondary",
+      "harness": "codex",
+      "enabled": true,
+      "bindings": [
+        {
+          "hostId": "owner-mac",
+          "binding": "fleet-codex-second",
+          "platform": "darwin",
+          "readiness": "ready",
+          "observedAt": 1794202699153,
+          "authority": "host-owned native registry; no credentials transferred"
+        }
+      ],
+      "createdAt": 1794202681311
+    },
+    {
+      "id": "22231e60-d941-4309-97eb-21a80575c08e",
+      "name": "claude-owner",
+      "harness": "claude",
+      "enabled": true,
+      "bindings": [
+        {
+          "hostId": "owner-mac",
+          "binding": "fleet-claude",
+          "platform": "darwin",
+          "readiness": "ready",
+          "observedAt": 1794204106721,
+          "authority": "host-owned native registry; no credentials transferred"
+        }
+      ],
+      "createdAt": 1794204061087
+    },
+    {
+      "id": "f1c72fd8-cabd-4f6c-8b4a-527d66fb66ce",
+      "name": "fleet-unavailable",
+      "harness": "codex",
+      "enabled": true,
+      "bindings": [],
+      "createdAt": 1794204261739
+    },
+    {
+      "id": "1e6aa2e7-d0b5-42d5-8dd2-73e12172a0ab",
+      "name": "antigravity-current",
+      "harness": "antigravity",
+      "enabled": true,
+      "bindings": [
+        {
+          "hostId": "owner-mac",
+          "binding": "fleet-antigravity-current",
+          "platform": "darwin",
+          "readiness": "ready",
+          "observedAt": 1794204483768,
+          "authority": "host-owned native registry; no credentials transferred"
+        }
+      ],
+      "createdAt": 1794204346088
+    }
+  ],
+  "recommendations": [
+    {
+      "id": "recommendation:hello-world",
+      "projectId": "hello-world",
+      "methodId": "hello-search",
+      "selectedAt": 1794205293326,
+      "actor": "operator"
+    }
+  ],
+  "accountPreferences": [
+    {
+      "id": "project-account:hello-world",
+      "projectId": "hello-world",
+      "accountName": "fleet-primary",
+      "selectedAt": 1794202915098,
+      "actor": "operator"
+    }
+  ],
+  "accountActions": [
+    {
+      "id": "555d3d04-249a-4b20-b186-ab5b69210a50",
+      "accountId": "4b144fe2-154e-4753-a6e3-f1a9c6993d0a",
+      "operation": "new-work-enabled",
+      "previous": true,
+      "enabled": false,
+      "actor": "operator",
+      "at": 1794210773530
+    },
+    {
+      "id": "2904ca2e-62b5-4c49-81d6-5ce27e925252",
+      "accountId": "4b144fe2-154e-4753-a6e3-f1a9c6993d0a",
+      "operation": "new-work-enabled",
+      "previous": false,
+      "enabled": true,
+      "actor": "operator",
+      "at": 1794210776113
+    }
+  ],
+  "retainedExperiment": {
+    "id": "01656b67-6445-492b-9be6-5aadebdf422c",
+    "requestId": "retained:b010787a-48ee-47cc-ad6b-879a25b955c0:fa34505e-c55f-445f-afc5-2ae6b52705f6",
+    "source": "retained-executions",
+    "createdAt": 1794205229463,
+    "text": "Retained execution comparison; inspect recorded inputs and confounders.",
+    "profileIds": [
+      "baseline",
+      "design-rules"
+    ],
+    "trials": [
+      {
+        "sessionId": "af2976ef-42c5-40c1-814f-94662bcc4e33",
+        "executionId": "b010787a-48ee-47cc-ad6b-879a25b955c0",
+        "profileId": "baseline"
+      },
+      {
+        "sessionId": "ff834715-4a99-4b86-9526-30bcfa34cba0",
+        "executionId": "fa34505e-c55f-445f-afc5-2ae6b52705f6",
+        "profileId": "design-rules"
+      }
+    ],
+    "selectedExecutionIds": [
+      "b010787a-48ee-47cc-ad6b-879a25b955c0",
+      "fa34505e-c55f-445f-afc5-2ae6b52705f6"
+    ],
+    "note": "Same website task, same five retained Pipe sources, same managed Codex account and requested gpt-6.1-sol low. Baseline versus guided method changes developer instructions and design-rules MCP. Guided output keeps the project H1 but adds the shared heading and dark/yellow palette alongside project green. Select hello-search/baseline for this isolated project to keep its reference design simpler; this is an explicit project choice, not evidence of general quality superiority. Native observed windows and receipt duration are separate: guided terminal receipt includes manual closure-event outbox sequence reconciliation, with no model replay. The native binary also gained lifecycle observation; do not read receipt delay as model latency."
+  },
+  "nativeEvidence": [
+    {
+      "executionId": "b010787a-48ee-47cc-ad6b-879a25b955c0",
+      "harness": "codex",
+      "nativeTurnStartFrames": 1,
+      "openMethod": "thread/start",
+      "requestedModel": "gpt-6.1-sol",
+      "requestedEffort": "low",
+      "openConfigEffort": "low",
+      "developerInstructionsSha256": "0c12d4f560f6ccc449af01e2a79dccf6189fc1aa113da7fe2aca44fee9b150a4",
+      "nativeThreadId": "01a1beca-51e3-77b1-a608-91a31749cdcb",
+      "hostBinding": "fleet-codex",
+      "markerMatchesRegistry": true,
+      "historyFilesUnderSelectedNativeHome": 1,
+      "nativeRawSha256": "ae6546c6ee53c385fa5e46189928a553d801d43aa6f2499f881e0e44cb72b077",
+      "outboundRawSha256": "274a0f85d1628e70ebc7166e619a80b69f3ebabd17591fbe9066aeac268d136a",
+      "outboundMode": "0o600",
+      "rawRetainedHostPrivate": true
+    },
+    {
+      "executionId": "f60425e1-a1af-4959-8c07-bb288e4e39dc",
+      "harness": "codex",
+      "nativeTurnStartFrames": 1,
+      "openMethod": "thread/start",
+      "requestedModel": "gpt-6.1-sol",
+      "requestedEffort": "low",
+      "openConfigEffort": "low",
+      "developerInstructionsSha256": "0c12d4f560f6ccc449af01e2a79dccf6189fc1aa113da7fe2aca44fee9b150a4",
+      "nativeThreadId": "01a1bed1-d7fa-7a62-a216-14698f9afea5",
+      "hostBinding": "fleet-codex-second",
+      "markerMatchesRegistry": true,
+      "historyFilesUnderSelectedNativeHome": 1,
+      "nativeRawSha256": "5f1e948e055af202e073470d005b72b7bd75e5bd1cc625ac3be4153f715f3f87",
+      "outboundRawSha256": "2587f7e76ed941d813a390bbae6afea1b505b9cb2411efad3f5f7f394d9288ec",
+      "outboundMode": "0o600",
+      "rawRetainedHostPrivate": true
+    },
+    {
+      "executionId": "fa34505e-c55f-445f-afc5-2ae6b52705f6",
+      "harness": "codex",
+      "nativeTurnStartFrames": 1,
+      "openMethod": "thread/start",
+      "requestedModel": "gpt-6.1-sol",
+      "requestedEffort": "low",
+      "openConfigEffort": "low",
+      "developerInstructionsSha256": "9d4c158f71661a73bae1c0645002382e5b0f473c37c37f35322b12a0fafab021",
+      "nativeThreadId": "01a1bee6-37d9-71d2-be68-f07019772c56",
+      "hostBinding": "fleet-codex",
+      "markerMatchesRegistry": true,
+      "historyFilesUnderSelectedNativeHome": 1,
+      "nativeRawSha256": "bfec3cc89f732e10bfbd3ef7bed71506fe7a115a114e5ed780844bd54c76bb31",
+      "outboundRawSha256": "03f11f3e998c49a9ef73168efa2d0a64709aa0a0c4e95df0e24ec2e611441b50",
+      "outboundMode": "0o600",
+      "rawRetainedHostPrivate": true
+    },
+    {
+      "executionId": "20dd490e-fa78-4001-a584-ded45e0a1280",
+      "harness": "codex",
+      "nativeTurnStartFrames": 1,
+      "openMethod": "thread/start",
+      "requestedModel": "gpt-6.1-sol",
+      "requestedEffort": "low",
+      "openConfigEffort": "low",
+      "developerInstructionsSha256": "0c12d4f560f6ccc449af01e2a79dccf6189fc1aa113da7fe2aca44fee9b150a4",
+      "nativeThreadId": "01a1bf1b-3ffb-74a1-8205-6ce83d06e547",
+      "hostBinding": "fleet-codex",
+      "markerMatchesRegistry": true,
+      "historyFilesUnderSelectedNativeHome": 1,
+      "nativeRawSha256": "74b11226f5c717f21d09190212fb91fa3f62419371bb25ecaefe911e4c7f629d",
+      "outboundRawSha256": "9e6a063386664cf8104c5c63a81571fb34cf80e90d51ed1ff3ae3ae8d71b3b97",
+      "outboundMode": "0o600",
+      "rawRetainedHostPrivate": true
+    },
+    {
+      "executionId": "4474aff0-bf92-4e4a-ad04-20d514339fbd",
+      "harness": "claude",
+      "generatingPrintInvocations": 1,
+      "requestedModel": "sonnet",
+      "nativeReportedModel": "claude-sonnet-5-5",
+      "permissionMode": "dontAsk",
+      "nativeTools": [
+        "Bash",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Read",
+        "Write",
+        "mcp__design-rules__get_design_rules"
+      ],
+      "mcpServers": [
+        {
+          "name": "design-rules",
+          "status": "connected",
+          "source": "dynamic"
+        }
+      ],
+      "skills": [],
+      "plugins": [
+        {
+          "name": "cc-plugin-agents-md",
+          "path": "builtin",
+          "source": "cc-plugin-agents-md@builtin"
+        },
+        {
+          "name": "cc-plugin-telemetry",
+          "path": "builtin",
+          "source": "cc-plugin-telemetry@builtin"
+        },
+        {
+          "name": "cc-plugin-privacy",
+          "path": "builtin",
+          "source": "cc-plugin-privacy@builtin"
+        },
+        {
+          "name": "cc-plugin-plugin-authoring",
+          "path": "builtin",
+          "source": "cc-plugin-plugin-authoring@builtin"
+        }
+      ],
+      "resultIsError": false,
+      "nativeUsage": {
+        "input_tokens": 8,
+        "cache_creation_input_tokens": 6143,
+        "cache_read_input_tokens": 17411,
+        "output_tokens": 387,
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 6143,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "global",
+        "iterations": [
+          {
+            "input_tokens": 2,
+            "output_tokens": 90,
+            "cache_read_input_tokens": 6008,
+            "cache_creation_input_tokens": 135,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 135
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "standard",
+        "fallback_credit": null
+      },
+      "nativeReportedEstimatedCostUsd": 0.0301991,
+      "estimatedCostIsBilledCharge": false,
+      "nativeRawSha256": "15e01d786f6a64260b98ec91f550471e84f929506e4aef09b5d76f61c185cece",
+      "rawRetainedHostPrivate": true,
+      "artifactExactHeadingReadback": true,
+      "artifactSha256": "44405914311858f91860b80f62381f5d21b6c3d199f1871f01839653cec36c63",
+      "credentialAuthority": "native-current",
+      "hostHomeAndOsUserMetadataForKeychain": true,
+      "dedicatedConfigRoot": true,
+      "explicitLoginOrCredentialCopy": false,
+      "actualResumeQualified": false
+    }
+  ],
+  "scopeCounts": {
+    "codexGeneratingTurns": 4,
+    "claudeGeneratingTurns": 1,
+    "claudeCliPreflightFailuresBeforeModel": 1,
+    "newAntigravityGeneratingTurns": 0,
+    "pipeSearchCalls": 2,
+    "modelTurnReplays": 0
+  },
+  "twoCodexAccountsSameProfile": true,
+  "rawNativeEvidencePublished": false
+}

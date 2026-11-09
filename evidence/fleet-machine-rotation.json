@@ -1,0 +1,15 @@
+{
+  "credentialType": "Fleet machine transport bearer",
+  "rotated": true,
+  "boundary": "actual coordinator loopback route",
+  "oldProtectedBackupBearerStatus": 401,
+  "newBearerSafeInvalidHostStatus": 403,
+  "publicEdgeProbe": "403 for both; not application-auth proof",
+  "probeDispatchedWork": false,
+  "candidateSecretMatches": 0,
+  "nativeCredentialsChanged": false,
+  "transcriptDeletionClaimed": false,
+  "revokedProtectedCopies": "executor.pre-lab.json remains historical; no usable credential",
+  "coordinatorPid": 1061369,
+  "executorPid": 55447
+}

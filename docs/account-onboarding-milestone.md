@@ -1,0 +1,9 @@
+# Account/environment onboarding slice
+
+Candidate implementation under Fleet's canonical shared-operation, host-credential, explicit configuration and placement requirements. It is not a credential vault, remote terminal or native login service.
+
+Before code: extend existing managed records with explicit host selection, host-owned binding discovery, timestamped safe readiness reasons and inspection history. Web and tools share account operations. A heartbeat means host connectivity only; executable, native login, behavior approval and quota remain distinct. A new record/inspection never authenticates. Existing successful bindings and historical executions survive rechecks and disabling new work.
+
+Only the configured local Mac inspector supports onboarding in this slice. PDS/remote and unprovisioned Windows prerequisites are visible; Claude remains Mac/Windows-only, including children. Binding roots/executable paths come only from a protected host registry; browser/model supplies account/host/binding identifiers, never credential values or paths. Login handoff displays the exact selected host environment and supported native command, but never runs it. A subsequent explicit status inspection is required. Antigravity catalogue reachability alone cannot prove login; retain earlier ready qualification separately from an unknown new auth observation.
+
+Proof: shared API/MCP/auth/host ownership and readiness fixtures; fake native statuses distinguish missing executable/login/unbound configuration, unknown quota and offline host; existing Mac bindings receive read-only metadata inspection; desktop/mobile reload and disabled-account admission; no new login/model/provider call. Preserve original accounts/history, unrelated work and rollback evidence. Stage3 follows only after this slice: decide finite concurrent admission, then narrowly qualify resume/platform gaps with prerequisites and separate authorization.

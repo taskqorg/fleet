@@ -1,0 +1,27 @@
+{
+  "cause": "Selected account is disabled for new work",
+  "priorDeliveryState": "published",
+  "priorResults": [
+    {
+      "kind": "generate",
+      "results": 2,
+      "state": "completed"
+    },
+    {
+      "kind": "integrate",
+      "results": 1,
+      "state": "completed"
+    },
+    {
+      "kind": "publish",
+      "results": 1,
+      "state": "completed"
+    },
+    {
+      "kind": "publish-failure",
+      "results": 0,
+      "state": "failed"
+    }
+  ],
+  "status": 409
+}

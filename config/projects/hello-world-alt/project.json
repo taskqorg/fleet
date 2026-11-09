@@ -1,0 +1,10 @@
+{
+  "id": "hello-world-alt",
+  "name": "Hello World \u00b7 field notes",
+  "capability": "web-research",
+  "recommendedMethod": "search-basic",
+  "contextFiles": [
+    "rules.md",
+    "reference.json"
+  ]
+}

@@ -1,0 +1,41 @@
+import {createServer} from 'node:http';
+import {chromium} from 'playwright';import {createApp} from '../../packages/coordinator/app.js';import Database from 'better-sqlite3';import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,chmodSync} from 'node:fs';import {spawn} from 'node:child_process';import {resolve} from 'node:path';import assert from 'node:assert/strict';
+const root=mkdtempSync('/tmp/fleet-recovery-native-');chmodSync(root,0o700);const database=root+'/db',app=createApp({database,browserSecret:'fixture-browser',machineSecret:'fixture-machine',hostId:'fixture-mac'});let injected=false;
+const intercept=(req:any)=>{if(req.url.includes('/api/hosts/events')&&req.body?.events?.some((e:any)=>e.type==='process.closed')&&!injected){injected=true;const b=req.body,ev=b.events.find((e:any)=>e.type==='process.closed'),db=new Database(database);try{const execution=JSON.parse((db.prepare('SELECT data FROM records WHERE id=?').get(b.executionId) as any).data);const old={id:'event:'+b.executionId+':fixture-resource-collision',executionId:b.executionId,sessionId:execution.sessionId,seq:ev.seq,type:'resource.observation',data:{fixture:true,cpuPercent:null}};db.prepare('INSERT INTO records VALUES(?,?,?)').run('event',old.id,JSON.stringify(old))}finally{db.close()}}};
+await app.listen({host:'127.0.0.1',port:0});const api=async(path:string,b:any,machine=false)=>{const r=await fetch(app.listeningOrigin+path,{method:'POST',headers:{authorization:'Bearer '+(machine?'fixture-machine':'fixture-browser'),'content-type':'application/json'},body:JSON.stringify(b)});assert.ok(r.ok,await r.clone().text());return r.json()};
+const fake=root+'/fake-codex';writeFileSync(fake,`#!/usr/bin/env python3
+import sys,json,os,pathlib,time
+root=pathlib.Path(${JSON.stringify(root)});account=pathlib.Path(os.environ['CODEX_HOME']).name
+for raw in sys.stdin:
+ q=json.loads(raw);m=q.get('method')
+ if m=='initialize':print(json.dumps({'id':q['id'],'result':{}}),flush=True)
+ elif m=='thread/start':
+  assert q['params']['developerInstructions']=='Create the requested files in output/. Do not use subagents.'
+  print(json.dumps({'id':q['id'],'result':{'thread':{'id':'thread-'+account}}}),flush=True)
+ elif m=='turn/start':
+  task=q['params']['input'][0]['text'];assert task=='context-'+account
+  with (root/'calls').open('a') as f:f.write(account+'\\n')
+  (root/('started-'+account)).touch();print(json.dumps({'id':q['id'],'result':{'turn':{'id':'turn-'+account}}}),flush=True)
+  deadline=time.monotonic()+15
+  while not all((root/('started-'+a)).exists() for a in ['account-a','account-b']):
+   assert time.monotonic()<deadline,'Executor did not run independent sessions concurrently'
+   time.sleep(.03)
+  pathlib.Path('output').mkdir(exist_ok=True);pathlib.Path('output/result.txt').write_text(task)
+  print(json.dumps({'method':'item/completed','params':{'threadId':'thread-'+account,'turnId':'turn-'+account,'item':{'type':'agentMessage','id':'message-'+account,'text':task}}}),flush=True)
+  print(json.dumps({'method':'turn/completed','params':{'threadId':'thread-'+account,'turn':{'id':'turn-'+account,'status':'completed'}}}),flush=True)
+  break
+`);chmodSync(fake,0o700);const registry:any={};for(const a of ['account-a','account-b']){mkdirSync(root+'/home-'+a,{mode:0o700});mkdirSync(root+'/'+a,{mode:0o700});registry[a]={harness:'codex',home:root+'/home-'+a,nativeHome:root+'/'+a,executable:fake,readiness:'ready'}}writeFileSync(root+'/registry',JSON.stringify(registry),{mode:0o600});const executions:any[]=[];
+for(const a of ['account-a','account-b']){const s=await api('/api/sessions',{});await api('/api/sessions/'+s.sessionId+'/profile',{profileId:'baseline',account:a});const e=await api('/api/sessions/'+s.sessionId+'/messages',{requestId:a,text:'context-'+a});executions.push({...e,account:a})}
+const transport=createServer((req,res)=>{let raw='';req.on('data',b=>raw+=b);req.on('end',async()=>{const body=JSON.parse(raw);intercept({url:req.url,body});const reply=await app.inject({method:'POST',url:req.url!,headers:{authorization:req.headers.authorization},payload:body});res.writeHead(reply.statusCode,{'content-type':'application/json'});res.end(reply.body)})});await new Promise<void>(r=>transport.listen(0,'127.0.0.1',r));
+const executor=spawn(resolve('target/debug/fleet-executor'),[],{env:{PATH:process.env.PATH,FLEET_DATA_DIR:root+'/native-data',FLEET_COORDINATOR_URL:`http://127.0.0.1:${(transport.address() as any).port}`,FLEET_HOST_ID:'fixture-mac',FLEET_HOST_TOKEN:'fixture-machine',FLEET_NATIVE_ACCOUNTS:root+'/registry'},stdio:'ignore'});const browser=await chromium.launch({headless:true});
+const until=async(check:()=>Promise<any>)=>{const end=Date.now()+20000;while(Date.now()<end){const v=await check();if(v)return v;await new Promise(r=>setTimeout(r,50))}throw Error('Fixture timeout')};
+try{
+ const blocked=await until(async()=>{for(const e of executions){const v=await api('/api/recovery/transport_inspect',{executionId:e.id});if(v.conflicts.length)return v}return null});assert.ok(injected);assert.equal(blocked.conflicts[0].state,'blocked');assert.equal(readFileSync(root+'/calls','utf8').trim().split('\n').length,2);
+ const page=await browser.newPage({viewport:{width:1100,height:1000}});await page.goto(app.listeningOrigin+'/recovery?execution='+blocked.executionId);await page.locator('#key').fill('fixture-browser');await page.locator('#inspect').click();await page.getByRole('button',{name:/Authorize retained closure/}).waitFor();await page.reload();await page.locator('#key').fill('fixture-browser');await page.locator('#inspect').click();await page.getByRole('button',{name:/Authorize retained closure/}).click();
+ await until(async()=>{const v=await api('/api/recovery/transport_inspect',{executionId:blocked.executionId});return v.conflicts[0]?.state==='delivered'&&v.state==='completed'});
+ await page.reload();await page.locator('#key').fill('fixture-browser');await page.locator('#inspect').click();await page.getByText('Inspected · completed',{exact:true}).waitFor();await page.screenshot({path:'evidence/recovery-desktop.png',fullPage:true});
+ for(const e of executions){const v=await until(async()=>{const r=await api('/api/recovery/transport_inspect',{executionId:e.id});return r.state==='completed'?r:null});assert.equal(v.commands.length,1);assert.equal(v.results.length,1);const result=await fetch(app.listeningOrigin+'/api/results/'+encodeURIComponent(v.results[0].id),{headers:{authorization:'Bearer fixture-browser'}});assert.equal(await result.text(),'context-'+e.account);const events=await (await fetch(app.listeningOrigin+'/api/executions/'+e.id+'/events',{headers:{authorization:'Bearer fixture-browser'}})).json();assert.ok(JSON.stringify(events).includes('context-'+e.account));assert.ok(!JSON.stringify(events).includes('context-'+(e.account==='account-a'?'account-b':'account-a')))}
+ const db=new Database(database);try{const conflicts=db.prepare("SELECT data FROM records WHERE kind='transport-conflict'").all() as any[];assert.equal(conflicts.length,1);const c=JSON.parse(conflicts[0].data);assert.equal(c.original.seq,c.originalSequence);assert.equal(c.state,'delivered')}finally{db.close()}
+ assert.equal(readFileSync(root+'/calls','utf8').trim().split('\n').length,2);const native=new Database(root+'/native-data/journal.sqlite');try{assert.equal((native.prepare('SELECT count(*) AS n FROM outbox').get() as any).n,0);assert.equal((native.prepare('SELECT count(*) AS n FROM commands WHERE terminal=0').get() as any).n,0)}finally{native.close()}
+ writeFileSync('evidence/recovery-local-proof.json',JSON.stringify({fixture:true,actualExecutor:true,realModelCalls:0,concurrentNativeSessions:2,distinctAccountHomes:true,barrierRequiresOverlap:true,contextEventResultSeparation:true,closureCollisionInjectedOnce:true,originalConflictRetained:true,approvalViaWeb:true,reloadPersists:true,outboxAfter:0,nativeEffectLaunches:2,noNativeReplay:true},null,2)+'\n');console.log('Actual executor recovery, two-session overlap and browser reload passed');
+}finally{executor.kill('SIGTERM');await new Promise(r=>executor.once('exit',r));await browser.close();await new Promise<void>(r=>transport.close(()=>r()));await app.close()}

@@ -1,0 +1,19 @@
+node_modules/
+dist/
+target/
+.env
+.env.*
+!.env.example
+var/
+runtime/
+.private/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+__pycache__/
+
+# Host-private native evidence; publish reviewed projections only.
+evidence/multiharness-native-*/
+**/*.protocol-out.jsonl
+**/*.native.jsonl

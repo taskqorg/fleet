@@ -1,0 +1,448 @@
+{
+ "date": "2026-11-09",
+ "host": "owner Mac",
+ "codex": "codex-cli 0.167.0",
+ "agy": "1.5.3",
+ "method": "executor-equivalent direct spawn: env_clear + Fleet HOME/CODEX_HOME bindings + exact native.rs flags (codex exec --json); session dirs under ~/Library/Application Support/Fleet/isolation-test/sessions (same /Users/kirs ancestor tree as live sessions), removed afterwards; coordinator/executor service not used; no logins; no credential contents read",
+ "tests": [
+  {
+   "test": "a-two-accounts-parallel",
+   "wallS": 8.72,
+   "runs": [
+    {
+     "session": "a-first",
+     "account": "fleet-codex",
+     "exit": 0,
+     "latencyS": 5.9,
+     "thread": "01a1bfd3-ae43-7a12-9a82-78181a72b851",
+     "usage": {
+      "input_tokens": 12970,
+      "cached_input_tokens": 0,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 7,
+      "reasoning_output_tokens": 0
+     },
+     "answer": "ACC_A_OK",
+     "toolItems": [],
+     "errors": [],
+     "http429": false
+    },
+    {
+     "session": "a-second",
+     "account": "fleet-codex-second",
+     "exit": 0,
+     "latencyS": 8.68,
+     "thread": "01a1bfd3-ae3d-7660-8b45-904b5a71f633",
+     "usage": {
+      "input_tokens": 12970,
+      "cached_input_tokens": 11520,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 7,
+      "reasoning_output_tokens": 0
+     },
+     "answer": "ACC_B_OK",
+     "toolItems": [],
+     "errors": [],
+     "http429": false
+    }
+   ],
+   "authMtimeChanged": {
+    "fleet-codex": false,
+    "fleet-codex-second": false,
+    "personal": false
+   },
+   "newRollouts": {
+    "fleet-codex": [
+     "codex/sessions/.../rollout-2026-11-09T17-21-23-01a1bfd3-ae43-7a12-9a82-78181a72b851.jsonl"
+    ],
+    "fleet-codex-second": [
+     "accounts/codex-second/native/sessions/.../rollout-2026-11-09T17-21-24-01a1bfd3-ae3d-7660-8b45-904b5a71f633.jsonl"
+    ]
+   },
+   "threadHome": {
+    "a-first": [
+     "fleet-codex"
+    ],
+    "a-second": [
+     "fleet-codex-second"
+    ]
+   }
+  },
+  {
+   "test": "b-same-account-two-profiles-parallel",
+   "wallS": 8.87,
+   "runs": [
+    {
+     "session": "b-alpha",
+     "account": "fleet-codex",
+     "exit": 0,
+     "latencyS": 8.87,
+     "thread": "01a1bfd3-f0fc-7b20-82fe-9facf2a3a8eb",
+     "usage": {
+      "input_tokens": 13055,
+      "cached_input_tokens": 0,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 172,
+      "reasoning_output_tokens": 91
+     },
+     "answer": "MARKER=PROFILE_ALPHA_7Q; MCP=functions.wait, functions.request_user_input, functions.request_user_input_async, functions.exec, clock.sleep, collaboration.followup_task, collaboration.interrupt_agent, collaboration.list_agents, collaboration.send_message, collaboration.spawn_agent, collaboration.wait_agent, mcp__design_rules (deferred; tool names not provided); SKILLS=NONE",
+     "toolItems": [],
+     "errors": [],
+     "http429": false,
+     "checks": {
+      "ownMarker": true,
+      "otherMarkerAbsent": true,
+      "designRulesSeen": true,
+      "personalMcpSeen": false
+     }
+    },
+    {
+     "session": "b-beta",
+     "account": "fleet-codex",
+     "exit": 0,
+     "latencyS": 8.46,
+     "thread": "01a1bfd3-f0fc-7740-941f-9852789d38e3",
+     "usage": {
+      "input_tokens": 13038,
+      "cached_input_tokens": 11520,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 154,
+      "reasoning_output_tokens": 80
+     },
+     "answer": "MARKER=PROFILE_BETA_3K; MCP=functions.wait,functions.request_user_input,functions.request_user_input_async,functions.exec,clock.sleep,collaboration.followup_task,collaboration.interrupt_agent,collaboration.list_agents,collaboration.send_message,collaboration.spawn_agent,collaboration.wait_agent; SKILLS=NONE",
+     "toolItems": [],
+     "errors": [],
+     "http429": false,
+     "checks": {
+      "ownMarker": true,
+      "otherMarkerAbsent": true,
+      "designRulesSeen": false,
+      "personalMcpSeen": false
+     }
+    }
+   ]
+  },
+  [
+   {
+    "label": "fleet-guarded",
+    "exit": 0,
+    "personalAgentsLinesSeen": 0,
+    "personalAgentsLinesTotal": 5,
+    "memoryPointer": false,
+    "sessionAgentsMarker": false,
+    "skillsBlock": true,
+    "personalSkillNames": false,
+    "promptBytes": 58654,
+    "stderrBytes": 0
+   },
+   {
+    "label": "home-isolation-only",
+    "exit": 0,
+    "personalAgentsLinesSeen": 0,
+    "personalAgentsLinesTotal": 5,
+    "memoryPointer": false,
+    "sessionAgentsMarker": true,
+    "skillsBlock": true,
+    "personalSkillNames": false,
+    "promptBytes": 68204,
+    "stderrBytes": 0
+   },
+   {
+    "label": "personal-default-contrast",
+    "exit": 0,
+    "personalAgentsLinesSeen": 5,
+    "personalAgentsLinesTotal": 5,
+    "memoryPointer": true,
+    "sessionAgentsMarker": true,
+    "skillsBlock": true,
+    "personalSkillNames": true,
+    "promptBytes": 86509,
+    "stderrBytes": 0
+   },
+   {
+    "label": "mcp-list-fleet-home-unguarded",
+    "exit": 0,
+    "serverNames": []
+   }
+  ],
+  {
+   "test": "c2-codex-tool-namespace-static",
+   "codexVersion": "codex-cli 0.167.0",
+   "fleetFlags": [
+    "clock",
+    "collaboration",
+    "exec",
+    "followup_task",
+    "functions",
+    "interrupt_agent",
+    "list_agents",
+    "request_user_input",
+    "request_user_input_async",
+    "send_message",
+    "sleep",
+    "spawn_agent",
+    "wait",
+    "wait_agent"
+   ],
+   "agents.max_threads=1": [
+    "clock",
+    "collaboration",
+    "exec",
+    "followup_task",
+    "functions",
+    "interrupt_agent",
+    "list_agents",
+    "request_user_input",
+    "request_user_input_async",
+    "send_message",
+    "sleep",
+    "spawn_agent",
+    "wait",
+    "wait_agent"
+   ],
+   "agents.max_threads=0": {
+    "exit": 1,
+    "stderr": "Error: agents.max_concurrent_threads_per_session must be at least 1"
+   },
+   "tools.collaboration=false": [
+    "clock",
+    "collaboration",
+    "exec",
+    "followup_task",
+    "functions",
+    "interrupt_agent",
+    "list_agents",
+    "request_user_input",
+    "request_user_input_async",
+    "send_message",
+    "sleep",
+    "spawn_agent",
+    "wait",
+    "wait_agent"
+   ],
+   "disable collaboration_modes": [
+    "clock",
+    "collaboration",
+    "exec",
+    "followup_task",
+    "functions",
+    "interrupt_agent",
+    "list_agents",
+    "request_user_input",
+    "request_user_input_async",
+    "send_message",
+    "sleep",
+    "spawn_agent",
+    "wait",
+    "wait_agent"
+   ]
+  },
+  {
+   "test": "d-agy-force-file-storage",
+   "agyVersion": "1.5.3",
+   "runs": [
+    {
+     "label": "private-gemini-home-native-store",
+     "exit": 0,
+     "modelLines": 13,
+     "mentionsLogin": false,
+     "firstLineRedacted": "gemini-4-argon-medium\tGemini 4 Argon (Medium)",
+     "filesCreatedInGeminiHome": []
+    },
+    {
+     "label": "private-gemini-home-force-file",
+     "exit": 0,
+     "modelLines": 13,
+     "mentionsLogin": false,
+     "firstLineRedacted": "gemini-4-argon-medium\tGemini 4 Argon (Medium)",
+     "filesCreatedInGeminiHome": []
+    }
+   ]
+  },
+  {
+   "test": "d2-agy-acp-session-new-no-prompt",
+   "runs": [
+    {
+     "force": false,
+     "initOk": true,
+     "authMethods": [
+      "oauth-personal",
+      "oauth-business",
+      "gemini-api-key",
+      "agent-platform"
+     ],
+     "sessionNewOk": true,
+     "sessionNewError": null,
+     "timeout": false,
+     "geminiHomeFiles": [
+      "antigravity-cli/builtin/.checksum",
+      "antigravity-cli/builtin/.manifest",
+      "antigravity-cli/builtin/keep.txt",
+      "antigravity-cli/builtin/plugins/swarm/README.md",
+      "antigravity-cli/builtin/plugins/swarm/assets/logo.svg",
+      "antigravity-cli/builtin/plugins/swarm/plugin.json",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/README.md",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/app.js",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/channels.mjs",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/hive.css",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/hive.js",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/index.html",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/main.mjs",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/narrator_bootstrap.js",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/package.json"
+     ]
+    },
+    {
+     "force": true,
+     "initOk": true,
+     "authMethods": [
+      "oauth-personal",
+      "oauth-business",
+      "gemini-api-key",
+      "agent-platform"
+     ],
+     "sessionNewOk": true,
+     "sessionNewError": null,
+     "timeout": false,
+     "geminiHomeFiles": [
+      "antigravity-cli/builtin/.checksum",
+      "antigravity-cli/builtin/.manifest",
+      "antigravity-cli/builtin/keep.txt",
+      "antigravity-cli/builtin/plugins/swarm/README.md",
+      "antigravity-cli/builtin/plugins/swarm/assets/logo.svg",
+      "antigravity-cli/builtin/plugins/swarm/plugin.json",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/README.md",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/app.js",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/channels.mjs",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/hive.css",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/hive.js",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/index.html",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/main.mjs",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/narrator_bootstrap.js",
+      "antigravity-cli/builtin/plugins/swarm/sidecars/swarm_board/package.json"
+     ]
+    }
+   ]
+  },
+  {
+   "test": "e-burst-same-account",
+   "account": "fleet-codex",
+   "n": 10,
+   "wallS": 5.92,
+   "succeeded": 10,
+   "latencyS": {
+    "min": 3.73,
+    "median": 4.345,
+    "max": 5.9
+   },
+   "any429": false,
+   "distinctThreads": 10,
+   "newRollouts": 10,
+   "authMtimeChanged": false,
+   "cachedInputTokens": [
+    11520,
+    11520,
+    11520,
+    11520,
+    11520,
+    11520,
+    11520,
+    11520,
+    11520,
+    11520
+   ],
+   "runs": [
+    {
+     "session": "e-0",
+     "exit": 0,
+     "latencyS": 4.2,
+     "thread": "01a1bfd5-4f71-7a72-b446-bf222513523f",
+     "answer": "BURST_0_OK",
+     "errors": [],
+     "http429": false
+    },
+    {
+     "session": "e-1",
+     "exit": 0,
+     "latencyS": 4.0,
+     "thread": "01a1bfd5-4f7c-7583-a3af-527ddc94cf48",
+     "answer": "BURST_1_OK",
+     "errors": [],
+     "http429": false
+    },
+    {
+     "session": "e-2",
+     "exit": 0,
+     "latencyS": 5.71,
+     "thread": "01a1bfd5-4f95-74f2-a2f8-054ab0a9e360",
+     "answer": "BURST_2_OK",
+     "errors": [],
+     "http429": false
+    },
+    {
+     "session": "e-3",
+     "exit": 0,
+     "latencyS": 4.35,
+     "thread": "01a1bfd5-4f71-78e1-b518-a6df1d762f31",
+     "answer": "BURST_3_OK",
+     "errors": [],
+     "http429": false
+    },
+    {
+     "session": "e-4",
+     "exit": 0,
+     "latencyS": 4.78,
+     "thread": "01a1bfd5-4f8e-7230-bd04-81e9f8c2c3aa",
+     "answer": "BURST_4_OK",
+     "errors": [],
+     "http429": false
+    },
+    {
+     "session": "e-5",
+     "exit": 0,
+     "latencyS": 4.34,
+     "thread": "01a1bfd5-4f77-7c73-a8cb-3d01e58f017b",
+     "answer": "BURST_5_OK",
+     "errors": [],
+     "http429": false
+    },
+    {
+     "session": "e-6",
+     "exit": 0,
+     "latencyS": 5.0,
+     "thread": "01a1bfd5-4f71-78c0-9486-8cba4fdd0c57",
+     "answer": "BURST_6_OK",
+     "errors": [],
+     "http429": false
+    },
+    {
+     "session": "e-7",
+     "exit": 0,
+     "latencyS": 3.94,
+     "thread": "01a1bfd5-4f76-78d2-833b-908d838c7c07",
+     "answer": "BURST_7_OK",
+     "errors": [],
+     "http429": false
+    },
+    {
+     "session": "e-8",
+     "exit": 0,
+     "latencyS": 3.73,
+     "thread": "01a1bfd5-4f82-7a93-9a98-8ceecb53df48",
+     "answer": "BURST_8_OK",
+     "errors": [],
+     "http429": false
+    },
+    {
+     "session": "e-9",
+     "exit": 0,
+     "latencyS": 5.9,
+     "thread": "01a1bfd5-4fbd-7ef2-8193-fd18b4c051d5",
+     "answer": "BURST_9_OK",
+     "errors": [],
+     "http429": false
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,27 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {createApp} from '../../packages/coordinator/app.js';
+test('retained artifact differences survive restart and enforce session boundary',async()=>{
+ const config={database:mkdtempSync(tmpdir()+'/fleet-diff-')+'/db',browserSecret:'browser',machineSecret:'machine',hostId:'mac'};
+ let app=createApp(config);
+ const call=(url:string,payload?:any,machine=false)=>app.inject({method:payload?'POST':'GET',url,headers:{authorization:'Bearer '+(machine?'machine':'browser')},payload});
+ const session=(await call('/api/sessions',{})).json().id;
+ const first=(await call(`/api/sessions/${session}/messages`,{requestId:'1',text:'first'})).json();
+ const command=(await call('/api/hosts/poll',{hostId:'mac'},true)).json().commands[0];
+ const artifact=async(executionId:string,path:string,content:string)=>{assert.equal((await call('/api/hosts/artifacts',{hostId:'mac',executionId,path,contentBase64:Buffer.from(content).toString('base64')},true)).statusCode,200)};
+ await artifact(first.id,'index.html','old');await artifact(first.id,'old.txt','removed');
+ await call('/api/hosts/receipts',{hostId:'mac',commandId:command.id,executionId:first.id,status:'completed'},true);
+ const second=(await call(`/api/sessions/${session}/messages`,{requestId:'2',text:'second'})).json();
+ await artifact(second.id,'index.html','new');await artifact(second.id,'new.txt','added');
+ await app.close();app=createApp(config);
+ const url=`/api/executions/${second.id}/differences?previous=${first.id}`;
+ assert.equal((await app.inject(url)).statusCode,401);
+ const diff=(await call(url)).json();assert.deepEqual(diff.files[0].textChange,{firstLine:1,removed:['old'],added:['new']});assert.equal(diff.files[1].textChange,null);assert.deepEqual(diff.files.map((x:any)=>[x.path,x.state]),[['index.html','modified'],['new.txt','added'],['old.txt','removed']]);
+ assert.equal((await call('/api/results/'+encodeURIComponent(diff.files[0].previous.id))).body,'old');
+ const other=(await call('/api/sessions',{})).json().id;
+ const unrelated=(await call(`/api/sessions/${other}/messages`,{requestId:'1',text:'other'})).json();
+ assert.equal((await call(`/api/executions/${unrelated.id}/differences?previous=${first.id}`)).statusCode,403);
+ await app.close();
+});

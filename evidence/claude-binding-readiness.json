@@ -1,0 +1,23 @@
+{
+  "exit": 0,
+  "loggedIn": true,
+  "authMethod": "claude.ai",
+  "apiProvider": "firstParty",
+  "stderrBytes": 0,
+  "effectiveUid": 501,
+  "userMetadataSupplied": true,
+  "executionContext": "local subprocess, not service or SSH",
+  "credentialAuthority": "native-current",
+  "hostHomeForKeychain": true,
+  "dedicatedConfigRoot": true,
+  "behaviorInputsPresent": {
+    "CLAUDE.md": false,
+    "settings.json": false,
+    "skills": false,
+    "plugins": false,
+    "commands": false,
+    "agents": false
+  },
+  "credentialValuesReadByAgent": false,
+  "authChanged": false
+}

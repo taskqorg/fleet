@@ -1,0 +1,31 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync} from 'node:fs';import {tmpdir} from 'node:os';
+import {createApp} from '../../packages/coordinator/app.js';
+test('durable scoped delegation, sequential dispatch, actual results and stop suppression',async()=>{
+ const dir=mkdtempSync(tmpdir()+'/fleet-delegate-');mkdirSync(dir+'/profiles');
+ for(const id of ['baseline','design-rules']){const p=JSON.parse(readFileSync('config/agents/'+id+'.json','utf8'));if(id==='design-rules')p.delegationProfiles=['baseline'];writeFileSync(dir+'/profiles/'+id+'.json',JSON.stringify(p))}
+ const config={database:dir+'/db',profilesDirectory:dir+'/profiles',browserSecret:'browser',machineSecret:'machine',hostId:'mac'};let app=createApp(config);
+ const call=(url:string,payload?:any,machine=false)=>app.inject({method:payload?'POST':'GET',url,headers:{authorization:'Bearer '+(machine?'machine':'browser')},payload});
+ const poll=async()=> (await call('/api/hosts/poll',{hostId:'mac'},true)).json().commands;
+ const receipt=(c:any,status:string)=>call('/api/hosts/receipts',{hostId:'mac',commandId:c.id,executionId:c.executionId,status,nativeSessionId:'native-'+c.sessionId},true);
+ const pair=(await call('/api/experiments',{requestId:'pair',text:'work',profileIds:['design-rules','baseline']})).json();const parent=(await poll())[0];await receipt(parent,'started');
+ const request={hostId:'mac',commandId:parent.id,executionId:parent.executionId,delegation:{requestId:'child',profileId:'baseline',input:'review'}};
+ assert.equal((await call('/api/hosts/receipts',request)).statusCode,401);
+ assert.equal((await call('/api/hosts/receipts',{...request,hostId:'other'},true)).statusCode,403);
+ assert.equal((await call('/api/hosts/receipts',{...request,executionId:pair.trials[1].executionId},true)).statusCode,403);
+ const d=(await call('/api/hosts/receipts',request,true)).json();assert.ok(d.childExecutionId);
+ assert.equal((await call('/api/hosts/receipts',request,true)).json().id,d.id);
+ assert.equal((await call('/api/hosts/receipts',{...request,delegation:{...request.delegation,input:'changed'}},true)).statusCode,409);
+ assert.ok(!(await poll()).some((c:any)=>c.executionId===d.childExecutionId));
+ await receipt(parent,'unknown');assert.ok(!(await poll()).some((c:any)=>c.executionId===d.childExecutionId));await call('/api/hosts/artifacts',{hostId:'mac',executionId:parent.executionId,path:'output/index.html',mediaType:'text/html',contentBase64:Buffer.from('<h1>Actual site</h1>').toString('base64')},true);await receipt(parent,'completed');
+ const child=(await poll()).find((c:any)=>c.executionId===d.childExecutionId);assert.ok(child);await receipt(child,'started');
+ assert.equal((await call('/api/hosts/receipts',{hostId:'mac',commandId:child.id,executionId:child.executionId,delegation:{requestId:'recursive',profileId:'baseline',input:'x'}},true)).statusCode,403);
+ await call('/api/hosts/events',{hostId:'mac',executionId:child.executionId,events:[{id:'answer',seq:0,type:'assistant',text:'actual review result'}]},true);
+ await receipt(child,'completed');await app.close();app=createApp(config);
+ const next=(await poll()).find((c:any)=>c.sessionId===parent.sessionId);assert.ok(next);assert.equal(next.payload.nativeSessionId,'native-'+parent.sessionId);assert.match(next.payload.text,/actual review result/);
+ assert.equal((await poll()).filter((c:any)=>c.sessionId===parent.sessionId).length,1);
+ await call('/api/executions/'+parent.executionId+'/stop',{});
+ assert.ok(!(await poll()).some((c:any)=>c.id===next.id));
+ const history=(await call('/api/executions/'+parent.executionId+'/delegations')).json();assert.equal(history.delegations[0].result.events[0].text,'actual review result');
+ await app.close();
+});

@@ -1,0 +1,34 @@
+{
+  "claude": {
+    "horizontalOverflow": false,
+    "modelShown": true,
+    "numericUsageVisible": true,
+    "preflightVisible": true,
+    "session": "0bf1157b-cca6-46f0-8ff6-7f972c68c012",
+    "tools": [
+      {
+        "name": "mcp__design-rules__get_design_rules",
+        "visible": true
+      },
+      {
+        "name": "Write",
+        "visible": true
+      },
+      {
+        "name": "Read",
+        "visible": true
+      }
+    ]
+  },
+  "lab": {
+    "articles": [
+      "b010787a-48ee-47cc-ad6b-879a25b955c0",
+      "fa34505e-c55f-445f-afc5-2ae6b52705f6"
+    ],
+    "operatorNotePersisted": true,
+    "selected": [
+      "b010787a-48ee-47cc-ad6b-879a25b955c0",
+      "fa34505e-c55f-445f-afc5-2ae6b52705f6"
+    ]
+  }
+}

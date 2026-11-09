@@ -1,0 +1,223 @@
+{
+  "version": 1,
+  "agentConfigSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id",
+      "model",
+      "effort",
+      "instructions",
+      "mcpServers"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "model": {
+        "type": "string",
+        "minLength": 1
+      },
+      "effort": {
+        "enum": [
+          "low",
+          null
+        ]
+      },
+      "instructions": {
+        "type": "string",
+        "maxLength": 16384
+      },
+      "mcpServers": {
+        "type": "array",
+        "maxItems": 1,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "data"
+          ],
+          "properties": {
+            "id": {
+              "const": "design-rules"
+            },
+            "data": {
+              "type": "object",
+              "description": "Opaque experiment data object, at most 16384 bytes as compact JSON; no executable, env, URL or native flags are accepted in grants."
+            }
+          }
+        }
+      },
+      "delegationProfiles": {
+        "type": "array",
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,79}$"
+        }
+      },
+      "harness": {
+        "enum": [
+          "codex",
+          "claude",
+          "antigravity"
+        ]
+      },
+      "instructionRole": {
+        "enum": [
+          "developer",
+          "system",
+          "user"
+        ]
+      },
+      "tools": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "enum": [
+            "Read",
+            "Edit",
+            "Write",
+            "Bash",
+            "Glob",
+            "Grep"
+          ]
+        }
+      },
+      "settings": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "sandbox": {
+            "type": "boolean"
+          },
+          "mode": {
+            "enum": [
+              "plan",
+              "accept-edits"
+            ]
+          },
+          "includeDefaultCustomizations": {
+            "const": false
+          }
+        }
+      }
+    },
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "harness": {
+              "const": "codex"
+            }
+          },
+          "required": [
+            "harness"
+          ]
+        },
+        "then": {
+          "required": [
+            "instructionRole"
+          ],
+          "properties": {
+            "instructionRole": {
+              "const": "developer"
+            },
+            "effort": {
+              "const": "low"
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "harness": {
+              "const": "claude"
+            }
+          },
+          "required": [
+            "harness"
+          ]
+        },
+        "then": {
+          "required": [
+            "instructionRole"
+          ],
+          "properties": {
+            "instructionRole": {
+              "const": "system"
+            },
+            "effort": {
+              "const": null
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "harness": {
+              "const": "antigravity"
+            }
+          },
+          "required": [
+            "harness"
+          ]
+        },
+        "then": {
+          "required": [
+            "instructionRole"
+          ],
+          "properties": {
+            "instructionRole": {
+              "const": "user"
+            },
+            "effort": {
+              "const": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "payloadFixture": {
+    "model": "gpt-6.1-sol",
+    "effort": "low",
+    "instructions": "",
+    "text": "Create output/index.html and output/style.css for a small systems studio website. Consult project design rules when available.",
+    "agentConfig": {
+      "id": "design-rules",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "instructions": "Create the requested files in output/. Before designing the website, call design-rules get_design_rules with empty arguments and apply its heading, palette and layout to the generated HTML and CSS. Do not use subagents.",
+      "mcpServers": [
+        {
+          "id": "design-rules",
+          "data": {
+            "heading": "Quiet systems, clear decisions",
+            "palette": {
+              "background": "#101b28",
+              "foreground": "#eef4ed",
+              "accent": "#f4b860"
+            },
+            "layout": "A narrow left introduction column beside three vertically stacked feature cards."
+          }
+        }
+      ]
+    }
+  },
+  "compatibility": "agentConfig is optional; no universal session-profile lock. New invocations supply current configuration. Native resume override application remains unqualified, and retained conversation history persists. Independent trials require fresh sessions.",
+  "hashAlgorithm": "SHA256 of serde_json compact serialization with sorted object keys, UTF-8; instructionsSha256 hashes raw UTF-8 instruction bytes.",
+  "preparation": "requested profile; profileSha256; instructionsSha256; grantsSha256; applied native mapping; MCP availability remains unknown until named native call/result",
+  "executorMilestone": {
+    "selection": "Ordinary session profile selection accepts named host account independently; profile catalogue includes all three harnesses. Host provisioning remains required.",
+    "nonCodex": "Claude scoped native/MCP grants and Antigravity installed ACP per-session grants. Antigravity explicit user role, advertised model selection, mode and private behavior controls; separate effort requires a selected advertised variant ID. Native-current credentials remain host-owned.",
+    "hostRegistry": "FLEET_NATIVE_ACCOUNTS private executor-owned JSON file; entries contain harness, home, nativeHome, executable. No browser paths, env or secrets accepted.",
+    "events": "Existing native event shape retained; fleetNormalized adds harness, session, message, tools, native usage and non-additive scope. Original JSONL retained."
+  }
+}

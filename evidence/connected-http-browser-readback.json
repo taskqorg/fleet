@@ -1,0 +1,35 @@
+{
+  "authenticatedOperatorOrigin": "https://fleet.ufobe.com",
+  "sites": [
+    {
+      "css": [
+        {
+          "path": "style.css",
+          "sha256": "1b87ecb63a02f19c95df0db1cb6103bd0e2f829208f4d0893cb162f3a42c1660",
+          "status": 200
+        }
+      ],
+      "h1": "Hello Worldfrom Fleet.",
+      "htmlSha256": "5de6465515bbf95c47be96edb8be4e946c84891ff2556b77db348ed234e2ff44",
+      "project": "hello-world",
+      "status": 200,
+      "title": "Hello World from Fleet",
+      "version2": true
+    },
+    {
+      "css": [
+        {
+          "path": "style.css",
+          "sha256": "87e80bcd20e8bb76c6cd60aa5c1cec161d000233f1c582286c00f87c859cc195",
+          "status": 200
+        }
+      ],
+      "h1": "Hello fromthe field",
+      "htmlSha256": "73dfb10909c46f2ecf7c2e27ac31af500c866069bf7cf2537409adf711732b41",
+      "project": "hello-world-alt",
+      "status": 200,
+      "title": "Hello from the field \u00b7 Hello World",
+      "version2": false
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "id": "antigravity-worker",
+  "harness": "antigravity",
+  "model": "gemini-3.8-flash-low",
+  "effort": null,
+  "instructionRole": "user",
+  "instructions": "Follow the explicit task scope. Retain outputs in output/. Do not spawn subagents.",
+  "mcpServers": [
+    {
+      "id": "design-rules",
+      "data": {
+        "heading": "Fleet Antigravity qualification rules",
+        "rule": "Only local output files; no network or subagents."
+      }
+    }
+  ],
+  "settings": {
+    "sandbox": true,
+    "includeDefaultCustomizations": false,
+    "mode": "accept-edits"
+  }
+}

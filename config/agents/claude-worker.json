@@ -1,0 +1,20 @@
+{
+  "id": "claude-worker",
+  "harness": "claude",
+  "model": "sonnet",
+  "effort": null,
+  "instructionRole": "system",
+  "instructions": "Follow the explicit task scope. Retain outputs in output/. Do not spawn subagents.",
+  "mcpServers": [],
+  "tools": [
+    "Read",
+    "Edit",
+    "Write",
+    "Bash",
+    "Glob",
+    "Grep"
+  ],
+  "delegationProfiles": [
+    "claude-reviewer"
+  ]
+}

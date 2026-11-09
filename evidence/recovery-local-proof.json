@@ -1,0 +1,17 @@
+{
+  "fixture": true,
+  "actualExecutor": true,
+  "realModelCalls": 0,
+  "concurrentNativeSessions": 2,
+  "distinctAccountHomes": true,
+  "barrierRequiresOverlap": true,
+  "contextEventResultSeparation": true,
+  "closureCollisionInjectedOnce": true,
+  "originalConflictRetained": true,
+  "approvalViaWeb": true,
+  "reloadPersists": true,
+  "outboxAfter": 0,
+  "nativeEffectLaunches": 2,
+  "noNativeReplay": true,
+  "testedExecutorSha256": "f7423847b21b00d4f52706d81be6fbb5ee6513377feebc90e8d998009b30c5c3"
+}
