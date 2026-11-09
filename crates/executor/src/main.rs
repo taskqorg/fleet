@@ -4,6 +4,7 @@ mod harness;
 mod lab;
 mod native;
 mod outbox;
+mod worktree;
 use base64::Engine;
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
@@ -77,44 +78,6 @@ fn git() -> Command {
         .stdin(Stdio::null());
     if let Some(v) = env::var_os("PATH") { c.env("PATH", v); }
     c
-}
-/// Configured project roots (FLEET_PROJECT_ROOTS, ':'-separated absolute paths).
-fn project_roots() -> Vec<PathBuf> {
-    env::var("FLEET_PROJECT_ROOTS").unwrap_or_default().split(':').filter(|s| s.starts_with('/')).filter_map(|s| fs::canonicalize(s).ok()).collect()
-}
-/// A project session whose working directory is a git repository runs in its own worktree (branch fleet/<session>).
-/// The payload path is untrusted: it must canonicalize under a configured project root and outside executor/session dirs.
-fn worktree(dir: &std::path::Path, session: &str, repo: Option<&str>, roots: &[PathBuf], forbidden: &[&std::path::Path]) -> Result<Option<PathBuf>> {
-    let Some(repo) = repo else { return Ok(None) };
-    let allowed = |p: &std::path::Path| -> Option<PathBuf> {
-        if forbidden.iter().any(|f| fs::canonicalize(f).is_ok_and(|f| p.starts_with(&f) || f.starts_with(p))) { return None; }
-        roots.iter().find(|r| p.starts_with(r)).cloned()
-    };
-    let repo = fs::canonicalize(repo).map_err(|_| "working directory unavailable")?;
-    let root = allowed(&repo).ok_or("working directory outside configured project roots")?;
-    let rev = |arg: &str| -> Result<Option<PathBuf>> {
-        let o = git().env("GIT_CEILING_DIRECTORIES", &root).arg("-C").arg(&repo).args(["rev-parse", "--path-format=absolute", arg]).output()?;
-        if !o.status.success() { return Ok(None); }
-        Ok(Some(fs::canonicalize(String::from_utf8_lossy(&o.stdout).trim())?))
-    };
-    let (Some(top), Some(common)) = (rev("--show-toplevel")?, rev("--git-common-dir")?) else { return Ok(None) };
-    if allowed(&top).is_none() || allowed(&common).is_none() {
-        return Err("repository outside configured project roots".into());
-    }
-    let w = dir.join("worktree");
-    if w.join(".git").exists() {
-        return Ok(Some(w));
-    }
-    let branch = format!("fleet/{session}");
-    let top = top.to_string_lossy().into_owned();
-    let exists = git().env("GIT_CEILING_DIRECTORIES", &root).args(["-C", &top, "rev-parse", "--verify", "--quiet", &branch]).output()?.status.success();
-    let mut c = git();
-    c.env("GIT_CEILING_DIRECTORIES", &root).args(["-C", &top, "worktree", "add"]);
-    if exists { c.arg(&w).arg(&branch); } else { c.args(["-b", &branch]).arg(&w); }
-    if !c.output()?.status.success() {
-        return Err("git worktree add failed".into());
-    }
-    Ok(Some(w))
 }
 struct Wire {
     protocol: Option<Protocol>,
@@ -252,6 +215,21 @@ impl Executor {
                 None => self.finish(&c, "failed", None),
             };
         }
+        if c["kind"] == "teardown" {
+            // Session finish: teardown script, keep on dirty/teardown failure, safe branch delete.
+            let p = &c["payload"];
+            let dir = self.session_dir(&session);
+            let repo = worktree::repo_path(p, &self.host);
+            let data = match worktree::worktree(&dir, &session, repo.as_deref(), &worktree::project_roots(&p["project"], &self.host), &[&self.root, &self.sessions], &p["project"]) {
+                Ok(Some((_, top, false))) => worktree::teardown(&dir, &session, &top, &p["project"]),
+                Ok(Some((w, top, true))) => { let _ = git().arg("-C").arg(&top).args(["worktree", "remove"]).arg(&w).output(); json!({"removed":false,"reason":"no-worktree"}) }
+                Ok(None) => json!({"removed":false,"reason":"no-worktree"}),
+                Err(e) => json!({"removed":false,"reason":e.to_string()}),
+            };
+            let ok = data["removed"] == true || data["reason"] == "uncommitted" || data["reason"] == "no-worktree";
+            self.event(&c, 0, "teardown", data)?;
+            return self.finish(&c, if ok { "completed" } else { "failed" }, None);
+        }
         if c["kind"] != "start" && c["kind"] != "input" {
             return self.finish(&c, "failed", None);
         }
@@ -321,8 +299,21 @@ impl Executor {
         if harness::name(p) == "codex" && !collaboration {
             cmd.args(["--disable", "multi_agent", "--disable", "multi_agent_v2"]);
         }
-        let workdir = match worktree(&dir, &session, p["workingDirectory"].as_str(), &project_roots(), &[&self.root, &self.sessions]) {
-            Ok(w) => w,
+        let repo = worktree::repo_path(p, &self.host);
+        let workdir = match worktree::worktree(&dir, &session, repo.as_deref(), &worktree::project_roots(&p["project"], &self.host), &[&self.root, &self.sessions], &p["project"]) {
+            Ok(Some((w, top, created))) => {
+                if let (true, Some(script), false) = (created, p["project"]["scripts"]["setup"].as_str(), p["setup"] == "skip") {
+                    let e = worktree::script("setup", script, &top, &w, &session);
+                    let ok = e["ok"] == true;
+                    self.event(&c, 1, "setup", e)?;
+                    if !ok {
+                        self.event(&c, 2, "preparation.failed", json!({"reason":"setup-failed"}))?;
+                        return self.finish(&c, "failed", native.as_deref());
+                    }
+                }
+                Some(w)
+            }
+            Ok(None) => None,
             Err(e) => {
                 self.event(&c, 1, "preparation.failed", json!({"reason":e.to_string()}))?;
                 return self.finish(&c, "failed", native.as_deref());
@@ -533,7 +524,7 @@ impl Executor {
                 child,
                 command: c.clone(),
                 native: native.clone(),
-                seq: 0,
+                seq: 2,
                 completed: false,
                 stopped: false,
                 owned: HashMap::from([(child_pid, identity_for_tree)]),
@@ -868,32 +859,6 @@ mod tests {
 #[cfg(test)]
 mod journal_tests {
     use super::*;
-    #[test]
-    fn worktree_per_session_in_repo() {
-        let root = env::temp_dir().join(format!("fleet-wt-{}", std::process::id()));
-        let repo = root.join("repo");
-        fs::create_dir_all(&repo).unwrap();
-        for a in [&["init", "-q"][..], &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"]] {
-            assert!(Command::new("git").arg("-C").arg(&repo).args(a).status().unwrap().success());
-        }
-        let s = root.join("s1");
-        fs::create_dir_all(&s).unwrap();
-        let roots = vec![fs::canonicalize(&repo).unwrap()];
-        let r = repo.to_str().unwrap();
-        let w = worktree(&s, "s1", Some(r), &roots, &[]).unwrap().unwrap();
-        assert!(w.join(".git").exists());
-        assert_eq!(worktree(&s, "s1", Some(r), &roots, &[]).unwrap(), Some(w));
-        assert_eq!(worktree(&s, "s1", None, &roots, &[]).unwrap(), None);
-        // Rejected: outside configured roots, unconfigured roots, and inside executor/session dirs.
-        assert!(worktree(&s, "s2", Some(root.to_str().unwrap()), &roots, &[]).is_err());
-        assert!(worktree(&s, "s2", Some(r), &[], &[]).is_err());
-        assert!(worktree(&s, "s2", Some(r), &roots, &[&root]).is_err());
-        // A subdirectory root inside a repo whose toplevel/common dir sit above it is refused.
-        let sub = repo.join("sub");
-        fs::create_dir_all(&sub).unwrap();
-        assert!(worktree(&s, "s3", Some(sub.to_str().unwrap()), &[fs::canonicalize(&sub).unwrap()], &[]).is_err());
-        fs::remove_dir_all(root).unwrap();
-    }
     #[test]
     fn duplicate_and_changed_identity_never_spawn_again() {
         let db = Connection::open_in_memory().unwrap();
