@@ -1,0 +1,15 @@
+// Install by root: /etc/polkit-1/rules.d/50-fleet-launch.rules (tight D4 exception).
+// User fleet may start, stop, restart and kill only fleet-launch@<fleet-*>:<execution>.service.
+// Reading unit state needs no polkit grant. Nothing else is allowed.
+polkit.addRule(function (action, subject) {
+  if (action.id !== "org.freedesktop.systemd1.manage-units" || subject.user !== "fleet") {
+    return polkit.Result.NOT_HANDLED;
+  }
+  var unit = action.lookup("unit") || "";
+  var verb = action.lookup("verb") || "";
+  if (/^fleet-launch@fleet-[a-z0-9][a-z0-9-]*:[A-Za-z0-9_-]+\.service$/.test(unit) &&
+      ["start", "stop", "restart", "kill"].indexOf(verb) >= 0) {
+    return polkit.Result.YES;
+  }
+  return polkit.Result.NOT_HANDLED;
+});

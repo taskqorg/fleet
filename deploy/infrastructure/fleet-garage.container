@@ -1,0 +1,29 @@
+# Fleet Garage store on PDS18 (design FD2, tight D7). Rootless Podman Quadlet of user fleet.
+# Install: ~/.config/containers/systemd/fleet-garage.container (as fleet).
+# Config: /home/fleet/.config/fleet/garage.toml from garage.toml.candidate.
+# Host-only secret files (0600, never committed) under /home/fleet/.config/fleet/garage/:
+#   rpc_secret, admin_token, metrics_token.
+[Unit]
+Description=Fleet Garage S3 store
+After=network-online.target
+
+[Container]
+ContainerName=fleet-garage
+# dxflrs/garage:v2.5.0, multi-arch index digest from Docker Hub, 2026-11-09.
+Image=docker.io/dxflrs/garage@sha256:677e5b758e4425a325b811c425c026bf35a4bf42f7ddbaa773de3f4fd779a5a5
+# Host network: garage.toml binds 127.0.0.1 itself, so S3 (9490), admin (9491) and RPC (9492) stay on loopback.
+Network=host
+# Same paths inside and outside the container, so garage.toml reads the same on every host.
+Volume=/home/fleet/data/garage:/home/fleet/data/garage:Z
+Volume=/home/fleet/.config/fleet/garage:/home/fleet/.config/fleet/garage:ro,Z
+Volume=/home/fleet/.config/fleet/garage.toml:/etc/garage.toml:ro,Z
+Exec=/garage -c /etc/garage.toml server
+
+[Service]
+Restart=on-failure
+# Operator settings, not defaults chosen by Fleet. Uncomment and set after measuring.
+#MemoryMax=
+#CPUQuota=
+
+[Install]
+WantedBy=default.target

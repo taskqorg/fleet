@@ -1,0 +1,31 @@
+# Fleet ClickHouse (design FD3, tight D5). Rootless Podman Quadlet of user fleet.
+# Install: ~/.config/containers/systemd/fleet-clickhouse.container (as fleet).
+# Host-only file /home/fleet/.config/fleet/clickhouse.env (0600) holds
+# CLICKHOUSE_DB=fleet, CLICKHOUSE_USER and CLICKHOUSE_PASSWORD. Never commit it.
+[Unit]
+Description=Fleet ClickHouse (events, spans, measurements)
+After=network-online.target
+
+[Container]
+ContainerName=fleet-clickhouse
+# clickhouse/clickhouse-server:26.8.36.3 (26.8 LTS), multi-arch index digest from Docker Hub, 2026-11-09.
+Image=docker.io/clickhouse/clickhouse-server@sha256:d426d2f612e1e189c90f9a3f8dcd85a03c6851273833817a296bb327e63aa7a7
+EnvironmentFile=/home/fleet/.config/fleet/clickhouse.env
+# HTTP interface on loopback only. Native protocol is not published.
+PublishPort=127.0.0.1:9480:8123
+# Container uid/gid 101 (clickhouse) maps to the host user fleet, so files on the host stay fleet-owned.
+UserNS=keep-id:uid=101,gid=101
+Volume=/home/fleet/data/clickhouse:/var/lib/clickhouse:Z
+Volume=/home/fleet/.config/fleet/clickhouse-backup.xml:/etc/clickhouse-server/config.d/fleet-backup.xml:ro,Z
+Volume=/backup/fleet:/backups:z
+Ulimit=nofile=262144:262144
+
+[Service]
+Restart=on-failure
+TimeoutStartSec=300
+# Operator settings, not defaults chosen by Fleet. Uncomment and set after measuring.
+#MemoryMax=
+#CPUQuota=
+
+[Install]
+WantedBy=default.target

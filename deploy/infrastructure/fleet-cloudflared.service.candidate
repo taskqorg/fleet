@@ -1,0 +1,22 @@
+# Fleet store tunnel on PDS18 (tight D8). User unit of fleet:
+#   /home/fleet/.config/systemd/user/fleet-cloudflared.service
+# Publishes fleet-store-pds18.ufobe.com -> Garage S3 on 127.0.0.1:9490, behind Cloudflare Access
+# (policy: group fleet-people plus the Fleet service token). Outbound only; no public listener.
+# Host-only credentials file (0600, never committed): /home/fleet/.config/fleet/cloudflared/fleet-store-pds18.json
+# Tunnel created and routed by the operator: cloudflared tunnel create fleet-store-pds18;
+#   cloudflared tunnel route dns fleet-store-pds18 fleet-store-pds18.ufobe.com
+[Unit]
+Description=Fleet store Cloudflare Tunnel (fleet-store-pds18.ufobe.com)
+After=network-online.target fleet-garage.service
+Wants=fleet-garage.service
+
+[Service]
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate run --credentials-file /home/fleet/.config/fleet/cloudflared/fleet-store-pds18.json --url http://127.0.0.1:9490 fleet-store-pds18
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

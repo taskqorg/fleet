@@ -1,0 +1,22 @@
+# Fleet Garage, single node (design FD2). Install as /home/fleet/.config/fleet/garage.toml.
+# On macOS replace /home/fleet with the executor service user's home (see deploy/hosts/macos/).
+# Secrets are read from host-only files; no secret value belongs in this file.
+metadata_dir = "/home/fleet/data/garage/meta"
+data_dir = "/home/fleet/data/garage/data"
+db_engine = "lmdb"
+metadata_auto_snapshot_interval = "6h"
+
+replication_factor = 1
+
+rpc_bind_addr = "127.0.0.1:9492"
+rpc_public_addr = "127.0.0.1:9492"
+rpc_secret_file = "/home/fleet/.config/fleet/garage/rpc_secret"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "127.0.0.1:9490"
+
+[admin]
+api_bind_addr = "127.0.0.1:9491"
+admin_token_file = "/home/fleet/.config/fleet/garage/admin_token"
+metrics_token_file = "/home/fleet/.config/fleet/garage/metrics_token"

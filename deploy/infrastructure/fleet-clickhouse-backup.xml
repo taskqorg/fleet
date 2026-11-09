@@ -1,0 +1,6 @@
+<!-- Install as /home/fleet/.config/fleet/clickhouse-backup.xml. Lets BACKUP ... TO File() write under /backups (host /backup/fleet). -->
+<clickhouse>
+    <backups>
+        <allowed_path>/backups/</allowed_path>
+    </backups>
+</clickhouse>

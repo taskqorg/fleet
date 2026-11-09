@@ -1,0 +1,11 @@
+# User unit of fleet: /home/fleet/.config/systemd/user/fleet-backup.timer
+[Unit]
+Description=Fleet nightly backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

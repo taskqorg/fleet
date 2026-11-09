@@ -1,0 +1,19 @@
+# Root-owned launch helper (tight D4 exception, design FD5 / section 9).
+# Install by root: /etc/systemd/system/fleet-launch@.service, plus 50-fleet-launch.rules (polkit).
+# Instance name: <account-user>:<execution-id>, for example fleet-launch@fleet-codex-1:ex42.service.
+# Runs /home/fleet/work/<execution-id>/run as <account-user>, in this unit's own cgroup.
+# The run file is written by the executor (user fleet); it holds the command for one execution.
+[Unit]
+Description=Fleet execution %i
+
+[Service]
+Type=exec
+ExecStart=/bin/sh -eu -c 'inst="$$1"; user="$${inst%%%%:*}"; ex="$${inst#*:}"; \
+  case "$$user" in fleet-?*) ;; *) echo "refused: $$user is not a fleet-* user" >&2; exit 64;; esac; \
+  [ "$$user" != "$$inst" ] && [ -n "$$ex" ] || { echo "refused: instance must be <user>:<execution>" >&2; exit 64; }; \
+  case "$$ex" in *[!A-Za-z0-9_-]*) echo "refused: bad execution id" >&2; exit 64;; esac; \
+  id -u "$$user" >/dev/null; \
+  exec setpriv --reuid="$$user" --regid="$$user" --init-groups --reset-env -- /home/fleet/work/"$$ex"/run' fleet-launch %i
+NoNewPrivileges=true
+PrivateTmp=true
+KillMode=control-group
