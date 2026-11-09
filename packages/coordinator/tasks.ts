@@ -148,13 +148,17 @@ export function taskModel(raw:Raw,executions:Executions){
   // only its rows are joined (the planner would otherwise join every matching task before the LIMIT). Counts never join.
   const rows=await raw.query(G.derived?`SELECT ${cols},${g} AS g ${base}${W(c)} ORDER BY ${g},t.seq DESC,t.id LIMIT ${limit+1}`
    :`SELECT ${cols},t.g FROM (SELECT t.*,${g} AS g FROM task t${W(c)} ORDER BY ${g},t.seq DESC,t.id LIMIT ${limit+1}) t LEFT JOIN task_derived d ON d.task_id=t.id ORDER BY t.g,t.seq DESC,t.id`,p);
-  // Per-state counts leave the state filter out, so every counter keeps its number while one state is selected.
-  const cp:any[]=[],cc=where(f,cp,false);
-  const byState=Object.fromEntries(STATES.map(s=>[s,0]));for(const r of await raw.query(`SELECT t.state::text AS state,count(*) AS n FROM task t${W(cc)} GROUP BY 1`,cp))byState[r.state]=Number(r.n);
-  const gp:any[]=[],gc=where(f,gp);
-  const groups=b.group&&b.group!=='none'?(await raw.query(`SELECT ${g} AS g,min(${LABELS[b.group]}) AS label,count(*) AS n ${G.derived?base:'FROM task t'}${W(gc)} GROUP BY 1 ORDER BY 1`,gp)).map(r=>({key:r.g,label:r.label,count:Number(r.n)})):[];
+  const {counts:byState,groups}=await summary(f,b.group);
   const page=rows.slice(0,limit).map(listRow);
   return {tasks:page,nextAfter:rows.length>limit?page.at(-1)!.sortKey:null,counts:byState,total:Object.values(byState).reduce((a:number,n:any)=>a+n,0),groups}}
+ // Counts and group summaries only (list_membership after a change): no page rows.
+ // Per-state counts leave the state filter out, so every counter keeps its number while one state is selected.
+ async function summary(f:PageFilter,group?:string){const G=groupOf(group);
+  const cp:any[]=[],cc=where(f,cp,false),byState=Object.fromEntries(STATES.map(s=>[s,0]));
+  for(const r of await raw.query(`SELECT t.state::text AS state,count(*) AS n FROM task t${W(cc)} GROUP BY 1`,cp))byState[r.state]=Number(r.n);
+  const gp:any[]=[],gc=where(f,gp);
+  const groups=group&&group!=='none'?(await raw.query(`SELECT ${G.sql} AS g,min(${LABELS[group]}) AS label,count(*) AS n ${G.derived?base:'FROM task t'}${W(gc)} GROUP BY 1 ORDER BY 1`,gp)).map(r=>({key:r.g,label:r.label,count:Number(r.n)})):[];
+  return {counts:byState,groups}}
  // The ids among `ids` that match the filter, with the same row shape and sort key as page().
  async function membership(f:PageFilter,group:string|undefined,ids:string[]){const g=groupOf(group).sql,p:any[]=[],c=where(f,p);p.push(ids.filter(x=>typeof x==='string').slice(0,1000));c.push(`t.id=ANY($${p.length})`);
   return (await raw.query(`SELECT ${cols},${g} AS g ${base}${W(c)}`,p)).map(listRow)}
@@ -210,6 +214,6 @@ export function taskModel(raw:Raw,executions:Executions){
   question:questionAdapter('question'),
   'project-question':questionAdapter('project-question'),
  };
- return {adapters,create,update,get,list,page,membership,derivedDrift,transition,settle,depend,ask,answer,questions};
+ return {adapters,create,update,get,list,page,summary,membership,derivedDrift,transition,settle,depend,ask,answer,questions};
 }
 export type Tasks=ReturnType<typeof taskModel>;

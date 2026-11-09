@@ -5,6 +5,7 @@ import {map} from './store.js';
 // ContextHandoffDelivery, ThreadForkService, ProviderTurnControlService, QueuedRunOrder,
 // ProviderRuntimeRecoveryService) and Orca orchestration (agent-resume-argv, worker-resume-session-capture,
 // ask-methods, reply-method, lifecycle-reconciliation, worker-stop). No caps or admission rules are added.
+import {parseView,formatView,viewProblem} from '../view-url/view-url.js';
 import {randomUUID} from 'node:crypto';
 import {canonical,readTrustedProfile} from './lab.js';
 import {forkArgv,keyFor,resumeArgv} from './resume-argv.js';
@@ -28,7 +29,7 @@ export function decideTransition(current:Side|null,target:Side):Transition{
 }
 const side=(key:string,cfg:any):Side=>{const {model,effort,id,...rest}=cfg??{};return {key,model:model??'gpt-6.1-sol',effort:cfg?effort:'low',config:canonical(rest)}};
 
-export function agentTools(store:Store,deps:{directory:string,hostId:string,enqueue:(s:any,text:string,requestId:string)=>Promise<any>,resolveAccount?:(account:string,harness:string)=>Promise<any>,project?:(projectId:string)=>Promise<any>,pickAccount?:(harness:string,projectId:string,hostId?:string)=>Promise<string|undefined>,deliver?:(b:any)=>Promise<any>}){
+export function agentTools(store:Store,deps:{browserOrigin?:string,directory:string,hostId:string,enqueue:(s:any,text:string,requestId:string)=>Promise<any>,resolveAccount?:(account:string,harness:string)=>Promise<any>,project?:(projectId:string)=>Promise<any>,pickAccount?:(harness:string,projectId:string,hostId?:string)=>Promise<string|undefined>,deliver?:(b:any)=>Promise<any>}){
  const {all,get,put}=store;
  const capable=async (name:string)=>{const h=(await all('host-observation',{id:deps.hostId})).find(x=>x.id===deps.hostId);return Array.isArray(h?.capabilities)&&h.capabilities.includes(name)};
  const executions=async (sessionId:string)=>(await all('execution',{sessionId:sessionId})).filter(e=>e.sessionId===sessionId);
@@ -190,7 +191,13 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   const s:any={id:randomUUID(),createdAt:Date.now(),projectId,agentConfig:profile,startRequest:key,...(b.role?{role:b.role}:{}),...(account?{account}:{}),...(b.setup?{setup:b.setup}:{}),...(typeof b.callerSessionId==='string'?{createdBySessionId:b.callerSessionId}:{}),...(typeof b.callerExecutionId==='string'?{createdByExecutionId:b.callerExecutionId}:{})};
   await put('session',s);const first=typeof b.text==='string'&&b.text?(await submit({sessionId:s.id,requestId:'start:'+requestId,text:b.text})):null;
   return {sessionId:s.id,projectId,role:b.role??null,profileId:profile.id,account:account??null,executionId:first&&!first.queued?first.id:null,hostId:first?.hostId??null}}
+ // Operator-app links (docs/designs/fleet-view-urls-and-list-path.md §1): the same codec the app uses; no database access.
+ const viewLink=async(b:any)=>{const hasView=b?.view!==undefined,hasUrl=b?.url!==undefined;if(hasView===hasUrl)fail(400,'Expected view or url');
+  if(hasUrl){if(typeof b.url!=='string')fail(400,'Expected url');const view=parseView(b.url,{origin:deps.browserOrigin??null});if(!view)fail(400,'Not a Fleet view URL');return {view}}
+  const problem=viewProblem(b.view);if(problem)fail(400,'Invalid view: '+problem);
+  const path=formatView(b.view);return {url:deps.browserOrigin?new URL(path,deps.browserOrigin).href:null,path}};
  const operations:Record<string,(b:any)=>Promise<any>>={
+  view_link:viewLink,
   session_start:start,session_deliver:async b=>(await deps.deliver?.(b))??fail(503,'Delivery unavailable'),
   project_readiness:readiness,
   session_transition:transition,session_fork:fork,session_resume:resume,
@@ -200,6 +207,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   worker_done:workerDone,execution_status:status,reconcile,
  };
  const descriptions:Record<string,string>={
+  view_link:'Build a Fleet operator-app link from a view ({view:{view:"tasks",state:["failed"],project:["fleet"],group,q,focus,sel}}), or parse a link into a view ({url}); returns {url,path} or {view}',
   session_transition:'Switch profile/harness/account/model; returns reuse|switch_model_in_session|restart_and_resume|create_with_handoff and hands context to a new native session',
   session_fork:'Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown',
   session_resume:'Native resume/fork argv and captured native sessions for a session',session_handoffs:'Context handoffs of a session with delivery state',
@@ -226,6 +234,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   if(name==='execution_status'&&a.sessionId!==undefined){(await mine(a.sessionId));a.executionId=(await executions(a.sessionId)).at(-1)?.id??fail(404,'No execution');delete a.sessionId}
   else if(['ask','worker_done','execution_status'].includes(name))a.executionId=executionId;
   else if(name==='reply')(await mine((await get(str(a.questionId,'questionId'),'question')).sessionId));
+  else if(name==='view_link'){} // no session or ownership: pure link building
   else if(name==='reconcile')fail(403,'Not available to host agents');
   else if(name==='session_start'){
    // Host agents start sessions only in their own project, with a profile from its roles map and a registered account.
