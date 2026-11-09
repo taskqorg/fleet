@@ -11,6 +11,10 @@ fn check(name: &str, target: &str, failed: Option<String>) -> Value {
     }
 }
 
+fn valid_remote(r: &str) -> bool {
+    !r.starts_with('-') && ["https://", "ssh://", "git@"].iter().any(|p| r.starts_with(p))
+}
+
 /// `registry` is the FLEET_NATIVE_ACCOUNTS file (host account bindings).
 pub fn run(project: &Value, host: &str, registry: Option<&Path>) -> Value {
     let mut checks = vec![];
@@ -21,11 +25,13 @@ pub fn run(project: &Value, host: &str, registry: Option<&Path>) -> Value {
         checks.push(check("checkout", path, (!present).then(|| "checkout-missing".into())));
         for r in repos.iter().filter(|r| env["repo"].is_null() || env["repo"] == r["id"]) {
             let remote = r["remote"].as_str().unwrap_or("");
-            // ponytail: inherited env carries the connection until W4 sets per-project credentials.
-            let o = Command::new("git").args(["-c", "core.hooksPath=/dev/null", "ls-remote", "--exit-code", remote, "HEAD"])
-                .env("GIT_TERMINAL_PROMPT", "0").env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
-                .stdin(Stdio::null()).output();
-            let failed = match o { Ok(o) if o.status.success() => None, Ok(o) => Some(format!("ls-remote-exit-{}", o.status.code().unwrap_or(-1))), Err(_) => Some("git-unavailable".into()) };
+            let failed = if !valid_remote(remote) { Some("invalid-remote".into()) } else {
+                let o = crate::worktree::clean(Command::new("git"))
+                    .args(["-c", "core.hooksPath=/dev/null", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always", "ls-remote", "--exit-code", "--", remote, "HEAD"])
+                    .env("GIT_TERMINAL_PROMPT", "0").env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
+                    .stdin(Stdio::null()).output();
+                match o { Ok(o) if o.status.success() => None, Ok(o) => Some(format!("ls-remote-exit-{}", o.status.code().unwrap_or(-1))), Err(_) => Some("git-unavailable".into()) }
+            };
             checks.push(check("remote", r["id"].as_str().unwrap_or(remote), failed));
         }
         if let Some(s) = project["scripts"]["setup"].as_str() {
@@ -52,6 +58,12 @@ pub fn run(project: &Value, host: &str, registry: Option<&Path>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rejects_option_like_remote() {
+        let p = json!({"repos":[{"id":"m","remote":"--upload-pack=touch /tmp/x"}],"environments":[{"hostId":"h","checkoutPath":"/none"}]});
+        assert_eq!(run(&p, "h", None)["checks"][1]["reason"], "invalid-remote");
+        assert!(!valid_remote("file:///x") && valid_remote("git@github.com:a/b.git") && valid_remote("https://x/y"));
+    }
     #[test]
     fn reports_each_check() {
         let d = std::env::temp_dir().join(format!("fleet-ready-{}", std::process::id()));

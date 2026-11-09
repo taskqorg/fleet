@@ -21,7 +21,7 @@ fn tail(b: &[u8]) -> String {
     s[s.char_indices().map(|(i, _)| i).find(|&i| i >= n).unwrap_or(0)..].to_owned()
 }
 /// Child env: allowlist only, never executor secrets (FLEET_HOST_TOKEN etc.).
-fn clean(mut c: Command) -> Command {
+pub fn clean(mut c: Command) -> Command {
     c.env_clear();
     for k in ["PATH", "HOME", "SSH_AUTH_SOCK", "LANG"] { if let Some(v) = env::var_os(k) { c.env(k, v); } }
     c
