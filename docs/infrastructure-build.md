@@ -110,3 +110,7 @@ Findings to carry into Phase 3:
 * Store credentials must reach the coordinator directly from the store's host. In the design this happens when the executor registers its store through the outbox.
 * On this Mac, Python from python.org has no CA bundle, so use `curl` or the system trust for HTTPS.
 * The Windows store runs only while the user is logged in: WSL is started by the `wsl-keepalive` logon task. Its real capacity is bounded by free space on `C:` (73 GB), because the WSL disk image lives there.
+
+## Note: backups with FORCE row-level security, 2026-11-09
+
+From migration 6, every Fleet table has `FORCE ROW LEVEL SECURITY`, so `pg_dump` run as the owner role `fleet` fails with `query would be affected by row-level security policy`. Run dumps as `postgres`, which bypasses row-level security: for example, `runuser -u postgres -- pg_dump -Fc -d fleet`. The nightly `tight-pg-backup` service already runs as `User=postgres` and is not affected. Pre-deploy dumps are in `/backup/fleet/pre-deploy/`.
