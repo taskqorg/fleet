@@ -382,6 +382,13 @@ SELECT ... FROM change WHERE seq > $cursor AND xid < pg_snapshot_xmin(pg_current
 
 ## Future Improvements
 
+* **Priority classes in the scheduler and a queue view** (owner decision 2026-11-10; the data model is in [data foundation §2](fleet-data-foundation.md)).
+  * Urgent runs first and may use accounts reserved for urgent work.
+  * Normal runs first in, first out, and the operator can move a task up or down by hand.
+  * Background runs only when nothing else waits for the same resource. What background work may use is an operator setting.
+  * The Overview and Hosts show the queue per class: what runs next, and on which host and account. They also show who waits for what, with the reason, for example "waiting: Claude window 92%" or "waiting: reserved for urgent".
+  * The first slice only stores and shows the class: chips, plus grouping and sorting by class.
+
 * Projects, Laboratory, Agents, Access and History views, then deleting the remaining legacy pages.
 * Per-person grants and per-stream scope (Phase 6).
 * Results (Phase 3).

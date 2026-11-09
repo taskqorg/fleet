@@ -218,3 +218,21 @@ Each check was proven once with `UX_INJECT=<defect>`, which produced its warning
   * Change rows use the client kinds (`task`, `execution`, `question`, `session`, `event`, `host`), not legacy kinds.
   * The list order is group key, then newest first, then id. There is no separate sort option.
   * Priority grouping shows higher numbers first. Which way priority should run is an open question for the owner.
+
+## 2026-11-10 D16: Priority is a queue class
+
+* **Choice (owner):** `urgent`, `normal` (the default) or `background`, with `p0`, `p1` and `p2` accepted as synonyms. Recorded in [data foundation §2](../designs/fleet-data-foundation.md).
+* **In the app:**
+  * Urgent has a red chip and background a grey chip. Normal has no chip (OR-17).
+  * Grouping by priority orders urgent, normal, background, and the rows inside a group carry no chip.
+* **Planned:** the scheduler behaviour and the per-class queue view, in [fleet-operator-app.md](../designs/fleet-operator-app.md#future-improvements).
+* **Review fixes to PR #24 also in this change:**
+  * Hosts and Overview re-read hosts every 5 s and use the server clock.
+  * The draft is kept when a send fails.
+  * The IndexedDB clear closes connections and cancels pending writes.
+  * List updates are ordered by request sequence and sent in chunks of at most 1000 ids; a failed update falls back to a reload.
+  * The stream drains again after joining.
+  * Tasks without a project have their own filter.
+  * Durations use `endedAt`.
+  * Totals, artifacts and commands carry parent ids.
+  * The service worker caches only app routes, each under its own path.
