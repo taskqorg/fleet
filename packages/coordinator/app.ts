@@ -79,7 +79,7 @@ export function createApp(config:{database:string,browserSecret:string,machineSe
   put('execution',e);put('message',{id:randomUUID(),sessionId:s.id,executionId:e.id,requestId:requestId,text:input});
   put('command',command);return e;
  };
- agent=agentTools({all,get,put},{directory:config.profilesDirectory||'config/agents',hostId:config.hostId,enqueue});
+ agent=agentTools({all,get,put},{directory:config.profilesDirectory||'config/agents',hostId:config.hostId,enqueue,resolveAccount:(account:string,harness:string)=>managed.resolve(account,harness,config.hostId)});
  const delegates=delegation({all,get,put},config.profilesDirectory||'config/agents',enqueue);
  app.get('/api/executions/:id/delegations',async(req:any)=>{get(req.params.id,'execution');return {delegations:all('delegation').filter(d=>d.parentExecutionId===req.params.id||d.childExecutionId===req.params.id||d.continuationExecutionId===req.params.id).map(related)}});
  app.post('/api/sessions/:id/messages',async(req:any)=>db.transaction(()=>{

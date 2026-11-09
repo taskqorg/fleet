@@ -27,7 +27,7 @@ export function decideTransition(current:Side|null,target:Side):Transition{
 }
 const side=(key:string,cfg:any):Side=>{const {model,effort,id,...rest}=cfg??{};return {key,model:model??'gpt-6.1-sol',effort:cfg?effort:'low',config:canonical(rest)}};
 
-export function agentTools(store:Store,deps:{directory:string,hostId:string,enqueue:(s:any,text:string,requestId:string)=>any}){
+export function agentTools(store:Store,deps:{directory:string,hostId:string,enqueue:(s:any,text:string,requestId:string)=>any,resolveAccount?:(account:string,harness:string)=>any}){
  const {all,get,put}=store;
  const capable=(name:string)=>{const h=all('host-observation').find(x=>x.id===deps.hostId);return Array.isArray(h?.capabilities)&&h.capabilities.includes(name)};
  const executions=(sessionId:string)=>all('execution').filter(e=>e.sessionId===sessionId);
@@ -193,6 +193,12 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   else if(name==='reply')mine(get(str(a.questionId,'questionId'),'question').sessionId);
   else if(name==='reconcile')fail(403,'Not available to host agents');
   else{a.sessionId=a.sessionId??own;mine(a.sessionId);if(name==='session_fork')a.callerSessionId=own}
+  if(name==='session_transition'){
+   // Host agents may hand a session to another agent type, but only to an existing profile and a registered,
+   // enabled account with a ready binding on this host (resolve also keeps Claude off PDS).
+   let profile:any;try{profile=readTrustedProfile(deps.directory,str(a.profileId,'profileId'))}catch{fail(403,'Unknown profile')}
+   if(a.account!==undefined&&a.account!==null){let ok:any;try{ok=deps.resolveAccount?.(a.account,profile.harness??'codex')}catch{}
+    if(!ok||!all('managed-account').some(m=>m.id===a.account||m.name===a.account))fail(403,'Account not available')}}
   if(name==='execution_status'&&e.sessionId!==own)fail(403,'Execution rejected');
   return operations[name](a);
  }
