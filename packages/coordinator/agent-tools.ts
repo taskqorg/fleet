@@ -225,7 +225,11 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   else if(['ask','worker_done','execution_status'].includes(name))a.executionId=executionId;
   else if(name==='reply')mine(get(str(a.questionId,'questionId'),'question').sessionId);
   else if(name==='reconcile')fail(403,'Not available to host agents');
-  else if(name==='session_start'){const p=get(own,'session').projectId;if(p&&a.projectId!==undefined&&a.projectId!==p)fail(403,'Project belongs to another agent');a.projectId=a.projectId??p;a.callerSessionId=own}
+  else if(name==='session_start'){
+   // Host agents start sessions only in their own project, with a profile from its roles map and a registered account.
+   const p=get(own,'session').projectId;if(!p||a.projectId!==undefined&&a.projectId!==p)fail(403,'Project belongs to another agent');a.projectId=p;a.callerSessionId=own;
+   const roles=Object.values(deps.project?.(p)?.roles??{});if(a.profileId!==undefined&&!roles.includes(a.profileId))fail(403,'Profile not in project roles');
+   if(a.account!==undefined&&!all('managed-account').some(m=>m.enabled&&(m.id===a.account||m.name===a.account)))fail(403,'Account not available')}
   else{a.sessionId=a.sessionId??own;mine(a.sessionId);if(name==='session_fork')a.callerSessionId=own}
   if(name==='session_transition'){
    // Host agents may hand a session to another agent type, but only to an existing profile and a registered,
