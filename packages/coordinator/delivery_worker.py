@@ -94,13 +94,32 @@ def main():
                     content=base64.b64decode(f['contentBase64'],validate=True)
                     if hashlib.sha256(content).hexdigest()!=f['sha256']:raise RuntimeError('Material digest mismatch')
                     (workspace/f['path']).write_bytes(content)
-                html=(workspace/'index.html').read_text()
+                html=(workspace/'index.html').read_text() if not p.get('branch') else '<html>'
                 if '<html' not in html.lower() or '<script' in html.lower() or re.search(r'(?:src|href)\s*=\s*["\'](?:https?:)?//',html,re.I):
                     # Source links are allowed; remotely loaded resources are not.
                     if '<html' not in html.lower() or '<script' in html.lower() or re.search(r'src\s*=\s*["\'](?:https?:)?//',html,re.I):raise RuntimeError('Static verification failed')
                 result={'kind':p['kind'],'projectId':p['projectId'],'deliveryId':p['deliveryId'],'files':[{'path':f['path'],'sha256':f['sha256']} for f in p['files']]}
                 if p['kind']=='integrate':
                     repo=workspace/'repo';run(['git','clone','--quiet',project['repository'],str(repo)])
+                if p['kind']=='integrate' and p.get('branch'):
+                    # Agent path: the session already pushed its branch; open a PR and merge it after checks.
+                    integration={'mergeMethod':'squash','autoMerge':True,**(p.get('integration') or {})}
+                    base=project.get('defaultBranch','main');branch=p['branch']
+                    if not re.fullmatch(r'[A-Za-z0-9_.-]+/[0-9a-f-]{36}',branch):raise RuntimeError('Session branch denied')
+                    head=run(['git','ls-remote','origin','refs/heads/'+branch],repo).split()
+                    if not head:raise RuntimeError('Session branch not pushed')
+                    result.update(commit=head[0],repository=project['repository'],verified=True,mode='pr',branch=branch)
+                    effect=True
+                    existing=json.loads(run(['gh','pr','list','--head',branch,'--state','all','--json','url'],repo))
+                    url=existing[0]['url'] if existing else run(['gh','pr','create','--base',base,'--head',branch,'--title','Fleet session '+branch.split('/',1)[1],'--body','Fleet session delivery '+p['deliveryId']],repo).splitlines()[-1]
+                    if integration['autoMerge']:
+                        checks=subprocess.run(['gh','pr','checks',url,'--watch','--fail-fast','--interval','15'],cwd=repo,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=1800)
+                        if checks.returncode and b'no checks reported' not in checks.stdout:raise RuntimeError('PR checks did not pass; PR left open')
+                        if json.loads(run(['gh','pr','view',url,'--json','state'],repo)).get('state')=='OPEN':run(['gh','pr','merge',url,'--'+integration['mergeMethod']],repo)
+                    view=json.loads(run(['gh','pr','view',url,'--json','state,mergeCommit'],repo))
+                    result.update(prUrl=url,prState=view.get('state'))
+                    if view.get('state')=='MERGED':result.update(mergedSha=(view.get('mergeCommit') or {}).get('oid'))
+                elif p['kind']=='integrate':
                     for f in p['files']:shutil.copyfile(workspace/f['path'],repo/f['path'])
                     if project.get('contextDirectory'):
                         context=pathlib.Path(project['contextDirectory']);(repo/'.fleet').mkdir(exist_ok=True)

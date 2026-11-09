@@ -27,7 +27,7 @@ export function decideTransition(current:Side|null,target:Side):Transition{
 }
 const side=(key:string,cfg:any):Side=>{const {model,effort,id,...rest}=cfg??{};return {key,model:model??'gpt-6.1-sol',effort:cfg?effort:'low',config:canonical(rest)}};
 
-export function agentTools(store:Store,deps:{directory:string,hostId:string,enqueue:(s:any,text:string,requestId:string)=>any,resolveAccount?:(account:string,harness:string)=>any,project?:(projectId:string)=>any}){
+export function agentTools(store:Store,deps:{directory:string,hostId:string,enqueue:(s:any,text:string,requestId:string)=>any,resolveAccount?:(account:string,harness:string)=>any,project?:(projectId:string)=>any,pickAccount?:(harness:string,projectId:string,hostId?:string)=>string|undefined,deliver?:(b:any)=>any}){
  const {all,get,put}=store;
  const capable=(name:string)=>{const h=all('host-observation').find(x=>x.id===deps.hostId);return Array.isArray(h?.capabilities)&&h.capabilities.includes(name)};
  const executions=(sessionId:string)=>all('execution').filter(e=>e.sessionId===sessionId);
@@ -107,6 +107,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
 
  function onReceipt(c:any,e:any,status:string){
   if(c.kind==='steer'){const q=all('queued-message').find(x=>x.steerCommandId===c.id);if(q){q.state=status==='completed'?'steered':status==='failed'?'queued':status==='unknown'?'steer_unknown':q.state;if(q.state==='queued')delete q.steerCommandId;put('queued-message',q)}return}
+  if(c.kind==='start'&&['completed','failed','stopped'].includes(status))wake(e,status);
   if(c.kind!=='start'||!e.handoffId)return;
   const h=get(e.handoffId,'handoff');if(h.state!=='sent')return;
   // T3 ContextHandoffDelivery: started means the native turn received the inline handoff; unknown stays visible.
@@ -114,6 +115,11 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   else if(status==='failed'||status==='stopped'){h.state='pending';const s=get(e.sessionId,'session');if(!s.pendingHandoffId&&!e.startedAt){s.pendingHandoffId=h.id;put('session',s)}}
   put('handoff',h);
  }
+ // Completion wake: a child session's finished turn becomes the next message of the session that created it
+ // (queued while that session is busy). Same queue as ask/reply; requestId per execution keeps it single.
+ function wake(e:any,status:string){const s=get(e.sessionId,'session');if(!s.createdBySessionId)return;
+  const r=get(e.id,'execution').report;
+  try{submit({sessionId:s.createdBySessionId,requestId:'wake:'+e.id,source:'wake',text:`Fleet: your session ${s.id}${s.role?' ('+s.role+')':''} finished execution ${e.id}: ${status}.${r?` worker_done ${r.outcome}: ${r.summary??''}`:''} Read it with execution_status {sessionId:"${s.id}"}.`})}catch{}}
  const ready=(c:any)=>c.kind!=='steer'||!terminal(get(c.executionId,'execution'));
 
  // Orca ask-methods/reply-method: non-blocking question; `resume` reads it back. The reply reaches the asker as its
@@ -146,7 +152,8 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   return terminal(e)?{outcome:'proven',detail:e.stopRequested&&(e.state==='stopped'||stop?.status==='stopped')?'stopped':'already_finished',state:e.state}:{outcome:'unknown',detail:'unconfirmed',state:e.state,stopCommand:stop?{id:stop.id,status:stop.status}:null}};
  function status(b:any){const e=get(str(b?.executionId,'executionId'),'execution'),s=get(e.sessionId,'session');
   const next=terminal(e)?'message':e.state==='unknown'?'session_fork':e.stopRequested?'execution_status':'wait_or_steer';
-  return {executionId:e.id,sessionId:e.sessionId,state:e.state,report:e.report??null,stop:e.stopRequested?stopOutcome(e):null,next,resume:resume({sessionId:s.id})}}
+  const readiness=all('event').filter((x:any)=>x.executionId===e.id&&x.type==='readiness').map((x:any)=>x.data);
+  return {executionId:e.id,sessionId:e.sessionId,state:e.state,report:e.report??null,...(readiness.length?{readiness}:{}),stop:e.stopRequested?stopOutcome(e):null,next,resume:resume({sessionId:s.id})}}
  function resume(b:any){const s=get(str(b?.sessionId,'sessionId'),'session'),harness=harnessOf(s);
   const native=(id:string)=>({key:keyFor(harness),id,resumeArgv:resumeArgv(harness,{id,effort:s.agentConfig?.effort}),forkArgv:forkArgv(harness,{id})});
   return {sessionId:s.id,harness,account:s.account??null,native:s.nativeSessionId?native(s.nativeSessionId):null,nativeSessions:s.nativeSessions??{},forkOf:s.forkOf??null}}
@@ -167,8 +174,22 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
  function readiness(b:any){const projectId=str(b?.projectId,'projectId'),project=deps.project?.(projectId)??fail(404,'Unknown project');
   return {projectId,hosts:[...new Set<string>((project.environments??[]).map((e:any)=>e.hostId))].map(hostId=>{const sessionId=randomUUID(),id=randomUUID();
    put('session',{id:sessionId,createdAt:Date.now(),actor:'program-worker'});put('execution',{id,executionId:id,sessionId,hostId,state:'queued',createdAt:Date.now(),actor:'program-worker'});
-   put('command',{id:randomUUID(),executionId:id,sessionId,hostId,kind:'readiness',status:'pending',payload:{projectId,project}});return {hostId,executionId:id}})}}
+   put('command',{id:randomUUID(),executionId:id,sessionId,hostId,kind:'readiness',status:'pending',payload:{projectId,project:{...project,roles:Object.fromEntries(Object.entries(project.roles??{}).map(([r,v]:any)=>[r,roleHarness(v)]))}}});return {hostId,executionId:id}})}}
+ // Role value names a profile (or, legacy, a harness). The executor's readiness checks accounts by harness.
+ const roleProfile=(v:string)=>{try{return readTrustedProfile(deps.directory,v)}catch{return null}};
+ const roleHarness=(v:string)=>{const p=roleProfile(v);return p?p.harness??'codex':v};
+ // Start a new session bound to a project: profile from the role (or profileId), account from the project
+ // binding (picks the host). Idempotent per (projectId, requestId). Optional text starts the first turn.
+ function start(b:any){const projectId=str(b?.projectId,'projectId'),requestId=str(b.requestId,'requestId'),project=deps.project?.(projectId)??fail(404,'Unknown project');
+  const key=projectId+':'+requestId,old=all('session').find(s=>s.startRequest===key);if(old)return {sessionId:old.id,projectId,role:old.role??null,profileId:old.agentConfig?.id,account:old.account??null,existing:true};
+  const profileId=b.profileId??(b.role?project.roles?.[b.role]:undefined),profile=typeof profileId==='string'&&roleProfile(profileId)||fail(400,'Expected profileId or a role mapped to a profile');
+  if(b.setup!==undefined&&!['run','skip'].includes(b.setup))fail(400,'Expected setup run|skip');
+  const account=b.account??deps.pickAccount?.(profile.harness??'codex',projectId,b.hostId);
+  const s:any={id:randomUUID(),createdAt:Date.now(),projectId,agentConfig:profile,startRequest:key,...(b.role?{role:b.role}:{}),...(account?{account}:{}),...(b.setup?{setup:b.setup}:{}),...(typeof b.callerSessionId==='string'?{createdBySessionId:b.callerSessionId}:{})};
+  put('session',s);const first=typeof b.text==='string'&&b.text?submit({sessionId:s.id,requestId:'start:'+requestId,text:b.text}):null;
+  return {sessionId:s.id,projectId,role:b.role??null,profileId:profile.id,account:account??null,executionId:first&&!first.queued?first.id:null,hostId:first?.hostId??null}}
  const operations:Record<string,(b:any)=>any>={
+  session_start:start,session_deliver:b=>deps.deliver?.(b)??fail(503,'Delivery unavailable'),
   project_readiness:readiness,
   session_transition:transition,session_fork:fork,session_resume:resume,
   session_handoffs:b=>({handoffs:all('handoff').filter(h=>h.sessionId===str(b?.sessionId,'sessionId'))}),
@@ -180,6 +201,8 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
   session_transition:'Switch profile/harness/account/model; returns reuse|switch_model_in_session|restart_and_resume|create_with_handoff and hands context to a new native session',
   session_fork:'Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown',
   session_resume:'Native resume/fork argv and captured native sessions for a session',session_handoffs:'Context handoffs of a session with delivery state',
+  session_start:'Start a new session in a project: projectId, requestId, role (project roles map) or profileId, optional account/hostId, text, setup run|skip. The creator is woken when it finishes',
+  session_deliver:'Open a PR from a project session branch (<prefix>/<sessionId>, pushed by the agent) and let Fleet merge it after checks; call again with the same sessionId to read its state',
   project_readiness:'Check a project per environment host: remote reachable, checkout, setup script, bound account login; read results with execution_status',
   message_send:'Send a message; starts a turn, or queues/steers it while the session is busy',queue_list:'Queued messages',
   ask:'Ask the coordinator a non-blocking question; pass resume=<questionId> to read the answer',reply:'Answer a question; delivered to the asker as its next message',
@@ -197,9 +220,16 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
  function bound(name:string,args:any,executionId:string){
   const e=get(executionId,'execution'),own=e.sessionId,a={...(args??{})};
   const mine=(id:any)=>typeof id==='string'&&(id===own||get(id,'session').createdBySessionId===own)||fail(403,'Session belongs to another agent');
-  if(['ask','worker_done','execution_status'].includes(name))a.executionId=executionId;
+  // execution_status with sessionId: latest execution of a session this agent owns (PM watching its worker).
+  if(name==='execution_status'&&a.sessionId!==undefined){mine(a.sessionId);a.executionId=executions(a.sessionId).at(-1)?.id??fail(404,'No execution');delete a.sessionId}
+  else if(['ask','worker_done','execution_status'].includes(name))a.executionId=executionId;
   else if(name==='reply')mine(get(str(a.questionId,'questionId'),'question').sessionId);
   else if(name==='reconcile')fail(403,'Not available to host agents');
+  else if(name==='session_start'){
+   // Host agents start sessions only in their own project, with a profile from its roles map and a registered account.
+   const p=get(own,'session').projectId;if(!p||a.projectId!==undefined&&a.projectId!==p)fail(403,'Project belongs to another agent');a.projectId=p;a.callerSessionId=own;
+   const roles=Object.values(deps.project?.(p)?.roles??{});if(a.profileId!==undefined&&!roles.includes(a.profileId))fail(403,'Profile not in project roles');
+   if(a.account!==undefined&&!all('managed-account').some(m=>m.enabled&&(m.id===a.account||m.name===a.account)))fail(403,'Account not available')}
   else{a.sessionId=a.sessionId??own;mine(a.sessionId);if(name==='session_fork')a.callerSessionId=own}
   if(name==='session_transition'){
    // Host agents may hand a session to another agent type, but only to an existing profile and a registered,
@@ -207,7 +237,7 @@ export function agentTools(store:Store,deps:{directory:string,hostId:string,enqu
    let profile:any;try{profile=readTrustedProfile(deps.directory,str(a.profileId,'profileId'))}catch{fail(403,'Unknown profile')}
    if(a.account!==undefined&&a.account!==null){let ok:any;try{ok=deps.resolveAccount?.(a.account,profile.harness??'codex')}catch{}
     if(!ok||!all('managed-account').some(m=>m.id===a.account||m.name===a.account))fail(403,'Account not available')}}
-  if(name==='execution_status'&&e.sessionId!==own)fail(403,'Execution rejected');
+
   return operations[name](a);
  }
  return {operations,bound,decorate,captureNative,knownNative,onReceipt,promote,ready,reconcile,stopOutcome,sessionView,transition,submit,mcp};

@@ -23,7 +23,7 @@ test('agent tools: queue, handoff, fork, resume, ask/reply, worker_done, stop ou
  const asked=(await call('/api/hosts/agent-tools',{hostId:'mac',commandId:c.id,executionId:c.executionId,request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'ask',arguments:{requestId:'q1',question:'Colors?'}}}},true)).json();
  const question=JSON.parse(asked.result.content[0].text);assert.equal(question.state,'open');
  const other=(await call('/api/sessions',{})).json().sessionId;
- for(const [name,args] of [['message_send',{sessionId:other,requestId:'x',text:'x'}],['session_transition',{sessionId:other,profileId:'baseline'}],['session_fork',{sessionId:other,requestId:'x'}],['session_transition',{profileId:'baseline',account:'made-up-account'}],['session_transition',{profileId:'no-such-profile'}],['reconcile',{}]] as const)
+ for(const [name,args] of [['message_send',{sessionId:other,requestId:'x',text:'x'}],['session_transition',{sessionId:other,profileId:'baseline'}],['session_fork',{sessionId:other,requestId:'x'}],['session_transition',{profileId:'baseline',account:'made-up-account'}],['session_transition',{profileId:'no-such-profile'}],['reconcile',{}],['execution_status',{sessionId:other}]] as const)
   assert.equal((await call('/api/hosts/agent-tools',{hostId:'mac',commandId:c.id,executionId:c.executionId,request:{jsonrpc:'2.0',id:2,method:'tools/call',params:{name,arguments:args}}},true)).statusCode,403,name);
  const ownQueue=JSON.parse((await call('/api/hosts/agent-tools',{hostId:'mac',commandId:c.id,executionId:c.executionId,request:{jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'queue_list',arguments:{}}}},true)).json().result.content[0].text);
  assert.ok(ownQueue.queued.every((x:any)=>x.sessionId===s));
@@ -69,6 +69,8 @@ test('readiness per environment host; start carries setup; archive sends teardow
  const poll=async(hostId='mac')=>(await call('/api/hosts/poll',{hostId},true)).json().commands;
  const r=await op('project_readiness',{projectId:'p1'});assert.deepEqual(r.hosts.map((h:any)=>h.hostId),['mac','pds']);
  const [rc]=await poll();assert.equal(rc.kind,'readiness');assert.equal(rc.payload.project.repos[0].id,'main');
+ await call('/api/hosts/events',{hostId:'mac',executionId:rc.executionId,events:[{id:'r',seq:0,type:'readiness',data:{hostId:'mac',ok:false,checks:[{check:'remote',status:'failed',reason:'ls-remote-exit-128'}]}}]},true);
+ assert.equal((await op('execution_status',{executionId:rc.executionId})).readiness[0].checks[0].reason,'ls-remote-exit-128');
  const s=(await op('session_create',{})).sessionId;
  await op('message_send',{sessionId:s,requestId:'one',text:'Go',setup:'skip'});
  const start=(await poll()).find((x:any)=>x.kind==='start');assert.equal(start.payload.setup,'skip');
@@ -76,5 +78,27 @@ test('readiness per environment host; start carries setup; archive sends teardow
  await call('/api/hosts/receipts',{hostId:'mac',commandId:start.id,executionId:start.executionId,status:'completed'},true);
  const t=await op('session_archive',{sessionId:s});assert.equal(t.kind,'teardown');assert.equal(t.executionId,start.executionId);
  assert.equal((await op('session_archive',{sessionId:s})).id,t.id);
+ await app.close();
+});
+test('session_start binds a project session; finished child wakes its creator; session_deliver opens a PR step',async()=>{
+ const dir=mkdtempSync(tmpdir()+'/fleet-start-');mkdirSync(dir+'/projects/p1',{recursive:true});mkdirSync(dir+'/agents');
+ writeFileSync(dir+'/agents/w.json',JSON.stringify({id:'w',model:'gpt-6.1-sol',effort:'low',instructions:'x',mcpServers:[]}));
+ writeFileSync(dir+'/projects/p1/project.json',JSON.stringify({id:'p1',name:'P1',contextFiles:[],roles:{pm:'w',worker:'w'},repos:[{id:'main',remote:'git@example.com:a/b.git'}],environments:[{hostId:'mac',checkoutPath:'/x'}]}));
+ const app=createApp({database:dir+'/db',browserSecret:'b',machineSecret:'m',hostId:'mac',integrationHostId:'prog',projectConfigDirectory:dir,profilesDirectory:dir+'/agents'});
+ const call=async(url:string,payload?:any,machine=false)=>(await app.inject({method:payload?'POST':'GET',url,headers:{authorization:'Bearer '+(machine?'m':'b')},payload}));
+ const op=async(name:string,body:any)=>(await call('/api/ops/'+name,body)).json();
+ const poll=async(hostId='mac')=>(await call('/api/hosts/poll',{hostId},true)).json().commands;
+ const done=(c:any)=>call('/api/hosts/receipts',{hostId:'mac',commandId:c.id,executionId:c.executionId,status:'completed'},true);
+ const tool=async(c:any,name:string,args:any)=>JSON.parse((await call('/api/hosts/agent-tools',{hostId:'mac',commandId:c.id,executionId:c.executionId,request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}}},true)).json().result.content[0].text);
+ const pm=await op('session_start',{projectId:'p1',role:'pm',requestId:'pm1',text:'Plan'});assert.equal(pm.profileId,'w');
+ assert.equal((await op('session_start',{projectId:'p1',role:'pm',requestId:'pm1'})).sessionId,pm.sessionId);
+ const [pc]=await poll();assert.equal(pc.payload.projectId,'p1');assert.equal(pc.payload.gitNetwork,true);
+ const child=await tool(pc,'session_start',{role:'worker',requestId:'w1',text:'Do it'});
+ assert.equal((await call('/api/hosts/agent-tools',{hostId:'mac',commandId:pc.id,executionId:pc.executionId,request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'session_start',arguments:{projectId:'other',role:'worker',requestId:'w2'}}}},true)).statusCode,403);
+ await done(pc);const cc=(await poll()).find((x:any)=>x.sessionId===child.sessionId);await done(cc);
+ const wake=(await poll()).find((x:any)=>x.sessionId===pm.sessionId);assert.match(wake.payload.text,new RegExp('your session '+child.sessionId));
+ const d=await tool(wake,'session_deliver',{sessionId:child.sessionId});assert.equal(d.branch,'fleet/'+child.sessionId);
+ const [ic]=await poll('prog');assert.equal(ic.payload.branch,d.branch);assert.equal((await tool(wake,'session_deliver',{sessionId:child.sessionId})).id,d.id);
+ assert.ok((await op('session_get',{sessionId:pm.sessionId})).executions.length===2);
  await app.close();
 });

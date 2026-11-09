@@ -246,7 +246,9 @@ impl Executor {
                 Err(e) => json!({"removed":false,"reason":e.to_string()}),
             } };
             let ok = data["removed"] == true || data["reason"] == "uncommitted" || data["reason"] == "no-worktree";
-            self.event(&c, 0, "teardown", data)?;
+            // The teardown command reuses the last execution, whose seq 0.. are taken by its turn: use a fresh seq.
+            let seq = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1 << 40, |d| d.as_millis() as u64);
+            self.event(&c, seq, "teardown", data)?;
             return self.finish(&c, if ok { "completed" } else { "failed" }, None);
         }
         if c["kind"] != "start" && c["kind"] != "input" {
@@ -279,7 +281,7 @@ impl Executor {
         )?;
         fs::rename(dir.join(".fleet-instructions.tmp"), dir.join("AGENTS.md"))?;
         if p.get("agentConfig").is_none() && harness::name(p) == "codex" {
-            self.event(&c,0,"preparation",json!({"model":p["model"],"effort":p["effort"],"subscription":true,"instructionsSha256":format!("{:x}",Sha256::digest(p["instructions"].as_str().unwrap_or("").as_bytes())),"tools":{"shell":"workspace-write, network disabled, approvals denied","mcp":[],"collaborationTools":p["agentConfig"]["collaborationTools"].as_bool().unwrap_or(true)},"skills":[],"repairs":false,"nativeConfig":"Fleet-owned HOME/CODEX_HOME required; config and execpolicy ignored; AGENTS discovery, skills, memories and hooks disabled; context observations pending"}))?;
+            self.event(&c,0,"preparation",json!({"model":p["model"],"effort":p["effort"],"subscription":true,"instructionsSha256":format!("{:x}",Sha256::digest(p["instructions"].as_str().unwrap_or("").as_bytes())),"tools":{"shell":if p["gitNetwork"] == true {"workspace-write, git network enabled, checkout .git writable, approvals denied"} else {"workspace-write, network disabled, approvals denied"},"mcp":[],"collaborationTools":p["agentConfig"]["collaborationTools"].as_bool().unwrap_or(true)},"skills":[],"repairs":false,"nativeConfig":"Fleet-owned HOME/CODEX_HOME required; config and execpolicy ignored; AGENTS discovery, skills, memories and hooks disabled; context observations pending"}))?;
         }
         // The coordinator owns the native id per harness:account continuation; no id means a new native session
         // (a handoff to another harness must not resume the previous harness's thread).
@@ -319,8 +321,10 @@ impl Executor {
             cmd.args(["--disable", "multi_agent", "--disable", "multi_agent_v2"]);
         }
         let repo = worktree::repo_path(p, &self.host);
+        let mut checkout_top = None;
         let workdir = match worktree::worktree(&dir, &session, repo.as_deref(), &worktree::project_roots(), &[&self.root, &self.sessions], &p["project"]) {
             Ok(Some((w, top, created))) => {
+                checkout_top = Some(top.clone());
                 if let (true, Some(script), false) = (created, p["project"]["scripts"]["setup"].as_str(), p["setup"] == "skip") {
                     let e = worktree::script("setup", script, &top, &w, &session);
                     let ok = e["ok"] == true;
@@ -364,7 +368,7 @@ impl Executor {
                 claude_servers["fleet"] = json!({"command":"python3","args":args});
             } else {
                 cmd.args(["-c","mcp_servers.fleet.command=\"python3\"","-c",&format!("mcp_servers.fleet.args={args}"),"-c","mcp_servers.fleet.required=true"]);
-                let mut tools = vec!["session_transition","session_fork","session_resume","session_handoffs","message_send","queue_list","ask","reply","questions","worker_done","execution_status"];
+                let mut tools = vec!["session_start","session_deliver","session_transition","session_fork","session_resume","session_handoffs","message_send","queue_list","ask","reply","questions","worker_done","execution_status"];
                 if !profiles.is_empty() { tools.push("request_child"); }
                 if p["projectId"].is_string() { tools.extend(["project_context","catalogue","pipeline_run","direct_search","pipeline_history","pipeline_get","question_ask","question_history","account_list"]); }
                 cmd.args(["-c",&format!("mcp_servers.fleet.enabled_tools={}",json!(tools))]);
@@ -391,10 +395,15 @@ impl Executor {
             cmd = codex::command(&cmd);
         }
         let mut protocol = if codex_protocol {
+            // gitNetwork: sandbox network on and the checkout's common .git writable (fetch/commit/push from the worktree).
+            let mut sp = p.clone();
+            if p["gitNetwork"] == true {
+                if let Some(t) = &checkout_top { sp["writableRoots"] = json!([t.join(".git")]); }
+            }
             Some(Protocol::Codex(codex::Session::new(
                 workdir.as_ref().unwrap_or(&dir).to_string_lossy().into_owned(),
                 native.clone(),
-                p.clone(),
+                sp,
             ).fork(if native.is_none() { p["fork"]["nativeSessionId"].as_str().map(str::to_owned) } else { None })))
         } else if acp_protocol {
             Some(Protocol::Antigravity(antigravity::Session::new(
@@ -678,7 +687,8 @@ impl Executor {
                 if let Some(status) = l.exit {
                     l.seq+=1;self.event(&l.command,l.seq,"process.closed",json!({"exitCode":status.code(),"stdoutClosed":l.eof,"observedOwnedProcessesRemaining":false,"cleanupUnknown":l.cleanup_unknown}))?;
                     let dir = self.session_dir(&id(&l.command, "sessionId")?);
-                    let output = dir.join("output");
+                    // Project sessions run in their worktree, so the agent writes output/ there.
+                    let output = [dir.join("worktree").join("output"), dir.join("output")].into_iter().find(|o| o.is_dir()).unwrap_or_else(|| dir.join("output"));
                     if output.is_dir() {
                         if let Err(_) = self.artifacts(&output, &output, &execution) {
                             return self

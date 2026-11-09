@@ -66,7 +66,8 @@ export function registerProjects(app:FastifyInstance,store:Store,config:{directo
   question_answer:(b:any)=>{const q=get(b.questionId,'project-question');if(typeof b.answer!=='string'||!b.answer||b.answer.length>4000)fail(400,'Expected answer');if(q.state==='answered'){if(q.answer!==b.answer)fail(409,'Answer already recorded');return q}Object.assign(q,{state:'answered',answer:b.answer,answeredAt:Date.now(),answeredBy:'operator'});put('project-question',q);return q},
   question_history:(b:any)=>{project(b.projectId);return {questions:all('project-question').filter(q=>q.projectId===b.projectId)}},project_context:(b:any)=>project(b.projectId),catalogue:(b:any)=>catalogue(b.projectId),pipeline_run:runPipeline,pipeline_get:(b:any)=>{if(typeof b.runId!=='string'||!b.runId||b.runId.length>200)fail(400,'Expected runId');const r=get(b.runId,'pipeline-run');if(b.projectId&&r.projectId!==b.projectId)fail(403,'Pipeline belongs to another project');return r},pipeline_history:(b:any)=>{project(b.projectId);return {runs:all('pipeline-run').filter(r=>r.projectId===b.projectId)}}};
  app.get('/projects',async(_,r)=>r.type('text/html').send(projectUi(config.proxy)));
- app.get('/api/projects',async()=>({projects:ids().map(project)}));
+ operations.project_list=()=>({projects:ids().map(project)});
+ app.get('/api/projects',async()=>operations.project_list());
  app.get('/api/projects/:id',async(req:any)=>operations.project_context({projectId:req.params.id}));
  app.get('/api/projects/:id/catalogue',async(req:any)=>operations.catalogue({projectId:req.params.id}));
  app.get('/api/projects/:id/runs',async(req:any)=>operations.pipeline_history({projectId:req.params.id}));

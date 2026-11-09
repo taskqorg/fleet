@@ -40,7 +40,8 @@ export function createApp(config:{nativeHostIds?:string[],database:string,browse
  const owned=(b:any)=>{if(![config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].filter(Boolean).includes(b.hostId)) fail(403,'Host rejected'); if(b.executionId&&get(b.executionId,'execution').hostId!==b.hostId) fail(403,'Execution rejected')};
  app.get('/',async(_,r)=>r.type('text/html').send(ui(config.browserProxyAuth)));
  app.get('/test-sites/:project/:file',async(req:any,r)=>{if(!config.testSiteRoot||!['hello-world','hello-world-alt'].includes(req.params.project)||!/^[a-zA-Z0-9_-]+\.(html|css)$/.test(req.params.file))fail(404,'Unknown test site');const root=realpathSync(resolve(config.testSiteRoot!,req.params.project)),path=realpathSync(resolve(root,'current',req.params.file));if(!path.startsWith(root+sep))fail(403,'Test-site path rejected');r.header('Content-Security-Policy',"sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src data:; frame-ancestors 'self'");return r.type(req.params.file.endsWith('.css')?'text/css':'text/html').send(readFileSync(path))});
- app.get('/api/profiles',async()=>({profiles:listProfiles(config.profilesDirectory||'config/agents')}));
+ const profiles_list=()=>({profiles:listProfiles(config.profilesDirectory||'config/agents')});
+ app.get('/api/profiles',async()=>profiles_list());
  const session_create=()=>{const s={id:randomUUID(),createdAt:Date.now()};put('session',s);return {sessionId:s.id,...s}};
  app.post('/api/sessions',async()=>db.transaction(session_create)());
  const session_profile=({sessionId,...body}:any)=>{const req={body};
@@ -54,10 +55,11 @@ export function createApp(config:{nativeHostIds?:string[],database:string,browse
   s.agentConfig=readTrustedProfile(config.profilesDirectory||'config/agents',req.body.profileId);put('session',s);return {sessionId:s.id,profileId:s.agentConfig.id,account:s.account};
  };
  app.post('/api/sessions/:id/profile',async(req:any)=>db.transaction(()=>session_profile({...req.body,sessionId:req.params.id}))());
- app.get('/api/sessions/:id',async(req:any)=>{const s=get(req.params.id,'session');return {...s,...agent.sessionView(s.id),sessionId:s.id,delegations:all('delegation').filter(d=>d.parentSessionId===s.id||d.childSessionId===s.id).map(related),messages:all('message').filter(x=>x.sessionId===s.id),executions:all('execution').filter(x=>x.sessionId===s.id),events:all('event').filter(x=>x.sessionId===s.id),results:all('artifact').filter(x=>x.sessionId===s.id).map(({contentBase64,...x})=>x)}});
+ const session_get=(b:any)=>{const s=get(b?.sessionId,'session');return {...s,...agent.sessionView(s.id),sessionId:s.id,delegations:all('delegation').filter(d=>d.parentSessionId===s.id||d.childSessionId===s.id).map(related),messages:all('message').filter(x=>x.sessionId===s.id),executions:all('execution').filter(x=>x.sessionId===s.id),events:all('event').filter(x=>x.sessionId===s.id),results:all('artifact').filter(x=>x.sessionId===s.id).map(({contentBase64,...x})=>x)}};
+ app.get('/api/sessions/:id',async(req:any)=>session_get({sessionId:req.params.id}));
  app.get('/api/sessions/:id/events',async(req:any)=>{get(req.params.id,'session');const after=Number(req.query.after??-1),limit=Number(req.query.limit??100);if(!Number.isSafeInteger(after)||!Number.isSafeInteger(limit)||limit<1||limit>500)fail(400,'Invalid page');const events=all('event').filter(x=>x.sessionId===req.params.id).slice(after+1,after+1+limit);return {events,nextCursor:events.length?after+events.length:after}});
- app.get('/api/executions/:id/differences',async(req:any)=>{
-  const current=get(req.params.id,'execution'),previous=get(text(req.query.previous,300),'execution');
+ const execution_differences=(b:any)=>{
+  const current=get(b?.executionId,'execution'),previous=get(text(b?.previous,300),'execution');
   if(current.sessionId!==previous.sessionId)fail(403,'Different session');
   const artifacts=all('artifact'),before=artifacts.filter(x=>x.executionId===previous.id),after=artifacts.filter(x=>x.executionId===current.id);
   const files=[...new Set([...before,...after].map(x=>x.path))].sort().map(path=>{
@@ -72,9 +74,13 @@ export function createApp(config:{nativeHostIds?:string[],database:string,browse
    return {path,textChange,state:!left?'added':!right?'removed':left.sha256===right.sha256?'unchanged':'modified',previous:left?{id:left.id,sha256:left.sha256}:null,current:right?{id:right.id,sha256:right.sha256}:null};
   });
   return {sessionId:current.sessionId,previousExecutionId:previous.id,executionId:current.id,files};
- });
- app.get('/api/executions/:id/events',async(req:any)=>{get(req.params.id,'execution');return {events:all('event').filter(x=>x.executionId===req.params.id).sort((a,b)=>a.seq-b.seq)}});
+ };
+ app.get('/api/executions/:id/differences',async(req:any)=>execution_differences({executionId:req.params.id,previous:req.query.previous}));
+ const execution_events=(b:any)=>{get(b?.executionId,'execution');return {events:all('event').filter(x=>x.executionId===b.executionId).sort((a,b)=>a.seq-b.seq)}};
+ app.get('/api/executions/:id/events',async(req:any)=>execution_events({executionId:req.params.id}));
  const managed=accounts(app,{all,get,put},config);
+ // Git network for agents: profile gitNetwork wins; default on for pm/reviewer/worker sessions of projects with repos.
+ const gitNetwork=(s:any)=>s.agentConfig?.gitNetwork??(!!s.projectId&&['pm','reviewer','worker'].includes(s.role)&&projects.project_context({projectId:s.projectId}).settings.repos.length>0);
  const enqueue=(s:any,input:string,requestId:string)=>{
   // Execution host follows the account binding: the session's last host first, then the default host, then extra native hosts.
   const harness=s.agentConfig?.harness??'codex',last=all('execution').filter(x=>x.sessionId===s.id&&x.hostId).at(-1)?.hostId;
@@ -83,11 +89,13 @@ export function createApp(config:{nativeHostIds?:string[],database:string,browse
   for(const h of candidates){try{binding=managed.resolve(s.account,harness,h);hostId=h;errors.length=0;break}catch(error){errors.push(error)}}
   if(errors.length)throw errors.find((x:any)=>x.statusCode===403)??errors[candidates.indexOf(config.hostId)]??errors[0];
   const e={...(s.agentConfig?{agentConfig:s.agentConfig,profileSha256:profileDigest(s.agentConfig)}:{}),...(s.account||binding?{requestedAccount:s.account??null,effectiveAccount:binding??{binding:s.account,legacy:true}}:{}),id:randomUUID(),executionId:'',sessionId:s.id,hostId,state:'queued',createdAt:Date.now(),model:s.agentConfig?.model??'gpt-6.1-sol',effort:s.agentConfig?s.agentConfig.effort:'low'};e.executionId=e.id;
-  const command:any={id:randomUUID(),executionId:e.id,sessionId:s.id,hostId,kind:'start',payload:{harness:s.agentConfig?.harness??'codex',...(s.account||binding&&!s.nativeSessionId?{account:binding?.binding??s.account,...(binding?{managedAccount:binding}:{})}:{}),text:input,...(s.projectId?{projectId:s.projectId,project:projects.project_context({projectId:s.projectId}).settings}:{}),setup:s.setup??'run',...(s.workingDirectory?{workingDirectory:s.workingDirectory}:{}),model:e.model,effort:e.effort,...(s.agentConfig?{agentConfig:s.agentConfig}:{}),instructions:s.agentConfig?'':'Follow the user request and its scope. Discuss, answer questions, or review existing results when requested; do not create or modify a website unless requested. When creating a static website, deliver output/index.html and retain all source assets. Do not spawn subagents.',...(s.nativeSessionId?{nativeSessionId:s.nativeSessionId}:{})},status:'pending'};agent.decorate(s,e,command);
+  const command:any={id:randomUUID(),executionId:e.id,sessionId:s.id,hostId,kind:'start',payload:{harness:s.agentConfig?.harness??'codex',...(s.account||binding&&!s.nativeSessionId?{account:binding?.binding??s.account,...(binding?{managedAccount:binding}:{})}:{}),text:input,...(s.projectId?{projectId:s.projectId,project:projects.project_context({projectId:s.projectId}).settings}:{}),...(gitNetwork(s)?{gitNetwork:true}:{}),setup:s.setup??'run',...(s.workingDirectory?{workingDirectory:s.workingDirectory}:{}),model:e.model,effort:e.effort,...(s.agentConfig?{agentConfig:s.agentConfig}:{}),instructions:s.agentConfig?'':'Follow the user request and its scope. Discuss, answer questions, or review existing results when requested; do not create or modify a website unless requested. When creating a static website, deliver output/index.html and retain all source assets. Do not spawn subagents.',...(s.nativeSessionId?{nativeSessionId:s.nativeSessionId}:{})},status:'pending'};agent.decorate(s,e,command);
   put('execution',e);put('message',{id:randomUUID(),sessionId:s.id,executionId:e.id,requestId:requestId,text:input});
   put('command',command);return e;
  };
- agent=agentTools({all,get,put},{directory:config.profilesDirectory||'config/agents',hostId:config.hostId,enqueue,project:(projectId:string)=>projects.project_context({projectId}).settings,resolveAccount:(account:string,harness:string)=>{let last:any;for(const h of [config.hostId,...(config.nativeHostIds??[])]){try{const r=managed.resolve(account,harness,h);if(r)return r}catch(e){last=e}}if(last)throw last}});
+ // Account for a new project session: the named one, else the project preference, else the first enabled account of the harness with a ready binding (on hostId when given). The binding picks the host.
+ const pickAccount=(harness:string,projectId:string,hostId?:string)=>{const ms=all('managed-account').filter(m=>m.enabled&&(m.harness??'codex')===harness&&(m.bindings??[]).some((b:any)=>b.readiness==='ready'&&(!hostId||b.hostId===hostId)));const pref=managed.preferred(projectId);return (ms.find(m=>m.name===pref)??ms[0])?.name};
+ agent=agentTools({all,get,put},{directory:config.profilesDirectory||'config/agents',hostId:config.hostId,enqueue,pickAccount,deliver:(b:any)=>deliveryRuntime.operations.session_deliver(b),project:(projectId:string)=>projects.project_context({projectId}).settings,resolveAccount:(account:string,harness:string)=>{let last:any;for(const h of [config.hostId,...(config.nativeHostIds??[])]){try{const r=managed.resolve(account,harness,h);if(r)return r}catch(e){last=e}}if(last)throw last}});
  const delegates=delegation({all,get,put},config.profilesDirectory||'config/agents',enqueue);
  app.get('/api/executions/:id/delegations',async(req:any)=>{get(req.params.id,'execution');return {delegations:all('delegation').filter(d=>d.parentExecutionId===req.params.id||d.childExecutionId===req.params.id||d.continuationExecutionId===req.params.id).map(related)}});
  app.post('/api/sessions/:id/messages',async(req:any)=>db.transaction(()=>{
@@ -118,7 +126,7 @@ export function createApp(config:{nativeHostIds?:string[],database:string,browse
  registerLab(app,{all,get,put,transaction:fn=>db.transaction(fn)()},{hostId:config.hostId,profilesDirectory:config.profilesDirectory||'config/agents',browserProxyAuth:config.browserProxyAuth});
  // One operation table: served as MCP tools (/api/tools) and as POST /api/ops/<name>; the web UI calls the same names.
  // ponytail: legacy per-feature routes stay as aliases. UI-only routes left (violations): lab experiment POSTs (/api/experiments*).
- const ops:Record<string,(b:any)=>any>={...projects,...transportRecovery.operations,...agent.operations,session_create,session_profile,session_archive,execution_stop};
+ const ops:Record<string,(b:any)=>any>={...projects,...transportRecovery.operations,...agent.operations,session_create,session_profile,session_archive,execution_stop,session_get,execution_differences,execution_events,profiles_list};
  const runOp=(n:string,b:any)=>{const op=ops[n];if(!op)fail(404,'Unknown operation');return op===projects[n]||op===transportRecovery.operations[n]?op(b??{}):db.transaction(()=>op(b??{}))()}; // project/recovery ops manage their own transactions (some async)
  app.post('/api/ops/:name',async(req:any)=>runOp(req.params.name,req.body));
  app.post('/api/tools',async(req:any)=>{const q=req.body;if(q?.method==='initialize')return {jsonrpc:'2.0',id:q.id,result:{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fleet',version:'1'}}};if(q?.method==='tools/list')return {jsonrpc:'2.0',id:q.id,result:{tools:Object.keys(ops).map(name=>({name,inputSchema:{type:'object'}}))}};if(q?.method!=='tools/call'||!ops[q.params?.name])fail(400,'Unknown tool');return {jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text:JSON.stringify(await runOp(q.params.name,q.params.arguments))}]}}});
