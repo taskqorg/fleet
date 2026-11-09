@@ -9,7 +9,7 @@
 * the title, which takes the free width at medium weight, with the ID (`font-mono`, `fg-muted`) right after it;
 * a compact service zone on the right: the [harness mark](harness-counts.md) while the task runs, the [delivery stage chip](stage-chip.md), the [age chip](number.md), the cost ([number](number.md), right aligned), and the pin button (always visible, B2).
 
-Other lists follow the same order: state, then name with ID, then the service zone.
+Every list follows the same order: state first, then name with ID, then the service zone (OR-22, [D12](../decisions.md)). The traceability check in `check:design` warns about any list row whose first cell is not a state badge.
 
 **Grouping.** Lists can group rows. Each group header row shows the group's icon, name and count. Groups collapse; completed and cancelled start collapsed. Anchor keeping works across groups.
 

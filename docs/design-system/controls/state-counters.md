@@ -4,7 +4,7 @@
 
 **Purpose.** Shows how many items are in each state and filters by state with one click. This is the quick state filter in every list, and the per-project summary on the Overview ([D9](../decisions.md)).
 
-**Anatomy.** One capsule per state, in the fixed registry order. Each capsule has the state's icon and its count in monospace, tinted by tone. The state name is in a tooltip only (B1, OR-20).
+**Anatomy.** First a Σ capsule with the total count, then one capsule per state, in the fixed registry order. Each capsule has the state's icon and its count in monospace, tinted by tone. The state name is in a tooltip only (B1, OR-20).
 
 **States.**
 * *Count zero:* neutral, no fill.
@@ -12,7 +12,9 @@
 * *Active:* outlined in the tone colour, `aria-pressed`.
 
 **Behaviour.**
-* Clicking toggles that state in the view's state filter. Several states can be active together.
+* Σ shows all items: it clears the state filter and is pressed while no state is selected ([D12](../decisions.md)).
+* A state capsule toggles that state in the filter. Several states can be on together. Clicking an active state turns it off; when the last one turns off, Σ is pressed again.
+* The Σ total is the sum of the shown states. If any count is unknown, the total is `?`.
 * Counts reflect every other active filter (project, agent, search), so they show what one click will give.
 * Counts update in place and never reorder (W13).
 * Callers may omit states that are not relevant, as the Overview does with completed and cancelled.

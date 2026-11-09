@@ -386,12 +386,18 @@ export function SplitButton({ main, alternatives, kind = 'default' }: {
 
 /* ---------- State counters: quick filter by state with totals (state-counters.md) ---------- */
 
-export function StateCounters<F extends Family>({ family, counts, active, onToggle, label }: {
-  family: F; counts: Partial<Record<StateOf<F>, number | null>>; active: StateOf<F>[]; onToggle: (s: StateOf<F>) => void; label: string;
+export function StateCounters<F extends Family>({ family, counts, active, onToggle, onAll, label }: {
+  family: F; counts: Partial<Record<StateOf<F>, number | null>>; active: StateOf<F>[]; onToggle: (s: StateOf<F>) => void;
+  /** Σ button: show all (clear the state filter). Omit to hide the Σ button. */
+  onAll?: () => void; label: string;
 }) {
   const all = Object.keys(states[family]) as StateOf<F>[];
+  const values = all.map(s => counts[s]).filter(n => n !== undefined) as (number | null)[];
+  const total = values.includes(null) ? null : (values as number[]).reduce((a, b) => a + b, 0);
   return (
     <div class="counters" data-ui="state-counters" role="group" aria-label={label}>
+      {onAll && <button type="button" class={`counter t-neutral sigma${active.length === 0 ? ' on' : ''}`} aria-pressed={active.length === 0}
+        aria-label={`All: ${total === null ? 'unknown' : total}`} onClick={onAll}><span class="sig" aria-hidden="true">Σ</span><span class="num">{total === null ? '?' : total.toLocaleString('en')}</span></button>}
       {all.map(s => {
         const d = states[family][s] as StateDef, n = counts[s];
         if (n === undefined) return null;

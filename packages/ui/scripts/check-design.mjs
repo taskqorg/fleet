@@ -37,6 +37,11 @@ for (const f of files.filter(f => /\.tsx$/.test(f))) {
   const t = readFileSync(f, 'utf8');
   for (const m of t.matchAll(/role="dialog"|popover=/g)) warn.push(`${relative(root, f)}  OR-14  floating layer found; it may hold only information`);
 }
+// Icons must take the theme colour (currentColor), never a fixed fill or stroke (D12).
+for (const [name, svg] of Object.entries(JSON.parse(readFileSync(join(root, 'packages/ui/icons.json'), 'utf8')))) {
+  const tag = svg.match(/<svg[^>]*>/)?.[0] ?? '';
+  if (!/\sfill=/.test(tag) || /(fill|stroke)="#/.test(svg)) warn.push(`packages/ui/icons.json  icon "${name}"  fixed or default colour; use fill/stroke currentColor`);
+}
 for (const p of contrastProblems()) warn.push(`tokens.json  contrast  ${p} (needs 4.5:1)`);
 
 // Performance target: initial JavaScript of the UI package (D6: ≤ 200 KB, a target, not a stop).

@@ -83,7 +83,7 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height }: {
             onSave={n => { const v = { ...view, name: n }; setViews([...views.filter(x => x.name !== n), v]); setActive(n); }}
             onUnpin={n => { setViews(views.filter(v => v.name !== n)); if (active === n) setActive(null); }} />
           <span class="grow" />
-          <StateCounters family="task" label="Tasks by state" counts={counts} active={view.states}
+          <StateCounters family="task" label="Tasks by state" counts={counts} active={view.states} onAll={() => edit({ states: [] })}
             onToggle={s => edit({ states: view.states.includes(s) ? view.states.filter(x => x !== s) : [...view.states, s] })} />
           <span class="seg-group" role="group" aria-label="Group by"><span class="muted type-sm">Group</span>
             {GROUPS.map(g => <button type="button" key={g.id} class={`seg${view.group === g.id ? ' on' : ''}`} aria-pressed={view.group === g.id} onClick={() => edit({ group: g.id })}>{g.label}</button>)}

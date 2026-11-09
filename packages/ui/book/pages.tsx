@@ -135,7 +135,7 @@ function TaskDetail({ t, onClose }: { t: TaskRow; onClose: () => void }) {
 
 type Res = { id: string; name: string; type: string; size: number; project: string; task: number; at: number; copy: 'stored' | 'placed' | 'pending' | 'unavailable' };
 const TYPES = ['diff', 'image', 'report', 'video', 'glb'];
-const RESULTS: Res[] = Array.from({ length: 2000 }, (_, i) => ({ id: `r${i}`, name: `${['index.html', 'hero.png', 'review.md', 'walk.mp4', 'prop.glb'][i % 5]}`, type: TYPES[i % 5], size: (i * 7919 % 4000) * 1e5,
+const RESULTS: Res[] = Array.from({ length: 2000 }, (_, i) => ({ id: `r${i}`, name: `${['index.html', 'hero.png', 'review.md', 'walk.mp4', 'prop.glb'][i % 5]}`, type: TYPES[i % 5], size: ((i + 1) * 7919 % 4000 + 1) * 1e5,
   project: PROJECTS[i % 4], task: 9989 - i, at: NOW - i * 7 * min, copy: (['stored', 'placed', 'placed', 'pending', 'unavailable'] as const)[i * 3 % 5] }));
 
 function Results() {
@@ -152,15 +152,15 @@ function Results() {
       <Panel><ListFrame bar={<FilterBar query={query} onQuery={setQuery} placeholder="Search results" chips={[]} onRemove={() => {}} onAdd={() => {}} onClear={() => setCopies([])}
           fields={[{ field: 'Type', values: TYPES.map(t => ({ value: t, count: 400 })) }, { field: 'Project', values: PROJECTS.map(p => ({ value: p, count: 500 })) }]}
           shown={shown.length} total={RESULTS.length}
-          extra={<StateCounters family="copy" label="Results by copy state" counts={counts} active={copies} onToggle={c => setCopies(copies.includes(c) ? copies.filter(x => x !== c) : [...copies, c])} />} />}>
+          extra={<StateCounters family="copy" label="Results by copy state" counts={counts} active={copies} onAll={() => setCopies([])} onToggle={c => setCopies(copies.includes(c) ? copies.filter(x => x !== c) : [...copies, c])} />} />}>
         <VirtualList items={shown} getKey={r => r.id} rowHeight={ROW} follow="top" label="Results" rowClass={r => r.id === sel.id ? 'sel' : ''}
-          columns="minmax(0,1fr) 3.5rem 4rem 4.5rem 1.25rem 2.75rem"
-          header={<><span>Result</span><span>Type</span><span>Project</span><span class="r">Size</span><span /><span class="r">Age</span></>}
+          columns="1.25rem minmax(0,1fr) 3.5rem 4rem 4.5rem 2.75rem"
+          header={<><span /><span>Result</span><span>Type</span><span>Project</span><span class="r">Size</span><span class="r">Age</span></>}
           render={r => <>
-            <a class="title row-link" href={`#/results/${r.id}`} onClick={e => { e.preventDefault(); setSel(r); }}>{r.name} <span class="id">T-{r.task}</span></a>
+            <span class="lead"><StateBadge family="copy" state={r.copy} compact /></span>
+            <span class="tt"><a class="title row-link" href={`#/results/${r.id}`} onClick={e => { e.preventDefault(); setSel(r); }}>{r.name}</a><span class="id">T-{r.task}</span></span>
             <span class="svc">{r.type}</span><span class="svc">{r.project}</span>
             <span class="r"><Num m={{ value: r.size, basis: 'measured' }} kind="bytes" /></span>
-            <StateBadge family="copy" state={r.copy} compact />
             <span class="r"><AgeChip t={r.at} now={NOW} /></span>
           </>} />
       </ListFrame></Panel>
@@ -236,9 +236,10 @@ function Laboratory() {
     <PageHead title="Laboratory"><span class="muted">Experiment: hero copy method · 225 trials · 3 variants</span><SplitButton kind="primary" main={{ label: 'Repeat trials', icon: 'rotate-ccw' }} alternatives={[{ label: 'Add variant', icon: 'plus' }, { label: 'Run on new task set', icon: 'list' }]} /></PageHead>
     <div class="tabs" role="tablist">{['Compare', 'Trials', 'Assessments'].map(x => <button type="button" role="tab" key={x} aria-selected={tab === x} onClick={() => setTab(x)}>{x}</button>)}</div>
     {tab === 'Compare' && <Panel title="Variants">
-      <div class="vl-wrap" style={{ '--cols': 'minmax(0,1fr) 4rem 4rem 4.5rem 4rem 4.5rem 5rem' }}>
-        <div class="vl-head" role="row"><span>Variant</span><span class="r">Score</span><span class="r">Judge</span><span class="r">Tokens</span><span class="r">Time</span><span class="r">Cost</span><span class="r">Failed</span></div>
-        {VARIANTS.map(x => <div key={x.v} role="row" class="vl-row static">
+      <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) 4rem 4rem 4.5rem 4rem 4.5rem 5rem' }}>
+        <div class="vl-head" role="row"><span /><span>Variant</span><span class="r">Score</span><span class="r">Judge</span><span class="r">Tokens</span><span class="r">Time</span><span class="r">Cost</span><span class="r">Failed</span></div>
+        {VARIANTS.map((x, i) => <div key={x.v} role="row" class="vl-row static">
+          <span class="lead"><StateBadge family="execution" state={i === 2 ? 'running' : 'succeeded'} reason={i === 2 ? 'trials still running' : 'all trials finished'} compact /></span>
           <span class="title">{x.v}</span>
           <span class="r"><Num m={{ value: x.score, basis: 'measured' }} kind="count" /></span>
           <span class="r"><Num m={{ value: x.judge, basis: x.judge === null ? 'unavailable' : 'measured', reason: 'judge not run' }} kind="count" /></span>

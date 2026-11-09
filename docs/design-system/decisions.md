@@ -125,3 +125,15 @@ Append only. Each entry: date, question, options, choice, reason.
 * **(d) Phone navigation:** still open. The interim icon rail (D1) stays.
 * **Workers per host:** counts per harness, shown as harness mark plus number and omitted when zero ([harness counts](controls/harness-counts.md)). They appear in the stat strip, the Hosts table and the Overview.
 * **Registry:** adds the harness marks (Codex, Claude, Antigravity) from TaskQ's icon set, and the delivery stages.
+
+## 2026-11-10 D12: Final review fixes (icon colour, Σ counter, state first in every list)
+
+* **Approved** except for three fixes.
+* **1. Icon colour:** the harness marks (Codex, Claude) had no `fill` and rendered black in the dark theme.
+  * Fix: every registry icon now takes the theme colour (`currentColor`).
+  * `check:design` warns about any icon with a fixed or default colour.
+* **2. Σ counter:** state counters start with a Σ button that shows the total and resets the state filter to all. The state buttons toggle on and off, and several can be on at once. Spec: [state-counters](controls/state-counters.md).
+* **3. State first in every list:** OR-22 now covers every list, not only task rows.
+  * Results drifted: its copy state was in a middle column. It now starts with the copy state, and the Laboratory variants start with their run state.
+  * The traceability check warns when a list row's first cell is not a state badge.
+  * Verified: moving the Results state column back makes the report show `state not first column in list "Results"`.
