@@ -9,3 +9,4 @@ cpSync('config/catalogue.json','dist/config/catalogue.json');
 cpSync('packages/coordinator/pipe_search.py','dist/packages/coordinator/pipe_search.py');
 
 cpSync('packages/coordinator/delivery_worker.py','dist/packages/coordinator/delivery_worker.py');
+cpSync('packages/coordinator/db','dist/packages/coordinator/db',{recursive:true});
