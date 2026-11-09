@@ -8,9 +8,11 @@ export type View = {
 export type PageParams = { filter: { state?: string[]; search?: string; projectId?: (string | null)[]; archived?: boolean }; group?: string };
 
 // The one source of these lists: the coordinator's task_page and sessions_list import them.
-export const TASK_STATES = ['queued', 'in_progress', 'waiting', 'paused', 'completed', 'failed', 'cancelled'];
-export const SESSION_STATES = ['idle', 'preparing', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'];
-export const TASK_GROUPS = ['priority', 'state', 'project', 'agent', 'host', 'none'];
+export const TASK_STATES = ['queued', 'in_progress', 'waiting', 'paused', 'completed', 'failed', 'cancelled'] as const;
+export type TaskState = typeof TASK_STATES[number];
+export const SESSION_STATES = ['idle', 'preparing', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'] as const;
+export type SessionState = typeof SESSION_STATES[number];
+export const TASK_GROUPS = ['priority', 'state', 'project', 'agent', 'host', 'none'] as const;
 export const VIEWS: ViewName[] = ['tasks', 'conversations', 'hosts', 'overview'];
 const NO_PROJECT = '-';
 
@@ -30,7 +32,7 @@ type Key = {
   list: boolean;
 };
 const items = (raw: string) => raw.split(',').map(x => dec(x, true)).filter(Boolean);
-const listKey_ = (field: 'state' | 'sel', allowed?: string[]): Key => ({
+const listKey_ = (field: 'state' | 'sel', allowed?: readonly string[]): Key => ({
   parse: (v, raw) => { const xs = items(raw).filter(x => !allowed || allowed.includes(x)); if (xs.length) v[field] = sorted([...(v[field] ?? []), ...xs]); },
   format: v => v[field]?.length ? sorted(v[field]!).map(enc).join(',') : undefined,
   list: field !== 'sel',
@@ -54,7 +56,7 @@ function sortProjects(ps: (string | null)[]): (string | null)[] {
 // One table per view: every key the view understands, with its parse and canonical format. Anything else goes to extra.
 const TABLE: Record<ViewName, Record<string, Key>> = {
   tasks: {
-    group: { parse: (v, raw) => { const g = dec(raw, true); if (TASK_GROUPS.includes(g)) v.group = g; }, format: v => v.group && v.group !== 'priority' ? v.group : undefined, list: true },
+    group: { parse: (v, raw) => { const g = dec(raw, true); if ((TASK_GROUPS as readonly string[]).includes(g)) v.group = g; }, format: v => v.group && v.group !== 'priority' ? v.group : undefined, list: true },
     preset: text('preset', false), project, q: text('q', true), sel: listKey_('sel'), state: listKey_('state', TASK_STATES),
   },
   conversations: {

@@ -66,3 +66,38 @@ test('backfill: tasks written before migration 10 get their derived row',async()
  await s.migrate();
  assert.deepEqual(await derived(s,'old'),{projectId:'p',agent:'codex',host:'mac',started:true,open:0});await noDrift(s);
  await s.close()});
+
+// Review of PR #30.
+test('review 1: rewriting execution.seq recomputes "latest" host and agent',async()=>{const s=await fresh();
+ let t='';await s.tx(async()=>{t=await s.tasks.create({title:'T'});await s.executions.createExecution({id:'x1',kind:'agent_run',taskId:t,hostId:'mac',harness:'codex',state:'running'});
+  await s.executions.createExecution({id:'x2',kind:'agent_run',taskId:t,hostId:'pds18',harness:'claude',state:'running'})});
+ assert.equal((await derived(s,t))!.host,'pds18');
+ await s.tx(()=>s.query("UPDATE execution SET seq=(SELECT max(seq)+1 FROM execution) WHERE id='x1'"));
+ assert.deepEqual([(await derived(s,t))!.host,(await derived(s,t))!.agent],['mac','codex']);await noDrift(s);
+ await s.close()});
+
+test('review 2: deleting a task and then its executions in one transaction commits',async()=>{const s=await fresh();
+ let t='';await s.tx(async()=>{t=await s.tasks.create({title:'T'});await s.executions.createExecution({id:'d1',kind:'agent_run',taskId:t,hostId:'mac',harness:'codex',state:'running'})});
+ await s.tx(async()=>{await s.query('DELETE FROM task WHERE id=$1',[t]);await s.query("DELETE FROM execution WHERE id='d1'")});
+ assert.equal(await derived(s,t),null);await noDrift(s);
+ await s.close()});
+
+test('review 3: the drift check run by a scoped caller sees all of each task and reports no false drift',async()=>{const s=await fresh();
+ await s.tx(async()=>{await s.tasks.create({id:'tp',title:'p task',projectId:'p'});await s.tasks.ask({kind:'operator_decision',taskId:'tp',text:'q',options:['a']})});
+ await s.query("UPDATE question SET project_id='q' WHERE task_id='tp'");
+ await s.query("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='fleet_app_test') THEN CREATE ROLE fleet_app_test NOLOGIN NOBYPASSRLS; END IF; END $$");
+ await s.query('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO fleet_app_test');
+ const r=await s.tx(async()=>{await s.query('SET LOCAL ROLE fleet_app_test');await s.query("SELECT set_config('fleet.project_ids','p',true)");return s.tasks.derivedDrift()});
+ assert.deepEqual(r.drifted,[]);
+ await s.close()});
+
+test('review 4: a task missing its derived row still lists (empty values) and the drift check reports it',async()=>{const s=await fresh();
+ await s.tx(async()=>{await s.tasks.create({id:'gap',title:'Gap'})});await s.query("DELETE FROM task_derived WHERE task_id='gap'");
+ for(const group of ['priority','agent']){const p=await s.read(()=>s.tasks.page({group}));assert.deepEqual(p.tasks.map((t:any)=>[t.id,t.agent,t.openQuestions]),[['gap',null,0]],group);assert.equal(p.total,1)}
+ assert.equal((await s.read(()=>s.tasks.membership({},'agent',['gap']))).length,1);
+ assert.deepEqual((await s.read(()=>s.tasks.derivedDrift())).drifted.map((d:any)=>[d.taskId,d.stored]),[['gap',null]]);
+ await s.close()});
+
+test('review 10: group names are checked as own keys ("constructor" is a 400)',async()=>{const s=await fresh();
+ for(const group of ['constructor','toString','__proto__'])await assert.rejects(s.read(()=>s.tasks.page({group})),(e:any)=>e.statusCode===400,group);
+ await s.close()});

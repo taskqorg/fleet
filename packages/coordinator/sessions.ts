@@ -4,7 +4,7 @@ import {SESSION_STATES} from '../view-url/view-url.js';
 type Raw={query:(sql:string,params?:any[])=>Promise<any[]>};
 const fail=(code:number,message:string)=>{throw Object.assign(Error(message),{statusCode:code})};
 // Session state is the state of its latest execution; a session without one is 'idle'.
-const STATES=SESSION_STATES;
+const STATES:readonly string[]=SESSION_STATES;
 export type SessionFilter={state?:string[],search?:string,archived?:boolean};
 
 const base=`WITH x AS (SELECT d.id, d.data, d.project_id,
