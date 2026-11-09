@@ -85,25 +85,30 @@ fn project_roots() -> Vec<PathBuf> {
 /// The payload path is untrusted: it must canonicalize under a configured project root and outside executor/session dirs.
 fn worktree(dir: &std::path::Path, session: &str, repo: Option<&str>, roots: &[PathBuf], forbidden: &[&std::path::Path]) -> Result<Option<PathBuf>> {
     let Some(repo) = repo else { return Ok(None) };
+    let allowed = |p: &std::path::Path| -> Option<PathBuf> {
+        if forbidden.iter().any(|f| fs::canonicalize(f).is_ok_and(|f| p.starts_with(&f) || f.starts_with(p))) { return None; }
+        roots.iter().find(|r| p.starts_with(r)).cloned()
+    };
     let repo = fs::canonicalize(repo).map_err(|_| "working directory unavailable")?;
-    if !roots.iter().any(|r| repo.starts_with(r))
-        || forbidden.iter().any(|f| fs::canonicalize(f).is_ok_and(|f| repo.starts_with(&f) || f.starts_with(&repo)))
-    {
-        return Err("working directory outside configured project roots".into());
-    }
-    let top = git().arg("-C").arg(&repo).args(["rev-parse", "--show-toplevel"]).output()?;
-    if !top.status.success() {
-        return Ok(None);
+    let root = allowed(&repo).ok_or("working directory outside configured project roots")?;
+    let rev = |arg: &str| -> Result<Option<PathBuf>> {
+        let o = git().env("GIT_CEILING_DIRECTORIES", &root).arg("-C").arg(&repo).args(["rev-parse", "--path-format=absolute", arg]).output()?;
+        if !o.status.success() { return Ok(None); }
+        Ok(Some(fs::canonicalize(String::from_utf8_lossy(&o.stdout).trim())?))
+    };
+    let (Some(top), Some(common)) = (rev("--show-toplevel")?, rev("--git-common-dir")?) else { return Ok(None) };
+    if allowed(&top).is_none() || allowed(&common).is_none() {
+        return Err("repository outside configured project roots".into());
     }
     let w = dir.join("worktree");
     if w.join(".git").exists() {
         return Ok(Some(w));
     }
     let branch = format!("fleet/{session}");
-    let top = String::from_utf8_lossy(&top.stdout).trim().to_owned();
-    let exists = git().args(["-C", &top, "rev-parse", "--verify", "--quiet", &branch]).output()?.status.success();
+    let top = top.to_string_lossy().into_owned();
+    let exists = git().env("GIT_CEILING_DIRECTORIES", &root).args(["-C", &top, "rev-parse", "--verify", "--quiet", &branch]).output()?.status.success();
     let mut c = git();
-    c.args(["-C", &top, "worktree", "add"]);
+    c.env("GIT_CEILING_DIRECTORIES", &root).args(["-C", &top, "worktree", "add"]);
     if exists { c.arg(&w).arg(&branch); } else { c.args(["-b", &branch]).arg(&w); }
     if !c.output()?.status.success() {
         return Err("git worktree add failed".into());
@@ -923,6 +928,10 @@ mod journal_tests {
         assert!(worktree(&s, "s2", Some(root.to_str().unwrap()), &roots, &[]).is_err());
         assert!(worktree(&s, "s2", Some(r), &[], &[]).is_err());
         assert!(worktree(&s, "s2", Some(r), &roots, &[&root]).is_err());
+        // A subdirectory root inside a repo whose toplevel/common dir sit above it is refused.
+        let sub = repo.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        assert!(worktree(&s, "s3", Some(sub.to_str().unwrap()), &[fs::canonicalize(&sub).unwrap()], &[]).is_err());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
