@@ -1,4 +1,4 @@
-import {readFileSync,realpathSync} from 'node:fs';
+import {readFileSync,realpathSync,readdirSync,existsSync} from 'node:fs';
 import {resolve,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash,randomUUID} from 'node:crypto';
@@ -12,10 +12,32 @@ function pipe(connection:string|undefined,run:string,args:any):Promise<any>{
  if(!connection)return Promise.resolve({isError:true,content:[{type:'text',text:'Pipe connection unavailable: host connection is not configured'}]});
  return new Promise(resolveResult=>{const child=spawn('python3',[fileURLToPath(new URL('./pipe_search.py',import.meta.url)),connection,run],{env:{PATH:process.env.PATH},stdio:['pipe','pipe','ignore']});let output='',settled=false;const finish=(v:any)=>{if(settled)return;settled=true;clearTimeout(timer);resolveResult(v)};const timer=setTimeout(()=>{child.kill('SIGKILL');finish({isError:true,content:[{type:'text',text:'Pipe outcome unknown: client timeout; do not replay'}]})},50000);child.stdout.on('data',b=>{output+=b;if(output.length>4*1024*1024){child.kill('SIGKILL');finish({isError:true,content:[{type:'text',text:'Pipe outcome unknown: response exceeds retained limit; do not replay'}]})}});child.on('error',()=>finish({isError:true,content:[{type:'text',text:'Pipe connection unavailable: client could not start'}]}));child.on('close',()=>{try{finish(JSON.parse(output))}catch{finish({isError:true,content:[{type:'text',text:'Pipe outcome unknown: invalid client response; do not replay'}]})}});child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify(args));});
 }
+// Project definition subset (docs/prototype-implementation-plan.md W1). Absent key = default below; unknown keys are reported in unknownKeys, never dropped silently.
+const SETTINGS_DEFAULTS:any={repos:[],environments:[],roles:{},worktree:{envMode:'worktree',baseRef:null,startFromOrigin:true,branchPrefix:'fleet',linkPaths:[],sharedDirectories:[]},scripts:{setup:null,teardown:null},setupStart:'wait',integration:{mode:'pr',mergeMethod:'squash',autoMerge:true,syncCheckoutAfterMerge:true},cleanup:{keepWhen:['uncommitted','teardown-failed']},identity:null};
+const TOP_KEYS=['id','name','capability','recommendedMethod','contextFiles',...Object.keys(SETTINGS_DEFAULTS)];
+const ITEM_KEYS:any={repos:['id','remote','forge','defaultBranch','connection','path'],environments:['hostId','checkoutPath','repo'],identity:['name','email']};
+const ENUMS:any={'worktree.envMode':['worktree','local'],setupStart:['wait','background'],'integration.mode':['pr','direct'],'integration.mergeMethod':['squash','merge','rebase'],'repos.forge':['github','gitlab']};
+export function projectSettings(p:any){
+ const unknownKeys:string[]=[],bad=(k:string):never=>fail(500,'Invalid project setting '+k);
+ const isObj=(v:any)=>v&&typeof v==='object'&&!Array.isArray(v);
+ const check=(k:string,v:any,d:any)=>{if(ENUMS[k]&&!ENUMS[k].includes(v))bad(k);if(d!==null&&v!==null&&typeof d!==typeof v||Array.isArray(d)!==Array.isArray(v))bad(k)};
+ for(const k of Object.keys(p))if(!TOP_KEYS.includes(k))unknownKeys.push(k);
+ const out:any={};
+ for(const [k,d] of Object.entries(SETTINGS_DEFAULTS) as [string,any][]){
+  const v=p[k];if(v===undefined){out[k]=structuredClone(d);continue}
+  if(k==='roles'){if(!isObj(v)||Object.values(v).some(x=>typeof x!=='string'))bad(k);out[k]=v;continue}
+  if(Array.isArray(d)){if(!Array.isArray(v))bad(k);out[k]=v.map((item:any,i:number)=>{if(!isObj(item))bad(k);for(const x of Object.keys(item)){if(!ITEM_KEYS[k].includes(x))unknownKeys.push(`${k}[${i}].${x}`);else if(typeof item[x]!=='string')bad(`${k}[${i}].${x}`)}if(k==='repos'){if(!item.remote)bad(k+'.remote');check('repos.forge',item.forge??'github',null);return {forge:'github',defaultBranch:'main',...item}}if(!item.hostId||!item.checkoutPath)bad(k);return item});continue}
+  if(k==='identity'){if(!isObj(v))bad(k);for(const x of Object.keys(v))if(!ITEM_KEYS.identity.includes(x))unknownKeys.push('identity.'+x);out[k]=v;continue}
+  if(isObj(d)){if(!isObj(v))bad(k);out[k]={...d};for(const [x,y] of Object.entries(v)){if(!(x in d)){unknownKeys.push(k+'.'+x);continue}check(k+'.'+x,y,d[x]);out[k][x]=y}continue}
+  check(k,v,d);out[k]=v;
+ }
+ return {settings:out,unknownKeys};
+}
 export function registerProjects(app:FastifyInstance,store:Store,config:{directory:string,pipeConnectionFile?:string,proxy?:boolean,searchHostId?:string}){
  const {all,get,put}=store;
  const read=(path:string)=>JSON.parse(readFileSync(path,'utf8'));
- const project=(id:string)=>{if(!['hello-world','hello-world-alt'].includes(id))fail(404,'Unknown project');const root=resolve(config.directory,'projects',id),p=read(resolve(root,'project.json'));if(p.id!==id||!Array.isArray(p.contextFiles))fail(500,'Invalid project definition');return {...p,context:p.contextFiles.map((name:any)=>{if(typeof name!=='string'||name.includes('..')||name.startsWith('/'))fail(500,'Invalid project context path');const path=realpathSync(resolve(root,name));if(!path.startsWith(realpathSync(root)+sep))fail(500,'Project context escapes repository');const text=readFileSync(path,'utf8');return {path:name,text,sha256:digest(text)}})}};
+ const ids=()=>readdirSync(resolve(config.directory,'projects')).filter(n=>existsSync(resolve(config.directory,'projects',n,'project.json'))).sort();
+ const project=(id:string)=>{if(typeof id!=='string'||!ids().includes(id))fail(404,'Unknown project');const root=resolve(config.directory,'projects',id),p=read(resolve(root,'project.json'));if(p.id!==id||!Array.isArray(p.contextFiles))fail(500,'Invalid project definition');return {...p,...projectSettings(p),context:p.contextFiles.map((name:any)=>{if(typeof name!=='string'||name.includes('..')||name.startsWith('/'))fail(500,'Invalid project context path');const path=realpathSync(resolve(root,name));if(!path.startsWith(realpathSync(root)+sep))fail(500,'Project context escapes repository');const text=readFileSync(path,'utf8');return {path:name,text,sha256:digest(text)}})}};
  const catalogue=(id:string)=>{const p=project(id),c=read(resolve(config.directory,'catalogue.json'));return {projectId:id,capability:c.capability,sharedDefault:c.sharedDefault,recommendedMethod:all('project-recommendation').find(r=>r.projectId===id)?.methodId??p.recommendedMethod??c.sharedDefault,recommendationSource:all('project-recommendation').some(r=>r.projectId===id)?'project-selected':p.recommendedMethod?'project':'shared',methods:c.methods.filter((m:any)=>m.scope==='shared'||m.scope===id)}};
  for(const run of all('pipeline-run').filter(r=>r.state==='running')){run.state='unknown';run.steps[0].state='unknown';run.steps[0].error={code:'interrupted','message':'Original dispatch outcome unconfirmed; no replay'};run.durationMs=null;put('pipeline-run',run)}
  function runPipeline(b:any,actor:any={kind:'operator'}){
@@ -44,7 +66,7 @@ export function registerProjects(app:FastifyInstance,store:Store,config:{directo
   question_answer:(b:any)=>{const q=get(b.questionId,'project-question');if(typeof b.answer!=='string'||!b.answer||b.answer.length>4000)fail(400,'Expected answer');if(q.state==='answered'){if(q.answer!==b.answer)fail(409,'Answer already recorded');return q}Object.assign(q,{state:'answered',answer:b.answer,answeredAt:Date.now(),answeredBy:'operator'});put('project-question',q);return q},
   question_history:(b:any)=>{project(b.projectId);return {questions:all('project-question').filter(q=>q.projectId===b.projectId)}},project_context:(b:any)=>project(b.projectId),catalogue:(b:any)=>catalogue(b.projectId),pipeline_run:runPipeline,pipeline_get:(b:any)=>{if(typeof b.runId!=='string'||!b.runId||b.runId.length>200)fail(400,'Expected runId');const r=get(b.runId,'pipeline-run');if(b.projectId&&r.projectId!==b.projectId)fail(403,'Pipeline belongs to another project');return r},pipeline_history:(b:any)=>{project(b.projectId);return {runs:all('pipeline-run').filter(r=>r.projectId===b.projectId)}}};
  app.get('/projects',async(_,r)=>r.type('text/html').send(projectUi(config.proxy)));
- app.get('/api/projects',async()=>({projects:['hello-world','hello-world-alt'].map(project)}));
+ app.get('/api/projects',async()=>({projects:ids().map(project)}));
  app.get('/api/projects/:id',async(req:any)=>operations.project_context({projectId:req.params.id}));
  app.get('/api/projects/:id/catalogue',async(req:any)=>operations.catalogue({projectId:req.params.id}));
  app.get('/api/projects/:id/runs',async(req:any)=>operations.pipeline_history({projectId:req.params.id}));
