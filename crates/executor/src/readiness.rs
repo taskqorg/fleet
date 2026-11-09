@@ -15,6 +15,16 @@ fn valid_remote(r: &str) -> bool {
     !r.starts_with('-') && ["https://", "ssh://", "git@"].iter().any(|p| r.starts_with(p))
 }
 
+/// Reason from git stderr without passing stderr on: network, auth or missing repository.
+fn ls_remote_reason(code: i32, stderr: &str) -> String {
+    let e = stderr.to_ascii_lowercase();
+    let kind = if ["could not resolve host", "network is unreachable", "connection timed out", "connection refused", "operation timed out", "temporary failure in name resolution"].iter().any(|x| e.contains(x)) { "network-unreachable" }
+        else if ["permission denied", "authentication failed", "could not read username", "host key verification failed", "invalid username or password"].iter().any(|x| e.contains(x)) { "auth-denied" }
+        else if ["repository not found", "does not appear to be a git repository", "not found"].iter().any(|x| e.contains(x)) { "repo-missing" }
+        else if code == 2 { "head-missing" } else { "unclassified" };
+    format!("ls-remote-{kind}-exit-{code}")
+}
+
 /// `registry` is the FLEET_NATIVE_ACCOUNTS file (host account bindings).
 pub fn run(project: &Value, host: &str, registry: Option<&Path>) -> Value {
     let mut checks = vec![];
@@ -32,7 +42,7 @@ pub fn run(project: &Value, host: &str, registry: Option<&Path>) -> Value {
                 let o = g
                     .args(["-c", "core.hooksPath=/dev/null", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always", "ls-remote", "--exit-code", "--", remote, "HEAD"])
                     .stdin(Stdio::null()).output();
-                match o { Ok(o) if o.status.success() => None, Ok(o) => Some(format!("ls-remote-exit-{}", o.status.code().unwrap_or(-1))), Err(_) => Some("git-unavailable".into()) }
+                match o { Ok(o) if o.status.success() => None, Ok(o) => Some(ls_remote_reason(o.status.code().unwrap_or(-1), &String::from_utf8_lossy(&o.stderr))), Err(_) => Some("git-unavailable".into()) }
             };
             checks.push(check("remote", r["id"].as_str().unwrap_or(remote), failed));
         }
@@ -60,6 +70,13 @@ pub fn run(project: &Value, host: &str, registry: Option<&Path>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ls_remote_reasons() {
+        assert_eq!(ls_remote_reason(128, "ssh: Could not resolve hostname github.com"), "ls-remote-network-unreachable-exit-128");
+        assert_eq!(ls_remote_reason(128, "git@github.com: Permission denied (publickey)."), "ls-remote-auth-denied-exit-128");
+        assert_eq!(ls_remote_reason(128, "ERROR: Repository not found."), "ls-remote-repo-missing-exit-128");
+        assert_eq!(ls_remote_reason(2, ""), "ls-remote-head-missing-exit-2");
+    }
     #[test]
     fn rejects_option_like_remote() {
         let p = json!({"repos":[{"id":"m","remote":"--upload-pack=touch /tmp/x"}],"environments":[{"hostId":"h","checkoutPath":"/none"}]});

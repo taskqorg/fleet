@@ -109,7 +109,8 @@ impl Session {
             self.harness_version = v["result"]["userAgent"].as_str().map(str::to_owned);
             let p = &self.profile;
             let profile = p.get("agentConfig").unwrap_or(p);
-            let mut params = json!({"cwd":self.root,"model":p["model"],"approvalPolicy":"never","sandbox":"workspace-write","developerInstructions":profile["instructions"].as_str().unwrap_or(""),"config":{"model_reasoning_effort":p["effort"],"sandbox_workspace_write.network_access":false}});
+            let mut params = json!({"cwd":self.root,"model":p["model"],"approvalPolicy":"never","sandbox":"workspace-write","developerInstructions":profile["instructions"].as_str().unwrap_or(""),"config":{"model_reasoning_effort":p["effort"],"sandbox_workspace_write.network_access":p["gitNetwork"] == true}});
+            if let Some(r) = p.get("writableRoots") { params["config"]["sandbox_workspace_write.writable_roots"] = r.clone(); }
             if let Some(n) = self.resume.as_ref().or(self.fork.as_ref()) {
                 params["threadId"] = json!(n);
             }
