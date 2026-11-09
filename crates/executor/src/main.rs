@@ -184,9 +184,10 @@ impl Executor {
         v
     }
     fn post(&self, route: &str, v: Value) -> Result<Value> {
-        Ok(ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(5))
-            .build()
+        // One pooled agent: keep-alive avoids a TLS handshake per outbox row.
+        static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+        Ok(AGENT
+            .get_or_init(|| ureq::AgentBuilder::new().timeout(Duration::from_secs(5)).build())
             .post(&format!("{}{route}", self.url))
             .set("Authorization", &format!("Bearer {}", self.token))
             .send_json(v)?
@@ -210,9 +211,24 @@ impl Executor {
                 r.get::<_, String>(2)?,
             ))
         })?;
-        for r in rows {
-            let (n, p, b) = r?;
-            let value: Value = serde_json::from_str(&b)?;
+        let rows: Vec<(i64, String, String)> = rows.collect::<std::result::Result<_, _>>()?;
+        drop(stmt);
+        let mut i = 0;
+        while i < rows.len() {
+            let (n, p, b) = rows[i].clone();
+            let mut value: Value = serde_json::from_str(&b)?;
+            // Consecutive event rows of one execution go in one request (coordinator validates the whole batch).
+            let mut batch = vec![n];
+            if p == "/api/hosts/events" {
+                while let Some((m, q, c)) = rows.get(i + batch.len()) {
+                    let next: Value = serde_json::from_str(c)?;
+                    if q != &p || next["executionId"] != value["executionId"] || value["events"].as_array().map_or(0, |a| a.len()) >= 500 { break; }
+                    let more = next["events"].as_array().cloned().unwrap_or_default();
+                    value["events"].as_array_mut().ok_or("events missing")?.extend(more);
+                    batch.push(*m);
+                }
+            }
+            i += batch.len();
             let response = match self.post(&p, value.clone()) {
                 Ok(response) => response,
                 Err(error) => {
@@ -238,7 +254,9 @@ impl Executor {
                     params![response.to_string(), key],
                 )?;
             }
-            self.db.execute("DELETE FROM outbox WHERE rowid=?", [n])?;
+            for n in batch {
+                self.db.execute("DELETE FROM outbox WHERE rowid=?", [n])?;
+            }
         }
         Ok(())
     }
