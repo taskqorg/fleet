@@ -92,7 +92,7 @@ The operator can work without the mouse.
 * Every control is reachable and usable by keyboard and has an accessible name.
 * Lists use proper table or grid semantics; virtualised rows keep `aria-rowcount` and `aria-rowindex`.
 * Live updates are announced politely and in batches ("3 tasks changed"), never row by row.
-* Hit targets are at least 24 × 24 px on desktop and 44 × 44 px on phone.
+* Hit targets are at least 24 × 24 px on desktop and 44 × 44 px with a coarse pointer (touch), on any width. This covers row links, row pins, navigation links, chips, tabs and inputs; lists use 44 px rows on touch (owner exception, D14).
 * Text zoom to 200 % keeps all content and functions.
 
 ## 11. Themes and devices

@@ -11,6 +11,7 @@
 * *[TooltipLayer](../owner-rules.md):* mounted once.
 
 **Rules.**
+* A "Skip to content" link comes first. The "N need you" chip is hidden on the Overview, where the needs-you panel is already shown (OR-17, D14).
 * The main area has one scroll region (specq F3). Lists scroll inside their own virtual list.
 * Routes are stable URLs (`#/tasks/9989` in mockups, real paths in the app; specq F7). Back restores the list position and selection.
 * Pages size to their content; there is no `100vh`.

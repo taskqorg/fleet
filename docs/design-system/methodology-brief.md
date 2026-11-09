@@ -1,98 +1,63 @@
 # Fleet spec-driven design method
 
 * **Author:** Alex Kirs
-* **Date:** 2026-11-09
-* **Status:** approved by the owner on 2026-11-09 ([D6](decisions.md)). Brainstorm record: seven review lenses, the owner's answers and decisions D4–D6.
+* **Date:** 2026-11-09, revised 2026-11-10 after the [independent review](reviews/2026-11-10/SUMMARY.md) ([D14](decisions.md#2026-11-10-d14-review-fixes-and-automatic-checks))
+* **Status:** approved by the owner ([D6](decisions.md#2026-11-09-d6-method-owner-rules-table-and-decisions-38)); later decisions D7–D14 are in [decisions.md](decisions.md).
 
-## Overview
+**Terms.**
+* *Owner:* the person who approves design choices.
+* *Worker:* the agent session that does the work.
+* *Book:* the live demo page of `packages/ui`.
+* *Mockups:* pages built from the book.
+* *specq:* the organisation's shared rules repository; its P1–P16 are the owner's verbatim preferences.
+* *TaskQ:* an earlier product whose icon set Fleet reuses.
 
-Fleet's interface is built by agents across many separate sessions. In earlier rounds a fresh session that was told "let's do design" ignored earlier decisions, the owner's preferences and the shared guidance in `specq/design`, even though its instructions said to follow the spec. The work was also not grounded in real data, and basics such as targets, spacing and scrolling were decided again every time.
+## Problem
 
-**Owner principle:** the method guides agents and never becomes a gate that stops work. It aims for 95% of the result with 20% of the effort. We start simple and learn what works.
+Fleet's interface is built by agents in many separate sessions. In earlier rounds, a fresh session ignored earlier decisions and the owner's preferences, even though its instructions said to follow the spec. Basics such as touch targets, spacing and scrolling were decided again each time.
 
-The method has three parts:
+**Owner principle:** the method guides and never becomes a gate that stops work. It aims for most of the result with little effort, starts simple, and learns what works.
 
-1. **Owner rules every session reads first.** [owner-rules.md](owner-rules.md) is one page in plain words: OR-1 to OR-19. They are instructions, not gates.
-2. **Shared parts that make the right way the easy way.**
-   * `packages/ui` holds one time and number formatter, one icon registry (the TaskQ Lucide set), tokens, a ready virtual list, and the controls.
-   * Consistency comes from these parts being simpler to use than writing a local variant.
-3. **Checks that only warn.** `npm run check:design` prints a report.
-   * It is not part of `npm test`, and it never blocks a pull request.
-   * Reviewers and the owner read the report. Book screenshots are attached to the pull request.
+## Method
 
-Work follows one loop at every step: update the spec, the owner says "ok" in chat, the worker records it in `decisions.md`, and a fresh session builds from the spec.
+1. **Owner rules first.** Every design or UI session reads [owner-rules.md](owner-rules.md) first. They are instructions, not gates. The file is the only list of the rules, so other documents link to it and do not copy rule numbers or ranges.
+2. **Shared parts make the right way the easy way.** `packages/ui` holds the tokens, the icon registry, the formatter, the virtual list, the controls and the patterns. Pages compose them and add no styling of their own.
+3. **Checks only warn.** `npm run check:design` prints a report. It never fails the build. Its checks are listed in one place: the `RULES` table and the steps in [`check-design.mjs`](../../packages/ui/scripts/check-design.mjs).
 
-## Order of work
+## Work loop
 
-This is guidance, not a gate:
+1. Update the spec, meaning the inventory, owner rules, controls, patterns and pages, together with a `decisions.md` entry.
+2. Build from the spec in `packages/ui`. Run `npm run book` and `npm run check:design`.
+3. Open a pull request.
+   * CI ([`ci.yml`](../../.github/workflows/ci.yml)) runs the build, the tests and the design report.
+   * CI posts the report summary as a pull-request comment and uploads the report and screenshots.
+   * If CI is not available, paste the report summary into the pull request by hand.
+4. The owner reviews the self-contained book and mockups and says "ok". The worker records the "ok" in `decisions.md`.
 
-1. Foundation specs: entities, system sections, and what the interface shows and accepts. This is [inventory.md](inventory.md).
-2. The whole-system map (OR-10).
+Order of work (guidance, not a gate):
+1. Inventory.
+2. System map.
 3. Owner rules, registry and tokens.
-4. Everyday controls in `packages/ui`: lists, tables, filters, forms (OR-4). The book page is their live demo.
+4. Everyday controls.
 5. Patterns.
-6. Pages, section by section. Orchestrated agents build them and iterate until the owner says "ok".
+6. Pages.
 
-## Mechanisms
+## Performance targets
 
-* **Entry point.** The [README](README.md) starts with owner-rules.md and links the rest in order. An `AGENTS.md` line points design and UI sessions to it.
-* **`packages/ui`:**
-  * Preact + Signals + Wouter, built with esbuild ([D4](decisions.md)).
-  * `tokens.json` produces CSS variables.
-  * `registry`: icons, state names, labels.
-  * `format`: compact time, numbers, bytes, money with basis.
-  * `VirtualList`: built on TanStack Virtual core, with anchor keeping.
-  * The controls themselves.
-* **Book page.** `book/index.html` is the live demo of `packages/ui`, built from the same code into one self-contained file. There is no separate copy.
-* **`check:design` report.** The report warns about:
-  * raw colours or pixel values outside tokens;
-  * inline SVG outside the registry;
-  * date formatting outside `format`;
-  * `100vh`;
-  * low contrast pairs;
-  * arrow glyphs beside numbers (OR-7);
-  * interactive elements in floating layers (OR-14);
-  * bundle size.
+These are measured targets, not stops. The report prints each value next to its target.
+* **JavaScript size:** the minified size of `packages/ui` and of each built page's inline script, raw and gzip, against 200 KB raw.
+* **Interaction latency:** the time from clicking a task row to its detail heading being visible in the mockups, measured in headless Chromium, against 100 ms.
 
-  Each warning names the rule and the shared part to use instead.
-* **Performance targets.** These are measured targets, not stops: initial JavaScript ≤ 200 KB, and interaction response ≤ 100 ms.
-* **Decisions.** Each decision is recorded once in `decisions.md`. A decided question is not asked again unless the owner reopens it.
-* **Prototype code.** `packages/coordinator/*ui.ts` is evidence only. New PWA routes replace it page by page.
+## Risks
 
-## Goals and non-goals
-
-* **Goals:**
-  * the owner rules;
-  * shared parts that carry consistency;
-  * the warning report;
-  * the decision log;
-  * the order of work.
-* **Non-goals:**
-  * blocking gates;
-  * visual regression tests (for now);
-  * timing gates;
-  * making the method shared through specq (later);
-  * native desktop apps.
+* *Warnings get ignored.* Because the report never blocks, nobody may act on it. Mitigation: CI posts its summary on every pull request, and reviewers check that summary first.
+* *Heuristic checks make mistakes.* Pattern and DOM checks can raise false alarms or miss real problems. Each check was shown once to catch its defect (D14), and review still looks at the screenshots.
+* *A check fails silently.* A check that cannot run reports "not run" with its reason. Read those lines rather than assuming everything passed.
 
 ## Alternatives weighed
 
-* **Blocking checks in `npm test` or CI (the reviewers' recommendation).** Rejected by the owner: the method must guide, not stop work. The checks still run, as a report.
-* **A stronger `AGENTS.md` alone.** Not enough on its own, because it failed before. It is kept as a pointer, and the shared parts do the real work.
-* **An LLM reviewer as a gate.** Rejected. Its results are not repeatable.
-* **Pixel visual regression.** Not now. Screenshots are attached to pull requests instead.
-* **Adopting HIG or a component library wholesale.** Rejected. HIG numbers fill gaps that no owner rule covers (OR-5).
-* **Storybook, Figma or a token server.** Rejected. Each would be a second source of truth.
-* **Copying P1–P16 verbatim into Fleet.** Rejected. owner-rules.md links the specq source instead.
-
-## Decisions
-
-| Question | Choice |
-|---|---|
-| Front-end stack | Preact + Signals + Wouter, esbuild; virtual scroll from a library ([D4](decisions.md)) |
-| Owner rules | Per-rule answers; instructions, not gates ([D5, D6](decisions.md)) |
-| Where checks run | Warning report in the pull request, never blocking |
-| Performance | Measured targets: initial JavaScript ≤ 200 KB, interaction ≤ 100 ms |
-| Approval | Owner says "ok" in chat; the worker records it in `decisions.md` |
-| Visual regression | Not now; book screenshots are attached to the pull request |
-| Stage-1 specimens | Archived in `explorations/archive/` |
-| Book role | Live demo page of `packages/ui`; no separate copy |
+* **Blocking checks in CI.** Rejected by the owner. Only build and test failures fail the job; design warnings never do.
+* **An LLM reviewer as a gate.** Rejected, because its results are not repeatable. Advisory reviews, like the 2026-11-10 one, are welcome.
+* **Pixel visual regression.** Not now. Screenshots go into the pull request instead.
+* **Adopting a component library or HIG wholesale.** Rejected. HIG numbers fill only the gaps that no owner rule covers.
+* **Storybook, Figma or a token server.** Rejected, because each would be a second source of truth.

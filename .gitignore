@@ -17,3 +17,4 @@ __pycache__/
 evidence/multiharness-native-*/
 **/*.protocol-out.jsonl
 **/*.native.jsonl
+design-report/

@@ -69,8 +69,11 @@ export function money(n: number): Formatted {
   return { text, long: `${n.toFixed(2)} dollars` };
 }
 
-export type Kind = 'money' | 'count' | 'duration' | 'bytes';
-const BY_KIND: Record<Kind, (n: number) => Formatted> = { money, count, duration, bytes };
+/** Scores 0..1 with two fixed decimals: 0.80, 0.68. */
+export function score(n: number): Formatted { return { text: n.toFixed(2), long: n.toFixed(2) }; }
+
+export type Kind = 'money' | 'count' | 'duration' | 'bytes' | 'score';
+const BY_KIND: Record<Kind, (n: number) => Formatted> = { money, count, duration, bytes, score };
 
 /** A measured, estimated, partial or unavailable number (principles §2). */
 export function measured(m: Measured, kind: Kind): Formatted {

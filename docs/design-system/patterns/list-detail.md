@@ -15,6 +15,8 @@
 5. Any open [decision](../controls/decision-block.md) or [problem](../controls/problem-row.md) for this item.
 6. Tabs: Executions ([tree](../controls/execution-tree.md)), Transcript ([viewer](../controls/transcript-viewer.md)) and Results ([viewer shell](../controls/result-viewer.md)).
 
+**Narrow widths (D14).** At 1100 px and below, the detail comes first, above the list. Opening an item moves focus to the detail and scrolls it into view, so the change is always visible (OR-19, WCAG 2.4.3).
+
 **Rules.**
 * The detail's URL includes the item.
 * Live updates change values in place.

@@ -32,7 +32,6 @@ function Overview() {
     <PageHead title="Overview"><Stale at={NOW - 20e3} now={NOW} /></PageHead>
     <OpsSummary>
     <StatStrip label="Operations" stats={[
-      { label: 'need you', icon: 'bell', value: { value: 3, basis: 'measured' }, tone: 'attention', href: '#/tasks' },
       { label: 'failed today', icon: 'octagon-x', value: { value: 2, basis: 'measured' }, tone: 'danger', href: '#/tasks' },
       { label: 'running', icon: 'activity', value: { value: 10, basis: 'measured' }, of: 13, href: '#/hosts' },
       { label: 'queued', icon: 'list-ordered', value: { value: 7, basis: 'measured' } },
@@ -46,7 +45,7 @@ function Overview() {
               answered={answered[d.id] ? { by: 'you', answer: answered[d.id], at: NOW, delivered: true } : undefined} onAnswer={a => setAnswered({ ...answered, [d.id]: a })} />)}
           <ProblemRow severity="failure" title="Claude quota exhausted" facts={<>resets in <span class="mono">2h</span> · T-9937 interrupted</>}
             actions={[{ label: 'Continue on codex', primary: true }, { label: 'Wait for reset' }]} />
-          <ProblemRow severity="warning" title="Low space on windows store" facts={<><span class="mono">18 GB</span> free, warning at <span class="mono">25 GB</span></>}
+          <ProblemRow severity="warning" title="Low space on windows store" facts="18 GB free, warning at 25 GB"
             actions={[{ label: 'Open host' }]} />
       </NeedsYou>
       <div class="stack">
@@ -63,7 +62,7 @@ function Overview() {
           <ul class="kv">
             {[{ a: 'claude-max', used: 0.97, reset: NOW - 3 * hr }, { a: 'codex-pro', used: 0.41, reset: NOW - 1 * hr }, { a: 'antigravity', used: null as number | null, reset: 0 }].map(x => <li key={x.a}>
               <Icon name="bot" /><span class="k">{x.a}</span>
-              <FillBar total={x.used === null ? null : 100} segments={x.used === null ? [] : [{ label: 'window', bytes: x.used * 100 }]} warnAt={10} unit="percent" />
+              <FillBar total={x.used === null ? null : 100} segments={x.used === null ? [] : [{ label: 'used', bytes: x.used * 100 }]} warnAt={10} unit="percent" />
             </li>)}
           </ul>
         </Panel>
@@ -91,14 +90,14 @@ function Tasks({ id }: { id?: string }) {
       <Panel><TaskListView items={items} now={NOW} selected={sel?.id} height="var(--size-page-list)" onOpen={t => go(`/tasks/${t.id}`)}
         onPin={pid => setItems(xs => xs.map(x => x.id === pid ? { ...x, pinned: !x.pinned } : x))} /></Panel>
     </>}
-    detail={sel && <TaskDetail t={sel} onClose={() => go('/tasks')} />} />;
+    detail={sel && <TaskDetail t={sel} onClose={() => go('/tasks')} />} detailKey={sel?.id} />;
 }
 
 function TaskDetail({ t, onClose }: { t: TaskRow; onClose: () => void }) {
   const [tab, setTab] = useState('Executions');
   const [rtab, setRtab] = useState('Diff');
   const [answer, setAnswer] = useState<string | null>(null);
-  return <article class="detail" aria-label={t.title}>
+  return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={t.title}>
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
       <span class="muted mono">{t.project} · T-{t.id}</span><span class="grow" />
@@ -120,7 +119,7 @@ function TaskDetail({ t, onClose }: { t: TaskRow; onClose: () => void }) {
     {t.state === 'waiting' && <DecisionBlock question="Accept this result?" askedBy="reviewer (claude)" addressedTo="you" since={NOW - 12 * min} now={NOW}
       context={<>Checks passed: links, contrast, screenshots.</>} options={[{ label: 'Accept', kbd: 'a', primary: true }, { label: 'Request rework', kbd: 'r' }]}
       answered={answer ? { by: 'you', answer, at: NOW, delivered: false } : undefined} onAnswer={setAnswer} />}
-    {t.state === 'failed' && <ProblemRow severity="failure" title="render-07 failed" facts="exit 1 · log retained · dependants not started" actions={[{ label: 'Retry failed step', primary: true }, { label: 'Open log' }]} />}
+    {t.state === 'failed' && <ProblemRow severity="failure" title="render-07 failed" facts="exit 1 · dependants not started" actions={[{ label: 'Retry step', primary: true }, { label: 'Open log' }]} />}
     <div class="tabs detail-tabs" role="tablist">{['Executions', 'Transcript', 'Results'].map(x => <button type="button" role="tab" key={x} aria-selected={tab === x} onClick={() => setTab(x)}>{x}</button>)}</div>
     {tab === 'Executions' && <ExecTree nodes={TREE} now={NOW} label="Executions" />}
     {tab === 'Transcript' && <div class="pane"><Transcript entries={transcript()} label="Transcript" now={NOW} /></div>}
@@ -154,18 +153,19 @@ function Results() {
           shown={shown.length} total={RESULTS.length}
           extra={<StateCounters family="copy" label="Results by copy state" counts={counts} active={copies} onAll={() => setCopies([])} onToggle={c => setCopies(copies.includes(c) ? copies.filter(x => x !== c) : [...copies, c])} />} />}>
         <VirtualList items={shown} getKey={r => r.id} rowHeight={ROW} follow="top" label="Results" rowClass={r => r.id === sel.id ? 'sel' : ''}
-          columns="1.25rem minmax(0,1fr) 3.5rem 4rem 4.5rem 2.75rem"
-          header={<><span /><span>Result</span><span>Type</span><span>Project</span><span class="r">Size</span><span class="r">Age</span></>}
+          columns="1.25rem minmax(0,1fr) 4rem 4.5rem 2.75rem"
+          header={<><span /><span>Result</span><span>Project</span><span class="r">Size</span><span class="r">Age</span></>}
           render={r => <>
             <span class="lead"><StateBadge family="copy" state={r.copy} compact /></span>
             <span class="tt"><a class="title row-link" href={`#/results/${r.id}`} onClick={e => { e.preventDefault(); setSel(r); }}>{r.name}</a><span class="id">T-{r.task}</span></span>
-            <span class="svc">{r.type}</span><span class="svc">{r.project}</span>
+            <span class="svc">{r.project}</span>
             <span class="r"><Num m={{ value: r.size, basis: 'measured' }} kind="bytes" /></span>
             <span class="r"><AgeChip t={r.at} now={NOW} /></span>
           </>} />
       </ListFrame></Panel>
     </>}
-    detail={<article class="detail">
+    detailKey={sel.id}
+    detail={<article class="detail" data-ui="detail" tabIndex={-1} aria-label={sel.name}>
       <ResultViewer name={sel.name} type={sel.type} size={sel.size} source={`T-${sel.task}`} tab={tab} onTab={setTab} tabs={['View', 'Checks 2', 'Versions 3']}
         copies={[{ where: 'windows', state: sel.copy }, { where: 'mac', state: 'pending' }]}>
         {sel.copy === 'unavailable' ? <Empty text="No holding store is online. Last copy on mac, seen 2h ago." action={<Button label="Notify when online" icon="bell" />} /> : <Empty text={`${sel.type} viewer for ${sel.name}`} />}
@@ -181,14 +181,14 @@ function Hosts() {
   return <>
     <PageHead title="Hosts"><Stale at={NOW - 40e3} now={NOW} /></PageHead>
     <StatStrip label="Workers per host" stats={hosts.map(x => ({ label: x.id, icon: 'panels-top-left' as const, value: { value: x.running, basis: 'measured' as const, partial: x.online ? undefined : 'last known' }, of: x.slots, tone: x.running >= x.slots ? 'attention' as const : undefined, harness: x.byHarness }))} />
-    <ProblemRow severity="warning" title="Low space on windows store" facts={<><span class="mono">18 GB</span> free, warning at <span class="mono">25 GB</span> · 4 uploads waiting</>}
+    <ProblemRow severity="warning" title="Low space on windows store" facts="18 GB free, warning at 25 GB · 4 uploads waiting"
       actions={[{ label: 'Raise capacity', primary: true }, { label: 'Change game locations' }, { label: 'Add retention rule' }]} />
     <Panel title="Hosts and stores">
       <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(6rem,9rem) 3rem 3.5rem 7rem 3rem minmax(0,1fr)' }}>
         <div class="vl-head" role="row"><span /><span>Host</span><span>Seen</span><span class="r">Workers</span><span /><span class="r">Queue</span><span>Store</span></div>
         {hosts.map(x => <div key={x.id} role="row" class={`vl-row static${x.id === sel ? ' sel' : ''}`} onClick={() => setSel(x.id)}>
           <StateBadge family="host" state={x.online ? 'online' : 'offline'} compact lastSeen={x.online ? undefined : x.lastSeen} now={NOW} />
-          <span class="title">{x.id} <span class="id">{x.platform}</span></span>
+          <span class="title">{x.id}{!x.id.includes(x.platform.slice(0, 3)) && <span class="id">{x.platform}</span>}</span>
           <span><AgeChip t={x.lastSeen} now={NOW} alertAfter={15 * 60} tone="attention" /></span>
           <span class="r"><Num m={{ value: x.running, basis: 'measured', partial: x.online ? undefined : 'last known' }} kind="count" /><span class="muted">/{x.slots}</span></span>
           <HarnessCounts counts={x.byHarness} label={`${x.id} workers by harness`} />
@@ -197,7 +197,7 @@ function Hosts() {
         </div>)}
       </div>
     </Panel>
-    <Panel title={`${h.id} ${h.platform}`}>
+    <Panel title={h.id}>
       <div class="stack-pad">
         <DetailSection title="Environments">
           <KvRow icon="folder-open" label="game-worktree-3" meta="codex · T-9976" value={<Num m={{ value: 4.2e9, basis: 'measured' }} kind="bytes" />} />
@@ -233,7 +233,7 @@ function Laboratory() {
   const [note, setNote] = useState<string | null>(null);
   const [tab, setTab] = useState('Compare');
   return <>
-    <PageHead title="Laboratory"><span class="muted">Experiment: hero copy method · 225 trials · 3 variants</span><SplitButton kind="primary" main={{ label: 'Repeat trials', icon: 'rotate-ccw' }} alternatives={[{ label: 'Add variant', icon: 'plus' }, { label: 'Run on new task set', icon: 'list' }]} /></PageHead>
+    <PageHead title="Laboratory"><span class="muted">Experiment: hero copy method · 3 variants × 75</span><SplitButton kind="primary" main={{ label: 'Repeat trials', icon: 'rotate-ccw' }} alternatives={[{ label: 'Add variant', icon: 'plus' }, { label: 'Run on new task set', icon: 'list' }]} /></PageHead>
     <div class="tabs" role="tablist">{['Compare', 'Trials', 'Assessments'].map(x => <button type="button" role="tab" key={x} aria-selected={tab === x} onClick={() => setTab(x)}>{x}</button>)}</div>
     {tab === 'Compare' && <Panel title="Variants">
       <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) 4rem 4rem 4.5rem 4rem 4.5rem 5rem' }}>
@@ -241,20 +241,20 @@ function Laboratory() {
         {VARIANTS.map((x, i) => <div key={x.v} role="row" class="vl-row static">
           <span class="lead"><StateBadge family="execution" state={i === 2 ? 'running' : 'succeeded'} reason={i === 2 ? 'trials still running' : 'all trials finished'} compact /></span>
           <span class="title">{x.v}</span>
-          <span class="r"><Num m={{ value: x.score, basis: 'measured' }} kind="count" /></span>
-          <span class="r"><Num m={{ value: x.judge, basis: x.judge === null ? 'unavailable' : 'measured', reason: 'judge not run' }} kind="count" /></span>
+          <span class="r"><Num m={{ value: x.score, basis: 'measured' }} kind="score" /></span>
+          <span class="r"><Num m={{ value: x.judge, basis: x.judge === null ? 'unavailable' : 'measured', reason: 'judge not run' }} kind="score" /></span>
           <span class="r"><Num m={{ value: x.tokens, basis: 'measured' }} kind="count" /></span>
           <span class="r"><Num m={{ value: x.time, basis: 'measured' }} kind="duration" /></span>
           <span class="r"><Num m={{ value: x.cost, basis: x.cost === null ? 'unavailable' : x.est ? 'estimated' : 'measured', reason: x.cost === null ? 'no meter' : 'tokens' }} kind="money" /></span>
-          <span class="r"><span class={`chip-age${x.failed > 5 ? ' t-danger alert' : ''}`}>{x.failed}/{x.trials}</span></span>
+          <span class="r"><span class={`chip-age${x.failed > 5 ? ' t-danger alert' : ''}`} aria-label={`${x.failed} of ${x.trials} trials failed`}>{x.failed > 5 && <Icon name="triangle-alert" />}{x.failed}/{x.trials}</span></span>
         </div>)}
       </div>
     </Panel>}
     {tab === 'Trials' && <Panel><TaskListView items={ALL.slice(0, 300)} now={NOW} onPin={() => {}} height="420px" /></Panel>}
     {tab === 'Assessments' && <Empty text="No assessments yet. Write one from the comparison." />}
-    <Panel title="Recommendation">
-      <DecisionBlock question="Recommend B new skill for hero copy in dashq?" askedBy="lab agent" addressedTo="architect" since={NOW - 3 * hr} now={NOW}
-        context="B scores 0.83 against 0.71 with fewer tokens; 2 failed trials kept for review." options={[{ label: 'Recommend', kbd: 'a', primary: true }, { label: 'Keep current' }]}
+    <Panel>
+      <DecisionBlock question="Use B new skill for hero copy in dashq?" askedBy="lab agent" addressedTo="architect" since={NOW - 3 * hr} now={NOW}
+        context="B scores 0.83 against 0.71 with fewer tokens; 2 failed trials kept for review." options={[{ label: 'Yes', kbd: 'a', primary: true }, { label: 'Keep current' }]}
         answered={note ? { by: 'you', answer: note, at: NOW, delivered: true } : undefined} onAnswer={setNote} />
     </Panel>
   </>;
