@@ -1,10 +1,11 @@
 import {type Docs,executionScope} from "./store.js";
+import type {Executions} from "./executions.js";
 import {createHash,randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {canonical} from './lab.js';
 const fail=(statusCode:number,message:string):never=>{throw Object.assign(Error(message),{statusCode})};
 const hash=(v:any)=>createHash('sha256').update(canonical(v)).digest('hex');
-export function recovery(app:any,store:Docs&{transaction:<T>(fn:()=>Promise<T>|T)=>Promise<T>},owned:(b:any)=>Promise<void>,proxy:boolean){
+export function recovery(app:any,store:Docs&{transaction:<T>(fn:()=>Promise<T>|T)=>Promise<T>,executions:Executions},owned:(b:any)=>Promise<void>,proxy:boolean){
  const {all,get,put,transaction}=store;
  const inspect=async (b:any)=>{const e=(await get(b.executionId,'execution'));return {executionId:e.id,hostId:e.hostId,state:e.state,error:e.error??null,hostJournal:'Unknown to coordinator; delivery observation is not native reinspection',nativeOutcome:'Not inferred from transport; inspect native evidence and validated receipts',commands:(await all('command',{executionId:e.id})).filter((c:any)=>c.executionId===e.id).map((c:any)=>({id:c.id,kind:c.kind,status:c.status})),eventCount:(await all('event',{executionId:e.id})).filter((x:any)=>x.executionId===e.id).length,results:(await all('artifact',{executionId:e.id},['contentBase64'])).filter((x:any)=>x.executionId===e.id).map(({contentBase64,...x}:any)=>x),conflicts:(await all('transport-conflict',{executionId:e.id})).filter((x:any)=>x.executionId===e.id).map(({original,...x}:any)=>x),audit:(await all('transport-audit',{executionId:e.id})).filter((x:any)=>x.executionId===e.id),resend:'Owning host automatically resends its unchanged retained outbox; no native dispatch or program-effect replay'}};
  const authorize=async (b:any)=>{if(Object.keys(b).sort().join()!=='conflictId,executionId,frameSha256,requestId'||typeof b.requestId!=='string'||!b.requestId||b.requestId.length>200)fail(400,'Expected exact recovery identity');if(typeof b.executionId!=='string')fail(400,'Expected exact recovery identity');
@@ -19,7 +20,11 @@ export function recovery(app:any,store:Docs&{transaction:<T>(fn:()=>Promise<T>|T
   }
   // Validate the entire batch before inserting; conflicting original events remain immutable.
   const seen=new Map(),ids=new Map();for(const {value} of prepared){if(ids.has(value.id)&&!isDeepStrictEqual(ids.get(value.id),value))fail(409,'Batch event conflict');ids.set(value.id,value);const old=seen.get(value.seq);if(old&&old!==value.id)fail(409,'Batch sequence conflict');seen.set(value.seq,value.id)}
-  return (await transaction(async ()=>{for(const {value,conflict} of prepared){await put('event',value);if(conflict&&conflict.state!=='delivered'){conflict.state='delivered';conflict.deliveredAt=Date.now();await put('transport-conflict',conflict);await put('transport-audit',{id:randomUUID(),executionId:b.executionId,conflictId:conflict.id,actor:'owning-host',operation:'retained-transport-delivered',at:Date.now(),nativeEffectReplayed:false})}}return {ok:true}}));
+  return (await transaction(async ()=>{for(const {value,conflict} of prepared){await put('event',value);if(conflict&&conflict.state!=='delivered'){conflict.state='delivered';conflict.deliveredAt=Date.now();await put('transport-conflict',conflict);await put('transport-audit',{id:randomUUID(),executionId:b.executionId,conflictId:conflict.id,actor:'owning-host',operation:'retained-transport-delivered',at:Date.now(),nativeEffectReplayed:false})}}// Execution-scope typed writes (section 12): observation, harness version, reported child agents, totals of an ended execution.
+   const ex=store.executions;await ex.markObservation(b.executionId,'confirmed');
+   for(const {value} of prepared){const v=value.data;if(typeof v?.harnessVersion==='string')await ex.setHarnessVersion(b.executionId,v.harnessVersion);if(Array.isArray(v?.children)&&v.children.length)await ex.recordChildren(b.executionId,v.children)}
+   if(await ex.ended(b.executionId))await ex.writeTotals(b.executionId);
+   return {ok:true}}));
  }
  return {ingest,operations};
 }

@@ -318,13 +318,14 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
     *   `wait_reason`, `priority`;
     *   `completion_requirements` (JSONB), `result_destination`;
     *   `created_by`, timestamps.
-*   **Table `task_dependency`.** `task_id` and `depends_on_task_id`. Tasks are flat; there is no hierarchy.
+*   **Table `task_dependency`.** `task_id`, `depends_on_task_id` and `kind`. Tasks are flat; there is no hierarchy. Only `blocks` dependencies gate transitions. `revision_of` records a delivery that revises an earlier one (legacy `previousDeliveryId`) without waiting for it, as the legacy flow never waited for acceptance.
 *   **Derived, not stored.** Progress, cost so far and the latest result come from the view `task_view` over the task's executions, artifacts and questions. Only `state` and `wait_reason` are stored, and they change only through these transitions, all written by `tasks.ts`:
 
     | From | Trigger | To |
     |---|---|---|
     | (new) | `tasks.create` | `queued` |
     | `queued` | the first execution of the task starts and all dependencies are `completed` | `in_progress` |
+    | `queued` | an open question of kind `operator_decision` blocks the task before its first execution, or a dependency is not `completed` | `waiting`, with `wait_reason` |
     | `in_progress` | an open question of kind `operator_decision` or `agent_question` blocks the task, or a dependency is not `completed` | `waiting`, with `wait_reason` |
     | `waiting` | the blocking question is answered, or the dependency completes | `in_progress` |
     | `in_progress` | the completion requirements are met and an `acceptance` question is answered `accepted` | `completed` |
@@ -350,11 +351,13 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
     | `requestId`, `signature` | `task.completion_requirements` |
     | `methodId`, `profileId`, `account` | `task.delivery_method` (jsonb); each step execution records its own `account_id` and `config_ref` |
     | `questionId` | a `question` row of kind `operator_decision` with this `task_id` |
-    | `previousDeliveryId` | a `task_dependency` row |
+    | `previousDeliveryId` | a `task_dependency` row of kind `revision_of` |
     | `steps[i].executionId` | an execution with `task_id`, kind `pipeline_step` or `agent_run` |
     | state `waiting` | task `waiting`, `wait_reason = question` |
     | state `pr-open` | task `in_progress` |
-    | state `merged`, `published` | task `in_progress` until acceptance, then `completed` |
+    | state `merged`, `published` | task `in_progress`; an `acceptance` question (options `accepted`, `rejected`, with the step artifacts) is asked once per state; `completed` after `accepted` |
+| states `researching`, `generating`, `integrating`, `publishing`, `blocked` | task `in_progress` |
+| states `quota`, `unavailable` | task `failed` |
     | state `failed` | task `failed` |
     | state `unknown` | task `in_progress`; its latest execution is `unconfirmed` |
 
@@ -480,6 +483,8 @@ Agent replies return summaries and IDs by default. Raw transcript text is return
 *   **Out of scope.** Every other record kind moves unchanged into a Postgres table `document(kind, id, data jsonb)`, with the same behaviour as today. Those kinds get their own tables only when a later design needs them.
 *   **Base64 artifacts.** They are decoded, hashed and uploaded to the PDS18 store. The base64 documents stay readable until `delivery.ts` reads results through `artifacts.get`, which happens in the same phase.
 *   **Readers move with writers.** Every module that reads run documents or events moves to the new tables in the same phase as the writers (item 19).
+*   **Row shape during the transition (Phase 2).** A typed row (`execution`, `task`, `question`) keeps its typed columns and, in `data`, the record the coordinator API returns today (the legacy document). `executions.ts` and `tasks.ts` write both in one statement. The store serves the legacy kinds (`execution`, `delegation`, `pipeline-run`, `delivery`, `question`, `project-question`) from these tables, so every route answers exactly as before while new code reads the typed columns. A delegation lives on its child execution's row (`execution.delegation`); a pipeline run's steps are their own `pipeline_step` rows. Migration 6 moves the existing documents in insertion order and keeps their `seq`.
+*   **Row-level security scope.** Every table has `FORCE ROW LEVEL SECURITY`. The coordinator sets `fleet.project_ids = '*'` on each connection (operator scope), and `''` in a list makes rows without a project visible. Narrow per-operation scopes (`SET LOCAL`) come with the agent-facing tools of Phase 6, the first callers that act for one project.
 *   **Cut-over.** A one-time migration runs during a short planned stop. The SQLite file stays read-only as the rollback source. Rolling back means pointing the coordinator back at SQLite. Any work done after the cut-over is then re-exported by the reverse script, which maps `document` rows and the typed tables (`execution`, `task`, `task_dependency`, `question`, `artifact`) back to legacy documents.
 
 ### 8. Agent-facing tools for results and history
@@ -621,6 +626,16 @@ Throughput is not the constraint. A write transaction takes a few milliseconds (
 | Ops `/api/ops/:name`, MCP `/api/tools`, project and recovery routes | Same as the operation's own group. | `READ_OPERATIONS` run as reads. `LONG_OPERATIONS` (pipeline and delivery generation) open short GLOBAL transactions around their synchronous steps. All others are one GLOBAL write. |
 | UI reads (every GET and HEAD) | A consistent view. | Read snapshot. A static scan and the read-only transaction both confirm that none of them writes. |
 | Startup recovery (`onReady`) | Runs once, before traffic. | GLOBAL write |
+
+**Phase 2 additions.**
+
+| Group | Invariant it needs | Mechanism |
+|---|---|---|
+| Task and question operations (`task_create`, `task_update`, `questions_answer`, legacy `question_answer`, `reply`) | Task state changes only through the transition table (§2); a question is answered once; acceptance completes its task once. | GLOBAL write |
+| `task_get`, `task_list`, `questions_list`, `executions_list` | A consistent view of one task with its executions, questions and `task_view`. | Read snapshot |
+| Typed writes inside receipts and poll (execution rows, task state from delivery, `detectProblems`) | Same as their handler. | GLOBAL write |
+| Typed writes inside host ingest (observation and `last_seen_at`, `harness_version`, `child_agent` rows of the execution, `execution_totals`) | Columns that no GLOBAL writer sets. Totals are recomputed from the row, so a recomputation from either scope gives the same value. | Execution scope. A GLOBAL writer that updates the same execution row waits for its row lock. |
+| Migration 6 (documents to typed tables) | Runs once, alone. | One GLOBAL write |
 
 **Whole-kind reads on write paths.**
 

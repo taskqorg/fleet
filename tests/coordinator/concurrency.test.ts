@@ -1,7 +1,7 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {createApp} from '../../packages/coordinator/app.js';import {createStore} from '../../packages/coordinator/store.js';import {volume} from './volume-fixture.js';
 // Runs on PGlite; set FLEET_TEST_DATABASE_URL to a disposable Postgres database to exercise real SERIALIZABLE conflicts.
 const url=process.env.FLEET_TEST_DATABASE_URL;
-const fresh=async()=>{if(url){const s=createStore(url);await s.query('DROP TABLE IF EXISTS document, schema_migration');await s.close()}
+const fresh=async()=>{if(url){const s=createStore(url);await s.query('DROP SCHEMA public CASCADE');await s.query('CREATE SCHEMA public');await s.close()}
  const app=createApp({database:url??'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac'});await app.ready();return app};
 test('concurrent receipts and event batches: no 500, no lost write',async()=>{const app=await fresh(),store=(app as any).store;
  const {docs}=volume();await store.tx(async()=>{for(const [k,d] of docs)await store.put(k,d)});
