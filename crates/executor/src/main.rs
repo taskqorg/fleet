@@ -5,6 +5,7 @@ mod lab;
 mod native;
 mod outbox;
 mod readiness;
+mod checkout_sync;
 mod worktree;
 use base64::Engine;
 use rusqlite::{Connection, params};
@@ -224,6 +225,11 @@ impl Executor {
             if !ok {
                 self.event(&c, 1, "readiness.failed", json!({"reason":"readiness-check-failed"}))?;
             }
+            return self.finish(&c, if ok { "completed" } else { "failed" }, None);
+        }
+        if c["kind"] == "base-updated" {
+            let (data, ok) = checkout_sync::run(&c["payload"], &self.host);
+            self.event(&c, 0, if ok { "checkout.synced" } else { "sync-failed" }, data)?;
             return self.finish(&c, if ok { "completed" } else { "failed" }, None);
         }
         if c["kind"] == "teardown" {
