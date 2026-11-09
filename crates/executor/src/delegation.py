@@ -4,6 +4,9 @@ import sqlite3
 import sys
 import time
 import uuid
+import mimetypes
+import os
+import shutil
 
 journal, context_json = sys.argv[1:]
 context = json.loads(context_json)
@@ -12,6 +15,64 @@ db.execute('PRAGMA synchronous=FULL')
 AGENT_TOOL_ARGS = {'session_start': ['projectId', 'requestId', 'role', 'profileId', 'account', 'hostId', 'text', 'setup'], 'session_deliver': ['sessionId', 'requestId'], 'ask': ['requestId', 'question', 'resume'], 'reply': ['questionId', 'answer'], 'message_send': ['sessionId', 'requestId', 'text', 'delivery'], 'session_fork': ['sessionId', 'requestId', 'text', 'strategy'], 'session_transition': ['sessionId', 'profileId', 'account'], 'worker_done': ['outcome', 'summary'], 'session_resume': ['sessionId'], 'session_handoffs': ['sessionId'], 'queue_list': ['sessionId'], 'questions': ['sessionId', 'state'], 'execution_status': ['sessionId']}
 AGENT_TOOL_REQUIRED = {'session_start': ['requestId'], 'ask': ['requestId', 'question'], 'reply': ['questionId', 'answer'], 'message_send': ['requestId', 'text'], 'session_fork': ['requestId'], 'session_transition': ['profileId'], 'worker_done': ['outcome']}
 AGENT_TOOL_DESC = {'session_start': 'Start a new Fleet session in your project: requestId, role (pm|worker|reviewer from the project roles) or profileId, optional text (first turn), setup run|skip. You are woken with a message when it finishes.', 'session_deliver': 'Ask Fleet to open a PR from a project session branch (fleet/<sessionId>, already pushed) and merge it after checks. Call again with the same sessionId to read the state.', 'execution_status': 'State of your execution, or with sessionId the latest execution of a session you started'}
+# Artifact tools run on this host (design section 8): the executor's transfer worker uploads and downloads; the agent never
+# receives store URLs or the Access token. artifact_save takes a path inside the working area.
+ARTIFACT_TOOLS = {
+ 'artifact_save': {'description': 'Store a file of your working area as an artifact of this execution now (otherwise FLEET_OUTPUT_DIR is collected when the run ends). required=true makes this run wait for it.', 'properties': {'path': {'type': 'string'}, 'name': {'type': 'string'}, 'media_type': {'type': 'string'}, 'required': {'type': 'boolean'}}, 'required': ['path']},
+ 'artifact_list': {'description': 'List artifact metadata of this project (or of an execution or task). Never returns content.', 'properties': {'execution_id': {'type': 'string'}, 'task_id': {'type': 'string'}, 'media_type': {'type': 'string'}}, 'required': []},
+ 'artifact_get': {'description': 'Download an artifact into FLEET_INPUT_DIR and return its local path and metadata.', 'properties': {'artifact_id': {'type': 'string'}}, 'required': ['artifact_id']},
+}
+def transfer(kind, body, wait, until):
+    key = str(uuid.uuid4())
+    with db:
+        db.execute("INSERT INTO transfers(id,kind,body,created_at) VALUES(?,?,?,?)", (key, kind, json.dumps(body), int(time.time() * 1000)))
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        row = db.execute('SELECT state,response FROM transfers WHERE id=?', (key,)).fetchone()
+        if row and row[1]:
+            r = json.loads(row[1])
+            if row[0] == 'failed' or until(row[0], r): return {**r, 'transferId': key}
+        time.sleep(.1)
+    return {'state': 'pending', 'transferId': key, 'instruction': 'Still in progress on this host; list artifacts later.'}
+def artifact_tool(name, q):
+    if name == 'artifact_save':
+        # Open component by component from the working area, never following a link, and copy from that open file.
+        parts = [p for p in q['path'].split('/') if p not in ('', '.')]
+        if not parts or '..' in parts: raise ValueError('path must be a file inside your working area')
+        fd = os.open(context['workdir'], os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for p in parts[:-1]:
+                nxt = os.open(p, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd); os.close(fd); fd = nxt
+            src = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+        finally:
+            os.close(fd)
+        try:
+            import stat as _stat
+            st = os.fstat(src)
+            # A hard link could name a file from outside the working area; only single-link regular files are saved.
+            if not _stat.S_ISREG(st.st_mode) or st.st_nlink != 1: raise ValueError('path must be a regular file with one link')
+            key = str(uuid.uuid4()); os.makedirs(context['spool'], exist_ok=True); spool = os.path.join(context['spool'], key)
+            with os.fdopen(os.dup(src), 'rb') as fin, open(spool, 'xb') as fout: shutil.copyfileobj(fin, fout)
+        finally:
+            os.close(src)
+        path = os.path.join(context['workdir'], *parts); root = context['workdir']
+        body = {'path': spool, 'spool': True, 'previews': True, 'name': q.get('name') or os.path.relpath(path, root), 'mediaType': q.get('media_type') or mimetypes.guess_type(path)[0] or 'application/octet-stream', 'executionId': context['executionId'], 'required': q.get('required') is True}
+        with db:
+            db.execute("INSERT INTO transfers(id,kind,body,created_at) VALUES(?,?,?,?)", (key, 'upload', json.dumps(body), int(time.time() * 1000)))
+            # P3-D3: the required declaration goes to the coordinator through the outbox, in the same transaction and so ahead
+            # of the completion receipt, whether or not the transfer has reserved the upload by then.
+            if body['required']:
+                db.execute("CREATE TABLE IF NOT EXISTS outbox(route TEXT NOT NULL,body TEXT NOT NULL)")
+                db.execute("INSERT INTO outbox(route,body) VALUES(?,?)", ('/api/hosts/artifacts/declare', json.dumps({'hostId': context['hostId'], 'executionId': context['executionId'], 'name': body['name']})))
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            row = db.execute('SELECT state,response FROM transfers WHERE id=?', (key,)).fetchone()
+            if row and row[1] and ('artifactId' in json.loads(row[1]) or row[0] == 'failed'): return json.loads(row[1])
+            time.sleep(.1)
+        return {'artifactId': key, 'state': 'pending'}
+    if name == 'artifact_list':
+        return transfer('list', {'executionId': context['executionId'], 'filter': {'executionId': q.get('execution_id'), 'taskId': q.get('task_id'), 'mediaType': q.get('media_type')}}, 20, lambda s, r: s == 'done')
+    return transfer('get', {'executionId': context['executionId'], 'artifactId': q['artifact_id'], 'inputDir': context['inputDir']}, 600, lambda s, r: s == 'done')
 AGENT_TOOLS = ['session_start', 'session_deliver', 'session_transition', 'session_fork', 'session_resume', 'session_handoffs', 'message_send', 'queue_list', 'ask', 'reply', 'questions', 'worker_done', 'execution_status']
 for line in sys.stdin:
     req = {}
@@ -29,6 +90,9 @@ for line in sys.stdin:
                 for name in ['project_context','catalogue','pipeline_run','direct_search','pipeline_history','pipeline_get','question_ask','question_history','account_list']:
                     props = {'requestId': {'type':'string'}, 'query': {'type':'string'}, 'methodId': {'type':'string'}, 'text': {'type':'string'}, 'runId': {'type':'string'}}
                     result['tools'].append({'name':name,'annotations':{'readOnlyHint':name not in ['pipeline_run','direct_search','question_ask'],'destructiveHint':False,'idempotentHint':True,'openWorldHint':name in ['pipeline_run','direct_search']},'description':'Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.','inputSchema':{'type':'object','additionalProperties':False,'properties':props}})
+            if context.get('workdir'):
+                for name, spec in ARTIFACT_TOOLS.items():
+                    result['tools'].append({'name': name, 'description': spec['description'], 'annotations': {'readOnlyHint': name != 'artifact_save', 'destructiveHint': False, 'idempotentHint': name != 'artifact_save', 'openWorldHint': False}, 'inputSchema': {'type': 'object', 'properties': spec['properties'], 'required': spec['required'], 'additionalProperties': False}})
             for name in AGENT_TOOLS:
                 result['tools'].append({'name': name, 'description': AGENT_TOOL_DESC.get(name, 'Fleet agent session tool ' + name + ' (bound to this session by the host)'), 'inputSchema': {'type': 'object', 'properties': {k: {'type': 'string'} for k in AGENT_TOOL_ARGS.get(name, [])}, 'required': AGENT_TOOL_REQUIRED.get(name, [])}})
         elif method == 'tools/call' and req['params'].get('name') in AGENT_TOOLS:
@@ -48,6 +112,14 @@ for line in sys.stdin:
                 result = response['result']
             else:
                 result = {'content': [{'type': 'text', 'text': json.dumps(response or {'status': 'pending', 'instruction': 'Outcome unknown; inspect with execution_status before repeating effects.'})}], 'isError': True}
+        elif method == 'tools/call' and req['params'].get('name') in ARTIFACT_TOOLS and context.get('workdir'):
+            q = req['params'].get('arguments') or {}
+            spec = ARTIFACT_TOOLS[req['params']['name']]
+            if not isinstance(q, dict) or set(q) - set(spec['properties']) or any(k not in q for k in spec['required']) or any(not isinstance(v, (str, bool)) for v in q.values()): raise ValueError('Invalid artifact tool arguments')
+            try:
+                result = {'content': [{'type': 'text', 'text': json.dumps(artifact_tool(req['params']['name'], q))}]}
+            except (OSError, ValueError) as error:
+                result = {'content': [{'type': 'text', 'text': json.dumps({'error': 'artifact tool refused: ' + (str(error) if isinstance(error, ValueError) else 'path must be a regular file inside your working area, not a link')})}], 'isError': True}
         elif method == 'ping':
             result = {}
         elif method == 'tools/call' and (req['params'].get('name') == 'request_child' or context.get('projectId') and req['params'].get('name') in ['project_context','catalogue','pipeline_run','direct_search','pipeline_history','pipeline_get','question_ask','question_history','account_list']):

@@ -21,6 +21,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # The executor: its unit tests, and the binary the coordinator's end-to-end artifact test runs.
+      - run: cargo build -p fleet-executor && cargo test -p fleet-executor
       - run: npm test
       - name: Install Chromium for the design checks
         if: always()

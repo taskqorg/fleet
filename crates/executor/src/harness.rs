@@ -300,7 +300,7 @@ pub fn claude_mcp(c: &mut Command, profile: &Value, servers: &Value) {
         allowed.push("mcp__design-rules__get_design_rules".into());
     }
     if servers.get("fleet").is_some() {
-        for tool in ["session_transition","session_fork","session_resume","session_handoffs","message_send","queue_list","ask","reply","questions","worker_done","execution_status"] { allowed.push(format!("mcp__fleet__{tool}")); }
+        for tool in ["session_transition","session_fork","session_resume","session_handoffs","message_send","queue_list","ask","reply","questions","worker_done","execution_status","artifact_save","artifact_list","artifact_get"] { allowed.push(format!("mcp__fleet__{tool}")); }
         if profile["delegationProfiles"].as_array().is_some_and(|p| !p.is_empty()) { allowed.push("mcp__fleet__request_child".into()); }
         let context = servers["fleet"]["args"].as_array().and_then(|a| a.last()).and_then(Value::as_str).and_then(|s| serde_json::from_str::<Value>(s).ok());
         if context.as_ref().is_some_and(|c| c["projectId"].is_string()) {

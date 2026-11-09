@@ -15,7 +15,7 @@ function pipe(connection:string|undefined,run:string,args:any):Promise<any>{
 }
 // Project definition subset (docs/prototype-implementation-plan.md W1). Absent key = default below; unknown keys are reported in unknownKeys, never dropped silently.
 const SETTINGS_DEFAULTS:any={repos:[],environments:[],roles:{},worktree:{envMode:'worktree',baseRef:null,startFromOrigin:true,branchPrefix:'fleet',linkPaths:[],sharedDirectories:[]},scripts:{setup:null,teardown:null},setupStart:'wait',integration:{mode:'pr',mergeMethod:'squash',autoMerge:true,syncCheckoutAfterMerge:true},cleanup:{keepWhen:['uncommitted','teardown-failed']},identity:null};
-const TOP_KEYS=['id','name','capability','recommendedMethod','contextFiles',...Object.keys(SETTINGS_DEFAULTS)];
+const TOP_KEYS=['id','name','capability','recommendedMethod','contextFiles','artifact_locations','artifact_rules',...Object.keys(SETTINGS_DEFAULTS)];
 const ITEM_KEYS:any={repos:['id','remote','forge','defaultBranch','connection','path'],environments:['hostId','checkoutPath','repo'],identity:['name','email']};
 const ENUMS:any={'worktree.envMode':['worktree','local'],setupStart:['wait','background'],'integration.mode':['pr','direct'],'integration.mergeMethod':['squash','merge','rebase'],'repos.forge':['github','gitlab']};
 export function projectSettings(p:any){
@@ -32,9 +32,14 @@ export function projectSettings(p:any){
   if(isObj(d)){if(!isObj(v))bad(k);out[k]={...d};for(const [x,y] of Object.entries(v)){if(!(x in d)){unknownKeys.push(k+'.'+x);continue}check(k+'.'+x,y,d[x]);out[k][x]=y}continue}
   check(k,v,d);out[k]=v;
  }
+ // Artifact placement (design §3): host IDs that must hold the project's artifacts (null: the coordinator default), and the
+ // optional retention rules; whether each host has a registered store is checked where stores are known (artifacts.ts).
+ const loc=p.artifact_locations;if(loc!==undefined&&(!Array.isArray(loc)||!loc.length||loc.some((h:any)=>typeof h!=='string'||!h)||new Set(loc).size!==loc.length))bad('artifact_locations');
+ out.artifact_locations=loc??null;
+ const rules=p.artifact_rules;if(rules!==undefined&&(!Array.isArray(rules)||rules.some((r:any)=>!r||typeof r!=='object')))bad('artifact_rules');out.artifact_rules=rules??[];
  return {settings:out,unknownKeys};
 }
-export function registerProjects(app:FastifyInstance,store:Store,config:{directory:string,pipeConnectionFile?:string,proxy?:boolean,searchHostId?:string}){
+export function registerProjects(app:FastifyInstance,store:Store,config:{directory:string,pipeConnectionFile?:string,proxy?:boolean,searchHostId?:string,readArtifact?:(id:string)=>Promise<Buffer>}){
  const {all,get,put,atomic}=store,snapshot=store.read;
  const read=(path:string)=>JSON.parse(readFileSync(path,'utf8'));
  const ids=()=>readdirSync(resolve(config.directory,'projects')).filter(n=>existsSync(resolve(config.directory,'projects',n,'project.json'))).sort();
@@ -52,7 +57,7 @@ export function registerProjects(app:FastifyInstance,store:Store,config:{directo
   if(config.searchHostId){
    const sid=randomUUID(),eid=randomUUID(),cid=randomUUID();await put('session',{id:sid,createdAt:Date.now(),actor:'program-worker',projectId:b.projectId});await put('execution',{id:eid,executionId:eid,sessionId:sid,hostId:config.searchHostId,state:'queued',createdAt:Date.now(),actor:'program-worker',pipelineRunId:run.id});await put('command',{id:cid,executionId:eid,sessionId:sid,hostId:config.searchHostId,kind:'pipe-search',status:'pending',payload:{runId:run.id,arguments:args}});run.executionId=eid;await put('pipeline-run',run);
    const deadline=Date.now()+50000;
-   while(Date.now()<deadline){const artifact=(await all('artifact',{executionId:eid,path:'pipe-response.json'})).find(a=>a.executionId===eid&&a.path==='pipe-response.json');if(artifact){try{response=JSON.parse(Buffer.from(artifact.contentBase64,'base64').toString())}catch{}break}const e=(await get(eid,'execution'));if(['failed','unknown','stopped'].includes(e.state)){response={isError:true,content:[{type:'text',text:'Pipe outcome unknown: host worker '+e.state+'; inspect execution before replay'}]};break}await new Promise(r=>setTimeout(r,200))}
+   while(Date.now()<deadline){const artifact=(await all('artifact',{executionId:eid,path:'pipe-response.json'})).find(a=>a.executionId===eid&&a.path==='pipe-response.json');if(artifact){try{response=JSON.parse((await config.readArtifact!(artifact.artifactId??artifact.id)).toString())}catch{}break}const e=(await get(eid,'execution'));if(['failed','unknown','stopped'].includes(e.state)){response={isError:true,content:[{type:'text',text:'Pipe outcome unknown: host worker '+e.state+'; inspect execution before replay'}]};break}await new Promise(r=>setTimeout(r,200))}
    response??={isError:true,content:[{type:'text',text:'Pipe outcome unknown: host acknowledgement timeout; do not replay'}]};
   }else response=await pipe(config.pipeConnectionFile,run.id,args);const step=run.steps[0];step.finishedAt=Date.now();step.durationMs=step.finishedAt-startedAt;
   const text=response.content?.filter((c:any)=>c.type==='text').map((c:any)=>c.text).join('\n')??'Invalid Pipe response';

@@ -59,3 +59,7 @@ test('row-level security: forced on the owner, scoped by fleet.project_ids',asyn
  assert.deepEqual(await seen(null),{docs:[],tasks:[]});
  await assert.rejects(s.tx(async()=>{await s.query('SET LOCAL ROLE fleet_app_test');await s.query("SELECT set_config('fleet.project_ids','p',true)");await s.query("INSERT INTO task(id,title,project_id) VALUES('x','x','q')")}),/row-level security/);
  await s.close()});
+
+test('a task moves to in_progress when its first execution starts, without any delivery',async()=>{const s=await fresh();
+ await s.tx(async()=>{await s.tasks.create({id:'t',title:'model',projectId:'p'});await s.put('session',{id:'ss',createdAt:1,projectId:'p',deliveryId:'t'});await s.put('execution',{id:'x',executionId:'x',sessionId:'ss',hostId:'h',state:'queued'})});
+ assert.equal(await state(s,'t'),'queued');await s.put('execution',{id:'x',executionId:'x',sessionId:'ss',hostId:'h',state:'started',startedAt:1});assert.equal(await state(s,'t'),'in_progress');await s.close()});
