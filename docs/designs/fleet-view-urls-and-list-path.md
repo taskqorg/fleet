@@ -1,7 +1,7 @@
 # Fleet view URLs and list data path
 
 * **Author:** Alex Kirs
-* **Status:** Draft (review round 1 applied)
+* **Status:** Approved (owner, 2026-11-10); implemented in PRs #29, #30, #31, #33, #34 and this docs change
 * **Date:** 2026-11-10
 * **Brief:** [web-stack-brief.md](web-stack-brief.md) (measurements, alternatives, owner answers)
 

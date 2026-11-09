@@ -78,7 +78,7 @@ Each goal is measured as described in §9. The numbers are targets that are repo
 | D1 | Live updates | SSE change feed with a resume cursor, plus cursor polling (`changes_since`) as the catch-up and fallback path. Both share one versioned cursor. A full refetch happens only when the cursor is older than the retained log. The heartbeat stays under Cloudflare's 100 s idle timeout. |
 | D2 | Where the app lives | The app owns all of `fleet.ufobe.com`. The old pages move to `/legacy/*` and are deleted one by one. Hosts never get a UI. Each main view has its own manifest. First slice: Tasks, Conversations, Overview and Hosts; Results waits for Phase 3. |
 | D3 | Offline | The service worker caches the shell. IndexedDB keeps the last-read data, read-only, with its age shown. No queued writes. The store is cleared on sign-out and on a grant change, and holds only what the grants allow. |
-| D4 | Client data layer | One normalized entity store on Preact Signals, in our own code. The client never decides list membership: `list_membership` decides, in one batched read. Membership, ordering and the anchor are covered by tests. |
+| D4 | Client data layer | One normalized entity store on Preact Signals, in our own code. The client never decides list membership: `list_membership` decides, in one batched read. Membership, ordering and the anchor are covered by tests. Implemented by `app/src/store.ts` ([fleet-view-urls-and-list-path.md §2](fleet-view-urls-and-list-path.md)); the first version kept lists per component, which reset them on every filter change. |
 | D5 | Change-feed source | A change-log table written by triggers on every watched table, including `document`. The cursor is `seq`. Reads run under RLS. LISTEN/NOTIFY wakes the stream. Retention is an operator setting with no built-in cap. An old cursor gets `resync`. |
 
 These are settled elsewhere:
@@ -159,10 +159,10 @@ Browser windows (one origin)                          Coordinator (Fastify)
   * `/` redirects to `/overview`.
   * View routes: `/overview`, `/tasks`, `/tasks/:id`, `/conversations`, `/conversations/:id`, `/hosts`, `/hosts/:id` (host detail as stacked sections, design-system D11 C3).
   * The coordinator returns `index.html` for these paths only. Any other unknown non-API path gets a 404 page.
-* **List state** (filters, grouping, search) lives in the URL query, as in [principles §4](../design-system/principles.md#4-filters-and-search). Per-person defaults and nav pins live in IndexedDB until Phase 6 adds people.
+* **List state** (filters, grouping, search, presets, the focused row and checked rows) lives in the URL in one canonical form, defined in [fleet-view-urls-and-list-path.md §1](fleet-view-urls-and-list-path.md) and implemented by `packages/view-url`; agents build and read such links with `view_link`. Per-person defaults and nav pins live in IndexedDB until Phase 6 adds people.
 * **Shell.** `AppShell` from `packages/ui`, with nav items built from the registry's `workspaces`.
 
-* **Codes.** Rows and details show the human code after the title through the `packages/ui` formatter (design-system D15). The UUID is only in a tooltip and "copy UUID". Search accepts a code, an alias or a UUID; a code goes through `entity.resolve`, and an alias opens the entity under its current code. Detail URLs keep the UUID (`/tasks/:id`); `/tasks/T-FLT-42` resolves and redirects.
+* **Codes.** Rows and details show the human code after the title through the `packages/ui` formatter (design-system D15). The UUID is only in a tooltip and "copy UUID". Search accepts a code, an alias or a UUID; a code goes through `entity.resolve`, and an alias opens the entity under its current code. Detail URLs keep the UUID (`/tasks/:id`) until codes exist; the view URL codec passes a code through unchanged, and the redirect direction for codes is decided by the D17 slice ([fleet-view-urls-and-list-path.md](fleet-view-urls-and-list-path.md), Non-Goals).
 
 ### 3. Data loading and the entity store (D4)
 
@@ -265,7 +265,9 @@ SELECT ... FROM change WHERE seq > $cursor AND xid < pg_snapshot_xmin(pg_current
 * **Guard rule** (`app.ts:43`). A request skips the Bearer check only when its path does not start with `/api/` and either proxy mode is on or the path is outside `/legacy/`. This keeps today's rule: `/` was always public, and the legacy pages are public only in proxy mode. Every `/api/*` request, including `/api/stream`, keeps the Bearer and Origin checks. `origin_guard.py` is unchanged: it guards the whole site.
 * **Read ops.** These are added to `READ_OPERATIONS` (`store.ts:143`) and served as MCP tools too:
   * `changes_since {cursor, limit≤1000}` returns `{changes, cursor, resync?}`.
-  * `list_membership {lists:[{name:'tasks'|'sessions', filter}], ids}` returns `{lists:[{name, rows:[{row, sortKey}], counts}]}`. Hosts are few, so `/hosts` re-reads `hosts_list` on any `host` or `execution` change instead.
+  * `list_membership {lists:[{name:'tasks'|'sessions', filter, group?}], ids}` returns `{lists:[{name, rows:[{row, sortKey}], counts, groups?}]}` (`groups` for grouped task lists). Hosts are few, so `/hosts` re-reads `hosts_list` on any `host` or `execution` change instead.
+  * `view_link {view} | {url}` returns `{url, path}` or `{view}`: the canonical operator-app link for a view, or the view of a link; 400 for an invalid view, a foreign origin or a path that is not a view. Also in the agent operation table, so agent MCP endpoints offer it ([fleet-view-urls-and-list-path.md §1](fleet-view-urls-and-list-path.md)).
+  * `task_derived_check {}` returns `{checked, drifted}`: tasks whose stored derived values (`task_derived`) differ from a fresh computation, limited to the caller's projects.
   * `me {}` returns `{email: config.ownerEmail, roles:['operator','architect'], grantsVersion:'1', changeLogRetentionDays}`.
   * `sessions_list {filter, limit, after}` returns `{sessions, nextAfter, counts}`. Each session row has id, title, state, agent, last activity and open questions.
   * `hosts_list {}` returns `{hosts, staleAfterMs: 30000}`. The host ids are the configured ids (`config.hostId`, `integrationHostId`, `publicationHostId`, `nativeHostIds`) plus every `host-observation`. Each host row has `{id, platform, lastSeenAt, runningByHarness, slots, queued, stores: 'unavailable'}`. This is the first part of data foundation §11 `hosts.list`, with the same shape, extended in Phase 3.
