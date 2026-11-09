@@ -6,3 +6,24 @@ test('one operation surface: web ops and MCP tools share names',async()=>{const 
  const s=(await app.inject({method:'POST',url:'/api/ops/session_create',headers:h,payload:{}})).json();assert.ok(s.sessionId);
  const v=(await app.inject({method:'POST',url:'/api/tools',headers:h,payload:{jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'queue_list',arguments:{sessionId:s.sessionId}}}})).json();assert.deepEqual(JSON.parse(v.result.content[0].text),{queued:[]});
  assert.equal((await app.inject({method:'POST',url:'/api/ops/nope',headers:h,payload:{}})).statusCode,404);await app.close()});
+// Phase 3 of docs/designs/fleet-view-urls-and-list-path.md: view_link for the browser and agents, task_derived_check, groups.
+test('view_link builds and parses operator-app links; task_derived_check; list_membership returns groups',async()=>{
+ const origin='https://fleet.example';
+ const app=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac',browserProxyAuth:true,browserOrigin:origin});await app.ready();
+ const op=(name:string,payload:any)=>app.inject({method:'POST',url:'/api/ops/'+name,payload,headers:{authorization:'Bearer b',origin}});
+ const built=(await op('view_link',{view:{view:'tasks',state:['failed'],project:['fleet']}})).json();
+ assert.deepEqual(built,{url:origin+'/tasks?project=fleet&state=failed',path:'/tasks?project=fleet&state=failed'});
+ assert.deepEqual((await op('view_link',{url:built.url})).json(),{view:{view:'tasks',project:['fleet'],state:['failed']}});
+ assert.deepEqual((await op('view_link',{url:'/tasks/a?sel=c,b'})).json(),{view:{view:'tasks',focus:'a',sel:['b','c']}});
+ for(const bad of [{url:'https://evil.example/tasks'},{url:'/legacy/x'},{},{view:{view:'tasks'},url:'/tasks'},{view:{view:'nope'}}])assert.equal((await op('view_link',bad)).statusCode,400,JSON.stringify(bad));
+ const agentTools=(await app.inject({method:'POST',url:'/api/agent-tools',headers:{authorization:'Bearer b',origin},payload:{jsonrpc:'2.0',id:1,method:'tools/list'}})).json().result.tools;
+ assert.ok(agentTools.some((t:any)=>t.name==='view_link'&&t.description));
+ const s=(app as any).store;let id='';await s.tx(async()=>{id=await s.tasks.create({title:'T',projectId:'p',priority:'urgent'})});
+ assert.deepEqual((await op('task_derived_check',{})).json(),{checked:1,drifted:[]});
+ const m=(await op('list_membership',{ids:[id],lists:[{name:'tasks',filter:{},group:'priority'}]})).json();
+ assert.deepEqual(m.lists[0].groups,[{key:'1',label:'urgent',count:1}]);
+ await app.close();
+ // Without a configured origin the path is still returned.
+ const bare=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac'});await bare.ready();
+ assert.deepEqual((await bare.inject({method:'POST',url:'/api/ops/view_link',payload:{view:{view:'hosts',focus:'mac'}},headers:{authorization:'Bearer b'}})).json(),{url:null,path:'/hosts/mac'});
+ await bare.close()});

@@ -133,7 +133,7 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  };
  // Account for a new project session: the named one, else the project preference, else the first enabled account of the harness with a ready binding (on hostId when given). The binding picks the host.
  const pickAccount=async (harness:string,projectId:string,hostId?:string)=>{const ms=(await all('managed-account')).filter(m=>m.enabled&&(m.harness??'codex')===harness&&(m.bindings??[]).some((b:any)=>b.readiness==='ready'&&(!hostId||b.hostId===hostId)));const pref=(await managed.preferred(projectId));return (ms.find(m=>m.name===pref)??ms[0])?.name};
- agent=agentTools(store,{directory:config.profilesDirectory||'config/agents',hostId:config.hostId,enqueue,pickAccount,deliver:async (b:any)=>(await deliveryRuntime.operations.session_deliver(b)),project:(projectId:string)=>projects.project_context({projectId}).settings,resolveAccount:async(account:string,harness:string)=>{let last:any;for(const h of [config.hostId,...(config.nativeHostIds??[])]){try{const r=await managed.resolve(account,harness,h);if(r)return r}catch(e){last=e}}if(last)throw last}});
+ agent=agentTools(store,{browserOrigin:config.browserOrigin,directory:config.profilesDirectory||'config/agents',hostId:config.hostId,enqueue,pickAccount,deliver:async (b:any)=>(await deliveryRuntime.operations.session_deliver(b)),project:(projectId:string)=>projects.project_context({projectId}).settings,resolveAccount:async(account:string,harness:string)=>{let last:any;for(const h of [config.hostId,...(config.nativeHostIds??[])]){try{const r=await managed.resolve(account,harness,h);if(r)return r}catch(e){last=e}}if(last)throw last}});
  // Executions bound to a host, account or environment nothing registered are marked with a problem (design §1).
  const detectProblems=async()=>{const environments:Record<string,string[]>={};for(const id of projects.project_list?(await projects.project_list()).projects.map((p:any)=>p.id):[]){try{environments[id]=projects.project_context({projectId:id}).settings.environments.map((e:any)=>e.hostId)}catch{}}
   return store.executions.detectProblems({hosts:[config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].filter(Boolean) as string[],environments})};
@@ -255,7 +255,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   task_page:(b:any)=>store.tasks.page({filter:b?.filter,group:b?.group,limit:b?.limit,after:b?.after}),
   sessions_list:(b:any)=>sessionList.page({filter:b?.filter,limit:b?.limit,after:b?.after}),
   list_membership:async(b:any)=>{const ids=Array.isArray(b?.ids)&&b.ids.length<=1000?b.ids:fail(400,'Expected at most 1000 ids');if(!Array.isArray(b?.lists)||b.lists.length<1||b.lists.length>2)fail(400,'Expected one or two lists');
-   return {lists:await map(b.lists,async(l:any)=>l?.name==='tasks'?{name:'tasks',rows:await store.tasks.membership(l.filter??{},l.group,ids),counts:(await store.tasks.page({filter:l.filter,group:l.group,limit:1})).counts}
+   return {lists:await map(b.lists,async(l:any)=>l?.name==='tasks'?{name:'tasks',rows:await store.tasks.membership(l.filter??{},l.group,ids),...(({counts,groups})=>({counts,groups}))(await store.tasks.page({filter:l.filter,group:l.group,limit:1}))}
     :l?.name==='sessions'?{name:'sessions',rows:await sessionList.membership(l.filter??{},ids),counts:(await sessionList.page({filter:l.filter,limit:1})).counts}:fail(400,'Unknown list'))}},
   hosts_list:async()=>{const configured=[config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].filter(Boolean) as string[];
    const observed=await all('host-observation'),ids=[...new Set([...configured,...observed.map((h:any)=>h.id)])];
@@ -263,6 +263,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
    const queued=await store.query("SELECT data->>'hostId' AS host_id,count(*)::int AS n FROM document WHERE kind='command' AND data->>'status'='pending' GROUP BY 1");
    return {staleAfterMs:30000,serverNow:Date.now(),hosts:ids.map(id=>{const o:any=observed.find((h:any)=>h.id===id);const by:Record<string,number>={};for(const r of running)if(r.host_id===id)by[r.harness??'unknown']=r.n;
     return {id,configured:configured.includes(id),platform:o?.platform??null,lastSeenAt:o?.lastSeenAt??null,capabilities:o?.capabilities??[],runningByHarness:by,running:Object.values(by).reduce((a,n)=>a+n,0),slots:null,queued:queued.find((q:any)=>q.host_id===id)?.n??0,stores:'unavailable'}})}},
+  task_derived_check:async()=>store.tasks.derivedDrift(),
   me:async()=>({email:config.ownerEmail??null,roles:['operator','architect'],grantsVersion:'1',changeLogRetentionDays:retentionDays}),
  };
  const ops:Record<string,(b:any)=>any>={...typedOps,...projects,...transportRecovery.operations,...agent.operations,session_create,session_profile,session_archive,execution_stop,session_get,execution_differences,execution_events,profiles_list};
