@@ -15,12 +15,11 @@ test('Claude admission rejects an ineligible persisted binding for direct and de
   const parent=(await send('/api/sessions/'+sid+'/messages',{requestId:'parent',text:'review'})).json();
   const command=(await send('/api/hosts/poll',{hostId:'pds-test'},true)).json().commands[0];
   await send('/api/hosts/receipts',{hostId:'pds-test',commandId:command.id,executionId:parent.id,status:'started'},true);
-  const Database=(await import('better-sqlite3')).default,db=new Database(database);
-  try{const record=JSON.parse((db.prepare("SELECT data FROM records WHERE id=?").get(account.id) as any).data);record.bindings[0].platform='linux';db.prepare('UPDATE records SET data=? WHERE id=?').run(JSON.stringify(record),account.id)}finally{db.close()}
+  const store=(app as any).store;const record=await store.get(account.id,'managed-account');record.bindings[0].platform='linux';await store.put('managed-account',record);
   const child=await send('/api/hosts/receipts',{hostId:'pds-test',commandId:command.id,executionId:parent.id,delegation:{requestId:'child',profileId:'claude-reviewer',input:'review'}},true);
   assert.equal(child.statusCode,403);assert.match(child.body,/Claude account cannot run on PDS/);
   const direct=(await send('/api/sessions',{})).json().sessionId;await send('/api/sessions/'+direct+'/profile',{profileId:'claude-worker',account:account.name});
   assert.equal((await send('/api/sessions/'+direct+'/messages',{requestId:'direct',text:'review'})).statusCode,403);
-  const check=new Database(database);try{assert.equal((check.prepare("SELECT count(*) AS n FROM records WHERE kind='execution'").get() as any).n,1);assert.equal((check.prepare("SELECT count(*) AS n FROM records WHERE kind='delegation'").get() as any).n,0)}finally{check.close()}
+  assert.equal((await store.all('execution')).length,1);assert.equal((await store.all('delegation')).length,0);
  }finally{await app.close()}
 });
