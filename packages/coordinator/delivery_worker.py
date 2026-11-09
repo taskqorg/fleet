@@ -106,7 +106,8 @@ def main():
                         context=pathlib.Path(project['contextDirectory']);(repo/'.fleet').mkdir(exist_ok=True)
                         for name in ['project.json','rules.md','reference.json']:shutil.copyfile(context/name,repo/'.fleet'/name)
                     run(['git','add','--']+[f['path'] for f in p['files']]+(['.fleet'] if project.get('contextDirectory') else []),repo)
-                    run(['git','-c','user.name=Fleet delivery','-c','user.email=fleet@ufobe.com','commit','--allow-empty','-m','Publish Fleet delivery '+p['deliveryId']],repo)
+                    who=p.get('identity') or {'name':'Fleet delivery','email':'fleet@ufobe.com'}
+                    run(['git','-c','user.name='+who['name'],'-c','user.email='+who['email'],'commit','--allow-empty','-m','Publish Fleet delivery '+p['deliveryId']],repo)
                     commit=run(['git','rev-parse','HEAD'],repo)
                     # W3: integration.mode from project settings; pr is the default. GitHub only (gh); GitLab later.
                     integration={'mode':'pr','mergeMethod':'squash','autoMerge':True,**(p.get('integration') or {})}
@@ -120,10 +121,14 @@ def main():
                     if integration['mode']=='direct':result.update(mergedSha=commit)
                     else:
                         url=run(['gh','pr','create','--base',base,'--head',branch,'--title','Fleet delivery '+p['deliveryId'],'--body','Fleet delivery '+p['deliveryId']],repo).splitlines()[-1]
-                        if integration['autoMerge']:run(['gh','pr','merge',url,'--auto','--'+integration['mergeMethod']],repo)
+                        # autoMerge: Fleet merges itself after checks pass (GitHub auto-merge is unavailable on free private repos).
+                        if integration['autoMerge']:
+                            checks=subprocess.run(['gh','pr','checks',url,'--watch','--fail-fast','--interval','15'],cwd=repo,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=1800)
+                            if checks.returncode and b'no checks reported' not in checks.stdout:raise RuntimeError('PR checks did not pass; PR left open')
+                            run(['gh','pr','merge',url,'--'+integration['mergeMethod']],repo)
                         view=json.loads(run(['gh','pr','view',url,'--json','state,mergeCommit'],repo))
                         result.update(prUrl=url,prState=view.get('state'))
-                        # Merged now (no required checks) gives base-updated; a pending auto-merge reports prState OPEN.
+                        # Merged gives base-updated; autoMerge off leaves prState OPEN.
                         if view.get('state')=='MERGED':result.update(mergedSha=(view.get('mergeCommit') or {}).get('oid'))
                 elif p['kind']=='publish-failure':raise RuntimeError('Controlled publication refusal: acceptance failure fixture; current version unchanged')
                 else:

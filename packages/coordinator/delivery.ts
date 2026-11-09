@@ -45,7 +45,7 @@ export function delivery(store:any,config:any,enqueue:any,projects:any,resolveAc
    if(new Set(artifacts.map((a:any)=>a.path.replace(/^output\//,''))).size!==artifacts.length)fail(409,'Conflicting static artifact paths');
    const hostId=b.kind==='integrate'?config.integrationHostId:config.publicationHostId;if(!hostId)fail(503,'Required program worker host is not configured');
    const id=randomUUID(),e={id,executionId:id,sessionId:r.sessionId,hostId,state:'queued',actor:'program-worker',deliveryId:r.id,projectId:r.projectId,createdAt:Date.now()};put('execution',e);
-   const c={id:randomUUID(),executionId:id,sessionId:r.sessionId,hostId,kind:'delivery-step',status:'pending',payload:{kind:b.kind,projectId:r.projectId,deliveryId:r.id,...(b.kind==='integrate'?{integration:settings(r.projectId).integration}:{}),files:artifacts.map((a:any)=>({path:a.path.replace(/^output\//,''),contentBase64:a.contentBase64,sha256:a.sha256}))}};put('command',c);
+   const c={id:randomUUID(),executionId:id,sessionId:r.sessionId,hostId,kind:'delivery-step',status:'pending',payload:{kind:b.kind,projectId:r.projectId,deliveryId:r.id,...(b.kind==='integrate'?{integration:settings(r.projectId).integration,identity:settings(r.projectId).identity}:{}),files:artifacts.map((a:any)=>({path:a.path.replace(/^output\//,''),contentBase64:a.contentBase64,sha256:a.sha256}))}};put('command',c);
    r.steps.push({kind:b.kind,actor:'program-worker',hostId,executionId:id,state:'queued'});return save(r);
   },
   delivery_get:(b:any)=>reconcile(get(b.deliveryId,'delivery')),
