@@ -15,9 +15,27 @@ This design defines that data foundation. It has four parts:
 1.  **Execution record.** One record shape for every run, whatever started it.
 2.  **Task table.** Production work items that operators track and accept.
 3.  **Artifact store.** Results of any type and size, kept outside the database.
-4.  **History collection.** Transcripts, events and measurements, gathered from every host, with secrets removed, and readable by people and agents within their permissions.
+4.  **History collection.** Transcripts, events and measurements, gathered from every host, with known secrets masked, and readable by people and agents within their permissions.
 
 The laboratory ladder, spending control, account routing and result viewers will be built on this foundation. They are out of scope here.
+
+### Terms
+
+*   **Coordinator.** The central TypeScript service on PDS18 (`packages/coordinator`). It owns all state and serves the operator UI and agent tools.
+*   **Executor.** The Rust service on each host (`crates/executor`). It launches harnesses, collects their output and reports to the coordinator.
+*   **Outbox.** The executor's local queue of rows for the coordinator, sent in batches over HTTP, each row with a sequence number `seq`.
+*   **Harness.** An agent program that Fleet launches: Codex, Claude Code, or Antigravity (`agy`, its CLI). An **adapter** is the executor code that reads one harness's output.
+*   **ACP.** The Agent Client Protocol, the session protocol Antigravity speaks.
+*   **Session.** One continuous conversation with a harness. An execution may run inside a session.
+*   **Profile.** A named agent setup in `config/agents/*.json`: harness, model, instructions, skills and sandbox settings.
+*   **Environment.** A registered place where an execution runs on a host: a working area plus the settings it needs.
+*   **Project grant.** The record that says which projects a person or agent may read or change. Every query is filtered by it.
+*   **Experiment and variant.** An experiment is a lab study, stored as the existing `experiment` document. A variant is one way of working that the experiment compares. Each lab execution records `experiment_id` and `variant`.
+*   **Hosts.** PDS18 is the central Linux server. The other hosts are the owner's Mac and Windows machines. A host ID is the ID its executor registers with.
+*   **tight.** The owner's infrastructure rules for PDS18, in `~/Projects/tight/tight.md`. Its decisions are written `tight-D4`, `tight-D6` and so on. This design's own decisions are `FD1` to `FD6`.
+*   **AssetQ and Pipe.** Earlier prototypes on PDS18: AssetQ stores files with Postgres metadata; Pipe holds provider keys and records each API call.
+*   **t3code and Orca.** Two existing agent IDEs whose tool shapes and parsing code Fleet copies. Revisions are named where they are used.
+*   **EGM.** The design-review method used for this document.
 
 ## The Problem
 
@@ -42,7 +60,7 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
 *   **G1. One execution record for every run.** This covers:
     *   agent turns;
     *   pipeline runs and their steps;
-    *   deliveries (merge, publication);
+    *   delivery steps (merge, publication), which belong to a delivery task;
     *   laboratory trials;
     *   delegations, handoffs and forks;
     *   child agents that a harness reports.
@@ -53,8 +71,9 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
     *   the configuration revision it ran with.
 *   **G2. A task table owned by Fleet.**
     *   Tasks are flat and linked by dependencies.
-    *   They use the task states from `fleet.md`, and questions and decisions attach to them.
-    *   A task's progress, cost and latest result are derived from its linked executions, not stored twice.
+    *   They use the task states from `fleet.md`. Questions, including operator decisions and acceptance, attach to them.
+    *   A task's progress, cost and latest result are derived from its linked executions, not stored twice. The stored `state` changes only through the transitions in Technical Plan §2.
+    *   A delivery is a task. Its merge and publication steps are executions of that task.
 *   **G3. An artifact store for any result type and size.**
     *   Artifacts are immutable objects keyed by their content hash.
     *   Each one links to the execution that produced it.
@@ -62,7 +81,7 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
     *   An execution that declares a required artifact cannot reach `succeeded` until that artifact is stored.
 *   **G4. Complete history, collected centrally.**
     *   Harness transcripts and events from every host are copied to central storage, live where the harness allows and at the latest when the run ends.
-    *   Secrets known to Fleet are removed before writing.
+    *   Secrets known to Fleet, and values that match common token patterns, are masked before writing.
     *   Nothing expires by default. Moving or deleting data is an optional project rule, and a deletion leaves a tombstone record.
 *   **G5. Measurements with stated coverage.** Each execution records what is available:
     *   tokens;
@@ -116,6 +135,14 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
 
 ## Open Questions
 
+Open questions come first; answered ones follow with their evidence.
+
+*   **Q2. S3 store on Windows.** Garage officially targets Linux. Decide whether the Windows store is Garage under WSL2 or another S3 server with a native Windows build. Placement does not depend on this choice, because each store is independent.
+*   **Q7. Backup and durability.** Is one storage node on PDS18 with backups enough, or is replication needed? What is the backup target?
+*   **Q9. Connection gateway.** How agents call third-party APIs without seeing keys, and how each call's cost reaches its execution. The gateway is a separate design, and it must use the `connection_cost` record defined here.
+*   **Q8. tight amendments.** Two tight rules must change before Phase 0 and Phase 5:
+    *   tight-D7 says "Do not create a generic S3 service". That rule was written for the AssetQ prototype. Amend it to allow Fleet's per-host stores, as a Podman Quadlet of `fleet` on PDS18.
+    *   tight-D4 says no service user has sudo. Amend it with one exception: the root-owned system unit template `fleet-launch@.service` (Technical Plan §9) lets the `fleet` user start processes only as `fleet-*` account users. It grants nothing else.
 *   **Q1. Garage features: answered 2026-11-09.** Tested on a local single-node Garage 2.5.0 (Homebrew, native on macOS arm64), using `@aws-sdk/client-s3` v3. All of these passed:
     *   a presigned PUT with `x-amz-checksum-sha256` (200), and a wrong SHA-256 is rejected with 400;
     *   `HEAD` with `ChecksumMode` returns the stored SHA-256, which the commit step can check without downloading;
@@ -125,15 +152,12 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
     *   `PutBucketLifecycleConfiguration` and `GetBucketLifecycleConfiguration`.
 
     One gotcha: the SDK client must set `requestChecksumCalculation: 'WHEN_REQUIRED'`. Otherwise the presigner embeds a CRC32 of an empty body in part URLs, and Garage rejects the part with `InvalidDigest`. Garage keeps an independent single-node store on each host, because its layout is cluster-wide.
-*   **Q1b. Garage on macOS: answered.** Homebrew ships a native `garage` 2.5.0 bottle for arm64, so the Mac store runs natively under launchd.
-*   **Q2. S3 store on Windows.** Garage officially targets Linux. Decide whether the Windows store is Garage under WSL2 or another S3 server with a native Windows build. Placement does not depend on this choice, because each store is independent.
-*   **Q9. Connection gateway.** How agents call third-party APIs without seeing keys, and how each call's cost reaches its execution. The gateway is a separate design, and it must use the `connection_cost` record defined here.
-*   **Q8. tight D7.** tight D7 says "Do not create a generic S3 service". That decision belongs to the AssetQ prototype. Update tight to allow Fleet's per-host stores, as a Podman Quadlet of `fleet` on PDS18.
+*   **Q3. Garage on macOS: answered 2026-11-09.** Homebrew ships a native `garage` 2.5.0 bottle for arm64, so the Mac store runs natively under launchd.
 *   **Q4. Native OpenTelemetry export: answered 2026-11-09.** The checks read the strings in the installed binaries; no harness was run.
     *   Claude Code 2.1.319 has OTel export (`CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_*`).
     *   Codex 0.167.0 has OTel export (`otlp-http`, `OTEL_EXPORTER_OTLP_*`, `log_user_prompt`).
     *   Antigravity 1.5.3 has none.
-    *   Under D4, an adapter may point a harness's OTLP exporter at a loopback endpoint of the executor. That makes native OTel one more input to the adapter, not a separate path. Still open: whether the OTel data contains anything the native stream does not.
+    *   Under FD4, an adapter may point a harness's OTLP exporter at a loopback endpoint of the executor. That makes native OTel one more input to the adapter, not a separate path. Still open: whether the OTel data contains anything the native stream does not.
 *   **Q5. Rate-limit signals: answered 2026-11-09.**
     *   Codex rollout files carry `rate_limits` with:
         *   `primary` and `secondary` windows, each with `used_percent`, `window_minutes` and `resets_at`;
@@ -143,18 +167,19 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
         This is a measured value (`basis = measured`) for each window.
     *   Claude Code `stream-json` emits `rate_limit_event` with `rate_limit_info` (`status`, for example `allowed` or `rejected`, reset time, overage and fallback flags). This is a measured status, not a percentage.
     *   Antigravity has no CLI command for quota: `agy models` lists models only. Its binary contains a local `LanguageServerService/RetrieveUserQuotaSummary` handler and a `RetrieveUserQuota` response with buckets (`remaining_fraction`, `remaining_amount`, `reset_time`). Next live check: call that handler on the language server that an ACP session starts. Calling Google's API directly with the account's OAuth token is not acceptable, because it would act outside the harness.
-    *   The executor drops all of these today (see item 35).
+    *   The executor drops all of these today (see Detailed Implementation Plan, item 35).
+    *   Evidence: Codex field names were read from local rollout files written by Codex 0.167.0; Claude and Antigravity names were read from the strings in the installed Claude Code 2.1.319 and Antigravity 1.5.3 binaries, as in Q4.
 *   **Q6. Claude transcript cleanup: answered 2026-11-09.**
     *   The default `cleanupPeriodDays` is 30 days.
     *   Claude 2.1.319 skips the retention sweep when `--setting-sources` excludes user settings and no other enabled source provides `cleanupPeriodDays`. Fleet launches Claude with `--setting-sources ""` (`crates/executor/src/harness.rs:226`), so Fleet-launched transcripts are not deleted by Claude.
+    *   Evidence: read from the strings in the installed Claude Code 2.1.319 binary, as in Q4.
     *   The risk remains for sessions launched without that flag, and for any future change to that behaviour. Copying transcripts when a run ends (G4) is still required, but it is not urgent.
-*   **Q7. Backup and durability.** Is one storage node on PDS18 with backups enough, or is replication needed? What is the backup target?
 
 ## Critical User Journeys (CUJs)
 
 ### CUJ 1: Operator sees what a task cost and where it stands
 
-*   **Given**: A task in project `dashq` has had three executions: a worker run on Codex, a reviewer run on Claude, and a delivery.
+*   **Given**: A task in project `dashq` has had three executions: a worker run on Codex, a reviewer run on Claude, and a merge step.
 *   **When**: The operator opens the task.
 *   **Then**: The operator sees:
     *   the task state and its waiting reason, if any;
@@ -167,7 +192,7 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
 
 *   **Given**: An experiment ran 300 trials across 4 variants.
 *   **When**: The operator lists the project's work, and later the architect asks an agent to compare the variants.
-*   **Then**: The operator's list shows tasks only, with no trials. The agent queries executions linked to the experiment and gets per-variant totals and scores, with pointers to individual runs.
+*   **Then**: The operator's list shows tasks only, with no trials. The agent queries executions linked to the experiment, grouped by `variant`, and gets per-variant totals with pointers to individual runs. Scores stay in the `experiment` document and are joined by execution ID.
 
 ### CUJ 3: A 3D model is a result
 
@@ -182,7 +207,7 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
 
 *   **Given**: Two weeks of executions across Codex, Claude and Antigravity on three hosts.
 *   **When**: The operator asks an agent "where did our Claude window go this week and what can we cut?"
-*   **Then**: The agent queries totals by project, task, kind and configuration revision, and drills into the most expensive executions. It reads transcript parts on demand. It never sees credentials, because they were removed at ingest. Its answer cites execution IDs.
+*   **Then**: The agent queries totals by project, task, kind and configuration revision, and drills into the most expensive executions. It reads transcript parts on demand. Credentials that Fleet injected, and values that match token patterns, were masked at ingest, so the agent does not see them. Its answer cites execution IDs.
 
 ### CUJ 5: A project keeps its heavy assets on one host
 
@@ -191,7 +216,7 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
 *   **Then**:
     *   The game bundle goes to the Windows store and is never copied anywhere else. Its metadata row in Postgres records which store holds it.
     *   A design file from the other project is written on Windows and then copied to the Mac. It shows `placed` once both copies are verified.
-    *   Operators on other machines open artifacts through a presigned link while a holding host is online. While none is online, the artifact is shown as unavailable, not lost.
+    *   Operators on other machines open artifacts through a presigned link to the holding store's Cloudflare Tunnel hostname, behind Cloudflare Access, while a holding host is online. While none is online, the artifact is shown as unavailable, not lost.
 
 ### CUJ 6: History survives the host
 
@@ -205,14 +230,14 @@ Without this foundation, the laboratory cannot compare variants honestly. The op
 
 | # | Question | Decision |
 |---|---|---|
-| D1 | Core database | Postgres: role and database `fleet` in the existing system PostgreSQL 18 cluster on PDS18 (tight D6), with local peer authentication and the existing nightly `pg_dump` |
-| D2 | Object store and placement | An independent single-node S3 store on each host (Garage; on Windows, Garage under WSL2 or another S3 server, see Q2). Fleet manages placement: each project lists the locations that must hold its artifacts, and Fleet copies objects between stores and checks their hashes |
-| D3 | Events, spans and measurements | ClickHouse next to Postgres, as a rootless Podman Quadlet unit of the `fleet` user (tight D4/D5). Separate from the ClickHouse that belongs to Langfuse |
-| D4 | Getting history off the hosts | Extend the executor outbox. Raw transcripts and artifacts upload directly to the store with presigned URLs. No collector process on the hosts |
-| D5 | Isolation boundary | One OS user per harness account, with the harness sandbox inside. Project keys are issued for each execution and never stored with the account user. On Linux, each execution runs in a `systemd-run --scope` |
-| D6 | Running the services on PDS18 | Follow tight: one Unix user `fleet`, user systemd units with linger, no Docker and no sudo, containers only as rootless Podman Quadlet. Garage on PDS18 also runs as a Podman Quadlet of `fleet`. Hosts other than PDS18 follow the same pattern with their native service manager |
+| FD1 | Core database | Postgres: role and database `fleet` in the existing system PostgreSQL 18 cluster on PDS18 (tight-D6), with local peer authentication and the existing nightly `pg_dump` |
+| FD2 | Object store and placement | An independent single-node S3 store on each host (Garage; on Windows, Garage under WSL2 or another S3 server, see Q2). Each store is published through Cloudflare Tunnel behind Cloudflare Access, as Fleet and Dash are. Fleet manages placement: each project lists the locations that must hold its artifacts, and Fleet copies objects between stores and checks their hashes |
+| FD3 | Events, spans and measurements | ClickHouse next to Postgres, as a rootless Podman Quadlet unit of the `fleet` user (tight-D4 and tight-D5). Separate from the ClickHouse that belongs to Langfuse |
+| FD4 | Getting history off the hosts | Extend the executor outbox. Raw transcripts and artifacts upload directly to the store with presigned URLs. No collector process on the hosts |
+| FD5 | Isolation boundary | One OS user per harness account, with the harness sandbox inside. Project keys are issued for each execution and never stored with the account user. On Linux, each execution runs in its own systemd scope, started through the root-owned `fleet-launch@.service` template |
+| FD6 | Running the services on PDS18 | Follow tight: one Unix user `fleet`, user systemd units with linger, no Docker and no sudo except the one launch helper in Q8, containers only as rootless Podman Quadlet. Garage on PDS18 also runs as a Podman Quadlet of `fleet`. Hosts other than PDS18 follow the same pattern with their native service manager |
 
-The principle behind D4 is that the layer between Fleet and the harnesses belongs to Fleet. That layer covers how each harness is configured, how its output is read, and how Fleet interacts with it. Fleet has to write it in any case, so history passes through that layer and nothing writes into Fleet's stores around it. Native OpenTelemetry output from a harness, where it exists, becomes one more input to the same executor adapter. It is not a separate path.
+The principle behind FD4 is that the layer between Fleet and the harnesses belongs to Fleet. That layer covers how each harness is configured, how its output is read, and how Fleet interacts with it. Fleet has to write it in any case, so history passes through that layer and nothing writes into Fleet's stores around it. Native OpenTelemetry output from a harness, where it exists, becomes one more input to the same executor adapter. It is not a separate path.
 
 ### Data flow
 
@@ -228,8 +253,9 @@ The principle behind D4 is that the layer between Fleet and the harnesses belong
  │   │ request presigned PUT        │<─────────────────┤              measurement        │
  │   v                              │                  │  operations (UI + agents)      │
  │ upload raw transcript/artifact ──┼──> Garage store  │   query with project filter    │
- │   confirm hash+size via outbox   │   (central or    │                                │
- └──────────────────────────────────┘    per-location) └────────────────────────────────┘
+ │   (multipart, 32 MiB parts)      │   (per host, via │                                │
+ │   confirm hash+size via outbox   │   Cloudflare     │                                │
+ └──────────────────────────────────┘   Tunnel+Access) └────────────────────────────────┘
 ```
 
 ### 1. Execution: one record shape
@@ -237,23 +263,24 @@ The principle behind D4 is that the layer between Fleet and the harnesses belong
 *   **Granularity rule.** An execution is a unit that Fleet launches, or that a harness reports as a separate agent. That covers:
     *   an agent turn or session run;
     *   a pipeline run and each of its steps;
-    *   a delivery;
+    *   a delivery step, such as a merge or a publication;
     *   a laboratory trial;
     *   a delegated or handed-off run;
     *   a reported child agent.
 
     Calls inside an execution are spans in ClickHouse, not executions. This includes model calls, tool calls and shell commands.
-*   **Kinds.** `agent_run`, `pipeline_run`, `pipeline_step`, `delivery`, `child_agent`, `tool_run` (a Fleet tool or connection call that is billed or long-running on its own). A lab trial is an `agent_run` or `pipeline_run` linked to an experiment. It is not a separate kind.
+*   **Kinds.** `agent_run`, `pipeline_run`, `pipeline_step`, `child_agent`, `tool_run` (a Fleet tool or connection call that is billed or long-running on its own). A lab trial is an `agent_run` or `pipeline_run` linked to an experiment. It is not a separate kind. A delivery is not an execution kind: it is a task, and its steps are executions of that task (§2).
 *   **States.** `preparing`, `running`, `waiting`, `succeeded`, `failed`, `cancelled`. Observation confidence is a separate field (`confirmed` or `unconfirmed`, plus `last_seen_at`). Lost contact leaves the last known state and marks it unconfirmed, as `fleet.md` requires.
-*   **Unplaceable executions.** An execution bound to a host, account or environment that is not registered is shown as a problem with that reason. It does not wait silently. Example from live state: `6b00f0fb` has waited forever for the non-existent host `pds18`.
-*   **Mapping from the prototype.** `completed` → `succeeded`; `stopped` → `cancelled`; `unknown` → last known state with `observation = unconfirmed`. Each migrated row keeps `legacy_kind` and `legacy_id`.
+*   **Unplaceable executions.** An execution bound to a host, account or environment that is not registered is shown as a problem with that reason. It does not wait silently. Example from live state: `6b00f0fb` has waited forever for the host ID `pds18`, which no executor has registered.
+*   **Mapping from the prototype.** The full mapping per legacy kind is in §7. Each migrated row keeps `legacy_kind` and `legacy_id`.
 *   **Links.** All are optional foreign keys:
     *   `project_id`, `task_id`, `experiment_id`, `parent_execution_id`;
-    *   `session_id`, `account_id`, `host_id`, `environment_id`.
+    *   `session_id`, `account_id`, `host_id`, `environment_id`;
+    *   `variant`, set on lab executions.
 
     Lab versus production is not a flag: it follows from the presence of `experiment_id`.
 *   **Effective configuration.** `harness`, `harness_version`, `model`, and `config_ref`. `config_ref` holds the repository, revision and paths of the instructions, skills and profile, plus a hash of any draft content. The harness version is recorded on every run, so a self-update inside an experiment is visible.
-*   **Totals and coverage.** When an execution ends, the coordinator writes a totals row from ClickHouse to Postgres. It covers tokens by type, subscription-window signals, money by connection, wall-clock and active time, CPU and peak memory. Each value carries `basis`: `measured`, `estimated` or `unavailable`. Totals cover the execution's own spans only. A tree total is the sum over the distinct executions in the tree, so nested usage is never counted twice.
+*   **Totals and coverage.** When an execution ends, the coordinator writes a totals row from ClickHouse to Postgres. If events for an execution that has already ended arrive later, the coordinator recomputes that row. It covers tokens by type, subscription-window signals, money by connection, wall-clock and active time, CPU and peak memory. Each value carries `basis`: `measured`, `estimated` or `unavailable`. The row also carries `history_incomplete`, the count of outbox rows the coordinator rejected for this execution. Totals cover the execution's own spans only. A tree total is the sum over the distinct executions in the tree, so nested usage is never counted twice.
 
 ### 2. Task: production work item
 
@@ -264,20 +291,61 @@ The principle behind D4 is that the layer between Fleet and the harnesses belong
     *   `completion_requirements` (JSONB), `result_destination`;
     *   `created_by`, timestamps.
 *   **Table `task_dependency`.** `task_id` and `depends_on_task_id`. Tasks are flat; there is no hierarchy.
-*   **Derived, not stored.** Progress, cost so far and the latest result come from a view over the task's executions and artifacts. Questions and decisions keep their existing records and gain a `task_id` link.
+*   **Derived, not stored.** Progress, cost so far and the latest result come from the view `task_view` over the task's executions, artifacts and questions. Only `state` and `wait_reason` are stored, and they change only through these transitions, all written by `tasks.ts`:
+
+    | From | Trigger | To |
+    |---|---|---|
+    | (new) | `tasks.create` | `queued` |
+    | `queued` | the first execution of the task starts and all dependencies are `completed` | `in_progress` |
+    | `in_progress` | an open question of kind `operator_decision` or `agent_question` blocks the task, or a dependency is not `completed` | `waiting`, with `wait_reason` |
+    | `waiting` | the blocking question is answered, or the dependency completes | `in_progress` |
+    | `in_progress` | the completion requirements are met and an `acceptance` question is answered `accepted` | `completed` |
+    | `in_progress` | an `acceptance` question is answered `rejected` | `in_progress`, with a new execution expected |
+    | `in_progress` or `waiting` | the operator stops the task, or its last execution fails and the operator marks it failed | `failed` |
+    | any open state | the operator pauses or resumes it | `paused`, or back to the state before |
+    | any open state | the operator cancels it | `cancelled` |
+
+*   **Acceptance.** A task reaches `completed` only through an answered `acceptance` question. The answer records who accepted, when, and the accepted artifact IDs. A result with no task (a lab run, an ad hoc agent run) is not accepted; it stays a result of its execution.
+*   **Table `question`.** One typed table replaces the legacy `project-question` and `question` documents:
+    *   `id`, `kind` (`operator_decision`, `agent_question` or `acceptance`), `project_id`;
+    *   `task_id` and `execution_id`, both nullable and indexed. `task_id` is set when the question is created: from the task for operator decisions and acceptance, and from `execution.task_id` for agent questions;
+    *   `session_id`, `text`, `options jsonb`, `asked_by`, `asked_at`;
+    *   `answer`, `answered_by`, `answered_at`, `state` (`open`, `answered` or `withdrawn`).
+
+    Operators and agents answer through one operation, `questions.answer`. There is no separate `decision` record.
+*   **Delivery as a task.** A legacy `delivery` document becomes one `task` row. Each entry in its `steps[]` becomes an execution with that `task_id`:
+
+    | Legacy `delivery` field | New place |
+    |---|---|
+    | `id` | `task.id` (kept, and `task.legacy_id`) |
+    | `task` (the text) | `task.title` and `task.expected_outcome` |
+    | `requestId`, `signature` | `task.completion_requirements` |
+    | `methodId`, `profileId`, `account` | `task.delivery_method` (jsonb); each step execution records its own `account_id` and `config_ref` |
+    | `questionId` | a `question` row of kind `operator_decision` with this `task_id` |
+    | `previousDeliveryId` | a `task_dependency` row |
+    | `steps[i].executionId` | an execution with `task_id`, kind `pipeline_step` or `agent_run` |
+    | state `waiting` | task `waiting`, `wait_reason = question` |
+    | state `pr-open` | task `in_progress` |
+    | state `merged`, `published` | task `in_progress` until acceptance, then `completed` |
+    | state `failed` | task `failed` |
+    | state `unknown` | task `in_progress`; its latest execution is `unconfirmed` |
+
 *   **External boards.** None. A future export reads from this table.
 
 ### 3. Artifact store
 
-*   **Table `store`.** One row per host store: `id`, `kind` (`s3`), `endpoint`, `bucket`, `host_id`, `state` (`reachable`, `unreachable` or `full`), `capacity_bytes`, `used_bytes`, and the credentials reference. The credentials themselves stay in the coordinator's and executor's secret configuration, never in rows.
-*   **Project setting `artifact_locations`.** A list of hosts that must hold the project's artifacts, for example `[windows]`, `[mac]` or `[windows, mac]`. The default is `[pds18]`. Optionally, a separate list can be set for lab output and for production output. The setting changes only placement. It never limits who may read the artifacts, which follows project grants.
+*   **Table `store`.** One row per host store: `id`, `kind` (`s3`), `endpoint` (the store's Cloudflare Tunnel hostname), `bucket`, `host_id`, `state` (`reachable`, `unreachable` or `full`), `capacity_bytes`, `used_bytes`, and the credentials reference. The credentials themselves stay in the coordinator's and executor's secret configuration, never in rows.
+*   **Project setting `artifact_locations`.** A list of hosts that must hold the project's artifacts, for example `[windows]`, `[mac]` or `[windows, mac]`. The default is the PDS18 host ID. Optionally, a separate list can be set for lab output and for production output. The setting changes only placement. It never limits who may read the artifacts, which follows project grants.
 *   **Table `artifact_copy`.** `artifact_id`, `store_id`, `state` (`pending`, `copying`, `verified`, `failed` or `deleted`), `verified_at`, `last_error`. An artifact is `stored` once one copy is `verified`. It is `placed` once every location in the project's list holds a verified copy. The task and result views show both states.
-*   **Placement worker.** It runs in the coordinator. For each artifact with missing copies, it copies the object from a verified store to the missing store, checks the hash, and marks the copy `verified`.
-    *   The copy goes directly between stores, either by a server-side copy where both stores can reach each other, or through the executor of the target host. It never passes through an operator's machine.
+*   **Store connectivity.** Each host store listens on loopback and is published through Cloudflare Tunnel (`cloudflared`) under its own hostname, behind Cloudflare Access, the same way Fleet and Dash are published. Executors and the coordinator pass Access with a service token. Operators pass Access with their normal login. Presigned URLs are signed for the tunnel hostname.
+*   **Transfers.** Every upload and copy uses S3 multipart with 32 MiB parts, below the Cloudflare request-body limit. A file of 32 MiB or less is one part. Each part is retried on its own. A pending upload, with its upload ID and finished parts, is kept on disk, so it resumes after a restart.
+*   **Placement worker.** It runs in the coordinator. For each artifact with missing copies, it queues a `copy` command to the executor of the target host. That executor downloads from a verified store and uploads to its local store, both through the tunnels, then the coordinator checks the hash and marks the copy `verified`. The copy never passes through an operator's machine.
     *   A store that is offline (a sleeping Mac, a Windows reboot) leaves its copies `pending`. They resume when its host reports the store reachable again.
     *   Objects are immutable and keyed by hash, so a repeated copy is safe and there are no version conflicts.
     *   Changing a project's locations schedules new copies. Removing a location deletes copies there only after the other locations hold verified copies.
-*   **Local first.** A worker writes to the store on its own host when that host is in the project's list. Otherwise it writes to the nearest store in the list. Files that must stay on one machine therefore never leave it (CUJ 5).
+*   **Shared objects.** Several `artifact` rows in one project can point to the same object, because the key is the content hash. A store copy of an object is deleted only when no live (not deleted) `artifact` row with that `content_hash` in that project needs that store. Deleting one row otherwise only writes its tombstone.
+*   **Forced purge.** `artifacts.purge(content_hash, reason)` removes an object that contains a leaked secret from every store at once, whatever rows still point to it. It marks every such row `deleted` with `deleted_by = purge:<reason>`. Only the operator may run it, and it is logged as an event.
+*   **Local first.** A worker writes to the store on its own host when that host is in the project's list. Otherwise it writes to the first store in the list that is `reachable`. Files that must stay on one machine therefore never leave it (CUJ 5).
 *   **Previews.**
     *   After an image or video artifact is committed, the executor that uploaded it builds previews with `ffmpeg`, if `ffmpeg` is present on that host:
         *   a 512 px `thumbnail` for an image;
@@ -291,11 +359,11 @@ The principle behind D4 is that the layer between Fleet and the harnesses belong
     *   `{scope: lab, older_than_days: 180, action: delete}`.
 
     How the rules run:
-    *   The placement worker carries out a rule as ordinary copies and deletions, under the same safety rule: delete only after the target holds verified copies.
+    *   The placement worker carries out a rule as ordinary copies and deletions, under the same safety rules: delete only after the target holds verified copies, and only when no live row still needs the object.
     *   Deletion keeps the `artifact` row as a tombstone (`state = deleted`, `deleted_at`, `deleted_by = rule:<id>`).
     *   A new or changed rule runs only after the operator reviews a preview. The preview lists the count, total size and a sample of the affected artifacts, and the operator confirms it.
     *   Without rules, nothing moves or expires. History in ClickHouse is not affected by artifact rules.
-*   **Reading.** `artifacts.get` returns a link to a verified copy, preferring the reader's own host. When no listed store is reachable, the artifact is shown as unavailable, not lost.
+*   **Reading.** `artifacts.get` returns a presigned link to a verified copy on its store's tunnel hostname, preferring the reader's own host. When no listed store is reachable, the artifact is shown as unavailable, not lost.
 *   **Table `artifact`.**
     *   `id`, `content_hash` (sha256), `size`, `media_type`, `name`;
     *   `store_id`, `object_key`;
@@ -304,16 +372,16 @@ The principle behind D4 is that the layer between Fleet and the harnesses belong
     *   `derived_from_artifact_id` and `role` (`original`, `thumbnail`, `poster` or `web`). A preview is an ordinary artifact that points to its original;
     *   `state`: `pending`, `stored`, `failed` or `deleted`;
     *   `deleted_at` and `deleted_by`, which form the tombstone.
-*   **Object keys.** `<project>/<lab|prod>/<sha256>` in each store. The same content in the same project is stored once per store.
+*   **Object keys.** `<project>/<lab|prod>/<sha256>` in each store. The same content in the same project is stored once per store (see Shared objects).
 *   **Write protocol.**
     1.  The executor asks the coordinator to reserve an artifact, sending name, size, type and hash.
-    2.  The coordinator returns a presigned PUT, or a multipart upload, for the chosen store in the project's list.
-    3.  The executor uploads directly to the store.
+    2.  The coordinator starts a multipart upload on the chosen store in the project's list and returns presigned part URLs.
+    3.  The executor uploads the 32 MiB parts directly to the store through its tunnel hostname.
     4.  The executor confirms through the outbox.
     5.  The coordinator checks the object's size and hash on the store, then marks it `stored`.
-*   **Success rule.** An execution with a `required` artifact that is not `stored` cannot move to `succeeded`. It stays `running` while retries continue, then becomes `failed` with the upload error. This replaces today's behaviour, where a run succeeds after a 4xx.
+*   **Success rule.** An execution with a `required` artifact that is not `stored` cannot move to `succeeded`. It stays `running` while retries continue, for up to the operator setting `artifact_retry_window` (default 24 hours), then becomes `failed` with the upload error. This replaces today's behaviour, where a run succeeds after a 4xx.
 *   **Raw transcripts.** These are artifacts with `media_type` set to the harness log format. They are uploaded when the run ends, and in chunks during long runs. This protects them against local cleanup (CUJ 6).
-*   **No size limit in Fleet.** The base64 path and `FLEET_MAX_ARTIFACT_BYTES` are removed. Limits are the store's disk, and they show as store capacity.
+*   **No size limit in Fleet.** The base64 path and `FLEET_MAX_ARTIFACT_BYTES` are removed, in the coordinator and in the executor. Limits are the store's disk, and they show as store capacity.
 
 ### 4. ClickHouse: events, spans, measurements
 
@@ -323,7 +391,8 @@ The principle behind D4 is that the layer between Fleet and the harnesses belong
     *   `measurement`: CPU, memory, rate-limit signals and connection cost, each with its `basis`. Connection cost rows carry `connection_id`, `amount`, and `currency` or `credits`.
     *   `host_metric`: host health, disk, harness versions and reachability.
 *   **Columns copied from Postgres at ingest.** `project_id`, `task_id`, `experiment_id`, `account_id`, `host_id` and `execution_id`. Every query can then filter by permission and group without a join.
-*   **Engine and keys.** `ReplacingMergeTree` keyed by (`execution_id`, `seq`), so a retried outbox batch does not duplicate rows. Partitioned by month and ordered by (`project_id`, `execution_id`, `ts`). No TTL by default. A project retention rule can add one later.
+*   **Engine and keys.** `ReplacingMergeTree`, partitioned by month and `ORDER BY (project_id, execution_id, seq)`. The sort key is the deduplication key, so a retried outbox batch with the same `seq` collapses to one row. `ts` is a plain column.
+*   **Reading without double counts.** Duplicates disappear only when ClickHouse merges parts in the background. Every query that sums therefore reads with `FINAL`, or takes one value per `seq` with `argMax`. No TTL by default. A project retention rule can add one later.
 
 ### 5. Executor: harness adapters, outbox and redaction
 
@@ -340,7 +409,8 @@ The principle behind D4 is that the layer between Fleet and the harnesses belong
 *   **Outbox.** It keeps its existing batching, thread and `seq`. New event classes travel in the same batches. A batch row that the coordinator rejects with a 4xx is set aside, as today, and also counted, so the execution shows incomplete history instead of looking complete.
 *   **Redaction.**
     *   First pass, in the executor: it replaces every secret value it injected (connection credentials, git key material, the Fleet machine token, provider tokens) with `«redacted:<name>»` before writing to the outbox or uploading.
-    *   Second pass, in the coordinator: a pattern scan for common token formats. A match is logged as a redaction miss to fix.
+    *   Second pass, in the coordinator: a pattern scan for common token formats. A match is masked before the row is stored, and logged as a `redaction_miss` event with the pattern name only.
+    *   Coverage: the two passes catch values Fleet injected and values in the listed token formats. They do not catch a secret an agent reads from disk in an unknown format, or a harness login token that is not injected by Fleet. A secret found later is removed with the forced purge (§3).
 *   **Host metrics.** The executor adds periodic `host_metric` reports to the existing host observation: disk, load, harness versions and reachable stores.
 
 ### 6. Operations for people and agents
@@ -350,23 +420,39 @@ People and agents use the same coordinator operations under the same permissions
 *   `executions.query`: filters on links, kind, state and time.
 *   `executions.get`: totals with coverage, plus the span tree.
 *   `tasks.list`, `tasks.get`, `tasks.create`, `tasks.update`.
+*   `questions.ask`, `questions.answer`.
 *   `usage.summary`: group by project, task, experiment, account, host, kind or configuration, with totals that count nothing twice.
 *   `transcript.read`: one execution, a range or a search, returning redacted text marked as data.
 *   `artifacts.get`: metadata plus a short-lived presigned GET.
 
 Permissions:
 *   The project grant is applied inside each operation.
-*   Postgres row-level security on `project_id` is the second guard.
+*   Agents may read tasks and questions of the projects in their grant, create tasks in those projects, update only tasks their own execution is linked to, and ask questions. Only operators answer `operator_decision` and `acceptance` questions.
+*   Postgres row-level security on `project_id` is the second guard. The tables are owned by the role `fleet`; the coordinator connects as the non-owner role `fleet_app`, and every table has `FORCE ROW LEVEL SECURITY`. When `fleet.project_ids` is not set, a policy returns no rows.
 *   ClickHouse is reachable only through these operations, and every query gets a mandatory project filter.
 
 Agent replies return summaries and IDs by default. Raw transcript text is returned only by `transcript.read`.
 
 ### 7. Migration from `records`
 
-*   **In scope.** These kinds map to the new tables: `execution`, `delegation`, `pipeline-run`, `delivery`, the lab trials inside `experiment`, `session-fork`, `handoff` and `artifact`.
+*   **In scope.** These kinds map to the new tables:
+
+    | Legacy kind | Target | Notes |
+    |---|---|---|
+    | `execution` | `execution`, kind `agent_run` | state `completed` → `succeeded`, `stopped` → `cancelled`, `unknown` → last known state with `observation = unconfirmed`; other states keep their name |
+    | `delegation` | `execution`, kind `agent_run` | `parent_execution_id` = the delegating execution |
+    | `pipeline-run` | `execution`, kind `pipeline_run`, plus one `pipeline_step` per step | steps link by `parent_execution_id` |
+    | `delivery` | `task`, plus executions for its steps | field and state mapping in §2 |
+    | lab trials inside `experiment` | `execution` with `experiment_id` and `variant` | the `experiment` document stays in `document` |
+    | `session-fork`, `handoff` | `execution`, kind `agent_run` | `parent_execution_id` = the source execution |
+    | `project-question`, `question` | `question` | kind `operator_decision` or `agent_question`; `task_id` filled from the delivery or from `execution.task_id` |
+    | `artifact` | `artifact` and `artifact_copy` | base64 decoded, see below |
+
+    Tasks are backfilled only from deliveries. Other legacy executions get no task.
 *   **Out of scope.** Every other record kind moves unchanged into a Postgres table `document(kind, id, data jsonb)`, with the same behaviour as today. Those kinds get their own tables only when a later design needs them.
-*   **Base64 artifacts.** They are decoded, hashed and uploaded to the central Garage store.
-*   **Cut-over.** A one-time migration runs during a short planned stop. The SQLite file stays read-only as the rollback source. Rolling back means pointing the coordinator back at SQLite. Any work done after the cut-over must then be re-exported from Postgres by a reverse script, which is part of the migration tool.
+*   **Base64 artifacts.** They are decoded, hashed and uploaded to the PDS18 store. The base64 documents stay readable until `delivery.ts` reads results through `artifacts.get`, which happens in the same phase.
+*   **Readers move with writers.** Every module that reads run documents or events moves to the new tables in the same phase as the writers (item 19).
+*   **Cut-over.** A one-time migration runs during a short planned stop. The SQLite file stays read-only as the rollback source. Rolling back means pointing the coordinator back at SQLite. Any work done after the cut-over is then re-exported by the reverse script, which maps `document` rows and the typed tables (`execution`, `task`, `task_dependency`, `question`, `artifact`) back to legacy documents.
 
 ### 8. Agent-facing tools for results and history
 
@@ -375,7 +461,7 @@ The shapes are copied from t3code (`apps/server/src/mcp/toolkits/attachment/tool
 *   **Output folder, the default path.**
     *   Each execution gets `FLEET_OUTPUT_DIR`, a folder inside its working area.
     *   Anything the agent writes there is collected by the executor when the run ends, and in chunks during long runs. It is stored as artifacts of that execution.
-    *   This extends the worktree output collection added in `23c5418`.
+    *   This extends the worktree output collection added in commit `23c5418`.
     *   The agent needs no tool call and no knowledge of storage.
 *   **Explicit tools.** MCP tools on the existing `/api/tools` surface:
     *   `artifact_prepare_upload({name, media_type, size, sha256, required?})` returns `{artifact_id, upload: {url | parts[]}, expires_at}`. Use it for files larger than a single request, or to store a file now rather than at the end.
@@ -385,8 +471,11 @@ The shapes are copied from t3code (`apps/server/src/mcp/toolkits/attachment/tool
     *   `artifact_get({artifact_id})` returns metadata plus a local path when the file is already on this host, or a short-lived URL otherwise. It never returns the file content inline.
     *   `history_query({filters, group_by?})` maps to `usage.summary` and `executions.query`.
     *   `transcript_read({execution_id, range? | search?})` returns redacted text marked as data, with paging (`cursor`, `limit`).
+    *   `task_list({project_id?, state?})`, `task_get({task_id})`, `task_create({project_id, title, expected_outcome, depends_on?})` and `task_update({task_id, ...})` map to the `tasks.*` operations.
+    *   `question_ask({text, options?, task_id?})` and `question_answer({question_id, answer})` map to `questions.*`.
+    *   Every tool applies the permission rule in §6.
 *   **Files as paths, not content.** Inputs and earlier results reach the agent as paths in the prompt, as both t3code and Orca do. The agent reads what it needs.
-*   **Real schemas.** Each tool in `agent-tools.ts` gets a real `inputSchema` instead of today's `{type:'object'}`.
+*   **Real schemas.** Every tool gets a real `inputSchema` instead of today's `{type:'object'}`, wherever that stub appears.
 *   **Instructions on demand.**
     *   A short `fleet` skill stub says what the output folder is and lists the tool names.
     *   The full guide is read on request.
@@ -394,45 +483,32 @@ The shapes are copied from t3code (`apps/server/src/mcp/toolkits/attachment/tool
 
 ### 9. Isolation boundary
 
-**Mechanism (D5).**
+#### Mechanism (FD5)
 
-*   **Boundary.** One OS user per harness account, for example `fleet-claude-1` or `fleet-codex-2`.
-    *   The executor runs under its own service user and launches each agent as the account user:
-        *   macOS: `launchd` or `sudo -u`;
-        *   Linux: a systemd unit;
-        *   Windows: `CreateProcessWithLogonW`.
-    *   The account user owns its `HOME` and its native login.
+*   **Boundary.** One OS user per harness account, for example `fleet-claude-1` or `fleet-codex-2`. The account user owns its `HOME` and its native login (Keychain or file).
+*   **Launch.** The executor runs under its own service user and launches each agent as the account user:
+    *   Linux (PDS18): through the root-owned system unit template `fleet-launch@.service`. A polkit rule lets the `fleet` user start this template only, and only for instance names that are `fleet-*` users. Each execution runs in its own scope, which gives its cgroup. This is the tight-D4 amendment in Q8.
+    *   macOS: `launchctl asuser`, or `sudo -u` through one narrow sudoers rule for the executor's service user that allows only `fleet-*` users.
+    *   Windows: `CreateProcessWithLogonW`.
 *   **Keys for each execution.**
     *   Project keys and connection credentials live only with the executor's service user.
-    *   For each execution, the executor places the key the execution needs into a temporary file, or behind a per-execution `ssh-agent` socket, inside the working area. It deletes the key when the run ends.
-    *   The account user's `HOME` never holds project keys. Projects that share an account therefore cannot read each other's keys.
-*   **Inner layer.** The harness sandbox separates executions that run under the same account user. It is configured per profile.
+    *   For each execution, the executor places the key it needs into a temporary file, or behind a per-execution `ssh-agent` socket, inside the working area. It deletes the key when the run ends.
+    *   The account user's `HOME` never holds project keys, so projects that share an account cannot read each other's keys.
+*   **Inner layer.** A harness's own sandbox (Claude Code Seatbelt or bubblewrap, Codex sandbox) separates executions that run under the same account user. It is configured per profile.
 *   **Measurement.**
-    *   On Linux (PDS18), each execution runs inside `systemd-run --scope`, and its cgroup gives exact CPU and memory for the execution. Basis: `measured`.
-    *   On macOS and Windows, usage is measured per account user. Each execution's process tree is sampled by pid. Basis: `estimated`.
-*   **Known gaps, accepted.**
-    *   On macOS and Windows, there is no OS boundary between projects that share one account.
-    *   On those two systems, CPU per execution is an estimate.
-    *   The login Keychain of a macOS user is locked while that user is not logged in, and Claude then falls back to file storage. This was already observed; record it as a harness fact.
-*   **Upgrade path.** Each gap closes with the per-execution OS mechanism for that platform, adopted one platform at a time when needed:
-    *   Seatbelt on macOS;
-    *   a Job Object plus AppContainer on Windows.
+    *   Linux: the execution's cgroup gives exact CPU and memory. Basis: `measured`.
+    *   macOS and Windows: each execution's process tree is sampled by pid, inside the account user's processes. Basis: `estimated`.
+*   **Accepted gaps.**
+    *   On macOS and Windows, there is no OS boundary between projects that share one account, and CPU per execution is an estimate.
+    *   A macOS user's login Keychain is locked while that user is not logged in, and Claude then falls back to file storage. This is a recorded harness fact.
+*   **Upgrade path.** Each gap closes with the per-execution OS mechanism for that platform, adopted one platform at a time when needed: Seatbelt on macOS, a Job Object plus AppContainer on Windows.
 
-Requirements the mechanism meets:
+#### Requirements
 
-*   **Secrets.**
-    *   An agent's environment holds only the connections granted to its execution.
-    *   Key files belong to the boundary's owner and cannot be read from other boundaries.
-    *   The Fleet machine token is never readable by an agent.
-*   **Native logins.** Each harness account keeps its native login (Keychain or file) inside its own boundary, with a real `HOME`.
+*   **Secrets.** An agent's environment holds only the connections granted to its execution. Key files cannot be read from other boundaries. The Fleet machine token is never readable by an agent.
 *   **Working area.** Each execution writes to its own working area. The shared `.git` is read-only to agents, and writes go through the delivery path. Host-side git runs with hooks and fsmonitor disabled, so files an agent planted in a checkout never run on the host.
 *   **Network.** Network access is a setting per project or profile, not a fixed rule.
-*   **Measurement.** CPU, memory and disk are measured for everything inside the boundary, including children:
-    *   cgroups on Linux;
-    *   a Job Object on Windows;
-    *   per-user process accounting on macOS.
 *   **Observation.** A person can log in to the boundary, or attach to it, and watch the agent.
-*   **Inner layer.** A harness's own sandbox (Claude Code Seatbelt/bubblewrap, Codex sandbox) may run inside the boundary for each execution. It is configured per profile.
 
 ## Alternatives Considered
 
@@ -449,7 +525,7 @@ Requirements the mechanism meets:
 
 *   **Pros**: A ready interface without GitHub's limits, and the data stays on the owner's infrastructure.
 *   **Cons**: It adds a second state model and a second permission model. Agents would read and write through someone else's API, and Fleet's task states would have to be mapped onto it.
-*   **Reason for Rejection**: Rejected by author: Fleet keeps tasks in its own central tables and builds its own simple view: smooth scrolling, decision blocks, text answers and choices.
+*   **Reason for Rejection**: Rejected by author: mapping Fleet's task states and project grants onto another tracker's model costs more than one task table and one view. Fleet keeps tasks in its own tables.
 
 ### A3: A task for every run, including laboratory trials
 
@@ -482,7 +558,7 @@ Requirements the mechanism meets:
 
 *   **Pros**: Full control of the protocol.
 *   **Cons**: It reimplements uploads, multipart transfer, presigned access and lifecycle rules, all of which S3-compatible stores already provide.
-*   **Reason for Rejection**: Rejected by author: do not reinvent the wheel.
+*   **Reason for Rejection**: Rejected by author: a custom server must rebuild multipart, presigned access and lifecycle rules that any S3 server already has, and Fleet would maintain that code.
 
 ### A8: MinIO on each host with its built-in bucket replication
 
@@ -506,7 +582,7 @@ Requirements the mechanism meets:
 
 *   **Pros**: Already deployed on PDS18, with Postgres metadata, immutable file storage, scoped API and connection budgets.
 *   **Cons**: It is a prototype from an earlier iteration of the same idea, its storage is local to PDS18, and its proposed limits are 50 GiB of objects.
-*   **Reason for Rejection**: Rejected by author: AssetQ and Pipe are prototypes, not commitments. Choose the option that fits per-project placement best.
+*   **Reason for Rejection**: Rejected by author: AssetQ stores files only on PDS18, so it cannot keep a project's files on Windows only (CUJ 5).
 
 ### A9: Cloudflare R2 as the object store
 
@@ -524,10 +600,10 @@ Requirements the mechanism meets:
 
 *   **Pros**: A ready trace viewer, cost, scores and datasets.
 *   **Cons**:
-    *   Its trace, observation and score model duplicates the execution, which breaks the "no extra entities" rule.
+    *   Its trace, observation and score model is a second record of each execution next to Fleet's own.
     *   Its permissions do not match Fleet's project grants.
     *   It is a heavy stack, and its S3 needs are unverified against Garage.
-*   **Reason for Rejection**: Rejected by author: Fleet keeps one execution model in its own stores.
+*   **Reason for Rejection**: Rejected by author: two records of each run must be kept in step, and Langfuse's permissions cannot express project grants.
 
 ### A12: An OpenTelemetry Collector on every host, writing to ClickHouse
 
@@ -548,7 +624,7 @@ Requirements the mechanism meets:
 
 *   **Pros**: Projects that share an account are separated by the OS, and CPU is exact for each execution on every platform.
 *   **Cons**: Three platform mechanisms to build and keep up with harness updates. A harness may stop working inside Seatbelt or AppContainer, for example because it cannot reach the Keychain or the GUI.
-*   **Reason for Rejection**: Rejected by author: too much effort for the remaining 5% of requirements. It stays as the upgrade path, adopted one platform at a time when needed. Linux already gets per-execution cgroups through `systemd-run --scope`.
+*   **Reason for Rejection**: Rejected by author: three platform mechanisms cost more than the two gaps they close (project separation within one account on macOS and Windows, and exact CPU there). It stays as the upgrade path, adopted one platform at a time when needed. Linux already gets per-execution cgroups through `systemd-run --scope`.
 
 ### A15: One OS user per account and project pair
 
@@ -565,21 +641,31 @@ Requirements the mechanism meets:
 
 *   **Security & Privacy.**
     *   Agents never receive storage, database or Fleet machine credentials.
-    *   Project keys exist only for the length of an execution (D5).
-    *   Secrets are redacted twice: by exact value in the executor, and by pattern in the coordinator.
+    *   Project keys exist only for the length of an execution (FD5).
+    *   Secrets are masked twice: by exact value in the executor, and by pattern in the coordinator. Coverage limits are in Technical Plan §5.
     *   History returned to agents is marked as data.
-    *   Postgres row-level security on `project_id` backs up the permission checks in each operation.
+    *   Postgres row-level security on `project_id`, forced on every table and applied to the non-owner role `fleet_app`, backs up the permission checks in each operation.
 *   **Performance.** These numbers are working targets for measurement, not caps.
     *   Task and execution list queries return in under 200 ms at 10 million executions.
     *   `usage.summary` over 30 days of one project returns in under 2 s.
-    *   Outbox ingest keeps up with 10 parallel sessions, the load already proven live.
+    *   Outbox ingest keeps up with 10 parallel sessions. Ten parallel Codex turns were proven live on today's outbox; the new event classes are a target to measure in Phase 4.
 *   **Durability.**
-    *   Postgres is backed up by the existing nightly `pg_dump` (tight D6). A backup counts only after a restore proof.
+    *   Postgres is backed up by the existing nightly `pg_dump` (tight-D6). A backup counts only after a restore proof.
     *   ClickHouse and Garage backups go to `/backup/fleet/` for the provider pull. Their restore proof is part of acceptance.
     *   Projects with a single artifact location accept the risk of a single copy. The task view shows that risk.
 *   **Rollout & Rollback.**
     *   Rollout is phased; each phase ships on its own.
-    *   Until Phase 2 completes, rollback means pointing the coordinator back at the read-only SQLite file and running the reverse export.
+    *   Until Phase 7 retires SQLite, rollback means pointing the coordinator back at the read-only SQLite file and running the reverse export, which covers the `document` table and the typed tables.
+
+## Risks & Mitigations
+
+*   **ClickHouse returns duplicates before a merge.** Mitigation: every summing query uses `FINAL` or `argMax` by `seq` (§4); a test feeds a duplicate batch and checks totals.
+*   **A cross-host transfer stops halfway.** Mitigation: 32 MiB multipart parts, each retried on its own, with the upload state kept on disk (§3).
+*   **A store host is offline.** Mitigation: copies stay `pending` and resume; the artifact shows as unavailable, not lost.
+*   **A deleted row removes bytes another row needs.** Mitigation: a store copy is deleted only when no live row needs it (§3).
+*   **A secret reaches history.** Mitigation: two masking passes, and the forced purge for anything found later (§3, §5).
+*   **The launch helper grants too much.** Mitigation: it starts only `fleet-launch@` instances for `fleet-*` users, and the isolation probe checks it (item 54).
+*   **Migration breaks a reader.** Mitigation: readers move in the same phase as writers, and the reverse export allows rollback until Phase 7.
 
 ## Detailed Implementation Plan
 
@@ -615,7 +701,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
     *   Listens on loopback port 9480 (HTTP) only.
     *   Data under `/home/fleet/data/clickhouse`.
     *   Memory and CPU set through the user unit, as an operator setting.
-*   **Why**: D3 and D6. It follows tight D5: rootless Podman Quadlet, no Docker.
+*   **Why**: FD3 and FD6. It follows tight-D5: rootless Podman Quadlet, no Docker.
 
 ##### 2. `deploy/infrastructure/fleet-garage.container` and `deploy/infrastructure/garage.toml.candidate` (Create)
 
@@ -625,30 +711,34 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
     *   The S3 API on loopback port 9490, and the admin API on loopback.
     *   Data under `/home/fleet/data/garage`.
     *   One bucket `fleet`.
-*   **Why**: D2. PDS18's own store.
+    *   An ingress hostname for the store in PDS18's existing `cloudflared` configuration, behind a Cloudflare Access policy that admits the operator and a service token for executors and the coordinator.
+*   **Why**: FD2. PDS18's own store.
 
 ##### 3. `deploy/infrastructure/fleet-postgres.sql` (Create)
 
 *   **Type / Scope**: SQL run once by root through the existing route.
-*   **Proposed Changes**: Creates role `fleet` (`LOGIN`, no superuser, no `BYPASSRLS`) and database `fleet`, owned by `fleet`. Peer authentication stays on the existing local socket.
-*   **Why**: D1 and tight D6, one role and one database per service.
+*   **Proposed Changes**:
+    *   Creates role `fleet` (no superuser, no `BYPASSRLS`) and database `fleet`, owned by `fleet`. `fleet` owns the tables and runs migrations.
+    *   Creates role `fleet_app` (`LOGIN`, no superuser, no `BYPASSRLS`, not an owner) with `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the tables. The coordinator connects as `fleet_app`.
+    *   Peer authentication stays on the existing local socket, with a map from the Unix user `fleet` to both roles.
+*   **Why**: FD1 and tight-D6, one role and one database per service.
 
 ##### 4. `deploy/infrastructure/fleet-backup.sh` and `fleet-backup.timer` (Create)
 
 *   **Type / Scope**: User timer script.
 *   **Proposed Changes**:
     *   A nightly ClickHouse `BACKUP` to a local disk target, and a Garage bucket mirror, both written to `/backup/fleet/YYYY-MM-DD/`.
-    *   Keeps the same 5 days as tight D6.
+    *   Keeps the same 5 days as tight-D6.
     *   No service stops.
 *   **Why**: Durability. The existing `pg_dump` already covers Postgres.
 
-##### 5. `deploy/infrastructure/fleet.service.candidate` (Modify)
+##### 5. `deploy/infrastructure/fleet.service.candidate` and `deploy/infrastructure/coordinator.env` (Modify)
 
-*   **Type / Scope**: Coordinator user unit.
+*   **Type / Scope**: Coordinator user unit and the environment file it loads. `deploy/infrastructure/fleet.service.candidate` is the unit in use; `deploy/fleet.service.candidate` is an older copy and is deleted.
 *   **Proposed Changes**:
-    *   Add `After=` and `Wants=` for the ClickHouse and Garage units.
-    *   Add environment names `FLEET_DATABASE_URL` (Unix socket, peer authentication), `FLEET_CLICKHOUSE_URL` and `FLEET_STORES_FILE`.
-    *   Remove `FLEET_MAX_ARTIFACT_BYTES`.
+    *   In the unit, add `After=` and `Wants=` for the ClickHouse and Garage units.
+    *   In `coordinator.env`, add `FLEET_DATABASE_URL` (Unix socket, peer authentication, role `fleet_app`), `FLEET_CLICKHOUSE_URL` and `FLEET_STORES_FILE`.
+    *   `FLEET_MAX_ARTIFACT_BYTES` is removed in Phase 3 (item 26), when the base64 path goes.
 *   **Why**: The coordinator needs the new stores.
 
 ##### 6. `deploy/hosts/macos/fleet-garage.plist`, `deploy/hosts/windows/fleet-garage.md` (Create)
@@ -657,8 +747,8 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Proposed Changes**:
     *   macOS: a launchd agent running Garage single-node under the executor service user, listening on loopback.
     *   Windows: an install note that stays open until Q2 is answered (WSL2 or a native S3 server).
-    *   Each host's store is reachable from other hosts only through its executor.
-*   **Why**: D2, local stores.
+    *   Each host's store gets an ingress hostname in that host's `cloudflared` configuration, behind the same Cloudflare Access policy as item 2.
+*   **Why**: FD2, local stores.
 
 ##### 7. `docs/infrastructure-build.md` (Modify)
 
@@ -670,10 +760,11 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 
 *   **Type / Scope**: Infrastructure decisions.
 *   **Proposed Changes**:
-    *   Add `fleet` to the D4 user table.
-    *   Note the Fleet ClickHouse and Garage under D5 and D7.
+    *   Add `fleet` to the tight-D4 user table.
+    *   Note the Fleet ClickHouse and Garage under tight-D5 and tight-D7.
     *   Replace "Do not create a generic S3 service" with a scoped rule: Fleet's per-host store is allowed as a Podman Quadlet of `fleet` (Q8).
-*   **Why**: tight is the single source for host decisions (tight D13).
+    *   Add the tight-D4 exception for `fleet-launch@.service` and its polkit rule (Q8).
+*   **Why**: tight is the single source for host decisions (tight-D13).
 
 #### Phase 1: async data access on Postgres
 
@@ -682,7 +773,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Type / Scope**: Dependencies.
 *   **Proposed Changes**:
     *   Add `pg`, `@types/pg`, `@clickhouse/client`, `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner`, and `@electric-sql/pglite` (dev).
-    *   Keep `better-sqlite3` until Phase 7, for the migration tool only.
+    *   Keep `better-sqlite3` and `@types/better-sqlite3` until Phase 7, for the migration tool only.
 *   **Why**: The new stores.
 
 ##### 10. `packages/coordinator/db/schema.sql` (Create)
@@ -690,7 +781,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Type / Scope**: Postgres schema with numbered migrations.
 *   **Proposed Changes**:
     *   `schema_migration(version, applied_at)`.
-    *   `document(kind text, id text primary key, data jsonb, project_id text null, updated_at)`, holding every legacy kind.
+    *   `document(kind text, id text primary key, data jsonb, project_id text null, seq bigserial, updated_at)`, holding every legacy kind. `seq` keeps insertion order: `forward` fills it from SQLite `rowid`, and `all()` orders by it, so callers that take `.at(-1)` as the latest record keep working.
     *   Phase 2 and Phase 3 tables are added by later migrations in the same file.
 *   **Why**: G7. Phase 1 moves storage without changing the model.
 
@@ -700,8 +791,10 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Proposed Changes**:
     *   `createStore(url)` returns `{get(id, kind), put(kind, doc), all(kind, filter?), tx(fn), query(sql, params)}`.
     *   All of them are async. `tx` runs `fn` inside one Postgres transaction at `SERIALIZABLE` isolation and retries on serialization failure.
+    *   `fn` must be safe to run again: IDs (`randomUUID()`), file reads and calls to other operations happen before `tx`, and their results are passed in. Async operations such as `delivery_create`, which calls `question_ask`, run their steps as separate transactions.
+    *   `put` keeps today's behaviour: writing an id that already exists under a different kind does nothing.
     *   It replaces the synchronous `get`, `put` and `all` helpers defined in `app.ts`.
-*   **Why**: D1 requires async access. A single module keeps the change in one place.
+*   **Why**: FD1 requires async access. A single module keeps the change in one place.
 
 ##### 12. `packages/coordinator/app.ts` (Modify)
 
@@ -710,7 +803,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
     *   Remove `better-sqlite3` and the `records` table creation at line 19.
     *   Accept a `store` from `createStore`.
     *   Make every handler `await` the store.
-    *   Turn `db.transaction(() => …)` blocks, such as `/api/hosts/poll` at line 106, into `store.tx(async t => …)`.
+    *   Turn `db.transaction(() => …)` blocks, such as `/api/hosts/poll` at line 114, into `store.tx(async t => …)`.
     *   Behaviour and routes stay the same.
 *   **Why**: Phase 1.
 
@@ -725,7 +818,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Type / Scope**: Entry point.
 *   **Proposed Changes**:
     *   Read `FLEET_DATABASE_URL`, `FLEET_CLICKHOUSE_URL` and `FLEET_STORES_FILE`.
-    *   Drop `FLEET_DATABASE` and `FLEET_MAX_ARTIFACT_BYTES` after Phase 3.
+    *   Drop `FLEET_MAX_ARTIFACT_BYTES` in Phase 3. Keep `FLEET_DATABASE` (the SQLite path) for `migrate-sqlite` until Phase 7.
     *   Run the schema migrations on start.
 *   **Why**: Configuration for the new stores.
 
@@ -736,7 +829,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
     *   `forward`: read every `records` row and insert it into `document`, keeping kind, id and data.
     *   `verify`: compare row counts and data hashes per kind.
     *   `reverse`: export `document` rows changed after the cut-over back into a copy of the SQLite file.
-    *   Phase 2 extends it with typed mapping, and Phase 3 with extraction of base64 artifacts.
+    *   Phase 2 extends `forward` and `reverse` with the typed mapping in Technical Plan §7, in both directions. Phase 3 extends them with extraction of base64 artifacts.
 *   **Why**: G7, migration without loss and with a rollback path.
 
 #### Phase 2: executions and tasks
@@ -748,15 +841,17 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
     *   `execution`:
         *   `id`, `kind` (enum), `state` (enum);
         *   `observation` (`confirmed` or `unconfirmed`), `last_seen_at`;
-        *   `project_id`, `task_id`, `experiment_id`, `parent_execution_id`, `session_id`, `account_id`, `host_id`, `environment_id`;
+        *   `project_id`, `task_id`, `experiment_id`, `variant`, `parent_execution_id`, `session_id`, `account_id`, `host_id`, `environment_id`;
         *   `harness`, `harness_version`, `model`, `config_ref jsonb`;
         *   `problem text null`, `started_at`, `ended_at`;
         *   `legacy_kind`, `legacy_id`, `data jsonb`.
-    *   `execution_totals`: `execution_id` plus one column per measure, each with a `_basis` column.
-    *   `task`: the columns listed in Technical Plan §2.
+    *   `execution_totals`: `execution_id`; `tokens_input`, `tokens_output`, `tokens_cache_read`, `tokens_cache_write`; `rate_limit_last jsonb`; `connection_cost jsonb` (amount per connection and currency); `wall_ms`, `active_ms`, `cpu_ms`, `peak_memory_bytes`; each with a `_basis` column; plus `history_incomplete integer` and `computed_at`.
+    *   `task`: the columns listed in Technical Plan §2, plus `delivery_method jsonb` and `legacy_id`.
     *   `task_dependency`.
+    *   `question`: the columns listed in Technical Plan §2, with indexes on `task_id` and `execution_id`.
+    *   View `task_view`: per task, the count of executions by state, the sum of `execution_totals` over distinct executions, the latest `stored` artifact, and open questions.
     *   Indexes on (`project_id`, `state`, `started_at`), `task_id`, `experiment_id`, `parent_execution_id` and `account_id`.
-    *   Row-level security policies on `project_id`, for a session variable `fleet.project_ids` that each operation sets.
+    *   Row-level security on every table, with `FORCE ROW LEVEL SECURITY`. Policy: `project_id = ANY (string_to_array(current_setting('fleet.project_ids', true), ','))`. When the setting is unset the expression is null and no row is visible. Each operation sets `fleet.project_ids` with `SET LOCAL`.
 *   **Why**: G1, G2 and G6.
 
 ##### 17. `packages/coordinator/executions.ts` (Create)
@@ -765,7 +860,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Proposed Changes**:
     *   `createExecution`, `transition(id, state)`, and `markObservation`.
     *   `detectProblems()` marks executions bound to an unregistered host, account or environment, filling `problem`, as with `6b00f0fb`.
-    *   `writeTotals(id)` reads ClickHouse after Phase 4, and before that writes only the measures that are available.
+    *   `writeTotals(id)` reads ClickHouse after Phase 4. Before that it writes wall-clock time from `started_at` and `ended_at` with basis `measured`, and every other measure with basis `unavailable`. It runs when an execution ends, and again when ingest receives events for an execution that has already ended.
     *   The legacy state mapping from Technical Plan §1.
 *   **Why**: G1.
 
@@ -774,28 +869,28 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Type / Scope**: Task operations.
 *   **Proposed Changes**:
     *   `tasks.create`, `tasks.update`, `tasks.get` and `tasks.list`.
-    *   `tasks.get` returns the derived progress, cost and latest result through a view over the task's executions and artifacts.
-    *   Questions and decisions gain a `task_id` link in `document.data`.
+    *   `tasks.get` returns the derived progress, cost and latest result from `task_view`.
+    *   The state transitions from Technical Plan §2, and nowhere else.
+    *   `questions.ask` and `questions.answer` on the `question` table. Answering an `acceptance` question records who accepted and the artifact IDs, and moves the task.
 *   **Why**: G2.
 
-##### 19. `packages/coordinator/delegation.ts`, `delivery.ts`, `lab.ts`, `projects.ts`, `agent-tools.ts`, `app.ts` (Modify)
+##### 19. `packages/coordinator/delegation.ts`, `delivery.ts`, `lab.ts`, `projects.ts`, `agent-tools.ts`, `recovery.ts`, `ui.ts`, `lab-ui.ts`, `account-ui.ts`, `app.ts` (Modify)
 
-*   **Type / Scope**: Writers of run records.
+*   **Type / Scope**: Writers and readers of run records and questions.
 *   **Proposed Changes**:
-    *   Write `execution` rows through `executions.ts` instead of the `execution`, `delegation`, `pipeline-run` and `delivery` documents, with these kinds:
-        *   `agent_run`;
-        *   `pipeline_run` and `pipeline_step`;
-        *   `delivery`;
-        *   `child_agent` (from `d3802cc` recording).
-    *   Lab trials set `experiment_id`.
+    *   Writers: write `execution` rows through `executions.ts` instead of the `execution`, `delegation` and `pipeline-run` documents, with kinds `agent_run`, `pipeline_run`, `pipeline_step` and `child_agent` (from the child-agent recording added in commit `d3802cc`).
+    *   `delivery.ts`: `delivery_create` creates a `task` through `tasks.ts`, and each step creates an execution with that `task_id`. `reconcile`, `delivery_get` and `delivery_history` read the task, its executions and `task_view` instead of `all('delivery')`.
+    *   Questions: `projects.ts` (`project-question`, lines 65-67), `delivery.ts` (lines 21 and 25) and `agent-tools.ts` (`question`, lines 128-136, read at 169, 172 and 197) use `questions.ask` and `questions.answer`.
+    *   Readers: `agent-tools.ts` (lines 169 and 172), `recovery.ts`, `ui.ts`, `lab-ui.ts`, `account-ui.ts` and the routes in `app.ts` read executions through `executions.ts` instead of `all('execution')`.
+    *   Lab trials set `experiment_id` and `variant`.
     *   Handoff and fork set `parent_execution_id`.
 *   **Why**: G1, with one record shape.
 
 ##### 20. `packages/coordinator/project-ui.ts` (Modify)
 
 *   **Type / Scope**: Operator view.
-*   **Proposed Changes**: A task list and a task detail page that read `tasks.list` and `tasks.get`. The page scrolls smoothly without jumping, shows decision blocks for open questions, and answers questions by text or by option.
-*   **Why**: G2 and the owner's view requirements. This is the minimal view, not a full interface.
+*   **Proposed Changes**: A task list and a task detail page that read `tasks.list` and `tasks.get`. Loading new data does not move the scroll position. The page shows a block for each open question, and answers it by text or by option through `questions.answer`. Acceptance questions show the result artifacts with accept and reject buttons.
+*   **Why**: G2 and the owner's view requirements. It has only these two pages.
 
 #### Phase 3: artifacts and placement
 
@@ -803,7 +898,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 
 *   **Type / Scope**: Migration 3.
 *   **Proposed Changes**: The `store`, `artifact` and `artifact_copy` tables from Technical Plan §3, with indexes on `content_hash`, `execution_id`, `task_id` and (`store_id`, `state`).
-*   **Why**: G3 and D2.
+*   **Why**: G3 and FD2.
 
 ##### 22. `config/stores.example.json` (Create)
 
@@ -825,8 +920,9 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Type / Scope**: Artifact operations.
 *   **Proposed Changes**:
     *   The S3 client sets `requestChecksumCalculation: 'WHEN_REQUIRED'` (see Q1). Single-part uploads are presigned with `x-amz-checksum-sha256`, so the store itself rejects a wrong hash.
-    *   `reserve({execution_id, name, media_type, size, sha256, required})` picks the store: the writer's host if it is in the list, otherwise the nearest one. It returns a presigned PUT, or multipart part URLs for files over 64 MiB.
-    *   `commit(id)` checks the object's size and hash on the store with `HEAD` plus a stored checksum, then marks the artifact and its first copy `verified`.
+    *   `reserve({execution_id, name, media_type, size, sha256, required})` picks the store: the writer's host if it is in the list, otherwise the first host in the list whose store is `reachable`. It starts a multipart upload and returns presigned URLs for 32 MiB parts.
+    *   `commit(id)` completes the multipart upload, checks the object's size and hash on the store with `HEAD` plus a stored checksum, then marks the artifact `stored` and its first `artifact_copy` `verified`.
+    *   `purge(content_hash, reason)`: the forced purge from Technical Plan §3, operator only.
     *   `discard(id)`, `list(filter)` and `get(id)`. `get` returns metadata and a presigned GET for a verified copy, preferring the reader's host.
     *   The success rule: `executions.transition(id, 'succeeded')` refuses while any `required` artifact is not `stored`.
 *   **Why**: G3.
@@ -835,10 +931,11 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 
 *   **Type / Scope**: Placement worker and audit.
 *   **Proposed Changes**:
-    *   `runPlacement()` repeats on a short interval. For each artifact missing a verified copy at a listed location, it copies with a server-side `CopyObject` where both stores are reachable from the coordinator, and otherwise queues a `copy` command to the target host's executor. It then verifies the hash.
-    *   `runAudit()` re-hashes a sample of copies in each store every day and marks missing or corrupt copies `failed`, which schedules a new copy.
+    *   `runPlacement()` repeats every 60 seconds (an operator setting). A store is `reachable` when its host's last observation is under 2 minutes old and reports the store reachable. For each artifact missing a verified copy at a reachable listed location, it queues a `copy` command to the target host's executor, then verifies the hash.
+    *   `runAudit()` re-hashes 100 copies per store every day (an operator setting) and marks missing or corrupt copies `failed`, which schedules a new copy.
     *   Removing a location deletes copies there only after the remaining locations hold verified copies.
-*   **Why**: D2. The audit prevents a false `placed` state.
+    *   A store copy is deleted only when no live `artifact` row with that `content_hash` in the project needs that store.
+*   **Why**: FD2. The audit detects a false `placed` state.
 *   **Retention rules**: `previewRule(projectId, rule)` returns the count, the bytes and a sample of affected artifacts. `confirmRule` stores the confirmation. `runRules()` applies only confirmed rules, through the same copy-then-delete path.
 
 ##### 26. `packages/coordinator/app.ts` (Modify)
@@ -846,8 +943,14 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Type / Scope**: Routes.
 *   **Proposed Changes**:
     *   Replace `POST /api/hosts/artifacts` (base64 at line 118) with `POST /api/hosts/artifacts/reserve` and `POST /api/hosts/artifacts/commit`.
-    *   Remove `maxArtifactBytes` and the body limit derived from it.
+    *   Remove `maxArtifactBytes`, the body limit derived from it, and `FLEET_MAX_ARTIFACT_BYTES`.
     *   `GET /api/results/:id` redirects to a presigned GET.
+
+##### 26b. `packages/coordinator/delivery.ts` (Modify)
+
+*   **Type / Scope**: Delivery result reading.
+*   **Proposed Changes**: `reconcile` (line 11) reads `delivery-result.json` through `artifacts.get` instead of decoding `contentBase64`. The base64 documents are removed only after this change ships.
+*   **Why**: Phase 3 must not break delivery.
 *   **Why**: G3, no size limit inside Fleet.
 
 ##### 27. `crates/executor/src/upload.rs` (Create)
@@ -855,17 +958,19 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Type / Scope**: Rust module.
 *   **Proposed Changes**:
     *   Hash a file with streaming SHA256.
-    *   Call reserve, then PUT the file (or its parts) to the presigned URLs with `ureq`, then commit.
-    *   Retry with backoff.
-    *   Keep a pending upload in the existing `journal.sqlite`, so it survives an executor restart.
-    *   It also serves the `copy` command from `placement.ts`: it downloads from the source presigned GET and uploads to its local store.
-*   **Why**: G3 and D4. Files go directly to the store.
+    *   Call reserve, then PUT each 32 MiB part to its presigned URL on the store's tunnel hostname with `ureq`, then commit.
+    *   Retry each part on its own, with backoff.
+    *   Keep the pending upload (upload ID and finished parts) in the existing `journal.sqlite`, so it resumes after an executor restart.
+    *   Send the Cloudflare Access service token headers on every store request.
+    *   It also serves the `copy` command from `placement.ts`: it downloads from the source presigned GET and uploads to its local store in the same parts.
+*   **Why**: G3 and FD4. Files go directly to the store.
 
 ##### 28. `crates/executor/src/main.rs` (Modify)
 
 *   **Type / Scope**: Executor core.
 *   **Proposed Changes**:
     *   Replace the base64 artifact queue at line 812 with `upload.rs`.
+    *   Remove the executor's own `FLEET_MAX_ARTIFACT_BYTES` check (lines 792-810, 16 MiB default).
     *   Create `FLEET_OUTPUT_DIR` inside each execution's working area, and collect it when the run ends and in chunks during long runs, extending `23c5418`.
     *   Upload the redacted raw transcript as an artifact.
     *   Remove `use base64`.
@@ -896,7 +1001,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Type / Scope**: ClickHouse schema.
 *   **Proposed Changes**:
     *   Tables `event`, `span`, `measurement` and `host_metric`, as in Technical Plan §4.
-    *   Each table carries the link columns, uses `ReplacingMergeTree` keyed by (`execution_id`, `seq`), is partitioned by month, and is ordered by (`project_id`, `execution_id`, `ts`).
+    *   Each table carries the link columns, uses `ReplacingMergeTree`, is partitioned by month, and has `ORDER BY (project_id, execution_id, seq)`. `ts` is a plain column.
     *   No TTL.
 *   **Why**: G4 and G5.
 
@@ -907,9 +1012,10 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
     *   `ingestBatch(hostId, rows)` splits each batch: state changes go to Postgres in one transaction, telemetry rows go to ClickHouse in batches.
     *   It copies the link columns from the execution row.
     *   It runs the second-pass redaction scan.
-    *   It counts rows that a 4xx sets aside on the execution (`history_incomplete`).
-    *   It replaces the event handling at `/api/hosts/events`.
-*   **Why**: D4, with nothing written around Fleet's own layer.
+    *   It counts rows that a 4xx sets aside on the execution (`execution_totals.history_incomplete`).
+    *   When rows arrive for an execution that has already ended, it calls `writeTotals` again.
+    *   It replaces the event handling at `/api/hosts/events`, which today is `transportRecovery.ingest` in `recovery.ts` (`app.ts:116-117`).
+*   **Why**: FD4, with nothing written around Fleet's own layer.
 
 ##### 32. `packages/coordinator/redaction.ts` (Create)
 
@@ -917,7 +1023,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Proposed Changes**:
     *   Patterns for common token formats: bearer tokens, `sk-` keys, GitHub tokens, private key blocks, AWS keys.
     *   A match is replaced and logged as a `redaction_miss` event with the pattern name only.
-*   **Why**: G4, the second pass.
+*   **Why**: G4, the second pass. The match is masked before the row is stored.
 
 ##### 33. `packages/coordinator/accounts.ts` (Modify)
 
@@ -932,7 +1038,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
     *   New row classes: `model_usage`, `tool_call`, `rate_limit`, `child_agent`, `error`, `harness_version` and `host_metric`.
     *   Batching and `seq` stay as they are.
     *   Rows rejected with a 4xx are counted and reported, not only set aside.
-*   **Why**: D4 and G5.
+*   **Why**: FD4 and G5.
 
 ##### 35. `crates/executor/src/harness.rs`, `codex.rs`, `antigravity.rs`, `native.rs` (Modify)
 
@@ -957,7 +1063,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 
 *   **Type / Scope**: Resource and host reporting.
 *   **Proposed Changes**:
-    *   `resources()` at line 925 reports CPU and memory for the whole process tree, by pid-tree sampling, with basis `estimated`. On Linux it reads the execution's cgroup instead, with basis `measured`, after Phase 5.
+    *   `resources()` at line 935 reports CPU and memory for the whole process tree, by pid-tree sampling, with basis `estimated`. On Linux it reads the execution's cgroup instead, with basis `measured`, after Phase 5.
     *   Add periodic `host_metric` rows: disk, load, harness versions and store reachability.
 *   **Why**: G5 and the host telemetry the owner asked for.
 
@@ -968,12 +1074,12 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Type / Scope**: Rust module.
 *   **Proposed Changes**:
     *   `launch_as(account_user, cmd)` per OS:
-        *   macOS: `launchctl asuser`, or `sudo -u` through one narrow sudoers rule for the executor's service user;
-        *   Linux: `systemd-run --uid=<user> --scope`;
+        *   macOS: `launchctl asuser`, or `sudo -u` through one narrow sudoers rule that allows only `fleet-*` users;
+        *   Linux: `systemctl start fleet-launch@<user>-<execution>.service` through the polkit rule from item 41;
         *   Windows: `CreateProcessWithLogonW`, active when the Windows executor exists.
     *   `issue_keys(execution)` writes the needed key to `<working area>/.fleet/keys/` with mode 0600, owned by the account user, or starts a per-execution `ssh-agent` socket. It deletes the key when the run ends.
     *   `cgroup_usage(scope)` on Linux.
-*   **Why**: G8 and D5.
+*   **Why**: G8 and FD5.
 
 ##### 39. `crates/executor/src/git_access.rs` (Modify)
 
@@ -998,13 +1104,13 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Proposed Changes**:
     *   Create `fleet-<harness>-<n>` with a private `HOME`, no admin groups, and on Linux linger enabled.
     *   On macOS, document the one-time native login per user and the locked-Keychain file fallback.
-    *   Add the executor's narrow launch rule.
-*   **Why**: D5. The owner runs these once per account.
+    *   Add the executor's narrow launch rule. On Linux: install the system unit template `/etc/systemd/system/fleet-launch@.service` (runs the command for the execution as the instance's user, in its own scope) and a polkit rule in `/etc/polkit-1/rules.d/` that lets the `fleet` user start and stop only `fleet-launch@` units whose user is a `fleet-*` user. On macOS: the sudoers rule from item 38.
+*   **Why**: FD5. The owner runs these once per account.
 
 ##### 42. `docs/layered-isolation-model.md` and `docs/multi-account-same-env.md` (Modify)
 
 *   **Type / Scope**: Documentation.
-*   **Proposed Changes**: State the D5 boundary, the accepted gaps, the upgrade path (Seatbelt; Job Object with AppContainer), and the locked-Keychain fact.
+*   **Proposed Changes**: State the FD5 boundary, the accepted gaps, the upgrade path (Seatbelt; Job Object with AppContainer), and the locked-Keychain fact.
 *   **Why**: One source for the isolation model.
 
 #### Phase 6: agent tools and query operations
@@ -1023,8 +1129,8 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 
 *   **Type / Scope**: MCP tools.
 *   **Proposed Changes**:
-    *   Replace `inputSchema:{type:'object'}` at line 191 with real JSON schemas for every tool.
-    *   Add `artifact_prepare_upload`, `artifact_commit`, `artifact_discard`, `artifact_list`, `artifact_get`, `history_query` and `transcript_read`.
+    *   Replace `inputSchema:{type:'object'}` at line 214 with real JSON schemas for every tool. The same stub in `recovery.ts:12`, `projects.ts:77`, `app.ts:132`, `crates/executor/src/delegation.py:26-33` and `design_rules.py:19` gets a real schema too.
+    *   Add `artifact_prepare_upload`, `artifact_commit`, `artifact_discard`, `artifact_list`, `artifact_get`, `history_query`, `transcript_read`, `task_list`, `task_get`, `task_create`, `task_update`, `question_ask` and `question_answer`, with the permission rule from Technical Plan §6.
     *   Responses return IDs and paths, never inline file content.
 *   **Why**: G9.
 
@@ -1053,7 +1159,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
     *   State that history has no default expiry and that deletion is an optional project rule with a tombstone.
     *   Narrow compatibility blocking to confirmed incompatible combinations.
     *   Link this design.
-*   **Why**: Resolves the brief's contradictions with `fleet.md`.
+*   **Why**: Resolves the contradictions with `fleet.md` listed in `docs/designs/fleet-data-foundation-brief.md`.
 
 ##### 48. `docs/state-ownership.md`, `docs/work-analysis.md`, `docs/capabilities-and-pipelines.md` (Modify)
 
@@ -1061,16 +1167,16 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Proposed Changes**: Reference the task table, the execution as the unit of analysis, and artifact placement. Remove claims that this design supersedes.
 *   **Why**: Each rule keeps one canonical source.
 
-##### 49. `docs/designs/fleet-data-foundation.md` and `docs/README.md` (Create / Modify)
+##### 49. `docs/designs/fleet-data-foundation.md` and `docs/README.md` (Modify)
 
 *   **Type / Scope**: Design record.
-*   **Proposed Changes**: The finalized version of this draft, linked from the specification guide.
-*   **Why**: The EGM handoff.
+*   **Proposed Changes**: Set this document's status to accepted and link it from the specification guide.
+*   **Why**: The design is recorded where readers look for it.
 
 ##### 50. `package.json` and `packages/coordinator/migrate-sqlite.ts` (Modify)
 
 *   **Type / Scope**: Retirement.
-*   **Proposed Changes**: After 30 days without a rollback, remove `better-sqlite3` and archive the SQLite file to `/backup/fleet/`.
+*   **Proposed Changes**: After 30 days without a rollback, remove `better-sqlite3`, `@types/better-sqlite3` and `FLEET_DATABASE`, and archive the SQLite file to `/backup/fleet/`. `tests/coordinator/lab-packaged.ts` stops setting `FLEET_DATABASE`.
 *   **Why**: G7. The old store is retired.
 
 #### Tests
@@ -1079,14 +1185,15 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 
 *   **Type / Scope**: Unit tests on PGlite, with a fake S3 and a fake ClickHouse client.
 *   **Proposed Changes**:
-    *   **store:** transaction retry.
-    *   **executions:** legacy state mapping; detection of an unregistered host; observation `unconfirmed`.
-    *   **tasks:** derived progress and cost; dependencies.
-    *   **artifacts:** reserve and commit; hash mismatch is refused; a required artifact blocks `succeeded`.
+    *   **store:** transaction retry; `all()` keeps insertion order; `put` under a different kind does nothing; row-level security returns no rows when `fleet.project_ids` is unset.
+    *   **executions:** legacy state mapping; detection of an unregistered host; observation `unconfirmed`; totals are recomputed for late events.
+    *   **tasks:** derived progress and cost; dependencies; every state transition in Technical Plan §2; `completed` only after an accepted `acceptance` question; agent permission rule.
+    *   **questions:** both legacy kinds migrate with `task_id`; one answer path for operators and agents.
+    *   **artifacts:** reserve and commit; hash mismatch is refused; a required artifact blocks `succeeded`; a copy shared by two rows survives deleting one row; purge removes the object from every store.
     *   **placement:** an `[windows]` project is never copied elsewhere; a `[windows, mac]` project reaches `placed`; a store offline leaves copies `pending`; removing a location is safe; the audit detects a missing copy; an unconfirmed rule never runs; a delete rule leaves tombstones and removes nothing while the target lacks verified copies.
-    *   **ingest:** a duplicate `seq` is idempotent; the 4xx count is reported; the redaction scan works.
+    *   **ingest:** a duplicate `seq` is counted once in summed queries; the 4xx count is reported; the redaction scan masks a match.
     *   **usage:** no double counting in tree totals; the project filter is always present.
-    *   **migrate:** forward, verify and reverse round-trip.
+    *   **migrate:** forward, verify and reverse round-trip, including the typed tables; a legacy delivery becomes a task with step executions; legacy readers in item 19 return the same data.
 
 ##### 52. `tests/coordinator/*.test.ts` (Modify)
 
@@ -1102,17 +1209,17 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 
 *   **Type / Scope**: Executor tests.
 *   **Proposed Changes**:
-    *   **upload:** a multipart upload resumes after an executor restart.
+    *   **upload:** a multipart upload resumes after an executor restart; a failed part is retried alone; a file over 16 MiB is accepted.
     *   **redaction:** every injected secret is removed from the outbox rows and from the uploaded transcript.
     *   **preview:** a PNG and an MP4 fixture produce a thumbnail and a poster linked by `derived_from_artifact_id`; without `ffmpeg`, the result is `unavailable` and the execution still succeeds.
-    *   **isolation:** an agent cannot read another account's `HOME`, the shared key directory, or the machine token; a hook or `core.fsmonitor` that an agent planted in a checkout does not run during host-side git; the key file is gone after the run; the Linux cgroup reports usage.
+    *   **isolation:** an agent cannot read another account's `HOME`, the shared key directory, or the machine token; a hook or `core.fsmonitor` that an agent planted in a checkout does not run during host-side git; the key file is gone after the run; the Linux cgroup reports usage; the `fleet` user cannot start `fleet-launch@` for a user outside `fleet-*`.
 
 ### Verification Plan
 
 *   **Compilation/Build**: `npm run build`, `cargo build --release -p executor`.
 *   **Unit Tests**: `npm test`, `cargo test -p executor`, `python3 -I tests/executor/<file>.py` for each executor protocol test.
 *   **Static Analysis & Linting**: `tsc --noEmit` (strict settings from `tsconfig.json`), `cargo clippy -- -D warnings`.
-*   **Test Coverage Requirement**: Every branch named in item 51 has a test. No numeric coverage target.
+*   **Test Coverage Requirement**: Every branch named in items 51, 53 and 54 has a test. No numeric coverage target.
 *   **E2E/Integration**: After each phase, run live on PDS18 and the Mac:
     *   **Phase 1:** T1 and T14 from `docs/test-results-T1-T16.md` pass again on Postgres, and `migrate-sqlite verify` reports no difference.
     *   **Phase 2:** CUJ 1 and CUJ 2.
