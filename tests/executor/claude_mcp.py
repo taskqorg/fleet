@@ -6,6 +6,8 @@ for name in ['home','native']:(root/name).mkdir(mode=0o700)
 fake=root/'claude';fake.write_text('''#!/usr/bin/env python3
 import os,sys,json,subprocess
 args=sys.argv[1:];get=lambda k:args[args.index(k)+1]
+assert '--not-a-native-option fixture' not in args
+assert sys.stdin.read()=='--not-a-native-option fixture\\n'
 assert get('--permission-mode')=='dontAsk' and '--strict-mcp-config' in args
 assert get('--setting-sources')=='' and get('--tools')=='Read'
 assert 'FLEET_HOST_TOKEN' not in os.environ and 'ANTHROPIC_API_KEY' not in os.environ
@@ -32,7 +34,7 @@ print(json.dumps({'type':'result','session_id':'claude-fixture','is_error':False
 ''');fake.chmod(0o700)
 registry=root/'accounts.json';registry.write_text(json.dumps({'claude':{'harness':'claude','home':str(root/'home'),'nativeHome':str(root/'native'),'executable':str(fake),'readiness':'ready'}}));registry.chmod(0o600)
 profile={'id':'fixture','harness':'claude','model':'fixture','effort':None,'instructionRole':'system','instructions':'explicit system','tools':['Read'],'mcpServers':[{'id':'design-rules','data':{'heading':'fixture-heading'}}],'delegationProfiles':['claude-reviewer']}
-commands=[{'id':'mcp','executionId':'mcp','sessionId':'mcp','kind':'start','payload':{'harness':'claude','account':'claude','model':'fixture','effort':None,'text':'fixture','agentConfig':profile}}];received=[]
+commands=[{'id':'mcp','executionId':'mcp','sessionId':'mcp','kind':'start','payload':{'harness':'claude','account':'claude','model':'fixture','effort':None,'text':'--not-a-native-option fixture','agentConfig':profile}}];received=[]
 class Handler(BaseHTTPRequestHandler):
  def log_message(self,*a):pass
  def do_POST(self):

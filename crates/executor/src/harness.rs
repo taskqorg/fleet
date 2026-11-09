@@ -247,8 +247,8 @@ fn command_registry(
         if let Some(n) = native {
             c.args(["--resume", n]);
         }
-        c.arg(text);
-        Ok((c, None))
+        // Variadic native tool flags must never consume the user prompt.
+        Ok((c, Some(format!("{text}\n").into_bytes())))
     } else {
         crate::lab::validate_antigravity_settings(p.get("settings")).map_err(fail)?;
         if p.get("effort").is_some_and(|v| !v.is_null()) {
@@ -490,6 +490,7 @@ print(json.dumps({'harness':h,'home':os.environ['HOME'],'args':sys.argv[1:]}))
             let work = root.join(format!("{id}-work"));
             for n in [None, Some("retained-id")] {
                 let (mut c, input) = command_registry(&work, n, &p, &registry).unwrap();
+                if h == "claude" { assert_eq!(input.as_deref(),Some(b"hello\n".as_slice())); assert!(!c.get_args().any(|v| v == "hello")); }
                 c.stdin(Stdio::piped()).stdout(Stdio::piped());
                 let mut child = c.spawn().unwrap();
                 if let Some(input) = input {

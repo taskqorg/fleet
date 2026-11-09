@@ -1,0 +1,15 @@
+{
+  "executionId": "b89f88cc-d548-4223-bedb-b95f23e3fb0a",
+  "state": "failed",
+  "phase": "native CLI input validation before model turn",
+  "exitCode": 1,
+  "nativeStdoutBytes": 0,
+  "nativeSessionCreated": false,
+  "toolsCalled": 0,
+  "error": "Error: Input must be provided either through stdin or as a prompt argument when using --print",
+  "stderrSha256": "2122456c9827a04aff9792c1149505097ac016d61c330a0df0dd73976358987c",
+  "cause": "variadic --tools consumed positional task text",
+  "fix": "supported text stdin for print mode; tools/allowedTools remain explicit argv options",
+  "credentialOrLoginChanges": false,
+  "modelTurnReplay": false
+}
