@@ -16,3 +16,11 @@ CREATE INDEX document_project ON document(project_id) WHERE project_id IS NOT NU
 
 -- migration 2: per-request reads filter documents by jsonb containment (store.all with a filter)
 CREATE INDEX document_data ON document USING gin (data jsonb_path_ops);
+
+-- migration 3: without the GIN pending list, SERIALIZABLE predicate locks stay on the index entries a query reads.
+-- With fastupdate on, a non-empty pending list makes every containment read lock the whole index, so every write conflicts.
+ALTER INDEX document_data SET (fastupdate = off);
+
+-- migration 4: per-execution and per-session reads (store.all) lock only that execution's or session's index range.
+CREATE INDEX document_execution ON document(kind, (data->>'executionId'), seq);
+CREATE INDEX document_session ON document(kind, (data->>'sessionId'), seq);
