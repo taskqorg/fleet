@@ -228,7 +228,7 @@ impl Executor {
             return self.finish(&c, if ok { "completed" } else { "failed" }, None);
         }
         if c["kind"] == "base-updated" {
-            let (data, ok) = checkout_sync::run(&c["payload"], &self.host);
+            let (data, ok) = checkout_sync::run(&c["payload"], &self.host, &worktree::project_roots(), &[&self.root, &self.sessions]);
             self.event(&c, 0, if ok { "checkout.synced" } else { "sync-failed" }, data)?;
             return self.finish(&c, if ok { "completed" } else { "failed" }, None);
         }

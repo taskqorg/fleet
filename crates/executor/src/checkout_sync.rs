@@ -1,19 +1,27 @@
 //! Checkout sync (docs/prototype-implementation-plan.md W3): on `base-updated` fetch and fast-forward this host's clean checkouts.
 //! Dirty or diverged checkouts stay untouched and are reported with a reason; no raw stderr leaves the host.
 use serde_json::{Value, json};
-use std::path::Path;
-use std::process::{Command, Stdio};
+use std::path::{Path, PathBuf};
 
-fn git(dir: &str, args: &[&str]) -> Option<String> {
-    // ponytail: ambient host credentials until W4 sets per-project connections.
-    let o = Command::new("git").args(["-c", "core.hooksPath=/dev/null", "-C", dir]).args(args)
-        .env("GIT_TERMINAL_PROMPT", "0").env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
-        .stdin(Stdio::null()).output().ok()?;
+fn git(dir: &Path, args: &[&str]) -> Option<String> {
+    // Cleared env + hardened config (crate::git); ambient ssh agent/HOME credentials until W4 sets per-project connections.
+    let mut c = crate::git();
+    for k in ["HOME", "SSH_AUTH_SOCK"] { if let Some(v) = std::env::var_os(k) { c.env(k, v); } }
+    #[cfg(test)] c.args(["-c", "protocol.file.allow=always"]);
+    let o = c.args(["-c", "core.sshCommand=ssh -o BatchMode=yes"]).arg("-C").arg(dir).args(args)
+        .env("GIT_TERMINAL_PROMPT", "0").output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_owned())
 }
 
-fn sync(dir: &str, sha: &str) -> Result<(), &'static str> {
-    if !Path::new(dir).join(".git").exists() { return Err("checkout-missing") }
+/// Same gate as worktree.rs: canonical path under a host project root, not overlapping executor/session dirs.
+fn allowed(dir: &str, roots: &[PathBuf], forbidden: &[&Path]) -> Option<PathBuf> {
+    let p = std::fs::canonicalize(dir).ok()?;
+    if forbidden.iter().any(|f| std::fs::canonicalize(f).is_ok_and(|f| p.starts_with(&f) || f.starts_with(&p))) { return None }
+    roots.iter().any(|r| p.starts_with(r)).then_some(p)
+}
+
+fn sync(dir: &Path, sha: &str) -> Result<(), &'static str> {
+    if !dir.join(".git").exists() { return Err("checkout-missing") }
     if git(dir, &["status", "--porcelain"]).ok_or("status-failed")? != "" { return Err("checkout-dirty") }
     git(dir, &["fetch", "--quiet", "origin"]).ok_or("fetch-failed")?;
     git(dir, &["merge", "--ff-only", "--quiet", sha]).ok_or("not-fast-forward")?;
@@ -21,13 +29,13 @@ fn sync(dir: &str, sha: &str) -> Result<(), &'static str> {
 }
 
 /// Returns per-checkout results and whether all synced.
-pub fn run(p: &Value, host: &str) -> (Value, bool) {
+pub fn run(p: &Value, host: &str, roots: &[PathBuf], forbidden: &[&Path]) -> (Value, bool) {
     let sha = p["sha"].as_str().unwrap_or("");
     let valid = sha.len() >= 7 && sha.bytes().all(|b| b.is_ascii_hexdigit());
     let results: Vec<Value> = p["project"]["environments"].as_array().into_iter().flatten()
         .filter(|e| e["hostId"] == host && (e["repo"].is_null() || p["repo"].is_null() || e["repo"] == p["repo"]))
         .filter_map(|e| e["checkoutPath"].as_str())
-        .map(|dir| match if valid { sync(dir, sha) } else { Err("invalid-sha") } {
+        .map(|dir| match if !valid { Err("invalid-sha") } else { allowed(dir, roots, forbidden).ok_or("checkout-denied").and_then(|d| sync(&d, sha)) } {
             Ok(()) => json!({"checkoutPath":dir,"status":"synced","sha":sha}),
             Err(r) => json!({"checkoutPath":dir,"status":"failed","reason":r}),
         }).collect();
@@ -38,6 +46,7 @@ pub fn run(p: &Value, host: &str) -> (Value, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
     #[test]
     fn fast_forwards_clean_and_keeps_dirty() {
         let d = std::env::temp_dir().join(format!("fleet-sync-{}", std::process::id()));
@@ -53,12 +62,13 @@ mod tests {
         s(&d, &["clone", "-q", "origin.git", "dirty"]);
         std::fs::write(d.join("dirty/x"), "x").unwrap();
         c("two"); s(&up, &["push", "-q", "origin", "HEAD:main"]);
-        let sha = git(up.to_str().unwrap(), &["rev-parse", "HEAD"]).unwrap();
+        let sha = git(&up, &["rev-parse", "HEAD"]).unwrap();
         let env = |n: &str| json!({"hostId":"h","checkoutPath":d.join(n).to_str()});
-        let (r, ok) = run(&json!({"sha":sha,"project":{"environments":[env("clean"), env("dirty"), {"hostId":"x","checkoutPath":"/none"}]}}), "h");
+        let (r, ok) = run(&json!({"sha":sha,"project":{"environments":[env("clean"), env("dirty"), {"hostId":"x","checkoutPath":"/none"}]}}), "h", &[d.canonicalize().unwrap()], &[]);
+        assert_eq!(run(&json!({"sha":sha,"project":{"environments":[env("clean")]}}), "h", &[], &[]).0["checkouts"][0]["reason"], "checkout-denied");
         assert!(!ok);
         assert_eq!(r["checkouts"][0]["status"], "synced");
-        assert_eq!(git(d.join("clean").to_str().unwrap(), &["rev-parse", "HEAD"]).unwrap(), sha);
+        assert_eq!(git(&d.join("clean"), &["rev-parse", "HEAD"]).unwrap(), sha);
         assert_eq!(r["checkouts"][1]["reason"], "checkout-dirty");
         assert_eq!(r["checkouts"].as_array().unwrap().len(), 2);
     }
