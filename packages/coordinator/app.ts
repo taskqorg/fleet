@@ -41,9 +41,10 @@ export function createApp(config:{nativeHostIds?:string[],database:string,browse
  app.get('/',async(_,r)=>r.type('text/html').send(ui(config.browserProxyAuth)));
  app.get('/test-sites/:project/:file',async(req:any,r)=>{if(!config.testSiteRoot||!['hello-world','hello-world-alt'].includes(req.params.project)||!/^[a-zA-Z0-9_-]+\.(html|css)$/.test(req.params.file))fail(404,'Unknown test site');const root=realpathSync(resolve(config.testSiteRoot!,req.params.project)),path=realpathSync(resolve(root,'current',req.params.file));if(!path.startsWith(root+sep))fail(403,'Test-site path rejected');r.header('Content-Security-Policy',"sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src data:; frame-ancestors 'self'");return r.type(req.params.file.endsWith('.css')?'text/css':'text/html').send(readFileSync(path))});
  app.get('/api/profiles',async()=>({profiles:listProfiles(config.profilesDirectory||'config/agents')}));
- app.post('/api/sessions',async()=>{const s={id:randomUUID(),createdAt:Date.now()};put('session',s);return {sessionId:s.id,...s}});
- app.post('/api/sessions/:id/profile',async(req:any)=>db.transaction(()=>{
-  const s=get(req.params.id,'session');if(!req.body||Object.keys(req.body).some(k=>!['profileId','account','workingDirectory'].includes(k))||typeof req.body.profileId!=='string')fail(400,'Expected profileId only');
+ const session_create=()=>{const s={id:randomUUID(),createdAt:Date.now()};put('session',s);return {sessionId:s.id,...s}};
+ app.post('/api/sessions',async()=>db.transaction(session_create)());
+ const session_profile=({sessionId,...body}:any)=>{const req={body};
+  const s=get(sessionId,'session');if(!req.body||Object.keys(req.body).some(k=>!['profileId','account','workingDirectory'].includes(k))||typeof req.body.profileId!=='string')fail(400,'Expected profileId only');
   if(all('execution').some(e=>e.sessionId===s.id&&!['completed','failed','stopped'].includes(e.state)))fail(409,'Execution active');
   if(req.body.account!==undefined&&(typeof req.body.account!=='string'||!/^(?:[a-z][a-z0-9-]{0,79}|[a-f0-9-]{36})$/.test(req.body.account)))fail(400,'Invalid named host account');
   if(req.body.workingDirectory!==undefined&&(typeof req.body.workingDirectory!=='string'||!req.body.workingDirectory.startsWith('/')||req.body.workingDirectory.includes('..')))fail(400,'Invalid working directory');if(req.body.workingDirectory!==undefined){s.workingDirectory=req.body.workingDirectory;put('session',s)}
@@ -51,7 +52,8 @@ export function createApp(config:{nativeHostIds?:string[],database:string,browse
   const selected=readTrustedProfile(config.profilesDirectory||'config/agents',req.body.profileId);
   s.account=req.body.account;
   s.agentConfig=readTrustedProfile(config.profilesDirectory||'config/agents',req.body.profileId);put('session',s);return {sessionId:s.id,profileId:s.agentConfig.id,account:s.account};
- })());
+ };
+ app.post('/api/sessions/:id/profile',async(req:any)=>db.transaction(()=>session_profile({...req.body,sessionId:req.params.id}))());
  app.get('/api/sessions/:id',async(req:any)=>{const s=get(req.params.id,'session');return {...s,...agent.sessionView(s.id),sessionId:s.id,delegations:all('delegation').filter(d=>d.parentSessionId===s.id||d.childSessionId===s.id).map(related),messages:all('message').filter(x=>x.sessionId===s.id),executions:all('execution').filter(x=>x.sessionId===s.id),events:all('event').filter(x=>x.sessionId===s.id),results:all('artifact').filter(x=>x.sessionId===s.id).map(({contentBase64,...x})=>x)}});
  app.get('/api/sessions/:id/events',async(req:any)=>{get(req.params.id,'session');const after=Number(req.query.after??-1),limit=Number(req.query.limit??100);if(!Number.isSafeInteger(after)||!Number.isSafeInteger(limit)||limit<1||limit>500)fail(400,'Invalid page');const events=all('event').filter(x=>x.sessionId===req.params.id).slice(after+1,after+1+limit);return {events,nextCursor:events.length?after+events.length:after}});
  app.get('/api/executions/:id/differences',async(req:any)=>{
@@ -91,7 +93,8 @@ export function createApp(config:{nativeHostIds?:string[],database:string,browse
  app.post('/api/sessions/:id/messages',async(req:any)=>db.transaction(()=>{
   const s=get(req.params.id,'session'),b=req.body; if(!b||Array.isArray(b)||typeof b!=='object'||Object.keys(b).some(k=>!['requestId','text','delivery'].includes(k))||!Object.hasOwn(b,'requestId')||!Object.hasOwn(b,'text'))fail(400,'Expected requestId, text and optional delivery');text(b.requestId,200);text(b.text);return agent.submit({sessionId:s.id,requestId:b.requestId,text:b.text,delivery:b.delivery});
  })());
- app.post('/api/executions/:id/stop',async(req:any)=>{const e=get(req.params.id,'execution');let c=all('command').find(x=>x.executionId===e.id&&x.kind==='stop');if(!c){c={id:randomUUID(),executionId:e.id,sessionId:e.sessionId,hostId:e.hostId,kind:'stop',payload:{},status:'pending'};put('command',c)}e.stopRequested=true;put('execution',e);return {...c,stop:agent.stopOutcome(e)}});
+ const execution_stop=(b:any)=>{const e=get(b?.executionId,'execution');let c=all('command').find(x=>x.executionId===e.id&&x.kind==='stop');if(!c){c={id:randomUUID(),executionId:e.id,sessionId:e.sessionId,hostId:e.hostId,kind:'stop',payload:{},status:'pending'};put('command',c)}e.stopRequested=true;put('execution',e);return {...c,stop:agent.stopOutcome(e)}};
+ app.post('/api/executions/:id/stop',async(req:any)=>db.transaction(()=>execution_stop({executionId:req.params.id}))());
  app.post('/api/agent-operations/:name',async(req:any)=>{const op=agent.operations[req.params.name];if(!op)fail(404,'Unknown agent operation');return db.transaction(()=>op(req.body??{}))()});
  app.post('/api/agent-tools',async(req:any)=>agent.mcp(req.body,(n:string,a:any)=>db.transaction(()=>agent.operations[n](a))(),'fleet-agent'));
  app.post('/api/hosts/agent-tools',async(req:any)=>{const b=req.body;owned(b);const c=get(b.commandId,'command');if(c.executionId!==b.executionId||c.hostId!==b.hostId)fail(403,'Command rejected');return agent.mcp(b.request,(n:string,a:any)=>db.transaction(()=>agent.bound(n,a,b.executionId))(),'fleet-agent')});
@@ -109,5 +112,11 @@ export function createApp(config:{nativeHostIds?:string[],database:string,browse
  deliveryRuntime.advance();
  agent.reconcile();
  registerLab(app,{all,get,put,transaction:fn=>db.transaction(fn)()},{hostId:config.hostId,profilesDirectory:config.profilesDirectory||'config/agents',browserProxyAuth:config.browserProxyAuth});
+ // One operation table: served as MCP tools (/api/tools) and as POST /api/ops/<name>; the web UI calls the same names.
+ // ponytail: legacy per-feature routes stay as aliases. UI-only routes left (violations): lab experiment POSTs (/api/experiments*).
+ const ops:Record<string,(b:any)=>any>={...projects,...transportRecovery.operations,...agent.operations,session_create,session_profile,execution_stop};
+ const runOp=(n:string,b:any)=>{const op=ops[n];if(!op)fail(404,'Unknown operation');return op===projects[n]||op===transportRecovery.operations[n]?op(b??{}):db.transaction(()=>op(b??{}))()}; // project/recovery ops manage their own transactions (some async)
+ app.post('/api/ops/:name',async(req:any)=>runOp(req.params.name,req.body));
+ app.post('/api/tools',async(req:any)=>{const q=req.body;if(q?.method==='initialize')return {jsonrpc:'2.0',id:q.id,result:{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fleet',version:'1'}}};if(q?.method==='tools/list')return {jsonrpc:'2.0',id:q.id,result:{tools:Object.keys(ops).map(name=>({name,inputSchema:{type:'object'}}))}};if(q?.method!=='tools/call'||!ops[q.params?.name])fail(400,'Unknown tool');return {jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text:JSON.stringify(await runOp(q.params.name,q.params.arguments))}]}}});
  app.addHook('onClose',async()=>{db.close()});return app;
 }
