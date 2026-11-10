@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -420,4 +422,48 @@ func TestSpoolLossMarkerFailureIsReported(t *testing.T) {
 	os.Mkdir(filepath.Join(state, "spool-lost.tmp"), 0o700) // and the lost counter cannot be written
 	gw.call("web_search", testToken)
 	expect(t, field(gw.health(), "spool"), map[string]any{"lost": 1, "lostRecorded": false}, "spool health")
+}
+
+// Requirement: a caller that gives up releases its provider request (fleet-connections.md §2).
+// Risk: the provider request runs to the gateway timeout, and an idempotent tool fails over to another paid key;
+// a request already sent must still be recorded with outcome unknown.
+func TestCallerCancellationReachesProvider(t *testing.T) {
+	released, stop := make(chan time.Duration, 4), make(chan struct{})
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		begun := time.Now()
+		io.ReadAll(r.Body) // the server notices a closed connection only after the body is read
+		select {
+		case <-r.Context().Done():
+		case <-stop:
+		}
+		released <- time.Since(begun)
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(stop) }) // runs first: no provider handler outlives the test
+	gw := newFixture(t, server.URL, "invented-key-a", "invented-key-b")
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	request, _ := http.NewRequestWithContext(ctx, "POST", "http://"+gw.address+"/v1/call/tavily/web_search", strings.NewReader(`{"query":"q"}`))
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	if _, err := http.DefaultClient.Do(request); err == nil {
+		t.Fatal("caller was answered")
+	}
+	select {
+	case held := <-released:
+		if held > time.Second {
+			t.Fatalf("provider request held %v after the caller left", held)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("provider request not released; %d requests", calls.Load())
+	}
+	for end := time.Now().Add(3 * time.Second); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
+		if lines, _ := gw.spool(); len(lines) == 1 {
+			expect(t, []any{lines[0]["outcome"], lines[0]["errorCode"]}, []any{"unknown", "caller-cancelled"}, "spooled cancel")
+			expect(t, calls.Load(), int32(1), "provider requests")
+			return
+		}
+	}
+	t.Fatal("no spool line")
 }

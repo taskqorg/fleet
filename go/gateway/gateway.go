@@ -481,8 +481,9 @@ func (g *gateway) usable(c *connection) []string {
 }
 
 // send makes one provider request; the timeout covers the answer and, separately, reading its body.
-func (g *gateway) send(method, url, value string, body []byte, headers map[string]string) (*http.Response, []byte, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+// Cancelling caller ends the request too; it does not undo what the provider already did.
+func (g *gateway) send(caller context.Context, method, url, value string, body []byte, headers map[string]string) (*http.Response, []byte, error) {
+	ctx, cancel := context.WithCancel(caller)
 	defer cancel()
 	var timedOut atomic.Bool
 	timer := time.AfterFunc(g.config.requestTimeout, func() { timedOut.Store(true); cancel() })
@@ -526,7 +527,7 @@ func (e errBody) orNil() error {
 	return e
 }
 
-func (g *gateway) call(name string, c *connection, p *provider, t *tool, path string, body []byte) *answer {
+func (g *gateway) call(ctx context.Context, name string, c *connection, p *provider, t *tool, path string, body []byte) *answer {
 	keys := g.usable(c)
 	if len(keys) == 0 {
 		return refusal(503, "error", "no-usable-key", "no active key; the holder or the owner must act")
@@ -543,9 +544,14 @@ func (g *gateway) call(name string, c *connection, p *provider, t *tool, path st
 			lastFailure = "key " + id + " has no value file"
 			continue
 		}
-		response, data, err := g.send(t.Method, p.BaseURL+path, value, body, t.Headers)
+		response, data, err := g.send(ctx, t.Method, p.BaseURL+path, value, body, t.Headers)
 		var cut errBody
 		switch {
+		case err != nil && ctx.Err() != nil:
+			// The caller left: no failover, and a request already sent may still have been charged.
+			a := refusal(499, "unknown", "caller-cancelled", "the caller cancelled the call")
+			a.key = id
+			return a
 		case errors.Is(err, context.DeadlineExceeded) && response == nil:
 			a := refusal(504, "unknown", "provider-timeout", "the provider did not answer in time")
 			a.key = id
@@ -610,7 +616,7 @@ func (g *gateway) call(name string, c *connection, p *provider, t *tool, path st
 }
 
 // usageReport is the provider's own per-key usage for every key with a value (reconcile, §2); unknown is reported, never guessed.
-func (g *gateway) usageReport() map[string]any {
+func (g *gateway) usageReport(ctx context.Context) map[string]any {
 	s := g.snapshot.Load()
 	rows := []map[string]any{}
 	for name, c := range s.Connections {
@@ -624,7 +630,7 @@ func (g *gateway) usageReport() map[string]any {
 				continue
 			}
 			row := map[string]any{"connection": name, "key": k.ID, "usage": nil}
-			response, data, err := g.send("GET", p.BaseURL+p.Usage.Path, value, nil, nil)
+			response, data, err := g.send(ctx, "GET", p.BaseURL+p.Usage.Path, value, nil, nil)
 			switch {
 			case errors.Is(err, context.DeadlineExceeded) && response == nil:
 				row["unknown"] = "usage request timed out"
@@ -718,7 +724,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 401, map[string]string{"error": "unauthenticated", "reason": "the coordinator's usage token is required"})
 			return
 		}
-		writeJSON(w, 200, g.usageReport())
+		writeJSON(w, 200, g.usageReport(r.Context()))
 		return
 	}
 	route, _ := strings.CutPrefix(r.URL.Path, "/v1/call/")
@@ -780,7 +786,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if t.Method != "GET" {
 			sent, _ = json.Marshal(body)
 		}
-		a = g.call(connectionName, c, p, t, path, sent)
+		a = g.call(r.Context(), connectionName, c, p, t, path, sent)
 	}
 	if a.disabled != 0 {
 		g.onDisabled(a.key, a.disabled)
