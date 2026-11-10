@@ -15,7 +15,16 @@ import (
 	"strings"
 )
 
-func repoRoot() string { return strings.TrimSuffix(schemaFile(), "packages/coordinator/db/schema.sql") }
+func repoRoot() string {
+	if exe, err := os.Executable(); err == nil {
+		if r := filepath.Join(filepath.Dir(exe), "../.."); dirExists(filepath.Join(r, "config")) {
+			return r
+		}
+	}
+	return "."
+}
+
+func dirExists(p string) bool { _, err := os.Stat(p); return err == nil }
 
 func envDir(k, rel string) string {
 	if v := os.Getenv(k); v != "" {
@@ -531,7 +540,7 @@ func init() {
 	projectOp("project_list", true, func(q *Request) (any, error) {
 		out := []doc{}
 		for _, id := range projectIDs() {
-			if q.person != nil && !mayAccessProject(q.person, id) {
+			if q.person != nil && !mayAccessProjectID(q.person, id) {
 				continue
 			}
 			p, err := projectContext(id)
@@ -735,4 +744,16 @@ func (a *App) mcp(q *Request, server string, ops map[string]registeredOp, descri
 		return nil, err
 	}
 	return doc{"jsonrpc": "2.0", "id": rpc.ID, "result": doc{"content": []doc{{"type": "text", "text": js(out)}}}}, nil
+}
+
+// A project's artifact_locations for the artifacts area; the default list when it names none.
+func init() {
+	artifactLocations = func(a *App, projectID *string) []string {
+		if projectID != nil {
+			if l := strList(projectSettingsOf(*projectID)["artifact_locations"]); len(l) > 0 {
+				return l
+			}
+		}
+		return defaultLocations
+	}
 }

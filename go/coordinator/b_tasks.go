@@ -797,7 +797,7 @@ func init() {
 			return nil, err
 		}
 		p := q.person
-		if p == nil || !mayAccessProject(p, gs(t, "project_id")) {
+		if p == nil || !mayAccessProjectID(p, gs(t, "project_id")) {
 			return nil, fail(403, "Take needs a grant on the task project")
 		}
 		if gs(t, "directed_by") != p.Email {

@@ -15,8 +15,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func harnessOf(s doc) string { return firstString(gm(s, "agentConfig")["harness"], "codex") }
-func keyOf(s doc) string     { return harnessOf(s) + ":" + gs(s, "account") }
+func harnessOf(s doc) string         { return firstString(gm(s, "agentConfig")["harness"], "codex") }
+func continuationKeyOf(s doc) string { return harnessOf(s) + ":" + gs(s, "account") }
 
 func sessionExecutions(q *Request, sid string) ([]doc, error) {
 	return all(q, "execution", doc{"sessionId": sid})
@@ -346,7 +346,7 @@ func wake(q *Request, e doc, status string) error {
 
 // agentDecorate: inline handoff delivery and the native fork request on a start command (call before storing it).
 func agentDecorate(q *Request, s, e, command doc) error {
-	e["continuationKey"] = keyOf(s)
+	e["continuationKey"] = continuationKeyOf(s)
 	payload := gm(command, "payload")
 	if f := gs(s, "forkNativeSessionId"); f != "" && gs(s, "nativeSessionId") == "" {
 		payload["fork"] = doc{"nativeSessionId": f, "argv": forkArgv(harnessOf(s), f)}
@@ -379,8 +379,8 @@ func agentKnownNative(q *Request, e doc) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	key := firstString(e["continuationKey"], keyOf(s))
-	if key == keyOf(s) {
+	key := firstString(e["continuationKey"], continuationKeyOf(s))
+	if key == continuationKeyOf(s) {
 		return gs(s, "nativeSessionId"), nil
 	}
 	return gs(gm(gm(s, "nativeSessions"), key), "nativeSessionId"), nil
@@ -402,14 +402,14 @@ func agentCaptureNative(q *Request, e doc, id string) error {
 			seen = i + 1
 		}
 	}
-	key := firstString(e["continuationKey"], keyOf(s))
+	key := firstString(e["continuationKey"], continuationKeyOf(s))
 	ns := gm(s, "nativeSessions")
 	if ns == nil {
 		ns = doc{}
 	}
 	ns[key] = doc{"nativeSessionId": id, "seen": seen, "capturedAt": now(), "executionId": e["id"]}
 	s["nativeSessions"] = ns
-	if key == keyOf(s) {
+	if key == continuationKeyOf(s) {
 		s["nativeSessionId"] = id
 		delete(s, "forkNativeSessionId")
 	}
@@ -535,7 +535,7 @@ func makeHandoff(q *Request, s doc, turns []doc, strategy, source string) (doc, 
 	for _, t := range turns {
 		ids = append(ids, t["executionId"])
 	}
-	h := doc{"id": uuid(), "sessionId": s["id"], "strategy": strategy, "source": source, "toKey": keyOf(s), "turns": ids, "text": renderHandoff(turns, strategy, source), "state": "pending", "createdAt": now()}
+	h := doc{"id": uuid(), "sessionId": s["id"], "strategy": strategy, "source": source, "toKey": continuationKeyOf(s), "turns": ids, "text": renderHandoff(turns, strategy, source), "state": "pending", "createdAt": now()}
 	s["pendingHandoffId"] = h["id"]
 	return h, putDoc(q, "handoff", h)
 }
@@ -590,7 +590,7 @@ func sessionTransition(q *Request, b doc) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	fromKey := keyOf(s)
+	fromKey := continuationKeyOf(s)
 	ns := clone(s["nativeSessions"])
 	nsd, _ := ns.(map[string]any)
 	if nsd == nil {
@@ -617,7 +617,7 @@ func sessionTransition(q *Request, b doc) (doc, error) {
 			next["account"] = acct
 		}
 	}
-	toKey := keyOf(next)
+	toKey := continuationKeyOf(next)
 	typ := "create_with_handoff"
 	if gs(s, "nativeSessionId") != "" {
 		from, to := sideOf(fromKey, gm(s, "agentConfig")), sideOf(toKey, profile)
