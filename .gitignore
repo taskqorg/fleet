@@ -30,3 +30,6 @@ go/coordinator/schema.sql
 
 # Shared rules checked out by CI (ci.yml); untracked there, it marked CI builds dirty in /api/health.
 .specq/
+
+# Orca worktree setup, local to each machine.
+orca.yaml
