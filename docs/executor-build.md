@@ -3,18 +3,13 @@
 Build: `(cd go && CGO_ENABLED=0 go build -o bin/fleet-executor ./executor)`.
 Checks: `(cd go && go test ./executor)`.
 
-Run locally with operator-supplied environment:
+Run locally against a local coordinator:
 
 ```sh
-FLEET_COORDINATOR_URL=http://127.0.0.1:8787 \
-FLEET_HOST_ID=mac \
-FLEET_DATA_DIR=/absolute/owned/fleet-data \
-FLEET_CODEX_BIN=/absolute/path/to/codex \
-FLEET_HOST_SECRET_FILE="$HOME/.config/fleet/host-secret" \
-go/bin/fleet-executor
+FLEET_COORDINATOR_URL=http://127.0.0.1:8787 FLEET_HOST_ID=mac FLEET_DATA_DIR=/absolute/owned/fleet-data go/bin/fleet-executor
 ```
 
-Production requires HTTPS and a dedicated private data directory. The token must be provided outside Git and never printed. Candidate launchd recipe: ProgramArguments contains the absolute binary; WorkingDirectory is the owned data directory; EnvironmentVariables contains these five settings supplied in a private plist; RunAtLoad=true and KeepAlive=true. Parent owns activation. No plist installed or service activated.
+Only `FLEET_HOST_ID` is required. Release defaults ([self-update §5](designs/fleet-self-update.md#5-config-defaults-and-env)): `FLEET_COORDINATOR_URL` `https://fleet.ufobe.com`; `FLEET_DATA_DIR` `~/.local/state/fleet/executor` (Linux) or `~/Library/Application Support/Fleet/executor` (macOS); `FLEET_HOST_SECRET_FILE` `~/.config/fleet/host-secret`; `FLEET_STORE_ENDPOINT_HOSTS` from `config/executor-defaults.json` of the release; `FLEET_CODEX_BIN` `codex` on `PATH`. Env values override them. The secret file stays outside Git and is never printed. Service units: [deploy](../deploy/README.md).
 
 ## Native selection
 
@@ -61,6 +56,6 @@ Final fake integration evidence directory before the private-directory mode chan
 
 Final rerun evidence: `/var/folders/sw/55r1dvwn2g30l77zs5nwp3_80000gn/T/fleet-fake-2y8kii0e`. Debug executable SHA256: `5e022086eec5ddf301f1cfee9497d13e9633887408669af8d19e880065ade8ac`. No installed/live binary was replaced.
 
-## Fetch a CI release manually (L2)
+## Releases
 
-CI release files and the fetch and verify steps: [executor delivery](designs/fleet-executor-delivery.md#fetch-a-ci-release-manually).
+Release files and updates: [executor delivery](designs/fleet-executor-delivery.md), [self-update](designs/fleet-self-update.md).

@@ -2,27 +2,50 @@
 
 Service files and scripts for running Fleet. Nothing here is applied automatically.
 
-* `build-release.sh <commit> <out-dir> [os/arch ...]`: one release tarball per target (`fleet-<commit>-<os>-<arch>.tgz` and `.sha256`) from a clean `git archive`. Every tarball has the same layout: `fleet-coordinator`, `fleet-gateway`, `fleet-executor` (static Go binaries), `dist/app/`, `config/`, `release.json`.
-* `install-release.sh <tarball> | --rollback`: verifies, unpacks into `~/releases/<name>/`, points `~/releases/current` at it (the old one becomes `previous`) and restarts the Fleet services installed on this host.
+* `build-release.sh <commit> <out-dir> <version> <previous> [os/arch ...]`: one release tarball per target (`fleet-<version>-<os>-<arch>.tgz`) and `SHA256SUMS` from a clean `git archive`; run by `.github/workflows/release.yml` and for local trials. Every tarball has the same layout: `fleet-coordinator`, `fleet-gateway`, `fleet-executor`, `fleet-update` (static Go binaries), `dist/app/`, `config/`, `deploy/`, `release.json` (`version`, `previous`, `commit`, `target`, `builtAt`).
+* `install-release.sh <tarball> | --rollback`: first install and manual recovery. Checks the tarball against `SHA256SUMS` next to it, selftests every binary, unpacks into `~/releases/<version>/`, points `~/releases/current` at it (the old one becomes `previous`; relative links) and restarts the Fleet services installed on this host.
 * `status.sh`: sourced by both scripts. When stdout is a terminal they print [OSC 7501 program status](https://www.superlogical.com/rex/docs/build/program-status): `state=working` with `progress`, then `done` or `error`, app `fleet-deploy`, base64 `msg`.
 * `infrastructure/`: PDS18 units following tight: the coordinator (`fleet.service.candidate`), the gateway and its socket, the Access origin guard (`fleet-access-guard.service`, which runs `fleet-gateway guard`), ClickHouse and Garage Quadlets, Postgres role setup (`fleet-postgres.sql`), backups, the root-owned `fleet-launch@.service` helper, and the Caddy and Cloudflare tunnel candidates. Files ending in `.candidate` are proposed, not installed.
-* `hosts/linux/fleet-executor.service`: the executor as a systemd user unit (PDS18, WSL).
-* `hosts/macos/`: launchd agents for the Mac (executor, Garage, cloudflared).
+  `fleet-update.service` and `.timer` run `fleet-update pds18` as root every 5 minutes; `fleet-executor-pds18.conf` points the PDS18 executor at its root-owned releases.
+* `hosts/linux/`: the executor and `fleet-update` (service and timer) as systemd user units (PDS18 executor, WSL).
+* `hosts/macos/`: launchd agents for the Mac (executor, `fleet-update`, Garage, cloudflared).
 
-Design: [data foundation](../docs/designs/fleet-data-foundation.md) Phase 0 and §10.
+Design: [data foundation](../docs/designs/fleet-data-foundation.md) Phase 0 and §10; [self-update](../docs/designs/fleet-self-update.md).
 
-## Runbook: PDS18, the owner's Mac, WSL
+## Releases
 
-Each host runs the binaries from `~/releases/current` of its service user. PDS18 runs the coordinator, the gateway, the guard and an executor; the Mac and WSL run an executor. Environment files under `~/.config/fleet/` stay on the host, mode 0600, and are never printed.
+The owner releases by tag: `git tag v<N>.<yymmdd>.<M> <commit on main> && git push origin v<N>.<yymmdd>.<M>`, with `yymmdd` the UTC date of the tag and `M` the sequence that day from 0. The release workflow waits for the commit's `build-test-design`, builds, checks migrations against the previous release and publishes on GitHub Releases: the tarballs, `SHA256SUMS`, `SHA256SUMS.sig` (Ed25519, key in environment `release`), `latest.json` and `provenance.sigstore.jsonl`. A failed gate is re-run from the Actions page; no new tag is needed. Every host then installs the release by itself ([self-update](../docs/designs/fleet-self-update.md)): PDS18 within 5 minutes, each other executor on its next timer run after the coordinator is healthy.
 
-1. **Take the release from CI**, never a local build ([infrastructure build](../docs/infrastructure-build.md)): the run of the push to `main` for the commit, `conclusion == success`. Download the artifact `fleet-release-<sha>` (`fleet-release.tgz`, linux/amd64) and, for the Mac, `fleet-go-<sha>`; check each `.sha256` and the release SHA-256 against the job summary. Rename the release to `fleet-<sha12>-linux-amd64.tgz` and write its `.sha256` again: `install-release.sh` names the release directory after the file, and the same name every time would replace the running release and break `previous`. CI builds no Mac tarball: pack `fleet-executor-darwin-arm64` and `fleet-gateway-darwin-arm64` from `fleet-go-<sha>` as `fleet-executor` and `fleet-gateway` into `fleet-<sha12>-darwin-arm64.tgz`. `deploy/build-release.sh` stays for local trials only. Copy `install-release.sh` and `status.sh` next to the tarball on each host.
-2. **Before PDS18**: `runuser -u postgres -- pg_dump -Fc -d fleet > /backup/fleet/pre-deploy/fleet-pre-<sha12>.dump` (as `postgres`; see the RLS note in the infrastructure build).
-3. **First install only**, per host (keep the old unit as `<unit>.pre-<sha12>`):
-   * PDS18, user `fleet`: copy `infrastructure/fleet.service.candidate` as `fleet.service`, `fleet-gateway.service`, `fleet-gateway.socket` and `fleet-access-guard.service` to `~/.config/systemd/user/`; write `coordinator.env`, `access-guard.env` (`FLEET_BROWSER_SECRET`) and `gateway.json` (see the unit's comment; `state_dir` is `<FLEET_GATEWAY_DIR>/state`); `systemctl --user daemon-reload && systemctl --user enable fleet fleet-gateway.socket fleet-gateway fleet-access-guard`. Caddy uses `infrastructure/fleet.caddy.candidate` (ports 9470 coordinator, 8742 gateway, 9471 guard). The `fleet` user runs no executor.
-   * PDS18 executor, user `fleet-agent` (the agents' user; it must not be able to replace its own executor): releases are root-owned in `/opt/fleet-agent/releases`. Its unit `~fleet-agent/.config/systemd/user/fleet-executor.service` keeps `EnvironmentFile=/home/fleet-agent/.config/fleet/executor-pds18.env` and runs `ExecStart=/opt/fleet-agent/releases/current/fleet-executor`.
-   * Mac, executor service user: install `hosts/macos/fleet-executor.plist` as its comment says and write `executor.env`, including a `PATH` line (launchd gives a bare one; `claude` and `ffmpeg` live in `/usr/local/bin` or `/opt/homebrew/bin`). Boot out any older executor agent first: the executor holds `executor.lock` in its data directory.
-   * WSL (reach it as `ssh desktop`, then `wsl -u alexk -- bash -lc '<command>'`; releases in `/home/alexk/releases`): set `systemd=true` in `/etc/wsl.conf`, then install `hosts/linux/fleet-executor.service` and the env file as in its comment (`ExecStart=%h/releases/current/fleet-executor`).
-   * Every executor env file: `FLEET_STORE_ENDPOINT_HOSTS` with the store tunnel hosts (`fleet-store-pds18.ufobe.com,fleet-store-mac.ufobe.com,fleet-store-windows.ufobe.com`). Without it the executor sends no Access headers to the stores, the edge answers 302 and uploads stay `pending`.
-4. **Install** on each host, PDS18 first: `install-release.sh <tarball>`. It stops on a checksum mismatch, a failed `fleet-gateway selftest` or, on PDS18, a failed gateway `/healthz` or coordinator `/api/health` within 30 s. PDS18 executor: as root, `FLEET_RELEASES=/opt/fleet-agent/releases install-release.sh <tarball>` (root has no user units, so it only switches `current`), then restart `fleet-executor` as `fleet-agent`.
-5. **Check**: on PDS18 `systemctl --user status fleet fleet-gateway fleet-access-guard` (as `fleet`) and `fleet-executor` (as `fleet-agent`); `curl -s http://127.0.0.1:9470/api/health` (public, no secrets) shows the coordinator's `commit`, `built` and `database: ok`; then check the API with the browser secret and the owner's `X-Fleet-Person` from the host (`POST /api/ops/hosts_list`: every host's `lastSeenAt` within seconds). Executors report no version; compare the running binary's path and SHA-256. Then open https://fleet.ufobe.com. On the Mac `launchctl print gui/$(id -u)/com.ufobe.fleet-executor`; on WSL `systemctl --user status fleet-executor`. A run token minted by `connections_token_create` reaches the gateway with the next snapshot, a few seconds later. `/api/stream` sends `: ping` every 25 s (`infrastructure/sse-smoke.sh`).
-6. **Roll back** a host: `deploy/install-release.sh --rollback` points `current` at the previous release and restarts the same services.
+## Check
+
+`POST /api/ops/hosts_list` (or the hosts page) shows per host `version`, `autoUpdate` and `update` (`{version, state, error, at}`; PDS18 adds `parts` for the coordinator side and its executor). `state` is `ok`, `pending` (the executor could not reach the coordinator yet), `held`, `error` (transient; the next run retries), `refused` (with reason `checksum`, `provenance`, `selftest` or `unhealthy`, the last one after a rollback) or `failed` (unhealthy with no previous release). A refused or failed update opens one needs-you question for the holder. `curl -s http://127.0.0.1:9470/api/health` on PDS18 shows the coordinator's `version` and `autoUpdate`. Logs: `journalctl -u fleet-update` (PDS18), `journalctl --user -u fleet-update` (WSL), `~/Library/Logs/fleet-update.log` (Mac).
+
+A holder holds updates with `hosts_update {id, autoUpdate: "off"}` or `autoUpdate: "<RFC 3339 time>Z"` (hold until then), and resumes with `"on"`.
+
+## First install: PDS18, the owner's Mac, WSL
+
+Once per host, from a published release, each host downloading it itself from GitHub (never copied through another host). Environment files under `~/.config/fleet/` stay on the host, mode 0600, and are never printed. Paths are the defaults; no other env line is needed.
+
+1. **Download** in an empty directory on the host (`t=linux-amd64` on PDS18 and WSL, `darwin-arm64` on the Mac):
+   ```sh
+   v=<version>; t=linux-amd64; u=https://github.com/taskqorg/fleet/releases/download/v$v
+   curl -fL -O "$u/fleet-$v-$t.tgz" -O "$u/SHA256SUMS"
+   tar -xzf "fleet-$v-$t.tgz" ./deploy/install-release.sh ./deploy/status.sh
+   ```
+2. **Executor hosts (Mac, WSL)**, as the executor service user:
+   * Stop and remove the old executor unit or agent first (the executor holds `executor.lock` in its data directory). Move the old data directory to the default path (Linux and WSL `~/.local/state/fleet/executor`, macOS `~/Library/Application Support/Fleet/executor`) with the executor stopped; the host secret goes to `~/.config/fleet/host-secret` (`scripts/host-secret.sh`).
+   * `~/.config/fleet/executor.env` holds one line, `FLEET_HOST_ID=<id>`.
+   * `deploy/install-release.sh fleet-$v-$t.tgz` (unpacks into `~/releases/$v/`).
+   * WSL (reach it as `ssh desktop`, then `wsl -u alexk -- bash -lc '<command>'`): `systemd=true` in `/etc/wsl.conf`, `loginctl enable-linger alexk`; copy `~/releases/current/deploy/hosts/linux/fleet-executor.service`, `fleet-update.service` and `fleet-update.timer` to `~/.config/systemd/user/`, then `systemctl --user daemon-reload && systemctl --user enable --now fleet-executor fleet-update.timer`.
+   * Mac: from `~/releases/current/deploy/hosts/macos/`, `fleet-executor.plist` and `fleet-update.plist` with `FLEET_HOME` replaced by the home directory into `~/Library/LaunchAgents/` as `com.ufobe.fleet-executor.plist` and `com.ufobe.fleet-update.plist`, then `launchctl bootstrap gui/$(id -u)` for each.
+3. **PDS18**:
+   * Before: `runuser -u postgres -- pg_dump -Fc -d fleet -f /backup/fleet/pre-deploy/fleet-pre-$v.dump`.
+   * User `fleet`: `deploy/install-release.sh fleet-$v-$t.tgz` (into `/home/fleet/releases/$v/`; restarts `fleet`, `fleet-gateway`, `fleet-access-guard` and waits for health). The coordinator side keeps its env files (`coordinator.env`, `access-guard.env`, `gateway.json`); updates never touch them. `loginctl enable-linger fleet`.
+   * PDS18 executor, user `fleet-agent`: as root, `FLEET_RELEASES=/opt/fleet-agent/releases deploy/install-release.sh fleet-$v-$t.tgz`; `executor.env` with `FLEET_HOST_ID=pds18`, data at `/home/fleet-agent/.local/state/fleet/executor`, secret at `/home/fleet-agent/.config/fleet/host-secret`; install `deploy/hosts/linux/fleet-executor.service` plus `deploy/infrastructure/fleet-executor-pds18.conf` as its drop-in `fleet-executor.service.d/pds18.conf`; `loginctl enable-linger fleet-agent`; restart `fleet-executor` as `fleet-agent`.
+   * Root: `install -d -m 0755 /opt/fleet/update /var/lib/fleet-update`, `install -m 0755 /opt/fleet-agent/releases/current/fleet-update /opt/fleet/update/fleet-update`, copy `deploy/infrastructure/fleet-update.service` and `.timer` to `/etc/systemd/system/`, `systemctl daemon-reload && systemctl enable --now fleet-update.timer`.
+4. **Delete** old `fleet-<sha12>-…` release directories, and old `<unit>.pre-*` copies once the new units run.
+5. **Check** with `hosts_list` as above: every host at `$v`. The first `fleet-update` run marks the installed release healthy (`update.state: ok`).
+
+## Manual rollback
+
+When `fleet-update` itself is broken: `deploy/install-release.sh --rollback` on the host (PDS18 executor: as root with `FLEET_RELEASES=/opt/fleet-agent/releases`) points `current` at `previous` and restarts the same services. Restore a database only by hand, from `/backup/fleet/pre-deploy/fleet-pre-<version>.dump`.

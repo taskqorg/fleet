@@ -9,7 +9,7 @@ Observed 2026-11-09. Public coordinator activation remains pending; guard prepar
 - Node v22.18.0 at `/home/fleet/runtime/node-v22.18.0-linux-x64/bin/node`, official archive SHA256 verified against official SHASUMS256.txt; readback as fleet succeeded. Runtime root-owned, not group/other writable.
 - `/home/fleet/.config/fleet/coordinator.env`, fleet-owned 0600: PORT, FLEET_DATABASE, FLEET_HOST_ID, FLEET_BROWSER_ORIGIN, FLEET_MAX_ARTIFACT_BYTES, FLEET_BROWSER_SECRET and FLEET_PEOPLE_FILE (host secrets are per host, see configuration.md Hosts). Values stay host-only. Port 9470, owner-mac, HTTPS origin, 16777216-byte artifact limit match coordinator contract.
 - Coordinator user unit installed and verified, inactive; entry `/home/fleet/releases/current/fleet-coordinator`. Parent owns candidate release validation/activation.
-- Release layout (docs/designs/fleet-stack.md): a release directory holds the Go binary `fleet-coordinator` (linux/amd64, `CGO_ENABLED=0`, schema embedded) the built app `dist/app` and `config/` (agents, projects, pipelines, lab, skills, `catalogue.json`), read relative to the working directory. No Node runtime is needed. Run it with WorkingDirectory unchanged: `ExecStart=/home/fleet/releases/current/fleet-coordinator`. CI builds it in the job that runs `pnpm test` against that binary, then, only on a push to `main` in `taskqorg/fleet`, uploads it as the artifact `fleet-release-<commit sha>` (`fleet-release.tgz` and its `.sha256`, also in the job summary). Pull request runs publish nothing. A deploy takes that artifact for the merged commit, never a local build or a pull request run. It checks that the run's event is `push`, its branch is `main` and its repository is `taskqorg/fleet`, and that the archive's SHA-256 matches the summary. PDS18 then runs exactly the release CI started and checked.
+- Release layout (docs/designs/fleet-stack.md): a release directory holds the Go binary `fleet-coordinator` (linux/amd64, `CGO_ENABLED=0`, schema embedded) the built app `dist/app` and `config/` (agents, projects, pipelines, lab, skills, `catalogue.json`), read relative to the working directory. No Node runtime is needed. Run it with WorkingDirectory unchanged: `ExecStart=/home/fleet/releases/current/fleet-coordinator`. Releases come from GitHub Releases, published by `.github/workflows/release.yml` on a `v*` tag of a green `main` commit; `fleet-update` installs them on PDS18 by itself ([self-update](designs/fleet-self-update.md), [deploy runbook](../deploy/README.md)). Pull request runs publish nothing.
 - Fleet Access hostname app `d96d8ee0-0150-4f70-85d5-ac9b88af12b1`, one exact owner-email allow policy privately matched to existing Dash owner policy and read back. No personal allowlist values stored here.
 - Exact Access bypass apps for `/api/hosts/poll`, `/api/hosts/receipts`, `/api/hosts/events`, `/api/hosts/artifacts`, each read back with one bypass policy. Access cannot restrict method; Caddy permits only exact POST paths past browser guard. Application must enforce dedicated bearer plus host/execution ownership.
 - Dedicated Fleet-only JWT verifier on `127.0.0.1:9471`, user unit `fleet-access-guard.service`, active MainPID 100480, NRestarts 0 at readback. Isolated `/home/fleet/runtime/guard-venv`; dependencies pinned in `deploy/infrastructure/guard-requirements.lock`. Pip bootstrap wheel SHA256 matched PyPI metadata. Guard source and runtime root-owned; configuration `/home/fleet/.config/fleet/access-guard.env` mode0600. No shared guard modified.
@@ -121,19 +121,10 @@ From migration 6, every Fleet table has `FORCE ROW LEVEL SECURITY`, so `pg_dump`
 ## API key connections and fleet-gateway
 
 - Key values: `/home/fleet/.config/fleet/secrets/connections/<connection>/<fingerprint>` (fleet, 0600), backed up encrypted by `fleet-backup.sh` (`backup-age.env`). The Tavily keys were moved there from Pipe on 2026-11-10 ([configuration](configuration.md#coordinator-settings-api-keys)).
-- `fleet-gateway` runs as user units of `fleet` (`fleet-gateway.socket` on `127.0.0.1:8742`, `fleet-gateway.service`), binary `/home/fleet/runtime/fleet-gateway` from the CI `gateway-release` artifact, config `/home/fleet/.config/fleet/gateway.json`; the coordinator sets `FLEET_GATEWAY_DIR` and `FLEET_GATEWAY_URL`.
+- `fleet-gateway` runs as user units of `fleet` (`fleet-gateway.socket` on `127.0.0.1:8742`, `fleet-gateway.service`), binary `/home/fleet/releases/current/fleet-gateway` from the release, config `/home/fleet/.config/fleet/gateway.json`; the coordinator sets `FLEET_GATEWAY_DIR` and `FLEET_GATEWAY_URL`.
 - Remote hosts call `https://fleet.ufobe.com/v1/call/...`: Cloudflare Access app "Fleet gateway" (path `/v1/call`) admits only the `fleet-machines` service token; Caddy forwards the path to the gateway.
 - Pipe (its read lane, grants, units and public route) was deleted in stage C4 of [fleet-connections.md](designs/fleet-connections.md).
 
-## Executor release files (L2)
+## Executor release files
 
-The `executor-release` CI matrix publishes native Linux x86_64 and macOS arm64
-binaries plus adjacent SHA-256 files, as separate Actions artifacts beside the
-coordinator artifact. PR runs publish candidates for qualification; main push
-runs supply manually selected host files. See [manual download and verification](executor-build.md#fetch-a-ci-release-manually-l2).
-The matrix summary records build seconds and file bytes per target.
-Retention is the same default as the coordinator artifact. Expiry removes the
-ability to fetch that revision from that run; lasting publication remains stack
-question 7. `deploy/build-release.sh` continues to pack the coordinator only:
-executor files come from the native CI matrix, not the coordinator's build host.
-No deployment or auto-update is added.
+Every release tarball carries the executor and `fleet-update` next to the coordinator ([executor delivery](designs/fleet-executor-delivery.md)).
