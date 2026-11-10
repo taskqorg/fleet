@@ -1,1 +1,31 @@
-{"FLEET_CONNECTIONS_DIR":"/home/fleet/.config/fleet/connections","layout":{"<connection>/id_ed25519":"private deploy key, mode 0600, owner = executor user","known_hosts":"pinned host keys (StrictHostKeyChecking=yes)"},"connections":{"fleet-hello-world":"<dir>/fleet-hello-world/id_ed25519","fleet-hello-world-alt":"<dir>/fleet-hello-world-alt/id_ed25519"}}
+{
+ "FLEET_CONNECTIONS_DIR": "/home/fleet/.config/fleet/connections",
+ "layout": {
+  "<connection>/id_ed25519": "private deploy key, mode 0600, owner = executor user",
+  "known_hosts": "pinned host keys (StrictHostKeyChecking=yes)",
+  "<connection>/connection.json": "connection record, mode 0600, owner = executor or coordinator user: {clientPath, clientSha256, pipeConfigPath, tools}; paths and the client hash only, the token stays in pipeConfigPath"
+ },
+ "connections": {
+  "fleet-hello-world": "<dir>/fleet-hello-world/id_ed25519",
+  "fleet-hello-world-alt": "<dir>/fleet-hello-world-alt/id_ed25519"
+ },
+ "pipe-read": {
+  "record": "<dir>/pipe-read/connection.json",
+  "fields": {
+   "clientPath": "Pipe's client library (assetq scripts/pipe_mcp.py)",
+   "clientSha256": "SHA-256 of that file; the client refuses any other",
+   "pipeConfigPath": "Pipe client config {url, token, access_file?}, mode 0600",
+   "tools": [
+    "web_search",
+    "web_extract"
+   ]
+  },
+  "endpoints": {
+   "pds18": "http://127.0.0.1:8741 (loopback; the coordinator runs api steps here)",
+   "owner-mac": "https://pipe.ufobe.com (guarded; access_file)",
+   "windows": "https://pipe.ufobe.com (guarded; access_file)"
+  },
+  "grants": "profiles list it in connections[]; api steps name it in connection",
+  "costUnit": "credits (Pipe usage.credits)"
+ }
+}

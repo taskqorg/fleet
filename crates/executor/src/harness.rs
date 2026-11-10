@@ -214,8 +214,23 @@ fn command_registry(
         let user = unsafe { std::ffi::CStr::from_ptr((*passwd).pw_name) }.to_str().map_err(|_| fail("invalid host user metadata"))?;
         c.env("USER", user).env("LOGNAME", user);
         if let Some(credential_home) = credential_home { c.env("HOME", credential_home); }
+        // Skills (Lab Stage 2): written as a local plugin and loaded with --plugin-dir; slash commands stay disabled otherwise.
+        let skills: Vec<&Value> = p["skills"].as_array().into_iter().flatten().collect();
+        if skills.is_empty() {
+            c.arg("--disable-slash-commands");
+        } else {
+            let plugin = dir.join(".fleet-skills");
+            let _ = std::fs::remove_dir_all(&plugin);
+            std::fs::create_dir_all(plugin.join(".claude-plugin"))?;
+            std::fs::write(plugin.join(".claude-plugin/plugin.json"), json!({"name":"fleet-skills","version":"1.0.0","description":"Skills granted by the Fleet profile"}).to_string())?;
+            for s in &skills {
+                let id = s["id"].as_str().filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')).ok_or(fail("invalid skill id"))?;
+                std::fs::create_dir_all(plugin.join("skills").join(id))?;
+                std::fs::write(plugin.join("skills").join(id).join("SKILL.md"), s["text"].as_str().unwrap_or(""))?;
+            }
+            c.arg("--plugin-dir").arg(&plugin);
+        }
         c.env("CLAUDE_CONFIG_DIR", nh).args([
-            "--disable-slash-commands",
             "-p",
             "--output-format",
             "stream-json",
@@ -242,10 +257,11 @@ fn command_registry(
         }) {
             return Err(fail("unsupported Claude tool grant"));
         }
-        let tools = p["tools"]
+        let mut tools = p["tools"]
             .as_array()
             .map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>())
             .unwrap_or_default();
+        tools.extend(claude_extra_tools(p));
         c.args(["--tools", &tools.join(",")]);
         if let Some(n) = native {
             if !safe_native_id(n) { return Err(fail("invalid native session id")); }
@@ -316,7 +332,15 @@ pub fn claude_placement_here() -> std::result::Result<&'static str, &'static str
     let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
     claude_placement(std::env::var("FLEET_CLAUDE_PLACEMENT").ok().as_deref(), std::env::consts::OS, &release)
 }
-pub fn claude_mcp(c: &mut Command, profile: &Value, servers: &Value) {
+/// Built-in Claude tools a run adds to its profile's grant: web only with `webRoute: builtin` (R3.4; the default route is the
+/// granted connections), Skill when the profile grants skills.
+pub fn claude_extra_tools(p: &Value) -> Vec<&'static str> {
+    let mut t = vec![];
+    if p["webRoute"] == "builtin" { t.extend(["WebSearch", "WebFetch"]); }
+    if p["skills"].as_array().is_some_and(|s| !s.is_empty()) { t.push("Skill"); }
+    t
+}
+pub fn claude_mcp(c: &mut Command, profile: &Value, servers: &Value, extra: &[String]) {
     let mut allowed: Vec<String> = profile["tools"]
         .as_array()
         .into_iter()
@@ -324,6 +348,7 @@ pub fn claude_mcp(c: &mut Command, profile: &Value, servers: &Value) {
         .filter_map(Value::as_str)
         .map(str::to_owned)
         .collect();
+    allowed.extend(extra.iter().cloned());
     if servers.get("design-rules").is_some() {
         allowed.push("mcp__design-rules__get_design_rules".into());
     }

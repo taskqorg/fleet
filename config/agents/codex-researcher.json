@@ -1,0 +1,8 @@
+{
+  "id": "codex-researcher",
+  "model": "gpt-6.1-sol",
+  "effort": "low",
+  "instructions": "Answer the research task from the given inputs and, when needed, the granted web tools. Cite every source by URL. Write results in output/. Do not use subagents.",
+  "mcpServers": [],
+  "connections": ["pipe-read"]
+}

@@ -178,9 +178,13 @@ Experiment states: `draft → running ⇄ paused → stopped | done`. Variants a
 
 *   Every step writes an artifact `output.json` (structured result) plus any files. The next step gets all previous steps' artifacts in `FLEET_INPUT_DIR/<step id>/`.
 *   References: `${example.<field>}` and `${steps.<id>.output.<json path>}`, resolved by the coordinator before the step starts, from the example and from earlier `output.json`. A missing reference fails the step with `problem: ref:<path>`; no default.
-*   `api` step: `{connection, tool, arguments, mode: sync|job}` (default `sync`). `job`: submit, store job ID in the step's `execution.data.jobId`, poll on each reconcile of the experiment; after a restart, polling resumes from that field. Uncertain outcome is "unknown, never replay".
-*   `agent` step: profile + variant overrides.
-*   `script` step: new executor command kind `script`: own process group (stop kills the group), `FLEET_INPUT_DIR`, `FLEET_OUTPUT_DIR`, outputs collected as artifacts, optional `timeout_ms`.
+*   `api` step: `{connection, tool, arguments, mode: sync|job}` (default `sync`). `job`: the submit call's output carries `jobId`, stored in the step's `execution.data.jobId`; polling calls tool `job_status` `{jobId}` on the same connection, answer `{state: running|succeeded|failed, output, usage}`. The coordinator polls on every pipeline tick (every 5 s, and on every receipt; the experiment reconcile joins in Stage 3); after a restart, polling resumes from that field. Uncertain outcome is "unknown, never replay": a sync call cut by a coordinator restart ends `unknown:interrupted`.
+*   `agent` step: `{profile, prompt}` + variant overrides. The step's run is an ordinary agent execution (parent = the step) on the host its account binding picks.
+*   Variant overrides in Stage 2: `profile`, `model`, `skills`, `prompt`, `web_route`, `account` (agent steps), `host` (script steps).
+*   Inputs reach agent and script steps as start-command `inputs` `[{artifactId, path}]`; the executor downloads them into `FLEET_INPUT_DIR` before the step starts, and the host may read exactly those artifacts. Example `inputs` are staged under `example/`; an example's `references` never enter a run.
+*   `script` step: `{command, timeout_ms?, host?}`, executor command kind `script` (Stage 0): own process group (stop kills the group), `FLEET_INPUT_DIR`, `FLEET_OUTPUT_DIR`, outputs collected as artifacts, optional `timeout_ms`. Host: the step's or override's `host`, else the coordinator's default host.
+*   An agent or script step's `output.json` is the one it wrote; without one the coordinator writes `{files: [...]}`.
+*   A missing reference fails the step with `problem: ref:<path>`.
 *   Failed step stops later steps; trial keeps its reason.
 *   Version-1 files are rewritten to v2; no v1 reader stays (R3.1).
 
@@ -188,14 +192,15 @@ Experiment states: `draft → running ⇄ paused → stopped | done`. Variants a
 
 Fleet ships one connection client, `connection_call.py` (today's `pipe_search.py`, generalized), with two entry points:
 
-*   **CLI** (coordinator-side `api` step): `connection_call.py call <connection> <label>`, body on stdin.
-*   **MCP** (agent-side): `connection_call.py mcp <connection>`. The executor adds it to the harness MCP config for each connection the profile grants and allowlists `mcp__<connection>__<tool>`. This is the "MCP served from Fleet infrastructure" of R3.2.
+*   **CLI** (coordinator-side `api` step): `connection_call.py call <record> <label> <calls dir> <tool>`, arguments on stdin, the call line (with `output`) on stdout.
+*   **MCP** (agent-side): `connection_call.py mcp <record> <label> <calls dir>`. The executor adds it to the harness MCP config for each connection the profile grants and allowlists `mcp__<connection>__<tool>`. This is the "MCP served from Fleet infrastructure" of R3.2.
 
-Both entry points send label = the current step's execution ID (UUID; fits Pipe's 64-char `A-Za-z0-9._:-` rule), and both append one line per call to `$FLEET_OUTPUT_DIR/.connection-calls.jsonl`: `{tool, request_id, outcome, error_code, usage}`. The coordinator (API steps) or executor upload (agent steps) turns each line into a `tool_run` child with `connection_cost` from `usage.credits`, basis `measured`. No pull-back from Pipe, no "unmatched" state. Spend lands at step completion, before the step's state change triggers reconcile.
+Both entry points send label = the current step's execution ID (`<run>:step:<i>`; fits Pipe's 64-char `A-Za-z0-9._:-` rule), and both append one line per call to `<calls dir>/.connection-calls.jsonl` (for an agent: `$FLEET_OUTPUT_DIR`): `{tool, request_id, label, outcome: ok|error|unknown, error_code, usage}`. When the step completes, the coordinator turns each line into a `tool_run` child of the step with `connection_cost` `{unit: credits, credits, connection}` from `usage.credits`, basis `measured` (`unavailable` when Pipe reported no usage). API steps read the client's file directly; agent steps' file is uploaded with the other outputs, so both paths go through the same coordinator code. No pull-back from Pipe, no "unmatched" state. Spend lands at step completion, before the step's state change triggers reconcile.
+*   The connection record is a private host file `<FLEET_CONNECTIONS_DIR>/<connection>/connection.json` `{clientPath, clientSha256, pipeConfigPath, tools}`: paths and the client hash, never a credential (the Pipe token stays in `pipeConfigPath`). The coordinator reads its own host's record for API steps (env `FLEET_CONNECTIONS_DIR`, replacing `FLEET_PIPE_CONNECTION_FILE`); the program worker's `pipe-search` route is removed.
 
-*   The client checks the SHA-256 of Pipe's client library against `clientSha256` in the connection record before loading it.
-*   Errors come from Pipe's JSON `{error, reason}` body. `queue-full`, 429, provider quota, `no-usable-key` → `execution.problem = infra:<code>`; trial excluded from comparison. `unknown` is never retried automatically.
-*   Claude built-in web is off unless the variant sets `web_route: builtin` (R3.4). Each trial records its web route.
+*   The client checks the SHA-256 of Pipe's client library against `clientSha256` in the connection record and loads the module from the bytes it hashed.
+*   Errors come from Pipe's JSON `{error, reason}` body (`http-<status>` when the body is the provider's, as for 429, 432, 433). `queue-full`, `http-429`/`432`/`433`, `no-usable-key`, `key-disabled-*`, `provider-unreachable`, `unauthenticated`, an unreachable Pipe, a missing record or a hash mismatch → `execution.problem = infra:<code>`; trial excluded from comparison. `provider-body`, `provider-timeout`, a client timeout or an unreadable reply → outcome `unknown`, problem `unknown:<code>`, never retried. Other failures are `step:<code>`.
+*   Claude built-in web is off unless the variant sets `web_route: builtin` (R3.4): Fleet's Claude already runs with a `--tools` allowlist from the profile, which never includes `WebSearch` or `WebFetch`; `builtin` adds both. Codex gets `web_search="disabled"`, or `"live"` with `builtin`. Each trial records its web route (`webRoute` in the start command, `overrides` on the run).
 *   The Pipe token is read from a host-only file at run time. An agent on the same host could read it and send calls with any label; acceptable for the prototype, closed by per-run tokens (R3.3, `connections` design).
 
 ### Use-case registry and examples
@@ -468,26 +473,31 @@ Stage 1 exit: drift check flags a changed source; at least five `work` examples 
 
 *   v2 runner: ordered steps, `output.json` + artifacts, reference resolution, `sync` and `job` modes, typed `pipeline_run` / `pipeline_step` / `tool_run` rows, `infra:` problems from Pipe's JSON body. `projects.ts` `direct_search` and `pipeline_run` operations call it; no v1 path.
 
+*   Added while building Stage 2: `POST /api/pipelines/:id/runs` `{requestId, projectId?, exampleArtifactId? | example?, overrides?}` → run (same `requestId` returns the same run; an example artifact must be approved). The runner (`pipelines.ts`) drives a run forward on creation, on every receipt of a step's execution, on start and on the tick; `GET /api/pipeline-runs/:id` reads it. A pipeline step's agent or script execution links to the step through `pipelineStepId`.
+
 #### 21. `packages/coordinator/connection_call.py` (Create), `pipe_search.py` (Delete)
 
 *   CLI and MCP entry points, tool name parameter, label, hash pin check, `.connection-calls.jsonl`.
 
 #### 22. `crates/executor/src/harness.rs`, `native.rs`, `upload.rs` (Modify)
 
-*   Per-execution MCP config adds `connection_call.py mcp <connection>` for each granted connection; allowlist its tools; Claude built-in web off unless `web_route: builtin`. Install profile `skills`: Claude via `--add-dir <skills dir>` plus enabling skills in its settings; Codex via `AGENTS.md` include in the worktree. Upload `.connection-calls.jsonl` lines as `tool_run` children.
+*   Per-execution MCP config adds `connection_call.py mcp <record> <label> <output dir>` (the client embedded in the executor) for each connection the profile grants; allowlist its tools (`tools` of the host record). Claude built-in web off unless `web_route: builtin`. Install profile `skills` (`config/skills/<id>/SKILL.md`, sent in the start command): Claude via a local plugin (`--plugin-dir`, with the `Skill` tool; Fleet's `--setting-sources ''` would ignore skills found through `--add-dir`; `--disable-slash-commands` stays only when no skill is granted, since it turns skills off, so a run with skills also sees Claude's own built-in skills); Codex via the developer instructions, because Fleet's Codex disables native skills and `AGENTS.md` discovery. `.connection-calls.jsonl` is uploaded with the other outputs; the coordinator makes the `tool_run` rows (item 21). Step inputs are downloaded before the start (item 20).
 
 #### 23. `config/pipelines/hello-search.json`, `search-basic.json` (Modify); `web-research.json`, `draft-examples.json` (Create)
 
+*   `web-research`: search, read (first result), summary (agent `codex-researcher`, granted `pipe-read`), check (script). New profiles `codex-researcher`, `claude-researcher`, `codex-example-drafter`.
+*   `draft-examples`: an agent drafts example files, a script checks their shape. Turning drafted files into proposed example artifacts with a `pass_fail` rating question needs the rating answers of Stage 3 (items 27, 28) and lands there.
+
 #### 24. `config/connections.example.json` (Modify)
 
-*   Add `pipe-read`: endpoints per host, grants, cost unit `credits`, `clientSha256`.
+*   Add `pipe-read`: endpoints per host, grants, cost unit `credits`, `clientSha256`, the record path and fields.
 
 #### 25. Tests (Create)
 
 *   `tests/coordinator/pipelines.test.ts`: failed step stops later steps; missing reference fails with `ref:`; job resumes after restart; infra codes classified (`queue-full`, 429, `no-usable-key`, `unknown` not retried).
 *   `tests/coordinator/connection_call.test.ts`: hash mismatch refuses to load; both entry points write identical call lines.
 
-Stage 2 exit: `web-research` completes on Mac and WSL; every Pipe call of an API step and of an agent step appears as a `tool_run` with credits.
+Stage 2 exit: `web-research` completes on Mac and WSL (WSL needs a logged-in Claude or a provisioned Codex there); every Pipe call of an API step and of an agent step appears as a `tool_run` with credits.
 
 ### Stage 3: experiments and screen
 

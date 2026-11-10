@@ -85,7 +85,7 @@ def main():
     while True:
         commands=api('poll',{'hostId':config['hostId'],'platform':sys.platform})['commands']
         for c in commands:
-            if c['kind'] not in ['delivery-step','pipe-search','account-inspect']: raise RuntimeError('Unexpected command kind')
+            if c['kind'] not in ['delivery-step','account-inspect']: raise RuntimeError('Unexpected command kind')
             body={'hostId':config['hostId'],'executionId':c['executionId'],'commandId':c['id']}
             state=journal/(c['id']+'.json')
             if state.exists():
@@ -113,13 +113,6 @@ def main():
                         api('receipts',{**body,'accountObservation':{'accountId':p['accountId'],'binding':p['binding'],'platform':host_platform(),**result}})
                         result={**result,'accountId':p['accountId'],'binding':p['binding'],'authChanged':False}
                     save(body,'account-readiness.json',json.dumps(result).encode(),'application/json')
-                    shutil.rmtree(workspace);state.write_text(json.dumps({'state':'completed'}));api('receipts',{**body,'status':'completed'});continue
-                if c['kind']=='pipe-search':
-                    effect=True
-                    proc=subprocess.run(['python3',config['pipeWrapper'],config['pipeConnection'],p['runId']],input=json.dumps(p['arguments']).encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=48,env={'PATH':os.environ['PATH']})
-                    if proc.returncode:raise RuntimeError('Pipe host client failed')
-                    value=json.loads(proc.stdout)
-                    save(body,'pipe-response.json',json.dumps(value).encode(),'application/json')
                     shutil.rmtree(workspace);state.write_text(json.dumps({'state':'completed'}));api('receipts',{**body,'status':'completed'});continue
                 project=config['projects'][p['projectId']]
                 if p['kind'] not in config['kinds']:raise RuntimeError('Worker kind denied')

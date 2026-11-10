@@ -1,0 +1,7 @@
+{
+  "id": "codex-example-drafter",
+  "model": "gpt-6.1-sol",
+  "effort": "low",
+  "instructions": "Draft Lab examples exactly in the requested format. Write only the requested files in output/. Do not use subagents.",
+  "mcpServers": []
+}

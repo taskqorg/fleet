@@ -4,9 +4,9 @@ cpSync('config/agents','dist/config/agents',{recursive:true});
 mkdirSync('dist/contracts',{recursive:true});
 cpSync('contracts/lab-config.json','dist/contracts/lab-config.json');
 
-for(const name of ['projects','pipelines','lab'])cpSync('config/'+name,'dist/config/'+name,{recursive:true});
+for(const name of ['projects','pipelines','lab','skills'])cpSync('config/'+name,'dist/config/'+name,{recursive:true});
 cpSync('config/catalogue.json','dist/config/catalogue.json');
-cpSync('packages/coordinator/pipe_search.py','dist/packages/coordinator/pipe_search.py');
+cpSync('packages/coordinator/connection_call.py','dist/packages/coordinator/connection_call.py');
 
 cpSync('packages/coordinator/delivery_worker.py','dist/packages/coordinator/delivery_worker.py');
 cpSync('packages/coordinator/db','dist/packages/coordinator/db',{recursive:true});

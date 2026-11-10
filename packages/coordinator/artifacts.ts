@@ -196,6 +196,12 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
   const hash=(await import('node:crypto')).createHash('sha256').update(bytes).digest('hex'),key=keyOf({project_id:projectId,scope,content_hash:hash} as ArtifactRow);
   const exists=await s3(target).head(target.bucket,key).then(h=>h!==null,()=>false);if(!exists)await s3(target).put(target.bucket,key,bytes,mediaType);
   return {target,hash}}
+ // An output the coordinator writes for an execution (pipeline step output.json, example inputs): stored and verified at once.
+ async function saveObject(o:{projectId:string|null,scope:'lab'|'prod',executionId:string,name:string,bytes:Buffer,mediaType:string}){
+  const w=await writeObject(o.projectId,o.scope,o.bytes,o.mediaType)??fail(409,'No reachable store in the project locations'),id=randomUUID();
+  await store.tx(async()=>{await store.query("INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'stored')",[id,o.projectId,o.scope,w.hash,o.bytes.length,o.mediaType,o.name,o.executionId]);
+   await store.query("INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES($1,$2,$3,'verified',now())",[id,w.target.id,o.projectId])});
+  return {id,sha256:w.hash}}
  // Backfill (Phase 3 item 26c): base64 documents move to a store of their project's locations, one at a time, idempotently.
  // The coordinator computed the hash itself, so the object is written straight to its content key when that key is absent.
  async function backfill(limit=50){let moved=0;
@@ -206,6 +212,6 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
     await store.query("INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) SELECT id,$2,$3,'verified',now() FROM artifact WHERE legacy_id=$1 ON CONFLICT DO NOTHING",[d.id,target.id,projectId]);
     await store.query("DELETE FROM document WHERE kind='artifact' AND id=$1",[d.id])});moved++}
   return moved}
- return {backfill,writeObject,reserve,parts,commit,renew,declare,verified,read,readBuffer,get,list,purge,expireLeases,requirement,adapter,s3,presign,keyOf,stagingOf,row,select,PART_SIZE};
+ return {backfill,writeObject,saveObject,reserve,parts,commit,renew,declare,verified,read,readBuffer,get,list,purge,expireLeases,requirement,adapter,s3,presign,keyOf,stagingOf,row,select,PART_SIZE};
 }
 export type Artifacts=ReturnType<typeof artifactModel>;

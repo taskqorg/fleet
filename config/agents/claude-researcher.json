@@ -1,0 +1,11 @@
+{
+  "id": "claude-researcher",
+  "harness": "claude",
+  "model": "sonnet",
+  "effort": null,
+  "instructionRole": "system",
+  "instructions": "Answer the research task from the given inputs and, when needed, the granted web tools. Cite every source by URL. Write results in output/. Do not spawn subagents.",
+  "mcpServers": [],
+  "tools": ["Read", "Edit", "Write", "Bash", "Glob", "Grep"],
+  "connections": ["pipe-read"]
+}

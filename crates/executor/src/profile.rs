@@ -168,6 +168,36 @@ pub fn mcp_servers(v: &Value) -> Value {
     }
     servers
 }
+/// Connection client (docs/designs/fleet-lab.md, Connections): the same file the coordinator runs for api steps.
+pub const CONNECTION_CLIENT: &str = include_str!("../../../packages/coordinator/connection_call.py");
+/// A granted connection's host record `<FLEET_CONNECTIONS_DIR>/<connection>/connection.json` (private, owned by the executor
+/// user) and the tool names it serves. The record holds file paths and the client hash, never a credential.
+pub fn connection_record(dir: &Path, connection: &str) -> Result<(std::path::PathBuf, Vec<String>), String> {
+    use std::os::unix::fs::MetadataExt;
+    if connection.is_empty() || !connection.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
+        return Err("invalid connection id".into());
+    }
+    let path = dir.join(connection).join("connection.json");
+    let m = std::fs::symlink_metadata(&path).map_err(|_| format!("connection {connection} not configured on this host"))?;
+    if !m.is_file() || m.uid() != unsafe { libc::geteuid() } || m.mode() & 0o077 != 0 {
+        return Err(format!("connection {connection} record must be a private file of the executor user"));
+    }
+    let v: Value = serde_json::from_slice(&std::fs::read(&path).map_err(|e| e.to_string())?).map_err(|_| format!("connection {connection} record invalid"))?;
+    let tools: Vec<String> = v["tools"].as_array().into_iter().flatten().filter_map(Value::as_str)
+        .filter(|t| !t.is_empty() && t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')).map(str::to_owned).collect();
+    if tools.is_empty() { return Err(format!("connection {connection} lists no tools")); }
+    Ok((path, tools))
+}
+/// Skill text appended to Codex developer instructions (Fleet's Codex runs with skill and AGENTS.md discovery disabled).
+pub fn with_skills(v: &Value, skills: &Value) -> Value {
+    let mut out = v.clone();
+    let mut text = v["instructions"].as_str().unwrap_or("").to_string();
+    for s in skills.as_array().into_iter().flatten() {
+        if let (Some(id), Some(body)) = (s["id"].as_str(), s["text"].as_str()) { text.push_str(&format!("\n\n# Skill: {id}\n\n{body}")); }
+    }
+    out["instructions"] = json!(text);
+    out
+}
 // JSON string quoting is also valid TOML basic-string quoting for these values.
 pub fn apply(c: &mut Command, v: &Value) {
     c.args([
@@ -200,6 +230,28 @@ pub fn prepare(_dir: &Path, v: &Value) -> Result<Value, Box<dyn std::error::Erro
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn connection_records_skills_and_web_route() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("fleet-conn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("pipe-read")).unwrap();
+        let rec = dir.join("pipe-read/connection.json");
+        std::fs::write(&rec, r#"{"clientPath":"/x","clientSha256":"0","pipeConfigPath":"/y","tools":["web_search","web_extract","bad tool"]}"#).unwrap();
+        std::fs::set_permissions(&rec, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(connection_record(&dir, "pipe-read").unwrap_err().contains("private"));
+        std::fs::set_permissions(&rec, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let (path, tools) = connection_record(&dir, "pipe-read").unwrap();
+        assert_eq!((path, tools), (rec, vec!["web_search".to_string(), "web_extract".to_string()]));
+        assert!(connection_record(&dir, "../etc").is_err());
+        assert!(connection_record(&dir, "absent").unwrap_err().contains("not configured"));
+        let v = with_skills(&json!({"instructions":"base"}), &json!([{"id":"s1","text":"do it"}]));
+        assert_eq!(v["instructions"], "base\n\n# Skill: s1\n\ndo it");
+        assert!(CONNECTION_CLIENT.contains("def main(argv)"));
+        assert!(crate::harness::claude_extra_tools(&json!({})).is_empty());
+        assert_eq!(crate::harness::claude_extra_tools(&json!({"webRoute":"builtin","skills":[{"id":"s"}]})), vec!["WebSearch", "WebFetch", "Skill"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     #[test]
     fn scoped_claude_and_antigravity_settings() {
         let mut c: Value =
