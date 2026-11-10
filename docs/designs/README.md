@@ -6,6 +6,8 @@ Technical designs, briefs and their reviews. A design here is accepted direction
 * `fleet-operator-app.md`: the operator web app and its live change feed.
 * `fleet-view-urls-and-list-path.md`: view URLs and the list path.
 * `fleet-lab.md`: the Fleet Lab (experiments, examples, evaluators, Promote) in stages; `lab-brief.md` is its brief and `reviews/fleet-lab/` its review.
+* `fleet-people-access.md`: people, identity, per-host secrets, holders, subscriptions, take, dispatch, intake, readings and budgets. `people-access-brief.md` is its brief; `reviews/people-access/` holds the terms research and the review.
+* `fleet-connections.md`: API key connections, the Fleet gateway copied from Pipe's read lane, per-run tokens, call methods and deleting Pipe.
 * `legacy-inventory.md`: what the removed legacy pages did and which app section rebuilds each gap.
 * `entity-ids-brief.md`: human entity codes such as `T-FLT-42`.
 * `web-stack-brief.md`: front-end stack choice.
