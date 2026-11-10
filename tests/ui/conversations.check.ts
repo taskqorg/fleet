@@ -44,10 +44,11 @@ for (const [sid, x, word] of [['task-a', 'ta1', 'Alpha'], ['task-b', 'tb1', 'Bra
 // Results (Stage 4): rows in the artifact table for the list, legacy documents (bytes inline) for the viewer.
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 // An interactive result: its script runs, but on an opaque origin (no cookies, no parent access, no network).
-const PAGE_HTML = `<h1>hi</h1><script>document.body.dataset.ran='1';try{document.cookie;document.body.dataset.cookie='readable'}catch(e){document.body.dataset.cookie='blocked'}try{window.top.x=1}catch(e){document.body.dataset.top='blocked'}fetch('/api/ops/me',{method:'POST'}).then(()=>{document.body.dataset.net='open'},()=>{document.body.dataset.net='blocked'})</script>`;
+const PAGE_HTML = `<h1>hi</h1><img id="logo" src="logo.svg"><script>document.body.dataset.ran='1';try{document.cookie;document.body.dataset.cookie='readable'}catch(e){document.body.dataset.cookie='blocked'}try{window.top.x=1}catch(e){document.body.dataset.top='blocked'}fetch('/api/ops/me',{method:'POST'}).then(()=>{document.body.dataset.net='open'},()=>{document.body.dataset.net='blocked'})</script>`;
 const LOG = Array.from({ length: 6000 }, (_, i) => `line ${i} of the build log`).join('\n');
 await store.put('artifact', { id: 'shot-1', executionId: 'x1', sessionId: S, path: 'screenshot.png', mediaType: 'image/png', size: Buffer.from(PNG, 'base64').length, contentBase64: PNG });
 await store.put('artifact', { id: 'log-1', executionId: 'x1', sessionId: S, path: 'build.log', mediaType: 'text/plain', size: Buffer.byteLength(LOG), contentBase64: Buffer.from(LOG).toString('base64') });
+await store.put('artifact', { id: 'logo-1', executionId: 'x1', sessionId: S, path: 'logo.svg', mediaType: 'image/svg+xml', size: 104, contentBase64: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle cx="10" cy="10" r="9"/></svg>').toString('base64') });
 await store.put('artifact', { id: 'page-1', executionId: 'x1', sessionId: S, path: 'index.html', mediaType: 'text/html', size: PAGE_HTML.length, contentBase64: Buffer.from(PAGE_HTML).toString('base64') });
 for (const [i, st] of ['stored', 'pending', 'failed'].entries()) await store.query("INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES($1,null,'prod',$2,$3,$4,$5,'x1',$6)", ['row-' + i, 'h' + i, 10 + i, i ? 'text/plain' : 'image/png', `result-${i}.${i ? 'txt' : 'png'}`, st]);
 await store.tasks.ask({ kind: 'agent_question', text: 'Use Postgres 17?', options: ['yes', 'no'], executionId: 'x1', sessionId: S, askedBy: 'agent' });
@@ -189,6 +190,7 @@ try {
   const frame = p.frameLocator('.av-frame iframe');
   check(await until(async () => await frame.locator('body[data-ran="1"]').count() === 1), 'the interactive result runs its script');
   check(await until(async () => await frame.locator('body[data-cookie="blocked"][data-top="blocked"][data-net="blocked"]').count() === 1), 'its script cannot read cookies, reach the app page or call the network');
+  check(await until(async () => await frame.locator('#logo').evaluate((i: any) => i.complete && i.naturalWidth > 0).catch(() => false)), 'the page loads its own image from the same run');
   check(await p.evaluate(() => (window as any).x === undefined), 'the app page is untouched');
   const direct = await p.evaluate(async () => (await fetch('/api/results/page-1')).headers.get('content-security-policy'));
   check(!!direct && !/allow-scripts/.test(direct), '/api/results itself stays script-free');

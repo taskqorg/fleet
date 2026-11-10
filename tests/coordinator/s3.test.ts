@@ -71,3 +71,10 @@ test('IPv6 endpoint, XML entities, no retry on 501, clock offset after RequestTi
  s=await serve((req,res,n)=>{if(n===0)return;res.writeHead(204);res.end()});
  await s3Client({endpoint:s.url,credentials,idleTimeoutMs:200}).delete('b','k');assert.equal(s.count(),2);s.srv.closeAllConnections();s.srv.close();
 });
+
+test('head: a proxy that drops Content-Length on HEAD still gives the size (one-byte ranged GET)',async()=>{
+ const fake=await fakeStore({dropHeadLength:true}),c=s3Client({endpoint:fake.url,credentials});
+ try{await c.put('b','page.html',Buffer.from('<h1>hello</h1>'),'text/html');assert.equal((await c.head('b','page.html'))?.contentLength,14);
+  assert.equal(fake.requests.find(r=>r.method==='HEAD')!.headers['accept-encoding'],'identity');assert.equal(await c.head('b','missing'),null)}
+ finally{await fake.close()}
+});

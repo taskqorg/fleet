@@ -99,9 +99,14 @@ export function s3Client(o:{endpoint:string,credentials:Credentials,region?:stri
  return {
   put:async(bucket:string,key:string,body:Buffer,contentType?:string)=>{(await send('PUT',pathOf(bucket,key),{},contentType?{'content-type':contentType}:{},body)).resume()},
   // null when the object does not exist.
-  head:async(bucket:string,key:string)=>{try{const r=await send('HEAD',pathOf(bucket,key));r.resume();return {contentLength:Number(r.headers['content-length']),etag:r.headers.etag}}catch(e){if(e instanceof S3Error&&e.status===404)return null;throw e}},
+  // A proxy in front of the store (the Cloudflare tunnel) may compress text types and then drop Content-Length from HEAD
+  // (text/html artifacts failed with "size NaN"). Ask for identity encoding, and when the length is still missing read it
+  // from the Content-Range of a one-byte GET.
+  head:async(bucket:string,key:string)=>{try{const r=await send('HEAD',pathOf(bucket,key),{},{'accept-encoding':'identity'});r.resume();let n=Number(r.headers['content-length']);
+   if(!Number.isSafeInteger(n)){const g=await send('GET',pathOf(bucket,key),{},{'accept-encoding':'identity',range:'bytes=0-0'});g.resume();n=Number(/\/(\d+)$/.exec(String(g.headers['content-range']??''))?.[1]??(g.statusCode===200?g.headers['content-length']:NaN))}
+   return {contentLength:n,etag:r.headers.etag}}catch(e){if(e instanceof S3Error&&e.status===404)return null;if(e instanceof S3Error&&e.status===416)return {contentLength:0,etag:undefined};throw e}},
   // range: inclusive byte offsets [start, end] (an HTTP Range of one part), for paged reads of large objects.
-  get:async(bucket:string,key:string,range?:[number,number]):Promise<Readable>=>send('GET',pathOf(bucket,key),{},range?{range:`bytes=${range[0]}-${range[1]}`}:{}),
+  get:async(bucket:string,key:string,range?:[number,number]):Promise<Readable>=>send('GET',pathOf(bucket,key),{},{'accept-encoding':'identity',...(range?{range:`bytes=${range[0]}-${range[1]}`}:{})}),
   delete:async(bucket:string,key:string)=>{(await send('DELETE',pathOf(bucket,key))).resume()},
   copy:async(bucket:string,key:string,source:string)=>{checked(await text(send('PUT',pathOf(bucket,key),{},{'x-amz-copy-source':enc(source,true)})))},
   createMultipartUpload:async(bucket:string,key:string,contentType?:string)=>{const id=tag(checked(await text(send('POST',pathOf(bucket,key),{uploads:''},contentType?{'content-type':contentType}:{}))),'UploadId');if(!id)throw new S3Error(200,'InvalidResponse','CreateMultipartUpload returned no UploadId');return id},
