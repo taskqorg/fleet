@@ -242,6 +242,9 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 	if gs(qu, "kind") == "acceptance" && answer != "accepted" && answer != "rejected" {
 		return nil, fail(400, "Acceptance answer is accepted or rejected")
 	}
+	if err := runAnswerChecks(q, qu, answer); err != nil { // area C: Lab and budget answers
+		return nil, err
+	}
 	tag, err := q.tx.Exec(q.ctx(), "UPDATE question SET answer=$2,answered_by=$3,answered_at=now(),state='answered' WHERE id=$1 AND state='open'", id, answer, by)
 	if err != nil {
 		return nil, err
@@ -255,6 +258,9 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 			return nil, fail(409, "Question already answered differently")
 		}
 		return nil, fail(409, "Question withdrawn")
+	}
+	if err := runAnswerAfter(q, id); err != nil {
+		return nil, err
 	}
 	if t := gs(qu, "task_id"); t != "" {
 		if gs(qu, "kind") == "acceptance" {
