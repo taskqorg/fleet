@@ -51,8 +51,7 @@ The owner accepted this order on 2026-11-10:
 
 1. **Step 0.** Deliver the shared specq rules to the agents that write Fleet.
 2. **L2-L4 on the current stack.** Build and publish the executor in CI (L2),
-   generate both sides of the contracts from one schema (L3), move the Python
-   MCP servers into executor subcommands (L4).
+   generate both sides of the contracts from one schema (L3), move delegation and design-rules MCP servers into executor subcommands (L4).
 3. **L1 trial.** Port one slice to Go and to Rust, and measure both against the
    current stack after L2-L4. Trial preparation (requirement identifiers and
    external tests for the slice, Detailed Implementation steps 6-8) runs after
@@ -179,11 +178,10 @@ Questions 1-8 come from the brief and stay open. The owner answers them.
 *   **Old tests** stay while they help the work on the current stack (L3, L4,
     the trial) and are deleted at the end of the whole effort, not kept after
     it (owner).
-*   **L4 ports all three executor MCP servers**, including the `mcp` mode of
-    `connection_call.py`. Connections C1 later changes the Rust subcommand
-    instead of the Python `mcp` mode (owner). Follow-up:
-    [`fleet-connections.md`](./fleet-connections.md) C1 (items 5 and 7) must be
-    updated to match.
+*   **L4 ports delegation and design-rules only.** `connection_call.py`, its
+    loaded Python client and `delivery_worker.py` remain until Connections C1.
+    Fleet builds its own connections and then deletes Pipe; a Rust bridge to
+    today's Pipe protocol is out of scope.
 *   **Step 0 time budget:** 180 s for the full merge gate on the owner's Mac,
     diagnostic only (owner).
 *   **Trial run plan** (numeric choices, decided by the author of this
@@ -223,7 +221,8 @@ Questions 1-8 come from the brief and stay open. The owner answers them.
 *   **Given**: L4 is done.
 *   **When**: A session needs the delegation MCP server.
 *   **Then**: The executor starts `fleet-executor mcp delegation`; no `python3`
-    process is started for any executor MCP server.
+    process is started for delegation or design-rules. Connection MCP remains
+    Python until C1.
 
 ### CUJ 5: The owner decides the language
 
@@ -298,15 +297,18 @@ from Linux. Signing and quarantine on macOS are unverified (open question 5).
 
 ### Python removal (L4)
 
-The executor gains subcommands that replace its three Python MCP servers:
-`delegation.py`, `connection_call.py` in `mcp` mode, and `design_rules.py`
-(for example `fleet-executor mcp delegation`). Done means the executor starts
-no `python3` process. Connections C1 later changes the Rust connection
-subcommand instead of the Python `mcp` mode. The coordinator still runs
-`connection_call.py` and `delivery_worker.py` on its own host, so Python is
-not removed from the coordinator host. Whether `deploy/infrastructure/origin_guard.py` is
-ported, kept or deleted is decided in L4, as the brief says; other Python
-outside the executor is out of scope (Detailed Implementation step 16).
+The executor starts `fleet-executor mcp delegation` and
+`fleet-executor mcp design-rules` instead of Python for those two servers.
+Their outside stdio captures define the behavior to preserve, including errors
+and concurrent journal access. Delegation and account receipt types come from
+`contracts/host-protocol.schema.json`.
+
+`connection_call.py` (both CLI and MCP), its loaded Python client and
+`delivery_worker.py` remain until Connections C1 replaces this path with Fleet's
+own connections. L4 builds no Rust bridge to Pipe. Hosts serving connection MCP
+still need Python. `deploy/infrastructure/origin_guard.py` stays: it protects the
+origin independently of MCP. Other Python outside these two MCP servers is out
+of scope. The remaining file inventory is in the [executor README](../../crates/executor/README.md#remaining-python).
 
 ### Trial (L1)
 
@@ -529,35 +531,22 @@ steps below describe what that PR covers.
 
 ### L4: Python MCP servers into executor subcommands
 
-The behaviour spec for L4 is the current behaviour of the three Python MCP
-servers, captured by outside tests before the port.
+The behaviour spec for L4 is the current behavior of delegation and design-rules,
+captured through stdio before porting. `tests/executor/fixtures/mcp.json` retains
+those exchanges and journal effects; `tests/executor/mcp_replay.py` replays them
+against the Rust subcommands.
 
-14. `crates/executor/src/main.rs`, `crates/executor/src/profile.rs`: start the
-    delegation, connection and design-rules MCP servers as
-    `fleet-executor mcp <name>` instead of `python3`.
-15. Remove `crates/executor/src/delegation.py` and
-    `crates/executor/src/design_rules.py`, their `include_str!`/`include_bytes!`
-    uses (`main.rs:405`, `profile.rs:167,208,227`) and the `CONNECTION_CLIENT`
-    constant (`profile.rs:172`, used at `main.rs:442`) once the subcommands
-    replace them. Update the readers of these files in the same change:
-    *   `profile.rs:227` hashes `design_rules.py` into `mcpServerSha256`; after
-        the port it hashes the executor binary (author decision).
-    *   `profile.rs:262` (test `scoped_claude_and_antigravity_settings`)
-        asserts the design-rules command is `python3`; it asserts
-        `fleet-executor` with args `mcp design-rules` instead.
-    *   `tests/coordinator/artifact-tools.test.ts:9` runs `delegation.py`
-        through `python3` and is run by CI; it calls
-        `target/debug/fleet-executor mcp delegation` instead (CI builds it
-        first, `ci.yml:29-30`). Its `python3` SQLite setup calls stay.
-    *   `crates/executor/README.md:15` documents both files.
-    *   `evidence/delegation-approval-candidate-sha256.txt:3` pins a hash of
-        `delegation.py`; it stays as a historical record.
-    *   `tests/executor/delegation_protocol.py`, `project_protocol.py` and
-        `lab_protocol.py` call the files and will break (open question 6).
-    `packages/coordinator/connection_call.py` keeps its `call` mode for the
-    coordinator (`pipelines.ts:69`); its `mcp` mode is removed.
-16. `deploy/infrastructure/origin_guard.py`: the owner decides whether it is
-    ported, kept or deleted (brief, item С6).
+14. `crates/executor/src/main.rs`, `profile.rs` and `mcp.rs`: start delegation
+    and design-rules as `fleet-executor mcp <name>`. Retain connection MCP's
+    Python command and `CONNECTION_CLIENT` until C1.
+15. Remove `delegation.py` and `design_rules.py` and their embedded source uses.
+    Update the profile assertions, artifact-tools check and executor protocol
+    checks to call the subcommands. `mcpServerSha256` hashes the executor binary.
+    Preserve the historical delegation approval hash record. Type delegation
+    and account receipt readers through generated contracts; keep existing
+    ownership and input validation.
+16. Keep `origin_guard.py` and its test: origin admission is independent of MCP.
+    List remaining Python and its removal conditions in the executor README.
 
 Out of scope for this plan: the coordinator's use of
 `packages/coordinator/connection_call.py` (`call` mode),

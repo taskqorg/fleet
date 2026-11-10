@@ -1,3 +1,4 @@
+mod mcp;
 mod antigravity;
 mod codex;
 mod contracts;
@@ -418,11 +419,11 @@ impl Executor {
         let mut fleet_mcp: Vec<&str> = vec![];
         if fleet_tools {
             let context = json!({"hostId":self.host,"commandId":c["id"],"executionId":c["executionId"],"profiles":profiles,"projectId":p["projectId"],"workdir":workdir.clone().unwrap_or_else(|| dir.clone()),"inputDir":input_dir,"spool":self.root.join("spool")});
-            let args = json!(["-c",include_str!("delegation.py"),self.root.join("journal.sqlite"),context.to_string()]);
-            if (harness::name(p) == "claude" || harness::acp(harness::name(p))) {
-                claude_servers["fleet"] = json!({"command":"python3","args":args});
+            let args = json!(["mcp","delegation",self.root.join("journal.sqlite"),context.to_string()]);
+            if harness::name(p) == "claude" || harness::acp(harness::name(p)) {
+                claude_servers["fleet"] = json!({"command":env::current_exe()?,"args":args});
             } else {
-                cmd.args(["-c","mcp_servers.fleet.command=\"python3\"","-c",&format!("mcp_servers.fleet.args={args}"),"-c","mcp_servers.fleet.required=true"]);
+                cmd.args(["-c",&format!("mcp_servers.fleet.command={}",json!(env::current_exe()?)),"-c",&format!("mcp_servers.fleet.args={args}"),"-c","mcp_servers.fleet.required=true"]);
                 let mut tools = vec!["session_start","session_deliver","session_transition","session_fork","session_resume","session_handoffs","message_send","queue_list","ask","reply","questions","worker_done","execution_status","artifact_save","artifact_list","artifact_get"];
                 if !profiles.is_empty() { tools.push("request_child"); }
                 if p["projectId"].is_string() { tools.extend(["project_context","catalogue","pipeline_run","direct_search","pipeline_history","pipeline_get","question_ask","question_history","account_list"]); }
@@ -1053,6 +1054,7 @@ fn reproject() -> Result<()> {
     Ok(out.flush()?)
 }
 fn main() -> Result<()> {
+    if env::args().nth(1).as_deref() == Some("mcp") { return mcp::run(); }
     if env::args().nth(1).as_deref() == Some("reproject") {
         return reproject();
     }

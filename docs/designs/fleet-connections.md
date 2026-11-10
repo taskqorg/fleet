@@ -12,6 +12,8 @@
 
 Fleet reaches outside APIs (Tavily web search and extract today; Meshy and model APIs next) through Pipe, a separate service in the assetq repository. Fleet's `packages/coordinator/connection_call.py` loads Pipe's client library, checks its hash, reads a Pipe token from a host file and sends the Fleet step ID as a free-form label (`X-Pipe-Task`).
 
+L4 leaves `connection_call.py` and its MCP mode in Python until C1; C1 replaces this path with Fleet's own connections, without a Rust bridge to Pipe.
+
 The owner decided Fleet gets its own connections system and Pipe is deleted, with no bridge period. This design:
 
 *   adds an **API key connection** list, separate from subscriptions (owner decision 1: two lists, one ownership model);
