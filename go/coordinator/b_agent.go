@@ -1538,7 +1538,7 @@ func bound(q *Request, name string, a doc, executionID string) (doc, error) {
 		}
 		// ponytail: the account must be a registered managed account; its binding readiness on this host is the accounts area's resolve.
 		if acct, ok := a["account"]; ok && acct != nil {
-			if ok, err := has(q, "SELECT 1 FROM document WHERE kind='managed-account' AND (id=$1 OR data->>'name'=$1)", fmt.Sprint(acct)); err != nil || !ok {
+			if ok, err := has(q, "SELECT 1 FROM document WHERE kind='managed-account' AND (data->>'enabled')::boolean AND (id=$1 OR data->>'name'=$1)", fmt.Sprint(acct)); err != nil || !ok {
 				if err == nil {
 					err = fail(403, "Account not available")
 				}
