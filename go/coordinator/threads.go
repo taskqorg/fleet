@@ -883,7 +883,7 @@ func queryOrNil(q *Request, k string) any {
 
 func init() {
 	threadOp := func(name string, f func(*Request, doc) (doc, error)) {
-		bop(name, true, func(q *Request) (any, error) { return f(q, body(q)) })
+		gatedObjOp(name, true, func(q *Request) (any, error) { return f(q, body(q)) })
 	}
 	threadOp("thread_entries", threadEntries)
 	threadOp("thread_blocks", threadBlocks)
@@ -912,7 +912,7 @@ func init() {
 		err = exportPages(q, key, from, to, tzOf(b), func(s string) error { sb.WriteString(s); return nil })
 		return doc{"markdown": sb.String()}, err
 	})
-	broute("GET /api/threads/{scope}/{id}/entries", func(q *Request) (any, error) {
+	gatedRoute("GET /api/threads/{scope}/{id}/entries", func(q *Request) (any, error) {
 		key, err := routeThreadKey(q)
 		if err != nil {
 			return nil, err
@@ -923,7 +923,7 @@ func init() {
 		}
 		return threadEntries(q, doc{"key": key.view(), "limit": limit, "before": queryOrNil(q, "before"), "after": queryOrNil(q, "after"), "around": queryOrNil(q, "around")})
 	})
-	broute("GET /api/threads/{scope}/{id}/blocks", func(q *Request) (any, error) {
+	gatedRoute("GET /api/threads/{scope}/{id}/blocks", func(q *Request) (any, error) {
 		key, err := routeThreadKey(q)
 		if err != nil {
 			return nil, err
@@ -938,7 +938,7 @@ func init() {
 		}
 		return threadBlocks(q, doc{"key": key.view(), "rows": rs})
 	})
-	broute("GET /api/threads/{scope}/{id}/search", func(q *Request) (any, error) {
+	gatedRoute("GET /api/threads/{scope}/{id}/search", func(q *Request) (any, error) {
 		key, err := routeThreadKey(q)
 		if err != nil {
 			return nil, err
@@ -950,7 +950,7 @@ func init() {
 		return threadSearch(q, doc{"key": key.view(), "q": queryOrNil(q, "q"), "before": queryOrNil(q, "before"), "limit": limit})
 	})
 	// Export streams markdown page by page, each page in its own read snapshot.
-	blongRoute("GET /api/threads/{scope}/{id}/export", func(q *Request) (any, error) {
+	gatedLongRoute("GET /api/threads/{scope}/{id}/export", func(q *Request) (any, error) {
 		key, err := routeThreadKey(q)
 		if err != nil {
 			return nil, err

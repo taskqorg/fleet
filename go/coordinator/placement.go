@@ -3,7 +3,7 @@ package main
 // Placement (docs/designs/fleet-data-foundation.md §3): every stored artifact gets a verified copy on each reachable store of its
 // project's artifact_locations, through copy commands to the target store's own executor. Copies outside the list are
 // deleted only behind a surviving verified copy, never the last one. Pending purges are reconciled first. Confirmed
-// retention rules run through the same copy-then-delete path. One pass per store tick (d_routes.go), single flight.
+// retention rules run through the same copy-then-delete path. One pass per store tick (artifact_routes.go), single flight.
 
 import (
 	"context"
@@ -121,7 +121,7 @@ func effective(ctx context.Context, a *App, x *Artifact, hosts map[string]bool) 
 	}
 	sort.SliceStable(rules, func(i, j int) bool { return rules[i].OlderThanDays > rules[j].OlderThanDays })
 	for _, r := range rules {
-		ok, err := dOne(ctx, a, "SELECT 1 AS x FROM artifact_rule_confirmation WHERE project_id=$1 AND rule_hash=$2", projectKey(x.ProjectID), ruleHash(r))
+		ok, err := oneCtx(ctx, a, "SELECT 1 AS x FROM artifact_rule_confirmation WHERE project_id=$1 AND rule_hash=$2", projectKey(x.ProjectID), ruleHash(r))
 		if err != nil {
 			return plan{}, err
 		}
@@ -177,7 +177,7 @@ func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) 
 }
 
 func placeOne(ctx context.Context, a *App, x *Artifact, stores []StoreRow, byID, byHost map[string]*StoreRow, hosts map[string]bool) (queued, deleted int, err error) {
-	copies, err := dRows(ctx, conn(ctx, a), "SELECT store_id,state,last_error,attempts,next_attempt_at,(next_attempt_at IS NULL OR next_attempt_at<=now()) AS due FROM artifact_copy WHERE artifact_id=$1", x.ID)
+	copies, err := rowsCtx(ctx, conn(ctx, a), "SELECT store_id,state,last_error,attempts,next_attempt_at,(next_attempt_at IS NULL OR next_attempt_at<=now()) AS due FROM artifact_copy WHERE artifact_id=$1", x.ID)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -238,7 +238,7 @@ func placeOne(ctx context.Context, a *App, x *Artifact, stores []StoreRow, byID,
 		if err != nil {
 			return queued, deleted, err
 		}
-		if err := dExec(ctx, a, `INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,upload_id,staging_key,lease_expires_at) VALUES($1,$2,$3,'copying',$4,$5,now()+interval '6 hours')
+		if err := execCtx(ctx, a, `INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,upload_id,staging_key,lease_expires_at) VALUES($1,$2,$3,'copying',$4,$5,now()+interval '6 hours')
      ON CONFLICT(artifact_id,store_id) DO UPDATE SET state='copying',next_attempt_at=NULL,upload_id=excluded.upload_id,staging_key=excluded.staging_key,lease_expires_at=excluded.lease_expires_at,last_error=NULL`, x.ID, s.ID, x.ProjectID, upload, staging); err != nil {
 			return queued, deleted, err
 		}
@@ -290,7 +290,7 @@ func removeCopy(ctx context.Context, a *App, x *Artifact, s *StoreRow, survivors
 	if !alive {
 		return false, nil
 	}
-	others, err := dRows(ctx, conn(ctx, a), "SELECT a.project_id FROM artifact a JOIN artifact_copy c ON c.artifact_id=a.id WHERE a.id<>$1 AND a.project_id IS NOT DISTINCT FROM $2 AND a.scope=$3 AND a.content_hash=$4 AND a.state='stored' AND c.store_id=$5 AND c.state='verified'", x.ID, x.ProjectID, x.Scope, x.ContentHash, s.ID)
+	others, err := rowsCtx(ctx, conn(ctx, a), "SELECT a.project_id FROM artifact a JOIN artifact_copy c ON c.artifact_id=a.id WHERE a.id<>$1 AND a.project_id IS NOT DISTINCT FROM $2 AND a.scope=$3 AND a.content_hash=$4 AND a.state='stored' AND c.store_id=$5 AND c.state='verified'", x.ID, x.ProjectID, x.Scope, x.ContentHash, s.ID)
 	if err != nil {
 		return false, err
 	}
@@ -309,17 +309,17 @@ func removeCopy(ctx context.Context, a *App, x *Artifact, s *StoreRow, survivors
 			return false, err
 		}
 	}
-	return true, dExec(ctx, a, "UPDATE artifact_copy SET state='deleted' WHERE artifact_id=$1 AND store_id=$2", x.ID, s.ID)
+	return true, execCtx(ctx, a, "UPDATE artifact_copy SET state='deleted' WHERE artifact_id=$1 AND store_id=$2", x.ID, s.ID)
 }
 
 // deleteArtifact: a delete rule ends the artifact; every copy goes (objects only where no other stored row needs them) and
 // the row stays as a tombstone. Nothing happens while a verified copy sits on an unreachable store.
 func deleteArtifact(ctx context.Context, a *App, x *Artifact, by string) error {
-	held, err := dOne(ctx, a, "SELECT 1 AS x FROM artifact_copy c JOIN store s ON s.id=c.store_id WHERE c.artifact_id=$1 AND c.state='verified' AND s.state='unreachable' LIMIT 1", x.ID)
+	held, err := oneCtx(ctx, a, "SELECT 1 AS x FROM artifact_copy c JOIN store s ON s.id=c.store_id WHERE c.artifact_id=$1 AND c.state='verified' AND s.state='unreachable' LIMIT 1", x.ID)
 	if err != nil || held != nil {
 		return err
 	}
-	cs, err := dRows(ctx, conn(ctx, a), "SELECT store_id FROM artifact_copy WHERE artifact_id=$1 AND state='verified'", x.ID)
+	cs, err := rowsCtx(ctx, conn(ctx, a), "SELECT store_id FROM artifact_copy WHERE artifact_id=$1 AND state='verified'", x.ID)
 	if err != nil {
 		return err
 	}
@@ -328,7 +328,7 @@ func deleteArtifact(ctx context.Context, a *App, x *Artifact, by string) error {
 		if err != nil {
 			return err
 		}
-		shared, err := dOne(ctx, a, "SELECT 1 AS x FROM artifact y JOIN artifact_copy z ON z.artifact_id=y.id WHERE y.id<>$1 AND y.project_id IS NOT DISTINCT FROM $2 AND y.scope=$3 AND y.content_hash=$4 AND y.state='stored' AND z.store_id=$5 AND z.state='verified' LIMIT 1", x.ID, x.ProjectID, x.Scope, x.ContentHash, s.ID)
+		shared, err := oneCtx(ctx, a, "SELECT 1 AS x FROM artifact y JOIN artifact_copy z ON z.artifact_id=y.id WHERE y.id<>$1 AND y.project_id IS NOT DISTINCT FROM $2 AND y.scope=$3 AND y.content_hash=$4 AND y.state='stored' AND z.store_id=$5 AND z.state='verified' LIMIT 1", x.ID, x.ProjectID, x.Scope, x.ContentHash, s.ID)
 		if err != nil {
 			return err
 		}
@@ -341,16 +341,16 @@ func deleteArtifact(ctx context.Context, a *App, x *Artifact, by string) error {
 				return err
 			}
 		}
-		if err := dExec(ctx, a, "UPDATE artifact_copy SET state='deleted' WHERE artifact_id=$1 AND store_id=$2", x.ID, s.ID); err != nil {
+		if err := execCtx(ctx, a, "UPDATE artifact_copy SET state='deleted' WHERE artifact_id=$1 AND store_id=$2", x.ID, s.ID); err != nil {
 			return err
 		}
 	}
-	return dExec(ctx, a, "UPDATE artifact SET state='deleted',deleted_at=now(),deleted_by=$2 WHERE id=$1", x.ID, by)
+	return execCtx(ctx, a, "UPDATE artifact SET state='deleted',deleted_at=now(),deleted_by=$2 WHERE id=$1", x.ID, by)
 }
 
 // reconcilePurges: pending purges are deleted as soon as their store is reachable again, before it serves anything.
 func reconcilePurges(ctx context.Context, a *App) error {
-	rs, err := dRows(ctx, conn(ctx, a), "SELECT c.artifact_id,c.store_id,a.project_id,a.scope,a.content_hash FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id WHERE c.state='purge_pending'")
+	rs, err := rowsCtx(ctx, conn(ctx, a), "SELECT c.artifact_id,c.store_id,a.project_id,a.scope,a.content_hash FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id WHERE c.state='purge_pending'")
 	if err != nil {
 		return err
 	}
@@ -362,7 +362,7 @@ func reconcilePurges(ctx context.Context, a *App) error {
 		if t, err := tunnel(s); err == nil {
 			t.Delete(s.Bucket, keyOf(&Artifact{ProjectID: strp(c, "project_id"), Scope: astr(c["scope"]), ContentHash: astr(c["content_hash"])}))
 		}
-		if err := dExec(ctx, a, "UPDATE artifact_copy SET state='deleted' WHERE artifact_id=$1 AND store_id=$2", astr(c["artifact_id"]), s.ID); err != nil {
+		if err := execCtx(ctx, a, "UPDATE artifact_copy SET state='deleted' WHERE artifact_id=$1 AND store_id=$2", astr(c["artifact_id"]), s.ID); err != nil {
 			return err
 		}
 	}
@@ -371,7 +371,7 @@ func reconcilePurges(ctx context.Context, a *App) error {
 
 // expireWaiting: executions waiting for their artifacts longer than the retry window fail (P3-D2).
 func expireWaiting(ctx context.Context, a *App) error {
-	rs, err := dRows(ctx, conn(ctx, a), "SELECT id FROM execution WHERE legacy_kind='execution' AND data->>'state'='waiting' AND data->>'waitReason'='artifacts' AND coalesce((data->>'waitingSince')::bigint,0) < $1", nowMs()-int64(retryWindowMS))
+	rs, err := rowsCtx(ctx, conn(ctx, a), "SELECT id FROM execution WHERE legacy_kind='execution' AND data->>'state'='waiting' AND data->>'waitReason'='artifacts' AND coalesce((data->>'waitingSince')::bigint,0) < $1", nowMs()-int64(retryWindowMS))
 	if err != nil {
 		return err
 	}
@@ -403,7 +403,7 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		rows, err := dRows(withTx(q), conn(withTx(q), q.app), "SELECT id,name,size FROM artifact WHERE state='stored' AND project_id IS NOT DISTINCT FROM $1 AND scope=$2 AND created_at <= now() - ($3::text||' days')::interval ORDER BY seq", p, r.Scope, fmt.Sprint(r.OlderThanDays))
+		rows, err := rowsCtx(withTx(q), conn(withTx(q), q.app), "SELECT id,name,size FROM artifact WHERE state='stored' AND project_id IS NOT DISTINCT FROM $1 AND scope=$2 AND created_at <= now() - ($3::text||' days')::interval ORDER BY seq", p, r.Scope, fmt.Sprint(r.OlderThanDays))
 		if err != nil {
 			return nil, err
 		}
@@ -465,5 +465,3 @@ func init() {
 		return doc{"retrying": true}, nil
 	})
 }
-
-func placementPass(a *App) error { _, _, err := runPlacement(context.Background(), a); return err }

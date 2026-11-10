@@ -1,6 +1,6 @@
 package main
 
-// Area D routes: host artifact protocol, store registration, result bytes and preview, artifact and store operations,
+// Artifact routes: host artifact protocol, store registration, result bytes and preview, artifact and store operations,
 // subscription limits, the built app, and the store/lease ticker.
 
 import (
@@ -115,7 +115,7 @@ func init() {
 			}
 			v = int64(*b.Bytes)
 		}
-		r, err := dOne(withTx(q), q.app, "UPDATE store SET free_space_warning_bytes=$2,state=CASE WHEN state='unreachable' THEN state WHEN $2::bigint IS NOT NULL AND capacity_bytes < $2::bigint THEN 'full' ELSE 'reachable' END WHERE id=$1 RETURNING id,state", b.StoreID, v)
+		r, err := oneCtx(withTx(q), q.app, "UPDATE store SET free_space_warning_bytes=$2,state=CASE WHEN state='unreachable' THEN state WHEN $2::bigint IS NOT NULL AND capacity_bytes < $2::bigint THEN 'full' ELSE 'reachable' END WHERE id=$1 RETURNING id,state", b.StoreID, v)
 		if err != nil {
 			return nil, err
 		}
@@ -173,7 +173,7 @@ func init() {
 				case <-ctx.Done():
 					return
 				case <-t.C:
-					if err := dExec(ctx, a, "UPDATE store SET state='unreachable' WHERE state<>'unreachable' AND (observed_at IS NULL OR observed_at < now() - ($1::text||' milliseconds')::interval)", strconv.Itoa(storeUnseenMS)); err != nil {
+					if err := execCtx(ctx, a, "UPDATE store SET state='unreachable' WHERE state<>'unreachable' AND (observed_at IS NULL OR observed_at < now() - ($1::text||' milliseconds')::interval)", strconv.Itoa(storeUnseenMS)); err != nil {
 						log.Printf("store sweep: %v", err)
 					}
 					if _, _, err := runPlacement(ctx, a); err != nil {
@@ -272,7 +272,7 @@ func hostMayRead(q *Request) (*Artifact, error) {
 		return false
 	}
 	if b.CommandID != "" {
-		if r, err := dOne(ctx, a, "SELECT data FROM document WHERE kind='command' AND id=$1", b.CommandID); err == nil && r != nil {
+		if r, err := oneCtx(ctx, a, "SELECT data FROM document WHERE kind='command' AND id=$1", b.CommandID); err == nil && r != nil {
 			c, _ := r["data"].(map[string]any)
 			st, _ := c["status"].(string)
 			if c["hostId"] == hostID && (st == "pending" || st == "accepted" || st == "started") && names(c, x) {
@@ -291,7 +291,7 @@ func hostMayRead(q *Request) (*Artifact, error) {
 		if x.ExecutionID != nil && *x.ExecutionID == e.ID || e.ProjectID != nil && x.ProjectID != nil && *e.ProjectID == *x.ProjectID {
 			return x, nil
 		}
-		cs, err := dRows(ctx, conn(ctx, a), "SELECT data FROM document WHERE kind='command' AND data->>'executionId'=$1 AND data->>'hostId'=$2 AND data->>'kind' IN ('start','script')", e.ID, hostID)
+		cs, err := rowsCtx(ctx, conn(ctx, a), "SELECT data FROM document WHERE kind='command' AND data->>'executionId'=$1 AND data->>'hostId'=$2 AND data->>'kind' IN ('start','script')", e.ID, hostID)
 		if err != nil {
 			return nil, err
 		}
@@ -601,7 +601,7 @@ func subscriptionLimits(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	accounts, err := dRows(ctx, conn(ctx, q.app), "SELECT data FROM document WHERE kind='managed-account' ORDER BY seq")
+	accounts, err := rowsCtx(ctx, conn(ctx, q.app), "SELECT data FROM document WHERE kind='managed-account' ORDER BY seq")
 	if err != nil {
 		return nil, err
 	}

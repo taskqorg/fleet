@@ -1,10 +1,5 @@
 package main
 
-// Artifacts and stores (docs/designs/fleet-data-foundation.md §3). Bytes go between executors and the per-host stores;
-// the coordinator holds rows, chooses stores, presigns, and promotes a staging object to its content-hash key only after
-// the store host's executor re-hashed it over loopback (P3-D1). A verified object is never overwritten.
-// Dropped (no data to keep): legacy base64 artifact documents, their adapter and the backfill.
-
 import (
 	"context"
 	"encoding/json"
@@ -24,6 +19,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// Artifacts and stores (docs/designs/fleet-data-foundation.md §3). Bytes go between executors and the per-host stores;
+// the coordinator holds rows, chooses stores, presigns, and promotes a staging object to its content-hash key only after
+// the store host's executor re-hashed it over loopback (P3-D1). A verified object is never overwritten.
+// Dropped (no data to keep): legacy base64 artifact documents, their adapter and the backfill.
+
 const (
 	emptySHA256   = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	partSize      = 32 << 20
@@ -35,8 +35,7 @@ const (
 	placementTick = 60 * time.Second
 )
 
-// Hooks other areas set: settling a waiting execution once its artifacts settle (receipts area), and a project's
-// artifact_locations (projects area). Defaults: nothing to settle; FLEET_DEFAULT_ARTIFACT_LOCATIONS (default pds18).
+// Store settings: the default artifact locations (FLEET_DEFAULT_ARTIFACT_LOCATIONS, default pds18) when a project names none.
 var (
 	defaultLocations   = splitList(envOr("FLEET_DEFAULT_ARTIFACT_LOCATIONS", "pds18"))
 	storeEndpointHosts = splitList(os.Getenv("FLEET_STORE_ENDPOINT_HOSTS"))
@@ -88,14 +87,14 @@ func conn(ctx context.Context, a *App) querier {
 	return a.store.pool
 }
 
-func dTx(ctx context.Context, a *App, fn func(pgx.Tx) error) error {
+func txCtx(ctx context.Context, a *App, fn func(pgx.Tx) error) error {
 	if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
 		return fn(tx)
 	}
 	return a.store.Tx(ctx, nil, true, "", fn)
 }
 
-func dRows(ctx context.Context, db querier, sql string, args ...any) ([]map[string]any, error) {
+func rowsCtx(ctx context.Context, db querier, sql string, args ...any) ([]map[string]any, error) {
 	rs, err := db.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -107,16 +106,16 @@ func dRows(ctx context.Context, db querier, sql string, args ...any) ([]map[stri
 	return out, err
 }
 
-func dOne(ctx context.Context, a *App, sql string, args ...any) (map[string]any, error) {
-	r, err := dRows(ctx, conn(ctx, a), sql, args...)
+func oneCtx(ctx context.Context, a *App, sql string, args ...any) (map[string]any, error) {
+	r, err := rowsCtx(ctx, conn(ctx, a), sql, args...)
 	if err != nil || len(r) == 0 {
 		return nil, err
 	}
 	return r[0], nil
 }
 
-func dExec(ctx context.Context, a *App, sql string, args ...any) error {
-	return dTx(ctx, a, func(tx pgx.Tx) error { _, err := tx.Exec(ctx, sql, args...); return err })
+func execCtx(ctx context.Context, a *App, sql string, args ...any) error {
+	return txCtx(ctx, a, func(tx pgx.Tx) error { _, err := tx.Exec(ctx, sql, args...); return err })
 }
 
 func i64(m map[string]any, k string) int64 {
@@ -256,7 +255,7 @@ func storeRegister(q *Request, hostID string, b map[string]any, holder string) (
 		return nil, fail(400, "localEndpoint must be a loopback URL")
 	}
 	ctx := q.ctx()
-	if r, err := dOne(ctx, a, "SELECT host_id FROM store WHERE id=$1", id); err != nil {
+	if r, err := oneCtx(ctx, a, "SELECT host_id FROM store WHERE id=$1", id); err != nil {
 		return nil, err
 	} else if r != nil && astr(r["host_id"]) != hostID {
 		return nil, fail(403, "Store belongs to another host")
@@ -272,14 +271,14 @@ func storeRegister(q *Request, hostID string, b map[string]any, holder string) (
 	if zone != "" {
 		zonep = zone
 	}
-	err = dExec(ctx, a, `INSERT INTO store(id,host_id,zone,bucket,endpoint,local_endpoint,capacity_bytes,used_bytes,requires_logon,state,observed_at,holder) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'reachable',now(),$10)
+	err = execCtx(ctx, a, `INSERT INTO store(id,host_id,zone,bucket,endpoint,local_endpoint,capacity_bytes,used_bytes,requires_logon,state,observed_at,holder) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'reachable',now(),$10)
    ON CONFLICT(id) DO UPDATE SET zone=excluded.zone,bucket=excluded.bucket,endpoint=excluded.endpoint,local_endpoint=excluded.local_endpoint,capacity_bytes=excluded.capacity_bytes,used_bytes=excluded.used_bytes,requires_logon=excluded.requires_logon,state='reachable',observed_at=now(),registered_at=now(),holder=excluded.holder WHERE store.host_id=excluded.host_id`,
 		id, hostID, zonep, bucket, endpoint, local, intOrNil(b["capacityBytes"]), intOrNil(b["usedBytes"]), b["requiresLogon"] == true, holder)
 	if err != nil {
 		return nil, err
 	}
 	// The upsert's WHERE makes ownership part of the write: a store of another host is unchanged, and so is its key.
-	if r, err := dOne(ctx, a, "SELECT host_id FROM store WHERE id=$1", id); err != nil {
+	if r, err := oneCtx(ctx, a, "SELECT host_id FROM store WHERE id=$1", id); err != nil {
 		return nil, err
 	} else if r == nil || astr(r["host_id"]) != hostID {
 		return nil, fail(403, "Store belongs to another host")
@@ -572,14 +571,14 @@ func artifactReserve(q *Request) (any, error) {
 	if !artifactIDPattern.MatchString(id) {
 		id = newID()
 	}
-	if old, err := dOne(ctx, a, "SELECT state,execution_id FROM artifact WHERE id=$1", id); err != nil {
+	if old, err := oneCtx(ctx, a, "SELECT state,execution_id FROM artifact WHERE id=$1", id); err != nil {
 		return nil, err
 	} else if old != nil {
 		// A retry of the same reservation only: another execution's artifact id is refused, not described.
 		if astr(old["execution_id"]) != eb.ExecutionID {
 			return nil, fail(409, "Artifact id in use")
 		}
-		c, _ := dOne(ctx, a, "SELECT store_id FROM artifact_copy WHERE artifact_id=$1 AND state IN ('pending','copying','verified') ORDER BY state LIMIT 1", id)
+		c, _ := oneCtx(ctx, a, "SELECT store_id FROM artifact_copy WHERE artifact_id=$1 AND state IN ('pending','copying','verified') ORDER BY state LIMIT 1", id)
 		out := doc{"artifactId": id, "state": old["state"], "partSize": partSize}
 		if c != nil {
 			out["storeId"] = c["store_id"]
@@ -607,7 +606,7 @@ func artifactReserve(q *Request) (any, error) {
 	if e.Experiment != nil {
 		scope = "lab"
 	}
-	if r, err := dOne(ctx, a, "SELECT 1 AS x FROM purged_hash WHERE project_id=$1 AND scope=$2 AND content_hash=$3", projectKey(e.ProjectID), scope, hash); err != nil {
+	if r, err := oneCtx(ctx, a, "SELECT 1 AS x FROM purged_hash WHERE project_id=$1 AND scope=$2 AND content_hash=$3", projectKey(e.ProjectID), scope, hash); err != nil {
 		return nil, err
 	} else if r != nil {
 		return nil, failCode(409, "Content was purged", "purged")
@@ -639,7 +638,7 @@ func artifactReserve(q *Request) (any, error) {
 			id, e.ProjectID, scope, hash, size, media, file, e.ID, e.TaskID, required, role, nilIf(sv("derivedFrom")), nilIf(sv("previousArtifactId")), state)
 		return err
 	}
-	same, err := dOne(ctx, a, "SELECT 1 AS x FROM artifact a JOIN artifact_copy c ON c.artifact_id=a.id WHERE a.project_id IS NOT DISTINCT FROM $1 AND a.scope=$2 AND a.content_hash=$3 AND c.store_id=$4 AND c.state='verified' LIMIT 1", e.ProjectID, scope, hash, target.ID)
+	same, err := oneCtx(ctx, a, "SELECT 1 AS x FROM artifact a JOIN artifact_copy c ON c.artifact_id=a.id WHERE a.project_id IS NOT DISTINCT FROM $1 AND a.scope=$2 AND a.content_hash=$3 AND c.store_id=$4 AND c.state='verified' LIMIT 1", e.ProjectID, scope, hash, target.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -656,7 +655,7 @@ func artifactReserve(q *Request) (any, error) {
 		at = w
 	}
 	if same != nil || size == 0 {
-		err := dTx(ctx, a, func(tx pgx.Tx) error {
+		err := txCtx(ctx, a, func(tx pgx.Tx) error {
 			if err := insert(tx, "stored"); err != nil {
 				return err
 			}
@@ -680,7 +679,7 @@ func artifactReserve(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = dTx(ctx, a, func(tx pgx.Tx) error {
+	err = txCtx(ctx, a, func(tx pgx.Tx) error {
 		if err := insert(tx, "pending"); err != nil {
 			return err
 		}
@@ -764,7 +763,7 @@ func uploadArgs(q *Request) (*App, context.Context, uploadBody, *Artifact, error
 }
 
 func lease(ctx context.Context, a *App, artifactID, storeID, set string) error {
-	return dExec(ctx, a, "UPDATE artifact_copy SET "+set+" WHERE artifact_id=$1 AND store_id=$2", artifactID, storeID, strconv.Itoa(leaseMS))
+	return execCtx(ctx, a, "UPDATE artifact_copy SET "+set+" WHERE artifact_id=$1 AND store_id=$2", artifactID, storeID, strconv.Itoa(leaseMS))
 }
 
 func artifactParts(q *Request) (any, error) {
@@ -859,7 +858,7 @@ func artifactCommit(q *Request) (any, error) {
 	if b.HostID == s.HostID {
 		return doc{"state": "verifying", "verify": verify}, nil
 	}
-	open, err := dOne(ctx, a, "SELECT 1 AS x FROM document WHERE kind='command' AND data->>'kind'='artifact-verify' AND data->>'hostId'=$1 AND data->>'status' IN ('pending','accepted','started') AND data->'payload'->>'artifactId'=$2 AND data->'payload'->>'storeId'=$3 LIMIT 1", s.HostID, x.ID, s.ID)
+	open, err := oneCtx(ctx, a, "SELECT 1 AS x FROM document WHERE kind='command' AND data->>'kind'='artifact-verify' AND data->>'hostId'=$1 AND data->>'status' IN ('pending','accepted','started') AND data->'payload'->>'artifactId'=$2 AND data->'payload'->>'storeId'=$3 LIMIT 1", s.HostID, x.ID, s.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -873,7 +872,7 @@ func artifactCommit(q *Request) (any, error) {
 
 // queueCommand: a tool command for a host's executor (copy, verify), in a program-worker execution of its own.
 func queueCommand(ctx context.Context, a *App, hostID, kind string, payload doc) error {
-	return dTx(ctx, a, func(tx pgx.Tx) error {
+	return txCtx(ctx, a, func(tx pgx.Tx) error {
 		q := &Request{r: (&http.Request{}).WithContext(ctx), tx: tx}
 		sid, id := newID(), newID()
 		if err := put(q, "session", doc{"id": sid, "createdAt": nowMs(), "actor": "program-worker"}); err != nil {
@@ -914,7 +913,7 @@ func reject(ctx context.Context, a *App, x *Artifact, s *StoreRow, key, why stri
 			t.Delete(s.Bucket, key)
 		}
 	}
-	err := dTx(ctx, a, func(tx pgx.Tx) error {
+	err := txCtx(ctx, a, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "UPDATE artifact_copy SET state='failed',last_error=$3,upload_id=NULL,lease_expires_at=NULL,attempts=attempts+1,next_attempt_at=now()+(least($4::float8,60000*power(2,least(attempts,30)))::text||' milliseconds')::interval WHERE artifact_id=$1 AND store_id=$2", x.ID, s.ID, why, retryWindowMS); err != nil {
 			return err
 		}
@@ -947,7 +946,7 @@ func artifactRefused(q *Request) (any, error) {
 		why = "upload refused: " + truncate(*b.Error, 500)
 	}
 	all, _ := storeList(ctx, a)
-	cs, err := dRows(ctx, conn(ctx, a), "SELECT store_id,upload_id,staging_key FROM artifact_copy WHERE artifact_id=$1 AND state IN ('pending','copying')", x.ID)
+	cs, err := rowsCtx(ctx, conn(ctx, a), "SELECT store_id,upload_id,staging_key FROM artifact_copy WHERE artifact_id=$1 AND state IN ('pending','copying')", x.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1046,7 +1045,7 @@ func artifactVerified(q *Request) (any, error) {
 	if err := t.Delete(s.Bucket, staging); err != nil {
 		return nil, err
 	}
-	err = dTx(ctx, a, func(tx pgx.Tx) error {
+	err = txCtx(ctx, a, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "UPDATE artifact_copy SET state='verified',verified_at=now(),upload_id=NULL,staging_key=NULL,lease_expires_at=NULL,last_error=NULL WHERE artifact_id=$1 AND store_id=$2", x.ID, s.ID); err != nil {
 			return err
 		}
@@ -1075,7 +1074,7 @@ func artifactDeclare(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = dTx(ctx, a, func(tx pgx.Tx) error {
+	err = txCtx(ctx, a, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `UPDATE execution SET data=jsonb_set(data,'{requiredArtifacts}',(SELECT coalesce(jsonb_agg(DISTINCT v),'[]') FROM jsonb_array_elements_text(coalesce(data->'requiredArtifacts','[]')||to_jsonb($2::text)) v)) WHERE id=$1`, b.ExecutionID, file); err != nil {
 			return err
 		}
@@ -1090,7 +1089,7 @@ func artifactDeclare(q *Request) (any, error) {
 
 // source: a verified copy to read from, the reader host's own store first; a store with a purge pending serves nothing.
 func source(ctx context.Context, a *App, x *Artifact, hostID string) (*StoreRow, error) {
-	rs, err := dRows(ctx, conn(ctx, a), "SELECT store_id FROM artifact_copy WHERE artifact_id=$1 AND state='verified' AND store_id NOT IN (SELECT store_id FROM artifact_copy WHERE state='purge_pending')", x.ID)
+	rs, err := rowsCtx(ctx, conn(ctx, a), "SELECT store_id FROM artifact_copy WHERE artifact_id=$1 AND state='verified' AND store_id NOT IN (SELECT store_id FROM artifact_copy WHERE state='purge_pending')", x.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1186,7 +1185,7 @@ func artifactGetView(ctx context.Context, a *App, id, hostID string) (doc, error
 	if err != nil {
 		return nil, err
 	}
-	cs, err := dRows(ctx, conn(ctx, a), "SELECT store_id AS \"storeId\",state FROM artifact_copy WHERE artifact_id=$1 ORDER BY store_id", x.ID)
+	cs, err := rowsCtx(ctx, conn(ctx, a), "SELECT store_id AS \"storeId\",state FROM artifact_copy WHERE artifact_id=$1 ORDER BY store_id", x.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1309,10 +1308,10 @@ func artifactPurge(ctx context.Context, a *App, hash string, projectID, scope *s
 	deleted, pending := 0, 0
 	for i := range rows {
 		x := &rows[i]
-		if err := dExec(ctx, a, "INSERT INTO purged_hash(project_id,scope,content_hash,reason) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING", projectKey(x.ProjectID), x.Scope, hash, reason); err != nil {
+		if err := execCtx(ctx, a, "INSERT INTO purged_hash(project_id,scope,content_hash,reason) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING", projectKey(x.ProjectID), x.Scope, hash, reason); err != nil {
 			return nil, err
 		}
-		cs, err := dRows(ctx, conn(ctx, a), "SELECT store_id,staging_key FROM artifact_copy WHERE artifact_id=$1 AND state<>'deleted'", x.ID)
+		cs, err := rowsCtx(ctx, conn(ctx, a), "SELECT store_id,staging_key FROM artifact_copy WHERE artifact_id=$1 AND state<>'deleted'", x.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -1336,11 +1335,11 @@ func artifactPurge(ctx context.Context, a *App, hash string, projectID, scope *s
 			} else {
 				pending++
 			}
-			if err := dExec(ctx, a, "UPDATE artifact_copy SET state=$3 WHERE artifact_id=$1 AND store_id=$2", x.ID, astr(c["store_id"]), state); err != nil {
+			if err := execCtx(ctx, a, "UPDATE artifact_copy SET state=$3 WHERE artifact_id=$1 AND store_id=$2", x.ID, astr(c["store_id"]), state); err != nil {
 				return nil, err
 			}
 		}
-		if err := dExec(ctx, a, "UPDATE artifact SET state='deleted',deleted_at=now(),deleted_by=$2 WHERE id=$1", x.ID, "purge:"+reason); err != nil {
+		if err := execCtx(ctx, a, "UPDATE artifact SET state='deleted',deleted_at=now(),deleted_by=$2 WHERE id=$1", x.ID, "purge:"+reason); err != nil {
 			return nil, err
 		}
 	}
@@ -1349,7 +1348,7 @@ func artifactPurge(ctx context.Context, a *App, hash string, projectID, scope *s
 
 // expireLeases: reservations whose lease ran out are aborted and fail.
 func expireLeases(ctx context.Context, a *App) error {
-	stale, err := dRows(ctx, conn(ctx, a), "SELECT artifact_id,store_id,upload_id,staging_key FROM artifact_copy WHERE state IN ('pending','copying') AND lease_expires_at < now()")
+	stale, err := rowsCtx(ctx, conn(ctx, a), "SELECT artifact_id,store_id,upload_id,staging_key FROM artifact_copy WHERE state IN ('pending','copying') AND lease_expires_at < now()")
 	if err != nil {
 		return err
 	}
@@ -1512,7 +1511,7 @@ func saveObject(ctx context.Context, a *App, projectID *string, scope, execution
 		return "", "", err
 	}
 	id := newID()
-	err = dTx(ctx, a, func(tx pgx.Tx) error {
+	err = txCtx(ctx, a, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'stored')", id, projectID, scope, hash, len(data), media, name, executionID); err != nil {
 			return err
 		}
@@ -1520,4 +1519,27 @@ func saveObject(ctx context.Context, a *App, projectID *string, scope, execution
 		return err
 	})
 	return id, hash, err
+}
+
+// executionArtifacts and readArtifact: the artifact records of an execution (stored originals, in the record shape the old
+// readers used) and its bounded bytes.
+
+func readArtifact(a *App, id string) ([]byte, error) {
+	return artifactBytes(context.Background(), a, id, 128000)
+}
+
+func executionArtifacts(q *Request, executionID string) ([]doc, error) {
+	rows, err := artifacts(withTx(q), q.app, "WHERE execution_id=$1 AND state='stored' AND role='original' ORDER BY seq", executionID)
+	if err != nil {
+		return nil, err
+	}
+	out := []doc{}
+	for _, x := range rows {
+		id := x.ID
+		if x.LegacyID != nil {
+			id = *x.LegacyID
+		}
+		out = append(out, doc{"id": id, "artifactId": x.ID, "executionId": x.ExecutionID, "path": x.Name, "mediaType": x.MediaType, "size": x.Size, "sha256": x.ContentHash})
+	}
+	return out, nil
 }

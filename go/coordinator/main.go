@@ -96,7 +96,7 @@ func main() {
 	}
 }
 
-// loadPeople loads people.json at start (docs/designs/fleet-people-access.md); refreshPeople (b_request.go) re-reads it
+// loadPeople loads people.json at start (docs/designs/fleet-people-access.md); refreshPeople (browser_checks.go) re-reads it
 // when it changes.
 func (a *App) loadPeople(ctx context.Context, file string) error {
 	a.peopleFile = file

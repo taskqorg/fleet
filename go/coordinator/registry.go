@@ -160,7 +160,7 @@ func (a *App) serve(w http.ResponseWriter, hr *http.Request, kind int, h handler
 }
 
 // guard is the app.ts preHandler person gate on every route and operation, whatever registered it: architect operations and
-// routes need the architect role (or the held subscription), a named project must be granted. bop, broute and cop apply the
+// routes need the architect role (or the held subscription), a named project must be granted. gatedObjOp, gatedRoute and gatedOp apply the
 // same gate again; it is idempotent.
 func (a *App) guard(q *Request) error {
 	if q.person == nil || q.person.Owner {

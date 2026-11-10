@@ -1,6 +1,6 @@
 package main
 
-// Area A: hosts and the host operations (docs/designs/fleet-people-access.md). A host row is the 'host' document
+// hosts and the host operations (docs/designs/fleet-people-access.md). A host row is the 'host' document
 // 'host:<id>' {hostId, name, holder, platform, roles, secretHash, intake, harnesses, createdAt}; only the secret's hash is kept.
 
 import (
@@ -363,11 +363,11 @@ func hostsList(q *Request) (any, error) {
 			ids = append(ids, astr(o["id"]))
 		}
 	}
-	running, err := cQuery(q, "SELECT host_id,harness,count(*)::int AS n FROM execution WHERE state IN ('preparing','running') AND host_id IS NOT NULL GROUP BY 1,2")
+	running, err := queryRows(q, "SELECT host_id,harness,count(*)::int AS n FROM execution WHERE state IN ('preparing','running') AND host_id IS NOT NULL GROUP BY 1,2")
 	if err != nil {
 		return nil, err
 	}
-	queued, err := cQuery(q, "SELECT data->>'hostId' AS host_id,count(*)::int AS n FROM document WHERE kind='command' AND data->>'status'='pending' GROUP BY 1")
+	queued, err := queryRows(q, "SELECT data->>'hostId' AS host_id,count(*)::int AS n FROM document WHERE kind='command' AND data->>'status'='pending' GROUP BY 1")
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +440,7 @@ func routeDecisions(q *Request) (any, error) {
 	if !ok || id == "" || len(id) > 200 {
 		return nil, fail(400, "Expected executionId")
 	}
-	rs, err := cQuery(q, "SELECT execution_id,at,host_id,candidates,winner FROM route_decision WHERE execution_id=$1 ORDER BY at", id)
+	rs, err := queryRows(q, "SELECT execution_id,at,host_id,candidates,winner FROM route_decision WHERE execution_id=$1 ORDER BY at", id)
 	out := []doc{}
 	for _, r := range rs {
 		out = append(out, doc{"executionId": r["execution_id"], "at": r["at"], "hostId": r["host_id"], "candidates": r["candidates"], "winner": r["winner"]})

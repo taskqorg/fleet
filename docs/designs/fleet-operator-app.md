@@ -160,7 +160,7 @@ Browser windows (one origin)                          Coordinator (Go)
   * View routes: `/overview`, `/tasks`, `/tasks/:id`, `/conversations`, `/conversations/:id`, `/hosts`, `/hosts/:id` (host detail as stacked sections, design-system D11 C3).
   * The coordinator returns `index.html` for these paths only. Any other unknown non-API path gets a 404 page.
 * **List state** (filters, grouping, search, presets, the focused row and checked rows) lives in the URL in one canonical form, defined in [fleet-view-urls-and-list-path.md §1](fleet-view-urls-and-list-path.md) and implemented by `packages/view-url`; agents build and read such links with `view_link`. Per-person defaults and nav pins live in IndexedDB until Phase 6 adds people.
-* **Shell.** `AppShell` from `packages/ui`, with nav items built from the registry's `workspaces`, the one list of screens in nav order. A workspace marked `app: true` is a built screen: the app nav and routes (`app/src/main.tsx`, whose view map the type checker requires for every such screen), the manifests and service-worker routes (`app/build.mjs`, which writes `dist/app/screens.json`) and the coordinator's `index.html` routes (`appRoutes` in `go/coordinator/d_routes.go`, from that file) all follow the flag, so a new screen appears everywhere once it is set and its view is added. The stored entity is a session; the workspace, nav item and view are named Conversations everywhere.
+* **Shell.** `AppShell` from `packages/ui`, with nav items built from the registry's `workspaces`, the one list of screens in nav order. A workspace marked `app: true` is a built screen: the app nav and routes (`app/src/main.tsx`, whose view map the type checker requires for every such screen), the manifests and service-worker routes (`app/build.mjs`, which writes `dist/app/screens.json`) and the coordinator's `index.html` routes (`appRoutes` in `go/coordinator/artifact_routes.go`, from that file) all follow the flag, so a new screen appears everywhere once it is set and its view is added. The stored entity is a session; the workspace, nav item and view are named Conversations everywhere.
 
 * **Codes.** Rows and details show the human code after the title through the `packages/ui` formatter (design-system D15). The UUID is only in a tooltip and "copy UUID". Search accepts a code, an alias or a UUID; a code goes through `entity.resolve`, and an alias opens the entity under its current code. Detail URLs keep the UUID (`/tasks/:id`) until codes exist; the view URL codec passes a code through unchanged, and the redirect direction for codes is decided by the D17 slice ([fleet-view-urls-and-list-path.md](fleet-view-urls-and-list-path.md), Non-Goals).
 
@@ -268,7 +268,7 @@ Kinds are always the client kinds above, never legacy kinds (design-system D15).
 
 ### 6. Coordinator changes
 
-* **Guard rule.** The app routes (`/`, `/assets/*`, `/sw.js`, `/manifests/*`, `/icons/*` and the view paths) are public (`publicRoute`, `go/coordinator/d_routes.go`). Every `/api/*` request except `GET /api/health`, including `/api/stream`, carries the Bearer. The Access origin guard (`go/gateway/guard.go`) guards the whole site. Not built: the coordinator's own `Origin` check on browser writes.
+* **Guard rule.** The app routes (`/`, `/assets/*`, `/sw.js`, `/manifests/*`, `/icons/*` and the view paths) are public (`publicRoute`, `go/coordinator/artifact_routes.go`). Every `/api/*` request except `GET /api/health`, including `/api/stream`, carries the Bearer. The Access origin guard (`go/gateway/guard.go`) guards the whole site. Not built: the coordinator's own `Origin` check on browser writes.
 * **Read ops.** These are read operations (`operation(name, true, …)`, one read snapshot) and are served as MCP tools too:
   * `changes_since {cursor, limit≤1000}` returns `{changes, cursor, resync?}`.
   * `list_membership {lists:[{name:'tasks'|'sessions', filter, group?}], ids}` returns `{lists:[{name, rows:[{row, sortKey}], counts, groups?}]}` (`groups` for grouped task lists). Hosts are few, so `/hosts` re-reads `hosts_list` on any `host` or `execution` change instead.
@@ -291,7 +291,7 @@ Kinds are always the client kinds above, never legacy kinds (design-system D15).
 * `pnpm run build` type-checks, then runs `node app/build.mjs`, then builds the coordinator.
 * `app/build.mjs` runs esbuild in ESM mode with code splitting per view, minified, with hashed names, and writes to `dist/app`. It also writes `index.html`, `sw.js` (with the precache list) and the manifests, and prints chunk sizes (raw and gzip).
 * `app/tsconfig.json` type-checks `app/` and `packages/ui` with Preact JSX.
-* The coordinator serves `FLEET_APP_DIR`, default `dist/app` (`appRoutes`, `go/coordinator/d_routes.go`): hashed assets immutable, entry files revalidated.
+* The coordinator serves `FLEET_APP_DIR`, default `dist/app` (`appRoutes`, `go/coordinator/artifact_routes.go`): hashed assets immutable, entry files revalidated.
 * For development, `pnpm run app:dev` reruns `app/build.mjs` into `dist/app` whenever `app/src`, `packages/ui` or `packages/view-url` changes (`node --watch-path`).
 
 ### 8. Coexistence and retirement
@@ -378,7 +378,7 @@ The prototype pages were deleted with the TypeScript coordinator (owner, 2026-11
 
 * [Design system](../design-system/README.md), including [pages](../design-system/pages/README.md) and [decisions](../design-system/decisions.md).
 * [Data foundation](fleet-data-foundation.md), sections §6, §10, §11 and §12.
-* Code: `go/coordinator/registry.go`, `stream.go`, `store.go`, `d_routes.go`, `go/coordinator/schema.sql`, and `go/gateway/guard.go`.
+* Code: `go/coordinator/registry.go`, `stream.go`, `store.go`, `artifact_routes.go`, `go/coordinator/schema.sql`, and `go/gateway/guard.go`.
 
 ## Future Improvements
 
@@ -398,7 +398,7 @@ The prototype pages were deleted with the TypeScript coordinator (owner, 2026-11
 
 ## Implementation
 
-Built: the change feed (`go/coordinator/stream.go`, `changes_since` in `d_routes.go`), the list operations (`task_page` and `task_derived_check` in `b_tasks.go`, `sessions_list` and `list_membership` in `b_sessions.go`, `hosts_list` in `a_hosts.go`, `me` in `b_people.go`), the app routes (`d_routes.go`), the app (`app/build.mjs`, `app/src/`) and the checks (`tests/ui/store.test.ts`, `tests/ui/app.check.ts`).
+Built: the change feed (`go/coordinator/stream.go`, `changes_since` in `artifact_routes.go`), the list operations (`task_page` and `task_derived_check` in `tasks.go`, `sessions_list` and `list_membership` in `sessions.go`, `hosts_list` in `hosts.go`, `me` in `people.go`), the app routes (`artifact_routes.go`), the app (`app/build.mjs`, `app/src/`) and the checks (`tests/ui/store.test.ts`, `tests/ui/app.check.ts`).
 
 ### Verification
 

@@ -524,12 +524,12 @@ var projectOps = map[string]registeredOp{}
 
 func projectOp(name string, read bool, h handler) {
 	projectOps[name] = registeredOp{read, h}
-	bop(name, read, h)
+	gatedObjOp(name, read, h)
 }
 
 func init() {
-	broute("GET /api/profiles", func(q *Request) (any, error) { return doc{"profiles": listProfiles()}, nil })
-	bop("profiles_list", true, func(q *Request) (any, error) { return doc{"profiles": listProfiles()}, nil })
+	gatedRoute("GET /api/profiles", func(q *Request) (any, error) { return doc{"profiles": listProfiles()}, nil })
+	gatedObjOp("profiles_list", true, func(q *Request) (any, error) { return doc{"profiles": listProfiles()}, nil })
 	projectOp("project_list", true, func(q *Request) (any, error) {
 		out := []doc{}
 		for _, id := range projectIDs() {
@@ -663,9 +663,9 @@ func init() {
 		}
 		return doc{"runs": runs}, nil
 	})
-	broute("GET /api/projects", func(q *Request) (any, error) { return projectOps["project_list"].h(q) })
+	gatedRoute("GET /api/projects", func(q *Request) (any, error) { return projectOps["project_list"].h(q) })
 	projectRoute := func(path, op string) {
-		broute("GET "+path, func(q *Request) (any, error) {
+		gatedRoute("GET "+path, func(q *Request) (any, error) {
 			q.body = json.RawMessage(js(doc{"projectId": q.r.PathValue("id")}))
 			return projectOps[op].h(q)
 		})
@@ -673,17 +673,17 @@ func init() {
 	projectRoute("/api/projects/{id}", "project_context")
 	projectRoute("/api/projects/{id}/catalogue", "catalogue")
 	projectRoute("/api/projects/{id}/runs", "pipeline_history")
-	broute("GET /api/pipeline-runs/{id}", func(q *Request) (any, error) {
+	gatedRoute("GET /api/pipeline-runs/{id}", func(q *Request) (any, error) {
 		q.body = json.RawMessage(js(doc{"runId": q.r.PathValue("id")}))
 		return projectOps["pipeline_get"].h(q)
 	})
-	blongRoute("POST /api/project-operations/{name}", func(q *Request) (any, error) {
+	gatedLongRoute("POST /api/project-operations/{name}", func(q *Request) (any, error) {
 		if _, ok := projectOps[q.r.PathValue("name")]; !ok {
 			return nil, fail(404, "Unknown operation")
 		}
 		return q.app.runOp(q, q.r.PathValue("name"), q.body)
 	})
-	blongRoute("POST /api/project-tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet-projects", projectOps, nil) })
+	gatedLongRoute("POST /api/project-tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet-projects", projectOps, nil) })
 }
 
 // pipelineRun: a pipeline-run record with its steps.
@@ -747,4 +747,56 @@ func artifactLocations(a *App, projectID *string) []string {
 		}
 	}
 	return defaultLocations
+}
+
+// Small project and agent lookups shared across domains.
+
+func projectSetting(projectID any, key string) any {
+	p, ok := projectID.(string)
+	if !ok || p == "" {
+		return nil
+	}
+	st, err := projectSettingsByID(p)
+	if err != nil {
+		return nil
+	}
+	return st[key]
+}
+
+// agentReady: agent.ready(command) in the poll's ready filter (a steer of a finished execution waits forever).
+func agentReady(q *Request, c doc) (bool, error) {
+	if c["kind"] != "steer" {
+		return true, nil
+	}
+	e, err := get(q, c["executionId"], "execution")
+	return err == nil && !legacyTerminal(e), err
+}
+
+func takeTaskFrom(q *Request, taskID, taker string, from any) error {
+	return takeTask(q, taskID, taker, astr(from))
+}
+
+// projectSettingsByID: project_context(projectId).settings; error when unknown.
+func projectSettingsByID(id string) (doc, error) {
+	p, err := projectContext(id)
+	if err != nil {
+		return nil, err
+	}
+	return mapOf(p["settings"]), nil
+}
+
+// gitNetworkOf: whether the session's agent may use the network for git (its profile, else a project role with repos).
+func gitNetworkOf(s doc) bool {
+	if cfg, ok := s["agentConfig"].(map[string]any); ok {
+		if v, ok := cfg["gitNetwork"].(bool); ok {
+			return v
+		}
+	}
+	p := astr(s["projectId"])
+	role := astr(s["role"])
+	if p == "" || (role != "pm" && role != "reviewer" && role != "worker") {
+		return false
+	}
+	st, err := projectSettingsByID(p)
+	return err == nil && len(anys(st["repos"])) > 0
 }

@@ -159,7 +159,7 @@ func (a *App) ownSubscription(q *Request, name string, b map[string]any) bool {
 }
 
 func init() {
-	bop("me", true, func(q *Request) (any, error) {
+	gatedObjOp("me", true, func(q *Request) (any, error) {
 		p := q.person
 		if p == nil {
 			return doc{"email": nil, "name": nil, "roles": []string{}, "owner": false, "grantsVersion": nil, "changeLogRetentionDays": 7}, nil
@@ -175,7 +175,7 @@ func init() {
 // people_list and people_set: people.json as operations (docs/designs/fleet-pm-agent.md §8). A non-owner sees only
 // themself, as the person row-level policy does; only the owner sets the list, written atomically and reloaded.
 func init() {
-	bop("people_list", true, func(q *Request) (any, error) {
+	gatedObjOp("people_list", true, func(q *Request) (any, error) {
 		out := []*Person{}
 		for _, p := range q.app.people {
 			if q.person == nil || q.person.Owner || p.Email == q.person.Email {
@@ -186,7 +186,7 @@ func init() {
 		return doc{"people": out}, nil
 	})
 	// setting_changes: the audit of settings, newest first, optionally of one target (host:<id>, people, ...).
-	bop("setting_changes", true, func(q *Request) (any, error) {
+	gatedObjOp("setting_changes", true, func(q *Request) (any, error) {
 		// The people list is the owner's: its audit is not shown to architects.
 		owner := q.person == nil || q.person.Owner
 		b := body(q)
@@ -204,7 +204,7 @@ func init() {
 		}
 		return doc{"changes": out, "nextBefore": next}, err
 	})
-	clong("people_set", func(q *Request) (any, error) {
+	longOp("people_set", func(q *Request) (any, error) {
 		if q.person != nil && !q.person.Owner {
 			return nil, fail(403, "Only the owner sets people")
 		}

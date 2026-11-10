@@ -1,6 +1,6 @@
 package main
 
-// Area A: dispatch (docs/designs/fleet-people-access.md, slice 6), the one late choice point, with enqueue and startCommand. On every host poll each
+// dispatch (docs/designs/fleet-people-access.md, slice 6), the one late choice point, with enqueue and startCommand. On every host poll each
 // queued agent execution gets a ranked list of (subscription, host) candidates; the best unskipped one wins, and the poll
 // claims it when the winner is the polling host. With none left the execution waits with the first skip reason, and one
 // needs-you question is open per cause.
@@ -608,7 +608,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	if binding != nil && binding["taken"] == true {
 		task := astr(s["deliveryId"])
 		if task == "" {
-			ms, err := cQuery(q, "SELECT task_id FROM execution WHERE id=$1", e["id"])
+			ms, err := queryRows(q, "SELECT task_id FROM execution WHERE id=$1", e["id"])
 			if err != nil {
 				return nil, err
 			}

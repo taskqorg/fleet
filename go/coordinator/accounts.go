@@ -1,6 +1,6 @@
 package main
 
-// Area A: subscriptions and their host bindings (docs/designs/fleet-people-access.md). A subscription is a 'managed-account' document; logins stay
+// subscriptions and their host bindings (docs/designs/fleet-people-access.md). A subscription is a 'managed-account' document; logins stay
 // on the holder's host, Fleet keeps only what hosts observe.
 
 import (
@@ -211,7 +211,7 @@ func accountCreate(q *Request) (any, error) {
 	if !ok {
 		return nil, fail(400, "Expected account name and harness")
 	}
-	same, err := aRows(q, "SELECT data FROM document WHERE kind='managed-account' AND data->>'name'=$1", b["name"])
+	same, err := rows(q, "SELECT data FROM document WHERE kind='managed-account' AND data->>'name'=$1", b["name"])
 	if err != nil {
 		return nil, err
 	}
