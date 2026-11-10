@@ -882,7 +882,7 @@ Phases ship in order. Each phase leaves the system working and is verified live 
 Library choices. Each is the official or most widely used client, so there is one defensible answer:
 *   `pg` (node-postgres) for Postgres;
 *   `@clickhouse/client` for ClickHouse;
-*   `@aws-sdk/client-s3` with `@aws-sdk/s3-request-presigner` for S3.
+*   S3 goes through Fleet's own SigV4 client, `packages/coordinator/s3.ts`, which replaced `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner` (docs/designs/fleet-toolchain.md D3).
 
 The executor uploads to presigned URLs with its existing `ureq` and `sha2` crates, so it needs no S3 SDK.
 
@@ -971,7 +971,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 
 *   **Type / Scope**: Dependencies.
 *   **Proposed Changes**:
-    *   Add `pg`, `@types/pg`, `@clickhouse/client`, `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner`, and `@electric-sql/pglite` (dev).
+    *   Add `pg`, `@types/pg`, `@clickhouse/client`, and `@electric-sql/pglite` (dev). S3 was first `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner`; `packages/coordinator/s3.ts` has replaced them (fleet-toolchain.md D3).
     *   Keep `better-sqlite3` and `@types/better-sqlite3` until Phase 7, for the migration tool only.
 *   **Why**: The new stores.
 
@@ -1127,7 +1127,7 @@ Order: 21, 22, 24 (with its legacy adapter), 26c (backfill), 26b and the other r
 
 ##### 24. `packages/coordinator/artifacts.ts` (Create)
 
-*   **Type / Scope**: Artifact operations. Uses the existing `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner` (no new dependency).
+*   **Type / Scope**: Artifact operations. Uses `packages/coordinator/s3.ts`, Fleet's own SigV4 client (no third-party dependency; fleet-toolchain.md D3).
 *   **Proposed Changes**:
     *   `s3For(store, via: 'tunnel'|'local')`: a client per store and endpoint with `requestChecksumCalculation` and `responseChecksumValidation` `WHEN_REQUIRED`; for `tunnel`, a middleware at the `finalizeRequest` step, after signing, adds `CF-Access-Client-Id` and `CF-Access-Client-Secret`. Presigned URLs for a host other than the store's are post-processed the same way by the executor (it adds the headers, never signs them).
     *   `reserve({executionId, hostId, name, mediaType, size, sha256}) -> {artifactId, state} | {artifactId, state:'pending', uploadId, partSize}`: rejects a purged hash; store selection per §3; dedupe to an existing verified copy; else `CreateMultipartUpload` on the staging key and a `pending` row with a 1-hour lease. Errors: `no_store` (409, nothing reachable in the list), `project_invalid` (409).
