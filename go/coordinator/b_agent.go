@@ -1507,6 +1507,15 @@ func focusProject(q *Request, s doc, given any) (string, error) {
 	return p, nil
 }
 
+// directs: a person changes only sessions they direct (the owner any); an agent call is already bound to its own
+// session tree by bound().
+func directs(q *Request, s doc) error {
+	if q.agent != "" || q.person == nil || q.person.Owner || gs(s, "directedBy") == q.person.Email {
+		return nil
+	}
+	return fail(403, "Session is directed by someone else")
+}
+
 // focusSet: a session's focus, a list of projects in the caller's grants or "*" (docs/designs/fleet-pm-agent.md §2).
 func focusSet(q *Request, b doc) (doc, error) {
 	sid, err := strArg(b, "sessionId", "sessionId", 0)
@@ -1515,6 +1524,9 @@ func focusSet(q *Request, b doc) (doc, error) {
 	}
 	s, err := get(q, sid, "session")
 	if err != nil {
+		return nil, err
+	}
+	if err := directs(q, s); err != nil {
 		return nil, err
 	}
 	var v any = "*"
@@ -1549,7 +1561,8 @@ func agentMay(p *Person, name string) bool {
 	}
 	_, op := operations[name]
 	_, long := longOperations[name]
-	return (op || long) && (p.Owner || hasRole(p, "architect") || !architectOps.MatchString(name))
+	// account_*: guardOp lets a holder manage their own subscription, so the tools stay offered and guardOp decides.
+	return (op || long) && (p.Owner || hasRole(p, "architect") || !architectOps.MatchString(name) || strings.HasPrefix(name, "account_"))
 }
 
 // agentTools: the agent table plus every operation the director may call, as published by tools/list.
