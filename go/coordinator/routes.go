@@ -1,25 +1,11 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 )
-
-type doc = map[string]any
-
-func uuid() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	b[6], b[8] = b[6]&0x0f|0x40, b[8]&0x3f|0x80
-	h := hex.EncodeToString(b)
-	return h[:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
-}
-
-func now() int64 { return time.Now().UnixMilli() }
 
 func rows(q *Request, sql string, args ...any) ([]doc, error) {
 	rs, err := q.tx.Query(q.ctx(), sql, args...)
@@ -48,11 +34,8 @@ func one(q *Request, sql string, args ...any) (doc, error) {
 	return ds[0], nil
 }
 
-func getDoc(q *Request, id, kind string) (doc, error) {
-	return one(q, "SELECT data FROM document WHERE id=$1 AND kind=$2", id, kind)
-}
-
-func putDoc(q *Request, kind string, v doc) error {
+// putDocument writes a document row (put routes every non-typed kind here).
+func putDocument(q *Request, kind string, v doc) error {
 	if kind == "setting-change" && q.agent != "" { // an agent's change: the execution acts for its director (fleet-pm-agent.md §1)
 		v["actor"], v["onBehalfOf"] = q.agent, q.person.Email
 	}
@@ -99,7 +82,7 @@ func putExecution(q *Request, e doc) error {
 	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,project_id=coalesce(execution.project_id,excluded.project_id),observation=excluded.observation,host_id=excluded.host_id,model=excluded.model,
 	  started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,directed_by=excluded.directed_by,
 	  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-		e["id"], state, observation, e["sessionId"], e["hostId"], e["model"], cfg, ms("startedAt"), ms("finishedAt"), b, e["directedBy"], nilIf(firstString(e["projectId"], gm(e, "dispatch")["projectId"])))
+		e["id"], state, observation, e["sessionId"], e["hostId"], e["model"], cfg, ms("startedAt"), ms("finishedAt"), b, e["directedBy"], nilIf(firstString(e["projectId"], mapOf(e["dispatch"])["projectId"])))
 	return err
 }
 

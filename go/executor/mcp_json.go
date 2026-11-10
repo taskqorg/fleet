@@ -10,25 +10,9 @@ import (
 	"strings"
 )
 
-type obj = map[string]any
-
-// get walks object keys; a missing key or non-object yields nil.
-func get(v any, keys ...string) any {
-	for _, k := range keys {
-		m, ok := v.(obj)
-		if !ok {
-			return nil
-		}
-		v = m[k]
-	}
-	return v
-}
-
-func has(v any, k string) bool { m, ok := v.(obj); _, in := m[k]; return ok && in }
+func has(v any, k string) bool { m, ok := v.(M); _, in := m[k]; return ok && in }
 
 func str(v any) (string, bool) { s, ok := v.(string); return s, ok }
-
-func sv(v any) string { s, _ := v.(string); return s }
 
 // truth is Python truthiness for JSON values.
 func truth(v any) bool {
@@ -46,7 +30,7 @@ func truth(v any) bool {
 		return x != 0
 	case []any:
 		return len(x) > 0
-	case obj:
+	case M:
 		return len(x) > 0
 	}
 	return true
@@ -64,18 +48,6 @@ func decode(b []byte) (any, error) {
 	}
 	return v, nil
 }
-
-func encode(v any) string {
-	var b bytes.Buffer
-	e := json.NewEncoder(&b)
-	e.SetEscapeHTML(false)
-	if err := e.Encode(v); err != nil {
-		return "null"
-	}
-	return strings.TrimSuffix(b.String(), "\n")
-}
-
-func clone(v any) any { c, _ := decode([]byte(encode(v))); return c }
 
 // pyJSONError returns Python's json.loads message for raw, or "" when raw parses.
 func pyJSONError(raw string) string {

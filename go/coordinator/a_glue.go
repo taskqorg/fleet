@@ -17,7 +17,7 @@ func init() {
 
 // executionStop: one stop command; an execution no host can confirm is settled here.
 func executionStop(q *Request, id any) (any, error) {
-	e, err := aget(q, id, "execution")
+	e, err := get(q, id, "execution")
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +29,7 @@ func executionStop(q *Request, id any) (any, error) {
 	if len(stops) > 0 {
 		c = stops[0]
 	} else {
-		c = doc{"id": uuid(), "executionId": e["id"], "sessionId": e["sessionId"], "hostId": e["hostId"], "kind": "stop", "payload": doc{}, "status": "pending"}
+		c = doc{"id": newID(), "executionId": e["id"], "sessionId": e["sessionId"], "hostId": e["hostId"], "kind": "stop", "payload": doc{}, "status": "pending"}
 		if err := put(q, "command", c); err != nil {
 			return nil, err
 		}
@@ -56,7 +56,7 @@ func executionStop(q *Request, id any) (any, error) {
 		if e["hostId"] != nil {
 			e["stopDetail"] = "host never registered"
 		}
-		if c, err = aget(q, c["id"], "command"); err != nil {
+		if c, err = get(q, c["id"], "command"); err != nil {
 			return nil, err
 		}
 	}
@@ -114,7 +114,7 @@ func artifactGate(q *Request, e doc, declared []any) (doc, error) {
 		return doc{"state": "failed", "error": doc{"code": "artifact-required", "message": "Required artifacts missing or failed", "missing": r.Missing, "failed": r.Failed}}, nil
 	}
 	if len(r.Pending) > 0 {
-		return doc{"state": "waiting", "waitReason": "artifacts", "waitingSince": now(), "pendingArtifacts": r.Pending, "declaredArtifacts": declared}, nil
+		return doc{"state": "waiting", "waitReason": "artifacts", "waitingSince": nowMs(), "pendingArtifacts": r.Pending, "declaredArtifacts": declared}, nil
 	}
 	return doc{}, nil
 }
@@ -144,7 +144,7 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 		for _, k := range []string{"waitReason", "waitingSince", "pendingArtifacts", "declaredArtifacts"} {
 			delete(e, k)
 		}
-		e["state"], e["updatedAt"] = "completed", now()
+		e["state"], e["updatedAt"] = "completed", nowMs()
 		if failed {
 			e["state"] = "failed"
 			msg := "Required artifacts missing or failed"

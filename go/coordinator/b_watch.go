@@ -55,7 +55,7 @@ func watchSet(q *Request, b doc) (doc, error) {
 		}
 		w["timerMs"], w["nextWakeAt"] = ms, time.Now().UnixMilli()+int64(ms)
 	}
-	return w, putDoc(q, "watch", w)
+	return w, put(q, "watch", w)
 }
 
 func init() {
@@ -120,7 +120,7 @@ func watchOne(q *Request, wid string) error {
 	if err != nil || w == nil {
 		return err
 	}
-	id := gs(w, "sessionId")
+	id := astr(w["sessionId"])
 	s, err := maybe(q, id, "session")
 	if err != nil {
 		return err
@@ -142,7 +142,7 @@ func watchOne(q *Request, wid string) error {
 		return err
 	}
 	for _, e := range es {
-		own["execution:"+gs(e, "id")] = true
+		own["execution:"+astr(e["id"])] = true
 	}
 	children := map[string]bool{}
 	cs, err := rowsOf(q, "SELECT id FROM document WHERE kind='session' AND data->>'createdBySessionId'=$1", id)
@@ -150,7 +150,7 @@ func watchOne(q *Request, wid string) error {
 		return err
 	}
 	for _, c := range cs {
-		children[gs(c, "id")] = true
+		children[astr(c["id"])] = true
 	}
 	kinds, focus := strList(w["kinds"]), focusIDs(s)
 	cursor := int64(num(w["cursor"]))
@@ -215,7 +215,7 @@ func watchOne(q *Request, wid string) error {
 		w["nextWakeAt"] = nowMs + int64(num(w["timerMs"]))
 	}
 	delete(w, "lastError")
-	return putDoc(q, "watch", w)
+	return put(q, "watch", w)
 }
 
 // classify: one change by its current row; "" drops it (§5 table).
@@ -226,8 +226,8 @@ func classify(q *Request, c change) (string, error) {
 		if err != nil || t == nil {
 			return "", err
 		}
-		st := gs(t, "state")
-		if gs(t, "pause_reason") == "held" {
+		st := astr(t["state"])
+		if astr(t["pause_reason"]) == "held" {
 			st = "held"
 		}
 		return "task " + c.ID + " now " + st, nil
@@ -245,7 +245,7 @@ func classify(q *Request, c change) (string, error) {
 		if err != nil || r == nil {
 			return "", err
 		}
-		return "execution " + c.ID + " " + gs(r, "s"), nil
+		return "execution " + c.ID + " " + astr(r["s"]), nil
 	case "host": // only reported problems (§5 table)
 		r, err := first(q, "SELECT 1 AS x FROM document WHERE kind='host-observation' AND id=$1 AND jsonb_array_length(coalesce(data->'problems','[]'))>0", c.ID)
 		if err != nil || r == nil {

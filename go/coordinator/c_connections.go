@@ -33,7 +33,7 @@ var (
 	spoolFile      = regexp.MustCompile(`^\d{4}-\d\d-\d\d\.jsonl$`)
 	connEnded      = map[string]bool{"completed": true, "failed": true, "stopped": true}
 	usageToken     = cRandomToken()
-	processStarted = now()
+	processStarted = nowMs()
 )
 
 func cRandomToken() string {
@@ -74,7 +74,7 @@ func connByName(q *Request, name any) (doc, error) {
 	if !ok || !connName.MatchString(n) {
 		return nil, fail(400, "Expected connection name")
 	}
-	c, err := cGet(q, "connection:"+n, "api-connection")
+	c, err := maybe(q, "connection:"+n, "api-connection")
 	if err == nil && c == nil {
 		err = fail(404, "Unknown API key "+n)
 	}
@@ -82,8 +82,8 @@ func connByName(q *Request, name any) (doc, error) {
 }
 
 func connChange(q *Request, c doc, field string, previous, value any) error {
-	return putDoc(q, "setting-change", doc{"id": uuid(), "target": "connection:" + astr(c["name"]), "holder": c["holder"], "field": field,
-		"previous": previous, "value": value, "actor": actor(q, "operator"), "at": now()})
+	return put(q, "setting-change", doc{"id": newID(), "target": "connection:" + astr(c["name"]), "holder": c["holder"], "field": field,
+		"previous": previous, "value": value, "actor": actor(q, "operator"), "at": nowMs()})
 }
 
 func connKeys(q *Request, name string) ([]doc, error) {
@@ -99,11 +99,11 @@ func connSnapshot(q *Request) (doc, error) {
 	}
 	blocked = b
 	conns := doc{}
-	all, err := cAll(q, "api-connection")
+	connections, err := all(q, "api-connection", nil)
 	if err != nil {
 		return nil, err
 	}
-	for _, c := range all {
+	for _, c := range connections {
 		name := astr(c["name"])
 		ks, err := connKeys(q, name)
 		if err != nil {
@@ -126,7 +126,7 @@ func connSnapshot(q *Request) (doc, error) {
 		}
 		conns[name] = doc{"provider": c["provider"], "tools": c["tools"], "intake": c["intake"], "keys": keys, "blocked": bl}
 	}
-	toks, err := cAll(q, "run-token")
+	toks, err := all(q, "run-token", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func connSnapshot(q *Request) (doc, error) {
 		}
 		tokens = append(tokens, doc{"sha256": t["sha256"], "executionId": t["executionId"], "directedBy": t["directedBy"], "projectId": t["projectId"], "experimentId": t["experimentId"], "connections": t["connections"]})
 	}
-	return doc{"schema": 2, "generated_ms": now(), "providers": providers, "connections": conns, "tokens": tokens, "usageTokenSha256": sha256hex([]byte(usageToken))}, nil
+	return doc{"schema": 2, "generated_ms": nowMs(), "providers": providers, "connections": conns, "tokens": tokens, "usageTokenSha256": sha256hex([]byte(usageToken))}, nil
 }
 
 var snapshotMu sync.Mutex
@@ -157,7 +157,7 @@ func writeSnapshot(ctx context.Context, a *App) error {
 	}
 	file := filepath.Join(gatewayDir(), "snapshot.json")
 	tmp := fmt.Sprintf("%s.%d.tmp", file, os.Getpid())
-	if err := os.WriteFile(tmp, cJSON(s), 0o640); err != nil {
+	if err := os.WriteFile(tmp, jsonBytes(s), 0o640); err != nil {
 		return err
 	}
 	return os.Rename(tmp, file)
@@ -213,7 +213,7 @@ func connSync(q *Request) error {
 		if !connName.MatchString(name) || !ent.IsDir() {
 			continue
 		}
-		c, err := cGet(q, "connection:"+name, "api-connection")
+		c, err := maybe(q, "connection:"+name, "api-connection")
 		if err != nil {
 			return err
 		}
@@ -226,8 +226,8 @@ func connSync(q *Request) error {
 				continue
 			}
 			c = doc{"id": "connection:" + name, "name": name, "provider": name, "holder": owner, "access": doc{"people": []any{}, "projects": []any{"*"}, "experiments": []any{}},
-				"intake": "all", "tools": toolNames(name), "comment": "", "createdAt": now()}
-			if err := putDoc(q, "api-connection", c); err != nil {
+				"intake": "all", "tools": toolNames(name), "comment": "", "createdAt": nowMs()}
+			if err := put(q, "api-connection", c); err != nil {
 				return err
 			}
 		}
@@ -235,7 +235,7 @@ func connSync(q *Request) error {
 		for _, f := range files {
 			if m := stagedKey.FindStringSubmatch(f.Name()); m != nil {
 				// An add a crash interrupted: its bytes count only when the row committed.
-				k, err := cGet(q, "key:"+m[1], "connection-key")
+				k, err := maybe(q, "key:"+m[1], "connection-key")
 				if err != nil {
 					return err
 				}
@@ -258,12 +258,12 @@ func connSync(q *Request) error {
 			if fingerprint(strings.TrimSpace(string(b))) != f.Name() {
 				continue // a renamed or edited file never registers under a wrong fingerprint
 			}
-			if k, err := cGet(q, "key:"+f.Name(), "connection-key"); err != nil {
+			if k, err := maybe(q, "key:"+f.Name(), "connection-key"); err != nil {
 				return err
 			} else if k != nil && k["state"] == "retired" {
 				os.Remove(filepath.Join(root, name, f.Name())) // a retirement committed before a crash removed the value
 			} else if k == nil {
-				if err := putDoc(q, "connection-key", doc{"id": "key:" + f.Name(), "connectionId": name, "fingerprint": f.Name(), "state": "active", "addedAt": now(), "addedBy": "import"}); err != nil {
+				if err := put(q, "connection-key", doc{"id": "key:" + f.Name(), "connectionId": name, "fingerprint": f.Name(), "state": "active", "addedAt": nowMs(), "addedBy": "import"}); err != nil {
 					return err
 				}
 			}
@@ -305,7 +305,7 @@ func idList(v any, field string) ([]any, error) {
 func init() {
 	// Agent dispatch mints the run token for the profile's connections (a_dispatch.go); the a_hooks default is a stub.
 	cop("connections_list", true, func(q *Request) (any, error) {
-		keys, err := cAll(q, "connection-key")
+		keys, err := all(q, "connection-key", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -314,12 +314,12 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		all, err := cAll(q, "api-connection")
+		connections, err := all(q, "api-connection", nil)
 		if err != nil {
 			return nil, err
 		}
 		out := []any{}
-		for _, c := range all {
+		for _, c := range connections {
 			ks, hs := []any{}, []any{}
 			for _, k := range keys {
 				if k["connectionId"] == c["name"] {
@@ -345,7 +345,7 @@ func init() {
 		if !connName.MatchString(name) || providers[provider] == nil || !cKeysOnly(b, "name", "provider", "holder", "comment") {
 			return nil, fail(400, "Expected name and a known provider")
 		}
-		if old, err := cGet(q, "connection:"+name, "api-connection"); err != nil {
+		if old, err := maybe(q, "connection:"+name, "api-connection"); err != nil {
 			return nil, err
 		} else if old != nil {
 			return nil, fail(409, "API key name exists")
@@ -362,8 +362,8 @@ func init() {
 			comment = comment[:2000]
 		}
 		c := doc{"id": "connection:" + name, "name": name, "provider": provider, "holder": holder, "access": doc{"people": []any{}, "projects": []any{}, "experiments": []any{}},
-			"intake": "all", "tools": toolNames(provider), "comment": comment, "createdAt": now()}
-		if err := putDoc(q, "api-connection", c); err != nil {
+			"intake": "all", "tools": toolNames(provider), "comment": comment, "createdAt": nowMs()}
+		if err := put(q, "api-connection", c); err != nil {
 			return nil, err
 		}
 		publish(q)
@@ -387,7 +387,7 @@ func init() {
 			return nil, fail(400, "Expected one key value without spaces")
 		}
 		fp := fingerprint(value)
-		if old, err := cGet(q, "key:"+fp, "connection-key"); err != nil {
+		if old, err := maybe(q, "key:"+fp, "connection-key"); err != nil {
 			return nil, err
 		} else if old != nil {
 			return nil, fail(409, "Key already added")
@@ -396,8 +396,8 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		k := doc{"id": "key:" + fp, "connectionId": c["name"], "fingerprint": fp, "state": "active", "addedAt": now(), "addedBy": actor(q, "operator")}
-		if err := putDoc(q, "connection-key", k); err != nil {
+		k := doc{"id": "key:" + fp, "connectionId": c["name"], "fingerprint": fp, "state": "active", "addedAt": nowMs(), "addedBy": actor(q, "operator")}
+		if err := put(q, "connection-key", k); err != nil {
 			return nil, err
 		}
 		// The value is staged before commit and takes its key name only after the row committed; a rolled-back add removes
@@ -430,7 +430,7 @@ func init() {
 		if id != "" && !strings.HasPrefix(id, "key:") {
 			id = "key:" + id
 		}
-		k, err := cGet(q, id, "connection-key")
+		k, err := maybe(q, id, "connection-key")
 		if err != nil {
 			return nil, err
 		}
@@ -462,14 +462,14 @@ func init() {
 		if err := connChange(q, c, "key:"+astr(k["fingerprint"]), k["state"], to); err != nil {
 			return nil, err
 		}
-		k["state"], k["updatedAt"] = to, now()
+		k["state"], k["updatedAt"] = to, nowMs()
 		if to == "active" {
 			delete(k, "disabledReason")
 			delete(k, "disabledAt")
 			delete(k, "problem")
-			k["enabledAt"] = now()
+			k["enabledAt"] = nowMs()
 		}
-		if err := putDoc(q, "connection-key", k); err != nil {
+		if err := put(q, "connection-key", k); err != nil {
 			return nil, err
 		}
 		if to == "retired" {
@@ -525,8 +525,8 @@ func init() {
 			if err := connChange(q, c, "access", c["access"], next); err != nil {
 				return nil, err
 			}
-			c["access"], c["updatedAt"] = next, now()
-			if err := putDoc(q, "api-connection", c); err != nil {
+			c["access"], c["updatedAt"] = next, nowMs()
+			if err := put(q, "api-connection", c); err != nil {
 				return nil, err
 			}
 			publish(q)
@@ -553,8 +553,8 @@ func init() {
 			if err := connChange(q, c, "intake", c["intake"], in); err != nil {
 				return nil, err
 			}
-			c["intake"], c["updatedAt"] = in, now()
-			if err := putDoc(q, "api-connection", c); err != nil {
+			c["intake"], c["updatedAt"] = in, nowMs()
+			if err := put(q, "api-connection", c); err != nil {
 				return nil, err
 			}
 			publish(q)
@@ -574,7 +574,7 @@ func init() {
 		if !ok || !connName.MatchString(name) {
 			return nil, fail(400, "Expected token name")
 		}
-		toks, err := cAll(q, "run-token")
+		toks, err := all(q, "run-token", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -584,7 +584,7 @@ func init() {
 			}
 		}
 		requested := []string{}
-		for _, x := range cList(b["connections"]) {
+		for _, x := range anys(b["connections"]) {
 			if s, ok := x.(string); ok {
 				requested = append(requested, s)
 			}
@@ -604,7 +604,7 @@ func init() {
 		return m, nil
 	})
 	cop("connections_token_list", true, func(q *Request) (any, error) {
-		toks, err := cAll(q, "run-token")
+		toks, err := all(q, "run-token", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -624,15 +624,15 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		toks, err := cAll(q, "run-token")
+		toks, err := all(q, "run-token", nil)
 		if err != nil {
 			return nil, err
 		}
 		n := 0
 		for _, t := range toks {
 			if t["personal"] == b["name"] && b["name"] != nil && t["revokedAt"] == nil {
-				t["revokedAt"] = now()
-				if err := putDoc(q, "run-token", t); err != nil {
+				t["revokedAt"] = nowMs()
+				if err := put(q, "run-token", t); err != nil {
 					return nil, err
 				}
 				n++
@@ -699,14 +699,14 @@ func every(ctx context.Context, d time.Duration, fn func()) {
 func connAllowed(c doc, run doc) bool {
 	a := mapOf(c["access"])
 	has := func(list string, v any) bool {
-		for _, x := range cList(a[list]) {
+		for _, x := range anys(a[list]) {
 			if x == v {
 				return true
 			}
 		}
 		return false
 	}
-	if len(cList(a["people"])) == 0 && len(cList(a["projects"])) == 0 && len(cList(a["experiments"])) == 0 {
+	if len(anys(a["people"])) == 0 && len(anys(a["projects"])) == 0 && len(anys(a["experiments"])) == 0 {
 		return run["directedBy"] != nil && run["directedBy"] == c["holder"]
 	}
 	return (run["directedBy"] != nil && has("people", run["directedBy"])) || has("projects", "*") ||
@@ -724,7 +724,7 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 	}
 	granted := []doc{}
 	for _, name := range uniq {
-		c, err := cGet(q, "connection:"+name, "api-connection")
+		c, err := maybe(q, "connection:"+name, "api-connection")
 		if err != nil {
 			return nil, err
 		}
@@ -742,7 +742,7 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 		names = append(names, c["name"])
 		p := mapOf(providers[astr(c["provider"])])
 		tools := []any{}
-		for _, t := range cList(c["tools"]) {
+		for _, t := range anys(c["tools"]) {
 			if spec := mapOf(mapOf(p["tools"])[astr(t)]); spec != nil {
 				tools = append(tools, doc{"name": t, "description": spec["description"], "inputSchema": spec["inputSchema"]})
 			}
@@ -759,14 +759,14 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 		}
 	}
 	row := doc{"id": "run-token:" + sha, "sha256": sha, "executionId": run["executionId"], "directedBy": run["directedBy"], "projectId": run["projectId"],
-		"experimentId": run["experimentId"], "pipelineRunId": run["pipelineRunId"], "connections": names, "createdAt": now()}
+		"experimentId": run["experimentId"], "pipelineRunId": run["pipelineRunId"], "connections": names, "createdAt": nowMs()}
 	if run["step"] == true {
 		row["step"] = true
 	}
 	if run["personal"] != nil {
 		row["personal"] = run["personal"]
 	}
-	err := putDoc(q, "run-token", row)
+	err := put(q, "run-token", row)
 	if err != nil {
 		return nil, err
 	}
@@ -780,8 +780,8 @@ func revokeTokens(q *Request, executionID string) error {
 		return err
 	}
 	for _, t := range ts {
-		t["revokedAt"] = now()
-		if err := exec(q, "UPDATE document SET data=$2 WHERE id=$1", t["id"], cJSON(t)); err != nil {
+		t["revokedAt"] = nowMs()
+		if err := exec(q, "UPDATE document SET data=$2 WHERE id=$1", t["id"], jsonBytes(t)); err != nil {
 			return err
 		}
 	}
@@ -799,8 +799,8 @@ func revokeSteps(q *Request) error {
 	}
 	for _, t := range ts {
 		if c, _ := cNum(t["createdAt"]); int64(c) < processStarted {
-			t["revokedAt"] = now()
-			if err := exec(q, "UPDATE document SET data=$2 WHERE id=$1", t["id"], cJSON(t)); err != nil {
+			t["revokedAt"] = nowMs()
+			if err := exec(q, "UPDATE document SET data=$2 WHERE id=$1", t["id"], jsonBytes(t)); err != nil {
 				return err
 			}
 		}
@@ -870,7 +870,7 @@ func connRecord(q *Request, l doc) (bool, error) {
 	if !ok || l["tokenSha256"] == nil || l["executionId"] == nil {
 		return false, nil
 	}
-	t, err := cGet(q, "run-token:"+astr(l["tokenSha256"]), "run-token")
+	t, err := maybe(q, "run-token:"+astr(l["tokenSha256"]), "run-token")
 	if err != nil || t == nil {
 		return false, err
 	}
@@ -915,7 +915,7 @@ func connRecord(q *Request, l doc) (bool, error) {
 		}
 	}
 	if p := mapOf(l["keyProblem"]); p != nil && p["key"] != nil {
-		k, err := cGet(q, "key:"+astr(p["key"]), "connection-key")
+		k, err := maybe(q, "key:"+astr(p["key"]), "connection-key")
 		if err != nil {
 			return false, err
 		}
@@ -929,10 +929,10 @@ func connRecord(q *Request, l doc) (bool, error) {
 			}
 			at := l["startedAt"]
 			if at == nil {
-				at = now()
+				at = nowMs()
 			}
 			k["problem"] = doc{"status": p["status"], "message": msg, "at": at}
-			if err := putDoc(q, "connection-key", k); err != nil {
+			if err := put(q, "connection-key", k); err != nil {
 				return false, err
 			}
 		}
@@ -941,7 +941,7 @@ func connRecord(q *Request, l doc) (bool, error) {
 }
 
 func connDisable(q *Request, fp string, status any) error {
-	k, err := cGet(q, "key:"+fp, "connection-key")
+	k, err := maybe(q, "key:"+fp, "connection-key")
 	if err != nil || k == nil || k["state"] == "retired" || k["state"] == "disabled" {
 		return err
 	}
@@ -949,8 +949,8 @@ func connDisable(q *Request, fp string, status any) error {
 	if f, ok := cNum(status); ok {
 		st = fmt.Sprint(int64(f))
 	}
-	k["state"], k["disabledReason"], k["disabledAt"] = "disabled", "provider answered HTTP "+st, now()
-	if err := putDoc(q, "connection-key", k); err != nil {
+	k["state"], k["disabledReason"], k["disabledAt"] = "disabled", "provider answered HTTP "+st, nowMs()
+	if err := put(q, "connection-key", k); err != nil {
 		return err
 	}
 	publish(q)
@@ -979,7 +979,7 @@ func connTick(q *Request) error {
 	if err != nil {
 		return err
 	}
-	s := string(cJSON(cSortedKeys(func() map[string]any {
+	s := string(jsonBytes(cSortedKeys(func() map[string]any {
 		m := map[string]any{}
 		for k, v := range b {
 			if v {
@@ -1033,9 +1033,9 @@ func connReconcile(ctx context.Context, a *App) {
 		return
 	}
 	err = cTx(ctx, a, "", func(q *Request) error {
-		for _, r := range cList(report["keys"]) {
+		for _, r := range anys(report["keys"]) {
 			row := mapOf(r)
-			k, err := cGet(q, "key:"+astr(row["key"]), "connection-key")
+			k, err := maybe(q, "key:"+astr(row["key"]), "connection-key")
 			if err != nil {
 				return err
 			}
@@ -1070,7 +1070,7 @@ func connReconcile(ctx context.Context, a *App) {
 				delta := usage - bu
 				k["reconcile"] = doc{"at": report["at"], "providerDelta": delta, "recorded": recorded, "difference": delta - recorded}
 			}
-			if err := putDoc(q, "connection-key", k); err != nil {
+			if err := put(q, "connection-key", k); err != nil {
 				return err
 			}
 		}
@@ -1095,7 +1095,7 @@ func gatewayCall(ctx context.Context, token, connection, tool string, args any) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, "POST", url+"/v1/call/"+connection+"/"+tool, bytes.NewReader(cJSON(args)))
+	req, _ := http.NewRequestWithContext(ctx, "POST", url+"/v1/call/"+connection+"/"+tool, bytes.NewReader(jsonBytes(args)))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "fleet-connection/1")

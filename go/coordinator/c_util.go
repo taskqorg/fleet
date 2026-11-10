@@ -20,15 +20,6 @@ func cConfigDir() string   { return envOr("FLEET_PROJECT_CONFIG_DIRECTORY", "con
 func cProfilesDir() string { return envOr("FLEET_PROFILES_DIRECTORY", "config/agents") }
 func cLabDir() string      { return envOr("FLEET_LAB_DIRECTORY", "config/lab") }
 
-func cJSON(v any) []byte { b, _ := json.Marshal(v); return b }
-
-// cClone deep-copies a JSON value (maps and slices), so a stored record never aliases another.
-func cClone(v any) any {
-	var out any
-	json.Unmarshal(cJSON(v), &out)
-	return out
-}
-
 // cBody: the request body as a JSON object; absent or null is an empty object.
 func cBody(q *Request) (doc, error) {
 	b := doc{}
@@ -66,8 +57,6 @@ func cInt(v any) (int64, bool) {
 	return int64(f), true
 }
 
-func cList(v any) []any { l, _ := v.([]any); return l }
-
 func cKeysOnly(b doc, allowed ...string) bool {
 	for k := range b {
 		ok := false
@@ -94,20 +83,6 @@ func cQuery(q *Request, sql string, args ...any) ([]doc, error) {
 		out = []map[string]any{}
 	}
 	return out, err
-}
-
-// cAll: every document of a kind, oldest first.
-func cAll(q *Request, kind string) ([]doc, error) {
-	return rows(q, "SELECT data FROM document WHERE kind=$1 ORDER BY seq", kind)
-}
-
-// cGet: one document, nil when absent.
-func cGet(q *Request, id, kind string) (doc, error) {
-	d, err := getDoc(q, id, kind)
-	if errors.Is(err, errNotFound) {
-		return nil, nil
-	}
-	return d, err
 }
 
 func cOwnerEmail(a *App) string {
@@ -146,15 +121,15 @@ func cReq(ctx context.Context, a *App, tx pgx.Tx) *Request {
 
 // cAsk inserts one question; returns its id.
 func cAsk(q *Request, kind, text string, projectID any, options any, askedBy string, data doc) (string, error) {
-	id := uuid()
+	id := newID()
 	var opts any
 	if options != nil {
-		opts = cJSON(options)
+		opts = jsonBytes(options)
 	}
 	if data == nil {
 		data = doc{}
 	}
-	err := exec(q, "INSERT INTO question(id,kind,project_id,text,options,asked_by,data) VALUES($1,$2,$3,$4,$5,$6,$7)", id, kind, projectID, text, opts, askedBy, cJSON(data))
+	err := exec(q, "INSERT INTO question(id,kind,project_id,text,options,asked_by,data) VALUES($1,$2,$3,$4,$5,$6,$7)", id, kind, projectID, text, opts, askedBy, jsonBytes(data))
 	return id, err
 }
 
@@ -166,7 +141,7 @@ func cCreateExecution(q *Request, v doc) (bool, error) {
 	}
 	var cfg any
 	if v["configRef"] != nil {
-		cfg = cJSON(v["configRef"])
+		cfg = jsonBytes(v["configRef"])
 	}
 	data := v["data"]
 	if data == nil {
@@ -175,7 +150,7 @@ func cCreateExecution(q *Request, v doc) (bool, error) {
 	var id string
 	err := q.tx.QueryRow(q.ctx(), `INSERT INTO execution(id,kind,state,project_id,parent_execution_id,config_ref,data,experiment_id,variant,request_id)
 	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING RETURNING id`,
-		v["id"], v["kind"], state, v["projectId"], v["parentExecutionId"], cfg, cJSON(data), v["experimentId"], v["variant"], v["requestId"]).Scan(&id)
+		v["id"], v["kind"], state, v["projectId"], v["parentExecutionId"], cfg, jsonBytes(data), v["experimentId"], v["variant"], v["requestId"]).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -189,7 +164,7 @@ func cWriteConnectionCost(q *Request, id string, projectID any, cost any) error 
 	if cost == nil {
 		basis = "unavailable"
 	} else {
-		c = cJSON(cost)
+		c = jsonBytes(cost)
 	}
 	return exec(q, `INSERT INTO execution_totals(execution_id,project_id,connection_cost,connection_cost_basis) VALUES($1,$2,$3,$4)
 	 ON CONFLICT(execution_id) DO UPDATE SET connection_cost=excluded.connection_cost,connection_cost_basis=excluded.connection_cost_basis,computed_at=now()`, id, projectID, c, basis)
@@ -210,7 +185,7 @@ func cCanon(v any) string {
 	case map[string]any:
 		parts := []string{}
 		for _, k := range cSortedKeys(x) {
-			parts = append(parts, string(cJSON(k))+":"+cCanon(x[k]))
+			parts = append(parts, string(jsonBytes(k))+":"+cCanon(x[k]))
 		}
 		return "{" + strings.Join(parts, ",") + "}"
 	case []any:
@@ -220,7 +195,7 @@ func cCanon(v any) string {
 		}
 		return "[" + strings.Join(parts, ",") + "]"
 	default:
-		return string(cJSON(x))
+		return string(jsonBytes(x))
 	}
 }
 

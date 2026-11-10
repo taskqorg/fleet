@@ -10,12 +10,6 @@ import (
 	"time"
 )
 
-func gs(d doc, k string) string { v, _ := d[k].(string); return v }
-
-func gm(d doc, k string) doc { v, _ := d[k].(map[string]any); return v }
-
-func js(v any) string { b, _ := json.Marshal(v); return string(b) }
-
 func nilIf(v string) any {
 	if v == "" {
 		return nil
@@ -82,7 +76,9 @@ func all(q *Request, kind string, filter doc) ([]doc, error) {
 	return rows(q, "SELECT data FROM document WHERE kind=$1 AND data @> $2 ORDER BY seq", kind, js(f))
 }
 
-func get(q *Request, id, kind string) (doc, error) {
+// get: one record of a kind; a missing or non-string id is not found (404).
+func get(q *Request, anyID any, kind string) (doc, error) {
+	id := astr(anyID)
 	switch kind {
 	case "execution":
 		return getExecution(q, id)
@@ -91,7 +87,7 @@ func get(q *Request, id, kind string) (doc, error) {
 	case "delegation":
 		return one(q, "SELECT delegation FROM execution WHERE delegation->>'id'=$1", id)
 	}
-	return getDoc(q, id, kind)
+	return one(q, "SELECT data FROM document WHERE id=$1 AND kind=$2", id, kind)
 }
 
 // maybe: get, nil when absent.
@@ -120,7 +116,7 @@ func put(q *Request, kind string, v doc) error {
 		}
 		return err
 	}
-	return putDoc(q, kind, v)
+	return putDocument(q, kind, v)
 }
 
 func legacyState(legacy, previous string) (string, string) {
@@ -148,14 +144,14 @@ var terminalTyped = map[string]bool{"succeeded": true, "failed": true, "cancelle
 
 // putExecutionRecord: writes the execution record, then settles its task.
 func putExecutionRecord(q *Request, e doc) error {
-	id := gs(e, "id")
+	id := astr(e["id"])
 	var prev string
 	q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT state::text FROM execution WHERE id=$1),'')", id).Scan(&prev)
-	state, observation := legacyState(gs(e, "state"), prev)
+	state, observation := legacyState(astr(e["state"]), prev)
 	kind := "agent_run"
-	if gs(e, "actor") == "program-worker" {
+	if astr(e["actor"]) == "program-worker" {
 		kind = "tool_run"
-		if gs(e, "deliveryId") != "" {
+		if astr(e["deliveryId"]) != "" {
 			kind = "pipeline_step"
 		}
 	}
@@ -177,32 +173,32 @@ func putExecutionRecord(q *Request, e doc) error {
 		}
 	}
 	if parent == "" {
-		parent = gs(sess, "createdByExecutionId")
+		parent = astr(sess["createdByExecutionId"])
 	}
-	if fo := gm(sess, "forkOf"); parent == "" && gs(fo, "executionId") != "" {
-		other, err := has(q, "SELECT 1 FROM execution WHERE session_id=$1 AND id<>$2 AND legacy_kind='execution'", gs(sess, "id"), id)
+	if fo := mapOf(sess["forkOf"]); parent == "" && astr(fo["executionId"]) != "" {
+		other, err := has(q, "SELECT 1 FROM execution WHERE session_id=$1 AND id<>$2 AND legacy_kind='execution'", astr(sess["id"]), id)
 		if err != nil {
 			return err
 		}
 		if !other {
-			parent = gs(fo, "executionId")
+			parent = astr(fo["executionId"])
 		}
 	}
 	project := firstString(e["projectId"], sess["projectId"])
 	task := firstString(e["deliveryId"], sess["deliveryId"], sess["taskId"])
-	ac := gm(e, "agentConfig")
+	ac := mapOf(e["agentConfig"])
 	harness := any(nil)
-	if h := gs(ac, "harness"); h != "" {
+	if h := astr(ac["harness"]); h != "" {
 		harness = h
 	} else if kind == "agent_run" {
 		harness = "codex"
 	}
 	variant := any(nil)
 	if e["experimentId"] != nil {
-		variant = nilIf(gs(ac, "id"))
+		variant = nilIf(astr(ac["id"]))
 	}
-	account := firstString(gm(e, "effectiveAccount")["accountId"], e["accountId"])
-	cfg := js(doc{"profileId": nilIf(gs(ac, "id")), "profileSha256": e["profileSha256"], "effort": e["effort"]})
+	account := firstString(mapOf(e["effectiveAccount"])["accountId"], e["accountId"])
+	cfg := js(doc{"profileId": nilIf(astr(ac["id"])), "profileSha256": e["profileSha256"], "effort": e["effort"]})
 	err = exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,task_id,experiment_id,variant,parent_execution_id,session_id,account_id,host_id,harness,model,config_ref,started_at,ended_at,legacy_kind,legacy_id,data)
 	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'execution',$1,$18)
 	 ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,task_id=coalesce(execution.task_id,excluded.task_id),
@@ -213,7 +209,7 @@ func putExecutionRecord(q *Request, e doc) error {
 	if err != nil {
 		return err
 	}
-	if d := gs(e, "directedBy"); d != "" {
+	if d := astr(e["directedBy"]); d != "" {
 		if err := exec(q, "UPDATE execution SET directed_by=$2 WHERE id=$1 AND directed_by IS DISTINCT FROM $2", id, d); err != nil {
 			return err
 		}
@@ -236,15 +232,6 @@ func putExecutionRecord(q *Request, e doc) error {
 	return err
 }
 
-func firstString(vs ...any) string {
-	for _, v := range vs {
-		if s, ok := v.(string); ok && s != "" {
-			return s
-		}
-	}
-	return ""
-}
-
 func writeTotals(q *Request, id string) error {
 	if err := exec(q, `INSERT INTO execution_totals(execution_id,project_id,wall_ms,wall_ms_basis,computed_at)
 	 SELECT id,project_id,CASE WHEN started_at IS NOT NULL AND ended_at IS NOT NULL THEN (extract(epoch FROM ended_at-started_at)*1000)::bigint END,CASE WHEN started_at IS NOT NULL AND ended_at IS NOT NULL THEN 'measured' ELSE 'unavailable' END,now() FROM execution WHERE id=$1
@@ -263,15 +250,15 @@ func writeEnded(q *Request, id string) error {
 
 // putLegacyQuestion: an agent question record ('question') kept in the question table.
 func putLegacyQuestion(q *Request, v doc) error {
-	id := gs(v, "id")
+	id := astr(v["id"])
 	found, err := has(q, "SELECT 1 FROM question WHERE id=$1", id)
 	if err != nil {
 		return err
 	}
-	answered := gs(v, "state") == "answered"
+	answered := astr(v["state"]) == "answered"
 	if !found {
 		askedBy := "agent"
-		if e := gs(v, "executionId"); e != "" {
+		if e := astr(v["executionId"]); e != "" {
 			askedBy = "execution:" + e
 		}
 		if _, err := askQuestion(q, doc{"id": id, "kind": "agent_question", "text": v["question"], "projectId": v["projectId"], "executionId": v["executionId"], "sessionId": v["sessionId"],
@@ -285,7 +272,7 @@ func putLegacyQuestion(q *Request, v doc) error {
 		return nil
 	}
 	if answered {
-		if _, err := answerQuestion(q, id, gs(v, "answer"), firstString(v["answeredBy"], "operator"), nil); err != nil {
+		if _, err := answerQuestion(q, id, astr(v["answer"]), firstString(v["answeredBy"], "operator"), nil); err != nil {
 			return err
 		}
 	}
@@ -310,7 +297,7 @@ func body(q *Request) doc {
 }
 
 func terminalLegacy(e doc) bool {
-	switch gs(e, "state") {
+	switch astr(e["state"]) {
 	case "completed", "failed", "stopped":
 		return true
 	}

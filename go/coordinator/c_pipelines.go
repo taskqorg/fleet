@@ -55,7 +55,7 @@ func validatePipeline(d doc) (doc, error) {
 	if !stepIDPattern.MatchString(astr(d["id"])) {
 		return bad("id")
 	}
-	steps := cList(d["steps"])
+	steps := anys(d["steps"])
 	if len(steps) == 0 {
 		return bad("steps")
 	}
@@ -83,7 +83,7 @@ func validatePipeline(d doc) (doc, error) {
 			_, isStr := s["connection"].(string)
 			_, toolStr := s["tool"].(string)
 			mode, hasMode := s["mode"]
-			if !isStr || !toolStr || mapOf(s["arguments"]) == nil && cList(s["arguments"]) == nil || hasMode && mode != "sync" && mode != "job" {
+			if !isStr || !toolStr || mapOf(s["arguments"]) == nil && anys(s["arguments"]) == nil || hasMode && mode != "sync" && mode != "job" {
 				return bad("api step " + id)
 			}
 		case "agent":
@@ -126,7 +126,7 @@ func (e *refError) Error() string { return "ref:" + e.path }
 func shellQuote(x any) string {
 	s, ok := x.(string)
 	if !ok {
-		s = string(cJSON(x))
+		s = string(jsonBytes(x))
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
@@ -186,7 +186,7 @@ func resolveRefs(v any, example any, outputs doc, quote bool) (any, error) {
 			if str, ok := val.(string); ok {
 				return str
 			}
-			return string(cJSON(val))
+			return string(jsonBytes(val))
 		})
 		return out, ferr
 	case []any:
@@ -259,10 +259,10 @@ func putRun(q *Request, run doc) error {
 	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
 	  config_ref=CASE WHEN execution.variant IS NULL THEN excluded.config_ref ELSE execution.config_ref END,legacy_kind='pipeline-run',legacy_id=excluded.legacy_id,
 	  experiment_id=coalesce(execution.experiment_id,excluded.experiment_id),variant=coalesce(execution.variant,excluded.variant)`,
-		run["id"], state, obs, run["projectId"], msTime(run["startedAt"]), msTime(run["finishedAt"]), cJSON(rest), cJSON(cfg), run["experimentId"], run["variant"]); err != nil {
+		run["id"], state, obs, run["projectId"], msTime(run["startedAt"]), msTime(run["finishedAt"]), jsonBytes(rest), jsonBytes(cfg), run["experimentId"], run["variant"]); err != nil {
 		return err
 	}
-	for i, x := range cList(run["steps"]) {
+	for i, x := range anys(run["steps"]) {
 		s := mapOf(x)
 		st, sobs := runState(astr(s["state"]))
 		if st == "" {
@@ -279,7 +279,7 @@ func putRun(q *Request, run doc) error {
 		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,legacy_kind,legacy_id,data) VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,'pipeline-step',$7,$8)
 		 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,data=excluded.data,
 		  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-			stepRow(run, i), st, sobs, run["projectId"], run["id"], msTime(s["startedAt"]), id, cJSON(data)); err != nil {
+			stepRow(run, i), st, sobs, run["projectId"], run["id"], msTime(s["startedAt"]), id, jsonBytes(data)); err != nil {
 			return err
 		}
 	}
@@ -350,10 +350,10 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 	}
 	id := astr(o["id"])
 	if id == "" {
-		id = uuid()
+		id = newID()
 	}
 	steps := []any{}
-	for _, x := range cList(def["steps"]) {
+	for _, x := range anys(def["steps"]) {
 		s := mapOf(x)
 		e := doc{"id": s["id"], "kind": s["kind"], "state": "pending"}
 		if s["kind"] == "api" {
@@ -368,8 +368,8 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 		return d
 	}
 	run := doc{"id": id, "projectId": o["projectId"], "requestId": o["requestId"], "requestedBy": or("requestedBy", requester(q)), "definition": def,
-		"definitionSha256": sha256hex(cJSON(def)), "pipelineId": def["id"], "pipeline": o["file"], "example": or("example", doc{}), "overrides": or("overrides", doc{}),
-		"state": "running", "startedAt": now(), "durationMs": nil, "usage": nil, "result": nil, "steps": steps}
+		"definitionSha256": sha256hex(jsonBytes(def)), "pipelineId": def["id"], "pipeline": o["file"], "example": or("example", doc{}), "overrides": or("overrides", doc{}),
+		"state": "running", "startedAt": nowMs(), "durationMs": nil, "usage": nil, "result": nil, "steps": steps}
 	if o["experimentId"] != nil {
 		run["experimentId"] = o["experimentId"]
 	}
@@ -475,13 +475,13 @@ func pipelineCancel(ctx context.Context, a *App, runID string) (string, error) {
 		if err != nil || run == nil || run["state"] != "running" {
 			return err
 		}
-		for _, x := range cList(run["steps"]) {
+		for _, x := range anys(run["steps"]) {
 			s := mapOf(x)
 			if s["state"] == "running" || s["state"] == "pending" {
 				if s["state"] == "running" {
 					own = astr(s["executionId"])
 				}
-				s["state"], s["finishedAt"] = "cancelled", now()
+				s["state"], s["finishedAt"] = "cancelled", nowMs()
 				break
 			}
 		}
@@ -499,14 +499,14 @@ func notifyFinished(a *App, run doc) {
 }
 
 func finishRun(q *Request, run doc, state, problem string) error {
-	run["state"], run["finishedAt"] = state, now()
+	run["state"], run["finishedAt"] = state, nowMs()
 	st, _ := cNum(run["startedAt"])
-	run["durationMs"] = now() - int64(st)
+	run["durationMs"] = nowMs() - int64(st)
 	credits, used := 0.0, false
 	outputs := doc{}
 	var search doc
 	var stepErr any
-	for _, x := range cList(run["steps"]) {
+	for _, x := range anys(run["steps"]) {
 		s := mapOf(x)
 		if u := mapOf(s["usage"]); u != nil {
 			used = true
@@ -515,7 +515,7 @@ func finishRun(q *Request, run doc, state, problem string) error {
 		}
 		if o, ok := s["output"]; ok {
 			outputs[astr(s["id"])] = o
-			if search == nil && cList(mapOf(o)["results"]) != nil {
+			if search == nil && anys(mapOf(o)["results"]) != nil {
 				search = mapOf(o)
 			}
 		}
@@ -531,7 +531,7 @@ func finishRun(q *Request, run doc, state, problem string) error {
 	sources := []any{}
 	result := doc{"outputs": outputs}
 	if search != nil {
-		for _, r := range cList(search["results"]) {
+		for _, r := range anys(search["results"]) {
 			x := mapOf(r)
 			title := x["title"]
 			if title == nil {
@@ -559,12 +559,12 @@ func finishRun(q *Request, run doc, state, problem string) error {
 }
 
 func failStep(q *Request, run doc, i int, problem, message string) error {
-	s := mapOf(cList(run["steps"])[i])
+	s := mapOf(anys(run["steps"])[i])
 	s["state"] = "failed"
 	if strings.HasPrefix(problem, "unknown:") {
 		s["state"] = "unknown"
 	}
-	s["problem"], s["error"], s["finishedAt"] = problem, doc{"code": problem, "message": message}, now()
+	s["problem"], s["error"], s["finishedAt"] = problem, doc{"code": problem, "message": message}, nowMs()
 	if err := putRun(q, run); err != nil {
 		return err
 	}
@@ -589,9 +589,9 @@ func saveArtifact(q *Request, run doc, executionID, name string, b []byte, media
 }
 
 func completeStep(q *Request, run doc, i int, output any, extra doc) error {
-	s := mapOf(cList(run["steps"])[i])
+	s := mapOf(anys(run["steps"])[i])
 	if s["outputArtifactId"] == nil {
-		id, err := saveArtifact(q, run, stepRow(run, i), "output.json", cJSON(output), "application/json")
+		id, err := saveArtifact(q, run, stepRow(run, i), "output.json", jsonBytes(output), "application/json")
 		if err != nil {
 			return err
 		}
@@ -600,12 +600,12 @@ func completeStep(q *Request, run doc, i int, output any, extra doc) error {
 	for k, v := range extra {
 		s[k] = v
 	}
-	s["output"], s["state"], s["finishedAt"] = output, "completed", now()
+	s["output"], s["state"], s["finishedAt"] = output, "completed", nowMs()
 	st, ok := cNum(s["startedAt"])
 	if !ok {
-		st = float64(now())
+		st = float64(nowMs())
 	}
-	s["durationMs"] = now() - int64(st)
+	s["durationMs"] = nowMs() - int64(st)
 	return putRun(q, run)
 }
 
@@ -621,7 +621,7 @@ func artifactsOf(q *Request, executionID string) ([]doc, error) {
 // pipelineOutputs: files of the first n steps under <step id>/ (n<0: every step). A step's own files win over the
 // coordinator's output.json for it; dotfiles are left out.
 func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
-	steps := cList(run["steps"])
+	steps := anys(run["steps"])
 	if n < 0 {
 		n = len(steps)
 	}
@@ -664,7 +664,7 @@ func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
 func inputsFor(q *Request, run doc, i int) ([]any, error) {
 	out := []any{}
 	ex := mapOf(run["example"])
-	if inputs := cList(ex["inputs"]); len(inputs) > 0 {
+	if inputs := anys(ex["inputs"]); len(inputs) > 0 {
 		if run["exampleInputs"] == nil {
 			list := []any{}
 			for _, x := range inputs {
@@ -680,7 +680,7 @@ func inputsFor(q *Request, run doc, i int) ([]any, error) {
 				return nil, err
 			}
 		}
-		out = append(out, cList(run["exampleInputs"])...)
+		out = append(out, anys(run["exampleInputs"])...)
 	}
 	fs, err := pipelineOutputs(q, run, i)
 	if err != nil {
@@ -694,19 +694,19 @@ func inputsFor(q *Request, run doc, i int) ([]any, error) {
 
 // startScript: a script command for the executor, as its own session and execution.
 func startScript(q *Request, run doc, stepExecutionID, command string, timeout any, hostID string, inputs []any) (string, error) {
-	sid := uuid()
-	s := doc{"id": sid, "createdAt": now(), "pipelineRunId": run["id"]}
+	sid := newID()
+	s := doc{"id": sid, "createdAt": nowMs(), "pipelineRunId": run["id"]}
 	if run["projectId"] != nil {
 		s["projectId"] = run["projectId"]
 	}
-	if err := putDoc(q, "session", s); err != nil {
+	if err := put(q, "session", s); err != nil {
 		return "", err
 	}
 	if hostID == "" {
 		hostID = q.app.hostID
 	}
-	id := uuid()
-	e := doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hostID, "state": "queued", "createdAt": now(), "pipelineStepId": stepExecutionID, "pipelineRunId": run["id"]}
+	id := newID()
+	e := doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hostID, "state": "queued", "createdAt": nowMs(), "pipelineStepId": stepExecutionID, "pipelineRunId": run["id"]}
 	if run["experimentId"] != nil {
 		e["experimentId"] = run["experimentId"]
 	}
@@ -721,7 +721,7 @@ func startScript(q *Request, run doc, stepExecutionID, command string, timeout a
 	if timeout != nil {
 		payload["timeout_ms"] = timeout
 	}
-	return id, putDoc(q, "command", doc{"id": uuid(), "executionId": id, "sessionId": sid, "hostId": hostID, "kind": "script", "payload": payload, "status": "pending"})
+	return id, put(q, "command", doc{"id": newID(), "executionId": id, "sessionId": sid, "hostId": hostID, "kind": "script", "payload": payload, "status": "pending"})
 }
 
 // connCallFor: one provider call with a token minted for the step row, revoked after the call; the gateway's spool line
@@ -791,7 +791,7 @@ func advanceOnce(ctx context.Context, a *App, runID string) error {
 			return nil
 		}
 		i := -1
-		for j, x := range cList(run["steps"]) {
+		for j, x := range anys(run["steps"]) {
 			if mapOf(x)["state"] != "completed" {
 				i = j
 				break
@@ -819,10 +819,10 @@ func advanceOnce(ctx context.Context, a *App, runID string) error {
 
 // runStep: true when the next step may start now.
 func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
-	s := mapOf(cList(run["steps"])[i])
-	def := mapOf(cList(mapOf(run["definition"])["steps"])[i])
+	s := mapOf(anys(run["steps"])[i])
+	def := mapOf(anys(mapOf(run["definition"])["steps"])[i])
 	outputs := doc{}
-	for _, x := range cList(run["steps"])[:i] {
+	for _, x := range anys(run["steps"])[:i] {
 		outputs[astr(mapOf(x)["id"])] = mapOf(x)["output"]
 	}
 	row := stepRow(run, i)
@@ -849,12 +849,12 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			resolved, err = resolveRefs(def["command"], run["example"], outputs, true)
 		}
 		if re, ok := err.(*refError); ok {
-			s["startedAt"] = now()
+			s["startedAt"] = nowMs()
 			return failNow("ref:"+re.path, "Missing reference "+re.path)
 		} else if err != nil {
 			return false, err
 		}
-		s["state"], s["startedAt"] = "running", now()
+		s["state"], s["startedAt"] = "running", nowMs()
 		if kind == "api" {
 			s["arguments"] = resolved
 			if err := tx(func(q *Request) error { return putRun(q, run) }); err != nil {
@@ -868,9 +868,9 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			// A job submit without a clear answer: a task created since the call started is adopted; otherwise unknown, never resent.
 			if job && line["outcome"] != "ok" && (line["outcome"] == "unknown" || http5xx.MatchString(astr(line["error_code"]))) {
 				recent := connCallFor(ctx, a, run, connection, row, "recent_tasks", doc{})
-				tasks := cList(recent["output"])
+				tasks := anys(recent["output"])
 				if tasks == nil {
-					tasks = cList(mapOf(recent["output"])["result"])
+					tasks = anys(mapOf(recent["output"])["result"])
 				}
 				owned := map[string]bool{}
 				cRead(ctx, a, func(q *Request) error {

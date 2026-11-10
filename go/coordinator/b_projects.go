@@ -236,8 +236,6 @@ var settingsOrder = []string{"repos", "environments", "roles", "worktree", "scri
 var itemKeys = map[string][]string{"repos": {"id", "remote", "forge", "defaultBranch", "connection", "path"}, "environments": {"hostId", "checkoutPath", "repo"}, "identity": {"name", "email"}}
 var settingEnums = map[string][]any{"worktree.envMode": {"worktree", "local"}, "setupStart": {"wait", "background"}, "integration.mode": {"pr", "direct"}, "integration.mergeMethod": {"squash", "merge", "rebase"}, "repos.forge": {"github", "gitlab"}}
 
-func clone(v any) any { var out any; json.Unmarshal([]byte(js(v)), &out); return out }
-
 func jsType(v any) string {
 	switch v.(type) {
 	case string:
@@ -323,7 +321,7 @@ func projectSettings(p doc) (doc, []string, error) {
 					}
 				}
 				if k == "repos" {
-					if gs(o, "remote") == "" {
+					if astr(o["remote"]) == "" {
 						return nil, nil, bad(k + ".remote")
 					}
 					if err := check("repos.forge", firstString(o["forge"], "github"), nil); err != nil {
@@ -336,7 +334,7 @@ func projectSettings(p doc) (doc, []string, error) {
 					items = append(items, r)
 					continue
 				}
-				if gs(o, "hostId") == "" || gs(o, "checkoutPath") == "" {
+				if astr(o["hostId"]) == "" || astr(o["checkoutPath"]) == "" {
 					return nil, nil, bad(k)
 				}
 				items = append(items, o)
@@ -488,7 +486,7 @@ func projectSettingsOf(id string) doc {
 	if err != nil {
 		return nil
 	}
-	return gm(p, "settings")
+	return mapOf(p["settings"])
 }
 
 func catalogue(q *Request, id string) (doc, error) {
@@ -509,12 +507,12 @@ func catalogue(q *Request, id string) (doc, error) {
 		source = "project"
 	}
 	if len(recs) > 0 {
-		method, source = gs(recs[0], "methodId"), "project-selected"
+		method, source = astr(recs[0]["methodId"]), "project-selected"
 	}
 	methods := []any{}
 	ms, _ := c["methods"].([]any)
 	for _, x := range ms {
-		if sc := gs(x.(map[string]any), "scope"); sc == "shared" || sc == id {
+		if sc := astr(x.(map[string]any)["scope"]); sc == "shared" || sc == id {
 			methods = append(methods, x)
 		}
 	}
@@ -546,30 +544,30 @@ func init() {
 		}
 		return doc{"projects": out}, nil
 	})
-	projectOp("project_context", true, func(q *Request) (any, error) { return projectContext(gs(body(q), "projectId")) })
-	projectOp("catalogue", true, func(q *Request) (any, error) { return catalogue(q, gs(body(q), "projectId")) })
+	projectOp("project_context", true, func(q *Request) (any, error) { return projectContext(astr(body(q)["projectId"])) })
+	projectOp("catalogue", true, func(q *Request) (any, error) { return catalogue(q, astr(body(q)["projectId"])) })
 	projectOp("recommendation_set", false, func(q *Request) (any, error) {
 		b := body(q)
-		c, err := catalogue(q, gs(b, "projectId"))
+		c, err := catalogue(q, astr(b["projectId"]))
 		if err != nil {
 			return nil, err
 		}
 		found := false
 		for _, x := range c["methods"].([]any) {
-			found = found || gs(x.(map[string]any), "id") == gs(b, "methodId")
+			found = found || astr(x.(map[string]any)["id"]) == astr(b["methodId"])
 		}
 		if !found {
 			return nil, fail(400, "Method unavailable")
 		}
-		r := doc{"id": "recommendation:" + gs(b, "projectId"), "projectId": b["projectId"], "methodId": b["methodId"], "selectedAt": now(), "actor": actor(q, "operator")}
-		return r, putDoc(q, "project-recommendation", r)
+		r := doc{"id": "recommendation:" + astr(b["projectId"]), "projectId": b["projectId"], "methodId": b["methodId"], "selectedAt": nowMs(), "actor": actor(q, "operator")}
+		return r, put(q, "project-recommendation", r)
 	})
 	projectOp("question_ask", false, func(q *Request) (any, error) {
 		b := body(q)
-		if _, err := projectContext(gs(b, "projectId")); err != nil {
+		if _, err := projectContext(astr(b["projectId"])); err != nil {
 			return nil, err
 		}
-		rid, text := gs(b, "requestId"), gs(b, "text")
+		rid, text := astr(b["requestId"]), astr(b["text"])
 		if rid == "" || text == "" || len([]rune(text)) > 2000 {
 			return nil, fail(400, "Expected question text and requestId")
 		}
@@ -578,19 +576,19 @@ func init() {
 			return nil, err
 		}
 		if old != nil {
-			d := gm(old, "data")
-			if gs(d, "text") != text {
+			d := mapOf(old["data"])
+			if astr(d["text"]) != text {
 				return nil, fail(409, "Question identity conflict")
 			}
 			return d, nil
 		}
-		v := doc{"id": uuid(), "projectId": b["projectId"], "requestId": rid, "text": text, "state": "waiting", "createdAt": now(), "actor": actor(q, "operator")}
+		v := doc{"id": newID(), "projectId": b["projectId"], "requestId": rid, "text": text, "state": "waiting", "createdAt": nowMs(), "actor": actor(q, "operator")}
 		_, err = askQuestion(q, doc{"id": v["id"], "kind": "operator_decision", "text": text, "projectId": b["projectId"], "askedBy": v["actor"], "legacyKind": "project-question", "data": v, "askedAt": v["createdAt"]})
 		return v, err
 	})
 	projectOp("question_answer", false, func(q *Request) (any, error) {
 		b := body(q)
-		id := gs(b, "questionId")
+		id := astr(b["questionId"])
 		answer, err := strArg(b, "answer", "answer", 4000)
 		if err != nil {
 			return nil, err
@@ -605,27 +603,27 @@ func init() {
 			if err != nil {
 				return nil, err
 			}
-			if x, err := findQuestion(q, gs(a, "task_id"), id); x != nil || err != nil {
+			if x, err := findQuestion(q, astr(a["task_id"]), id); x != nil || err != nil {
 				return x, err
 			}
 			return doc{"id": a["id"], "state": a["state"], "answer": a["answer"]}, nil
 		}
-		v := gm(legacy, "data")
-		if gs(v, "state") == "answered" {
-			if gs(v, "answer") != answer {
+		v := mapOf(legacy["data"])
+		if astr(v["state"]) == "answered" {
+			if astr(v["answer"]) != answer {
 				return nil, fail(409, "Answer already recorded")
 			}
 			return v, nil
 		}
-		v["state"], v["answer"], v["answeredAt"], v["answeredBy"] = "answered", answer, now(), actor(q, "operator")
-		if _, err := answerQuestion(q, id, answer, gs(v, "answeredBy"), nil); err != nil {
+		v["state"], v["answer"], v["answeredAt"], v["answeredBy"] = "answered", answer, nowMs(), actor(q, "operator")
+		if _, err := answerQuestion(q, id, answer, astr(v["answeredBy"]), nil); err != nil {
 			return nil, err
 		}
 		return v, exec(q, "UPDATE question SET data=$2 WHERE id=$1", id, js(v))
 	})
 	projectOp("question_history", true, func(q *Request) (any, error) {
 		b := body(q)
-		if _, err := projectContext(gs(b, "projectId")); err != nil {
+		if _, err := projectContext(astr(b["projectId"])); err != nil {
 			return nil, err
 		}
 		qs, err := rows(q, "SELECT data FROM question WHERE legacy_kind='project-question' AND data->>'projectId'=$1 ORDER BY seq", b["projectId"])
@@ -633,7 +631,7 @@ func init() {
 	})
 	projectOp("pipeline_get", true, func(q *Request) (any, error) {
 		b := body(q)
-		id := gs(b, "runId")
+		id := astr(b["runId"])
 		if id == "" || len(id) > 200 {
 			return nil, fail(400, "Expected runId")
 		}
@@ -641,14 +639,14 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		if p := gs(b, "projectId"); p != "" && gs(r, "projectId") != p {
+		if p := astr(b["projectId"]); p != "" && astr(r["projectId"]) != p {
 			return nil, fail(403, "Pipeline belongs to another project")
 		}
 		return r, nil
 	})
 	projectOp("pipeline_history", true, func(q *Request) (any, error) {
 		b := body(q)
-		if _, err := projectContext(gs(b, "projectId")); err != nil {
+		if _, err := projectContext(astr(b["projectId"])); err != nil {
 			return nil, err
 		}
 		ids, err := rowsOf(q, "SELECT id FROM execution WHERE legacy_kind='pipeline-run' AND data->>'projectId'=$1 ORDER BY seq", b["projectId"])
@@ -657,7 +655,7 @@ func init() {
 		}
 		runs := []doc{}
 		for _, x := range ids {
-			r, err := pipelineRun(q, gs(x, "id"))
+			r, err := pipelineRun(q, astr(x["id"]))
 			if err != nil {
 				return nil, err
 			}

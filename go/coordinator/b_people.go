@@ -192,7 +192,7 @@ func init() {
 		b := body(q)
 		limit := pageLimit(b["limit"], 100)
 		rs, err := rowsOf(q, "SELECT seq,data FROM document WHERE kind='setting-change' AND ($1='' OR data->>'target'=$1) AND ($2 OR data->>'target'<>'people') AND ($3::bigint IS NULL OR seq<$3) ORDER BY seq DESC LIMIT $4",
-			gs(b, "target"), owner, b["before"], limit+1)
+			astr(b["target"]), owner, b["before"], limit+1)
 		out := []any{}
 		var next any
 		for i, r := range rs {
@@ -244,7 +244,7 @@ func init() {
 		json.Unmarshal(b.People, &next)
 		err = q.app.store.Tx(q.ctx(), nil, true, "", func(tx pgx.Tx) error {
 			q.tx = tx
-			return putDoc(q, "setting-change", doc{"id": uuid(), "target": "people", "field": "people", "previous": prev, "value": next, "actor": actor(q, "operator"), "at": now()})
+			return put(q, "setting-change", doc{"id": newID(), "target": "people", "field": "people", "previous": prev, "value": next, "actor": actor(q, "operator"), "at": nowMs()})
 		})
 		return doc{"people": len(q.app.people)}, err
 	})

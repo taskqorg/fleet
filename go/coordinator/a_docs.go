@@ -32,8 +32,6 @@ func aRows(q *Request, sql string, args ...any) ([]doc, error) {
 
 func isNotFound(err error) bool { var he *HTTPError; return errors.As(err, &he) && he.Code == 404 }
 
-func astr(v any) string { s, _ := v.(string); return s }
-
 // nonNil: v unless nil, else alt (JavaScript ??).
 func nonNil(v ...any) any {
 	for _, x := range v {
@@ -192,15 +190,6 @@ func inList(xs []string, s string) bool {
 		}
 	}
 	return false
-}
-
-// aget: get with any id; a missing or non-string id is 404.
-func aget(q *Request, id any, kind string) (doc, error) {
-	s, ok := id.(string)
-	if !ok || s == "" {
-		return nil, errNotFound
-	}
-	return get(q, s, kind)
 }
 
 func previousState(q *Request, id any) (string, error) {

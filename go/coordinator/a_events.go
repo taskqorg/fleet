@@ -42,7 +42,7 @@ func executionEvents(q *Request) (any, error) {
 	if id == "" && len(q.params) > 0 {
 		id = q.params[0]
 	}
-	if _, err := aget(q, id, "execution"); err != nil {
+	if _, err := get(q, id, "execution"); err != nil {
 		return nil, err
 	}
 	es, err := aRows(q, "SELECT data FROM document WHERE kind='event' AND data->>'executionId'=$1 AND (data->>'type') IS DISTINCT FROM 'execution.ended' ORDER BY (data->'seq')::numeric, seq", id)
@@ -123,7 +123,7 @@ func ingestIn(q *Request, b doc) (any, error) {
 		return nil, fail(400, "Invalid events")
 	}
 	xid := astr(b["executionId"])
-	execution, err := aget(q, xid, "execution")
+	execution, err := get(q, xid, "execution")
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +178,7 @@ func ingestIn(q *Request, b doc) (any, error) {
 		if c == nil {
 			c = doc{"id": cid, "executionId": xid, "hostId": b["hostId"], "originalEventId": eid, "originalSequence": seq, "frameSha256": digest, "original": ev,
 				"collisionEventId": collision["id"], "supported": previous == nil && ev["type"] == "process.closed" && collision["type"] == "resource.observation",
-				"state": "blocked", "observedAt": now()}
+				"state": "blocked", "observedAt": nowMs()}
 			if err := put(q, "transport-conflict", c); err != nil {
 				return nil, err
 			}
@@ -239,11 +239,11 @@ func ingestIn(q *Request, b doc) (any, error) {
 			return nil, err
 		}
 		if c := p.conflict; c != nil && c["state"] != "delivered" {
-			c["state"], c["deliveredAt"] = "delivered", now()
+			c["state"], c["deliveredAt"] = "delivered", nowMs()
 			if err := put(q, "transport-conflict", c); err != nil {
 				return nil, err
 			}
-			if err := put(q, "transport-audit", doc{"id": uuid(), "executionId": xid, "conflictId": c["id"], "actor": "owning-host", "operation": "retained-transport-delivered", "at": now(), "nativeEffectReplayed": false}); err != nil {
+			if err := put(q, "transport-audit", doc{"id": newID(), "executionId": xid, "conflictId": c["id"], "actor": "owning-host", "operation": "retained-transport-delivered", "at": nowMs(), "nativeEffectReplayed": false}); err != nil {
 				return nil, err
 			}
 		}
@@ -271,7 +271,7 @@ func ingestIn(q *Request, b doc) (any, error) {
 }
 
 func transportInspect(q *Request, b doc) (any, error) {
-	e, err := aget(q, b["executionId"], "execution")
+	e, err := get(q, b["executionId"], "execution")
 	if err != nil {
 		return nil, err
 	}
@@ -327,14 +327,14 @@ func transportAuthorize(q *Request, b doc) (any, error) {
 	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "execution:"+xid); err != nil {
 		return nil, err
 	}
-	c, err := aget(q, b["conflictId"], "transport-conflict")
+	c, err := get(q, b["conflictId"], "transport-conflict")
 	if err != nil {
 		return nil, err
 	}
 	if c["executionId"] != xid || c["frameSha256"] != b["frameSha256"] {
 		return nil, fail(409, "Recovery identity mismatch")
 	}
-	if _, err := aget(q, c["executionId"], "execution"); err != nil {
+	if _, err := get(q, c["executionId"], "execution"); err != nil {
 		return nil, err
 	}
 	if c["supported"] != true {
@@ -370,13 +370,13 @@ func transportAuthorize(q *Request, b doc) (any, error) {
 				top = r
 			}
 		}
-		c["reservedSequence"], c["state"], c["authorizedAt"] = top+1, "authorized", now()
+		c["reservedSequence"], c["state"], c["authorizedAt"] = top+1, "authorized", nowMs()
 		if err := put(q, "transport-conflict", c); err != nil {
 			return nil, err
 		}
 	}
-	if err := put(q, "transport-audit", doc{"id": uuid(), "executionId": c["executionId"], "conflictId": c["id"], "requestId": rid, "signature": frameHash(b),
-		"actor": "operator-authority", "operation": "authorize-retained-transport", "at": now(), "nativeEffectReplayed": false}); err != nil {
+	if err := put(q, "transport-audit", doc{"id": newID(), "executionId": c["executionId"], "conflictId": c["id"], "requestId": rid, "signature": frameHash(b),
+		"actor": "operator-authority", "operation": "authorize-retained-transport", "at": nowMs(), "nativeEffectReplayed": false}); err != nil {
 		return nil, err
 	}
 	return transportInspect(q, b)
