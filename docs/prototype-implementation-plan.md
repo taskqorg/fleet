@@ -1,6 +1,6 @@
 # Prototype implementation plan (T1–T16)
 
-2026-11-09. Planning only. Basis: [architecture breadth plan](architecture-breadth-plan.md) T1–T16, [project setup and access](project-setup-and-access.md), [settings matrix](project-settings-matrix.md), [settings decisions](project-settings-decisions.md), [real projects survey](real-projects-survey.md), [layered isolation](layered-isolation-model.md), [agent tools inventory](agent-tools-inventory.md), [PDS Codex environment](pds-codex-environment.md), [resources and auth](resources-and-auth-model.md).
+2026-11-09. Planning only. Basis: [architecture breadth plan](architecture-breadth-plan.md) T1–T16, [configuration](configuration.md), [layered isolation](layered-isolation-model.md), [agent tools inventory](agent-tools-inventory.md), [PDS Codex environment](pds-codex-environment.md), [resources and auth](resources-and-auth-model.md).
 
 Stand: coordinator `candidate-ccc2d24e023d`; executors on Mac (Claude, Codex, Antigravity) and PDS (Codex, Antigravity). Claude never runs on PDS.
 

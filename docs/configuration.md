@@ -1,95 +1,215 @@
 # Configuration
 
-Organization of existing settings, not new services, mandatory forms or a universal inheritance tree. Complements [project context](project-context.md), [allocation](work-allocation.md) and the [runtime boundary](runtime-integration.md).
+Where each setting lives, how settings resolve, what a project file holds and what a host needs. Settings organise existing mechanisms: no new services, mandatory forms or universal inheritance tree. Allocation of hosts and accounts is in [work allocation](work-allocation.md); the harness boundary in [runtime integration](runtime-integration.md); connection records in [connections](designs/fleet-connections.md); people and host secrets in [people and access](designs/fleet-people-access.md).
 
 ## Canonical homes
 
 | Home | Contains | References rather than copies |
 |---|---|---|
 | Shared catalogue | Agent configurations, role instructions, skills, tools, methods and pipelines. | Canonical definition files and their dependencies. |
-| Project | Purpose, requirements, workflow overrides, recommended methods, resource bindings and delivery rules. | Shared definitions, project-specific definitions and project materials. |
-| Agent configuration | Harness/model, behavior, assigned skills/tools and environment requirements. | Role and skill definitions, tool capabilities. |
-| Method or pipeline | Input/output expectations, implementation choices, step instructions and transitions where applicable. | Agent configurations, tools and required capabilities. |
-| Host/environment | Available software and runtime facilities, working-area preparation and placement/capacity controls. | Connection identities and shared host capacity. |
-| Connection | Service access, accounts, known quota pools and permitted use. | Protected credentials; never copies into prompts or definition files. |
-| Assignment | Specific outcome, inputs, explicit choices, requirements and applicable budget. | Project context and selected definitions. |
+| Project | Purpose, rules, repositories, environments, roles, workflow overrides, recommended methods, delivery rules. | Shared definitions, project definitions and project materials. |
+| Agent configuration (profile) | Harness, model, effort, instructions, MCP servers, sandbox and mode. | Role and skill definitions, tool capabilities. |
+| Method or pipeline | Input and output contract, implementation choices, steps and transitions. | Agent configurations, tools and required capabilities. |
+| Host or environment | Installed software, project roots, working-area preparation, placement settings. | Connection identities, shared host capacity. |
+| Connection | Service access, accounts, quota pools, permitted use. | Protected credentials; never copied into prompts or definition files. |
+| Assignment | Outcome, inputs, explicit choices, requirements, budget. | Project context and selected definitions. |
 
-The catalogue is an index of definitions, not another independently editable copy. Shared defaults reduce per-project setup. A project can reference a shared developer and supply its own requirements without cloning the developer configuration.
+The catalogue indexes definitions; it is not another editable copy. A project references a shared profile and adds its own requirements without cloning it. Checked-in files: `config/catalogue.json`, `config/agents/<id>.json`, `config/pipelines/*.json`, `config/projects/<id>/project.json` with `rules.md` ([config/README.md](../config/README.md)).
+
+## Project context
+
+The project repository is the default home for instructions, requirements, pipeline definitions and small materials; large assets stay elsewhere and are referenced from project files or task inputs. A project needs no code repository.
+
+Tasks expose their inputs and results; pipelines expose their definitions and settings. Each step gets its relevant instructions and materials; other context stays discoverable. Context selection neither grants nor restricts access.
+
+Ordinary sessions run one-off work and experiments without a pipeline. Formalise a method when repetition warrants it; repeated work uses accessible definitions, not conversation history. Execution history does not make an experiment a project standard: changing project rules or recommended methods is an explicit action. Validate this baseline on real projects before adding material catalogues or a prescribed project directory layout.
+
+## Project settings
+
+Every setting is per project; absent key means the default below. The coordinator reads every `config/projects/<id>/project.json` (no fixed list) and `projectSettings` in `packages/coordinator/projects.ts` validates it: a wrong type or enum value fails the project (500 `Invalid project setting <key>`); an unknown key is kept out and listed in `unknownKeys`, never dropped silently.
+
+| Key | Default | Values and effect |
+|---|---|---|
+| `id`, `name`, `contextFiles` | required | `contextFiles` are paths inside the project directory, served by `project_context`. |
+| `capability`, `recommendedMethod` | none | Project recommendation for the catalogue. |
+| `repos[]` | `[]` | `{id, remote, forge: github\|gitlab = github, defaultBranch = main, connection, path}`. `remote` required. |
+| `environments[]` | `[]` | `{hostId, checkoutPath, repo?}`: hosts allowed to run the project and their checkout. `checkoutPath` must sit under the host's `FLEET_PROJECT_ROOTS`. |
+| `roles` | `{}` | Role name to profile id (`pm`, `worker`, `reviewer`, ...). `session_start` takes a role or a profile id. |
+| `worktree.envMode` | `worktree` | `worktree` \| `local`. Not built: `local`; a session in a git checkout always gets a worktree. |
+| `worktree.baseRef` | `null` | Explicit base ref; wins over `startFromOrigin`. |
+| `worktree.startFromOrigin` | `true` | Fetch, then branch from `origin/<defaultBranch>` of the first repo; a failed fetch falls back to `HEAD`. |
+| `worktree.branchPrefix` | `fleet` | Session branch `<prefix>/<sessionId>`. |
+| `worktree.linkPaths`, `worktree.sharedDirectories` | `[]` | Relative paths symlinked from the main checkout into the worktree (`.env`, `node_modules`); only existing, non-escaping paths. Secrets in them stay per environment, never in Git. |
+| `scripts.setup` | `null` | Runs once in a new worktree with `FLEET_ROOT_PATH`, `FLEET_WORKTREE_PATH`, `FLEET_SESSION_ID`, a cleared environment (`PATH`, `HOME`, `SSH_AUTH_SOCK`, `LANG` only). Failure stops preparation (`setup-failed`). Per start `setup: run\|skip` (default run). |
+| `setupStart` | `wait` | `wait` \| `background`. Not built: `background`; the agent always starts after setup. |
+| `scripts.teardown` | `null` | Runs at session finish before worktree removal; same environment as setup. |
+| `cleanup.keepWhen` | `["uncommitted","teardown-failed"]` | The worktree is kept when dirty (Fleet links excluded) or when teardown failed; otherwise removed and the branch deleted with safe `git branch -d`. Not built: other values; the rule is fixed in `worktree.rs`. |
+| `integration.mode` | `pr` | `pr`: branch, pull request, merge after checks. `direct`: push to the default branch. |
+| `integration.mergeMethod` | `squash` | `squash` \| `merge` \| `rebase`. |
+| `integration.autoMerge` | `true` | Fleet merges the pull request itself after checks pass (`gh pr merge --<method>`); `false` leaves it open for a reviewer or the owner. |
+| `integration.syncCheckoutAfterMerge` | `true` | After a verified merge each environment host fast-forwards its clean checkout (`base-updated`); see [Checkout sync](#checkout-sync). |
+| `identity` | `null` | `{name, email}` for `GIT_AUTHOR_*`/`GIT_COMMITTER_*` of agent and delivery commits. |
+| `artifact_locations`, `artifact_rules` | `null`, `[]` | Hosts that must hold the project's artifacts and retention rules ([data foundation](designs/fleet-data-foundation.md)). |
+
+Not built: `integration.mode: direct` for agent sessions (`session_deliver` always opens a pull request; `direct` applies to artifact delivery only); `integration.mode: pr` on GitLab (the program worker uses `gh`); a merge method read from the repository default; `project_create` and a project editing UI (projects are files in Git).
+
+Example (`config/projects/fleet-hello-world/project.json`, shortened):
+
+```json
+{"id":"fleet-hello-world","name":"Fleet Hello World","contextFiles":["rules.md"],
+ "repos":[{"id":"main","remote":"git@github.com:taskqorg/fleet-hello-world.git","forge":"github","defaultBranch":"main","connection":"fleet-hello-world"}],
+ "environments":[{"hostId":"owner-mac","checkoutPath":"/Users/kirs/Projects/fleet-hello-world"}],
+ "roles":{"pm":"pm","worker":"claude-worker","reviewer":"website-reviewer"},
+ "worktree":{"branchPrefix":"fleet","linkPaths":[".env.local"],"sharedDirectories":["node_modules"]},
+ "scripts":{"setup":"mkdir -p dist"},
+ "integration":{"mode":"pr","mergeMethod":"squash","autoMerge":true},
+ "identity":{"name":"fleet-bot","email":"fleet-bot@users.noreply.github.com"}}
+```
+
+### Failures are visible
+
+The system helps and never stalls silently. Setup failure, expired credential or binding, teardown failure, unknown effect, merge conflict, dirty checkout: each is recorded as an event on its execution with a reason code and is readable by people and agents through the same API and MCP. Nothing is retried or deleted silently; a kept worktree waits for a later cleanup procedure.
+
+Not built: a single attention view over these failures that an operator, architect or supervisor agent can take and assign. Its model (new entity or existing execution states and events) is decided with the data model.
+
+### Checkout sync
+
+The coordinator never touches host checkouts. After a verified merge it sends `base-updated {sha}` to each environment host of the project. The executor (`crates/executor/src/checkout_sync.rs`) fetches and fast-forwards a checkout only if it is clean; otherwise it reports `checkout-dirty`, `fetch-failed` or `not-fast-forward` and leaves it untouched.
+
+### Not decided
+
+Needs seen in the owner's repositories with no setting yet: submodules (pilotq); per-worktree ports for parallel dev servers (cs, abuse-bot); a canonical check command `scripts.check`; deploy environments per branch with an explicit-request flag for production (cs `main` DEV, `live` PROD); a per-start `baseRef` for hotfixes; containerised harness wrappers; auto-merge per pull request source (bot versus agent). Production deploy and releases stay separate actions on an explicit owner request.
+
+## Project setup
+
+1. Write `config/projects/<id>/project.json` and `rules.md`: goal, context files, roles, repos, environments, identity, integration.
+2. Bind each repo to a connection; ask an architect for a missing one (missing access is a question).
+3. Prepare each environment in its own terminal: clone the repo to `checkoutPath`, install toolchains, place the connection credential. Fleet never accepts the secret.
+4. Bind harness accounts per role on the chosen hosts (`account_*` operations; a missing binding is a login handoff).
+5. Run `project_readiness {projectId}`; read results with `execution_status`.
+6. Run a smoke task: edit, commit with the project identity, push the branch, deliver.
+
+### Repository access
+
+Credentials stay on the environment where the native tool reads them; Fleet records only which connection a repo uses. The executor gives each execution only the project's credential: the SSH key `<FLEET_CONNECTIONS_DIR>/<connection>/id_ed25519` with `<FLEET_CONNECTIONS_DIR>/known_hosts` (`crates/executor/src/git_access.rs`); the ambient SSH agent and `~/.ssh` config are not used for project git. Agent and delivery git runs non-interactive, with hooks off and cleared environment. Projects on one OS user can still read each other's files through a shell; full separation needs a separate environment.
+
+Not built: GitHub App tokens, fine-grained PAT helpers, `gh` keyring bindings, package registry and cloud credentials per connection, and interactive secret requests.
+
+### Readiness
+
+`project_readiness` sends one read-only `readiness` command to each environment host (`crates/executor/src/readiness.rs`). Each check is `ok | failed` with a reason code; no raw stderr or secret leaves the host.
+
+- `checkout`: `checkoutPath/.git` exists.
+- `remote`: `git ls-remote --exit-code <remote> HEAD` with the connection's credential; reasons `ls-remote-{network|auth-denied|repo-missing|head-missing|unclassified}-exit-<code>`, `invalid-remote`.
+- `setup`: a setup script given as a path exists in the checkout.
+- `accounts`: each host account bound for a role harness is `ready`.
+- `claude-placement` and `claude-login` for projects with a Claude role ([Host settings: Claude placement](#host-settings-claude-placement)).
+
+Not built: push dry-run or token permission check, `gh auth status`, registry and cloud whoami, toolchain versions, scratch worktree create and remove, coordinator-side checks that context files and role profiles resolve.
 
 ## Consistent preparation
 
-Prepare the selected agent definition and skill content from canonical files on every execution environment. The same selected configuration uses the same content across hosts; independently maintained machine copies are not configuration sources. Adapt local paths and supported harness/tool wiring without silently changing instructions.
+Prepare the selected agent definition and skill content from canonical files on every host; the same selection uses the same content everywhere. Machine copies are not configuration sources. Adapt local paths and harness wiring without changing instructions.
 
-Fleet owns the execution configuration. Personal harness configuration, instructions, memory, skills, MCP servers and hooks must not enter implicitly. Record selected sources and effective settings, distinguishing supplied settings from observed application. Built-in harness behavior remains version-specific and must not be represented as Fleet-authored instructions.
+Fleet owns the execution configuration. Personal harness configuration, instructions, memory, skills, MCP servers and hooks never enter implicitly. Record selected sources and effective settings, separating supplied settings from observed application (`preparation` event: requested and effective). Built-in harness behaviour is version-specific and is not shown as Fleet-authored.
 
-An installed harness executable may be reused. Account access is supplied independently from personal behavioral configuration; never publish credentials in profiles or history. Configuration independence does not imply an OS-enforced filesystem boundary.
+An installed harness executable may be reused. Account access is supplied separately from personal behavioural configuration; credentials never appear in profiles or history. Configuration independence is not an OS filesystem boundary.
 
-Record the actual prepared content and tool availability. Later launches use current definitions unless another version or draft is explicitly selected. Do not assume edits are injected into an already running session.
-
-Instructions guide the agent's actions, including whether and how to call pipelines. Review run history, tool calls, results and checks to assess adherence and improve the definition. Supplying an instruction does not prove it was followed, and identical content does not guarantee identical model behavior.
+Later launches use current definitions unless a version or draft is selected; edits are not injected into a running session. Supplying an instruction does not prove it was followed: assess adherence from run history, tool calls, results and checks.
 
 ## Different kinds of settings
 
 | Kind | Resolution |
 |---|---|
-| Defaults and preferences | Apply existing agent/role, project and task override rules; explicit selections override defaults. |
-| Requirements | Combine applicable task, project and method requirements. Incompatible requirements need resolution, not silent replacement. |
-| Authority and operational controls | Apply grants, budgets, eligibility and resource restrictions; task prose does not widen them. |
-| Observations | Show current availability, measured load, reported quota and uncertainty separately from configured policy. |
+| Defaults and preferences | Profile and role, then project settings, then explicit task choices; explicit choices override defaults. |
+| Requirements | Task, project and method requirements combine. Incompatible requirements need resolution, not silent replacement. |
+| Authority and operational controls | Grants, budgets, eligibility and resource restrictions apply; task prose does not widen them. |
+| Observations | Availability, measured load, reported quota and uncertainty are shown apart from configured policy. |
 
-Method parameters describe the selected method. They do not become another universal precedence layer: a method's required Blender capability is a placement requirement; its default quality setting may be an overridable parameter. Defaults and requirements must be distinguishable in their owning definitions.
-
-Free-form instructions remain text. Give Fleet structured information only where it must select, route, invoke, account or recover. Do not promise to mechanically reconcile all semantic conflicts in arbitrary instructions.
+Method parameters describe the selected method, not another precedence layer: a method's required Blender capability is a placement requirement; its default quality is an overridable parameter. Free-form instructions stay text; structure only what Fleet must select, route, invoke, account or recover.
 
 ## Effective configuration
 
-For planned work, resolve an inspectable preview from current definitions, project differences, explicit assignment choices and allocation rules. At launch, retain the actual selected configuration and conditions under existing execution rules.
+For planned work, resolve an inspectable preview from current definitions, project differences, explicit assignment choices and allocation rules; at launch, retain the actual selection. Show what was selected, why, and each setting's source; mark unresolved choices and unobserved prerequisites. The preview does not guarantee future availability. The view is derived, not an editable master: edit the source or the assignment. People and agents get the same explanation.
 
-Show what was selected, why, and the source of relevant settings. Mark choices not yet resolved and prerequisites not yet observed. The preview is not a guarantee of future host availability, quota or runtime support.
-
-This view is derived, not a new editable master configuration. Edit an item's source or explicitly change the assignment. Human interfaces and agent tools expose the same explanation.
+Not built: the effective-configuration preview; the launch record is the `preparation` event.
 
 ## Changes and scope
 
-Ordinary sessions may request configuration changes. Resolve the intended target and scope: this assignment, a project's defaults, a shared definition or current resource routing. Ask only when ambiguity materially changes the effect; do not require a confirmation form for every change.
+Ordinary sessions may request configuration changes. Resolve the target and scope: this assignment, project defaults, a shared definition or current resource routing; ask only when ambiguity changes the effect. Show the applied scope and source diff. Definition changes affect later launches; live control is a separate operation. Temporary allocation controls keep the previous setting for explicit restoration.
 
-Show the applied scope and source diff where applicable. Definition changes affect subsequent launches under existing source rules; live control is a separate operation. Temporary allocation controls retain their previous settings for explicit restoration.
+Architects manage shared definitions and grants. Operators manage project work and granted controls; authorised agents use the same operations. A conversation's role label grants no authority.
 
-Architects manage shared definitions and grants. Operators manage project work and granted controls; authorized agents use the same operations. A conversation's role label does not grant additional authority.
+## Capabilities, methods and tools
+
+| Concept | Meaning | Example |
+|---|---|---|
+| Capability | Expected outcome with an input and result contract. | Create a 3D model from a description and optional references. |
+| Method | A way to provide the capability. | Direct generation API; an agent using Blender; generation with review. |
+| Tool | The callable interface that requests it. | An operation taking a description and returning model files and check results. |
+
+These need no separate services. Every method satisfies the advertised contract, including formats and check results. `config/catalogue.json` lists the methods of a capability and the pipeline each runs ([fleet.md](../fleet.md#tools-and-pipelines)).
+
+### Catalogue scope
+
+Entries are shared or project-specific. Project pipelines compose shared methods with project requirements, tools and checks; extract a shared method when reuse warrants it. People and agents see shared entries and their project's entries, not other projects'. Availability decides usable methods; recommendations guide the choice.
+
+### Pipeline development
+
+Develop pipelines in ordinary sessions: discuss, edit definitions, run trials, compare. Assess methods and select project or system recommendations in the [Lab](designs/fleet-lab.md). One-off work follows [Project context](#project-context).
+
+### Pipeline execution
+
+A pipeline is a process the system runs; the caller supplies inputs and gets results without coordinating steps. Steps call APIs through tools, run programs, launch agents or invoke pipelines; results return through the calling chain. An agent step gets an assignment and chooses its actions; expose a stage only when it needs coordination, comparison or repetition. Start coarse; split a step when its result, alternatives, reruns or resource use need separate control. A known procedure runs as a program without an agent. Improving the current result does not change the definition for future runs; that is a separate action.
+
+A single-step pipeline is valid; a simple API call needs no pipeline. Direct tools and pipelines share invocation and observation. MCP exposes tools to agents; a tool may call an API or run a pipeline. Provider configuration, accounts and key pools belong to connections.
+
+### Results and transfer
+
+A capability declares named required and optional outputs. An output holds data or references material in its source system, with type and description; Fleet need not copy it. Downstream steps bind inputs to these outputs and the system makes the material reachable in the receiving environment within permissions. Availability and verification are separate: keep the artifact and its check report even when it needs rework. Code results reference repository changes with a diff. Result viewers are in the [operator app](designs/fleet-operator-app.md).
+
+### Discovery, selection and fallback
+
+Agents discover capabilities by outcome and get contracts, usage conditions, a recommended method and alternatives, each with purpose, limits, requirements and known quality, time and cost; unknowns are marked.
+
+Selection: explicit task choice, else project recommendation, else system recommendation (`recommendationSource`: `project-selected`, `project`, `shared`). Routine calls do not ask the operator for a provider.
+
+A capability may permit fallback methods: when the primary is unavailable use an eligible authorised fallback and report the substitution; without one, offer alternatives. Never replace an explicitly selected method without permission. An unconfirmed original outcome does not authorise another attempt through a different method. Retain selected methods, substitutions, effective settings, internal executions and results.
+
+Not built: fallback methods and substitution reporting.
+
+### Review and rework
+
+A definition may branch on a review result and repeat rework up to a stated iteration limit; the system runs the transitions. A review requesting changes is a workflow outcome, not an execution failure. At the limit, return the artifact and its review outcome; exhausting attempts proves neither quality nor acceptance.
+
+Not built: review branches and rework loops in pipeline definitions.
 
 ## Host settings: Claude placement
 
-Claude runs only where the host's setting allows it ([fleet-lab.md](designs/fleet-lab.md), Claude on WSL). The setting is the environment variable `FLEET_CLAUDE_PLACEMENT` of the executor and of the program worker (`delivery_worker.py`) on that host:
+Claude runs only where the host allows it ([Lab](designs/fleet-lab.md)). The setting is `FLEET_CLAUDE_PLACEMENT` in the environment of the executor and of the program worker (`delivery_worker.py`) on that host:
 
 | Value | Allowed on | Host |
 |---|---|---|
 | `mac` | macOS | owner-mac |
-| `windows-wsl` | Linux under WSL; detected from the kernel release string (`/proc/sys/kernel/osrelease` names Microsoft) | windows (WSL user `alexk`) |
+| `windows-wsl` | Linux under WSL, detected from `/proc/sys/kernel/osrelease` naming Microsoft | windows (WSL user `alexk`) |
 | unset | nowhere: Claude is refused | PDS18 |
 
-A value that does not match the platform is refused too (`claude-placement-platform-mismatch`). A WSL host with `windows-wsl` reports platform `win32` to the coordinator, so its Claude gates treat it as Windows. Readiness reports a `claude-placement` check for projects with a Claude role.
+A value that does not match the platform is refused (`claude-placement-platform-mismatch`). A WSL host with `windows-wsl` reports platform `win32`, so Claude gates treat it as Windows. Readiness reports `claude-placement` for projects with a Claude role.
 
-On WSL the Claude subscription login lives under Fleet's config directory: the Claude account's `nativeHome` (Claude's `CLAUDE_CONFIG_DIR`) is `~/.config/fleet/claude`, so the login file is `~/.config/fleet/claude/.credentials.json` (the name Claude writes). Readiness checks, for each Claude account in the host's native registry, only that `<nativeHome>/.credentials.json` is present (`claude-login`); it never reads it. The owner logs in once with `CLAUDE_CONFIG_DIR=~/.config/fleet/claude claude` as `alexk`. The coordinator learns the binding from one host observation: `POST /api/hosts/accounts` with the machine secret, `{accountId, hostId: "windows", binding: "fleet-claude", platform: "win32", readiness: "ready", reason: "ready"}` (done 2026-11-10 for `claude-owner`, from PDS18 on loopback, because `/api/hosts/accounts` is behind Access on the public host). An account keeps one binding per host, so `claude-owner` now has `owner-mac` and `windows`; work goes to the first ready host in the order session host, `owner-mac`, native hosts, unless a pipeline run sets the `host` override.
+On WSL the Claude login lives under Fleet's config directory: the account's `nativeHome` (Claude's `CLAUDE_CONFIG_DIR`) is `~/.config/fleet/claude`, the login file `~/.config/fleet/claude/.credentials.json`. Readiness checks only that `<nativeHome>/.credentials.json` exists for each Claude account in the host's native registry (`claude-login`); it never reads it. The owner logs in once with `CLAUDE_CONFIG_DIR=~/.config/fleet/claude claude` as `alexk`. The coordinator learns the binding from one host observation `POST /api/hosts/accounts` with the host secret: `{accountId, hostId, binding: "fleet-claude", platform: "win32", readiness: "ready", reason: "ready"}`; on the public host this path is behind Access, so it is sent on loopback. An account keeps one binding per host; work goes to the first ready host in the order session host, `owner-mac`, native hosts, unless a pipeline run sets `host`.
 
 ## Host settings: connections
 
-A connection (example: `pipe-read`) is reached from a host through its record `<FLEET_CONNECTIONS_DIR>/<connection>/connection.json`, mode 0600, owned by the service user: `{clientPath, clientSha256, pipeConfigPath, tools}` ([fleet-lab.md](designs/fleet-lab.md), Connections). The coordinator reads its own host's records for pipeline api steps (`FLEET_CONNECTIONS_DIR` in the coordinator environment); the executor reads them for the connections a profile grants. The record holds paths and the client hash only; the Pipe token stays in the file `pipeConfigPath` names. After Pipe's client changes, update `clientSha256`; until then the client refuses to load it (`infra:client-hash-mismatch`).
-
-## Illustrative CSGO configuration
-
-This is a design example, not the current project's measured configuration.
-
-- A shared developer configuration provides chosen development instructions and tools. The csgo project references it and supplies game requirements and checks.
-- A project character method references common generation/optimization tools and csgo-specific rig adaptation. Its steps declare the needed capabilities without embedding machine names.
-- A particular character assignment supplies selected references and any explicit method choice. A Mac-only check requires a suitable Mac environment; general work follows eligible placement preferences.
-- Reserving Claude for required work changes allocation policy, not every developer definition. A Codex alternative must still satisfy the selected role, skills, tools and assignment requirements.
-
-The person can inspect one explanation of the planned or actual work without browsing every source. Detailed configuration remains available when needed.
+A host reaches a connection (example `pipe-read`) through `<FLEET_CONNECTIONS_DIR>/<connection>/connection.json`, mode 0600, owned by the service user: `{clientPath, clientSha256, pipeConfigPath, tools}` ([connections](designs/fleet-connections.md)). The coordinator reads its own host's records for pipeline API steps; the executor reads them for connections a profile grants. The record holds paths and the client hash only; the token stays in the file `pipeConfigPath` names. After the client changes, update `clientSha256`; until then it is refused (`infra:client-hash-mismatch`). Git keys of repo connections live in the same directory ([Repository access](#repository-access)).
 
 ## People and identity
 
-The guard (`deploy/infrastructure/origin_guard.py`) verifies the Cloudflare Access JWT and returns `Authorization: Bearer <browser secret>` and `X-Fleet-Person: <verified e-mail>`; Caddy strips any client-sent `X-Fleet-Person`. The coordinator reads `FLEET_PEOPLE_FILE` (required), the `people.json` of [people and access](designs/fleet-people-access.md) §1: `[{email, name, roles, owner?, grants: [{kind, id}]}]` with exactly one `owner: true`. A browser request without the header is 401; an e-mail not in the file is 403; a host request with the header is 403. `FLEET_ACCESS_OWNER` is removed.
+The guard (`deploy/infrastructure/origin_guard.py`) verifies the Cloudflare Access JWT and returns `Authorization: Bearer <browser secret>` and `X-Fleet-Person: <verified e-mail>`; Caddy strips a client-sent `X-Fleet-Person`. The coordinator reads `FLEET_PEOPLE_FILE` (required), the `people.json` of [people and access](designs/fleet-people-access.md): `[{email, name, roles, owner?, grants: [{kind, id}]}]` with exactly one `owner: true`. A browser request without the header is 401; an e-mail not in the file is 403; a host request with the header is 403.
 
 ## Hosts
 
-Each host has its own secret (people-access §3). Make it on the host with `scripts/host-secret.sh <file>` (0600, prints only the SHA-256) and register the hash as the owner: `hosts_register {id, name?, holder?, platform?, roles?, harnesses?, secretSha256}`; `hosts_rotate_secret {id, secretSha256}` replaces it and the old secret stops at once. Roles: `inspector-for:<hostId>` (account inspection and integration for that host), `publication` (delivery). The executor reads `FLEET_HOST_SECRET_FILE`; `FLEET_HOST_ID` is only a label, the coordinator derives the host from the secret and answers 403 to a different body `hostId`. The program worker config names `hostSecretFile`. Removed: `FLEET_HOST_TOKEN`, `FLEET_MACHINE_SECRET`, `FLEET_NATIVE_HOST_IDS`, `FLEET_INTEGRATION_HOST_ID`, `FLEET_PUBLICATION_HOST_ID`.
+Each host has its own secret. Make it on the host with `scripts/host-secret.sh <file>` (0600, prints only the SHA-256) and register the hash as the owner: `hosts_register {id, name?, holder?, platform?, roles?, harnesses?, secretSha256}`; `hosts_rotate_secret {id, secretSha256}` replaces it and the old secret stops at once. Roles: `inspector-for:<hostId>` (account inspection and integration for that host), `publication` (delivery). The executor reads `FLEET_HOST_SECRET_FILE`; `FLEET_HOST_ID` is only a label: the coordinator derives the host from the secret and answers 403 to a different body `hostId`. The program worker config names `hostSecretFile`. The executor's project roots are `FLEET_PROJECT_ROOTS` (`:`-separated absolute paths).
+
+## Example: csgo
+
+A shared developer profile provides development instructions and tools; the csgo project references it and adds game requirements and checks. A character method references shared generation tools and a csgo rig adaptation; its steps declare capabilities, not machine names. An assignment supplies references and any explicit method choice; a Mac-only check needs a Mac environment. Reserving Claude for required work is allocation policy, not a change to every profile; a Codex alternative must still meet the role, skills, tools and requirements. The person sees one explanation of planned or actual work without browsing every source.

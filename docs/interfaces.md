@@ -48,7 +48,7 @@ A representative path is: interrupted task -> cause -> another available agent -
 
 These workspaces organize the architect's work, not services or repositories. Their objects link across workspaces; exact menus and screen layouts remain unspecified.
 
-The catalogue follows [shared and project scopes](capabilities-and-pipelines.md#catalogue-scope). A project view includes its entries and available shared methods; the cross-project overview identifies each entry's scope. Ordinary sessions support [pipeline development](capabilities-and-pipelines.md#pipeline-development).
+The catalogue follows [shared and project scopes](configuration.md#catalogue-scope). A project view includes its entries and available shared methods; the cross-project overview identifies each entry's scope. Ordinary sessions support [pipeline development](configuration.md#pipeline-development).
 
 The laboratory workflow is:
 
@@ -87,7 +87,7 @@ Inspect the same result across operator and architect views. Compare a replaceme
 
 ## Result viewing
 
-Both interfaces reuse viewers suited to the [result type](capabilities-and-pipelines.md#results-and-transfer): readable text and reports, zoomable images, interactive 3D models, and file changes with diffs.
+Both interfaces reuse viewers suited to the [result type](configuration.md#results-and-transfer): readable text and reports, zoomable images, interactive 3D models, and file changes with diffs.
 
 Results may be stored materials or references to an external source; provide convenient inspection in either case. For a working product, provide access to its run or preview and checks where applicable; a code diff alone does not show product behavior.
 

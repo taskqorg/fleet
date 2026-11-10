@@ -1396,7 +1396,7 @@ Today `fleet-executor.service` and every agent turn it starts run as `fleet`, th
     *   Link this design.
 *   **Why**: Resolves the contradictions with `fleet.md` listed in `docs/designs/fleet-data-foundation-brief.md`.
 
-##### 48. `docs/state-ownership.md`, `docs/work-analysis.md`, `docs/capabilities-and-pipelines.md` (Modify)
+##### 48. `docs/state-ownership.md`, `docs/work-analysis.md`, `docs/configuration.md` (Modify)
 
 *   **Type / Scope**: Documentation.
 *   **Proposed Changes**: Reference the task table, the execution as the unit of analysis, and artifact placement. Remove claims that this design supersedes.
