@@ -290,18 +290,39 @@ export function ResultViewer(p: ResultProps) {
 
 export type ArtifactMeta = { id: string; name: string; mediaType: string; size: number };
 const TEXTUAL = /^(text\/|application\/(json|xml|x-ndjson|javascript|x-yaml|yaml|toml|sql|x-sh))/;
-/** Which view a stored media type gets: image, video, text, or download only. HTML and SVG show as text, never inlined. */
+/** Which view a stored media type gets: image, video, text, or download only. HTML and SVG are text with a rendered preview. */
 export const viewOf = (mediaType: string): 'image' | 'video' | 'text' | 'download' =>
   /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(mediaType) ? 'image' : /^video\//.test(mediaType) ? 'video' : TEXTUAL.test(mediaType) || mediaType === 'image/svg+xml' ? 'text' : 'download';
+/** The rendered view a text format has, if any. YAML has none: its source is already its readable form. */
+export const renderOf = (mediaType: string, name: string): 'html' | 'svg' | 'markdown' | 'json' | 'csv' | null =>
+  /^text\/html/.test(mediaType) ? 'html' : mediaType === 'image/svg+xml' ? 'svg' : /^text\/markdown/.test(mediaType) || /\.md$/i.test(name) ? 'markdown'
+    : /^application\/json/.test(mediaType) ? 'json' : /^text\/csv/.test(mediaType) ? 'csv' : null;
+/** CSV rows (RFC 4180: quoted fields, doubled quotes, line breaks inside quotes). */
+export function parseCsv(t: string): string[][] {
+  const rows: string[][] = []; let row: string[] = [], f = '', q = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (q) { if (c === '"') { if (t[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"') q = true; else if (c === ',') { row.push(f); f = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && t[i + 1] === '\n') i++; row.push(f); rows.push(row); row = []; f = ''; }
+    else f += c;
+  }
+  if (f || row.length) { row.push(f); rows.push(row); }
+  return rows;
+}
+const pretty = (t: string) => { try { return JSON.stringify(JSON.parse(t), null, 2); } catch { return t; /* not complete yet, or not JSON: shown as is */ } };
+// The chosen view per format lasts for the session (sessionStorage; a blocked store just falls back to the preview).
+const modeOf = (f: string) => { try { return sessionStorage.getItem('fleet.av.' + f) === 'source' ? 'source' : 'preview'; } catch { return 'preview'; } };
 const PAGE_BYTES = 65536;
 /**
  * One stored artifact by media type: image and video in a fixed-ratio frame (no jump when they load, OR-23), text read in
- * Range pages as the reader scrolls (no cap), HTML and SVG as source or, on request, running in a sandboxed frame without
- * same-origin access (scripts run, but on an opaque origin with no network); anything else is a download. Bytes come from `src` (GET /api/results/:id).
+ * Range pages as the reader scrolls (no cap). A format with a renderer opens rendered, with a Source/Preview switch:
+ * HTML runs in a sandboxed frame without same-origin access (scripts on an opaque origin, no network), SVG as an image
+ * (no scripts), Markdown as nodes, JSON indented, CSV as a table. Copy and download always take the source. Bytes come from `src`.
  */
 export function ArtifactView({ a, src }: { a: ArtifactMeta; src: string }) {
   const kind = viewOf(a.mediaType), [text, setText] = useState(''), [next, setNext] = useState(0), [busy, setBusy] = useState(false), [err, setErr] = useState<string | null>(null);
-  const [preview, setPreview] = useState(false), decoder = useRef(new TextDecoder());
+  const fmt = kind === 'text' ? renderOf(a.mediaType, a.name) : null, [mode, setMode] = useState(() => fmt ? modeOf(fmt) : 'source'), decoder = useRef(new TextDecoder());
   const more = async () => {
     if (busy || next >= a.size) return; setBusy(true);
     try { const r = await fetch(src, { headers: { range: `bytes=${next}-${Math.min(a.size, next + PAGE_BYTES) - 1}` }, credentials: 'same-origin' });
@@ -309,17 +330,28 @@ export function ArtifactView({ a, src }: { a: ArtifactMeta; src: string }) {
       setText(t => t + decoder.current.decode(b, { stream: next + b.length < a.size })); /* one decoder per artifact: a character split across pages stays whole */ setNext(n => n + b.length); setErr(null); }
     catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
-  useEffect(() => { setText(''); setNext(0); setPreview(false); decoder.current = new TextDecoder(); }, [a.id]);
+  useEffect(() => { setText(''); setNext(0); setMode(fmt ? modeOf(fmt) : 'source'); decoder.current = new TextDecoder(); }, [a.id]);
   useEffect(() => { if (kind === 'text' && next === 0 && a.size > 0) more(); }, [a.id, next]);
-  const page = kind === 'text' && /^(text\/html|image\/svg\+xml)/.test(a.mediaType);
+  const flip = () => { const m = mode === 'preview' ? 'source' : 'preview'; setMode(m); try { sessionStorage.setItem('fleet.av.' + fmt, m); } catch { /* session-only memory is optional */ } };
+  const scroller = (body: ComponentChildren) => <div class="av-text" onScroll={e => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) more(); }}>{body}
+    {next < a.size && <div class="muted type-sm">{bytes(next).text} of {bytes(a.size).text}{busy ? ' · loading' : ''}</div>}</div>;
+  const rendered = () => {
+    if (fmt === 'html') return <div class="av-frame page" data-tip="Agent output running in a sandbox: not part of Fleet"><iframe src={`${src}/preview`} sandbox="allow-scripts allow-forms allow-modals" title={a.name} referrerpolicy="no-referrer" /></div>;
+    if (fmt === 'svg') return <div class="av-frame"><img src={src} alt={a.name} /></div>;
+    if (fmt === 'markdown') return scroller(<Markdown text={text} />);
+    if (fmt === 'json') return scroller(<pre><code>{next < a.size ? text : pretty(text)}</code></pre>);
+    const [head, ...rows] = parseCsv(text);
+    return scroller(<table class="av-table"><thead><tr>{(head ?? []).map((h, i) => <th key={i}>{h}</th>)}</tr></thead><tbody>{rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>)}</tbody></table>);
+  };
   return <div class="av" data-ui="artifact-view">
     {kind === 'image' && <div class="av-frame"><img src={src} alt={a.name} loading="lazy" /></div>}
     {kind === 'video' && <div class="av-frame video"><video src={src} controls preload="metadata" /></div>}
     {kind === 'text' && <>
-      {page && <div class="bar"><Button label={preview ? 'Show source' : 'Run preview'} icon={preview ? 'type' : 'panels-top-left'} pressed={preview} onClick={() => setPreview(!preview)} /></div>}
-      {preview ? <div class="av-frame page" data-tip="Agent output running in a sandbox: not part of Fleet"><iframe src={`${src}/preview`} sandbox="allow-scripts allow-forms allow-modals" title={a.name} referrerpolicy="no-referrer" /></div>
-        : <div class="av-text" onScroll={e => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) more(); }}><pre><code>{text}</code></pre>
-          {next < a.size && <div class="muted type-sm">{bytes(next).text} of {bytes(a.size).text}{busy ? ' · loading' : ''}</div>}</div>}
+      <div class="bar">
+        {fmt && <Button label={mode === 'preview' ? 'Source' : 'Preview'} icon={mode === 'preview' ? 'type' : 'panels-top-left'} onClick={flip} />}
+        <Button label="Copy source" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(text).catch(e => setErr(e.message))} />
+      </div>
+      {fmt && mode === 'preview' ? rendered() : scroller(<pre><code>{text}</code></pre>)}
     </>}
     {kind === 'download' && <Empty text={`${a.mediaType} has no view here.`} />}
     {err && <ErrorBanner text={`Did not load: ${err}`} onRetry={more} />}

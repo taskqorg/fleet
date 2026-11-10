@@ -441,6 +441,9 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .av-frame.page{aspect-ratio:auto;height:var(--size-page-list)}
 .av-frame iframe{width:100%;height:100%;border:0;background:var(--surface)}
 .av-text{height:var(--size-page-list);overflow:auto;background:var(--surface-sunken);border:1px solid var(--line);border-radius:var(--radius-md);padding:var(--space-3)}
+.av-table{border-collapse:collapse;font-size:var(--font-size-sm)}
+.av-table th,.av-table td{border:1px solid var(--line);padding:var(--space-1) var(--space-3);text-align:left;vertical-align:top}
+.av-table th{font-weight:var(--font-weight-medium);background:var(--surface)}
 .av-text pre{margin:0;font-family:var(--font-mono);font-size:var(--font-size-sm);white-space:pre-wrap;overflow-wrap:anywhere}
 
 /* Catalogue rows in the control column: two lines, title then ID and secondary facts; no column heads (D19) */

@@ -9,7 +9,21 @@
 * Body: the viewer for the type, on `surface-sunken`.
 * Side strip (optional): checks for this result, comments and annotations.
 
-**As built (Conversations Stage 4).** `ArtifactView` is the body: image (fit, fixed 4:3 frame so nothing jumps), video (16:9 frame, native controls), text read in 64 KB `Range` pages as the reader scrolls (no cap), HTML and SVG as source with a "Run preview" toggle that runs them in a sandboxed frame (scripts on an opaque origin, no network), and download only for other types. Zoom, diff, versions and 3D are not built yet.
+**As built.** `ArtifactView` is the body: image (fit, fixed 4:3 frame so nothing jumps), video (16:9 frame, native controls), text read in 64 KB `Range` pages as the reader scrolls (no cap), and download only for other types. Zoom, diff, versions and 3D are not built yet.
+
+**Rendered first (owner).** Every format with a renderer opens rendered; one **Source** / **Preview** button above the body switches to the source and back. The choice is remembered per format for the browser session. Copy and download always take the source.
+
+| Format | Preview | Source |
+|---|---|---|
+| HTML | Runs in a sandboxed frame: scripts on an opaque origin, no network, no access to the app | Text |
+| SVG | Image (`<img>`, so its scripts never run) | Text |
+| Markdown (`text/markdown`, `.md`) | Rendered as nodes, never as HTML | Text |
+| JSON | Indented, two spaces | Text as stored |
+| CSV | Table, first row as the header | Text |
+| Image, video | As above; no switch | — |
+| Anything else textual (plain text, YAML, logs, code) | No renderer: the text shows directly | — |
+
+YAML has no renderer: its source is already its readable form.
 
 **Viewers.** Text and markdown (rendered, with raw toggle); diff (unified and split, file list on the left); image (fit, 100 %, zoom with wheel and `+`/`-`, pan by drag); video (poster frame, native controls); preview link (URL, last check, "Open preview"); 3D (placeholder until defined); unknown type (metadata and download only).
 
