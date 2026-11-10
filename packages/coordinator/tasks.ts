@@ -174,7 +174,8 @@ export function taskModel(raw:Raw,executions:Executions){
   const title=(r.task??(r.sourceSessionId?'Deliver session '+r.sourceSessionId:'Delivery '+r.id)).split('\n')[0].slice(0,200);
   const req={requestId:r.requestId??null,signature:r.signature??null},method={methodId:r.methodId??null,profileId:r.profileId??null,account:r.account??null,invocation:r.invocation??null,branch:r.branch??null};
   if(!exists)await create({id:r.id,projectId:r.projectId??null,title,expectedOutcome:r.task??null,completionRequirements:req,deliveryMethod:method,createdBy:r.sourceSessionId?'session:'+r.sourceSessionId:'operator',legacyKind:'delivery',data:r,createdAt:r.createdAt});
-  else await raw.query('UPDATE task SET project_id=$2,title=$3,expected_outcome=$4,completion_requirements=$5,delivery_method=$6,data=$7,updated_at=now() WHERE id=$1',[r.id,r.projectId??null,title,r.task??null,clean(req),clean(method),clean(r)]);
+  // Write only when something changed: the delivery advance re-saves every record on each coordinator start.
+  else await raw.query('UPDATE task SET project_id=$2,title=$3,expected_outcome=$4,completion_requirements=$5,delivery_method=$6,data=$7,updated_at=now() WHERE id=$1 AND (project_id,title,expected_outcome,completion_requirements,delivery_method,data) IS DISTINCT FROM ($2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb)',[r.id,r.projectId??null,title,r.task??null,clean(req),clean(method),clean(r)]);
   if(r.previousDeliveryId&&await one('SELECT 1 AS x FROM task WHERE id=$1',[r.previousDeliveryId]))await depend(r.id,r.previousDeliveryId,'revision_of');
   if(r.questionId)await raw.query('UPDATE question SET task_id=$2 WHERE id=$1 AND task_id IS NULL',[r.questionId,r.id]);
   const steps=(r.steps??[]).map((s:any)=>s.executionId).filter((x:any)=>typeof x==='string');
