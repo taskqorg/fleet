@@ -861,6 +861,20 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
+		// An agent's question is answered by delivering the reply to its session (agent tool reply); recording the
+		// answer alone left the asker without it.
+		if aq, err := first(q, "SELECT coalesce(q.project_id,s.data->>'projectId') AS project_id FROM question q LEFT JOIN document s ON s.kind='session' AND s.id=q.session_id WHERE q.id=$1 AND q.legacy_kind='question'", id); err != nil {
+			return nil, err
+		} else if aq != nil {
+			// The reply reaches another session: the person must have that session's project, as for any project op.
+			if p := q.person; p != nil && !p.Owner && !mayAccessProjectID(p, gs(aq, "project_id")) {
+				return nil, errNotFound
+			}
+			if _, err := agentReply(q, doc{"questionId": id, "answer": answer}); err != nil {
+				return nil, err
+			}
+			return findQuestion(q, "", id)
+		}
 		ids, _ := b["artifactIds"].([]any)
 		if _, err := answerQuestion(q, id, answer, actor(q, "operator"), ids); err != nil {
 			return nil, err
