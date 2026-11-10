@@ -3403,6 +3403,11 @@
       "spool": "<root>/spool",
       "_response": {
         "error": "rejected"
+      },
+      "_transferState": "failed",
+      "_transferResponse": {
+        "error": "rejected",
+        "state": "failed"
       }
     },
     "requests": [
@@ -3424,9 +3429,97 @@
         "id": 1,
         "method": "tools/call",
         "params": {
+          "name": "project_context",
+          "arguments": {
+            "requestId": "project_context"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "catalogue",
+          "arguments": {
+            "requestId": "catalogue"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
           "name": "pipeline_run",
           "arguments": {
-            "requestId": "failed"
+            "requestId": "pipeline_run"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "direct_search",
+          "arguments": {
+            "requestId": "direct_search"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "pipeline_history",
+          "arguments": {
+            "requestId": "pipeline_history"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "pipeline_get",
+          "arguments": {
+            "requestId": "pipeline_get"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "question_ask",
+          "arguments": {
+            "requestId": "question_ask"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "question_history",
+          "arguments": {
+            "requestId": "question_history"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "account_list",
+          "arguments": {
+            "requestId": "account_list"
           }
         }
       },
@@ -3437,6 +3530,145 @@
         "params": {
           "name": "session_start",
           "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_deliver",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_transition",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_fork",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_resume",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_handoffs",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "message_send",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "queue_list",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "ask",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "reply",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "questions",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "worker_done",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "execution_status",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_save",
+          "arguments": {
+            "path": "sub/a.txt"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_list",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_get",
+          "arguments": {
+            "artifact_id": "failed"
+          }
         }
       }
     ],
@@ -3490,6 +3722,353 @@
             ],
             "isError": true
           }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected",
+                  "state": "failed"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected",
+                  "state": "failed",
+                  "transferId": "<uuid>"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": 2.0,
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected",
+                  "state": "failed",
+                  "transferId": "<uuid>"
+                }
+              }
+            ]
+          }
         }
       ],
       "effects": {
@@ -3508,11 +4087,115 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
-                "requestId": "failed"
+                "requestId": "project_context"
+              },
+              "operation": "project_context",
+              "projectId": "project",
+              "requestId": "project_context-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "catalogue"
+              },
+              "operation": "catalogue",
+              "projectId": "project",
+              "requestId": "catalogue-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_run"
               },
               "operation": "pipeline_run",
               "projectId": "project",
-              "requestId": "failed"
+              "requestId": "pipeline_run"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "direct_search"
+              },
+              "operation": "direct_search",
+              "projectId": "project",
+              "requestId": "direct_search"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_history"
+              },
+              "operation": "pipeline_history",
+              "projectId": "project",
+              "requestId": "pipeline_history-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_get"
+              },
+              "operation": "pipeline_get",
+              "projectId": "project",
+              "requestId": "pipeline_get-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "question_ask"
+              },
+              "operation": "question_ask",
+              "projectId": "project",
+              "requestId": "question_ask"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "question_history"
+              },
+              "operation": "question_history",
+              "projectId": "project",
+              "requestId": "question_history-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "account_list"
+              },
+              "operation": "account_list",
+              "projectId": "project",
+              "requestId": "account_list-<uuid>"
             },
             "executionId": "execution",
             "hostId": "host"
@@ -3529,6 +4212,186 @@
               "params": {
                 "arguments": {},
                 "name": "session_start"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_deliver"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_transition"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_fork"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_resume"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_handoffs"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "message_send"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "queue_list"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "ask"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "reply"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "questions"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "worker_done"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "execution_status"
               }
             }
           }
@@ -3548,11 +4411,115 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
-                "requestId": "failed"
+                "requestId": "project_context"
+              },
+              "operation": "project_context",
+              "projectId": "project",
+              "requestId": "project_context-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "catalogue"
+              },
+              "operation": "catalogue",
+              "projectId": "project",
+              "requestId": "catalogue-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_run"
               },
               "operation": "pipeline_run",
               "projectId": "project",
-              "requestId": "failed"
+              "requestId": "pipeline_run"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "direct_search"
+              },
+              "operation": "direct_search",
+              "projectId": "project",
+              "requestId": "direct_search"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_history"
+              },
+              "operation": "pipeline_history",
+              "projectId": "project",
+              "requestId": "pipeline_history-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_get"
+              },
+              "operation": "pipeline_get",
+              "projectId": "project",
+              "requestId": "pipeline_get-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "question_ask"
+              },
+              "operation": "question_ask",
+              "projectId": "project",
+              "requestId": "question_ask"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "question_history"
+              },
+              "operation": "question_history",
+              "projectId": "project",
+              "requestId": "question_history-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "account_list"
+              },
+              "operation": "account_list",
+              "projectId": "project",
+              "requestId": "account_list-<uuid>"
             },
             "executionId": "execution",
             "hostId": "host"
@@ -3571,9 +4538,212 @@
                 "name": "session_start"
               }
             }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_deliver"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_transition"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_fork"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_resume"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_handoffs"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "message_send"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "queue_list"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "ask"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "reply"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "questions"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "worker_done"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": 2.0,
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "execution_status"
+              }
+            }
           }
         ],
-        "transfers": []
+        "transfers": [
+          {
+            "path": "<root>/spool/<uuid>",
+            "spool": true,
+            "previews": true,
+            "name": "sub/a.txt",
+            "mediaType": "text/plain",
+            "executionId": "execution",
+            "required": false
+          },
+          {
+            "executionId": "execution",
+            "filter": {
+              "executionId": null,
+              "taskId": null,
+              "mediaType": null
+            }
+          },
+          {
+            "executionId": "execution",
+            "artifactId": "failed",
+            "inputDir": "<root>/in"
+          }
+        ]
       }
     }
   }

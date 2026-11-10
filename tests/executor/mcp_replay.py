@@ -28,7 +28,7 @@ def run(server, context, requests):
                 while not stop.is_set():
                     with c:
                         c.execute('UPDATE delegation_requests SET response=? WHERE response IS NULL',(json.dumps(ctx.get('_response',{'childExecutionId':'child','result':{'content':[{'type':'text','text':'reply'}]}})),))
-                        c.execute('UPDATE transfers SET state=?,response=? WHERE response IS NULL',('done',json.dumps({'artifactId':'artifact','state':'done'})))
+                        c.execute('UPDATE transfers SET state=?,response=? WHERE response IS NULL',(ctx.get('_transferState','done'),json.dumps(ctx.get('_transferResponse',{'artifactId':'artifact','state':'done'}))))
                     stop.wait(.005)
             except Exception as e: errors.append(e)
             finally:c.close()
@@ -63,7 +63,11 @@ if CAPTURE:
     requests += [call('artifact_save',{'path':p}) for p in ['../outside','link','hard','missing','sub/a.txt','.txt','note.MD','archive.tgz','blob.unknown']]+[call('artifact_save',{'path':'sub/a.txt','required':True}),call('artifact_save',{}),call('artifact_save',{'path':3}),call('artifact_list'),call('artifact_get',{'artifact_id':'artifact'}),'broken']
     requests += [call('pipeline_run'),call('artifact_get'),call('artifact_list',{'extra':'no'}),call('artifact_save',{'path':''}),call('request_child',{'requestId':'','profileId':'reviewer','input':'x'})]
     cases.append({'server':'delegation','context':ctx,'requests':requests})
-    cases.append({'server':'delegation','context':{**ctx,'_response':{'error':'rejected'}},'requests':[call('request_child',{'requestId':'refused','profileId':'reviewer','input':'x'}),call('pipeline_run',{'requestId':'failed'}),call('session_start')]})
+    rejected=[call('request_child',{'requestId':'refused','profileId':'reviewer','input':'x'})]
+    rejected += [call(name,{'requestId':name}) for name in ['project_context','catalogue','pipeline_run','direct_search','pipeline_history','pipeline_get','question_ask','question_history','account_list']]
+    rejected += [call(name) for name in ['session_start','session_deliver','session_transition','session_fork','session_resume','session_handoffs','message_send','queue_list','ask','reply','questions','worker_done','execution_status']]
+    rejected += [call('artifact_save',{'path':'sub/a.txt'}),call('artifact_list'),call('artifact_get',{'artifact_id':'failed'})]
+    cases.append({'server':'delegation','context':{**ctx,'_response':{'error':'rejected'},'_transferState':'failed','_transferResponse':{'error':'rejected','state':'failed'}},'requests':rejected})
     for case in cases:case['expected']=run(case['server'],case['context'],case['requests'])
     FIXTURE.write_text(json.dumps(cases,indent=2)+'\n');print('Captured',sum(len(c['expected']['replies']) for c in cases),'replies')
 else:
