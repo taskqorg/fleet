@@ -125,6 +125,40 @@ func init() {
 		return r, nil
 	})
 	operation("subscription_limits", true, subscriptionLimits)
+	// changes_since: the stream's read for the app's catch-up and polling fallback (stream.ts); no cursor is the head.
+	operation("changes_since", true, func(q *Request) (any, error) {
+		var b struct {
+			Cursor *float64 `json:"cursor"`
+			Limit  *float64 `json:"limit"`
+		}
+		decode(q.body, &b)
+		limit := 500
+		if b.Limit != nil {
+			limit = max(1, min(1000, int(*b.Limit)))
+		}
+		if b.Cursor == nil {
+			c, err := head(q.ctx(), q.tx)
+			return doc{"changes": []change{}, "cursor": c}, err
+		}
+		if *b.Cursor < 0 || *b.Cursor != float64(int64(*b.Cursor)) {
+			return nil, fail(400, "Invalid cursor")
+		}
+		cs, next, resync, held, err := since(q.ctx(), q.tx, int64(*b.Cursor), limit)
+		if err != nil {
+			return nil, err
+		}
+		if cs == nil {
+			cs = []change{}
+		}
+		out := doc{"changes": cs, "cursor": next}
+		if resync {
+			out["resync"] = true
+		}
+		if held {
+			out["held"] = true
+		}
+		return out, nil
+	})
 
 	appRoutes()
 

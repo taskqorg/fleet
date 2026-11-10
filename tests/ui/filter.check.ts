@@ -94,6 +94,8 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     // A copied link reproduces focus, sel, filters and grouping in a second page.
     const other = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await other.goto(origin + checked); await other.waitForSelector('[data-ui=detail] .detail-title');
+    // The list's page arrives after the detail at 20,000 tasks: wait for the focused row, up to 5 s, before reading the view.
+    await other.waitForSelector('.vl-row.sel', { timeout: 5000 }).catch(() => {});
     const there = await other.evaluate(() => ({ url: location.pathname + location.search, checked: document.querySelectorAll('.vl-row .row-check:checked').length, focusedRow: !!document.querySelector('.vl-row.sel') }));
     await other.close();
     rule(N, there.url === checked && there.checked === 1 && there.focusedRow, `copied link did not reproduce the view: ${JSON.stringify(there)} for ${checked}`);

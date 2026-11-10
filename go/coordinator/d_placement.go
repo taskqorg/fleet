@@ -397,6 +397,9 @@ func init() {
 	hookPlacement = func(a *App) error { _, _, err := runPlacement(context.Background(), a); return err }
 	// Retention rules: the operator previews the effect, then confirms; editing a rule changes its hash.
 	operation("artifact_rule_preview", true, func(q *Request) (any, error) {
+		if err := operatorOnly(q); err != nil {
+			return nil, err
+		}
 		p, r, err := ruleArg(q)
 		if err != nil {
 			return nil, err
@@ -447,6 +450,9 @@ func init() {
 	})
 	// An operator retry of a failed copy: placement queues it on its next pass.
 	operation("artifact_copy_retry", false, func(q *Request) (any, error) {
+		if err := operatorOnly(q); err != nil {
+			return nil, err
+		}
 		var b struct{ ArtifactID, StoreID string }
 		decode(q.body, &b)
 		var id string
