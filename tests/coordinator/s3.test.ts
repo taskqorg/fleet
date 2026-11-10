@@ -54,6 +54,9 @@ test('IPv6 endpoint, XML entities, no retry on 501, clock offset after RequestTi
  // IPv6 literal endpoint, and every XML entity form decoded.
  let s=await serve((req,res)=>{res.writeHead(200,{'content-type':'application/xml'});res.end('<InitiateMultipartUploadResult><UploadId>a&amp;b&lt;c&gt;&quot;&apos;&#65;&#x42;</UploadId></InitiateMultipartUploadResult>')});
  assert.equal(await s3Client({endpoint:s.url,credentials}).createMultipartUpload('b','k'),'a&b<c>"\'AB');s.srv.close();
+ // An out-of-range reference in an error body is replaced, not thrown.
+ s=await serve((req,res)=>{res.writeHead(400,{'content-type':'application/xml'});res.end('<Error><Code>Bad</Code><Message>x&#x110000;y</Message></Error>')});
+ await assert.rejects(s3Client({endpoint:s.url,credentials}).delete('b','k'),(e:any)=>e.code==='Bad'&&e.message==='x\ufffdy');s.srv.close();
  // 501 is not transient: one attempt.
  s=await serve((req,res)=>{res.writeHead(501);res.end()});
  await assert.rejects(s3Client({endpoint:s.url,credentials}).delete('b','k'),(e:any)=>e.status===501);assert.equal(s.count(),1);s.srv.close();

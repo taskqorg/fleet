@@ -48,7 +48,9 @@ export function presignQuery(o:{method:string,host:string,path:string,query:Reco
 
 const amzDate=(ms:number)=>new Date(ms).toISOString().replace(/[-:]|\.\d{3}/g,'');
 const ENTITIES:Record<string,string>={quot:'"',apos:"'",lt:'<',gt:'>',amp:'&'};
-const unxml=(s:string)=>s.replace(/&(#x[0-9a-fA-F]+|#\d+|quot|apos|lt|gt|amp);/g,(_,e:string)=>e[0]==='#'?String.fromCodePoint(e[1]==='x'?parseInt(e.slice(2),16):Number(e.slice(1))):ENTITIES[e]);
+// A numeric reference outside Unicode becomes U+FFFD: a store's reply must never throw here.
+const point=(n:number)=>Number.isInteger(n)&&n>=0&&n<=0x10ffff?String.fromCodePoint(n):'\ufffd';
+const unxml=(s:string)=>s.replace(/&(#x[0-9a-fA-F]+|#\d+|quot|apos|lt|gt|amp);/g,(_,e:string)=>e[0]==='#'?point(e[1]==='x'?parseInt(e.slice(2),16):Number(e.slice(1))):ENTITIES[e]);
 const tag=(xml:string,name:string)=>{const v=new RegExp(`<${name}>([^<]*)</${name}>`).exec(xml)?.[1];return v===undefined?undefined:unxml(v)};
 const xmlEsc=(s:string)=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const RETRY_STATUS=new Set([429,500,502,503,504]),RETRY_CODES=new Set(['SlowDown','Throttling','ThrottlingException','RequestTimeout','RequestTimeTooSkewed']);
@@ -74,12 +76,12 @@ export function s3Client(o:{endpoint:string,credentials:Credentials,region?:stri
   Object.assign(h,o.extraHeaders?.()??{});
   const qs=query(q);
   return new Promise<IncomingMessage>((ok,no)=>{
-   const req=(https?httpsRequest:httpRequest)({method,hostname,port:base.port||undefined,path:path+(qs?'?'+qs:''),headers:h},async res=>{
+   const req=(https?httpsRequest:httpRequest)({method,hostname,port:base.port||undefined,path:path+(qs?'?'+qs:''),headers:h},async res=>{try{
     const status=res.statusCode??0;if(status>=200&&status<300)return ok(res);
     const text=method==='HEAD'?(res.resume(),''):await readAll(res).catch(()=>'');
     const code=tag(text,'Code')??String(status);
     if(code==='RequestTimeTooSkewed'&&res.headers.date){const server=Date.parse(res.headers.date);if(!Number.isNaN(server))offset=server-Date.now()}
-    no(new S3Error(status,code,tag(text,'Message')??`${method} ${path}: ${status} ${code}`))});
+    no(new S3Error(status,code,tag(text,'Message')??`${method} ${path}: ${status} ${code}`))}catch(e){no(e)}});
    // Idle, not total: the timer restarts on every byte, so a long upload or download keeps going.
    req.setTimeout(idle,()=>req.destroy(Object.assign(new Error(`${method} ${path}: no data for ${idle} ms`),{code:'ETIMEDOUT'})));
    req.on('error',no);req.end(body)})
