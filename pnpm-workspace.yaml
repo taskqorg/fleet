@@ -4,7 +4,6 @@ minimumReleaseAge: 1440
 # Only these packages may run install scripts; pnpm 10 blocks all others.
 onlyBuiltDependencies:
   - esbuild
-  - better-sqlite3
 # Optional native packages whose install scripts are not needed.
 ignoredBuiltDependencies:
   - fsevents

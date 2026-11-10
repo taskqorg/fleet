@@ -6,7 +6,7 @@
 // verify compares row counts and a data hash per kind (keys sorted, so jsonb key order does not count).
 // reverse copies <sqlite> to <output.sqlite> and writes back every document changed after since (default: every document),
 // including the typed tables (executions, tasks, questions), each record written back as its legacy document.
-import Database from 'better-sqlite3';
+import {DatabaseSync} from 'node:sqlite';
 import {copyFileSync,existsSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
@@ -15,7 +15,7 @@ import {createStore,type Store} from './store.ts';
 const canonical=(v:any):any=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
 const digest=(rows:{id:string,data:any}[])=>{const h=createHash('sha256');for(const r of [...rows].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0))h.update(r.id+'\0'+JSON.stringify(canonical(r.data))+'\n');return h.digest('hex')};
 const group=(rows:{kind:string,id:string,data:any}[])=>{const m=new Map<string,{id:string,data:any}[]>();for(const r of rows){if(!m.has(r.kind))m.set(r.kind,[]);m.get(r.kind)!.push(r)}return m};
-const records=(path:string)=>{if(!existsSync(path))throw Error('SQLite file not found: '+path);const db=new Database(path,{readonly:true,fileMustExist:true});try{return (db.prepare('SELECT rowid AS seq,kind,id,data FROM records ORDER BY rowid').all() as any[]).map(r=>({...r,data:JSON.parse(r.data)}))}finally{db.close()}};
+const records=(path:string)=>{if(!existsSync(path))throw Error('SQLite file not found: '+path);const db=new DatabaseSync(path,{readOnly:true,timeout:5000});try{return (db.prepare('SELECT rowid AS seq,kind,id,data FROM records ORDER BY rowid').all() as any[]).map(r=>({...r,data:JSON.parse(r.data)}))}finally{db.close()}};
 
 // Legacy kinds that live in typed tables (store.typedKinds) go through their adapters, so the typed columns are filled the same
 // way as by the running coordinator; a delegation follows its child execution. Every other kind is a document row.
@@ -56,8 +56,8 @@ export async function reverse(sqlite:string,store:Store,output:string,since?:str
  const rows=[...await store.query(`SELECT kind,id,data FROM document${since?' WHERE updated_at>$1':''} ORDER BY seq`,since?[since]:[])];
  for(const kind of store.typedKinds){const ids=since?(await store.query(CHANGED[kind],[since])).map((r:any)=>r.id):null;
   for(const data of ids?[...(await store.many(ids,kind)).values()]:await store.all(kind))rows.push({kind,id:data.id,data})}
- const db=new Database(output);
- try{const put=db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE records.kind=excluded.kind');db.transaction(()=>{for(const r of rows)put.run(r.kind,r.id,JSON.stringify(r.data))})()}finally{db.close()}
+ const db=new DatabaseSync(output,{timeout:5000});
+ try{const put=db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE records.kind=excluded.kind');db.exec('BEGIN');try{for(const r of rows)put.run(r.kind,r.id,JSON.stringify(r.data));db.exec('COMMIT')}catch(e){if(db.isTransaction)db.exec('ROLLBACK');throw e}}finally{db.close()}
  return {written:rows.length,output};
 }
 
