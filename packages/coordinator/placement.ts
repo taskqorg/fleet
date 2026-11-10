@@ -5,7 +5,7 @@
 import {createHash} from 'node:crypto';
 import type {Store} from './store.ts';
 import type {Stores} from './stores.ts';
-import type {Artifacts} from './artifacts.ts';
+import {COPY_SOURCE_SECONDS,type Artifacts} from './artifacts.ts';
 const fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};
 export type Rule={scope:'lab'|'prod',older_than_days:number,action:'move'|'delete',to?:string[]};
 export const ruleHash=(r:Rule)=>createHash('sha256').update(JSON.stringify({scope:r.scope,older_than_days:r.older_than_days,action:r.action,to:r.to??null})).digest('hex');
@@ -42,10 +42,10 @@ export function placementWorker(store:Store,deps:{stores:Stores,artifacts:Artifa
     // A failed copy waits for its backoff (or an operator retry); its failure stays visible meanwhile.
     if(c?.state==='failed'){problems.push({kind:'artifact-copy-failed',artifactId:a.id,storeId:s.id,error:c.last_error,attempts:c.attempts,nextAttemptAt:c.next_attempt_at,actions:['artifact_copy_retry']});if(!c.due)continue}
     const from=verified.map((v:any)=>stores.find(x=>x.id===v.store_id)).find(x=>x&&x.state!=='unreachable');if(!from)continue;
-    const staging=A.stagingOf(a,s.id),up={UploadId:await A.s3(s).createMultipartUpload(s.bucket,staging,a.media_type)};
+    const staging=A.stagingOf(a,s.id),uploadId=await A.s3(s).createMultipartUpload(s.bucket,staging,a.media_type);
     await store.tx(()=>store.query(`INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,upload_id,staging_key,lease_expires_at) VALUES($1,$2,$3,'copying',$4,$5,now()+interval '6 hours')
-     ON CONFLICT(artifact_id,store_id) DO UPDATE SET state='copying',next_attempt_at=NULL,upload_id=excluded.upload_id,staging_key=excluded.staging_key,lease_expires_at=excluded.lease_expires_at,last_error=NULL`,[a.id,s.id,a.project_id,up.UploadId,staging]));
-    const url=A.s3(from,s.host_id===from.host_id&&from.local_endpoint?'local':'tunnel').presign('GET',from.bucket,A.keyOf(a),6*3600);
+     ON CONFLICT(artifact_id,store_id) DO UPDATE SET state='copying',next_attempt_at=NULL,upload_id=excluded.upload_id,staging_key=excluded.staging_key,lease_expires_at=excluded.lease_expires_at,last_error=NULL`,[a.id,s.id,a.project_id,uploadId,staging]));
+    const url=A.s3(from,s.host_id===from.host_id&&from.local_endpoint?'local':'tunnel').presign('GET',from.bucket,A.keyOf(a),COPY_SOURCE_SECONDS);
     await deps.queueCommand(s.host_id,'artifact-copy',{artifactId:a.id,storeId:s.id,size:a.size,partSize:A.PART_SIZE,source:{storeId:from.id,url}});queued++}
    // Copies on stores outside the list: delete only behind a verified copy on a reachable listed store that HEAD confirms.
    for(const c of verified){const s=stores.find(x=>x.id===c.store_id);if(!s||plan.locations.includes(s.host_id))continue;
@@ -56,7 +56,7 @@ export function placementWorker(store:Store,deps:{stores:Stores,artifacts:Artifa
 
  // Deletes the object on a store only when no other stored row of the same project, scope and hash needs that store.
  async function removeCopy(a:any,s:any,survivors:any[]){const alive=[];for(const x of survivors){if(x.state==='unreachable')continue;
-   const ok=await A.s3(x).head(x.bucket,A.keyOf(a)).then(h=>h.contentLength===a.size,()=>false);if(ok)alive.push(x)}
+   const ok=await A.s3(x).head(x.bucket,A.keyOf(a)).then(h=>h?.contentLength===a.size,()=>false);if(ok)alive.push(x)}
   if(!alive.length)return false;
   const needed=(await store.query("SELECT a.project_id FROM artifact a JOIN artifact_copy c ON c.artifact_id=a.id WHERE a.id<>$1 AND a.project_id IS NOT DISTINCT FROM $2 AND a.scope=$3 AND a.content_hash=$4 AND a.state='stored' AND c.store_id=$5 AND c.state='verified'",[a.id,a.project_id,a.scope,a.content_hash,s.id])).some((r:any)=>deps.locations(r.project_id).includes(s.host_id));
   if(!needed)await A.s3(s).delete(s.bucket,A.keyOf(a));

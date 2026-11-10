@@ -25,18 +25,46 @@ test('client: path-style requests, Access headers outside the signature, multipa
  await c.put('b','a/one.txt',Buffer.from('hello'),'text/plain');
  const put=fake.requests.at(-1)!;assert.equal(put.url,'/b/a/one.txt');assert.equal(put.headers['cf-access-client-id'],'cid');
  assert.doesNotMatch(String(put.headers.authorization),/cf-access/);assert.doesNotMatch(Object.keys(put.headers).join(' '),/checksum/);
- assert.equal((await c.head('b','a/one.txt')).contentLength,5);
+ assert.equal((await c.head('b','a/one.txt'))?.contentLength,5);
  const chunks:Buffer[]=[];for await(const d of await c.get('b','a/one.txt'))chunks.push(d);assert.equal(Buffer.concat(chunks).toString(),'hello');
  await c.copy('b','a/two.txt','b/a/one.txt');assert.equal(fake.objects.get('a/two.txt')?.toString(),'hello');
  const id=await c.createMultipartUpload('b','a/big.bin','application/octet-stream');
- const parts=[{PartNumber:1,ETag:await c.uploadPartCopy('b','a/big.bin',id,1,'b/a/one.txt','bytes=0-1')},{PartNumber:2,ETag:await c.uploadPartCopy('b','a/big.bin',id,2,'b/a/one.txt','bytes=2-4')}];
+ const parts=[{partNumber:1,etag:await c.uploadPartCopy('b','a/big.bin',id,1,'b/a/one.txt','bytes=0-1')},{partNumber:2,etag:await c.uploadPartCopy('b','a/big.bin',id,2,'b/a/one.txt','bytes=2-4')}];
  await c.completeMultipartUpload('b','a/big.bin',id,parts);assert.equal(fake.objects.get('a/big.bin')?.toString(),'hello');
  const aborted=await c.createMultipartUpload('b','a/x');await c.abortMultipartUpload('b','a/x',aborted);assert.equal(fake.uploads.has(aborted),false);
  await c.delete('b','a/two.txt');
- await assert.rejects(c.head('b','a/two.txt'),(e:any)=>e instanceof S3Error&&e.$metadata.httpStatusCode===404&&e.name==='NotFound');
- await assert.rejects(c.get('b','a/two.txt'),(e:any)=>e.name==='NoSuchKey'&&e.$metadata.httpStatusCode===404);
+ assert.equal(await c.head('b','a/two.txt'),null);
+ await assert.rejects(c.get('b','a/two.txt'),(e:any)=>e instanceof S3Error&&e.code==='NoSuchKey'&&e.status===404);
  const url=new URL(c.presign('PUT','b','a/big.bin',900,{partNumber:'3',uploadId:id}));assert.equal(url.pathname,'/b/a/big.bin');assert.equal(url.searchParams.get('partNumber'),'3');assert.equal(url.searchParams.get('X-Amz-SignedHeaders'),'host');
  const before=fake.requests.length;fake.down=true;
- await assert.rejects(c.head('b','a/one.txt'),(e:any)=>e.$metadata.httpStatusCode===503);assert.equal(fake.requests.length-before,3,'three attempts');
+ await assert.rejects(c.head('b','a/one.txt'),(e:any)=>e.status===503);assert.equal(fake.requests.length-before,3,'three attempts');
  fake.down=false;await fake.close();
+});
+
+test('canonical query sorts by encoded name',()=>{
+ // Raw order puts a_ (0x5f) before aé; encoded, a%C3%A9 sorts first.
+ const q=presignQuery({method:'GET',host:'h',path:'/b/k',query:{'a_':'2','aé':'1'},credentials,region:'garage',date,expires:60});
+ assert.ok(q.indexOf('a%C3%A9=1')<q.indexOf('a_=2'));
+});
+
+import {createServer} from 'node:http';
+const serve=async(handler:(req:any,res:any,n:number)=>void)=>{let n=0;const srv=createServer((req,res)=>handler(req,res,n++));await new Promise<void>(r=>srv.listen(0,'::1',r));return {srv,url:`http://[::1]:${(srv.address() as any).port}`,count:()=>n}};
+
+test('IPv6 endpoint, XML entities, no retry on 501, clock offset after RequestTimeTooSkewed, idle timeout retried',async()=>{
+ // IPv6 literal endpoint, and every XML entity form decoded.
+ let s=await serve((req,res)=>{res.writeHead(200,{'content-type':'application/xml'});res.end('<InitiateMultipartUploadResult><UploadId>a&amp;b&lt;c&gt;&quot;&apos;&#65;&#x42;</UploadId></InitiateMultipartUploadResult>')});
+ assert.equal(await s3Client({endpoint:s.url,credentials}).createMultipartUpload('b','k'),'a&b<c>"\'AB');s.srv.close();
+ // 501 is not transient: one attempt.
+ s=await serve((req,res)=>{res.writeHead(501);res.end()});
+ await assert.rejects(s3Client({endpoint:s.url,credentials}).delete('b','k'),(e:any)=>e.status===501);assert.equal(s.count(),1);s.srv.close();
+ // Skew: the retry is signed with the server's clock.
+ const server=Date.now()+3600000,dates:string[]=[];
+ s=await serve((req,res,n)=>{dates.push(String(req.headers['x-amz-date']));if(n===0){res.writeHead(403,{'content-type':'application/xml',date:new Date(server).toUTCString()});res.end('<Error><Code>RequestTimeTooSkewed</Code></Error>')}else{res.writeHead(204);res.end()}});
+ const skewed=s3Client({endpoint:s.url,credentials});await skewed.delete('b','k');
+ const hour=(d:string)=>Date.UTC(+d.slice(0,4),+d.slice(4,6)-1,+d.slice(6,8),+d.slice(9,11),+d.slice(11,13));
+ assert.ok(Math.abs(hour(dates[1])-server)<120000,'second attempt uses the server clock');
+ assert.match(new URL(skewed.presign('GET','b','k',60)).searchParams.get('X-Amz-Date')!,new RegExp('^'+dates[1].slice(0,11)));s.srv.close();
+ // A silent socket is aborted after the idle timeout and retried.
+ s=await serve((req,res,n)=>{if(n===0)return;res.writeHead(204);res.end()});
+ await s3Client({endpoint:s.url,credentials,idleTimeoutMs:200}).delete('b','k');assert.equal(s.count(),2);s.srv.closeAllConnections();s.srv.close();
 });
