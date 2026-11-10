@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: taskqorg/specq
-          ref: d178c809b607d37696fe93b7572d85ed62f883a9
+          ref: 13772b779be68103d0581d61a5f8fe7af2b92dd1
           path: .specq
           persist-credentials: false
       - name: Contract lint
