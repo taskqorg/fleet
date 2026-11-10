@@ -130,7 +130,7 @@ func budgetAsk(q *Request) (any, error) {
 	if r["scope"] == "project" {
 		project = r["scope_id"]
 	}
-	id, err := hookTaskAsk(q, doc{"kind": "operator_decision", "projectId": project,
+	id, err := askQuestion(q, doc{"kind": "operator_decision", "projectId": project,
 		"text":    fmt.Sprintf("%s asks to raise the %s %s budget from %v to %v %s%s.", asker, r["scope"], r["scope_id"], jsNum(num(r["limit"])), jsNum(limit), r["unit"], reason),
 		"options": []any{"approve", "decline"}, "askedBy": asker,
 		"data": doc{"budgetAsk": doc{"budgetId": r["id"], "limit": limit, "askedBy": askedBy}, "cause": fmt.Sprint("budget:", r["id"], ":ask")}})

@@ -61,7 +61,7 @@ func (a *App) delegationRequest(q *Request, b doc, c doc) (any, error) {
 	if len(existing) > 0 {
 		return nil, fail(409, "One child per invocation")
 	}
-	profile, err := hookProfile(astr(r["profileId"]))
+	profile, err := readTrustedProfile(astr(r["profileId"]))
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +102,7 @@ func (a *App) fetchSources(id string, files []doc) {
 		texts, errText := doc{}, ""
 		n := 0
 		for _, f := range files {
-			b, err := hookReadArtifact(a, astr(nonNil(f["artifactId"], f["id"])))
+			b, err := readArtifact(a, astr(nonNil(f["artifactId"], f["id"])))
 			if err != nil {
 				var he *HTTPError
 				if !asHTTP(err, &he) || he.Code != 503 {
@@ -239,7 +239,7 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	if (len(sources) == 0 && mapOf(d["request"])["profileId"] == "website-reviewer") || len(js(sources)) > 128000 {
 		return routingError(sourcesTooLarge)
 	}
-	replies, err := hookReplyText(q, astr(parent["id"]))
+	replies, err := replyText(q, astr(parent["id"]))
 	if err != nil {
 		return false, err
 	}
@@ -284,7 +284,7 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 
 // artifactsOf: the artifact records of an execution without their bodies (the artifacts area serves the kind).
 func aArtifactsOf(q *Request, executionID string) ([]doc, error) {
-	return hookArtifactsOf(q, executionID)
+	return executionArtifacts(q, executionID)
 }
 
 // delegationReconcile: on every poll, retain finished child results and deliver them as the parent's continuation.
@@ -348,7 +348,7 @@ func (a *App) delegationReconcile(q *Request) error {
 		}
 		deliver := func() error {
 			if cfg := mapOf(s["agentConfig"]); cfg != nil {
-				p, err := hookProfile(astr(cfg["id"]))
+				p, err := readTrustedProfile(astr(cfg["id"]))
 				if err != nil {
 					return err
 				}

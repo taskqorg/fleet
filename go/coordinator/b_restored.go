@@ -29,11 +29,11 @@ func executionDifferences(q *Request, id, previousID string) (any, error) {
 	if str(current, "sessionId") != str(previous, "sessionId") {
 		return nil, fail(403, "Different session")
 	}
-	before, err := hookArtifactsOf(q, str(previous, "id"))
+	before, err := executionArtifacts(q, str(previous, "id"))
 	if err != nil {
 		return nil, err
 	}
-	after, err := hookArtifactsOf(q, str(current, "id"))
+	after, err := executionArtifacts(q, str(current, "id"))
 	if err != nil {
 		return nil, err
 	}

@@ -25,10 +25,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// cArtifactWriteObject writes bytes to a reachable store of the project's locations and returns the content hash and the
-// store id (area D). Unset or no reachable store: the import is refused with 409.
-var cArtifactWriteObject func(q *Request, projectID any, scope string, b []byte, mediaType string) (hash, storeID string, err error)
-
 var (
 	labIdent     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$`)
 	labIdent200  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$`)
@@ -300,10 +296,7 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 	for _, p := range planned {
 		old := p.old
 		if old == nil {
-			if cArtifactWriteObject == nil {
-				return nil, fail(409, "No reachable store in the project locations")
-			}
-			h, storeID, err := cArtifactWriteObject(q, projectID, "lab", p.bytes, "application/json")
+			h, storeID, err := artifactWriteObject(q, projectID, "lab", p.bytes, "application/json")
 			if err != nil {
 				return nil, err
 			}
@@ -375,10 +368,7 @@ func labExampleGet(q *Request, id string) (doc, error) {
 	if len(rs) == 0 {
 		return nil, fail(404, "Unknown example")
 	}
-	if cArtifactRead == nil {
-		return nil, fail(503, "Artifact store unavailable")
-	}
-	b, err := cArtifactRead(cCtx(q), q.app, id, 8<<20)
+	b, err := artifactBytes(cCtx(q), q.app, id, 8<<20)
 	if err != nil {
 		return nil, err
 	}
@@ -704,9 +694,6 @@ func expView(r doc) doc {
 		"stopReason": r["stop_reason"], "createdAt": r["created_at"]}
 }
 
-// cProjectKnown: the project's catalogue reads (area B's catalogue), set in c_glue.go.
-var cProjectKnown func(q *Request, id string) bool
-
 func expCreate(q *Request, b doc) (doc, error) {
 	if !cKeysOnly(b, "kind", "projectId", "pipelineId", "examples", "variants", "repeats", "evaluators", "budgets", "primaryEvaluator", "strategy") {
 		return nil, fail(400, "Expected kind, projectId, pipelineId, examples, variants, repeats, evaluators, budgets, primaryEvaluator, strategy")
@@ -732,7 +719,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 	if _, err := loadPipeline(pipelineID + ".json"); err != nil {
 		return nil, err
 	}
-	if !cProjectKnown(q, projectID) {
+	if !projectKnown(q, projectID) {
 		return nil, fail(400, "Unknown project "+projectID)
 	}
 	exl := cList(b["examples"])
@@ -1025,10 +1012,7 @@ func trialFiles(q *Request, trial, example doc) ([]labFile, error) {
 		if rel == "" {
 			continue
 		}
-		if cArtifactRead == nil {
-			return nil, fail(503, "Artifact store unavailable")
-		}
-		b, err := cArtifactRead(cCtx(q), q.app, o.ArtifactID, 64<<20)
+		b, err := artifactBytes(cCtx(q), q.app, o.ArtifactID, 64<<20)
 		if err != nil {
 			return nil, err
 		}
@@ -1496,8 +1480,8 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 		if err != nil {
 			return nil, err
 		}
-		if own != "" && cStopExecution != nil {
-			cStopExecution(q.ctx(), q.app, own)
+		if own != "" {
+			stopExecution(q.ctx(), q.app, own)
 		}
 	} else {
 		if !labFinal[astr(t["state"])] {
@@ -1533,9 +1517,7 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 var methodSlug = regexp.MustCompile(`[^a-z0-9]+`)
 
 // Promote: a catalogue method entry as a JSON patch for config/catalogue.json for the owner to commit; once a method with
-// this config_ref exists, the project recommendation is set to it (through cRecommend, area B's recommendation_set).
-var cRecommend func(q *Request, projectID, methodID string) (any, error)
-
+// this config_ref exists, the project recommendation is set to it (recommend: the recommendation_set operation).
 func expPromote(q *Request, id, label string) (doc, error) {
 	exp, err := expRow(q, id)
 	if err != nil {
@@ -1560,10 +1542,8 @@ func expPromote(q *Request, id, label string) (doc, error) {
 		return doc{"cataloguePatch": []any{doc{"op": "add", "path": "/methods/-", "value": method}}, "method": method, "recommendation": nil}, nil
 	}
 	var rec any
-	if cRecommend != nil {
-		if rec, err = cRecommend(q, astr(exp["project_id"]), astr(existing["id"])); err != nil {
-			return nil, err
-		}
+	if rec, err = recommend(q, astr(exp["project_id"]), astr(existing["id"])); err != nil {
+		return nil, err
 	}
 	return doc{"cataloguePatch": nil, "method": existing, "recommendation": rec}, nil
 }
@@ -1755,10 +1735,10 @@ func importDrafts(ctx context.Context, a *App, run doc) {
 	var files []fileRef
 	cRead(ctx, a, func(q *Request) (err error) { files, err = pipelineOutputs(q, run, -1); return })
 	for _, f := range files {
-		if !draftExample.MatchString(f.Path) || cArtifactRead == nil {
+		if !draftExample.MatchString(f.Path) {
 			continue
 		}
-		b, err := cArtifactRead(ctx, a, f.ArtifactID, 64<<20)
+		b, err := artifactBytes(ctx, a, f.ArtifactID, 64<<20)
 		if err != nil {
 			continue
 		}
@@ -2169,16 +2149,6 @@ func init() {
 	})
 	r("GET /api/lab/registry", "lab_registry", none)
 
-	pipelineFinished = func(ctx context.Context, a *App, run doc) {
-		if id := astr(run["experimentId"]); id != "" {
-			if err := labReconcile(ctx, a, id); err != nil {
-				log.Printf("lab reconcile %s: %v", id, err)
-			}
-		}
-		if run["pipelineId"] == "draft-examples" && run["state"] == "completed" {
-			importDrafts(ctx, a, run)
-		}
-	}
 	onStart(func(ctx context.Context, a *App) {
 		go func() {
 			labReconcileWhere(ctx, a, "running,paused,stopped", false)
@@ -2193,4 +2163,15 @@ func init() {
 			}
 		}()
 	})
+}
+
+func pipelineFinished(ctx context.Context, a *App, run doc) {
+	if id := astr(run["experimentId"]); id != "" {
+		if err := labReconcile(ctx, a, id); err != nil {
+			log.Printf("lab reconcile %s: %v", id, err)
+		}
+	}
+	if run["pipelineId"] == "draft-examples" && run["state"] == "completed" {
+		importDrafts(ctx, a, run)
+	}
 }

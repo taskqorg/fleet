@@ -30,21 +30,6 @@ var (
 	ownOutput      = regexp.MustCompile(`^(output/)?output\.json$`)
 )
 
-// Hooks other areas provide. Unset, the step or call fails with a clear reason instead of a crash.
-var (
-	// cArtifactSave stores bytes as a stored artifact of executionId (area D). Returns its id.
-	cArtifactSave func(q *Request, projectID any, scope, executionID, name string, b []byte, mediaType string) (string, error)
-	// cArtifactRead reads a stored artifact's bytes up to max (area D).
-	cArtifactRead func(ctx context.Context, a *App, id string, max int64) ([]byte, error)
-	// cStartAgentStep starts an agent step's execution (trusted profile with overrides, skills, session,
-	// enqueue; area B's submit path). Returns the execution id.
-	cStartAgentStep func(q *Request, run, step doc, stepExecutionID, prompt string, inputs []any, overrides doc) (string, error)
-	// cStopExecution stops an execution (execution_stop; area A).
-	cStopExecution func(ctx context.Context, a *App, executionID string) error
-	// pipelineFinished: Lab reconcile and drafted-example import (c_lab.go).
-	pipelineFinished func(ctx context.Context, a *App, run doc)
-)
-
 func problemOf(outcome string, code any) string {
 	c, _ := code.(string)
 	if outcome == "unknown" {
@@ -510,9 +495,7 @@ func pipelineCancel(ctx context.Context, a *App, runID string) (string, error) {
 }
 
 func notifyFinished(a *App, run doc) {
-	if pipelineFinished != nil {
-		go pipelineFinished(context.Background(), a, run)
-	}
+	go pipelineFinished(context.Background(), a, run)
 }
 
 func finishRun(q *Request, run doc, state, problem string) error {
@@ -602,10 +585,7 @@ func runScope(run doc) string {
 }
 
 func saveArtifact(q *Request, run doc, executionID, name string, b []byte, media string) (string, error) {
-	if cArtifactSave == nil {
-		return "", fail(503, "Artifact store unavailable (no reachable store)")
-	}
-	return cArtifactSave(q, run["projectId"], runScope(run), executionID, name, b, media)
+	return artifactSave(q, run["projectId"], runScope(run), executionID, name, b, media)
 }
 
 func completeStep(q *Request, run doc, i int, output any, extra doc) error {
@@ -954,10 +934,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 				return err
 			}
 			if kind == "agent" {
-				if cStartAgentStep == nil {
-					return fail(409, "Agent steps are not available on this coordinator")
-				}
-				execID, err = cStartAgentStep(q, run, def, row, astr(resolved), inputs, mapOf(run["overrides"]))
+				execID, err = startAgentStep(q, run, def, row, astr(resolved), inputs, mapOf(run["overrides"]))
 			} else {
 				host := astr(def["host"])
 				if h := mapOf(run["overrides"])["host"]; h != nil {
@@ -1096,8 +1073,8 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	var output any
 	for _, art := range arts {
-		if ownOutput.MatchString(astr(art["path"])) && cArtifactRead != nil {
-			if b, err := cArtifactRead(ctx, a, astr(art["id"]), 64<<20); err == nil {
+		if ownOutput.MatchString(astr(art["path"])) {
+			if b, err := artifactBytes(ctx, a, astr(art["id"]), 64<<20); err == nil {
 				if json.Unmarshal(b, &output) != nil {
 					output = nil
 				}

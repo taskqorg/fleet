@@ -510,7 +510,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 
 // openCauseQuestion opens a needs-you operator_decision question keyed by cause, addressed to one person.
 func openCauseQuestion(q *Request, cause string, addressedTo, projectID any, text string) error {
-	qid, err := hookTaskAsk(q, doc{"kind": "operator_decision", "text": text, "options": []any{"ok"}, "askedBy": "fleet", "projectId": projectID, "data": doc{"cause": cause}})
+	qid, err := askQuestion(q, doc{"kind": "operator_decision", "text": text, "options": []any{"ok"}, "askedBy": "fleet", "projectId": projectID, "data": doc{"cause": cause}})
 	if err != nil {
 		return err
 	}
@@ -552,13 +552,13 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	p["text"] = d["input"]
 	if pid := astr(s["projectId"]); pid != "" {
 		p["projectId"] = pid
-		st, err := hookProjectSettings(pid)
+		st, err := projectSettingsByID(pid)
 		if err != nil {
 			return nil, err
 		}
 		p["project"] = st
 	}
-	if hookGitNetwork(s) {
+	if gitNetworkOf(s) {
 		p["gitNetwork"] = true
 	}
 	p["setup"] = nonNil(s["setup"], "run")
@@ -582,11 +582,11 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 		p[k] = v
 	}
 	command := doc{"id": uuid(), "executionId": e["id"], "sessionId": s["id"], "hostId": host, "kind": "start", "payload": p, "status": "pending"}
-	if err := hookAgentDecorate(q, s, e, command); err != nil {
+	if err := agentDecorate(q, s, e, command); err != nil {
 		return nil, err
 	}
 	if granted := strs(cfg["connections"]); len(granted) > 0 {
-		run, err := hookConnectionsMint(q, doc{"executionId": e["id"], "directedBy": e["directedBy"], "projectId": s["projectId"], "experimentId": e["experimentId"], "pipelineRunId": s["pipelineRunId"]}, granted)
+		run, err := mint(q, doc{"executionId": e["id"], "directedBy": e["directedBy"], "projectId": s["projectId"], "experimentId": e["experimentId"], "pipelineRunId": s["pipelineRunId"]}, granted)
 		if err != nil {
 			return nil, err
 		}
@@ -617,7 +617,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 			}
 		}
 		if task != "" {
-			if err := hookTaskTake(q, task, astr(binding["holder"]), e["takenFrom"]); err != nil {
+			if err := takeTaskFrom(q, task, astr(binding["holder"]), e["takenFrom"]); err != nil {
 				return nil, err
 			}
 		}
