@@ -2,7 +2,7 @@
 import { render, type ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import {
-  Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, ExecTree, DecisionBlock, ResultViewer, SplitButton, NavRail, StatStrip,
+  Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, StatStrip,
   SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions,
   Composer, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type ThreadBlock, type Family, type Stage,
@@ -165,6 +165,7 @@ function SplitDemo() {
     <SplitButton kind="primary" main={{ label: 'Retry', icon: 'rotate-ccw', onClick: () => setLast('Retry') }}
       alternatives={[{ label: 'Retry on another host', icon: 'panels-top-left', onClick: () => setLast('Retry on another host') }, { label: 'Continue on codex', icon: 'bot', onClick: () => setLast('Continue on codex') }, { label: 'Full rerun', icon: 'rotate-cw', onClick: () => setLast('Full rerun') }]} />
     <SplitButton main={{ label: 'Accept', icon: 'check' }} alternatives={[{ label: 'Accept and merge', icon: 'git-merge' }, { label: 'Accept without publishing', icon: 'save' }]} />
+    <ActionMenu label="Actions" items={[{ label: 'Retry last message', icon: 'rotate-ccw', onClick: () => setLast('Retry last message') }, { label: 'Switch profile or model', icon: 'sliders-horizontal', onClick: () => setLast('Switch') }, { label: 'Hand off to another agent', icon: 'bot', onClick: () => setLast('Hand off') }, { label: 'Fork', icon: 'git-merge', onClick: () => setLast('Fork') }]} />
     {last && <span class="muted type-sm">ran: {last}</span>}
   </div>;
 }
