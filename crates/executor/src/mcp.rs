@@ -394,7 +394,8 @@ fn delegation(req: &Value, ctx: &Value, db: &mut Connection) -> Result<Value> {
     } else {
         body
     };
-    let tx = db.transaction()?;
+    // Acquire the writer before reading: a deferred WAL read cannot upgrade after a concurrent host reply.
+    let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let old = tx.query_row(
         "SELECT body FROM delegation_requests WHERE id=?",
         [&key],

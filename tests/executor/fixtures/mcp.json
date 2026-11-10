@@ -1342,6 +1342,20 @@
         "method": "tools/call",
         "params": {
           "name": "pipeline_run",
+          "arguments": {
+            "requestId": "pass-through",
+            "query": {
+              "native": "argument"
+            }
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "pipeline_run",
           "arguments": {}
         }
       },
@@ -2826,6 +2840,29 @@
         {
           "jsonrpc": "2.0",
           "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "childExecutionId": "child",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "reply"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
           "error": {
             "code": -32602,
             "message": "A stable requestId is required for effects"
@@ -3287,6 +3324,22 @@
             "hostId": "host",
             "executionId": "execution",
             "name": "sub/a.txt"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "query": {
+                  "native": "argument"
+                },
+                "requestId": "pass-through"
+              },
+              "operation": "pipeline_run",
+              "projectId": "project",
+              "requestId": "pass-through"
+            },
+            "executionId": "execution",
+            "hostId": "host"
           }
         ],
         "delegation_requests": [
@@ -3611,6 +3664,22 @@
                 "name": "execution_status"
               }
             }
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "query": {
+                  "native": "argument"
+                },
+                "requestId": "pass-through"
+              },
+              "operation": "pipeline_run",
+              "projectId": "project",
+              "requestId": "pass-through"
+            },
+            "executionId": "execution",
+            "hostId": "host"
           }
         ],
         "transfers": [

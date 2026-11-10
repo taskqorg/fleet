@@ -64,7 +64,7 @@ if CAPTURE:
         requests.extend([call(name,{'requestId':name}),call(name,{'invalid':True})])
     for name in ['session_start','session_deliver','session_transition','session_fork','session_resume','session_handoffs','message_send','queue_list','ask','reply','questions','worker_done','execution_status']: requests.append(call(name))
     requests += [call('artifact_save',{'path':p}) for p in ['../outside','link','hard','missing','sub/a.txt','.txt','note.MD','archive.tgz','blob.unknown']]+[call('artifact_save',{'path':'sub/a.txt','required':True}),call('artifact_save',{}),call('artifact_save',{'path':3}),call('artifact_list'),call('artifact_get',{'artifact_id':'artifact'}),'broken']
-    requests += [call('pipeline_run'),call('artifact_get'),call('artifact_list',{'extra':'no'}),call('artifact_save',{'path':''}),call('request_child',{'requestId':'','profileId':'reviewer','input':'x'})]
+    requests += [call('pipeline_run',{'requestId':'pass-through','query':{'native':'argument'}}),call('pipeline_run'),call('artifact_get'),call('artifact_list',{'extra':'no'}),call('artifact_save',{'path':''}),call('request_child',{'requestId':'','profileId':'reviewer','input':'x'})]
     cases.append({'server':'delegation','context':ctx,'requests':requests})
     rejected=[call('request_child',{'requestId':'refused','profileId':'reviewer','input':'x'})]
     rejected += [call(name,{'requestId':name}) for name in ['project_context','catalogue','pipeline_run','direct_search','pipeline_history','pipeline_get','question_ask','question_history','account_list']]
