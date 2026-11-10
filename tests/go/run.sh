@@ -9,6 +9,6 @@ trap 'rm -rf "$secrets"' EXIT
 for f in tests/trial/*.test.ts tests/go/*.test.ts; do
   FLEET_TRIAL_SERVER=go/bin/fleet-coordinator FLEET_STORE_SECRETS="$secrets" FLEET_STORE_ENDPOINT_HOSTS=127.0.0.1 \
   FLEET_DEFAULT_ARTIFACT_LOCATIONS=trial-host \
-  FLEET_SECRET_DIR="$secrets/secret" FLEET_GATEWAY_DIR="$secrets/gateway" FLEET_GATEWAY_URL=http://127.0.0.1:47811 FLEET_CONNECTION_TICK_MS=200 FLEET_PIPELINE_TICK_MS=200 FLEET_STREAM_PING_MS=300 \
+  FLEET_SECRET_DIR="$secrets/secret" FLEET_GATEWAY_DIR="$secrets/gateway" FLEET_GATEWAY_URL=http://127.0.0.1:47811 FLEET_CONNECTION_TICK_MS=200 FLEET_PIPELINE_TICK_MS=200 FLEET_STREAM_PING_MS=300 FLEET_WATCH_TICK_MS=200 \
   FLEET_TRIAL_TESTS="$f" node tests/trial/run.ts 2>&1 | tee /dev/stderr | grep -q "result=pass" # run.ts exits 0 on failure
 done
