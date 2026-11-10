@@ -7,7 +7,7 @@
 // reverse copies <sqlite> to <output.sqlite> and writes back every document changed after since (default: every document),
 // including the typed tables (executions, tasks, questions), each record written back as its legacy document.
 import {DatabaseSync} from 'node:sqlite';
-import {copyFileSync,existsSync} from 'node:fs';
+import {copyFileSync,existsSync,realpathSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {createStore,type Store} from './store.ts';
@@ -61,7 +61,8 @@ export async function reverse(sqlite:string,store:Store,output:string,since?:str
  return {written:rows.length,output};
 }
 
-if(process.argv[1]===fileURLToPath(import.meta.url)){
+// realpath on both sides: a release runs through the releases/current symlink.
+if(process.argv[1]&&realpathSync(process.argv[1])===realpathSync(fileURLToPath(import.meta.url))){
  const [mode,sqlite,url,output,since]=process.argv.slice(2);
  if(!['forward','verify','reverse'].includes(mode)||!sqlite||!url||(mode==='reverse'&&!output)){console.error('usage: migrate-sqlite forward|verify <sqlite> <database-url> | reverse <sqlite> <database-url> <output.sqlite> [since]');process.exit(2)}
  const store=createStore(url);

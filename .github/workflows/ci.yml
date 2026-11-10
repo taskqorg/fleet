@@ -5,6 +5,9 @@
 name: ci
 on:
   pull_request:
+  # A push to main runs the same gates and is the only run that publishes a release (docs/infrastructure-build.md).
+  push:
+    branches: [main]
 permissions: {}
 jobs:
   build-test-design:
@@ -95,6 +98,27 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      # The release layout without node_modules: the bundled coordinator must start and serve (docs/designs/fleet-toolchain.md D4).
+      - run: node tests/coordinator/release-smoke.ts
+        env:
+          FLEET_TEST_PG: postgresql://postgres:postgres@localhost:5432
+      # Deploys use exactly this smoked release, and only from a push to main in this repository, never a pull request
+      # run (docs/infrastructure-build.md). The archive's SHA-256 goes into the job summary; the deploy checks it.
+      - name: Pack the release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          tar -czf fleet-release.tgz package.json dist
+          sha256sum fleet-release.tgz | tee fleet-release.tgz.sha256
+          echo "fleet-release-${GITHUB_SHA}: $(cut -d' ' -f1 fleet-release.tgz.sha256)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fleet-release-${{ github.sha }}
+          path: |
+            fleet-release.tgz
+            fleet-release.tgz.sha256
+          if-no-files-found: error
       # The executor binary the end-to-end artifact tests run.
       - run: cargo build -p fleet-executor
       # One file at a time: the Postgres-backed tests share the database "fleet" (tests/coordinator/pg-test.ts).
@@ -103,7 +127,7 @@ jobs:
           FLEET_TEST_PG: postgresql://postgres:postgres@localhost:5432
   comment:
     needs: build-test-design
-    if: always()
+    if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     permissions:
       pull-requests: write
