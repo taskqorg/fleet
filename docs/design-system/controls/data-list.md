@@ -33,6 +33,6 @@ Every list follows the same order: state first, then name with ID, then the serv
 
 **Do.** Keep one line per row on desktop. **Don't.** Card grids for operational lists; infinite "load more" buttons; animating rows into place.
 
-**Implementation.** Rendering window from TanStack Virtual core; anchor keeping and the pill in `VirtualList` (D4). Any collection longer than a screen uses it (OR-9).
+**Implementation.** Rendering window from TanStack Virtual core; anchor keeping and the pill in `VirtualList` (D4). Any collection longer than a screen uses it (OR-9). Threads also load upward: `onStart` fires once per list length when the first rows are in view, rows loaded above keep the row being read in place (OR-23) and do not count in the pill, and `handle.current.scrollToKey(key, align)` jumps to a row (search hits).
 
 **Used in.** Overview, Tasks, Results, Hosts, Laboratory trials, History.

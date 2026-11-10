@@ -42,6 +42,8 @@ jobs:
       - run: pnpm run build
       # The executor: its unit tests, and the binary the coordinator's end-to-end artifact test runs.
       - run: cargo build -p fleet-executor && cargo test -p fleet-executor
+      # The executor protocol scripts (tests/executor): actual executor binary against fake harnesses and transports.
+      - run: tests/executor/run.sh
       - run: pnpm test
       # Use-case registry drift (docs/designs/fleet-lab.md Stage 1): warns, never blocks. Only Fleet's own sources are
       # checked here; the other org repos are not checked out, so their entries report nothing.
@@ -69,6 +71,17 @@ jobs:
             docs/design-system/book/index.html
             docs/design-system/pages/mockups.html
           if-no-files-found: warn
+  # The executor protocol scripts on macOS, where Claude placement 'mac' lets claude_mcp.py run (it skips on plain Linux).
+  executor-macos:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: cargo build -p fleet-executor
+      - run: tests/executor/run.sh
   # The filter-path check (docs/designs/fleet-view-urls-and-list-path.md §4): its own job, so it does not slow build-test-design.
   filter-check:
     runs-on: ubuntu-24.04
@@ -140,6 +153,39 @@ jobs:
       - run: node --test --test-concurrency=1 tests/coordinator/*.test.ts
         env:
           FLEET_TEST_PG: postgresql://postgres:postgres@localhost:5432
+  executor-release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build release executor
+        shell: bash
+        run: |
+          start=$SECONDS
+          rustup target add '${{ matrix.target }}'
+          cargo build --locked --release -p fleet-executor --target '${{ matrix.target }}'
+          file='fleet-executor-${{ matrix.target }}'
+          cp 'target/${{ matrix.target }}/release/fleet-executor' "$file"
+          shasum -a 256 "$file" | tee "$file.sha256"
+          echo "${{ matrix.target }}: $((SECONDS-start)) seconds; $(wc -c < "$file") bytes" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fleet-executor-${{ matrix.target }}-${{ github.sha }}
+          path: |
+            fleet-executor-${{ matrix.target }}
+            fleet-executor-${{ matrix.target }}.sha256
+          if-no-files-found: error
   comment:
     needs: build-test-design
     if: always() && github.event_name == 'pull_request'

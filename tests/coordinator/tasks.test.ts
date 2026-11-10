@@ -99,3 +99,10 @@ test('task_page takes the view codec page params: project lists with "no project
  assert.deepEqual(await ids('/tasks?project=p'),['a']);assert.deepEqual(await ids('/tasks?project=-,p'),['a','c']);
  assert.deepEqual(await ids('/tasks?project=p,q'),['a','b']);assert.deepEqual(await ids('/tasks'),['a','b','c']);
  await s.close()});
+test('two different answers racing: only one wins, the other gets 409; the same answer again returns the stored one',async()=>{const s=await fresh();
+ const q=await s.tasks.ask({kind:'agent_question',text:'Use Postgres 17?',options:['yes','no'],askedBy:'agent'});
+ // The hook runs between the unlocked read and the update: a concurrent answer lands there.
+ s.tasks.onAnswer({check:async()=>{s.tasks.onAnswer(null);await s.query("UPDATE question SET state='answered',answer='no',answered_by='tasks' WHERE id=$1",[q])},after:async()=>{}});
+ await assert.rejects(s.tasks.answer(q,{answer:'yes',by:'operator'}),(e:any)=>e.statusCode===409);
+ assert.equal((await s.tasks.answer(q,{answer:'no',by:'operator'})).answered_by,'tasks');
+ await s.close()});

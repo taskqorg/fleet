@@ -14,6 +14,7 @@ import {registerProjects} from './projects.ts';
 import {accounts} from './accounts.ts';
 import {delivery} from './delivery.ts';
 import {agentTools} from './agent-tools.ts';
+import {threads} from './threads.ts';
 import {storeRegistry,accessToken} from './stores.ts';
 import {artifactModel,type Artifacts} from './artifacts.ts';
 import {placementWorker} from './placement.ts';
@@ -46,7 +47,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  // which no other handler writes: it runs in the execution's scope, in parallel with other executions and with GLOBAL writers.
  const ingestScope=(req:any)=>typeof req.body?.executionId==='string'?executionScope(req.body.executionId):fail(400,'Expected executionId');
  const ingestRoutes=new Set(['/api/hosts/events']);
- const longRoutes=new Set(['/api/stream','/assets/*','/assets/','/api/hosts/artifacts/list','/api/hosts/artifacts/reserve','/api/hosts/artifacts/parts','/api/hosts/artifacts/commit','/api/hosts/artifacts/verified','/api/hosts/artifacts/renew','/api/hosts/artifacts/failed','/api/hosts/artifacts/declare','/api/hosts/artifacts/get','/api/hosts/artifacts/read','/api/results/:id','/api/pipeline-runs','/api/pipelines/:id/runs','/api/project-operations/:name','/api/project-tools','/api/ops/:name','/api/tools','/api/hosts/receipts','/api/hosts/agent-tools']);
+ const longRoutes=new Set(['/api/stream','/api/threads/:scope/:id/export','/assets/*','/assets/','/api/hosts/artifacts/list','/api/hosts/artifacts/reserve','/api/hosts/artifacts/parts','/api/hosts/artifacts/commit','/api/hosts/artifacts/verified','/api/hosts/artifacts/renew','/api/hosts/artifacts/failed','/api/hosts/artifacts/declare','/api/hosts/artifacts/get','/api/hosts/artifacts/read','/api/results/:id','/api/pipeline-runs','/api/pipelines/:id/runs','/api/project-operations/:name','/api/project-tools','/api/ops/:name','/api/tools','/api/hosts/receipts','/api/hosts/agent-tools']);
  // Reads (GET, HEAD) run in a read-only snapshot; every other route is one GLOBAL write (store.atomic) unless it is host ingest.
  // Lab experiment routes call operations (runOp opens their transactions); reconcile needs committed state.
  app.addHook('onRoute',(o:any)=>{if(longRoutes.has(o.url)||/^\/api\/lab\/(experiments|ratings|scores|registry)/.test(o.url))return;const h=o.handler,method=[o.method].flat()[0];
@@ -115,9 +116,23 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   s.agentConfig=readTrustedProfile(config.profilesDirectory||'config/agents',req.body.profileId);await put('session',s);return {sessionId:s.id,profileId:s.agentConfig.id,account:s.account};
  };
  app.post('/api/sessions/:id/profile',async(req:any)=>(await store.tx(async ()=>(await session_profile({...req.body,sessionId:req.params.id})))));
- const session_get=async (b:any)=>{const s=(await get(b?.sessionId,'session'));return {...s,...(await agent.sessionView(s.id)),sessionId:s.id,delegations:(await map((await all('delegation')).filter(d=>d.parentSessionId===s.id||d.childSessionId===s.id),related)),messages:(await all('message',{sessionId:s.id})).filter(x=>x.sessionId===s.id),executions:(await all('execution',{sessionId:s.id})).filter(x=>x.sessionId===s.id),events:(await all('event',{sessionId:s.id})).filter(x=>x.sessionId===s.id),results:(await all('artifact',{sessionId:s.id},['contentBase64'])).filter(x=>x.sessionId===s.id).map(({contentBase64,...x})=>x)}};
+ const session_get=async (b:any)=>{const s=(await get(b?.sessionId,'session'));return {...s,...(await agent.sessionView(s.id)),sessionId:s.id,delegations:(await map((await all('delegation')).filter(d=>d.parentSessionId===s.id||d.childSessionId===s.id),related)),messages:(await all('message',{sessionId:s.id})).filter(x=>x.sessionId===s.id),executions:(await all('execution',{sessionId:s.id})).filter(x=>x.sessionId===s.id),events:[...await all('event',{sessionId:s.id}),...await all('event-delta',{sessionId:s.id})].filter(x=>x.sessionId===s.id&&x.type!=='execution.ended'),results:(await all('artifact',{sessionId:s.id},['contentBase64'])).filter(x=>x.sessionId===s.id).map(({contentBase64,...x})=>x)}};
  app.get('/api/sessions/:id',async(req:any)=>(await session_get({sessionId:req.params.id})));
- app.get('/api/sessions/:id/events',async(req:any)=>{(await get(req.params.id,'session'));const after=Number(req.query.after??-1),limit=Number(req.query.limit??100);if(!Number.isSafeInteger(after)||!Number.isSafeInteger(limit)||limit<1||limit>500)fail(400,'Invalid page');const events=(await all('event',{sessionId:req.params.id})).filter(x=>x.sessionId===req.params.id).slice(after+1,after+1+limit);return {events,nextCursor:events.length?after+events.length:after}});
+ // Conversation threads (docs/designs/fleet-conversations.md): pages of typed blocks per task or session, search and export.
+ // feedCursor is read in the same snapshot as the page, so the client follows the feed from there and misses no row.
+ const thread=threads({query:store.query,artifacts:async(executionId:string)=>artifacts.list({executionId}),cursor:async()=>(await store.changes.since(null)).cursor});
+ const thread_entries=(b:any)=>thread.entries(b),thread_blocks=(b:any)=>thread.blocks(b),thread_search=(b:any)=>thread.search(b),thread_export=(b:any)=>thread.exportText(b,store.read);
+ const threadKey=(req:any)=>req.params.scope==='task'?{task:req.params.id}:req.params.scope==='session'?{session:req.params.id}:fail(404,'Unknown thread scope');
+ const intOf=(v:any)=>v===undefined?undefined:/^\d+$/.test(v)?Number(v):fail(400,'Expected integer');
+ const pointOf=(v:any)=>{if(v===undefined)return undefined;const m=/^(\d+:\d+)(?:@(\d+))?$/.exec(String(v));return m?{key:m[1],offset:Number(m[2]??0)}:fail(400,'Expected seq:index@offset')};
+ app.get('/api/threads/:scope/:id/entries',async(req:any)=>thread_entries({key:threadKey(req),limit:intOf(req.query.limit)??100,before:req.query.before,after:req.query.after,around:req.query.around}));
+ app.get('/api/threads/:scope/:id/blocks',async(req:any)=>thread_blocks({key:threadKey(req),rows:String(req.query.rows??'').split(',').filter(Boolean).map(x=>{const i=x.indexOf(':');return {kind:x.slice(0,i),id:x.slice(i+1)}})}));
+ app.get('/api/threads/:scope/:id/search',async(req:any)=>thread_search({key:threadKey(req),q:req.query.q,before:req.query.before,limit:intOf(req.query.limit)??50}));
+ // Streams markdown page by page, each page in its own snapshot, so a long thread is never held as one string.
+ app.get('/api/threads/:scope/:id/export',async(req:any,reply:any)=>{const {Readable}=await import('node:stream');const b={key:threadKey(req),from:pointOf(req.query.from),to:pointOf(req.query.to)};
+  await store.read(()=>thread.entries({key:b.key,limit:1}));// 404 before the stream starts
+  return reply.type('text/markdown; charset=utf-8').send(Readable.from(thread.exportPages(b,store.read)))});
+ app.get('/api/sessions/:id/events',async(req:any)=>{(await get(req.params.id,'session'));const after=Number(req.query.after??-1),limit=Number(req.query.limit??100);if(!Number.isSafeInteger(after)||!Number.isSafeInteger(limit)||limit<1||limit>500)fail(400,'Invalid page');const events=(await all('event',{sessionId:req.params.id})).filter(x=>x.sessionId===req.params.id&&x.type!=='execution.ended').slice(after+1,after+1+limit);return {events,nextCursor:events.length?after+events.length:after}});
  const execution_differences=async (b:any)=>{
   const current=(await get(b?.executionId,'execution')),previous=(await get(text(b?.previous,300),'execution'));
   if(current.sessionId!==previous.sessionId)fail(403,'Different session');
@@ -137,7 +152,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   return {sessionId:current.sessionId,previousExecutionId:previous.id,executionId:current.id,files};
  };
  app.get('/api/executions/:id/differences',async(req:any)=>(await execution_differences({executionId:req.params.id,previous:req.query.previous})));
- const execution_events=async (b:any)=>{(await get(b?.executionId,'execution'));return {events:(await all('event',{executionId:b.executionId})).filter(x=>x.executionId===b.executionId).sort((a,b)=>a.seq-b.seq)}};
+ const execution_events=async (b:any)=>{(await get(b?.executionId,'execution'));return {events:(await all('event',{executionId:b.executionId})).filter(x=>x.executionId===b.executionId&&x.type!=='execution.ended').sort((a,b)=>a.seq-b.seq)}};
  app.get('/api/executions/:id/events',async(req:any)=>(await execution_events({executionId:req.params.id})));
  const managed=accounts(app,store,{...config,hosts});
  // Git network for agents: profile gitNetwork wins; default on for pm/reviewer/worker sessions of projects with repos.
@@ -356,7 +371,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   hosts_rotate_secret:(b:any)=>hosts.operations.hosts_rotate_secret(b,requestPerson.getStore()??null),
   me:async()=>{const p=requestPerson.getStore();return {email:p?.email??null,name:p?.name??null,roles:p?.roles??[],owner:p?.owner??false,grantsVersion:p?.grantsVersion??null,changeLogRetentionDays:retentionDays}},
  };
- const ops:Record<string,(b:any)=>any>={...typedOps,...projects,...transportRecovery.operations,...agent.operations,session_create,session_profile,session_archive,execution_stop,session_get,execution_differences,execution_events,profiles_list,...labOps};
+ const ops:Record<string,(b:any)=>any>={...typedOps,...projects,...transportRecovery.operations,...agent.operations,session_create,session_profile,session_archive,execution_stop,session_get,thread_entries,thread_blocks,thread_search,thread_export,execution_differences,execution_events,profiles_list,...labOps};
  registerStream(app,store,{retentionDays});
  const runOp=async (n:string,b:any)=>{const op=ops[n];if(!op)fail(404,'Unknown operation');return READ_OPERATIONS.has(n)?store.read(()=>op(b??{})):LONG_OPERATIONS.has(n)?op(b??{}):op===projects[n]||op===transportRecovery.operations[n]?store.atomic(()=>op(b??{})):(await store.tx(()=>op(b??{})))};
  // Per-op timing: the Server-Timing header (browser devtools, curl -i) carries the operation's own time, not the transfer.

@@ -515,6 +515,138 @@ pub fn project(h: &str, v: &Value) -> Value {
     };
     json!({"harness":h,"session":session,"completed":success,"lifecycle":v.get("type").or(v.get("event")),"error":v.get("error").or(v.pointer("/result/error")),"message":message,"messages":messages,"tools":tools(h,v),"usage":usage(v),"nativeUsage":v.get("usage").or(v.pointer("/result/usage")),"contextUsage":if v["update"]["sessionUpdate"]=="usage_update" {json!({"used":v["update"]["used"],"capacity":v["update"]["size"],"scope":"native context window; not additive billing usage"})}else{Value::Null},"usageScope":if h=="codex" && v.get("usage").is_some_and(|u|u.get("total").is_some()) {"native thread cumulative total; not additive"} else {"native report; scope unknown, may be cumulative; not additive"},"native":v})
 }
+/// Typed transcript blocks (docs/designs/fleet-conversations.md, "Block model"): text, reasoning and tool, the only producer of
+/// reply text. State per execution: tools started and not yet ended (claude tool_use, ACP tool_call) with their start time, and
+/// the open streams (ACP chunks). A chunk record carries `deltaOf` and its chunk as a block; the next record that is not a chunk
+/// closes every open stream and carries the joined final blocks first, then its own, and names the closed streams in `closes`.
+/// The first chunk of a stream also carries `opens: true`, so a reader finds streams without reading every chunk.
+#[derive(Default)]
+pub struct Blocks {
+    tools: std::collections::HashMap<String, (Value, Value, u64)>,
+    streams: Vec<(String, String, String)>,
+    opened: u64,
+}
+fn text_of(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Array(a) => a.iter().map(text_of).filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n"),
+        Value::Object(o) => o.get("text").map(text_of).unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+fn key(v: &Value) -> String {
+    v.as_str().map(String::from).unwrap_or_else(|| v.to_string())
+}
+fn text_block(kind: &str, markdown: String) -> Option<Value> {
+    if markdown.is_empty() { return None; }
+    Some(if kind == "text" { json!({"kind":"text","role":"agent","markdown":markdown}) } else { json!({"kind":"reasoning","markdown":markdown}) })
+}
+fn tool_block(name: &Value, input: &Value, output: &Value, state: &Value, started: Value, ended: Value) -> Value {
+    json!({"kind":"tool","name":if name.is_null() {json!("tool")} else {name.clone()},"input":input,"output":output,"state":if state.is_null() {json!("completed")} else {state.clone()},"startedAt":started,"endedAt":ended})
+}
+impl Blocks {
+    /// project() plus `blocks` (and `deltaOf` / `closes` for streams); `at` is the record's time in ms.
+    pub fn project(&mut self, h: &str, v: &Value, at: u64) -> Value {
+        let mut p = project(h, v);
+        let chunk = self.chunk(h, v);
+        let mut blocks = Vec::new();
+        if let Some((kind, text)) = chunk {
+            let id = match self.streams.iter_mut().find(|s| s.0 == kind) {
+                Some(s) => { s.2.push_str(&text); s.1.clone() }
+                None => {
+                    self.opened += 1;
+                    let id = format!("{kind}:{}", self.opened);
+                    self.streams.push((kind.clone(), id.clone(), text.clone()));
+                    p["opens"] = json!(true);
+                    id
+                }
+            };
+            p["deltaOf"] = json!(id);
+            p["blocks"] = json!(text_block(&kind, text).into_iter().collect::<Vec<_>>());
+            return p;
+        }
+        let closed: Vec<_> = self.streams.drain(..).collect();
+        if !closed.is_empty() { p["closes"] = json!(closed.iter().map(|s| &s.1).collect::<Vec<_>>()); }
+        let streamed_text = closed.iter().any(|s| s.0 == "text");
+        blocks.extend(closed.into_iter().filter_map(|(kind, _, text)| text_block(&kind, text)));
+        // The step format repeats the streamed reply in result.response: the closed stream already holds it.
+        blocks.extend(self.own(h, v, at).into_iter().filter(|b| !(streamed_text && v["result"]["response"].is_string() && b["kind"] == "text")));
+        p["blocks"] = json!(blocks);
+        p
+    }
+    fn chunk(&self, h: &str, v: &Value) -> Option<(String, String)> {
+        if h != "antigravity" { return None; }
+        let kind = match v["update"]["sessionUpdate"].as_str() { Some("agent_message_chunk") => "text", Some("agent_thought_chunk") => "reasoning", _ => {
+            return v["step_update"]["text_delta"].as_str().map(|t| ("text".into(), t.into()));
+        } };
+        Some((kind.into(), text_of(&v["update"]["content"])))
+    }
+    fn own(&mut self, h: &str, v: &Value, at: u64) -> Vec<Value> {
+        let t = v["type"].as_str().unwrap_or("");
+        if t == "unparsed" || t.ends_with(".failed") || (h == "claude" && t == "result" && v["is_error"] == true) {
+            return vec![tool_block(&json!(t), &Value::Null, v, &json!("failed"), json!(at), json!(at))];
+        }
+        let mut out = Vec::new();
+        // A turn end settles tools that never reported an end, so a cut-off tool still shows.
+        if matches!(t, "turn.completed" | "turn.failed" | "result") || v["event"] == "result" {
+            let mut open: Vec<_> = self.tools.drain().collect();
+            open.sort_by_key(|(_, x)| x.2);
+            out.extend(open.into_iter().map(|(_, (name, input, started))| tool_block(&name, &input, &Value::Null, &json!("unfinished"), json!(started), json!(at))));
+        }
+        match h {
+            "codex" if t == "item.completed" => {
+                let i = &v["item"];
+                let started = i.get("startedAtMs").filter(|x| x.is_number()).cloned().unwrap_or(json!(at));
+                let ended = i.get("completedAtMs").filter(|x| x.is_number()).cloned().unwrap_or(json!(at));
+                match i["type"].as_str().unwrap_or("") {
+                    "agent_message" | "agentMessage" => out.extend(text_block("text", text_of(&i["text"]))),
+                    "reasoning" | "plan" => {
+                        let text = [text_of(&i["text"]), text_of(&i["summary"]), text_of(&i["content"])].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n");
+                        out.extend(text_block("reasoning", text))
+                    }
+                    "userMessage" | "user_message" => {}
+                    other => out.push(tool_block(
+                        i.get("tool").or(i.get("name")).filter(|x| !x.is_null()).unwrap_or(&json!(other)),
+                        i.get("arguments").or(i.get("command")).or(i.get("changes")).unwrap_or(&Value::Null),
+                        i.get("result").or(i.get("aggregatedOutput")).or(i.get("aggregated_output")).or(i.get("output")).or(i.get("error")).or(i.get("message")).unwrap_or(&Value::Null),
+                        &if other == "error" { json!("failed") } else { i["status"].clone() }, started, ended)),
+                }
+            }
+            "claude" => {
+                let assistant = t == "assistant";
+                for b in v["message"]["content"].as_array().into_iter().flatten() {
+                    match b["type"].as_str() {
+                        Some("text") if assistant => out.extend(text_block("text", text_of(&b["text"]))),
+                        Some("thinking") if assistant => out.extend(text_block("reasoning", text_of(&b["thinking"]))),
+                        Some("tool_use") => { self.tools.insert(key(&b["id"]), (b["name"].clone(), b["input"].clone(), at)); }
+                        Some("tool_result") => {
+                            let (name, input, started) = self.tools.remove(&key(&b["tool_use_id"])).unwrap_or((Value::Null, Value::Null, at));
+                            out.push(tool_block(&name, &input, &b["content"], &json!(if b["is_error"] == true { "failed" } else { "completed" }), json!(started), json!(at)));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "antigravity" => {
+                if let Some(r) = v["result"]["response"].as_str() { out.extend(text_block("text", r.into())); }
+                let u = &v["update"];
+                if matches!(u["sessionUpdate"].as_str(), Some("tool_call" | "tool_call_update")) {
+                    let id = key(&u["toolCallId"]);
+                    let entry = self.tools.entry(id.clone()).or_insert((u.get("title").or(u.get("name")).cloned().unwrap_or(Value::Null), u["rawInput"].clone(), at));
+                    if entry.0.is_null() { entry.0 = u.get("title").cloned().unwrap_or(Value::Null); }
+                    if entry.1.is_null() { entry.1 = u["rawInput"].clone(); }
+                    if matches!(u["status"].as_str(), Some("completed" | "failed")) {
+                        let (name, input, started) = self.tools.remove(&id).unwrap();
+                        let output = u.get("rawOutput").filter(|x| !x.is_null() && !x.as_object().is_some_and(|o| o.is_empty())).or(u.get("content")).cloned().unwrap_or(Value::Null);
+                        out.push(tool_block(&name, &input, &output, &u["status"], json!(started), json!(at)));
+                    }
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -705,6 +837,45 @@ print(json.dumps({'harness':h,'home':os.environ['HOME'],'args':sys.argv[1:]}))
             &json!({"message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"ok"}]}}),
         );
         assert_eq!(p["tools"][0]["result"], "ok");
+    }
+    #[test]
+    fn blocks_per_harness() {
+        let mut b = Blocks::default();
+        let p = b.project("codex", &json!({"type":"item.completed","item":{"type":"agent_message","text":"Hi"}}), 5);
+        assert_eq!(p["blocks"], json!([{"kind":"text","role":"agent","markdown":"Hi"}]));
+        let p = b.project("codex", &json!({"type":"item.completed","item":{"type":"mcpToolCall","tool":"read","arguments":{"p":1},"result":"ok","status":"completed","startedAtMs":1,"completedAtMs":4}}), 5);
+        assert_eq!(p["blocks"][0]["kind"], "tool");
+        assert_eq!((p["blocks"][0]["name"].clone(), p["blocks"][0]["startedAt"].clone(), p["blocks"][0]["endedAt"].clone()), (json!("read"), json!(1), json!(4)));
+        assert_eq!(b.project("codex", &json!({"type":"item.completed","item":{"type":"reasoning","summary":[],"content":[]}}), 5)["blocks"], json!([]));
+        assert_eq!(b.project("codex", &json!({"type":"item.completed","item":{"type":"userMessage","content":[{"text":"hi"}]}}), 5)["blocks"], json!([]));
+        let mut c = Blocks::default();
+        assert_eq!(c.project("claude", &json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hm"},{"type":"text","text":"Yes"},{"type":"tool_use","id":"t","name":"Read","input":{"f":1}}]}}), 10)["blocks"],
+            json!([{"kind":"reasoning","markdown":"hm"},{"kind":"text","role":"agent","markdown":"Yes"}]));
+        let p = c.project("claude", &json!({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"ok"}]}}), 30);
+        assert_eq!(p["blocks"], json!([{"kind":"tool","name":"Read","input":{"f":1},"output":"ok","state":"completed","startedAt":10,"endedAt":30}]));
+        let mut a = Blocks::default();
+        let chunk = |t: &str| json!({"type":"acp.update","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":t}}});
+        let d1 = a.project("antigravity", &chunk("Hel"), 1);
+        let d2 = a.project("antigravity", &chunk("lo"), 2);
+        assert_eq!((d1["deltaOf"].clone(), d2["deltaOf"].clone()), (json!("text:1"), json!("text:1")));
+        assert_eq!((d1["opens"].clone(), d2.get("opens")), (json!(true), None));
+        assert_eq!(d2["blocks"][0]["markdown"], "lo");
+        let end = a.project("antigravity", &json!({"type":"turn.completed","stopReason":"end_turn"}), 3);
+        assert!(end.get("deltaOf").is_none());
+        assert_eq!(end["closes"], json!(["text:1"]));
+        assert_eq!(end["blocks"], json!([{"kind":"text","role":"agent","markdown":"Hello"}]));
+        a.project("antigravity", &json!({"type":"acp.update","update":{"sessionUpdate":"tool_call","toolCallId":"x","title":"Edit","rawInput":{"a":1},"status":"pending"}}), 4);
+        let p = a.project("antigravity", &json!({"type":"acp.update","update":{"sessionUpdate":"tool_call_update","toolCallId":"x","status":"completed","rawOutput":"done"}}), 9);
+        assert_eq!(p["blocks"], json!([{"kind":"tool","name":"Edit","input":{"a":1},"output":"done","state":"completed","startedAt":4,"endedAt":9}]));
+        let mut s = Blocks::default();
+        s.project("antigravity", &json!({"step_update":{"text_delta":"Hi"}}), 1);
+        assert_eq!(s.project("antigravity", &json!({"event":"result","result":{"status":"SUCCESS","response":"Hi"}}), 2)["blocks"], json!([{"kind":"text","role":"agent","markdown":"Hi"}]));
+        c.project("claude", &json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"u","name":"Bash","input":{}}]}}), 40);
+        assert_eq!(c.project("claude", &json!({"type":"result","is_error":false}), 50)["blocks"][0]["state"], "unfinished");
+        let e = b.project("codex", &json!({"type":"item.completed","item":{"type":"error","message":"stream disconnected"}}), 5);
+        assert_eq!((e["blocks"][0]["state"].clone(), e["blocks"][0]["output"].clone()), (json!("failed"), json!("stream disconnected")));
+        let p = a.project("codex", &json!({"type":"unparsed","raw":"x"}), 7);
+        assert_eq!((p["blocks"][0]["kind"].clone(), p["blocks"][0]["name"].clone(), p["blocks"][0]["output"]["raw"].clone()), (json!("tool"), json!("unparsed"), json!("x")));
     }
     #[test]
     fn native_projection() {

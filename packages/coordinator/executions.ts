@@ -52,7 +52,8 @@ export function executionModel(raw:Raw){
     harness=excluded.harness,model=excluded.model,config_ref=excluded.config_ref,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
     problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
    [e.id,kindOf(e),state,observation,l.projectId,l.taskId,e.experimentId??null,e.experimentId?e.agentConfig?.id??null:null,l.parent,e.sessionId??null,e.effectiveAccount?.accountId??e.accountId??null,e.hostId??null,harness,e.model??null,clean(config),ts(e.startedAt),ts(e.finishedAt),clean(e)]);
-  if(TERMINAL.has(state)&&!(prev&&TERMINAL.has(prev)))await writeTotals(e.id);
+  // A record written already ended (migration replay) has no live end to place in its thread.
+  if(TERMINAL.has(state)&&!(prev&&TERMINAL.has(prev))){await writeTotals(e.id);if(prev)await writeEnded(e.id)}
  }
 
  // Pipeline run with one pipeline_step row per step (§7); steps link to the run by parent_execution_id.
@@ -117,7 +118,11 @@ export function executionModel(raw:Raw){
   const row=await one('SELECT state FROM execution WHERE id=$1',[id]);if(!row)notFound();
   if(row.state===state)return row;if(TERMINAL.has(row.state)||ORDER[state]<ORDER[row.state as State])throw Object.assign(Error(`Execution ${row.state} cannot become ${state}`),{statusCode:409});
   await raw.query(`UPDATE execution SET state=$2,problem=CASE WHEN $2::execution_state='succeeded' THEN NULL ELSE problem END,ended_at=CASE WHEN $3 THEN coalesce(ended_at,now()) ELSE ended_at END,started_at=CASE WHEN $2::execution_state IN ('running','waiting') THEN coalesce(started_at,now()) ELSE started_at END WHERE id=$1`,[id,state,TERMINAL.has(state)]);
-  if(TERMINAL.has(state))await writeTotals(id);return {state}}
+  if(TERMINAL.has(state)){await writeTotals(id);await writeEnded(id)}return {state}}
+ // The end of an agent run in its thread (docs/designs/fleet-conversations.md): one event with no blocks whose seq places the
+ // result block. The fixed id keeps it to one row however often the run is settled.
+ async function writeEnded(id:string){const r=await one("SELECT session_id,project_id,ended_at FROM execution WHERE id=$1 AND kind='agent_run'",[id]);if(!r)return;
+  await raw.query("INSERT INTO document(kind,id,data,project_id) VALUES('event',$1,$2,$3) ON CONFLICT(id) DO NOTHING",['ended:'+id,clean({id:'ended:'+id,executionId:id,sessionId:r.session_id,type:'execution.ended',timestamp:r.ended_at?new Date(r.ended_at).getTime():Date.now(),data:{fleetNormalized:{blocks:[]}}}),r.project_id])}
  // Observation confidence: confirmed whenever the host reports for the execution, unconfirmed when contact is lost.
  async function markObservation(id:string,observation:'confirmed'|'unconfirmed'){await raw.query('UPDATE execution SET observation=$2::observation,last_seen_at=CASE WHEN $2::text=\'confirmed\' THEN now() ELSE last_seen_at END WHERE id=$1',[id,observation])}
  const setHarnessVersion=(id:string,version:string)=>raw.query('UPDATE execution SET harness_version=$2 WHERE id=$1 AND harness_version IS DISTINCT FROM $2',[id,version]);

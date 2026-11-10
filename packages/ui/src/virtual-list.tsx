@@ -24,7 +24,12 @@ export type VirtualListProps<T> = {
   rowClass?: (item: T) => string;
   /** Infinite scroll (OR-11): called once per list length when the last rows come into view. */
   onEnd?: () => void;
+  /** Upward loading (threads): called once per list length when the first rows come into view. */
+  onStart?: () => void;
+  /** Filled with the list's methods: scrollToKey for jumps (search hits). */
+  handle?: { current: VirtualListHandle | null };
 };
+export type VirtualListHandle = { scrollToKey: (key: string, align: 'start' | 'center' | 'end') => void };
 
 // Touch devices get the 44 px row (owner exception to density, D14/M2).
 const TOUCH_ROW = parseInt(tokens.size['row-phone']);
@@ -73,8 +78,10 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     const el = scroller.current;
     if (!el) return;
     // ponytail: O(n) key diff per update; switch to a server-provided "new since" count if lists reach millions client-side.
-    let added = 0;
-    for (const it of p.items) if (!prev.current.keys.has(p.getKey(it))) added++;
+    // New rows counted for the pill are the ones after the last row already shown; rows loaded above are not new.
+    let added = 0, lastOld = -1;
+    p.items.forEach((it, i) => { if (prev.current.keys.has(p.getKey(it))) lastOld = i; });
+    p.items.forEach((it, i) => { if (i > lastOld && !prev.current.keys.has(p.getKey(it))) added++; });
     const wasAtEdge = prev.current.atEdge;
     prev.current.keys = new Set(p.items.map(p.getKey));
     if (wasAtEdge) {
@@ -98,6 +105,13 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
   const endFor = useRef(-1);
   const lastVisible = v.getVirtualItems().at(-1)?.index ?? -1;
   useLayoutEffect(() => { if (p.onEnd && p.items.length && lastVisible >= p.items.length - 5 && endFor.current !== p.items.length) { endFor.current = p.items.length; p.onEnd(); } });
+
+  const startFor = useRef(-1);
+  const firstVisible = v.getVirtualItems()[0]?.index ?? -1;
+  useLayoutEffect(() => { if (p.onStart && p.items.length && firstVisible >= 0 && firstVisible < 5 && startFor.current !== p.items.length) { startFor.current = p.items.length; p.onStart(); } });
+  if (p.handle) p.handle.current = {
+    scrollToKey: (key, align) => { const i = p.items.findIndex(it => p.getKey(it) === key); if (i >= 0) { prev.current.atEdge = false; v.scrollToIndex(i, { align }); } },
+  };
 
   const style = p.columns ? { '--cols': p.columns } : undefined;
   return (

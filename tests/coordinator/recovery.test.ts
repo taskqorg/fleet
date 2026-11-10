@@ -28,3 +28,16 @@ test('recovery tools and UI retain browser authority and exact proxy Origin',asy
  assert.equal((await app.inject({method:'POST',url:'/api/recovery-tools',payload:{id:1,method:'tools/list'},headers:{authorization:'Bearer browser',origin:'https://fixture.invalid'}})).statusCode,200);
  }finally{await app.close()}
 });
+
+test('stream chunks are stored as event-delta; a resent chunk is found, a changed one or a seq collision conflicts',async()=>{
+ const app=createApp({database:mkdtempSync('/tmp/fleet-delta-')+'/db',browserSecret:'browser',machineSecret:'machine',hostId:'mac'});
+ const post=(url:string,b:any,machine=false)=>app.inject({method:'POST',url,headers:{authorization:'Bearer '+(machine?'machine':'browser')},payload:b});
+ try{const sid=(await post('/api/sessions',{})).json().sessionId,e=(await post('/api/sessions/'+sid+'/messages',{requestId:'one',text:'x'})).json();
+  const chunk={id:'c1',seq:1,type:'acp.update',data:{fleetNormalized:{deltaOf:'text:1',opens:true,blocks:[{kind:'text',role:'agent',markdown:'Hel'}]}}};
+  const send=(ev:any)=>post('/api/hosts/events',{hostId:'mac',executionId:e.id,events:[ev]},true);
+  assert.equal((await send(chunk)).statusCode,200);assert.equal((await send(chunk)).statusCode,200);
+  const kinds=await (app as any).store.query("SELECT kind FROM document WHERE id=$1",['event:'+e.id+':c1']);assert.deepEqual(kinds.map((k:any)=>k.kind),['event-delta']);
+  assert.equal((await send({...chunk,data:{fleetNormalized:{...chunk.data.fleetNormalized,blocks:[]}}})).statusCode,409);
+  assert.equal((await send({id:'other',seq:1,type:'resource.observation',data:{}})).statusCode,409);
+ }finally{await app.close()}
+});
