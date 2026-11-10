@@ -74,7 +74,7 @@ Not built: a single attention view over these failures that an operator, archite
 
 ### Checkout sync
 
-The coordinator never touches host checkouts. After a verified merge it sends `base-updated {sha}` to each environment host of the project. The executor (`go/executor/checkout_sync.go`) fetches and fast-forwards a checkout only if it is clean; otherwise it reports `checkout-dirty`, `fetch-failed` or `not-fast-forward` and leaves it untouched.
+The coordinator never touches host checkouts. After a verified merge it sends `base-updated {sha}` to each environment host of the project. The executor (`go/executor/checkout_sync.go`) fetches and fast-forwards a checkout only if it is clean; otherwise it reports `checkout-dirty`, `fetch-failed` or `not-fast-forward` and leaves it untouched. Known property: these `git fetch` and `git merge` run inside the host checkout under that repository's own `.git/config` (hooks are off, system and global config are not read). A checkout is the operator's, so its config is trusted like the checkout itself; an agent with write access to the checkout's `.git` could set a command there that this sync later runs.
 
 ### Not decided
 
