@@ -1,6 +1,6 @@
 import {fileURLToPath} from 'node:url';
-import {createApp} from './app.js';
-import {createStore} from './store.js';
+import {createApp} from './app.ts';
+import {createStore} from './store.ts';
 // FLEET_DATABASE_URL: the coordinator role (fleet_app on PDS18, e.g. postgresql://fleet_app@/fleet?host=/var/run/postgresql).
 // FLEET_MIGRATION_DATABASE_URL: the owner role (fleet) that applies db/schema.sql on start; defaults to FLEET_DATABASE_URL.
 const database=process.env.FLEET_DATABASE_URL;if(!database)throw Error('FLEET_DATABASE_URL required');

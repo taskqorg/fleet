@@ -8,9 +8,9 @@ import {
   AppShell, TaskListView, StatStrip, DecisionBlock, ProblemRow, FillBar, StateBadge, Num, Totals, AgeChip, ExecTree, Transcript,
   ResultViewer, SettingField, SplitButton, Button, Empty, VirtualList, Icon, Stale, StateCounters, FilterBar,
   ListDetail, NeedsYou, OpsSummary, ListFrame, OutcomeBlock, DetailSection, KvRow, HarnessCounts, type TaskRow,
-} from '../src/index';
-import { NAV } from './nav';
-import { NOW, min, hr, tasks, TREE, transcript, hosts, PROJECTS } from './fixtures';
+} from '../src/index.ts';
+import { NAV } from './nav.ts';
+import { NOW, min, hr, tasks, TREE, transcript, hosts, PROJECTS } from './fixtures.ts';
 import tokens from '../tokens.json';
 
 const ROW = parseInt(tokens.size.row);

@@ -1,7 +1,7 @@
 // Lab examples outside the coordinator (docs/designs/fleet-lab.md, Stage 1).
 //
-//   pnpm exec tsx scripts/lab-examples.ts check FILE…    run each example's script checks with no agent
-//   pnpm exec tsx scripts/lab-examples.ts import FILE…   send the examples to the coordinator as approved examples
+//   node scripts/lab-examples.ts check FILE…    run each example's script checks with no agent
+//   node scripts/lab-examples.ts import FILE…   send the examples to the coordinator as approved examples
 //
 // FILE is a JSON file holding one example or an array of them; "-" reads standard input. check validates each example
 // against the registry, then runs its checks twice in a fresh directory: on inputs plus references (every check must pass)
@@ -17,7 +17,7 @@ import {mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {delimiter,dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {parseExample,useCaseIds,type Example,type ExampleFile} from '../packages/coordinator/lab/examples.js';
+import {parseExample,useCaseIds,type Example,type ExampleFile} from '../packages/coordinator/lab/examples.ts';
 
 export function readExamples(files:string[]):any[]{return files.flatMap(f=>{const v=JSON.parse(f==='-'?readFileSync(0,'utf8'):readFileSync(f,'utf8'));return Array.isArray(v)?v:[v]})}
 

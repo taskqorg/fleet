@@ -8,11 +8,11 @@
 // newer record or list. Changes that arrive while a list's page is loading are asked about once the page has landed.
 import { signal, effect, type Signal } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { op, online, signedOut, OpError } from './api';
-import { subscribe, currentCursor, feedState, type Change } from './feed';
-import { applyMembership, chunks, touched, type Row, type SortKey } from './lists';
-import { save, load, onClear, pruneKeys } from './offline';
-import { listKey, toPageParams, type View } from '../../packages/view-url/view-url';
+import { op, online, signedOut, OpError } from './api.ts';
+import { subscribe, currentCursor, feedState, type Change } from './feed.ts';
+import { applyMembership, chunks, touched, type Row, type SortKey } from './lists.ts';
+import { save, load, onClear, pruneKeys } from './offline.ts';
+import { listKey, toPageParams, type View } from '../../packages/view-url/view-url.ts';
 
 export type Freshness = 'current' | 'updating' | 'offline' | 'signed-out';
 export const freshness = (restored: boolean): Freshness => signedOut.value ? 'signed-out' : !online.value ? 'offline' : restored ? 'updating' : 'current';

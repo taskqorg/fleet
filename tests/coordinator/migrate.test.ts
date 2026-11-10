@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import Database from 'better-sqlite3';import {mkdtempSync} from 'node:fs';import {tmpdir} from 'node:os';
-import {createStore} from '../../packages/coordinator/store.js';import {forward,verify,reverse} from '../../packages/coordinator/migrate-sqlite.js';
+import {createStore} from '../../packages/coordinator/store.ts';import {forward,verify,reverse} from '../../packages/coordinator/migrate-sqlite.ts';
 // Fixture shaped like var/fleet.sqlite: the records table, interleaved kinds, nested JSON, base64 artifacts, unicode, project ids, upserted rows.
 const fixture=(path:string)=>{const db=new Database(path);db.exec('CREATE TABLE records(kind TEXT,id TEXT PRIMARY KEY,data TEXT)');const put=db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE records.kind=excluded.kind');const add=(kind:string,v:any)=>put.run(kind,v.id,JSON.stringify(v));
  add('session',{id:'s1',createdAt:1,projectId:'hello-world',agentConfig:{id:'baseline',model:'gpt-6.1-sol',effort:'low',tools:['a','b']}});

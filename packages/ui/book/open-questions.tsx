@@ -4,9 +4,9 @@ import { useState } from 'preact/hooks';
 import {
   Icon, Button, StateBadge, Num, AgeChip, FillBar, SettingField, NavRail, TooltipLayer, GroupHeader, SplitButton,
   type IconName,
-} from '../src/index';
-import { NAV } from './nav';
-import { NOW, hr, hosts, tasks, type Task } from './fixtures';
+} from '../src/index.ts';
+import { NAV } from './nav.ts';
+import { NOW, hr, hosts, tasks, type Task } from './fixtures.ts';
 
 const T = tasks(8, 9989);
 const PRI = (t: Task) => (t.id % 5 === 0 ? 0 : t.id % 2 ? 1 : 2);

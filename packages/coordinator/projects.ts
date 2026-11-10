@@ -1,4 +1,4 @@
-import {LONG_OPERATIONS,READ_OPERATIONS} from './store.js';
+import {LONG_OPERATIONS,READ_OPERATIONS} from './store.ts';
 import {readFileSync,realpathSync,readdirSync,existsSync} from 'node:fs';
 import {resolve,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';

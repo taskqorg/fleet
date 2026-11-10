@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {createStore} from '../../packages/coordinator/store.js';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {createStore} from '../../packages/coordinator/store.ts';
 const fresh=async()=>{const s=createStore('memory://');await s.migrate();return s};
 test('all() keeps insertion order; updates keep their place; put never changes kind',async()=>{const s=await fresh();
  for(const id of ['c','a','b'])await s.put('x',{id,n:1});await s.put('x',{id:'c',n:2});await s.put('other',{id:'a',stolen:true});

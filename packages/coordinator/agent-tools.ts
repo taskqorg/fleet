@@ -1,14 +1,14 @@
-import {map} from './store.js';
+import {map} from './store.ts';
 // Agent session tools: cross-agent handoff, fork, resume info, ask/reply, checked worker_done,
 // queue/steer for busy sessions, startup reconciliation and proven|unknown stop outcome.
 // Logic ported from T3 Code orchestration-v2 (ProviderSessionTransitionPolicy, ContextHandoffService,
 // ContextHandoffDelivery, ThreadForkService, ProviderTurnControlService, QueuedRunOrder,
 // ProviderRuntimeRecoveryService) and Orca orchestration (agent-resume-argv, worker-resume-session-capture,
 // ask-methods, reply-method, lifecycle-reconciliation, worker-stop). No caps or admission rules are added.
-import {parseView,formatView,viewProblem} from '../view-url/view-url.js';
+import {parseView,formatView,viewProblem} from '../view-url/view-url.ts';
 import {randomUUID} from 'node:crypto';
-import {canonical,readTrustedProfile} from './profiles.js';
-import {forkArgv,keyFor,resumeArgv} from './resume-argv.js';
+import {canonical,readTrustedProfile} from './profiles.ts';
+import {forkArgv,keyFor,resumeArgv} from './resume-argv.ts';
 
 type Store={all:(k:string,filter?:object,omit?:string[])=>Promise<any[]>,get:(id:string,k:string)=>Promise<any>,put:(k:string,v:any)=>Promise<unknown>};
 const fail=(statusCode:number,message:string):never=>{throw Object.assign(Error(message),{statusCode})};

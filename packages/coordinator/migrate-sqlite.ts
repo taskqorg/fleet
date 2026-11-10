@@ -10,7 +10,7 @@ import Database from 'better-sqlite3';
 import {copyFileSync,existsSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
-import {createStore,type Store} from './store.js';
+import {createStore,type Store} from './store.ts';
 
 const canonical=(v:any):any=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
 const digest=(rows:{id:string,data:any}[])=>{const h=createHash('sha256');for(const r of [...rows].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0))h.update(r.id+'\0'+JSON.stringify(canonical(r.data))+'\n');return h.digest('hex')};

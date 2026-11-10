@@ -1,7 +1,7 @@
 // Derived task values (docs/designs/fleet-view-urls-and-list-path.md §3, migration 10): triggers keep task_derived current on
 // every write path, emit task-kind change rows, follow project moves, and the drift check agrees.
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {freshDb} from './pg-test.js';
+import {freshDb} from './pg-test.ts';
 // PGlite by default; with FLEET_TEST_PG the same tests run on PostgreSQL with the PDS18 roles (CI job postgres-roles).
 const fresh=async()=>(await freshDb()).s;
 const derived=async(s:any,id:string)=>{const [r]=await s.query('SELECT project_id,agent,host,started_at,open_questions FROM task_derived WHERE task_id=$1',[id]);

@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {createStore,TYPED_KINDS} from '../../packages/coordinator/store.js';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {createStore,TYPED_KINDS} from '../../packages/coordinator/store.ts';
 // Documents written by the coordinator at main 93c2cc0 (pre-Phase 2) while running its own test suite: 8 databases that together
 // hold every kind migration 6 moves (execution, delegation, pipeline-run, delivery, project-question, question). Large artifact
 // bodies are shortened.

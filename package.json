@@ -3,14 +3,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc && node packages/coordinator/package-assets.mjs && node app/build.mjs",
+    "build": "pnpm run typecheck && node packages/coordinator/build.mjs && node packages/coordinator/package-assets.mjs && node app/build.mjs",
     "start": "node dist/packages/coordinator/server.js",
-    "test": "tsx --test tests/coordinator/*.test.ts tests/ui/*.test.ts",
+    "test": "node --test tests/coordinator/*.test.ts tests/ui/*.test.ts",
     "book": "node packages/ui/scripts/build-book.mjs",
     "check:design": "node packages/ui/scripts/check-design.mjs",
     "app:build": "node app/build.mjs",
     "app:dev": "node --watch-path=app/src --watch-path=packages/ui --watch-path=packages/view-url app/build.mjs",
-    "check:filter": "pnpm run build && tsx tests/ui/filter.check.ts --assert"
+    "check:filter": "pnpm run build && node tests/ui/filter.check.ts --assert",
+    "typecheck": "tsc && tsc -p app && tsc -p packages/ui"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1164.0",
@@ -32,8 +33,10 @@
     "@types/pg": "8.23.1",
     "esbuild": "0.28.2",
     "playwright": "1.56.1",
-    "tsx": "4.20.6",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   },
-  "packageManager": "pnpm@10.34.9"
+  "packageManager": "pnpm@10.34.9",
+  "engines": {
+    "node": ">=22.18"
+  }
 }

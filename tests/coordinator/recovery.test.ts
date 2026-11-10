@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync} from 'node:fs';import {createApp} from '../../packages/coordinator/app.js';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync} from 'node:fs';import {createApp} from '../../packages/coordinator/app.ts';
 test('shared recovery preserves original conflict, authenticates owner and never changes outcome',async()=>{
  const config={database:mkdtempSync('/tmp/fleet-recovery-')+'/db',browserSecret:'browser',machineSecret:'machine',hostId:'mac',publicationHostId:'pds'};let app=createApp(config);
  const post=(url:string,b:any,machine=false)=>app.inject({method:'POST',url,headers:{authorization:'Bearer '+(machine?'machine':'browser')},payload:b});

@@ -2,7 +2,7 @@
 // One LISTEN per process wakes every open stream; each wake is debounced and read in its own short snapshot, so a stream never
 // holds a transaction or a pool connection between wakes. The client resumes with ?cursor=; changes_since is the same read.
 import type {FastifyInstance} from 'fastify';
-import type {Store} from './store.js';
+import type {Store} from './store.ts';
 
 const PING_MS=25_000, DEBOUNCE_MS=50, PRUNE_MS=3_600_000;
 

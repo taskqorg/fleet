@@ -30,7 +30,7 @@ jobs:
       - name: Use-case drift (warning only)
         if: always()
         continue-on-error: true
-        run: pnpm exec tsx scripts/lab-drift.ts
+        run: node scripts/lab-drift.ts
       - name: Install Chromium for the design checks
         if: always()
         run: pnpm exec playwright install --with-deps chromium
@@ -98,7 +98,7 @@ jobs:
       # The executor binary the end-to-end artifact tests run.
       - run: cargo build -p fleet-executor
       # One file at a time: the Postgres-backed tests share the database "fleet" (tests/coordinator/pg-test.ts).
-      - run: pnpm exec tsx --test --test-concurrency=1 tests/coordinator/*.test.ts
+      - run: node --test --test-concurrency=1 tests/coordinator/*.test.ts
         env:
           FLEET_TEST_PG: postgresql://postgres:postgres@localhost:5432
   comment:

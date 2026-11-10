@@ -1,8 +1,8 @@
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {readFileSync} from 'node:fs';
 import pg from 'pg';
-import {executionModel,type Adapter} from './executions.js';
-import {taskModel} from './tasks.js';
+import {executionModel,type Adapter} from './executions.ts';
+import {taskModel} from './tasks.ts';
 
 type Query=(sql:string,params?:any[])=>Promise<{rows:any[]}>;
 export type Mode='read'|'write';

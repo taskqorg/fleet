@@ -1,8 +1,8 @@
 // Converts assetq (Pipe) dataset revisions into Lab examples (docs/designs/fleet-lab.md, Stage 1 item 18; Open Question Q2).
 //
 //   assetq datasets > datasets.json            on a host with the Pipe CLI (owner credential stays there)
-//   pnpm exec tsx scripts/lab-import-assetq.ts datasets.json > examples.json
-//   pnpm exec tsx scripts/lab-examples.ts import examples.json
+//   node scripts/lab-import-assetq.ts datasets.json > examples.json
+//   node scripts/lab-examples.ts import examples.json
 //
 // Input: the GET /v1/datasets reply, an array of {id, version, document: {operation, cases: [{id, text, attachments}]}, sha256}
 // (or one such revision). Each case becomes one synthetic example of use case assetq:datasets. Nothing is lost: the case's
@@ -12,7 +12,7 @@ import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import type {Example} from '../packages/coordinator/lab/examples.js';
+import type {Example} from '../packages/coordinator/lab/examples.ts';
 
 const part=(s:string)=>s.replace(/[^A-Za-z0-9._-]/g,'-');
 // IDs longer than the example limit keep a hash of the full ID, so two long case IDs never collide.

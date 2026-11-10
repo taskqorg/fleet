@@ -1,8 +1,8 @@
 // Stage 0 exit (docs/designs/fleet-lab.md): a trial inserted by SQL fixture is a plain execution with lab artifacts and no task.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createApp} from '../../packages/coordinator/app.js';
-import {attachStores,upload} from './artifact-helpers.js';
+import {createApp} from '../../packages/coordinator/app.ts';
+import {attachStores,upload} from './artifact-helpers.ts';
 
 test('lab trial: experiment row and pipeline_run with experiment_id, lab artifacts, not in Tasks',async()=>{
  const app:any=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac',storeEndpointHosts:['127.0.0.1']});

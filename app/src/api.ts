@@ -9,7 +9,7 @@ if (typeof window !== 'undefined') {
   addEventListener('offline', () => { online.value = false; });
 }
 
-export class OpError extends Error { constructor(message: string, readonly status: number) { super(message); } }
+export class OpError extends Error { readonly status: number; constructor(message: string, status: number) { super(message); this.status = status; } }
 
 export async function op<T = any>(name: string, body: unknown = {}, opts: { signal?: AbortSignal } = {}): Promise<T> {
   let r: Response;

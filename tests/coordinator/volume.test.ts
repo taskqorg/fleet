@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {createApp} from '../../packages/coordinator/app.js';import {volume} from './volume-fixture.js';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {createApp} from '../../packages/coordinator/app.ts';import {volume} from './volume-fixture.ts';
 // Budgets measured on the old SQLite build (1967769) with this fixture on the author's Mac: poll 380 ms, session read 18 ms.
 // Postgres before the fix (PGlite, main 1ddecc1): poll 780 ms and 163 queries, session read 30 ms.
 // 21 queries: 20 reads and writes plus the scope lock statement.

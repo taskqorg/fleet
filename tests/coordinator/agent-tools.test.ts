@@ -1,7 +1,7 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,mkdirSync,writeFileSync} from 'node:fs';import {tmpdir} from 'node:os';
-import {createApp} from '../../packages/coordinator/app.js';
-import {decideTransition} from '../../packages/coordinator/agent-tools.js';
-import {resumeArgv,forkArgv} from '../../packages/coordinator/resume-argv.js';
+import {createApp} from '../../packages/coordinator/app.ts';
+import {decideTransition} from '../../packages/coordinator/agent-tools.ts';
+import {resumeArgv,forkArgv} from '../../packages/coordinator/resume-argv.ts';
 test('agent tools: queue, handoff, fork, resume, ask/reply, worker_done, stop outcome, reconcile (fake native)',async()=>{
  const config={database:mkdtempSync(tmpdir()+'/fleet-agent-')+'/db',browserSecret:'b',machineSecret:'m',hostId:'mac'};let app=createApp(config);
  const call=async(url:string,payload?:any,machine=false)=>(await app.inject({method:payload?'POST':'GET',url,headers:{authorization:'Bearer '+(machine?'m':'b')},payload}));

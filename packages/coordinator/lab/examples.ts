@@ -5,8 +5,8 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {readdirSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
-import type {Store} from '../store.js';
-import type {Artifacts} from '../artifacts.js';
+import type {Store} from '../store.ts';
+import type {Artifacts} from '../artifacts.ts';
 const fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};
 
 export type ExampleFile={path:string,text:string};

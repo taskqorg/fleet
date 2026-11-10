@@ -1,5 +1,5 @@
-import type { NavItem } from '../src/controls';
-import { workspaces } from '../src/registry';
+import type { NavItem } from '../src/controls.tsx';
+import { workspaces } from '../src/registry.ts';
 
 // The book's nav: every registry workspace, with demo count badges.
 const COUNTS: Record<string, NavItem['count']> = {

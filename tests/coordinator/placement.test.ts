@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';import {mkdtempSync,mkdirSync,writeFileSync} from 'node:fs';import {tmpdir} from 'node:os';
-import {createApp} from '../../packages/coordinator/app.js';import {fakeStore} from './s3-fake.js';import {upload} from './artifact-helpers.js';
+import {createApp} from '../../packages/coordinator/app.ts';import {fakeStore} from './s3-fake.ts';import {upload} from './artifact-helpers.ts';
 const sha=(b:Buffer)=>createHash('sha256').update(b).digest('hex');
 // CUJ 5 shape: a Mac and a Windows host, each with its own store; projects keep artifacts on [windows] or on [windows, mac].
 async function setup(){const dir=mkdtempSync(tmpdir()+'/fleet-placement-');

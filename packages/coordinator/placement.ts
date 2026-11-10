@@ -5,9 +5,9 @@
 import {createHash} from 'node:crypto';
 import {CreateMultipartUploadCommand,DeleteObjectCommand,GetObjectCommand,HeadObjectCommand} from '@aws-sdk/client-s3';
 import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
-import type {Store} from './store.js';
-import type {Stores} from './stores.js';
-import type {Artifacts} from './artifacts.js';
+import type {Store} from './store.ts';
+import type {Stores} from './stores.ts';
+import type {Artifacts} from './artifacts.ts';
 const fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};
 export type Rule={scope:'lab'|'prod',older_than_days:number,action:'move'|'delete',to?:string[]};
 export const ruleHash=(r:Rule)=>createHash('sha256').update(JSON.stringify({scope:r.scope,older_than_days:r.older_than_days,action:r.action,to:r.to??null})).digest('hex');

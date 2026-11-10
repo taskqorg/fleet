@@ -5,13 +5,13 @@ import {
   ListDetail, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, VirtualList, StateBadge, HarnessMark, AgeChip, Button,
   SplitButton, RowCheck, Totals, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   type TreeNode, type Harness, type StateOf,
-} from '../../../packages/ui/src/index';
+} from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
-import { op, online } from '../api';
-import { useList, useDoc } from '../store';
-import { listKey, type View } from '../../../packages/view-url/view-url';
-import { useUrlView, useSearchBox } from '../url';
-import { usePins, useViews } from '../prefs';
+import { op, online } from '../api.ts';
+import { useList, useDoc } from '../store.ts';
+import { listKey, type View } from '../../../packages/view-url/view-url.ts';
+import { useUrlView, useSearchBox } from '../url.ts';
+import { usePins, useViews } from '../prefs.ts';
 
 const ROW = parseInt(tokens.size.row);
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;

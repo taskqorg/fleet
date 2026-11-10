@@ -1,6 +1,6 @@
 // Per-person conveniences kept in the browser until people exist (Phase 6): pinned rows, saved views, pinned sections.
 import { useState } from 'preact/hooks';
-import type { View } from '../../packages/view-url/view-url';
+import type { View } from '../../packages/view-url/view-url.ts';
 
 const read = <T>(k: string, d: T): T => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
 const write = (k: string, v: unknown) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } };

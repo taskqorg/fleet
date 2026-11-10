@@ -1,7 +1,7 @@
 // A coordinator restart re-runs the delivery advance on start (onReady). Records that did not change must not be written:
 // before this fix every restart set updated_at on every delivery task, so the operator list showed them as just updated.
 import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync} from 'node:fs';import {tmpdir} from 'node:os';
-import {createApp} from '../../packages/coordinator/app.js';
+import {createApp} from '../../packages/coordinator/app.ts';
 
 test('restarting the coordinator leaves unchanged delivery tasks untouched (updated_at, change rows)',async()=>{
  const database=mkdtempSync(tmpdir()+'/fleet-restart-')+'/db',config={database,browserSecret:'b',machineSecret:'m',hostId:'mac'};

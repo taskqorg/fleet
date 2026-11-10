@@ -2,7 +2,7 @@
 // the moment of the change, never from a value captured earlier (a debounced search must not undo a click made meanwhile).
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation, useSearch } from 'wouter-preact';
-import { parseView, formatView, type View, type ViewName } from '../../packages/view-url/view-url';
+import { parseView, formatView, type View, type ViewName } from '../../packages/view-url/view-url.ts';
 
 /** The URL after applying patch to the view in current (path and query). Pure, for the hooks below and tests. */
 export const nextUrl = (current: string, name: ViewName, patch: Partial<View>) => formatView({ ...(parseView(current) ?? { view: name }), ...patch });

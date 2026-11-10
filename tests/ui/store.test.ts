@@ -22,7 +22,7 @@ const deferred = () => { let ok!: (v: any) => void; const p = new Promise(r => o
 
 test('review #33-1: paging uses the shown list\'s own params and waits while that list is loading', async () => {
   await clearAll();
-  const A = { view: 'tasks', state: ['failed'] } as const, B = { view: 'tasks', state: ['queued'] } as const;
+  const A = { view: 'tasks' as const, state: ['failed'] }, B = { view: 'tasks' as const, state: ['queued'] };
   answer = async (_n, b) => b.after ? page([row('t9')]) : page([row('t1')], ['1', -1, 't1']);
   await loadList('tasks', 'A', A);
   const slow = deferred(); answer = async (_n, b) => b.filter.state[0] === 'queued' ? slow.p : page([row('t2')]);

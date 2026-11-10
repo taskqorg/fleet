@@ -2,9 +2,9 @@
 // Staleness is decided on the client from lastSeenAt (no write happens when a host stops polling), re-evaluated every 5 s.
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { ListDetail, StatStrip, StateBadge, HarnessCounts, AgeChip, Num, FillBar, DetailSection, KvRow, Empty, OfflineMarker, Button } from '../../../packages/ui/src/index';
-import { op } from '../api';
-import { useDoc } from '../store';
+import { ListDetail, StatStrip, StateBadge, HarnessCounts, AgeChip, Num, FillBar, DetailSection, KvRow, Empty, OfflineMarker, Button } from '../../../packages/ui/src/index.ts';
+import { op } from '../api.ts';
+import { useDoc } from '../store.ts';
 
 const useTick = (msTick: number) => { const [, set] = useState(0); useEffect(() => { const t = setInterval(() => set(n => n + 1), msTick); return () => clearInterval(t); }, [msTick]); };
 

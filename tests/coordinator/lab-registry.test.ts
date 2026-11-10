@@ -5,12 +5,12 @@ import {execFileSync} from 'node:child_process';
 import {existsSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {section,hash,check,run,loadRegistry} from '../../scripts/lab-drift.js';
-import {checkExample,readExamples,runChecks,importExamples} from '../../scripts/lab-examples.js';
-import {convert} from '../../scripts/lab-import-assetq.js';
-import {useCaseIds} from '../../packages/coordinator/lab/examples.js';
-import {createApp} from '../../packages/coordinator/app.js';
-import {attachStores} from './artifact-helpers.js';
+import {section,hash,check,run,loadRegistry} from '../../scripts/lab-drift.ts';
+import {checkExample,readExamples,runChecks,importExamples} from '../../scripts/lab-examples.ts';
+import {convert} from '../../scripts/lab-import-assetq.ts';
+import {useCaseIds} from '../../packages/coordinator/lab/examples.ts';
+import {createApp} from '../../packages/coordinator/app.ts';
+import {attachStores} from './artifact-helpers.ts';
 
 const doc='# Cases\n\n<a id="uc1"></a>\n\n## UC1. First\n\nText one.\n\n### Detail\n\nMore.\n\n## UC-02. Second case\n\nText two.\n\n## Rows\n\n| ID | Goal |\n|---|---|\n| L01 PILOTQ-R1 | Row one |\n| L010 | Not L01 |\n';
 

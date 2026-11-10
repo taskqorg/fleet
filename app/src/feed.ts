@@ -1,7 +1,7 @@
 // Live change feed client (D1): SSE with ?cursor=, manual reconnect with backoff, changes_since catch-up, polling fallback after
 // three failed connects, resync. Changes are batched per animation frame and handed to every subscriber at once.
 import { signal } from '@preact/signals';
-import { op, online } from './api';
+import { op, online } from './api.ts';
 
 export type Change = { seq: number; kind: string; id: string; taskId: string | null; sessionId: string | null; hostId: string | null; op: string };
 type Sub = { changes: (c: Change[]) => void; resync: () => void };

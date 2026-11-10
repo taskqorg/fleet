@@ -1,6 +1,6 @@
 // Synthetic fixture data shared by the book and the page mockups. Shapes follow the inventory, values are invented.
-import { states, type StateOf, type Harness, type Stage } from '../src/registry';
-import type { TreeNode, Entry } from '../src/controls';
+import { states, type StateOf, type Harness, type Stage } from '../src/registry.ts';
+import type { TreeNode, Entry } from '../src/controls.tsx';
 
 export const NOW = Date.now();
 export const min = 60e3, hr = 60 * min;
