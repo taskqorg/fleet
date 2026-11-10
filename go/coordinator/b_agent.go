@@ -1260,6 +1260,11 @@ func sessionStart(q *Request, b doc) (doc, error) {
 		if taskID, err = taskFor(q, b["taskId"], pid, true); err != nil {
 			return nil, err
 		}
+		if held, err := has(q, "SELECT 1 FROM task WHERE id=$1 AND pause_reason='held'", taskID); err != nil {
+			return nil, err
+		} else if held && q.agent != "" { // Held waits for the person (fleet-pm-agent.md §4)
+			return nil, fail(409, "Task is Held: release it first")
+		}
 	}
 	s := doc{"id": uuid(), "createdAt": now(), "projectId": pid, "agentConfig": profile, "startRequest": key}
 	for k, v := range map[string]string{"taskId": taskID, "directedBy": directedBy, "role": gs(b, "role"), "account": account, "setup": gs(b, "setup"), "hostId": gs(b, "hostId"), "createdBySessionId": gs(b, "callerSessionId"), "createdByExecutionId": gs(b, "callerExecutionId")} {
@@ -1445,6 +1450,9 @@ func init() {
 					f = doc{}
 				}
 				f["projectId"], a["filter"] = focus, f // focus filters reads without a project (§2)
+			}
+			if name == "task_create" && a["projectId"] == nil && len(focus) == 1 {
+				a["projectId"] = focus[0] // one focus project is the default (§2)
 			}
 			args := json.RawMessage(js(a))
 			r, err := q.app.runOp(q, name, args)

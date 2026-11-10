@@ -13,6 +13,11 @@ import (
 
 var taskStates = []string{"queued", "in_progress", "waiting", "paused", "completed", "failed", "cancelled"}
 
+// listStates: the states of lists and counts; "held" is a paused task with pause_reason 'held' (fleet-pm-agent.md §4).
+var listStates = append([]string{"held"}, taskStates...)
+
+const stateSQL = "(CASE WHEN t.state='paused' AND t.pause_reason='held' THEN 'held' ELSE t.state::text END)"
+
 var openTask = map[string]bool{"queued": true, "in_progress": true, "waiting": true, "paused": true}
 
 type taskRule struct {
@@ -28,6 +33,8 @@ var taskTransitions = map[string]taskRule{
 	"rejected":        {[]string{"in_progress"}, "in_progress"},
 	"operator_fail":   {[]string{"in_progress", "waiting"}, "failed"},
 	"pause":           {[]string{"queued", "in_progress", "waiting"}, "paused"},
+	"hold":            {[]string{"queued"}, "paused"},
+	"release":         {[]string{"paused"}, "previous"},
 	"resume":          {[]string{"paused"}, "previous"},
 	"cancel":          {[]string{"queued", "in_progress", "waiting", "paused"}, "cancelled"},
 }
@@ -94,6 +101,9 @@ func taskTransition(q *Request, id, trigger, reason string) (string, error) {
 			return "", err
 		}
 	}
+	if trigger == "release" && gs(t, "pause_reason") != "held" {
+		return "", fail(409, "Paused by a person: resume it")
+	}
 	to := rule.to
 	if to == "previous" {
 		to = gs(t, "state_before_pause")
@@ -107,10 +117,14 @@ func taskTransition(q *Request, id, trigger, reason string) (string, error) {
 		}
 		wr = nilIf(reason)
 	}
-	if trigger == "pause" {
+	var pauseReason any
+	if trigger == "pause" || trigger == "hold" {
 		before = state
 	}
-	return to, exec(q, "UPDATE task SET state=$2,wait_reason=$3,state_before_pause=$4,updated_at=now() WHERE id=$1", id, to, wr, before)
+	if trigger == "hold" {
+		pauseReason = "held"
+	}
+	return to, exec(q, "UPDATE task SET state=$2,wait_reason=$3,state_before_pause=$4,pause_reason=$5,updated_at=now() WHERE id=$1", id, to, wr, before, pauseReason)
 }
 
 // settleTask moves an open task toward target through the transitions whose guards hold now.
@@ -338,8 +352,9 @@ func createTask(q *Request, v doc) (string, error) {
 	if cr == nil {
 		cr = doc{}
 	}
-	if err := exec(q, "INSERT INTO task(id,project_id,title,expected_outcome,completion_requirements,result_destination,created_by,data) VALUES($1,$2,$3,$4,$5,$6,$7,'{}')",
-		id, v["projectId"], title, v["expectedOutcome"], js(cr), v["resultDestination"], v["createdBy"]); err != nil {
+	held := v["held"] == true // a Held task: paused before its first queue (fleet-pm-agent.md §4)
+	if err := exec(q, "INSERT INTO task(id,project_id,title,expected_outcome,completion_requirements,result_destination,created_by,data,state,state_before_pause,pause_reason) VALUES($1,$2,$3,$4,$5,$6,$7,'{}',CASE WHEN $8 THEN 'paused' ELSE 'queued' END::task_state,CASE WHEN $8 THEN 'queued' END::task_state,CASE WHEN $8 THEN 'held' END)",
+		id, v["projectId"], title, v["expectedOutcome"], js(cr), v["resultDestination"], v["createdBy"], held); err != nil {
 		return "", err
 	}
 	if d := gs(v, "directedBy"); d != "" {
@@ -363,7 +378,7 @@ func createTask(q *Request, v doc) (string, error) {
 
 const taskViewCols = `id,project_id AS "projectId",title,expected_outcome AS "expectedOutcome",state,wait_reason AS "waitReason",priority,completion_requirements AS "completionRequirements",
  result_destination AS "resultDestination",delivery_method AS "deliveryMethod",accepted_by AS "acceptedBy",accepted_at AS "acceptedAt",accepted_artifact_ids AS "acceptedArtifactIds",
- created_by AS "createdBy",directed_by AS "directedBy",requested_by AS "requestedBy",taken_from AS "takenFrom",created_at AS "createdAt",updated_at AS "updatedAt",legacy_kind AS "legacyKind",legacy_id AS "legacyId"`
+ created_by AS "createdBy",directed_by AS "directedBy",requested_by AS "requestedBy",taken_from AS "takenFrom",created_at AS "createdAt",updated_at AS "updatedAt",legacy_kind AS "legacyKind",legacy_id AS "legacyId",pause_reason AS "pauseReason"`
 
 const executionCols = `id,kind,state,observation,last_seen_at AS "lastSeenAt",project_id AS "projectId",task_id AS "taskId",experiment_id AS "experimentId",variant,parent_execution_id AS "parentExecutionId",
  session_id AS "sessionId",account_id AS "accountId",host_id AS "hostId",environment_id AS "environmentId",harness,harness_version AS "harnessVersion",model,config_ref AS "configRef",problem,
@@ -418,10 +433,10 @@ var taskGroups = map[string]taskGroup{
 	"project":  {"coalesce(t.project_id,'~')", false},
 	"agent":    {"coalesce(d.agent,'~')", true},
 	"host":     {"coalesce(d.host,'~')", true},
-	"state":    {"(CASE t.state WHEN 'waiting' THEN '1' WHEN 'failed' THEN '2' WHEN 'in_progress' THEN '3' WHEN 'queued' THEN '4' WHEN 'paused' THEN '5' WHEN 'completed' THEN '6' ELSE '7' END)", false},
+	"state":    {"(CASE " + stateSQL + " WHEN 'waiting' THEN '1' WHEN 'failed' THEN '2' WHEN 'in_progress' THEN '3' WHEN 'queued' THEN '4' WHEN 'held' THEN '5' WHEN 'paused' THEN '6' WHEN 'completed' THEN '7' ELSE '8' END)", false},
 }
 
-var taskLabels = map[string]string{"priority": "t.priority", "state": "t.state::text", "project": "t.project_id", "agent": "d.agent", "host": "d.host"}
+var taskLabels = map[string]string{"priority": "t.priority", "state": stateSQL, "project": "t.project_id", "agent": "d.agent", "host": "d.host"}
 
 func groupOf(g any) (string, taskGroup, error) {
 	if g == nil {
@@ -473,13 +488,13 @@ func taskWhere(f doc, p *[]any, withState bool) ([]string, error) {
 		ss := []string{}
 		for _, x := range st {
 			v, ok := x.(string)
-			if !ok || !slices.Contains(taskStates, v) {
+			if !ok || !slices.Contains(listStates, v) {
 				return nil, fail(400, "Invalid state")
 			}
 			ss = append(ss, v)
 		}
 		*p = append(*p, ss)
-		c = append(c, fmt.Sprintf("t.state::text=ANY($%d)", len(*p)))
+		c = append(c, fmt.Sprintf(stateSQL+"=ANY($%d)", len(*p)))
 	}
 	if s, ok := f["search"].(string); ok && strings.TrimSpace(s) != "" {
 		*p = append(*p, likePattern(s))
@@ -488,10 +503,10 @@ func taskWhere(f doc, p *[]any, withState bool) ([]string, error) {
 	return c, nil
 }
 
-const taskListCols = "t.id,t.project_id,t.title,t.state,t.wait_reason,t.priority,t.created_at,t.updated_at,t.seq,d.agent,d.host,d.started_at,coalesce(d.open_questions,0) AS open_questions"
+const taskListCols = "t.id,t.project_id,t.title,t.state,t.pause_reason,t.wait_reason,t.priority,t.created_at,t.updated_at,t.seq,d.agent,d.host,d.started_at,coalesce(d.open_questions,0) AS open_questions"
 
 func taskListRow(x doc) doc {
-	return doc{"id": x["id"], "projectId": x["project_id"], "title": x["title"], "state": x["state"], "waitReason": x["wait_reason"], "priority": x["priority"], "agent": x["agent"], "host": x["host"],
+	return doc{"id": x["id"], "projectId": x["project_id"], "title": x["title"], "state": x["state"], "pauseReason": x["pause_reason"], "waitReason": x["wait_reason"], "priority": x["priority"], "agent": x["agent"], "host": x["host"],
 		"startedAt": x["started_at"], "createdAt": x["created_at"], "updatedAt": x["updated_at"], "openQuestions": x["open_questions"], "sortKey": []any{x["g"], -num(x["seq"]), x["id"]}}
 }
 
@@ -531,8 +546,8 @@ func taskSummary(q *Request, f doc, group any, groupCounts bool) (doc, []doc, er
 	if err != nil {
 		return nil, nil, err
 	}
-	byState := zeroCounts(taskStates)
-	rs, err := rowsOf(q, "SELECT t.state::text AS state,count(*) AS n FROM task t"+where(cc)+" GROUP BY 1", cp...)
+	byState := zeroCounts(listStates)
+	rs, err := rowsOf(q, "SELECT "+stateSQL+" AS state,count(*) AS n FROM task t"+where(cc)+" GROUP BY 1", cp...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -561,9 +576,9 @@ func taskSummary(q *Request, f doc, group any, groupCounts bool) (doc, []doc, er
 	}
 	by := map[string]doc{}
 	for _, g := range groups {
-		by[gs(g, "key")] = zeroCounts(taskStates)
+		by[gs(g, "key")] = zeroCounts(listStates)
 	}
-	rs, err = rowsOf(q, "SELECT "+G.sql+" AS g,t.state::text AS state,count(*) AS n "+from+where(cc)+" GROUP BY 1,2", cp...)
+	rs, err = rowsOf(q, "SELECT "+G.sql+" AS g,"+stateSQL+" AS state,count(*) AS n "+from+where(cc)+" GROUP BY 1,2", cp...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -686,7 +701,7 @@ func init() {
 			}
 		}
 		id, err := createTask(q, doc{"projectId": b["projectId"], "title": title, "expectedOutcome": b["expectedOutcome"], "priority": b["priority"], "completionRequirements": b["completionRequirements"],
-			"resultDestination": b["resultDestination"], "createdBy": actor(q, "operator"), "directedBy": director(q), "dependsOn": deps})
+			"resultDestination": b["resultDestination"], "createdBy": actor(q, "operator"), "directedBy": director(q), "dependsOn": deps, "held": q.agent != "" || b["held"] == true})
 		if err != nil {
 			return nil, err
 		}
@@ -700,6 +715,9 @@ func init() {
 		}
 		if _, err := taskRow(q, id); err != nil {
 			return nil, err
+		}
+		if _, ok := b["action"]; ok && q.agent != "" {
+			return nil, fail(400, "Use task_hold, task_release or task_cancel")
 		}
 		if a, ok := b["action"]; ok {
 			trig := map[string]string{"pause": "pause", "resume": "resume", "cancel": "cancel", "fail": "operator_fail"}[fmt.Sprint(a)]
@@ -728,6 +746,18 @@ func init() {
 		}
 		return taskGet(q, id)
 	})
+	for name, trig := range map[string]string{"task_hold": "hold", "task_release": "release", "task_cancel": "cancel"} {
+		bop(name, false, func(q *Request) (any, error) {
+			id, err := strArg(body(q), "taskId", "taskId", 200)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := taskTransition(q, id, trig, ""); err != nil {
+				return nil, err
+			}
+			return taskGet(q, id)
+		})
+	}
 	bop("task_get", true, func(q *Request) (any, error) {
 		id, err := strArg(body(q), "taskId", "taskId", 200)
 		if err != nil {
@@ -778,7 +808,7 @@ func init() {
 		}
 		if v := gs(b, "state"); v != "" {
 			p = append(p, v)
-			c = append(c, fmt.Sprintf("t.state::text=$%d", len(p)))
+			c = append(c, fmt.Sprintf(stateSQL+"=$%d", len(p)))
 		}
 		rs, err := rowsOf(q, "SELECT t.*,v.execution_count,v.executions_by_state,v.open_questions FROM task t JOIN task_view v ON v.task_id=t.id"+where(c)+" ORDER BY t.seq", p...)
 		if err != nil {
@@ -857,7 +887,7 @@ func taskRecord(t doc) doc {
 	for col, key := range map[string]string{"id": "id", "project_id": "projectId", "title": "title", "expected_outcome": "expectedOutcome", "state": "state", "wait_reason": "waitReason", "priority": "priority",
 		"completion_requirements": "completionRequirements", "result_destination": "resultDestination", "delivery_method": "deliveryMethod", "accepted_by": "acceptedBy", "accepted_at": "acceptedAt",
 		"accepted_artifact_ids": "acceptedArtifactIds", "created_by": "createdBy", "directed_by": "directedBy", "requested_by": "requestedBy", "taken_from": "takenFrom", "created_at": "createdAt",
-		"updated_at": "updatedAt", "legacy_kind": "legacyKind", "legacy_id": "legacyId"} {
+		"updated_at": "updatedAt", "legacy_kind": "legacyKind", "legacy_id": "legacyId", "pause_reason": "pauseReason"} {
 		v[key] = t[col]
 	}
 	return v
