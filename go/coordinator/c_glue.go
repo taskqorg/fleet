@@ -220,17 +220,9 @@ func init() {
 			}
 			web = astr(v)
 		}
-		skills := []any{}
-		for _, x := range cList(profile["skills"]) {
-			id, _ := x.(string)
-			if !skillID.MatchString(id) {
-				return "", fail(400, "Invalid skill")
-			}
-			text, err := os.ReadFile(filepath.Join(cConfigDir(), "skills", id, "SKILL.md"))
-			if err != nil {
-				return "", fail(400, "Unknown skill "+id)
-			}
-			skills = append(skills, doc{"id": id, "text": string(text)})
+		skills, err := profileSkills(profile)
+		if err != nil {
+			return "", err
 		}
 		s := doc{"id": uuid(), "createdAt": now(), "agentConfig": profile, "pipelineRunId": run["id"]}
 		if overrides["account"] != nil {
@@ -264,4 +256,21 @@ func cCtx(q *Request) context.Context {
 		return q.ctx()
 	}
 	return context.WithValue(q.ctx(), txKey{}, q.tx)
+}
+
+// profileSkills: the SKILL.md texts of a profile's skills (config/skills/<id>/SKILL.md), as an execution payload carries them.
+func profileSkills(profile doc) ([]any, error) {
+	skills := []any{}
+	for _, x := range cList(profile["skills"]) {
+		id, _ := x.(string)
+		if !skillID.MatchString(id) {
+			return nil, fail(400, "Invalid skill")
+		}
+		text, err := os.ReadFile(filepath.Join(cConfigDir(), "skills", id, "SKILL.md"))
+		if err != nil {
+			return nil, fail(400, "Unknown skill "+id)
+		}
+		skills = append(skills, doc{"id": id, "text": string(text)})
+	}
+	return skills, nil
 }

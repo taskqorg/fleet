@@ -171,3 +171,14 @@ test('PM7 watch: foreign changes in focus wake the PM with one message, its own 
   await sleep(1000);
   assert.deepEqual((await queuedTexts(worker.sessionId)).filter(t => /watch timer/.test(t)).length, 1, 'the stored timer wakes an idle watch once per queued wake');
 });
+
+test('PM8 profile: a PM session carries its skills and sees the task tools (risk: the PM profile loses its instructions outside pipelines)', {timeout: 30_000}, async () => {
+  await hostOf(OWNER);
+  const s = ok(await op('session_start', {requestId: randomUUID(), text: 'pm turn', projectId: PROJECT, role: 'pm'}));
+  const {commands} = ok(await hostCall(OWNER, '/api/hosts/poll', poll));
+  const c = commands.find((x: any) => x.executionId === s.executionId && x.kind === 'start');
+  assert.deepEqual(JSON.stringify(c).match(/"id":"pm-(tasks|watch|fleet)"/g)?.length, 3, 'three skills in the start command');
+  const pm = await agent(OWNER, {projectId: PROJECT, role: 'pm'});
+  const names = await pm.list();
+  for (const n of ['task_create', 'task_release', 'watch_set', 'focus_set', 'people_set', 'setting_changes']) assert.ok(names.includes(n), n);
+});
