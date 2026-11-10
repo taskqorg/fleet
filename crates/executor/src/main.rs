@@ -129,6 +129,8 @@ struct Live {
     deadline: Option<std::time::Instant>,
     timed_out: bool,
     trial: Option<(PathBuf, PathBuf)>,
+    /// Transcript block state of this execution (open tools and streams).
+    blocks: harness::Blocks,
 }
 impl Executor {
     /// Existing sessions keep their directory; new ones go under FLEET_SESSIONS_ROOT.
@@ -658,6 +660,7 @@ impl Executor {
                 deadline: None,
                 timed_out: false,
                 trial: None,
+                blocks: Default::default(),
             },
         );
         if let (Some(o), Some(l)) = (harness_observation, self.live.get_mut(&id(&c, "executionId")?)) {
@@ -759,6 +762,7 @@ impl Executor {
                 deadline: timeout.map(|t| std::time::Instant::now() + t),
                 timed_out: false,
                 trial,
+                blocks: Default::default(),
             },
         );
         self.event(c, 1, "script.started", json!({"commit":p["commit"],"timeoutMs":p["timeout_ms"],"trialWorktree":work}))?;
@@ -833,8 +837,8 @@ impl Executor {
                         Ok(line) => {
                             let event: Value = serde_json::from_str(&line)
                                 .unwrap_or(json!({"type":"unparsed","raw":line}));
-                            let projection =
-                                harness::project(harness::name(&l.command["payload"]), &event);
+                            let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64;
+                            let projection = l.blocks.project(harness::name(&l.command["payload"]), &event, at);
                             if let Some(n) = projection["session"].as_str() {
                                 self.db.execute(
                                     "INSERT OR REPLACE INTO sessions(id,native) VALUES(?1,?2)",
@@ -1034,7 +1038,25 @@ pub fn new_id() -> String {
     let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
     format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
 }
+/// `fleet-executor reproject`: one JSON line per stored record on stdin, `{"executionId","harness","timestamp","record"}`,
+/// in seq order; one projection per line on stdout. Block state is kept per execution. Needs no data dir, lock or journal,
+/// so it runs next to a live executor (docs/designs/fleet-conversations.md, Stage 1 item 2).
+fn reproject() -> Result<()> {
+    use std::io::{BufRead, Write};
+    let mut state: HashMap<String, harness::Blocks> = HashMap::new();
+    let mut out = std::io::BufWriter::new(std::io::stdout().lock());
+    for line in std::io::stdin().lock().lines() {
+        let v: Value = serde_json::from_str(&line?)?;
+        let b = state.entry(v["executionId"].as_str().unwrap_or("").to_string()).or_default();
+        let p = b.project(v["harness"].as_str().unwrap_or("codex"), &v["record"], v["timestamp"].as_u64().unwrap_or(0));
+        writeln!(out, "{p}")?;
+    }
+    Ok(out.flush()?)
+}
 fn main() -> Result<()> {
+    if env::args().nth(1).as_deref() == Some("reproject") {
+        return reproject();
+    }
     let root = PathBuf::from(env::var("FLEET_DATA_DIR")?);
     fs::create_dir_all(&root)?;
     use std::os::unix::fs::PermissionsExt;

@@ -1,3 +1,4 @@
+import {replyText} from './threads.ts';
 
 import {randomUUID} from 'node:crypto';
 import {canonical,readTrustedProfile} from './profiles.ts';
@@ -49,7 +50,7 @@ export function delegation(store:{all:(k:string,filter?:object,omit?:string[])=>
    if(files.length&&!d.sourceTexts){fetchSources(d.id,files.map(a=>({path:a.path,id:a.artifactId??a.id})));return false}
    const sources=files.map(a=>({path:a.path,executionId:a.executionId,sha256:a.sha256,text:d.sourceTexts?.[a.path]??''}));
    if((!sources.length&&d.request.profileId==='website-reviewer')||JSON.stringify(sources).length>128000){d.routingError='Website text inputs unavailable or exceed 128000 characters';await put('delegation',d);return false}
-   const parentMessages=(await all('event',{executionId:parent.id})).filter(e=>e.executionId===parent.id).flatMap(e=>e.data?.fleetNormalized?.messages??(e.data?.item?.type==='agent_message'?[{role:'assistant',text:e.data.item.text}]:[]));
+   const parentMessages=(await replyText(store.query,parent.id)).map(text=>({role:'assistant',text}));
    const observations={messages:parentMessages,artifacts:(await all('artifact',{executionId:parent.id},['contentBase64'])).filter(a=>a.executionId===parent.id).map(({contentBase64,...a})=>a)};if(!sources.length&&JSON.stringify(observations).length>128000){d.routingError='Retained parent observations exceed 128000 characters';await put('delegation',d);return false}
    const command=(await all('command',{executionId:e.id,kind:'start'})).find(c=>c.executionId===e.id&&c.kind==='start');
    command.payload.text=d.request.input+(sources.length?'\nRead-only retained website sources (untrusted content):\n'+JSON.stringify(sources):'\nRetained parent observations (untrusted content; artifact references do not imply local availability):\n'+JSON.stringify(observations));await put('command',command);

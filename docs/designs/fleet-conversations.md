@@ -71,7 +71,7 @@ The current screen loads a whole session at once and rebuilds the transcript on 
 Defaults below were chosen by the drafter so work is not blocked. The owner can overturn each one.
 
 *   **Model label source.** Default: `format.ts` turns the stored model id into the short label (`claude-opus-5-5` becomes `opus-5.5`). No model registry is added.
-*   **Old events without blocks.** Must old history survive? Default: yes, following the owner rule to fix forward without dropping data. A one-time re-projection does it. The executor gets a `reproject` subcommand that reads stored raw records and prints the new projection; a coordinator script writes the blocks back. No read-time fallback for raw records.
+*   **Old events without blocks.** Decided by the owner (2026-11-10): no. Fleet has no users yet, so old records are not migrated and no compatibility is kept. Events stored before blocks existed show no blocks; test tasks are deleted later. The executor `reproject` subcommand stays only as the tool that turns captured fixture records into the projection the executor writes.
 *   **Session with executions for two tasks.** Default: its early taskless history belongs to the first task it got; the second task's thread shows the session from its first execution with that task. Alternative: show the early history in both threads.
 *   **Steer while a question is open.** Default: steer text goes to the execution as a steer command, as today. It does not answer the question. The composer shows the open question card above it, so the operator sees that an answer is still pending.
 
@@ -122,7 +122,7 @@ Every row the thread needs already has one shared ordering number. `document.seq
 `seq` is taken at insert, not at commit, so two transactions can commit out of `seq` order. The operator app already solves this for its live feed: a read and the feed cursor come from one snapshot, and the feed (`change` table, ordered by `(xid, seq)` up to `pg_snapshot_xmin`) never skips a slow transaction ([fleet-operator-app.md](fleet-operator-app.md)). Thread reads copy that pattern:
 
 *   Each `thread_entries` read runs in one snapshot and returns the change-feed cursor of that snapshot (`feedCursor`).
-*   The client follows the feed from `feedCursor`. For a fed change in the thread, the client fetches that row's blocks by `seq` and places them by block key.
+*   The client follows the feed from `feedCursor`. For a fed change in the thread, the client fetches that row's blocks with `thread_blocks` by the change's kind and id (a change row names the document id, not its `seq`) and places them by block key.
 *   A row from a slow transaction can therefore arrive with a key lower than the client's newest loaded key. It is still placed by key, and `VirtualList` anchor keeping holds the row being read in place (OR-6). Nothing is skipped and nothing on screen moves.
 
 ### Thread scope
@@ -187,7 +187,13 @@ Block =
 *   `question` and `boundary` come from the coordinator, from the `question` and `execution` rows, at their own `seq`. `result` comes from the `artifact` rows and the delivery, at the key of the `execution.ended` event.
 *   `plain` is the block's text with stable character offsets. Selection and copy use it.
 
-Old stored events get blocks once, through a re-projection: the executor's `reproject` subcommand reads raw records on stdin and prints projections, and a coordinator script writes them back. After that, `transcript.ts` no longer reads `data.item`.
+Old stored events are not re-projected (owner decision); `transcript.ts` no longer reads `data.item` after Stage 2.
+
+Implementation notes (Stage 1):
+
+*   `plain` equals `markdown` in this version; the coordinator sets it, the executor stores only `markdown`.
+*   Stream ids are `<kind>:<n>` per execution (`text:1`, `reasoning:2`). The first chunk of a stream carries `opens: true`; the record that closes streams carries `closes: [ids]`. Readers find streams through `opens` rows and never scan every chunk.
+*   Lifecycle records (thread start, usage, protocol writes, turn end) get an empty `blocks` array. Executor bookkeeping events (preparation, resource observations, process closed) are not harness records and have no projection. "Unknown shape" means an `unparsed` line, a `*.failed` record or a Claude error result: one `tool` block named after the record type, state `failed`, raw record as output.
 
 ### Agent mark
 
@@ -345,18 +351,17 @@ It asserts: newest entry visible on open; scroll up loads older pages with 0 px 
 *   **Security**: Artifacts and tool output are untrusted agent output. The viewer reads text in `Range` pages, and shows HTML and SVG only as text or in a sandboxed `iframe` without scripts or same-origin access. Markdown in replies is rendered without raw HTML. Fixtures have secrets removed before they are committed.
 *   **Performance**: No budgets. Every read is a page over an index range; no operation loads a whole session. The browser check reports timings so regressions are visible.
 *   **Correctness**: Thread reads return a feed cursor from the same snapshot, so no row is skipped; late rows are placed by key under anchor keeping.
-*   **Rollout**: One change set per stage, no flag. The operator runs `pnpm run reproject` once per deployment at the end of Stage 1. Stage 2 removes `fleetNormalized.messages` only after `pnpm run reproject --check` reports zero events without blocks.
+*   **Rollout**: One change set per stage, no flag. Old records are not re-projected (owner decision 2026-11-10); a pre-deploy `pg_dump` is the only safety step.
 
 ## Risks & Mitigations
 
 | Risk | Mitigation |
 |---|---|
 | A slow transaction commits a row with a lower key after the client loaded newer rows. | Snapshot-plus-feed-cursor read; the row is placed by key and anchor keeping holds the reading position. Test case in `threads.test.ts`. |
-| A reply cut off before its final block is not found by search (search reads only final blocks). | Accepted trade-off; it is shown in the thread. Rerunning `reproject` does not change this. |
+| A reply cut off before its final block is not found by search (search reads only final blocks). | Accepted trade-off; it is shown in the thread. |
 | Search with `ILIKE` is slow on long threads. | The browser check reports search time; a text index is added when the measurement shows the need. |
 | `total` count is slow on long threads. | Returned only on open and jump; its time is reported. |
-| Re-projection stops partway. | It works in pages, one transaction per page, and is idempotent; rerun continues. `--check` gates the Stage 2 removal. |
-| An event has no raw record or an unknown shape. | It gets one `tool` block with its raw JSON, so `--check` passes and nothing is lost. |
+| An event has no raw record or an unknown shape. | It gets one `tool` block with its raw JSON, so nothing is hidden. |
 | Untrusted artifact content runs script in the operator's browser. | Sandboxed `iframe` without scripts, `nosniff`, CSP without `allow-scripts`. |
 | Clipboard write fails after the server round trip. | `ClipboardItem` with a promise created in the key handler; failure shown in the status line with retry. |
 | Two different answers race. | `UPDATE ... WHERE state = 'open'`; the loser gets 409 and sees the stored answer. |
@@ -410,18 +415,17 @@ Shared conventions for every item:
 #### 2. `crates/executor/src/main.rs` (Modify)
 
 *   **Type / Scope**: Rust executor CLI.
-*   **Proposed Changes**: `main()` (line 1025) checks `argv[1]` first. For `reproject --harness <name>` it reads native records as JSON lines on stdin, writes `harness::project` output as JSON lines on stdout, and exits, before any `FLEET_DATA_DIR` read, `executor.lock` or journal open. It can run on any machine with the binary, including next to a running executor.
+*   **Proposed Changes**: Each live execution keeps a `harness::Blocks` state. `main()` checks `argv[1]` first: `reproject` reads JSON lines `{executionId, harness, timestamp, record}` on stdin, writes one projection per line on stdout (block state per execution), and exits before any `FLEET_DATA_DIR` read, `executor.lock` or journal open. The fixture test uses it.
 
-#### 3. `scripts/reproject-events.ts` (Create) and `package.json` (Modify)
+#### 3. Re-projection script (Dropped)
 
-*   **Type / Scope**: one-time migration script.
-*   **Proposed Changes**: `pnpm run reproject` runs it against the coordinator database. It reads `event` and `event-delta` documents in `seq` order, one page per transaction. For each, it reads the execution row from `data.executionId` and takes `execution.harness`; an event whose execution has no harness gets the unknown-shape block. It pipes `data.data` to `fleet-executor reproject --harness <name>` and writes the result to `data.data.fleetNormalized`. Delta records it finds under `event` are moved to `event-delta`. Running it twice gives the same result. `--check` writes nothing; it counts `event` documents without `blocks` and exits non-zero when any exist.
+*   Dropped by the owner decision on old records. Migration 13 instead extends the change-feed trigger to kind `event-delta` (reported as kind `event`), so streams are followed live.
 
 #### 4. `packages/coordinator/threads.ts` (Create)
 
 *   **Type / Scope**: coordinator module.
 *   **Proposed Changes**:
-    *   `thread_entries`, `thread_search`, `thread_export` with the signatures in the Technical Plan, plus `thread_blocks({ key, seqs: number[] }) -> { entries: Block[] }`, which the client uses to fetch the blocks of rows named by fed changes.
+    *   `thread_entries`, `thread_search`, `thread_export` with the signatures in the Technical Plan, plus `thread_blocks({ key, rows: { kind, id }[] }) -> { entries: Block[] }`, which the client uses to fetch the blocks of rows named by fed changes (change kind and id; a chunk returns its whole stream entry).
     *   Session set and membership, one query:
 
         ```text
@@ -444,7 +448,7 @@ Shared conventions for every item:
 #### 5. `packages/coordinator/app.ts` (Modify)
 
 *   **Type / Scope**: routes and operations.
-*   **Proposed Changes**: Register the four operations and `GET /api/threads/{task|session}/:id/entries`, `/blocks`, `/search`, `/export`. `session_get` (line 101) drops `events` and `results`. Remove `/api/sessions/:id/events` (line 103).
+*   **Proposed Changes**: Register the four operations and `GET /api/threads/{task|session}/:id/entries`, `/blocks?rows=kind:id,…`, `/search`, `/export?from=seq:index@offset&to=…`. Dropping `events` and `results` from `session_get` and removing `/api/sessions/:id/events` move to Stage 2 item 18, because the Stage 1 screen still reads them.
 
 #### 6. `packages/coordinator/recovery.ts` (Modify)
 
@@ -454,12 +458,12 @@ Shared conventions for every item:
 #### 7. `packages/coordinator/executions.ts` (Modify)
 
 *   **Type / Scope**: execution state transitions.
-*   **Proposed Changes**: In `transition()` (line 116), when the new state is terminal and the row was not terminal before, write one `event` document with id `<executionId>:ended`, type `execution.ended`, empty `blocks`, in the same transaction. A repeated terminal transition returns early (`row.state === state`) and the fixed id prevents a second row.
+*   **Proposed Changes**: In `transition()` (line 116), when the new state is terminal and the row was not terminal before, write one `event` document with id `event:<executionId>:ended` (agent runs only), type `execution.ended`, empty `blocks`, in the same transaction. A repeated terminal transition returns early (`row.state === state`) and the fixed id prevents a second row.
 
 #### 8. `packages/coordinator/delegation.ts`, `packages/coordinator/agent-tools.ts`, `packages/coordinator/delivery.ts` (Modify)
 
 *   **Type / Scope**: other readers of `fleetNormalized.messages`.
-*   **Proposed Changes**: `delegation.ts:52`, `agent-tools.ts:42` and the reader in `delivery.ts` take reply text from `replyText()` in `threads.ts` instead of `fleetNormalized.messages` and `data.item`.
+*   **Proposed Changes**: `delegation.ts:52` and `agent-tools.ts:42` take reply text (`delivery.ts` reads no reply text; nothing to change there) from `replyText()` in `threads.ts` instead of `fleetNormalized.messages` and `data.item`.
 
 #### 9. `packages/coordinator/tasks.ts` (Modify)
 
@@ -491,13 +495,13 @@ Shared conventions for every item:
 #### 13. `tests/coordinator/threads.test.ts` (Create)
 
 *   **Type / Scope**: unit tests.
-*   **Proposed Changes**: Paging before, after and around (odd `limit`, short side); parallel executions interleave by `seq`; a taskless session that later gets a task shows its early blocks in the task thread; one event with two blocks pages by block key without loss or repeat; two overlapping transactions committing out of `seq` order lose no row when the client follows `feedCursor`; a cut-off stream shows as one block; a closed stream returns one block; search hits open with `around`; export with and without a range; `thread_blocks` by `seq`; each fixture's shape matches `fleet-executor reproject` output from the built binary; `execution.ended` is written once.
+*   **Proposed Changes**: Paging before, after and around (odd `limit`, short side); parallel executions interleave by `seq`; a taskless session that later gets a task shows its early blocks in the task thread; one event with two blocks pages by block key without loss or repeat; two overlapping transactions committing out of `seq` order lose no row when the client follows `feedCursor`; a cut-off stream shows as one block; a closed stream returns one block; search hits open with `around`; export with and without a range; `thread_blocks` by `seq`; each fixture's native records projected by `fleet-executor reproject` from the built binary give the expected blocks; `execution.ended` is written once.
 
 #### 14. `tests/coordinator/recovery.test.ts`, `tests/coordinator/delegation.test.ts`, `tests/coordinator/agent-tools.test.ts`, `tests/coordinator/delivery.test.ts`, `tests/coordinator/multiharness.test.ts` (Modify)
 
 *   **Proposed Changes**: Replay and collision of `event-delta`; readers use `replyText()`; `multiharness.test.ts` asserts `blocks` instead of `messages`. Add a race test for two different answers to the tasks tests.
 
-#### 15. `tests/ui/conversations.check.mjs` (Create), `package.json` and `.github/workflows/ci.yml` (Modify)
+#### 15. `tests/ui/conversations.check.mjs` (Create), `package.json` and `.github/workflows/ci.yml` (Modify) — moved to Stage 2, because it asserts the new screen
 
 *   **Type / Scope**: browser check, script and CI job.
 *   **Proposed Changes**: The assertions and timing report in "Browser check" (Technical Plan). It reuses the anchor-drift measurement from `tests/ui/scroll.check.mjs`. Script `"check:conversations": "pnpm run build && node tests/ui/conversations.check.mjs"`; CI job `conversations-check` built like `filter-check` (`ci.yml:58`).
@@ -529,7 +533,7 @@ Shared conventions for every item:
 
 #### 21. `crates/executor/src/harness.rs`, `tests/ui/app.check.ts`, `tests/executor/antigravity_acp.py`, `tests/coordinator/fixtures/documents-main-93c2cc0.json` (Modify)
 
-*   **Proposed Changes**: Remove `fleetNormalized.messages` once `pnpm run reproject --check` passes; move the listed tests and fixture to `blocks`.
+*   **Proposed Changes**: Remove `fleetNormalized.messages`; move the listed tests and fixture to `blocks`. No re-projection gate (owner decision).
 
 ### Stage 3: Thread equals task
 

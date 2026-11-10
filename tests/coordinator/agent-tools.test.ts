@@ -16,7 +16,7 @@ test('agent tools: queue, handoff, fork, resume, ask/reply, worker_done, stop ou
  // 5) busy session queues instead of 409
  const q=(await call(path,{requestId:'two',text:'Then this'})).json();assert.equal(q.queued,true);assert.equal(q.position,1);
  let [c]=await poll(['steer']);await receipt(c,'started','native-codex');
- await call('/api/hosts/events',{hostId:'mac',executionId:first.id,events:[{id:'a',seq:0,type:'assistant',text:'built it'}]},true);
+ await call('/api/hosts/events',{hostId:'mac',executionId:first.id,events:[{id:'a',seq:0,type:'assistant',data:{fleetNormalized:{blocks:[{kind:'text',role:'agent',markdown:'built it'}]}}}]},true);
  const steer=(await call(path,{requestId:'three',text:'steer me',delivery:'steer'})).json();assert.equal(steer.state,'steering');
  const sc=(await poll()).find((x:any)=>x.kind==='steer');await receipt(sc,'failed');
  // 4) ask/reply + worker_done
