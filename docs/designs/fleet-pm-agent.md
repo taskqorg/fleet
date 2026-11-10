@@ -57,7 +57,7 @@ Defaults below are used in this design. Each can be changed by the owner without
 *   **Q4. Grants revoked while a PM runs.** Default: every call is checked when made, so the next call fails 403 with the reason. The running turn is not stopped. Watch wakes for projects outside the new scope stop matching.
 *   **Q5. One long session or one per wake?** Default: one session; each wake is a new execution of that session, as with any queued message today. The PM keeps its conversation.
 *   **Q6. Which signals count as anomalies?** Default: the ones Fleet already records (§6).
-*   **Q7. Do people and grant changes from an agent need a person's confirmation?** Default: no; they run under the owner's role, audited and visible (help, not block). Alternative: the PM raises a `question` and the change runs when the owner answers yes. This is the main prompt-injection lever (see Risks).
+*   **Q7. Do people and grant changes from an agent need a person's confirmation?** Default: no; they run under the owner's role, audited and visible (help, not block). Alternative: the PM raises a `question` and the change runs when the owner answers yes. This is the main prompt-injection lever (see Risks). **Decided by the owner (2026-11-10): no confirmation by default.** Changes are audited and visible; confirmation through a `question` is an opt-in setting.
 
 ## Critical User Journeys (CUJs)
 
@@ -237,7 +237,7 @@ The PM asks people through the `question` table (`ask` puts the PM's own task in
 
 ## Risks and Mitigations
 
-*   **Prompt injection through watched text.** The owner's PM has owner rights and reads text other agents wrote (questions, run results, task text). A worker's output could steer an owner-level call. Mitigations: the profile instruction in §8; every call is audited with actor and director and shown on the session view; identity and take operations are person-only (§1 deny list). Whether people and grant changes from an agent need a person's confirmation is Q7.
+*   **Prompt injection through watched text.** The owner's PM has owner rights and reads text other agents wrote (questions, run results, task text). A worker's output could steer an owner-level call. Mitigations: the profile instruction in §8; every call is audited with actor and director and shown on the session view; identity and take operations are person-only (§1 deny list). People and grant changes from an agent need no confirmation by default (Q7, owner decision); confirmation is an opt-in setting.
 *   **Self-wake loop.** If the own-change filter misses (null `fleet.actor` on some write path), the PM wakes on its own edits. Each loop still collapses to one queued message per pass (§5 step 8), and the wake count on the session view makes it visible. The test plan covers it.
 *   **Grant revoked mid-turn.** Calls fail 403 from the next call on (Q4); the turn ends normally.
 *   **Cost of watch.** Each wake is a model turn. Measured and shown (G9); the person changes kinds or timer.
