@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -375,6 +376,14 @@ func (a *App) events(q *Request) (any, error) {
 		}
 		id := "event:" + b.ExecutionId + ":" + ev.Id
 		v := raw.Events[i]
+		// encoding/json matches keys case-insensitively: store the validated type and seq, never a case variant.
+		for k := range v {
+			if k != "id" && k != "type" && k != "seq" && (strings.EqualFold(k, "id") || strings.EqualFold(k, "type") || strings.EqualFold(k, "seq")) {
+				return nil, fail(400, "Invalid event identity")
+			}
+		}
+		v["type"], _ = json.Marshal(ev.Type)
+		v["seq"], _ = json.Marshal(ev.Seq)
 		v["id"], _ = json.Marshal(id)
 		v["executionId"], _ = json.Marshal(b.ExecutionId)
 		v["sessionId"], _ = json.Marshal(e["sessionId"])
