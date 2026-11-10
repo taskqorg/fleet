@@ -5,7 +5,8 @@ JSON Schema contracts shared by the coordinator, the app and the executor.
 * `host-protocol.schema.json`: the host protocol (`/api/hosts/poll` request and reply, `/api/hosts/receipts` status
   receipts, `/api/hosts/events` batches) and event payloads. It is the source of the types on all three sides
   (docs/designs/fleet-stack.md, Contracts); `go/coordinator/schema.sql` stays the source of table rows only.
-* `lab-config.json`: JSON Schema for agent configurations in laboratory configurations (copied as an asset; not generated).
+* `profile.schema.json`: the agent profile (`config/agents/*.json`, the start command's `agentConfig`). Its validator
+  `contract.ParseProfile` (`go/contract/profile.go`) is the one the coordinator and the executor run; a Go test checks every shipped profile.
 
 ## Generated types
 

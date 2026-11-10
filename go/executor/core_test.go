@@ -164,23 +164,3 @@ func TestStoreKeyFormats(t *testing.T) {
 		}
 	}
 }
-
-// Requirement: profiles outside the supported shapes are refused before any spawn. Risk: an unmapped grant silently
-// widens what the agent may do.
-func TestProfileValidate(t *testing.T) {
-	ok := M{"id": "p", "model": "m", "effort": "low", "instructions": "x", "mcpServers": []any{}}
-	if err := profileValidate(ok); err != nil {
-		t.Fatal(err)
-	}
-	claude := M{"id": "p", "harness": "claude", "model": "m", "instructionRole": "system", "instructions": "x", "mcpServers": []any{}, "tools": []any{"Read", "Bash"}}
-	if err := profileValidate(claude); err != nil {
-		t.Fatal(err)
-	}
-	for _, bad := range []M{{"id": "p", "model": "m", "effort": "low", "instructions": "x", "mcpServers": []any{}, "tools": []any{}},
-		{"id": "p", "harness": "claude", "model": "m", "instructionRole": "system", "instructions": "x", "mcpServers": []any{}, "tools": []any{"WebFetch"}},
-		{"id": "p", "harness": "antigravity", "model": "m", "instructionRole": "user", "instructions": "x", "mcpServers": []any{}, "settings": M{"mode": "yolo"}}} {
-		if profileValidate(bad) == nil {
-			t.Fatal(bad)
-		}
-	}
-}

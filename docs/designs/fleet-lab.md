@@ -11,7 +11,7 @@ Lab adds no run machinery of its own. A trial is a `pipeline_run` execution with
 | Coordinator | Fleet's TypeScript server (`packages/coordinator`). Owns Postgres, routes, reconcile. |
 | Executor | Fleet's Go process on each host (`go/executor`). Runs harnesses, scripts, worktrees. |
 | Harness | An agent CLI the executor drives: Codex, Claude, Antigravity. |
-| Profile | A trusted JSON file in `config/agents` naming harness, model, skills and granted connections (`listProfiles` in `go/coordinator/projects.go`, `go/executor/profile.go`). |
+| Profile | A trusted JSON file in `config/agents` naming harness, model, skills and granted connections (`listProfiles` in `go/coordinator/projects.go`; one validator, `contract.ParseProfile` in `go/contract/profile.go`, schema `contracts/profile.schema.json`). |
 | Connection | Fleet's record of one outside provider endpoint, owned by [fleet-connections.md](fleet-connections.md). Example: `tavily`. |
 | Catalogue / recommendation | `config/catalogue.json` lists methods per project; `recommendation_set` records the chosen method as a `project-recommendation`. |
 | Use case | A registry entry pointing at a use case written in an org repo. Current sources: Fleet, csgo, desiign; replaced prototypes (taskq, pilotq, agentq, dashq, assetq) keep their entries marked with `status` and `maps_to` ([asset pipelines](fleet-asset-pipelines.md#3-registry-s3)). |
@@ -237,7 +237,7 @@ Host setting `FLEET_CLAUDE_PLACEMENT` (`mac | windows-wsl`, [configuration.md](.
 
 ## Removal in one cut (R3.1)
 
-The old lab (its pages, its `/api/lab/*` and `/api/experiments` routes and stored documents) is gone. Profile code lives in `go/coordinator/projects.go` and `go/executor/profile.go`; profiles are listed by `GET /api/profiles`. Paired delegation is an `ab` experiment; delivery comparison is removed.
+The old lab (its pages, its `/api/lab/*` and `/api/experiments` routes and stored documents) is gone. Profile code lives in `go/contract/profile.go` (the one validator, used by coordinator and executor), `go/coordinator/projects.go` and `go/executor/profile.go`; profiles are listed by `GET /api/profiles`. Paired delegation is an `ab` experiment; delivery comparison is removed.
 
 Not built: deleting AssetQ (the rest of Pipe: service, database, route, repository) in one cut, keeping only the `fleet:UC2` crate seed ([asset pipelines §2](fleet-asset-pipelines.md#2-deleting-assetq-s2-after-s1)).
 

@@ -105,8 +105,8 @@ git: definition_export  ──▶  unified diff of every ahead definition agains
 
 * **Identity.** `kind` is `agent`, `pipeline` or `catalogue`. `id` is the file stem for agents and pipelines (`idPattern`). A catalogue method's `pipeline` value is a file name (`hello-search.json`); resolve strips `.json` to get the pipeline id. The catalogue is **one definition**, id `catalogue`, path `config/catalogue.json`, whatever capabilities it holds: one file, one revision line, one `repoSha`. Split it only when the file is split.
 * **Paths.** `path` is relative to the repository root. Reconcile reads the directories the coordinator reads today: `FLEET_PROFILES_DIRECTORY` (default `config/agents`), `FLEET_PROJECT_CONFIG_DIRECTORY` (default `config`, for `catalogue.json`) and the pipeline directory under `projectConfigDir()`. With an override, `path` is still written as the default repository path, so export patches the repository.
-* **Content** is the parsed JSON, validated by the kind's existing validator before it is stored: `validatePipeline` for pipelines, `readTrustedProfile`'s checks (required `effort, id, instructions, mcpServers, model`, optional keys from `profileOptional`, `go/coordinator/projects.go`) for agents, the checks in `catalogue()` for the catalogue. The validators move to take content instead of a path. Content is stored canonical (keys sorted, two-space indent, trailing newline) so the diff and `contentSha` are stable and match a file written by export. The build commits the shipped files once in canonical form, and a Go test fails when a file under `config/agents`, `config/pipelines` or `config/catalogue.json` is not canonical, so the first export does not reformat whole files.
-* **Classification at reconcile.** A file in the profile directory that fails `readTrustedProfile` is not a definition: it is skipped, as `listProfiles` skips it today, and listed in a start log line. A pipeline or catalogue file that fails validation keeps the last valid revision (or, with none, no definition) and raises one needs-you question with the problem, as a malformed `people.json` does.
+* **Content** is the parsed JSON, validated by the kind's existing validator before it is stored: `validatePipeline` for pipelines, `contract.ParseProfile` (`go/contract/profile.go`, schema `contracts/profile.schema.json`, already taking content) for agents, the checks in `catalogue()` for the catalogue. The validators move to take content instead of a path. Content is stored canonical (keys sorted, two-space indent, trailing newline) so the diff and `contentSha` are stable and match a file written by export. The build commits the shipped files once in canonical form, and a Go test fails when a file under `config/agents`, `config/pipelines` or `config/catalogue.json` is not canonical, so the first export does not reformat whole files.
+* **Classification at reconcile.** A file in the profile directory that fails `readTrustedProfile` (`contract.ParseProfile` plus the file-name check) is not a definition: it is skipped, as `listProfiles` skips it today, and listed in a start log line. A pipeline or catalogue file that fails validation keeps the last valid revision (or, with none, no definition) and raises one needs-you question with the problem, as a malformed `people.json` does.
 * **Revision numbers** are integers per definition, starting at 1. The repository's file is a revision with `source: repo`. The revision id shown in the head is `<kind>/<id>@<n>`; `contentSha` (SHA-256 of the canonical content) is shown in History next to the git blob sha when the revision came from the repository.
 
 ### Mirror to the config repository
@@ -261,16 +261,7 @@ Shared types:
   "DefinitionContent": {"type": "object", "properties": {
     "agent": {"$ref": "#/$defs/AgentDefinition"}, "pipeline": {"$ref": "#/$defs/PipelineDefinition"}, "catalogue": {"$ref": "#/$defs/CatalogueDefinition"}},
     "$comment": "Exactly one property, matching the kind."},
-  "AgentDefinition": {"type": "object", "required": ["id", "model", "effort", "instructions", "mcpServers"], "properties": {
-    "id": {"type": "string"}, "model": {"type": "string"}, "effort": {"type": ["string", "null"]}, "instructions": {"type": "string"},
-    "mcpServers": {"type": "array", "items": {"$ref": "#/$defs/McpServerRef"}},
-    "harness": {"type": "string"}, "instructionRole": {"type": "string"}, "tools": {"type": "array", "items": {"type": "string"}},
-    "skills": {"type": "array", "items": {"type": "string"}}, "delegationProfiles": {"type": "array", "items": {"type": "string"}},
-    "settings": {"type": "object", "additionalProperties": true}, "fleetTools": {"type": "array", "items": {"type": "string"}},
-    "collaborationTools": {"type": "array", "items": {"type": "string"}}, "gitNetwork": {"type": "boolean"},
-    "connections": {"type": "array", "items": {"type": "string"}}, "fleetOperations": {"type": "array", "items": {"type": "string"}}},
-    "$comment": "Mirrors readTrustedProfile and profileOptional (go/coordinator/projects.go); closed, as that validator refuses other keys. Contract C8 'profile' replaces this entry when it lands; the builder copies element types from the validator where they differ."},
-  "McpServerRef": {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}, "data": {"type": "string"}}},
+  "AgentDefinition": {"$comment": "The Profile type of contracts/profile.schema.json, copied into this file when it is written (the generators take no cross-file $ref); go/contract.ParseProfile is its validator."},
   "PipelineDefinition": {"type": "object", "required": ["version", "id", "steps"], "properties": {
     "version": {"type": "integer"}, "id": {"type": "string"}, "steps": {"type": "array", "items": {"$ref": "#/$defs/PipelineStep"}}},
     "additionalProperties": true},
@@ -581,7 +572,7 @@ Stage 2 only (the mirror):
 Stage 1:
 
 * `go/coordinator/textdiff.go` (Create): line diff (Myers) and unified output. Why: no stdlib diff; about 80 lines, no new dependency.
-* `go/coordinator/profiles.go` (Modify; today `listProfiles`, `readTrustedProfile` and `profilesDir` in `projects.go`, `profilesDir` in `store.go`): `readTrustedProfile`'s checks take content; profiles are read from definition heads and return a `DefinitionRef`. The directory readers remain only in reconcile.
+* `go/coordinator/profiles.go` (Modify; today `listProfiles`, `readTrustedProfile` and `profilesDir` in `projects.go`, `profilesDir` in `store.go`): profile checks already take content (`contract.ParseProfile`); profiles are read from definition heads and return a `DefinitionRef`. The directory readers remain only in reconcile.
 * `go/coordinator/pipelines.go` (Modify; today `pipelines.go`): `loadPipeline` reads the head or a draft; `pipelineRunCreate` becomes the operation `pipeline_run_create` (the route stays) with `draft` and the signature change; `pipelineStart` resolves agent step profiles and records refs per step; `pipeline_rerun` with the reuse walk; record `definitions`, `draft_content`, `rerun_of`, `reused_steps`.
 * `go/coordinator/pipelines.go`, capability op (Modify; today in `pipelines.go`, moved by wave 1): `pipeline_run` records definition references; the request signature adds the catalogue revision.
 * `go/coordinator/catalogue.go` (Modify; today `catalogue` in `projects.go`): read the catalogue head; method assessments; `recommendedFor`.
