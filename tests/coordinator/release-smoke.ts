@@ -12,7 +12,7 @@ const root=mkdtempSync(tmpdir()+'/fleet-release-'),release=root+'/release-smoke'
 cpSync('package.json',release+'/package.json');cpSync('dist',release+'/dist',{recursive:true});symlinkSync(release,current);
 assert.equal(existsSync(release+'/node_modules'),false);
 const owner=await recreateFleetDatabase(),port=await freePort(),secret='smoke-browser',origin='http://127.0.0.1:'+port;
-const env={PATH:process.env.PATH,PORT:String(port),FLEET_DATABASE_URL:appUrl(),FLEET_MIGRATION_DATABASE_URL:owner,FLEET_BROWSER_SECRET:secret,FLEET_PEOPLE_FILE:peopleFile(),FLEET_MACHINE_SECRET:'smoke-machine',FLEET_BROWSER_ORIGIN:origin};
+const env={PATH:process.env.PATH,PORT:String(port),FLEET_DATABASE_URL:appUrl(),FLEET_MIGRATION_DATABASE_URL:owner,FLEET_BROWSER_SECRET:secret,FLEET_PEOPLE_FILE:peopleFile(),FLEET_BROWSER_ORIGIN:origin};
 const child=spawn(process.execPath,[current+'/dist/packages/coordinator/server.js'],{cwd:current,env,stdio:['ignore','inherit','inherit']});
 const exited=new Promise<void>(r=>child.once('exit',()=>r()));
 try{

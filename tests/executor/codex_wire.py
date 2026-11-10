@@ -1,6 +1,6 @@
 """Actual executor pipe bytes against a fake executable. Zero native/model calls."""
 import hashlib,json,os,pathlib,subprocess,tempfile,threading,time
-import sys as _sys;_sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)));from executor_binary import executor_binary
+import sys as _sys;_sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)));from executor_binary import executor_binary,secret_file
 from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
 root=pathlib.Path(tempfile.mkdtemp(prefix='fleet-codex-wire-'));root.chmod(0o700)
 fake=root/'fake-codex';fake.write_text('''#!/usr/bin/env python3
@@ -38,7 +38,7 @@ class Handler(BaseHTTPRequestHandler):
    if self.path.endswith('/receipts'):commands[:]=[c for c in commands if c['id']!=b['commandId']]
   self.send_response(200);self.end_headers();self.wfile.write(json.dumps(reply).encode())
 srv=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=srv.serve_forever,daemon=True).start()
-env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}','FLEET_HOST_ID':'fake','FLEET_HOST_TOKEN':'fake-only','FLEET_DATA_DIR':str(root/'data'),'FLEET_CODEX_BIN':str(fake),'FLEET_NATIVE_HOME':str(root/'home'),'FLEET_CODEX_HOME':str(root/'native')}
+env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}','FLEET_HOST_ID':'fake','FLEET_HOST_SECRET_FILE':secret_file('fake-only-host-secret-0123456789abcdef'),'FLEET_DATA_DIR':str(root/'data'),'FLEET_CODEX_BIN':str(fake),'FLEET_NATIVE_HOME':str(root/'home'),'FLEET_CODEX_HOME':str(root/'native')}
 p=subprocess.Popen([executor_binary()],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 try:
  work=root/'data/sessions/wire-session'

@@ -7,3 +7,11 @@ def executor_binary():
     copy=os.path.join(tempfile.mkdtemp(prefix='fleet-executor-'),'fleet-executor')
     shutil.copy2(os.path.join(target,'debug','fleet-executor'),copy)
     return copy
+
+
+def secret_file(value):
+    """A private host secret file for FLEET_HOST_SECRET_FILE (people-access §3)."""
+    import tempfile, pathlib
+    p = pathlib.Path(tempfile.mkdtemp()) / 'host-secret'
+    p.write_text(value + '\n'); p.chmod(0o600)
+    return str(p)

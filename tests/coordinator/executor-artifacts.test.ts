@@ -3,7 +3,7 @@
 // collects them into its spool, uploads the parts, re-hashes over loopback, and the run completes once both are stored.
 import {test} from 'node:test';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';import {execFileSync,spawn} from 'node:child_process';
 import {existsSync,mkdtempSync,writeFileSync,chmodSync,mkdirSync} from 'node:fs';import {tmpdir} from 'node:os';import {resolve} from 'node:path';
-import {createApp} from './test-app.ts';import {fakeStore} from './s3-fake.ts';
+import {createApp,hostSecret} from './test-app.ts';import {fakeStore} from './s3-fake.ts';
 import {executorBinary} from './executor-binary.ts';
 let binary='';
 const FAKE_CODEX=`#!/usr/bin/env python3
@@ -29,8 +29,9 @@ test('the executor collects output, uploads it to its own store and the run comp
  writeFileSync(root+'/codex',FAKE_CODEX);chmodSync(root+'/codex',0o755);
  writeFileSync(root+'/store.key',JSON.stringify({accessKeyId:'k',secretAccessKey:'s'}),{mode:0o600});
  writeFileSync(root+'/store.json',JSON.stringify({id:'e2e-store',zone:'e2e',bucket:'fleet',endpoint:fake.url,localEndpoint:fake.url,keyFile:root+'/store.key',capacityBytes:1e12,backingPath:root}));
- const app=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'e2e',storeEndpointHosts:['127.0.0.1'],placementIntervalMs:0});await app.listen({port:0,host:'127.0.0.1'});
- const executor=spawn(binary,[],{env:{PATH:process.env.PATH,HOME:root+'/home',FLEET_COORDINATOR_URL:app.listeningOrigin,FLEET_HOST_ID:'e2e',FLEET_HOST_TOKEN:'m',FLEET_DATA_DIR:root+'/data',FLEET_CODEX_BIN:root+'/codex',FLEET_NATIVE_HOME:root+'/home',FLEET_CODEX_HOME:root+'/account',FLEET_STORE_CONFIG:root+'/store.json',FLEET_CF_ACCESS_FILE:root+'/none'},stdio:['ignore','ignore','pipe']});
+ const app=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'e2e',storeEndpointHosts:['127.0.0.1'],placementIntervalMs:0});await app.listen({port:0,host:'127.0.0.1'});await (app as any).registerTestHosts();
+ writeFileSync(root+'/host-secret',hostSecret('m','e2e'),{mode:0o600});
+ const executor=spawn(binary,[],{env:{PATH:process.env.PATH,HOME:root+'/home',FLEET_COORDINATOR_URL:app.listeningOrigin,FLEET_HOST_ID:'e2e',FLEET_HOST_SECRET_FILE:root+'/host-secret',FLEET_DATA_DIR:root+'/data',FLEET_CODEX_BIN:root+'/codex',FLEET_NATIVE_HOME:root+'/home',FLEET_CODEX_HOME:root+'/account',FLEET_STORE_CONFIG:root+'/store.json',FLEET_CF_ACCESS_FILE:root+'/none'},stdio:['ignore','ignore','pipe']});
  let stderr='';executor.stderr.on('data',d=>stderr+=d);
  const api=async(url:string,payload?:any)=>(await app.inject({method:payload?'POST':'GET',url,headers:{authorization:'Bearer b'},payload})).json();
  try{

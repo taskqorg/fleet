@@ -1,5 +1,6 @@
 """Real isolated worker crash at a controlled transport boundary; no native/model/provider calls."""
 import json,os,pathlib,subprocess,tempfile,threading,time
+import sys as _sys;_sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)));from executor_binary import secret_file
 from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
 root=pathlib.Path(tempfile.mkdtemp(prefix='fleet-program-recovery-'));root.chmod(0o700);started=threading.Event();release=threading.Event();received=[];pending=True
 command={'id':'isolated-command','executionId':'isolated-execution','sessionId':'isolated-session','kind':'delivery-step','payload':{'kind':'publish','projectId':'hello-world','deliveryId':'isolated-delivery','files':[]}}
@@ -15,7 +16,7 @@ class Handler(BaseHTTPRequestHandler):
    reply={'ok':True}
   try:self.send_response(200);self.end_headers();self.wfile.write(json.dumps(reply).encode())
   except BrokenPipeError:pass
-server=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=server.serve_forever,daemon=True).start();config=root/'worker.json';config.write_text(json.dumps({'hostId':'isolated-mac','coordinator':f'http://127.0.0.1:{server.server_port}','machineSecret':'invented-fixture-only','journal':str(root/'journal'),'projects':{},'kinds':['publish']}));config.chmod(0o600);prior=root/'retained-result.txt';prior.write_text('surviving result')
+server=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=server.serve_forever,daemon=True).start();config=root/'worker.json';config.write_text(json.dumps({'hostId':'isolated-mac','coordinator':f'http://127.0.0.1:{server.server_port}','hostSecretFile':secret_file('invented-fixture-only-host-secret-0123456789'),'journal':str(root/'journal'),'projects':{},'kinds':['publish']}));config.chmod(0o600);prior=root/'retained-result.txt';prior.write_text('surviving result')
 argv=['python3','packages/coordinator/delivery_worker.py',str(config),'--once'];p=subprocess.Popen(argv,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
 try:
  assert started.wait(5),'No observed started transport boundary';p.kill();p.wait(timeout=5);release.set()

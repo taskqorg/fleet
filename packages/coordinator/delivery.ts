@@ -46,7 +46,7 @@ export function delivery(store:Docs,config:any,enqueue:(s:any,input:string,reque
    const artifacts=(await all('artifact',{executionId:generate.executionId})).filter((a:any)=>a.executionId===generate.executionId);
    if(!artifacts.some((a:any)=>['index.html','output/index.html'].includes(a.path))||artifacts.some((a:any)=>!/^(?:output\/)?[a-zA-Z0-9_-]+\.(html|css)$/.test(a.path))||artifacts.reduce((n:number,a:any)=>n+a.size,0)>1024*1024)fail(409,'Expected bounded static HTML/CSS artifacts');
    if(new Set(artifacts.map((a:any)=>a.path.replace(/^output\//,''))).size!==artifacts.length)fail(409,'Conflicting static artifact paths');
-   const hostId=b.kind==='integrate'?config.integrationHostId:config.publicationHostId;if(!hostId)fail(503,'Required program worker host is not configured');
+   const hostId=b.kind==='integrate'?(await config.hosts.integration(config.hostId)):(await config.hosts.publication());if(!hostId)fail(503,'Required program worker host is not configured');
    const id=randomUUID(),e={id,executionId:id,sessionId:r.sessionId,hostId,state:'queued',actor:'program-worker',deliveryId:r.id,projectId:r.projectId,createdAt:Date.now()};await put('execution',e);
    const c={id:randomUUID(),executionId:id,sessionId:r.sessionId,hostId,kind:'delivery-step',status:'pending',payload:{kind:b.kind,projectId:r.projectId,deliveryId:r.id,...(b.kind==='integrate'?{integration:(await settings(r.projectId)).integration,identity:(await settings(r.projectId)).identity}:{}),files:artifacts.map((a:any)=>({path:a.path.replace(/^output\//,''),artifactId:a.artifactId??a.id,sha256:a.sha256}))}};await put('command',c);
    r.steps.push({kind:b.kind,actor:'program-worker',hostId,executionId:id,state:'queued'});return (await save(r));
@@ -54,7 +54,7 @@ export function delivery(store:Docs,config:any,enqueue:(s:any,input:string,reque
   // Agent path: the session pushed <branchPrefix>/<sessionId>; a program worker opens the PR and merges it after checks.
   session_deliver:async (b:any)=>{const s=(await get(b?.sessionId,'session'));if(!s.projectId)fail(400,'Session has no project');
    const old=(await all('delivery',{sourceSessionId:s.id})).find((r:any)=>r.sourceSessionId===s.id);if(old)return (await reconcile(old));
-   const p=(await settings(s.projectId)),branch=p.worktree.branchPrefix+'/'+s.id,hostId=config.integrationHostId??fail(503,'Required program worker host is not configured');
+   const p=(await settings(s.projectId)),branch=p.worktree.branchPrefix+'/'+s.id,hostId=(await config.hosts.integration(config.hostId))??fail(503,'Required program worker host is not configured');
    const id=randomUUID(),r:any={id:randomUUID(),projectId:s.projectId,requestId:'session:'+s.id,sourceSessionId:s.id,sessionId:s.id,branch,createdAt:Date.now(),state:'integrating',steps:[{kind:'integrate',actor:'program-worker',hostId,executionId:id,state:'queued'}]};
    await put('execution',{id,executionId:id,sessionId:s.id,hostId,state:'queued',actor:'program-worker',deliveryId:r.id,projectId:s.projectId,createdAt:Date.now()});
    await put('command',{id:randomUUID(),executionId:id,sessionId:s.id,hostId,kind:'delivery-step',status:'pending',payload:{kind:'integrate',projectId:s.projectId,deliveryId:r.id,branch,integration:p.integration,identity:p.identity,files:[]}});
