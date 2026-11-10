@@ -1,4 +1,4 @@
-// Lab experiments (docs/designs/fleet-lab.md "Experiment reconcile", "Budgets", "Ratings"; Stage 3 items 26-29).
+// Lab experiments (docs/designs/fleet-lab.md "Experiment reconcile", "Budgets", "Ratings").
 // An experiment is one comparison: pinned approved examples × variants × repeats of one v2 pipeline. A trial is a
 // pipeline_run execution with experiment_id, variant and request_id set; a judge run is one with variant null.
 // reconcile(id) is the one function that moves an experiment: it runs under the experiment's scope lock (store.tx with

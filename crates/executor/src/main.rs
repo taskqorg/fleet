@@ -674,7 +674,7 @@ impl Executor {
         self.receipt(&c, "started", native.as_deref())?;
         Ok(())
     }
-    /// Lab script step (docs/designs/fleet-lab.md Stage 0, item 11): `sh -c <command>` in its own process group, in the trial's
+    /// Lab script step (docs/designs/fleet-lab.md "Pipeline format version 2"): `sh -c <command>` in its own process group, in the trial's
     /// own worktree at the pinned commit (or the session dir when the payload names no repository). Payload: command,
     /// optional commit with workingDirectory/project, optional timeout_ms. Stop and timeout kill the whole group. The full
     /// stdout and stderr (output/script.stdout, output/script.stderr) and everything in FLEET_OUTPUT_DIR become artifacts.

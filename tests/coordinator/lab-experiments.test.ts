@@ -1,4 +1,4 @@
-// Lab experiments, scores and ratings (docs/designs/fleet-lab.md Stage 3, item 31).
+// Lab experiments, scores and ratings (docs/designs/fleet-lab.md "Experiment reconcile").
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,chmodSync,readFileSync,cpSync} from 'node:fs';

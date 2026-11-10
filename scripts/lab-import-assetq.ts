@@ -1,4 +1,4 @@
-// Converts assetq (Pipe) dataset revisions into Lab examples (docs/designs/fleet-lab.md, Stage 1 item 18; Open Question Q2).
+// Converts assetq (Pipe) dataset revisions into Lab examples (docs/designs/fleet-lab.md "Use-case registry and examples"; owner decision Q2).
 //
 //   assetq datasets > datasets.json            on a host with the Pipe CLI (owner credential stays there)
 //   node scripts/lab-import-assetq.ts datasets.json > examples.json

@@ -1,4 +1,4 @@
-// Lab examples outside the coordinator (docs/designs/fleet-lab.md, Stage 1).
+// Lab examples outside the coordinator (docs/designs/fleet-lab.md "Use-case registry and examples").
 //
 //   node scripts/lab-examples.ts check FILE…    run each example's script checks with no agent
 //   node scripts/lab-examples.ts import FILE…   send the examples to the coordinator as approved examples

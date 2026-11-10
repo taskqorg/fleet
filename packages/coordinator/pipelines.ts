@@ -1,5 +1,5 @@
 import {requester} from './people.ts';
-// Pipeline format version 2 runner (docs/designs/fleet-lab.md, "Pipeline format version 2", Stage 2 item 20).
+// Pipeline format version 2 runner (docs/designs/fleet-lab.md "Pipeline format version 2").
 // A run is an ordered chain of api, agent and script steps. The run is the pipeline_run execution (legacy record kind
 // 'pipeline-run', whose steps are the pipeline_step rows `<run>:step:<i>`); each provider call is a tool_run child of its
 // step with connection_cost. Every step leaves an output.json artifact; agent and script steps get the earlier steps'

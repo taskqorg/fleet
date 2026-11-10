@@ -180,14 +180,14 @@ PMs apply the project's effective rules when preparing tasks. Executing agents a
 - History and evidence: retain every execution in full, without default expiry: session history, agent output, actions, tool calls, questions, results and verification materials. This is the source for analysis and pipeline improvement.
 - Changes: operators and architects can inspect diffs between skill and agent configuration revisions using existing version-control and diff tools.
 - Compatibility: checked combinations of harnesses, models, skills, tools and environments, stored as versioned facts. Confirmed incompatibility blocks launch; incomplete or unchecked results are visible, not treated as incompatibility.
-- Quality: compare agents, methods and methodologies through [experiments](docs/lab.md), including numeric evaluations and budgeted iterative improvement at step, task or project scope.
+- Quality: compare agents, methods and methodologies through [experiments](docs/designs/fleet-lab.md), including numeric evaluations and budgeted iterative improvement at step, task or project scope.
 - Operation: retain invocation counts, duration, cost, CPU, memory, disk usage, failures and recovery across agents, tools, Fleet components and infrastructure, including preparation and cleanup. Link records to components, tools, working areas and runs where applicable; expose missing observations.
 
 Three records: a run with its conditions and results; an assessment of runs with criteria, comparison, limitations and suitability, appended and never rewritten; a recommendation for a catalogue kind of work within a project or system scope, linked to its assessment. Comments and tags are fields of runs and assessments. Keep failed runs visible.
 
 Architects and assisting agents write assessments. Recommendation changes require architect authority, which may be delegated to an agent; otherwise the agent proposes the change as a question. Updating a recommendation preserves earlier runs and assessments; new work reads current recommendations when choosing a method.
 
-Agents query recommendations by kind of work and project with scope fallback and usage conditions resolved; assessments remain reachable. Humans and agents use [work analysis](docs/work-analysis.md) to inspect the full work cycle, attribute resources and identify improvements to rules, tools and configurations.
+Agents query recommendations by kind of work and project with scope fallback and usage conditions resolved; assessments remain reachable. Humans and agents use [work analysis](docs/designs/fleet-lab.md#work-analysis) to inspect the full work cycle, attribute resources and identify improvements to rules, tools and configurations.
 
 Observation confidence is separate from execution state. Lost contact means current execution is unconfirmed, not failed or cancelled; show the last known state and the uncertainty.
 
@@ -213,7 +213,7 @@ Each persistent test names the requirement and the risk it protects; follow [spe
 - [Use cases](docs/use-cases.md): end-to-end scenarios connecting the system blocks.
 - [Execution continuity](docs/execution-continuity.md): working area lifecycle, resource visibility and handoff.
 - [System operations](docs/system-operations.md): operation groups, contracts and agent communication semantics.
-- [Experiments](docs/lab.md): reproduce recorded work, compare changes and apply improvements to products.
+- [Experiments](docs/designs/fleet-lab.md): reproduce recorded work, compare changes and apply improvements to products.
 - [Interface workflows](docs/interfaces.md): operator and architect activities and contextual actions.
 - [Capabilities and pipelines](docs/configuration.md#capabilities-methods-and-tools): callable outcomes, alternative methods and system-executed workflows.
 

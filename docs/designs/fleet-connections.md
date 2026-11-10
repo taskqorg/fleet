@@ -228,7 +228,7 @@ One cut, no bridge:
 ### Additional Resources
 
 *   assetq `pipe.md`, `docs/read-lane.md`, `lane/`, `deploy/read-lane/`
-*   [fleet-lab.md](fleet-lab.md) "Connections: one accounting path"; [lab-brief.md](lab-brief.md) "Pipe in Fleet" (superseded)
+*   [fleet-lab.md](fleet-lab.md) "Connections: one accounting path"
 *   [fleet-data-foundation.md](fleet-data-foundation.md) Non-Goals (`connection_cost`), Q9
 
 ### Future Improvements

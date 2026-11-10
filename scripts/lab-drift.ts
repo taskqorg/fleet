@@ -1,4 +1,4 @@
-// Use-case registry drift check (docs/designs/fleet-lab.md, Stage 1 item 17). Each entry of config/lab/use-cases/*.json points
+// Use-case registry drift check (docs/designs/fleet-lab.md "Use-case registry and examples"). Each entry of config/lab/use-cases/*.json points
 // at a section of a source document: {repo, path, anchor, commit, sha256}. This recomputes the section's hash from the repo's
 // HEAD and reports entries whose source changed. It warns; it never blocks a launch.
 //

@@ -1,4 +1,4 @@
-// Lab Stage 1 (docs/designs/fleet-lab.md): use-case registry, drift check, examples and their import.
+// Lab registry (docs/designs/fleet-lab.md "Use-case registry and examples"): use-case registry, drift check, examples and their import.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
