@@ -8,7 +8,7 @@ How executor files are built in CI, published and fetched by a host. Fetching is
 - Each target gets `fleet-executor-<triple>` and `fleet-executor-<triple>.sha256`, uploaded as the workflow artifact `fleet-executor-<triple>-<commit sha>`. The job summary records build seconds and bytes.
 - The job runs on pull requests too, so a downloaded Mac binary can be checked before merge. A host uses only a successful run of a push to `main`.
 - Linux needs glibc 2.39 or newer (Ubuntu 24.04 build). PDS18 is x86_64 ([PDS Codex environment](../pds-codex-environment.md)); the Mac is arm64. WSL uses the Linux file; its distribution must meet the glibc requirement. Windows without WSL is not a target.
-- The gateway follows the same pattern for Linux only (`gateway-release`, artifact `fleet-gateway-x86_64-unknown-linux-gnu-<sha>`).
+- The gateway is Go: the CI job `go` cross-builds `fleet-gateway-<os>-<arch>` for linux/amd64 and darwin/arm64 with `CGO_ENABLED=0` into the artifact `fleet-go-<sha>`, and the main release pack carries `fleet-gateway`.
 
 ## Publication and trust
 

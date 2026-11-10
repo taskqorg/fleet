@@ -4,7 +4,7 @@ Service files and scripts for running Fleet. Nothing here is applied automatical
 
 * `build-release.sh <commit> <out-dir> [os/arch ...]`: one release tarball per target (`fleet-<commit>-<os>-<arch>.tgz` and `.sha256`) from a clean `git archive`. Every tarball has the same layout: `fleet-coordinator`, `fleet-gateway`, `fleet-executor` (static Go binaries), `dist/app/`, `config/`, `release.json`.
 * `install-release.sh <tarball> | --rollback`: verifies, unpacks into `~/releases/<name>/`, points `~/releases/current` at it (the old one becomes `previous`) and restarts the Fleet services installed on this host.
-* `status.sh`: sourced by both scripts. When stdout is a terminal they print OSC 7501 program status: `ESC]7501;working;<percent>;<text>BEL`, `ESC]7501;done;;<text>BEL`, `ESC]7501;error;;<text>BEL`.
+* `status.sh`: sourced by both scripts. When stdout is a terminal they print [OSC 7501 program status](https://www.superlogical.com/rex/docs/build/program-status): `state=working` with `progress`, then `done` or `error`, app `fleet-deploy`, base64 `msg`.
 * `infrastructure/`: PDS18 units following tight: the coordinator (`fleet.service.candidate`), the gateway and its socket, the Access origin guard (`fleet-access-guard.service`, which runs `fleet-gateway guard`), ClickHouse and Garage Quadlets, Postgres role setup (`fleet-postgres.sql`), backups, the root-owned `fleet-launch@.service` helper, and the Caddy and Cloudflare tunnel candidates. Files ending in `.candidate` are proposed, not installed.
 * `hosts/linux/fleet-executor.service`: the executor as a systemd user unit (PDS18, WSL).
 * `hosts/macos/`: launchd agents for the Mac (executor, Garage, cloudflared).
