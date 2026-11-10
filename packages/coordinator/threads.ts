@@ -13,7 +13,7 @@ const TERMINAL=new Set(['succeeded','failed','cancelled']);
 const MAX='9223372036854775807';
 const ms=(v:any)=>v==null?null:new Date(v).getTime();
 
-export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promise<any[]>,cursor:()=>Promise<number>,stage?:(sessionId:string)=>Promise<string|null>}){
+export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promise<any[]>,cursor:()=>Promise<number>,stage?:(sessionId:string)=>Promise<string|null>,deliverySessions?:(id:string)=>Promise<string[]>}){
  const {query}=deps;
  const threadKey=(b:any):ThreadKey=>{const k=b?.key;if(k&&typeof k.task==='string'&&k.task)return {task:k.task};if(k&&typeof k.session==='string'&&k.session)return {session:k.session};return fail(400,'Expected key {task} or {session}')};
  // Membership (design "Thread scope"): a task's executions, plus the taskless executions of sessions whose first task it is.
@@ -58,8 +58,8 @@ export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promis
    return [{kind,key:at(0),executionId:v.executionId,...(kind==='text'?{role:'agent',...mark(e)}:{}),markdown:text,plain:text,stream:TERMINAL.has(e?.state)?'cut-off':'open'}]}
   const own=(Array.isArray(v.blocks)?v.blocks:[]).map((b:any,i:number)=>({...b,key:at(i),executionId:v.executionId,...(b.kind==='text'?{role:b.role??'agent',...mark(e)}:{}),...(b.kind==='text'||b.kind==='reasoning'?{plain:b.markdown??''}:{})}));
   if(v.type==='execution.ended'){const list=(await deps.artifacts(v.executionId)).filter((a:any)=>a.state===undefined||a.state==='stored').map((a:any)=>({id:a.artifactId??a.id,name:a.path??a.name,mediaType:a.mediaType,size:Number(a.size)||0}));
-   // The delivery of a session shows on the result of its newest ended run, in place (OR-23). It is read with the block: delivery
-   // changes emit no change rows, so an open thread shows a new stage on its next read (ponytail: feed delivery changes when needed).
+   // The delivery of a session shows on the result of its newest ended run, in place (OR-23); a fed change of the delivery's
+   // task row refreshes that block (thread_blocks, kind 'task'), so the stage updates live.
    const sid=e?.session_id,latest=sid&&deps.stage?(await query("SELECT id FROM execution WHERE session_id=$1 AND kind='agent_run' AND ended_at IS NOT NULL ORDER BY seq DESC LIMIT 1",[sid]))[0]?.id:null;
    const stage=latest===v.executionId?await deps.stage!(sid):null;
    if(list.length||stage)own.push({kind:'result',key:at(own.length),executionId:v.executionId,artifactIds:list.map((a:any)=>a.id),artifacts:list,...(stage?{stage}:{})})}
@@ -104,6 +104,10 @@ export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promis
    if(c.kind==='execution'){const e=m.get(c.id);if(e)out.push(boundary(e));continue}
    if(c.kind==='question'){for(const q of await query('SELECT * FROM question WHERE id=$1 AND execution_id=ANY($2)',[c.id,ids]))out.push(question(q));continue}
    // A stored artifact updates the result block of its execution's end.
+   // A delivery lives on its task row: a fed task change that is a delivery of one of the thread's sessions refreshes the
+   // result block of that session's newest ended run, where the stage shows (the stage chip updates live).
+   if(c.kind==='task'){for(const sid of deps.deliverySessions?await deps.deliverySessions(c.id):[]){const e=[...m.values()].filter(x=>x.session_id===sid&&x.ended_at).sort((a,b)=>b.seq-a.seq)[0];
+     if(e)for(const d of await query(`SELECT seq,kind AS src,${ROW} AS v FROM document WHERE id=$1 AND kind='event'`,['ended:'+e.id]))out.push(...await expand({seq:Number(d.seq),src:d.src,v:d.v},m))}continue}
    if(c.kind==='artifact'){const e=(await query("SELECT execution_id AS e FROM artifact WHERE id=$1 UNION ALL SELECT data->>'executionId' FROM document WHERE kind='artifact' AND id=$1",[c.id]))[0]?.e;
     if(e&&m.has(e))for(const d of await query(`SELECT seq,kind AS src,${ROW} AS v FROM document WHERE id=$1 AND kind='event'`,['ended:'+e]))out.push(...await expand({seq:Number(d.seq),src:d.src,v:d.v},m));continue}
    if(c.kind!=='event')continue;

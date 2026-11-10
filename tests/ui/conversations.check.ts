@@ -51,6 +51,14 @@ await store.put('artifact', { id: 'log-1', executionId: 'x1', sessionId: S, path
 await store.put('artifact', { id: 'logo-1', executionId: 'x1', sessionId: S, path: 'logo.svg', mediaType: 'image/svg+xml', size: 104, contentBase64: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle cx="10" cy="10" r="9"/></svg>').toString('base64') });
 await store.put('artifact', { id: 'page-1', executionId: 'x1', sessionId: S, path: 'index.html', mediaType: 'text/html', size: PAGE_HTML.length, contentBase64: Buffer.from(PAGE_HTML).toString('base64') });
 for (const [i, st] of ['stored', 'pending', 'failed'].entries()) await store.query("INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES($1,null,'prod',$2,$3,$4,$5,'x1',$6)", ['row-' + i, 'h' + i, 10 + i, i ? 'text/plain' : 'image/png', `result-${i}.${i ? 'txt' : 'png'}`, st]);
+// A delivered session (live stage on its result card).
+await store.put('session', { id: 'deliv', createdAt: Date.now() });
+await store.put('message', { id: 'm-dl', sessionId: 'deliv', executionId: 'dl1', text: 'Ship it' });
+await store.put('execution', { id: 'dl1', executionId: 'dl1', sessionId: 'deliv', hostId: 'pds18', state: 'started', startedAt: Date.now() - 6e4 });
+await store.put('artifact', { id: 'dl-page', executionId: 'dl1', sessionId: 'deliv', path: 'site.html', mediaType: 'text/html', size: 4, contentBase64: Buffer.from('<p>x').toString('base64') });
+await store.put('execution', { id: 'dl1', executionId: 'dl1', sessionId: 'deliv', hostId: 'pds18', state: 'completed', startedAt: Date.now() - 6e4, finishedAt: Date.now() });
+const delivery = { id: 'dl-record', projectId: 'p', requestId: 'dl', task: 'Ship it', sourceSessionId: 'deliv', sessionId: 'deliv', createdAt: Date.now(), state: 'pr-open', steps: [] };
+await store.put('delivery', delivery);
 await store.tasks.ask({ kind: 'agent_question', text: 'Use Postgres 17?', options: ['yes', 'no'], executionId: 'x1', sessionId: S, askedBy: 'agent' });
 
 let target = 0;
@@ -182,6 +190,11 @@ try {
   check(await until(async () => await p.locator('[role=group][aria-label=Profile] button').count() > 0), 'Switch opens an inline panel with profiles');
   await p.getByRole('button', { name: 'Actions' }).click(); await p.getByRole('menuitem', { name: 'Fork' }).click();
   check(await until(async () => !p.url().endsWith('/task-a') && /\/conversations\/[0-9a-f-]{36}/.test(p.url())), 'Fork opens the new session');
+  // The delivery stage on a result card updates live from the change feed, without a reload.
+  await p.goto(`${origin}/conversations/deliv`);
+  check(await until(async () => await p.locator('.th-result [data-ui=stage-chip][aria-label="PR open"]').count() === 1), 'result card shows the delivery stage');
+  await store.put('delivery', { ...delivery, state: 'merged' });
+  check(await until(async () => await p.locator('.th-result [data-ui=stage-chip][aria-label="Merged"]').count() === 1, 8000), 'the stage chip updates live when the delivery merges');
   // Results page: state first, filters, and the viewer for an image, a long text read in pages, and HTML without scripts.
   await p.goto(`${origin}/results`);
   check(await until(async () => await p.locator('.vl-row', { hasText: 'result-0.png' }).count() === 1), 'results page lists results');

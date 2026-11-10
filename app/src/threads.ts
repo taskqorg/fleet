@@ -51,7 +51,9 @@ export function fed(w: Win, entries: Block[], removed: string[] = []): Win {
   return { ...w, blocks, first, last, total, fresh, freshKeys };
 }
 /** Change-feed rows that can touch a session thread; thread_blocks checks membership on the server. */
-export const touches = (c: Change, sessionIds: Set<string>, taskId?: string) => ['event', 'execution', 'question', 'artifact'].includes(c.kind) && (c.kind === 'question' || (!!taskId && c.taskId === taskId) || (!!c.sessionId && sessionIds.has(c.sessionId)));
+// question and task changes carry no session: the server keeps only those of this thread (a task change may be a delivery of
+// one of its sessions, whose stage shows on a result card).
+export const touches = (c: Change, sessionIds: Set<string>, taskId?: string) => ['event', 'execution', 'question', 'artifact', 'task'].includes(c.kind) && (c.kind === 'question' || c.kind === 'task' || (!!taskId && c.taskId === taskId) || (!!c.sessionId && sessionIds.has(c.sessionId)));
 
 const PAGE = 100;
 /** One thread's window: newest on open, older and newer pages, jump around a key, and live blocks from the feed. */
