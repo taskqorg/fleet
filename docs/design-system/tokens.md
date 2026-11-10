@@ -31,8 +31,8 @@ State to colour mapping lives in [state badge](controls/state-badge.md).
 
 | Token | Value | Use |
 |---|---|---|
-| `font-sans` | IBM Plex Sans, then the system UI stack | All text. The app serves the font files itself (`app/build.mjs`, from the pinned `@fontsource` packages, SIL OFL 1.1): no request leaves the origin, and the service worker keeps them for offline use. |
-| `font-mono` | IBM Plex Mono, then the system monospace stack | Numbers in columns and totals, IDs, durations, sizes, code and transcripts. |
+| `font-sans` | The native UI stack: `system-ui`, then San Francisco, Segoe UI, Roboto, Helvetica Neue, Arial, then colour emoji | All text. No web fonts: the text renders in its final font on the first paint ([D22](decisions.md#2026-11-11-d22-system-fonts)). Every listed face carries Cyrillic. |
+| `font-mono` | The native monospace stack: `ui-monospace`, SF Mono, Cascadia Mono, JetBrains Mono, Menlo, Consolas, Liberation Mono | Numbers in columns and totals, IDs, durations, sizes, code and transcripts. |
 | `font-size-xs` | 11 px | Sub-labels under totals. |
 | `font-size-sm` | 12 px | Column heads, reasons, IDs, badges. |
 | `font-size-md` | 13 px | Body and rows (default). |
