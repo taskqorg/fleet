@@ -114,7 +114,7 @@ These are settled elsewhere:
 * **Then:**
   * Data shows at once with the marker "offline · 18h". The accessible name reads "offline, last updated 18 hours ago".
   * Accept and Pause are disabled, with the reason "offline".
-  * When the network returns, the app catches up from the lowest stored cursor of the restored lists, or resyncs if that cursor is older than the floor.
+  * When the network returns, the feed connects at the server head and every list still showing stored rows or a failed load reloads its first page ([fleet-view-urls-and-list-path.md §2](fleet-view-urls-and-list-path.md); stored cursors are no longer used).
 
 ### CUJ 4: Coordinator restart
 
@@ -169,7 +169,7 @@ Browser windows (one origin)                          Coordinator (Fastify)
 * **Rows.**
   * Rows are kept by `(kind, id)`. The kinds are `task`, `execution`, `question`, `session`, `host` and `event` (per open conversation).
   * Each row carries the `seq` it was read at. A change with a lower or equal `seq` than the row's is ignored.
-* **Lists.** A list is `{ name, filter, order: id[], counts, cursor, endCursor }`. `counts` holds per-state counts from the server.
+* **Lists.** A list is `{ ids, keys, counts, total, groups, nextAfter, at }` under its canonical list key, plus the change cursor it reflects ([fleet-view-urls-and-list-path.md §2](fleet-view-urls-and-list-path.md)). `counts` holds per-state counts from the server.
 * **Reads.**
   * Existing ops: `task_get`, `questions_list`, `executions_list` and `session_get`.
   * Extended op: `task_list`.
@@ -231,7 +231,7 @@ SELECT ... FROM change WHERE seq > $cursor AND xid < pg_snapshot_xmin(pg_current
 
 **Catch-up and fallback.**
 * `changes_since {cursor, limit}` is the same read in request-response form.
-* The client uses it when it restores from IndexedDB (from the lowest stored cursor of the restored lists).
+* The client uses it to catch up after a reconnect of the stream (from its in-memory cursor).
 * It also uses it when SSE fails three times in a row, polling every 3 s until the stream comes back.
 
 **Retention and resync.**

@@ -2,7 +2,7 @@
 
 * **Author:** Alex Kirs
 * **Date:** 2026-11-10
-* **Status:** Brainstorm brief (EGM, 7 lenses). Input for `/egm:egm-draft`.
+* **Status:** Brainstorm brief (EGM, 7 lenses), kept as the record of the measurements and the options. The design that followed, [fleet-view-urls-and-list-path.md](fleet-view-urls-and-list-path.md), decided differently in places: stored values in a side table `task_derived` kept by triggers (not a flag-guarded query rewrite first), the normalized entity store of D4 (not a per-view cache), and `sel` in the URL now. The Node toolchain cleanup (Key Decisions item 6) is still planned.
 
 ## Overview
 
