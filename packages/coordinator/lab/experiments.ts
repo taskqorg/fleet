@@ -143,8 +143,8 @@ export function labExperiments(d:Deps){
    const last=latest(trials),missing=exp.examples.length*exp.variants.length*exp.repeats-last.size;
    // A budget reached with nothing left to launch changes nothing: the experiment finishes.
    const s:any=await spend(id),budgets=missing>0?exp.budgets:[];let state='running',reason:string|null=null,changed=false;
-   for(const b of budgets.filter((b:any)=>b.action==='stop'))if(!b.firedAt&&s[b.unit].value>=b.limit){b.firedAt=Date.now();changed=true;state='stopped';reason='budget:'+b.unit;break}
-   if(state==='running')for(const b of budgets.filter((b:any)=>b.action!=='stop'))if(!b.firedAt&&s[b.unit].value>=b.limit){b.firedAt=Date.now();changed=true;
+   for(const b of budgets.filter((b:any)=>b.action==='stop'))if(!b.firedAt&&s[b.unit]?.value>=b.limit){b.firedAt=Date.now();changed=true;state='stopped';reason='budget:'+b.unit;break}
+   if(state==='running')for(const b of budgets.filter((b:any)=>b.action!=='stop'))if(!b.firedAt&&s[b.unit]?.value>=b.limit){b.firedAt=Date.now();changed=true;
     if(b.action==='pause'){state='paused';
      await store.tasks.ask({kind:'operator_decision',projectId:exp.project_id,text:`Lab budget reached: ${b.unit} ${s[b.unit].value} of ${b.limit}. Running trials finish; resume launches or stop the experiment?`,options:['resume','stop'],askedBy:'lab',data:{experimentId:id,budget:b.unit}});break}}
    if(changed||state!=='running')await q('UPDATE experiment SET budgets=$2,state=$3,stop_reason=coalesce($4,stop_reason) WHERE id=$1',[id,JSON.stringify(budgets),state,reason]);

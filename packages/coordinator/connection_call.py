@@ -7,9 +7,11 @@ Calls go to fleet-gateway: POST <FLEET_GATEWAY_URL>/v1/call/<connection>/<tool> 
 the bearer. The gateway holds the keys and records every call in its spool, so this client writes no record of its own. A
 remote host adds the Cloudflare Access service token from FLEET_CF_ACCESS_FILE (default ~/.config/fleet/cf-access-machine.env).
 """
+import http.client
 import json
 import os
 import re
+import socket
 import ssl
 import sys
 import urllib.error
@@ -49,13 +51,17 @@ def call(connection, tool, arguments):
     request = urllib.request.Request(f'{url}/v1/call/{connection}/{tool}', json.dumps(arguments).encode(), headers, method='POST')
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT, context=tls_context() if url.startswith('https://') else None) as r:
-            status, call_id, error, body = r.status, r.headers.get('x-fleet-call-id'), r.headers.get('x-fleet-error'), r.read()
+            status, call_id, error, outcome, body = r.status, r.headers.get('x-fleet-call-id'), r.headers.get('x-fleet-error'), r.headers.get('x-fleet-outcome'), r.read()
     except urllib.error.HTTPError as e:
-        status, call_id, error, body = e.code, e.headers.get('x-fleet-call-id'), e.headers.get('x-fleet-error'), e.read()
+        status, call_id, error, outcome, body = e.code, e.headers.get('x-fleet-call-id'), e.headers.get('x-fleet-error'), e.headers.get('x-fleet-outcome'), e.read()
     except TimeoutError:
         return {**line, 'outcome': 'unknown', 'error_code': 'client-timeout'}
-    except (urllib.error.URLError, OSError):
-        return {**line, 'error_code': 'unreachable'}
+    except urllib.error.URLError as e:
+        # Not connected at all: nothing was sent. Any other failure after sending leaves the charge unknown.
+        refused = isinstance(e.reason, (ConnectionRefusedError, socket.gaierror))
+        return {**line, 'outcome': 'error' if refused else 'unknown', 'error_code': 'unreachable'}
+    except (http.client.HTTPException, OSError):
+        return {**line, 'outcome': 'unknown', 'error_code': 'connection-lost'}
     line['callId'] = call_id
     try:
         output = json.loads(body)
@@ -67,7 +73,7 @@ def call(connection, tool, arguments):
         return {**line, 'outcome': 'ok', 'output': output, 'usage': output.get('usage') if isinstance(output, dict) else None}
     # The gateway names its own refusals in x-fleet-error; a provider reply passed through is http-<status>.
     code = f'http-{status}' if not error or re.fullmatch(r'provider-\d+', error) else error
-    return {**line, 'outcome': 'unknown' if code in UNKNOWN else 'error', 'error_code': code, 'output': output}
+    return {**line, 'outcome': 'unknown' if outcome == 'unknown' or code in UNKNOWN else 'error', 'error_code': code, 'output': output}
 
 
 def mcp(connection, spec):

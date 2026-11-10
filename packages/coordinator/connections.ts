@@ -89,21 +89,22 @@ export function connectionRegistry(store:Store,config:{secretDir?:string,gateway
  async function mint(run:{executionId:string,directedBy?:string|null,projectId?:string|null,experimentId?:string|null,pipelineRunId?:string|null},requested:string[]){
   const granted:any[]=[];
   for(const name of [...new Set(requested)]){const c=await get('connection:'+name,'api-connection').catch(()=>null);if(c&&c.intake==='all'&&allowed(c,run))granted.push(c)}
-  if(!granted.length)return null;
+  if(!granted.length)return {token:null,connections:[],refused:[...new Set(requested)]};
   const token=randomBytes(32).toString('base64url'),sha256=createHash('sha256').update(token).digest('hex');
   await put('run-token',{id:'run-token:'+sha256,sha256,executionId:run.executionId,directedBy:run.directedBy??null,projectId:run.projectId??null,experimentId:run.experimentId??null,pipelineRunId:run.pipelineRunId??null,connections:granted.map(c=>c.name),createdAt:Date.now()});publish();
-  return {token,connections:granted.map(c=>({name:c.name,instructions:providers[c.provider].instructions,tools:c.tools.filter((t:string)=>providers[c.provider].tools[t]).map((t:string)=>({name:t,description:providers[c.provider].tools[t].description,inputSchema:providers[c.provider].tools[t].inputSchema}))}))}}
+  return {token,refused:[...new Set(requested)].filter(n=>!granted.some(c=>c.name===n)),connections:granted.map(c=>({name:c.name,instructions:providers[c.provider].instructions,tools:c.tools.filter((t:string)=>providers[c.provider].tools[t]).map((t:string)=>({name:t,description:providers[c.provider].tools[t].description,inputSchema:providers[c.provider].tools[t].inputSchema}))}))}}
  async function revoke(executionId:string){let changed=false;for(const t of await all('run-token',{executionId}))if(t.executionId===executionId&&!t.revokedAt){t.revokedAt=Date.now();await put('run-token',t);changed=true}if(changed)publish()}
  const ENDED=['completed','failed','stopped'];
  // Spool ingest (§3): every gateway line becomes one tool_run under the token's execution with connection_cost, idempotent by
  // callId. A past day's file is deleted once read. A line naming a disabled key disables its row and asks the owner once.
  const spoolDir=()=>config.gatewayDir?join(config.gatewayDir,'state','spool'):null;
- async function ingest(){const dir=spoolDir();if(!dir||!existsSync(dir))return 0;let added=0;const today=new Date().toISOString().slice(0,10);
+ async function ingest(){const dir=spoolDir();if(!dir||!existsSync(dir))return 0;let added=0;const yesterday=new Date(Date.now()-86400000).toISOString().slice(0,10);
   for(const file of readdirSync(dir).filter(f=>/^\d{4}-\d\d-\d\d\.jsonl$/.test(f)).sort()){
    // ponytail: the whole file is read each pass (one day of lines); keep a read offset if a day's file gets large.
    const lines=readFileSync(join(dir,file),'utf8').split('\n').filter(Boolean).flatMap(l=>{try{return [JSON.parse(l)]}catch{return []}});
    for(const l of lines)if(await record(l))added++;
-   if(file.slice(0,10)<today)rmSync(join(dir,file),{force:true})}
+   // Deleted after commit, and only once a whole day has passed since it ended: a call that started before midnight may still append.
+   if(file.slice(0,10)<yesterday){const f=join(dir,file);after(()=>rmSync(f,{force:true}))}}
   return added}
  async function record(l:any){if(typeof l?.callId!=='string'||!l.tokenSha256||!l.executionId)return false;
   const t=await get('run-token:'+l.tokenSha256,'run-token').catch(()=>null);if(!t)return false;
@@ -125,6 +126,7 @@ export function connectionRegistry(store:Store,config:{secretDir?:string,gateway
  async function tick(){await ingest();
   const open=(await all('run-token')).filter((t:any)=>!t.revokedAt);if(!open.length)return;
   const runs=await store.many(open.map((t:any)=>t.executionId),'execution');
-  for(const t of open){const e=runs.get(t.executionId);if(!e||ENDED.includes(e.state))await revoke(t.executionId)}}
+  // A token whose execution is not an agent execution (an api step row) is revoked by its caller, never here.
+  for(const t of open){const e=runs.get(t.executionId);if(e&&ENDED.includes(e.state))await revoke(t.executionId)}}
  return {operations,sync,snapshot,writeSnapshot,publish,mint,revoke,ingest,tick};
 }

@@ -50,7 +50,7 @@ type Deps={
  store:{get:(id:string,kind:string)=>Promise<any>,put:(kind:string,v:any)=>Promise<unknown>,all:(kind:string,f?:any)=>Promise<any[]>,query:(sql:string,p?:any[])=>Promise<any[]>,atomic:<T>(fn:()=>Promise<T>|T)=>Promise<T>,outside:<T>(fn:()=>T)=>T,executions:any},
  directory:string,
  // Per-run tokens and spool ingest (connections.ts): an api step's call carries a token minted for its step row.
- connections?:{mint:(run:any,requested:string[])=>Promise<{token:string}|null>,published:()=>Promise<void>,revoke:(executionId:string)=>Promise<void>,ingest:()=>Promise<number>},
+ connections?:{mint:(run:any,requested:string[])=>Promise<{token:string|null}>,published:()=>Promise<void>,revoke:(executionId:string)=>Promise<void>,ingest:()=>Promise<number>},
  // The gateway this coordinator calls (FLEET_GATEWAY_URL; loopback on PDS18).
  gatewayUrl?:string,
  save:(o:{projectId:string|null,scope:'lab'|'prod',executionId:string,name:string,bytes:Buffer,mediaType:string})=>Promise<{id:string}>,
@@ -76,9 +76,9 @@ export function pipelineRunner(d:Deps){
  // spool line becomes the step's tool_run (ingested here, so the row exists when the step moves on).
  async function call(run:any,connection:string,executionId:string,tool:string,args:any):Promise<any>{
   const minted=d.connections&&d.gatewayUrl&&/^[a-z0-9-]+$/.test(connection)?await store.atomic(()=>d.connections!.mint({executionId,directedBy:run.requestedBy?.email??null,projectId:run.projectId??null,experimentId:run.experimentId??null},[connection])):null;
-  if(!minted)return {tool,outcome:'error',error_code:'connection-unavailable',usage:null,output:null};
+  if(!minted?.token)return {tool,outcome:'error',error_code:'connection-unavailable',usage:null,output:null};
   await d.connections!.published();// the gateway must see the token before the call
-  try{return await new Promise<any>(res=>{const child=spawn(client[0],[...client.slice(1),'call',connection,tool],{env:{PATH:process.env.PATH,FLEET_RUN_TOKEN:minted.token,FLEET_GATEWAY_URL:d.gatewayUrl!},stdio:['pipe','pipe','ignore']});
+  try{return await new Promise<any>(res=>{const child=spawn(client[0],[...client.slice(1),'call',connection,tool],{env:{PATH:process.env.PATH,FLEET_RUN_TOKEN:minted.token!,FLEET_GATEWAY_URL:d.gatewayUrl!},stdio:['pipe','pipe','ignore']});
    let out='';child.stdout.on('data',b=>out+=b);child.on('error',()=>res({tool,outcome:'error',error_code:'client-unavailable',usage:null,output:null}));
    child.on('close',()=>{try{res(JSON.parse(out))}catch{res({tool,outcome:'unknown',error_code:'invalid-response',usage:null,output:null})}});child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify(args))})}
   finally{await store.atomic(async()=>{await d.connections!.revoke(executionId);await d.connections!.ingest()})}}

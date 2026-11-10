@@ -530,6 +530,7 @@ impl Gateway {
         }));
         let mut response = reply(answer.status, answer.body);
         response.headers_mut().insert("x-fleet-call-id", HeaderValue::from_str(&call_id).expect("hex call id"));
+        response.headers_mut().insert("x-fleet-outcome", HeaderValue::from_static(answer.outcome));
         if let Some(error) = answer.error.as_deref().and_then(|e| HeaderValue::from_str(e).ok()) {
             response.headers_mut().insert("x-fleet-error", error);
         }

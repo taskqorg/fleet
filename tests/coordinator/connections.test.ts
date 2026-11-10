@@ -64,7 +64,7 @@ test('run tokens: access filters connections, the snapshot holds only the hash, 
  const run=await store.tx(()=>c.mint({executionId:'exec-1',directedBy:OWNER,projectId:'p1',experimentId:null},['tavily','other','absent']));
  assert.deepEqual(run.connections.map((x:any)=>x.name),['tavily']);assert.deepEqual(run.connections[0].tools.map((t:any)=>t.name),['web_search','web_extract']);
  await c.writeSnapshot();const tok=f.snapshot().tokens;assert.equal(tok.length,1);assert.equal(tok[0].sha256,sha256(run.token));assert.ok(!JSON.stringify(f.snapshot()).includes(run.token));
- assert.equal(await store.tx(()=>c.mint({executionId:'exec-1',directedBy:'x@y.z',projectId:null},['other'])),null);
+ assert.deepEqual(await store.tx(()=>c.mint({executionId:'exec-1',directedBy:'x@y.z',projectId:null},['other'])),{token:null,connections:[],refused:['other']});assert.deepEqual(run.refused,['other','absent']);
  // Spool: one ok call and one that disabled the key; read twice, recorded once.
  mkdirSync(join(f.gatewayDir,'state','spool'),{recursive:true});const sp=join(f.gatewayDir,'state','spool',new Date().toISOString().slice(0,10)+'.jsonl');
  const line=(callId:string,extra:any)=>JSON.stringify({callId,executionId:'exec-1',tokenSha256:sha256(run.token),connection:'tavily',tool:'web_search',status:200,outcome:'ok',usage:{unit:'credits',amount:2},...extra});
