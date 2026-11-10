@@ -89,11 +89,12 @@ impl Client {
     /// redirect is never followed since requests carry the Access headers) and is retried; 4xx is permanent.
     fn store_answer(url: &str, r: std::result::Result<ureq::Response, ureq::Error>) -> std::result::Result<ureq::Response, Failure> {
         let key = format!("store {}", url.split_once("://").map_or(url, |(_, r)| r).split(['/', '?']).next().unwrap_or(""));
-        match r {
-            Ok(r) if (300..400).contains(&r.status()) => { let (s, to) = (r.status(), outbox::location(&r)); let _ = r.into_string(); outbox::edge_redirect(&key, s, &to); Err(Failure::Retry(format!("store redirected with {s} to {to}"))) }
-            Ok(r) => { outbox::edge_ok(&key); Ok(r) }
-            Err(ureq::Error::Status(code, r)) if code < 500 && code != 429 => { outbox::edge_ok(&key); Err(Failure::Permanent(format!("store {code} {}", r.into_string().unwrap_or_default()))) }
-            Err(e) => Err(Failure::Retry(e.to_string())),
+        let r = match r { Ok(r) | Err(ureq::Error::Status(_, r)) => r, Err(e) => return Err(Failure::Retry(e.to_string())) };
+        match outbox::class(r.status(), false) {
+            outbox::Class::Edge => { let (s, to) = (r.status(), outbox::location(&r)); let _ = r.into_string(); outbox::edge_redirect(&key, s, &to); Err(Failure::Retry(format!("store redirected with {s} to {to}"))) }
+            outbox::Class::Ok => { outbox::edge_ok(&key); Ok(r) }
+            outbox::Class::Reject => { outbox::edge_ok(&key); Err(Failure::Permanent(format!("store {} {}", r.status(), r.into_string().unwrap_or_default()))) }
+            outbox::Class::Retry => Err(Failure::Retry(format!("store {} {}", r.status(), r.into_string().unwrap_or_default()))),
         }
     }
     pub fn put_part(&self, url: &str, bytes: &[u8]) -> std::result::Result<String, Failure> {

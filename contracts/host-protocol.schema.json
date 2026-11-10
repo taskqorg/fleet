@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Host protocol and event payloads (fleet-stack L3 stage 1). Source for packages/coordinator, app and crates/executor types; see contracts/README.md for the supported keyword subset.",
+  "$defs": {
+    "PollRequest": {
+      "type": "object",
+      "required": ["hostId", "platform", "capabilities", "stores", "problems"],
+      "properties": {
+        "hostId": {"type": "string"},
+        "platform": {"type": "string"},
+        "capabilities": {"type": "array", "items": {"type": "string"}},
+        "stores": {"$comment": "store::report output; described when stores are next changed", "type": "array", "items": {}},
+        "problems": {"type": "array", "items": {"$ref": "#/$defs/EdgeProblem"}}
+      }
+    },
+    "EdgeProblem": {
+      "type": "object",
+      "required": ["kind", "route", "status", "location", "detail"],
+      "properties": {
+        "kind": {"$ref": "#/$defs/EdgeProblemKind"},
+        "route": {"type": "string"},
+        "status": {"type": "integer", "minimum": 0},
+        "location": {"type": ["string", "null"]},
+        "detail": {"type": "string"}
+      }
+    },
+    "EdgeProblemKind": {"type": "string", "enum": ["edge-redirect"]},
+    "PollReply": {
+      "type": "object",
+      "required": ["commands"],
+      "properties": {
+        "commands": {"type": "array", "items": {"$ref": "#/$defs/Command"}}
+      }
+    },
+    "Command": {
+      "$comment": "Envelope only: payloads differ by kind and are described when each kind is next changed.",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind", "executionId"],
+      "properties": {
+        "id": {"type": "string"},
+        "kind": {"type": "string"},
+        "executionId": {"type": "string"},
+        "sessionId": {"type": "string"},
+        "hostId": {"type": "string"},
+        "payload": {"type": "object", "additionalProperties": true, "properties": {}}
+      }
+    },
+    "Receipt": {
+      "$comment": "Status receipt. Delegation and account receipts (written by the Python MCP servers) are described in L4.",
+      "type": "object",
+      "required": ["hostId", "commandId", "executionId", "status"],
+      "properties": {
+        "hostId": {"type": "string"},
+        "commandId": {"type": "string"},
+        "executionId": {"type": "string"},
+        "status": {"$ref": "#/$defs/ReceiptStatus"},
+        "nativeSessionId": {"type": ["string", "null"]},
+        "artifacts": {"type": "array", "items": {"type": "string"}},
+        "error": {"type": "string"}
+      }
+    },
+    "ReceiptStatus": {"type": "string", "enum": ["accepted", "started", "completed", "failed", "stopped", "unknown"]},
+    "HostEvents": {
+      "type": "object",
+      "required": ["hostId", "executionId", "events"],
+      "properties": {
+        "hostId": {"type": "string"},
+        "executionId": {"type": "string"},
+        "events": {"type": "array", "items": {"$ref": "#/$defs/HostEvent"}}
+      }
+    },
+    "HostEvent": {
+      "type": "object",
+      "required": ["id", "seq", "type", "timestamp", "data"],
+      "properties": {
+        "id": {"type": "string"},
+        "seq": {"type": "integer", "minimum": 0},
+        "type": {"type": "string"},
+        "timestamp": {"type": "integer", "minimum": 0},
+        "data": {"$ref": "#/$defs/EventData"}
+      }
+    },
+    "EventData": {
+      "$comment": "Harness events keep their native record and add fleetNormalized; item is set on item.completed. Other kinds carry their own fields (open).",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "item": {"$ref": "#/$defs/Item"},
+        "fleetNormalized": {"$ref": "#/$defs/Normalized"},
+        "harnessVersion": {"type": "string"},
+        "children": {"type": "array", "items": {}}
+      }
+    },
+    "Item": {
+      "$comment": "A completed native item (codex), agentMessage renamed agent_message.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "type": {"type": "string"},
+        "text": {"type": "string"},
+        "command": {"type": "string"},
+        "name": {"type": "string"},
+        "status": {"type": "string"}
+      }
+    },
+    "Normalized": {
+      "$comment": "harness::project and Blocks::project output; only the fields the coordinator and app read are named.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "usage": {},
+        "usageScope": {"type": "string"},
+        "deltaOf": {"type": ["string", "null"]}
+      }
+    },
+    "OutboxFailed": {
+      "$comment": "data of an outbox.failed event.",
+      "type": "object",
+      "required": ["route", "status", "reason"],
+      "properties": {
+        "route": {"type": "string"},
+        "status": {"type": "integer", "minimum": 0},
+        "reason": {"type": "string"}
+      }
+    }
+  }
+}

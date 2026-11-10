@@ -1,5 +1,6 @@
 mod antigravity;
 mod codex;
+mod contracts;
 mod harness;
 mod profile;
 mod native;
@@ -192,7 +193,8 @@ impl Executor {
     }
     fn receipt(&self, c: &Value, status: &str, native: Option<&str>) -> Result<()> {
         let declared = std::mem::take(&mut *self.declared.borrow_mut());
-        self.queue("/api/hosts/receipts",json!({"hostId":self.host,"commandId":c["id"],"executionId":c["executionId"],"status":status,"nativeSessionId":native,"artifacts":declared}))
+        let r = contracts::Receipt { host_id: self.host.clone(), command_id: id(c, "id")?.into(), execution_id: id(c, "executionId")?.into(), status: serde_json::from_value(json!(status))?, native_session_id: native.map(Into::into), artifacts: Some(declared), error: None };
+        self.queue("/api/hosts/receipts", serde_json::to_value(r)?)
     }
     fn run(&mut self, c: Value) -> Result<()> {
         let cid = id(&c, "id")?;
@@ -860,16 +862,9 @@ impl Executor {
                                 l.completed = true;
                             }
                             l.seq += 1;
-                            self.event(
-                                &l.command,
-                                l.seq,
-                                event["type"].as_str().unwrap_or("unknown"),
-                                {
-                                    let mut retained = event.clone();
-                                    retained["fleetNormalized"] = projection;
-                                    retained
-                                },
-                            )?;
+                            let mut retained: contracts::EventData = serde_json::from_value(event.clone())?;
+                            retained.fleet_normalized = Some(serde_json::from_value(projection)?);
+                            self.typed_event(&l.command, l.seq, event["type"].as_str().unwrap_or("unknown"), retained)?;
                         }
                         Err(mpsc::TryRecvError::Empty) => break,
                         Err(mpsc::TryRecvError::Disconnected) => {
@@ -964,7 +959,11 @@ impl Executor {
         Ok(())
     }
     fn event(&self, c: &Value, seq: u64, kind: &str, data: Value) -> Result<()> {
-        self.queue("/api/hosts/events",json!({"hostId":self.host,"executionId":c["executionId"],"events":[{"id":format!("{}-{seq}",c["id"].as_str().unwrap()),"seq":seq,"type":kind,"timestamp":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis(),"data":data}]}))
+        self.typed_event(c, seq, kind, serde_json::from_value(data)?)
+    }
+    fn typed_event(&self, c: &Value, seq: u64, kind: &str, data: contracts::EventData) -> Result<()> {
+        let event = contracts::HostEvent { id: format!("{}-{seq}", id(c, "id")?), seq, r#type: kind.into(), timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64, data };
+        self.queue("/api/hosts/events", serde_json::to_value(contracts::HostEvents { host_id: self.host.clone(), execution_id: id(c, "executionId")?.into(), events: vec![event] })?)
     }
     /// Collects the output folder: each regular file (symlinks skipped, nothing outside the root) is copied into the spool, so
     /// later edits and worktree cleanup cannot change what is uploaded, and queued for upload with its relative path as name.
@@ -1122,8 +1121,10 @@ fn main() -> Result<()> {
         let result = (|| -> Result<()> {
             // A poll the edge answered is asked again every 2 s (outbox::edge_redirect), not every 100 ms.
             if outbox::edge_wait(outbox::POLL) { return Ok(()) }
-            let reply=e.post("/api/hosts/poll",json!({"hostId":e.host,"platform":platform(),"capabilities":capabilities(),"stores":e.stores(),"problems":outbox::edge_problems(outbox::POLL)}))?;
-            for c in reply["commands"].as_array().ok_or("commands missing")? {
+            let poll = contracts::PollRequest { host_id: e.host.clone(), platform: platform().into(), capabilities: capabilities(), stores: serde_json::from_value(e.stores())?, problems: outbox::edge_problems(outbox::POLL) };
+            let reply: contracts::PollReply = serde_json::from_value(e.post("/api/hosts/poll", serde_json::to_value(poll)?)?)?;
+            // ponytail: commands go on as JSON values; command payloads get schema types when each kind is next changed.
+            for c in &reply.commands.into_iter().map(serde_json::to_value).collect::<std::result::Result<Vec<_>, _>>()? {
                 if e.run(c.clone()).is_err()
                     && !e.live.contains_key(c["executionId"].as_str().unwrap_or(""))
                 {

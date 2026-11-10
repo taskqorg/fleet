@@ -1,0 +1,12 @@
+## coordinator: tsc
+exit=0
+## app: tsc -p app
+exit=0
+## executor: cargo build
+error[E0560]: struct `EventData` has no field named `item`
+   --> crates/executor/src/codex.rs:190:21
+    |
+190 |                     item: Some(serde_json::from_value(item).map_err(|e| format!("codex item: {e}"))?),
+    |                     ^^^^ `EventData` does not have this field
+--
+error: could not compile `fleet-executor` (bin "fleet-executor") due to 1 previous error; 1 warning emitted

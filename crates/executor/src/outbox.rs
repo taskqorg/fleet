@@ -20,26 +20,23 @@ pub fn schema(db: &Connection) -> rusqlite::Result<()> {
 /// or a 2xx that is not JSON (a login page served inline). The row stays queued and is retried with backoff. The body is
 /// drained so the pooled connection is reused.
 pub enum Answer { Ok(Value), Edge(u16, String), Reject(u16, String), Retry(String) }
+/// The one status table for coordinator answers (outbox, transfer client) and store answers (upload::store_answer).
+/// A redirect is always an edge condition; 401 is one only for the coordinator (`host_token`: the host token is not
+/// accepted right now, a rotation or a restart, never the row), while a store's 401 rejects the request.
+#[derive(PartialEq, Debug)]
+pub enum Class { Ok, Edge, Retry, Reject }
+pub fn class(status: u16, host_token: bool) -> Class {
+    match status { 300..=399 => Class::Edge, 401 if host_token => Class::Edge, 429 | 500.. => Class::Retry, 400.. => Class::Reject, _ => Class::Ok }
+}
 pub fn classify(r: std::result::Result<ureq::Response, ureq::Error>) -> Answer {
-    match r {
-        Ok(r) if (300..400).contains(&r.status()) => {
-            let status = r.status();
-            let to = location(&r);
-            let _ = r.into_string();
-            Answer::Edge(status, to)
-        }
-        Ok(r) => {
-            let status = r.status();
-            let text = r.into_string().unwrap_or_default();
-            serde_json::from_str::<Value>(&text).map_or_else(|_| Answer::Edge(status, "an answer that is not JSON".into()), Answer::Ok)
-        }
-        Err(ureq::Error::Status(code, r)) => {
-            let text = r.into_string().unwrap_or_default();
-            // 401: the coordinator or the edge does not accept the host token right now (a rotation, a restart); never the row.
-            if code == 401 { return Answer::Edge(401, "the host token is not accepted".into()) }
-            if code >= 500 || code == 429 { Answer::Retry(format!("{code} {text}")) } else { Answer::Reject(code, text) }
-        }
-        Err(e) => Answer::Retry(e.to_string()),
+    let r = match r { Ok(r) | Err(ureq::Error::Status(_, r)) => r, Err(e) => return Answer::Retry(e.to_string()) };
+    let status = r.status();
+    match class(status, true) {
+        Class::Edge if status == 401 => { let _ = r.into_string(); Answer::Edge(401, "the host token is not accepted".into()) }
+        Class::Edge => { let to = location(&r); let _ = r.into_string(); Answer::Edge(status, to) }
+        Class::Ok => { let text = r.into_string().unwrap_or_default(); serde_json::from_str::<Value>(&text).map_or_else(|_| Answer::Edge(status, "an answer that is not JSON".into()), Answer::Ok) }
+        Class::Retry => Answer::Retry(format!("{status} {}", r.into_string().unwrap_or_default())),
+        Class::Reject => Answer::Reject(status, r.into_string().unwrap_or_default()),
     }
 }
 /// A redirect's Location without its query or fragment: an edge login URL can carry parameters.
@@ -90,12 +87,12 @@ pub fn edge_wait(route: &str) -> bool {
 }
 /// The host problems for a poll; the poll's own route is left out (a poll that is delivered proves it works). `location` is
 /// set for a redirect; `detail` describes any edge answer.
-pub fn edge_problems(except: &str) -> Value {
+pub fn edge_problems(except: &str) -> Vec<crate::contracts::EdgeProblem> {
     let m = EDGE.lock().unwrap_or_else(|e| e.into_inner());
-    Value::Array(m.iter().filter(|(r, _)| r.as_str() != except).map(|(route, e)| {
+    m.iter().filter(|(r, _)| r.as_str() != except).map(|(route, e)| {
         let redirect = (300..400).contains(&e.status);
-        json!({"kind":"edge-redirect","route":route,"status":e.status,"location":if redirect { json!(e.detail) } else { Value::Null },"detail":if redirect { format!("redirect to {}", e.detail) } else { e.detail.clone() }})
-    }).collect())
+        crate::contracts::EdgeProblem { kind: crate::contracts::EdgeProblemKind::EdgeRedirect, route: route.clone(), status: e.status.into(), location: redirect.then(|| e.detail.clone()), detail: if redirect { format!("redirect to {}", e.detail) } else { e.detail.clone() } }
+    }).collect()
 }
 
 /// One coordinator request on the pooled agent (keep-alive avoids a TLS handshake per row; redirects are not followed).
@@ -177,7 +174,9 @@ pub fn flush(db: &Connection, url: &str, token: &str, host: &str) -> Result<()> 
                     if let (Some(execution), false) = (value["executionId"].as_str(), own) {
                         // ponytail: seq offset 1e12+rowid keeps clear of harness sequences; reserve a range if the coordinator ever caps seq.
                         let seq = 1_000_000_000_000i64 + n;
-                        queue(&tx, "/api/hosts/events", json!({"hostId":host,"executionId":execution,"events":[{"id":format!("outbox-failed-{n}"),"seq":seq,"type":"outbox.failed","timestamp":now,"data":{"route":p,"status":status,"reason":reason}}]}))?;
+                        let data = crate::contracts::OutboxFailed { route: p.clone(), status: status as u64, reason: reason.clone() };
+                        let event = crate::contracts::HostEvent { id: format!("outbox-failed-{n}"), seq: seq as u64, r#type: "outbox.failed".into(), timestamp: now as u64, data: serde_json::from_value(serde_json::to_value(data)?)? };
+                        queue(&tx, "/api/hosts/events", serde_json::to_value(crate::contracts::HostEvents { host_id: host.into(), execution_id: execution.into(), events: vec![event] })?)?;
                     }
                     tx.commit()?;
                     i += 1;
@@ -219,6 +218,12 @@ pub fn spawn(path: std::path::PathBuf, url: String, token: String, host: String)
 pub mod tests {
     use super::*;
     use std::io::{BufRead, BufReader, Read, Write};
+    #[test]
+    fn one_status_table() {
+        for (s, coordinator, store) in [(200, Class::Ok, Class::Ok), (302, Class::Edge, Class::Edge), (401, Class::Edge, Class::Reject), (404, Class::Reject, Class::Reject), (429, Class::Retry, Class::Retry), (503, Class::Retry, Class::Retry)] {
+            assert_eq!((class(s, true), class(s, false)), (coordinator, store), "{s}");
+        }
+    }
     /// A coordinator stand-in: answers `n` requests with `answer(path, body)` -> (status line, extra headers).
     pub fn serve(n: usize, answer: impl Fn(&str, &Value) -> (&'static str, &'static str) + Send + 'static) -> (String, std::thread::JoinHandle<Vec<(String, Value)>>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -293,7 +298,7 @@ pub mod tests {
         queue(&db, "/api/hosts/stores", json!({"hostId":"mac"})).unwrap();
         flush(&db, &url, "t", "mac").unwrap();
         assert_eq!((count(&db, "outbox"), count(&db, "outbox_failed")), (1, 0), "kept, not set aside");
-        let p = edge_problems("");
+        let p = json!(edge_problems(""));
         assert!(p.as_array().unwrap().iter().any(|x| x["route"] == "/api/hosts/stores" && x["status"] == 302 && !x["location"].as_str().unwrap().contains("token")), "{p}");
         // Within the backoff the route is not asked again; after it the row is delivered.
         flush(&db, &url, "t", "mac").unwrap();
@@ -301,7 +306,7 @@ pub mod tests {
         std::thread::sleep(Duration::from_millis(2100));
         flush(&db, &url, "t", "mac").unwrap();
         assert_eq!(count(&db, "outbox"), 0);
-        assert!(!edge_problems("").as_array().unwrap().iter().any(|x| x["route"] == "/api/hosts/stores"), "cleared on delivery");
+        assert!(!json!(edge_problems("")).as_array().unwrap().iter().any(|x| x["route"] == "/api/hosts/stores"), "cleared on delivery");
         assert_eq!(server.join().unwrap().len(), 2);
     }
     #[test]
