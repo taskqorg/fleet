@@ -124,7 +124,9 @@ func (p *pyParser) ws(i int) int {
 	}
 	return i
 }
-func (p *pyParser) lit(i int, w string) bool { return strings.HasPrefix(string(p.s[min(i, len(p.s)):]), w) }
+func (p *pyParser) lit(i int, w string) bool {
+	return strings.HasPrefix(string(p.s[min(i, len(p.s)):]), w)
+}
 
 func (p *pyParser) value(i int) int {
 	switch c := p.at(i); {

@@ -10,7 +10,6 @@ import (
 	"crypto/rand"
 	"database/sql"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -134,7 +133,7 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 		q = get(p, "arguments")
 	}
 	if slices.Contains(artifactTools, name) && truth(get(ctx, "workdir")) {
-		return artifactCall(ctx, name, q, db)
+		return artifactCall(ctx, name, q, dbExec{db})
 	}
 	need := func(k string) (string, error) {
 		s, ok := str(get(ctx, k))
@@ -413,5 +412,3 @@ func mcpRun(args []string) error {
 		out.Flush()
 	}
 }
-
-var _ = json.Number("")
