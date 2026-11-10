@@ -6,3 +6,4 @@ Service files and scripts for running Fleet. Nothing here is applied automatical
 * `hosts/macos/`: launchd files for a macOS host (Garage, cloudflared).
 
 Design: [data foundation](../docs/designs/fleet-data-foundation.md) Phase 0 and §10.
+* `build-release.sh <commit> <out-dir>`: the coordinator release tarball (`fleet-<commit>.tgz`) from a clean `git archive`, built without macOS `._*` files.

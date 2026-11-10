@@ -453,7 +453,7 @@ Stage 0 exit: a trial inserted by SQL fixture (experiment row + `pipeline_run` w
 *   `artifacts.ts` `writeObject` (shared with backfill) writes an object the coordinator hashed itself. An import refuses purged content (as `reserve` does) and checks every example before writing any, so a refused batch stores nothing.
 *   Agents never see examples: the host artifact routes (`artifact_list`, `artifact_get`) skip role `example`, because references are known-good answers. Stage 2 hands a trial its example inputs only.
 *   `config/lab` ships in `dist/config/lab`; the coordinator reads the registry from there (`FLEET_LAB_DIRECTORY` overrides).
-*   `scripts/lab-examples.ts check|import`.
+*   `scripts/lab-examples.ts check|import`. `import` sends `$FLEET_ORIGIN` as Origin when set (needed behind `FLEET_BROWSER_PROXY_AUTH`); `check` puts the node running it first on PATH.
 *   Five owner-written `work` seeds: `fleet:UC1` page, `fleet:UC5` web research (for the `web-research` pipeline, the API-step example), `fleet:UC9` faster code, `taskq:UC-07` plan to tasks, `taskq:UC-16` tray icon.
 
 #### 19b. `tests/coordinator/lab-registry.test.ts` (Create)

@@ -6,12 +6,15 @@
 // FILE is a JSON file holding one example or an array of them; "-" reads standard input. check validates each example
 // against the registry, then runs its checks twice in a fresh directory: on inputs plus references (every check must pass)
 // and on inputs alone (at least one check must fail, so a check that passes on untouched input is reported). A check is a
-// shell command run in that directory with FLEET_OUTPUT_DIR set to it, the same contract a Stage 3 script evaluator uses.
-// import posts to $FLEET_URL/api/lab/examples with the operator credential from $FLEET_TOKEN; --project ID sets the project.
+// shell command run in that directory with FLEET_OUTPUT_DIR set to it, the same contract a Stage 3 script evaluator uses;
+// the node running this script comes first on PATH, so checks that call node work where node is not on PATH (a systemd unit).
+// import posts to $FLEET_URL/api/lab/examples with the operator credential from $FLEET_TOKEN, and sends $FLEET_ORIGIN as
+// Origin when set (a coordinator with FLEET_BROWSER_PROXY_AUTH refuses a POST without its FLEET_BROWSER_ORIGIN);
+// --project ID sets the project.
 import {execFileSync} from 'node:child_process';
 import {mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {dirname,join,resolve} from 'node:path';
+import {delimiter,dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {parseExample,useCaseIds,type Example,type ExampleFile} from '../packages/coordinator/lab/examples.js';
 
@@ -21,7 +24,7 @@ export function readExamples(files:string[]):any[]{return files.flatMap(f=>{cons
 export function runChecks(e:Example,files:ExampleFile[]){const dir=mkdtempSync(join(tmpdir(),'lab-example-'));
  try{for(const f of files){mkdirSync(dirname(join(dir,f.path)),{recursive:true});writeFileSync(join(dir,f.path),f.text)}
   const failed:{id:string,output:string}[]=[];
-  for(const c of e.checks){try{execFileSync('sh',['-c',c.run],{cwd:dir,env:{...process.env,FLEET_TOKEN:undefined,FLEET_OUTPUT_DIR:dir},stdio:['ignore','pipe','pipe'],encoding:'utf8'})}
+  for(const c of e.checks){try{execFileSync('sh',['-c',c.run],{cwd:dir,env:{...process.env,FLEET_TOKEN:undefined,FLEET_OUTPUT_DIR:dir,PATH:[dirname(process.execPath),process.env.PATH].filter(Boolean).join(delimiter)},stdio:['ignore','pipe','pipe'],encoding:'utf8'})}
    catch(x:any){failed.push({id:c.id,output:String(x.stderr||x.stdout||x.message).trim().split('\n').filter(Boolean).pop()??''})}}
   return failed}finally{rmSync(dir,{recursive:true,force:true})}}
 
@@ -33,6 +36,11 @@ export function checkExample(raw:any,useCases:Set<string>):string[]{let e:Exampl
  if(!runChecks(e,e.inputs).length)problems.push('every check passes on the inputs alone');
  return problems}
 
+export async function importExamples(o:{url:string,token:string,origin?:string,examples:any[],projectId?:string}){
+ const headers:Record<string,string>={'content-type':'application/json',authorization:'Bearer '+o.token};if(o.origin)headers.origin=o.origin;
+ const r=await fetch(o.url.replace(/\/$/,'')+'/api/lab/examples',{method:'POST',headers,body:JSON.stringify({examples:o.examples,projectId:o.projectId,approved:true})});
+ const body=await r.text();if(!r.ok)throw Error(`import failed: ${r.status} ${body}`);return JSON.parse(body) as {examples:any[]}}
+
 async function main(argv:string[]){const [cmd,...rest]=argv,root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
  const projectAt=rest.indexOf('--project'),projectId=projectAt>=0?rest[projectAt+1]:undefined,files=rest.filter((_,i)=>projectAt<0||i!==projectAt&&i!==projectAt+1);
  const examples=readExamples(files.length?files:['-']);
@@ -40,9 +48,7 @@ async function main(argv:string[]){const [cmd,...rest]=argv,root=resolve(dirname
   for(const x of examples){const p=checkExample(x,useCases);console.log(`${x?.id??'?'}: ${p.length?'FAIL\n  '+p.join('\n  '):Array.isArray(x?.checks)&&!x.checks.length?'no script checks (owner or judge rating)':'ok'}`);if(p.length)bad++}
   console.log(`${examples.length-bad} of ${examples.length} examples pass their checks with no agent`);if(bad)process.exitCode=1;return}
  if(cmd==='import'){const url=process.env.FLEET_URL,token=process.env.FLEET_TOKEN;if(!url||!token)throw Error('FLEET_URL and FLEET_TOKEN required');
-  const r=await fetch(url.replace(/\/$/,'')+'/api/lab/examples',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({examples,projectId,approved:true})});
-  const body=await r.text();if(!r.ok)throw Error(`import failed: ${r.status} ${body}`);
-  for(const x of JSON.parse(body).examples)console.log(`${x.id}@${x.version}: ${x.created?'created':'already stored'} ${x.artifactId}`);return}
+  for(const x of (await importExamples({url,token,origin:process.env.FLEET_ORIGIN,examples,projectId})).examples)console.log(`${x.id}@${x.version}: ${x.created?'created':'already stored'} ${x.artifactId}`);return}
  throw Error('usage: lab-examples.ts check|import FILE… [--project ID]')}
 
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))main(process.argv.slice(2)).catch(e=>{console.error(e.message);process.exitCode=1});

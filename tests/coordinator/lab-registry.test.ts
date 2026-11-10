@@ -2,11 +2,11 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {mkdirSync,mkdtempSync,readFileSync,readdirSync,writeFileSync} from 'node:fs';
+import {existsSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {section,hash,check,run,loadRegistry} from '../../scripts/lab-drift.js';
-import {checkExample,readExamples} from '../../scripts/lab-examples.js';
+import {checkExample,readExamples,runChecks,importExamples} from '../../scripts/lab-examples.js';
 import {convert} from '../../scripts/lab-import-assetq.js';
 import {useCaseIds} from '../../packages/coordinator/lab/examples.js';
 import {createApp} from '../../packages/coordinator/app.js';
@@ -96,3 +96,15 @@ test('POST /api/lab/examples stores approved lab artifacts; same content is idem
  assert.ok(!seen.includes(own.artifactId),'examples are not in an agent artifact list');
  assert.equal((await host('/api/hosts/artifacts/get',{hostId:'mac',executionId:'agent-1',artifactId:own.artifactId})).statusCode,403);
  await app.close()});
+
+test('check runner puts its own node on PATH',(t)=>{const saved=process.env.PATH;
+ // PATH holds only the directory of sh, so the check's node can come only from the runner.
+ if(existsSync('/bin/node'))return t.skip('node is in /bin');process.env.PATH='/bin';
+ try{assert.deepEqual(runChecks({checks:[{id:'node',run:'node -e 0'}]} as any,[]),[])}finally{process.env.PATH=saved}});
+
+test('import sends FLEET_ORIGIN, so it works behind browser proxy auth',async()=>{
+ const app:any=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac',storeEndpointHosts:['127.0.0.1'],browserProxyAuth:true,browserOrigin:'https://fleet.example'});
+ await app.ready();await attachStores(app,'m',['mac']);const url=await app.listen({host:'127.0.0.1',port:0});
+ const ex=JSON.parse(readFileSync('config/lab/examples/fleet-uc1-about-page.json','utf8'));
+ try{await assert.rejects(importExamples({url,token:'b',examples:[ex]}),/403/);
+  assert.equal((await importExamples({url,token:'b',origin:'https://fleet.example',examples:[ex]})).examples[0].created,true)}finally{await app.close()}});
