@@ -17,6 +17,8 @@
 | Executor delivery | [designs/fleet-executor-delivery.md](designs/fleet-executor-delivery.md) | Executor release files built in CI, trust, and how a host fetches them. | none |
 | Self-update | [designs/fleet-self-update.md](designs/fleet-self-update.md) | Release by tag with provenance, the `fleet-update` timer on every host, PDS18 order, rollback, `autoUpdate`, versions in `hosts_list`. | none |
 | Definition editors | [designs/fleet-definition-editors.md](designs/fleet-definition-editors.md) | Agents, pipelines and the catalogue as store revisions with drafts, conflicts, a one-way mirror to a private config repository, and the editor operations. | [design-system/patterns/definition-editor.md](design-system/patterns/definition-editor.md) |
+| Telemetry | [designs/fleet-telemetry.md](designs/fleet-telemetry.md) | One span per operation across all services, trace context, process CPU and memory, the rules pass and telemetry operations. | |
+| System management | [designs/fleet-system-management.md](designs/fleet-system-management.md) | Host remove, archive, delete and purge, worktree removal on delivery, problems as questions, backups, the audit journal and the System screen. | |
 | PM agent | [designs/fleet-pm-agent.md](designs/fleet-pm-agent.md) | Director-scoped agent tools, task tools, Held tasks, focus, watch mode. | [system-operations.md](system-operations.md), [execution-contract.md](execution-contract.md) |
 | Orchestration | [orchestration.md](orchestration.md) | Coordination semantics over executions. | none |
 | Allocation | [work-allocation.md](work-allocation.md) | Which host, environment and agent configuration runs a task; balancing and operator steering. | none |
