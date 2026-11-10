@@ -185,7 +185,9 @@ func init() {
 	})
 	// setting_changes: the audit of settings, newest first, optionally of one target (host:<id>, people, ...).
 	bop("setting_changes", true, func(q *Request) (any, error) {
-		rs, err := rows(q, "SELECT data FROM document WHERE kind='setting-change' AND ($1='' OR data->>'target'=$1) ORDER BY seq DESC LIMIT 200", gs(body(q), "target"))
+		// The people list is the owner's: its audit is not shown to architects.
+		owner := q.person == nil || q.person.Owner
+		rs, err := rows(q, "SELECT data FROM document WHERE kind='setting-change' AND ($1='' OR data->>'target'=$1) AND ($2 OR data->>'target'<>'people') ORDER BY seq DESC LIMIT 200", gs(body(q), "target"), owner)
 		return doc{"changes": rs}, err
 	})
 	clong("people_set", func(q *Request) (any, error) {
