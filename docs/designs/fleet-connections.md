@@ -67,7 +67,7 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 
 ## Open Questions
 
-*   **Q1. Meshy job semantics.** Submit, then poll. This design keeps the job ID in `execution.data.jobId` and treats an uncertain submit as "unknown, never replay" (fleet-lab.md, `pipe.md` ASSETQ-R4). Confirm Meshy's idempotency key support before C3.
+*   **Q1. Meshy job semantics (decided).** Submit, then poll; the job ID is kept in `execution.data.jobId`. Meshy's API takes no idempotency key (checked in its Image to 3D reference), so a submit is never retried or failed over. On an unknown outcome or a 5xx, Fleet first reads the key's newest tasks (`recent_tasks`, `sort_by=-created_at`) and adopts the one task created since the call started; with none or several, the step ends `unknown:submit-unconfirmed`, visible, and nothing is sent again (owner decision).
 *   **Q2. Reconcile source per provider.** Tavily exposes per-key usage; Meshy and model APIs differ. C2 ships reconcile for Tavily only.
 
 ## Critical User Journeys (CUJs)
@@ -173,6 +173,8 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 *   Every call: `tool_run` execution, parent = calling execution, `directed_by` and project copied from the token, plus a `connection_cost` measurement `{connection_id, amount, unit, basis}`. Basis `measured` when the provider returned usage, `estimated` when Fleet computed it from a price table, `unavailable` otherwise (same values as people-access §9).
 *   Budgets use the shape in people-access §9 with `scope = connection` or with the connection named in a person, project or experiment budget. Spend reaches the coordinator through spool ingest, so a `pause` or `stop` budget can be overshot by the calls made during the ingest delay plus calls in flight, and without limit while the coordinator is down (the gateway keeps the last flags but cannot count). The coordinator computes reached budgets and writes a "blocked by budget" flag per (connection, scope) into the snapshot; the gateway refuses such calls with `budget-reached`, and keeps the last flags while the coordinator is down. Dispatch applies the same budgets to agent runs. `warn` never refuses.
 *   Lab units `pipe_calls` and `pipe_credits` become `calls` and `credits`.
+*   **As built (C3).** `budget_set` with `scope: connection` counts that connection's `tool_run` rows: unit `calls`, or the amount of the provider's own unit (`credits`), optionally per `period`. The action is a setting with default `warn` (owner rule outside Lab): `warn` and `pause` show on the budget and the person can ask for more; only a reached `stop` connection budget, set by the owner, becomes `blocked: ['connection']` in the snapshot on the next tick, and the gateway answers `budget-reached`. The gateway also refuses a run whose `person:`, `project:` or `experiment:` scope is listed; person, project and experiment budgets that name a connection are not built yet. `budget_ask {budgetId, limit, reason}` raises one question (`budget:<id>:ask`); only the owner's `approve` writes the new limit, audited with both people.
+*   **Meshy (C3).** Catalogue tools `image_to_3d` (not idempotent), `job_status` (`GET .../{jobId}`: a `{field}` in a catalogue path takes that body field) and `recent_tasks`. The job step maps Meshy's task (`status`, `model_urls`, `consumed_credits`) to the job shape; the credits land as `connection_cost` when the task succeeds.
 
 ### 7. Deleting Pipe (stage C4)
 

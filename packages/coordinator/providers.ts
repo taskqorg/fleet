@@ -17,4 +17,16 @@ export const providers:Record<string,{baseUrl:string,instructions:string,usage?:
    description:'Read one to twenty absolute HTTP(S) pages.',
    inputSchema:{type:'object',required:['urls'],properties:{urls:{type:'array',items:{type:'string'},minItems:1,maxItems:20},
     extract_depth:{type:'string',enum:['basic','advanced'],description:'advanced costs more credits'},format:{type:'string',enum:['markdown','text']}}}}}},
+ // Meshy (C3): submit, then poll. Meshy takes no idempotency key, so the submit is never sent twice (idempotent: false); an
+ // unanswered submit is looked up in recent_tasks before anything else (pipelines.ts, owner decision on Q1).
+ meshy:{baseUrl:'https://api.meshy.ai',
+  instructions:'image_to_3d starts a Meshy Image to 3D task and returns its id; job_status reads the task. A submit is never repeated by Fleet.',
+  tools:{
+  image_to_3d:{method:'POST',path:'/openapi/v1/image-to-3d',unit:'credits',idempotent:false,
+   description:'Start an Image to 3D task from an image URL. Returns {result: <task id>}.',
+   inputSchema:{type:'object',required:['image_url'],properties:{image_url:{type:'string'},target_formats:{type:'array',items:{type:'string',enum:['glb','obj','fbx','stl','usdz','3mf']}},should_texture:{type:'boolean'}}}},
+  job_status:{method:'GET',path:'/openapi/v1/image-to-3d/{jobId}',unit:'credits',idempotent:true,
+   description:'Read an Image to 3D task: status, model_urls, consumed_credits.',inputSchema:{type:'object',required:['jobId'],properties:{jobId:{type:'string'}}}},
+  recent_tasks:{method:'GET',path:'/openapi/v1/image-to-3d?page_size=20&sort_by=-created_at',unit:'credits',idempotent:true,
+   description:'The newest Image to 3D tasks of this key.',inputSchema:{type:'object',properties:{}}}}},
 };

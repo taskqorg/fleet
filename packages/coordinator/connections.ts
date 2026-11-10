@@ -13,7 +13,7 @@ const NAME=/^[a-z][a-z0-9-]{0,62}$/;
 const STATES=['active','draining','disabled','retired'];
 export const fingerprint=(value:string)=>createHash('sha256').update(value).digest('hex').slice(0,12);
 
-export function connectionRegistry(store:Store,config:{secretDir?:string,gatewayDir?:string,gatewayUrl?:string}){
+export function connectionRegistry(store:Store,config:{secretDir?:string,gatewayDir?:string,gatewayUrl?:string,blocked?:()=>Promise<Set<string>>}){
  const {all,get,put}=store;
  const dirOf=(name:string)=>join(config.secretDir??fail(409,'FLEET_SECRET_DIR is not set on the coordinator'),'connections',name);
  const owner=()=>{const p=requestPerson.getStore();if(p&&!p.owner)fail(403,'Only the owner handles key values')};
@@ -27,8 +27,8 @@ export function connectionRegistry(store:Store,config:{secretDir?:string,gateway
 
  // Snapshot (§3): written atomically (temp file plus rename) after the change committed. C3 adds budget flags.
  async function snapshot(){
-  const connections:any={};
-  for(const c of await all('api-connection'))connections[c.name]={provider:c.provider,tools:c.tools,intake:c.intake,keys:(await keysOf(c.name)).filter((k:any)=>k.state!=='retired').map((k:any)=>({id:k.id.slice(4),state:k.state,...(k.enabledAt?{enabledAt:k.enabledAt}:{})})),blocked:[]};
+  const connections:any={},blocked=await config.blocked?.()??new Set<string>();
+  for(const c of await all('api-connection'))connections[c.name]={provider:c.provider,tools:c.tools,intake:c.intake,keys:(await keysOf(c.name)).filter((k:any)=>k.state!=='retired').map((k:any)=>({id:k.id.slice(4),state:k.state,...(k.enabledAt?{enabledAt:k.enabledAt}:{})})),blocked:blocked.has(c.name)?['connection']:[]};
   const tokens=(await all('run-token')).filter((t:any)=>!t.revokedAt).map((t:any)=>({sha256:t.sha256,executionId:t.executionId,directedBy:t.directedBy,projectId:t.projectId,experimentId:t.experimentId,connections:t.connections}));
   return {schema:2,generated_ms:Date.now(),providers,connections,tokens,usageTokenSha256:createHash('sha256').update(usageToken).digest('hex')}}
  async function writeSnapshot(){if(!config.gatewayDir)return;const s=await store.read(snapshot);
@@ -105,6 +105,7 @@ export function connectionRegistry(store:Store,config:{secretDir?:string,gateway
    // ponytail: the whole file is read each pass (one day of lines); keep a read offset if a day's file gets large.
    const lines=readFileSync(join(dir,file),'utf8').split('\n').filter(Boolean).flatMap(l=>{try{return [JSON.parse(l)]}catch{return []}});
    for(const l of lines)if(await record(l))added++;
+   if(added)publish();// spend moved: budget flags may change
    // Deleted after commit, and only once a whole day has passed since it ended: a call that started before midnight may still append.
    if(file.slice(0,10)<yesterday){const f=join(dir,file);after(()=>rmSync(f,{force:true}))}}
   return added}
@@ -126,7 +127,10 @@ export function connectionRegistry(store:Store,config:{secretDir?:string,gateway
   const cause=`key:${fp}:disabled`;if((await store.tasks.questions({kind:'operator_decision'})).some((q:any)=>q.cause===cause&&q.state!=='answered'))return;
   await store.tasks.ask({kind:'operator_decision',text:`API key ${fp} of ${k.connectionId} was refused by the provider (HTTP ${status}) and is disabled. Re-enable it on the API keys screen once it works again, or retire it.`,options:['seen'],askedBy:'fleet',data:{cause}})}
  // One pass: ingest, then revoke tokens of ended runs (a run that ended while the coordinator was down is settled here).
+ // Budget flags follow spend and limit changes (asks, budget_set): republished when the reached set changes.
+ let lastBlocked='';
  async function tick(){await ingest();
+  const b=JSON.stringify([...(await config.blocked?.()??[])].sort());if(b!==lastBlocked){lastBlocked=b;publish()}
   const open=(await all('run-token')).filter((t:any)=>!t.revokedAt);if(!open.length)return;
   const runs=await store.many(open.map((t:any)=>t.executionId),'execution');
   // An api step's token is revoked by its caller (and all of them at start, below); any other token goes when its execution

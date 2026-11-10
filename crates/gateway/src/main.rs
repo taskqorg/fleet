@@ -121,11 +121,15 @@ struct Connection {
     tools: Vec<String>,
     intake: String,
     keys: Vec<Key>,
+    /// Reached pause/stop budgets: "connection" (every call) or a run scope (person:, project:, experiment:).
+    blocked: Vec<String>,
 }
 
 struct Token {
     execution_id: String,
     connections: Vec<String>,
+    /// Budget scopes this run belongs to: person:<email>, project:<id>, experiment:<id>.
+    scopes: Vec<String>,
 }
 
 struct Snapshot {
@@ -184,7 +188,8 @@ impl Snapshot {
             if !providers.contains_key(&provider) {
                 return Err(format!("connection {name} names an unknown provider"));
             }
-            connections.insert(name.clone(), Connection { provider, tools, intake: c["intake"].as_str().unwrap_or("all").to_owned(), keys });
+            let blocked = c["blocked"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+            connections.insert(name.clone(), Connection { provider, tools, intake: c["intake"].as_str().unwrap_or("all").to_owned(), keys, blocked });
         }
         let mut tokens = HashMap::new();
         for t in v["tokens"].as_array().ok_or("tokens is missing")? {
@@ -193,7 +198,11 @@ impl Snapshot {
                 return Err("token hash is not SHA-256".into());
             }
             let connections = t["connections"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
-            tokens.insert(hash, Token { execution_id: text(&t["executionId"], "token executionId")?, connections });
+            let scopes = [("person", "directedBy"), ("project", "projectId"), ("experiment", "experimentId")]
+                .iter()
+                .filter_map(|(scope, field)| t[*field].as_str().map(|v| format!("{scope}:{v}")))
+                .collect();
+            tokens.insert(hash, Token { execution_id: text(&t["executionId"], "token executionId")?, connections, scopes });
         }
         let revision = Sha256::digest(bytes).iter().take(6).map(|b| format!("{b:02x}")).collect();
         let usage_token = v["usageTokenSha256"].as_str().map(str::to_owned);
@@ -304,6 +313,7 @@ struct Caller {
     token: Option<String>,
     execution_id: Option<String>,
     connections: Vec<String>,
+    scopes: Vec<String>,
 }
 
 fn reply(status: StatusCode, body: impl Into<Bytes>) -> Response<Body> {
@@ -358,9 +368,9 @@ impl Gateway {
 
     /// The token's run, else one more read of the snapshot (a token minted after the last adoption), else none.
     /// Rereads are coalesced: a caller that finds one running waits for it instead of starting another.
-    async fn authenticate(&self, token: &str) -> Option<(String, Vec<String>)> {
+    async fn authenticate(&self, token: &str) -> Option<(String, Vec<String>, Vec<String>)> {
         let hash = sha256(token);
-        let find = |s: &Snapshot| s.tokens.get(&hash).map(|t| (t.execution_id.clone(), t.connections.clone()));
+        let find = |s: &Snapshot| s.tokens.get(&hash).map(|t| (t.execution_id.clone(), t.connections.clone(), t.scopes.clone()));
         if let Some(found) = find(&self.snapshot.read().unwrap()) {
             return Some(found);
         }
@@ -381,7 +391,7 @@ impl Gateway {
             .collect()
     }
 
-    async fn call(&self, name: &str, connection: &Connection, provider: &Provider, tool: &Tool, body: Bytes) -> Answer {
+    async fn call(&self, name: &str, connection: &Connection, provider: &Provider, tool: &Tool, path: &str, body: Bytes) -> Answer {
         let keys = self.usable(connection);
         if keys.is_empty() {
             return refusal(StatusCode::SERVICE_UNAVAILABLE, "error", "no-usable-key", "no active key; the holder or the owner must act");
@@ -397,7 +407,7 @@ impl Gateway {
             };
             let request = Request::builder()
                 .method(tool.method.clone())
-                .uri(format!("{}{}", provider.base_url, tool.path))
+                .uri(format!("{}{path}", provider.base_url))
                 .header(AUTHORIZATION, format!("Bearer {value}"))
                 .header(CONTENT_TYPE, "application/json")
                 .body(Full::new(body.clone()))
@@ -536,7 +546,8 @@ impl Gateway {
         let caller = Caller {
             token: run.as_ref().map(|_| sha256(token.as_deref().unwrap_or(""))),
             execution_id: run.as_ref().map(|r| r.0.clone()),
-            connections: run.map(|r| r.1).unwrap_or_default(),
+            connections: run.as_ref().map(|r| r.1.clone()).unwrap_or_default(),
+            scopes: run.map(|r| r.2).unwrap_or_default(),
         };
         // Read the body before any refusal: closing on unread bytes resets the connection and loses the caller's reason.
         // Unauthenticated callers get a small, short read, so a slow or large body cannot hold the gateway.
@@ -555,6 +566,8 @@ impl Gateway {
         } else if let Some((connection, provider, tool)) = found {
             if connection.intake != "all" {
                 refusal(StatusCode::FORBIDDEN, "error", "intake-paused", "the connection's intake is paused")
+            } else if let Some(scope) = connection.blocked.iter().find(|b| *b == "connection" || caller.scopes.contains(b)) {
+                refusal(StatusCode::FORBIDDEN, "error", "budget-reached", &format!("a budget on {scope} is reached; ask the owner to raise it"))
             } else {
                 match collected.map(|read| read.map(|b| serde_json::from_slice::<Value>(&b.to_bytes()))) {
                     Ok(Ok(Ok(Value::Object(mut body)))) => {
@@ -563,7 +576,23 @@ impl Gateway {
                         for (k, v) in &tool.inject {
                             body.insert(k.clone(), v.clone());
                         }
-                        self.call(&connection_name, connection, provider, tool, Value::Object(body).to_string().into()).await
+                        // {field} in a catalogue path takes that body field (Meshy task id), which then leaves the body; a GET sends none.
+                        let mut path = tool.path.clone();
+                        let mut bad = false;
+                        while let Some(start) = path.find('{') {
+                            let Some(len) = path[start..].find('}') else { bad = true; break };
+                            let field = path[start + 1..start + len].to_owned();
+                            match body.remove(&field).and_then(|v| v.as_str().map(str::to_owned)).filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')) {
+                                Some(v) => path.replace_range(start..start + len + 1, &v),
+                                None => { bad = true; break }
+                            }
+                        }
+                        if bad {
+                            refusal(StatusCode::BAD_REQUEST, "error", "bad-request", "a path field is missing or not an id")
+                        } else {
+                            let sent: Bytes = if tool.method == Method::GET { Bytes::new() } else { Value::Object(body).to_string().into() };
+                            self.call(&connection_name, connection, provider, tool, &path, sent).await
+                        }
                     }
                     _ => refusal(StatusCode::BAD_REQUEST, "error", "bad-request", "the body must be a JSON object of at most 1 MiB"),
                 }

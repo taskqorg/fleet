@@ -99,6 +99,18 @@ test('a job step keeps its jobId and resumes polling after a restart',async()=>{
  }finally{await second.app.close();await first.f.close()}
 });
 
+test('a Meshy job: the task shape maps to the job; an unanswered submit adopts the one task created since, never resends',async()=>{
+ const s=setup({m:{version:2,id:'m',steps:[{...api('meshy',{mode:'job'}),id:'model',tool:'image_to_3d',arguments:{image_url:'${example.image}'}}]},
+  t:{version:2,id:'t',steps:[{...api('slow',{mode:'job'}),id:'model',tool:'image_to_3d',arguments:{image_url:'${example.image}'}}]}},{meshy:'meshy',slow:'meshy-timeout'});
+ writeFileSync(s.dir+'/job.state','succeeded');
+ const {app}=await boot(s.config);
+ try{const a=await until(app,(await start(app,'m',{requestId:'m1',example:{image:'a.png'}})).id,r=>r.state!=='running');
+  assert.equal(a.state,'completed');assert.equal(a.steps[0].jobId,'task-9');assert.deepEqual(a.steps[0].output.model_urls,{glb:'m.glb'});assert.deepEqual(a.steps[0].usage,{credits:30});
+  const b=await until(app,(await start(app,'t',{requestId:'t1',example:{image:'a.png'}})).id,r=>r.state!=='running');
+  assert.equal(b.state,'completed');assert.equal(b.steps[0].adoptedAfter,'provider-timeout');
+  assert.equal(s.calls().filter((c:any)=>c.tool==='image_to_3d').length,2,'one submit per run, never resent');
+ }finally{await app.close()}});
+
 test('agent and script steps get earlier outputs as inputs; the agent call file becomes tool_run rows',async()=>{
  const s=setup({chain:{version:2,id:'chain',steps:[api(),{id:'summary',kind:'agent',profile:'codex-researcher',prompt:'Summarize ${example.query}'},{id:'check',kind:'script',command:'test -s "$FLEET_INPUT_DIR/summary/summary.md"'}]}},{'tavily':'ok'});
  const {app,f}=await boot(s.config);
