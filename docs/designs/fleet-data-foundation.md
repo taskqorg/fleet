@@ -1301,7 +1301,9 @@ Today `fleet-executor.service` and every agent turn it starts run as `fleet`, th
 *   The project configs change their `pds18-native` `checkoutPath` from `/home/fleet/projects/<id>` to `/home/fleet-agent/projects/<id>`.
 *   The program worker (delivery, publication) has no agent turns and stays `fleet`.
 *   Check: as `fleet-agent`, reading `/home/fleet/.config/fleet/coordinator.env` fails with Permission denied; one real Codex turn on `pds18-native` completes, with its artifacts uploaded.
-*   Rollback: stop the `fleet-agent` executor unit and start `fleet.service`'s old `fleet-executor.service` again (left installed and disabled), with the configs back to the old `checkoutPath`.
+*   `/home/fleet` itself becomes 0700. The store config's `backingPath` (free-space reading) points at the mount point `/`, because `fleet-agent` cannot reach the Garage data directory.
+*   Follow-up, a few days after the check: delete the originals that were copied (`/home/fleet/accounts`, `/home/fleet/projects`, `/home/fleet/data/executor-pds18`, the project git connections, and `/home/fleet/runtime/{executor-*,codex-*,agy-*}`) and the old `fleet-executor.service` of user `fleet`.
+*   Rollback: stop the `fleet-agent` executor unit and start the old `fleet-executor.service` of user `fleet` again (left installed and disabled), with the configs back to the old `checkoutPath`.
 
 ##### 38. `crates/executor/src/isolation.rs` (Create)
 
