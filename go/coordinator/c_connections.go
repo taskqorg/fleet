@@ -997,8 +997,12 @@ func connTick(q *Request) error {
 			return m
 		}())))
 		if s != lastBlocked {
-			lastBlocked = s
-			publish(q)
+			onEnd(q.tx, func(committed bool) { // a rolled-back pass leaves lastBlocked so the next pass republishes
+				if committed {
+					lastBlocked = s
+					schedulePublish()
+				}
+			})
 		}
 	}
 	open, err := rows(q, "SELECT data FROM document WHERE kind='run-token' AND NOT data ? 'revokedAt' AND NOT data ? 'step' AND NOT data ? 'personal'")
