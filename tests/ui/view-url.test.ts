@@ -2,9 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseView, formatView, listKey, toPageParams, TASK_GROUPS, type View } from '../../packages/view-url/view-url.ts';
-import { createStore } from '../../packages/coordinator/store.ts';
 
-const p = (u: string): View => { const v = parseView(u); assert.ok(v, 'not a view: ' + u); return v; };
+const p = (u: string): View => { const v = parseView(u); assert.ok(v, 'not a view: ' + u); return v!; };
 const canon = (u: string) => formatView(p(u));
 
 test('round trip per view, canonical order of keys and values, defaults omitted', () => {
@@ -86,11 +85,7 @@ test("today's links still parse", () => {
   assert.equal(p('/tasks/0b6c1f2e-6f1d-4e0a-9d3b-1a2b3c4d5e6f').focus, '0b6c1f2e-6f1d-4e0a-9d3b-1a2b3c4d5e6f');
 });
 
-test('review 7: every codec grouping is accepted by task_page (one list of groups)', async () => {
-  const s = createStore('memory://'); await s.migrate();
-  for (const group of TASK_GROUPS) await s.read(() => s.tasks.page({ group, limit: 1 }));
-  await s.close();
-});
+// review 7 (every codec grouping is accepted by task_page) is an outside test now: tests/go/d.test.ts.
 
 test("review #31-7: a project named '-' does not collide with the no-project marker", () => {
   const v: View = { view: 'tasks', project: ['-', null, 'a'] };

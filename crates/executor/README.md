@@ -25,7 +25,7 @@ requires Python on its execution host; no live host was inspected or changed.
 
 | File | Purpose and removal condition |
 |---|---|
-| `packages/coordinator/connection_call.py` | CLI and MCP client of `fleet-gateway` (docs/designs/fleet-connections.md §5); kept while connection MCP runs in Python. |
+| `connection_call.py` | CLI and MCP client of `fleet-gateway` (docs/designs/fleet-connections.md §5), embedded in the executor; kept while connection MCP runs in Python. |
 | `packages/coordinator/delivery_worker.py` | Program delivery and account inspection on worker hosts; remains Python pending its C1 replacement. L4 does not claim Python-free hosts. |
 | `deploy/infrastructure/origin_guard.py` | Origin admission service; kept independently of C1 and MCP. |
 | `deploy/infrastructure/test_origin_guard.py` | Origin guard regression checks; kept while that service exists. |
