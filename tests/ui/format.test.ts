@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { age, duration, bytes, count, money, measured } from '../../packages/ui/src/format.ts';
+import { age, duration, bytes, count, money, measured, agentLabel } from '../../packages/ui/src/format.ts';
 
 const now = new Date(2026, 10, 9, 12, 0, 0).getTime();
 const ago = (s: number) => now - s * 1000;
@@ -36,4 +36,12 @@ test('measurement basis: unknown is never 0', () => {
   assert.equal(measured({ value: 0.42, basis: 'estimated', reason: 'tokens' }, 'money').text, '≈ $0.42');
   assert.equal(measured({ value: 182000, basis: 'measured', partial: '2 of 3 measured' }, 'count').text, '≥ 182k');
   assert.equal(measured({ value: 0, basis: 'measured' }, 'money').text, '$0.00');
+});
+
+test('agent label: short model id and effort for codex, claude and antigravity', () => {
+  assert.equal(agentLabel('claude-opus-5-5', 'high'), 'opus-5.5 · high');
+  assert.equal(agentLabel('claude-sonnet-5-5', null), 'sonnet-5.5');
+  assert.equal(agentLabel('gpt-6.1-sol', 'low'), 'gpt-6.1-sol · low');
+  assert.equal(agentLabel('gemini-3.8-flash-low', undefined), 'gemini-3.8-flash-low');
+  assert.equal(agentLabel(null, null), '');
 });

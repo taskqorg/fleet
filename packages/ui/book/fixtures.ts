@@ -1,6 +1,6 @@
 // Synthetic fixture data shared by the book and the page mockups. Shapes follow the inventory, values are invented.
 import { states, type StateOf, type Harness, type Stage } from '../src/registry.ts';
-import type { TreeNode, Entry } from '../src/controls.tsx';
+import type { TreeNode, ThreadBlock } from '../src/controls.tsx';
 
 export const NOW = Date.now();
 export const min = 60e3, hr = 60 * min;
@@ -41,13 +41,15 @@ export const TREE: TreeNode[] = [
     { id: 'm1', name: 'merge to main', state: 'preparing' }] },
 ];
 
-export const transcript = (): Entry[] => [
-  { id: '1', t: NOW - 10 * min, who: 'User', text: 'Rework the hero copy; keep it short.' },
-  { id: '2', t: NOW - 10 * min + 3e3, call: { name: 'file_read index.html', state: 'completed', secs: 0 } },
-  { id: '3', t: NOW - 9 * min, gap: 'Events 120–180 not received yet' },
-  ...Array.from({ length: 40 }, (_, i): Entry => i % 2
-    ? { id: `a${i}`, t: NOW - (8 - i / 6) * min, call: { name: 'shell npm test', state: 'completed', secs: i % 9 } }
-    : { id: `a${i}`, t: NOW - (8 - i / 6) * min, who: 'Assistant', text: `Step ${i} done. Checking the next file${i % 4 === 0 ? '; long messages wrap and keep their measured height across several lines when the content needs more space than one row offers.' : '.'}` }),
+export const transcript = (): ThreadBlock[] => [
+  { kind: 'boundary', key: '1:0', executionId: 'b61f0c2a-0000', state: 'running', harness: 'claude', model: 'claude-opus-5-5', effort: 'high', startedAt: NOW - 10 * min },
+  { kind: 'text', key: '2:0', role: 'operator', markdown: 'Rework the hero copy; keep it short.' },
+  { kind: 'reasoning', key: '3:0', markdown: 'The hero is in index.html.\nRead it first.' },
+  { kind: 'tool', key: '4:0', name: 'Read', input: { path: 'index.html' }, output: '<h1>Fleet</h1>', state: 'completed', startedAt: NOW - 9 * min, endedAt: NOW - 9 * min + 1200 },
+  ...Array.from({ length: 40 }, (_, i): ThreadBlock => i % 2
+    ? { kind: 'tool', key: `${10 + i}:0`, name: 'Bash', input: { command: 'npm test' }, output: 'ok', state: 'completed', startedAt: NOW - 8 * min, endedAt: NOW - 8 * min + (i % 9) * 1000 }
+    : { kind: 'text', key: `${10 + i}:0`, role: 'agent', harness: 'claude', model: 'claude-opus-5-5', effort: 'high', markdown: `Step ${i} done.${i % 4 === 0 ? ' Long replies wrap and keep their measured height.\n\n```\nnpm test\n```' : ''}` }),
+  { kind: 'question', key: '60:0', questionId: 'q1', text: 'Use Postgres 17?', options: ['yes', 'no'], state: 'open' },
 ];
 
 export type Host = {

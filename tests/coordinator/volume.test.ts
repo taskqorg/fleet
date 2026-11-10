@@ -12,6 +12,6 @@ test('poll and a session read stay inside the SQLite-era budget at live volume',
  assert.deepEqual(poll.body.commands.map((c:any)=>c.id).sort(),Array.from({length:9},(_,i)=>'command-'+(190+i)).sort());
  assert.ok(poll.queries<=POLL_QUERIES,`poll ran ${poll.queries} queries`);assert.ok(poll.ms<POLL_MS,`poll took ${poll.ms.toFixed(0)} ms`);
  const session=await timed({method:'GET',url:'/api/sessions/'+sessions[3],headers:{authorization:'Bearer b'}});
- assert.equal(session.body.executions.length,2);assert.equal(session.body.events.length,30);
+ assert.equal(session.body.executions.length,2);assert.equal(session.body.events,undefined);const page=await timed({method:'GET',url:'/api/threads/session/'+sessions[3]+'/entries?limit=100',headers:{authorization:'Bearer b'}});assert.equal(page.body.entries.filter((b:any)=>b.kind==='boundary').length,2);
  assert.ok(session.ms<SESSION_MS,`session read took ${session.ms.toFixed(1)} ms`);
- console.log(`poll ${poll.ms.toFixed(0)} ms ${poll.queries} queries; session ${session.ms.toFixed(1)} ms`);await app.close()});
+ console.log(`poll ${poll.ms.toFixed(0)} ms ${poll.queries} queries; session ${session.ms.toFixed(1)} ms; thread page ${page.ms.toFixed(1)} ms`);await app.close()});

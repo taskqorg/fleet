@@ -11,6 +11,7 @@
     "app:build": "node app/build.mjs",
     "app:dev": "node --watch-path=app/src --watch-path=packages/ui --watch-path=packages/view-url app/build.mjs",
     "check:filter": "pnpm run build && node tests/ui/filter.check.ts --assert",
+    "check:conversations": "pnpm run build && node tests/ui/conversations.check.ts",
     "typecheck": "tsc && tsc -p app && tsc -p packages/ui"
   },
   "dependencies": {

@@ -106,18 +106,19 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
   const lastVisible = v.getVirtualItems().at(-1)?.index ?? -1;
   useLayoutEffect(() => { if (p.onEnd && p.items.length && lastVisible >= p.items.length - 5 && endFor.current !== p.items.length) { endFor.current = p.items.length; p.onEnd(); } });
 
+  // Read from the scroll position after anchor keeping ran, not from the render: rows just loaded above are not "in view".
   const startFor = useRef(-1);
-  const firstVisible = v.getVirtualItems()[0]?.index ?? -1;
-  useLayoutEffect(() => { if (p.onStart && p.items.length && firstVisible >= 0 && firstVisible < 5 && startFor.current !== p.items.length) { startFor.current = p.items.length; p.onStart(); } });
+  const checkStart = () => { const el = scroller.current; if (p.onStart && el && p.items.length && el.scrollTop < p.rowHeight * 5 && startFor.current !== p.items.length) { startFor.current = p.items.length; p.onStart(); } };
+  useLayoutEffect(checkStart);
   if (p.handle) p.handle.current = {
-    scrollToKey: (key, align) => { const i = p.items.findIndex(it => p.getKey(it) === key); if (i >= 0) { prev.current.atEdge = false; v.scrollToIndex(i, { align }); } },
+    scrollToKey: (key, align) => { const i = p.items.findIndex(it => p.getKey(it) === key); if (i >= 0) { prev.current.atEdge = false; v.scrollToIndex(i, { align }); const el = scroller.current, start = v.getOffsetForIndex(i, 'start')?.[0]; if (el && start !== undefined) anchor.current = { key, delta: start - el.scrollTop }; } },
   };
 
   const style = p.columns ? { '--cols': p.columns } : undefined;
   return (
     <div data-ui="data-list" class={`vl-wrap ${p.class ?? ''}`} style={style}>
       {p.header && <div class="vl-head" role="row">{p.header}</div>}
-      <div ref={scroller} class="vl" role="grid" aria-label={p.label} aria-rowcount={p.items.length} tabIndex={0} onScroll={capture}>
+      <div ref={scroller} class="vl" role="grid" aria-label={p.label} aria-rowcount={p.items.length} tabIndex={0} onScroll={() => { capture(); checkStart(); }}>
         <div class="vl-space" style={{ height: `${v.getTotalSize()}px` }}>
           {v.getVirtualItems().map(vi => (
             <div key={vi.key} data-index={vi.index} ref={p.dynamic ? v.measureElement : undefined} role="row" aria-rowindex={vi.index + 1}

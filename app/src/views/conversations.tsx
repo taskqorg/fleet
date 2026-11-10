@@ -1,16 +1,16 @@
 // Conversations (docs/design-system/pages/conversations.md): sessions list and one conversation with its live transcript.
 // Actions use the same operations agents use: session_create, message_send, execution_stop, session_fork.
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  ListDetail, ListFrame, FilterBar, StateCounters, RowCheck, VirtualList, StateBadge, HarnessMark, Button, Transcript, Composer, DecisionBlock,
+  ListDetail, ListFrame, FilterBar, StateCounters, RowCheck, VirtualList, StateBadge, HarnessMark, Button, Thread, Composer, DecisionBlock, Icon, type VirtualListHandle,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
 import { op, online } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
-import { entries } from '../transcript.ts';
+import { useThread } from '../threads.ts';
 
 const ROW = parseInt(tokens.size.row);
 type SessionRow = { id: string; title: string | null; state: StateOf<'session'>; harness: string | null; openQuestions: number; sortKey: (string | number)[] };
@@ -58,28 +58,53 @@ export function Conversations({ id }: { id?: string }) {
 
 function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const [, go] = useLocation();
-  const { data: s, error, state } = useDoc<any>(`session:${id}`, () => op('session_get', { sessionId: id }), c => c.sessionId === id);
-  const [failure, setFailure] = useState<string | null>(null);
+  const { data: s, error, state } = useDoc<any>(`session:${id}`, () => op('session_get', { sessionId: id }), c => c.sessionId === id && c.kind !== 'event');
+  const thread = useThread({ session: id });
+  const [failure, setFailure] = useState<{ text: string; retry?: () => void } | null>(null);
+  const [q, setQ] = useState(''), [hits, setHits] = useState<{ key: string; snippet: string }[] | null>(null), [hit, setHit] = useState(0), [marked, setMarked] = useState<string | null>(null);
+  const handle = useRef<VirtualListHandle | null>(null);
+  // The hit is scrolled to once the replaced window is on screen.
+  const [jumpTo, setJumpTo] = useState<string | null>(null);
+  useEffect(() => { if (jumpTo && thread.win?.blocks.some(b => b.key === jumpTo)) { handle.current?.scrollToKey(jumpTo, 'center'); setJumpTo(null); } }, [thread.win, jumpTo]);
   const now = Date.now(), off = !online.value;
-  const run = async (fn: () => Promise<unknown>) => { setFailure(null); try { await fn(); } catch (e: any) { setFailure(e.message); } };
+  const run = async (fn: () => Promise<unknown>) => { setFailure(null); try { await fn(); } catch (e: any) { setFailure({ text: e.message, retry: () => run(fn) }); } };
+  const copyFail = (e: unknown) => setFailure({ text: `Copy failed: ${(e as any)?.message ?? e}` });
+  // A jump replaces the window with entries around the hit, then puts the hit row in view and marks it.
+  const open = async (list: { key: string }[], i: number) => { if (!list[i]) return; setHit(i); setMarked(list[i].key); await thread.jump(list[i].key); setJumpTo(list[i].key); };
+  const search = () => run(async () => { if (!q.trim()) { setHits(null); setMarked(null); return; } const r = await op('thread_search', { key: { session: id }, q, limit: 100 }); setHits(r.hits); await open(r.hits, 0); });
   if (error && !s) return <article class="detail" data-ui="detail" tabIndex={-1}><ErrorBanner text={`Conversation did not load: ${error}`} /></article>;
   if (!s) return <article class="detail" data-ui="detail" tabIndex={-1}><Skeleton rows={6} /></article>;
-  const active = (s.executions ?? []).filter((e: any) => !['completed', 'failed', 'stopped', 'unknown', 'succeeded', 'cancelled'].includes(e.state)).at(-1);
-  const open = (s.questions ?? []).filter((q: any) => q.state === 'open');
+  const running = (e: any) => !['completed', 'failed', 'stopped', 'unknown', 'succeeded', 'cancelled'].includes(e.state);
+  // Composer target: the newest running execution; with none, a new message starts one (design "Controls").
+  const active = (s.executions ?? []).filter(running).at(-1);
+  const openQs = (s.questions ?? []).filter((q: any) => q.state === 'open');
+  const w = thread.win;
   return <article class="detail conversation" data-ui="detail" tabIndex={-1} aria-label="Conversation">
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
       <span class="muted mono">{id.slice(0, 8)}{s.agentConfig?.id ? ` · ${s.agentConfig.id}` : ''}</span><span class="grow" />
+      <label class="search"><Icon name="search" /><input type="search" placeholder="Search thread" aria-label="Search thread" value={q} onInput={e => setQ((e.target as HTMLInputElement).value)} onKeyDown={e => { if (e.key === 'Enter') search(); }} /></label>
+      <span class="count" aria-live="polite">{hits ? `${hits.length ? hit + 1 : 0} of ${hits.length}` : w ? `${w.blocks.length.toLocaleString('en')} of ${w.total.toLocaleString('en')}` : ''}</span>
+      <Button label="Previous hit" icon="arrow-up" iconOnly disabledReason={!hits || hit <= 0 ? 'no earlier hit' : undefined} onClick={() => hits && open(hits, hit - 1)} />
+      <Button label="Next hit" icon="arrow-down" iconOnly disabledReason={!hits || hit >= hits.length - 1 ? 'no later hit' : undefined} onClick={() => hits && open(hits, hit + 1)} />
       <OfflineMarker state={state} now={now} />
-      {active && <Button label="Stop" icon="pause" disabledReason={off ? 'offline' : undefined} onClick={() => run(() => op('execution_stop', { executionId: active.id }))} />}
       <Button label="Fork" icon="copy" iconOnly disabledReason={off ? 'offline' : undefined} onClick={() => run(async () => { const f = await op('session_fork', { sessionId: id, requestId: reqId() }); go(nextUrl(location.pathname + location.search, 'conversations', { focus: f.sessionId })); })} />
     </header>
-    {failure && <ErrorBanner text={failure} />}
-    {open.map((q: any) => <DecisionBlock key={q.id} question={q.question ?? q.text} askedBy="agent" addressedTo="you" since={q.askedAt ? Date.parse(q.askedAt) || now : now} now={now}
-      options={(Array.isArray(q.options) ? q.options : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
-      onAnswer={a => run(() => op('questions_answer', { questionId: q.id, answer: a }))} />)}
-    <div class="pane"><Transcript entries={entries(s)} label="Transcript" now={now} />
-      <Composer draftKey={id} disabledReason={off ? 'offline' : undefined} placeholder={active ? 'Steer or queue a message' : 'Message'}
-        onSend={async text => { setFailure(null); try { await op('message_send', { sessionId: id, requestId: reqId(), text }); } catch (e: any) { setFailure(e.message); throw e; } }} /></div>
+    <div class="status-line" role="status">{failure ? <ErrorBanner text={failure.text} onRetry={failure.retry} /> : thread.error ? <ErrorBanner text={`Thread did not load: ${thread.error}`} onRetry={thread.newest} /> : null}</div>
+    <div class="pane">
+      {!w ? <Skeleton rows={6} /> : <Thread blocks={w.blocks} label="Transcript" now={now} marked={marked} handle={handle} onStart={thread.older} onEnd={thread.newer}
+        stopReason={off ? 'offline' : undefined} onStop={x => run(() => op('execution_stop', { executionId: x }))}
+        onAnswer={(questionId, answer) => run(() => op('questions_answer', { questionId, answer }))} onCopyFail={copyFail} />}
+      {w && w.fresh > 0 && <button type="button" class="pill pill-bottom" onClick={() => { setMarked(null); setHits(null); thread.newest(); }}>{w.fresh} new</button>}
+      {/* D3: steer goes to the execution and does not answer; the open question stays in sight above the composer. */}
+      {openQs.map((q: any) => <DecisionBlock key={q.id} question={q.question ?? q.text} askedBy="agent" addressedTo="you" since={q.askedAt ? Date.parse(q.askedAt) || now : now} now={now}
+        options={(Array.isArray(q.options) ? q.options : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
+        onAnswer={a => run(() => op('questions_answer', { questionId: q.id, answer: a }))} />)}
+      <div class="composer-bar">
+        <span class="muted mono">{active ? `${active.id.slice(0, 8)}` : ''}</span>
+        {active && <Button label="Stop" icon="pause" disabledReason={off ? 'offline' : undefined} onClick={() => run(() => op('execution_stop', { executionId: active.id }))} />}
+      </div>
+      <Composer draftKey={id} disabledReason={off ? 'offline' : undefined} placeholder={active ? 'Steer' : 'Message'}
+        onSend={async text => { setFailure(null); try { await op('message_send', { sessionId: id, requestId: reqId(), text, ...(active ? { delivery: 'steer' } : {}) }); } catch (e: any) { setFailure({ text: e.message }); throw e; } }} /></div>
   </article>;
 }

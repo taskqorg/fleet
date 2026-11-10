@@ -97,3 +97,9 @@ export function percent(part: number, whole: number): Formatted {
   const v = Math.round(part / whole * 100);
   return { text: `${v}%`, long: `${v} percent` };
 }
+
+/** Short agent label from the stored model id and effort: claude-opus-5-5 + high -> "opus-5.5 · high" (design D4). */
+export function agentLabel(model: string | null | undefined, effort?: string | null): string {
+  const m = (model ?? '').replace(/^claude-/, '').replace(/-(\d+)-(\d+)$/, '-$1.$2');
+  return [m, effort].filter(Boolean).join(' · ');
+}

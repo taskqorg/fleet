@@ -1,6 +1,6 @@
 # Transcript viewer
 
-**Code.** `Transcript` in `packages/ui`. Demo: [book](../book/index.html).
+**Code.** `Thread` in `packages/ui` (rows: `TextRow`, `ToolRow`, `ReasoningRow`, `QuestionRow`, `ResultRow`, `BoundaryRow`; agent mark `AgentMark`). Demo: [book](../book/index.html).
 
 **Purpose.** Reads a live or finished execution transcript: messages, tool calls, results and questions, with paging and search.
 
@@ -8,7 +8,7 @@
 
 **States.** Loading (skeleton entries), following (live, pinned to the bottom), paused-follow (pill "24 new"), searching (matches highlighted, "3 of 17" with next/previous), finished, history gap ("Events 120–180 not received yet" in `attention-fg`), error.
 
-**Implementation.** `VirtualList` with measured rows and `follow="bottom"`.
+**Implementation.** `VirtualList` with measured rows and `follow="bottom"`, `onStart` for older pages, `scrollToKey` for search hits. Each row: content first, service zone (agent mark, copy, Stop) on the right (OR-21); tool and reasoning rows are one line and open downward (OR-23).
 
 **Behaviour.**
 * Virtualised with measured, cached entry heights; older pages load when scrolling up, keeping the anchor entry in place.
