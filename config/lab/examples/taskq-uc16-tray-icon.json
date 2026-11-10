@@ -1,0 +1,26 @@
+{
+ "id": "taskq-uc16-tray-icon",
+ "use_case_id": "taskq:UC-16",
+ "version": 1,
+ "origin": "synthetic",
+ "fixture": null,
+ "prompt": "Draw a macOS menu-bar (tray) icon meaning \"all tasks done\": a circle with a check mark. Write tray.svg: viewBox 0 0 16 16, vector shapes only (no images, text or scripts), a single colour so it works as a template image.",
+ "inputs": [],
+ "references": [
+  {
+   "path": "tray.svg",
+   "text": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\">\n <circle cx=\"8\" cy=\"8\" r=\"7\" fill=\"none\" stroke=\"#000\" stroke-width=\"1.5\"/>\n <path d=\"M5 8.5 7 10.5 11 5.5\" fill=\"none\" stroke=\"#000\" stroke-width=\"1.5\"/>\n</svg>\n"
+  }
+ ],
+ "checks": [
+  {
+   "id": "exists",
+   "run": "test -f tray.svg"
+  },
+  {
+   "id": "shape",
+   "run": "node -e \"const s=require('fs').readFileSync('tray.svg','utf8');if(!/<svg[^>]*viewBox=.0 0 16 16./.test(s))throw Error('viewBox 0 0 16 16 expected');if(/<image|<script|<text/.test(s))throw Error('vector shapes only');if(!/<(path|circle|rect|polygon|line)/.test(s))throw Error('no shapes');const c=new Set((s.match(/#[0-9a-fA-F]{3,6}/g)||[]).map(x=>x.toLowerCase()));if(c.size>1)throw Error('one colour expected for a template icon')\""
+  }
+ ],
+ "split": "held_out"
+}
