@@ -47,8 +47,11 @@ func director(q *Request) string {
 	return ownerEmail(q)
 }
 
-// actor: the request person, else the fallback (an execution, 'operator').
+// actor: the calling agent execution, else the request person, else the fallback (an execution, 'operator').
 func actor(q *Request, fallback string) string {
+	if q.agent != "" {
+		return q.agent
+	}
 	if q.person != nil {
 		return q.person.Email
 	}

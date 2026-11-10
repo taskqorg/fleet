@@ -24,6 +24,10 @@ type Store struct {
 // Scope: nil is the coordinator's own '*' scope (the owner, hosts).
 type Scope struct{ ProjectIDs, Person string }
 
+// actorKey: the context value naming the agent execution of a call (execution:<id>); every transaction of that call sets
+// fleet.actor from it, which fleet_change() records as change.actor (docs/designs/fleet-pm-agent.md §1).
+type actorKey struct{}
+
 // Scope keys. Lock order: GLOBAL before any execution scope; an execution-scope writer never takes GLOBAL.
 const GLOBAL = "fleet:write"
 
@@ -90,6 +94,11 @@ func (s *Store) once(ctx context.Context, sc *Scope, write bool, lock string, fn
 		opts = pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}
 	}
 	return pgx.BeginTxFunc(ctx, s.pool, opts, func(tx pgx.Tx) error {
+		if a, _ := ctx.Value(actorKey{}).(string); a != "" {
+			if _, err := tx.Exec(ctx, "SELECT set_config('fleet.actor',$1,true)", a); err != nil {
+				return err
+			}
+		}
 		if sc != nil {
 			if _, err := tx.Exec(ctx, "SELECT set_config('fleet.project_ids',$1,true),set_config('fleet.person',$2,true)", sc.ProjectIDs, sc.Person); err != nil {
 				return err
