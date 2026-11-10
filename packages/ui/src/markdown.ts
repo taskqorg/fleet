@@ -16,7 +16,11 @@ const ITEM = /^( {0,3})([-*+]|(\d{1,9})[.)])(\s+|$)(.*)$/, QUOTE = /^ {0,3}> ?(.
 const cells = (l: string) => l.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, '|'));
 
 /** Block structure of a markdown text. */
-export function parse(src: string): MdBlock[] {
+// Nesting past this depth (quotes in quotes, lists in lists) stays paragraph text: agent output is untrusted, so a deeply nested
+// reply must not exhaust the stack.
+const MAX_DEPTH = 16;
+export function parse(src: string, depth = 0): MdBlock[] {
+  if (depth >= MAX_DEPTH) return src.trim() ? [{ t: 'p', text: src }] : [];
   const lines = src.replace(/\r\n?/g, '\n').split('\n'), out: MdBlock[] = [];
   let i = 0;
   const para: string[] = [];
@@ -35,7 +39,7 @@ export function parse(src: string): MdBlock[] {
     if (QUOTE.test(l)) {
       flush(); const body: string[] = [];
       while (i < lines.length && lines[i].trim() && (m = QUOTE.exec(lines[i]))) { body.push(m[1]); i++; }
-      out.push({ t: 'quote', blocks: parse(body.join('\n')) }); continue;
+      out.push({ t: 'quote', blocks: parse(body.join('\n'), depth + 1) }); continue;
     }
     if (l.includes('|') && i + 1 < lines.length && SEP.test(lines[i + 1]) && lines[i + 1].includes('-')) {
       flush(); const head = cells(l), align = cells(lines[i + 1]).map(c => c.startsWith(':') && c.endsWith(':') ? 'center' as const : c.endsWith(':') ? 'right' as const : c.startsWith(':') ? 'left' as const : null);
@@ -46,7 +50,7 @@ export function parse(src: string): MdBlock[] {
     if ((m = ITEM.exec(l)) && (!para.length || m[2] === '-' || m[2] === '*' || m[2] === '+' || m[3] === '1')) {
       flush(); const ordered = m[3] !== undefined, indent = m[1].length, items: MdBlock[][] = [];
       let cur: string[] | null = null;
-      const close = () => { if (cur) items.push(parse(cur.join('\n'))); };
+      const close = () => { if (cur) items.push(parse(cur.join('\n'), depth + 1)); };
       while (i < lines.length) {
         const x = lines[i], im = ITEM.exec(x);
         if (im && im[1].length <= indent + 1 && (im[3] !== undefined) === ordered) { close(); cur = [im[5]]; i++; continue; }

@@ -23,3 +23,10 @@ test('tables with alignment and escaped pipes', () => {
 test('only http, https and mailto links are kept', () => {
   assert.ok(SAFE_LINK.test('https://x')); assert.ok(SAFE_LINK.test('mailto:a@b')); assert.ok(!SAFE_LINK.test('javascript:alert(1)')); assert.ok(!SAFE_LINK.test('data:text/html,x'));
 });
+
+test('deep nesting stops at a fixed depth instead of exhausting the stack', () => {
+  let b: any = parse('>'.repeat(5000) + ' x'), d = 0;
+  while (b[0]?.t === 'quote') { b = b[0].blocks; d++; }
+  assert.equal(d, 16); assert.equal(b[0].t, 'p');
+  assert.doesNotThrow(() => parse(Array.from({ length: 3000 }, (_, i) => ' '.repeat(i * 2) + '- x').join('\n')));
+});

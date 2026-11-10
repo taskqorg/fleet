@@ -4,18 +4,19 @@ import { type MdBlock, SAFE_LINK as SAFE } from './markdown.ts';
 export { parse } from './markdown.ts';
 
 /** Inline spans: code first (its content is literal), then links, bold, italic, strike. */
-export function inline(s: string): ComponentChildren[] {
+export function inline(s: string, depth = 0): ComponentChildren[] {
+  if (depth >= 16) return [s]; // nested emphasis past this stays text (untrusted input, bounded stack)
   const out: ComponentChildren[] = [];
   const re = /(`+)([\s\S]*?[^`])\1(?!`)|\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)|<(https?:\/\/[^>\s]+)>|\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|~~([\s\S]+?)~~|\*([^*\s][\s\S]*?)\*|(?<![\w])_([^_\s][\s\S]*?)_(?![\w])|(\n)/g;
   let last = 0, m: RegExpExecArray | null, k = 0;
   while ((m = re.exec(s))) {
     if (m.index > last) out.push(s.slice(last, m.index));
     if (m[2] !== undefined) out.push(<code key={k++}>{m[2].replace(/^ (.*) $/, '$1')}</code>);
-    else if (m[3] !== undefined) out.push(SAFE.test(m[4]) ? <a key={k++} href={m[4]} target="_blank" rel="noopener noreferrer">{inline(m[3])}</a> : <span key={k++}>{inline(m[3])}</span>);
+    else if (m[3] !== undefined) out.push(SAFE.test(m[4]) ? <a key={k++} href={m[4]} target="_blank" rel="noopener noreferrer">{inline(m[3], depth + 1)}</a> : <span key={k++}>{inline(m[3], depth + 1)}</span>);
     else if (m[5] !== undefined) out.push(<a key={k++} href={m[5]} target="_blank" rel="noopener noreferrer">{m[5]}</a>);
-    else if (m[6] !== undefined || m[7] !== undefined) out.push(<strong key={k++}>{inline(m[6] ?? m[7])}</strong>);
-    else if (m[8] !== undefined) out.push(<s key={k++}>{inline(m[8])}</s>);
-    else if (m[9] !== undefined || m[10] !== undefined) out.push(<em key={k++}>{inline(m[9] ?? m[10])}</em>);
+    else if (m[6] !== undefined || m[7] !== undefined) out.push(<strong key={k++}>{inline(m[6] ?? m[7], depth + 1)}</strong>);
+    else if (m[8] !== undefined) out.push(<s key={k++}>{inline(m[8], depth + 1)}</s>);
+    else if (m[9] !== undefined || m[10] !== undefined) out.push(<em key={k++}>{inline(m[9] ?? m[10], depth + 1)}</em>);
     else if (m[11] !== undefined) out.push(<br key={k++} />);
     last = re.lastIndex;
   }
