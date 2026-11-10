@@ -89,6 +89,17 @@ test('B6 ask and reply: an answer reaches the asking session as its next message
   assert.equal((await op('reply', {questionId: q.id, answer: 'red'})).status, 409);
 });
 
+test('B6c project readiness: a member with the project grant starts it and reads its result', async () => {
+  // Risk: readiness rows carry no project, so row-level security refuses every non-owner (403 Not in your scope).
+  const member = 'member@trial.test';
+  const secret = ok(await op('hosts_register', {id: 'owner-mac'})).secret;
+  assert.equal((await fetch(BASE + '/api/hosts/poll', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + secret}, body: JSON.stringify({platform: 'darwin', capabilities: [], stores: [], problems: []})})).status, 200);
+  const r = ok(await op('project_readiness', {projectId: 'fleet-hello-world'}, member));
+  const h = r.hosts.find((x: any) => x.hostId === 'owner-mac');
+  assert.ok(h?.executionId, JSON.stringify(r));
+  ok(await op('execution_status', {executionId: h.executionId}, member));
+});
+
 test('B7 tools: the operation table is served as MCP tools', async () => {
   // Risk: agents and the app lose tools they call by name.
   const list = ok(await call('POST', '/api/tools', {jsonrpc: '2.0', id: 1, method: 'tools/list'}));
