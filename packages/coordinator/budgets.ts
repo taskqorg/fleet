@@ -41,9 +41,10 @@ export function budgets(store:Store){
  // The budgets that cover an execution (its project and its director) and are reached by measured spend.
  const reached=async(e:any)=>{const rows=await store.query("SELECT * FROM budget WHERE (scope='project' AND scope_id=$1) OR (scope='person' AND scope_id=$2)",[e.dispatch?.projectId??'',e.directedBy??'']);
   const out=[];for(const r of rows){const s=await spend(r);if(s.value!==null&&s.value>=Number(r.limit))out.push({id:r.id,action:r.action,reason:`${r.scope} ${r.scope_id} budget reached: ${r.unit} ${s.value} of ${Number(r.limit)}`})}return out};
- // Connection budgets reached with pause or stop: the gateway refuses that connection's calls (fleet-connections.md §6).
+ // Connection budgets reached with action stop: the gateway refuses that connection's calls (fleet-connections.md §6). The
+ // default action is warn; warn and pause only show (owner rule: refusing calls is the owner's explicit setting).
  const blockedConnections=async():Promise<Set<string>>=>{const out=new Set<string>();
-  for(const r of await store.query("SELECT * FROM budget WHERE scope='connection' AND action IN ('pause','stop')")){const s=await spend(r);if(s.value!==null&&s.value>=Number(r.limit))out.add(r.scope_id)}return out};
+  for(const r of await store.query("SELECT * FROM budget WHERE scope='connection' AND action='stop'")){const s=await spend(r);if(s.value!==null&&s.value>=Number(r.limit))out.add(r.scope_id)}return out};
  // Answer hook for asks: only the owner approves; an approval sets the limit.
  const answers={check:async(q:any,answer:string,p:Person|null)=>{if(!q.data?.budgetAsk)return;if(!['approve','decline'].includes(answer))fail(400,'Answer approve or decline');if(answer==='approve'&&p&&!p.owner)fail(403,'Only the owner raises a budget')},
   after:async(q:any)=>{const a=q.data?.budgetAsk;if(!a||q.answer!=='approve')return;
