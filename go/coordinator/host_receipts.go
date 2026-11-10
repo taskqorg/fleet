@@ -11,6 +11,9 @@ func init() {
 	longRoute("POST /api/hosts/receipts", func(q *Request) (any, error) { return q.app.receipt(q) })
 }
 
+// receiptState: the execution state a command receipt status reports ('unknown' reports none).
+var receiptState = map[string]string{"accepted": "preparing", "started": "running", "completed": "succeeded", "failed": "failed", "stopped": "cancelled"}
+
 var receiptRank = map[string]int{"pending": 0, "accepted": 1, "started": 2, "unknown": 2, "completed": 3, "failed": 3, "stopped": 3}
 
 // projectReceiptOps: the project operations a native agent may call through a receipt.
@@ -173,10 +176,14 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	wasFinal := legacyTerminal(e)
+	wasFinal := terminal(e)
 	kind := c["kind"]
 	if !wasFinal && kind != "steer" && (kind != "stop" || status == "stopped") {
-		e["state"] = status
+		if s, ok := receiptState[status]; ok {
+			e["state"], e["observation"] = s, "confirmed"
+		} else { // 'unknown': the host lost track; the state stays, unconfirmed
+			e["observation"] = "unconfirmed"
+		}
 	}
 	e["updatedAt"] = nowMs()
 	if status == "started" && e["startedAt"] == nil {
@@ -226,14 +233,14 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 		if err := agentOnReceipt(q, c, e, reported); err != nil {
 			return nil, "", err
 		}
-		if legacyTerminal(e) {
+		if terminal(e) {
 			if err := agentPromote(q); err != nil {
 				return nil, "", err
 			}
 		}
 	}
 	ended := ""
-	if legacyTerminal(e) || state == "unknown" {
+	if terminal(e) || unconfirmed(e) {
 		ended = astr(e["id"])
 	}
 	return doc{"ok": true}, ended, nil

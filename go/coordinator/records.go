@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -69,7 +68,7 @@ func all(q *Request, kind string, filter doc) ([]doc, error) {
 	}
 	switch kind {
 	case "execution":
-		return rows(q, "SELECT data FROM execution WHERE legacy_kind='execution' AND data @> $1 ORDER BY seq", js(f))
+		return rows(q, "SELECT "+execJSON+" FROM execution WHERE "+execKinds+" AND data @> $1 ORDER BY seq", js(f))
 	case "question":
 		return rows(q, "SELECT data FROM question WHERE legacy_kind='question' AND data @> $1 ORDER BY seq", js(f))
 	case "delegation":
@@ -111,7 +110,7 @@ func maybe(q *Request, id any, kind string) (doc, error) {
 func put(q *Request, kind string, v doc) error {
 	switch kind {
 	case "execution":
-		return putExecutionRecord(q, v)
+		return putExecution(q, v)
 	case "question":
 		return putLegacyQuestion(q, v)
 	case "delegation":
@@ -124,41 +123,34 @@ func put(q *Request, kind string, v doc) error {
 	return putDocument(q, kind, v)
 }
 
-func legacyState(legacy, previous string) (string, string) {
-	switch legacy {
-	case "queued", "accepted", "pending":
-		return "preparing", "confirmed"
-	case "started", "running":
-		return "running", "confirmed"
-	case "waiting":
-		return "waiting", "confirmed"
-	case "completed":
-		return "succeeded", "confirmed"
-	case "failed", "quota", "unavailable":
-		return "failed", "confirmed"
-	case "stopped", "cancelled":
-		return "cancelled", "confirmed"
-	}
-	if previous == "" {
-		previous = "preparing"
-	}
-	return previous, "unconfirmed"
-}
+// execJSON: an execution record as the API shows it: the typed state and observation over the open remainder in data.
+const execJSON = "data || jsonb_build_object('state',state,'observation',observation)"
 
 var terminalTyped = map[string]bool{"succeeded": true, "failed": true, "cancelled": true}
 
-// putExecutionRecord: writes the execution record, then settles its task.
-func putExecutionRecord(q *Request, e doc) error {
+// execKinds: the execution kinds served as 'execution' records (host-dispatched agent runs and host jobs).
+const execKinds = "kind IN ('agent_run','host_job')"
+
+// putExecution: the one writer of an execution record (kind agent_run or host_job). state is the typed execution state
+// (stateOrder); observation is 'confirmed' unless the record says 'unconfirmed'. Both live in their columns only, then
+// the record's task settles.
+func putExecution(q *Request, e doc) error {
 	id := astr(e["id"])
 	var prev string
-	q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT state::text FROM execution WHERE id=$1),'')", id).Scan(&prev)
-	state, observation := legacyState(astr(e["state"]), prev)
+	if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT state::text FROM execution WHERE id=$1),'')", id).Scan(&prev); err != nil {
+		return err
+	}
+	state := firstString(e["state"], prev, "preparing")
+	if _, ok := stateOrder[state]; !ok {
+		return fmt.Errorf("execution %s: unknown state %q", id, state)
+	}
+	observation := "confirmed"
+	if e["observation"] == "unconfirmed" {
+		observation = "unconfirmed"
+	}
 	kind := "agent_run"
 	if astr(e["actor"]) == "program-worker" {
-		kind = "tool_run"
-		if astr(e["deliveryId"]) != "" {
-			kind = "pipeline_step"
-		}
+		kind = "host_job"
 	}
 	sess, err := maybe(q, e["sessionId"], "session")
 	if err != nil {
@@ -181,7 +173,7 @@ func putExecutionRecord(q *Request, e doc) error {
 		parent = astr(sess["createdByExecutionId"])
 	}
 	if fo := mapOf(sess["forkOf"]); parent == "" && astr(fo["executionId"]) != "" {
-		other, err := has(q, "SELECT 1 FROM execution WHERE session_id=$1 AND id<>$2 AND legacy_kind='execution'", astr(sess["id"]), id)
+		other, err := has(q, "SELECT 1 FROM execution WHERE session_id=$1 AND id<>$2 AND "+execKinds, astr(sess["id"]), id)
 		if err != nil {
 			return err
 		}
@@ -193,10 +185,8 @@ func putExecutionRecord(q *Request, e doc) error {
 	task := firstString(e["deliveryId"], sess["deliveryId"], sess["taskId"])
 	ac := mapOf(e["agentConfig"])
 	harness := any(nil)
-	if h := astr(ac["harness"]); h != "" {
-		harness = h
-	} else if kind == "agent_run" {
-		harness = "codex"
+	if kind == "agent_run" {
+		harness = harnessOf(e)
 	}
 	variant := any(nil)
 	if e["experimentId"] != nil {
@@ -204,13 +194,19 @@ func putExecutionRecord(q *Request, e doc) error {
 	}
 	account := firstString(mapOf(e["effectiveAccount"])["accountId"], e["accountId"])
 	cfg := js(doc{"profileId": nilIf(astr(ac["id"])), "profileSha256": e["profileSha256"], "effort": e["effort"]})
-	err = exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,task_id,experiment_id,variant,parent_execution_id,session_id,account_id,host_id,harness,model,config_ref,started_at,ended_at,legacy_kind,legacy_id,data)
-	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'execution',$1,$18)
+	data := doc{}
+	for k, v := range e {
+		if k != "state" && k != "observation" {
+			data[k] = v
+		}
+	}
+	err = exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,task_id,experiment_id,variant,parent_execution_id,session_id,account_id,host_id,harness,model,config_ref,started_at,ended_at,data)
+	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 	 ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,task_id=coalesce(execution.task_id,excluded.task_id),
 	  experiment_id=excluded.experiment_id,variant=excluded.variant,parent_execution_id=excluded.parent_execution_id,session_id=excluded.session_id,account_id=excluded.account_id,host_id=excluded.host_id,
 	  harness=excluded.harness,model=excluded.model,config_ref=excluded.config_ref,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
 	  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-		id, kind, state, observation, nilIf(project), nilIf(task), e["experimentId"], variant, nilIf(parent), e["sessionId"], nilIf(account), e["hostId"], harness, e["model"], cfg, ms(e["startedAt"]), ms(e["finishedAt"]), js(e))
+		id, kind, state, observation, nilIf(project), nilIf(task), e["experimentId"], variant, nilIf(parent), e["sessionId"], nilIf(account), e["hostId"], harness, e["model"], cfg, ms(e["startedAt"]), ms(e["finishedAt"]), js(data))
 	if err != nil {
 		return err
 	}
@@ -301,15 +297,11 @@ func body(q *Request) doc {
 	return b
 }
 
-func terminalLegacy(e doc) bool {
-	switch astr(e["state"]) {
-	case "completed", "failed", "stopped":
-		return true
-	}
-	return false
-}
+// terminal: an execution record in a final state.
+func terminal(e doc) bool { return terminalTyped[astr(e["state"])] }
 
-var _ = strings.TrimSpace
+// unconfirmed: the host has not confirmed the execution's state (a receipt 'unknown', a silent host).
+func unconfirmed(e doc) bool { return e["observation"] == "unconfirmed" }
 
 func rows(q *Request, sql string, args ...any) ([]doc, error) {
 	rs, err := q.tx.Query(q.ctx(), sql, args...)
@@ -353,41 +345,7 @@ func putDocument(q *Request, kind string, v doc) error {
 }
 
 func getExecution(q *Request, id string) (doc, error) {
-	return one(q, "SELECT data FROM execution WHERE id=$1 AND legacy_kind='execution'", id)
-}
-
-// Legacy state of the API record -> typed execution state.
-var typedState = map[string]string{"queued": "preparing", "accepted": "preparing", "pending": "preparing", "started": "running",
-	"running": "running", "waiting": "waiting", "completed": "succeeded", "failed": "failed", "stopped": "cancelled", "cancelled": "cancelled"}
-
-// putExecution writes the typed row with the API record in data (agent runs only: the slice has no other kind).
-func putExecution(q *Request, e doc) error {
-	legacy, _ := e["state"].(string)
-	state, observation := typedState[legacy], "confirmed"
-	if state == "" {
-		observation = "unconfirmed"
-		if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT state::text FROM execution WHERE id=$1),'preparing')", e["id"]).Scan(&state); err != nil {
-			return err
-		}
-	}
-	b, _ := json.Marshal(e)
-	cfg, _ := json.Marshal(doc{"profileId": nil, "profileSha256": nil, "effort": e["effort"]})
-	ms := func(k string) any {
-		if v, ok := e[k].(float64); ok {
-			return time.UnixMilli(int64(v))
-		}
-		if v, ok := e[k].(int64); ok {
-			return time.UnixMilli(v)
-		}
-		return nil
-	}
-	_, err := q.tx.Exec(q.ctx(), `INSERT INTO execution(id,kind,state,observation,session_id,host_id,harness,model,config_ref,started_at,ended_at,legacy_kind,legacy_id,data,directed_by,project_id)
-	 VALUES($1,'agent_run',$2,$3,$4,$5,'codex',$6,$7,$8,$9,'execution',$1,$10,$11,$12)
-	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,project_id=coalesce(execution.project_id,excluded.project_id),observation=excluded.observation,host_id=excluded.host_id,model=excluded.model,
-	  started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,directed_by=excluded.directed_by,
-	  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-		e["id"], state, observation, e["sessionId"], e["hostId"], e["model"], cfg, ms("startedAt"), ms("finishedAt"), b, e["directedBy"], nilIf(firstString(e["projectId"], mapOf(e["dispatch"])["projectId"])))
-	return err
+	return one(q, "SELECT "+execJSON+" FROM execution WHERE id=$1 AND "+execKinds, id)
 }
 
 func decode(raw json.RawMessage, v any) error {

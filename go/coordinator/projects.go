@@ -769,7 +769,7 @@ func agentReady(q *Request, c doc) (bool, error) {
 		return true, nil
 	}
 	e, err := get(q, c["executionId"], "execution")
-	return err == nil && !legacyTerminal(e), err
+	return err == nil && !terminal(e), err
 }
 
 func takeTaskFrom(q *Request, taskID, taker string, from any) error {

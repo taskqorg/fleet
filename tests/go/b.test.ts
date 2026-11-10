@@ -22,7 +22,7 @@ test('B1 queue: a message to a busy session is queued in order, never refused or
   const sid = await session();
   const first = ok(await send(sid, 'one'));
   const second = ok(await send(sid, 'two')), third = ok(await send(sid, 'three'));
-  assert.equal(first.state, 'queued');
+  assert.equal(first.state, 'preparing');
   assert.deepEqual([second.queued, second.position, third.position], [true, 1, 2]);
   const s = ok(await call('GET', '/api/sessions/' + sid));
   assert.equal(s.executions.length, 1);

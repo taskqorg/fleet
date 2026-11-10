@@ -90,7 +90,7 @@ test('SL3 a created session reads back; an unknown one is 404 (risk: session row
 test('SL4 a message queues one execution with no host yet; a repeated requestId returns the same execution; a bad body changes nothing (risk: duplicate work on client retry)', async () => {
   const id = await session();
   const e = ok(await browser('POST', `/api/sessions/${id}/messages`, {requestId: 'r1', text: 'hello'}));
-  assert.equal(e.state, 'queued'); assert.equal(e.hostId ?? null, null, 'the host is chosen at a poll'); assert.equal(e.sessionId, id);
+  assert.equal(e.state, 'preparing'); assert.equal(e.hostId ?? null, null, 'the host is chosen at a poll'); assert.equal(e.sessionId, id);
   assert.equal(ok(await browser('POST', `/api/sessions/${id}/messages`, {requestId: 'r1', text: 'hello'})).id, e.id);
   for (const bad of [{text: 'x'}, {requestId: 'r2'}, {requestId: 'r2', text: ''}, {requestId: 'r2', text: 'x', extra: 1}, []])
     assert.equal((await browser('POST', `/api/sessions/${id}/messages`, bad)).status, 400, JSON.stringify(bad));
@@ -114,7 +114,7 @@ test('SL6 receipts move the execution forward only; a repeated terminal receipt 
   const {h, sessionId, executionId, commandId} = await started();
   const receipt = (status: string, extra: object = {}) => h('/api/hosts/receipts', {commandId, executionId, status, ...extra});
   const state = async () => ok(await browser('GET', `/api/sessions/${sessionId}`)).executions.find((x: any) => x.id === executionId).state;
-  ok(await receipt('accepted')); ok(await receipt('started')); assert.equal(await state(), 'started');
+  ok(await receipt('accepted')); ok(await receipt('started')); assert.equal(await state(), 'running');
   assert.equal((await receipt('accepted')).status, 409, 'regression');
   assert.equal((await receipt('bogus')).status, 400, 'invalid status');
   ok(await receipt('failed', {error: 'boom'})); assert.equal(await state(), 'failed');

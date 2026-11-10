@@ -26,7 +26,7 @@ func sessionExecutions(q *Request, sid string) ([]doc, error) {
 func activeOf(q *Request, sid string) (doc, error) {
 	es, err := sessionExecutions(q, sid)
 	for _, e := range es {
-		if !terminalLegacy(e) {
+		if !terminal(e) {
 			return e, err
 		}
 	}
@@ -104,7 +104,7 @@ func enqueue(q *Request, s doc, input, requestID string, payload, execution doc,
 		payload["skills"] = skills
 	}
 	id := newID()
-	e := doc{"id": id, "executionId": id, "sessionId": s["id"], "hostId": nil, "state": "queued", "createdAt": nowMs(), "directedBy": s["directedBy"], "model": "gpt-6.1-sol", "effort": "low",
+	e := doc{"id": id, "executionId": id, "sessionId": s["id"], "hostId": nil, "state": "preparing", "createdAt": nowMs(), "directedBy": s["directedBy"], "model": "gpt-6.1-sol", "effort": "low",
 		"dispatch": doc{"harness": harnessOf(s), "projectId": s["projectId"], "workingDirectory": s["workingDirectory"], "account": s["account"], "host": nilIf(host), "last": nilIf(last), "input": input, "payload": payload}}
 	if ac != nil {
 		e["agentConfig"], e["profileSha256"], e["model"], e["effort"] = ac, frameHash(ac), firstString(ac["model"], "gpt-6.1-sol"), ac["effort"]
@@ -207,7 +207,7 @@ func submit(q *Request, b doc) (doc, error) {
 	if b["source"] != nil {
 		m["source"] = b["source"]
 	}
-	if b["delivery"] == "steer" && active != nil && astr(active["state"]) == "started" {
+	if b["delivery"] == "steer" && active != nil && astr(active["state"]) == "running" {
 		ok, err := capable(q, "steer")
 		if err != nil {
 			return nil, err
@@ -704,7 +704,7 @@ func sessionFork(q *Request, b doc) (doc, error) {
 		last = es[len(es)-1]
 	}
 	native := astr(source["nativeSessionId"])
-	nativeOK := native != "" && (last == nil || terminalLegacy(last)) && forkArgv(harnessOf(source), native) != nil
+	nativeOK := native != "" && (last == nil || terminal(last)) && forkArgv(harnessOf(source), native) != nil
 	if nativeOK {
 		if nativeOK, err = capable(q, "native-fork"); err != nil {
 			return nil, err
@@ -908,9 +908,9 @@ func stopOutcome(q *Request, e doc) (doc, error) {
 	if len(cs) > 0 {
 		stop = cs[0]
 	}
-	if terminalLegacy(e) {
+	if terminal(e) {
 		detail := "already_finished"
-		if e["stopRequested"] == true && (astr(e["state"]) == "stopped" || astr(stop["status"]) == "stopped") {
+		if e["stopRequested"] == true && (astr(e["state"]) == "cancelled" || astr(stop["status"]) == "stopped") {
 			detail = "stopped"
 		}
 		return doc{"outcome": "proven", "detail": detail, "state": e["state"]}, nil
@@ -933,9 +933,9 @@ func executionStatus(q *Request, b doc) (doc, error) {
 	}
 	next := "wait_or_steer"
 	switch {
-	case terminalLegacy(e):
+	case terminal(e):
 		next = "message"
-	case astr(e["state"]) == "unknown":
+	case unconfirmed(e):
 		next = "session_fork"
 	case e["stopRequested"] == true:
 		next = "execution_status"
@@ -980,7 +980,7 @@ func agentReconcile(q *Request) (doc, error) {
 		if err != nil {
 			return nil, err
 		}
-		if terminalLegacy(e) && astr(c["status"]) == "pending" {
+		if terminal(e) && astr(c["status"]) == "pending" {
 			m["state"] = "queued"
 			delete(m, "steerCommandId")
 			if err := put(q, "queued-message", m); err != nil {
@@ -998,7 +998,7 @@ func agentReconcile(q *Request) (doc, error) {
 		if err != nil {
 			return nil, err
 		}
-		if terminalLegacy(e) && e["startedAt"] == nil {
+		if terminal(e) && e["startedAt"] == nil {
 			h["state"] = "pending"
 			if err := put(q, "handoff", h); err != nil {
 				return nil, err
@@ -1024,7 +1024,7 @@ func agentReconcile(q *Request) (doc, error) {
 		return nil, err
 	}
 	for _, e := range es {
-		if terminalLegacy(e) {
+		if terminal(e) {
 			continue
 		}
 		starts, err := all(q, "command", doc{"executionId": e["id"], "kind": "start"})
@@ -1035,7 +1035,7 @@ func agentReconcile(q *Request) (doc, error) {
 		if len(starts) == 0 || astr(starts[0]["status"]) == "pending" {
 			class = "awaiting_host"
 		}
-		if astr(e["state"]) == "unknown" {
+		if unconfirmed(e) {
 			class, next = "unknown", "session_fork"
 		}
 		items = append(items, doc{"kind": "execution", "executionId": e["id"], "sessionId": e["sessionId"], "state": e["state"], "classification": class, "next": next})
@@ -1112,7 +1112,7 @@ func projectReadiness(q *Request, b doc) (doc, error) {
 		if err := put(q, "session", s); err != nil {
 			return nil, err
 		}
-		if err := put(q, "execution", doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hid, "state": "queued", "createdAt": nowMs(), "actor": "program-worker", "projectId": pid}); err != nil {
+		if err := put(q, "execution", doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hid, "state": "preparing", "createdAt": nowMs(), "actor": "program-worker", "projectId": pid}); err != nil {
 			return nil, err
 		}
 		roles := doc{}

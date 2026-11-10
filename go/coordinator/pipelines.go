@@ -706,15 +706,11 @@ func startScript(q *Request, run doc, stepExecutionID, command string, timeout a
 		hostID = q.app.hostID
 	}
 	id := newID()
-	e := doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hostID, "state": "queued", "createdAt": nowMs(), "pipelineStepId": stepExecutionID, "pipelineRunId": run["id"]}
+	e := doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hostID, "state": "preparing", "createdAt": nowMs(), "actor": "program-worker", "pipelineStepId": stepExecutionID, "pipelineRunId": run["id"]}
 	if run["experimentId"] != nil {
 		e["experimentId"] = run["experimentId"]
 	}
-	if err := putExecution(q, e); err != nil {
-		return "", err
-	}
-	// The script run is a step's child, in the run's project and experiment.
-	if err := exec(q, "UPDATE execution SET parent_execution_id=$2,project_id=$3,experiment_id=$4,harness=NULL WHERE id=$1", id, stepExecutionID, run["projectId"], run["experimentId"]); err != nil {
+	if err := putExecution(q, e); err != nil { // a host job, the step's child in the run's project (session) and experiment
 		return "", err
 	}
 	payload := doc{"command": command, "inputs": inputs}
@@ -1031,16 +1027,16 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	// Agent or script step running: wait for its execution.
 	var e doc
-	if err := readTx(ctx, a, func(q *Request) (err error) { e, err = getExecutionOrNil(q, astr(s["executionId"])); return }); err != nil || e == nil {
+	if err := readTx(ctx, a, func(q *Request) (err error) { e, err = maybe(q, s["executionId"], "execution"); return }); err != nil || e == nil {
 		return false, err
 	}
 	st := astr(e["state"])
-	if st != "completed" && st != "failed" && st != "stopped" {
-		return false, nil // unknown is not final: the host may still report the real outcome
+	if !terminalTyped[st] {
+		return false, nil // an unconfirmed state is not final: the host may still report the real outcome
 	}
-	if st != "completed" {
+	if st != "succeeded" {
 		problem := "step:cancelled"
-		if st != "stopped" {
+		if st != "cancelled" {
 			code := mapOf(e["error"])["code"]
 			if code == nil {
 				code = "failed"
@@ -1110,14 +1106,6 @@ func strOr(v any) string {
 		return ""
 	}
 	return fmt.Sprint(v)
-}
-
-func getExecutionOrNil(q *Request, id string) (doc, error) {
-	e, err := getExecution(q, id)
-	if err == errNotFound {
-		return nil, nil
-	}
-	return e, err
 }
 
 func init() {
