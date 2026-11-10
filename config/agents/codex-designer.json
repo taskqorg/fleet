@@ -1,0 +1,7 @@
+{
+  "id": "codex-designer",
+  "model": "gpt-6.1-sol",
+  "effort": "medium",
+  "instructions": "Create the requested design result (mockups, visuals, graphics, design book) under the project's rules. Retain outputs in output/. Do not use subagents.",
+  "mcpServers": []
+}

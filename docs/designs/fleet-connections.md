@@ -116,14 +116,15 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 
 *   **`provider`**: a code-side catalogue entry, not a table: `{id, baseUrl, tools: {<tool>: {method, path, unit, idempotent}}}` in `providers.ts`. Tavily (`web_search` → `/search`, `web_extract` → `/extract`, unit `credits`, idempotent) ships in C0; Meshy in C3. The coordinator copies the catalogue into the snapshot, so the Rust gateway has no second copy.
 *   **`api-connection`** document kind (separate list from `managed-account`, decision 1): `{id, name, provider, holder, access: {people: [], projects: [], experiments: []}, intake: all | paused, tools: [], comment}`. **Use:** a run token gets the connection when the run's director, its project or its experiment is listed (any one is enough); `projects: ['*']` means every project; empty means only work directed by the holder. **Visibility** is separate: architects and the holder see the connection; the owner sees all.
-*   **`connection-key`** document kind: `{id, connectionId, fingerprint (first 12 hex of SHA-256), state, addedAt, addedBy, disabledReason?, disabledAt?}`. No value.
+*   **`connection-key`** document kind: `{id, connectionId, fingerprint (first 12 hex of SHA-256), state, addedAt, addedBy, disabledReason?, disabledAt?}`. No value. The key's id is its fingerprint (document id `key:<fingerprint>`), as in the lane, so the gateway's disabled-key file and the spool name keys the same way.
 *   Both kinds carry `holder` (people-access §4), so ownership, visibility and audit are one model with subscriptions.
 
 ### 2. Keys
 
-*   **Values.** `<FLEET_SECRET_DIR>/connections/<connection>/<key id>` on PDS18, mode 0600, coordinator user. Added through `connections.key_add` (owner only), which writes the file and the metadata row in one step and returns only the fingerprint. Screens, agents, executors and profiles never receive a value.
+*   **Values.** `<FLEET_SECRET_DIR>/connections/<connection>/<fingerprint>` on PDS18, one value per file, mode 0600, coordinator user. Added through `connections_key_add` (owner only), which writes the file and the metadata row in one step and returns only the fingerprint. Screens, agents, executors and profiles never receive a value.
+*   **Import and restore.** At start the coordinator registers every value file that has no row, if the file name matches the value's fingerprint; a directory named after a catalogue provider with no connection becomes that connection (holder owner, access `{projects: ['*']}`). `scripts/connections-import.sh` splits a one-key-per-line file (Pipe's `tavily-keys`) into such files, so import and restore need no database step.
 *   **Gateway load.** `fleet-gateway.service` reads the key directory through systemd `LoadCredential`, as `pipe-read.service` does. A key change reloads the gateway, which drains in-flight calls while the socket stays open (socket activation); callers see a delay, not a refusal.
-*   **Backup.** The secret directory is encrypted with SOPS/age into the nightly backup (`fleet-backup.sh`). Restore is the read-lane restore copied: decrypt with the age identity, start the gateway, it serves from its retained snapshot without Postgres.
+*   **Backup.** The secret directory is encrypted with SOPS/age into the nightly backup (`fleet-backup.sh`, `secrets.sops.json`; recipient `FLEET_BACKUP_AGE_RECIPIENT` in `backup-age.env`, the age identity kept off the host). Restore is the read-lane restore copied: decrypt with the age identity, start the gateway, it serves from its retained snapshot without Postgres.
 *   **Rotation:** add → mark old `draining` (no new calls) → `retired` after the owner confirms. No quiet-period timer (no invented number).
 *   **Failover:** to the next active key only when a key got no HTTP answer **and** the tool is `idempotent`. A non-idempotent tool (Meshy submit) returns `outcome: unknown` instead, never replayed. 429 and quota replies pass through unchanged with `Retry-After`. 401, 402, 403 disable that key (persisted in the gateway's `disabled-keys` file and reported in the spool); if none is left, `503 no-usable-key`.
 *   **Reconcile** (Tavily first): a timer compares the provider's per-key usage with the spool's sum; a positive difference ("another client uses this key") shows on the connection.
@@ -257,9 +258,9 @@ Stages run alongside the people slices.
 
 #### 1. `packages/coordinator/connections.ts` (Create), `packages/coordinator/app.ts` (Modify) — C0
 
-*   `api-connection` and `connection-key` kinds; operations `connections.list`, `connections.create`, `connections.key_add`, `connections.key_state`, `connections.set_access`, `connections.set_intake`. Key values: owner only. Others: owner or holder.
-*   `writeSnapshot()`: builds the §3 schema and writes `<FLEET_GATEWAY_DIR>/snapshot.json` atomically (temp file plus rename) on every change.
-*   Seed: connection `tavily` (holder owner, access `{projects: ['*']}`) with today's Tavily keys moved from `/etc/pipe-read/tavily-keys` into the secret directory by `scripts/connections-import.ts` (Create).
+*   `api-connection` and `connection-key` kinds; operations `connections_list`, `connections_create`, `connections_key_add`, `connections_key_state`, `connections_set_access`, `connections_set_intake` (architect operations). Key values and re-enabling a disabled key: owner only. Other changes: owner or holder.
+*   `writeSnapshot()`: builds the §3 schema and writes `<FLEET_GATEWAY_DIR>/snapshot.json` atomically (temp file plus rename) after every committed change and at start. Without `FLEET_GATEWAY_DIR` no snapshot is written.
+*   Seed: connection `tavily` (holder owner, access `{projects: ['*']}`) with today's Tavily keys moved from `/etc/pipe-read/tavily-keys` into the secret directory by `scripts/connections-import.sh` (Create); the coordinator registers them at start (§2).
 
 #### 2. `packages/coordinator/providers.ts` (Create) — C0, C3
 
@@ -307,7 +308,7 @@ Stages run alongside the people slices.
 
 #### 11. UI — C0-C3
 
-*   `app/src/main.tsx`, `app/src/api.ts`, `app/src/lists.ts` (Modify): route `/api-keys` (list) and `/api-keys/<id>` (connection page): provider, holder, tools, keys (fingerprint, state), access, intake, spend, budgets, reconcile difference. Components from `packages/ui` (`data-list`, `state-badge`, `setting-field`, `number`); registered in `packages/ui/src/registry.ts`. `pnpm run check:design` clean.
+*   `app/src/main.tsx`, `app/src/api.ts`, `app/src/lists.ts` (Modify): route `/keys` (list) and `/keys/<name>` (connection page; screen ids are one lowercase word): provider, holder, tools, keys (fingerprint, state), access, intake, spend, budgets, reconcile difference. Components from `packages/ui` (`state-badge`, `setting-field`, `kv-row`; state families `key` and `intake`); registered in `packages/ui/src/registry.ts`. `pnpm run check:design` clean.
 
 #### 12. Docs (Modify)
 

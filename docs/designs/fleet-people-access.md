@@ -128,6 +128,10 @@ Log in once per subscription per environment that runs it. The table states prov
 - **Effects.** `requested_by` keeps the original director. Not built: a terms note on automatic takes (the subscriber doing work for someone else's project is the provider-safe case only while the requester gets no login, token or way to drive the session); person-scope budgets counting against the new director, stall questions to the new director, telling the requester, and the owner taking on the holder's behalf with notice.
 - The owner's subscriptions on other people's projects, and Simon and the owner taking each other's tasks, are this rule. `take.projects` ships empty: nothing is taken until the holder lists a project.
 
+### Status (slice 5)
+
+*   **Project without the Mac.** `config/projects/desiign` (`Amoenum/desiign`, no repository connection: git runs with the host's own access, like `cs` (organization deploy keys are off), `integration.mode: direct`, environments `owner-mac` and `windows`; roles follow the project's D09: `worker` Claude, `designer` Codex). On the deployed coordinator, Alina is an operator in `people.json` (outside the repository) with a grant on `desiign` only, and `account_update` gives the owner's subscriptions `take.projects: ["desiign"]`, so her work runs on his plans. Her Mac, store and file locations come later.
+
 ### 6. Dispatch
 
 Not built (all of §6). Today `enqueue` picks a host at queue time (§5 rule) and `managed.resolve` answers 409 for an unusable choice.

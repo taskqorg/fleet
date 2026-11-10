@@ -60,7 +60,7 @@ export function createStore(url:string,opts:{scope?:string,role?:string}={}){
  // doomed: the first retryable failure (deadlock, or a serialization failure from a concurrent update) seen in this transaction.
  // Later queries rethrow it and the transaction never commits, even when handler code caught the error.
  // held: scope locks this transaction holds; release runs when it ends.
- type Tx={q:Query,done:boolean,mode:Mode,doomed?:unknown,held:Set<string>,release:(()=>void)[]};
+ type Tx={q:Query,done:boolean,mode:Mode,doomed?:unknown,held:Set<string>,release:(()=>void)[],after:(()=>void)[]};
  const current=new AsyncLocalStorage<{t:Tx,frame?:Frame}>();
  // Query counts by SQL text, for profiling and the poll query budget test.
  const stats=new Map<string,number>();const count=(k:string)=>stats.set(k,(stats.get(k)??0)+1);
@@ -85,12 +85,13 @@ export function createStore(url:string,opts:{scope?:string,role?:string}={}){
   if(t0&&!t0.done){if(mode==='write'&&t0.mode==='read')throw Error('Write transaction requested inside a read-only transaction');
    if(lock)await lockIn(t0,lock);if(commitOnError)return fn();const frame:Frame={sp:null,parent:c0!.frame??null};
    try{const v=await current.run({t:t0,frame},fn);if(frame.sp)await t0.q('RELEASE SAVEPOINT '+frame.sp);return v}catch(e){if(t0.doomed)throw t0.doomed;if(frame.sp)await t0.q('ROLLBACK TO SAVEPOINT '+frame.sp);throw e}}
-  for(let attempt=0;;attempt++){const t:Tx={q:null as any as Query,done:false,mode,held:new Set(),release:[]};
+  for(let attempt=0;;attempt++){const t:Tx={q:null as any as Query,done:false,mode,held:new Set(),release:[],after:[]};
    try{const out:{v?:T,e?:unknown}=await db.tx(async tq=>{
      t.q=async(s,p)=>{if(t.doomed)throw t.doomed;try{return await tq(s,p)}catch(e){if(retryable(e))t.doomed=e;throw t.doomed??e}};
      try{const sc=scope();if(sc){if(opts.role)await t.q('SET LOCAL ROLE '+opts.role.replace(/\W/g,''));await t.q("SELECT set_config('fleet.project_ids',$1,true),set_config('fleet.person',$2,true)",[sc.projectIds,sc.person])}
      if(mode==='write')await lockIn(t,lock??GLOBAL);const v=await current.run({t},fn);if(t.doomed)throw t.doomed;return {v}}
      catch(e){if(t.doomed)throw t.doomed;if(commitOnError&&!retryable(e))return {e};throw e}finally{t.done=true}},mode);
+    for(const f of t.after)try{f()}catch(e){console.error('afterCommit',e)}
     if('e' in out)throw out.e;return out.v as T}
    catch(e){if(!retryable(e))throw e;count('RETRY');await backoff(attempt)}
    finally{for(const r of t.release.reverse())r()}}
@@ -121,6 +122,8 @@ export function createStore(url:string,opts:{scope?:string,role?:string}={}){
   // Read-only snapshot for handlers that only read; a write inside it fails.
   read:<T>(fn:()=>Promise<T>|T)=>run(fn,'read',false),
   // Takes one more scope inside the current write transaction (for example GLOBAL writer touching one execution's ingest scope).
+  // Runs fn once the current write transaction committed (now, outside one): side effects outside the database.
+  afterCommit:(fn:()=>void)=>{const t=current.getStore()?.t;if(t&&!t.done)t.after.push(fn);else fn()},
   lock:async(key:string)=>{const t=current.getStore()?.t;if(!t||t.done||t.mode!=='write')throw Error('lock() needs a write transaction');await lockIn(t,key)},
   query:(sql:string,params:any[]=[])=>q(sql,params).then(r=>r.rows),
   setScope:(fn:()=>Scope|null)=>{scopeOf=fn},
@@ -183,10 +186,10 @@ export function createStore(url:string,opts:{scope?:string,role?:string}={}){
 // Legacy kinds that live in typed tables since migration 6, and the table holding each record's own row.
 export const TYPED_KINDS=['execution','pipeline-run','delivery','project-question','question','delegation'];
 const TABLE_OF:Record<string,string>={execution:'execution','pipeline-run':'execution',delivery:'task','project-question':'question',question:'question'};
-export type Docs=Pick<Store,'get'|'put'|'all'|'tx'|'atomic'|'read'|'lock'>;
+export type Docs=Pick<Store,'get'|'put'|'all'|'tx'|'atomic'|'read'|'lock'|'afterCommit'>;
 // Operations that wait on a pipeline run; they open short transactions around their own synchronous steps.
 // Operations that only read: they run in a read-only snapshot (a write inside one fails loudly).
-export const READ_OPERATIONS=new Set(['lab_experiments_list','lab_experiment_get','lab_ratings_list','lab_rating_get','lab_registry','lab_examples_list','view_link','task_derived_check','artifact_list','artifact_get','stores_list','artifact_rule_preview','task_page','changes_since','list_membership','sessions_list','hosts_list','me','task_get','task_list','questions_list','executions_list','question_history','project_context','catalogue','pipeline_get','pipeline_history','project_list','account_list','account_hosts','account_login_handoff','transport_inspect','session_handoffs','queue_list','questions','execution_status','session_get','thread_entries','thread_blocks','thread_search','thread_export','execution_differences','execution_events','profiles_list']);
+export const READ_OPERATIONS=new Set(['connections_list','lab_experiments_list','lab_experiment_get','lab_ratings_list','lab_rating_get','lab_registry','lab_examples_list','view_link','task_derived_check','artifact_list','artifact_get','stores_list','artifact_rule_preview','task_page','changes_since','list_membership','sessions_list','hosts_list','me','task_get','task_list','questions_list','executions_list','question_history','project_context','catalogue','pipeline_get','pipeline_history','project_list','account_list','account_hosts','account_login_handoff','transport_inspect','session_handoffs','queue_list','questions','execution_status','session_get','thread_entries','thread_blocks','thread_search','thread_export','execution_differences','execution_events','profiles_list']);
 // Lab operations open their own transactions: reconcile reads committed state and runs checks outside any lock but its own.
 export const LONG_OPERATIONS=new Set(['pipeline_run','direct_search','delivery_generate','lab_experiment_create','lab_experiment_action','lab_cell_action','lab_promote','lab_rating_create','lab_score_correct']);
 // Sequential async forms of the array methods, for callbacks that read the store; order of reads and writes stays as in the sync code.

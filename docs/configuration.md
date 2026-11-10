@@ -202,6 +202,10 @@ On WSL the Claude login lives under Fleet's config directory: the account's `nat
 
 A host reaches a connection (example `pipe-read`) through `<FLEET_CONNECTIONS_DIR>/<connection>/connection.json`, mode 0600, owned by the service user: `{clientPath, clientSha256, pipeConfigPath, tools}` ([connections](designs/fleet-connections.md)). The coordinator reads its own host's records for pipeline API steps; the executor reads them for connections a profile grants. The record holds paths and the client hash only; the token stays in the file `pipeConfigPath` names. After the client changes, update `clientSha256`; until then it is refused (`infra:client-hash-mismatch`). Git keys of repo connections live in the same directory ([Repository access](#repository-access)).
 
+## Coordinator settings: API keys
+
+API key connections ([connections](designs/fleet-connections.md)) keep key values in `FLEET_SECRET_DIR` (PDS18: `/home/fleet/.config/fleet/secrets`): `connections/<connection>/<fingerprint>`, one value per file, mode 0600. Add keys on the API keys screen (owner) or move a one-key-per-line file there with `scripts/connections-import.sh <file> <connection> <secret dir> fleet` as root; the coordinator registers new files at start. The coordinator writes the gateway snapshot (no values) to `FLEET_GATEWAY_DIR/snapshot.json`. The nightly backup encrypts the secret directory to `FLEET_BACKUP_AGE_RECIPIENT` (`/home/fleet/.config/fleet/backup-age.env`, with `FLEET_SECRET_DIR`).
+
 ## People and identity
 
 The guard (`deploy/infrastructure/origin_guard.py`) verifies the Cloudflare Access JWT and returns `Authorization: Bearer <browser secret>` and `X-Fleet-Person: <verified e-mail>`; Caddy strips a client-sent `X-Fleet-Person`. The coordinator reads `FLEET_PEOPLE_FILE` (required), the `people.json` of [people and access](designs/fleet-people-access.md): `[{email, name, roles, owner?, grants: [{kind, id}]}]` with exactly one `owner: true`. A browser request without the header is 401; an e-mail not in the file is 403; a host request with the header is 403.

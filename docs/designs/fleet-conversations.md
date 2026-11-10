@@ -136,6 +136,8 @@ Membership rule: an entry belongs to task T's thread if its execution has `task_
 
 As a query: the session set is `SELECT DISTINCT session_id FROM execution WHERE task_id = T`; entries are rows of those sessions whose execution has `task_id = T`, plus rows whose execution has no `task_id` when T is that session's first task.
 
+Joining a task (added 2026-11-10, owner request): `session_start` takes an optional `taskId` (a task of the same project); the session records it and every execution it starts carries that `task_id`. `session_task_attach({ sessionId, taskId })` attaches a taskless session: the session records the task, its next executions carry it, and its earlier taskless executions join the task thread by the membership rule; nothing is copied or rewritten. A session that already belongs to another task gets 409; the same call again returns `existing: true`. The attached task counts as the session's first task (D2). Both are agent tools as well (the PM agent and people-access use them); host agents may call them only for their own sessions and project.
+
 Access: the thread operations run under the same project scope as every other read operation. A task's executions belong to the task's project, so plain scope filtering is enough.
 
 ### Read path: `thread_entries`

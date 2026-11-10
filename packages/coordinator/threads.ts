@@ -20,8 +20,10 @@ export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promis
  async function members(key:ThreadKey){
   const cols="id,session_id,harness,model,config_ref->>'effort' AS effort,state,started_at,ended_at,seq";
   const rows='task' in key
-   ?await query(`WITH first_task AS (SELECT DISTINCT ON (session_id) session_id,task_id FROM execution WHERE task_id IS NOT NULL AND session_id IN (SELECT session_id FROM execution WHERE task_id=$1) ORDER BY session_id,seq)
-     SELECT ${cols} FROM execution WHERE kind='agent_run' AND (task_id=$1 OR (task_id IS NULL AND session_id IN (SELECT session_id FROM first_task WHERE task_id=$1))) ORDER BY seq`,[key.task])
+   // A session's task: the one it was attached to (session_task_attach), else the first task its executions got.
+   ?await query(`WITH attached AS (SELECT id AS session_id FROM document WHERE kind='session' AND data->>'taskId'=$1),
+     first_task AS (SELECT DISTINCT ON (session_id) session_id,task_id FROM execution WHERE task_id IS NOT NULL AND session_id IN (SELECT session_id FROM execution WHERE task_id=$1) ORDER BY session_id,seq)
+     SELECT ${cols} FROM execution WHERE kind='agent_run' AND (task_id=$1 OR (task_id IS NULL AND (session_id IN (SELECT session_id FROM first_task WHERE task_id=$1) OR session_id IN (SELECT session_id FROM attached)))) ORDER BY seq`,[key.task])
    :await query(`SELECT ${cols} FROM execution WHERE kind='agent_run' AND session_id=$1 ORDER BY seq`,[key.session]);
   if(!rows.length&&'session' in key&&!(await query("SELECT 1 AS x FROM document WHERE kind='session' AND id=$1",[key.session])).length)fail(404,'Not found');
   if(!rows.length&&'task' in key&&!(await query('SELECT 1 AS x FROM task WHERE id=$1',[key.task])).length)fail(404,'Not found');
@@ -150,7 +152,7 @@ export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promis
   const m=new Map([[e.id,{...e,seq:Number(e.seq)}]]),out:string[]=[];let after:Key|null=null;
   for(;;){const r=await side(m,'>',after,500);for(const b of r.blocks)if(b.kind==='text'&&b.role==='agent'&&b.markdown)out.push(b.markdown);if(!r.more)return out;after=parseKey(r.blocks.at(-1).key)}}
  // The thread a session shows (design "Thread scope", D2): the thread of the first task the session got, else its own.
- async function keyOf(sessionId:string):Promise<ThreadKey>{const t=(await query('SELECT task_id FROM execution WHERE session_id=$1 AND task_id IS NOT NULL ORDER BY seq LIMIT 1',[sessionId]))[0]?.task_id;return t?{task:t}:{session:sessionId}}
+ async function keyOf(sessionId:string):Promise<ThreadKey>{const t=(await query("SELECT data->>'taskId' AS task_id FROM document WHERE kind='session' AND id=$1 AND data ? 'taskId'",[sessionId]))[0]?.task_id??(await query('SELECT task_id FROM execution WHERE session_id=$1 AND task_id IS NOT NULL ORDER BY seq LIMIT 1',[sessionId]))[0]?.task_id;return t?{task:t}:{session:sessionId}}
  return {keyOf,entries,blocks,search,exportPages,exportText,replyText,threadKey,markdown};
 }
 export type Threads=ReturnType<typeof threads>;

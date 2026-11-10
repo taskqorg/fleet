@@ -291,6 +291,8 @@ type SettingProps = {
   label: string; value: string; help: string; changed?: { by: string; at: number }; now: number;
   status: { kind: 'applied'; at: number } | { kind: 'pending' } | { kind: 'apply_error'; error: string };
   onSave?: (v: string) => void;
+  /** A write-only value (a key): typed into a password field, never shown; the field starts empty. */
+  secret?: boolean;
 };
 export function SettingField(p: SettingProps) {
   const [edit, setEdit] = useState<string | null>(null);
@@ -301,8 +303,8 @@ export function SettingField(p: SettingProps) {
       <label for={id}>{p.label}</label>
       <div class="val">
         {edit === null
-          ? <button type="button" id={id} class="value" onClick={() => setEdit(p.value)}>{p.value}</button>
-          : <><input id={id} value={edit} onInput={e => setEdit((e.target as HTMLInputElement).value)}
+          ? <button type="button" id={id} class="value" onClick={() => setEdit(p.value)}>{p.value || (p.secret ? 'Paste' : '—')}</button>
+          : <><input id={id} value={edit} type={(p.secret ? 'password' : 'text') as 'text'} autocomplete={p.secret ? 'off' : undefined} onInput={e => setEdit((e.target as HTMLInputElement).value)}
               onKeyDown={e => { if (e.key === 'Enter') { p.onSave?.(edit); setEdit(null); } if (e.key === 'Escape') setEdit(null); }} />
             <Button label="Save" kind="primary" onClick={() => { p.onSave?.(edit); setEdit(null); }} /><Button label="Cancel" kind="quiet" onClick={() => setEdit(null)} /></>}
         <StateBadge family="setting" state={s.kind} compact reason={s.kind === 'applied' ? age(s.at, p.now).text : s.kind === 'apply_error' ? s.error : undefined} />
