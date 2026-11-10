@@ -6,5 +6,6 @@ set -eu
 f=${1:?usage: host-secret.sh <file>}
 [ -e "$f" ] && { echo "$f exists; move it away first" >&2; exit 1; }
 umask 077
+set -C  # noclobber: the redirect itself fails if the file appeared meanwhile
 openssl rand -hex 32 > "$f"
 tr -d '\n' < "$f" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1

@@ -16,6 +16,7 @@ test('per-host secrets: derived host, foreign hostId 403, old shared secret 401,
   const alinaSecret='alina-mac-secret-made-on-her-mac-0123456789';
   const alina=(await op('hosts_register',{id:'alina-mac',holder:ALINA,secretSha256:sha256(alinaSecret)})).json();assert.equal(alina.secret,undefined);
   assert.equal((await op('hosts_register',{id:'x'},ALINA)).statusCode,403);
+  assert.equal((await op('hosts_register',{id:'y',secretSha256:sha256('browser')})).statusCode,400);
   // The old shared secret (and any unknown one) is refused on every host route.
   for(const route of ['poll','receipts','events','stores','artifacts/get','agent-tools','accounts'])assert.equal((await host('machine',route,{hostId:'pds18-native'})).statusCode,401,route);
   // CUJ 2: Alina's secret claiming pds18-native is 403 on poll and store registration; without hostId it is her host.
@@ -27,7 +28,7 @@ test('per-host secrets: derived host, foreign hostId 403, old shared secret 401,
   const store=(app as any).store;
   await store.tx(async()=>{for(const [id,projectId] of [['e-other','hello-world'],['e-desiign','desiign']]){
    await store.put('execution',{id,executionId:id,sessionId:'s-'+id,hostId:'alina-mac',projectId,state:'queued',createdAt:Date.now()});
-   await store.put('command',{id:'c-'+id,executionId:id,sessionId:'s-'+id,hostId:'alina-mac',kind:'stop',payload:{projectId},status:'pending'})}});
+   await store.put('command',{id:'c-'+id,executionId:id,sessionId:'s-'+id,hostId:'alina-mac',kind:'start',payload:{projectId},status:'pending'})}});
   const got=(await host(alinaSecret,'poll',{})).json().commands.map((c:any)=>c.id);
   assert.ok(!got.includes('c-e-other'),'other project command withheld');
   // Rotation: the old secret stops at once.

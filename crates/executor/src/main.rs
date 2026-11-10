@@ -73,8 +73,6 @@ struct Executor {
     declared: std::cell::RefCell<Vec<String>>,
     store_report: std::cell::RefCell<(Option<std::time::Instant>, Value)>,
 }
-/// Host platform for the coordinator. A WSL host whose Claude placement is `windows-wsl` counts as Windows (`win32`), the
-/// rule the coordinator's Claude gates (accounts.ts) and delivery_worker.py apply; any other Linux host stays `linux`.
 /// Reads the host secret file: not a symlink, no group or other access, one line.
 fn host_secret(path: PathBuf) -> Result<String> {
     use std::os::unix::fs::MetadataExt;
@@ -87,6 +85,8 @@ fn host_secret(path: PathBuf) -> Result<String> {
     Ok(s)
 }
 
+/// Host platform for the coordinator. A WSL host whose Claude placement is `windows-wsl` counts as Windows (`win32`), the
+/// rule the coordinator's Claude gates (accounts.ts) and delivery_worker.py apply; any other Linux host stays `linux`.
 fn platform() -> &'static str {
     if harness::claude_placement_here() == Ok("windows-wsl") {
         return "win32";

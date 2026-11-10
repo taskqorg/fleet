@@ -11,7 +11,7 @@ export const secretHash=(secret:string)=>createHash('sha256').update(secret).dig
 const fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};
 const ID=/^[a-z][a-z0-9-]{0,79}$/,HASH=/^[0-9a-f]{64}$/;
 
-export function hostRegistry(store:Store,people:{personFor:(e:string|undefined)=>Person|null}){
+export function hostRegistry(store:Store,people:{personFor:(e:string|undefined)=>Person|null},browserSecret:string){
  // Read through on every call: fewer than 10 hosts, one indexed kind scan. ponytail: cache if polls ever show up in profiles.
  // Document ids are unique across kinds, and host-observation uses the bare host id: a host row is stored as 'host:<id>'.
  const list=async():Promise<Host[]>=>(await store.all('host')).map(({hostId,...x}:any)=>({...x,id:hostId}));
@@ -23,6 +23,8 @@ export function hostRegistry(store:Store,people:{personFor:(e:string|undefined)=
  const maySee=(host:Host,projectId:string|null|undefined)=>{const p=people.personFor(host.holder);if(!p)return false;if(p.owner)return true;
   return !!projectId&&p.grants.some(g=>g.kind==='project'&&g.id===projectId)};
  const owner=(p:Person|null|undefined)=>{if(!p?.owner)fail(403,'Only the owner manages hosts')};
+ // The two credential kinds never match (§1).
+ const distinct=(hash:string)=>{if(hash===secretHash(browserSecret))fail(400,'A host secret must differ from the browser secret')};
  const operations={
   // Owner only. With secretSha256 (the hash of a secret generated on the host itself, which never leaves it) the coordinator
   // stores that hash; without it, the coordinator mints a secret and returns it once.
@@ -34,13 +36,13 @@ export function hostRegistry(store:Store,people:{personFor:(e:string|undefined)=
    const harnesses=b.harnesses??{};if(typeof harnesses!=='object'||Object.values(harnesses).some((v:any)=>typeof v?.allowed!=='boolean'))fail(400,'harnesses: {<name>: {allowed}}');
    const secret=b.secretSha256?null:randomBytes(32).toString('hex');
    const h:Host={id:b.id,name:typeof b.name==='string'?b.name:b.id,holder,platform:typeof b.platform==='string'?b.platform:'unknown',roles,secretHash:b.secretSha256??secretHash(secret!),intake:'all',harnesses,createdAt:Date.now()};
-   if((await list()).some(x=>x.secretHash===h.secretHash))fail(409,'Secret already used by another host');
+   distinct(h.secretHash);if((await list()).some(x=>x.secretHash===h.secretHash))fail(409,'Secret already used by another host');
    await save(h);return {host:view(h),...(secret?{secret}:{})}},
   // Replaces the hash; the old secret stops at once.
   hosts_rotate_secret:async(b:any,p:Person|null)=>{owner(p);const h=await byId(b?.id)??fail(404,'Unknown host');
    if(b.secretSha256!==undefined&&!HASH.test(b.secretSha256))fail(400,'secretSha256 must be 64 hex characters');
    const secret=b.secretSha256?null:randomBytes(32).toString('hex');h.secretHash=b.secretSha256??secretHash(secret!);
-   if((await list()).some(x=>x.id!==h.id&&x.secretHash===h.secretHash))fail(409,'Secret already used by another host');
+   distinct(h.secretHash);if((await list()).some(x=>x.id!==h.id&&x.secretHash===h.secretHash))fail(409,'Secret already used by another host');
    await save(h);return {host:view(h),...(secret?{secret}:{})}},
  };
  const view=({secretHash,...h}:Host)=>h;

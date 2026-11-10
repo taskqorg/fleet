@@ -47,9 +47,10 @@ def main():
     if path.is_symlink() or st.st_uid!=os.getuid() or st.st_mode&0o077: raise RuntimeError('Private owned worker configuration required')
     config=json.loads(path.read_text())
     # The worker host's own secret (people-access section 3), one line in a private file.
-    secret_path=pathlib.Path(config['hostSecretFile']); sst=secret_path.stat()
-    if secret_path.is_symlink() or sst.st_mode&0o077: raise RuntimeError('Private host secret file required')
+    secret_path=pathlib.Path(config['hostSecretFile']); sst=secret_path.lstat()
+    if secret_path.is_symlink() or sst.st_uid!=os.getuid() or sst.st_mode&0o077: raise RuntimeError('Private owned host secret file required')
     token=secret_path.read_text().strip()
+    if len(token)<32: raise RuntimeError('Host secret too short')
     journal=pathlib.Path(config['journal']); journal.mkdir(mode=0o700,parents=True,exist_ok=True)
     def api(route,body):
         req=urllib.request.Request(config['coordinator']+'/api/hosts/'+route,data=json.dumps(body).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','User-Agent':'Fleet-ProgramWorker/1'})
