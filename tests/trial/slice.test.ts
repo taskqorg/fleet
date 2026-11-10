@@ -32,7 +32,7 @@ async function host(id: string) {
   const secret = hosts.get(id)!;
   return (path: string, body: unknown, headers: Record<string, string> = {}) => call('POST', path, body, {authorization: 'Bearer ' + secret, ...headers});
 }
-// The executor's default host is trial-host (FLEET_HOST_ID in run.ts): a message runs there.
+// The coordinator's default host is trial-host (FLEET_HOST_ID in run.ts): its poll claims a queued execution.
 const session = async () => ok(await browser('POST', '/api/sessions', {})).sessionId as string;
 async function started() {
   const h = await host('trial-host');
@@ -87,10 +87,10 @@ test('SL3 a created session reads back; an unknown one is 404 (risk: session row
   assert.equal((await browser('GET', `/api/sessions/${randomUUID()}`)).status, 404);
 });
 
-test('SL4 a message queues one execution and one start command; a repeated requestId returns the same execution; a bad body changes nothing (risk: duplicate work on client retry)', async () => {
+test('SL4 a message queues one execution with no host yet; a repeated requestId returns the same execution; a bad body changes nothing (risk: duplicate work on client retry)', async () => {
   const id = await session();
   const e = ok(await browser('POST', `/api/sessions/${id}/messages`, {requestId: 'r1', text: 'hello'}));
-  assert.equal(e.state, 'queued'); assert.equal(e.hostId, 'trial-host'); assert.equal(e.sessionId, id);
+  assert.equal(e.state, 'queued'); assert.equal(e.hostId ?? null, null, 'the host is chosen at a poll'); assert.equal(e.sessionId, id);
   assert.equal(ok(await browser('POST', `/api/sessions/${id}/messages`, {requestId: 'r1', text: 'hello'})).id, e.id);
   for (const bad of [{text: 'x'}, {requestId: 'r2'}, {requestId: 'r2', text: ''}, {requestId: 'r2', text: 'x', extra: 1}, []])
     assert.equal((await browser('POST', `/api/sessions/${id}/messages`, bad)).status, 400, JSON.stringify(bad));
@@ -100,14 +100,14 @@ test('SL4 a message queues one execution and one start command; a repeated reque
   assert.deepEqual(s.messages.map((m: any) => [m.requestId, m.text, m.executionId]), [['r1', 'hello', e.id]]);
 });
 
-test('SL5 a poll delivers pending commands of the polling host only (risk: work sent to the wrong machine)', async () => {
+test('SL5 a poll of the default host claims a queued execution and delivers its start command; a poll delivers commands of the polling host only (risk: work sent to the wrong machine)', async () => {
   const {executionId, commandId} = await started();
   const other = await host('other-host');
   const {commands} = ok(await other('/api/hosts/poll', {platform: 'linux', capabilities: [], stores: [], problems: []}));
   assert.ok(!commands.some((c: any) => c.id === commandId || c.executionId === executionId), 'another host never gets this command');
   const h = await host('trial-host');
   const again = ok(await h('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []})).commands.find((c: any) => c.id === commandId);
-  assert.equal(again?.kind, 'start'); assert.equal(again?.payload?.text, 'hello'); assert.equal(again?.status, 'pending');
+  assert.equal(again?.kind, 'start'); assert.equal(again?.payload?.text, 'hello'); assert.equal(again?.status, 'pending'); assert.equal(again?.hostId, 'trial-host');
 });
 
 test('SL6 receipts move the execution forward only; a repeated terminal receipt is a no-op; a foreign command is 403 (risk: outbox retries and reordering corrupt state)', async () => {

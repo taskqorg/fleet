@@ -49,6 +49,9 @@ export const DEFECTS: Defect[] = [
 ];
 
 const only = process.argv.slice(2);
+// A defect counts as caught only against a green baseline.
+try { execFileSync(process.execPath, [join(root, 'tests/trial/run.ts')], {cwd: root, stdio: 'ignore'}); }
+catch { console.log('baseline is red: node tests/trial/run.ts must pass before defects are planted'); process.exit(1); }
 let missed = 0;
 for (const d of DEFECTS.filter(d => !only.length || only.includes(d.id))) {
   const path = join(root, 'packages/coordinator', d.file), original = readFileSync(path, 'utf8');
