@@ -360,3 +360,9 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .list-progress[hidden]{display:none}
 .list-view.pending .vl-row,.counters.pending .counter{color:var(--fg-muted)}
 .row-check{width:var(--size-icon);height:var(--size-icon);margin:0;accent-color:var(--accent)}
+/* Lab matrix (docs/design-system/pages/laboratory.md): a static row per example, one cell per variant holding its
+   summary per evaluator and one line per repeat. Rows grow with repeats. */
+.vl-row.static.lab-row{height:auto;min-height:var(--size-row);align-items:start;padding-top:var(--space-2);padding-bottom:var(--space-2);white-space:normal}
+.lab-cell{display:flex;flex-direction:column;gap:var(--space-1)}
+.lab-trial{display:flex;align-items:center;gap:var(--space-2);font-variant-numeric:tabular-nums}
+.lab-patch{margin:0;padding:var(--space-2) var(--space-4);font-family:var(--font-mono);font-size:var(--font-size-sm);overflow-x:auto}

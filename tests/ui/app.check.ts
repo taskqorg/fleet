@@ -53,6 +53,7 @@ try {
     ['/conversations/sess-1', ['detail', 'transcript-viewer', 'composer']],
     ['/hosts', ['stat-strip', 'harness-counts', 'state-badge', 'fill-bar']],
     ['/hosts/mac', ['detail', 'detail-section']],
+    ['/lab', ['data-list', 'state-badge']],
   ];
   page.on('requestfailed', r => { if (!r.url().includes('/api/stream')) errors.push('request failed ' + r.url()); }); // navigation aborts the stream
   page.on('response', r => { if (r.status() >= 400) errors.push(r.status() + ' ' + r.url()); });

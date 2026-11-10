@@ -58,7 +58,9 @@ type Deps={
  startAgent:(o:{run:any,step:any,stepExecutionId:string,prompt:string,inputs:{artifactId:string,path:string}[],overrides:any})=>Promise<string>,
  startScript:(o:{run:any,step:any,stepExecutionId:string,command:string,timeoutMs?:number,hostId?:string,inputs:{artifactId:string,path:string}[]})=>Promise<string>,
  // Test seam: the connection client command (default python3 connection_call.py).
- client?:string[]};
+ client?:string[],
+ // Called once a run reaches a final state (Lab reconcile, drafted examples).
+ onFinish?:(run:any)=>void};
 
 export function pipelineRunner(d:Deps){
  const {store}=d;
@@ -85,19 +87,20 @@ export function pipelineRunner(d:Deps){
     [id,run.projectId??null,credits===null?null:JSON.stringify({unit:'credits',credits,connection}),credits===null?'unavailable':'measured'])}
   return lines}
 
- async function start(o:{file:string,projectId:string|null,requestId:string,example?:any,overrides?:any,requestedBy?:any,experimentId?:string,variant?:string,extra?:any}){
+ async function start(o:{id?:string,file:string,projectId:string|null,requestId:string,example?:any,overrides?:any,requestedBy?:any,experimentId?:string,variant?:string,extra?:any}){
   const definition=load(o.file),now=Date.now();
-  const run:any={id:randomUUID(),projectId:o.projectId,requestId:o.requestId,requestedBy:o.requestedBy??{kind:'operator'},definition,definitionSha256:createHash('sha256').update(JSON.stringify(definition)).digest('hex'),
+  const run:any={id:o.id??randomUUID(),projectId:o.projectId,requestId:o.requestId,requestedBy:o.requestedBy??{kind:'operator'},definition,definitionSha256:createHash('sha256').update(JSON.stringify(definition)).digest('hex'),
    pipelineId:definition.id,pipeline:o.file,example:o.example??{},overrides:o.overrides??{},experimentId:o.experimentId??undefined,variant:o.variant??undefined,state:'running',startedAt:now,durationMs:null,usage:null,result:null,
    steps:definition.steps.map((s:any)=>({id:s.id,kind:s.kind,...(s.kind==='api'?{tool:s.tool,connection:s.connection}:{}),state:'pending'})),...o.extra};
   await store.put('pipeline-run',run);return run}
 
- const finishRun=async(run:any,state:'completed'|'failed'|'unknown',problem?:string)=>{run.state=state;run.finishedAt=Date.now();run.durationMs=run.finishedAt-run.startedAt;
+ const finishRun=async(run:any,state:'completed'|'failed'|'unknown'|'cancelled',problem?:string)=>{run.state=state;run.finishedAt=Date.now();run.durationMs=run.finishedAt-run.startedAt;
   const credits=run.steps.reduce((a:number,s:any)=>a+(s.usage?.credits??0),0);run.usage=run.steps.some((s:any)=>s.usage)?{credits}:null;
   const outputs=Object.fromEntries(run.steps.filter((s:any)=>s.output!==undefined).map((s:any)=>[s.id,s.output]));
   const search=run.steps.find((s:any)=>Array.isArray(s.output?.results));
   run.result={outputs,sources:search?search.output.results.map((x:any)=>({url:x.url,title:x.title??x.url,content:x.content??null})):[],...(search?{native:search.output}:{}),...(problem?{error:run.steps.find((s:any)=>s.error)?.error??{code:problem}}:{})};
-  await store.put('pipeline-run',run);if(problem)await store.query('UPDATE execution SET problem=$2 WHERE id=$1',[run.id,problem])};
+  await store.put('pipeline-run',run);if(problem)await store.query('UPDATE execution SET problem=$2 WHERE id=$1',[run.id,problem]);
+  if(d.onFinish){const done={...run};setImmediate(()=>d.onFinish!(done))}};
  const failStep=async(run:any,i:number,problem:string,message:string)=>{const s=run.steps[i];s.state=problem.startsWith('unknown:')?'unknown':'failed';s.problem=problem;s.error={code:problem,message};s.finishedAt=Date.now();
   // Later steps never start (failed step stops later steps); the run keeps the failed step's reason.
   await store.put('pipeline-run',run);await store.query('UPDATE execution SET problem=$2 WHERE id=$1',[stepRow(run,i),problem]);await finishRun(run,s.state==='unknown'?'unknown':'failed',problem)};
@@ -108,8 +111,11 @@ export function pipelineRunner(d:Deps){
  // Inputs of an agent or script step: example inputs, then every earlier step's artifacts under <step id>/.
  async function inputsFor(run:any,i:number){const out:{artifactId:string,path:string}[]=[];
   if(Array.isArray(run.example?.inputs)&&run.example.inputs.length){if(!run.exampleInputs){run.exampleInputs=[];for(const f of run.example.inputs){const a=await d.save({projectId:run.projectId,scope:run.experimentId?'lab':'prod',executionId:run.id,name:'example/'+f.path,bytes:Buffer.from(String(f.text)),mediaType:'text/plain'});run.exampleInputs.push({artifactId:a.id,path:'example/'+f.path})}await store.put('pipeline-run',run)}out.push(...run.exampleInputs)}
-  // A step's own files win over the coordinator's output.json for it (one file per path).
-  for(let j=0;j<i;j++){const s=run.steps[j],ids=[stepRow(run,j),...(s.executionId?[s.executionId]:[])],files=new Map<string,string>();
+  out.push(...await outputsOf(run,i));return out}
+ // Files of the first n steps under <step id>/ (every step by default). A step's own files win over the coordinator's
+ // output.json for it (one file per path); dotfiles (the calls file) are left out.
+ async function outputsOf(run:any,n=run.steps.length){const out:{artifactId:string,path:string}[]=[];
+  for(let j=0;j<n;j++){const s=run.steps[j],ids=[stepRow(run,j),...(s.executionId?[s.executionId]:[])],files=new Map<string,string>();
    for(const id of ids)for(const a of await d.artifactsOf(id)){const rel=a.path.replace(/^output\//,'');if(rel.split('/').some(p=>p.startsWith('.')))continue;files.set(s.id+'/'+rel,a.id)}
    for(const [path,artifactId] of files)out.push({artifactId,path})}
   return out}
@@ -168,6 +174,13 @@ export function pipelineRunner(d:Deps){
  const onExecution=async(executionId:string)=>{for(const r of await running())if(r.steps.some((s:any)=>s.executionId===executionId))await advance(r.id)};
  // Job steps poll on each tick; agent and script steps also advance here in case a receipt hook was missed.
  // A run already being advanced is skipped, so one slow call never holds up the others.
+ // Owner cancel (Lab cancel cell): the run ends cancelled, later steps never start; the result is the running step's own
+ // execution, which the caller stops. Serial with advance, so no step starts after the cancel.
+ const cancel=(runId:string):Promise<string|null>=>store.outside(()=>{const prev=chains.get(runId)??Promise.resolve();const next=prev.catch(()=>{}).then(async()=>{
+  const run=await store.get(runId,'pipeline-run').catch(()=>null);if(!run||run.state!=='running')return null;
+  const s=run.steps.find((x:any)=>x.state==='running'||x.state==='pending'),own=s?.state==='running'?s.executionId??null:null;if(s){s.state='cancelled';s.finishedAt=Date.now()}
+  await finishRun(run,'cancelled','cancelled');return own});
+  chains.set(runId,next);next.finally(()=>{if(chains.get(runId)===next)chains.delete(runId)}).catch(()=>{});return next});
  const tick=async()=>{for(const r of await running())if(!chains.has(r.id))advance(r.id).catch(()=>{})};
  const wait=async(runId:string)=>{for(;;){const r=await store.get(runId,'pipeline-run');if(r.state!=='running')return r;await new Promise(x=>setTimeout(x,200))}};
- return {load,start,advance,onExecution,tick,wait,recordCalls}}
+ return {load,start,advance,onExecution,tick,wait,recordCalls,outputsOf,cancel}}

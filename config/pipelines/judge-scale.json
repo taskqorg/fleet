@@ -1,0 +1,2 @@
+{"version":2,"id":"judge-scale","steps":[
+ {"id":"judge","kind":"agent","profile":"codex-judge","prompt":"Task given to the agent under test: ${example.prompt}\nIts output files are in $FLEET_INPUT_DIR/example/trial/. Judge whether the output does the task. Write output/output.json as {\"value\": <an integer 1 (useless) to 5 (fully correct, well sourced)>, \"rationale\": \"<one or two sentences>\"} and nothing else."}]}
