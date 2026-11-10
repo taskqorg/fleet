@@ -29,7 +29,7 @@ export function decideTransition(current:Side|null,target:Side):Transition{
 }
 const side=(key:string,cfg:any):Side=>{const {model,effort,id,...rest}=cfg??{};return {key,model:model??'gpt-6.1-sol',effort:cfg?effort:'low',config:canonical(rest)}};
 
-export function agentTools(store:Store,deps:{browserOrigin?:string,directory:string,hostId:string,enqueue:(s:any,text:string,requestId:string)=>Promise<any>,resolveAccount?:(account:string,harness:string)=>Promise<any>,project?:(projectId:string)=>Promise<any>,pickAccount?:(harness:string,projectId:string,hostId?:string)=>Promise<string|undefined>,deliver?:(b:any)=>Promise<any>}){
+export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise<boolean>,browserOrigin?:string,directory:string,hostId:string,enqueue:(s:any,text:string,requestId:string)=>Promise<any>,resolveAccount?:(account:string,harness:string)=>Promise<any>,project?:(projectId:string)=>Promise<any>,pickAccount?:(harness:string,projectId:string,hostId?:string)=>Promise<string|undefined>,deliver?:(b:any)=>Promise<any>}){
  const {all,get,put}=store;
  const capable=async (name:string)=>{const h=(await all('host-observation',{id:deps.hostId})).find(x=>x.id===deps.hostId);return Array.isArray(h?.capabilities)&&h.capabilities.includes(name)};
  const executions=async (sessionId:string)=>(await all('execution',{sessionId:sessionId})).filter(e=>e.sessionId===sessionId);
@@ -175,7 +175,10 @@ export function agentTools(store:Store,deps:{browserOrigin?:string,directory:str
  const sessionView=async (sessionId:string)=>({queued:(await map((await all('queued-message',{sessionId:sessionId})).filter(q=>q.sessionId===sessionId),view)),questions:(await all('question',{sessionId:sessionId})).filter(q=>q.sessionId===sessionId),handoffs:(await all('handoff',{sessionId:sessionId})).filter(h=>h.sessionId===sessionId).map(({text,...h})=>h),transitions:(await all('session-transition',{sessionId:sessionId})).filter(t=>t.sessionId===sessionId),forks:(await all('session-fork',{sourceSessionId:sessionId})).filter(f=>f.sourceSessionId===sessionId)});
  // W5: one readiness command per environment host; results arrive as 'readiness' events on its program-worker execution.
  async function readiness(b:any){const projectId=str(b?.projectId,'projectId'),project=(await deps.project?.(projectId))??fail(404,'Unknown project');
-  return {projectId,hosts:(await map([...new Set<string>((project.environments??[]).map((e:any)=>e.hostId))],async hostId=>{const sessionId=randomUUID(),id=randomUUID();
+  return {projectId,hosts:(await map([...new Set<string>((project.environments??[]).map((e:any)=>e.hostId))],async hostId=>{
+   // A host that is neither configured nor ever polled cannot take the command: report it, create no run (example: 6b00f0fb on 'pds18').
+   if(deps.knownHost&&!(await deps.knownHost(hostId)))return {hostId,executionId:null,problem:'unregistered host '+hostId};
+   const sessionId=randomUUID(),id=randomUUID();
    await put('session',{id:sessionId,createdAt:Date.now(),actor:'program-worker'});await put('execution',{id,executionId:id,sessionId,hostId,state:'queued',createdAt:Date.now(),actor:'program-worker'});
    await put('command',{id:randomUUID(),executionId:id,sessionId,hostId,kind:'readiness',status:'pending',payload:{projectId,project:{...project,roles:Object.fromEntries(Object.entries(project.roles??{}).map(([r,v]:any)=>[r,roleHarness(v)]))}}});return {hostId,executionId:id}}))}}
  // Role value names a profile (or, legacy, a harness). The executor's readiness checks accounts by harness.
