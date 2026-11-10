@@ -24,3 +24,15 @@ test('restarting the coordinator leaves unchanged delivery tasks untouched (upda
  const moved=await s.query("SELECT kind,id FROM change WHERE seq>$1 AND kind='task'",[c]);
  assert.deepEqual(moved,[],'a restart wrote task change rows');
  await app.close()});
+
+test('a store error while the start-up delivery advance reads a result is logged; the coordinator still starts',async()=>{
+ const database=mkdtempSync(tmpdir()+'/fleet-restart-store-')+'/db',config={database,browserSecret:'b',machineSecret:'m',hostId:'mac'};
+ let app=createApp(config);await app.ready();const s=(app as any).store;
+ await s.tx(async()=>{await s.put('execution',{id:'g3',executionId:'g3',sessionId:'s3',hostId:'mac',state:'completed',startedAt:1,finishedAt:2,deliveryId:'d-store'});
+  await s.put('delivery',{id:'d-store',projectId:'p',requestId:'r3',task:'Page',state:'generating',steps:[{kind:'generate',executionId:'g3',state:'completed'}]})});
+ // A stored result whose bytes no reachable store holds: reading it fails (503), as an unreachable or refusing store does.
+ await s.query("INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES('dr','p','prod','h',2,'application/json','delivery-result.json','g3','stored')");
+ await app.close();
+ app=createApp(config);await app.ready();
+ assert.equal((await app.inject({url:'/api/sessions/s3',headers:{authorization:'Bearer b'}})).statusCode<500,true);
+ await app.close()});

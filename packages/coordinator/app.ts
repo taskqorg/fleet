@@ -413,7 +413,9 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  });
  deliveryRuntime=delivery(store,{...config,hosts},enqueue,projects,managed.resolve,async(id:string)=>subscriptionsOf(id)[0],(id:string)=>artifacts.readBuffer(id,1024*1024));
  Object.assign(projects,deliveryRuntime.operations);
- app.addHook('onReady',()=>store.atomic(async()=>{await deliveryRuntime.advance();await agent.reconcile()}));
+ // A store error here (an unreachable or misbehaving store while a delivery reads its result) is logged, never a failed start:
+ // the coordinator keeps serving and the stores list shows the store's state.
+ app.addHook('onReady',()=>store.atomic(async()=>{await deliveryRuntime.advance().catch(e=>app.log.error(e,'delivery advance at start failed'));await agent.reconcile()}));
  // Placement runs on its own timer (placement_interval_seconds, default 60 s); 0 turns the timer off (tests run it directly).
  let placementTimer:any;const placementMs=config.placementIntervalMs??60000;
  app.addHook('onReady',async()=>{if(placementMs>0){let running=false;placementTimer=setInterval(()=>{if(running)return;running=true;/* single flight: a slow pass never overlaps the next */stores.sweep().then(()=>artifacts.backfill()).then(()=>placement.runPlacement()).catch(e=>app.log.error(e)).finally(()=>{running=false})},placementMs);placementTimer.unref()}});

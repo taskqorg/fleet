@@ -3,18 +3,26 @@
 // Cloudflare Access headers. requireAccess makes it refuse requests without the Access headers, as the tunnel does.
 import {createServer,type IncomingMessage,type ServerResponse} from 'node:http';
 import {createHash,randomUUID} from 'node:crypto';
+import {signature} from '../../packages/coordinator/s3.ts';
 export type FakeStore={url:string,objects:Map<string,Buffer>,requests:{method:string,url:string,headers:Record<string,any>}[],close:()=>Promise<void>,uploads:Map<string,{key:string,parts:Map<number,Buffer>}>,down:boolean};
 const xml=(res:ServerResponse,status:number,body:string)=>{res.writeHead(status,{'content-type':'application/xml'});res.end('<?xml version="1.0" encoding="UTF-8"?>'+body)};
 const etag=(b:Buffer)=>'"'+createHash('md5').update(b).digest('hex')+'"';
 const body=(req:IncomingMessage)=>new Promise<Buffer>(r=>{const c:Buffer[]=[];req.on('data',d=>c.push(d));req.on('end',()=>r(Buffer.concat(c)))});
 // dropHeadLength: answer HEAD without Content-Length, as the Cloudflare tunnel does for compressed text types.
-export async function fakeStore(opts:{requireAccess?:{id:string,secret:string},dropHeadLength?:boolean}={}):Promise<FakeStore>{
+// rewriteEncoding: change Accept-Encoding on the way in, as the Cloudflare tunnel does. verify: check the SigV4 signature
+// over the headers as they arrive (a signed header a proxy rewrote fails with 403, as Garage answered after abcf10c).
+export async function fakeStore(opts:{requireAccess?:{id:string,secret:string},dropHeadLength?:boolean,rewriteEncoding?:boolean,verify?:{credentials:{accessKeyId:string,secretAccessKey:string},region:string}}={}):Promise<FakeStore>{
  const objects=new Map<string,Buffer>(),uploads=new Map<string,{key:string,parts:Map<number,Buffer>}>(),requests:FakeStore['requests']=[];
  const state:any={down:false};
  const server=createServer(async(req,res)=>{
   const u=new URL(req.url!,'http://x'),[bucket,...rest]=u.pathname.slice(1).split('/'),key=decodeURIComponent(rest.join('/'));
   requests.push({method:req.method!,url:req.url!,headers:{...req.headers}});const data=await body(req);
   if(state.down){res.writeHead(503);res.end();return}
+  if(opts.rewriteEncoding)req.headers['accept-encoding']='gzip, br';
+  if(opts.verify){const auth=String(req.headers.authorization??''),names=/SignedHeaders=([^,]+)/.exec(auth)?.[1].split(';')??[],given=/Signature=([0-9a-f]+)/.exec(auth)?.[1];
+   const path=req.url!.split('?')[0],query=Object.fromEntries(new URL(req.url!,'http://x').searchParams);
+   const {signature:want}=signature({method:req.method!,path,query,headers:Object.fromEntries(names.map(n=>[n,String(req.headers[n]??'')])),payload:String(req.headers['x-amz-content-sha256']),credentials:opts.verify.credentials,region:opts.verify.region,date:String(req.headers['x-amz-date'])});
+   if(want!==given){res.writeHead(403,{'content-type':'application/xml'});res.end('<Error><Code>SignatureDoesNotMatch</Code><Message>Invalid signature</Message></Error>');return}}
   if(opts.requireAccess&&(req.headers['cf-access-client-id']!==opts.requireAccess.id||req.headers['cf-access-client-secret']!==opts.requireAccess.secret)){res.writeHead(302,{location:'https://access.example/login'});res.end();return}
   const q=u.searchParams;
   if(req.method==='GET'&&!key&&q.get('list-type')==='2'){const prefix=q.get('prefix')??'';const keys=[...objects.keys()].filter(k=>k.startsWith(prefix)).sort();

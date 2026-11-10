@@ -78,3 +78,11 @@ test('head: a proxy that drops Content-Length on HEAD still gives the size (one-
   assert.equal(fake.requests.find(r=>r.method==='HEAD')!.headers['accept-encoding'],'identity');assert.equal(await c.head('b','missing'),null)}
  finally{await fake.close()}
 });
+
+test('a proxy that rewrites Accept-Encoding does not break the signature (identity is asked for outside the signature)',async()=>{
+ const fake=await fakeStore({rewriteEncoding:true,verify:{credentials,region:'garage'}}),c=s3Client({endpoint:fake.url,credentials});
+ try{await c.put('b','page.html',Buffer.from('<h1>hello</h1>'),'text/html');assert.equal((await c.head('b','page.html'))?.contentLength,14);
+  const chunks:Buffer[]=[];for await(const d of await c.get('b','page.html',[0,3]))chunks.push(d);assert.equal(Buffer.concat(chunks).toString(),'<h1>');
+  const head=fake.requests.find(r=>r.method==='HEAD')!;assert.doesNotMatch(String(head.headers.authorization),/accept-encoding/);}
+ finally{await fake.close()}
+});

@@ -70,10 +70,13 @@ export function s3Client(o:{endpoint:string,credentials:Credentials,region?:stri
  // One attempt; resolves with the response, or rejects with S3Error for a non-2xx status.
  function once(method:string,path:string,q:Record<string,string>,headers:Record<string,string>,body?:Buffer){
   const date=amzDate(now()),payload=body?hash(body):EMPTY;
-  const h:Record<string,string>={...headers,host,'x-amz-date':date,'x-amz-content-sha256':payload};
+  // Accept-Encoding stays outside the signature: the store tunnel rewrites it, and a signed copy would no longer match
+  // ("Invalid signature" 403 on every HEAD and GET after abcf10c). Like the Access headers, it is added after signing.
+  const {'accept-encoding':encoding,...signed}=headers;
+  const h:Record<string,string>={...signed,host,'x-amz-date':date,'x-amz-content-sha256':payload};
   if(body)h['content-length']=String(body.length);
   h.authorization=signature({method,path,query:q,headers:h,payload,credentials:o.credentials,region,date}).authorization;
-  Object.assign(h,o.extraHeaders?.()??{});
+  Object.assign(h,o.extraHeaders?.()??{});if(encoding)h['accept-encoding']=encoding;
   const qs=query(q);
   return new Promise<IncomingMessage>((ok,no)=>{
    const req=(https?httpsRequest:httpRequest)({method,hostname,port:base.port||undefined,path:path+(qs?'?'+qs:''),headers:h},async res=>{try{
