@@ -26,7 +26,7 @@ for (const [id, platform, ago] of [['pds18', 'linux', 2000], ['mac', 'darwin', 1
 await store.put('session', { id: 'sess-1', createdAt: Date.now() - 600000, agentConfig: { id: 'baseline', harness: 'codex' } });
 await store.tx(() => store.executions.createExecution({ id: 'sx-1', kind: 'agent_run', sessionId: 'sess-1', hostId: 'pds18', harness: 'codex', state: 'succeeded' }));
 await store.put('message', { id: 'msg-1', sessionId: 'sess-1', executionId: 'sx-1', text: 'Rework the hero copy; keep it short.' });
-for (let i = 0; i < 12; i++) await store.put('event', { id: 'ev-' + i, sessionId: 'sess-1', executionId: 'sx-1', type: 'item.completed', item: i % 2 ? { type: 'command_execution', command: 'npm test', status: 'completed' } : { type: 'agent_message', text: 'Step ' + i + ' done; checking the next file.' } });
+for (let i = 0; i < 12; i++) await store.put('event', { id: 'ev-' + i, sessionId: 'sess-1', executionId: 'sx-1', type: 'item.completed', data: i % 2 ? { item: { type: 'command_execution', command: 'npm test', status: 'completed' } } : { item: { type: 'agent_message', text: 'Step ' + i + ' done; checking the next file.' }, fleetNormalized: { messages: [{ role: 'assistant', text: 'Step ' + i + ' done; checking the next file.' }] } } });
 
 // Proxy first (its origin is the browser origin), then the coordinator.
 let target = 0;
