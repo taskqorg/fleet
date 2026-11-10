@@ -419,7 +419,7 @@ Shared conventions for every item:
 
 #### 3. Re-projection script (Dropped)
 
-*   Dropped by the owner decision on old records. Migration 13 instead extends the change-feed trigger to kind `event-delta` (reported as kind `event`), so streams are followed live.
+*   Dropped by the owner decision on old records. Migration 14 instead extends the change-feed trigger to kind `event-delta` (reported as kind `event`), so streams are followed live.
 
 #### 4. `packages/coordinator/threads.ts` (Create)
 
