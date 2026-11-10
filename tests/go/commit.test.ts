@@ -7,7 +7,7 @@ import {after, before, test} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {createHash, randomBytes, randomUUID} from 'node:crypto';
-import {copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync} from 'node:fs';
+import {copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync} from 'node:fs';
 import {homedir, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {freePort, root, startCoordinator, type Coordinator} from '../harness.ts';
@@ -86,4 +86,24 @@ test('S1 a past spool file stays until its imported lines are committed (require
   for (let i = 0; i < 50 && existsSync(file); i++) await sleep(100);
   assert.equal(existsSync(file), false, 'the spool file stays after a committed import');
   assert.equal(c.sql(`SELECT count(*) FROM execution WHERE id='call:${callId}'`).trim(), '1');
+});
+
+test('K1 a key value file changes only with its committed row, for add and retire (requirement: key files follow the committed key state; risk: a failed retire leaves an active key without bytes, a failed add leaves bytes that import adopts as an active key)', async () => {
+  const conn = await tavily(), keys = join(SECRET_DIR, 'connections', conn);
+  // Add whose commit fails: no value file under the key name, no staged bytes left.
+  const lost = 'tvly-' + randomUUID(), lostFp = sha(lost).slice(0, 12);
+  failCommitOn('fail_key_add', `document NEW.id = 'key:${lostFp}'`);
+  assert.notEqual((await op('connections_key_add', {connection: conn, value: lost})).status, 200);
+  clear('fail_key_add', 'document');
+  assert.equal(existsSync(join(keys, lostFp)), false, 'a rolled-back add left the value file');
+  assert.deepEqual(readdirSync(keys), []);
+  // Retire whose commit fails: the row stays active and keeps its value file.
+  const k = ok(await op('connections_key_add', {connection: conn, value: 'tvly-' + randomUUID()}));
+  assert.ok(existsSync(join(keys, k.fingerprint)));
+  failCommitOn('fail_key_retire', `document NEW.id = 'key:${k.fingerprint}' AND NEW.data->>'state' = 'retired'`);
+  assert.notEqual((await op('connections_key_state', {keyId: k.fingerprint, state: 'retired'})).status, 200);
+  clear('fail_key_retire', 'document');
+  assert.ok(existsSync(join(keys, k.fingerprint)), 'a rolled-back retire deleted the value of an active key');
+  ok(await op('connections_key_state', {keyId: k.fingerprint, state: 'retired'}));
+  assert.equal(existsSync(join(keys, k.fingerprint)), false);
 });

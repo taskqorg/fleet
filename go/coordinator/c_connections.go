@@ -29,6 +29,7 @@ var (
 	connName       = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	keyValue       = regexp.MustCompile(`^\S+$`) // with 8..4096 bytes, checked beside it
 	keyFile        = regexp.MustCompile(`^[0-9a-f]{12}$`)
+	stagedKey      = regexp.MustCompile(`^\.([0-9a-f]{12})\.add$`)
 	spoolFile      = regexp.MustCompile(`^\d{4}-\d\d-\d\d\.jsonl$`)
 	connEnded      = map[string]bool{"completed": true, "failed": true, "stopped": true}
 	usageToken     = cRandomToken()
@@ -228,6 +229,20 @@ func connSync(q *Request) error {
 		}
 		files, _ := os.ReadDir(filepath.Join(root, name))
 		for _, f := range files {
+			if m := stagedKey.FindStringSubmatch(f.Name()); m != nil {
+				// An add a crash interrupted: its bytes count only when the row committed.
+				k, err := cGet(q, "key:"+m[1], "connection-key")
+				if err != nil {
+					return err
+				}
+				staged := filepath.Join(root, name, f.Name())
+				if k != nil && k["state"] != "retired" && k["connectionId"] == name {
+					os.Rename(staged, filepath.Join(root, name, m[1]))
+				} else {
+					os.Remove(staged)
+				}
+				continue
+			}
 			if !keyFile.MatchString(f.Name()) {
 				continue
 			}
@@ -241,6 +256,8 @@ func connSync(q *Request) error {
 			}
 			if k, err := cGet(q, "key:"+f.Name(), "connection-key"); err != nil {
 				return err
+			} else if k != nil && k["state"] == "retired" {
+				os.Remove(filepath.Join(root, name, f.Name())) // a retirement committed before a crash removed the value
 			} else if k == nil {
 				if err := putDoc(q, "connection-key", doc{"id": "key:" + f.Name(), "connectionId": name, "fingerprint": f.Name(), "state": "active", "addedAt": now(), "addedBy": "import"}); err != nil {
 					return err
@@ -380,14 +397,23 @@ func init() {
 		if err := putDoc(q, "connection-key", k); err != nil {
 			return nil, err
 		}
-		// ponytail: the file is written before commit; a rolled-back add leaves a file that sync() adopts as an import.
+		// The value is staged before commit and takes its key name only after the row committed; a rolled-back add removes
+		// it, and connSync settles a stage a crash left behind against the committed row.
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(filepath.Join(dir, fp), []byte(value+"\n"), 0o600); err != nil {
+		staged, final := filepath.Join(dir, "."+fp+".add"), filepath.Join(dir, fp)
+		if err := os.WriteFile(staged, []byte(value+"\n"), 0o600); err != nil {
 			return nil, err
 		}
-		os.Chmod(filepath.Join(dir, fp), 0o600)
+		os.Chmod(staged, 0o600)
+		onEnd(q.tx, func(committed bool) {
+			if !committed {
+				os.Remove(staged)
+			} else if err := os.Rename(staged, final); err != nil {
+				log.Printf("key %s: %v", fp, err)
+			}
+		})
 		publish()
 		return k, nil
 	})
@@ -445,7 +471,13 @@ func init() {
 		}
 		if to == "retired" {
 			if dir, err := connDir(astr(c["name"])); err == nil {
-				os.Remove(filepath.Join(dir, astr(k["fingerprint"])))
+				// The value goes only once the retirement committed; connSync removes it if a crash came in between.
+				path := filepath.Join(dir, astr(k["fingerprint"]))
+				onEnd(q.tx, func(committed bool) {
+					if committed {
+						os.Remove(path)
+					}
+				})
 			}
 		}
 		publish()
