@@ -130,6 +130,15 @@ func (a *App) setPeople(ctx context.Context, raw []byte) error {
 		}
 		people[p.Email] = p
 	}
+	// A common name is a second key in the same X-Fleet-Person namespace: unique, never an e-mail key.
+	names := map[string]bool{}
+	for _, p := range list {
+		cn := strings.ToLower(p.AccessCommonName)
+		if cn != "" && (names[cn] || people[cn] != nil || strings.Contains(cn, "@")) {
+			return errors.New("accessCommonName " + p.Email + " is not unique or collides with an e-mail")
+		}
+		names[cn] = true
+	}
 	if owners != 1 {
 		return errors.New("exactly one person must have owner: true")
 	}
@@ -273,9 +282,10 @@ func (a *App) authorize(q *Request) error {
 		return fail(401, "Person required")
 	}
 	p := a.people[strings.ToLower(email)]
-	for _, c := range a.people {
+	for _, c := range a.people { // ponytail: linear scan, fewer than 10 people
 		if p == nil && c.AccessCommonName != "" && strings.EqualFold(c.AccessCommonName, email) {
 			p = c
+			break
 		}
 	}
 	if p == nil {

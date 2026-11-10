@@ -193,7 +193,9 @@ func init() {
 		out := []*Person{}
 		for _, p := range q.app.people {
 			if q.person == nil || fullAccess(q.person) || p.Email == q.person.Email {
-				out = append(out, p)
+				c := *p
+				c.AccessCommonName = "" // the service token's client ID stays in the deployed file
+				out = append(out, &c)
 			}
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].Email < out[j].Email })
@@ -201,8 +203,8 @@ func init() {
 	})
 	// setting_changes: the audit of settings, newest first, optionally of one target (host:<id>, people, ...).
 	gatedObjOp("setting_changes", true, func(q *Request) (any, error) {
-		// The people list is the owner's: its audit is not shown to architects.
-		owner := q.person == nil || fullAccess(q.person)
+		// The people list is the owner's: its audit (with service-token client IDs) is not shown to architects or site-agents.
+		owner := q.person == nil || q.person.Owner
 		b := body(q)
 		limit := pageLimit(b["limit"], 100)
 		rs, err := rowsOf(q, "SELECT seq,data FROM document WHERE kind='setting-change' AND ($1='' OR data->>'target'=$1) AND ($2 OR data->>'target'<>'people') AND ($3::bigint IS NULL OR seq<$3) ORDER BY seq DESC LIMIT $4",
