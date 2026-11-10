@@ -189,6 +189,7 @@ The PM asks people through the `question` table (agent `ask` opens an `agent_que
 
 *   Settings, profiles, pipelines, Lab and projects already have operations (`hosts_update`, `budget_set`, `account_update`, `connections_*`, `session_profile`, `pipeline_*`, `lab_*`, `project_*`). §1 makes them reachable with the director's rights; `guardOp` and each operation's own holder checks apply unchanged.
 *   People have no operation today: `people.json` is read once at start (`loadPeople`, `main.go`). Two new operations: `people_list` (read; a non-owner sees only themself, as the `person` row-level policy does) and `people_set {people}` (owner only). `people_set` writes the whole list to `FLEET_PEOPLE_FILE` atomically (write to a temporary file, rename), reloads `q.app.people` and the `person` and `person_grant` mirror, and writes one `setting-change` document `{target: "people", previous, value}`. No confirmation (Q7).
+*   **Visibility.** A read operation `setting_changes {target?, before?, limit?}` pages `setting-change` documents newest first (`nextBefore`), so the owner and the PM see every agent change with `actor` and `onBehalfOf`.
 
 ### 9. PM profile
 
