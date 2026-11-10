@@ -484,8 +484,7 @@ steps below describe what that PR covers.
     add a `fleet` project, following the existing projects in
     `config/projects/`, so rule delivery applies to agents that write Fleet.
 4.  `.github/workflows/ci.yml`: check out specq at the pinned commit and run
-    its `contract_lint.py` on `fleet.md`, as agentq does
-    (`docs/real-projects-survey.md`); print a report of tests that name no
+    its `contract_lint.py` on `fleet.md`, as agentq does; print a report of tests that name no
     requirement. Both checks warn and do not fail the build.
 5.  Measure one task before and after, with the same prompt and model: number
     of new tests and whether they name requirements. One task gives a
