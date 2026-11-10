@@ -1260,6 +1260,11 @@ func sessionStart(q *Request, b doc) (doc, error) {
 		if taskID, err = taskFor(q, b["taskId"], pid, true); err != nil {
 			return nil, err
 		}
+		if held, err := has(q, "SELECT 1 FROM task WHERE id=$1 AND pause_reason='held'", taskID); err != nil {
+			return nil, err
+		} else if held && q.agent != "" { // Held waits for the person (fleet-pm-agent.md §4)
+			return nil, fail(409, "Task is Held: release it first")
+		}
 	}
 	s := doc{"id": uuid(), "createdAt": now(), "projectId": pid, "agentConfig": profile, "startRequest": key}
 	for k, v := range map[string]string{"taskId": taskID, "directedBy": directedBy, "role": gs(b, "role"), "account": account, "setup": gs(b, "setup"), "hostId": gs(b, "hostId"), "createdBySessionId": gs(b, "callerSessionId"), "createdByExecutionId": gs(b, "callerExecutionId")} {

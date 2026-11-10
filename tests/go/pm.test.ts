@@ -108,6 +108,7 @@ test('PM5 Held: an agent task starts Held with the execution as creator, and lea
   assert.equal((await page('paused')).tasks.length, 0, 'a Held task is not an ordinary pause');
   assert.equal((await pm.tool('task_update', {taskId: t.id, action: 'resume'})).status, 400, 'agents change state only through the task tools');
   ok(await pm.tool('task_update', {taskId: t.id, expectedOutcome: 'README summary'}));
+  assert.equal((await pm.tool('session_start', {requestId: randomUUID(), role: 'pm', taskId: t.id})).status, 409, 'no work on a Held task');
   assert.equal(ok(await pm.tool('task_release', {taskId: t.id})).state, 'queued');
   assert.equal(ok(await pm.tool('task_hold', {taskId: t.id})).pauseReason, 'held');
   assert.equal(ok(await pm.tool('task_release', {taskId: t.id})).state, 'queued');
