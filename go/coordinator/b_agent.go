@@ -203,7 +203,7 @@ func submit(q *Request, b doc) (doc, error) {
 		}
 		return enqueue(q, s, text, requestID, nil, nil, "")
 	}
-	m := doc{"id": uuid(), "sessionId": sid, "requestId": requestID, "text": text, "state": "queued", "createdAt": now()}
+	m := doc{"id": uuid(), "sessionId": sid, "projectId": s["projectId"], "requestId": requestID, "text": text, "state": "queued", "createdAt": now()}
 	if b["source"] != nil {
 		m["source"] = b["source"]
 	}
@@ -217,7 +217,7 @@ func submit(q *Request, b doc) (doc, error) {
 			if n := gs(s, "nativeSessionId"); n != "" {
 				payload["nativeSessionId"] = n
 			}
-			c := doc{"id": uuid(), "executionId": active["id"], "sessionId": sid, "hostId": active["hostId"], "kind": "steer", "payload": payload, "status": "pending"}
+			c := doc{"id": uuid(), "executionId": active["id"], "sessionId": sid, "hostId": active["hostId"], "projectId": s["projectId"], "kind": "steer", "payload": payload, "status": "pending"}
 			if err := putDoc(q, "command", c); err != nil {
 				return nil, err
 			}
@@ -792,7 +792,11 @@ func agentAsk(q *Request, b doc) (doc, error) {
 		}
 		return old[0], nil
 	}
-	qu := doc{"id": uuid(), "executionId": eid, "sessionId": e["sessionId"], "requestId": rid, "question": question, "state": "open", "createdAt": now()}
+	s, err := get(q, gs(e, "sessionId"), "session")
+	if err != nil {
+		return nil, err
+	}
+	qu := doc{"id": uuid(), "executionId": eid, "sessionId": e["sessionId"], "projectId": s["projectId"], "requestId": rid, "question": question, "state": "open", "createdAt": now()}
 	return qu, put(q, "question", qu)
 }
 
@@ -814,6 +818,13 @@ func agentReply(q *Request, b doc) (doc, error) {
 			return nil, fail(409, "Question already answered differently")
 		}
 		return qu, nil
+	}
+	if qu["projectId"] == nil { // a question asked before it carried its session's project
+		s, err := get(q, gs(qu, "sessionId"), "session")
+		if err != nil {
+			return nil, err
+		}
+		qu["projectId"] = s["projectId"]
 	}
 	qu["state"], qu["answer"], qu["answeredAt"] = "answered", answer, now()
 	d, err := submit(q, doc{"sessionId": qu["sessionId"], "requestId": "reply:" + qid, "source": "reply", "text": fmt.Sprintf("Fleet reply to your question %s (\"%s\"):\n%s", qid, gs(qu, "question"), answer)})
