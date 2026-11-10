@@ -402,9 +402,9 @@ export function ResultRow({ artifactIds, stage }: { artifactIds: string[]; stage
   return <div class="th-row th-result" data-ui="thread-row"><Icon name="file-text" /><span class="th-line">{artifactIds.map(id => <a key={id} class="mono" href={`/api/results/${encodeURIComponent(id)}`} target="_blank" rel="noopener">{id.slice(0, 8)}</a>)}</span>{stage && <StageChip stage={stage} />}</div>;
 }
 /** An execution start: state, agent mark, duration chip, and Stop while it runs (CUJ 5). */
-export function BoundaryRow({ executionId, state, mark, startedAt, endedAt, now, onStop, stopReason }: { executionId: string; state: StateOf<'execution'>; mark: Mark; startedAt?: number | null; endedAt?: number | null; now: number; onStop?: () => void; stopReason?: string }) {
+export function BoundaryRow({ session, executionId, state, mark, startedAt, endedAt, now, onStop, stopReason }: { session?: string; executionId: string; state: StateOf<'execution'>; mark: Mark; startedAt?: number | null; endedAt?: number | null; now: number; onStop?: () => void; stopReason?: string }) {
   const secs = startedAt != null ? ((endedAt ?? now) - startedAt) / 1000 : null;
-  return <div class="th-row th-boundary" data-ui="thread-row"><StateBadge family="execution" state={state} compact /><span class="id">{executionId.slice(0, 8)}</span><span class="grow" />
+  return <div class="th-row th-boundary" data-ui="thread-row"><StateBadge family="execution" state={state} compact />{session && <span class="id" data-tip="Session">{session.slice(0, 8)}</span>}<span class="id">{executionId.slice(0, 8)}</span><span class="grow" />
     <span class="th-svc"><AgentMark {...mark} />{secs !== null && <span class="chip-age">{duration(secs).text}</span>}{onStop && <Button label="Stop" icon="pause" iconOnly disabledReason={stopReason} onClick={onStop} />}</span></div>;
 }
 
@@ -418,8 +418,10 @@ export type ThreadBlock = { kind: string; key: string; executionId?: string; [k:
  * A thread: one row per block in a measured VirtualList that follows the bottom, loads older rows upward (onStart) and
  * newer ones downward (onEnd), and jumps through `handle`. Open tool and reasoning rows are kept by key across the window.
  */
-export function Thread({ blocks, label, now, marked, handle, pending, onStart, onEnd, onStop, stopReason, onAnswer, onCopyFail }: {
-  blocks: ThreadBlock[]; label: string; now: number; marked?: string | null; handle?: { current: VirtualListHandle | null }; pending?: { count: number; onJump: () => void };
+export function Thread({ blocks, label, now, marked, selected, onRowClick, showSession, handle, pending, onStart, onEnd, onStop, stopReason, onAnswer, onCopyFail }: {
+  blocks: ThreadBlock[]; label: string; now: number; marked?: string | null;
+  /** Cross-message selection: rows in it are tinted; a click on a row (Shift extends) selects it, buttons and links excepted. */
+  selected?: (key: string) => boolean; onRowClick?: (key: string, shift: boolean) => void; showSession?: boolean; handle?: { current: VirtualListHandle | null }; pending?: { count: number; onJump: () => void };
   onStart?: () => void; onEnd?: () => void; onStop?: (executionId: string) => void; stopReason?: string;
   onAnswer?: (questionId: string, answer: string) => void; onCopyFail?: (e: unknown) => void;
 }) {
@@ -433,14 +435,15 @@ export function Thread({ blocks, label, now, marked, handle, pending, onStart, o
       case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'question': return <QuestionRow text={b.text} options={b.options ?? []} state={b.state} answer={b.answer} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} />;
       case 'result': return <ResultRow artifactIds={b.artifactIds ?? []} stage={b.stage} />;
-      case 'boundary': return <BoundaryRow executionId={b.executionId!} state={b.state} mark={markOf(b)} startedAt={b.startedAt} endedAt={b.endedAt} now={now} stopReason={stopReason}
+      case 'boundary': return <BoundaryRow session={showSession ? b.sessionId : undefined} executionId={b.executionId!} state={b.state} mark={markOf(b)} startedAt={b.startedAt} endedAt={b.endedAt} now={now} stopReason={stopReason}
         onStop={onStop && ['preparing', 'running', 'waiting'].includes(b.state) ? () => onStop(b.executionId!) : undefined} />;
       default: return null;
     }
   };
   return <div class="transcript" data-ui="transcript-viewer">
     <VirtualList class="tr-body" items={blocks} getKey={b => b.key} rowHeight={ROW} dynamic follow="bottom" label={label} handle={handle} pending={pending} onStart={onStart} onEnd={onEnd}
-      rowClass={b => b.key === marked ? 'marked' : ''} render={row} />
+      rowClass={b => [b.key === marked ? 'marked' : '', selected?.(b.key) ? 'picked' : ''].join(' ')}
+      render={b => <div class="th-pick" style={{ display: 'contents' }} onClick={e => { if (!onRowClick || (e.target as HTMLElement).closest('button,a,input') || !(getSelection()?.isCollapsed ?? true) && !e.shiftKey) return; if (e.shiftKey) getSelection()?.removeAllRanges(); ((e.currentTarget as HTMLElement).closest('.vl') as HTMLElement | null)?.focus({ preventScroll: true }); onRowClick(b.key, e.shiftKey); }}>{row(b)}</div>} />
   </div>;
 }
 

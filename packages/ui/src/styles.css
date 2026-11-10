@@ -400,3 +400,5 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .conversation .pane{flex:1;min-height:0}
 .conversation .transcript,.conversation .tr-body{flex:1;min-height:0}
 .conversation .tr-body .vl{flex:1;height:auto;min-height:0}
+.vl-row.picked{background:var(--hover)}
+.vl-row.picked.marked{background:var(--selected)}
