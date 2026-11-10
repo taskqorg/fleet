@@ -264,15 +264,6 @@ func storeRegister(q *Request, hostID string, b map[string]any, holder string) (
 	} else if r != nil && str(r, "host_id") != hostID {
 		return nil, fail(403, "Store belongs to another host")
 	}
-	if err := os.MkdirAll(storeSecretsDir, 0o700); err != nil {
-		return nil, err
-	}
-	kb, _ := json.Marshal(storeKey{key, secret})
-	if err := os.WriteFile(storeKeyFile(id), kb, 0o600); err != nil {
-		return nil, err
-	}
-	os.Chmod(storeKeyFile(id), 0o600)
-	s3cache.Delete(id) // new credentials
 	intOrNil := func(v any) any {
 		if f, ok := v.(float64); ok && f == float64(int64(f)) {
 			return int64(f)
@@ -285,11 +276,26 @@ func storeRegister(q *Request, hostID string, b map[string]any, holder string) (
 		zonep = zone
 	}
 	err = dExec(ctx, a, `INSERT INTO store(id,host_id,zone,bucket,endpoint,local_endpoint,capacity_bytes,used_bytes,requires_logon,state,observed_at,holder) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'reachable',now(),$10)
-   ON CONFLICT(id) DO UPDATE SET zone=excluded.zone,bucket=excluded.bucket,endpoint=excluded.endpoint,local_endpoint=excluded.local_endpoint,capacity_bytes=excluded.capacity_bytes,used_bytes=excluded.used_bytes,requires_logon=excluded.requires_logon,state='reachable',observed_at=now(),registered_at=now(),holder=excluded.holder`,
+   ON CONFLICT(id) DO UPDATE SET zone=excluded.zone,bucket=excluded.bucket,endpoint=excluded.endpoint,local_endpoint=excluded.local_endpoint,capacity_bytes=excluded.capacity_bytes,used_bytes=excluded.used_bytes,requires_logon=excluded.requires_logon,state='reachable',observed_at=now(),registered_at=now(),holder=excluded.holder WHERE store.host_id=excluded.host_id`,
 		id, hostID, zonep, bucket, endpoint, local, intOrNil(b["capacityBytes"]), intOrNil(b["usedBytes"]), b["requiresLogon"] == true, holder)
 	if err != nil {
 		return nil, err
 	}
+	// The upsert's WHERE makes ownership part of the write: a store of another host is unchanged, and so is its key.
+	if r, err := dOne(ctx, a, "SELECT host_id FROM store WHERE id=$1", id); err != nil {
+		return nil, err
+	} else if r == nil || str(r, "host_id") != hostID {
+		return nil, fail(403, "Store belongs to another host")
+	}
+	if err := os.MkdirAll(storeSecretsDir, 0o700); err != nil {
+		return nil, err
+	}
+	kb, _ := json.Marshal(storeKey{key, secret})
+	if err := os.WriteFile(storeKeyFile(id), kb, 0o600); err != nil {
+		return nil, err
+	}
+	os.Chmod(storeKeyFile(id), 0o600)
+	s3cache.Delete(id) // new credentials
 	return doc{"ok": true, "storeId": id}, nil
 }
 
@@ -560,9 +566,13 @@ func artifactReserve(q *Request) (any, error) {
 	if !artifactIDPattern.MatchString(id) {
 		id = uuid()
 	}
-	if old, err := dOne(ctx, a, "SELECT state FROM artifact WHERE id=$1", id); err != nil {
+	if old, err := dOne(ctx, a, "SELECT state,execution_id FROM artifact WHERE id=$1", id); err != nil {
 		return nil, err
 	} else if old != nil {
+		// A retry of the same reservation only: another execution's artifact id is refused, not described.
+		if str(old, "execution_id") != sv("executionId") {
+			return nil, fail(409, "Artifact id in use")
+		}
 		c, _ := dOne(ctx, a, "SELECT store_id FROM artifact_copy WHERE artifact_id=$1 AND state IN ('pending','copying','verified') ORDER BY state LIMIT 1", id)
 		out := doc{"artifactId": id, "state": old["state"], "partSize": partSize}
 		if c != nil {
