@@ -1,6 +1,6 @@
 # Tokens
 
-Visual values for direction B "Instrument" ([D19](decisions.md)): neutral greys with no tint, an accent that is the ink itself (near-white in dark, near-black in light), hairlines, 2 px corners, and monospace for figures, IDs and small labels. The machine-readable source is [packages/ui/tokens.json](../../packages/ui/tokens.json); this file explains how to use it. Pages and controls use tokens only, never raw values.
+Visual values for direction B "Instrument" ([D19](decisions.md)): neutral greys with a barely cool cast and no hue of their own, an accent that is the ink itself (near-white in dark, near-black in light), hairlines, 2 px corners, and monospace for figures, IDs and small labels. The machine-readable source is [packages/ui/tokens.json](../../packages/ui/tokens.json); this file explains how to use it. Pages and controls use tokens only, never raw values.
 
 In CSS every token is a custom property named by its path without the group for colour: `--bg`, `--fg-muted`, `--accent`; other groups keep their prefix: `--space-3`, `--radius-md`, `--font-mono`, `--motion-fast`. `packages/ui/scripts/tokens.mjs` generates them; `npm run check:design` reports contrast pairs below 4.5:1.
 

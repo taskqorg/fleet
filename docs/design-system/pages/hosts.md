@@ -11,6 +11,8 @@
 
 There is no stat strip: it repeated the rows (OR-17).
 
+Not built in the app, shown in the mockup: slots and the store fill in the row, the low-space problem row, the setting fields. The app's page head shows the offline marker, not "updated 40s".
+
 | Inventory item | Shown by |
 |---|---|
 | Hosts: platform, last contact, observation state, harness versions, readiness | Catalogue row: name (the platform shows only when the name does not already say it, OR-17), [state icon](../controls/state-badge.md) (unconfirmed overlay when offline), last contact [age chip](../controls/number.md) (attention past 15m) |

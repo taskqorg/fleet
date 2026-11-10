@@ -5,10 +5,10 @@
 **Job.** Read and act on one item while the catalogue stays in view (D5 of specq: no extra screen just to reach a link). These are the second and third columns of the [app shell](app-shell.md).
 
 **Composition.**
-* **Control column,** `size-ctl` wide: the section title, then search, filters, counters and grouping ([list view](list-view.md)), then the list. The list fills the rest of the column and is its only scroller.
+* **Control column,** `size-ctl` wide: the section title, then search, filters, counters and grouping ([list view](list-view.md)), then the list. A virtual list fills the rest of the column and is its only scroller; a short hand-built catalogue (Hosts, API keys) scrolls with the column.
 * **Work area,** the remaining width: the opened item (OR-27). With nothing opened it shows one quiet line, or the section's reference page (Lab shows the use-case registry), never a second copy of the list.
 
-**Catalogue row.** Two lines, `size-row-2` high: the title on the first line, its ID and other secondary facts on the second. The state icon stays leftmost and the service zone stays on the right (OR-21, OR-22). The list has no column heads. The whole row opens the item (OR-26).
+**Catalogue row.** Two lines, `size-row-2` high (a hand-built row takes that as its least height and grows when its facts wrap): the title on the first line, its ID and other secondary facts on the second. The state icon stays leftmost and the service zone stays on the right (OR-21, OR-22). The list has no column heads. The whole row opens the item (OR-26).
 
 **Work area, from top to bottom:**
 1. Close icon, then `project · ID` in mono, then the primary actions as a [split button](../controls/split-button.md) (Pause with Cancel, Change account and Hand off) and Share as an icon.

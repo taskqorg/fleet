@@ -284,7 +284,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .stat .sl{color:var(--fg-muted);font-size:var(--font-size-sm)}
 /* OR-26: the whole row opens the item; the shell forwards the click to the row link */
 .row-link{color:inherit;text-decoration:none}
-.vl-row:has(.row-link){cursor:pointer}
+.vl-row:has(.row-link),.kv li:has(.row-link){cursor:pointer}
 .vl-row.sel{background:var(--selected);box-shadow:inset 3px 0 var(--accent)}
 .seg-group{display:inline-flex;gap:var(--space-1)}
 
@@ -519,6 +519,8 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .flow-loop{display:inline-flex;align-items:center;position:relative;padding:var(--space-6) var(--space-3) var(--space-3);border:1px dashed var(--fg-muted);border-radius:var(--radius-md)}
 .flow-cap{position:absolute;top:var(--space-2);left:var(--space-3);display:inline-flex;align-items:center;gap:var(--space-2);font-family:var(--font-mono);font-size:var(--font-size-xs);text-transform:uppercase;letter-spacing:.06em;color:var(--fg-muted);white-space:nowrap}
 .flow-cap .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
+/* A wide table in the work area scrolls sideways inside its own panel (OR-25) */
+.detail .panel:has(.lab-row){overflow-x:auto}
 /* Layout of the open-questions page only. */
 .page{max-width:1500px;margin:0 auto;padding:var(--space-5)}
 .bk-head h1{margin:0 0 var(--space-1);font-size:var(--font-size-xl)}
