@@ -101,7 +101,7 @@ fn snapshot(url: &str, keys: &[(&str, &str)], tokens: &[&str], intake: &str, sub
             "web_search": {"method": "POST", "path": "/search", "unit": "credits", "idempotent": true, "inject": {"include_usage": true}},
             "submit": {"method": "POST", "path": "/submit", "unit": "credits", "idempotent": submit_idempotent}}}},
         "connections": {"tavily": {"provider": "tavily", "tools": ["web_search", "submit"], "intake": intake, "keys": keys, "blocked": []}},
-        "tokens": tokens})
+        "tokens": tokens, "usageTokenSha256": sha256("usage-token")})
 }
 
 impl Fixture {
@@ -252,7 +252,8 @@ fn a_403_is_recorded_on_the_key_and_never_disables_it() {
 fn usage_reports_each_key_from_the_provider() {
     let upstream = provider(|key| if key == "invented-key-b" { (500, 0) } else { (200, 0) });
     let gw = Fixture::new(&upstream.url, &["invented-key-a", "invented-key-b"]);
-    let rows = call_raw(gw.port, "GET", "/v1/usage", &[], "").2["keys"].as_array().unwrap().clone();
+    assert_eq!(call_raw(gw.port, "GET", "/v1/usage", &[("Authorization", &format!("Bearer {TOKEN}"))], "").0, 401);
+    let rows = call_raw(gw.port, "GET", "/v1/usage", &[("Authorization", "Bearer usage-token")], "").2["keys"].as_array().unwrap().clone();
     let a = rows.iter().find(|r| r["key"] == fp("invented-key-a")).unwrap();
     assert_eq!(a["usage"], 40.0);
     let b = rows.iter().find(|r| r["key"] == fp("invented-key-b")).unwrap();

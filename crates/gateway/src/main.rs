@@ -134,6 +134,8 @@ struct Snapshot {
     providers: HashMap<String, Provider>,
     connections: HashMap<String, Connection>,
     tokens: HashMap<String, Token>,
+    /// SHA-256 of the coordinator's own token for /v1/usage.
+    usage_token: Option<String>,
 }
 
 fn text(v: &Value, what: &str) -> Res<String> {
@@ -194,7 +196,8 @@ impl Snapshot {
             tokens.insert(hash, Token { execution_id: text(&t["executionId"], "token executionId")?, connections });
         }
         let revision = Sha256::digest(bytes).iter().take(6).map(|b| format!("{b:02x}")).collect();
-        Ok(Self { revision, generated_ms, providers, connections, tokens })
+        let usage_token = v["usageTokenSha256"].as_str().map(str::to_owned);
+        Ok(Self { revision, generated_ms, providers, connections, tokens, usage_token })
     }
 }
 
@@ -461,13 +464,13 @@ impl Gateway {
                 let Some(value) = self.values.read().unwrap().get(&key.id).cloned() else { continue };
                 let request = Request::get(&path).header(AUTHORIZATION, format!("Bearer {value}")).body(Body::default()).expect("static request shape");
                 let observed = match tokio::time::timeout(self.config.request_timeout, self.client.request(request)).await {
-                    Ok(Ok(r)) if r.status().is_success() => match r.into_body().collect().await {
-                        Ok(b) => serde_json::from_slice::<Value>(&b.to_bytes())
+                    Ok(Ok(r)) if r.status().is_success() => match tokio::time::timeout(self.config.request_timeout, Limited::new(r.into_body(), PROVIDER_BYTES).collect()).await {
+                        Ok(Ok(b)) => serde_json::from_slice::<Value>(&b.to_bytes())
                             .ok()
                             .and_then(|v| field.split('.').try_fold(v, |v, f| v.get(f).cloned()))
                             .and_then(|v| v.as_f64())
                             .ok_or("usage reply has no ".to_owned() + &field),
-                        Err(e) => Err(format!("usage body: {e}")),
+                        _ => Err("usage body cut off, too large or too slow".into()),
                     },
                     Ok(Ok(r)) => Err(format!("usage HTTP {}", r.status().as_u16())),
                     Ok(Err(e)) => Err(format!("usage request: {e}")),
@@ -512,6 +515,11 @@ impl Gateway {
         }
         // Loopback only: Caddy forwards /v1/call/* alone, so remote callers never reach this.
         if request.method() == Method::GET && path == "/v1/usage" {
+            let bearer = request.headers().get(AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).map(|t| sha256(t.trim()));
+            let expected = self.snapshot.read().unwrap().usage_token.clone();
+            if bearer.is_none() || bearer != expected {
+                return Ok(reply(StatusCode::UNAUTHORIZED, json!({"error": "unauthenticated", "reason": "the coordinator's usage token is required"}).to_string()));
+            }
             return Ok(reply(StatusCode::OK, self.usage().await.to_string()));
         }
         let route = path.strip_prefix("/v1/call/").and_then(|r| r.split_once('/')).filter(|(c, t)| is_name(c) && is_name(t));
@@ -627,7 +635,7 @@ async fn serve(config: Config) -> Res<()> {
     let gateway = Arc::new(Gateway {
         config,
         client,
-        snapshot: RwLock::new(Arc::new(Snapshot { revision: String::new(), generated_ms: 0, providers: HashMap::new(), connections: HashMap::new(), tokens: HashMap::new() })),
+        snapshot: RwLock::new(Arc::new(Snapshot { revision: String::new(), generated_ms: 0, providers: HashMap::new(), connections: HashMap::new(), tokens: HashMap::new(), usage_token: None })),
         seen: Mutex::new(seen),
         reread: tokio::sync::Mutex::new(()),
         rejected_snapshots: AtomicU64::new(0),
