@@ -912,7 +912,7 @@ func readStdout(r *os.File, rawLog *os.File, w *wire, acpProtocol bool, out chan
 		}
 		if derr != nil {
 			w.mu.Unlock()
-			out <- enc(M{"type": "protocol.failed", "error": "native protocol outcome unconfirmed; no replay"})
+			out <- enc(M{"type": "protocol.failed", "error": "native protocol outcome unconfirmed; no replay", "reason": derr.Error()})
 			return
 		}
 		for _, req := range requests {
