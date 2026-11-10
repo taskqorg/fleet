@@ -27,6 +27,8 @@ jobs:
       - run: pnpm run build
       # The executor: its unit tests, and the binary the coordinator's end-to-end artifact test runs.
       - run: cargo build -p fleet-executor && cargo test -p fleet-executor
+      # The executor protocol scripts (tests/executor): actual executor binary against fake harnesses and transports.
+      - run: tests/executor/run.sh
       - run: pnpm test
       # Use-case registry drift (docs/designs/fleet-lab.md Stage 1): warns, never blocks. Only Fleet's own sources are
       # checked here; the other org repos are not checked out, so their entries report nothing.
@@ -54,6 +56,17 @@ jobs:
             docs/design-system/book/index.html
             docs/design-system/pages/mockups.html
           if-no-files-found: warn
+  # The executor protocol scripts on macOS, where Claude placement 'mac' lets claude_mcp.py run (it skips on plain Linux).
+  executor-macos:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: cargo build -p fleet-executor
+      - run: tests/executor/run.sh
   # The filter-path check (docs/designs/fleet-view-urls-and-list-path.md §4): its own job, so it does not slow build-test-design.
   filter-check:
     runs-on: ubuntu-24.04

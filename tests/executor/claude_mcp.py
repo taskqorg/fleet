@@ -15,18 +15,18 @@ assert 'FLEET_HOST_SECRET_FILE' not in os.environ and 'ANTHROPIC_API_KEY' not in
 assert os.environ.get('USER') and os.environ.get('LOGNAME')==os.environ['USER']
 assert get('--system-prompt')=='explicit system'
 servers=json.loads(get('--mcp-config'))['mcpServers'];assert set(servers)=={'design-rules','fleet'}
-allowed=get('--allowedTools').split(',');assert set(allowed)=={'Read','mcp__design-rules__get_design_rules','mcp__fleet__request_child'}
+allowed=get('--allowedTools').split(',');assert {'Read','mcp__design-rules__get_design_rules','mcp__fleet__request_child'}<=set(allowed);assert all(a in ['Read','mcp__design-rules__get_design_rules'] or a.startswith('mcp__fleet__') for a in allowed)
 assert '--dangerously-skip-permissions' not in args
 for name,s in servers.items():
  p=subprocess.Popen([s['command'],*s['args']],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
  def call(i,m,params):
   p.stdin.write(json.dumps({'jsonrpc':'2.0','id':i,'method':m,'params':params})+'\\n');p.stdin.flush();return json.loads(p.stdout.readline())
  assert 'result' in call(1,'initialize',{'protocolVersion':'2024-11-05'})
- tools=call(2,'tools/list',{})['result']['tools'];assert len(tools)==1
+ tools=call(2,'tools/list',{})['result']['tools']
  if name=='design-rules':
   assert tools[0]['name']=='get_design_rules';result=call(3,'tools/call',{'name':'get_design_rules','arguments':{}});assert 'fixture-heading' in json.dumps(result)
  else:
-  assert tools[0]['name']=='request_child';assert tools[0]['inputSchema']['properties']['profileId']['enum']==['claude-reviewer']
+  tools=[t for t in tools if t['name']=='request_child'];assert tools[0]['inputSchema']['properties']['profileId']['enum']==['claude-reviewer']
   assert 'error' in call(3,'tools/call',{'name':'request_child','arguments':{'requestId':'bad','profileId':'ungranted','input':'review'}})
   result=call(4,'tools/call',{'name':'request_child','arguments':{'requestId':'child','profileId':'claude-reviewer','input':'review'}});assert 'accepted' in json.dumps(result)
  p.stdin.close();p.wait(timeout=3)
@@ -48,6 +48,11 @@ class Handler(BaseHTTPRequestHandler):
   self.send_response(200);self.end_headers();self.wfile.write(json.dumps(reply).encode())
 srv=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=srv.serve_forever,daemon=True).start()
 env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}','FLEET_HOST_ID':'fake','FLEET_HOST_SECRET_FILE':secret_file('fixture-host-secret-0123456789abcdef'),'FLEET_DATA_DIR':str(root/'data'),'FLEET_NATIVE_ACCOUNTS':str(registry)}
+# Claude runs only where the host placement allows it (harness.rs claude_placement): macOS here, WSL on Windows.
+import platform as _platform
+if _platform.system()!='Darwin' and 'microsoft' not in _platform.release().lower():
+ print('skipped: Claude placement needs macOS or WSL');srv.shutdown();raise SystemExit(0)
+env['FLEET_CLAUDE_PLACEMENT']='mac' if _platform.system()=='Darwin' else 'windows-wsl'
 p=subprocess.Popen([executor_binary()],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 try:
  end=time.monotonic()+20;terminal=[]

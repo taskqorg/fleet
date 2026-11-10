@@ -125,7 +125,7 @@ try:
  assert any(e['type']=='preparation' and e['data']['requested']==profile for e in ev),ev
  assert any(e['data'].get('item',{}).get('tool')=='get_design_rules' and e['data']['item']['result'] for e in ev),ev
  raw=(root/'data/sessions/lab/lab.native.jsonl').read_text();assert 'get_design_rules' in raw and 'Quiet systems' in raw
- bad=command('badprofile','start','quick');bad['payload']['agentConfig']={**profile,'model':'unsupported'};commands.append(bad);wait(lambda:status('badprofile','failed'));assert not (root/'data/sessions/badprofile').exists()
+ bad=command('badprofile','start','quick');bad['payload']['agentConfig']={**profile,'model':'--unsupported'};commands.append(bad);wait(lambda:status('badprofile','failed'));assert not (root/'data/sessions/badprofile').exists()
  p.terminate();p.wait(timeout=5)
  env['FLEET_CODEX_BIN']=str(root/'missing-codex')
  p=launch();commands.append(command('spawnfailure','start','quick'));wait(lambda:status('spawnfailure','failed'))
