@@ -4,7 +4,7 @@ The coordinator is one Go binary, `fleet-coordinator`, built from `go/coordinato
 
 ## Build
 
-- `pnpm run go:build` runs `go generate ./...` (protocol types from `contracts/host-protocol.schema.json`; `schema.sql` copied from `packages/coordinator/db/schema.sql` and embedded) and writes `go/bin/fleet-coordinator`, `fleet-executor`, `fleet-gateway` and `fleet-update`.
+- `pnpm run go:build` writes `go/bin/fleet-coordinator`, `fleet-executor`, `fleet-gateway` and `fleet-update`. Generated Go types (`go/contract`) and `go/coordinator/schema.sql` are committed; after a change to `contracts/*.schema.json` run `cd go && go generate ./...` and commit the result (CI fails on drift).
 - `pnpm run app:build` type-checks and bundles the app into `dist/app`, which the coordinator serves; `pnpm run build` runs both.
 - `deploy/build-release.sh` builds the release tarball with all three binaries; [deploy/README.md](../deploy/README.md) owns release and install.
 
@@ -41,7 +41,7 @@ The coordinator is one Go binary, `fleet-coordinator`, built from `go/coordinato
 
 Routes are registered in `go/coordinator/registry.go` and the area files; `routes.go` and `main.go` hold the session routes and the credential check. `GET /api/health` is public and shows `commit`, `built` and `database`. `GET /api/stream` is the SSE change stream. A request runs in one transaction: a read snapshot for GET, a write otherwise, scoped to the person's projects by row-level security (a write outside scope answers 403).
 
-The schema is `packages/coordinator/db/schema.sql`; [fleet-data-foundation.md](designs/fleet-data-foundation.md) is its specification.
+The schema is `go/coordinator/schema.sql` (embedded in the binary); [fleet-data-foundation.md](designs/fleet-data-foundation.md) is its specification.
 
 ## Tests
 

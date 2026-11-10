@@ -117,7 +117,7 @@ Defaults below were chosen by the drafter so work is not blocked. The owner can 
 
 ### Ordering key
 
-Every row the thread needs already has one shared ordering number. `document.seq` is a `bigserial`, and the `execution`, `question` and `artifact` tables take their `seq` default from the same sequence (`packages/coordinator/db/schema.sql`). Events and operator messages are documents. Here `seq` is the row's `seq` column, not the per-execution `data.seq` that host events also carry. So `seq` gives one total order across sessions and executions that overlap in time. The thread cursor is `seq`. No new ordering column is needed.
+Every row the thread needs already has one shared ordering number. `document.seq` is a `bigserial`, and the `execution`, `question` and `artifact` tables take their `seq` default from the same sequence (`go/coordinator/schema.sql`). Events and operator messages are documents. Here `seq` is the row's `seq` column, not the per-execution `data.seq` that host events also carry. So `seq` gives one total order across sessions and executions that overlap in time. The thread cursor is `seq`. No new ordering column is needed.
 
 `seq` is taken at insert, not at commit, so two transactions can commit out of `seq` order. The operator app already solves this for its live feed: a read and the feed cursor come from one snapshot, and the feed (`change` table, ordered by `(xid, seq)` up to `pg_snapshot_xmin`) never skips a slow transaction ([fleet-operator-app.md](fleet-operator-app.md)). Thread reads copy that pattern:
 

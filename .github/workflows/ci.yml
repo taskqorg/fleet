@@ -148,7 +148,9 @@ jobs:
         with:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
-      - run: go generate ./... && go vet ./... && go test ./...  # outside tests run in pnpm test (build-test-design)
+      # Generated code is committed (go/contract): regenerating must not change it.
+      - run: go generate ./... && git diff --exit-code && test -z "$(git status --porcelain)"
+      - run: go vet ./... && go test ./...  # outside tests run in pnpm test (build-test-design)
       - name: Cross-build
         run: |
           mkdir -p dist

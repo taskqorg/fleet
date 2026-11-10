@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fleet/contract"
 	"fmt"
 	"io"
 	"os"
@@ -1712,7 +1713,7 @@ func (e *executor) exchange() error {
 	}
 	sig.PollOk, sig.PollError = pollSignal(a)
 	if a.kind == answerOK {
-		var r PollReply
+		var r contract.PollReply
 		if b, err := json.Marshal(a.value); err == nil && json.Unmarshal(b, &r) == nil {
 			sig.Target = r.Target
 			if r.AutoUpdate != nil {

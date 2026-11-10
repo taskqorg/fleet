@@ -378,7 +378,7 @@ The prototype pages were deleted with the TypeScript coordinator (owner, 2026-11
 
 * [Design system](../design-system/README.md), including [pages](../design-system/pages/README.md) and [decisions](../design-system/decisions.md).
 * [Data foundation](fleet-data-foundation.md), sections §6, §10, §11 and §12.
-* Code: `go/coordinator/registry.go`, `stream.go`, `store.go`, `d_routes.go`, `packages/coordinator/db/schema.sql`, and `go/gateway/guard.go`.
+* Code: `go/coordinator/registry.go`, `stream.go`, `store.go`, `d_routes.go`, `go/coordinator/schema.sql`, and `go/gateway/guard.go`.
 
 ## Future Improvements
 

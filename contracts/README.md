@@ -4,15 +4,15 @@ JSON Schema contracts shared by the coordinator, the app and the executor.
 
 * `host-protocol.schema.json`: the host protocol (`/api/hosts/poll` request and reply, `/api/hosts/receipts` status
   receipts, `/api/hosts/events` batches) and event payloads. It is the source of the types on all three sides
-  (docs/designs/fleet-stack.md, Contracts); `packages/coordinator/db/schema.sql` stays the source of table rows only.
+  (docs/designs/fleet-stack.md, Contracts); `go/coordinator/schema.sql` stays the source of table rows only.
 * `lab-config.json`: JSON Schema for agent configurations in laboratory configurations (copied as an asset; not generated).
 
 ## Generated types
 
 * TypeScript: `contracts/gen-ts.mjs` writes `contracts/generated/<name>.ts`. `pnpm run typecheck` and `pnpm run build`
   run it first; `pnpm run contracts` runs it alone (for an editor). The output is not committed.
-* Go: `go/gen` writes the same types into the coordinator and executor packages on `go generate` (`go/coordinator/protocol_gen.go`).
-  The executor gets the same file (`go/executor/protocol_gen.go`) for the poll reply and the update result; its other host messages stay JSON values (open `EventData`).
+* Go: `go/gen` writes the same types into the shared package `go/contract` on `go generate` (`go/contract/host_protocol_gen.go`).
+  The file is committed; CI fails when `go generate` changes it. The executor uses it for the poll reply; its other host messages stay JSON values (open `EventData`).
 
 Every `*.schema.json` file here is generated; each `$defs` entry becomes one type with the same name.
 

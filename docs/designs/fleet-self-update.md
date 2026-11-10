@@ -344,7 +344,7 @@ Six phases, one pull request each; every phase builds and passes `go test ./...`
 
 #### Phase 2: protocol expand and coordinator
 
-7.  `contracts/host-protocol.schema.json` (Modify): optional `PollRequest.version`, `PollRequest.update`; `PollReply.target`, `PollReply.autoUpdate`; `EdgeProblemKind` becomes `ProblemKind` with `version-behind`. Regenerate `go/coordinator/protocol_gen.go` (`go generate`).
+7.  `contracts/host-protocol.schema.json` (Modify): optional `PollRequest.version`, `PollRequest.update`; `PollReply.target`, `PollReply.autoUpdate`; `EdgeProblemKind` becomes `ProblemKind` with `version-behind`. Regenerate `go/contract/host_protocol_gen.go` (`go generate`).
 8.  `go/coordinator/a_hosts.go` (Modify): `autoUpdate` validation and `setting-change` in `hostsUpdate`; `version`, `autoUpdate`, `update` in `hostsList`; PDS18 state merge for the coordinator machine's host.
 9.  `go/coordinator/a_poll.go` (Modify): store `version`, `update`; `version-behind` after `hostProblems`; answer `target`, `autoUpdate`; needs-you open and withdraw.
 10. `go/coordinator/a_dispatch.go` (Modify): extract `openCauseQuestion`; dispatch calls it.

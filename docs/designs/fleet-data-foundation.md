@@ -855,7 +855,7 @@ Throughput is not the constraint. A write transaction takes a few milliseconds (
 
 ## Implementation status
 
-The phases below were built and verified live on PDS18 with the TypeScript coordinator and Rust executor, then carried unchanged into the Go port: `go/coordinator` (schema `packages/coordinator/db/schema.sql`, store `store.go`, artifacts `d_artifacts.go`, placement `d_placement.go`, S3 client `d_s3.go`) and `go/executor` (upload `upload.go`, outbox `outbox.go`). Tests are the outside tests in `tests/go` and `tests/trial` and `go test ./...`.
+The phases below were built and verified live on PDS18 with the TypeScript coordinator and Rust executor, then carried unchanged into the Go port: `go/coordinator` (schema `go/coordinator/schema.sql`, store `store.go`, artifacts `d_artifacts.go`, placement `d_placement.go`, S3 client `d_s3.go`) and `go/executor` (upload `upload.go`, outbox `outbox.go`). Tests are the outside tests in `tests/go` and `tests/trial` and `go test ./...`.
 
 *   Phase 0, infrastructure on PDS18 (Postgres role, ClickHouse, Garage): built ([infrastructure-build.md](../infrastructure-build.md)).
 *   Phase 1, the `document` table on Postgres: built.

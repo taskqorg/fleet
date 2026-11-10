@@ -3,8 +3,6 @@
 // Behaviour reference: crates/executor (Rust) at origin/main.
 package main
 
-//go:generate go run ../gen ../../contracts/host-protocol.schema.json main protocol_gen.go
-
 import (
 	"database/sql"
 	"fmt"

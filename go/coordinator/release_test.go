@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fleet/contract"
 	"os"
 	"path/filepath"
 	"testing"
@@ -62,11 +63,11 @@ func TestMergeUpdateWorseWins(t *testing.T) {
 		t.Fatalf("pds18Host = %q", pds18Host())
 	}
 	m := mergeUpdate(map[string]any{"version": "1.261112.0", "state": "pending", "at": "z"}).(doc)
-	if m["state"] != UpdateStateRefused || m["error"] != "selftest" || len(m["parts"].(doc)) != 2 {
+	if m["state"] != contract.UpdateStateRefused || m["error"] != "selftest" || len(m["parts"].(doc)) != 2 {
 		t.Fatalf("%v", m)
 	}
 	m = mergeUpdate(map[string]any{"version": "1.261112.0", "state": "failed", "at": "z"}).(doc)
-	if m["state"] != UpdateStateFailed {
+	if m["state"] != contract.UpdateStateFailed {
 		t.Fatalf("%v", m)
 	}
 }

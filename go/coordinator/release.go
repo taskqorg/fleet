@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fleet/contract"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -133,7 +134,7 @@ func (a *App) ownAutoUpdate(ctx context.Context) string {
 // pds18StateFile is written by fleet-update on PDS18; the coordinator merges it into its own host's row.
 var pds18StateFile = "/var/lib/fleet-update/pds18-state.json"
 
-var updateRank = map[UpdateState]int{UpdateStateOk: 0, UpdateStateHeld: 1, UpdateStatePending: 2, UpdateStateError: 3, UpdateStateRefused: 4, UpdateStateFailed: 5}
+var updateRank = map[contract.UpdateState]int{contract.UpdateStateOk: 0, contract.UpdateStateHeld: 1, contract.UpdateStatePending: 2, contract.UpdateStateError: 3, contract.UpdateStateRefused: 4, contract.UpdateStateFailed: 5}
 
 // mergeUpdate: the worse of the polled result and the PDS18 parts; parts lists coordinator and executor results.
 func mergeUpdate(polled any) any {
@@ -145,11 +146,11 @@ func mergeUpdate(polled any) any {
 	if json.Unmarshal(b, &st) != nil {
 		return polled
 	}
-	var worst *UpdateResult
+	var worst *contract.UpdateResult
 	parts := doc{}
 	for _, k := range []string{"coordinator", "executor"} {
 		var part struct {
-			Last *UpdateResult `json:"last"`
+			Last *contract.UpdateResult `json:"last"`
 		}
 		json.Unmarshal(st[k], &part)
 		if r := part.Last; r != nil {
@@ -173,8 +174,8 @@ func mergeUpdate(polled any) any {
 }
 
 // decodeUpdate reads a poll body's update through the generated contract type.
-func decodeUpdate(v any) (UpdateResult, bool) {
-	var r UpdateResult
+func decodeUpdate(v any) (contract.UpdateResult, bool) {
+	var r contract.UpdateResult
 	b, err := json.Marshal(v)
 	if v == nil || err != nil || json.Unmarshal(b, &r) != nil {
 		return r, false
@@ -185,11 +186,11 @@ func decodeUpdate(v any) (UpdateResult, bool) {
 
 // updateQuestion opens one needs-you question per host and version for a refused or failed update, and withdraws the
 // host's open update questions when an update succeeds.
-func updateQuestion(q *Request, host string, holder any, r UpdateResult) error {
+func updateQuestion(q *Request, host string, holder any, r contract.UpdateResult) error {
 	switch r.State {
-	case UpdateStateOk:
+	case contract.UpdateStateOk:
 		return exec(q, "UPDATE question SET state='withdrawn',cause=NULL WHERE state='open' AND cause LIKE $1", "update:"+host+":%")
-	case UpdateStateRefused, UpdateStateFailed:
+	case contract.UpdateStateRefused, contract.UpdateStateFailed:
 	default:
 		return nil
 	}
@@ -206,7 +207,7 @@ func updateQuestion(q *Request, host string, holder any, r UpdateResult) error {
 		reason = *r.Error
 	}
 	what := "refused"
-	if r.State == UpdateStateFailed {
+	if r.State == contract.UpdateStateFailed {
 		what = "failed"
 	} else if reason == "unhealthy" {
 		what = "rolled back"

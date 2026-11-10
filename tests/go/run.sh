@@ -1,6 +1,6 @@
 #!/bin/sh
 # Outside tests of the Go coordinator: tests/trial and tests/go against go/bin/fleet-coordinator on a fresh local Postgres
-# database (tests/trial/run.ts). Build first: cd go && go generate ./... && go build -o bin/fleet-coordinator ./coordinator
+# database (tests/trial/run.ts). Build first: pnpm run go:build
 set -e
 cd "$(dirname "$0")/../.."
 secrets=$(mktemp -d)

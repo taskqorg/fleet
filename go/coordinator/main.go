@@ -2,8 +2,6 @@
 // SL1-SL11. Environment: docs/coordinator-build.md.
 package main
 
-//go:generate go run ../gen ../../contracts/host-protocol.schema.json main protocol_gen.go
-
 import (
 	"context"
 	"crypto/sha256"

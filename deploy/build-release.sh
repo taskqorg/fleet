@@ -28,7 +28,7 @@ for target in "$@"; do
   os=${target%/*} arch=${target#*/} stage="$work/stage-$os-$arch"
   status working $((30 + 60 * step / $#)) "building $os/$arch"
   mkdir -p "$stage/dist"
-  (cd go && go generate ./... && for cmd in coordinator gateway executor update; do
+  (cd go && for cmd in coordinator gateway executor update; do
     CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-X main.version=$version" -o "$stage/fleet-$cmd" "./$cmd"
   done)
   cp -R dist/app "$stage/dist/" && cp -R config deploy "$stage/"
