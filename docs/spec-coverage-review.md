@@ -54,7 +54,7 @@ The [root pipeline rules](../fleet.md#tools-and-pipelines) require other indepen
 
 ### F6. Full-history and budget promises exceed current qualification evidence
 
-The [root observation contract](../fleet.md#observation-and-evaluation) requires full retention, while native evidence and usage may be missing. [Work analysis](work-analysis.md) correctly preserves unknowns. No test in this design session establishes complete native tool/child capture, image retention or delayed-cost handling across hosts.
+The [root observation contract](../fleet.md#observation-and-evaluation) requires full retention, while native evidence and usage may be missing. [Work analysis](designs/fleet-lab.md#work-analysis) correctly preserves unknowns. No test in this design session establishes complete native tool/child capture, image retention or delayed-cost handling across hosts.
 
 **Next:** specify the observable minimum and expose capture gaps, then qualify it. Decide where durable history/results survive host loss and test restoration. Do not weaken retention, invent missing usage or equate passing document lint with runtime proof.
 

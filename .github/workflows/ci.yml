@@ -55,7 +55,7 @@ jobs:
       # The executor protocol scripts (tests/executor): actual executor binary against fake harnesses and transports.
       - run: tests/executor/run.sh
       - run: pnpm test
-      # Use-case registry drift (docs/designs/fleet-lab.md Stage 1): warns, never blocks. Only Fleet's own sources are
+      # Use-case registry drift (docs/designs/fleet-lab.md "Use-case registry and examples"): warns, never blocks. Only Fleet's own sources are
       # checked here; the other org repos are not checked out, so their entries report nothing.
       - name: Use-case drift (warning only)
         if: always()

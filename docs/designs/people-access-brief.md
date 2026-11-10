@@ -45,7 +45,7 @@ Fleet today has one person, the owner, and reaches outside APIs through Pipe, a 
 
 The two changes share one model. Every subscription and every API key is a **connection**. Every use of a connection is an **execution** with measurements. One choice point picks the connection, and one budget shape applies to people, projects, experiments and connections.
 
-Most of the people side is already designed in [fleet-data-foundation.md](fleet-data-foundation.md): §10 has `people.json`, `person`, grants, `share` and row-level security by `fleet.project_ids`; §3 has `artifact_locations` and per-host stores. Most of the connections side is designed in [lab-brief.md](lab-brief.md) "Pipe in Fleet" and Pipe's own [read lane](/Users/kirs/Projects/assetq/docs/read-lane.md). What is missing is small but load-bearing:
+Most of the people side is already designed in [fleet-data-foundation.md](fleet-data-foundation.md): §10 has `people.json`, `person`, grants, `share` and row-level security by `fleet.project_ids`; §3 has `artifact_locations` and per-host stores. Most of the connections side is designed in `lab-brief.md` "Pipe in Fleet" and Pipe's own [read lane](/Users/kirs/Projects/assetq/docs/read-lane.md). What is missing is small but load-bearing:
 
 1. a **holder** on hosts, connections, stores and projects;
 2. a **"directed by"** person on each execution, so the terms can be checked;
@@ -178,7 +178,7 @@ Name trap: `packages/coordinator/placement.ts` places **artifacts**, not tasks. 
 
 ## Connections
 
-This part replaces Pipe. It was written from the owner's scope extension, [lab-brief.md](lab-brief.md) "Pipe in Fleet", [fleet-lab.md](fleet-lab.md) §Connections, `pipe_search.py`, and Pipe's [pipe.md](/Users/kirs/Projects/assetq/pipe.md) and [read-lane.md](/Users/kirs/Projects/assetq/docs/read-lane.md). The lenses did not review it.
+This part replaces Pipe. It was written from the owner's scope extension, `lab-brief.md` "Pipe in Fleet", [fleet-lab.md](fleet-lab.md) §Connections, `pipe_search.py`, and Pipe's [pipe.md](/Users/kirs/Projects/assetq/pipe.md) and [read-lane.md](/Users/kirs/Projects/assetq/docs/read-lane.md). The lenses did not review it.
 
 ### Model
 

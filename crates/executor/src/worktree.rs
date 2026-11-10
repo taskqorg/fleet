@@ -93,7 +93,7 @@ pub fn worktree(dir: &Path, session: &str, repo: Option<&str>, roots: &[PathBuf]
     }
     Ok(Some((w, top, true)))
 }
-/// A trial's own worktree (docs/designs/fleet-lab.md Stage 0, item 11): detached at the pinned commit, under the trial's
+/// A trial's own worktree (docs/designs/fleet-lab.md "Pipeline format version 2"): detached at the pinned commit, under the trial's
 /// session dir, with no linkPaths or sharedDirectories, so trials share nothing. The repository passes the same root checks
 /// as a session worktree. Returns (trial worktree, checkout toplevel); a retried command gets the existing one.
 pub fn trial(dir: &Path, repo: &str, commit: &str, roots: &[PathBuf], forbidden: &[&Path]) -> Result<(PathBuf, PathBuf)> {

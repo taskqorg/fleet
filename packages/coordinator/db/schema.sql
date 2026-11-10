@@ -410,7 +410,7 @@ CREATE OR REPLACE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$
 SELECT set_config('fleet.project_ids', '*', true);
 INSERT INTO task_derived(task_id, project_id, agent, host, started_at, open_questions) SELECT t.id, v.* FROM task t CROSS JOIN LATERAL task_derived_values(t.id) v ON CONFLICT (task_id) DO NOTHING;
 CREATE TRIGGER task_derived_change AFTER INSERT OR UPDATE OR DELETE ON task_derived FOR EACH ROW EXECUTE FUNCTION fleet_change();
--- migration 11: Lab groundwork (docs/designs/fleet-lab.md Stage 0, item 12). The new value 'rating' is not used in this migration
+-- migration 11: Lab groundwork (docs/designs/fleet-lab.md "Data contracts"). The new value 'rating' is not used in this migration
 -- (Postgres refuses a new enum value in the transaction that added it). Old lab experiments are deleted (owner decision; not
 -- restorable by design); the executions they ran stay as plain executions without the experiment link.
 ALTER TYPE question_kind ADD VALUE 'rating';
@@ -462,7 +462,7 @@ CREATE TRIGGER experiment_change AFTER INSERT OR UPDATE OR DELETE ON experiment 
 CREATE TRIGGER score_change AFTER INSERT OR UPDATE OR DELETE ON score FOR EACH ROW EXECUTE FUNCTION fleet_change();
 DELETE FROM document WHERE kind = 'experiment';
 UPDATE execution SET experiment_id = NULL, variant = NULL, data = data - 'experimentId' WHERE experiment_id IS NOT NULL OR data ? 'experimentId';
--- migration 12: Lab examples (docs/designs/fleet-lab.md Stage 1). An example is a lab-scope artifact with role 'example' (the
+-- migration 12: Lab examples (docs/designs/fleet-lab.md "Use-case registry and examples"). An example is a lab-scope artifact with role 'example' (the
 -- example JSON, written by the coordinator); approved_at is set when the owner approves it and stays null while proposed.
 ALTER TABLE artifact DROP CONSTRAINT artifact_role_check;
 ALTER TABLE artifact ADD CONSTRAINT artifact_role_check CHECK (role IN ('original', 'thumbnail', 'poster', 'example'));

@@ -1,4 +1,4 @@
-// Pipeline format v2 runner (docs/designs/fleet-lab.md Stage 2, item 25).
+// Pipeline format v2 runner (docs/designs/fleet-lab.md "Connections: one accounting path").
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,chmodSync,readFileSync,cpSync} from 'node:fs';

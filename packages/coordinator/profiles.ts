@@ -1,4 +1,4 @@
-// Trusted agent profiles (docs/designs/fleet-lab.md Stage 0): read from config/profiles, validated, hashed.
+// Trusted agent profiles (docs/designs/fleet-lab.md "Removal in one cut"): read from config/profiles, validated, hashed.
 import {readFileSync,readdirSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createHash} from 'node:crypto';

@@ -1,4 +1,4 @@
-// Stage 0 exit (docs/designs/fleet-lab.md): a trial inserted by SQL fixture is a plain execution with lab artifacts and no task.
+// Lab trial (docs/designs/fleet-lab.md "Entities"): a trial inserted by SQL fixture is a plain execution with lab artifacts and no task.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {dbApp} from './pg-test.ts';

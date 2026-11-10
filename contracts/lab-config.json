@@ -114,7 +114,7 @@
           "type": "string",
           "pattern": "^[a-z][a-z0-9-]{0,79}$"
         },
-        "description": "Unused until Lab Stage 2 (docs/designs/fleet-lab.md)."
+        "description": "Skills installed for this profile's runs (docs/designs/fleet-lab.md \"Pipeline format version 2\")."
       },
       "connections": {
         "type": "array",
@@ -124,7 +124,7 @@
           "type": "string",
           "pattern": "^[a-z][a-z0-9-]{0,79}$"
         },
-        "description": "Unused until Lab Stage 2 (docs/designs/fleet-lab.md)."
+        "description": "Connections this profile may call over MCP (docs/designs/fleet-lab.md \"Connections: one accounting path\")."
       }
     },
     "allOf": [

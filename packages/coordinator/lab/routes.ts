@@ -1,4 +1,4 @@
-// Lab routes (docs/designs/fleet-lab.md Stage 3 item 29). The same functions are served as operations (lab_*), which the
+// Lab routes (docs/designs/fleet-lab.md "/lab screen"). The same functions are served as operations (lab_*), which the
 // /lab screen calls; rating answers go through questions_answer like every question.
 import type {labExperiments} from './experiments.ts';
 type Lab=ReturnType<typeof labExperiments>;
