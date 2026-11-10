@@ -649,7 +649,7 @@ func init() {
 		if _, err := projectContext(astr(b["projectId"])); err != nil {
 			return nil, err
 		}
-		ids, err := rowsOf(q, "SELECT id FROM execution WHERE legacy_kind='pipeline-run' AND data->>'projectId'=$1 ORDER BY seq", b["projectId"])
+		ids, err := rowsOf(q, "SELECT id FROM execution WHERE "+runRows+" AND data->>'projectId'=$1 ORDER BY seq", b["projectId"])
 		if err != nil {
 			return nil, err
 		}
@@ -688,11 +688,11 @@ func init() {
 
 // pipelineRun: a pipeline-run record with its steps.
 func pipelineRun(q *Request, id string) (doc, error) {
-	r, err := one(q, "SELECT data FROM execution WHERE id=$1 AND legacy_kind='pipeline-run'", id)
+	r, err := one(q, "SELECT "+execJSON+" FROM execution WHERE id=$1 AND "+runRows, id)
 	if err != nil {
 		return nil, err
 	}
-	steps, err := rows(q, "SELECT data - 'index' FROM execution WHERE legacy_kind='pipeline-step' AND parent_execution_id=$1 ORDER BY (data->>'index')::int", id)
+	steps, err := rows(q, "SELECT ("+execJSON+") - 'index' FROM execution WHERE kind='pipeline_step' AND parent_execution_id=$1 ORDER BY (data->>'index')::int", id)
 	r["steps"] = steps
 	return r, err
 }

@@ -213,25 +213,6 @@ func resolveRefs(v any, example any, outputs doc, quote bool) (any, error) {
 	return v, nil
 }
 
-// Legacy state of a run or step record -> typed execution state.
-func runState(legacy string) (string, string) {
-	switch legacy {
-	case "queued", "accepted", "pending":
-		return "preparing", "confirmed"
-	case "started", "running":
-		return "running", "confirmed"
-	case "waiting":
-		return "waiting", "confirmed"
-	case "completed":
-		return "succeeded", "confirmed"
-	case "failed", "quota", "unavailable":
-		return "failed", "confirmed"
-	case "stopped", "cancelled":
-		return "cancelled", "confirmed"
-	}
-	return "", "unconfirmed"
-}
-
 func msTime(v any) any {
 	if f, ok := numOK(v); ok {
 		return time.UnixMilli(int64(f))
@@ -243,43 +224,33 @@ func msTime(v any) any {
 func putRun(q *Request, run doc) error {
 	rest := doc{}
 	for k, v := range run {
-		if k != "steps" {
+		if k != "steps" && k != "state" && k != "observation" {
 			rest[k] = v
 		}
 	}
-	state, obs := runState(astr(run["state"]))
-	if state == "" {
-		if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT state::text FROM execution WHERE id=$1),'preparing')", run["id"]).Scan(&state); err != nil {
-			return err
-		}
-	}
+	state, obs := runState(run)
 	cfg := doc{"method": run["selectedMethod"], "definitionSha256": run["definitionSha256"]}
-	if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,started_at,ended_at,legacy_kind,legacy_id,data,config_ref,experiment_id,variant)
-	 VALUES($1,'pipeline_run',$2,$3,$4,$5,$6,'pipeline-run',$1,$7,$8,$9,$10)
+	if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,started_at,ended_at,data,config_ref,experiment_id,variant)
+	 VALUES($1,'pipeline_run',$2,$3,$4,$5,$6,$7,$8,$9,$10)
 	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
-	  config_ref=CASE WHEN execution.variant IS NULL THEN excluded.config_ref ELSE execution.config_ref END,legacy_kind='pipeline-run',legacy_id=excluded.legacy_id,
+	  config_ref=CASE WHEN execution.variant IS NULL THEN excluded.config_ref ELSE execution.config_ref END,
 	  experiment_id=coalesce(execution.experiment_id,excluded.experiment_id),variant=coalesce(execution.variant,excluded.variant)`,
 		run["id"], state, obs, run["projectId"], msTime(run["startedAt"]), msTime(run["finishedAt"]), jsonBytes(rest), jsonBytes(cfg), run["experimentId"], run["variant"]); err != nil {
 		return err
 	}
 	for i, x := range anys(run["steps"]) {
 		s := mapOf(x)
-		st, sobs := runState(astr(s["state"]))
-		if st == "" {
-			st = "preparing"
-		}
+		st, sobs := runState(s)
 		data := doc{"index": i}
 		for k, v := range s {
-			data[k] = v
+			if k != "state" && k != "observation" {
+				data[k] = v
+			}
 		}
-		id := s["id"]
-		if id == nil {
-			id = fmt.Sprint(i)
-		}
-		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,legacy_kind,legacy_id,data) VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,'pipeline-step',$7,$8)
+		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,data) VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,$7)
 		 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,data=excluded.data,
 		  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-			stepRow(run, i), st, sobs, run["projectId"], run["id"], msTime(s["startedAt"]), id, jsonBytes(data)); err != nil {
+			stepRow(run, i), st, sobs, run["projectId"], run["id"], msTime(s["startedAt"]), jsonBytes(data)); err != nil {
 			return err
 		}
 	}
@@ -294,7 +265,7 @@ func withSteps(q *Request, runs []doc) ([]doc, error) {
 	for _, r := range runs {
 		ids = append(ids, astr(r["id"]))
 	}
-	steps, err := queryRows(q, "SELECT parent_execution_id AS run,data FROM execution WHERE legacy_kind='pipeline-step' AND parent_execution_id=ANY($1) ORDER BY (data->>'index')::int", ids)
+	steps, err := queryRows(q, "SELECT parent_execution_id AS run,"+execJSON+" AS data FROM execution WHERE kind='pipeline_step' AND parent_execution_id=ANY($1) ORDER BY (data->>'index')::int", ids)
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +284,7 @@ func withSteps(q *Request, runs []doc) ([]doc, error) {
 }
 
 func getRun(q *Request, id string) (doc, error) {
-	rs, err := rows(q, "SELECT data FROM execution WHERE id=$1 AND legacy_kind='pipeline-run'", id)
+	rs, err := rows(q, "SELECT "+execJSON+" FROM execution WHERE id=$1 AND "+runRows, id)
 	if err != nil {
 		return nil, err
 	}
@@ -325,11 +296,23 @@ func getRun(q *Request, id string) (doc, error) {
 }
 
 func runsWhere(q *Request, clause string, args ...any) ([]doc, error) {
-	rs, err := rows(q, "SELECT data FROM execution WHERE legacy_kind='pipeline-run' AND "+clause+" ORDER BY seq", args...)
+	rs, err := rows(q, "SELECT "+execJSON+" FROM execution WHERE "+runRows+" AND "+clause+" ORDER BY seq", args...)
 	if err != nil {
 		return nil, err
 	}
 	return withSteps(q, rs)
+}
+
+// runRows: the pipeline runs a run record was written for (a Lab trial row exists before its run starts).
+const runRows = "kind='pipeline_run' AND data ? 'pipelineId'"
+
+// runState: the typed state and observation of a run or step record; unconfirmed only when the record says so.
+func runState(r doc) (string, string) {
+	state, obs := firstString(r["state"], "preparing"), "confirmed"
+	if r["observation"] == "unconfirmed" {
+		obs = "unconfirmed"
+	}
+	return state, obs
 }
 
 func stepRow(run doc, i int) string { return fmt.Sprintf("%v:step:%d", run["id"], i) }
@@ -355,7 +338,7 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 	steps := []any{}
 	for _, x := range anys(def["steps"]) {
 		s := mapOf(x)
-		e := doc{"id": s["id"], "kind": s["kind"], "state": "pending"}
+		e := doc{"id": s["id"], "kind": s["kind"], "state": "preparing"}
 		if s["kind"] == "api" {
 			e["tool"], e["connection"] = s["tool"], s["connection"]
 		}
@@ -433,7 +416,7 @@ func pipelineWait(ctx context.Context, a *App, runID string) (doc, error) {
 func pipelineOnExecution(a *App, executionID string) {
 	var ids []string
 	readTx(context.Background(), a, func(q *Request) error {
-		rs, err := queryRows(q, "SELECT parent_execution_id AS id FROM execution WHERE legacy_kind='pipeline-step' AND data->>'executionId'=$1", executionID)
+		rs, err := queryRows(q, "SELECT parent_execution_id AS id FROM execution WHERE kind='pipeline_step' AND data->>'executionId'=$1", executionID)
 		for _, r := range rs {
 			ids = append(ids, astr(r["id"]))
 		}
@@ -447,7 +430,7 @@ func pipelineOnExecution(a *App, executionID string) {
 func pipelineTick(ctx context.Context, a *App) {
 	var ids []string
 	readTx(ctx, a, func(q *Request) error {
-		rs, err := queryRows(q, "SELECT id FROM execution WHERE legacy_kind='pipeline-run' AND data->>'state'='running' AND (data->'definition'->>'version')::int=2 ORDER BY seq")
+		rs, err := queryRows(q, "SELECT id FROM execution WHERE "+runRows+" AND state='running' AND (data->'definition'->>'version')::int=2 ORDER BY seq")
 		for _, r := range rs {
 			ids = append(ids, astr(r["id"]))
 		}
@@ -477,7 +460,7 @@ func pipelineCancel(ctx context.Context, a *App, runID string) (string, error) {
 		}
 		for _, x := range anys(run["steps"]) {
 			s := mapOf(x)
-			if s["state"] == "running" || s["state"] == "pending" {
+			if s["state"] == "running" || s["state"] == "preparing" {
 				if s["state"] == "running" {
 					own = astr(s["executionId"])
 				}
@@ -561,8 +544,9 @@ func finishRun(q *Request, run doc, state, problem string) error {
 func failStep(q *Request, run doc, i int, problem, message string) error {
 	s := mapOf(anys(run["steps"])[i])
 	s["state"] = "failed"
-	if strings.HasPrefix(problem, "unknown:") {
-		s["state"] = "unknown"
+	lost := strings.HasPrefix(problem, "unknown:") // the outcome is unknown: failed for Fleet, unconfirmed
+	if lost {
+		s["observation"], run["observation"] = "unconfirmed", "unconfirmed"
 	}
 	s["problem"], s["error"], s["finishedAt"] = problem, doc{"code": problem, "message": message}, nowMs()
 	if err := putRun(q, run); err != nil {
@@ -570,9 +554,6 @@ func failStep(q *Request, run doc, i int, problem, message string) error {
 	}
 	if err := exec(q, "UPDATE execution SET problem=$2 WHERE id=$1", stepRow(run, i), problem); err != nil {
 		return err
-	}
-	if s["state"] == "unknown" {
-		return finishRun(q, run, "unknown", problem)
 	}
 	return finishRun(q, run, "failed", problem)
 }
@@ -600,7 +581,7 @@ func completeStep(q *Request, run doc, i int, output any, extra doc) error {
 	for k, v := range extra {
 		s[k] = v
 	}
-	s["output"], s["state"], s["finishedAt"] = output, "completed", nowMs()
+	s["output"], s["state"], s["finishedAt"] = output, "succeeded", nowMs()
 	st, ok := numOK(s["startedAt"])
 	if !ok {
 		st = float64(nowMs())
@@ -788,13 +769,13 @@ func advanceOnce(ctx context.Context, a *App, runID string) error {
 		}
 		i := -1
 		for j, x := range anys(run["steps"]) {
-			if mapOf(x)["state"] != "completed" {
+			if mapOf(x)["state"] != "succeeded" {
 				i = j
 				break
 			}
 		}
 		if i < 0 {
-			if err := writeTx(ctx, a, "", func(q *Request) error { return finishRun(q, run, "completed", "") }); err != nil {
+			if err := writeTx(ctx, a, "", func(q *Request) error { return finishRun(q, run, "succeeded", "") }); err != nil {
 				return err
 			}
 			notifyFinished(a, run)
@@ -829,7 +810,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	connection := astr(def["connection"])
 
-	if s["state"] == "pending" {
+	if s["state"] == "preparing" {
 		var resolved any
 		var err error
 		switch kind {

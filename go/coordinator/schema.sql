@@ -595,3 +595,9 @@ ALTER TYPE execution_kind ADD VALUE 'host_job';
 UPDATE execution SET kind = 'host_job', harness = NULL WHERE legacy_kind = 'execution' AND (data->>'actor' = 'program-worker' OR data ? 'pipelineStepId');
 UPDATE execution SET harness = coalesce(data->'agentConfig'->>'harness', 'codex') WHERE legacy_kind = 'execution' AND kind = 'agent_run';
 UPDATE execution SET data = data - 'state' - 'observation', legacy_kind = NULL, legacy_id = NULL WHERE legacy_kind = 'execution';
+
+-- migration 24: pipeline runs and steps keep their state only in the typed column too; an unknown outcome is failed and
+-- unconfirmed. No execution row has a legacy kind or id any more.
+UPDATE execution SET state = 'failed', observation = 'unconfirmed' WHERE legacy_kind IN ('pipeline-run', 'pipeline-step') AND data->>'state' = 'unknown';
+UPDATE execution SET data = data - 'state' - 'observation' WHERE legacy_kind IN ('pipeline-run', 'pipeline-step');
+ALTER TABLE execution DROP COLUMN legacy_kind, DROP COLUMN legacy_id;

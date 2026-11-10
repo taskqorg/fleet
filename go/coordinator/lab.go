@@ -32,7 +32,7 @@ var (
 	labCommit    = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 	labLabel     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,59}$`)
 	draftExample = regexp.MustCompile(`/examples/[^/]+\.json$`)
-	labFinal     = map[string]bool{"completed": true, "failed": true, "unknown": true, "cancelled": true}
+	labFinal     = terminalTyped
 	labOverrides = []string{"profile", "model", "skills", "prompt", "web_route", "account", "host"}
 )
 
@@ -882,7 +882,7 @@ func expSpend(q *Request, id string) (doc, error) {
 }
 
 func expRuns(q *Request, id string) ([]doc, error) {
-	rs, err := queryRows(q, "SELECT id,variant,problem FROM execution WHERE experiment_id=$1 AND kind='pipeline_run' AND legacy_kind='pipeline-run' ORDER BY seq", id)
+	rs, err := queryRows(q, "SELECT id,variant,problem FROM execution WHERE experiment_id=$1 AND "+runRows+" ORDER BY seq", id)
 	if err != nil {
 		return nil, err
 	}
@@ -932,7 +932,7 @@ func expLatest(trials []doc) ([]string, map[string]doc) {
 	return order, m
 }
 
-func comparable(t doc) bool { return t["state"] == "completed" }
+func comparable(t doc) bool { return t["state"] == "succeeded" && t["observation"] != "unconfirmed" }
 
 func expInsertRun(q *Request, exp doc, requestID, file string, example any, variant doc, extra doc) (string, error) {
 	id := newID()
@@ -1139,7 +1139,7 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 				complete = false
 				continue
 			}
-			if run["state"] != "completed" {
+			if run["state"] != "succeeded" {
 				continue // a failed judge run counts as evaluated; it has no score
 			}
 			steps := anys(run["steps"])
@@ -1841,7 +1841,7 @@ func expGet(q *Request, id string) (doc, error) {
 				}
 			}
 		}
-		return doc{"id": t["id"], "cell": t["cell"], "state": t["state"], "problem": t["problem"], "comparable": comparable(t), "startedAt": t["startedAt"], "finishedAt": t["finishedAt"],
+		return doc{"id": t["id"], "cell": t["cell"], "state": t["state"], "observation": t["observation"], "problem": t["problem"], "comparable": comparable(t), "startedAt": t["startedAt"], "finishedAt": t["finishedAt"],
 			"durationMs": t["durationMs"], "spend": spend, "confounders": doc{"hosts": uniq(hosts), "harnesses": uniq(harnesses), "models": uniq(models), "webRoute": web}, "scores": mine}
 	}
 	order, last := expLatest(trials)
@@ -2155,7 +2155,7 @@ func init() {
 			// A finish hook lost to a restart: completed draft runs are imported again (idempotent).
 			var runs []doc
 			readTx(ctx, a, func(q *Request) (err error) {
-				runs, err = runsWhere(q, "data->>'pipelineId'='draft-examples' AND data->>'state'='completed'")
+				runs, err = runsWhere(q, "data->>'pipelineId'='draft-examples' AND state='succeeded'")
 				return
 			})
 			for _, r := range runs {
@@ -2171,7 +2171,7 @@ func pipelineFinished(ctx context.Context, a *App, run doc) {
 			log.Printf("lab reconcile %s: %v", id, err)
 		}
 	}
-	if run["pipelineId"] == "draft-examples" && run["state"] == "completed" {
+	if run["pipelineId"] == "draft-examples" && run["state"] == "succeeded" {
 		importDrafts(ctx, a, run)
 	}
 }

@@ -137,7 +137,7 @@ test('P2 api step without a usable connection fails as infra, and an unanswered 
   assert.equal(c.name, 'tavily');
   const n = seen.length;
   const r = await until(async () => { const x = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId: 'p2b', example: {query: 'q'}})); return x.state !== 'running' ? x : undefined; }, 'run ends');
-  assert.equal(r.state, 'unknown'); assert.equal(r.steps[0].problem, 'unknown:provider-timeout');
+  assert.deepEqual([r.state, r.observation], ['failed', 'unconfirmed']); assert.equal(r.steps[0].problem, 'unknown:provider-timeout');
   assert.equal(seen.length - n, 1, 'one call, not replayed');
   assert.match(seen.at(-1)!, /^Bearer \S+$/);
   // The step's token is revoked after the call.
