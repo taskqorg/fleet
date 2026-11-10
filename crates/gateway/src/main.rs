@@ -439,8 +439,9 @@ impl Gateway {
                 if status.is_success() { ("ok", None) } else { ("error", Some(format!("provider-{}", status.as_u16()))) };
             // The provider's own words, cut to 500 bytes, with the key value removed in case the provider echoed it.
             let problem = (status.as_u16() == 403).then(|| {
-                let text = String::from_utf8_lossy(&bytes[..bytes.len().min(500)]).replace(&value, "[key]");
-                (id.clone(), text)
+                // Redact over the whole body first, so a key cut at the 500-byte mark cannot leave a prefix behind.
+                let full = String::from_utf8_lossy(&bytes).replace(&value, "[key]");
+                (id.clone(), full.chars().take(500).collect::<String>())
             });
             return Answer { status, body: bytes, retry_after, outcome, error, key: Some(id.clone()), usage, disabled: None, problem };
         }
