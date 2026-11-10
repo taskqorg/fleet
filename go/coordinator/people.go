@@ -17,11 +17,25 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// fullAccess: nil (hosts, timers), the owner, or a person with grant {kind: "*"} (site-agents: owner-equivalent
+// visibility and operations, distinct actor; only people_set stays the owner's).
+func fullAccess(p *Person) bool {
+	if p == nil || p.Owner {
+		return true
+	}
+	for _, g := range p.Grants {
+		if g.Kind == "*" {
+			return true
+		}
+	}
+	return false
+}
+
 func mayAccessProjectID(p *Person, projectID string) bool {
 	if p == nil {
 		return false
 	}
-	if p.Owner {
+	if fullAccess(p) {
 		return true
 	}
 	if projectID == "" {
@@ -86,7 +100,7 @@ func hasRole(p *Person, r string) bool { return slices.Contains(p.Roles, r) }
 // guardOp: the architect gate on operation names (a holder's own subscription passes) and the project grant of a named project.
 func (a *App) guardOp(q *Request, name string, body json.RawMessage) error {
 	p := q.person
-	if p == nil || p.Owner {
+	if p == nil || fullAccess(p) {
 		return nil
 	}
 	var b map[string]any
@@ -103,7 +117,7 @@ func (a *App) guardOp(q *Request, name string, body json.RawMessage) error {
 // guardRoute: the same gate on routes (architect routes, /api/projects/{id}, ?projectId=, tools/call arguments).
 func (a *App) guardRoute(q *Request) error {
 	p := q.person
-	if p == nil || p.Owner {
+	if p == nil || fullAccess(p) {
 		return nil
 	}
 	path := q.r.URL.Path
@@ -178,8 +192,10 @@ func init() {
 	gatedObjOp("people_list", true, func(q *Request) (any, error) {
 		out := []*Person{}
 		for _, p := range q.app.people {
-			if q.person == nil || q.person.Owner || p.Email == q.person.Email {
-				out = append(out, p)
+			if q.person == nil || fullAccess(q.person) || p.Email == q.person.Email {
+				c := *p
+				c.AccessCommonName = "" // the service token's client ID stays in the deployed file
+				out = append(out, &c)
 			}
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].Email < out[j].Email })
@@ -187,7 +203,7 @@ func init() {
 	})
 	// setting_changes: the audit of settings, newest first, optionally of one target (host:<id>, people, ...).
 	gatedObjOp("setting_changes", true, func(q *Request) (any, error) {
-		// The people list is the owner's: its audit is not shown to architects.
+		// The people list is the owner's: its audit (with service-token client IDs) is not shown to architects or site-agents.
 		owner := q.person == nil || q.person.Owner
 		b := body(q)
 		limit := pageLimit(b["limit"], 100)
