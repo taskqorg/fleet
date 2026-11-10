@@ -69,3 +69,12 @@ export async function freshDb(upTo = Infinity): Promise<{ s: Store; migrate: () 
   s.close = async () => { await closeApp(); await owner.close(); };
   return { s, migrate: () => owner.migrate(), scoped };
 }
+
+/** createApp on a freshDb store (PGlite, or fleet_app under FORCE RLS with FLEET_TEST_PG); app.close() closes the store. */
+export async function dbApp(config: Record<string, unknown>): Promise<any> {
+  const { createApp } = await import('../../packages/coordinator/app.ts');
+  const { s } = await freshDb();
+  const app: any = createApp({ database: 'memory://', ...config, store: s } as any);
+  app.addHook('onClose', () => s.close());
+  return app;
+}

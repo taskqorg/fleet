@@ -9,7 +9,7 @@ import {section,hash,check,run,loadRegistry} from '../../scripts/lab-drift.ts';
 import {checkExample,readExamples,runChecks,importExamples} from '../../scripts/lab-examples.ts';
 import {convert} from '../../scripts/lab-import-assetq.ts';
 import {useCaseIds} from '../../packages/coordinator/lab/examples.ts';
-import {createApp} from '../../packages/coordinator/app.ts';
+import {dbApp} from './pg-test.ts';
 import {attachStores} from './artifact-helpers.ts';
 
 const doc='# Cases\n\n<a id="uc1"></a>\n\n## UC1. First\n\nText one.\n\n### Detail\n\nMore.\n\n## UC-02. Second case\n\nText two.\n\n## Rows\n\n| ID | Goal |\n|---|---|\n| L01 PILOTQ-R1 | Row one |\n| L010 | Not L01 |\n';
@@ -72,7 +72,7 @@ test('assetq dataset cases convert to examples without loss',()=>{
  assert.deepEqual(checkExample(e,useCaseIds('config/lab')),[])});
 
 test('POST /api/lab/examples stores approved lab artifacts; same content is idempotent, other content needs a new version',async()=>{
- const app:any=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac',storeEndpointHosts:['127.0.0.1']});
+ const app:any=await dbApp({browserSecret:'b',machineSecret:'m',hostId:'mac',storeEndpointHosts:['127.0.0.1']});
  await app.ready();await attachStores(app,'m',['mac']);
  const call=(method:string,url:string,payload?:any)=>app.inject({method,url,headers:{authorization:'Bearer b'},payload});
  const ex=JSON.parse(readFileSync('config/lab/examples/fleet-uc1-about-page.json','utf8'));
@@ -108,7 +108,7 @@ test('check runner puts its own node on PATH',(t)=>{const saved=process.env.PATH
  try{assert.deepEqual(runChecks({checks:[{id:'node',run:'node -e 0'}]} as any,[]),[])}finally{process.env.PATH=saved}});
 
 test('import sends FLEET_ORIGIN, so it works behind browser proxy auth',async()=>{
- const app:any=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac',storeEndpointHosts:['127.0.0.1'],browserProxyAuth:true,browserOrigin:'https://fleet.example'});
+ const app:any=await dbApp({browserSecret:'b',machineSecret:'m',hostId:'mac',storeEndpointHosts:['127.0.0.1'],browserProxyAuth:true,browserOrigin:'https://fleet.example'});
  await app.ready();await attachStores(app,'m',['mac']);const url=await app.listen({host:'127.0.0.1',port:0});
  const ex=JSON.parse(readFileSync('config/lab/examples/fleet-uc1-about-page.json','utf8'));
  try{await assert.rejects(importExamples({url,token:'b',examples:[ex]}),/403/);

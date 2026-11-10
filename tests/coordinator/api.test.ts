@@ -22,6 +22,9 @@ test('view_link builds and parses operator-app links; task_derived_check; list_m
  assert.deepEqual((await op('task_derived_check',{})).json(),{checked:1,drifted:[]});
  const m=(await op('list_membership',{ids:[id],lists:[{name:'tasks',filter:{},group:'priority'}]})).json();
  assert.deepEqual(m.lists[0].groups,[{key:'1',label:'urgent',count:1}]);
+ const pg=(await op('task_page',{group:'project',groupCounts:true,filter:{state:['completed']},limit:1})).json().groups;
+ assert.equal(pg.length,0,'groups follow the state filter');
+ const [g]=(await op('task_page',{group:'project',groupCounts:true,limit:1})).json().groups;assert.equal(g.label,'p');assert.equal(g.counts.queued,1);assert.equal(Object.values(g.counts).reduce((a:any,n:any)=>a+n,0),1);
  await app.close();
  // Without a configured origin the path is still returned.
  const bare=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac'});await bare.ready();

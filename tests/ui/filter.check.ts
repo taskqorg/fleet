@@ -14,6 +14,14 @@ const sizes = (argv.includes('--sizes') ? argv[argv.indexOf('--sizes') + 1] : ar
 const ASSERTED_UP_TO = 20000, BUDGET_MS = 300;
 const failures: string[] = [];
 const rule = (size: number, ok: boolean, what: string) => { if (!ok && size <= ASSERTED_UP_TO) failures.push(`${size}: ${what}`); if (!ok) console.log(`  FAIL ${what}`); };
+// The 300 ms budgets hold on the operator's machine (§4). A shared CI runner's timing is noise, so on CI (env CI) they are
+// written to the job summary and never fail the job; the structural rules stay asserted everywhere.
+const timings: string[] = [];
+const budget = (size: number, ms: number, what: string) => {
+  if (!process.env.CI) return rule(size, size < ASSERTED_UP_TO || ms < BUDGET_MS, `${what} ${ms} ms (budget ${BUDGET_MS} ms)`);
+  const over = size === ASSERTED_UP_TO && ms >= BUDGET_MS; if (over) console.log(`  OVER BUDGET (reported only on CI) ${what} ${ms} ms`);
+  timings.push(`| ${size} | ${what} | ${ms} | ${size === ASSERTED_UP_TO ? (over ? 'over' : 'ok') : 'report only'} |`);
+};
 const med = (a: number[]) => [...a].sort((x, y) => x - y)[a.length >> 1];
 const time = async (f: () => Promise<unknown>, n = 7) => { const a: number[] = []; for (let i = 0; i < n; i++) { const s = performance.now(); await f(); a.push(performance.now() - s); } return med(a); };
 const CASES: [string, any][] = [['all, group priority', { filter: { state: [] }, group: 'priority' }], ['state=in_progress', { filter: { state: ['in_progress'] }, group: 'priority' }],
@@ -48,7 +56,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     const ms = await time(async () => { const r = await fetch(origin + '/api/ops/task_page', { method: 'POST', headers: { 'content-type': 'application/json', origin }, body: JSON.stringify({ ...b, limit: 100 }) }); bytes = (await r.text()).length; });
     httpMedians[N][name] = ms;
     console.log(`HTTP task_page ${name}: ${ms.toFixed(1)} ms, ${(bytes / 1024).toFixed(0)} KB`);
-    rule(N, N < ASSERTED_UP_TO || ms < BUDGET_MS, `HTTP task_page ${name} median ${ms.toFixed(0)} ms >= ${BUDGET_MS} ms`);
+    budget(N, Math.round(ms), `HTTP task_page ${name} median`);
   }
 
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -80,7 +88,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
       rule(N, !r.remounted && !r.listGone, `${name}: list element replaced`);
       rule(N, !r.listSkeleton, `${name}: skeleton after first load`);
       rule(N, !r.countersGone, `${name}: counters vanished`);
-      if (settle) rule(N, r.settledMs >= 0 && (N < ASSERTED_UP_TO || r.settledMs < BUDGET_MS), `${name}: settled in ${r.settledMs} ms (budget ${BUDGET_MS} ms; -1 = never)`);
+      if (settle) { rule(N, r.settledMs >= 0, `${name}: never settled`); if (r.settledMs >= 0) budget(N, r.settledMs, `${name}: settled in`); }
       return r;
     };
     await step('click state counter', `document.querySelector('[data-ui=state-counters] .counter:not(.sigma)').click()`);
@@ -125,6 +133,10 @@ const ns = Object.keys(httpMedians).map(Number).sort((a, b) => a - b);
 if (ns.length > 1) for (const name of CASES.map(c => c[0])) {
   const lo = ns.find(n => n === 20000) ?? ns[0], hi = ns[ns.length - 1];
   if (lo !== hi) console.log(`growth ${lo} -> ${hi}, ${name}: x${(httpMedians[hi][name] / httpMedians[lo][name]).toFixed(2)} (reported, not asserted)`);
+}
+if (timings.length && process.env.GITHUB_STEP_SUMMARY) {
+  const { appendFileSync } = await import('node:fs');
+  appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Filter check timings (reported, not asserted on CI; budget ${BUDGET_MS} ms at ${ASSERTED_UP_TO} tasks)\n\n| tasks | case | ms | budget |\n|---|---|---|---|\n${timings.join('\n')}\n`);
 }
 if (failures.length) { console.log(`\n${failures.length} rule(s) failed:\n` + failures.map(f => '  ' + f).join('\n')); if (ASSERT) process.exit(1); }
 else console.log('\nall rules passed');

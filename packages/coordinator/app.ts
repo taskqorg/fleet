@@ -156,7 +156,12 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  const session_archive=async (b:any)=>{const s=(await get(b?.sessionId,'session')),es=(await all('execution',{sessionId:s.id})).filter(x=>x.sessionId===s.id);if(es.some(e=>!['completed','failed','stopped','unknown'].includes(e.state)))fail(409,'Execution active');
   const old=(await all('command',{sessionId:s.id,kind:'teardown'})).find(c=>c.sessionId===s.id&&c.kind==='teardown');if(old)return old;s.archivedAt=Date.now();await put('session',s);const last=es.filter(e=>e.hostId).at(-1);if(!last)return {sessionId:s.id,archivedAt:s.archivedAt,teardown:null};
   const c={id:randomUUID(),executionId:last.id,sessionId:s.id,hostId:last.hostId,kind:'teardown',payload:{...(s.projectId?{projectId:s.projectId,project:projects.project_context({projectId:s.projectId}).settings}:{}),...(s.workingDirectory?{workingDirectory:s.workingDirectory}:{})},status:'pending'};await put('command',c);return c};
- const execution_stop=async (b:any)=>{const e=(await get(b?.executionId,'execution'));let c=(await all('command',{executionId:e.id,kind:'stop'})).find(x=>x.executionId===e.id&&x.kind==='stop');if(!c){c={id:randomUUID(),executionId:e.id,sessionId:e.sessionId,hostId:e.hostId,kind:'stop',payload:{},status:'pending'};await put('command',c)}e.stopRequested=true;await put('execution',e);return {...c,stop:(await agent.stopOutcome(e))}};
+ const execution_stop=async (b:any)=>{const e=(await get(b?.executionId,'execution'));let c=(await all('command',{executionId:e.id,kind:'stop'})).find(x=>x.executionId===e.id&&x.kind==='stop');if(!c){c={id:randomUUID(),executionId:e.id,sessionId:e.sessionId,hostId:e.hostId,kind:'stop',payload:{},status:'pending'};await put('command',c)}e.stopRequested=true;
+  // A host that is neither configured nor ever polled has fetched none of this execution's commands, so no host can confirm
+  // the stop: settle it here as stopped (its pending commands too) instead of leaving it open forever (example: 6b00f0fb).
+  const known=[config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].includes(e.hostId)||!!(await all('host-observation',{id:e.hostId})).find(h=>h.id===e.hostId);
+  if(e.hostId&&!known&&!['completed','failed','stopped'].includes(e.state)){for(const x of (await all('command',{executionId:e.id})).filter(x=>x.executionId===e.id&&x.status==='pending')){x.status='stopped';await put('command',x)}e.state='stopped';e.stopDetail='host never registered';c=(await get(c.id,'command'))}
+  await put('execution',e);return {...c,stop:(await agent.stopOutcome(e))}};
  app.post('/api/executions/:id/stop',async(req:any)=>(await store.tx(async ()=>(await execution_stop({executionId:req.params.id})))));
  app.post('/api/agent-operations/:name',async(req:any)=>{const op=agent.operations[req.params.name];if(!op)fail(404,'Unknown agent operation');return (await store.tx(async ()=>(await op(req.body??{}))))});
  app.post('/api/agent-tools',async(req:any)=>(await agent.mcp(req.body,async (n:string,a:any)=>READ_OPERATIONS.has(n)?store.read(()=>agent.operations[n](a)):store.tx(()=>agent.operations[n](a)),'fleet-agent')));
@@ -314,7 +319,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   executions_list:async(b:any)=>({executions:await store.executions.list({taskId:b?.taskId,projectId:b?.projectId,parentExecutionId:b?.parentExecutionId,problem:b?.problem===true})}),
   // Operator app reads (docs/designs/fleet-operator-app.md §6); agents can call them too.
   changes_since:(b:any)=>{const c=b?.cursor;if(c!==null&&c!==undefined&&(!Number.isSafeInteger(c)||c<0))fail(400,'Invalid cursor');return store.changes.since(c??null,b?.limit??500)},
-  task_page:(b:any)=>store.tasks.page({filter:b?.filter,group:b?.group,limit:b?.limit,after:b?.after}),
+  task_page:(b:any)=>store.tasks.page({filter:b?.filter,group:b?.group,groupCounts:b?.groupCounts,limit:b?.limit,after:b?.after}),
   sessions_list:(b:any)=>sessionList.page({filter:b?.filter,limit:b?.limit,after:b?.after}),
   list_membership:async(b:any)=>{const ids=Array.isArray(b?.ids)&&b.ids.length<=1000?b.ids:fail(400,'Expected at most 1000 ids');if(!Array.isArray(b?.lists)||b.lists.length<1||b.lists.length>2)fail(400,'Expected one or two lists');
    return {lists:await map(b.lists,async(l:any)=>l?.name==='tasks'?{name:'tasks',rows:await store.tasks.membership(l.filter??{},l.group,ids),...(await store.tasks.summary(l.filter??{},l.group))}
@@ -332,7 +337,8 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  const ops:Record<string,(b:any)=>any>={...typedOps,...projects,...transportRecovery.operations,...agent.operations,session_create,session_profile,session_archive,execution_stop,session_get,execution_differences,execution_events,profiles_list,...labOps};
  registerStream(app,store,{retentionDays});
  const runOp=async (n:string,b:any)=>{const op=ops[n];if(!op)fail(404,'Unknown operation');return READ_OPERATIONS.has(n)?store.read(()=>op(b??{})):LONG_OPERATIONS.has(n)?op(b??{}):op===projects[n]||op===transportRecovery.operations[n]?store.atomic(()=>op(b??{})):(await store.tx(()=>op(b??{})))};
- app.post('/api/ops/:name',async(req:any)=>(await runOp(req.params.name,req.body)));
+ // Per-op timing: the Server-Timing header (browser devtools, curl -i) carries the operation's own time, not the transfer.
+ app.post('/api/ops/:name',async(req:any,reply:any)=>{const t=performance.now();try{return await runOp(req.params.name,req.body)}finally{if(Object.hasOwn(ops,req.params.name))reply.header('server-timing',`op;desc="${req.params.name}";dur=${(performance.now()-t).toFixed(1)}`)}});
  registerLab(app,labOps,runOp);
  app.post('/api/tools',async(req:any)=>{const q=req.body;if(q?.method==='initialize')return {jsonrpc:'2.0',id:q.id,result:{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fleet',version:'1'}}};if(q?.method==='tools/list')return {jsonrpc:'2.0',id:q.id,result:{tools:Object.keys(ops).map(name=>({name,inputSchema:{type:'object'}}))}};if(q?.method!=='tools/call'||!ops[q.params?.name])fail(400,'Unknown tool');return {jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text:JSON.stringify(await runOp(q.params.name,q.params.arguments))}]}}});
  app.addHook('onClose',async()=>{if(ownStore)await store.close()});return app;
