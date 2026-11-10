@@ -1291,6 +1291,18 @@ Order: 21, 22, 24 (with its legacy adapter), 26c (backfill), 26b and the other r
 
 #### Phase 5: isolation boundary
 
+##### Step 1 on PDS18: the executor under its own user (planned 2026-11-10)
+
+Today `fleet-executor.service` and every agent turn it starts run as `fleet`, the coordinator's own uid, so a turn can read `coordinator.env` (operator Bearer, machine secret, database URLs) and every other coordinator file. Step 1 closes that, before per-account users (items 38 to 41), and changes nothing in daily work: same host id `pds18-native`, same accounts and profiles, no new prompts or approvals.
+
+*   New user `fleet-agent` (uid >= 1000, own group, not in group `fleet`, home `/home/fleet-agent` 0750, linger). `/home/fleet` stays 0750 and `.config/fleet`, `releases` and `data` stay 0700 `fleet`, so `fleet-agent` cannot open any coordinator file.
+*   The executor runs as a user unit of `fleet-agent`. These move to `/home/fleet-agent`, copied first, with the originals kept until the check passes: the executor data directory (with `native-home`), the Codex account home `accounts/codex-pds`, `native-accounts.pds18.json`, `store-pds18.json`, the git connections of the projects (`fleet-hello-world`, `fleet-hello-world-alt`, `known_hosts`; not `pipe-read`), the checkouts `projects/`, and `executor-pds18.env`. Only the executor holds its machine credential; separating hosts from one another is fleet-people-access slice 2.
+*   The executor, Codex and Antigravity binaries move out of `/home/fleet/runtime` (unreachable behind 0750) to `/opt/fleet-agent/runtime`, root-owned 0755, so an agent cannot replace them.
+*   The project configs change their `pds18-native` `checkoutPath` from `/home/fleet/projects/<id>` to `/home/fleet-agent/projects/<id>`.
+*   The program worker (delivery, publication) has no agent turns and stays `fleet`.
+*   Check: as `fleet-agent`, reading `/home/fleet/.config/fleet/coordinator.env` fails with Permission denied; one real Codex turn on `pds18-native` completes, with its artifacts uploaded.
+*   Rollback: stop the `fleet-agent` executor unit and start `fleet.service`'s old `fleet-executor.service` again (left installed and disabled), with the configs back to the old `checkoutPath`.
+
 ##### 38. `crates/executor/src/isolation.rs` (Create)
 
 *   **Type / Scope**: Rust module.
