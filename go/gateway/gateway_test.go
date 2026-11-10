@@ -20,7 +20,7 @@ const testToken = "invented-run-token"
 
 func fp(k string) string { return sha(k)[:12] }
 
-type seenCall struct{ key, body string }
+type seenCall struct{ key, body, optIn string }
 
 type fakeProvider struct {
 	url  string
@@ -41,7 +41,7 @@ func newProvider(t *testing.T, script func(key string) int) *fakeProvider {
 		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		body, _ := io.ReadAll(r.Body)
 		p.lock.Lock()
-		p.seen = append(p.seen, seenCall{key, string(body)})
+		p.seen = append(p.seen, seenCall{key, string(body), r.Header.Get("X-Opt-In")})
 		p.lock.Unlock()
 		status := script(key)
 		if status == 0 {
@@ -81,7 +81,7 @@ func testSnapshot(url string, keys []keyState, tokens []string, intake string) m
 	}
 	return map[string]any{"schema": 2, "generated_ms": 1,
 		"providers": map[string]any{"tavily": map[string]any{"baseUrl": url, "usage": map[string]any{"path": "/usage", "field": "key.usage"}, "tools": map[string]any{
-			"web_search": map[string]any{"method": "POST", "path": "/search", "unit": "credits", "idempotent": true, "inject": map[string]any{"include_usage": true}},
+			"web_search": map[string]any{"method": "POST", "path": "/search", "unit": "credits", "idempotent": true, "inject": map[string]any{"include_usage": true}, "headers": map[string]any{"X-Opt-In": "true"}},
 			"submit":     map[string]any{"method": "POST", "path": "/submit", "unit": "credits", "idempotent": false},
 			"status":     map[string]any{"method": "GET", "path": "/tasks/{jobId}", "unit": "credits", "idempotent": true}}}},
 		"connections": map[string]any{"tavily": map[string]any{"provider": "tavily", "tools": []string{"web_search", "submit", "status"}, "intake": intake, "keys": ks, "blocked": blocked}},
@@ -215,6 +215,7 @@ func TestRunTokenCallInjectsKeyAndSpoolsOneLine(t *testing.T) {
 	var forwarded map[string]any
 	json.Unmarshal([]byte(sent.body), &forwarded)
 	expect(t, forwarded["include_usage"], true, "inject")
+	expect(t, sent.optIn, "true", "headers")
 	if _, ok := forwarded["api_key"]; ok {
 		t.Fatal("the caller never selects a key")
 	}
