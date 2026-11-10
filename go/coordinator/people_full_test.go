@@ -18,4 +18,7 @@ func TestStarGrantIsOwnerEquivalent(t *testing.T) {
 	if fullAccess(&op) || scopeOf(&op) == nil {
 		t.Fatal("operator without star grant must stay scoped")
 	}
+	if connRealOwner(&Request{person: &p}) == nil || connOwner(&Request{person: &p}) != nil || connRealOwner(&Request{person: &Person{Owner: true}}) != nil {
+		t.Fatal("star grant: personal tokens refused, other key handling allowed; owner allowed")
+	}
 }
