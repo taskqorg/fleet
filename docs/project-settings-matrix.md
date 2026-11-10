@@ -1,6 +1,6 @@
 # Project settings matrix
 
-2026-11-09. Research only, read from source code of `~/Projects/orca` and `~/Projects/t3code` and the Fleet worktree. Basis: [fleet.md](../fleet.md), [first-version design](first-version-design.md), [architecture breadth plan](architecture-breadth-plan.md), [project setup and access](project-setup-and-access.md). Goal: agents work automatically; projects differ only in settings. No limits or gates are proposed.
+2026-11-09. Research only, read from source code of `~/Projects/orca` and `~/Projects/t3code` and the Fleet worktree. Basis: [fleet.md](../fleet.md), first-version design, [architecture breadth plan](architecture-breadth-plan.md), [project setup and access](project-setup-and-access.md). Goal: agents work automatically; projects differ only in settings. No limits or gates are proposed.
 
 ## Config files and locations
 

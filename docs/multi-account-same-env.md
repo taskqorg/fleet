@@ -1,6 +1,6 @@
 # Several accounts of one harness in one environment
 
-2026-11-09. Analysis only: no native calls, logins, credential reads or deploys. Sources: [resources and auth model](resources-and-auth-model.md), [account onboarding](multiharness-account-onboarding.md), [native grants](multiharness-native-grants.md), [second Codex routing](second-codex-routing-evidence.md), [Claude placement](claude-placement-proof.md), [Antigravity readiness](antigravity-readiness.md), `packages/coordinator/accounts.ts`, `crates/executor/src/{main,harness,native,codex}.rs`, T3 Code `apps/server/src/provider/**`, Orca `src/main/{codex-accounts,claude-accounts,antigravity}/**`.
+2026-11-09. Analysis only: no native calls, logins, credential reads or deploys. Sources: [resources and auth model](resources-and-auth-model.md), account onboarding, native grants, second Codex routing, Claude placement, Antigravity readiness, `packages/coordinator/accounts.ts`, `crates/executor/src/{main,harness,native,codex}.rs`, T3 Code `apps/server/src/provider/**`, Orca `src/main/{codex-accounts,claude-accounts,antigravity}/**`.
 
 Question: on one host and one OS user, can two accounts of the same harness (two Codex ChatGPT accounts, two Claude, two Antigravity) run **at the same time**?
 
@@ -36,7 +36,7 @@ Question: on one host and one OS user, can two accounts of the same harness (two
 ### Claude Code
 
 - Isolation: `CLAUDE_CONFIG_DIR` per account; macOS Keychain item keyed by that dir path (Orca `claude-accounts/keychain.ts`, AgentQ). Linux/Windows: `.credentials.json` inside the dir. Fleet passes `HOME` and real `USER/LOGNAME` (Keychain account name).
-- Proven locally: one dedicated Claude account on the Mac, execution `4474aff0-bf92-4e4a-ad04-20d514339fbd` ([connected live evidence](connected-live-evidence.md)). Linux bindings rejected (403) by policy. No second Claude account exists.
+- Proven locally: one dedicated Claude account on the Mac, execution `4474aff0-bf92-4e4a-ad04-20d514339fbd` (connected live evidence). Linux bindings rejected (403) by policy. No second Claude account exists.
 - Collisions:
   - Keychain item name depends on the exact dir spelling (symlink/realpath). Orca checks several spellings; Fleet must pass one canonical absolute path for login and runs, or a run sees "not logged in".
   - Locked Keychain (SSH, launchd without a GUI session) makes Claude fall back to a file in the dir; login and runs must happen in the same session type.
@@ -47,7 +47,7 @@ Question: on one host and one OS user, can two accounts of the same harness (two
 ### Antigravity
 
 - Isolation: none for credentials on the native store. `GEMINI_HOME`/`--gemini-dir`/`--app-data-dir` isolate behavior only.
-- Proven locally: catalogue works with host `HOME` + private `GEMINI_HOME`, fails with private `HOME` ([readiness](antigravity-readiness.md), `evidence/antigravity-readiness-20261109/binding-compare.json`); one native ACP turn on the current principal ([ACP implementation](antigravity-acp-implementation.md), `evidence/antigravity-native-20261109/`).
+- Proven locally: catalogue works with host `HOME` + private `GEMINI_HOME`, fails with private `HOME` (readiness, `evidence/antigravity-readiness-20261109/binding-compare.json`); one native ACP turn on the current principal (ACP implementation, `evidence/antigravity-native-20261109/`).
 - Collisions: one shared Keychain item per OS user; `agy acp --login` replaces it for every consumer of that user, including the owner's own agy. Orca's account switcher works by rewriting that item (serialized `AntigravityAccountService`), so switching mid-run changes the principal of other runs. Refresh of the shared item by several concurrent runs of the same principal is unproven.
 - Untested lead: T3 sets `AGY_ACP_FORCE_FILE_STORAGE=1` with a private `GEMINI_HOME` per profile, which suggests per-home file credentials on its pinned runtime. Not verified on installed 1.5.3; would need its own login under that home.
 - Concurrency: two **different** accounts at once: not possible on one OS user's native store. Same account, parallel runs: unproven.

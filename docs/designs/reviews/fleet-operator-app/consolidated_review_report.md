@@ -2,7 +2,7 @@
 
 * **Mode:** consolidated report, Stages 5 to 9.
 * **Reviewers:** zoom-out, inventive-catalyst, comprehension, design, structural, style, implementation-readiness, codebase-details.
-* **Reports:** [Stage 5](zoom_out_report.md), [Stage 6](comprehension_report.md), [Stage 7](critic_report.md), [Stage 8](intermediate_zoom_out_report.md), [Stage 9](implementation_readiness_report.md).
+* **Reports:** Stage 5, Stage 6, Stage 7, Stage 8, Stage 9.
 
 ## Totals after deduplication (first draft)
 

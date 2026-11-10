@@ -1,6 +1,6 @@
 # Resources and authentication model
 
-2026-11-09. Research only: no native calls, logins, credential reads or deploys. Sources: official docs ([Codex auth](https://developers.openai.com/codex/auth), [Claude Code auth](https://code.claude.com/docs/en/authentication)), installed help/source evidence in [multiharness account onboarding](multiharness-account-onboarding.md) and [Antigravity readiness](antigravity-readiness.md), `packages/coordinator/accounts.ts`, and how `~/Projects/t3code` and `~/Projects/orca` handle accounts.
+2026-11-09. Research only: no native calls, logins, credential reads or deploys. Sources: official docs ([Codex auth](https://developers.openai.com/codex/auth), [Claude Code auth](https://code.claude.com/docs/en/authentication)), installed help/source evidence in multiharness account onboarding and Antigravity readiness, `packages/coordinator/accounts.ts`, and how `~/Projects/t3code` and `~/Projects/orca` handle accounts.
 
 ## Question
 
