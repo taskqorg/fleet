@@ -2,6 +2,8 @@
 
 Status: implemented. Decisions D1–D4 were approved by the coordinator during brainstorm. All five phases are merged (#41, #43, #44, #45, #46; the last at `422dcf9`). The release deploy waits for the coordinator. The decisions below are kept as written; where the code later moved, the implementation notes say so.
 
+Language: [`fleet-language.md`](./fleet-language.md) says which of D1-D4 the move to Go cancels and when.
+
 ## Problem
 
 Each worktree carries 150 MB of `node_modules` and 300–620 MB of Rust `target`. The dependency tree has 163 production packages, a large share of them from a fast-moving SDK. Builds run `tsc` (2.1 s) on every build, and tests run through `tsx`. The owner asked for the best toolchain from evidence, including a runtime switch.
