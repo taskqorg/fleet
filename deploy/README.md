@@ -49,3 +49,13 @@ Once per host, from a published release, each host downloading it itself from Gi
 ## Manual rollback
 
 When `fleet-update` itself is broken: `deploy/install-release.sh --rollback` on the host (PDS18 executor: as root with `FLEET_RELEASES=/opt/fleet-agent/releases`) points `current` at `previous` and restarts the same services. Restore a database only by hand, from `/backup/fleet/pre-deploy/fleet-pre-<version>.dump`.
+
+## Rollback drill
+
+Proves the three-start rollback on the live hosts. It needs a breakage on `main`, so it runs only when no other work lands on `main` (agreed with whoever else merges there), and the breakage is reverted at once.
+
+1. Note the running version `N` in `hosts_list` (every host `update.state: ok`).
+2. Merge a pull request whose coordinator passes `selftest` but exits at start: in `go/coordinator/main.go`, `log.Fatal("rollback drill")` right after the `selftest` branch. Tag it `D` (the next version) once its `build-test-design` is green.
+3. Revert that pull request on `main` right after tagging, and tag the revert `E` only after the drill.
+4. Expect on PDS18 within 5 minutes (`journalctl -u fleet-update`): three `unhealthy start` lines, `rolled back to N`, coordinator back on `N`; `hosts_list` for `pds18` shows `update.state: refused`, `error: unhealthy`, `version: D`; one needs-you question "pds18: update to D rolled back (unhealthy)."; no executor moves (the coordinator never marked `D` healthy). Later runs log nothing for `D`.
+5. Tag `E`: every host installs it; the `pds18` `ok` withdraws the question.
