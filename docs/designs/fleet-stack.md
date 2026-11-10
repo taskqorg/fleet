@@ -533,7 +533,7 @@ steps below describe what that PR covers.
 
 The behaviour spec for L4 is the current behavior of delegation and design-rules,
 captured through stdio before porting. `tests/executor/fixtures/mcp.json` retains
-those exchanges and journal effects; `tests/executor/mcp_replay.py` replays them
+those exchanges and journal effects; `tests/coordinator/mcp-replay.test.ts` replays them
 against the Rust subcommands.
 
 14. `crates/executor/src/main.rs`, `profile.rs` and `mcp.rs`: start delegation

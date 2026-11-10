@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory(prefix='fleet-approval-') as root:
     env = {k: v for k, v in os.environ.items() if k in ['PATH', 'TMPDIR', 'SYSTEMROOT']}
     pathlib.Path(root+'/codex').mkdir()
     env.update(HOME=root, CODEX_HOME=root+'/codex')
-    args = ['codex', 'app-server', '--strict-config', '--print-startup-config', '-c', 'approval_policy="never"', '-c', 'mcp_servers.fleet.command="python3"', '-c', 'mcp_servers.fleet.enabled_tools=["request_child"]']
+    args = ['codex', 'app-server', '--strict-config', '--print-startup-config', '-c', 'approval_policy="never"', '-c', 'mcp_servers.fleet.command="fleet-executor"', '-c', 'mcp_servers.fleet.args=["mcp","delegation","unused-journal","{}"]', '-c', 'mcp_servers.fleet.enabled_tools=["request_child"]']
     good = subprocess.run(args+['-c', 'mcp_servers.fleet.tools.request_child.approval_mode="approve"'], env=env, capture_output=True, text=True, timeout=15)
     assert good.returncode == 0, good.stderr
     version = json.loads(good.stdout)['appServerVersion']

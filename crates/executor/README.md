@@ -20,7 +20,7 @@ Talks only to the coordinator's `/api/hosts/*` routes (`packages/coordinator/app
 
 ## Remaining Python
 
-L4 removes only `src/delegation.py` and `src/design_rules.py`. Connection MCP still
+The repository retains 19 Python files. L4 removes `src/delegation.py` and `src/design_rules.py`. Connection MCP still
 requires Python on its execution host; no live host was inspected or changed.
 
 | File | Purpose and removal condition |
@@ -33,13 +33,13 @@ requires Python on its execution host; no live host was inspected or changed.
 | `tests/coordinator/fixtures/fake_connection.py`, `pipe_client.py` | Synthetic connection adapter fixtures; remove or replace with the adapter in C1. |
 | `tests/executor/account_status.py` | Program worker account observations; retained while the worker exists. |
 | `tests/executor/antigravity_acp.py`, `claude_mcp.py`, `codex_wire.py`, `fake_integration.py` | Fake native harness/transport checks; development and CI only. |
-| `tests/executor/delegation_approval.py`, `delegation_protocol.py`, `project_protocol.py`, `lab_protocol.py`, `mcp_replay.py` | MCP grants, durable transport and captured stdio regression checks; development and CI only, now invoking Rust. |
+| `tests/executor/delegation_approval.py`, `delegation_protocol.py`, `project_protocol.py`, `lab_protocol.py` | MCP grants, durable transport and read-only wire checks; development and CI only. The approval check validates Codex config for the Rust subcommand without starting a server. |
 | `tests/executor/executor_binary.py` | Protocol-check binary locator/copy and synthetic secret fixture helper; development and CI only. |
 | `tests/executor/program_recovery.py` | Program worker restart/recovery check; retained while the worker exists. |
 | `tests/executor/lab_provenance.py`, `native_probe.py` | Opt-in retained-run inspection and real native probe; outside the merge gate. |
 
 Python snippets in shell/TypeScript checks and deployment scripts also remain for
-fixtures, SQLite setup and administration; they are not executor MCP servers.
+fixtures, SQLite setup and administration. `config/pipelines/draft-examples.json` embeds a Python example program; `src/harness.rs` embeds a Python fake harness in its tests. These are not executor MCP servers.
 C1 must replace the connection and worker paths before their hosts can drop Python.
 
 The MCP replay compares JSON values, parses JSON text content and normalizes fixture

@@ -1,6 +1,6 @@
+"""Deterministic MCP/outbox protocol check. No native calls or network."""
 # fleet-stack L4: preserve MCP grants and durable transport after replacing host Python.
 from executor_binary import executor_binary
-"""Deterministic MCP/outbox protocol check. No native calls or network."""
 import json
 import os
 import sqlite3

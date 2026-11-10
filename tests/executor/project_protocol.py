@@ -1,6 +1,6 @@
+"""Actual stdio MCP and durable host envelopes; no native executable/model calls."""
 # fleet-stack L4: preserve MCP grants and durable transport after replacing host Python.
 from executor_binary import executor_binary
-"""Actual stdio MCP and durable host envelopes; no native executable/model calls."""
 import json,pathlib,sqlite3,subprocess,tempfile,threading,time
 root=pathlib.Path(tempfile.mkdtemp(prefix='fleet-project-mcp-'));path=root/'journal.sqlite'
 db=sqlite3.connect(path);db.executescript('CREATE TABLE delegation_requests(id TEXT PRIMARY KEY,body TEXT,response TEXT);CREATE TABLE outbox(route TEXT,body TEXT);');db.close()

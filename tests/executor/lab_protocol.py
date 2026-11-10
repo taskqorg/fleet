@@ -1,6 +1,6 @@
-# fleet-stack L4: preserve MCP grants and durable transport after replacing host Python.
-from executor_binary import executor_binary
 """Read-only MCP wire regression; no model calls."""
+# fleet-stack L4: preserve the read-only design-rules MCP wire after replacing host Python.
+from executor_binary import executor_binary
 import json
 import subprocess
 from pathlib import Path
