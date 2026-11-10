@@ -1628,7 +1628,8 @@ func runExecutor() error {
 	}
 	// Artifact transfers run on their own goroutines; the Access token for store tunnels from FLEET_CF_ACCESS_FILE.
 	if err := spawnTransfers(journal, newTransferClient(url, token, host, accessToken(accessFile())), func(_ *transferClient, db *sql.DB, body M, response any) {
-		if body["previews"] == true && jStr(response, "state") == "stored" {
+		// A remote store answers "verifying" until the store's host checks the copy; the bytes are uploaded either way.
+		if st := jStr(response, "state"); body["previews"] == true && (st == "stored" || st == "verifying") {
 			buildPreviews(db, body, response)
 		}
 		if body["spool"] == true && jIsStr(body, "path") {
