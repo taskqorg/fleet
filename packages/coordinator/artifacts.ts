@@ -130,8 +130,9 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
  async function get(id:string,hostId?:string){const legacyDoc=await legacyDocument(id);if(legacyDoc)return {id:legacyDoc.id,legacyId:legacyDoc.id,projectId:null as string|null,executionId:legacyDoc.executionId,name:legacyDoc.path,mediaType:legacyDoc.mediaType,size:legacyDoc.size,sha256:legacyDoc.sha256,state:'stored',availability:'available',copies:[]};const a=await row(id),copies=await store.query('SELECT store_id,state,verified_at FROM artifact_copy WHERE artifact_id=$1 ORDER BY store_id',[a.id]);
   const s=a.state==='stored'?await source(a,hostId):undefined;
   return {...view(a),copies:copies.map((c:any)=>({storeId:c.store_id,state:c.state})),availability:a.state!=='stored'?a.state:s?'available':'unavailable',...(s?{url:await presign(s,hostId??'',new GetObjectCommand({Bucket:s.bucket,Key:keyOf(a),ResponseContentType:a.media_type}))}:{})}}
- async function list(f:{executionId?:string,taskId?:string,mediaType?:string,projectId?:string}={}){const c:string[]=[],p:any[]=[];
+ async function list(f:{executionId?:string,taskId?:string,mediaType?:string,projectId?:string,noExamples?:boolean}={}){const c:string[]=[],p:any[]=[];
   for(const [k,col] of [['executionId','execution_id'],['taskId','task_id'],['mediaType','media_type'],['projectId','project_id']] as const)if(typeof f[k]==='string'){p.push(f[k]);c.push(`${col}=$${p.length}`)}
+  if(f.noExamples)c.push("role<>'example'");
   return (await store.query(`SELECT * FROM artifact${c.length?' WHERE '+c.join(' AND '):''} ORDER BY seq`,p)).map((r:any)=>view({...r,size:Number(r.size)}))}
 
  // Forced purge (operator): every store, now where reachable, pending where not; the hash is refused from then on.

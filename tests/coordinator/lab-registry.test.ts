@@ -84,4 +84,11 @@ test('POST /api/lab/examples stores approved lab artifacts; same content is idem
  assert.equal((await call('GET','/api/lab/examples?state=proposed')).json().examples.length,1);
  const got=(await call('GET','/api/lab/examples/'+stored.artifactId)).json();assert.equal(got.state,'approved');assert.deepEqual(got.example.checks,ex.checks);
  assert.equal((await app.inject({method:'GET',url:'/api/lab/examples'})).statusCode,401);
+ // An agent of the example's project cannot list or read it (references are known-good answers).
+ const own=(await call('POST','/api/lab/examples',{examples:[{...ex,id:'own-project'}],projectId:'fleet-hello-world',approved:true})).json().examples[0];
+ await app.store.executions.insertIfAbsent({id:'agent-1',kind:'agent_run',state:'running',projectId:'fleet-hello-world',hostId:'mac'});
+ const host=(url:string,payload:any)=>app.inject({method:'POST',url,headers:{authorization:'Bearer m'},payload});
+ const seen=(await host('/api/hosts/artifacts/list',{hostId:'mac',executionId:'agent-1'})).json().artifacts.map((a:any)=>a.id);
+ assert.ok(!seen.includes(own.artifactId),'examples are not in an agent artifact list');
+ assert.equal((await host('/api/hosts/artifacts/get',{hostId:'mac',executionId:'agent-1',artifactId:own.artifactId})).statusCode,403);
  await app.close()});
