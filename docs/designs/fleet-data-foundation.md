@@ -333,7 +333,7 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
     *   `completion_requirements` (JSONB), `result_destination`;
     *   `created_by`, timestamps.
 *   **Table `task_dependency`.** `task_id`, `depends_on_task_id` and `kind`. Tasks are flat; there is no hierarchy. Only `blocks` dependencies gate transitions. `revision_of` records a delivery that revises an earlier one (legacy `previousDeliveryId`) without waiting for it, as the legacy flow never waited for acceptance.
-*   **Derived, not stored.** Progress, cost so far and the latest result come from the view `task_view` over the task's executions, artifacts and questions. Only `state` and `wait_reason` are stored, and they change only through these transitions, all written by `go/coordinator/b_tasks.go`:
+*   **Derived, not stored.** Progress, cost so far and the latest result come from the view `task_view` over the task's executions, artifacts and questions. Only `state` and `wait_reason` are stored, and they change only through these transitions, all written by `go/coordinator/tasks.go`:
 
     | From | Trigger | To |
     |---|---|---|
@@ -855,7 +855,7 @@ Throughput is not the constraint. A write transaction takes a few milliseconds (
 
 ## Implementation status
 
-The phases below were built and verified live on PDS18 with the TypeScript coordinator and Rust executor, then carried unchanged into the Go port: `go/coordinator` (schema `packages/coordinator/db/schema.sql`, store `store.go`, artifacts `d_artifacts.go`, placement `d_placement.go`, S3 client `d_s3.go`) and `go/executor` (upload `upload.go`, outbox `outbox.go`). Tests are the outside tests in `tests/go` and `tests/trial` and `go test ./...`.
+The phases below were built and verified live on PDS18 with the TypeScript coordinator and Rust executor, then carried unchanged into the Go port: `go/coordinator` (schema `go/coordinator/schema.sql`, store `store.go`, artifacts `artifacts.go`, placement `placement.go`, S3 client `d_s3.go`) and `go/executor` (upload `upload.go`, outbox `outbox.go`). Tests are the outside tests in `tests/go` and `tests/trial` and `go test ./...`.
 
 *   Phase 0, infrastructure on PDS18 (Postgres role, ClickHouse, Garage): built ([infrastructure-build.md](../infrastructure-build.md)).
 *   Phase 1, the `document` table on Postgres: built.

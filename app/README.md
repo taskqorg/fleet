@@ -18,4 +18,4 @@ The Fleet operator app: a Preact single-page app served by the coordinator at `/
 
 ## Connections
 
-Builds only from `packages/ui` (OR-13). Reads and writes only through coordinator ops; the coordinator (`go/coordinator/d_routes.go`, `stream.go`) serves the built files. Checked by `tests/ui/app.check.ts` through `pnpm run check:design`.
+Builds only from `packages/ui` (OR-13). Reads and writes only through coordinator ops; the coordinator (`go/coordinator/artifact_routes.go`, `stream.go`) serves the built files. Checked by `tests/ui/app.check.ts` through `pnpm run check:design`.

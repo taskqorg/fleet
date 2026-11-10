@@ -18,22 +18,7 @@ const res = await build({
 const files = Object.keys(res.metafile.outputs).map(p => p.split('/dist/app/')[1] ?? p.replace(/^.*dist\/app\//, ''));
 const main = files.find(f => /assets\/main-.*\.js$/.test(f));
 
-// IBM Plex (design decision D19): woff2 files from the pinned @fontsource packages, copied under content-hashed names.
-// Latin and Cyrillic only; the browser fetches a file when a page uses its unicode-range, and the service worker precaches them all.
-const fontFiles = [];
-let fontCss = '';
-for (const [pkg, weights] of [['ibm-plex-sans', [400, 500, 600]], ['ibm-plex-mono', [400, 500, 600]]]) for (const w of weights) {
-  const dir = new URL(`node_modules/@fontsource/${pkg}/`, root);
-  for (const face of readFileSync(new URL(`${w}.css`, dir), 'utf8').match(/@font-face\s*\{[^}]*\}/g)) {
-    const file = face.match(/url\(\.\/(files\/[^)]*-(?:latin|cyrillic)-\d+-normal\.woff2)\)/)?.[1];
-    if (!file) continue; // latin-ext, cyrillic-ext, greek, vietnamese
-    const bytes = readFileSync(new URL(file, dir));
-    const name = `assets/${file.slice(6, -6)}-${createHash('sha256').update(bytes).digest('hex').slice(0, 10)}.woff2`;
-    writeFileSync(new URL(name, out), bytes); fontFiles.push('/' + name);
-    fontCss += face.replace(/src:[^;]*;/, `src:url(/${name}) format('woff2');`).replace(/\s+/g, ' ');
-  }
-}
-const css = fontCss + tokensCss() + readFileSync(new URL('packages/ui/src/styles.css', root), 'utf8') + 'html,body,#app{height:100%}';
+const css = tokensCss() + readFileSync(new URL('packages/ui/src/styles.css', root), 'utf8') + 'html,body,#app{height:100%}';
 const cssName = `assets/app-${createHash('sha256').update(css).digest('hex').slice(0, 10)}.css`;
 writeFileSync(new URL(cssName, out), css);
 
@@ -42,7 +27,7 @@ const icons = JSON.parse(readFileSync(new URL('packages/ui/icons.json', root), '
 const reg = await build({ entryPoints: [new URL('packages/ui/src/registry.ts', root).pathname], bundle: true, format: 'esm', write: false, loader: { '.json': 'json' } });
 const { workspaces } = await import('data:text/javascript;base64,' + Buffer.from(reg.outputFiles[0].text).toString('base64'));
 const VIEWS = Object.fromEntries(workspaces.filter(w => w.app).map(w => [w.id, ['Fleet ' + w.label, w.icon]]));
-// The coordinator serves index.html for these screens only (go/coordinator/d_routes.go appRoutes).
+// The coordinator serves index.html for these screens only (go/coordinator/artifact_routes.go appRoutes).
 writeFileSync(new URL('screens.json', out), JSON.stringify(Object.keys(VIEWS)));
 const accent = tokens.color.light.accent;
 for (const [view, [name, icon]] of Object.entries(VIEWS)) {
@@ -62,7 +47,7 @@ const html = `<!doctype html>
 writeFileSync(new URL('index.html', out), html);
 
 const version = createHash('sha256').update(files.join() + css).digest('hex').slice(0, 10);
-const precache = ['/' + cssName, ...fontFiles, ...files.filter(f => f.startsWith('assets/')).map(f => '/' + f)];
+const precache = ['/' + cssName, ...files.filter(f => f.startsWith('assets/')).map(f => '/' + f)];
 writeFileSync(new URL('sw.js', out), `// Fleet service worker ${version}: app shell only; /api is never cached (design §5).
 const CACHE='fleet-${version}',ASSETS=${JSON.stringify(precache)};
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll([...ASSETS,'/overview']))));

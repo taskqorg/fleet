@@ -1,8 +1,5 @@
-// Fleet coordinator, trial slice (docs/designs/fleet-stack.md#trial-slice-l1): the routes, tables and behaviours of
-// SL1-SL11. Environment: docs/coordinator-build.md.
+// Fleet coordinator: the HTTP API, the SSE stream and the built app over Postgres. Environment: docs/coordinator-build.md.
 package main
-
-//go:generate go run ../gen ../../contracts/host-protocol.schema.json main protocol_gen.go
 
 import (
 	"context"
@@ -16,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -100,7 +96,7 @@ func main() {
 	}
 }
 
-// loadPeople loads people.json at start (docs/designs/fleet-people-access.md); refreshPeople (b_request.go) re-reads it
+// loadPeople loads people.json at start (docs/designs/fleet-people-access.md); refreshPeople (browser_checks.go) re-reads it
 // when it changes.
 func (a *App) loadPeople(ctx context.Context, file string) error {
 	a.peopleFile = file
@@ -194,93 +190,6 @@ type Request struct {
 func (q *Request) ctx() context.Context { return q.r.Context() }
 
 type handler func(*Request) (any, error)
-
-// route kinds: per-route transaction (read snapshot for GET, one GLOBAL write otherwise, execution scope for
-// host ingest); stream runs its own short reads.
-const (
-	txRead = iota
-	txWrite
-	txIngest
-	txNone
-)
-
-type trialRoute struct {
-	method string
-	re     *regexp.Regexp
-	kind   int
-	h      handler
-	raw    func(*Request, http.ResponseWriter) error
-}
-
-func (a *App) routes() http.Handler {
-	r := func(method, pattern string, kind int, h handler) trialRoute {
-		return trialRoute{method, regexp.MustCompile("^" + pattern + "$"), kind, h, nil}
-	}
-	seg := "([^/]+)"
-	table := []trialRoute{
-		r("POST", "/api/sessions", txWrite, a.sessionCreate),
-		r("GET", "/api/sessions/"+seg, txRead, a.sessionGet),
-		r("POST", "/api/sessions/"+seg+"/messages", txWrite, a.message),
-		{method: "GET", re: regexp.MustCompile(`^/api/stream$`), kind: txNone, raw: a.serveStream},
-	}
-	mux := a.registered()
-	return http.HandlerFunc(func(w http.ResponseWriter, hr *http.Request) {
-		if _, p := mux.Handler(hr); p != "" { // registry.go routes win over the trial table
-			mux.ServeHTTP(w, hr)
-			return
-		}
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		q := &Request{r: hr, app: a}
-		err := func() error {
-			if err := a.authorize(q); err != nil {
-				return err
-			}
-			for _, rt := range table {
-				m := rt.re.FindStringSubmatch(hr.URL.Path)
-				if m == nil || rt.method != hr.Method {
-					continue
-				}
-				q.params = m[1:]
-				if rt.raw != nil {
-					return rt.raw(q, w)
-				}
-				if err := a.readBody(q); err != nil {
-					return err
-				}
-				if err := a.guard(q); err != nil {
-					return err
-				}
-				var out any
-				lock := ""
-				if rt.kind == txIngest {
-					var b struct {
-						ExecutionID *string `json:"executionId"`
-					}
-					if json.Unmarshal(q.body, &b) != nil || b.ExecutionID == nil {
-						return fail(400, "Expected executionId")
-					}
-					lock = executionScope(*b.ExecutionID)
-				}
-				err := a.store.Tx(q.ctx(), scopeOf(q.person), rt.kind != txRead, lock, func(tx pgx.Tx) error {
-					q.tx = tx
-					var err error
-					out, err = rt.h(q)
-					return err
-				})
-				if err != nil {
-					return err
-				}
-				w.Header().Set("Content-Type", "application/json; charset=utf-8")
-				return json.NewEncoder(w).Encode(out)
-			}
-			return fail(404, "Route "+hr.Method+":"+hr.URL.Path+" not found")
-		}()
-		if err != nil {
-			writeError(w, err)
-		}
-	})
-}
 
 func writeError(w http.ResponseWriter, err error) {
 	var he *HTTPError

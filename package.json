@@ -3,18 +3,18 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm run typecheck && node app/build.mjs && pnpm run go:build",
+    "build": "pnpm run app:build && pnpm run go:build",
     "start": "go/bin/fleet-coordinator",
     "test": "node --test tests/ui/*.test.ts && tests/go/run.sh",
     "book": "node packages/ui/scripts/build-book.mjs",
     "check:design": "node packages/ui/scripts/check-design.mjs",
-    "app:build": "node app/build.mjs",
+    "app:build": "pnpm run typecheck && node app/build.mjs",
     "app:dev": "node --watch-path=app/src --watch-path=packages/ui --watch-path=packages/view-url app/build.mjs",
     "check:filter": "pnpm run build && node tests/ui/filter.check.ts --assert",
     "check:conversations": "pnpm run build && node tests/ui/conversations.check.ts",
     "contracts": "node contracts/gen-ts.mjs",
     "typecheck": "node contracts/gen-ts.mjs && tsc && tsc -p app && tsc -p packages/ui",
-    "go:build": "cd go && go generate ./... && go build -trimpath -o bin/fleet-coordinator ./coordinator"
+    "go:build": "cd go && for c in coordinator executor gateway update; do CGO_ENABLED=0 go build -trimpath -o bin/fleet-$c ./$c || exit 1; done"
   },
   "dependencies": {
     "@preact/signals": "2.11.4",
@@ -23,8 +23,6 @@
     "wouter-preact": "3.13.0"
   },
   "devDependencies": {
-    "@fontsource/ibm-plex-mono": "5.3.0",
-    "@fontsource/ibm-plex-sans": "5.3.0",
     "@types/node": "22.18.0",
     "esbuild": "0.28.2",
     "playwright": "1.56.1",

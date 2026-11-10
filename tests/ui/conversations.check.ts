@@ -51,6 +51,9 @@ seed.bulk(() => {
   seed.artifact({ id: 'shot-1', executionId: 'x1', name: 'screenshot.png', mediaType: 'image/png', bytes: Buffer.from(PNG, 'base64') });
   seed.artifact({ id: 'log-1', executionId: 'x1', name: 'build.log', mediaType: 'text/plain', bytes: Buffer.from(LOG) });
   seed.artifact({ id: 'logo-1', executionId: 'x1', name: 'logo.svg', mediaType: 'image/svg+xml', bytes: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle cx="10" cy="10" r="9"/></svg>') });
+  seed.artifact({ id: 'md-1', executionId: 'x1', name: 'notes.md', mediaType: 'text/markdown', bytes: Buffer.from('# Notes\n\n**bold** text') });
+  seed.artifact({ id: 'json-1', executionId: 'x1', name: 'out.json', mediaType: 'application/json', bytes: Buffer.from('{"a":1,"b":[2,3]}') });
+  seed.artifact({ id: 'csv-1', executionId: 'x1', name: 'rows.csv', mediaType: 'text/csv', bytes: Buffer.from('name,note\nx,"a, ""b"""\n') });
   seed.artifact({ id: 'page-1', executionId: 'x1', name: 'index.html', mediaType: 'text/html', bytes: Buffer.from(PAGE_HTML) });
   for (const [i, st] of ['stored', 'pending', 'failed'].entries()) seed.artifact({ id: 'row-' + i, executionId: 'x1', name: `result-${i}.${i ? 'txt' : 'png'}`, mediaType: i ? 'text/plain' : 'image/png', bytes: Buffer.alloc(10 + i, i), state: st });
 });
@@ -195,9 +198,24 @@ try {
   const firstPage = (await p.locator('.av-text pre').textContent())!.length;
   for (let i = 0; i < 6; i++) { await p.locator('.av-text').evaluate(e => { e.scrollTop = e.scrollHeight; }); await p.waitForTimeout(200); }
   check((await p.locator('.av-text pre').textContent())!.includes('line 5999 of'), `long text loads further pages on scroll (first page ${firstPage} chars)`);
+  // Every renderable format opens rendered; the Source/Preview switch shows the source and is remembered per format.
+  await p.goto(`${origin}/results/md-1`);
+  check(await until(async () => await p.locator('.av-text .md .md-h', { hasText: 'Notes' }).count() === 1), 'Markdown opens rendered');
+  await p.goto(`${origin}/results/json-1`);
+  check(await until(async () => (await p.locator('.av-text pre').textContent() ?? '').includes('"a": 1,\n')), 'JSON opens indented');
+  await p.goto(`${origin}/results/csv-1`);
+  check(await until(async () => await p.locator('.av-table td', { hasText: 'a, "b"' }).count() === 1), 'CSV opens as a table');
+  await p.getByRole('button', { name: 'Source', exact: true }).click();
+  check(await until(async () => (await p.locator('.av-text pre').textContent() ?? '').includes('"a, ""b"""')), 'Source shows the raw CSV');
+  await p.goto(`${origin}/results/logo-1`);
+  check(await until(async () => await p.locator('.av-frame img').evaluate((i: any) => i.complete && i.naturalWidth > 0).catch(() => false)), 'SVG opens as an image');
+  await p.goto(`${origin}/results/csv-1`);
+  check(await until(async () => await p.getByRole('button', { name: 'Preview', exact: true }).count() === 1 && await p.locator('.av-table').count() === 0), 'the CSV choice of Source is remembered');
   await p.goto(`${origin}/results/page-1`);
-  check(await until(async () => (await p.locator('.av-text pre').textContent() ?? '').includes('<script>')), 'HTML shows as source text');
-  await p.getByRole('button', { name: 'Run preview' }).click();
+  check(await until(async () => await p.locator('.av-frame iframe').count() === 1), 'HTML opens as a running preview');
+  await p.getByRole('button', { name: 'Source', exact: true }).click();
+  check(await until(async () => (await p.locator('.av-text pre').textContent() ?? '').includes('<script>')), 'HTML Source shows the source text');
+  await p.getByRole('button', { name: 'Preview', exact: true }).click();
   check(await p.locator('.av-frame iframe').getAttribute('sandbox') === 'allow-scripts allow-forms allow-modals', 'HTML preview frame: scripts, no same-origin');
   const frame = p.frameLocator('.av-frame iframe');
   check(await until(async () => await frame.locator('body[data-ran="1"]').count() === 1), 'the interactive result runs its script');

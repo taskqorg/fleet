@@ -220,9 +220,9 @@ Go rules:
 
 ## Verification
 
-The merge-gate command is `pnpm install --frozen-lockfile && pnpm run build && (cd go && go generate ./... && go vet ./... && go test ./...) && pnpm test`.
+The merge-gate command is `pnpm install --frozen-lockfile && pnpm run build && (cd go && go generate ./... && test -z "$(git status --porcelain)" && go vet ./... && go test ./...) && pnpm test`.
 
-`pnpm run build` also builds the Go coordinator (`go/bin/fleet-coordinator`). `pnpm test` runs the app unit tests and `tests/go/run.sh`: the binary on a fresh database of a local PostgreSQL server (server programs on `PATH`, `tests/harness.ts`), with `tests/trial` and `tests/go` over HTTP.
+`pnpm run build` runs `app:build` (typecheck and bundle) and `go:build` (the four Go binaries in `go/bin/`). `pnpm test` runs the app unit tests and `tests/go/run.sh`: the binary on a fresh database of a local PostgreSQL server (server programs on `PATH`, `tests/harness.ts`), with `tests/trial` and `tests/go` over HTTP.
 
 The full gate runs in CI on the pull request, never on the owner’s Mac: several agents work there at once, and each full run takes about 1.5 cores and 1 GB per test file. Locally run only the build of what you changed and the test files that cover it (`node <test file>`); push and read the CI result for everything else.
 

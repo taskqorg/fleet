@@ -112,7 +112,7 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 
 ### 1. Model
 
-*   **`provider`**: a code-side catalogue entry, not a table: `{id, baseUrl, tools: {<tool>: {method, path, unit, idempotent}}}` in `go/coordinator/c_providers.go`. Tavily (`web_search` → `/search`, `web_extract` → `/extract`, unit `credits`, idempotent) ships in C0; Meshy in C3. The coordinator copies the catalogue into the snapshot, so the gateway has no second copy.
+*   **`provider`**: a code-side catalogue entry, not a table: `{id, baseUrl, tools: {<tool>: {method, path, unit, idempotent}}}` in `go/coordinator/providers.go`. Tavily (`web_search` → `/search`, `web_extract` → `/extract`, unit `credits`, idempotent) ships in C0; Meshy in C3. The coordinator copies the catalogue into the snapshot, so the gateway has no second copy.
 *   **`api-connection`** document kind (separate list from `managed-account`, decision 1): `{id, name, provider, holder, access: {people: [], projects: [], experiments: []}, intake: all | paused, tools: [], comment}`. **Use:** a run token gets the connection when the run's director, its project or its experiment is listed (any one is enough); `projects: ['*']` means every project; empty means only work directed by the holder. **Visibility** is separate: architects and the holder see the connection; the owner sees all.
 *   **`connection-key`** document kind: `{id, connectionId, fingerprint (first 12 hex of SHA-256), state, addedAt, addedBy, disabledReason?, disabledAt?}`. No value. The key's id is its fingerprint (document id `key:<fingerprint>`), as in the lane, so the gateway's disabled-key file and the spool name keys the same way.
 *   Both kinds carry `holder` (people-access §4), so ownership, visibility and audit are one model with subscriptions.
@@ -259,7 +259,7 @@ Stages run alongside the people slices.
 | C3 Meshy and budgets | Meshy provider, `job` mode (submit then poll), connection budgets and requests | a Meshy charge lands as `connection_cost`; a `warn` budget shows and a request raises it | C1, people slice 6 |
 | C4 Delete Pipe | §7 | the Pipe search in the Verification Plan is empty; old route fails; a Lab web trial completes | C1 |
 
-All stages are built: registry, keys and snapshot in `go/coordinator/c_connections.go`, the catalogue in `c_providers.go`, the gateway in `go/gateway`, the MCP server in `go/executor/mcp_connection.go`, the API keys screen in the app.
+All stages are built: registry, keys and snapshot in `go/coordinator/connections.go`, the catalogue in `providers.go`, the gateway in `go/gateway`, the MCP server in `go/executor/mcp_connection.go`, the API keys screen in the app.
 
 ### Verification Plan
 

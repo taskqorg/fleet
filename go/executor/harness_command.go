@@ -31,9 +31,9 @@ func pharness(p any) string {
 	v, ok := any(nil), has(p, "harness")
 	switch {
 	case ok:
-		v = get(p, "harness")
-	case has(get(p, "agentConfig"), "harness"):
-		v = get(p, "agentConfig", "harness")
+		v = jAt(p, "harness")
+	case has(jAt(p, "agentConfig"), "harness"):
+		v = jAt(p, "agentConfig", "harness")
 	default:
 		return "codex"
 	}
@@ -145,7 +145,7 @@ func codexExec(dir, native, text, home, account, exe string) (*exec.Cmd, error) 
 		return nil, err
 	}
 	marker := filepath.Join(dir, ".fleet-native-home.json")
-	binding := encode(obj{"home": h, "codexHome": a})
+	binding := enc(M{"home": h, "codexHome": a})
 	if native != "" {
 		if old, err := os.ReadFile(marker); err != nil || string(old) != binding {
 			return nil, errors.New("native session home mismatch; legacy history retained without migration")
@@ -173,19 +173,19 @@ func codexExec(dir, native, text, home, account, exe string) (*exec.Cmd, error) 
 
 func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.Cmd, []byte, error) {
 	fail := func(s string) (*exec.Cmd, []byte, error) { return nil, nil, errors.New(s) }
-	p := clone(p0).(obj)
+	p := jClone(p0).(M)
 	if profile, ok := p0["agentConfig"]; ok {
 		if err := profileValidate(profile); err != nil {
 			return nil, nil, err
 		}
 		for _, k := range []string{"harness", "model", "effort"} {
-			if has(p0, k) && has(profile, k) && encode(p0[k]) != encode(get(profile, k)) {
+			if has(p0, k) && has(profile, k) && enc(p0[k]) != enc(jAt(profile, k)) {
 				return fail("requested configuration conflicts with profile")
 			}
 		}
 		for _, k := range []string{"harness", "model", "effort", "instructions", "instructionRole", "tools", "settings"} {
 			if has(profile, k) {
-				p[k] = get(profile, k)
+				p[k] = jAt(profile, k)
 			}
 		}
 	}
@@ -215,18 +215,18 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 	if !has(accounts, account) {
 		return fail("account not provisioned")
 	}
-	a := get(accounts, account)
-	if has(a, "readiness") && get(a, "readiness") != "ready" {
+	a := jAt(accounts, account)
+	if has(a, "readiness") && jAt(a, "readiness") != "ready" {
 		return fail("named host account is unprovisioned; operator login and readiness review required")
 	}
-	if get(a, "harness") != h {
+	if jAt(a, "harness") != h {
 		return fail("account harness mismatch")
 	}
-	home, ok := str(get(a, "home"))
+	home, ok := str(jAt(a, "home"))
 	if !ok {
 		return fail("home missing")
 	}
-	nh, ok := str(get(a, "nativeHome"))
+	nh, ok := str(jAt(a, "nativeHome"))
 	if !ok {
 		return fail("nativeHome missing")
 	}
@@ -241,8 +241,8 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 		}
 	}
 	credentialHome := ""
-	if (isACP(h) || h == "claude") && get(a, "credentialAuthority") == "native-current" {
-		ch, ok := str(get(a, "credentialHome"))
+	if (isACP(h) || h == "claude") && jAt(a, "credentialAuthority") == "native-current" {
+		ch, ok := str(jAt(a, "credentialHome"))
 		if !ok {
 			return fail("credentialHome required for native-current")
 		}
@@ -257,7 +257,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 	} else if has(a, "credentialAuthority") {
 		return fail("unsupported credential authority")
 	}
-	exe, ok := str(get(a, "executable"))
+	exe, ok := str(jAt(a, "executable"))
 	if !ok {
 		return fail("host executable missing")
 	}
@@ -272,7 +272,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 	if err != nil {
 		return nil, nil, err
 	}
-	binding := obj{"harness": h, "account": account, "home": homeAbs, "nativeHome": nhAbs}
+	binding := M{"harness": h, "account": account, "home": homeAbs, "nativeHome": nhAbs}
 	if h == "claude" {
 		if _, err := claudePlacementHere(); err != nil {
 			return fail("Claude is ineligible on this host: " + err.Error())
@@ -280,7 +280,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 	}
 	if isACP(h) || h == "claude" {
 		binding["transport"] = map[bool]string{true: "stream-json", false: "acp-1.5.3"}[h == "claude"]
-		binding["credentialAuthority"] = get(a, "credentialAuthority")
+		binding["credentialAuthority"] = jAt(a, "credentialAuthority")
 		binding["credentialHome"] = nil
 		if credentialHome != "" {
 			c, err := absolute(credentialHome)
@@ -297,11 +297,11 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 			old, err = os.ReadFile(filepath.Join(dir, ".fleet-harness-account.json"))
 		}
 		v, derr := decode(old)
-		if err != nil || derr != nil || encode(v) != encode(binding) {
+		if err != nil || derr != nil || enc(v) != enc(binding) {
 			return fail("native account/session binding mismatch")
 		}
 	}
-	if err := os.WriteFile(marker, []byte(encode(binding)), 0o644); err != nil {
+	if err := os.WriteFile(marker, []byte(enc(binding)), 0o644); err != nil {
 		return nil, nil, err
 	}
 	text, hasText := str(p["text"])
@@ -332,7 +332,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 	if !hasText {
 		return fail("missing text")
 	}
-	instructions := sv(p["instructions"])
+	instructions := jStr(p["instructions"])
 	if h == "claude" {
 		u, err := user.Current()
 		if err != nil || u.Username == "" {
@@ -353,12 +353,12 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 			if err := os.MkdirAll(filepath.Join(plugin, ".claude-plugin"), 0o755); err != nil {
 				return nil, nil, err
 			}
-			manifest := encode(obj{"name": "fleet-skills", "version": "1.0.0", "description": "Skills granted by the Fleet profile"})
+			manifest := enc(M{"name": "fleet-skills", "version": "1.0.0", "description": "Skills granted by the Fleet profile"})
 			if err := os.WriteFile(filepath.Join(plugin, ".claude-plugin/plugin.json"), []byte(manifest), 0o644); err != nil {
 				return nil, nil, err
 			}
 			for _, s := range skills {
-				id, _ := str(get(s, "id"))
+				id, _ := str(jAt(s, "id"))
 				if id == "" || strings.Trim(id, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
 					return fail("invalid skill id")
 				}
@@ -366,7 +366,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 				if err := os.MkdirAll(d, 0o755); err != nil {
 					return nil, nil, err
 				}
-				if err := os.WriteFile(filepath.Join(d, "SKILL.md"), []byte(sv(get(s, "text"))), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(d, "SKILL.md"), []byte(jStr(jAt(s, "text"))), 0o644); err != nil {
 					return nil, nil, err
 				}
 			}
@@ -398,7 +398,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 				return fail("invalid native session id")
 			}
 			c.Args = append(c.Args, "--resume="+native)
-		} else if src, ok := str(get(p, "fork", "nativeSessionId")); ok && safeNativeID(src) {
+		} else if src, ok := str(jAt(p, "fork", "nativeSessionId")); ok && safeNativeID(src) {
 			// Claude stores sessions per cwd project; copy the source transcript into this session's project, then fork it.
 			file := src + ".jsonl"
 			entries, err := os.ReadDir(filepath.Join(nh, "projects"))
@@ -457,7 +457,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 	sub := func(v string) string { return strings.ReplaceAll(v, "{nativeHome}", nh) }
 	var args []string
 	if has(a, "args") {
-		list, ok := get(a, "args").([]any)
+		list, ok := jAt(a, "args").([]any)
 		for _, x := range list {
 			s, isS := x.(string)
 			ok = ok && isS
@@ -474,7 +474,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 		}
 	}
 	if has(a, "environment") {
-		env, ok := get(a, "environment").(obj)
+		env, ok := jAt(a, "environment").(M)
 		if !ok {
 			return fail("binding environment must be an object")
 		}
@@ -489,7 +489,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 		setEnv(c, "GEMINI_HOME", nh)
 	}
 	c.Args = append(c.Args, args...)
-	if sandbox, ok := get(p, "settings", "sandbox").(bool); ok && h == "antigravity" {
+	if sandbox, ok := jAt(p, "settings", "sandbox").(bool); ok && h == "antigravity" {
 		c.Args = append(c.Args, fmt.Sprintf("--sandbox=%t", sandbox))
 	}
 	return c, nil, nil
@@ -499,10 +499,10 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 // the profile grants skills.
 func claudeExtraTools(p any) []string {
 	var t []string
-	if get(p, "webRoute") == "builtin" {
+	if jAt(p, "webRoute") == "builtin" {
 		t = append(t, "WebSearch", "WebFetch")
 	}
-	if s, _ := get(p, "skills").([]any); len(s) > 0 {
+	if s, _ := jAt(p, "skills").([]any); len(s) > 0 {
 		t = append(t, "Skill")
 	}
 	return t

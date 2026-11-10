@@ -51,14 +51,14 @@ Section numbers §1-§12 are cited by code; keep them.
 - **Access** allows the group `fleet-people`, edited by hand.
 - **Two credential kinds never mix.** A person: browser Bearer plus `X-Fleet-Person`. A host: its host secret and no `X-Fleet-Person`; a host-secret request with the header is 403. A host secret equal to the browser secret is refused.
 - **Coordinator.** A browser request without `X-Fleet-Person` is 401. An e-mail not in `people.json` is 403. The request context carries the person.
-- **`people.json`** (`FLEET_PEOPLE_FILE`, `go/coordinator/main.go`, `b_people.go`): `[{email, name, roles, owner?, grants: [{kind, id}]}]`, exactly one `owner: true`. Loaded into tables `person` and `person_grant` at start and on an owner edit. Not built: re-reading the file when it changes; keeping the last valid load and raising a needs-you question for a malformed file (today the coordinator does not start).
+- **`people.json`** (`FLEET_PEOPLE_FILE`, `go/coordinator/main.go`, `people.go`): `[{email, name, roles, owner?, grants: [{kind, id}]}]`, exactly one `owner: true`. Loaded into tables `person` and `person_grant` at start and on an owner edit. Not built: re-reading the file when it changes; keeping the last valid load and raising a needs-you question for a malformed file (today the coordinator does not start).
 - **`me`** returns e-mail, name, roles, owner flag and `grantsVersion`: a hash of roles, owner flag and grants, not of the name. The operator app clears its offline cache when `grantsVersion` changes (`app/src/offline.ts` `checkGrants`).
 - **Loopback scripts** that call the coordinator with the browser Bearer send `X-Fleet-Person` from `FLEET_PERSON` (`scripts/lab-examples.ts`).
 - **Actors.** Every audit `actor` is the person's e-mail; agents act as their execution ID; program workers as `program-worker`. Literal `'operator'` as a role (`askedBy` of agent questions) stays.
 
 ### 2. Visibility
 
-- **Scope per transaction.** `Store.Tx` (`go/coordinator/store.go`) takes the scope of the current request person (`scopeOf`), read per transaction. The owner, hosts, timers and program workers keep the connection's `*` scope and run no extra statement. Any other person gets `SET LOCAL fleet.project_ids` (their project grants; an architect also gets `''`, rows without a project) and `SET LOCAL fleet.person`. A scoped query outside a transaction runs in one. Host and account choice inside a person's request runs unscoped (`unscoped`, `go/coordinator/b_unscoped.go`). The change stream reads each wake in its viewer's scope.
+- **Scope per transaction.** `Store.Tx` (`go/coordinator/store.go`) takes the scope of the current request person (`scopeOf`), read per transaction. The owner, hosts, timers and program workers keep the connection's `*` scope and run no extra statement. Any other person gets `SET LOCAL fleet.project_ids` (their project grants; an architect also gets `''`, rows without a project) and `SET LOCAL fleet.person`. A scoped query outside a transaction runs in one. Host and account choice inside a person's request runs unscoped (`unscoped`, `go/coordinator/store.go`). The change stream reads each wake in its viewer's scope.
 - **Holder rows.** Row-level security on `document` also shows `host`, `managed-account` and `api-connection` rows whose `holder` is `fleet.person`; `store` rows carry a `holder` column with the same clause. `host-observation` rows carry the host's holder. A holder sees their own host and store without the architect role.
 - **Operations per role.** Architect operations: `account_*`, `lab_*`, `connection*`, `recovery*`, `reconcil*`, `transport_*`, `artifact_rule*`, `profiles_list`, and routes `/api/lab`, `/api/accounts`, `/api/recovery*`, `/api/reconciliation`, `/api/profiles`. An operator call is 403. `hosts_list` and `stores_list` are operator operations; row-level security filters them.
 - A write outside the scope (row-level security error 42501) is 403.
@@ -68,7 +68,7 @@ Section numbers §1-§12 are cited by code; keep them.
 
 ### 3. Hosts: records, secrets and trust
 
-- **Host record** (`go/coordinator/a_hosts.go`): document kind `host` `{id, name, holder, platform, roles, secretHash, intake, harnesses: {<name>: {allowed}}, createdAt}`, stored under id `host:<id>` (document ids are unique across kinds; `host-observation` uses the bare id). Config keeps only the coordinator's own host ID. The coordinator creates no host rows by itself.
+- **Host record** (`go/coordinator/hosts.go`): document kind `host` `{id, name, holder, platform, roles, secretHash, intake, harnesses: {<name>: {allowed}}, createdAt}`, stored under id `host:<id>` (document ids are unique across kinds; `host-observation` uses the bare id). Config keeps only the coordinator's own host ID. The coordinator creates no host rows by itself.
 - **Roles:** `inspector-for:<hostId>` (runs account inspections and integration for that host) and `publication` (runs delivery). A host without a role runs agent work.
 - **Secret per host.** Only the SHA-256 is stored. `scripts/host-secret.sh <file>` writes a new secret on the host itself into a 0600 file and prints only its hash; the owner calls `hosts_register {id, holder, roles, harnesses, secretSha256}` or `hosts_rotate_secret`. No secret leaves its host. Without `secretSha256` the coordinator mints a secret and returns it once. Rotation stops the old secret at once. Both operations are owner only.
 - The executor reads `FLEET_HOST_SECRET_FILE`; the program worker reads `hostSecretFile` from its config. `FLEET_HOST_ID` is a label only.
@@ -153,7 +153,7 @@ Not built (all of §6). Today `enqueue` picks a host at queue time (§5 rule) an
 - An unusable explicit host or subscription makes the execution wait with that reason; it no longer fails the request.
 - Fleet never balances across subscriptions to stretch limits; the owner may list subscriptions in any order. One host may win the whole queue; intake and the order list are the controls.
 
-**As built (slice 6).** `enqueue` writes the execution with no host and a `dispatch` record (harness, project, explicit subscription, explicit host, last host, input); dispatch (`go/coordinator/a_dispatch.go`) runs at the start of every `/api/hosts/poll`, inside its transaction, and the start command is built at claim from the session as it is then. Candidates: the explicit subscription (or the codex default binding, the owner's configured default) as a list of one; otherwise the director's subscriptions, then take-rule ones, then the project's `subscriptions` order, then the host's own login (only for the host's holder). Hosts: the explicit one, else the session's last host, the coordinator default, then host creation order. Skips in order: trust, host intake, the subscription checks of `managed.resolve` (director, intake, placement, ready binding), online (a poll within 30 s), budgets. Not built yet: "hosts holding the project's files first" (slice 5 file locations) and the switch point (slice 7 readings). The claim needs no row lock: the poll runs under the coordinator's GLOBAL write lock. A queued execution that is stopped before dispatch is settled as stopped at once. Lab experiment budgets stay in Lab for now; the `budget` table carries person and project budgets, and spend is measured for `wall_ms` and `tokens` only (other units are unverifiable and never enforced). Questions gain `addressed_to`, readable by that person under row-level security; the owner-override notice (G4) uses it.
+**As built (slice 6).** `enqueue` writes the execution with no host and a `dispatch` record (harness, project, explicit subscription, explicit host, last host, input); dispatch (`go/coordinator/dispatch.go`) runs at the start of every `/api/hosts/poll`, inside its transaction, and the start command is built at claim from the session as it is then. Candidates: the explicit subscription (or the codex default binding, the owner's configured default) as a list of one; otherwise the director's subscriptions, then take-rule ones, then the project's `subscriptions` order, then the host's own login (only for the host's holder). Hosts: the explicit one, else the session's last host, the coordinator default, then host creation order. Skips in order: trust, host intake, the subscription checks of `managed.resolve` (director, intake, placement, ready binding), online (a poll within 30 s), budgets. Not built yet: "hosts holding the project's files first" (slice 5 file locations) and the switch point (slice 7 readings). The claim needs no row lock: the poll runs under the coordinator's GLOBAL write lock. A queued execution that is stopped before dispatch is settled as stopped at once. Lab experiment budgets stay in Lab for now; the `budget` table carries person and project budgets, and spend is measured for `wall_ms` and `tokens` only (other units are unverifiable and never enforced). Questions gain `addressed_to`, readable by that person under row-level security; the owner-override notice (G4) uses it.
 
 ### 7. Intake and stall alerts
 
@@ -174,7 +174,7 @@ Not built (all of §8); `quota` is reported as `unknown`.
 
 ### 9. Budgets
 
-Not built beyond Lab: experiments have `budgets` (`go/coordinator/c_lab.go`).
+Not built beyond Lab: experiments have `budgets` (`go/coordinator/lab.go`).
 
 ```text
 budget { id, scope: person | project | experiment | connection, scopeId,
@@ -207,6 +207,19 @@ Built from `packages/ui` only, per `docs/design-system/owner-rules.md`.
 
 - Built: hosts list and stores list filtered by row-level security.
 - Not built: **Subscriptions** (`/subscriptions`): holder, harness, plan, intake, reading with age and reset countdown, hosts, take rule, comment, terms warnings. **Hosts:** holder, intake, placement, secret rotation. **Task and execution:** directed by, taken from, connection, route decision. **Project settings:** order list, file locations with preview, repository delivery. **Budgets** with spend, basis, age and Ask for more.
+
+## Agent access to the web app
+
+Agents (the orchestrator, a PM, development workers in worktrees) open the deployed `https://fleet.ufobe.com` without the owner signing in. They use the existing service token `ufobe-site-agents` (`~/.config/ufobe-agents/README.md` on the Mac; the same file for root and hermes on PDS18). No new mechanism.
+
+- **Access.** Application `Fleet` (`d96d8ee0-0150-4f70-85d5-ac9b88af12b1`, domain `fleet.ufobe.com`) has policy `site-agents` (`b0ee3b61-7777-4779-bc97-29e027cac7bb`, `non_identity`, precedence 2, include service token `e5e8fd24-42b1-44cf-8b48-056119b70056`) next to `Fleet people` (`55aff54c-e181-4a53-be03-d016a8290b8c`). Nothing else changed; the `/api/hosts/*` and `/v1/call` applications keep their own policies.
+- **Guard.** A service-token JWT has no `email` claim; it has `common_name` (the token's client ID). The guard sends `X-Fleet-Person: <common_name>` when `email` is absent; a `common_name` with `@` is refused.
+- **Person.** `people.json` has `{"email": "site-agents", "name": "Site agents", "roles": ["operator", "architect"], "accessCommonName": "<client ID>", "grants": [{"kind": "*", "id": "*"}]}`. The coordinator maps a header equal to an `accessCommonName` to that person. The value lives only in the deployed file, never in Git.
+- **Rights.** Grant `{kind: "*"}` is owner-equivalent (`fullAccess`, `go/coordinator/b_people.go`): scope `*` and every owner check, except `people_set`, which stays the owner's. It is a setting: the owner narrows it by replacing the grant with project grants or by removing roles.
+- **Actor.** Every request is the person `site-agents`: audit `actor`, `setting-change`, `directedBy` and telemetry show `site-agents`, never the owner. `me` returns `owner: false`.
+- **Use.** Send `CF-Access-Client-Id` and `CF-Access-Client-Secret` from the sourced env file. curl: two `-H` headers. Playwright or Chromium: `extraHTTPHeaders` on a context used only for `fleet.ufobe.com`, so the secret never goes to another host. See [AGENTS.md](../../AGENTS.md#opening-the-deployed-web-app).
+- **Smoke check.** `deploy/infrastructure/agent-access-smoke.sh` opens `/`, `/tasks`, `/lab` and `/api/accounts`, then the `/api/ops` reads `me` (is `site-agents`) and `project_list` (not empty).
+- **Gap.** After a restart with a malformed `people.json`, the people come from the `person` rows, which have no `accessCommonName`; agents get 403 until the file is fixed.
 
 ## Slices
 

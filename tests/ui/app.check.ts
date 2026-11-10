@@ -60,9 +60,6 @@ try {
     await page.emulateMedia({ colorScheme: 'light' });
     for (const f of await layoutFindings(page)) out.push(`  ${f}`);
   }
-  // Fonts (D19): the app's own IBM Plex files load; a missing file would fall back to the system font without any error.
-  const fonts = await page.evaluate(() => document.fonts.ready.then(() => ['IBM Plex Sans', 'IBM Plex Mono'].filter(f => ![...document.fonts].some(x => x.family.replace(/["']/g, '') === f && x.status === 'loaded'))));
-  out.push(`fonts: ${fonts.length ? 'NOT LOADED ' + fonts.join(', ') : 'IBM Plex Sans and Mono loaded'}`);
   // Narrow width: the rail stays, the opened item takes the place of the catalogue.
   const narrow = await b.newPage({ viewport: { width: 600, height: 900 } });
   await narrow.goto(origin + `/tasks/${waiting}`); await narrow.waitForTimeout(700);

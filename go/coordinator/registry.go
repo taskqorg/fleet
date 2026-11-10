@@ -9,8 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Route registry of the Go rewrite. Area files call these from init(); patterns are net/http ServeMux patterns
-// ("GET /api/sessions/{id}", read with q.r.PathValue). Registered routes win over the trial table in main.go.
+// Route registry: the one router. Domain files call these from init(); patterns are net/http ServeMux patterns
+// ("GET /api/sessions/{id}", read with q.r.PathValue).
 //   route        one transaction around the handler: GET a read snapshot, otherwise one GLOBAL write.
 //   longRoute    no surrounding transaction (q.tx nil); the handler opens its own through q.app.store.Tx.
 //   publicRoute  matched before the credential check; a plain http.HandlerFunc.
@@ -19,6 +19,13 @@ import (
 // A handler may return a raw value instead of JSON.
 
 type raw func(http.ResponseWriter) error
+
+// route kinds: per-route transaction (read snapshot for GET, one GLOBAL write otherwise); txNone runs without one.
+const (
+	txRead = iota
+	txWrite
+	txNone
+)
 
 type registeredRoute struct {
 	pattern string
@@ -91,6 +98,31 @@ func (a *App) registered() *http.ServeMux {
 	return mux
 }
 
+// routes is the server handler: the registered mux; GET /api/stream after the credential check; any other unmatched
+// path is a JSON 404 after the credential check.
+func (a *App) routes() http.Handler {
+	mux := a.registered()
+	return http.HandlerFunc(func(w http.ResponseWriter, hr *http.Request) {
+		if _, p := mux.Handler(hr); p != "" {
+			mux.ServeHTTP(w, hr)
+			return
+		}
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		q := &Request{r: hr, app: a}
+		err := a.authorize(q)
+		if err == nil && hr.Method == "GET" && hr.URL.Path == "/api/stream" {
+			// The stream runs its own short reads: no body, no person gate, no surrounding transaction (stream.go).
+			err = a.serveStream(q, w)
+		} else if err == nil {
+			err = fail(404, "Route "+hr.Method+":"+hr.URL.Path+" not found")
+		}
+		if err != nil {
+			writeError(w, err)
+		}
+	})
+}
+
 // serve: credential check, body, the route's transaction, then JSON (or the raw writer) or the error.
 func (a *App) serve(w http.ResponseWriter, hr *http.Request, kind int, h handler) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -128,7 +160,7 @@ func (a *App) serve(w http.ResponseWriter, hr *http.Request, kind int, h handler
 }
 
 // guard is the app.ts preHandler person gate on every route and operation, whatever registered it: architect operations and
-// routes need the architect role (or the held subscription), a named project must be granted. bop, broute and cop apply the
+// routes need the architect role (or the held subscription), a named project must be granted. gatedObjOp, gatedRoute and gatedOp apply the
 // same gate again; it is idempotent.
 func (a *App) guard(q *Request) error {
 	if q.person == nil || q.person.Owner {

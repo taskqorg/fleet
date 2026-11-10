@@ -53,16 +53,16 @@ func accessHeaders() map[string]string {
 var gatewayClient = &http.Client{Timeout: 60 * time.Second}
 
 // connectionCall is one gateway call: {tool, callId, outcome: ok|error|unknown, error_code, usage, output}.
-func connectionCall(connection, tool string, arguments any) obj {
+func connectionCall(connection, tool string, arguments any) M {
 	url, token := strings.TrimRight(os.Getenv("FLEET_GATEWAY_URL"), "/"), os.Getenv("FLEET_RUN_TOKEN")
 	// An owner connection token lives in a 0600 file (FLEET_TOKEN_FILE), never in the session config.
 	if f := os.Getenv("FLEET_TOKEN_FILE"); token == "" && f != "" {
 		b, _ := os.ReadFile(f)
 		token = strings.TrimSpace(string(b))
 	}
-	line := obj{"tool": tool, "callId": nil, "outcome": "error", "error_code": nil, "usage": nil, "output": nil}
-	with := func(kv ...any) obj {
-		r := obj{}
+	line := M{"tool": tool, "callId": nil, "outcome": "error", "error_code": nil, "usage": nil, "output": nil}
+	with := func(kv ...any) M {
+		r := M{}
 		for k, v := range line {
 			r[k] = v
 		}
@@ -74,7 +74,7 @@ func connectionCall(connection, tool string, arguments any) obj {
 	if url == "" || token == "" {
 		return with("error_code", "connection-unavailable")
 	}
-	req, err := http.NewRequest("POST", url+"/v1/call/"+connection+"/"+tool, bytes.NewReader([]byte(encode(arguments))))
+	req, err := http.NewRequest("POST", url+"/v1/call/"+connection+"/"+tool, bytes.NewReader([]byte(enc(arguments))))
 	if err != nil {
 		return with("error_code", "unreachable")
 	}
@@ -110,13 +110,13 @@ func connectionCall(connection, tool string, arguments any) obj {
 	ok := r.StatusCode >= 200 && r.StatusCode < 300
 	output, err := decode(body)
 	if err != nil {
-		output = obj{"text": strings.ToValidUTF8(string(body[:min(len(body), 2000)]), "�")}
+		output = M{"text": strings.ToValidUTF8(string(body[:min(len(body), 2000)]), "�")}
 		if ok {
 			return with("outcome", "unknown", "error_code", "invalid-response", "output", output)
 		}
 	}
 	if ok {
-		return with("outcome", "ok", "output", output, "usage", get(output, "usage"))
+		return with("outcome", "ok", "output", output, "usage", jAt(output, "usage"))
 	}
 	// The gateway names its own refusals in x-fleet-error; a provider reply passed through is http-<status>.
 	reason := r.Header.Get("x-fleet-error")
@@ -132,13 +132,13 @@ func connectionCall(connection, tool string, arguments any) obj {
 }
 
 func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error {
-	tools, _ := get(spec, "tools").([]any)
+	tools, _ := jAt(spec, "tools").([]any)
 	if tools == nil {
 		tools = []any{}
 	}
 	names := map[string]bool{}
 	for _, t := range tools {
-		names[sv(get(t, "name"))] = true
+		names[jStr(jAt(t, "name"))] = true
 	}
 	out := bufio.NewWriter(w)
 	sc := bufio.NewScanner(in)
@@ -148,46 +148,46 @@ func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error
 		if err != nil || !has(m, "id") {
 			continue
 		}
-		params, _ := get(m, "params").(obj)
-		reply := obj{"jsonrpc": "2.0", "id": get(m, "id")}
-		switch get(m, "method") {
+		params, _ := jAt(m, "params").(M)
+		reply := M{"jsonrpc": "2.0", "id": jAt(m, "id")}
+		switch jAt(m, "method") {
 		case "initialize":
 			pv := any("2025-06-18")
 			if has(params, "protocolVersion") {
 				pv = params["protocolVersion"]
 			}
-			instr := get(spec, "instructions")
+			instr := jAt(spec, "instructions")
 			if !has(spec, "instructions") {
 				instr = ""
 			}
-			reply["result"] = obj{"protocolVersion": pv, "capabilities": obj{"tools": obj{}}, "serverInfo": obj{"name": connection, "version": "1"}, "instructions": instr}
+			reply["result"] = M{"protocolVersion": pv, "capabilities": M{"tools": M{}}, "serverInfo": M{"name": connection, "version": "1"}, "instructions": instr}
 		case "ping":
-			reply["result"] = obj{}
+			reply["result"] = M{}
 		case "tools/list":
-			reply["result"] = obj{"tools": tools}
+			reply["result"] = M{"tools": tools}
 		case "tools/call":
 			name, _ := str(params["name"])
-			line := obj{"outcome": "error", "error_code": "tool-not-granted", "output": nil}
+			line := M{"outcome": "error", "error_code": "tool-not-granted", "output": nil}
 			if names[name] && name != "" {
 				args := params["arguments"]
 				if !truth(args) {
-					args = obj{}
+					args = M{}
 				}
 				line = connectionCall(connection, name, args)
 			}
 			ok := line["outcome"] == "ok"
-			text := encode(line["output"])
+			text := enc(line["output"])
 			if !ok {
 				text = fmt.Sprintf("Call %v: %v", line["outcome"], line["error_code"])
 				if truth(line["output"]) {
-					text += " " + encode(line["output"])
+					text += " " + enc(line["output"])
 				}
 			}
-			reply["result"] = obj{"content": []any{obj{"type": "text", "text": text}}, "isError": !ok}
+			reply["result"] = M{"content": []any{M{"type": "text", "text": text}}, "isError": !ok}
 		default:
-			reply["error"] = obj{"code": -32601, "message": "method not found"}
+			reply["error"] = M{"code": -32601, "message": "method not found"}
 		}
-		fmt.Fprintln(out, encode(reply))
+		fmt.Fprintln(out, enc(reply))
 		out.Flush()
 	}
 	return sc.Err()

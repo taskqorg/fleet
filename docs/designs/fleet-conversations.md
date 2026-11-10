@@ -63,7 +63,7 @@ The current screen loads a whole session at once and rebuilds the transcript on 
 *   A stored thread entity. The thread is derived from `task_id` or from the session.
 *   A new windowing engine. `VirtualList` is extended.
 *   Keeping the old view behind a flag.
-*   New agent operations. Retry, fork, hand off and switch use the existing agent tool operations (`go/coordinator/b_agent.go`).
+*   New agent operations. Retry, fork, hand off and switch use the existing agent tool operations (`go/coordinator/agent.go`).
 *   Editing or deleting artifacts from the viewer. Artifact lifecycle stays in the data foundation.
 
 ## Open Questions
@@ -117,7 +117,7 @@ Defaults below were chosen by the drafter so work is not blocked. The owner can 
 
 ### Ordering key
 
-Every row the thread needs already has one shared ordering number. `document.seq` is a `bigserial`, and the `execution`, `question` and `artifact` tables take their `seq` default from the same sequence (`packages/coordinator/db/schema.sql`). Events and operator messages are documents. Here `seq` is the row's `seq` column, not the per-execution `data.seq` that host events also carry. So `seq` gives one total order across sessions and executions that overlap in time. The thread cursor is `seq`. No new ordering column is needed.
+Every row the thread needs already has one shared ordering number. `document.seq` is a `bigserial`, and the `execution`, `question` and `artifact` tables take their `seq` default from the same sequence (`go/coordinator/schema.sql`). Events and operator messages are documents. Here `seq` is the row's `seq` column, not the per-execution `data.seq` that host events also carry. So `seq` gives one total order across sessions and executions that overlap in time. The thread cursor is `seq`. No new ordering column is needed.
 
 `seq` is taken at insert, not at commit, so two transactions can commit out of `seq` order. The operator app already solves this for its live feed: a read and the feed cursor come from one snapshot, and the feed (`change` table, ordered by `(xid, seq)` up to `pg_snapshot_xmin`) never skips a slow transaction ([fleet-operator-app.md](fleet-operator-app.md)). Thread reads copy that pattern:
 
@@ -232,11 +232,11 @@ Native browser selection is kept inside one row, for copying part of a reply.
 
 ### Questions
 
-The thread renders `question` blocks with the existing `DecisionBlock` pattern. Answering calls `questions_answer`, the call Tasks uses. `answerQuestion` (`go/coordinator/b_tasks.go`) returns the stored question when the same answer repeats and fails with 409 when a different answer arrives; the card then shows the stored answer and who gave it. Its read is not locked, so two different answers sent at the same moment can both pass; the update becomes `UPDATE ... WHERE state = 'open'` so only one wins. The card updates from the change feed. Answered cards collapse to one line with the answer.
+The thread renders `question` blocks with the existing `DecisionBlock` pattern. Answering calls `questions_answer`, the call Tasks uses. `answerQuestion` (`go/coordinator/tasks.go`) returns the stored question when the same answer repeats and fails with 409 when a different answer arrives; the card then shows the stored answer and who gave it. Its read is not locked, so two different answers sent at the same moment can both pass; the update becomes `UPDATE ... WHERE state = 'open'` so only one wins. The card updates from the change feed. Answered cards collapse to one line with the answer.
 
 ### Results and the artifact viewer
 
-Data foundation Phase 3 is on main: `artifact` rows, artifact stores and placement exist, and `artifact_list` and `artifact_get` exist (`go/coordinator/d_routes.go`).
+Data foundation Phase 3 is on main: `artifact` rows, artifact stores and placement exist, and `artifact_list` and `artifact_get` exist (`go/coordinator/artifact_routes.go`).
 
 *   **Result block**: one per execution end that has artifacts or a delivery, at the key of the `execution.ended` event. A delivery or artifact that arrives later updates this block in place; it does not move (OR-23). It shows artifact names, the delivery-stage chip and links each artifact to its Results page entry.
 *   **Delivery stage** (Owner Decision): the existing `stages` in `packages/ui/src/registry.ts`, rendered by `StageChip`. The coordinator maps the `delivery` record state to a stage key:
@@ -250,10 +250,10 @@ Data foundation Phase 3 is on main: `artifact` rows, artifact stores and placeme
 
     The delivery record has no check status today, so `checks` and `checks_failed` are not shown until delivery records one. No check state is guessed.
 
-*   **Viewer**: the existing `ResultViewer` (`packages/ui/src/controls.tsx:269`) gains image, video and text views. It opens in the work area (OR-27). It chooses a view from the stored `media_type`: image, video, text (read in `Range` pages as the operator scrolls, no cap), and download-only for other types. HTML and SVG are shown as text or in a sandboxed `iframe` with no scripts and no same-origin access; they are never inlined into the page. Bytes come from the existing `GET /api/results/:id` (`resultBytes`, `go/coordinator/d_routes.go`). The route's CSP drops `allow-scripts` and `script-src 'unsafe-inline'`, and the route gains `Range`, `X-Content-Type-Options: nosniff`, and `Content-Disposition: attachment` for types without a view.
+*   **Viewer**: the existing `ResultViewer` (`packages/ui/src/controls.tsx:269`) gains image, video and text views. It opens in the work area (OR-27). It chooses a view from the stored `media_type`: image, video, text (read in `Range` pages as the operator scrolls, no cap), and download-only for other types. HTML and SVG are shown as text or in a sandboxed `iframe` with no scripts and no same-origin access; they are never inlined into the page. Bytes come from the existing `GET /api/results/:id` (`resultBytes`, `go/coordinator/artifact_routes.go`). The route's CSP drops `allow-scripts` and `script-src 'unsafe-inline'`, and the route gains `Range`, `X-Content-Type-Options: nosniff`, and `Content-Disposition: attachment` for types without a view.
 *   **Results page**: a new app section listing `artifact` rows with task, project, execution, media type, state and time filters, using the Tasks list pattern (state icon first, OR-22). It uses the same `ResultViewer`. Conversations result cards link into it.
 
-Artifacts live in the `artifact` table. The thread, the viewer and the Results page read them only through `artifact_list` (`artifactList`, `go/coordinator/d_artifacts.go`) and `artifact_get`.
+Artifacts live in the `artifact` table. The thread, the viewer and the Results page read them only through `artifact_list` (`artifactList`, `go/coordinator/artifacts.go`) and `artifact_get`.
 
 ### Controls
 
@@ -261,7 +261,7 @@ Stop, steer and answer are always visible. The rest are in one left-aligned menu
 
 *   **Composer target**: the newest running execution of the thread, named in the composer. When nothing runs, the composer sends a new message to the thread's newest session with `message_send`, which starts an execution, and steer is not shown. Each `boundary` row of a running execution has its own Stop (Owner Decision).
 *   **Stop**: `execution_stop` on that execution.
-*   **Steer**: `message_send` with `delivery: 'steer'` on the target execution's session; queued when the host cannot steer (`go/coordinator/b_agent.go`).
+*   **Steer**: `message_send` with `delivery: 'steer'` on the target execution's session; queued when the host cannot steer (`go/coordinator/agent.go`).
 
 Menu actions:
 
@@ -272,7 +272,7 @@ Menu actions:
 | Fork | `session_fork` | original session unchanged, task | session and execution | same thread, new boundary |
 | Hand off | `session_transition` with another harness or account (`create_with_handoff`) | task, context handoff record | session and execution | same thread, new boundary |
 
-Hand off is the existing context handoff (`makeHandoff`, `go/coordinator/b_agent.go`). Quota-driven handoff is not part of this design (it is also out of scope in [fleet-data-foundation.md](fleet-data-foundation.md)).
+Hand off is the existing context handoff (`makeHandoff`, `go/coordinator/agent.go`). Quota-driven handoff is not part of this design (it is also out of scope in [fleet-data-foundation.md](fleet-data-foundation.md)).
 
 ### Data flow
 
@@ -384,7 +384,7 @@ It asserts: newest entry visible on open; scroll up loads older pages with 0 px 
 
 ## Implementation
 
-All five stages are built: block projection in `go/executor/harness_blocks.go`; `thread_entries`, `thread_search`, `replyText` and the feed cursor in `go/coordinator/b_threads.go`; the screen in `app/src/views/conversations.tsx`, `app/src/threads.ts` and `app/src/selection.ts`; the Results page in `app/src/views/results.tsx`; the viewer in `ResultViewer` (`packages/ui/src/controls.tsx`).
+All five stages are built: block projection in `go/executor/harness_blocks.go`; `thread_entries`, `thread_search`, `replyText` and the feed cursor in `go/coordinator/threads.go`; the screen in `app/src/views/conversations.tsx`, `app/src/threads.ts` and `app/src/selection.ts`; the Results page in `app/src/views/results.tsx`; the viewer in `ResultViewer` (`packages/ui/src/controls.tsx`).
 
 *   **Block key**: the string `` `${seq}:${index}` ``, compared numerically by `seq` then `index`. Coordinator-made blocks (`question`, `boundary`, `result`) use index 0 on their own row.
 *   **Snapshot and feed cursor**: thread operations run in one read snapshot, and `feedCursor` is read inside it.
