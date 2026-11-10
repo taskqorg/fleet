@@ -5,6 +5,7 @@ import { useLocation } from 'wouter-preact';
 import {
   ListDetail, ListFrame, FilterBar, StateCounters, RowCheck, VirtualList, StateBadge, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection, type VirtualListHandle,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf,
+  writeClip, zone,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
 import { op, online } from '../api.ts';
@@ -13,7 +14,7 @@ import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, inside, range, type Selection } from '../selection.ts';
 
-const ROW = parseInt(tokens.size.row);
+const ROW = parseInt(tokens.size['row-2']); // two-line catalogue row
 type SessionRow = { id: string; title: string | null; state: StateOf<'session'>; harness: string | null; openQuestions: number; sortKey: (string | number)[] };
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
 const reqId = () => crypto.randomUUID();
@@ -42,12 +43,10 @@ export function Conversations({ id }: { id?: string }) {
           : list.shownKey === null || (!rows.length && list.pending) ? <Skeleton rows={8} />
           : !rows.length ? <Empty text="No conversations yet." action={<Button label="New conversation" onClick={create} />} />
           : <VirtualList items={rows} getKey={r => r.id} rowHeight={ROW} follow="top" label="Conversations" onEnd={list.more}
-            columns="1.25rem minmax(0,1fr) 1.25rem 2rem 1.25rem" rowClass={r => r.id === id ? 'sel' : ''}
-            header={<><span /><span>Conversation</span><span /><span class="r">Asks</span><span /></>}
+            columns="1.25rem minmax(0,1fr) 2rem 1.25rem" rowClass={r => r.id === id ? 'sel' : ''}
             render={r => <>
               <span class="lead"><StateBadge family="session" state={r.state} compact /></span>
-              <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.title ?? 'New conversation'}</a><span class="id">{r.id.slice(0, 8)}</span></span>
-              <span>{isHarness(r.harness) && <HarnessMark h={r.harness} />}</span>
+              <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.title ?? 'New conversation'}</a><span class="id">{r.id.slice(0, 8)}</span>{isHarness(r.harness) && <HarnessMark h={r.harness} />}</span>
               <span class="r">{r.openQuestions ? <span class="chip-age t-attention alert" aria-label={`${r.openQuestions} open questions`}>{r.openQuestions}</span> : ''}</span>
               <RowCheck checked={sel.includes(r.id)} label={'Select ' + (r.title ?? 'conversation')} onToggle={() => toggleSel(r.id)} />
             </>} />}
@@ -65,12 +64,13 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const key: ThreadKey = thread.win?.key ?? { session: id };
   // A plain click marks where a selection starts (no tint, so reading stays quiet); Shift+click selects up to that row.
   const [sel, setSel] = useState<Selection>(null), pickFrom = useRef<string | null>(null);
-  // Cmd+A selects the thread; Cmd+C copies the selected rows as markdown from the server. The clipboard write starts inside the
+  // Cmd+A selects the thread; Cmd+C copies the selected rows from the server as markdown and chat-safe HTML. The clipboard write starts inside the
   // key handler with a promise, so the browser keeps the user gesture while the export loads.
   const copySel = (s0: NonNullable<Selection>) => {
     try {
-      const text = op<{ markdown: string }>('thread_export', { key, ...range(s0) }).then(r => new Blob([r.markdown], { type: 'text/plain' }));
-      navigator.clipboard.write([new ClipboardItem({ 'text/plain': text })]).catch(e => copyFail(e, () => copySel(s0)));
+      // Both formats (formats.md "Copy"); times in the reader's own zone.
+      const text = op<{ markdown: string }>('thread_export', { key, ...range(s0), tz: zone() }).then(r => r.markdown);
+      writeClip(text).catch(e => copyFail(e, () => copySel(s0)));
     } catch (e) { copyFail(e, () => copySel(s0)); } // no async clipboard (plain http): say so instead of failing silently
   };
   // The key handler reads the latest selection through a ref: effects run after paint, and a key can come first.

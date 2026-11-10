@@ -4,7 +4,7 @@
 // answered through questions_answer like every question; rating outputs show blind (A, B, …) in the seeded order.
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { StateBadge, Button, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon } from '../../../packages/ui/src/index.ts';
+import { StateBadge, Button, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, ROW2 } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useDoc } from '../store.ts';
 
@@ -12,11 +12,7 @@ const LAB_KINDS = new Set(['experiment', 'score', 'question', 'execution']);
 const touches = (c: { kind: string }) => LAB_KINDS.has(c.kind);
 const ms = (t: any) => typeof t === 'number' ? t : Date.parse(t);
 
-export function Lab({ id }: { id?: string }) { return id ? <Experiment id={id} /> : <LabHome />; }
-
-const title = (e: any) => `${e.pipelineId} · ${e.kind === 'ab' ? 'A/B' : e.kind} · ${e.variants.map((v: any) => v.label).join(' vs ')}`;
-
-function LabHome() {
+export function Lab({ id }: { id?: string }) {
   const [, go] = useLocation();
   const { data, state } = useDoc<any>('lab', async () => {
     const [x, r, p, ex] = await Promise.all([op('lab_experiments_list'), op('lab_registry'), op('lab_ratings_list', { state: 'open' }), op('lab_examples_list', { state: 'proposed' }).catch(() => ({ examples: [] }))]);
@@ -25,32 +21,44 @@ function LabHome() {
   const now = Date.now();
   if (!data) return <><header class="page-h"><h1>Lab</h1></header><Empty text="Loading…" /></>;
   const approvals = data.ratings.filter((r: any) => r.exampleArtifactId), open = data.ratings.filter((r: any) => r.experimentId);
-  return <>
+  // Control column: what waits for the owner, then the experiments catalogue (its one scroller, OR-25).
+  const list = <>
     <header class="page-h"><h1>Lab</h1><span class="grow" /><OfflineMarker state={state} now={now} /></header>
     {(approvals.length > 0 || open.length > 0) && <section class="panel"><header class="panel-h"><Icon name="bell" /><h2>Waiting for you</h2></header>
       {open.length > 0 && <div class="vl-row static"><span>{open.length} open ratings</span></div>}
       {approvals.map((r: any) => <Rating key={r.id} r={r} now={now} />)}
     </section>}
-    <section class="panel"><header class="panel-h"><Icon name="chart-no-axes-column" /><h2>Experiments</h2><span class="muted">{data.experiments.length}</span></header>
-      {data.experiments.length ? <VirtualList items={data.experiments} getKey={(e: any) => e.id} rowHeight={32} follow="top" label="Experiments" columns="1.25rem minmax(0,1fr) 3rem"
-        header={<><span /><span>Experiment</span><span>Age</span></>}
+    <section class="panel">
+      {data.experiments.length ? <VirtualList items={data.experiments} getKey={(e: any) => e.id} rowHeight={ROW2} follow="top" label="Experiments" columns="1.25rem minmax(0,1fr) auto"
+        rowClass={(e: any) => e.id === id ? 'sel' : ''}
         render={(e: any) => <>
-          <StateBadge family="experiment" state={e.state} reason={e.stopReason ?? undefined} compact />
-          <a class="title row-link" href={`/lab/${e.id}`} onClick={ev => { ev.preventDefault(); go(`/lab/${e.id}`); }}>{title(e)}<span class="id">{e.id.slice(0, 8)}</span></a>
+          <span class="lead"><StateBadge family="experiment" state={e.state} reason={e.stopReason ?? undefined} compact /></span>
+          <span class="tt"><a class="title row-link" href={`/lab/${e.id}`} onClick={ev => { ev.preventDefault(); go(`/lab/${e.id}`); }}>{title(e)}</a><span class="id">{e.id.slice(0, 8)}</span></span>
           <AgeChip t={ms(e.createdAt)} now={now} />
         </>} />
         : <Empty text="No experiments yet. Create one with POST /api/lab/experiments." />}
     </section>
-    <section class="panel"><header class="panel-h"><Icon name="list" /><h2>Use-case registry</h2><span class="muted">{data.useCases.length}</span></header>
-      <VirtualList items={data.useCases} getKey={(u: any) => u.id} rowHeight={32} follow="top" label="Use cases" columns="1.25rem minmax(0,1fr) 5rem 9rem"
-        header={<><span /><span>Use case</span><span>Fit</span><span>Maturity</span></>}
-        render={(u: any) => <>
-          <StateBadge family="source" state={u.source_status} reason={u.source ? `${u.source.repo}/${u.source.path}#${u.source.anchor}` : undefined} compact />
-          <span class="title">{u.goal}<span class="id">{u.id}</span></span>
-          <span class="muted">{u.lab_fit}</span><span class="muted">{u.maturity}</span>
-        </>} />
-    </section>
   </>;
+  return <ListDetail list={list} detail={id ? <Experiment key={id} id={id} onClose={() => go('/lab')} /> : undefined} detailKey={id}
+    idle={<Registry useCases={data.useCases} />} />;
+}
+
+const title = (e: any) => `${e.pipelineId} · ${e.kind === 'ab' ? 'A/B' : e.kind} · ${e.variants.map((v: any) => v.label).join(' vs ')}`;
+
+// The use-case registry fills the work area while no experiment is open. It scrolls with the work area, so its rows are plain.
+// ponytail: static rows, fine for tens of use cases; make it its own catalogue with a virtual list if the registry grows past a few hundred.
+function Registry({ useCases }: { useCases: any[] }) {
+  return <article class="detail" aria-label="Use-case registry">
+    <h2 class="detail-title">Use-case registry</h2>
+    <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) 5rem 9rem' }}>
+      <div class="vl-head" role="row"><span /><span>Use case</span><span>Fit</span><span>Maturity</span></div>
+      {useCases.map((u: any) => <div key={u.id} role="row" class="vl-row static">
+        <StateBadge family="source" state={u.source_status} reason={u.source ? `${u.source.repo}/${u.source.path}#${u.source.anchor}` : undefined} compact />
+        <span class="tt"><span class="title">{u.goal}</span><span class="id">{u.id}</span></span>
+        <span class="muted">{u.lab_fit}</span><span class="muted">{u.maturity}</span>
+      </div>)}
+    </div>
+  </article>;
 }
 
 // One rating or approval question with its blind outputs and keyboard answers.
@@ -71,7 +79,7 @@ function Rating({ r, now }: { r: any; now: number }) {
 const scoreText = (s: any) => s.form === 'pick_best' ? `${s.wins ?? 0} of ${s.n} picks` : s.form === 'pass_fail' ? `${s.passed}/${s.n} pass` : s.mean === undefined ? '' : s.min === s.max ? s.mean.toFixed(2) : `${s.mean.toFixed(2)} (${s.min}–${s.max})`;
 const evaluatorLabel = (k: string) => k.split(':')[0] === 'human' ? 'owner ' + k.split(':')[2] : k.split(':').slice(0, 2).join(' ');
 
-function Experiment({ id }: { id: string }) {
+function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
   const { data: e, state } = useDoc<any>(`lab:${id}`, async () => {
     const [x, r] = await Promise.all([op('lab_experiment_get', { experimentId: id }), op('lab_ratings_list', { experimentId: id })]);
     return { ...x, ratings: r.ratings };
@@ -81,7 +89,7 @@ function Experiment({ id }: { id: string }) {
   const [patch, setPatch] = useState<any>(null);
   useEffect(() => { if (e && location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView(); }, [!!e]);
   const now = Date.now();
-  if (!e) return <><header class="page-h"><h1>Lab</h1></header><Empty text="Loading…" /></>;
+  if (!e) return <article class="detail" data-ui="detail" tabIndex={-1}><Empty text="Loading…" /></article>;
   const act = (name: string, body: any) => op(name, body).then((r: any) => { setMsg(r?.warnings?.length ? { text: r.warnings.join('; '), tone: 'warning' } : null); return r; }).catch((x: any) => setMsg({ text: x.message, tone: 'failure' }));
   const trial = (key: string) => e.trials.filter((t: any) => `${t.cell.example}|${t.cell.variant}|${t.cell.repeat}` === key).sort((a: any, b: any) => b.cell.attempt - a.cell.attempt)[0];
   const toggle = (t: string) => setSel(s => s.includes(t) ? s.filter(x => x !== t) : [...s, t]);
@@ -89,12 +97,13 @@ function Experiment({ id }: { id: string }) {
   const budgetOf = (unit: string) => e.budgets.find((b: any) => b.unit === unit);
   const note = (unit: string) => { const b = budgetOf(unit); return b ? `of ${b.limit} · ${b.action}${b.firedAt ? ' · reached' : ''}` : undefined; };
   const cols = `minmax(8rem,14rem) ${e.variants.map(() => 'minmax(12rem,1fr)').join(' ')}`;
-  return <>
-    <header class="page-h"><StateBadge family="experiment" state={e.state} reason={e.stopReason ?? undefined} /><h1>{title(e)}</h1><span class="id">{e.id.slice(0, 8)}</span><span class="grow" />
+  return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={title(e)}>
+    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><StateBadge family="experiment" state={e.state} reason={e.stopReason ?? undefined} /><span class="id">{e.id.slice(0, 8)}</span><span class="grow" />
       {e.state === 'draft' && <Button label="Launch" icon="play" kind="primary" onClick={() => act('lab_experiment_action', { experimentId: id, action: 'launch' })} />}
       {e.state === 'paused' && <Button label="Resume" icon="play" kind="primary" onClick={() => act('lab_experiment_action', { experimentId: id, action: 'resume' })} />}
       {(e.state === 'running' || e.state === 'paused') && <Button label="Stop" icon="square" kind="danger" onClick={() => act('lab_experiment_action', { experimentId: id, action: 'stop' })} />}
       <OfflineMarker state={state} now={now} /></header>
+    <h2 class="detail-title">{title(e)}</h2>
     {msg && <ProblemRow title={msg.tone === 'warning' ? 'Launched with warnings' : 'Action refused'} facts={msg.text} severity={msg.tone} actions={[]} />}
     <Totals items={[
       { label: 'Trials', m: e.spend.trials, kind: 'count', note: note('trials') },
@@ -143,5 +152,5 @@ function Experiment({ id }: { id: string }) {
     <section class="panel"><header class="panel-h"><Icon name="message-circle-question" /><h2>Ratings</h2><span class="muted">rated {e.ratings.filter((r: any) => r.state === 'answered').length} of {e.ratings.length}</span></header>
       {e.ratings.length ? e.ratings.map((r: any) => <Rating key={r.id} r={r} now={now} />) : <Empty text="Select comparable trials in the matrix to ask for a rating." />}
     </section>
-  </>;
+  </article>;
 }

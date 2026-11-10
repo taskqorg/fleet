@@ -95,7 +95,7 @@ These are settled elsewhere:
 * **Then:**
   * Within 1 s, T-9989's state icon changes in place and the needs-you counter rises.
   * Row 300 keeps its screen position. If T-9989 moves into a group above the viewport, the "N new" pill appears instead of a jump.
-  * The operator opens T-9989. At 1100 px or narrower, the detail comes first and takes focus.
+  * The operator opens T-9989. At 1100 px or narrower, the opened task takes the place of the list and takes focus.
   * Pressing `a` calls `questions_answer`, and the block collapses to "Accepted · now".
 
 ### CUJ 2: Two windows, one state
@@ -382,7 +382,7 @@ Kinds are always the client kinds above, never legacy kinds (design-system D15).
   * One `LISTEN` connection per process, and at most one short indexed read per open stream per commit wake (50 ms debounce).
   * About 10 people with a few windows each means a few tens of reads per wake.
   * Log size: one row per write. Measure rows per day in the first week; retention is the operator's setting.
-* **Accessibility and design.** The page specs, OR-1 to OR-22 and `check:design` apply to the app routes.
+* **Accessibility and design.** The page specs, the [owner rules](../design-system/owner-rules.md) and `check:design` apply to the app routes.
 
 ## Additional Resources
 

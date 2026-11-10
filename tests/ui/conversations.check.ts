@@ -136,8 +136,12 @@ try {
 
   // Copy one reply.
   await vl.evaluate(e => { e.scrollTop = e.scrollHeight; }); await p.waitForTimeout(200);
-  await p.locator('.th-text.agent', { hasText: 'Live reply two' }).getByRole('button', { name: 'Copy reply' }).click();
-  check(await p.evaluate(() => navigator.clipboard.readText()) === 'Live reply two', 'reply copy puts its markdown on the clipboard');
+  await p.locator('.th-text.agent', { hasText: 'Live reply two' }).getByRole('button', { name: 'Copy message' }).click();
+  // formats.md "Copy": a bold header line with author and time, the body, and chat-safe HTML beside the text.
+  const one = await until(async () => /^\*\*\S.* · \d{1,2} [A-Z][a-z]{2}( \d{4})? \d\d:\d\d\*\*\nLive reply two\n$/.test(await p.evaluate(() => navigator.clipboard.readText())));
+  check(one, 'message copy puts a header line (author · time) and the body on the clipboard');
+  const html = await p.evaluate(async () => { const [it] = await navigator.clipboard.read(); return it.types.includes('text/html') ? (await it.getType('text/html')).text() : ''; });
+  check(/^<b>[^<]+<\/b><br>Live reply two$/.test(html), 'message copy also writes chat-safe HTML');
 
   // Answer the open question.
   await p.locator('.decision', { hasText: 'Use Postgres 17?' }).first().getByRole('button', { name: 'yes' }).click();
@@ -162,6 +166,7 @@ try {
   await p.keyboard.press('Meta+c');
   const clip = await until(async () => /Alpha question[\s\S]*Alpha reply[\s\S]*Bravo question[\s\S]*Bravo reply/.test(await p.evaluate(() => navigator.clipboard.readText())));
   check(clip, 'Cmd+C copies the selected rows as markdown');
+  check(/\*\*You · \d{1,2} [A-Z][a-z]{2}|\*\*\S+ · \d{1,2} [A-Z][a-z]{2}/.test(await p.evaluate(() => navigator.clipboard.readText())), 'each copied message keeps its author and time');
   await p.evaluate(() => navigator.clipboard.writeText(''));
   await p.keyboard.press('Meta+a'); await p.keyboard.press('Meta+c');
   check(await until(async () => { const t = await p.evaluate(() => navigator.clipboard.readText()); return t.startsWith('---') && t.includes('Alpha question') && t.includes('Bravo reply'); }), 'Cmd+A then Cmd+C copies the whole thread');

@@ -53,7 +53,8 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .totals dt{color:var(--fg-muted);font-size:var(--font-size-sm)}
 .totals dd{margin:0;font-size:var(--font-size-lg)}
 .totals dd.note{font-size:var(--font-size-xs);color:var(--fg-muted)}
-.chip-age{display:inline-block;padding:0 var(--space-2);border-radius:var(--radius-sm);font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg-muted);background:var(--neutral-bg)}
+.chip-age{display:inline-block;padding:0 var(--space-2);border-radius:var(--radius-sm);font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg-muted)}
+/* formats.md: a time is plain; only a time that needs a look gets a box (OR-18). */
 .chip-age.alert{background:var(--tone-bg);color:var(--tone-fg);font-weight:var(--font-weight-bold)}
 
 /* Fill bar */
@@ -126,7 +127,9 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 /* Thread rows: content first, service zone on the right (OR-21); folds open downward (OR-23) */
 .th-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--space-3);align-items:start;padding:var(--space-2) var(--space-4)}
 .th-row .th-svc{display:inline-flex;align-items:center;gap:var(--space-2);color:var(--fg-muted);font-size:var(--font-size-sm)}
-.th-text.operator .who{font-weight:var(--font-weight-medium);margin-right:var(--space-2)}
+.th-who{display:flex;align-items:baseline;gap:var(--space-2);font-size:var(--font-size-sm);color:var(--fg-muted)}
+.th-who .who{font-weight:var(--font-weight-medium);color:var(--fg)}
+.th-who .when{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
 .th-text.operator{background:var(--surface)}
 .th-head{display:inline-flex;align-items:center;gap:var(--space-2);min-width:0;border:0;background:none;padding:0;color:var(--fg);font:inherit;text-align:left;cursor:pointer}
 .th-line{display:inline-flex;align-items:center;gap:var(--space-3);min-width:0}
@@ -169,7 +172,8 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .setting{display:grid;grid-template-columns:var(--size-label) 1fr;gap:var(--space-1) var(--space-4);align-items:center;padding:var(--space-3) 0;border-bottom:1px solid var(--line-soft)}
 .setting label{font-weight:var(--font-weight-medium)}
 .setting .val{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3)}
-.setting .value{height:var(--size-control);padding:0 var(--space-3);border:1px solid transparent;border-radius:var(--radius-md);background:none;font-family:var(--font-mono);cursor:text}
+.setting .value{height:var(--size-control);padding:0 var(--space-3);border:1px solid transparent;border-radius:var(--radius-md);background:none;font-variant-numeric:tabular-nums;text-align:left;cursor:text}
+/* formats.md: a setting value is text (sans, left); codes inside it carry .mono themselves. */
 .setting .value:hover{border-color:var(--line)}
 .setting input{width:var(--size-input);height:var(--size-control);padding:0 var(--space-3);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--surface);font-family:var(--font-mono)}
 .setting .help{grid-column:2;color:var(--fg-muted);font-size:var(--font-size-sm)}
@@ -203,6 +207,9 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .tooltip{position:fixed;z-index:10;max-width:var(--size-tip);transform:translate(-50%,calc(-100% - var(--space-2)));padding:var(--space-1) var(--space-2);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--float);color:var(--fg);box-shadow:var(--elevation-popover);font-size:var(--font-size-sm);line-height:var(--font-line);pointer-events:none}
 .tooltip.below{transform:translate(-50%,var(--space-2))}
 .vl-row .id{margin-left:0}
+/* formats.md: descriptive facts on a row's second line are sans; .id is only for codes. */
+.facts{font-size:var(--font-size-sm);color:var(--fg-muted)}
+.vl-head>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vl-row .btn.icon-only{border-color:transparent;background:none}.vl-row .btn.icon-only:hover{background:var(--hover)}
 
 /* Split button */
@@ -216,7 +223,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 
 /* State counters */
 .counters{display:flex;flex-wrap:wrap;gap:var(--space-1)}
-.counter{display:inline-flex;align-items:center;gap:var(--space-1);height:var(--size-chip);padding:0 var(--space-2);border:1px solid transparent;border-radius:var(--radius-pill);background:var(--tone-bg);color:var(--tone-fg);cursor:pointer;font-size:var(--font-size-sm)}
+.counter{display:inline-flex;align-items:center;gap:var(--space-1);height:var(--size-chip);padding:0 var(--space-2);border:1px solid transparent;border-radius:var(--radius-md);background:var(--tone-bg);color:var(--tone-fg);cursor:pointer;font-size:var(--font-size-sm)}
 .counter .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
 .counter.zero{background:none;color:var(--fg-muted)}
 .counter.on{border-color:var(--tone-fg);box-shadow:inset 0 0 0 1px var(--tone-fg)}
@@ -239,7 +246,15 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .naming input{width:var(--size-input);height:var(--size-chip);padding:0 var(--space-2);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--surface)}
 
 /* Navigation rail */
-.rail{display:flex;flex-direction:column;gap:var(--space-3);width:var(--size-rail);padding:var(--space-3) var(--space-2);border-right:1px solid var(--line);background:var(--surface)}
+.rail{display:flex;flex-direction:column;gap:var(--space-3);width:var(--size-rail);min-height:0;overflow-y:auto;padding:var(--space-3) var(--space-2);border-right:1px solid var(--line);background:var(--rail)}
+.rail>*{flex:none}
+.rail-head{display:flex;align-items:center;gap:var(--space-2);padding-left:var(--space-3)}
+.rail-head .btn{border-color:transparent;background:none}
+.rail.mini{width:auto;padding:var(--space-2) var(--space-1)}
+.rail.mini .nm,.rail.mini .rail-h,.rail.mini .rail-search,.rail.mini .nav-pin,.rail.mini .brand,.rail.mini .waiting{display:none}
+.rail.mini .rail-head{padding:0;justify-content:center}
+.rail.mini .nav-i a{padding:0 var(--space-2);position:relative}
+.rail.mini .nav-count{position:absolute;top:calc(-1 * var(--space-1));right:calc(-1 * var(--space-1));padding:0 var(--space-1)}
 .rail-g{list-style:none;margin:0;padding:0}
 .rail-g.pinned{padding-bottom:var(--space-3);border-bottom:1px solid var(--line)}
 .rail-h{padding:var(--space-1) var(--space-3);font-size:var(--font-size-xs);color:var(--fg-muted);text-transform:uppercase;letter-spacing:.04em}
@@ -266,17 +281,21 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .stat .sv{font-size:var(--font-size-lg);font-family:var(--font-mono)}
 .stat .of{color:var(--fg-muted);font-size:var(--font-size-sm)}
 .stat .sl{color:var(--fg-muted);font-size:var(--font-size-sm)}
-.row-link{color:inherit;text-decoration:none}.row-link:hover{text-decoration:underline}
+/* OR-26: the whole row opens the item; the shell forwards the click to the row link */
+.row-link{color:inherit;text-decoration:none}
+.vl-row:has(.row-link),.kv li:has(.row-link){cursor:pointer}
 .vl-row.sel{background:var(--selected);box-shadow:inset 3px 0 var(--accent)}
 .seg-group{display:inline-flex;gap:var(--space-1)}
 
 /* App shell and page layout (patterns/app-shell.md) */
-.shell{display:flex;flex-direction:column;min-height:100%}
-.topbar{display:flex;align-items:center;gap:var(--space-4);height:var(--size-topbar);padding:0 var(--space-4);border-bottom:1px solid var(--line);background:var(--surface)}
+/* Three columns (OR-24). The shell alone takes the viewport height; each column has at most one scroller (OR-25). */
+.shell{display:grid;grid-template-columns:auto minmax(0,1fr);height:100dvh;overflow:hidden}
 .brand{font-size:var(--font-size-lg)}
 .waiting{text-decoration:none;font-size:var(--font-size-sm);padding:var(--space-1) var(--space-3)}
-.shell-body{display:flex;flex:1;min-height:0}
-.shell-main{flex:1;min-width:0;padding:var(--space-4) var(--space-5);display:flex;flex-direction:column;gap:var(--space-4)}
+.shell-main{min-width:0;min-height:0;overflow-y:auto;padding:var(--space-4) var(--space-5);display:flex;flex-direction:column;gap:var(--space-4);background:var(--surface)}
+.shell-main>*{flex:none}
+.shell-main:has(>.split-view){padding:0;gap:0;overflow:hidden}
+.shell-main>.split-view{flex:1;min-height:0}
 .page-h{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3)}
 .page-h h1{margin:0;font-size:var(--font-size-xl);font-weight:var(--font-weight-bold)}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);overflow:hidden}
@@ -290,20 +309,33 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .kv li{display:flex;align-items:center;gap:var(--space-3);min-height:var(--size-row)}
 .kv .k{min-width:var(--size-clock);font-weight:var(--font-weight-medium)}
 .kv .v{font-family:var(--font-mono)}
-.split-view{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-4);align-items:start}
-.split-view.has-detail{grid-template-columns:minmax(0,1fr) minmax(0,var(--size-detail))}
-.split-list{display:flex;flex-direction:column;gap:var(--space-4);min-width:0}
-.detail{display:flex;flex-direction:column;gap:var(--space-3);min-width:0;padding:var(--space-4);background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg)}
+/* Control column and work area (patterns/list-detail.md) */
+.split-view{display:grid;grid-template-columns:var(--size-ctl) minmax(0,1fr)}
+.split-list{display:flex;flex-direction:column;min-width:0;min-height:0;overflow-y:auto;border-right:1px solid var(--line);background:var(--bg)}
+.split-list>*{flex:none}
+.split-list>.page-h{padding:var(--space-4) var(--space-4) var(--space-2)}
+.split-list>.panel{border:0;border-radius:0;background:none}
+.split-list>.stats{padding:0 var(--space-4) var(--space-2)}
+.split-list>.panel:has(.vl),.split-list .list-view,.split-list .vl-wrap{display:flex;flex-direction:column;flex:1;min-height:0}
+/* OR-25: a control column that holds a virtual list leaves scrolling to the list, so the two never nest. ponytail: in a very short window the head above the list clips; give the head its own row limit if that shows up. */
+.split-list:has(.vl){overflow-y:hidden}
+.detail{display:flex;flex-direction:column;gap:var(--space-3);min-width:0;min-height:0;overflow-y:auto;padding:var(--space-4) var(--space-6);background:var(--surface)}
+.detail>*{flex:none}
+.work-idle{display:grid;min-width:0;min-height:0;background:var(--surface)}
+.work-empty{place-items:center}
 .detail-h{display:flex;align-items:center;gap:var(--space-2)}
-.detail-title{margin:0;font-size:var(--font-size-lg);font-weight:var(--font-weight-bold)}
+.detail-title{margin:0;font-size:var(--font-size-xl);font-weight:var(--font-weight-bold)}
 .state-line{display:flex;align-items:center;gap:var(--space-3)}
 .detail-tabs{border-bottom:1px solid var(--line);padding-bottom:var(--space-1)}
 .vl-row.static{position:relative;transform:none;height:var(--size-row);cursor:default}
 .list-view .vl{height:var(--list-height,var(--size-list))}
-@media (max-width:1100px){.cols,.split-view.has-detail{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:1100px){
+  .cols,.split-view{grid-template-columns:minmax(0,1fr)}
+  .split-view.has-detail>.split-list,.split-view:not(.has-detail)>.work-idle{display:none}
+}
 @media (max-width:760px){
   .rail{width:auto;padding:var(--space-2) var(--space-1)}
-  .rail .nm,.rail .rail-h,.rail-search,.rail .nav-pin{display:none}
+  .rail .nm,.rail .rail-h,.rail-search,.rail .nav-pin,.rail .brand,.rail .waiting,.rail-head{display:none}
   .rail .nav-i a{padding:0 var(--space-2);position:relative}
   .rail .nav-count{position:absolute;top:0;right:0;padding:0 var(--space-1)}
   .shell-main{padding:var(--space-3)}
@@ -346,7 +378,6 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .skip:focus{top:var(--space-2)}
 .shell-main:focus{outline:none}
 .detail:focus{outline:none}
-@media (max-width:1100px){.split-view.has-detail>.detail{order:-1}}
 @media (max-width:760px){.rail .nav-count{top:calc(-1 * var(--space-1));right:calc(-1 * var(--space-1))}}
 /* M2: 44 px targets on touch for row pins, row links, nav links (owner exception) */
 @media (pointer:coarse){
@@ -395,8 +426,8 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .md-table{overflow-x:auto}
 .md table{border-collapse:collapse;font-size:var(--font-size-sm)}
 .md th,.md td{border:1px solid var(--line);padding:var(--space-1) var(--space-2);text-align:left}
-/* The conversation detail fills the viewport height below the top bar; the thread takes what the header and composer leave */
-.detail.conversation{position:sticky;top:var(--space-4);height:calc(100dvh - var(--size-topbar) - 2 * var(--space-4))}
+/* A conversation fills the work area; the thread is its one scroller and takes what the header and composer leave (OR-25) */
+.detail.conversation{overflow:hidden}
 .conversation .pane{flex:1;min-height:0}
 .conversation .transcript,.conversation .tr-body{flex:1;min-height:0}
 .conversation .tr-body .vl{flex:1;height:auto;min-height:0}
@@ -411,3 +442,83 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .av-frame iframe{width:100%;height:100%;border:0;background:var(--surface)}
 .av-text{height:var(--size-page-list);overflow:auto;background:var(--surface-sunken);border:1px solid var(--line);border-radius:var(--radius-md);padding:var(--space-3)}
 .av-text pre{margin:0;font-family:var(--font-mono);font-size:var(--font-size-sm);white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* Catalogue rows in the control column: two lines, title then ID and secondary facts; no column heads (D19) */
+.split-list .vl{flex:1;height:auto}
+.split-list .vl-head{display:none}
+.split-list .vl-row .tt{flex-wrap:wrap;align-content:center;align-items:center;row-gap:0}
+.split-list .vl-row .tt .title{order:-1;flex:0 0 100%}
+.split-list .vl-row.static{height:auto;min-height:var(--size-row-2)}
+/* Direction B (D19): small labels in mono capitals */
+.rail-h,.dsec h3,.totals dt,.sub-h,.seg-label,.group-h,.vl-head{font-family:var(--font-mono);font-size:var(--font-size-xs);text-transform:uppercase;letter-spacing:.06em}
+.page-h h1{letter-spacing:-.01em}
+
+/* Direction B details (D19): ticks and hairlines instead of fills and boxes */
+.shell-main,.rail,.split-list,.detail,.vl{scrollbar-width:thin}
+.vl-row .badge.compact{background:none}
+.nav-i.cur{box-shadow:inset 3px 0 var(--accent)}
+.detail-title{font-size:var(--font-size-2xl);letter-spacing:-.01em;text-wrap:balance}
+.detail-h .mono{font-size:var(--font-size-sm)}
+.totals{gap:0;background:none;border:0;border-top:1px solid var(--fg-muted);border-bottom:1px solid var(--line);border-radius:0}
+.totals>div{background:none;padding-left:0}
+.totals>div+div{border-left:1px solid var(--line);padding-left:var(--space-4)}
+.totals dd{font-family:var(--font-mono)}
+.decision{border:0;border-left:3px solid var(--attention-fg);border-radius:0 var(--radius-md) var(--radius-md) 0}
+.decision.answered{border:0;border-left:3px solid var(--success-fg)}
+.tabs{gap:var(--space-4)}
+.tabs button{padding:0;border-radius:0;font-weight:var(--font-weight-medium)}
+.tabs button[aria-selected=true]{background:none;color:var(--accent);box-shadow:inset 0 -2px var(--accent)}
+.counter{background:none;border-color:var(--line);font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.counter.on{background:var(--tone-bg);border-color:var(--tone-fg);box-shadow:none}
+.counter.zero{border-color:var(--line-soft)}
+.seg.on,.saved-chip.on{color:var(--accent)}
+.search{background:var(--surface)}
+.vl-row.grp{background:var(--bg);border-bottom-color:var(--line)}
+.work-empty{font-family:var(--font-mono);font-size:var(--font-size-sm)}
+.tr-body .vl{background:none}
+.th-text.operator{background:var(--surface-sunken);box-shadow:inset 3px 0 var(--accent)}
+.outcome{border-left:3px solid var(--line);border-radius:0 var(--radius-md) var(--radius-md) 0}
+/* Catalogue rows built by hand (hosts, keys, limits): same two lines; second-line facts may wrap */
+.split-list .vl-row.static{padding-top:var(--space-2);padding-bottom:var(--space-2);align-items:start}
+.split-list .vl-row .fill-wrap{flex:0 0 100%;flex-wrap:wrap;row-gap:0}
+.split-list .vl-row .fill-wrap .legend{flex-basis:100%}
+.split-list .vl-row.static .tt{white-space:normal;column-gap:var(--space-3);row-gap:var(--space-1)}
+
+/* Definition editor parts (D20): draft bar, choice, step list, flow strip */
+.problem.draft{border-left-color:var(--attention-fg)}
+.seg .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
+.detail-title{display:flex;align-items:center;gap:var(--space-3)}
+.diff.block{padding:var(--space-3);background:var(--bg);border:1px solid var(--line);border-radius:var(--radius-md);white-space:pre-wrap;overflow-wrap:anywhere}
+.steps{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--radius-md)}
+.step-item{border-bottom:1px solid var(--line-soft)}
+.step-item:last-child{border-bottom:0}
+.step{display:grid;grid-template-columns:var(--space-6) var(--size-badge) var(--size-fill) minmax(0,1fr) auto;gap:var(--space-1) var(--space-3);align-items:center;width:100%;min-height:var(--size-row-2);padding:var(--space-2) var(--space-3);border:0;background:none;text-align:left;cursor:pointer}
+.step:hover{background:var(--hover)}
+.step.open{background:var(--selected);box-shadow:inset 3px 0 var(--accent)}
+.step .no{font-family:var(--font-mono);font-size:var(--font-size-sm);color:var(--fg-muted)}
+.step .lead{display:inline-flex;color:var(--fg-muted)}
+.step .nm{font-weight:var(--font-weight-medium)}
+.step .ex{min-width:0;color:var(--fg-muted)}
+.step .ex b{color:var(--fg);font-weight:var(--font-weight-regular)}
+.step .io{grid-column:3/-1;font-family:var(--font-mono);font-size:var(--font-size-sm);color:var(--fg-muted)}
+.step .io .w{color:var(--fg)}
+.step .svc{display:inline-flex;align-items:center;gap:var(--space-3)}
+.step-item.inset,.step-band.inset{box-shadow:inset 3px 0 var(--line)}
+.step-band{display:flex;align-items:center;gap:var(--space-2);padding:var(--space-1) var(--space-3);background:var(--bg);border-bottom:1px solid var(--line-soft);font-size:var(--font-size-sm);color:var(--fg-muted)}
+.step-band .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
+.step-error,.step-edit{padding:var(--space-2) var(--space-4) var(--space-2) calc(var(--space-6) + var(--size-badge) + 3 * var(--space-3))}
+.step-error{background:var(--danger-bg);color:var(--danger-fg);font-size:var(--font-size-sm)}
+.step-edit{display:flex;flex-direction:column;gap:var(--space-2);padding-top:var(--space-3);padding-bottom:var(--space-4);border-top:1px solid var(--line-soft)}
+.flow{display:flex;align-items:center;overflow-x:auto;padding:var(--space-1) 0}
+.flow-n{display:inline-flex;align-items:center;gap:var(--space-2);height:var(--size-control);padding:0 var(--space-3);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--bg);font-family:var(--font-mono);font-size:var(--font-size-sm);white-space:nowrap}
+.flow-n .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
+.flow-n .badge{background:none}
+.flow-n.cur{border-color:var(--accent);box-shadow:inset 0 -2px var(--accent)}
+.flow-n.opt{border-style:dashed}
+.flow-w{flex:none;width:var(--space-5);height:1px;background:var(--fg-muted)}
+.flow-par{display:flex;flex-direction:column;gap:var(--space-2);padding:var(--space-2) var(--space-3);border-left:1px solid var(--fg-muted);border-right:1px solid var(--fg-muted)}
+.flow-loop{display:inline-flex;align-items:center;position:relative;padding:var(--space-6) var(--space-3) var(--space-3);border:1px dashed var(--fg-muted);border-radius:var(--radius-md)}
+.flow-cap{position:absolute;top:var(--space-2);left:var(--space-3);display:inline-flex;align-items:center;gap:var(--space-2);font-family:var(--font-mono);font-size:var(--font-size-xs);text-transform:uppercase;letter-spacing:.06em;color:var(--fg-muted);white-space:nowrap}
+.flow-cap .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
+/* A wide table in the work area scrolls sideways inside its own panel (OR-25) */
+.detail .panel:has(.lab-row){overflow-x:auto}

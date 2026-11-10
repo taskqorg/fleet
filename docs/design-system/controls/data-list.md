@@ -13,7 +13,9 @@ Every list follows the same order: state first, then name with ID, then the serv
 
 **Grouping.** Lists can group rows. Each group header row shows the group's icon, name and count. Groups collapse; completed and cancelled start collapsed. Anchor keeping works across groups.
 
-**Sizes.** Row `size-row` (32 px), compact `size-row-compact` per person, phone `size-row-phone` with two lines: title on line 1, state and one key value on line 2.
+**Sizes.** Row `size-row` (32 px), compact `size-row-compact` per person. A catalogue in the control column uses two-line rows, `size-row-2` ([list and detail](../patterns/list-detail.md)), as does the phone (`size-row-phone`).
+
+**Opening.** A row that opens an item has one `row-link` on its title; a click anywhere else on the row follows that link (OR-26). Buttons, checkboxes and other links in the row keep their own action.
 
 **States.** Row: rest, hover, selected (`selected` + 3 px `accent` left bar), focused (ring inside the row), changed (fade from `attention-soft` to none over `motion-highlight`), problem (`attention-soft` fill). List: loading first page (skeleton rows), loading more (thin row at the end after 300 ms), empty, error, stale ([status states](status-states.md)).
 
@@ -31,7 +33,7 @@ Every list follows the same order: state first, then name with ID, then the serv
 
 **Accessibility.** `role="grid"` with `aria-rowcount` (total) and `aria-rowindex` per rendered row; one tab stop with roving focus. Sort state in `aria-sort`. Live changes announced in batches by a polite region: "3 tasks changed".
 
-**Do.** Keep one line per row on desktop. **Don't.** Card grids for operational lists; infinite "load more" buttons; animating rows into place.
+**Do.** Keep one line per row in tables, and two in a catalogue. **Don't.** Card grids for operational lists; infinite "load more" buttons; animating rows into place.
 
 **Implementation.** Rendering window from TanStack Virtual core; anchor keeping and the pill in `VirtualList` (D4). Any collection longer than a screen uses it (OR-9). Threads also load upward: `onStart` fires once per list length when the first rows are in view, rows loaded above keep the row being read in place (OR-23) and do not count in the pill, and `handle.current.scrollToKey(key, align)` jumps to a row (search hits).
 

@@ -12,6 +12,9 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [number](number.md) | Measurement basis |
 | [fill-bar](fill-bar.md) | Store fill per project, quota use |
 | [execution-tree](execution-tree.md) | Executions and steps as a tree |
+| [step-list](step-list.md) | A pipeline's steps and a run of them; the read-only flow picture |
+| [draft-bar](draft-bar.md) | A definition that differs from its saved revision |
+| [choice](choice.md) | One or several of a few fixed options |
 | [transcript-viewer](transcript-viewer.md) | Live transcript with paging and search |
 | [decision-block](decision-block.md) | Decisions inline |
 | [result-viewer](result-viewer.md) | Result viewers |

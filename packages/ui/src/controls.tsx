@@ -1,10 +1,11 @@
 // Fleet controls. Specs: docs/design-system/controls/*.md. Styling: styles.css with tokens only.
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages } from './registry.ts';
+import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages, stepKinds, type StepKind } from './registry.ts';
 import { type Measured, type Kind, measured, age, bytes, exact, percent, duration, agentLabel } from './format.ts';
 import { VirtualList, type VirtualListHandle } from './virtual-list.tsx';
 import { parse, renderBlocks } from './markdown.tsx';
+import { author, clipMessage, writeClip } from './clip.ts';
 import tokens from '../tokens.json';
 
 const ROW = parseInt(tokens.size.row);
@@ -397,14 +398,19 @@ export function Markdown({ text, onCopyFail }: { text: string; onCopyFail?: (e: 
 type Mark = { harness?: string | null; model?: string | null; effort?: string | null };
 /** Agent mark (D4): harness icon and the short label; the model id on hover. */
 export function AgentMark({ harness, model, effort }: Mark) {
-  return <span class="agent-mark">{harness && harness in harnesses && <HarnessMark h={harness as Harness} />}<span class="lbl" data-tip={model ?? undefined}>{agentLabel(model, effort)}</span></span>;
+  return <span class="agent-mark">{harness && harness in harnesses && <HarnessMark h={harness as Harness} />}<span class="lbl" data-tip={model ?? undefined}>{agentLabel(model, effort) || harness /* no model recorded: the harness still names the author */}</span></span>;
 }
 
-/** An operator or agent reply: content first, the service zone (agent mark, copy) on the right (OR-21). */
-export function TextRow({ who, markdown, mark, onCopyFail }: { who: 'operator' | 'agent'; markdown: string; mark?: Mark; onCopyFail?: (e: unknown) => void }) {
+/** An operator or agent message: a head line with who wrote it and when (OR-2), then the content; copy on the right (OR-21).
+ *  Copy writes the head line and the body as plain markdown and as chat-safe HTML (clip.ts, formats.md "Copy"). */
+export function TextRow({ who, markdown, mark, by, at, now, onCopyFail }: { who: 'operator' | 'agent'; markdown: string; mark?: Mark; by?: string | null; at?: number | null; now?: number; onCopyFail?: (e: unknown) => void }) {
+  const t = now ?? Date.now(), name = author({ role: who, by, ...mark });
   return <div class={`th-row th-text ${who}`} data-ui="thread-row">
-    <div class="th-main">{who === 'operator' && <span class="who">You</span>}<Markdown text={markdown} onCopyFail={onCopyFail} /></div>
-    <span class="th-svc">{who === 'agent' && mark && <AgentMark {...mark} />}<Button label="Copy reply" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(markdown).catch(e => onCopyFail?.(e))} /></span>
+    <div class="th-main">
+      <div class="th-who">{who === 'operator' ? <span class="who" data-tip={by ?? undefined}>{name}</span> : <AgentMark {...(mark ?? {})} />}
+        {at ? <span class="when" data-tip={exact(at)} aria-label={age(at, t).long}>{age(at, t).text}</span> : null}</div>
+      <Markdown text={markdown} onCopyFail={onCopyFail} /></div>
+    <span class="th-svc"><Button label="Copy message" icon={actions.copy} iconOnly kind="quiet" onClick={() => writeClip(clipMessage(name, at, t, markdown)).catch(e => onCopyFail?.(e))} /></span>
   </div>;
 }
 
@@ -474,7 +480,7 @@ export function Thread({ blocks, label, now, marked, selected, onRowClick, showS
   const markOf = (b: ThreadBlock): Mark => ({ harness: b.harness, model: b.model, effort: b.effort });
   const row = (b: ThreadBlock) => {
     switch (b.kind) {
-      case 'text': return <TextRow who={b.role === 'operator' ? 'operator' : 'agent'} markdown={b.markdown ?? ''} mark={markOf(b)} onCopyFail={onCopyFail} />;
+      case 'text': return <TextRow who={b.role === 'operator' ? 'operator' : 'agent'} markdown={b.markdown ?? ''} mark={markOf(b)} by={b.by} at={b.at} now={now} onCopyFail={onCopyFail} />;
       case 'tool': return <ToolRow name={b.name} input={b.input} output={b.output} state={b.state} startedAt={b.startedAt} endedAt={b.endedAt} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'question': return <QuestionRow text={b.text} options={b.options ?? []} state={b.state} answer={b.answer} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} />;
@@ -593,8 +599,9 @@ export function Presets({ presets, active, onPick, onSave, onUnpin }: {
 /* ---------- Navigation rail with pinned sections (nav-rail.md) ---------- */
 
 export type NavItem = { id: string; label: string; icon: IconName; group: string; count?: { n: number; tone: Tone; label: string } };
-export function NavRail({ items, pinned, current, onPin, onGo }: {
+export function NavRail({ items, pinned, current, onPin, onGo, mini, head }: {
   items: NavItem[]; pinned: string[]; current: string; onPin: (id: string, pin: boolean) => void; onGo: (id: string) => void;
+  /** Collapsed to icons. */ mini?: boolean; /** Product name, need-you chip and the collapse button (app shell). */ head?: ComponentChildren;
 }) {
   const [q, setQ] = useState('');
   const item = (it: NavItem) => {
@@ -611,7 +618,8 @@ export function NavRail({ items, pinned, current, onPin, onGo }: {
   const found = items.filter(i => i.label.toLowerCase().includes(q.toLowerCase()));
   const groups = [...new Set(found.filter(i => !pinned.includes(i.id)).map(i => i.group))];
   return (
-    <nav class="rail" data-ui="nav-rail" aria-label="Sections">
+    <nav class={`rail${mini ? ' mini' : ''}`} data-ui="nav-rail" aria-label="Sections">
+      {head && <div class="rail-head">{head}</div>}
       {pinned.length > 0 && <ul class="rail-g pinned" aria-label="Pinned">{pinned.map(id => items.find(i => i.id === id)).filter(Boolean).map(i => item(i!))}</ul>}
       <label class="search rail-search"><Icon name="search" /><input type="search" placeholder="Sections" aria-label="Find section" value={q} onInput={e => setQ((e.target as HTMLInputElement).value)} /></label>
       {groups.map(g => <ul key={g} class="rail-g" aria-label={g}><li class="rail-h">{g}</li>{found.filter(i => i.group === g && !pinned.includes(i.id)).map(item)}</ul>)}
@@ -721,3 +729,67 @@ export function OfflineMarker({ state, since, now }: { state: 'current' | 'offli
 
 export const RowCheck = ({ checked, label, onToggle }: { checked: boolean; label: string; onToggle: () => void }) =>
   <input type="checkbox" class="row-check" data-ui="row-check" checked={checked} aria-label={label} onClick={e => e.stopPropagation()} onChange={onToggle} />;
+
+/* ---------- Choice: one or several of a few fixed options (controls/choice.md) ---------- */
+
+export function Choice({ label, options, value, onChange }: {
+  label: string; options: { id: string; label: string; icon?: IconName }[]; value: string | string[]; onChange?: (id: string) => void;
+}) {
+  const on = (id: string) => Array.isArray(value) ? value.includes(id) : value === id;
+  return <span class="seg-group" data-ui="choice" role="group" aria-label={label}>{options.map(o =>
+    <button type="button" key={o.id} class={`seg${on(o.id) ? ' on' : ''}`} aria-pressed={on(o.id)} onClick={() => onChange?.(o.id)}>{o.icon && <Icon name={o.icon} />}{o.label}</button>)}</span>;
+}
+
+/* ---------- Draft bar: a definition that differs from its saved revision (controls/draft-bar.md) ---------- */
+
+export function DraftBar({ changes, base, note, actions: acts }: {
+  changes: number; base: string; note: string; actions: { label: string; icon?: IconName; primary?: boolean; onClick?: () => void }[];
+}) {
+  return <div class="problem draft" data-ui="draft-bar" role="group" aria-label="Draft">
+    <Icon name="file-plus-2" /><b>Draft</b><span class="facts">{changes} {changes === 1 ? 'change' : 'changes'} against <span class="mono">{base}</span>. {note}</span>
+    <span class="acts">{acts.map(a => <Button key={a.label} label={a.label} icon={a.icon} kind={a.primary ? 'primary' : 'default'} onClick={a.onClick} />)}</span>
+  </div>;
+}
+
+/* ---------- Step list and flow strip: a pipeline's steps, with a run's state on top (controls/step-list.md) ---------- */
+
+export type StepItem =
+  | { band: 'loop' | 'parallel'; label: string; inset?: boolean }
+  | { id: string; kind: StepKind; executor: ComponentChildren; reads: string; writes: string; inset?: boolean;
+      /** The step in one run: shown in place of what it reads and writes. */
+      run?: { state: StateOf<'execution'>; reason?: string; note?: string; time: Measured; cost: Measured; error?: string } };
+
+/** The one place a pipeline is edited (D20). `children` is the editor of the open step, shown under its row (OR-14). */
+export function StepList({ items, open, onOpen, label, children }: { items: StepItem[]; open?: string; onOpen?: (id: string) => void; label: string; children?: ComponentChildren }) {
+  let n = 0;
+  return <div class="steps" data-ui="step-list" role="list" aria-label={label}>{items.map((s, i) => {
+    if ('band' in s) return <div key={i} class={`step-band${s.inset ? ' inset' : ''}`}><Icon name={s.band === 'loop' ? 'rotate-cw' : 'rows-3'} /><span>{s.label}</span></div>;
+    n++;
+    const k = stepKinds[s.kind];
+    return <div key={s.id} role="listitem" class={`step-item${s.inset ? ' inset' : ''}`}>
+      <button type="button" class={`step${open === s.id ? ' open' : ''}`} aria-expanded={onOpen ? open === s.id : undefined} onClick={() => onOpen?.(s.id)}>
+        <span class="no">{String(n).padStart(2, '0')}</span>
+        {s.run ? <StateBadge family="execution" state={s.run.state} reason={s.run.reason} compact /> : <span class="lead" data-tip={k.label}><Icon name={k.icon} label={k.label} /></span>}
+        <b class="nm">{s.id}</b><span class="ex">{s.executor}</span>
+        {s.run ? <span class="svc">{s.run.note && <span class="chip-age">{s.run.note}</span>}<Num m={s.run.time} kind="duration" /><Num m={s.run.cost} kind="money" /></span>
+          : <span class="io">reads {s.reads} · writes <span class="w">{s.writes}</span></span>}
+      </button>
+      {s.run?.error && <div class="step-error" data-important="">{s.run.error}</div>}
+      {open === s.id && children && <div class="step-edit">{children}</div>}
+    </div>;
+  })}</div>;
+}
+
+export type FlowNode =
+  | { id: string; kind: StepKind; state?: StateOf<'execution'>; current?: boolean; optional?: boolean }
+  | { loop: string; nodes: FlowNode[] } | { parallel: FlowNode[] };
+
+/** A read-only picture of the steps: wires for order, a bracket for parallel steps, a dashed frame for a loop. */
+export function FlowStrip({ nodes, label }: { nodes: FlowNode[]; label: string }) {
+  const row = (ns: FlowNode[]): ComponentChildren => ns.map((n, i) => <>{i > 0 && <span class="flow-w" />}{one(n, i)}</>);
+  const one = (n: FlowNode, i: number): ComponentChildren =>
+    'loop' in n ? <span key={i} class="flow-loop"><span class="flow-cap"><Icon name="rotate-cw" />{n.loop}</span>{row(n.nodes)}</span>
+    : 'parallel' in n ? <span key={i} class="flow-par">{n.parallel.map(one)}</span>
+    : <span key={n.id} class={`flow-n${n.current ? ' cur' : ''}${n.optional ? ' opt' : ''}`}>{n.state ? <StateBadge family="execution" state={n.state} compact /> : <Icon name={stepKinds[n.kind].icon} />}{n.id}</span>;
+  return <div class="flow" data-ui="flow-strip" role="img" aria-label={label}>{row(nodes)}</div>;
+}

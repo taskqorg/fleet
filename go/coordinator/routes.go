@@ -177,7 +177,7 @@ func (a *App) message(q *Request) (any, error) {
 	if err := putExecution(q, e); err != nil {
 		return nil, err
 	}
-	if err := putDoc(q, "message", doc{"id": uuid(), "sessionId": sid, "executionId": id, "requestId": requestID, "text": input}); err != nil {
+	if err := putDoc(q, "message", doc{"id": uuid(), "sessionId": sid, "executionId": id, "requestId": requestID, "text": input, "sentBy": director(q)}); err != nil {
 		return nil, err
 	}
 	return e, nil

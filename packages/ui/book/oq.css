@@ -44,3 +44,5 @@
 .switcher{display:flex;align-items:center;gap:var(--space-2);min-height:var(--size-hit-phone);padding:0 var(--space-3);border:0;border-bottom:1px solid var(--line);background:var(--surface);cursor:pointer;text-align:left}
 .inline-rail .rail{width:100%;border-right:0;border-bottom:1px solid var(--line)}
 .inline-rail .nav-pin{opacity:1}
+/* The phone variants keep the top bar they were drawn with (before D19 removed it from the shell). */
+.topbar{display:flex;align-items:center;gap:var(--space-4);height:var(--size-row-phone);padding:0 var(--space-4);border-bottom:1px solid var(--line);background:var(--surface)}

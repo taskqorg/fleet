@@ -7,11 +7,12 @@
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
+import { layoutFindings } from './layout.check.ts';
 
 const page = new URL('../../docs/design-system/pages/mockups.html', import.meta.url).href;
 const shots = new URL('../../design-report/shots/', import.meta.url);
 mkdirSync(shots, { recursive: true });
-const ROUTES = ['/overview', '/tasks', '/tasks/9989', '/tasks/9978', '/results', '/hosts', '/lab'];
+const ROUTES = ['/overview', '/tasks', '/tasks/9989', '/tasks/9978', '/results', '/hosts', '/lab', '/agents', '/pipelines', '/pipelines/render-props', '/catalogue'];
 const DETAIL_ROUTES = ['/tasks/9989', '/tasks/9978', '/results'];
 const INJECT = process.env.UX_INJECT || '';
 const TARGET_JS = 200 * 1024, TARGET_MS = 100;
@@ -29,7 +30,7 @@ async function inject(p, what) {
     if (kind === 'size') { const s = document.createElement('script'); s.type = 'text/plain'; s.textContent = 'x'.repeat(250 * 1024); document.body.append(s); }
     if (kind === 'latency') document.addEventListener('click', () => { const t = performance.now(); while (performance.now() - t < 150) { /* busy */ } }, true);
   }, what);
-  if (what === 'offscreen') await p.addStyleTag({ content: '.split-view.has-detail>.detail{order:5!important}' });
+  if (what === 'offscreen') await p.addStyleTag({ content: '[data-ui=detail]{transform:translateY(2000px)}' });
 }
 
 const b = await chromium.launch();
@@ -44,7 +45,7 @@ try {
       const visible = e => { const s = getComputedStyle(e); const rc = e.getBoundingClientRect(); return s.visibility !== 'hidden' && s.display !== 'none' && rc.width > 0 && rc.height > 0; };
       const STOP = new Set(['the', 'and', 'for', 'with', 'from', 'not', 'are', 'has', 'all']);
       // OR-17: a word repeated inside one region (row, heading, card meta, stat).
-      for (const el of document.querySelectorAll('.vl-row:not(.grp), .kv li, .panel-h, .page-h, .detail-h, .detail-title, .state-line, .stat, .topbar, .decision .meta, .problem')) {
+      for (const el of document.querySelectorAll('.vl-row:not(.grp), .kv li, .panel-h, .page-h, .detail-h, .detail-title, .state-line, .stat, .rail-head, .decision .meta, .problem')) {
         if (!visible(el)) continue;
         const words = (el.innerText.toLowerCase().match(/[a-z]{3,}/g) || []).filter(w => !STOP.has(w));
         const dup = words.find((w, i) => words.indexOf(w) !== i);
@@ -72,6 +73,11 @@ try {
     });
     found.forEach(f => warn.push(`#${r}  ${f}`));
     await p.screenshot({ path: new URL(`${r.slice(1).replace('/', '-')}-1440.png`, shots).pathname, fullPage: true });
+    // The owner works in the dark theme: every route is also shot in it.
+    await p.emulateMedia({ colorScheme: 'dark' });
+    await p.screenshot({ path: new URL(`${r.slice(1).replace('/', '-')}-1440-dark.png`, shots).pathname });
+    // Layout rules (OR-24 to OR-27); last, because the row click navigates.
+    (await layoutFindings(p)).forEach(f => warn.push(`#${r}  ${f}`));
     await p.close();
   }
 

@@ -11,7 +11,7 @@ import { subscribe } from '../feed.ts';
 import { useDoc } from '../store.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
 
-const ROW = parseInt(tokens.size.row);
+const ROW = parseInt(tokens.size['row-2']); // two-line catalogue row
 const PAGE = 100;
 type Row = { id: string; name: string; mediaType: string; size: number; state: StateOf<'artifact'>; taskId: string | null; executionId: string | null; projectId: string | null; createdAt: number; seq: number };
 // Filter fields beyond search and state ride in the URL's extra keys.

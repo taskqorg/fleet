@@ -4,6 +4,8 @@
 
 **Purpose.** Compare variants of a pipeline over examples, inspect trials, rate outputs, decide and promote.
 
+**Columns (D19).** [List and detail](../patterns/list-detail.md): the control column holds "Waiting for you" and the experiments catalogue; the work area holds the opened experiment, or the use-case registry while none is open. The lists below keep their content and move to these places. Not built: the `#/lab` mockup still has the earlier one-page layout, and at 1100 px and below the registry cannot be reached while no experiment is open.
+
 **Layout of `/lab`.**
 * "Waiting for you": open ratings count; drafted examples awaiting approval as [decision blocks](../controls/decision-block.md) (pass or fail).
 * Experiments: [data list](../controls/data-list.md), state first, title = pipeline · kind · variants, short ID, age.

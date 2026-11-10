@@ -23,6 +23,8 @@
     "wouter-preact": "3.13.0"
   },
   "devDependencies": {
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "@fontsource/ibm-plex-sans": "5.3.0",
     "@types/node": "22.18.0",
     "esbuild": "0.28.2",
     "playwright": "1.56.1",

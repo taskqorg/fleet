@@ -5,6 +5,7 @@
 import { mkdirSync } from 'node:fs';
 import { chromium } from 'playwright';
 import { checkServer } from './seed.ts';
+import { layoutFindings } from './layout.check.ts';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : 'design-report/app';
 mkdirSync(shots, { recursive: true });
@@ -39,9 +40,9 @@ try {
     [`/tasks/${running}`, ['detail', 'execution-tree']],
     ['/conversations', ['list-view', 'data-list', 'state-counters']],
     ['/conversations/sess-1', ['detail', 'transcript-viewer', 'composer']],
-    ['/hosts', ['stat-strip', 'harness-counts', 'state-badge', 'fill-bar']],
-    ['/hosts/mac', ['detail', 'detail-section']],
-    ['/lab', ['data-list', 'state-badge']],
+    ['/hosts', ['list-detail', 'harness-counts', 'state-badge']],
+    ['/hosts/mac', ['detail', 'detail-section', 'fill-bar']],
+    ['/lab', ['list-detail', 'state-badge']],
   ];
   page.on('requestfailed', r => { if (!r.url().includes('/api/stream')) errors.push('request failed ' + r.url()); }); // navigation aborts the stream
   page.on('response', r => { if (r.status() >= 400) errors.push(r.status() + ' ' + r.url()); });
@@ -53,8 +54,16 @@ try {
     const hscroll = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
     out.push(`${route.replace(/[0-9a-f-]{36}/, ':id')}: ${missing.length ? 'MISSING ' + missing.join(', ') : 'ok'}${hscroll ? ', horizontal scroll' : ''}`);
     await page.screenshot({ path: `${shots}/${n + 1}-${route.split('/')[1]}${route.split('/')[2] ? '-detail' : ''}-1440.png` });
+    // The owner works in the dark theme: every route is also shot in it.
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.screenshot({ path: `${shots}/${n + 1}-${route.split('/')[1]}${route.split('/')[2] ? '-detail' : ''}-1440-dark.png` });
+    await page.emulateMedia({ colorScheme: 'light' });
+    for (const f of await layoutFindings(page)) out.push(`  ${f}`);
   }
-  // Narrow width: the rail stays, the detail comes first.
+  // Fonts (D19): the app's own IBM Plex files load; a missing file would fall back to the system font without any error.
+  const fonts = await page.evaluate(() => document.fonts.ready.then(() => ['IBM Plex Sans', 'IBM Plex Mono'].filter(f => ![...document.fonts].some(x => x.family.replace(/["']/g, '') === f && x.status === 'loaded'))));
+  out.push(`fonts: ${fonts.length ? 'NOT LOADED ' + fonts.join(', ') : 'IBM Plex Sans and Mono loaded'}`);
+  // Narrow width: the rail stays, the opened item takes the place of the catalogue.
   const narrow = await b.newPage({ viewport: { width: 600, height: 900 } });
   await narrow.goto(origin + `/tasks/${waiting}`); await narrow.waitForTimeout(700);
   const top = await narrow.evaluate(() => document.querySelector('[data-ui=detail]')?.getBoundingClientRect().top ?? null);

@@ -7,7 +7,7 @@ This folder is the single knowledge base for Fleet's interface design. It plays 
 1. [owner-rules.md](owner-rules.md): the owner's rules. Read first in every design or UI session.
 2. [methodology-brief.md](methodology-brief.md): how design work is done here.
 3. `packages/ui`: the shared parts (tokens, icons, formatter, virtual list, controls). Use them; do not write local variants.
-4. [book/index.html](book/index.html): the live demo of `packages/ui`. [pages/mockups.html](pages/mockups.html): page mockups built from it. `npm run book` rebuilds it; `npm run check:design` prints the warning report; its checks are listed in `packages/ui/scripts/check-design.mjs`. CI posts the report summary on every pull request.
+4. [book/index.html](book/index.html): the live demo of `packages/ui`. [pages/mockups.html](pages/mockups.html): page mockups built from it. `pnpm run book` rebuilds it; `pnpm run check:design` prints the warning report; its checks are listed in `packages/ui/scripts/check-design.mjs`. CI posts the report summary on every pull request.
 
 ## Files
 
@@ -15,6 +15,7 @@ This folder is the single knowledge base for Fleet's interface design. It plays 
 |---|---|---|
 | [inventory.md](inventory.md) | What the interface must let people see, configure, choose and decide. Grouped by workspace, with the data each item comes from. | The architecture adds, removes or changes something a person sees or controls. |
 | [owner-rules.md](owner-rules.md) | The owner's rules (the only list of them). | The owner changes a rule. |
+| [formats.md](formats.md) | One look per kind of value, the copy format, and what each screen answers. | A value kind or a screen's purpose is added or changed. |
 | `principles.md` | Usability rules that every screen follows: density, scrolling, filtering, keyboard, states, errors, empty states, motion, accessibility. | The owner approves a new rule. |
 | `tokens.md` + `packages/ui/tokens.json` | Colour, type, spacing, radius, elevation, motion, in light and dark. | The owner approves a visual change. |
 | `controls/<control>.md` | One file per control: purpose, anatomy, states, behaviour, keyboard, accessibility, do and don't, and where it is used. | A control is added or changed. |
@@ -29,6 +30,7 @@ This folder is the single knowledge base for Fleet's interface design. It plays 
 3. **Build from the book.** Pages use only recorded tokens, controls and patterns. A need the book does not cover is a change to the book first (step 1).
 4. **One source per rule.** A rule lives in one file; other files link to it.
 5. **Check against the book.** A page review checks it against the principles and the control specs it uses, not against taste.
+6. **A rule comes with its check.** A new owner rule names how it is checked ([owner rules](owner-rules.md#how-each-rule-is-checked)): a check on the rendered page where one is possible, otherwise the reviewer. Layout rules are checked on the rendered page, never by searching source text.
 
 ## Inputs
 

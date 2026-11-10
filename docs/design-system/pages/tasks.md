@@ -16,6 +16,6 @@
 | Accept, request rework, pause, continue, cancel, retry, change account, hand off | [Decision block](../controls/decision-block.md) (accept or rework); [split button](../controls/split-button.md) Pause with Cancel, Change account and Hand off; [problem row](../controls/problem-row.md) Retry |
 | Share the task or a result | Share icon in the detail head |
 
-**List columns (OR-22):** state icon; title with ID; [harness mark](../controls/harness-counts.md) while running; [delivery stage](../controls/stage-chip.md); age; cost; pin. Priority is a grouping (D11).
+**Catalogue row (OR-22, D19):** state icon; title, and on the second line its ID, the [harness mark](../controls/harness-counts.md) while running and the [delivery stage](../controls/stage-chip.md); then age, cost and pin on the right. There are no column heads. Priority is a grouping (D11).
 
 **Open.** None from stage 3. Phone navigation (d) is still open.

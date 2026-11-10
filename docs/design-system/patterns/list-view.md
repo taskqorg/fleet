@@ -18,7 +18,7 @@
 * Default grouping is by priority (D11). Grouping by state uses attention order: waiting, failed, in progress, queued, paused, completed, cancelled. Completed and cancelled start collapsed.
 * Pinned items come first within their group.
 * The whole view (filters, states, grouping, search) is in the URL and remembered per person ([principles §4](../principles.md#4-filters-and-search)).
-* Clicking a title opens the item in [list-detail](list-detail.md). The row stays selected.
+* Clicking anywhere on a row opens the item in the work area ([list-detail](list-detail.md), OR-26). The row stays selected.
 * New items arrive without moving the row being read. A "N new" pill appears when the person has scrolled away (OR-6, OR-7).
 
 **Server note.** The mockups compute counts and groups on the client. The app gets counts per state from the server for the active filters, so counts stay correct for lists that are only partly loaded.

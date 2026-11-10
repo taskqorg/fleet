@@ -111,7 +111,7 @@ Defaults below were chosen by the drafter so work is not blocked. The owner can 
 
 *   **Given**: An execution produced a screenshot and a log file.
 *   **When**: The operator clicks the result card in the thread.
-*   **Then**: The artifact viewer opens in the side panel. The image shows in a fixed-ratio frame; the log shows as text, read in `Range` pages, with a download link. The Results page lists both under the task.
+*   **Then**: The artifact viewer opens in the work area. The image shows in a fixed-ratio frame; the log shows as text, read in `Range` pages, with a download link. The Results page lists both under the task.
 
 ## Technical Plan (Architecture)
 
@@ -250,7 +250,7 @@ Data foundation Phase 3 is on main: `artifact` rows, artifact stores and placeme
 
     The delivery record has no check status today, so `checks` and `checks_failed` are not shown until delivery records one. No check state is guessed.
 
-*   **Viewer**: the existing `ResultViewer` (`packages/ui/src/controls.tsx:269`) gains image, video and text views. It opens in the side panel (OR-14). It chooses a view from the stored `media_type`: image, video, text (read in `Range` pages as the operator scrolls, no cap), and download-only for other types. HTML and SVG are shown as text or in a sandboxed `iframe` with no scripts and no same-origin access; they are never inlined into the page. Bytes come from the existing `GET /api/results/:id` (`app.ts:213`). The route's CSP drops `allow-scripts` and `script-src 'unsafe-inline'`, and the route gains `Range`, `X-Content-Type-Options: nosniff`, and `Content-Disposition: attachment` for types without a view.
+*   **Viewer**: the existing `ResultViewer` (`packages/ui/src/controls.tsx:269`) gains image, video and text views. It opens in the work area (OR-27). It chooses a view from the stored `media_type`: image, video, text (read in `Range` pages as the operator scrolls, no cap), and download-only for other types. HTML and SVG are shown as text or in a sandboxed `iframe` with no scripts and no same-origin access; they are never inlined into the page. Bytes come from the existing `GET /api/results/:id` (`app.ts:213`). The route's CSP drops `allow-scripts` and `script-src 'unsafe-inline'`, and the route gains `Range`, `X-Content-Type-Options: nosniff`, and `Content-Disposition: attachment` for types without a view.
 *   **Results page**: a new app section listing `artifact` rows with task, project, execution, media type, state and time filters, using the Tasks list pattern (state icon first, OR-22). It uses the same `ResultViewer`. Conversations result cards link into it.
 
 Artifacts live in two places: the `artifact` table and legacy `document` records of kind `artifact`. `artifacts.list` (`packages/coordinator/artifacts.ts:193`) already merges both, so the thread, the viewer and the Results page read artifacts only through it and `artifact_get`.
@@ -566,7 +566,7 @@ Shared conventions for every item:
 #### 26. `app/src/views/results.tsx` (Create), `app/src/main.tsx` (Modify), `packages/ui/src/registry.ts` (Modify)
 
 *   **Type / Scope**: view and navigation.
-*   **Proposed Changes**: Results section with its own registry icon (OR-3, "Navigation anchors"), `artifact_list` with filters, `ResultViewer` in the side panel.
+*   **Proposed Changes**: Results section with its own registry icon (OR-3, "Navigation anchors"), `artifact_list` with filters, `ResultViewer` in the work area.
 
 #### 27. `packages/coordinator/delivery.ts` (Modify)
 

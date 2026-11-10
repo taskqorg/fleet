@@ -1,12 +1,13 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Button, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, NavRail, TooltipLayer, HarnessMark, StageChip, type Chip, type FilterField, type NavItem } from './controls.tsx';
+import { Button, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, NavRail, TooltipLayer, HarnessMark, StageChip, type Chip, type FilterField, type NavItem } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
 import tokens from '../tokens.json';
 
 const ROW = parseInt(tokens.size.row);
+export const ROW2 = parseInt(tokens.size['row-2']);
 
 /* ---------- Task list view (patterns/list-view.md) ---------- */
 
@@ -22,8 +23,10 @@ const GROUPS: { id: GroupBy; label: string }[] = [
   { id: 'agent', label: 'Agent' }, { id: 'host', label: 'Host' }, { id: 'none', label: 'None' }];
 
 /** Filter bar + views + state counters + grouping + virtual list. View state lives here; a real page keeps it in the URL. */
-export function TaskListView({ items, now, onPin, onOpen, selected, height }: {
+export function TaskListView({ items, now, onPin, onOpen, selected, height, row = ROW }: {
   items: TaskRow[]; now: number; onPin: (id: number) => void; onOpen?: (t: TaskRow) => void; selected?: number; height?: string;
+  /** Row height: ROW2 for a catalogue in the control column. */
+  row?: number;
 }) {
   const [views, setViews] = useState<View[]>([
     { name: 'Needs me', chips: [], states: ['waiting', 'failed'], group: 'priority' },
@@ -89,25 +92,26 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height }: {
             {GROUPS.map(g => <button type="button" key={g.id} class={`seg${view.group === g.id ? ' on' : ''}`} aria-pressed={view.group === g.id} onClick={() => edit({ group: g.id })}>{g.label}</button>)}
           </span>
         </>} />
-      <VirtualList items={rows} getKey={r => r.kind === 'group' ? r.key : String(r.t.id)} rowHeight={ROW} follow="top" label="Tasks"
-        columns="1.25rem minmax(0,1fr) 1.25rem 1.25rem 2.75rem 4.5rem 1.75rem"
+      <VirtualList items={rows} getKey={r => r.kind === 'group' ? r.key : String(r.t.id)} rowHeight={row} follow="top" label="Tasks"
+        columns={row === ROW ? '1.25rem minmax(0,1fr) 1.25rem 1.25rem 2.75rem 4.5rem 1.75rem' : '1.25rem minmax(0,1fr) 2.75rem 4.5rem 1.75rem'}
         rowClass={r => r.kind === 'group' ? 'grp' : r.t.id === selected ? 'sel' : ''}
-        header={<><span /><span>Task</span><span /><span /><span class="r">Age</span><span class="r">Cost</span><span /></>}
+        header={row === ROW ? <><span /><span>Task</span><span /><span /><span class="r">Age</span><span class="r">Cost</span><span /></> : undefined}
         render={r => r.kind === 'group'
           ? <GroupHeader icon={r.icon} tone={r.tone} label={r.label} count={r.count}
               open={!closed.includes(r.key.slice(2))} onToggle={() => { const k = r.key.slice(2); setClosed(closed.includes(k) ? closed.filter(x => x !== k) : [...closed, k]); }} />
-          : <TaskCells t={r.t} now={now} onPin={onPin} onOpen={onOpen} showPriority={view.group !== 'priority'} />} />
+          : <TaskCells t={r.t} now={now} onPin={onPin} onOpen={onOpen} showPriority={view.group !== 'priority'} two={row !== ROW} />} />
     </div>
   );
 }
 
-function TaskCells({ t, now, onPin, onOpen, showPriority }: { t: TaskRow; now: number; onPin: (id: number) => void; onOpen?: (t: TaskRow) => void; showPriority: boolean }) {
+function TaskCells({ t, now, onPin, onOpen, showPriority, two }: { t: TaskRow; now: number; onPin: (id: number) => void; onOpen?: (t: TaskRow) => void; showPriority: boolean; two: boolean }) {
   // OR-22: state icon leftmost; ID beside the title; agent mark only while running; delivery stage as a chip.
+  // A two-line catalogue row keeps the marks on the second line, so the title has the whole first line (OR-21).
+  const marks = <>{t.state === 'in_progress' && <HarnessMark h={t.agent} />}{t.stage && <StageChip stage={t.stage} />}</>;
   return <>
     <span class="lead"><StateBadge family="task" state={t.state} reason={t.reason} compact /></span>
-    <span class="tt">{showPriority && t.priority === 0 && <span class="p0" aria-label="priority 0">p0</span>}<a class="title row-link" href={`#/tasks/${t.id}`} onClick={e => { if (onOpen) { e.preventDefault(); onOpen(t); } }}>{t.title}</a><span class="id">T-{t.id}</span></span>
-    <span>{t.state === 'in_progress' && <HarnessMark h={t.agent} />}</span>
-    <span>{t.stage && <StageChip stage={t.stage} />}</span>
+    <span class="tt">{showPriority && t.priority === 0 && <span class="p0" aria-label="priority 0">p0</span>}<a class="title row-link" href={`#/tasks/${t.id}`} onClick={e => { if (onOpen) { e.preventDefault(); onOpen(t); } }}>{t.title}</a><span class="id">T-{t.id}</span>{two && marks}</span>
+    {!two && <><span>{t.state === 'in_progress' && <HarnessMark h={t.agent} />}</span><span>{t.stage && <StageChip stage={t.stage} />}</span></>}
     <span class="r"><AgeChip t={t.started} now={now} alertAfter={t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" /></span>
     <span class="r"><Num m={t.cost === null ? { value: null, basis: 'unavailable', reason: 'no meter' } : { value: t.cost, basis: t.est ? 'estimated' : 'measured' }} kind="money" rise="bad" /></span>
     <Button label={t.pinned ? 'Unpin' : 'Pin'} icon={t.pinned ? actions.unpin : actions.pin} iconOnly pressed={t.pinned} onClick={() => onPin(t.id)} />
@@ -120,18 +124,23 @@ export function AppShell({ nav, current, onGo, waiting, children }: {
   nav: NavItem[]; current: string; onGo: (id: string) => void; waiting: number; children: ComponentChildren;
 }) {
   const [pinned, setPinned] = useState<string[]>(['tasks', 'hosts']);
+  // The collapsed rail is a per-device convenience; storage may be unavailable.
+  const [mini, setMini] = useState(() => { try { return localStorage.getItem('fleet.nav.mini') === '1'; } catch { return false; } });
+  const toggle = () => { setMini(!mini); try { localStorage.setItem('fleet.nav.mini', mini ? '0' : '1'); } catch { /* not remembered */ } };
+  // OR-26: a click anywhere on a row follows the row's link. Controls in the row keep their own action; a text selection is not a click.
+  const openRow = (e: MouseEvent) => {
+    const t = e.target as HTMLElement, link = t.closest?.('.vl-row, .kv li')?.querySelector<HTMLElement>('.row-link');
+    if (!link || t.closest('a,button,input,textarea,select,label') || !(getSelection()?.isCollapsed ?? true)) return;
+    link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }));
+  };
   return (
-    <div class="shell" data-ui="app-shell">
+    <div class="shell" data-ui="app-shell" onClick={openRow}>
       <a class="skip" href="#main" onClick={e => { e.preventDefault(); document.getElementById('main')?.focus(); }}>Skip to content</a>
-      <header class="topbar">
-        <b class="brand">Fleet</b>
-        <span class="grow" />
-        {waiting > 0 && current !== 'overview' && <a class="nav-count t-attention waiting" href="#/overview" onClick={e => { e.preventDefault(); onGo('overview'); }}>{waiting} need you</a>}
-      </header>
-      <div class="shell-body">
-        <NavRail items={nav} pinned={pinned} current={current} onGo={onGo} onPin={(id, p) => setPinned(p ? [...pinned, id] : pinned.filter(x => x !== id))} />
-        <main class="shell-main" id="main" tabIndex={-1}>{children}</main>
-      </div>
+      <NavRail items={nav} pinned={pinned} current={current} onGo={onGo} mini={mini} onPin={(id, p) => setPinned(p ? [...pinned, id] : pinned.filter(x => x !== id))}
+        head={<><b class="brand">Fleet</b><span class="grow" />
+          {waiting > 0 && current !== 'overview' && <a class="nav-count t-attention waiting" href="#/overview" onClick={e => { e.preventDefault(); onGo('overview'); }}>{waiting} need you</a>}
+          <Button label={mini ? 'Expand navigation' : 'Collapse navigation'} icon="panel-left-close" iconOnly pressed={mini} onClick={toggle} /></>} />
+      <main class="shell-main" id="main" tabIndex={-1}>{children}</main>
       <TooltipLayer />
     </div>
   );
@@ -139,18 +148,15 @@ export function AppShell({ nav, current, onGo, waiting, children }: {
 
 /* ---------- Layout patterns used by pages ---------- */
 
-/** List on the left, detail on the right; stacks when narrow (patterns/list-detail.md). */
-// D14/M1: when narrow, the detail comes first (CSS order) and takes focus, so opening an item always shows it.
-export function ListDetail({ list, detail, detailKey }: { list: ComponentChildren; detail?: ComponentChildren; detailKey?: string | number }) {
+/** Control column and work area (patterns/list-detail.md). With nothing open the work area says so; when narrow only one of the two shows. */
+export function ListDetail({ list, detail, detailKey, idle }: {
+  list: ComponentChildren; detail?: ComponentChildren; detailKey?: string | number;
+  /** What the work area shows while nothing is open, in place of the default line (the section's own reference page). */
+  idle?: ComponentChildren;
+}) {
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (detailKey === undefined) return;
-    const d = ref.current?.querySelector<HTMLElement>('[data-ui=detail]');
-    if (!d) return;
-    d.focus({ preventScroll: true });
-    if (d.getBoundingClientRect().top > window.innerHeight * 0.5 || d.getBoundingClientRect().top < 0) d.scrollIntoView({ block: 'start' });
-  }, [detailKey]);
-  return <div ref={ref} data-ui="list-detail" class={`split-view${detail ? ' has-detail' : ''}`}><div class="split-list">{list}</div>{detail}</div>;
+  useEffect(() => { if (detailKey !== undefined) ref.current?.querySelector<HTMLElement>('[data-ui=detail]')?.focus({ preventScroll: true }); }, [detailKey]);
+  return <div ref={ref} data-ui="list-detail" class={`split-view${detail ? ' has-detail' : ''}`}><div class="split-list">{list}</div>{detail ?? <div class={`work-idle${idle ? '' : ' work-empty'}`}>{idle ?? <Empty text="Pick a row to open it here." />}</div>}</div>;
 }
 /** Everything waiting for a person, answered in place (patterns/needs-you.md). */
 export const NeedsYou = ({ children }: { children: ComponentChildren }) => (
@@ -162,3 +168,16 @@ export const OpsSummary = ({ children }: { children: ComponentChildren }) => <di
 /** pending: a newer answer is loading; the rows stay, dimmed, under a thin progress bar (fleet-view-urls-and-list-path.md §2). The bar always keeps its height, so the rows never move (OR-23). */
 export const ListFrame = ({ bar, children, pending }: { bar: ComponentChildren; children: ComponentChildren; pending?: boolean }) =>
   <div class={`list-view${pending ? ' pending' : ''}`} data-ui="list-view" aria-busy={pending || undefined}>{bar}<div class="list-progress" role={pending ? 'progressbar' : undefined} aria-label={pending ? 'Updating' : undefined} aria-hidden={pending ? undefined : true} />{children}</div>;
+
+/** The work area for a definition kept in git: path and revision, name, tabs, then the tab's sections (patterns/definition-editor.md). */
+export function DefinitionEditor({ label, crumb, title, tabs, tab, onTab, onClose, actions, children }: {
+  label: string; crumb: string; title: ComponentChildren; tabs: string[]; tab: string; onTab: (t: string) => void; onClose?: () => void;
+  actions?: ComponentChildren; children: ComponentChildren;
+}) {
+  return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={label}>
+    <header class="detail-h">{onClose && <Button label="Close" icon="x" iconOnly onClick={onClose} />}<span class="muted mono">{crumb}</span><span class="grow" />{actions}</header>
+    <h2 class="detail-title">{title}</h2>
+    <div class="tabs detail-tabs" role="tablist">{tabs.map(x => <button type="button" role="tab" key={x} aria-selected={tab === x} onClick={() => onTab(x)}>{x}</button>)}</div>
+    <div class="stack" data-ui="definition-editor" role="tabpanel">{children}</div>
+  </article>;
+}

@@ -97,6 +97,14 @@ export const states = {
     all: { label: 'Accepting work', tone: 'success', icon: 'circle-check' },
     paused: { label: 'Paused', tone: 'neutral', icon: 'pause' },
   },
+  /** A definition kept in git (agent, pipeline, catalogue entry): its draft and qualification state (patterns/definition-editor.md). */
+  definition: {
+    draft: { label: 'Draft', tone: 'attention', icon: 'file-plus-2' },
+    ready: { label: 'Ready', tone: 'success', icon: 'circle-check' },
+    unchecked: { label: 'Not checked', tone: 'neutral', icon: 'circle-dashed' },
+    incompatible: { label: 'Incompatible', tone: 'danger', icon: 'circle-x' },
+    never: { label: 'Never run', tone: 'neutral', icon: 'circle-dashed' },
+  },
 } as const satisfies Record<string, Record<string, StateDef>>;
 
 export type Family = keyof typeof states;
@@ -112,12 +120,23 @@ export const workspaces = [
   { id: 'results', label: 'Results', icon: 'file-text', group: 'Operator', app: true },
   { id: 'projects', label: 'Projects', icon: 'folder-open', group: 'Operator', app: false },
   { id: 'agents', label: 'Agents', icon: 'bot', group: 'Architect', app: false },
+  { id: 'pipelines', label: 'Pipelines', icon: 'network', group: 'Architect', app: false },
+  { id: 'catalogue', label: 'Catalogue', icon: 'rows-3', group: 'Architect', app: false },
   { id: 'hosts', label: 'Hosts', icon: 'panels-top-left', group: 'Architect', app: true },
   { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', group: 'Architect', app: true },
   { id: 'keys', label: 'API keys', icon: 'shield', group: 'Architect', app: true },
   { id: 'access', label: 'Access', icon: 'shield', group: 'Architect', app: false },
 ] as const satisfies readonly { id: string; label: string; icon: IconName; group: string; app: boolean }[];
 export type AppScreen = Extract<(typeof workspaces)[number], { app: true }>['id'];
+
+/** What performs a pipeline step (fleet.md: executors are agents, tools, programs or pipelines). */
+export const stepKinds = {
+  agent: { label: 'Agent', icon: 'bot' },
+  tool: { label: 'Tool', icon: 'settings' },
+  program: { label: 'Program', icon: 'terminal' },
+  pipeline: { label: 'Pipeline', icon: 'network' },
+} as const satisfies Record<string, { label: string; icon: IconName }>;
+export type StepKind = keyof typeof stepKinds;
 
 /** Action icons used by controls. One meaning per icon. */
 export const actions = {

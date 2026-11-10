@@ -6,7 +6,7 @@ The main user is an operator who handles dozens of tasks a day, and an architect
 
 ## 1. Density and calm
 
-* **Dense by default.** A list row is one line, about 32 px tall on desktop. A desktop screen shows at least 20 task rows without scrolling. No decorative cards, hero areas or large empty margins.
+* **Dense by default.** A table row is one line, about 32 px tall on desktop. A catalogue row in the control column is two lines, 44 px: title, then its secondary facts. A desktop screen shows about 15 task rows without scrolling. No decorative cards, hero areas or large empty margins.
 * **Calm by default.** Colour carries meaning only: state, attention, measurement basis. Everything else is neutral. At most one accent colour on a screen, used for the primary action and the focus ring.
 * **One attention level per signal.** Problems and waiting decisions use the attention colour; normal running work does not. A screen where everything is highlighted is a defect.
 * **Numbers are tabular.** Numbers use tabular figures and right alignment in columns, so they line up and do not shift while they update.
@@ -98,5 +98,5 @@ The operator can work without the mouse.
 ## 11. Themes and devices
 
 * Light and dark are equal citizens. The default follows the system setting; the person can override it, and the choice is remembered.
-* Desktop first: layouts are designed for 1280 to 1920 px wide, with list and detail side by side from 1100 px.
-* Phone usable: at 390 px, list and detail become stacked screens, tables collapse into two-line rows, and every action stays reachable. No horizontal page scroll; wide tables scroll inside their own frame.
+* Desktop first: layouts are designed for 1280 to 1920 px wide, as three columns ([OR-24](owner-rules.md)); catalogue and work area sit side by side above 1100 px.
+* Phone usable: at 390 px the catalogue and the opened item are separate screens, and every action stays reachable. No page scroll in either direction ([OR-25](owner-rules.md)); wide tables scroll inside their own frame.
