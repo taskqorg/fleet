@@ -1,7 +1,7 @@
 # Fleet Lab
 
 *   **Author:** Alex Kirs
-*   **Status:** In Review (revision 2, after EGM review in [`reviews/fleet-lab/`](./reviews/fleet-lab/))
+*   **Status:** In Review (revision 2, after EGM review in `reviews/fleet-lab/`)
 *   **Date:** 2026-11-10
 *   **Input:** [`lab-brief.md`](./lab-brief.md). Its section "Owner Decisions, Round 3 (2026-11-10)" is binding and wins over earlier brief text. The decisions are restated in the table below so this doc stands alone.
 

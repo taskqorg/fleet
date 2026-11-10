@@ -278,7 +278,7 @@ It also prints the fixture load time, the migration 10 backfill time and the gro
 * [fleet-operator-app.md](fleet-operator-app.md) (D3 offline copy, D4 entity store, routing)
 * [fleet-data-foundation.md](fleet-data-foundation.md) (§2 task, §12 concurrency model, G2 derived values)
 * [design-system decisions](../design-system/decisions.md) (D17 entity codes, OR-22 via owner rules)
-* Review reports: [reviews/fleet-view-urls/](reviews/fleet-view-urls/)
+* Review reports: reviews/fleet-view-urls/
 
 ### Future Improvements
 

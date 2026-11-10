@@ -1,6 +1,6 @@
 # Component reuse review
 
-Source-based assessment against the [distributed contracts](distributed-contracts-proposal.md), 2026-11-09. Candidates below are not adopted dependencies, deployment instructions or proven end-to-end capabilities.
+Source-based assessment against the distributed contracts, 2026-11-09. Candidates below are not adopted dependencies, deployment instructions or proven end-to-end capabilities.
 
 ## Evidence and candidates
 
@@ -38,7 +38,7 @@ Validate three connected parts before broad UI work: registered execution host a
 
 ## First-version inventory refresh
 
-Local checkout review on 2026-11-09 for the [first-version plan](first-version-plan.md). Read current manifests, product rules, AgentQ adapter declarations, CoreQ exports and selected executor/module declarations. These are local source revisions, not deployed versions or claims about the latest remote branches. Unrelated local modifications were preserved.
+Local checkout review on 2026-11-09 for the first-version plan. Read current manifests, product rules, AgentQ adapter declarations, CoreQ exports and selected executor/module declarations. These are local source revisions, not deployed versions or claims about the latest remote branches. Unrelated local modifications were preserved.
 
 | Component | Inspected HEAD | First-version assessment |
 |---|---|---|

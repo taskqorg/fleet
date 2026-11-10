@@ -10,7 +10,7 @@ Native-tested debug executable SHA256: `1afcdefc8c3775352064a88ff31f1e82910c9c06
 
 Temporary root: `/var/folders/sw/55r1dvwn2g30l77zs5nwp3_80000gn/T/fleet-native-multiharness-6kcz5pwr`.
 
-Retained evidence: [summary](../evidence/multiharness-native-20261109/summary.json), [A request](../evidence/multiharness-native-20261109/request-A.json), [B request](../evidence/multiharness-native-20261109/request-B.json), [A native frames](../evidence/multiharness-native-20261109/A.native.jsonl), [B native frames](../evidence/multiharness-native-20261109/B.native.jsonl), [normalized events](../evidence/multiharness-native-20261109/events.json), [native developer/context extraction](../evidence/multiharness-native-20261109/native-context-proof.json), [artifact readback](../evidence/multiharness-native-20261109/artifact-readback.json). Original JSONL and durable journal remain in the temporary root; the new native rollout remains in the existing dedicated Codex store. No authentication file is included in these artifacts.
+Retained evidence: summary, A request, B request, A native frames, B native frames, normalized events, native developer/context extraction, artifact readback. Original JSONL and durable journal remain in the temporary root; the new native rollout remains in the existing dedicated Codex store. No authentication file is included in these artifacts.
 
 ## Actual results
 
