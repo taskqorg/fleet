@@ -5,7 +5,7 @@ import { useLocation } from 'wouter-preact';
 import {
   ListDetail, ListFrame, FilterBar, StateCounters, RowCheck, VirtualList, StateBadge, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection, type VirtualListHandle,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf,
-  writeClip,
+  writeClip, zone,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
 import { op, online } from '../api.ts';
@@ -69,7 +69,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const copySel = (s0: NonNullable<Selection>) => {
     try {
       // Both formats (formats.md "Copy"); times in the reader's own zone.
-      const text = op<{ markdown: string }>('thread_export', { key, ...range(s0), tz: Intl.DateTimeFormat().resolvedOptions().timeZone }).then(r => r.markdown);
+      const text = op<{ markdown: string }>('thread_export', { key, ...range(s0), tz: zone() }).then(r => r.markdown);
       writeClip(text).catch(e => copyFail(e, () => copySel(s0)));
     } catch (e) { copyFail(e, () => copySel(s0)); } // no async clipboard (plain http): say so instead of failing silently
   };

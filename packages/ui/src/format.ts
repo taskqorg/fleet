@@ -109,3 +109,6 @@ export function agentLabel(model: string | null | undefined, effort?: string | n
   const m = (model ?? '').replace(/^claude-/, '').replace(/-(\d+)-(\d+)$/, '-$1.$2');
   return [m, effort].filter(Boolean).join(' · ');
 }
+
+/** The reader's IANA time zone, for times the server writes into copied text (formats.md "Copy"). */
+export const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
