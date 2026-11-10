@@ -71,7 +71,9 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   // Two credential kinds never mix (§1): a host never carries a person; a browser request carries the person the guard verified.
   const named=req.headers['x-fleet-person'];
   if(machine){if(named!==undefined)fail(403,'Host requests carry no person');}
-  else{if(typeof named!=='string'||!named)fail(401,'Person required');await people.refresh();const p=people.personFor(named as string);if(!p)fail(403,'Unknown person');(req as any).person=p}
+  else{if(typeof named!=='string'||!named)fail(401,'Person required');await people.refresh();const p=people.personFor(named as string);if(!p)fail(403,'Unknown person');
+   // Until per-person visibility ships (people-access slice 3), only the owner works in Fleet; others may only read me.
+   if(!p!.owner&&!(route==='/api/ops/:name'&&(req.params as any)?.name==='me'))fail(403,'Only the owner until visibility ships');(req as any).person=p}
   if(!machine&&config.browserProxyAuth&&!['GET','HEAD','OPTIONS'].includes(req.method)&&req.headers.origin!==config.browserOrigin)fail(403,'Origin required');
   if(!machine&&req.headers.origin&&req.headers.origin!==(config.browserOrigin??`${req.protocol}://${req.headers.host}`)) fail(403,'Origin rejected');
  });

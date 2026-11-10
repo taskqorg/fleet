@@ -6,7 +6,7 @@ import http from 'node:http';
 import { mkdirSync } from 'node:fs';
 import { chromium } from 'playwright';
 import { createStore } from '../../packages/coordinator/store.ts';
-import { createApp } from '../coordinator/test-app.ts';
+import { createApp, OWNER } from '../coordinator/test-app.ts';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : 'design-report/app';
 mkdirSync(shots, { recursive: true });
@@ -31,7 +31,7 @@ for (let i = 0; i < 12; i++) await store.put('event', { id: 'ev-' + i, sessionId
 // Proxy first (its origin is the browser origin), then the coordinator.
 let target = 0;
 const proxy = http.createServer((req, res) => {
-  const up = http.request({ host: '127.0.0.1', port: target, path: req.url, method: req.method, headers: { ...req.headers, authorization: 'Bearer browser-check' } }, r => { res.writeHead(r.statusCode!, r.headers); r.pipe(res); });
+  const up = http.request({ host: '127.0.0.1', port: target, path: req.url, method: req.method, headers: { ...req.headers, authorization: 'Bearer browser-check', 'x-fleet-person': OWNER } }, r => { res.writeHead(r.statusCode!, r.headers); r.pipe(res); });
   up.on('error', () => { res.writeHead(502); res.end(); }); req.pipe(up);
 });
 await new Promise<void>(r => proxy.listen(0, '127.0.0.1', r));

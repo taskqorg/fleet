@@ -1,4 +1,4 @@
-import {actor as who} from './people.ts';
+import {actor as who,requester} from './people.ts';
 import {LONG_OPERATIONS,READ_OPERATIONS} from './store.ts';
 import {readFileSync,realpathSync,readdirSync,existsSync} from 'node:fs';
 import {resolve,sep} from 'node:path';
@@ -43,7 +43,7 @@ export function registerProjects(app:FastifyInstance,store:Store,config:{directo
  // On start: v2 runs move on (an interrupted sync call becomes unknown, never replayed); any other running run is unknown.
  app.addHook('onReady',async()=>{for(const run of (await all('pipeline-run',{state:'running'})).filter(r=>r.state==='running')){if(run.definition?.version===2){config.runner.advance(run.id).catch(()=>{});continue}run.state='unknown';for(const s of run.steps)if(s.state==='running'){s.state='unknown';s.error={code:'interrupted',message:'Original dispatch outcome unconfirmed; no replay'}}run.durationMs=null;await put('pipeline-run',run)}});
  // pipeline_run and direct_search: the selected method's v2 pipeline with the query as the example ({query, prompt}).
- async function runPipeline(b:any,actor:any={kind:'person',email:who('operator')},started?:(run:any)=>void){
+ async function runPipeline(b:any,actor:any=requester(),started?:(run:any)=>void){
   const pre=await atomic(async()=>{if(!b||Array.isArray(b)||Object.keys(b).some(k=>!['projectId','requestId','query','methodId','invocation'].includes(k))||typeof b.requestId!=='string'||!b.requestId||b.requestId.length>200||typeof b.query!=='string'||!b.query.trim()||b.query.length>2000||b.methodId!==undefined&&typeof b.methodId!=='string')fail(400,'Expected projectId, requestId, query and optional methodId');
   const signature=digest({projectId:b.projectId,query:b.query,methodId:b.methodId??null,invocation:b.invocation??'pipeline'});const old=(await all('pipeline-run',{projectId:b.projectId,requestId:b.requestId})).find(r=>r.projectId===b.projectId&&r.requestId===b.requestId);if(old){if(old.signature!==signature)fail(409,'Request identity conflict');return {old}}
   if(b.invocation!==undefined&&!['direct','pipeline'].includes(b.invocation))fail(400,'Invalid invocation');

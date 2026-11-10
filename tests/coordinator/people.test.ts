@@ -9,7 +9,8 @@ const owner={email:OWNER,name:'Owner',roles:['operator','architect'],owner:true}
 
 test('person header: verified e-mail maps to a person; none is 401, unknown 403, host credential with a person 403',async()=>{
  const file=peopleFile([owner,ALINA]);
- const app=createApp({database:mkdtempSync('/tmp/fleet-people-')+'/db',browserSecret:'browser',machineSecret:'machine',hostId:'mac',peopleFile:file});
+ const dir=mkdtempSync('/tmp/fleet-people-')+'/db';
+ const app=createApp({database:dir,browserSecret:'browser',machineSecret:'machine',hostId:'mac',peopleFile:file});
  try{
   const me=(person:any,auth='Bearer browser')=>app.inject({method:'POST',url:'/api/ops/me',headers:{authorization:auth,'x-fleet-person':person},payload:{}});
   assert.equal((await me(null)).statusCode,401);
@@ -22,16 +23,26 @@ test('person header: verified e-mail maps to a person; none is 401, unknown 403,
   assert.equal((await poll({'x-fleet-person':OWNER})).statusCode,403);
   assert.equal((await poll({})).statusCode,200);
   // Audit actors are the person's e-mail.
-  const t=(await app.inject({method:'POST',url:'/api/ops/task_create',headers:{authorization:'Bearer browser','x-fleet-person':'alina@example.test'},payload:{title:'x'}})).json();
-  assert.equal(t.createdBy??t.created_by,'alina@example.test');
+  const op=(person:string,name:string,payload:any)=>app.inject({method:'POST',url:'/api/ops/'+name,headers:{authorization:'Bearer browser','x-fleet-person':person},payload});
+  const t=(await op(OWNER,'task_create',{title:'x'})).json();assert.equal(t.createdBy,OWNER);
+  // Until visibility (slice 3), a person other than the owner reads only me.
+  assert.equal((await op('alina@example.test','task_create',{title:'x'})).statusCode,403);
   // A malformed file keeps the last valid load and asks once.
   writeFileSync(file,'{not json');await new Promise(r=>setTimeout(r,20));
   assert.equal((await me('alina@example.test')).statusCode,200);assert.equal((await me('alina@example.test')).statusCode,200);
-  const qs=(await app.inject({method:'POST',url:'/api/ops/questions_list',headers:{authorization:'Bearer browser'},payload:{}})).json();
-  assert.equal((qs.questions??qs).filter((q:any)=>/people\.json/.test(q.text)).length,1);
+  const qs=(await app.inject({method:'POST',url:'/api/ops/questions_list',headers:{authorization:'Bearer browser'},payload:{}})).json().questions;
+  assert.equal(qs.filter((q:any)=>/people\.json/.test(q.text)).length,1);
   writeFileSync(file,JSON.stringify([owner]));await new Promise(r=>setTimeout(r,20));
   assert.equal((await me('alina@example.test')).statusCode,403);
  }finally{await app.close()}
+ // A restart with a broken file serves the last valid load from the person rows, and does not ask twice.
+ writeFileSync(file,'[');
+ const again=createApp({database:dir,browserSecret:'browser',machineSecret:'machine',hostId:'mac',peopleFile:file});
+ try{
+  assert.equal((await again.inject({method:'POST',url:'/api/ops/me',headers:{authorization:'Bearer browser','x-fleet-person':OWNER},payload:{}})).json().owner,true);
+  const qs=(await again.inject({method:'POST',url:'/api/ops/questions_list',headers:{authorization:'Bearer browser'},payload:{}})).json().questions;
+  assert.equal(qs.filter((q:any)=>/people\.json/.test(q.text)&&q.state==='open').length,1);
+ }finally{await again.close()}
 });
 
 test('people.json validation: one owner, known roles, e-mails lowercased',()=>{

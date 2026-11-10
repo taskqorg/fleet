@@ -10,6 +10,8 @@ import type {Store} from './store.ts';
 export type Person={email:string,name:string,roles:string[],owner:boolean,grants:{kind:string,id:string}[],grantsVersion:string};
 const ROLES=['operator','architect'];
 
+// Changes only when what the person may do changes (roles, owner flag, grants), not on a name edit.
+const version=(p:Person)=>createHash('sha256').update(JSON.stringify([[...p.roles].sort(),p.owner,p.grants.map(g=>g.kind+':'+g.id).sort()])).digest('hex').slice(0,16);
 export function parsePeople(textValue:string):Map<string,Person>{
  const list=JSON.parse(textValue);if(!Array.isArray(list))throw Error('people.json must be a list');
  const out=new Map<string,Person>();
@@ -20,7 +22,8 @@ export function parsePeople(textValue:string):Map<string,Person>{
   if(p.owner!==undefined&&typeof p.owner!=='boolean')throw Error(`owner of ${email} must be true or false`);
   const grants=p.grants??[];if(!Array.isArray(grants)||grants.some((g:any)=>!g||typeof g.kind!=='string'||typeof g.id!=='string'))throw Error(`Grants of ${email} must be [{kind, id}]`);
   out.set(email,{email,name:typeof p.name==='string'?p.name:email,roles:[...p.roles],owner:p.owner===true,grants:grants.map((g:any)=>({kind:g.kind,id:g.id})),
-   grantsVersion:createHash('sha256').update(JSON.stringify(p)).digest('hex').slice(0,16)});
+   grantsVersion:''});
+  const x=out.get(email)!;x.grantsVersion=version(x);
  }
  if([...out.values()].filter(p=>p.owner).length!==1)throw Error('Exactly one person must have owner: true');
  return out;
@@ -30,23 +33,33 @@ export function parsePeople(textValue:string):Map<string,Person>{
 export const requestPerson=new AsyncLocalStorage<Person|null>();
 // Who acted, for audit rows: the request person's e-mail, else the given fallback (an execution, 'program-worker').
 export const actor=(fallback='system')=>requestPerson.getStore()?.email??fallback;
+// requestedBy of a run: the request person, else the operator role (timers, Lab reconcile).
+export const requester=()=>{const p=requestPerson.getStore();return p?{kind:'person',email:p.email}:{kind:'operator'}};
 
 export function peopleRegistry(file:string|undefined,store:Store){
- let loaded=new Map<string,Person>(),mtime=-1,lastError='';
+ let loaded=new Map<string,Person>(),seen='';
  const write=async(p:Map<string,Person>)=>store.atomic(async()=>{
   await store.query('DELETE FROM person',[]);
   for(const x of p.values()){await store.query('INSERT INTO person(email,name,roles,owner) VALUES($1,$2,$3,$4)',[x.email,x.name,x.roles,x.owner]);
    for(const g of x.grants)await store.query('INSERT INTO person_grant(email,object_kind,object_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[x.email,g.kind,g.id])}});
- const problem=async(message:string)=>{if(message===lastError)return;lastError=message;
-  await store.atomic(()=>store.tasks.ask({kind:'operator_decision',text:`people.json is not valid: ${message}. Fleet keeps the last valid list of people until the file is fixed.`,options:['fixed'],askedBy:'fleet',data:{peopleFile:true}}))};
- // Re-read on mtime change. Returns once the rows match the file.
+ // After a restart with a broken file, the rows of the last valid load are that load.
+ const fromRows=async()=>{const m=new Map<string,Person>();
+  for(const r of (await store.query('SELECT email,name,roles,owner FROM person',[])))m.set(r.email,{email:r.email,name:r.name,roles:r.roles,owner:r.owner,grants:[],grantsVersion:''});
+  for(const g of (await store.query('SELECT email,object_kind,object_id FROM person_grant',[])))m.get(g.email)?.grants.push({kind:g.object_kind,id:g.object_id});
+  for(const p of m.values())p.grantsVersion=version(p);return m};
+ // One open question for a broken file, kept across restarts; answering it after the fix closes it.
+ const problem=async(message:string)=>store.atomic(async()=>{
+  if((await store.query("SELECT 1 FROM question WHERE state='open' AND data->>'peopleFile'='true'",[])).length)return;
+  await store.tasks.ask({kind:'operator_decision',text:`people.json is not valid: ${message}. Fleet keeps the last valid list of people until the file is fixed.`,options:['fixed'],askedBy:'fleet',data:{peopleFile:true}})});
+ // Re-read when mtime, size or inode change; the state is recorded only after the load is applied.
  const refresh=async()=>{
-  if(!file)return;let m:number;try{m=statSync(file).mtimeMs}catch(e:any){m=-2;if(mtime!==m){mtime=m;await problem('cannot read the file ('+e.code+')')}return}
-  if(m===mtime)return;mtime=m;
-  let next:Map<string,Person>;try{next=parsePeople(readFileSync(file,'utf8'))}catch(e:any){await problem(e.message);return}
-  loaded=next;lastError='';await write(next);
+  if(!file)return;let key:string,next:Map<string,Person>|null=null,error='';
+  try{const st=statSync(file);key=[st.mtimeMs,st.size,st.ino].join(':')}catch(e:any){key='missing';error='cannot read the file ('+e.code+')'}
+  if(key===seen)return;
+  if(!error)try{next=parsePeople(readFileSync(file,'utf8'))}catch(e:any){error=e.message}
+  if(next){await write(next);loaded=next}else{if(!loaded.size)loaded=await fromRows();await problem(error)}
+  seen=key;
  };
  return {refresh,
-  personFor:(email:string|undefined)=>email?loaded.get(email.toLowerCase())??null:null,
-  owner:()=>[...loaded.values()].find(p=>p.owner)??null};
+  personFor:(email:string|undefined)=>email?loaded.get(email.toLowerCase())??null:null};
 }
