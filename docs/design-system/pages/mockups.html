@@ -318,6 +318,8 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .split-list>.panel{border:0;border-radius:0;background:none}
 .split-list>.stats{padding:0 var(--space-4) var(--space-2)}
 .split-list>.panel:has(.vl),.split-list .list-view,.split-list .vl-wrap{display:flex;flex-direction:column;flex:1;min-height:0}
+/* OR-25: a control column that holds a virtual list leaves scrolling to the list, so the two never nest. ponytail: in a very short window the head above the list clips; give the head its own row limit if that shows up. */
+.split-list:has(.vl){overflow-y:hidden}
 .detail{display:flex;flex-direction:column;gap:var(--space-3);min-width:0;min-height:0;overflow-y:auto;padding:var(--space-4) var(--space-6);background:var(--surface)}
 .detail>*{flex:none}
 .work-idle{display:grid;min-width:0;min-height:0;background:var(--surface)}
