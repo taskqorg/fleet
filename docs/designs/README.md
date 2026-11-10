@@ -13,6 +13,7 @@ Technical designs, briefs and their reviews. A design here is accepted direction
 * `fleet-stack.md`: Go for every service and the migration order, delivery order, rule delivery, toolchain, JSON Schema contracts, MCP subcommands, the trial slice and measurement protocol.
 * `fleet-docs-governance.md`: document kinds and their life, what an agent may add, EGM outputs outside the tree, the warning-only docs report and `docs-order` issue, the proposed specq rule, and the docs rework plan.
 * `fleet-executor-delivery.md`: executor release files built in CI and how a host fetches them.
+* `fleet-self-update.md`: releases by tag on GitHub Releases with provenance, the `fleet-update` timer on every host, PDS18 order, rollback, `autoUpdate`, versions in `hosts_list`.
 * `legacy-inventory.md`: what the removed legacy pages did and which app section rebuilds each gap.
 * `entity-ids-brief.md`: human entity codes such as `T-FLT-42`.
 * `web-stack-brief.md`: front-end stack choice.
