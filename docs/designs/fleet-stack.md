@@ -13,7 +13,7 @@ Order:
 
 Never port two components at once.
 
-Today: the coordinator, the executor and the gateway are Go (`go/coordinator`, `go/executor`, `go/gateway`); there is no Rust and no Python in the repository; the probe spikes are in `go/probe/`.
+Today: the coordinator, the executor and the gateway are Go (`go/coordinator`, `go/executor`, `go/gateway`); there is no Rust and no Python in the repository.
 
 ## Why this stack
 
@@ -92,7 +92,7 @@ The generators were checked against off-the-shelf output for the transcript even
 
 ## Go code
 
-The rules are in [`fleet.md`](../../fleet.md#stack): standard library first, `CGO_ENABLED=0`, one module `go/` with one `go.sum`, `-mod=readonly`, the checksum database on, `govulncheck` as a warning, contract types from `go/gen`, `-trimpath` release binaries from one Linux job. The schema is embedded in the binary: `go generate` copies `packages/coordinator/db/schema.sql` (the schema source, unchanged) next to `d_schema.go`; the copy is not committed. The CI job `go` vets, runs `go test` and cross-builds `go/coordinator` for linux/amd64, darwin/arm64 and windows/amd64 and `go/executor` and `go/gateway` for linux/amd64 and darwin/arm64, checks each binary for `CGO_ENABLED=0`, writes a SHA-256 file per binary and uploads the workflow artifact `fleet-go-<sha>`. Nested modules under `go/probe/` are outside that module and outside CI.
+The rules are in [`fleet.md`](../../fleet.md#stack): standard library first, `CGO_ENABLED=0`, one module `go/` with one `go.sum`, `-mod=readonly`, the checksum database on, `govulncheck` as a warning, contract types from `go/gen`, `-trimpath` release binaries from one Linux job. The schema is embedded in the binary: `go generate` copies `packages/coordinator/db/schema.sql` (the schema source, unchanged) next to `d_schema.go`; the copy is not committed. The CI job `go` vets, runs `go test` and cross-builds `go/coordinator` for linux/amd64, darwin/arm64 and windows/amd64 and `go/executor` and `go/gateway` for linux/amd64 and darwin/arm64, checks each binary for `CGO_ENABLED=0`, writes a SHA-256 file per binary and uploads the workflow artifact `fleet-go-<sha>`.
 
 ### Target state
 

@@ -28,7 +28,7 @@ function report(root:string){
  const counts={files:0,cases:0,unnamed_requirement:0,unnamed_risk:0};
  for(const name of files){
   const suffix=extname(name);
-  if(!((name.startsWith('tests/')&&/\.(?:test\.ts|check\.(?:ts|mjs))$/.test(name))||(name.startsWith('go/')&&!name.startsWith('go/probe/')&&name.endsWith('_test.go'))))continue;
+  if(!((name.startsWith('tests/')&&/\.(?:test\.ts|check\.(?:ts|mjs))$/.test(name))||(name.startsWith('go/')&&name.endsWith('_test.go'))))continue;
   const text=readFileSync(join(root,name),'utf8'),found=cases(text,suffix);if(!found.length)continue;
   counts.files++;
   const absent=missing(text);if(absent.length)console.log(`::warning file=${name}::File has no ${absent.join(', ')}`);
