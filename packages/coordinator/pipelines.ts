@@ -52,6 +52,8 @@ type Deps={
  connectionsDir?:string,
  save:(o:{projectId:string|null,scope:'lab'|'prod',executionId:string,name:string,bytes:Buffer,mediaType:string})=>Promise<{id:string}>,
  artifactsOf:(executionId:string)=>Promise<{id:string,path:string,sha256:string}[]>,
+ // Artifacts of an execution not yet stored (upload or copy still running); a step completes only when this is 0.
+ unsettled:(executionId:string)=>Promise<number>,
  read:(id:string)=>Promise<Buffer>,
  startAgent:(o:{run:any,step:any,stepExecutionId:string,prompt:string,inputs:{artifactId:string,path:string}[],overrides:any})=>Promise<string>,
  startScript:(o:{run:any,step:any,stepExecutionId:string,command:string,timeoutMs?:number,hostId?:string,inputs:{artifactId:string,path:string}[]})=>Promise<string>,
@@ -145,6 +147,8 @@ export function pipelineRunner(d:Deps){
   // unknown is not final: the host may still report the real outcome.
   if(!['completed','failed','stopped'].includes(e.state))return 'wait';
   if(e.state!=='completed'){await failStep(run,i,e.state==='stopped'?'step:cancelled':'step:'+(e.error?.code??'failed'),e.error?.message??('Step execution '+e.state));return 'wait'}
+  // Uploads can finish after the completion receipt: wait until every file of the step's execution is stored.
+  if(await d.unsettled(s.executionId))return 'wait';
   const arts=await d.artifactsOf(s.executionId),calls=arts.find(a=>/(^|\/)\.connection-calls\.jsonl$/.test(a.path)),own=arts.find(a=>/^(output\/)?output\.json$/.test(a.path));
   if(calls)await recordCalls(run,row,(await d.read(calls.id)).toString('utf8'),null);
   let output:any;if(own){try{output=JSON.parse((await d.read(own.id)).toString('utf8'))}catch{output=undefined}}
