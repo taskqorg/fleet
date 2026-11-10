@@ -138,7 +138,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .th-q{display:block}
 .agent-mark{display:inline-flex;align-items:center;gap:var(--space-1);font-family:var(--font-mono)}
 .vl-row.marked{background:var(--selected)}
-.md p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.md p{margin:0;overflow-wrap:anywhere}
 .md code{font-family:var(--font-mono);font-size:var(--font-size-sm)}
 .md .code{position:relative;margin:var(--space-2) 0;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md)}
 .md pre{margin:0;padding:var(--space-3);overflow-x:auto}
@@ -385,3 +385,18 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .status-line{position:relative;height:0}
 .status-line>*{position:absolute;left:0;right:0;top:0;z-index:2}
 .composer-bar{display:flex;align-items:center;gap:var(--space-2);padding:0 var(--space-4);min-height:var(--size-control)}
+/* Markdown in replies */
+.md>*+*{margin-top:var(--space-2)}
+.md .md-h{margin:var(--space-3) 0 0;font-size:var(--font-size-md);font-weight:var(--font-weight-bold)}
+.md ul,.md ol{margin:0;padding-left:var(--space-5)}
+.md blockquote{margin:0;padding-left:var(--space-3);border-left:2px solid var(--line);color:var(--fg-muted)}
+.md hr{border:0;border-top:1px solid var(--line)}
+.md a{color:var(--accent)}
+.md-table{overflow-x:auto}
+.md table{border-collapse:collapse;font-size:var(--font-size-sm)}
+.md th,.md td{border:1px solid var(--line);padding:var(--space-1) var(--space-2);text-align:left}
+/* The conversation detail fills the viewport height below the top bar; the thread takes what the header and composer leave */
+.detail.conversation{position:sticky;top:var(--space-4);height:calc(100dvh - var(--size-topbar) - 2 * var(--space-4))}
+.conversation .pane{flex:1;min-height:0}
+.conversation .transcript,.conversation .tr-body{flex:1;min-height:0}
+.conversation .tr-body .vl{flex:1;height:auto;min-height:0}
