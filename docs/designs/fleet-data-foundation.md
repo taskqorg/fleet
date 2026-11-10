@@ -387,6 +387,7 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
     *   Backfill: existing rows get codes in `created_at` order, filling only empty values.
 
 *   **Migration 11** (Lab Stage 0, [fleet-lab.md](fleet-lab.md)): `experiment` and `score` tables with row-level security and change-feed triggers, `execution.request_id` (unique when set), question kind `rating`; the old lab's `experiment` documents are deleted and their executions unlinked. Lab trials set `experiment_id` and `variant` through `executions.createExecution`.
+*   **Migration 12** (Lab Stage 1, [fleet-lab.md](fleet-lab.md)): artifact `role` adds `example` (a Lab example, written by the coordinator), `artifact.approved_at` (null while proposed), and a unique index on `(coalesce(project_id, ''), name)` for example artifacts.
 *   **Table `task_derived`** (migration 10): `task_id` (primary key, references `task`), `project_id` (copied from the task, for row-level security), `agent` (harness of the latest `preparing` or `running` execution), `host` (host of the latest execution), `started_at` (earliest execution start) and `open_questions`. Triggers on `execution`, `question` and `task` keep it current; the operator list (`task_page`) reads it instead of computing these per task. `task_derived_check` reports drift.
 
 ### 3. Artifact store

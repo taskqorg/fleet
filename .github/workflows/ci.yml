@@ -28,6 +28,12 @@ jobs:
       # The executor: its unit tests, and the binary the coordinator's end-to-end artifact test runs.
       - run: cargo build -p fleet-executor && cargo test -p fleet-executor
       - run: pnpm test
+      # Use-case registry drift (docs/designs/fleet-lab.md Stage 1): warns, never blocks. Only Fleet's own sources are
+      # checked here; the other org repos are not checked out, so their entries report nothing.
+      - name: Use-case drift (warning only)
+        if: always()
+        continue-on-error: true
+        run: node scripts/lab-drift.ts
       - name: Install Chromium for the design checks
         if: always()
         run: pnpm exec playwright install --with-deps chromium
