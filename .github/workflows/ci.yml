@@ -4,7 +4,9 @@
 # which checks out no PR code, may write a PR comment.
 name: ci
 on:
+  # edited: a ## Drift heading added to the description re-evaluates docs.drift (docs/designs/fleet-docs-governance.md#report).
   pull_request:
+    types: [opened, synchronize, reopened, edited]
   # A push to main runs the same gates and is the only run that publishes a release (docs/infrastructure-build.md).
   push:
     branches: [main]
@@ -15,8 +17,10 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Full history: the docs report diffs against the merge base or HEAD^.
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Check out shared rules
         uses: actions/checkout@v4
@@ -38,6 +42,12 @@ jobs:
         run: |
           node scripts/test-rule-report.ts --self-check
           node scripts/test-rule-report.ts
+      - name: Docs report (warning only)
+        if: always()
+        continue-on-error: true
+        run: |
+          node scripts/docs-report.ts --self-check
+          node scripts/docs-report.ts
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       # The executor: its unit tests, and the binary the coordinator's end-to-end artifact test runs.
@@ -225,8 +235,54 @@ jobs:
             const lines = report.split('\n');
             const short = lines.length > 60 ? lines.slice(0, 60).join('\n') + '\n… (full report in the design-report artifact)' : report;
             const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const body = `<!-- fleet-design-report -->\n**Design report** (warnings only, never blocks merge) · [run and artifacts](${run})\n\n\`\`\`\n${short}\n\`\`\``;
+            // Docs report: docs.drift lines drop when the current description has a ## Drift heading (read now, not at push).
+            let docs = 'Docs report not produced (see the job log).';
+            try { docs = fs.readFileSync('design-report/docs-report.txt', 'utf8'); } catch {}
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: context.issue.number });
+            const drift = /^## Drift\s*$/m.test(pr.body ?? '');
+            const docLines = docs.trimEnd().split('\n').filter(l => !(drift && / docs\.drift /.test(l)));
+            const docsShort = docLines.length > 40 ? docLines.slice(0, 40).join('\n') + '\n… (full report: design-report/docs-report.txt in the artifact)' : docLines.join('\n');
+            const issues = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/issues?q=is%3Aissue+is%3Aopen+label%3Adocs+fleet-docs-order`;
+            const body = `<!-- fleet-design-report -->\n**Design report** (warnings only, never blocks merge) · [run and artifacts](${run})\n\n\`\`\`\n${short}\n\`\`\`\n\n**Docs report** (warnings only) · [open docs-order issue](${issues})\n\n\`\`\`\n${docsShort}\n\`\`\``;
             const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number });
             const old = comments.find(c => c.body.includes('<!-- fleet-design-report -->'));
             if (old) await github.rest.issues.updateComment({ ...context.repo, comment_id: old.id, body });
             else await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+  # One open issue carries the docs report findings from main (docs/designs/fleet-docs-governance.md#from-warning-to-work):
+  # updated each push, created with label docs when missing, closed when only docs.size and docs.delta remain.
+  docs-order:
+    needs: build-test-design
+    if: always() && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: design-report
+      - name: Update the docs-order issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let report;
+            try { report = fs.readFileSync('design-report/docs-report.txt', 'utf8'); } catch { core.warning('No docs report; issue left as is.'); return; }
+            const findings = report.split('\n').filter(l => / docs\.[a-z]+ /.test(l) && !/ docs\.(size|delta) /.test(l));
+            const marker = '<!-- fleet-docs-order -->';
+            const { data: open } = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', labels: 'docs', per_page: 100 });
+            const issue = open.find(i => (i.body ?? '').includes(marker));
+            if (!findings.length) {
+              if (issue) await github.rest.issues.update({ ...context.repo, issue_number: issue.number, state: 'closed', state_reason: 'completed' });
+              return;
+            }
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const head = report.split('\n').filter(l => /^(Docs report|Counts:|docs\/:)/.test(l)).join('\n');
+            let list = findings.join('\n');
+            // GitHub caps an issue body at 65536 characters; the full report stays in the run artifact.
+            if (list.length > 60000) list = list.slice(0, 60000).replace(/\n[^\n]*$/, '') + '\n… (full report in the design-report artifact)';
+            const body = `${marker}\nDocs report findings on \`${context.sha.slice(0, 12)}\` · [run and artifacts](${run}). An agent that edits \`docs/\` fixes the findings in the files it touches (AGENTS.md). Rules: docs/designs/fleet-docs-governance.md.\n\n\`\`\`\n${head}\n${list}\n\`\`\``;
+            if (issue) { await github.rest.issues.update({ ...context.repo, issue_number: issue.number, body }); return; }
+            try { await github.rest.issues.getLabel({ ...context.repo, name: 'docs' }); }
+            catch { await github.rest.issues.createLabel({ ...context.repo, name: 'docs', color: '0e8a16', description: 'Docs report findings' }); }
+            await github.rest.issues.create({ ...context.repo, title: 'Docs order: docs report findings on main', body, labels: ['docs'] });
