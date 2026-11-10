@@ -63,7 +63,7 @@ fn provider(script: impl Fn(&str) -> (u16, u64) + Send + Sync + 'static) -> Prov
                     if status == 0 {
                         return;
                     }
-                    let reply = json!({"results": [{"title": "invented"}], "usage": {"credits": 2}}).to_string();
+                    let reply = if head.starts_with("GET /usage") { json!({"key": {"usage": 40}}) } else { json!({"results": [{"title": "invented"}], "usage": {"credits": 2}}) }.to_string();
                     let extra = if status == 429 { "Retry-After: 7\r\n" } else { "" };
                     let text = format!("HTTP/1.1 {status} X\r\n{extra}Content-Length: {}\r\n\r\n{reply}", reply.len());
                     if stream.write_all(text.as_bytes()).is_err() {
@@ -97,7 +97,7 @@ fn snapshot(url: &str, keys: &[(&str, &str)], tokens: &[&str], intake: &str, sub
     let keys: Vec<Value> = keys.iter().map(|(k, s)| json!({"id": fp(k), "state": s})).collect();
     let tokens: Vec<Value> = tokens.iter().map(|t| json!({"sha256": sha256(t), "executionId": "exec-1", "connections": ["tavily"]})).collect();
     json!({"schema": 2, "generated_ms": 1,
-        "providers": {"tavily": {"baseUrl": url, "tools": {
+        "providers": {"tavily": {"baseUrl": url, "usage": {"path": "/usage", "field": "key.usage"}, "tools": {
             "web_search": {"method": "POST", "path": "/search", "unit": "credits", "idempotent": true, "inject": {"include_usage": true}},
             "submit": {"method": "POST", "path": "/submit", "unit": "credits", "idempotent": submit_idempotent}}}},
         "connections": {"tavily": {"provider": "tavily", "tools": ["web_search", "submit"], "intake": intake, "keys": keys, "blocked": []}},
@@ -246,6 +246,17 @@ fn a_403_is_recorded_on_the_key_and_never_disables_it() {
     assert_eq!(lines[0]["keyProblem"]["key"], fp("invented-key-a"));
     assert!(lines[0]["keyProblem"]["message"].as_str().unwrap().contains("invented"));
     assert_eq!(gw.health()["keys"]["usable"], 1);
+}
+
+#[test]
+fn usage_reports_each_key_from_the_provider() {
+    let upstream = provider(|key| if key == "invented-key-b" { (500, 0) } else { (200, 0) });
+    let gw = Fixture::new(&upstream.url, &["invented-key-a", "invented-key-b"]);
+    let rows = call_raw(gw.port, "GET", "/v1/usage", &[], "").2["keys"].as_array().unwrap().clone();
+    let a = rows.iter().find(|r| r["key"] == fp("invented-key-a")).unwrap();
+    assert_eq!(a["usage"], 40.0);
+    let b = rows.iter().find(|r| r["key"] == fp("invented-key-b")).unwrap();
+    assert!(b["usage"].is_null() && b["unknown"].as_str().unwrap().contains("500"));
 }
 
 #[test]

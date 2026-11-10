@@ -106,6 +106,8 @@ struct Tool {
 struct Provider {
     base_url: String,
     tools: HashMap<String, Tool>,
+    /// Per-key usage report (reconcile): GET path, and the dotted field holding the number.
+    usage: Option<(String, String)>,
 }
 
 struct Key {
@@ -159,7 +161,8 @@ impl Snapshot {
                 tools.insert(name.clone(), Tool { method, path, idempotent: t["idempotent"] == true, unit, inject });
             }
             let base_url = text(&p["baseUrl"], "provider baseUrl")?.trim_end_matches('/').to_owned();
-            providers.insert(id.clone(), Provider { base_url, tools });
+            let usage = p["usage"]["path"].as_str().zip(p["usage"]["field"].as_str()).map(|(a, b)| (a.to_owned(), b.to_owned()));
+            providers.insert(id.clone(), Provider { base_url, tools, usage });
         }
         let mut connections = HashMap::new();
         for (name, c) in v["connections"].as_object().ok_or("connections is missing")? {
@@ -448,6 +451,37 @@ impl Gateway {
         refusal(StatusCode::BAD_GATEWAY, "error", "provider-unreachable", &format!("no key reached the provider; last failure: {last_failure}"))
     }
 
+    /// The provider's own per-key usage for every key with a value (reconcile, §2); unknown is reported, never guessed.
+    async fn usage(&self) -> Value {
+        let snapshot = self.snapshot.read().unwrap().clone();
+        let mut rows = Vec::new();
+        for (name, connection) in &snapshot.connections {
+            let Some((path, field)) = snapshot.providers.get(&connection.provider).and_then(|p| p.usage.clone().map(|u| (p.base_url.clone(), u))).map(|(b, (p, f))| (format!("{b}{p}"), f)) else { continue };
+            for key in connection.keys.iter().filter(|k| k.state != "retired") {
+                let Some(value) = self.values.read().unwrap().get(&key.id).cloned() else { continue };
+                let request = Request::get(&path).header(AUTHORIZATION, format!("Bearer {value}")).body(Body::default()).expect("static request shape");
+                let observed = match tokio::time::timeout(self.config.request_timeout, self.client.request(request)).await {
+                    Ok(Ok(r)) if r.status().is_success() => match r.into_body().collect().await {
+                        Ok(b) => serde_json::from_slice::<Value>(&b.to_bytes())
+                            .ok()
+                            .and_then(|v| field.split('.').try_fold(v, |v, f| v.get(f).cloned()))
+                            .and_then(|v| v.as_f64())
+                            .ok_or("usage reply has no ".to_owned() + &field),
+                        Err(e) => Err(format!("usage body: {e}")),
+                    },
+                    Ok(Ok(r)) => Err(format!("usage HTTP {}", r.status().as_u16())),
+                    Ok(Err(e)) => Err(format!("usage request: {e}")),
+                    Err(_) => Err("usage request timed out".into()),
+                };
+                rows.push(match observed {
+                    Ok(usage) => json!({"connection": name, "key": key.id, "usage": usage}),
+                    Err(reason) => json!({"connection": name, "key": key.id, "usage": null, "unknown": reason}),
+                });
+            }
+        }
+        json!({"at": now_ms(), "keys": rows})
+    }
+
     fn on_disabled(&self, id: &str, status: u16) {
         let mut disabled = self.disabled.lock().unwrap();
         disabled.insert(id.to_owned(), (status, now_ms()));
@@ -475,6 +509,10 @@ impl Gateway {
         let path = request.uri().path().to_owned();
         if request.method() == Method::GET && path == "/healthz" {
             return Ok(reply(StatusCode::OK, self.health().to_string()));
+        }
+        // Loopback only: Caddy forwards /v1/call/* alone, so remote callers never reach this.
+        if request.method() == Method::GET && path == "/v1/usage" {
+            return Ok(reply(StatusCode::OK, self.usage().await.to_string()));
         }
         let route = path.strip_prefix("/v1/call/").and_then(|r| r.split_once('/')).filter(|(c, t)| is_name(c) && is_name(t));
         let (Some((connection_name, tool_name)), &Method::POST) = (route, request.method()) else {

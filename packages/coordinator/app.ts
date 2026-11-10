@@ -30,7 +30,7 @@ import {readings} from './readings.ts';
 import {hostRegistry,type Host} from './hosts.ts';
 import type {HostEvents,PollReply,PollRequest,Receipt,AccountReceipt,ProjectReceipt,ChildReceipt} from '../../contracts/generated/host-protocol.ts';
 declare module 'fastify' {interface FastifyRequest {fleetHost:Host}}
-export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRetentionDays?:number,database:string,store?:Store,browserSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,storeSecrets?:string,storeEndpointHosts?:string[],cfAccessFile?:string,defaultArtifactLocations?:string[],artifactRetryWindowMs?:number,placementIntervalMs?:number,projectConfigDirectory?:string,connectionsDir?:string,secretDir?:string,gatewayDir?:string,connectionTickMs?:number,gatewayUrl?:string,connectionClient?:string[],pipelineTickMs?:number,testSiteRoot?:string,defaultAccountBinding?:string,labDirectory?:string}) {
+export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRetentionDays?:number,database:string,store?:Store,browserSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,storeSecrets?:string,storeEndpointHosts?:string[],cfAccessFile?:string,defaultArtifactLocations?:string[],artifactRetryWindowMs?:number,placementIntervalMs?:number,projectConfigDirectory?:string,connectionsDir?:string,secretDir?:string,gatewayDir?:string,connectionTickMs?:number,gatewayUrl?:string,reconcileMs?:number,connectionClient?:string[],pipelineTickMs?:number,testSiteRoot?:string,defaultAccountBinding?:string,labDirectory?:string}) {
  if(!config.browserSecret) throw Error('Browser credential required');
  if(config.browserProxyAuth&&!config.browserOrigin)throw Error('Proxy browser auth requires configured browser origin');
  const ownStore=!config.store,store=config.store??createStore(config.database),{all,get,put}=store;
@@ -361,13 +361,17 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  app.addHook('onClose',async()=>{clearInterval(pipelineTimer)});
  Object.assign(projects,managed.operations);
  // API key connections (fleet-connections.md, C0). Key values live in FLEET_SECRET_DIR; unset, keys cannot be added.
- const connections=connectionRegistry(store,{secretDir:config.secretDir,gatewayDir:config.gatewayDir});
+ const connections=connectionRegistry(store,{secretDir:config.secretDir,gatewayDir:config.gatewayDir,gatewayUrl:config.gatewayUrl});
  Object.assign(projects,connections.operations);
  app.addHook('onReady',async()=>{await store.atomic(()=>connections.sync());await connections.writeSnapshot()});
  // Spool ingest and token revocation every few seconds (connection_tick_seconds: test seam, 0 turns the timer off).
  let connectionTimer:any;const connectionMs=config.connectionTickMs??3000;
  app.addHook('onReady',async()=>{if(connectionMs>0){let running=false;connectionTimer=setInterval(()=>{if(running)return;running=true;store.atomic(()=>connections.tick()).catch(e=>app.log.error(e)).finally(()=>{running=false})},connectionMs);connectionTimer.unref?.()}});
  app.addHook('onClose',async()=>{clearInterval(connectionTimer)});
+ // Key usage reconcile every 10 minutes (reconcileMs: test seam; 0 off).
+ let reconcileTimer:any;const reconcileMs=config.reconcileMs??600000;
+ app.addHook('onReady',async()=>{if(reconcileMs>0){reconcileTimer=setInterval(()=>{connections.reconcile().catch(e=>app.log.error(e))},reconcileMs);reconcileTimer.unref?.()}});
+ app.addHook('onClose',async()=>{clearInterval(reconcileTimer)});
  app.decorate('connections',connections);
  // Success rule (design §3, P3-D2): a start command reported completed waits for the execution's required artifacts; a
  // missing or failed one fails it. settle() finishes a waiting execution once its artifacts are settled or the window passed.

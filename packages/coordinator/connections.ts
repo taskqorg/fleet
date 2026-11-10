@@ -13,7 +13,7 @@ const NAME=/^[a-z][a-z0-9-]{0,62}$/;
 const STATES=['active','draining','disabled','retired'];
 export const fingerprint=(value:string)=>createHash('sha256').update(value).digest('hex').slice(0,12);
 
-export function connectionRegistry(store:Store,config:{secretDir?:string,gatewayDir?:string}){
+export function connectionRegistry(store:Store,config:{secretDir?:string,gatewayDir?:string,gatewayUrl?:string}){
  const {all,get,put}=store;
  const dirOf=(name:string)=>join(config.secretDir??fail(409,'FLEET_SECRET_DIR is not set on the coordinator'),'connections',name);
  const owner=()=>{const p=requestPerson.getStore();if(p&&!p.owner)fail(403,'Only the owner handles key values')};
@@ -133,5 +133,15 @@ export function connectionRegistry(store:Store,config:{secretDir?:string,gateway
  // At start no api step call of an earlier process is in flight: their tokens are revoked.
  const started=Date.now();
  async function revokeSteps(){for(const t of await all('run-token'))if(t.step&&!t.revokedAt&&t.createdAt<started){t.revokedAt=Date.now();await put('run-token',t)}}
- return {operations,sync:async()=>{await revokeSteps();await sync()},snapshot,writeSnapshot,publish,mint,revoke,ingest,tick};
+ // Reconcile (§2, Tavily first): the provider's per-key usage since the first observation, against the credits recorded
+ // through the gateway for that key since then. A positive difference means another client uses the key; unknown stays unknown.
+ async function reconcile(){if(!config.gatewayUrl)return;
+  const report=await fetch(config.gatewayUrl.replace(/\/$/,'')+'/v1/usage').then(r=>r.ok?r.json():null).catch(()=>null);if(!report)return;
+  await store.atomic(async()=>{for(const row of report.keys??[]){const k=await get('key:'+row.key,'connection-key').catch(()=>null);if(!k)continue;
+   if(typeof row.usage!=='number'){k.reconcile={...(k.reconcile??{}),at:report.at,unknown:String(row.unknown??'no usage reported')};await put('connection-key',k);continue}
+   const base=k.usageBaseline??(k.usageBaseline={usage:row.usage,at:report.at});
+   const [r]=await store.query(`SELECT coalesce(sum((t.connection_cost->>'amount')::numeric),0)::float8 AS recorded FROM execution e JOIN execution_totals t ON t.execution_id=e.id
+    WHERE e.kind='tool_run' AND e.data->>'keyFingerprint'=$1 AND (e.data->>'startedAt')::bigint>=$2`,[k.fingerprint,base.at]);
+   const delta=row.usage-base.usage;k.reconcile={at:report.at,providerDelta:delta,recorded:r.recorded,difference:delta-r.recorded};await put('connection-key',k)}})}
+ return {operations,reconcile,sync:async()=>{await revokeSteps();await sync()},snapshot,writeSnapshot,publish,mint,revoke,ingest,tick};
 }
