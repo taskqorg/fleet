@@ -227,8 +227,8 @@ Kinds are always the client kinds above, never legacy kinds (design-system D15).
 
 **Stream.**
 * `GET /api/stream?cursor=N` is excluded from the GET read-snapshot wrapper (`longRoute`, `go/coordinator/registry.go`).
-* On connect it sends the visible backlog in its own short `store.read`.
-* After that, it keeps one shared `LISTEN fleet_change` per process. Each wake is debounced by 50 ms and triggers one short `store.read` per open stream: `seq > cursor`, under the watermark.
+* On connect it sends the visible backlog in its own short read snapshot.
+* After that, it keeps one shared `LISTEN fleet_change` per process. Each wake is debounced by 50 ms and triggers one short read snapshot per open stream: `seq > cursor`, under the watermark.
 * Each event is sent as `id: <seq>`, then `data: {kind,id,taskId,sessionId,hostId,op}`.
 * A `: ping` comment every 25 s keeps the connection open.
 * Headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache, no-transform`, `X-Accel-Buffering: no`. The stream is not compressed.
@@ -314,7 +314,7 @@ The prototype pages were deleted with the TypeScript coordinator (owner, 2026-11
 |---|---|
 | The feed skips a change committed out of `seq` order. | The xid watermark (§4) lets the cursor advance only past finished transactions. A test commits two overlapping transactions in reverse order. |
 | Event ingest floods the stream. | A constant notify payload (one wake per commit), a 50 ms debounce, one short read per stream per wake, and a test with a burst of 1,000 events. |
-| The stream holds a snapshot or a pool connection. | It is excluded from the GET wrapper, and every read is its own short `store.read`. A test commits after the stream opens. |
+| The stream holds a snapshot or a pool connection. | It is excluded from the GET wrapper, and every read is its own short read snapshot. A test commits after the stream opens. |
 | The prune blocks writers. | Batched deletes in their own lock scope `change:prune`, plus resync when a cursor's row is gone. |
 | An expired Access session looks like offline. | A separate "signed out" state, triggered by a redirect, 401 or 403. |
 | A proxy buffers SSE. | No-transform and no-buffering headers, no compression, a smoke check, and the `changes_since` polling fallback. |
