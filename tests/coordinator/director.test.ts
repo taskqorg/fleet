@@ -23,6 +23,8 @@ test('Alina-directed work never runs on Simon\'s subscription unless Simon takes
   const send=(sid:string,requestId:string)=>call('/api/sessions/'+sid+'/messages',{requestId,text:'x'},ALINA);
   const own=(await send(await session('alina-codex'),'one'));assert.equal(own.statusCode,200,own.body);assert.equal(own.json().directedBy,ALINA);
   const foreign=await send(await session('simon-codex'),'two');assert.equal(foreign.statusCode,409);assert.match(foreign.body,/held by simon@example.test/);
+  // Without a subscription, the host's own login (the owner's on this host) never runs Alina's work.
+  const bare=(await call('/api/sessions',{},ALINA)).json();assert.equal((await send(bare.sessionId,'bare')).statusCode,409);
   // Only the holder (or the owner) changes a subscription; the change is audited.
   assert.equal((await call('/api/ops/account_update',{accountId:simonSub.id,take:{projects:['hello-world']}},ALINA)).statusCode,403);
   await ok('/api/ops/account_update',{accountId:simonSub.id,take:{projects:['hello-world']}},SIMON);
