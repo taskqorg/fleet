@@ -69,7 +69,7 @@ func previewCommand(src, out string, poster bool, format string) *exec.Cmd {
 	switch {
 	case runtime.GOOS == "darwin":
 		wrap = []string{"-n", "19", "sandbox-exec", "-p", "(version 1)(allow default)(deny network*)"}
-	case exists("/usr/bin/unshare"):
+	case unshareWorks():
 		wrap = []string{"-n", "19", "unshare", "--user", "--map-root-user", "--net"}
 	default:
 		wrap = []string{"-n", "19"}
@@ -80,6 +80,13 @@ func previewCommand(src, out string, poster bool, format string) *exec.Cmd {
 	c := exec.Command("nice", append(append(wrap, "ffmpeg"), args...)...)
 	return c
 }
+
+// unshareWorks: unshare can make a user and network namespace here. Ubuntu 24.04 blocks unprivileged user namespaces
+// (kernel.apparmor_restrict_unprivileged_userns=1), so unshare exits 1 and every preview would fail; there the preview
+// runs without the network namespace (still nice, prlimit and the time bound).
+var unshareWorks = sync.OnceValue(func() bool {
+	return exists("/usr/bin/unshare") && exec.Command("/usr/bin/unshare", "--user", "--map-root-user", "--net", "true").Run() == nil
+})
 
 func runPreview(c *exec.Cmd) error {
 	var se strings.Builder
