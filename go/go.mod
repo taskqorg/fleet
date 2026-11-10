@@ -3,8 +3,9 @@ module fleet
 go 1.26.0
 
 require (
+	github.com/ebitengine/purego v0.11.3
 	github.com/jackc/pgx/v5 v5.7.5
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 	modernc.org/sqlite v1.62.0
 )
 

@@ -220,6 +220,14 @@ jobs:
             go version -m "$file" | grep -q 'CGO_ENABLED=0' || { echo "$file: cgo enabled"; exit 1; }
             (cd dist && sha256sum "${file#dist/}" | tee "${file#dist/}.sha256")
           done
+          # The executor: linux/amd64 and darwin/arm64 only (Windows not built: process control needs its own port).
+          for t in linux/amd64 darwin/arm64; do
+            os=${t%/*} arch=${t#*/}
+            file="dist/fleet-executor-$os-$arch"
+            GOOS=$os GOARCH=$arch go build -trimpath -o "$file" ./executor
+            go version -m "$file" | grep -q 'CGO_ENABLED=0' || { echo "$file: cgo enabled"; exit 1; }
+            (cd dist && sha256sum "${file#dist/}" | tee "${file#dist/}.sha256")
+          done
       - name: govulncheck (warning only)
         continue-on-error: true
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
