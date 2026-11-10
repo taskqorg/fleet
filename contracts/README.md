@@ -11,8 +11,8 @@ JSON Schema contracts shared by the coordinator, the app and the executor.
 
 * TypeScript: `contracts/gen-ts.mjs` writes `contracts/generated/<name>.ts`. `pnpm run typecheck` and `pnpm run build`
   run it first; `pnpm run contracts` runs it alone (for an editor). The output is not committed.
-* Go: `go/gen` writes the same types into the coordinator package on `go generate` (`go/coordinator/protocol_gen.go`).
-  The executor keeps host messages as JSON values (open `EventData`).
+* Go: `go/gen` writes the same types into the coordinator and executor packages on `go generate` (`go/coordinator/protocol_gen.go`).
+  The executor gets the same file (`go/executor/protocol_gen.go`) for the poll reply and the update result; its other host messages stay JSON values (open `EventData`).
 
 Every `*.schema.json` file here is generated; each `$defs` entry becomes one type with the same name.
 

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1580,10 +1581,7 @@ func reproject() error {
 }
 
 func runExecutor() error {
-	root := os.Getenv("FLEET_DATA_DIR")
-	if root == "" {
-		return errors.New("FLEET_DATA_DIR required")
-	}
+	root := envOr("FLEET_DATA_DIR", defaultDataDir())
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return err
 	}
@@ -1604,14 +1602,11 @@ func runExecutor() error {
 		return err
 	}
 	defer db.Close()
-	url := os.Getenv("FLEET_COORDINATOR_URL")
+	url := envOr("FLEET_COORDINATOR_URL", defaultCoordinatorURL)
 	host := os.Getenv("FLEET_HOST_ID")
-	secretFile := os.Getenv("FLEET_HOST_SECRET_FILE")
-	if url == "" || host == "" {
-		return errors.New("FLEET_COORDINATOR_URL and FLEET_HOST_ID required")
-	}
-	if secretFile == "" {
-		return errors.New("FLEET_HOST_SECRET_FILE required")
+	secretFile := envOr("FLEET_HOST_SECRET_FILE", defaultSecretFile())
+	if host == "" {
+		return errors.New("FLEET_HOST_ID required")
 	}
 	// The host's own secret, from a private file; the coordinator derives the host from it.
 	token, err := hostSecret(secretFile)
@@ -1705,8 +1700,30 @@ func (e *executor) exchange() error {
 	if edgeWait(pollRoute) {
 		return nil
 	}
-	reply, err := post(e.url, e.token, pollRoute, M{"hostId": e.host, "platform": platform(), "capabilities": capabilities(), "stores": e.stores(),
-		"problems": edgeProblems(pollRoute), "projectRoots": anyStrings(reportedRoots())})
+	body := M{"hostId": e.host, "platform": platform(), "capabilities": capabilities(), "stores": e.stores(),
+		"problems": edgeProblems(pollRoute), "projectRoots": anyStrings(reportedRoots()), "version": version}
+	if u := lastUpdate(e.root); u != nil {
+		body["update"] = u
+	}
+	a := send(e.url, e.token, pollRoute, body)
+	sig := updateSignal{Running: version, AutoUpdate: "on"}
+	if lastSignal != nil {
+		sig.Target, sig.AutoUpdate = lastSignal.Target, lastSignal.AutoUpdate
+	}
+	sig.PollOk, sig.PollError = pollSignal(a)
+	if a.kind == answerOK {
+		var r PollReply
+		if b, err := json.Marshal(a.value); err == nil && json.Unmarshal(b, &r) == nil {
+			sig.Target = r.Target
+			if r.AutoUpdate != nil {
+				sig.AutoUpdate = *r.AutoUpdate
+			}
+		}
+	}
+	if err := writeUpdateSignal(e.root, sig); err != nil {
+		fmt.Fprintln(os.Stderr, "executor: update.json:", err)
+	}
+	reply, err := answerValue(a)
 	if err != nil {
 		return err
 	}

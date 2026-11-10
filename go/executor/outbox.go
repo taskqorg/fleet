@@ -264,7 +264,10 @@ func send(url, token, route string, v any) answer {
 }
 
 func post(url, token, route string, v any) (any, error) {
-	a := send(url, token, route, v)
+	return answerValue(send(url, token, route, v))
+}
+
+func answerValue(a answer) (any, error) {
 	switch a.kind {
 	case answerOK:
 		return a.value, nil

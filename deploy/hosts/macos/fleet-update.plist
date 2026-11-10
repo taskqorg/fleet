@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  fleet-update on the Mac (docs/designs/fleet-self-update.md §3.5), a LaunchAgent of the executor service user, every
+  5 minutes. Install: replace FLEET_HOME with that user's home, copy to
+  FLEET_HOME/Library/LaunchAgents/com.ufobe.fleet-update.plist, then: launchctl bootstrap gui/$(id -u) <plist>.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.ufobe.fleet-update</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>[ -f FLEET_HOME/.config/fleet/executor.env ] &amp;&amp; { set -a; . FLEET_HOME/.config/fleet/executor.env; set +a; }; exec FLEET_HOME/releases/current/fleet-update executor</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>FLEET_HOME/Library/Logs/fleet-update.log</string>
+  <key>StandardErrorPath</key><string>FLEET_HOME/Library/Logs/fleet-update.log</string>
+</dict>
+</plist>

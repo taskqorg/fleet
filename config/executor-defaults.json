@@ -1,0 +1,4 @@
+{
+  "$comment": "Release defaults of the executor (docs/designs/fleet-self-update.md section 5); FLEET_STORE_ENDPOINT_HOSTS overrides storeEndpointHosts.",
+  "storeEndpointHosts": ["fleet-store-pds18.ufobe.com", "fleet-store-mac.ufobe.com", "fleet-store-windows.ufobe.com"]
+}

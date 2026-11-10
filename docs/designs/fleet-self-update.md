@@ -9,7 +9,7 @@
 
 ## Overview
 
-Every Fleet host installs a new release by itself. The owner pushes a tag `v<version>` on a green `main` commit. A release workflow publishes one tarball per target on GitHub Releases with checksums and build provenance. On each host a one-shot `fleet-update` command, started every 5 minutes by a systemd timer or a launchd agent, decides whether a newer release should run there, verifies it, installs it into `releases/<version>/`, switches `current`, restarts that host's Fleet services and rolls back by itself when the new version does not come up healthy.
+Every Fleet host installs a new release by itself. The owner pushes a tag `v<version>` on a green `main` commit. A release workflow publishes one tarball per target on GitHub Releases with checksums signed by the release key and build provenance. On each host a one-shot `fleet-update` command, started every 5 minutes by a systemd timer or a launchd agent, decides whether a newer release should run there, verifies it, installs it into `releases/<version>/`, switches `current`, restarts that host's Fleet services and rolls back by itself when the new version does not come up healthy.
 
 The design copies the CoreQ update model ([coreq.md](https://github.com/taskqorg/coreq/blob/main/coreq.md), sections Release artifacts, Update, Launcher) into Go; Fleet does not link the Rust crate ([stack](fleet-stack.md)). `COREQ-R<n>` names the CoreQ rule a step copies; [deviations](#deviations-from-coreq) are listed. `R2` and `R5` are principles of the [Fleet contract](../../fleet.md#principles).
 
@@ -59,6 +59,10 @@ The brief left four points to the draft.
 *   **Minimal env.** One line, `FLEET_HOST_ID=<id>`, the host's identity. The coordinator URL `https://fleet.ufobe.com` and every other value ship as release defaults ([section 5](#5-config-defaults-and-env)). Other env lines remain optional overrides.
 *   **`version-behind` edge.** Flagged at N-2 or older; N-1 is served without a flag.
 
+### Decision: release signature
+
+Owner rule (2026-11-11): standard library first; sigstore only for a guarantee Ed25519 lacks for Fleet. The guarantees Fleet needs are "built by `release.yml` on a `v*` tag of `taskqorg/fleet`" and "not altered after the build". An Ed25519 key held only by the GitHub environment `release` (deployment rule: tags `v*`) gives both: only a job of a `v*` tag run can read it, and the signature covers `SHA256SUMS`, whose lines name the version. Sigstore adds a public transparency log and no long-lived key; for one repository with one owner neither is needed at update time. So `release.yml` signs `SHA256SUMS` with the private key (secret `FLEET_RELEASE_KEY`, environment `release`) into `SHA256SUMS.sig`, and `fleet-update` checks it with `crypto/ed25519` against the public key compiled in (`go/update/main.go`). Zero new modules; no network service besides GitHub at update time. `actions/attest-build-provenance` still runs, so the release carries public provenance (`provenance.sigstore.jsonl`) anyone can check with `gh attestation verify`. Key rotation: a new key pair, the secret replaced, the new public key in the next release; hosts take that release with the old key's signature.
+
 ## Critical User Journeys (CUJs)
 
 ### CUJ 1: Owner releases
@@ -91,9 +95,9 @@ The brief left four points to the draft.
 
 ```text
  owner: git tag v<ver> ──► release.yml: wait for green CI, build 2 tarballs, selftest (linux + macOS),
-                           migration check, SHA256SUMS, latest.json, provenance ──► GitHub Release (public)
+                           migration check, SHA256SUMS + .sig, latest.json, provenance ──► GitHub Release (public)
                                                                      ▲ fetched by every fleet-update
-                                                                     │ Sigstore TUF root fetched for verify
+                                                                     │
  PDS18 root timer ─ fleet-update pds18 ─────────────────────────────┤
    reads latest.json; version + autoUpdate from 127.0.0.1 /api/health│
    stage + verify + selftest in /var/lib/fleet-update (root only)     │
@@ -102,7 +106,7 @@ The brief left four points to the draft.
    then install /opt/fleet-agent/releases, restart PDS18 executor     │
                                                                       │
  other host user timer ─ fleet-update executor ───────────────────────┘
-   reads <data>/update.json (target, autoUpdate) written by its executor
+   reads <data>/update/update.json (target, autoUpdate) written by its executor
    verify, selftest, install ~/releases, restart executor, health, write update-state.json
 
  executor poll ──► coordinator /api/hosts/poll
@@ -123,7 +127,7 @@ The brief left four points to the draft.
 *   **Job `build`** (`needs: gate`, `contents: read`): `deploy/build-release.sh <commit> out <version> <previous> linux/amd64 darwin/arm64`, the one build script for releases and local trials. Each tarball `fleet-<ver>-<os>-<arch>.tgz` holds `fleet-coordinator`, `fleet-gateway`, `fleet-executor`, `fleet-update`, `dist/app/`, `config/`, `deploy/` (unit files, `install-release.sh`, `status.sh`) and `release.json` `{version, previous, commit, target, builtAt}`. Runs every linux binary's `selftest`. Uploads the tarballs with `actions/upload-artifact`.
 *   **Job `selftest-macos`** (`needs: build`, `runs-on: macos-14`, `contents: read`): downloads the darwin tarball, runs each binary's `selftest` (COREQ-R25).
 *   **Job `migrate-check`** (`needs: build`, `contents: read`): on the runner's PostgreSQL, start the new coordinator (migrates), stop it, start the `previous` release's coordinator on that database and require `/api/health` 200. Skipped when `previous` is empty. This enforces "expand in N, contract in N+1".
-*   **Job `publish`** (`needs: [selftest-macos, migrate-check]`, `contents: write`, `id-token: write`, `attestations: write`): writes `SHA256SUMS` and `latest.json` `{"version", "files": {"linux-amd64": "<file>", "darwin-arm64": "<file>"}}`; `actions/attest-build-provenance` over both tarballs, its bundle saved as `provenance.sigstore.jsonl`; `gh release create v<ver> --latest` with the five files.
+*   **Job `publish`** (`needs: [selftest-macos, migrate-check]`, environment `release`, `contents: write`, `id-token: write`, `attestations: write`): signs `SHA256SUMS` (written by the build) into `SHA256SUMS.sig` with `openssl pkeyutl -sign -rawin` and the secret `FLEET_RELEASE_KEY`, writes `latest.json` `{"version", "files": {"linux-amd64": "<file>", "darwin-arm64": "<file>"}}`; `actions/attest-build-provenance` over both tarballs, its bundle saved as `provenance.sigstore.jsonl`; `gh release create v<ver> --latest` with the six files.
 
 `ci.yml` drops "Pack the release" and "Upload the release" and the comment that a push to `main` publishes a release; `fleet-update` joins its cross-build loop so pull request trials carry it.
 
@@ -131,12 +135,12 @@ The brief left four points to the draft.
 
 *   Every binary has `var version = "dev"`, set by `-ldflags "-X main.version=<ver>"` (the gateway already has it).
 *   `/api/health` adds `version` (and `autoUpdate`, section 4).
-*   Each binary gets `selftest` (executor: a new entry of its `subcommands` map in `go/executor/main.go`; coordinator: checked in `main()` before the first `need(...)`), printing `<name> <version>: selftest ok`. Coordinator: parse `config/` defaults and the embedded migrations, no database. Executor: open an in-memory SQLite journal, load the harness table. `fleet-update`: load the compiled-in Sigstore identity and TUF root. CoreQ's offline selftest env (`<ENV>_SELFTEST_OFFLINE=1`) is not needed: no Fleet selftest uses the network.
+*   Each binary gets `selftest` (executor: a new entry of its `subcommands` map in `go/executor/main.go`; coordinator: checked in `main()` before the first `need(...)`), printing `<name> <version>: selftest ok`. Coordinator: parse `config/` defaults and the embedded migrations, no database. Executor: open an in-memory SQLite journal, load the harness table. `fleet-update`: decode the compiled-in release public key. CoreQ's offline selftest env (`<ENV>_SELFTEST_OFFLINE=1`) is not needed: no Fleet selftest uses the network.
 *   `fleet-update` never installs `dev`.
 
 ### 3. `fleet-update`
 
-New Go command `go/update/` (binary `fleet-update`), in every tarball. One run, then exit; the timer repeats. The release repository `taskqorg/fleet` and the workflow identity are compiled in (COREQ-R8).
+New Go command `go/update/` (binary `fleet-update`), in every tarball, standard library only. One run, then exit; the timer repeats. The release repository `taskqorg/fleet` and the release public key are compiled in (COREQ-R8).
 
 Subcommands:
 
@@ -151,7 +155,7 @@ Releases root `R`: `~/releases` of the service user; on PDS18 `/home/fleet/relea
 *   `R/<ver>/`: unpacked tarball, directories 0755 and files read-only. Prune `chmod`s before removing.
 *   `R/current`, `R/previous`: symlinks, replaced atomically (`current.tmp-<pid>`, then rename). Units keep `ExecStart=…/releases/current/<binary>`.
 *   `R/<ver>/starts`, `R/<ver>/healthy`: unhealthy start count, healthy marker (COREQ-R16).
-*   State directory `S`: executor hosts `<data dir>/update/`; PDS18 `/var/lib/fleet-update/` (root, 0755) with `stage/` and the TUF cache (0700). `S/update-state.json` (PDS18: `S/pds18-state.json`, 0644, with keys `coordinator` and `executor`, one `last` each) holds `{refused: {"<ver>": "<reason>"}, last: {version, state, error, at}}`, written durably (COREQ-R22). `S/update.lock` is `flock`ed for the whole run.
+*   State directory `S`: executor hosts `<data dir>/update/`; PDS18 `/var/lib/fleet-update/` (root, 0755) with `stage/` (0700). `S/update-state.json` (PDS18: `S/pds18-state.json`, 0644, with keys `coordinator` and `executor`, one `last` each) holds `{refused: {"<ver>": "<reason>"}, last: {version, state, error, at}}`, written durably (COREQ-R22). `S/update.lock` is `flock`ed for the whole run.
 *   The running version is read from `R/current/release.json`, never from the link name.
 *   Prune at start: leftover `stage/` and `.tmp` entries; every `R/<ver>/` that is neither `current` nor `previous`; on PDS18 every dump in `/backup/fleet/pre-deploy/` except those of `current` and `previous` (the same rule).
 
@@ -159,12 +163,12 @@ Releases root `R`: `~/releases` of the service user; on PDS18 `/home/fleet/relea
 
 1.  Take `update.lock`; if held, exit 0. Prune.
 2.  Read the inputs.
-    *   Executor mode: `<data dir>/update.json` `{target, autoUpdate, at}`, written by the executor from its last poll answer. Missing file: exit (the executor has not polled yet).
+    *   Executor mode: `<data dir>/update/update.json` `{target, autoUpdate, running, pollOk, pollError, at}`, written by the executor from its last poll answer. Missing file: exit (the executor has not polled yet).
     *   `pds18` mode: `version` and `autoUpdate` from `GET 127.0.0.1:9470/api/health` (the coordinator reports `autoUpdate` of its own host record). Coordinator not answering: treat as `"on"`, so an update can repair it. Candidate from `https://github.com/taskqorg/fleet/releases/latest/download/latest.json`.
 3.  `autoUpdate` is `"off"` or a future time: record `held`, exit.
 4.  Candidate: executor mode `target`; `pds18` mode `latest.json.version`. Stop when not newer than the running version (COREQ-R14), refused in state, or not matching the strict version regex of section 1 (stricter than COREQ-R12 step 2).
-5.  Download the tarball for this `<os>-<arch>`, `SHA256SUMS` and `provenance.sigstore.jsonl` from `https://github.com/taskqorg/fleet/releases/download/v<ver>/` into the stage (`S/stage/` on PDS18; `R/<ver>.tmp/` elsewhere). Streamed to disk; no size cap beyond the checksum.
-6.  Verify: SHA-256 against `SHA256SUMS`, then the bundle with sigstore-go: certificate identity `https://github.com/taskqorg/fleet/.github/workflows/release.yml@refs/tags/v<ver>`, issuer `https://token.actions.githubusercontent.com`, subject digest equal to the tarball's (COREQ-R11). Trusted root from sigstore-go's TUF client, embedded root, cache in `S`, refreshed per its own expiry.
+5.  Download the tarball for this `<os>-<arch>`, `SHA256SUMS` and `SHA256SUMS.sig` from `https://github.com/taskqorg/fleet/releases/download/v<ver>/` into the stage (`S/stage/` on PDS18; `R/<ver>.tmp/` elsewhere). Streamed to disk; no size cap beyond the checksum.
+6.  Verify: the Ed25519 signature of `SHA256SUMS` against the compiled-in key, then the tarball's SHA-256 against its line (COREQ-R11, with a key instead of a certificate identity). `release.json` of the unpacked tree must name the candidate version.
 7.  Unpack in the stage, run `selftest` of each binary this host runs (COREQ-R25).
 8.  `pds18` mode: `runuser -u postgres -- pg_dump -Fc -d fleet -f /backup/fleet/pre-deploy/fleet-pre-<ver>.dump`.
 9.  Install: `pds18` mode copies the staged tree to `/home/fleet/releases/<ver>/`, owner `fleet`; executor mode renames `.tmp` to `R/<ver>/`. Write `previous` = old `current`, then `current` = `<ver>`. Running binaries are never written in place (COREQ-R13).
@@ -175,8 +179,8 @@ Failure classes:
 
 | Failure | Result |
 |---|---|
-| Network, HTTP, TUF fetch, disk, `pg_dump` | `state: error`, nothing refused, next run retries |
-| Digest mismatch against `SHA256SUMS`, bundle does not verify | `refused`, reason `checksum` / `provenance` |
+| Network, HTTP, disk, `pg_dump` | `state: error`, nothing refused, next run retries |
+| Digest mismatch against `SHA256SUMS`, signature does not verify | `refused`, reason `checksum` / `provenance` |
 | Selftest exits non-zero | `refused`, reason `selftest` |
 | Three unhealthy starts | rollback, `refused`, reason `unhealthy` |
 
@@ -214,7 +218,7 @@ All poll changes are additive: an N-1 executor ignores new answer fields and the
 *   **`healthyTarget`**: the coordinator's own `version` when `healthy` exists in its release directory (next to its executable), else the version of `releases/previous` when that has `healthy`, else null (no update offered). Read per request; two `stat` calls.
 *   **`/api/health`** adds `version` and `autoUpdate` of the coordinator's own host (`FLEET_HOST_ID` of the coordinator, `pds18`); both are not secret.
 *   **`poll`** writes `version` and `update` into the observation it already rebuilds, so one writer owns the row. After `hostProblems`, it appends `{kind: "version-behind"}` when the host's version is older than `previous` of the coordinator's `release.json`. `EdgeProblemKind` becomes `ProblemKind` with both values.
-*   **Needs-you**: extract `openCauseQuestion(q, cause, addressedTo, projectID, text string) error` in `a_dispatch.go` from its lines that call `hookTaskAsk` and then set `cause` and `addressed_to`; dispatch and `poll` both use it. `poll` opens a question when `update.state` is `refused` or `failed` and no question with cause `update:<hostId>:<version>` is open or answered (one lookup by cause, so repeated polls add nothing). Kind `operator_decision`, options `["ok"]`, addressed to the host's holder, text `"<hostId>: update to <version> <rolled back|refused> (<reason>)."`. A poll with `state: ok` withdraws open `update:<hostId>:*` questions (`state='withdrawn', cause=NULL`). Dispatch's held-cause filter does not match `update:`, so dispatch never withdraws them.
+*   **Needs-you**: extract `openCauseQuestion(q, cause string, addressedTo, projectID any, text string) error` in `a_dispatch.go` from its lines that call `hookTaskAsk` and then set `cause` and `addressed_to`; dispatch and `poll` both use it. `poll` opens a question when `update.state` is `refused` or `failed` and no question with cause `update:<hostId>:<version>` is open or answered (one lookup by cause, so repeated polls add nothing). Kind `operator_decision`, options `["ok"]`, addressed to the host's holder, text `"<hostId>: update to <version> <rolled back|refused> (<reason>)."`. A poll with `state: ok` withdraws open `update:<hostId>:*` questions (`state='withdrawn', cause=NULL`). Dispatch's held-cause filter does not match `update:`, so dispatch never withdraws them.
 *   **PDS18 row**: for its own host the coordinator also reads `/var/lib/fleet-update/pds18-state.json` and merges it with the polled `update`: the worse state wins (`failed` > `refused` > `error` > `pending` > `held` > `ok`), and `update.parts` lists coordinator and executor results.
 *   **`hosts_list`** adds `version`, `autoUpdate`, `update` `{version, state, error, at}`.
 *   **Executor**: writes `<data dir>/update/update.json` `{target, autoUpdate, running, pollOk, pollError, at}` only when a value changes (durably, temp file then rename); sends `version` and `update` in polls.
@@ -245,7 +249,7 @@ The three current hosts do this once: their env files are reduced to `FLEET_HOST
 *   OS names `linux`, `darwin` (Go's), not `macos`.
 *   No 64 MiB cap: the tarball holds the web app; checksum and provenance bound it.
 *   No launcher: `fleet-update` counts starts and rolls back.
-*   Provenance verified in-process with sigstore-go, not `gh attestation verify`.
+*   An Ed25519 signature of `SHA256SUMS` checked with Go's `crypto/ed25519`, not `gh attestation verify` ([Decision: release signature](#decision-release-signature)).
 
 ## Alternatives Considered
 
@@ -271,7 +275,13 @@ The three current hosts do this once: their env files are reduced to `FLEET_HOST
 
 *   **Pros**: proven in CoreQ; no new Go dependency.
 *   **Cons**: every host needs `gh` installed and authenticated.
-*   **Reason for Rejection**: Rejected by author (brief): sigstore-go in `fleet-update`. Cost: one large dependency and a TUF fetch; an unreachable TUF service is a transient error, never a refusal.
+*   **Reason for Rejection**: Rejected by author (brief).
+
+### Alternative G: sigstore-go in `fleet-update`
+
+*   **Pros**: keyless; checks the GitHub provenance itself, with the transparency log.
+*   **Cons**: measured 2026-11-11 (sigstore-go v1.4.0): `go.sum` grows from 38 to 206 modules, a minimal verifier binary from 8.3 MB to 26.9 MB (static, darwin/arm64); every update needs the Sigstore TUF service.
+*   **Reason for Rejection**: stack rule "standard library first" ([decision](#decision-release-signature)).
 
 ### Alternative E: Separate `/api/hosts/update` route
 
@@ -289,14 +299,15 @@ The three current hosts do this once: their env files are reduced to `FLEET_HOST
 
 ## Non-Functional Requirements
 
-*   **Security.** Only a release built by `release.yml` on a `v*` tag of `taskqorg/fleet` runs; identity and repository are compiled in and checked before any release file runs. Root on PDS18 stages, verifies and selftests only in `/var/lib/fleet-update` and runs only `/opt/fleet/update/fleet-update`; it never executes a file in `/home/fleet`.
+*   **Security.** Only a release signed in `release.yml` on a `v*` tag of `taskqorg/fleet` runs; the public key and repository are compiled in and checked before any release file runs. Root on PDS18 stages, verifies and selftests only in `/var/lib/fleet-update` and runs only `/opt/fleet/update/fleet-update`; it never executes a file in `/home/fleet`.
 *   **Rollout.** Executors follow within one timer period after the coordinator is healthy.
 *   **Rollback.** Automatic after three unhealthy starts; `install-release.sh --rollback` stays as the recovery path when `fleet-update` itself is broken.
 *   **Observability (R5).** One log line per step (journal or `fleet-update.log`); results in `hosts_list`; failures as needs-you questions.
 
 ## Risks
 
-*   **GitHub or Sigstore down**: transient; runs retry.
+*   **GitHub down**: transient; runs retry.
+*   **Release key leaked**: rotate (see the decision); until then a forged release could install. The key is readable only by `v*` tag jobs of environment `release`.
 *   **Disk full**: `pg_dump` or unpack fails as `error`; dumps and releases are pruned to `current` and `previous`.
 *   **Coordinator down while an executor updates**: the start does not count; no refusal.
 *   **Host clock skew**: only affects when a hold ends.
@@ -349,9 +360,9 @@ Six phases, one pull request each; every phase builds and passes `go test ./...`
 
 #### Phase 4: `fleet-update`
 
-15. `go/update/main.go`, `run.go`, `verify.go`, `layout.go` (Create): subcommands, section 3. `verify(bundle, digest, identity)` takes the identity as a parameter; `main` passes the compiled-in one.
-16. `go/update/update_test.go` (Create): version compare and strict regex; never-downgrade; refused skip; each failure class of 3.2; digest mismatch retried once; atomic links; three-start rollback; `pending` not counted; prune with read-only directories and dumps; held and off; bundle with wrong identity refused (fixture: a bundle from a fork release, verified against the fork identity passed in; replaced by the first real release's bundle).
-17. `go/go.mod`, `go/go.sum` (Modify): `github.com/sigstore/sigstore-go`.
+15. `go/update/main.go`, `update.go` (Create): subcommands, section 3; the updater takes the public key as a field, `main` passes the compiled-in one.
+16. `go/update/update_test.go` (Create): version compare and strict regex; never-downgrade; refused skip; each failure class of 3.2; digest mismatch retried once; atomic links; three-start rollback; `pending` not counted; prune with read-only directories and dumps; held and off; signature by another key refused.
+17. GitHub environment `release` (tags `v*`) with secret `FLEET_RELEASE_KEY`; the public key in `go/update/main.go`.
 
 #### Phase 5: workflows and units
 
@@ -373,7 +384,7 @@ Six phases, one pull request each; every phase builds and passes `go test ./...`
 
 *   **Build**: `pnpm run build`; `cd go && go generate ./... && go build ./...`.
 *   **Unit tests**: `cd go && go vet ./... && go test ./...`.
-*   **Release dry run**: on a fork, tag `v0.261111.0`; the workflow publishes; a test build of `fleet-update` with the fork compiled in installs it, refuses a modified asset, and rolls back a release whose executor exits at start.
+*   **Release dry run**: replaced by the first real release (owner's call): tag on `main`, PDS18 and the other hosts update themselves; a rollback test with a deliberately broken selftest on a test tag.
 *   **Live**: first tag on `main`; `hosts_list` shows PDS18 then every executor at the new version with `update.state: ok`.
 
 --------------------------------------------------------------------------------

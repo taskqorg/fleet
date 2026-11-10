@@ -275,6 +275,12 @@ func hostsUpdate(q *Request) (any, error) {
 		}
 		next["intake"] = v
 	}
+	if v, ok := b["autoUpdate"]; ok && v != nil {
+		if !validAutoUpdate(v) {
+			return nil, fail(400, "autoUpdate: on, off or an RFC 3339 time ending in Z")
+		}
+		next["autoUpdate"] = v
+	}
 	if v, ok := b["harnesses"]; ok && v != nil {
 		if !validHarnesses(v) {
 			return nil, fail(400, "harnesses: {<name>: {allowed}}")
@@ -291,7 +297,7 @@ func hostsUpdate(q *Request) (any, error) {
 		next["harnesses"] = m
 	}
 	changed := []string{}
-	for _, f := range []string{"intake", "harnesses"} {
+	for _, f := range []string{"intake", "autoUpdate", "harnesses"} {
 		v, ok := next[f]
 		if !ok || js(h[f]) == js(v) {
 			continue
@@ -365,6 +371,10 @@ func hostsList(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	records, err := hostList(q)
+	if err != nil {
+		return nil, err
+	}
 	now := now()
 	out := []doc{}
 	for _, id := range ids {
@@ -393,9 +403,23 @@ func hostsList(q *Request) (any, error) {
 			}
 		}
 		h := doc{"id": id, "configured": inList(configured, id), "platform": nil, "lastSeenAt": nil, "capabilities": []any{}, "problems": []any{},
-			"runningByHarness": by, "running": total, "slots": nil, "queued": n, "stores": "unavailable"}
+			"runningByHarness": by, "running": total, "slots": nil, "queued": n, "stores": "unavailable",
+			"version": nil, "autoUpdate": "on", "update": nil}
+		for _, r := range records {
+			if r["id"] == id {
+				h["autoUpdate"] = autoUpdateOf(r)
+			}
+		}
+		if id == q.app.hostID {
+			h["update"] = mergeUpdate(nil)
+		}
 		if o != nil {
-			h["platform"], h["lastSeenAt"] = o["platform"], o["lastSeenAt"]
+			h["platform"], h["lastSeenAt"], h["version"] = o["platform"], o["lastSeenAt"], o["version"]
+			if id == q.app.hostID {
+				h["update"] = mergeUpdate(o["update"])
+			} else {
+				h["update"] = o["update"]
+			}
 			if o["capabilities"] != nil {
 				h["capabilities"] = o["capabilities"]
 			}

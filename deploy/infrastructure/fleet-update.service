@@ -1,0 +1,10 @@
+# fleet-update on PDS18 (docs/designs/fleet-self-update.md §3.5): root, one run per start, from the root-owned copy that
+# only a verified, healthy release replaces. Install: copy this file and fleet-update.timer to /etc/systemd/system/, then
+#   systemctl daemon-reload && systemctl enable --now fleet-update.timer
+[Unit]
+Description=Fleet self-update (coordinator side, then the PDS18 executor)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/fleet/update/fleet-update pds18

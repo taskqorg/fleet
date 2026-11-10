@@ -45,6 +45,13 @@ type App struct {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "selftest" {
+		if err := selftest(); err != nil {
+			log.Fatal("selftest: ", err)
+		}
+		fmt.Printf("fleet-coordinator %s: selftest ok\n", version)
+		return
+	}
 	ctx := context.Background()
 	need := func(k string) string {
 		v := os.Getenv(k)

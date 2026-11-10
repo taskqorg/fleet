@@ -70,8 +70,22 @@ func (a *App) poll(q *Request) (any, error) {
 	if xs, ok := stringList(b["projectRoots"]); ok {
 		obs["projectRoots"] = xs
 	}
-	if ps := hostProblems(b["problems"]); ps != nil {
+	ps := hostProblems(b["problems"])
+	if v, ok := b["version"].(string); ok {
+		obs["version"] = v
+		// N-1 is served without a flag; N-2 and older show version-behind (work still runs).
+		if olderVersion(v, releaseJSON(releaseDir()).Previous) {
+			ps = append(ps, doc{"kind": string(ProblemKindVersionBehind)})
+		}
+	}
+	if ps != nil {
 		obs["problems"] = ps
+	}
+	if r, ok := decodeUpdate(b["update"]); ok {
+		obs["update"] = r
+		if err := updateQuestion(q, host, q.host["holder"], r); err != nil {
+			return nil, err
+		}
 	}
 	if err := put(q, "host-observation", obs); err != nil {
 		return nil, err
@@ -141,7 +155,8 @@ func (a *App) poll(q *Request) (any, error) {
 		}
 		out = append(out, fresh)
 	}
-	return doc{"commands": out}, nil
+	reply := PollReply{Target: healthyTarget(), AutoUpdate: ptr(autoUpdateOf(q.host))}
+	return doc{"commands": out, "target": reply.Target, "autoUpdate": reply.AutoUpdate}, nil
 }
 
 func safeInt(v any) any {
