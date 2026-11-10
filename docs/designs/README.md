@@ -7,6 +7,7 @@ Technical designs, briefs and their reviews. A design here is accepted direction
 * `fleet-view-urls-and-list-path.md`: view URLs and the list path.
 * `fleet-lab.md`: the Fleet Lab (experiments, examples, evaluators, Promote) and work analysis.
 * `fleet-people-access.md`: people, identity, per-host secrets, holders, subscriptions and logins, isolation layers, take, dispatch, intake, readings and budgets.
+* `fleet-definition-editors.md`: definitions (agents, pipelines, catalogue) as store revisions with drafts, conflicts, export to git, and the operations the editors need.
 * `fleet-pm-agent.md`: the PM agent: director-scoped agent tools, task tools, Held tasks, focus, watch mode.
 * `fleet-connections.md`: API key connections, the Fleet gateway copied from Pipe's read lane, per-run tokens, call methods and deleting Pipe.
 * `fleet-conversations.md`: the Conversations screen: one thread per task, paging both ways, typed transcript blocks, copy, question and result cards, the Results page. `conversations-brief.md` is its brief.
