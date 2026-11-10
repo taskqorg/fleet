@@ -9,9 +9,7 @@
 
 ## Overview
 
-Fleet reaches outside APIs (Tavily web search and extract today; Meshy and model APIs next) through Pipe, a separate service in the assetq repository. Fleet's `connection_call.py` loaded Pipe's client library, checks its hash, reads a Pipe token from a host file and sends the Fleet step ID as a free-form label (`X-Pipe-Task`).
-
-L4 leaves `connection_call.py` and its MCP mode in Python until C1; C1 replaces this path with Fleet's own connections, without a Rust bridge to Pipe.
+Fleet reached outside APIs (Tavily web search and extract; Meshy and model APIs next) through Pipe, a separate service in the assetq repository. Fleet's connection client loaded Pipe's client library, checked its hash, read a Pipe token from a host file and sent the Fleet step ID as a free-form label (`X-Pipe-Task`). C1 replaced this path with Fleet's own connections, without a bridge to Pipe.
 
 The owner decided Fleet gets its own connections system and Pipe is deleted, with no bridge period. This design:
 
@@ -114,7 +112,7 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 
 ### 1. Model
 
-*   **`provider`**: a code-side catalogue entry, not a table: `{id, baseUrl, tools: {<tool>: {method, path, unit, idempotent}}}` in `providers.ts`. Tavily (`web_search` → `/search`, `web_extract` → `/extract`, unit `credits`, idempotent) ships in C0; Meshy in C3. The coordinator copies the catalogue into the snapshot, so the Rust gateway has no second copy.
+*   **`provider`**: a code-side catalogue entry, not a table: `{id, baseUrl, tools: {<tool>: {method, path, unit, idempotent}}}` in `go/coordinator/c_providers.go`. Tavily (`web_search` → `/search`, `web_extract` → `/extract`, unit `credits`, idempotent) ships in C0; Meshy in C3. The coordinator copies the catalogue into the snapshot, so the gateway has no second copy.
 *   **`api-connection`** document kind (separate list from `managed-account`, decision 1): `{id, name, provider, holder, access: {people: [], projects: [], experiments: []}, intake: all | paused, tools: [], comment}`. **Use:** a run token gets the connection when the run's director, its project or its experiment is listed (any one is enough); `projects: ['*']` means every project; empty means only work directed by the holder. **Visibility** is separate: architects and the holder see the connection; the owner sees all.
 *   **`connection-key`** document kind: `{id, connectionId, fingerprint (first 12 hex of SHA-256), state, addedAt, addedBy, disabledReason?, disabledAt?}`. No value. The key's id is its fingerprint (document id `key:<fingerprint>`), as in the lane, so the gateway's disabled-key file and the spool name keys the same way.
 *   Both kinds carry `holder` (people-access §4), so ownership, visibility and audit are one model with subscriptions.
@@ -131,7 +129,7 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 
 ### 3. Gateway
 
-*   **Code.** Copy Pipe's read lane (assetq `lane/`, Rust) into `crates/gateway`. It is the proven design: loopback socket, snapshot adoption every second with last-valid fallback, `LoadCredential`, disabled-key persistence, provider error mapping, spool and loss counter. Changes from the lane:
+*   **Code.** `go/gateway` follows Pipe's read lane (assetq `lane/`, Rust), ported to Go. It is the proven design: loopback socket, snapshot adoption every second with last-valid fallback, `LoadCredential`, disabled-key persistence, provider error mapping, spool and loss counter. Changes from the lane:
     *   route `POST /v1/call/<connection>/<tool>` instead of `/v1/read/<tool>`, generic over the provider catalogue;
     *   auth by per-run token hash from the snapshot instead of project tokens; no `X-Pipe-Task`;
     *   keys read from the secret directory by fingerprint instead of `LoadCredential`, so no restart on a key change;
@@ -164,8 +162,8 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 ### 5. Call methods
 
 *   **HTTP:** `POST /v1/call/<connection>/<tool>`, body the tool's JSON, `Authorization: Bearer <run token>`. Replies copy the lane's table (`unauthenticated`, `bad-request`, `no-usable-key`, `key-disabled-<status>`, `provider-unreachable`, `provider-body`, `provider-timeout`; provider status passes through).
-*   **CLI:** `python3 connection_call.py call <connection> <tool>`, body on stdin, one line `{tool, callId, outcome, error_code, usage, output}` on stdout. The file is `crates/executor/connection_call.py`, embedded in the executor by `profile.rs`; the Go coordinator makes pipeline calls in-process; Pipe is removed from it: no client library load, no hash pin, no label, token from `FLEET_RUN_TOKEN`. Error classification (`UNKNOWN` set, `infra:`/`unknown:`/`step:` problems in fleet-lab.md) stays.
-*   **MCP:** `python3 connection_call.py mcp <connection> <spec>`, one stdio MCP server per connection; the start command's `connections: [{name, instructions, tools: [{name, description, inputSchema}]}]` gives the spec, so hosts need no connection files. The executor adds it to each run's MCP config and allowlists `mcp__<connection>__<tool>`, as it does for `connection_call.py mcp` today.
+*   **Pipeline calls:** the coordinator makes `api` step calls in-process over HTTP with the step's run token. A call answers one line `{tool, callId, outcome, error_code, usage, output}`; error classification (`infra:`/`unknown:`/`step:` problems in fleet-lab.md) stays.
+*   **MCP:** `fleet-executor mcp connection <connection> <spec>` (`go/executor/mcp_connection.go`), one stdio MCP server per connection; the start command's `connections: [{name, instructions, tools: [{name, description, inputSchema}]}]` gives the spec, so hosts need no connection files. The executor adds it to each run's MCP config and allowlists `mcp__<connection>__<tool>`, (`go/executor/executor.go`).
 *   The local `.connection-calls.jsonl` file is deleted: the spool is the record, so an agent cannot edit its own costs.
 *   **Built-in web** stays off unless the profile says `web_route: builtin` (fleet-lab.md R3.4).
 
@@ -181,7 +179,7 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 
 One cut, no bridge:
 
-*   **Fleet:** remove the Pipe parts of `connection_call.py`, the `pipe-read` record in `config/connections.example.json`, Pipe references in `pipelines.ts`, `projects.ts`, `executions.ts`, `lab/experiments.ts`, `lab/scores.ts`, `app.ts`, `artifacts.ts`, `store.ts`, `s3.ts`, `package-assets.mjs`, executor `profile.rs`, `harness.rs`, `main.rs`, `upload.rs`, `preview.rs`, `delegation.py`, and `packages/ui` registry and design check entries that name Pipe.
+*   **Fleet:** remove the Pipe client, the `pipe-read` record in `config/connections.example.json`, every Pipe reference in coordinator, executor and app code, and `packages/ui` registry and design check entries that name Pipe.
 *   **Hosts:** remove the Pipe MCP server and `~/.config/pipe/read.json` on every host.
 *   **PDS18 and Cloudflare:** stop and remove `pipe-read*` units, users and directories; remove the read-grant snapshot, project grants, the `pipe.ufobe.com` read route, its guard exemption and the read-lane probe; revoke Pipe project tokens.
 *   **DashQ:** remove the shipper enrolment.
@@ -255,86 +253,19 @@ Stages run alongside the people slices.
 | Stage | Content | Check | Needs |
 | --- | --- | --- | --- |
 | C0 Registry and keys | `api-connection`, `connection-key`, secret directory, SOPS/age backup, snapshot writer, API keys screen | the API keys list shows Tavily with holder and key states; restore from the backup alone works on a clean container | people slice 1 |
-| C1 Gateway and tokens | `crates/gateway`, units, per-run tokens minted in `enqueue`, `connection_call.py` on the gateway (HTTP, CLI, MCP), spool ingest, `pipe-read` renamed `tavily` in config; every Fleet call leaves Pipe | coordinator stop does not stop web reads; spool ingested with loss 0; every call is a `tool_run` | people slice 4 |
+| C1 Gateway and tokens | `go/gateway`, units, per-run tokens minted in `enqueue`, calls through the gateway (HTTP, MCP), spool ingest, `pipe-read` renamed `tavily` in config; every Fleet call leaves Pipe | coordinator stop does not stop web reads; spool ingested with loss 0; every call is a `tool_run` | people slice 4 |
 | C2 Key lifecycle | rotation, disable on 401/402, 403 recorded on the key, owner re-enable, Tavily reconcile | rotation with no failed calls; a 401 key shows disabled with its reason | C1 |
 | C3 Meshy and budgets | Meshy provider, `job` mode (submit then poll), connection budgets and requests | a Meshy charge lands as `connection_cost`; a `warn` budget shows and a request raises it | C1, people slice 6 |
 | C4 Delete Pipe | §7 | the Pipe search in the Verification Plan is empty; old route fails; a Lab web trial completes | C1 |
 
-### Target Files to Create/Modify
-
-#### 1. `packages/coordinator/connections.ts` (Create), `packages/coordinator/app.ts` (Modify) — C0
-
-*   `api-connection` and `connection-key` kinds; operations `connections_list`, `connections_create`, `connections_key_add`, `connections_key_state`, `connections_set_access`, `connections_set_intake` (architect operations). Key values and re-enabling a disabled key: owner only. Other changes: owner or holder.
-*   `writeSnapshot()`: builds the §3 schema and writes `<FLEET_GATEWAY_DIR>/snapshot.json` atomically (temp file plus rename) after every committed change and at start. Without `FLEET_GATEWAY_DIR` no snapshot is written.
-*   Seed: connection `tavily` (holder owner, access `{projects: ['*']}`) with today's Tavily keys moved from `/etc/pipe-read/tavily-keys` into the secret directory by `scripts/connections-import.sh` (Create); the coordinator registers them at start (§2).
-
-#### 2. `packages/coordinator/providers.ts` (Create) — C0, C3
-
-*   Provider catalogue `{id, baseUrl, tools: {<tool>: {method, path, unit, idempotent}}}`: Tavily in C0, Meshy in C3. Published to the gateway inside the snapshot.
-
-#### 3. `crates/gateway/` (Create, copied from assetq `lane/`); root `Cargo.toml` (Modify) — C1
-
-*   Copy `lane/src` and its tests; remove its own `[workspace]`; add `crates/gateway` to the root `members`.
-*   Changes listed in Technical Plan §3: generic route, catalogue from the snapshot, token auth with coalesced reread, idempotent-only failover, budget flags, spool writer replacing the coreq telemetry store, no `queue-full`, coreq dependency removed.
-*   Tests copied and adapted: snapshot fallback, unknown-token reread, disable on 401/402, 403 recorded without disabling, 429 pass-through, no failover for a non-idempotent tool, spool loss counter.
-
-#### 4. `deploy/infrastructure/fleet-gateway.service`, `fleet-gateway.socket` (Create); `fleet.caddy.candidate`, `fleet-backup.sh` (Modify) — C0, C1
-
-*   Units copied from `pipe-read.service` and `pipe-read.socket` (`LoadCredential`, `127.0.0.1:8742`).
-*   Caddy route `/v1/call/*` for remote hosts behind the guard and the `fleet-machines` service token.
-*   Backup: SOPS/age copy of the secret directory and the gateway's retained snapshot and `disabled-keys`.
-
-#### 5. `connection_call.py` (Modify) — C1, now `crates/executor/connection_call.py`
-
-*   Remove the record file, Pipe client loading, hash check and label. Entry points become `connection_call.py call <connection> <tool> [calls dir]` and `connection_call.py mcp`; the token comes from `FLEET_RUN_TOKEN`, the gateway URL from `FLEET_GATEWAY_URL`. Error classification (`UNKNOWN` set) stays. The local `.connection-calls.jsonl` is no longer written.
-*   The file name stays, so `profile.rs:172` (`include_str!`), `package-assets.mjs:9` and `pipelines.ts:60,69` keep their paths; their arguments change.
-
-#### 6. `packages/coordinator/tokens.ts` (Create); `app.ts`, `executions.ts`, `recovery.ts` (Modify) — C1
-
-*   `mintRunToken(execution)` and `revokeRunToken(executionId)`. C1 calls `mintRunToken` in `enqueue` (`app.ts:129-143`) where the start command is written; people slice 6 moves the call into `dispatch.ts`.
-*   Spool ingest every few seconds and at step completion, idempotent by `callId`, into `tool_run` plus `connection_cost`. Revocation on execution end and in recovery (§4).
-
-#### 7. `crates/executor/src/main.rs`, `profile.rs`, `harness.rs` (Modify) — C1
-
-*   `main.rs:428-440`: for each granted connection, add one MCP server `python3 <connection_call.py> mcp` with `FLEET_RUN_TOKEN` and `FLEET_GATEWAY_URL` in its environment only, instead of the record path and label. `FLEET_RUN_TOKEN` comes from the start command.
-*   `profile.rs` tests (`:238-273`): connection name `tavily` instead of `pipe-read`.
-
-#### 8. `packages/coordinator/pipelines.ts`, `lab/experiments.ts`, `lab/scores.ts` (Modify) — C1, C3
-
-*   `api` steps call `connection_call.py call` with the step's run token; Lab units `pipe_calls`, `pipe_credits` become `calls`, `credits`; Meshy `job` mode in C3.
-
-#### 9. Configuration and profiles (Modify) — C1
-
-*   `config/pipelines/hello-search.json`, `search-basic.json`, `web-research.json` (including prompt text) and `config/agents/codex-researcher.json`, `claude-researcher.json`: `pipe-read` becomes `tavily`.
-*   `config/connections.example.json`: the `pipe-read` record is removed; gateway layout added.
-
-#### 10. Pipe removal (Modify/Delete) — C4
-
-*   Files listed in Technical Plan §7. Delete `tests/coordinator/fixtures/pipe_client.py`; adapt `fake_connection.py` to fake the gateway.
-
-#### 11. UI — C0-C3
-
-*   `app/src/main.tsx`, `app/src/api.ts`, `app/src/lists.ts` (Modify): route `/keys` (list) and `/keys/<name>` (connection page; screen ids are one lowercase word): provider, holder, tools, keys (fingerprint, state), access, intake, spend, budgets, reconcile difference. Components from `packages/ui` (`state-badge`, `setting-field`, `kv-row`; state families `key` and `intake`); registered in `packages/ui/src/registry.ts`. `pnpm run check:design` clean.
-
-#### 12. Docs (Modify)
-
-*   `docs/designs/lab-brief.md` "Pipe in Fleet": superseded by this design.
-*   `docs/designs/fleet-lab.md` Connections: points here; the Pipe token caveat is closed by per-run tokens.
-*   `docs/designs/fleet-data-foundation.md` Q9 and the gateway non-goal: answered here.
-*   `docs/connections.md`, `docs/configuration.md`, `packages/coordinator/README.md`: gateway and variables, no Pipe.
-
-#### 13. Tests (Create/Modify)
-
-*   Modify `tests/coordinator/connection_call.test.ts`: call lines against a fake gateway; no hash pin.
-*   Create `tests/coordinator/connections.test.ts`: key add returns only a fingerprint; snapshot content; token mint, revoke, recovery revoke; spool ingest idempotence; budget flag.
-*   `cargo test -p gateway`.
+All stages are built: registry, keys and snapshot in `go/coordinator/c_connections.go`, the catalogue in `c_providers.go`, the gateway in `go/gateway`, the MCP server in `go/executor/mcp_connection.go`, the API keys screen in the app.
 
 ### Verification Plan
 
-*   **Build:** `pnpm run build`, `cargo build -p gateway -p executor`.
-*   **Tests:** `pnpm test`, `cargo test`, `python3 -m pytest deploy/infrastructure tests/executor`.
+*   **Build:** `pnpm run build`; `cd go && go vet ./... && go build ./...`.
+*   **Tests:** `cd go && go test ./...`; `tests/go/run.sh`.
 *   **Live (stage checks):** C0 restore from the backup alone on a clean container; C1 coordinator stop does not stop web reads, spool ingested with loss 0; C2 rotation with no failed calls, 403 disables a key; C3 a Meshy charge lands as `connection_cost`; C4 the Pipe search below is empty and a Lab web trial completes.
-*   **C4 search:** `rg -i 'pipe[-_ ]?(read|lane|token|config|client|mcp)|pipeConfigPath|pipe\.ufobe|X-Pipe|pipe_search' -g '!docs/designs/fleet-connections.md' -g '!evidence/**' -g '!tests/coordinator/fixtures/documents-*.json'` returns nothing ("pipeline" does not match). This design records what was removed, and evidence files and migration fixtures are past records.
+*   **C4 search:** `rg -i 'pipe[-_ ]?(read|lane|token|config|client|mcp)|pipeConfigPath|pipe\.ufobe|X-Pipe|pipe_search' -g '!docs/designs/fleet-connections.md' -g '!evidence/**' ` returns nothing ("pipeline" does not match). This design records what was removed, and evidence files and migration fixtures are past records.
 
 --------------------------------------------------------------------------------
 

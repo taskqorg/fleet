@@ -1,5 +1,7 @@
 # Architecture breadth plan
 
+> Historical record. It was written against the TypeScript coordinator and the Rust and Python executor, which the Go port deleted; file names in it are not current code. Current code: `go/coordinator`, `go/executor`, `go/gateway` ([stack](designs/fleet-stack.md)).
+
 2026-11-09. Analysis and planning only. No native call, code change or deploy. Goal: use the prototype to check the architecture **in breadth**, freeze the global architecture, then move to technical/infrastructure decisions, final software architecture and the V1 plan.
 
 Basis: [fleet.md](../fleet.md) (canonical), [use cases](use-cases.md), architecture coverage, next-stage plan, stage3 findings, [agent tools inventory](agent-tools-inventory.md), [resources and auth](designs/fleet-people-access.md#4-subscriptions), [multi-account same env](designs/fleet-people-access.md#4-subscriptions), [layered isolation](designs/fleet-people-access.md#isolation-layers), [PDS Codex environment](pds-codex-environment.md), lab/continuation/recovery/connected evidence docs, and `packages/coordinator/*` at `3e37b33` plus uncommitted work in progress (isolation fixes by another agent are not assessed here).

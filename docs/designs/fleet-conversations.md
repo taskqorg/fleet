@@ -23,9 +23,9 @@ The work has three parts:
 
 The current screen loads a whole session at once and rebuilds the transcript on every render.
 
-*   `session_get` (`packages/coordinator/app.ts:101`) reads all messages, executions, events and artifacts of a session in one response. `/api/sessions/:id/events` (`app.ts:103`) pages only forward, and it loads every event before it slices the page in memory. Opening a thread loads every event in the session, and the screen cannot open at the newest entry without loading everything before it.
+*   Before this design, `session_get` read all messages, executions, events and artifacts of a session in one response. `/api/sessions/:id/events` paged only forward, and it loads every event before it slices the page in memory. Opening a thread loads every event in the session, and the screen cannot open at the newest entry without loading everything before it.
 *   A task's work is spread across several sessions and executions. The operator has to open each session to see the whole task.
-*   `app/src/transcript.ts` reads reply text from `fleetNormalized.messages` and tool calls from the raw harness record `data.item`. Reading raw records caused the no-reply bug ([conversations-no-reply-rca.md](../conversations-no-reply-rca.md) §1). It also drops reasoning and plan items, sets every tool-call duration to 0, and filters all events once per execution, which is O(n²) per render.
+*   The old app transcript reader read reply text from `fleetNormalized.messages` and tool calls from the raw harness record `data.item`. Reading raw records caused the no-reply bug ([conversations-no-reply-rca.md](../conversations-no-reply-rca.md) §1). It also drops reasoning and plan items, sets every tool-call duration to 0, and filters all events once per execution, which is O(n²) per render.
 *   `VirtualList` (`packages/ui/src/virtual-list.tsx`) keeps the anchor row when rows are inserted, but it has only `onEnd`. It cannot load upward, and nothing keeps position while older rows are added above.
 *   Search filters loaded rows in memory, so it cannot find or jump to history that is not loaded.
 *   There is no browser check that asserts Conversations behaviour (drift item "Conversations has no asserting browser check" in [drift-2026-11-10.md](reviews/drift-2026-11-10.md)).
@@ -63,7 +63,7 @@ The current screen loads a whole session at once and rebuilds the transcript on 
 *   A stored thread entity. The thread is derived from `task_id` or from the session.
 *   A new windowing engine. `VirtualList` is extended.
 *   Keeping the old view behind a flag.
-*   New agent operations. Retry, fork, hand off and switch use the existing `agent-tools.ts` operations.
+*   New agent operations. Retry, fork, hand off and switch use the existing agent tool operations (`go/coordinator/b_agent.go`).
 *   Editing or deleting artifacts from the viewer. Artifact lifecycle stays in the data foundation.
 
 ## Open Questions
@@ -117,7 +117,7 @@ Defaults below were chosen by the drafter so work is not blocked. The owner can 
 
 ### Ordering key
 
-Every row the thread needs already has one shared ordering number. `document.seq` is a `bigserial`, and the `execution`, `question` and `artifact` tables take their `seq` default from the same sequence (`packages/coordinator/db/schema.sql`). Events and operator messages are documents. Here `seq` is the row's `seq` column, not the per-execution `data.seq` that host events also carry (`packages/coordinator/recovery.ts:18`). So `seq` gives one total order across sessions and executions that overlap in time. The thread cursor is `seq`. No new ordering column is needed.
+Every row the thread needs already has one shared ordering number. `document.seq` is a `bigserial`, and the `execution`, `question` and `artifact` tables take their `seq` default from the same sequence (`packages/coordinator/db/schema.sql`). Events and operator messages are documents. Here `seq` is the row's `seq` column, not the per-execution `data.seq` that host events also carry. So `seq` gives one total order across sessions and executions that overlap in time. The thread cursor is `seq`. No new ordering column is needed.
 
 `seq` is taken at insert, not at commit, so two transactions can commit out of `seq` order. The operator app already solves this for its live feed: a read and the feed cursor come from one snapshot, and the feed (`change` table, ordered by `(xid, seq)` up to `pg_snapshot_xmin`) never skips a slow transaction ([fleet-operator-app.md](fleet-operator-app.md)). Thread reads copy that pattern:
 
@@ -182,14 +182,14 @@ Block =
   | { kind: 'boundary',  key, sessionId, executionId, harness, model, effort, state, startedAt, endedAt }
 ```
 
-*   `text`, `tool` and `reasoning` come from the executor. `harness::project` (`crates/executor/src/harness.rs:450`) already writes `fleetNormalized` per event. It gains a `blocks` array with these three kinds for every supported harness. Tool duration comes from the harness start and end records.
+*   `text`, `tool` and `reasoning` come from the executor. `project` (`go/executor/harness_blocks.go`) writes `fleetNormalized` per event. It writes a `blocks` array with these three kinds for every supported harness. Tool duration comes from the harness start and end records.
 *   Streaming: delta records (projection with `deltaOf`) are stored as documents of kind `event-delta`, not `event`, so pages, search and export never scan them. When the stream ends, the executor writes one final block on the completing `event`. An open stream is shown as one entry at the end of the newest page, built in full from its `event-delta` rows; it is never split across a page edge.
 *   Execution end: on an execution's terminal transition the coordinator writes one `event` of type `execution.ended`. It carries no text; its `seq` places the result block. A stream cut off without a final block (the execution ended first) is shown as one closed entry built from its `event-delta` rows at read time, so the executor stays the only producer of text blocks.
 *   Records with no raw data or an unknown shape get one `tool` block named after the event type, with the raw JSON as output, so every event has `blocks`.
 *   `question` and `boundary` come from the coordinator, from the `question` and `execution` rows, at their own `seq`. `result` comes from the `artifact` rows and the delivery, at the key of the `execution.ended` event.
 *   `plain` is the block's text with stable character offsets. Selection and copy use it.
 
-Old stored events are not re-projected (owner decision); `transcript.ts` no longer reads `data.item` after Stage 2.
+Old stored events are not re-projected (owner decision); the app no longer reads `data.item`.
 
 Implementation notes (Stage 1):
 
@@ -199,7 +199,7 @@ Implementation notes (Stage 1):
 
 ### Agent mark
 
-The `boundary` block and each agent `text` block carry the execution's `harness`, `model` and `effort`. `effort` is already stored in `execution.config_ref` (`packages/coordinator/executions.ts:47`); the thread reads `config_ref->>'effort'`. The row shows the harness icon and the short label in the right service zone (OR-21). The boundary row shows duration and cost as visible chips (OR-19); host and tokens are in their tooltips, one tooltip per chip (OR-20). Reply rows show only the harness icon and label, with the model id on hover. Fleet has no cost attention rule today, so the cost chip stays neutral; this design invents no threshold (OR-18 applies once such a rule exists).
+The `boundary` block and each agent `text` block carry the execution's `harness`, `model` and `effort`. `effort` is stored in `execution.config_ref`; the thread reads `config_ref->>'effort'`. The row shows the harness icon and the short label in the right service zone (OR-21). The boundary row shows duration and cost as visible chips (OR-19); host and tokens are in their tooltips, one tooltip per chip (OR-20). Reply rows show only the harness icon and label, with the model id on hover. Fleet has no cost attention rule today, so the cost chip stays neutral; this design invents no threshold (OR-18 applies once such a rule exists).
 
 ### Rendering and nothing-jumps
 
@@ -232,11 +232,11 @@ Native browser selection is kept inside one row, for copying part of a reply.
 
 ### Questions
 
-The thread renders `question` blocks with the existing `DecisionBlock` pattern. Answering calls `questions_answer` (`app.ts:319`), the call Tasks uses. `tasks.answer` (`packages/coordinator/tasks.ts:79`) already returns the stored question when the same answer repeats and fails with 409 when a different answer arrives; the card then shows the stored answer and who gave it. Its read is not locked, so two different answers sent at the same moment can both pass; the update becomes `UPDATE ... WHERE state = 'open'` so only one wins. The card updates from the change feed. Answered cards collapse to one line with the answer.
+The thread renders `question` blocks with the existing `DecisionBlock` pattern. Answering calls `questions_answer`, the call Tasks uses. `answerQuestion` (`go/coordinator/b_tasks.go`) returns the stored question when the same answer repeats and fails with 409 when a different answer arrives; the card then shows the stored answer and who gave it. Its read is not locked, so two different answers sent at the same moment can both pass; the update becomes `UPDATE ... WHERE state = 'open'` so only one wins. The card updates from the change feed. Answered cards collapse to one line with the answer.
 
 ### Results and the artifact viewer
 
-Data foundation Phase 3 is on main: `artifact` rows, artifact stores and placement exist, and `artifact_list` and `artifact_get` exist (`app.ts:287`).
+Data foundation Phase 3 is on main: `artifact` rows, artifact stores and placement exist, and `artifact_list` and `artifact_get` exist (`go/coordinator/d_routes.go`).
 
 *   **Result block**: one per execution end that has artifacts or a delivery, at the key of the `execution.ended` event. A delivery or artifact that arrives later updates this block in place; it does not move (OR-23). It shows artifact names, the delivery-stage chip and links each artifact to its Results page entry.
 *   **Delivery stage** (Owner Decision): the existing `stages` in `packages/ui/src/registry.ts`, rendered by `StageChip`. The coordinator maps the `delivery` record state to a stage key:
@@ -250,18 +250,18 @@ Data foundation Phase 3 is on main: `artifact` rows, artifact stores and placeme
 
     The delivery record has no check status today, so `checks` and `checks_failed` are not shown until delivery records one. No check state is guessed.
 
-*   **Viewer**: the existing `ResultViewer` (`packages/ui/src/controls.tsx:269`) gains image, video and text views. It opens in the work area (OR-27). It chooses a view from the stored `media_type`: image, video, text (read in `Range` pages as the operator scrolls, no cap), and download-only for other types. HTML and SVG are shown as text or in a sandboxed `iframe` with no scripts and no same-origin access; they are never inlined into the page. Bytes come from the existing `GET /api/results/:id` (`app.ts:213`). The route's CSP drops `allow-scripts` and `script-src 'unsafe-inline'`, and the route gains `Range`, `X-Content-Type-Options: nosniff`, and `Content-Disposition: attachment` for types without a view.
+*   **Viewer**: the existing `ResultViewer` (`packages/ui/src/controls.tsx:269`) gains image, video and text views. It opens in the work area (OR-27). It chooses a view from the stored `media_type`: image, video, text (read in `Range` pages as the operator scrolls, no cap), and download-only for other types. HTML and SVG are shown as text or in a sandboxed `iframe` with no scripts and no same-origin access; they are never inlined into the page. Bytes come from the existing `GET /api/results/:id` (`resultBytes`, `go/coordinator/d_routes.go`). The route's CSP drops `allow-scripts` and `script-src 'unsafe-inline'`, and the route gains `Range`, `X-Content-Type-Options: nosniff`, and `Content-Disposition: attachment` for types without a view.
 *   **Results page**: a new app section listing `artifact` rows with task, project, execution, media type, state and time filters, using the Tasks list pattern (state icon first, OR-22). It uses the same `ResultViewer`. Conversations result cards link into it.
 
-Artifacts live in two places: the `artifact` table and legacy `document` records of kind `artifact`. `artifacts.list` (`packages/coordinator/artifacts.ts:193`) already merges both, so the thread, the viewer and the Results page read artifacts only through it and `artifact_get`.
+Artifacts live in the `artifact` table. The thread, the viewer and the Results page read them only through `artifact_list` (`artifactList`, `go/coordinator/d_artifacts.go`) and `artifact_get`.
 
 ### Controls
 
 Stop, steer and answer are always visible. The rest are in one left-aligned menu with icons (OR-13), in reserved space (OR-23).
 
 *   **Composer target**: the newest running execution of the thread, named in the composer. When nothing runs, the composer sends a new message to the thread's newest session with `message_send`, which starts an execution, and steer is not shown. Each `boundary` row of a running execution has its own Stop (Owner Decision).
-*   **Stop**: `execution_stop` (`app.ts:161`) on that execution.
-*   **Steer**: `message_send` with `delivery: 'steer'` on the target execution's session; queued when the host cannot steer (`agent-tools.ts:91`).
+*   **Stop**: `execution_stop` on that execution.
+*   **Steer**: `message_send` with `delivery: 'steer'` on the target execution's session; queued when the host cannot steer (`go/coordinator/b_agent.go`).
 
 Menu actions:
 
@@ -272,7 +272,7 @@ Menu actions:
 | Fork | `session_fork` | original session unchanged, task | session and execution | same thread, new boundary |
 | Hand off | `session_transition` with another harness or account (`create_with_handoff`) | task, context handoff record | session and execution | same thread, new boundary |
 
-Hand off is the existing context handoff in `agent-tools.ts:46`. Quota-driven handoff is not part of this design (it is also out of scope in [fleet-data-foundation.md](fleet-data-foundation.md)).
+Hand off is the existing context handoff (`makeHandoff`, `go/coordinator/b_agent.go`). Quota-driven handoff is not part of this design (it is also out of scope in [fleet-data-foundation.md](fleet-data-foundation.md)).
 
 ### Data flow
 
@@ -382,219 +382,19 @@ It asserts: newest entry visible on open; scroll up loads older pages with 0 px 
 
 --------------------------------------------------------------------------------
 
-## Detailed Implementation Plan
+## Implementation
 
-Stages follow the brief: 1 foundations, 2 single-session thread, 3 thread equals task, 4 results, 5 menu actions. Stage 4 can run in parallel with Stage 2, because Phase 3 of [fleet-data-foundation.md](fleet-data-foundation.md) is live. Until Stage 4 lands, result blocks carry artifacts and no delivery chip.
+All five stages are built: block projection in `go/executor/harness_blocks.go`; `thread_entries`, `thread_search`, `replyText` and the feed cursor in `go/coordinator/b_threads.go`; the screen in `app/src/views/conversations.tsx`, `app/src/threads.ts` and `app/src/selection.ts`; the Results page in `app/src/views/results.tsx`; the viewer in `ResultViewer` (`packages/ui/src/controls.tsx`).
 
-Shared conventions for every item:
-
-*   **Block key** in code: the string `` `${seq}:${index}` ``, compared numerically by `seq` then `index`. Coordinator-made blocks (`question`, `boundary`, `result`) use index 0 on their own row; the `execution.ended` event has an empty `blocks` array, so the `result` block at its `seq` takes index 0 without a collision.
-*   **Snapshot and feed cursor**: thread operations are in `READ_OPERATIONS`, so they already run inside `store.read`, one consistent snapshot (`packages/coordinator/store.ts:11`). `feedCursor` is `store.changes.since(null).cursor` (`store.ts:138`) called inside that same read. Nothing new is added to the store.
+*   **Block key**: the string `` `${seq}:${index}` ``, compared numerically by `seq` then `index`. Coordinator-made blocks (`question`, `boundary`, `result`) use index 0 on their own row.
+*   **Snapshot and feed cursor**: thread operations run in one read snapshot, and `feedCursor` is read inside it.
 *   **Stored event shape**: an `event` document's `data` holds `executionId`, `sessionId`, `seq` (per execution), `type` and `data` (the native record); `data.data.fleetNormalized` is the projection.
 
-### Stage 1: Foundations
-
-#### 1. `crates/executor/src/harness.rs` (Modify)
-
-*   **Type / Scope**: Rust executor.
-*   **Proposed Changes**: `project()` (line 450) adds `blocks` for every harness it handles. Mapping, to be confirmed against the captured fixtures in item 12:
-
-    | Harness | Native record | Block |
-    |---|---|---|
-    | codex | `item.completed` with `item.type = agent_message` | `text` |
-    | codex | `item.completed` with `item.type = reasoning` or `plan` | `reasoning` |
-    | codex | `item.completed` with any other `item.type` (command, tool call, file change) | `tool`; `startedAt` from the matching `item.started` |
-    | claude | `assistant` message, content part `text` | `text` |
-    | claude | `assistant` message, content part `thinking` | `reasoning` |
-    | claude | `user` message with `tool_result`, matched to its `tool_use` by id | `tool` on the `tool_result` event |
-    | antigravity | `session/update` `agent_message_chunk` | `text` delta |
-    | antigravity | `session/update` `agent_thought_chunk` | `reasoning` delta |
-    | antigravity | `tool_call_update` with a final status, matched to its `tool_call` | `tool` on the update event |
-    | any | record with no raw data or unknown shape | one `tool` block named after the record type, raw JSON as output |
-
-    A tool block lives on the event that ends the tool; the executor keeps the start time of open tool ids per execution. Delta records replace today's `"delta": true` (line 508) with `deltaOf: <stream id>`, where the stream id is the native message id, or `<executionId>:<turn>` when the harness has none. When a stream ends, the completing record carries the final joined block. `messages` stays until item 19.
-
-#### 2. `crates/executor/src/main.rs` (Modify)
-
-*   **Type / Scope**: Rust executor CLI.
-*   **Proposed Changes**: Each live execution keeps a `harness::Blocks` state. `main()` checks `argv[1]` first: `reproject` reads JSON lines `{executionId, harness, timestamp, record}` on stdin, writes one projection per line on stdout (block state per execution), and exits before any `FLEET_DATA_DIR` read, `executor.lock` or journal open. The fixture test uses it.
-
-#### 3. Re-projection script (Dropped)
-
-*   Dropped by the owner decision on old records. Migration 15 instead extends the change-feed trigger to kind `event-delta` (reported as kind `event`), so streams are followed live.
-
-#### 4. `packages/coordinator/threads.ts` (Create)
-
-*   **Type / Scope**: coordinator module.
-*   **Proposed Changes**:
-    *   `thread_entries`, `thread_search`, `thread_export` with the signatures in the Technical Plan, plus `thread_blocks({ key, rows: { kind, id }[] }) -> { entries: Block[], removed: BlockKey[] }`, which the client uses to fetch the blocks of rows named by fed changes (change kind and id; a chunk returns its whole stream entry; a closing event lists the stream entries it replaces in `removed`).
-    *   Session set and membership, one query:
-
-        ```text
-        WITH first_task AS (
-          SELECT DISTINCT ON (session_id) session_id, task_id
-          FROM execution WHERE task_id IS NOT NULL ORDER BY session_id, seq),
-        members AS (
-          SELECT id FROM execution
-          WHERE task_id = $T
-             OR (task_id IS NULL AND session_id IN (SELECT session_id FROM first_task WHERE task_id = $T)))
-        ```
-
-        The task side uses `execution_task_seq`; `first_task` reads `execution_session (session_id, seq)` for the sessions found. For a session thread, `members` is the session's executions.
-    *   Rows: `event` and message documents through `document_execution (kind, executionId, seq)` for the member executions; questions through `question_execution`; artifacts through `artifacts.list({ executionId })` (both sources); boundaries from the member `execution` rows. Merged by block key; `execution` is joined only for page rows.
-    *   Streams: the `event-delta` rows of each open or cut-off stream are joined into one block, placed at the key of the stream's first delta.
-    *   `replyText(executionId)`: the agent reply text of one execution, from final `text` blocks plus cut-off delta runs. Items 7a to 7c use it.
-    *   `thread_export` HTTP route: streams markdown by reading pages, each page in its own `store.read`. A row committed between pages appears in a later page or not at all; it is never repeated, because pages advance by block key.
-    *   Project scope: as every read operation.
-
-#### 5. `packages/coordinator/app.ts` (Modify)
-
-*   **Type / Scope**: routes and operations.
-*   **Proposed Changes**: Register the four operations and `GET /api/threads/{task|session}/:id/entries`, `/blocks?rows=kind:id,…`, `/search`, `/export?from=seq:index@offset&to=…`. Dropping `events` and `results` from `session_get` and removing `/api/sessions/:id/events` move to Stage 2 item 18, because the Stage 1 screen still reads them.
-
-#### 6. `packages/coordinator/recovery.ts` (Modify)
-
-*   **Type / Scope**: event ingest.
-*   **Proposed Changes**: In `ingest` (line 17 onward), store an event whose projection has `deltaOf` as kind `event-delta`, others as `event`. The replay lookup (`previous`), the `seq` collision lookup and the reserved-sequence lookup read both kinds, so a resent delta is still found.
-
-#### 7. `packages/coordinator/executions.ts` (Modify)
-
-*   **Type / Scope**: execution state transitions.
-*   **Proposed Changes**: In `transition()` (line 116), when the new state is terminal and the row was not terminal before, write one `event` document with id `ended:<executionId>` (agent runs only; host event ids are `event:…` and ingest refuses type `execution.ended`, so a host cannot forge it), type `execution.ended`, empty `blocks`, in the same transaction. A repeated terminal transition returns early (`row.state === state`) and the fixed id prevents a second row.
-
-#### 8. `packages/coordinator/delegation.ts`, `packages/coordinator/agent-tools.ts`, `packages/coordinator/delivery.ts` (Modify)
-
-*   **Type / Scope**: other readers of `fleetNormalized.messages`.
-*   **Proposed Changes**: `delegation.ts:52` and `agent-tools.ts:42` take reply text (`delivery.ts` reads no reply text; nothing to change there) from `replyText()` in `threads.ts` instead of `fleetNormalized.messages` and `data.item`.
-
-#### 9. `packages/coordinator/tasks.ts` (Modify)
-
-*   **Type / Scope**: question answer.
-*   **Proposed Changes**: In `answer` (line 77), the write at line 84 becomes `UPDATE question SET ... WHERE id = $1 AND state = 'open' RETURNING *`. When no row is returned, reread the question: if the stored answer equals the submitted one, return it; otherwise fail with 409. The hook side effects and task transition (line 85 onward) run only when a row was updated.
-
-#### 10. `packages/coordinator/store.ts` (Modify)
-
-*   **Type / Scope**: read-operation set.
-*   **Proposed Changes**: Add `thread_entries`, `thread_blocks`, `thread_search`, `thread_export` to `READ_OPERATIONS` (line 172).
-
-#### 11. `packages/ui/src/virtual-list.tsx` (Modify)
-
-*   **Type / Scope**: UI control.
-*   **Proposed Changes**: New props and method:
-
-    ```text
-    onStart?: () => void            // once per list length when the first rows come into view
-    scrollToKey(key: string, align: 'start' | 'center' | 'end'): void
-    ```
-
-    `scrollToKey` maps the key to its index and calls the existing `scrollToIndex(..., { align })` (line 81). Position keeping on prepend uses the existing `anchor` ref (`{ key, delta }`, line 39): it is captured before the items change and restored in the same layout effect after measurement. `onEnd` and `follow` are unchanged.
-
-#### 12. `tests/coordinator/fixtures/conversations/codex-6a55ab8b.json`, `claude-127d6fd7.json`, `lost-receipt-d89cc199.json` (Create)
-
-*   **Type / Scope**: captured fixtures.
-*   **Proposed Changes**: Real event documents of those executions, secrets removed.
-
-#### 13. `tests/coordinator/threads.test.ts` (Create)
-
-*   **Type / Scope**: unit tests.
-*   **Proposed Changes**: Paging before, after and around (odd `limit`, short side); parallel executions interleave by `seq`; a taskless session that later gets a task shows its early blocks in the task thread; one event with two blocks pages by block key without loss or repeat; two overlapping transactions committing out of `seq` order lose no row when the client follows `feedCursor`; a cut-off stream shows as one block; a closed stream returns one block; search hits open with `around`; export with and without a range; `thread_blocks` by `seq`; each fixture's native records projected by `fleet-executor reproject` from the built binary give the expected blocks; `execution.ended` is written once.
-
-#### 14. `tests/coordinator/recovery.test.ts`, `tests/coordinator/delegation.test.ts`, `tests/coordinator/agent-tools.test.ts`, `tests/coordinator/delivery.test.ts`, `tests/coordinator/multiharness.test.ts` (Modify)
-
-*   **Proposed Changes**: Replay and collision of `event-delta`; readers use `replyText()`; `multiharness.test.ts` asserts `blocks` instead of `messages`. Add a race test for two different answers to the tasks tests.
-
-#### 15. `tests/ui/conversations.check.ts` (Create), `package.json` and `.github/workflows/ci.yml` (Modify) — moved to Stage 2, because it asserts the new screen
-
-*   **Type / Scope**: browser check, script and CI job.
-*   **Proposed Changes**: The assertions and timing report in "Browser check" (Technical Plan). It reuses the anchor-drift measurement from `tests/ui/scroll.check.mjs`. Script `"check:conversations": "pnpm run build && node tests/ui/conversations.check.mjs"`; CI job `conversations-check` built like `filter-check` (`ci.yml:58`).
-
-### Stage 2: Single-session thread
-
-#### 16. `app/src/threads.ts` (Create); `app/src/transcript.ts` and `tests/ui/transcript.test.ts` (Delete)
-
-*   **Stage 2 notes**: `session_get` drops `events` and `results`, `/api/sessions/:id/events` is removed (from Stage 1 item 5). Rows live in `Thread` in `packages/ui` (rows of item 19 plus the list), which the book demo also uses. Markdown renders through `packages/ui/src/markdown.ts` (parse) and `markdown.tsx` (Preact nodes, never HTML strings): headings, lists, tables, quotes, rules, fenced code with its own copy, inline code, emphasis, and links only for http, https and mailto. The conversation detail fills the viewport height below the top bar. Steer is `message_send` with `delivery: 'steer'` while an execution runs.
-
-*   **Type / Scope**: app state.
-*   **Proposed Changes**: Window state per thread key: loaded blocks, `first`, `last`, `hasBefore`, `hasAfter`, `feedCursor`; the live insert rule and jump from "Read path" in the Technical Plan. Nothing reads `data.item`.
-
-#### 17. `tests/ui/threads.test.ts` (Create)
-
-*   **Proposed Changes**: Window state: prepend, append, jump replaces the window, fed block inside the window is inserted, fed block past `last` with `hasAfter` counts in the pill only.
-
-#### 18. `app/src/views/conversations.tsx` (Modify)
-
-*   **Type / Scope**: view.
-*   **Proposed Changes**: Renders blocks through `VirtualList` with `follow: 'bottom'`, `onStart`, `onEnd`. One row component per block kind (item 19). Composer with target execution, Stop, steer, as in "Controls". Server search with jump.
-
-#### 19. `packages/ui/src/controls.tsx` (Modify)
-
-*   **Type / Scope**: UI controls.
-*   **Proposed Changes**: Replace `Entry` and `Transcript` (line 346) with `TextRow`, `ToolRow` and `ReasoningRow` (collapsed, expand downward, copy), `QuestionRow` (wraps `DecisionBlock`, line 239, which gains a collapsed answered state and shows the stored answer after a 409), `ResultRow` (artifact names, `StageChip`, links), `BoundaryRow` (agent mark, duration and cost chips, Stop), and code-block copy.
-
-#### 20. `packages/ui/src/format.ts` (Modify) and `tests/ui/format.test.ts` (Modify)
-
-*   **Proposed Changes**: Short agent label from harness, model id and effort; tests for codex, claude and antigravity model ids.
-
-#### 21. `crates/executor/src/harness.rs`, `tests/ui/app.check.ts`, `tests/executor/antigravity_acp.py`, `tests/coordinator/fixtures/documents-main-93c2cc0.json` (Modify)
-
-*   **Proposed Changes**: Remove `fleetNormalized.messages`; move the listed tests and fixture to `blocks`. No re-projection gate (owner decision).
-
-### Stage 3: Thread equals task
-
-#### 22. `app/src/selection.ts` (Create) and `tests/ui/selection.test.ts` (Create)
-
-*   **Type / Scope**: app state and test.
-*   **Proposed Changes**: Selection `{ start, end }` over `(key, offset)`, highlight for rendered rows, Shift+click, Cmd+A; Cmd+C and whole-thread copy (a toolbar button) as in "Copy". As built, cross-message selection takes whole rows (a plain click marks the start, Shift+click selects up to a row); native browser selection stays for part of one row. The key handler reads the selection through a ref, because effects run after paint. Tests for range order, offsets in text blocks, and whole non-text blocks.
-
-#### 23. `app/src/url.ts` and `app/src/views/conversations.tsx` (Modify)
-
-*   **Proposed Changes**: The URL stays `/conversations/<sessionId>`; `session_get` returns `threadKey`, the thread of the session's first task (D2) or the session itself, and the detail shows that thread, so any session of a task opens the whole task. Pages return `sessionIds` so the live feed follows every session of a task thread. (Changed in Stage 3: no second URL form or redirect is needed.) Boundary rows between sessions and executions.
-
-### Stage 4: Results
-
-*   **As built (Stage 4 notes)**: the viewer body is `ArtifactView` in `packages/ui` (image and video in fixed-ratio frames, text in 64 KB `Range` pages loaded on scroll, HTML and SVG as source, or running in a preview, download otherwise) inside `ResultViewer`, whose download is a real link. `GET /api/results/:id` serves one `Range` part (206/416), drops scripts from its CSP and sends `Content-Disposition: attachment` for types without a view. Interactive results (design pages, prototypes, games; owner decision 2026-11-10) run in `GET /api/results/:id/preview` (HTML and SVG only): CSP `sandbox allow-scripts` without `allow-same-origin`, so the page has an opaque origin with no cookies or storage of Fleet, and `connect-src 'none'`; the viewer frames it with the same sandbox and Lab file links open it. Its own files from the same run (images, styles, scripts beside the page) are inlined as `data:` URLs when it is served, because requests from the opaque origin carry no Access cookie; `https:` sources (common CDNs) load for scripts, styles, images, fonts and media; `connect-src 'none'` stays, so it calls neither Fleet nor anything else. A separate results origin would add a second wall once one exists. `artifact_list` gains `states`, `since`, `q` (name), a media family (`image/`) and newest-first pages (`limit`, `before`, `nextBefore`); it lists the `artifact` table only, and legacy `artifact` documents (moved by the backfill) open by id. The delivery stage shows on the result of the session's newest ended run and updates live: a delivery is stored on its task row, so its change arrives as kind `task`, and `thread_blocks` returns the refreshed result block for a task change that is a delivery of one of the thread's sessions. Result cards link each artifact by name to its Results entry.
-
-#### 24. `packages/ui/src/controls.tsx` (Modify)
-
-*   **Type / Scope**: UI control.
-*   **Proposed Changes**: `ResultViewer` (line 269) gains image, video and text views, text read in `Range` pages, and a sandboxed `iframe` for HTML and SVG.
-
-#### 25. `packages/coordinator/app.ts` (Modify)
-
-*   **Proposed Changes**: `GET /api/results/:id` (line 213) drops `allow-scripts` and `script-src 'unsafe-inline'` from its CSP and supports `Range` requests, `X-Content-Type-Options: nosniff`, and `Content-Disposition: attachment` for types without a view.
-
-#### 26. `app/src/views/results.tsx` (Create), `app/src/main.tsx` (Modify), `packages/ui/src/registry.ts` (Modify)
-
-*   **Type / Scope**: view and navigation.
-*   **Proposed Changes**: Results section with its own registry icon (OR-3, "Navigation anchors"), `artifact_list` with filters, `ResultViewer` in the work area.
-
-#### 27. `packages/coordinator/delivery.ts` (Modify)
-
-*   **Proposed Changes**: Export the delivery-state-to-stage mapping from the table under "Results and the artifact viewer"; `threads.ts` uses it for the result block.
-
-### Stage 5: Menu actions
-
-#### 28. `app/src/views/conversations.tsx` (Modify)
-
-*   **Proposed Changes**: The action menu from the "Menu actions" table under "Controls", each entry calling the existing operation. As built: `ActionMenu` in the conversation header (Retry last message, Switch profile or model, Hand off to another agent, Fork; Fork moved into the menu). Switch and Hand off open an inline panel (OR-14) listing profiles (`profiles_list`) and, for hand off, enabled accounts (`account_list`), then call `session_transition`; its decision (reuse, model switch, new session with handoff) shows in the panel and the new execution appears as a boundary.
-
-### Documentation
-
-#### 29. `docs/design-system/README.md` and `docs/design-system/controls/` (Modify)
-
-*   **Proposed Changes**: Document the new rows, the extended `ResultViewer` and `VirtualList` upward loading; the book is regenerated with `pnpm run book`; run `pnpm run check:design`.
-
-#### 30. `docs/designs/README.md` (Modify)
-
-*   **Proposed Changes**: Register this design.
-
-### Verification Plan
-
-*   **Compilation/Build**: `pnpm run build`, `cargo build -p fleet-executor`.
-*   **Unit Tests**: `pnpm test`, `cargo test -p fleet-executor`.
-*   **Static Analysis & Linting**: `pnpm run typecheck`, `pnpm run check:design`.
-*   **Test Coverage Requirement**: Every block kind, every paging direction, the join of a taskless session, `event-delta` replay, and the repeated and conflicting answer have a test.
-*   **E2E/Integration**: `pnpm run check:conversations` runs the assertions in "Browser check" and prints the timing report.
+### Verification
+
+*   Build: `pnpm run build`; `cd go && go vet ./... && go test ./...`; `pnpm run check:design`.
+*   Tests: every block kind, every paging direction, the join of a taskless session, `event-delta` replay, and the repeated and conflicting answer (`tests/ui/threads.test.ts`, `tests/go`).
+*   Browser: `pnpm run check:conversations` runs the assertions in "Browser check" and prints the timing report.
 
 --------------------------------------------------------------------------------
 

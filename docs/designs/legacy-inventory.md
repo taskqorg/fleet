@@ -1,5 +1,7 @@
 # Legacy page inventory
 
+> Historical record. It was written against the TypeScript coordinator and the Rust and Python executor, which the Go port deleted; file names in it are not current code. Current code: `go/coordinator`, `go/executor`, `go/gateway` ([stack](fleet-stack.md)).
+
 * **Date:** 2026-11-10
 * **Source:** `origin/main` at `74e0186`.
 * **Purpose:** what each `/legacy/*` page offered, and whether the operator app (`app/`) covers it.

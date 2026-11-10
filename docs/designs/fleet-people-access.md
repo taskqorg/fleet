@@ -51,7 +51,7 @@ Section numbers §1-§12 are cited by code; keep them.
 - **Access** allows the group `fleet-people`, edited by hand.
 - **Two credential kinds never mix.** A person: browser Bearer plus `X-Fleet-Person`. A host: its host secret and no `X-Fleet-Person`; a host-secret request with the header is 403. A host secret equal to the browser secret is refused.
 - **Coordinator.** A browser request without `X-Fleet-Person` is 401. An e-mail not in `people.json` is 403. The request context carries the person.
-- **`people.json`** (`FLEET_PEOPLE_FILE`, `packages/coordinator/people.ts`): `[{email, name, roles, owner?, grants: [{kind, id}]}]`, exactly one `owner: true`. Loaded into tables `person` and `person_grant`; re-read when the file changes. A malformed file keeps the last valid load (also across restarts, from the `person` rows) and raises one needs-you question with the parse error. With no valid load, every browser request is 403.
+- **`people.json`** (`FLEET_PEOPLE_FILE`, `go/coordinator/main.go`, `b_people.go`): `[{email, name, roles, owner?, grants: [{kind, id}]}]`, exactly one `owner: true`. Loaded into tables `person` and `person_grant` at start and on an owner edit. Not built: re-reading the file when it changes; keeping the last valid load and raising a needs-you question for a malformed file (today the coordinator does not start).
 - **`me`** returns e-mail, name, roles, owner flag and `grantsVersion`: a hash of roles, owner flag and grants, not of the name. The operator app clears its offline cache when `grantsVersion` changes (`app/src/offline.ts` `checkGrants`).
 - **Loopback scripts** that call the coordinator with the browser Bearer send `X-Fleet-Person` from `FLEET_PERSON` (`scripts/lab-examples.ts`).
 - **Actors.** Every audit `actor` is the person's e-mail; agents act as their execution ID; program workers as `program-worker`. Literal `'operator'` as a role (`askedBy` of agent questions) stays.
@@ -68,7 +68,7 @@ Section numbers §1-§12 are cited by code; keep them.
 
 ### 3. Hosts: records, secrets and trust
 
-- **Host record** (`packages/coordinator/hosts.ts`): document kind `host` `{id, name, holder, platform, roles, secretHash, intake, harnesses: {<name>: {allowed}}, createdAt}`, stored under id `host:<id>` (document ids are unique across kinds; `host-observation` uses the bare id). Config keeps only the coordinator's own host ID. The coordinator creates no host rows by itself.
+- **Host record** (`go/coordinator/a_hosts.go`): document kind `host` `{id, name, holder, platform, roles, secretHash, intake, harnesses: {<name>: {allowed}}, createdAt}`, stored under id `host:<id>` (document ids are unique across kinds; `host-observation` uses the bare id). Config keeps only the coordinator's own host ID. The coordinator creates no host rows by itself.
 - **Roles:** `inspector-for:<hostId>` (runs account inspections and integration for that host) and `publication` (runs delivery). A host without a role runs agent work.
 - **Secret per host.** Only the SHA-256 is stored. `scripts/host-secret.sh <file>` writes a new secret on the host itself into a 0600 file and prints only its hash; the owner calls `hosts_register {id, holder, roles, harnesses, secretSha256}` or `hosts_rotate_secret`. No secret leaves its host. Without `secretSha256` the coordinator mints a secret and returns it once. Rotation stops the old secret at once. Both operations are owner only.
 - The executor reads `FLEET_HOST_SECRET_FILE`; the program worker reads `hostSecretFile` from its config. `FLEET_HOST_ID` is a label only.
@@ -84,7 +84,7 @@ Section numbers §1-§12 are cited by code; keep them.
 
 - **Record** `managed-account`: `name`, `harness`, `holder` (person e-mail; the creating person, only the owner names another), `kind` (`personal`; `team_seat` later), `plan`, `intake` (`all`, `paused`; §7), `take: {projects}` (§5), `switchPct` (§6; only for harnesses whose readings carry a percent), `comment`, `bindings` (per host: `binding`, `platform`, `readiness`, `roots`, `lastCheck`). Fleet stores only binding metadata: the paths `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `GEMINI_HOME`, never credential values. A binding belongs to one subscription only.
 - Operations: `account_create`, `account_list`, `account_hosts`, `account_discover`, `account_connect`, `account_login_handoff`, `account_update {accountId, intake?, plan?, comment?, switchPct?, take?, holder?}` (holder or owner; only the owner changes `holder`; one `setting-change` row per changed field, shown in `account_list` history). Login handoff shows the exact executable, argv and environment for that host and never accepts codes or tokens; the person completes the native flow on the host, then Recheck.
-- **Harnesses** `codex`, `claude`, `antigravity` and `acp`. Kind `acp`: the host binding (the native accounts registry entry) gives `executable`, `args` and `environment`, with `{nativeHome}` replaced, served by the same ACP session code, so another ACP agent joins by binding, not code. An `antigravity` entry without `args` uses the built-in binding (`go/executor/harness_acp.go`; argv in `harness.rs`: `agy acp --gemini-dir … --app-data-dir antigravity-cli --include-default-customizations=false`). No binary hash pinning.
+- **Harnesses** `codex`, `claude`, `antigravity` and `acp`. Kind `acp`: the host binding (the native accounts registry entry) gives `executable`, `args` and `environment`, with `{nativeHome}` replaced, served by the same ACP session code, so another ACP agent joins by binding, not code. An `antigravity` entry without `args` uses the built-in binding (`go/executor/harness_acp.go`; argv in `go/executor/harness_command.go`: `agy acp --gemini-dir … --app-data-dir antigravity-cli --include-default-customizations=false`). No binary hash pinning.
 
 #### Logins per harness
 
@@ -153,7 +153,7 @@ Not built (all of §6). Today `enqueue` picks a host at queue time (§5 rule) an
 - An unusable explicit host or subscription makes the execution wait with that reason; it no longer fails the request.
 - Fleet never balances across subscriptions to stretch limits; the owner may list subscriptions in any order. One host may win the whole queue; intake and the order list are the controls.
 
-**As built (slice 6).** `enqueue` writes the execution with no host and a `dispatch` record (harness, project, explicit subscription, explicit host, last host, input); `dispatch.ts` runs at the start of every `/api/hosts/poll`, inside its transaction, and the start command is built at claim from the session as it is then. Candidates: the explicit subscription (or the codex default binding, the owner's configured default) as a list of one; otherwise the director's subscriptions, then take-rule ones, then the project's `subscriptions` order, then the host's own login (only for the host's holder). Hosts: the explicit one, else the session's last host, the coordinator default, then host creation order. Skips in order: trust, host intake, the subscription checks of `managed.resolve` (director, intake, placement, ready binding), online (a poll within 30 s), budgets. Not built yet: "hosts holding the project's files first" (slice 5 file locations) and the switch point (slice 7 readings). The claim needs no row lock: the poll runs under the coordinator's GLOBAL write lock. A queued execution that is stopped before dispatch is settled as stopped at once. Lab experiment budgets stay in Lab for now; the `budget` table carries person and project budgets, and spend is measured for `wall_ms` and `tokens` only (other units are unverifiable and never enforced). Questions gain `addressed_to`, readable by that person under row-level security; the owner-override notice (G4) uses it.
+**As built (slice 6).** `enqueue` writes the execution with no host and a `dispatch` record (harness, project, explicit subscription, explicit host, last host, input); dispatch (`go/coordinator/a_dispatch.go`) runs at the start of every `/api/hosts/poll`, inside its transaction, and the start command is built at claim from the session as it is then. Candidates: the explicit subscription (or the codex default binding, the owner's configured default) as a list of one; otherwise the director's subscriptions, then take-rule ones, then the project's `subscriptions` order, then the host's own login (only for the host's holder). Hosts: the explicit one, else the session's last host, the coordinator default, then host creation order. Skips in order: trust, host intake, the subscription checks of `managed.resolve` (director, intake, placement, ready binding), online (a poll within 30 s), budgets. Not built yet: "hosts holding the project's files first" (slice 5 file locations) and the switch point (slice 7 readings). The claim needs no row lock: the poll runs under the coordinator's GLOBAL write lock. A queued execution that is stopped before dispatch is settled as stopped at once. Lab experiment budgets stay in Lab for now; the `budget` table carries person and project budgets, and spend is measured for `wall_ms` and `tokens` only (other units are unverifiable and never enforced). Questions gain `addressed_to`, readable by that person under row-level security; the owner-override notice (G4) uses it.
 
 ### 7. Intake and stall alerts
 
@@ -174,7 +174,7 @@ Not built (all of §8); `quota` is reported as `unknown`.
 
 ### 9. Budgets
 
-Not built beyond Lab: experiments have `budgets` in `lab/experiments.ts`.
+Not built beyond Lab: experiments have `budgets` (`go/coordinator/c_lab.go`).
 
 ```text
 budget { id, scope: person | project | experiment | connection, scopeId,
@@ -223,7 +223,7 @@ Slices 1-4 land before any non-owner host joins.
 | 7 Readings | `limit_reading`, limits view | not built |
 | 8 Simon's PC | WSL2 executor with Claude allowed | not built |
 
-Tests: `tests/coordinator/people.test.ts` (slice 1), `host-secrets.test.ts` (slice 2), `visibility.test.ts` (slice 3), `director.test.ts` (slice 4).
+Tests: the outside tests in `tests/go` and `tests/trial`.
 
 ## Provider terms
 

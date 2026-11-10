@@ -1,6 +1,8 @@
 # PDS18 second native environment (Codex + Antigravity)
 
-2026-11-09. Infra-only provisioning on `root@pds18.ufobe.com` (Ubuntu 26.04.1, x86_64), `fleet` user (uid 1005, linger on). No repo code was changed and the coordinator was not redeployed. The live turns are listed below. Claude is not installed and never runs on PDS: the Linux executor build refuses Claude accounts (`crates/executor/src/harness.rs`, `cfg!(target_os = "macos")`).
+> Historical record. It was written against the TypeScript coordinator and the Rust and Python executor, which the Go port deleted; file names in it are not current code. Current code: `go/coordinator`, `go/executor`, `go/gateway` ([stack](designs/fleet-stack.md)).
+
+2026-11-09. Infra-only provisioning on `root@pds18.ufobe.com` (Ubuntu 26.04.1, x86_64), `fleet` user (uid 1005, linger on). No repo code was changed and the coordinator was not redeployed. The live turns are listed below. Claude is not installed and never runs on PDS: the executor's readiness refuses Claude where `FLEET_CLAUDE_PLACEMENT` does not match the platform (`claudePlacement`, `go/executor/readiness.go`).
 
 ## Installed
 

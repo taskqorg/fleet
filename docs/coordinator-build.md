@@ -1,49 +1,52 @@
-# Coordinator build and integration
+# Coordinator build and operation
 
-## Local operation
+The coordinator is one Go binary, `fleet-coordinator`, built from `go/coordinator`. It serves the HTTP API, the SSE stream and the built app, and stores everything in Postgres.
 
-Use Node 22.18.0. Run `corepack enable` once (it installs the pnpm version pinned by `packageManager` in package.json), then `pnpm install --frozen-lockfile`, `pnpm run build` (type check, then bundle), `pnpm test`, then `pnpm start` with a random FLEET_BROWSER_SECRET and a FLEET_PEOPLE_FILE supplied outside Git (hosts register their own secrets, configuration.md Hosts). FLEET_DATABASE_URL selects the Postgres database (role fleet_app; a non-postgres:// value is an embedded PGlite directory, used by tests), and FLEET_MIGRATION_DATABASE_URL the owner role that applies packages/coordinator/db/schema.sql on start (defaults to FLEET_DATABASE_URL). FLEET_DATABASE (the old SQLite file) is read only by `node dist/packages/coordinator/migrate-sqlite.js forward|verify|reverse` (it uses node:sqlite, so Node 22 prints an ExperimentalWarning, which is expected); FLEET_HOST_ID selects the exact authorized executor (default owner-mac). Open http://127.0.0.1:8787 and enter the browser secret. The browser retains its session ID in localStorage; its credential remains in memory. The machine credential never reaches the browser.
+## Build
 
-## HTTP and persistence
+- `pnpm run go:build` runs `go generate ./...` (protocol types from `contracts/host-protocol.schema.json`; `schema.sql` copied from `packages/coordinator/db/schema.sql` and embedded) and writes `go/bin/fleet-coordinator`.
+- `pnpm run build` also type-checks and bundles the app into `dist/app`, which the coordinator serves.
+- `deploy/build-release.sh` builds the release tarball with all three binaries; [deploy/README.md](../deploy/README.md) owns release and install.
 
-Implemented operations are POST /api/sessions; GET /api/sessions/:id; POST /api/sessions/:id/messages; POST /api/executions/:id/stop; POST /api/hosts/poll, /receipts, /events, /artifacts; GET /api/results/:id. Session messages accept exactly requestId and text, retain server-generated identities, and deduplicate within their session; changed text under the same request identity conflicts. Every lookup checks its record kind. One execution may remain active per session. Follow-up start payloads retain the observed native session association. Instructions follow the requested discussion, review or creation scope; website creation delivers output/index.html with all source assets.
+## Run
 
-SQLite WAL with synchronous FULL retains commands and messages transactionally before acknowledgement; history has no expiry. Commands remain pending until receipt. Terminal receipts cannot regress and delayed receipts cannot overwrite terminal execution state. Events reject changed identity content and reused per-execution sequence. Session summary and GET /api/sessions/:id/events?after=-1&limit=100 use durable insertion order; cursor is a zero-based insertion position, maximum page size 500. GET /api/executions/:id/events returns per-execution sequence order. UPSERT preserves record insertion positions; identical event retries do not rewrite records. Session summary currently returns full retained history; storage queries scan records in this small prototype.
+`pnpm start` runs `go/bin/fleet-coordinator`. It applies the embedded schema with the migration role, opens the store, loads the people file, starts its background loops and listens on `127.0.0.1:$PORT`. Open http://127.0.0.1:8787. Every browser request carries `Authorization: Bearer <FLEET_BROWSER_SECRET>` and `X-Fleet-Person: <email>` of a listed person; host requests carry only their own host secret (hosts register their secrets, [configuration.md](configuration.md) Hosts). The machine credential never reaches the browser.
 
-Artifacts retain immutable execution/path identities, media type, full content, size and computed SHA-256; optional producer digests are validated. Changed content under the same identity conflicts. FLEET_MAX_ARTIFACT_BYTES sets the decoded per-file upload bound (default 16777216); HTTP body allowance follows it. Storage currently uses base64 SQLite records rather than the planned retained-file store. Source artifacts are retained without default expiry.
+| Variable | Default | Meaning |
+|---|---|---|
+| `FLEET_DATABASE_URL` | required | Postgres URL of the application role `fleet_app`. |
+| `FLEET_MIGRATION_DATABASE_URL` | `FLEET_DATABASE_URL` | Owner role that applies the schema on start. |
+| `FLEET_PEOPLE_FILE` | required | `people.json`, outside Git; exactly one owner. Read once at start. |
+| `FLEET_BROWSER_SECRET` | empty: every browser request is 401 | Browser bearer. |
+| `FLEET_HOST_ID` | `owner-mac` | Default executor host. |
+| `PORT` | `8787` | Loopback port (PDS18 uses 9470). |
+| `FLEET_APP_DIR` | `dist/app` | Built app. |
+| `FLEET_PROJECT_CONFIG_DIRECTORY` | `config` | Project settings. |
+| `FLEET_PROFILES_DIRECTORY` | `config/agents` | Agent profiles. |
+| `FLEET_LAB_DIRECTORY` | `config/lab` | Lab configuration. |
+| `FLEET_DEFAULT_ACCOUNT_BINDING` | empty | Account binding used for Codex when a request names none. |
+| `FLEET_DEFAULT_ARTIFACT_LOCATIONS` | `pds18` | Artifact locations when a project names none. |
+| `FLEET_STORE_SECRETS` | `var/stores` | Artifact store credentials. |
+| `FLEET_STORE_ENDPOINT_HOSTS` | empty | Store endpoint hosts (exact, or a `.suffix`) reached through the Access tunnel with the service token. |
+| `FLEET_ARTIFACT_RETRY_WINDOW_MS` | `86400000` | Upper bound of the backoff between attempts of a failed artifact copy. |
+| `FLEET_S3_IDLE_TIMEOUT_MS` | `60000` | Idle timeout of one store request. |
+| `FLEET_SECRET_DIR` | empty | Connection key values, `connections/<connection>/<fingerprint>`, mode 0600. |
+| `FLEET_GATEWAY_DIR` | empty | Where the gateway snapshot (`snapshot.json`, no key values) is published. |
+| `FLEET_GATEWAY_URL` | empty | Gateway base URL. |
+| `FLEET_CF_ACCESS_FILE` | `~/.config/fleet/cf-access-machine.env` | Cloudflare Access service token for machine calls. |
+| `FLEET_CONNECTION_TICK_MS`, `FLEET_PIPELINE_TICK_MS`, `FLEET_WATCH_TICK_MS`, `FLEET_RECONCILE_MS`, `FLEET_STREAM_PING_MS` | 3000, 5000, 15000, 600000, 25000 | Loop periods; test seams. `FLEET_CONNECTION_TICK_MS=0` turns the connection loop off. |
+| `FLEET_TEST_SITE_ROOT` | empty: route answers 404 | Example sites served under `/test-sites/` ([website-example.md](website-example.md)). |
 
-## Preview boundary
+## HTTP and storage
 
-Preview fetches retained HTML and assets through authenticated control requests and substitutes relative resources as data URLs inside opaque sandbox srcdoc, permitting scripts without same-origin privileges. Same-directory HTML CSS/script/image resources and CSS-relative images are supported. External resources, module import graphs, nested HTML navigation and dynamic backends remain outside the first static exercise. Executor must upload all source files. Unchanged session snapshots do not rebuild frames; preview frames are cached. Generated content has no coordinator bearer or same-origin access.
+Routes are registered in `go/coordinator/registry.go` and the area files; `routes.go` and `main.go` hold the session routes and the credential check. `GET /api/health` is public and shows `commit`, `built` and `database`. `GET /api/stream` is the SSE change stream. A request runs in one transaction: a read snapshot for GET, a write otherwise, scoped to the person's projects by row-level security (a write outside scope answers 403).
 
-## Local evidence
+The schema is `packages/coordinator/db/schema.sql`; [fleet-data-foundation.md](designs/fleet-data-foundation.md) is its specification.
 
-`npm test` passes two integrated tests covering persistence, request dedup/conflict, caller-controlled identity rejection, typed record boundaries, requested-scope instructions, follow-up history insertion order, restart, cursor paging and per-execution sequence order. `npm run build` and `git diff --check` pass. The earlier Chromium run of `tests/coordinator/browser.ts` (since removed) exercised actual Russian UI submit, fake executor events, event/sequence conflicts, terminal receipt regression, artifact retry/conflict, relative CSS preview, reload, native-context follow-up, stop request and observed stopped receipt. Evidence is evidence/coordinator-browser.json and evidence/coordinator-browser.png; screenshot visually inspected with all relevant elements visible at 1100px width. UI was unchanged in the subsequent identity/order patch, so browser qualification was not repeated. This is local fake execution evidence, not native or remote deployment proof. Latest dependency audit reported zero vulnerabilities with pinned Fastify 5.12.8.
+## Tests
 
-## Deployment integration
+`tests/go/run.sh` builds nothing; build first, then it runs `tests/trial` and `tests/go` against `go/bin/fleet-coordinator` on a fresh local Postgres database per file. Go unit tests: `cd go && go test ./...`.
 
-Infrastructure owns final runtime, service and Caddy setup; no production activation occurred in this worker. Use Node 22.18.0 and dist/packages/coordinator/server.js, bind loopback with PORT=9470, FLEET_DATABASE=/home/fleet/data/fleet.sqlite, FLEET_HOST_ID=owner-mac, FLEET_BROWSER_ORIGIN=https://fleet.ufobe.com, FLEET_BROWSER_SECRET, FLEET_PEOPLE_FILE, and configured FLEET_MAX_ARTIFACT_BYTES. Keep secrets in the protected external environment file. Explicit public origin configuration supports HTTPS reverse proxy without trusting forwarded origin headers.
+## Deployment
 
-Infrastructure prepares the separate Fleet-only Access JWT verifier on 127.0.0.1:9471; coordinator does not duplicate it. Browser Caddy routes must pass that verifier; exact POST machine routes use the separate machine Access applications and coordinator machine bearer. Coordinator independently checks exact host/execution ownership. Parent must verify Access/origin guard before activation; these integration instructions do not establish that it is active.
-
-Coordinator agreed native file/shell/browser tools plus Fleet HTTP operations suffice for the first web-session-first slice. Agent-facing MCP is explicitly deferred, with no qualification claim or general architecture change. Parent/executor still own actual Codex execution, observed native model/usage, remote retained output and deployed browser acceptance. No commit or push performed.
-
-## Readable session UI acceptance
-
-UI now groups user messages and native `item.completed` / `agent_message` answers chronologically by execution. Native tool status, observed turn token usage and resource observations have compact summaries; absent usage and cost remain unknown. All raw events remain available in collapsed per-execution details. Results include an Open result action in a modal opaque sandbox: generated HTML receives neither same-origin privileges nor shared credentials. Result frames remain outside conversation rerenders.
-
-The targeted Chromium scenario uses realistic native-shaped assistant, tool, usage and unknown resource events followed by a user follow-up. It checks raw details start collapsed, relative CSS works, Open result uses `sandbox=allow-scripts`, and preview DOM state survives both unchanged polling and changed conversation snapshots. Screenshots evidence/coordinator-browser.png (1100px desktop) and evidence/coordinator-mobile.png (390px mobile) were visually inspected for readable conversation, result action, preview and composer; mobile has no horizontal page overflow. This UI-only change requires no API or auth/deployment changes and was not deployed.
-
-## Production proxy browser authentication
-
-Set FLEET_BROWSER_PROXY_AUTH=true and FLEET_BROWSER_ORIGIN=https://fleet.ufobe.com for the owner-only Access deployment. UI hides the browser key input, emits no Authorization header, uses same-origin cookie-authenticated requests and automatically reloads its saved session. Without a saved session the user creates one with New session. Direct bearer UI remains the default for local/native tests.
-
-Coordinator still requires the existing FLEET_BROWSER_SECRET bearer on browser API routes. The dedicated JWT guard must validate Access first and return Authorization: Bearer with that secret for Caddy to copy upstream; the secret must never enter the HTML or browser response. Arbitrary identity headers do not authorize anything. Proxy-mode browser mutations require the exact configured Origin, including rejecting missing Origin; authenticated GET reads may omit Origin. Machine bearer/host scoping is unchanged. Infrastructure owns the guard/Caddy change; this worker does not deploy it.
-
-`npm test` covers missing/wrong Origin mutation rejection, correct Origin acceptance, mandatory bearer, untrusted identity header rejection and GET without Origin. `tests/coordinator/proxy-browser.ts` (since removed) simulated a trusted proxy injecting Authorization outside browser JS and checks hidden key input, session creation, message submission and automatic reload. Screenshot: evidence/coordinator-proxy-browser.png. This is a local simulation; Cloudflare native login was not tested here. The direct-bearer Chromium test remains the regression check for local mode.
-
-## Resource stream readability correction
-
-Execution conversation nodes now update incrementally rather than being recreated on polling. Each execution shows only its latest resource sample in one summary: CPU percent and RSS MiB for the native leader, disk MiB for the entire executor directory explicitly not attributed per task, and unknown cost. All samples remain in raw event details. Tool command/status labels are capped at 160 characters; complete tool records and output remain expandable. Existing assistant/user nodes, expanded details, preview frames and page scroll are preserved across updates. No API change, deployment or restart is part of this correction.
-
-The targeted browser scenario adds 100 realistic resource samples to assistant/tool/follow-up history and checks one latest summary, all 105 raw events, retained conversation node identity, expanded details and scroll position, together with existing preview DOM checks. Desktop/mobile evidence remains evidence/coordinator-browser.png and evidence/coordinator-mobile.png.
+[deploy/README.md](../deploy/README.md) owns units, environment files and Caddy. The Access origin guard (`fleet-gateway guard`, port 9471) validates Access and adds the browser bearer; the coordinator does not duplicate it and trusts no identity header without that bearer.

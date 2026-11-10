@@ -22,8 +22,8 @@ Append only. Each entry: date, question, options, choice, reason.
 
 ## 2026-11-09 D4: Front-end stack (methodology decision 1)
 
-* **Options:** (a) Preact + Signals + Wouter; (b) plain TypeScript templates with hand-written DOM patching; (c) server-rendered Fastify pages sharing only CSS and the registry.
-* **Choice:** (a) Preact + Signals + Wouter, built with esbuild. Fastify serves JSON and the static bundle.
+* **Options:** (a) Preact + Signals + Wouter; (b) plain TypeScript templates with hand-written DOM patching; (c) server-rendered pages sharing only CSS and the registry.
+* **Choice:** (a) Preact + Signals + Wouter, built with esbuild. The coordinator serves JSON and the static bundle.
 * **Reason:** keyed components and signals give in-place live updates without jumps; proven in TaskQ. (c) cannot meet the no-jump update requirement; (b) grows into hand-made list diffing.
 * **Also decided:** virtual scroll with anchor keeping uses an existing library rather than hand-written code (candidate: TanStack Virtual via `preact/compat`), accepted only if it passes the scroll behaviour tests.
 
@@ -44,20 +44,20 @@ Append only. Each entry: date, question, options, choice, reason.
   * P9: any collection longer than a screen uses the virtual list component. No 100k-item test.
   * Precedence: the owner rule wins, except touch targets of 44 px on touch devices and the contrast minimums, which always hold.
 * **Consistency:** shared parts in `packages/ui` make the right way the easy way: formatter, icon registry (TaskQ icons), tokens, virtual list.
-* **D3 checks:** `npm run check:design` prints a warning report. It is not in `npm test` and never blocks a pull request.
+* **D3 checks:** `pnpm run check:design` prints a warning report. It is not in `pnpm test` and never blocks a pull request.
 * **D4 performance:** measured targets, not stops: initial JavaScript ≤ 200 KB, interaction response ≤ 100 ms.
 * **D5 approval:** the owner says "ok" in chat, and the worker records it in `decisions.md`.
 * **D6 visual regression:** not now. Book screenshots are attached to the pull request.
 * **D7 old specimens:** archived in `explorations/archive/`.
 * **D8 book role:** the book is the live demo page of `packages/ui`. There is no separate copy.
-* **Rejected:** blocking checks in `npm test` or CI (the reviewers' recommendation), and gates on the order of work.
+* **Rejected:** blocking checks in `pnpm test` or CI (the reviewers' recommendation), and gates on the order of work.
 
 ## 2026-11-09 D7: Stage 2 built as packages/ui (pending owner review)
 
 * **Built:**
   * `packages/ui`: tokens, the icon registry (TaskQ Lucide set), the formatter, `VirtualList` on TanStack Virtual core, and 14 controls.
-  * `npm run book` builds [book/index.html](book/index.html) as one self-contained file.
-  * `npm run check:design` prints the warning report.
+  * `pnpm run book` builds [book/index.html](book/index.html) as one self-contained file.
+  * `pnpm run check:design` prints the warning report.
 * **Applied:**
   * OR-7: the pill reads "12 new".
   * OR-14: filters expand inline.
@@ -107,7 +107,7 @@ Append only. Each entry: date, question, options, choice, reason.
 * **Fixes:**
   * The rail never disappears. Below 760 px it shrinks to icons, with pins first, counters on the icons and names in tooltips. This is interim until the owner picks a variant for (d).
   * Every control and pattern now marks its root with `data-ui="<spec name>"`.
-  * The traceability check `tests/ui/trace.check.mjs` is part of the `npm run check:design` report. For each `pages/<page>.md`, it opens the routes listed on the spec's "Mockup routes" line and clicks every tab. It then reports any linked control or pattern that did not render, and requires `app-shell` and `nav-rail` on every page. It is a warning, not a gate (D6).
+  * The traceability check `tests/ui/trace.check.mjs` is part of the `pnpm run check:design` report. For each `pages/<page>.md`, it opens the routes listed on the spec's "Mockup routes" line and clicks every tab. It then reports any linked control or pattern that did not render, and requires `app-shell` and `nav-rail` on every page. It is a warning, not a gate (D6).
   * Page specs now link every control they name.
   * The layout patterns list-detail, needs-you and ops-summary are components (`ListDetail`, `NeedsYou`, `OpsSummary`, `ListFrame`), so pages compose them instead of copying markup.
 * **Open questions (a)–(d):** rendered as variants in [explorations/open-questions-01.html](explorations/open-questions-01.html) for the owner to pick.
