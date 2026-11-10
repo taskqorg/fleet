@@ -7,6 +7,7 @@
 | Topic | Target file | Summary | Merges into the target |
 |---|---|---|---|
 | Lab | [designs/fleet-lab.md](designs/fleet-lab.md) | Experiments over examples, variants, evaluators and budgets, Promote, the `/lab` screen, work analysis. | |
+| Analytics | [designs/fleet-analytics.md](designs/fleet-analytics.md) | `analytics_query` over work records and the price table for estimated money. | none |
 | Asset pipelines | [designs/fleet-asset-pipelines.md](designs/fleet-asset-pipelines.md) | Provider keys into connections, deleting AssetQ, registry statuses, Meshy and image pipelines with Blender, judges, `loop`, character. | |
 | Operator app | [designs/fleet-operator-app.md](designs/fleet-operator-app.md) | The operator web app, its sections and live change feed. | [interfaces.md](interfaces.md), [designs/legacy-inventory.md](designs/legacy-inventory.md) |
 | View URLs and list path | [designs/fleet-view-urls-and-list-path.md](designs/fleet-view-urls-and-list-path.md) | How a view URL is built and parsed; the filtered list path and its check. | none |

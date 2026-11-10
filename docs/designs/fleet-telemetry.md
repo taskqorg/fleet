@@ -201,7 +201,7 @@ Operations, under the [data foundation §6](fleet-data-foundation.md#6-operation
 
 **Permissions.** Project spans need the project grant; system spans (no `project_id`) need the owner. For non-owners the coordinator adds `project_id IN (<granted>)` to every query. **PM agent:** sees all telemetry within its director's rights; the owner's PM sees the whole system. Metadata only; transcripts only through its own transcript grant.
 
-**Overlap with existing operations.** `usage_summary` stays the source of truth for cost totals (it reads `measurement`). `executions_get` keeps state; it gains a `traceId` field that links to `telemetry_trace`.
+**Overlap with existing operations.** Boundary: telemetry queries spans (operations, latency, errors); [`analytics_query`](fleet-analytics.md#analytics_query) queries work records (executions, tokens, cost, experiments). `telemetry_query` never reports cost, and `analytics_query` never reads spans; a question needing both links them by `executionId`. `usage_summary` was never implemented; cost totals come from `analytics_query`. `executions_get` keeps state; it gains a `traceId` field that links to `telemetry_trace`.
 
 ```json
 {
