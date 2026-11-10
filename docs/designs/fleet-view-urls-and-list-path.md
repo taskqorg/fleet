@@ -1,7 +1,7 @@
 # Fleet view URLs and list data path
 
 * **Author:** Alex Kirs
-* **Status:** Approved (owner, 2026-11-10); implemented in PRs #29, #30, #31, #33, #34 and this docs change
+* **Status:** Implemented (owner-approved 2026-11-10); PRs #29-#31, #33-#37; live on PDS18 since 425d7a1. Drift check 2026-11-10: [reviews/drift-2026-11-10-web-stack.md](reviews/drift-2026-11-10-web-stack.md)
 * **Date:** 2026-11-10
 * **Brief:** [web-stack-brief.md](web-stack-brief.md) (measurements, alternatives, owner answers)
 
@@ -134,7 +134,8 @@ Measured in the brief on local PGlite (in-process coordinator, generated tasks w
 type ViewName = 'tasks' | 'conversations' | 'hosts' | 'overview';
 type View = { view: ViewName; focus?: string; group?: string; preset?: string; project?: (string | null)[];
   q?: string; sel?: string[]; state?: string[]; archived?: boolean; extra?: Record<string, string> };
-parseView(pathAndQuery: string): View      // tolerant: unknown keys go to extra; invalid values for known keys are dropped
+parseView(input: string, opts?: { origin?: string | null }): View | null  // a path or full URL; null if not a view or a foreign origin
+viewProblem(v: unknown): string | null     // checks a view from outside (view_link): unknown keys or bad values are errors
 formatView(v: View): string                // canonical path + query, no origin; defaults omitted
 listKey(v: View): string                   // view + canonical query without focus, sel, preset, extra
 toPageParams(v: View): { filter: { state?: string[]; search?: string; projectId?: (string | null)[]; archived?: boolean }; group?: string }
@@ -144,58 +145,63 @@ The allowed keys, defaults and values per view are one constant table in the mod
 
 **Agent operation `view_link`.** In the shared operation table and in the agent operation table (`agent.operations`), so it is available on `/api/ops`, `/api/tools` and the agent MCP endpoints. It is a read operation without database access.
 
-* Input `{ view }` → `{ url, path }`. `url` uses the configured `browserOrigin`; without one, `url` is `null` and `path` is returned.
-* Input `{ url }` → `{ view }`. A URL on another origin, or a path that is not a view, is rejected with 400 `Not a Fleet view URL`. Both or neither input → 400.
+* Input `{ view }` → `{ url, path }`. Every field is checked with `viewProblem`; a bad field is a 400, never dropped. `url` uses the configured `browserOrigin`; without one, `url` is `null` and `path` is returned.
+* Input `{ url }` → `{ view }`. A path that is not a view, or a URL on another origin than `browserOrigin`, is rejected with 400 `Not a Fleet view URL` (with no origin configured, any origin is accepted). Both or neither input → 400.
 
 ### 2. List data path (entity store, D4)
 
 ```text
- URL ─parseView─▶ View ─listKey─▶ lists[key]   : signal<{ ids, keys, counts, groups, nextAfter, at, error }>
-                                  records[id]  : signal<row>        (one per task or session, shared by all lists)
+ URL ─parseView─▶ View ─listKey─▶ lists[key]   : Entry { view, params, state: signal<{ ids, keys, counts, total, groups, nextAfter, at, restored, error }>, seq, ... }
+                                  records[id]  : { row, seq }       (one per task or session, shared by all lists)
+                                  holders[id]  : list keys          (which lists hold the id: only those re-render on a change)
                                   docs[name]   : signal<data>       (task_get / session_get details, overview, hosts)
-  task_page / sessions_list ─page─▶ records updated, lists[key].ids replaced
-  feed changes ─▶ list_membership(touched ids, each mounted list) ─▶ records updated once; ids placed by keys[id]
-  IndexedDB (D3, app/src/offline.ts) ◀── save per list key (ids, keys, counts, groups, the rows) and per doc
+  task_page / sessions_list ─loadList─▶ records at the request's start cursor, lists[key] replaced in one write
+  feed changes ─applyChanges─▶ list_membership (two lists per call, 1,000 ids per call) ─▶ records at the batch cursor; ids placed by keys[id]
+  IndexedDB (D3, app/src/offline.ts) ◀── list:<key> and doc:<name>, written lazily at most once a second
 ```
 
-* **`app/src/store.ts` (new)** holds three maps of Preact signals: `records` by entity id, `lists` by list key, `docs` by name. A list holds ordered `ids`, a sort key per id (`keys[id]`, because the sort key depends on the grouping and cannot live in the shared record), counts, group summaries, `nextAfter`, `at` (time of the last server answer) and `error`.
-* **Shown and wanted.** A mounted view has a slot with `wanted` (the list key from the URL) and `shown` (the last key that has data). When `wanted` changes and has data in memory or IndexedDB, it becomes `shown` at once. When it has none, the view keeps showing the `shown` list, marked pending, until the answer arrives; then it renders the new list in the same list element. Only when no list was ever shown does the view show the skeleton.
-* **Never reset.** Revalidating a list replaces its `ids`, counts and groups in one signal write; nothing is cleared first.
-* **Request order.** Each view slot has a sequence number and one `AbortController`. A new request for the slot aborts the previous one; an answer is applied only if it is the latest for its slot. The abort frees the browser; the server still finishes the query.
-* **Paging.** `more()` reads `nextAfter` of the `shown` list and appends only if that list is still the one shown when the page arrives. It returns nothing; progress is visible through the list signal.
-* **Changes.** One feed subscription for the whole store, started in `main.tsx`. For each change batch, the store collects touched ids per kind (tasks, sessions; `touched` in `lists.ts`) and calls `list_membership` once per mounted list (up to 1,000 ids per call; `chunks` in `lists.ts`). Answers update `records` once; each list places the ids by its own keys. If membership fails, the list revalidates with a full page, as today.
-* **Group summaries on change.** `list_membership` returns `groups` for grouped task lists, so the extra `task_page` with `limit: 1` after each change goes away.
-* **Unmounted lists** are not refreshed on changes. When their view mounts again, they render from memory and revalidate once.
-* **Docs.** `useDoc(name, fetch, touches, refreshMs?)` replaces `useLiveRecord` with the same parameters. It keeps the previous value visible while re-reading. Task and session details, Overview and Hosts use it.
-* **One mounted view.** `main.tsx` routes `/tasks/:id?` and `/conversations/:id?` as one route each, so focus changes never unmount the view. The list element is keyed by view only.
+* **`app/src/store.ts`** holds `records`, `lists` (an `Entry` per canonical list key: its view, page params, a state signal, a busy signal, the cursor it reflects, mount count) and `docs`, plus the `holders` index. A list holds ordered `ids`, a sort key per id (`keys[id]`, because the key depends on the grouping and cannot live in the shared record), counts, group summaries, `nextAfter`, `at` (time of the last server answer, 0 for stored data) and `error`. `app/src/url.ts` holds the URL hooks.
+* **`useList(kind, view)`** returns `{ rows, counts, total, groups, at, error, pending, shownKey, shownView, more, reload, state }`. `shownKey` is the list on screen, derived during render: the wanted list (from the URL) as soon as it has data, else the last shown one; `pending` is true while they differ or a request runs. `shownView` is the view of the rows on screen; group headers use it while a new grouping is pending. The skeleton shows only when nothing was ever shown.
+* **Never reset.** A page answer replaces `ids`, counts and groups in one signal write; nothing is cleared first.
+* **Order.** Every record and every list remembers the change cursor its data reflects. A page answer is applied at the cursor its request started from, a membership answer at the cursor of its change batch; an older answer never overwrites a newer record or list. Changes that arrive while a list's page is loading are kept and asked about once the page has landed. A new request of a view aborts the previous one (`op(name, body, { signal })`; an abort, also while the body is read, is not "offline").
+* **Paging.** `nextPage(key)` pages the shown list with that list's own params and does nothing while its first page loads.
+* **Changes.** One feed subscription for the whole store (`startStore()` in `main.tsx`). Only mounted lists are asked; unmounted lists keep their data in memory, so Back renders in the first frame, and revalidate when mounted again. If membership fails, the list reloads its first page. `list_membership` returns `groups` for grouped task lists.
+* **Offline and start.** The feed starts at the server head: every mounted list and doc loads fresh data on mount, and stored data only fills the first frame (also after a failed load, marked as not current). When the feed turns live, lists still showing stored rows or a failed load reload. Stored cursors are not used; keys of the old per-view layout are deleted once on start.
+* **Clearing.** Sign-out and a grants change clear IndexedDB and the store's memory; mounted lists and docs load again (entries and doc signals stay, because mounted hooks hold them).
+* **Memory.** Records no list holds are dropped after each page. Lists are not evicted: no limit is set until a memory measurement asks for one.
+* **Docs.** `useDoc(name, fetch, touches, refreshMs?)` replaces `useLiveRecord` with the same parameters and keeps the previous value visible while re-reading.
+* **One mounted view.** `main.tsx` routes `/tasks/:id?` and `/conversations/:id?` as one route each, so focus changes never unmount the view.
+* **URL changes** are built from the URL at the moment of the change (`app/src/url.ts`), never from a captured value, so a debounced search cannot undo a click made meanwhile. A search session ends on any navigation the view did not make.
 * **Search.** The input updates its own text at once; the URL and the request follow after 300 ms without a key press.
-* **Visible states.** Pending: counters and rows keep their values and are dimmed with the existing muted text token, and the list header shows a thin progress bar. Error with rows: rows stay, an error banner says "Showing data from <time>". Answered and empty: the empty state.
-* **Checkboxes.** Task and conversation rows get a checkbox in the last cell; the state badge stays the first cell (OR-22, checked by the trace check). It is a native checkbox (`RowCheck`), so Space toggles it when focused. Checked rows are the URL's `sel`.
+* **Visible states.** Pending: counters and rows keep their values, dimmed (`--fg-muted`), under a thin progress bar (`ListFrame` and `StateCounters` take `pending`). Error with rows: rows stay with the error banner. Answered and empty: the empty state.
+* **Checkboxes.** Task and conversation rows get a native checkbox (`RowCheck`) in the last cell; the state badge stays the first cell (OR-22). Checked rows are the URL's `sel`.
 
 ### 3. `task_page` query: side table `task_derived`
 
 Migration 10 in `packages/coordinator/db/schema.sql` (migration 9 is the artifact store):
 
-* **Table** `task_derived(task_id text PRIMARY KEY REFERENCES task(id) DEFERRABLE INITIALLY DEFERRED, project_id text NULL, agent text NULL, host text NULL, started_at timestamptz NULL, open_questions integer NOT NULL DEFAULT 0)`, with row-level security like the other tables (policy on `project_id`, copied from the task).
-  * `agent`: harness of the latest execution in `preparing` or `running`; null when none runs (shown in the "no agent" group).
+* **Table** `task_derived(task_id text PRIMARY KEY REFERENCES task(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED, project_id, agent, host, started_at, open_questions integer NOT NULL DEFAULT 0)`, with the `project_scope` policy on `project_id` (copied from the task).
+  * `agent`: harness of the latest (highest `seq`) execution in `preparing` or `running`; null when none runs.
   * `host`: host of the latest execution in any state.
   * `started_at`: earliest `started_at` of the task's executions.
   * `open_questions`: number of questions of the task in state `open`.
-* **Function** `fleet_task_derived(p_task text)`, plpgsql, with the function-level settings `SET search_path = public` and `SET fleet.project_ids = '*'`. Every table has `FORCE ROW LEVEL SECURITY` and the policies read `fleet.project_ids`, so `SECURITY DEFINER` alone would not widen what the function sees; the function-level setting does, for the duration of the call only. The function locks the task's `task_derived` row (`SELECT ... FOR UPDATE`, inserting it first when missing), then reads the task's `project_id` and the four values from `task`, `execution` and `question`, and upserts `task_derived` only when a value differs (`ON CONFLICT ... DO UPDATE ... WHERE (...) IS DISTINCT FROM (...)`). It writes only `task_derived`. It never touches `task`.
-* **Concurrency.** Today only GLOBAL writers change the trigger columns: execution-scope ingest writes `observation`, `last_seen_at`, `harness_version` and totals ([data foundation §12](fleet-data-foundation.md)), none of which fires the trigger. GLOBAL writers are serialized by the scope lock, so recomputes cannot race and derived-locks cannot form a cycle. This invariant is recorded in §12: *an execution-scope writer never writes `task_id`, `state`, `host_id`, `harness` or `started_at` of an execution, nor `task_id` or `state` of a question.* The row lock is kept as a second guard in case that invariant is broken later: it serializes recomputes of one task, and because it is taken before the reads, READ COMMITTED gives the second recompute a snapshot that includes the first's committed rows. When a trigger recomputes two tasks (a `task_id` move), it locks them in ascending id order. *Implementation note (phase 2):* the design first named `pg_advisory_xact_lock`; one advisory lock per task exhausts Postgres's shared lock table when one transaction writes thousands of tasks (`out of shared memory` at 20,000), so the lock is a row lock, which lives in the row and has no such limit.
-* **Triggers:** `AFTER INSERT OR DELETE OR UPDATE OF task_id, state, host_id, harness, started_at ON execution` and `AFTER INSERT OR DELETE OR UPDATE OF task_id, state ON question`, `FOR EACH ROW`, calling the function for `NEW.task_id` and, when different, `OLD.task_id`; null task ids are skipped. The column lists keep heartbeats and output writes from firing the recompute.
-* **Task triggers.** `AFTER INSERT OR UPDATE OF project_id ON task` calls the function, so every task has a `task_derived` row and its `project_id` follows the task when it moves between projects.
-* **A child before its task.** Foreign keys are deferred, so an execution can be inserted before its task in the same transaction. The function then finds no task row and stores `project_id` null; the task's own insert trigger runs the function again and sets it.
-* **Change feed:** a `task_derived_change` trigger calls `fleet_change`. The migration runs `CREATE OR REPLACE FUNCTION fleet_change()` with the whole one-line body of migration 8 restated with one more branch: table `task_derived` gives `k := 'task'; i := r.task_id; t := r.task_id;` and the row's `project_id`. The existing triggers stay as they are. Live lists refresh as for any task change. `task.updated_at` does not move on derived changes.
-* **Backfill:** after the triggers are created, the migration inserts one `task_derived` row per existing task, computed by one `INSERT ... SELECT ... ON CONFLICT DO NOTHING`. It runs inside the migration's global write, so no writer runs in between. `task_derived_change` adds one change row per task; clients then resync from the change log, as after any large write. At 20,000 tasks the check records the backfill time.
-* **Indexes (all created by migration 10):** `task_derived_agent ON task_derived(agent)`, `task_derived_host ON task_derived(host)`, and `task_priority_order ON task((CASE priority ...), seq DESC, id)` with the exact expression of the `priority` group, for the default page order. `execution_task_seq ON execution(task_id, seq DESC)` serves the recompute (only `execution_task ON execution(task_id)` exists today). `question_task` already covers questions.
-* **Query.** `page` and `membership` in `packages/coordinator/tasks.ts` read `task t JOIN task_derived d ON d.task_id = t.id`; the CTE with correlated subqueries is removed. Filters: `state`, `projectId` as an array (`t.project_id = ANY($n)`, with `null` written as `t.project_id IS NULL`), `search`. Three statements, as today, each with filters on plain columns:
-  * the page: `ORDER BY <group key>, t.seq DESC, t.id LIMIT n+1`;
-  * per-state counts: the `WHERE` without the state filter, so every counter keeps its number;
-  * group summaries: the full `WHERE`, `GROUP BY <group key>`.
-  The group expression is taken from the fixed `GROUPS` map (rewritten for the aliases `t.` and `d.`, for example `priority`: `(CASE t.priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END)`, `agent`: `coalesce(d.agent,'~')`) and interpolated, as today; only map values are ever interpolated. The `label` expression in the group summary, which today interpolates the group name as a string literal, uses the same map instead.
-* **Cost after the change.** The page read is an index-ordered read of `n` rows. Counts and group summaries remain a scan of the matching rows on plain columns (no subqueries). This is why the growth factor is reported, not asserted.
-* **Drift check:** `derivedDrift()` in `tasks.ts` recomputes the four values for every task and returns `{ checked, drifted: [{ taskId, stored, expected }] }`. Used by a test in `npm test` and exposed as the read operation `task_derived_check`.
+* **Functions.**
+  * `task_derived_values(p_task)` (SQL) is the one definition of the four values plus the task's `project_id`. It is revoked from PUBLIC.
+  * `task_derived_recompute(p_task)` locks the task's `task_derived` row (`SELECT ... FOR UPDATE`, inserting it first when missing), reads `task_derived_values` and updates the row only when a value differs. It does nothing when the task row does not exist (deleted, or not yet inserted: the task's own insert trigger computes it). Revoked from PUBLIC.
+  * `fleet_task_derived(p_task)` (`SECURITY DEFINER`) is the entry point the triggers call. It saves `fleet.project_ids`, sets it to `*` with `set_config(..., true)`, runs the recompute and sets the saved value back. A function-level `SET fleet.project_ids` is superuser-only on PostgreSQL 15+ (it failed on PDS18 as the owner role `fleet`). There is no exception block: a failed call's transaction or savepoint rollback restores the setting, and an exception block would open one subtransaction per write.
+  * `task_derived_drift()` (`SECURITY DEFINER`, same save and restore) recomputes every task with all projects visible and returns only the tasks the caller may see.
+  * The migration drops every earlier variant of these functions before creating them.
+* **Concurrency.** Only GLOBAL writers change the trigger columns: execution-scope ingest writes `observation`, `last_seen_at`, `harness_version` and totals ([data foundation §12](fleet-data-foundation.md), where this rule is recorded). GLOBAL writers run one at a time, so recomputes cannot race. The row lock is a second guard in case the rule is broken later; a `task_id` move recomputes the two tasks in ascending id order. *An advisory lock per task was the first choice; it exhausts the shared lock table when one transaction writes 20,000 tasks.*
+* **Triggers:** `AFTER INSERT OR DELETE OR UPDATE OF task_id, state, host_id, harness, started_at, seq ON execution` (`seq` because agent and host are "latest by seq"), `AFTER INSERT OR DELETE OR UPDATE OF task_id, state ON question`, and `AFTER INSERT OR UPDATE OF project_id ON task`. The column lists keep heartbeats and output writes from firing the recompute.
+* **Change feed:** a `task_derived_change` trigger calls `fleet_change`, replaced (`CREATE OR REPLACE`) with one more branch: table `task_derived` gives kind `task`, id and task id `task_id`, and the row's `project_id`. `task.updated_at` does not move on derived changes.
+* **Backfill:** the migration sets `fleet.project_ids` to `*` itself and inserts one row per existing task from `task_derived_values`, before the change trigger exists, so it writes no change row per task.
+* **Indexes:** `execution_task_seq ON execution(task_id, seq DESC)`, which replaces `execution_task`, and `task_priority_order ON task((CASE priority ...), seq DESC, id)` for the default page order. No indexes on `task_derived(agent|host)`: the group order uses `coalesce(...)`, which plain indexes cannot serve.
+* **Query** (`packages/coordinator/tasks.ts`). The CTE with correlated subqueries is removed. Filters: `state`, `projectId` (one id, null, or a list of both), `search`.
+  * The page joins `task_derived` (LEFT JOIN, so a task missing its row still lists with empty values) only where it is needed: for agent and host grouping the order needs it; otherwise the page is chosen on `task` alone and only its rows are joined.
+  * `summary(filter, group)` returns per-state counts (the `WHERE` without the state filter, so every counter keeps its number) and group summaries (joined only for agent and host). `page` and `list_membership` both use it.
+  * The group expression comes from the fixed `GROUPS` map, `{ sql, derived }` per grouping, checked with `Object.hasOwn`; only map values are interpolated.
+* **Cost after the change.** The page read is an index-ordered read of `n` rows. Counts and group summaries remain a scan of the matching rows on plain columns. This is why the growth factor is reported, not asserted.
+* **Drift check:** `derivedDrift()` returns `{ checked, drifted: [{ taskId, stored, expected }] }` for the caller's projects; `checked` counts the same tasks. Used by tests and exposed as the read operation `task_derived_check`.
 
 ### 4. Asserting filter check
 
@@ -262,7 +268,7 @@ It also prints the fixture load time, the migration 10 backfill time and the gro
 * **Performance:** targets in Goals; the check measures them.
 * **Write cost:** an execution or question write that changes a watched column adds one function call, one row lock and at most one write of `task_derived`. The check records the fixture load time before and after migration 10.
 * **Security:** `fleet_task_derived` sets `fleet.project_ids` to `*` for its own call, so it reads all of one task's rows whatever the writer's scope. It takes only a task id, writes only `task_derived`, and copies the task's `project_id`, so reads of `task_derived` and its change rows stay scoped. `view_link` builds URLs only on the configured origin and never includes credentials. A shared link grants nothing.
-* **Rollout and rollback:** migration 10 is additive. The reading code ships in the same release. If values drift, `task_derived_check` finds them; re-running `fleet_task_derived` for the drifted ids repairs them (one SQL statement, documented in the check's output). The old query stays as the reference in the tasks test.
+* **Rollout and rollback:** migration 10 is additive. The reading code ships in the same release. If values drift, `task_derived_check` finds them; re-running the recompute for the drifted ids repairs them: `SELECT fleet_task_derived(id) FROM unnest(ARRAY[...]) AS id` as the owner role. The old query stays as the reference in the tasks test.
 
 --------------------------------------------------------------------------------
 
@@ -357,7 +363,7 @@ Six phases. Each ends with `npm run build` and `npm test` passing and is one com
 #### 13. `app/src/store.ts` (Create)
 
 * **Type / Scope:** entity store on Preact Signals.
-* **Proposed Changes:** `records`, `lists`, `docs`; `useList(kind, view)` returning `{ rows, counts, groups, pending, error, shownKey, more }`; `useDoc(name, fetch, touches, refreshMs?)`; one feed subscription (`startStore()`); IndexedDB through `offline.ts` `save(key, data, currentCursor())` / `load` with keys `list:<listKey>` and `doc:<name>` (the cursor is the feed cursor at the time of the answer, as today, so `lowestCursor()` keeps choosing where the feed resumes); per-slot sequence and `AbortController`; `freshness` moved from `live.ts`.
+* **Proposed Changes:** `records`, `lists`, `docs`; `useList` and `useDoc` as in Technical Plan §2; one feed subscription (`startStore()`); IndexedDB through `offline.ts` with keys `list:<listKey>` and `doc:<name>`, snapshots built lazily at write time; cursors per record and list; `AbortController` per view; `freshness` moved from `live.ts`. `offline.ts` lost `lowestCursor()` (the feed starts at the server head) and gained `onClear` and `pruneKeys`. The URL hooks are in `app/src/url.ts`.
 
 #### 14. `app/src/live.ts` (Delete)
 
@@ -407,11 +413,11 @@ Six phases. Each ends with `npm run build` and `npm test` passing and is one com
 
 #### 25. `packages/ui/book/book.tsx` (Modify)
 
-* **Proposed Changes:** two new component sections in the section list: `['state-counters', 'State counters', 'state-counters', ...]` showing normal and pending, and `['list-frame', 'List frame', 'list-view', ...]` showing pending and `RowCheck` rows, so `npm run check:design` covers them. Screen pages in `pages.tsx` are unchanged.
+* **Proposed Changes:** one new component section, `['list-pending', 'Updating list: pending counters and rows, row checks', 'row-check', ...]`, showing `StateCounters` and `ListFrame` pending and `RowCheck` rows, so `npm run check:design` covers them. Screen pages in `pages.tsx` are unchanged.
 
 #### 26. `tests/ui/filter.check.ts` (Modify)
 
-* **Proposed Changes:** `--assert` and `--sizes` as in Technical Plan §4; backfill timing.
+* **Proposed Changes:** `--assert` and `--sizes` as in Technical Plan §4, plus a rule that a search after Back starts a new history entry.
 
 #### 27. `package.json` (Modify)
 
@@ -434,10 +440,11 @@ Six phases. Each ends with `npm run build` and `npm test` passing and is one com
 ### Verification Plan
 
 * **Compilation/Build:** `npm run build`.
-* **Unit Tests:** `npm test` (view-url, lists, task-derived, tasks, api).
+* **Unit Tests:** `npm test` (view-url, lists, store, task-derived, tasks, api, delivery-restart).
+* **CI jobs:** `build-test-design`; `filter-check` (`npm run check:filter`, Chromium); `postgres-roles` (the whole coordinator suite and every migration on PostgreSQL 18 with the PDS18 roles from `deploy/infrastructure/fleet-postgres.sql`, `tests/coordinator/pg-test.ts`).
 * **Static Analysis & Linting:** `npx tsc -p app/tsconfig.json --noEmit`; `npm run check:design`.
 * **E2E/Integration:** `npm run check:filter`; `npx tsx tests/ui/app.check.ts` reports no missing parts with the merged routes.
-* **Metrics:** settle time per case at 3,000 and 20,000 tasks, `task_page` median over HTTP, growth factor to 100,000, fixture load and backfill time. Recorded in the PR.
+* **Metrics:** settle time per case at 3,000 and 20,000 tasks, `task_page` median over HTTP, growth factor to 100,000, fixture load time. Recorded in the PRs.
 
 --------------------------------------------------------------------------------
 
