@@ -109,7 +109,11 @@ test('agent and script steps get earlier outputs as inputs; the agent call file 
   assert.deepEqual(agent.payload.inputs.map((i:any)=>i.path).sort(),['example/notes.txt','search/output.json']);
   // The host may read exactly the named inputs.
   const got=await host('artifacts/get',{hostId:'host',executionId:agent.executionId,artifactId:agent.payload.inputs[0].artifactId});assert.ok(got.url);
+  // An upload still pending after the completion receipt holds the step until it settles.
+  await app.store.query("INSERT INTO artifact(id,scope,content_hash,size,media_type,name,execution_id,state) VALUES('late','prod',$1,1,'text/plain','late.txt',$2,'pending')",['0'.repeat(64),agent.executionId]);
   await finish(agent,{'summary.md':'# Sources\nhttps://example.com/a','.connection-calls.jsonl':JSON.stringify({tool:'web_search',request_id:'q',label:run0.id+':step:1',outcome:'ok',error_code:null,usage:{credits:3}})+'\n'});
+  await new Promise(x=>setTimeout(x,500));assert.equal((await app.store.get(run0.id,'pipeline-run')).steps[1].state,'running');
+  await app.store.query("UPDATE artifact SET state='failed' WHERE id='late'");
   await until(app,run0.id,r=>r.steps[2].executionId);
   const [script]=(await host('poll',{hostId:'host'})).commands;assert.equal(script.kind,'script');
   assert.ok(script.payload.inputs.some((i:any)=>i.path==='summary/summary.md'));assert.ok(!script.payload.inputs.some((i:any)=>i.path.includes('.connection-calls')));

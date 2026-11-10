@@ -204,6 +204,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  const runner=pipelineRunner({store:store as any,directory:configDir,connectionsDir:config.connectionsDir,client:config.connectionClient,
   save:o=>artifacts.saveObject(o),read:id=>artifacts.read(id).then(async (b:any)=>Buffer.isBuffer(b)?b:Buffer.from(await new Response(b).arrayBuffer())),
   artifactsOf:async id=>(await artifacts.list({executionId:id})).filter((a:any)=>a.state==='stored').map((a:any)=>({id:a.id,path:a.name,sha256:a.sha256})),
+  unsettled:async id=>(await artifacts.list({executionId:id})).filter((a:any)=>a.state==='pending').length,
   startAgent:async({run,step,stepExecutionId,prompt,inputs,overrides})=>{const profile:any=readTrustedProfile(profilesDir,overrides.profile??step.profile);
    if(overrides.model!==undefined)profile.model=overrides.model;if(overrides.skills!==undefined)profile.skills=overrides.skills;
    if(overrides.web_route!==undefined&&!['connections','builtin'].includes(overrides.web_route))fail(400,'web_route must be connections or builtin');
