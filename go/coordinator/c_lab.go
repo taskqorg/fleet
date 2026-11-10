@@ -13,7 +13,7 @@ import (
 	"log"
 	"math"
 	"os"
-	"os/exec"
+	osexec "os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -292,6 +292,10 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 		planned = append(planned, plan{meta, bytes, name, hash, old})
 	}
 	approved := b["approved"] == true
+	// Fix: approval lets the coordinator run the example's check commands, so only the owner approves at import.
+	if approved && q.person != nil && !q.person.Owner {
+		return nil, fail(403, "Only the owner approves examples")
+	}
 	out := []any{}
 	for _, p := range planned {
 		old := p.old
@@ -474,7 +478,7 @@ func runChecks(checks []any, files []labFile) (doc, error) {
 	failed := []any{}
 	for _, x := range checks {
 		c := cMap(x)
-		cmd := exec.Command("sh", "-c", cStr(c["run"]))
+		cmd := osexec.Command("sh", "-c", cStr(c["run"]))
 		cmd.Dir = dir
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "FLEET_OUTPUT_DIR=" + dir}
 		if cmd.Run() != nil {
@@ -695,11 +699,8 @@ func expView(r doc) doc {
 		"stopReason": r["stop_reason"], "createdAt": r["created_at"]}
 }
 
-// cProjectExists: the project is configured (projects.ts catalogue succeeds); B owns projects, this reads the same files.
-func cProjectExists(id string) bool {
-	_, err := os.Stat(filepath.Join(cConfigDir(), "projects", id, "project.json"))
-	return err == nil
-}
+// cProjectKnown: the project's catalogue reads (area B's catalogue), set in c_glue.go.
+var cProjectKnown func(q *Request, id string) bool
 
 func expCreate(q *Request, b doc) (doc, error) {
 	if !cKeysOnly(b, "kind", "projectId", "pipelineId", "examples", "variants", "repeats", "evaluators", "budgets", "primaryEvaluator", "strategy") {
@@ -726,7 +727,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 	if _, err := loadPipeline(pipelineID + ".json"); err != nil {
 		return nil, err
 	}
-	if !cProjectExists(projectID) {
+	if !cProjectKnown(q, projectID) {
 		return nil, fail(400, "Unknown project "+projectID)
 	}
 	exl := cList(b["examples"])
@@ -1541,9 +1542,7 @@ func expPromote(q *Request, id, label string) (doc, error) {
 	method := doc{"id": fmt.Sprintf("%v-%s", exp["pipeline_id"], slug), "name": fmt.Sprintf("%v %s", exp["pipeline_id"], label), "scope": exp["project_id"],
 		"pipeline": cStr(exp["pipeline_id"]) + ".json", "overrides": v["overrides"], "configRef": v["config_ref"], "sourceExperiment": id}
 	var existing doc
-	if b, err := os.ReadFile(filepath.Join(cConfigDir(), "catalogue.json")); err == nil {
-		var c doc
-		json.Unmarshal(b, &c)
+	if c, err := catalogue(q, cStr(exp["project_id"])); err == nil {
 		for _, m := range cList(c["methods"]) {
 			if cMap(m)["configRef"] == v["config_ref"] {
 				existing = cMap(m)
@@ -2083,7 +2082,7 @@ func init() {
 	for name, op := range labOps {
 		name, op := name, op
 		if op.long {
-			longRoute("POST /api/ops/"+name, func(q *Request) (any, error) {
+			clong(name, func(q *Request) (any, error) {
 				b, err := cBody(q)
 				if err != nil {
 					return nil, err
@@ -2092,7 +2091,7 @@ func init() {
 			})
 			continue
 		}
-		operation(name, op.read, func(q *Request) (any, error) {
+		cop(name, op.read, func(q *Request) (any, error) {
 			b, err := cBody(q)
 			if err != nil {
 				return nil, err
@@ -2101,7 +2100,7 @@ func init() {
 		})
 	}
 	r := func(pattern, name string, body func(q *Request) (doc, error)) {
-		longRoute(pattern, func(q *Request) (any, error) {
+		blongRoute(pattern, func(q *Request) (any, error) {
 			b, err := body(q)
 			if err != nil {
 				return nil, err

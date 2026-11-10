@@ -1145,7 +1145,7 @@ func getExecutionOrNil(q *Request, id string) (doc, error) {
 
 func init() {
 	// Generic v2 run: an example (an approved example artifact, references withheld, or an inline example) and overrides.
-	longRoute("POST /api/pipelines/{id}/runs", func(q *Request) (any, error) {
+	blongRoute("POST /api/pipelines/{id}/runs", func(q *Request) (any, error) {
 		var out doc
 		err := q.app.store.Tx(q.ctx(), scopeOf(q.person), true, "", func(tx pgx.Tx) error {
 			q.tx = tx
@@ -1209,6 +1209,13 @@ func pipelineRunCreate(q *Request) (doc, error) {
 		overrides := cMap(b["overrides"])
 		if overrides == nil {
 			overrides = doc{}
+		}
+		// Fix: overrides take the Lab variant keys only; host, account and profile pick machines and credentials: owner only.
+		if !cKeysOnly(overrides, labOverrides...) {
+			return nil, fail(400, "overrides are "+strings.Join(labOverrides, ", "))
+		}
+		if q.person != nil && !q.person.Owner && (overrides["host"] != nil || overrides["account"] != nil || overrides["profile"] != nil) {
+			return nil, fail(403, "Only the owner overrides host, account or profile")
 		}
 		run, err := pipelineStart(q, doc{"file": file, "projectId": b["projectId"], "requestId": rid, "example": example, "overrides": overrides, "extra": doc{"signature": signature}})
 		if err != nil {

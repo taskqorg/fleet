@@ -138,6 +138,15 @@ test('P2 api step without a usable connection fails as infra, and an unanswered 
   await until(() => snapshot().tokens.every((t: any) => !String(t.executionId).startsWith(r.id)) || undefined, 'step token revoked');
 });
 
+test('P3 pipeline_run waits for the run of the project method and is idempotent: risk the project search path left unported', async () => {
+  const requestId = randomUUID();
+  const r = ok(await op('pipeline_run', {projectId: 'hello-world', requestId, query: 'fleet'}));
+  assert.notEqual(r.state, 'running'); assert.equal(r.projectId, 'hello-world'); assert.equal(typeof r.selectedMethod, 'string');
+  assert.equal(ok(await op('pipeline_run', {projectId: 'hello-world', requestId, query: 'fleet'})).id, r.id);
+  assert.equal((await op('pipeline_run', {projectId: 'hello-world', requestId, query: 'other'})).status, 409);
+  assert.equal(ok(await call('GET', '/api/pipeline-runs/' + r.id)).id, r.id);
+});
+
 test('L1 Lab registry and experiment validation: risk an experiment created over an unknown example or pipeline', async () => {
   const reg = ok(await call('GET', '/api/lab/registry'));
   assert.ok(reg.useCases.length > 0 && reg.useCases.every((u: any) => typeof u.id === 'string'));

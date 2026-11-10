@@ -282,7 +282,7 @@ func idList(v any, field string) ([]any, error) {
 }
 
 func init() {
-	operation("connections_list", true, func(q *Request) (any, error) {
+	cop("connections_list", true, func(q *Request) (any, error) {
 		keys, err := cAll(q, "connection-key")
 		if err != nil {
 			return nil, err
@@ -314,7 +314,7 @@ func init() {
 		}
 		return doc{"providers": providers, "connections": out}, nil
 	})
-	operation("connections_create", false, func(q *Request) (any, error) {
+	cop("connections_create", false, func(q *Request) (any, error) {
 		b, err := cBody(q)
 		if err != nil {
 			return nil, err
@@ -348,7 +348,7 @@ func init() {
 		return c, nil
 	})
 	// Owner only. Writes the value file and the row; answers with the fingerprint only.
-	operation("connections_key_add", false, func(q *Request) (any, error) {
+	cop("connections_key_add", false, func(q *Request) (any, error) {
 		if err := connOwner(q); err != nil {
 			return nil, err
 		}
@@ -390,7 +390,7 @@ func init() {
 		return k, nil
 	})
 	// Rotation (§2): active <-> draining, any -> retired (the value file is deleted; the row stays); disabled -> active is the owner's.
-	operation("connections_key_state", false, func(q *Request) (any, error) {
+	cop("connections_key_state", false, func(q *Request) (any, error) {
 		b, err := cBody(q)
 		if err != nil {
 			return nil, err
@@ -449,7 +449,7 @@ func init() {
 		publish()
 		return k, nil
 	})
-	operation("connections_set_access", false, func(q *Request) (any, error) {
+	cop("connections_set_access", false, func(q *Request) (any, error) {
 		b, err := cBody(q)
 		if err != nil {
 			return nil, err
@@ -496,7 +496,7 @@ func init() {
 		}
 		return c, nil
 	})
-	operation("connections_set_intake", false, func(q *Request) (any, error) {
+	cop("connections_set_intake", false, func(q *Request) (any, error) {
 		b, err := cBody(q)
 		if err != nil {
 			return nil, err
@@ -525,7 +525,7 @@ func init() {
 		return c, nil
 	})
 	// Owner connection tokens (§4): a long-lived bearer for the owner's interactive sessions; the value is answered once.
-	operation("connections_token_create", false, func(q *Request) (any, error) {
+	cop("connections_token_create", false, func(q *Request) (any, error) {
 		if err := connOwner(q); err != nil {
 			return nil, err
 		}
@@ -566,7 +566,7 @@ func init() {
 		m["name"] = name
 		return m, nil
 	})
-	operation("connections_token_list", true, func(q *Request) (any, error) {
+	cop("connections_token_list", true, func(q *Request) (any, error) {
 		toks, err := cAll(q, "run-token")
 		if err != nil {
 			return nil, err
@@ -579,7 +579,7 @@ func init() {
 		}
 		return doc{"tokens": out}, nil
 	})
-	operation("connections_token_revoke", false, func(q *Request) (any, error) {
+	cop("connections_token_revoke", false, func(q *Request) (any, error) {
 		if err := connOwner(q); err != nil {
 			return nil, err
 		}
