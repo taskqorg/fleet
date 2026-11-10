@@ -169,13 +169,24 @@ func writeSnapshot(ctx context.Context, a *App) error {
 	return os.Rename(tmp, file)
 }
 
-// publish: the snapshot is rewritten shortly after the caller's transaction ends (coalesced).
-// ponytail: a fixed 50 ms delay stands in for an after-commit hook; a commit slower than that is caught by the next publish
-// or the 3 s tick, which republishes when the blocked set changes and on every ingest.
+// publish: the snapshot is rewritten after the caller's transaction commits (coalesced). A rewrite scheduled before the
+// commit would read the old rows, and the tick does not republish on every change.
 var publishPending sync.Mutex
 var publishQueued bool
 
-func publish() {
+func publish(q *Request) {
+	if q.tx == nil {
+		schedulePublish()
+		return
+	}
+	onEnd(q.tx, func(committed bool) {
+		if committed {
+			schedulePublish()
+		}
+	})
+}
+
+func schedulePublish() {
 	publishPending.Lock()
 	defer publishPending.Unlock()
 	if publishQueued || cApp == nil {
@@ -183,7 +194,6 @@ func publish() {
 	}
 	publishQueued = true
 	go func() {
-		time.Sleep(50 * time.Millisecond)
 		publishPending.Lock()
 		publishQueued = false
 		publishPending.Unlock()
@@ -363,7 +373,7 @@ func init() {
 		if err := putDoc(q, "api-connection", c); err != nil {
 			return nil, err
 		}
-		publish()
+		publish(q)
 		return c, nil
 	})
 	// Owner only. Writes the value file and the row; answers with the fingerprint only.
@@ -414,7 +424,7 @@ func init() {
 				log.Printf("key %s: %v", fp, err)
 			}
 		})
-		publish()
+		publish(q)
 		return k, nil
 	})
 	// Rotation (§2): active <-> draining, any -> retired (the value file is deleted; the row stays); disabled -> active is the owner's.
@@ -480,7 +490,7 @@ func init() {
 				})
 			}
 		}
-		publish()
+		publish(q)
 		return k, nil
 	})
 	cop("connections_set_access", false, func(q *Request) (any, error) {
@@ -526,7 +536,7 @@ func init() {
 			if err := putDoc(q, "api-connection", c); err != nil {
 				return nil, err
 			}
-			publish()
+			publish(q)
 		}
 		return c, nil
 	})
@@ -554,7 +564,7 @@ func init() {
 			if err := putDoc(q, "api-connection", c); err != nil {
 				return nil, err
 			}
-			publish()
+			publish(q)
 		}
 		return c, nil
 	})
@@ -638,7 +648,7 @@ func init() {
 		if n == 0 {
 			return nil, fail(404, "Unknown token")
 		}
-		publish()
+		publish(q)
 		return doc{"name": b["name"], "revoked": true}, nil
 	})
 
@@ -767,7 +777,7 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	publish()
+	publish(q)
 	return doc{"token": token, "refused": refused, "connections": specs}, nil
 }
 
@@ -783,7 +793,7 @@ func revokeTokens(q *Request, executionID string) error {
 		}
 	}
 	if len(ts) > 0 {
-		publish()
+		publish(q)
 	}
 	return nil
 }
@@ -847,7 +857,7 @@ func connIngest(q *Request) (int, error) {
 			}
 		}
 		if added > 0 {
-			publish()
+			publish(q)
 		}
 		if f[:10] < yesterday {
 			// Retired only once the imported lines are committed; a re-read after a lost commit is deduplicated by callId.
@@ -950,7 +960,7 @@ func connDisable(q *Request, fp string, status any) error {
 	if err := putDoc(q, "connection-key", k); err != nil {
 		return err
 	}
-	publish()
+	publish(q)
 	cause := "key:" + fp + ":disabled"
 	var n int
 	// Fix: TS stored the cause only in data, so the dedupe never matched; the cause column (and its open-unique index) holds it now.
@@ -988,7 +998,7 @@ func connTick(q *Request) error {
 		}())))
 		if s != lastBlocked {
 			lastBlocked = s
-			publish()
+			publish(q)
 		}
 	}
 	open, err := rows(q, "SELECT data FROM document WHERE kind='run-token' AND NOT data ? 'revokedAt' AND NOT data ? 'step' AND NOT data ? 'personal'")

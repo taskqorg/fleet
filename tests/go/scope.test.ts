@@ -89,7 +89,7 @@ test('S3b questions: a member answers an agent question of their project and the
   const got = ok(await call('GET', '/api/sessions/' + s.sessionId, undefined, as(MEMBER)));
   assert.equal(got.questions.find((x: any) => x.id === q.id).state, 'answered');
   assert.ok(got.queued.some((m: any) => /blue/.test(m.text)), 'the answer reaches the asking session');
-}, {todo: 'defect: member answer of an agent question is refused 403 Not in your scope'});
+});
 
 test('S4 task take: a member takes a task of a granted project; not one of another project; an outsider takes none (risk: take moves direction across projects)', async () => {
   const mine = ok(await op('task_create', {projectId: MINE, title: 'S4 mine ' + randomUUID()}));
