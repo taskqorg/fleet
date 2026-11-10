@@ -356,8 +356,8 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .conversation .pane{display:flex;flex-direction:column}
 
 /* Updating list (fleet-view-urls-and-list-path.md §2): last rows and counts stay, dimmed; a thin bar shows the request. */
-.list-progress{height:var(--space-1);background:var(--accent)}
-.list-progress[hidden]{display:none}
+.list-progress{height:var(--space-1);background:transparent}
+.list-view.pending .list-progress{background:var(--accent)}
 .list-view.pending .vl-row,.counters.pending .counter{color:var(--fg-muted)}
 .row-check{width:var(--size-icon);height:var(--size-icon);margin:0;accent-color:var(--accent)}
 /* Lab matrix (docs/design-system/pages/laboratory.md): a static row per example, one cell per variant holding its
