@@ -4,7 +4,7 @@ package main
 // (docs/designs/fleet-connections.md §5). Calls go to fleet-gateway: POST <FLEET_GATEWAY_URL>/v1/call/<connection>/<tool>
 // with the run's token (FLEET_RUN_TOKEN) as the bearer. The gateway holds the keys and records every call, so this
 // client writes no record of its own. A remote host adds the Cloudflare Access service token from FLEET_CF_ACCESS_FILE
-// (default ~/.config/fleet/cf-access-machine.env). Port of connection_call.py mcp mode.
+// (default ~/.config/fleet/cf-access-machine.env).
 
 import (
 	"bufio"

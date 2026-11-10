@@ -1,7 +1,7 @@
 package main
 
-// unscoped runs fn with the transaction's row scope widened to '*' and restores the person's scope after it
-// (store.ts unscoped): the coordinator's own host and account choice inside a person's request sees every row,
+// unscoped runs fn with the transaction's row scope widened to '*' and restores the person's scope after it:
+// the coordinator's own host and account choice inside a person's request sees every row,
 // and filters in code (people-access §2).
 func unscoped[T any](q *Request, fn func() (T, error)) (T, error) {
 	var zero T

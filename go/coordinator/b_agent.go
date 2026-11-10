@@ -1,4 +1,4 @@
-// Agent session tools (packages/coordinator/agent-tools.ts) and the message submit path (app.ts enqueue): queue behind an
+// Agent session tools (docs/agent-tools-inventory.md) and the message submit path: queue behind an
 // active execution, steer, handoff, fork, transition, ask/reply, checked worker_done, stop outcome, reconcile, and the
 // host-agent binding (/api/hosts/agent-tools) of every call to the caller's own session.
 package main
@@ -50,7 +50,7 @@ func knownHost(q *Request, id string) (bool, error) {
 	})
 }
 
-// enqueue: a queued execution and its message (app.ts enqueue). Late choice: host and subscription are picked at dispatch.
+// enqueue: a queued execution and its message. Late choice: host and subscription are picked at dispatch.
 func enqueue(q *Request, s doc, input, requestID string, payload, execution doc, host string) (doc, error) {
 	if gs(s, "directedBy") == "" {
 		d := ""
@@ -1323,7 +1323,7 @@ var agentDescriptions = map[string]string{
 	"reconcile":           "Settle coordinator-owned queue/handoff state and report unproven executions",
 }
 
-// agentOps: the agent tool table (agent-tools.ts operations), also served as /api/ops and /api/tools.
+// agentOps: the agent tool table, also served as /api/ops and /api/tools.
 var agentOps = map[string]registeredOp{}
 
 func agentOp(name string, read bool, h func(*Request, doc) (doc, error)) {

@@ -1,6 +1,6 @@
 package main
 
-// Area A: budgets (budgets.ts) and provider limit readings (readings.ts), which dispatch applies.
+// Area A: budgets (docs/designs/fleet-people-access.md §9) and provider limit readings, which dispatch applies.
 
 import (
 	"fmt"

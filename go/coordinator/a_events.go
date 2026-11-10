@@ -1,6 +1,6 @@
 package main
 
-// Area A: host events and transport recovery (recovery.ts), and GET /api/executions/{id}/events. Events and stream deltas
+// Area A: host events and transport recovery (SL7, SL11), and GET /api/executions/{id}/events. Events and stream deltas
 // (kind event-delta) share one id and seq space per execution. A batch is validated whole, then stored in the execution's
 // scope, in parallel with other executions. A seq taken by another event becomes a retained transport conflict that the
 // operator may authorize; the owning host's resend then lands at a reserved seq.
@@ -94,7 +94,7 @@ func (a *App) ingest(q *Request) (any, error) {
 	if !ok {
 		return nil, fail(400, "Expected executionId")
 	}
-	// As app.ts store.atomic: a refused batch still commits the transport conflict it recorded (the batch's events are
+	// A refused batch still commits the transport conflict it recorded (the batch's events are
 	// written only after the whole batch is valid).
 	var out any
 	var refused error

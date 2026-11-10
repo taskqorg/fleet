@@ -1,4 +1,4 @@
-// People rules of a request (packages/coordinator/people.ts, app.ts preHandler): director, actor, project grants,
+// People rules of a request (docs/designs/fleet-people-access.md): director, actor, project grants,
 // the architect gate and the `me` operation.
 package main
 

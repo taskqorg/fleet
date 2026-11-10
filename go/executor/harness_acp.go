@@ -1,6 +1,6 @@
 package main
 
-// ACP 1.5.3 session (antigravity.rs). Protocol shapes: AgentQ d0f6bfa acp.rs; T3 d0f1f72 AntigravityAcpSupport and
+// ACP 1.5.3 session. Protocol shapes: AgentQ d0f6bfa acp.rs; T3 d0f1f72 AntigravityAcpSupport and
 // AcpSessionRuntime. Behavioural reuse only; no source copied. Fleet owns admission, logs and process cleanup.
 
 import (

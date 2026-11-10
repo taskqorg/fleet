@@ -1,7 +1,7 @@
 package main
 
 // The S3 subset Fleet uses against Garage, signed with AWS Signature Version 4 by hand (fleet.md Stack: minio-go would add
-// 19 modules). Same behaviour as packages/coordinator/s3.ts: region 'garage', path-style URLs, no checksums, Access headers
+// 19 modules). Behaviour (docs/designs/fleet-stack.md D3): region 'garage', path-style URLs, no checksums, Access headers
 // and Accept-Encoding added after signing (the tunnel rewrites Accept-Encoding), 3 attempts with jittered backoff on
 // 429/5xx, throttling codes and network errors, the clock offset learnt from Date after RequestTimeTooSkewed, and an idle
 // timeout (FLEET_S3_IDLE_TIMEOUT_MS, default 60 s) instead of a total request cap.

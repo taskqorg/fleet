@@ -1,4 +1,4 @@
-// Sessions (app.ts session routes, sessions.ts list): create, profile, read with its queue, questions, handoffs and
+// Sessions (docs/designs/fleet-operator-app.md §6): create, profile, read with its queue, questions, handoffs and
 // delegations, archive, message submit, the Conversations list and list membership.
 package main
 
@@ -392,6 +392,6 @@ func init() {
 		}
 		return doc{"lists": out}, nil
 	})
-	// /api/tools: the operation table as MCP tools (app.ts), each call in its own transaction.
+	// /api/tools: the operation table as MCP tools, each call in its own transaction.
 	blongRoute("POST /api/tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet", operations, agentDescriptions) })
 }

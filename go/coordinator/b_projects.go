@@ -1,4 +1,4 @@
-// Trusted agent profiles (packages/coordinator/profiles.ts) and project definitions (projects.ts): read from config files,
+// Trusted agent profiles and project definitions (docs/configuration.md): read from config files,
 // validated; routes /api/profiles, /api/projects*, /api/project-operations/{name}, /api/project-tools.
 package main
 
@@ -36,7 +36,7 @@ func envDir(k, rel string) string {
 func profilesDir() string { return envDir("FLEET_PROFILES_DIRECTORY", "config/agents") }
 func configDir() string   { return envDir("FLEET_PROJECT_CONFIG_DIRECTORY", "config") }
 
-// canonical: JSON with object keys sorted by byte order (profiles.ts canonical).
+// canonical: JSON with object keys sorted by byte order.
 func canonical(v any) string {
 	switch x := v.(type) {
 	case map[string]any:
@@ -225,7 +225,7 @@ func listProfiles() []doc {
 	return out
 }
 
-// Project settings (projects.ts projectSettings): defaults for absent keys, unknown keys reported.
+// Project settings (docs/configuration.md): defaults for absent keys, unknown keys reported.
 var settingsDefaults = map[string]any{"repos": []any{}, "environments": []any{}, "roles": doc{},
 	"worktree": doc{"envMode": "worktree", "baseRef": nil, "startFromOrigin": true, "branchPrefix": "fleet", "linkPaths": []any{}, "sharedDirectories": []any{}},
 	"scripts":  doc{"setup": nil, "teardown": nil}, "setupStart": "wait",
@@ -436,7 +436,7 @@ func readJSON(path string) (doc, error) {
 	return d, json.Unmarshal(raw, &d)
 }
 
-// projectContext: the definition with its settings, unknown keys and context files (projects.ts project()).
+// projectContext: the definition with its settings, unknown keys and context files.
 func projectContext(id string) (doc, error) {
 	if !slices.Contains(projectIDs(), id) {
 		return nil, fail(404, "Unknown project")
@@ -521,7 +521,7 @@ func catalogue(q *Request, id string) (doc, error) {
 	return doc{"projectId": id, "capability": c["capability"], "sharedDefault": c["sharedDefault"], "recommendedMethod": method, "recommendationSource": source, "methods": methods}, nil
 }
 
-// projectOps: the project operation table of projects.ts without the pipeline runs (pipelines area).
+// projectOps: the project operation table without the pipeline runs (pipelines area).
 var projectOps = map[string]registeredOp{}
 
 func projectOp(name string, read bool, h handler) {
@@ -688,7 +688,7 @@ func init() {
 	blongRoute("POST /api/project-tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet-projects", projectOps, nil) })
 }
 
-// pipelineRun: a pipeline-run record with its steps (executions.ts withSteps).
+// pipelineRun: a pipeline-run record with its steps.
 func pipelineRun(q *Request, id string) (doc, error) {
 	r, err := one(q, "SELECT data FROM execution WHERE id=$1 AND legacy_kind='pipeline-run'", id)
 	if err != nil {

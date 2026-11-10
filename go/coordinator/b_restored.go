@@ -1,4 +1,4 @@
-// Routes and operations of the TypeScript coordinator (app.ts) that the Go rewrite had not carried over:
+// Routes and operations the first Go port left out:
 // execution_differences with GET /api/executions/{id}/differences, GET /api/reconciliation and GET /test-sites.
 package main
 
@@ -13,7 +13,7 @@ import (
 
 const differenceTextLimit = 131072
 
-// executionDifferences compares the stored files of two executions of one session (app.ts execution_differences).
+// executionDifferences compares the stored files of two executions of one session.
 func executionDifferences(q *Request, id, previousID string) (any, error) {
 	if len(previousID) > 300 {
 		previousID = previousID[:300]

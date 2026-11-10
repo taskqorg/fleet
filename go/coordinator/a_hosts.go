@@ -1,6 +1,6 @@
 package main
 
-// Area A: hosts (packages/coordinator/hosts.ts) and the host operations of app.ts. A host row is the 'host' document
+// Area A: hosts and the host operations (docs/designs/fleet-people-access.md). A host row is the 'host' document
 // 'host:<id>' {hostId, name, holder, platform, roles, secretHash, intake, harnesses, createdAt}; only the secret's hash is kept.
 
 import (

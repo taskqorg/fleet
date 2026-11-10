@@ -27,7 +27,7 @@ func init() {
 	purego.RegisterLibFunc(&procSignal, lib, "proc_signal_with_audittoken")
 }
 
-// identity: start time from PROC_PIDTBSDINFO, as native.rs does (pbi_pid at 12, pbi_start_tvsec at 120, usec at 128).
+// identity: start time from PROC_PIDTBSDINFO (pbi_pid at 12, pbi_start_tvsec at 120, usec at 128).
 // The same value is available from sysctl kern.proc.pid through x/sys/unix without purego; both are printed.
 func identity(pid int) (string, error) {
 	var b [136]byte

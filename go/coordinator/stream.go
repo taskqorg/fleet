@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Live change feed (packages/coordinator/stream.ts). One LISTEN fleet_change connection per process wakes every open
+// Live change feed (docs/designs/fleet-operator-app.md §3, SL8). One LISTEN fleet_change connection per process wakes every open
 // stream; each stream reads in its own short snapshot in its viewer's scope, so it never holds a transaction between wakes.
 type Broadcast struct {
 	mu     sync.Mutex

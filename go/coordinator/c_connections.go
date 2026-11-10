@@ -1,4 +1,4 @@
-// API key connections (packages/coordinator/connections.ts, docs/designs/fleet-connections.md). Key values live only in
+// API key connections (docs/designs/fleet-connections.md). Key values live only in
 // <FLEET_SECRET_DIR>/connections/<connection>/<fingerprint> (0600); rows hold the fingerprint and state. Every change
 // republishes <FLEET_GATEWAY_DIR>/snapshot.json (no key values) once the change committed.
 package main
@@ -36,7 +36,7 @@ var (
 	processStarted = now()
 )
 
-// cBlockedConnections: connections whose budget is reached (budgets.ts blockedConnections), provided by the budgets area;
+// cBlockedConnections: connections whose budget is reached, provided by the budgets area;
 // nil means none are blocked.
 var cBlockedConnections func(q *Request) (map[string]bool, error)
 
@@ -1076,7 +1076,7 @@ func connReconcile(ctx context.Context, a *App) {
 	}
 }
 
-// gatewayCall: one call through fleet-gateway (connection_call.py `call`, ported in-process). Returns the call line
+// gatewayCall: one in-process call through fleet-gateway (docs/designs/fleet-connections.md §5). Returns the call line
 // {tool, callId, outcome: ok|error|unknown, error_code, usage, output}.
 var gatewayUnknown = map[string]bool{"provider-body": true, "provider-timeout": true, "client-timeout": true, "invalid-response": true}
 var providerCode = regexp.MustCompile(`^provider-\d+$`)

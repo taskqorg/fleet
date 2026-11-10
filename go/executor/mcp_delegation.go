@@ -2,7 +2,7 @@ package main
 
 // `executor mcp delegation|design-rules|connection`: newline JSON-RPC MCP servers the native agents start.
 // fleet-stack L4: the delegation server shares the executor's durable journal and makes no native or model calls.
-// Behaviour reference: crates/executor/src/mcp.rs and crates/executor/connection_call.py (mcp mode).
+// Behaviour reference: the stdio exchanges in tests/executor/fixtures/mcp.json (docs/designs/fleet-stack.md L4).
 
 import (
 	"bufio"

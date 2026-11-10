@@ -1,6 +1,6 @@
 package main
 
-// Artifacts and stores (packages/coordinator/artifacts.ts, stores.ts). Bytes go between executors and the per-host stores;
+// Artifacts and stores (docs/designs/fleet-data-foundation.md §3). Bytes go between executors and the per-host stores;
 // the coordinator holds rows, chooses stores, presigns, and promotes a staging object to its content-hash key only after
 // the store host's executor re-hashed it over loopback (P3-D1). A verified object is never overwritten.
 // Dropped (no data to keep): legacy base64 artifact documents, their adapter and the backfill.

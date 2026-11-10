@@ -1,4 +1,4 @@
-// Lab (packages/coordinator/lab/*.ts, docs/designs/fleet-lab.md): examples, experiments, scores and ratings.
+// Lab (docs/designs/fleet-lab.md): examples, experiments, scores and ratings.
 // An example is a lab-scope artifact with role 'example'. An experiment is pinned approved examples x variants x repeats of
 // one v2 pipeline; a trial is a pipeline_run with experiment_id, variant and request_id; a judge run has variant null.
 // labReconcile(id) is the one function that moves an experiment, under the experiment's scope lock.
@@ -26,7 +26,7 @@ import (
 )
 
 // cArtifactWriteObject writes bytes to a reachable store of the project's locations and returns the content hash and the
-// store id (artifacts.ts writeObject; area D). Unset or no reachable store: the import is refused with 409.
+// store id (area D). Unset or no reachable store: the import is refused with 409.
 var cArtifactWriteObject func(q *Request, projectID any, scope string, b []byte, mediaType string) (hash, storeID string, err error)
 
 var (
@@ -393,7 +393,7 @@ func labExampleGet(q *Request, id string) (doc, error) {
 	return doc{"artifactId": id, "state": st, "example": ex}, nil
 }
 
-// ---- scores (lab/scores.ts) ----
+// ---- scores ----
 
 // labShuffle: seeded shuffle (mulberry32 seeded from sha256(seed)), the same order as the TypeScript one.
 func labShuffle(items []any, seed string) []any {
@@ -679,7 +679,7 @@ func summarize(scores []doc, trials []string) doc {
 	return out
 }
 
-// ---- experiments (lab/experiments.ts) ----
+// ---- experiments ----
 
 func evaluatorName(e doc) string { return fmt.Sprintf("%v:%v:%v", e["kind"], e["ref"], e["form"]) }
 func cellKey(ex, variant any, repeat any) string {

@@ -1,6 +1,6 @@
 package main
 
-// Area A: POST /api/hosts/receipts (app.ts). Four envelopes: an account inspection result, a project tool call of a native
+// Area A: POST /api/hosts/receipts (SL6). Four envelopes: an account inspection result, a project tool call of a native
 // agent, a child (delegation) request, and the status receipt that moves a command and its execution forward only.
 
 import (
@@ -67,7 +67,7 @@ func commandOf(q *Request, b doc, msg string) (doc, error) {
 	return c, nil
 }
 
-// ownedBody (app.ts owned): the execution named in a host request runs on the requesting host.
+// ownedBody: the execution named in a host request runs on the requesting host.
 func ownedBody(q *Request, b doc) error {
 	if _, ok := b["hostId"].(string); !ok {
 		return fail(403, "Host rejected")
@@ -240,7 +240,7 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 }
 
 // agentAccountList: the subscriptions a native agent's work may use (its director's, or taken for its project), without
-// host roots or bindings. Fixed: app.ts handed a native agent every subscription with every host's roots.
+// host roots or bindings. Fixed: the TypeScript coordinator handed a native agent every subscription with every host's roots.
 func agentAccountList(q *Request, args doc, agent doc) (any, error) {
 	e, err := aget(q, agent["executionId"], "execution")
 	if err != nil {

@@ -1,6 +1,6 @@
 package main
 
-// Harness protocol tests ported from harness.rs, codex.rs and antigravity.rs: each guards a native wire risk.
+// Harness protocol tests: each guards a native wire risk.
 
 import (
 	"encoding/json"
