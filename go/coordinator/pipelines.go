@@ -49,7 +49,7 @@ func problemOf(outcome string, code any) string {
 
 func validatePipeline(d doc) (doc, error) {
 	bad := func(m string) (doc, error) { return nil, fail(500, "Invalid pipeline: "+m) }
-	if v, _ := cNum(d["version"]); v != 2 {
+	if v, _ := numOK(d["version"]); v != 2 {
 		return bad("version must be 2")
 	}
 	if !stepIDPattern.MatchString(astr(d["id"])) {
@@ -74,7 +74,7 @@ func validatePipeline(d doc) (doc, error) {
 			return bad(fmt.Sprintf("step kind %v", s["kind"]))
 		}
 		for k := range s {
-			if !cKeysOnly(doc{k: 1}, keys...) {
+			if !keysOnly(doc{k: 1}, keys...) {
 				return bad("step " + id + " key " + k)
 			}
 		}
@@ -95,7 +95,7 @@ func validatePipeline(d doc) (doc, error) {
 			}
 		case "script":
 			t, has := s["timeout_ms"]
-			n, isInt := cInt(t)
+			n, isInt := intOK(t)
 			if astr(s["command"]) == "" || has && !(isInt && n > 0) {
 				return bad("script step " + id)
 			}
@@ -108,7 +108,7 @@ func loadPipeline(file string) (doc, error) {
 	if !pipelineFile.MatchString(file) {
 		return nil, fail(500, "Invalid pipeline reference")
 	}
-	b, err := os.ReadFile(filepath.Join(cConfigDir(), "pipelines", file))
+	b, err := os.ReadFile(filepath.Join(projectConfigDir(), "pipelines", file))
 	if err != nil {
 		return nil, fail(404, "Unknown pipeline "+strings.TrimSuffix(file, ".json"))
 	}
@@ -233,7 +233,7 @@ func runState(legacy string) (string, string) {
 }
 
 func msTime(v any) any {
-	if f, ok := cNum(v); ok {
+	if f, ok := numOK(v); ok {
 		return time.UnixMilli(int64(f))
 	}
 	return nil
@@ -294,7 +294,7 @@ func withSteps(q *Request, runs []doc) ([]doc, error) {
 	for _, r := range runs {
 		ids = append(ids, astr(r["id"]))
 	}
-	steps, err := cQuery(q, "SELECT parent_execution_id AS run,data FROM execution WHERE legacy_kind='pipeline-step' AND parent_execution_id=ANY($1) ORDER BY (data->>'index')::int", ids)
+	steps, err := queryRows(q, "SELECT parent_execution_id AS run,data FROM execution WHERE legacy_kind='pipeline-step' AND parent_execution_id=ANY($1) ORDER BY (data->>'index')::int", ids)
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +412,7 @@ func pipelineAdvance(a *App, runID string) {
 func pipelineWait(ctx context.Context, a *App, runID string) (doc, error) {
 	for {
 		var r doc
-		if err := cRead(ctx, a, func(q *Request) (err error) { r, err = getRun(q, runID); return }); err != nil {
+		if err := readTx(ctx, a, func(q *Request) (err error) { r, err = getRun(q, runID); return }); err != nil {
 			return nil, err
 		}
 		if r == nil {
@@ -432,8 +432,8 @@ func pipelineWait(ctx context.Context, a *App, runID string) (doc, error) {
 // pipelineOnExecution: the run whose step is this execution moves on (receipt hook; the tick is the backstop).
 func pipelineOnExecution(a *App, executionID string) {
 	var ids []string
-	cRead(context.Background(), a, func(q *Request) error {
-		rs, err := cQuery(q, "SELECT parent_execution_id AS id FROM execution WHERE legacy_kind='pipeline-step' AND data->>'executionId'=$1", executionID)
+	readTx(context.Background(), a, func(q *Request) error {
+		rs, err := queryRows(q, "SELECT parent_execution_id AS id FROM execution WHERE legacy_kind='pipeline-step' AND data->>'executionId'=$1", executionID)
 		for _, r := range rs {
 			ids = append(ids, astr(r["id"]))
 		}
@@ -446,8 +446,8 @@ func pipelineOnExecution(a *App, executionID string) {
 
 func pipelineTick(ctx context.Context, a *App) {
 	var ids []string
-	cRead(ctx, a, func(q *Request) error {
-		rs, err := cQuery(q, "SELECT id FROM execution WHERE legacy_kind='pipeline-run' AND data->>'state'='running' AND (data->'definition'->>'version')::int=2 ORDER BY seq")
+	readTx(ctx, a, func(q *Request) error {
+		rs, err := queryRows(q, "SELECT id FROM execution WHERE legacy_kind='pipeline-run' AND data->>'state'='running' AND (data->'definition'->>'version')::int=2 ORDER BY seq")
 		for _, r := range rs {
 			ids = append(ids, astr(r["id"]))
 		}
@@ -470,7 +470,7 @@ func pipelineCancel(ctx context.Context, a *App, runID string) (string, error) {
 	defer m.Unlock()
 	own := ""
 	var done doc
-	err := cTx(ctx, a, "", func(q *Request) error {
+	err := writeTx(ctx, a, "", func(q *Request) error {
 		run, err := getRun(q, runID)
 		if err != nil || run == nil || run["state"] != "running" {
 			return err
@@ -500,7 +500,7 @@ func notifyFinished(a *App, run doc) {
 
 func finishRun(q *Request, run doc, state, problem string) error {
 	run["state"], run["finishedAt"] = state, nowMs()
-	st, _ := cNum(run["startedAt"])
+	st, _ := numOK(run["startedAt"])
 	run["durationMs"] = nowMs() - int64(st)
 	credits, used := 0.0, false
 	outputs := doc{}
@@ -510,7 +510,7 @@ func finishRun(q *Request, run doc, state, problem string) error {
 		s := mapOf(x)
 		if u := mapOf(s["usage"]); u != nil {
 			used = true
-			c, _ := cNum(u["credits"])
+			c, _ := numOK(u["credits"])
 			credits += c
 		}
 		if o, ok := s["output"]; ok {
@@ -601,7 +601,7 @@ func completeStep(q *Request, run doc, i int, output any, extra doc) error {
 		s[k] = v
 	}
 	s["output"], s["state"], s["finishedAt"] = output, "completed", nowMs()
-	st, ok := cNum(s["startedAt"])
+	st, ok := numOK(s["startedAt"])
 	if !ok {
 		st = float64(nowMs())
 	}
@@ -615,7 +615,7 @@ func (f fileRef) doc() doc { return doc{"artifactId": f.ArtifactID, "path": f.Pa
 
 // artifactsOf: stored artifacts of an execution {id, path, sha256}.
 func artifactsOf(q *Request, executionID string) ([]doc, error) {
-	return cQuery(q, "SELECT id,name AS path,content_hash AS sha256 FROM artifact WHERE execution_id=$1 AND state='stored' ORDER BY seq", executionID)
+	return queryRows(q, "SELECT id,name AS path,content_hash AS sha256 FROM artifact WHERE execution_id=$1 AND state='stored' ORDER BY seq", executionID)
 }
 
 // pipelineOutputs: files of the first n steps under <step id>/ (n<0: every step). A step's own files win over the
@@ -732,7 +732,7 @@ func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, 
 		return unavailable
 	}
 	var token string
-	err := cTx(ctx, a, "", func(q *Request) error {
+	err := writeTx(ctx, a, "", func(q *Request) error {
 		by := mapOf(run["requestedBy"])["email"]
 		m, err := mint(q, doc{"executionId": executionID, "directedBy": by, "projectId": run["projectId"], "experimentId": run["experimentId"], "step": true}, []string{connection})
 		if err == nil {
@@ -745,7 +745,7 @@ func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, 
 	}
 	writeSnapshot(ctx, a) // the gateway must see the token before the call
 	line := gatewayCall(ctx, token, connection, tool, args)
-	if err := cTx(ctx, a, "", func(q *Request) error {
+	if err := writeTx(ctx, a, "", func(q *Request) error {
 		if err := revokeTokens(q, executionID); err != nil {
 			return err
 		}
@@ -760,15 +760,15 @@ func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, 
 // recordJob: a finished job's usage as one tool_run child of the step.
 func recordJob(q *Request, run doc, stepID, tool, jobID, connection string, usage doc) error {
 	id := stepID + ":job:0"
-	if _, err := cCreateExecution(q, doc{"id": id, "kind": "tool_run", "state": "succeeded", "projectId": run["projectId"], "parentExecutionId": stepID, "experimentId": run["experimentId"], "variant": run["variant"],
+	if _, err := insertExecution(q, doc{"id": id, "kind": "tool_run", "state": "succeeded", "projectId": run["projectId"], "parentExecutionId": stepID, "experimentId": run["experimentId"], "variant": run["variant"],
 		"data": doc{"tool": tool, "requestId": jobID, "outcome": "ok", "errorCode": nil, "usage": usage, "connection": connection}}); err != nil {
 		return err
 	}
 	var cost any
-	if c, ok := cNum(usage["credits"]); ok {
+	if c, ok := numOK(usage["credits"]); ok {
 		cost = doc{"unit": "credits", "credits": c, "connection": connection}
 	}
-	return cWriteConnectionCost(q, id, run["projectId"], cost)
+	return writeConnectionCost(q, id, run["projectId"], cost)
 }
 
 func creditsOf(q *Request, executionID string) (any, error) {
@@ -784,7 +784,7 @@ func creditsOf(q *Request, executionID string) (any, error) {
 func advanceOnce(ctx context.Context, a *App, runID string) error {
 	for {
 		var run doc
-		if err := cRead(ctx, a, func(q *Request) (err error) { run, err = getRun(q, runID); return }); err != nil {
+		if err := readTx(ctx, a, func(q *Request) (err error) { run, err = getRun(q, runID); return }); err != nil {
 			return err
 		}
 		if run == nil || run["state"] != "running" || mapOf(run["definition"])["version"] != float64(2) {
@@ -798,7 +798,7 @@ func advanceOnce(ctx context.Context, a *App, runID string) error {
 			}
 		}
 		if i < 0 {
-			if err := cTx(ctx, a, "", func(q *Request) error { return finishRun(q, run, "completed", "") }); err != nil {
+			if err := writeTx(ctx, a, "", func(q *Request) error { return finishRun(q, run, "completed", "") }); err != nil {
 				return err
 			}
 			notifyFinished(a, run)
@@ -827,7 +827,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	row := stepRow(run, i)
 	kind := astr(def["kind"])
-	tx := func(fn func(q *Request) error) error { return cTx(ctx, a, "", fn) }
+	tx := func(fn func(q *Request) error) error { return writeTx(ctx, a, "", fn) }
 	failNow := func(problem, message string) (bool, error) {
 		return false, tx(func(q *Request) error { return failStep(q, run, i, problem, message) })
 	}
@@ -873,20 +873,20 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 					tasks = anys(mapOf(recent["output"])["result"])
 				}
 				owned := map[string]bool{}
-				cRead(ctx, a, func(q *Request) error {
-					rs, err := cQuery(q, "SELECT data->>'jobId' AS id FROM execution WHERE data ? 'jobId'")
+				readTx(ctx, a, func(q *Request) error {
+					rs, err := queryRows(q, "SELECT data->>'jobId' AS id FROM execution WHERE data ? 'jobId'")
 					for _, r := range rs {
 						owned[astr(r["id"])] = true
 					}
 					return err
 				})
-				started, _ := cNum(s["startedAt"])
+				started, _ := numOK(s["startedAt"])
 				mine := []doc{}
 				if recent["outcome"] == "ok" {
 					for _, x := range tasks {
 						t := mapOf(x)
 						id, ok := t["id"].(string)
-						c, _ := cNum(t["created_at"])
+						c, _ := numOK(t["created_at"])
 						if ok && c >= started-5000 && !owned[id] && (t["image_url"] == nil || t["image_url"] == mapOf(resolved)["image_url"]) {
 							mine = append(mine, t)
 						}
@@ -904,7 +904,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 				}
 			}
 			if line["outcome"] != "ok" {
-				return failNow(problemOf(astr(line["outcome"]), line["error_code"]), fmt.Sprintf("Connection call %v: %v", line["outcome"], cStrOr(line["error_code"])))
+				return failNow(problemOf(astr(line["outcome"]), line["error_code"]), fmt.Sprintf("Connection call %v: %v", line["outcome"], strOr(line["error_code"])))
 			}
 			if job {
 				out := mapOf(line["output"])
@@ -978,7 +978,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 		}
 		defer inflight.Delete(row)
 		line := connCallFor(ctx, a, run, connection, row, "job_status", doc{"jobId": s["jobId"]})
-		p, _ := cNum(s["polls"])
+		p, _ := numOK(s["polls"])
 		s["polls"] = p + 1
 		if line["outcome"] != "ok" {
 			if line["outcome"] == "unknown" {
@@ -1000,7 +1000,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 				urls = doc{}
 			}
 			var usage any
-			if c, ok := cNum(out["consumed_credits"]); ok {
+			if c, ok := numOK(out["consumed_credits"]); ok {
 				usage = doc{"credits": c}
 			}
 			out = doc{"state": state, "output": doc{"model_urls": urls, "thumbnail_url": out["thumbnail_url"]}, "usage": usage, "error": mapOf(out["task_error"])["message"]}
@@ -1031,7 +1031,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	// Agent or script step running: wait for its execution.
 	var e doc
-	if err := cRead(ctx, a, func(q *Request) (err error) { e, err = getExecutionOrNil(q, astr(s["executionId"])); return }); err != nil || e == nil {
+	if err := readTx(ctx, a, func(q *Request) (err error) { e, err = getExecutionOrNil(q, astr(s["executionId"])); return }); err != nil || e == nil {
 		return false, err
 	}
 	st := astr(e["state"])
@@ -1055,7 +1055,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	var arts []doc
 	var pending int
-	if err := cRead(ctx, a, func(q *Request) error {
+	if err := readTx(ctx, a, func(q *Request) error {
 		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM artifact WHERE execution_id=$1 AND state='pending'", s["executionId"]).Scan(&pending); err != nil {
 			return err
 		}
@@ -1105,7 +1105,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	})
 }
 
-func cStrOr(v any) string {
+func strOr(v any) string {
 	if v == nil {
 		return ""
 	}
@@ -1122,7 +1122,7 @@ func getExecutionOrNil(q *Request, id string) (doc, error) {
 
 func init() {
 	// Generic v2 run: an example (an approved example artifact, references withheld, or an inline example) and overrides.
-	blongRoute("POST /api/pipelines/{id}/runs", func(q *Request) (any, error) {
+	gatedLongRoute("POST /api/pipelines/{id}/runs", func(q *Request) (any, error) {
 		var out doc
 		err := q.app.store.Tx(q.ctx(), scopeOf(q.person), true, "", func(tx pgx.Tx) error {
 			q.tx = tx
@@ -1136,28 +1136,28 @@ func init() {
 		return out, err
 	})
 	onStart(func(ctx context.Context, a *App) {
-		cApp = a
+		runningApp = a
 		// On start, running v2 runs move on (an interrupted sync call becomes unknown, never replayed).
 		pipelineTick(ctx, a)
-		every(ctx, cEnvMs("FLEET_PIPELINE_TICK_MS", 5000), func() { pipelineTick(ctx, a); labReconcileRunning(ctx, a) })
+		every(ctx, envMs("FLEET_PIPELINE_TICK_MS", 5000), func() { pipelineTick(ctx, a); labReconcileRunning(ctx, a) })
 	})
 }
 
 func pipelineRunCreate(q *Request) (doc, error) {
 	{
-		b, err := cBody(q)
+		b, err := bodyObject(q)
 		if err != nil {
 			return nil, err
 		}
 		rid, ok := b["requestId"].(string)
-		if !ok || rid == "" || len(rid) > 200 || !cKeysOnly(b, "requestId", "projectId", "exampleArtifactId", "example", "overrides") {
+		if !ok || rid == "" || len(rid) > 200 || !keysOnly(b, "requestId", "projectId", "exampleArtifactId", "example", "overrides") {
 			return nil, fail(400, "Expected requestId and optional projectId, exampleArtifactId or example, overrides")
 		}
 		file := q.r.PathValue("id") + ".json"
 		if _, err := loadPipeline(file); err != nil {
 			return nil, err
 		}
-		signature := sha256hex([]byte(cCanon(b)))
+		signature := sha256hex([]byte(canonicalJSON(b)))
 		old, err := runsWhere(q, "data->>'requestId'=$1 AND data->>'pipeline'=$2", rid, file)
 		if err != nil {
 			return nil, err
@@ -1188,7 +1188,7 @@ func pipelineRunCreate(q *Request) (doc, error) {
 			overrides = doc{}
 		}
 		// Fix: overrides take the Lab variant keys only; host, account and profile pick machines and credentials: owner only.
-		if !cKeysOnly(overrides, labOverrides...) {
+		if !keysOnly(overrides, labOverrides...) {
 			return nil, fail(400, "overrides are "+strings.Join(labOverrides, ", "))
 		}
 		if q.person != nil && !q.person.Owner && (overrides["host"] != nil || overrides["account"] != nil || overrides["profile"] != nil) {
@@ -1200,4 +1200,258 @@ func pipelineRunCreate(q *Request) (doc, error) {
 		}
 		return run, nil
 	}
+}
+
+// Pipeline and Lab seams: the person gate on Lab and pipeline operations, long operations (their own transactions), the
+// question answer hooks, pipeline_run and direct_search, and the agent step start.
+
+// longOperations: operations that open their own transactions (q.tx nil). runOp (ops.go) runs them without one.
+var longOperations = map[string]handler{}
+
+// Answer checks run before a question's answer is recorded and the after steps run after, in the same transaction:
+// Lab, then budgets. question is the row (snake_case columns); in after, its answer column holds the answer.
+func runAnswerChecks(q *Request, question doc, answer string) error {
+	if err := labAnswerCheck(q, question, answer); err != nil {
+		return err
+	}
+	return budgetAnswerCheck(question, answer, q.person)
+}
+
+func runAnswerAfter(q *Request, id string) error {
+	row, err := first(q, "SELECT * FROM question WHERE id=$1", id)
+	if err != nil || row == nil {
+		return err
+	}
+	if err := labAnswerAfter(q, row); err != nil {
+		return err
+	}
+	return budgetAnswerAfter(q, row)
+}
+
+// gatedOp: an operation behind the same person gate as every other operation.
+func gatedOp(name string, read bool, h handler) {
+	operation(name, read, func(q *Request) (any, error) {
+		if err := q.app.guardOp(q, name, q.body); err != nil {
+			return nil, err
+		}
+		return h(q)
+	})
+}
+
+// longOp: a long operation: POST /api/ops/<name> without a surrounding transaction, listed among the tools, and run by
+// runOp without one.
+func longOp(name string, h handler) {
+	gated := func(q *Request) (any, error) {
+		if err := q.app.guardOp(q, name, q.body); err != nil {
+			return nil, err
+		}
+		return h(q)
+	}
+	longRoute("POST /api/ops/"+name, gated)
+	longOperations[name] = gated
+	operation(name, false, func(q *Request) (any, error) {
+		return nil, fail(500, "long operation "+name+" ran inside a transaction")
+	})
+}
+
+// writeTxAs runs fn in one write transaction in the person's scope (long operations and routes).
+func writeTxAs(q *Request, lock string, fn func(q *Request) error) error {
+	return q.app.store.Tx(q.ctx(), scopeOf(q.person), true, lock, func(tx pgx.Tx) error {
+		q.tx = tx
+		defer func() { q.tx = nil }()
+		return fn(q)
+	})
+}
+
+// runPipeline: the selected method's v2 pipeline with the query as the example ({query, prompt}); waits for the run.
+func runPipeline(q *Request, invocation string) (any, error) {
+	b, err := bodyObject(q)
+	if err != nil {
+		return nil, err
+	}
+	if invocation == "direct" {
+		b["invocation"] = "direct"
+	}
+	rid, _ := b["requestId"].(string)
+	query, isStr := b["query"].(string)
+	_, methodOK := b["methodId"].(string)
+	if !keysOnly(b, "projectId", "requestId", "query", "methodId", "invocation") || rid == "" || len(rid) > 200 || !isStr || strings.TrimSpace(query) == "" || len(query) > 2000 || b["methodId"] != nil && !methodOK {
+		return nil, fail(400, "Expected projectId, requestId, query and optional methodId")
+	}
+	inv := astr(b["invocation"])
+	if inv == "" {
+		inv = "pipeline"
+	}
+	var run doc
+	old := false
+	err = writeTxAs(q, "", func(q *Request) error {
+		signature := sha256hex([]byte(canonicalJSON(doc{"projectId": b["projectId"], "query": query, "methodId": b["methodId"], "invocation": inv})))
+		prev, err := runsWhere(q, "data->>'projectId'=$1 AND data->>'requestId'=$2", astr(b["projectId"]), rid)
+		if err != nil {
+			return err
+		}
+		if len(prev) > 0 {
+			if prev[0]["signature"] != signature {
+				return fail(409, "Request identity conflict")
+			}
+			run, old = prev[0], true
+			return nil
+		}
+		if inv != "direct" && inv != "pipeline" {
+			return fail(400, "Invalid invocation")
+		}
+		p, err := projectContext(astr(b["projectId"]))
+		if err != nil {
+			return err
+		}
+		c, err := catalogue(q, astr(b["projectId"]))
+		if err != nil {
+			return err
+		}
+		want := astr(b["methodId"])
+		source := c["recommendationSource"]
+		if want == "" {
+			want = astr(c["recommendedMethod"])
+		} else {
+			source = "explicit"
+		}
+		var method doc
+		for _, m := range anys(c["methods"]) {
+			if mapOf(m)["id"] == want {
+				method = mapOf(m)
+			}
+		}
+		if method == nil {
+			return fail(400, "Selected method unavailable for project")
+		}
+		run, err = pipelineStart(q, doc{"file": method["pipeline"], "projectId": b["projectId"], "requestId": rid, "example": doc{"query": query, "prompt": query},
+			"requestedBy": requester(q), "extra": doc{"signature": signature, "invocation": inv, "selectedMethod": method["id"], "selectionSource": source, "context": p}})
+		return err
+	})
+	if err != nil || old {
+		return run, err
+	}
+	pipelineAdvance(q.app, astr(run["id"]))
+	return pipelineWait(q.ctx(), q.app, astr(run["id"]))
+}
+
+var skillID = regexp.MustCompile(`^[a-z0-9-]{1,80}$`)
+
+// Artifact helpers (artifacts.go). The caller's transaction rides in the context, so D writes the rows in it.
+func projectIDPtr(v any) *string {
+	if s, ok := v.(string); ok {
+		return &s
+	}
+	return nil
+}
+
+func init() {
+	for _, inv := range []string{"pipeline", "direct"} {
+		inv := inv
+		name := map[string]string{"pipeline": "pipeline_run", "direct": "direct_search"}[inv]
+		h := func(q *Request) (any, error) { return runPipeline(q, inv) }
+		longOp(name, h)
+		projectOps[name] = registeredOp{false, h}
+	}
+	gatedLongRoute("POST /api/pipeline-runs", func(q *Request) (any, error) { return runPipeline(q, "pipeline") })
+
+}
+
+// ctxOf: the request context carrying its transaction, so the artifact helpers (txCtx) run in it instead of taking the lock again.
+func ctxOf(q *Request) context.Context {
+	if q.tx == nil {
+		return q.ctx()
+	}
+	return context.WithValue(q.ctx(), txKey{}, q.tx)
+}
+
+// profileSkills: the SKILL.md texts of a profile's skills (config/skills/<id>/SKILL.md), as an execution payload carries them.
+func profileSkills(profile doc) ([]any, error) {
+	skills := []any{}
+	for _, x := range anys(profile["skills"]) {
+		id, _ := x.(string)
+		if !skillID.MatchString(id) {
+			return nil, fail(400, "Invalid skill")
+		}
+		text, err := os.ReadFile(filepath.Join(projectConfigDir(), "skills", id, "SKILL.md"))
+		if err != nil {
+			return nil, fail(400, "Unknown skill "+id)
+		}
+		skills = append(skills, doc{"id": id, "text": string(text)})
+	}
+	return skills, nil
+}
+
+func artifactSave(q *Request, projectID any, scope, executionID, name string, b []byte, media string) (string, error) {
+	id, _, err := saveObject(ctxOf(q), q.app, projectIDPtr(projectID), scope, executionID, name, b, media)
+	return id, err
+}
+
+func artifactWriteObject(q *Request, projectID any, scope string, b []byte, media string) (string, string, error) {
+	s, hash, err := writeObject(ctxOf(q), q.app, projectIDPtr(projectID), scope, b, media)
+	if err != nil {
+		return "", "", err
+	}
+	return hash, s.ID, nil
+}
+
+func recommend(q *Request, projectID, methodID string) (any, error) {
+	sub := *q
+	sub.body = jsonBytes(doc{"projectId": projectID, "methodId": methodID})
+	return projectOps["recommendation_set"].h(&sub)
+}
+
+func projectKnown(q *Request, id string) bool { _, err := catalogue(q, id); return err == nil }
+
+// Agent step: the step's trusted profile with the variant overrides, its skills, a session of the
+// run, and an ordinary queued execution.
+func startAgentStep(q *Request, run, step doc, stepExecutionID, prompt string, inputs []any, overrides doc) (string, error) {
+	pid := astr(step["profile"])
+	if overrides["profile"] != nil {
+		pid = astr(overrides["profile"])
+	}
+	profile, err := readTrustedProfile(pid)
+	if err != nil {
+		return "", err
+	}
+	if v, ok := overrides["model"]; ok {
+		profile["model"] = v
+	}
+	if v, ok := overrides["skills"]; ok {
+		profile["skills"] = v
+	}
+	web := "connections"
+	if v, ok := overrides["web_route"]; ok {
+		if v != "connections" && v != "builtin" {
+			return "", fail(400, "web_route must be connections or builtin")
+		}
+		web = astr(v)
+	}
+	skills, err := profileSkills(profile)
+	if err != nil {
+		return "", err
+	}
+	s := doc{"id": newID(), "createdAt": nowMs(), "agentConfig": profile, "pipelineRunId": run["id"]}
+	if overrides["account"] != nil {
+		s["account"] = overrides["account"]
+	}
+	if run["projectId"] != nil {
+		s["projectId"] = run["projectId"]
+	}
+	if err := put(q, "session", s); err != nil {
+		return "", err
+	}
+	execution := doc{"pipelineStepId": stepExecutionID, "pipelineRunId": run["id"]}
+	if run["experimentId"] != nil {
+		execution["experimentId"] = run["experimentId"]
+	}
+	host := ""
+	if overrides["host"] != nil {
+		host = fmt.Sprint(overrides["host"])
+	}
+	e, err := enqueue(q, s, prompt, "pipeline:"+stepExecutionID, doc{"inputs": inputs, "skills": skills, "webRoute": web}, execution, host)
+	if err != nil {
+		return "", err
+	}
+	return astr(e["id"]), nil
 }

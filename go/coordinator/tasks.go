@@ -256,7 +256,7 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 	if astr(qu["kind"]) == "acceptance" && answer != "accepted" && answer != "rejected" {
 		return nil, fail(400, "Acceptance answer is accepted or rejected")
 	}
-	if err := runAnswerChecks(q, qu, answer); err != nil { // area C: Lab and budget answers
+	if err := runAnswerChecks(q, qu, answer); err != nil { // Lab and budget answers
 		return nil, err
 	}
 	tag, err := q.tx.Exec(q.ctx(), "UPDATE question SET answer=$2,answered_by=$3,answered_at=now(),state='answered' WHERE id=$1 AND state='open'", id, answer, by)
@@ -673,7 +673,7 @@ func taskMembership(q *Request, f doc, group any, ids []string) ([]doc, error) {
 }
 
 func init() {
-	bop("task_create", false, func(q *Request) (any, error) {
+	gatedObjOp("task_create", false, func(q *Request) (any, error) {
 		b := body(q)
 		title, err := strArg(b, "title", "title", 500)
 		if err != nil {
@@ -696,7 +696,7 @@ func init() {
 		}
 		return taskGet(q, id)
 	})
-	bop("task_update", false, func(q *Request) (any, error) {
+	gatedObjOp("task_update", false, func(q *Request) (any, error) {
 		b := body(q)
 		id, err := strArg(b, "taskId", "taskId", 200)
 		if err != nil {
@@ -736,7 +736,7 @@ func init() {
 		return taskGet(q, id)
 	})
 	for name, trig := range map[string]string{"task_hold": "hold", "task_release": "release", "task_cancel": "cancel"} {
-		bop(name, false, func(q *Request) (any, error) {
+		gatedObjOp(name, false, func(q *Request) (any, error) {
 			id, err := strArg(body(q), "taskId", "taskId", 200)
 			if err != nil {
 				return nil, err
@@ -747,14 +747,14 @@ func init() {
 			return taskGet(q, id)
 		})
 	}
-	bop("task_get", true, func(q *Request) (any, error) {
+	gatedObjOp("task_get", true, func(q *Request) (any, error) {
 		id, err := strArg(body(q), "taskId", "taskId", 200)
 		if err != nil {
 			return nil, err
 		}
 		return taskGet(q, id)
 	})
-	bop("task_request_acceptance", false, func(q *Request) (any, error) {
+	gatedObjOp("task_request_acceptance", false, func(q *Request) (any, error) {
 		b := body(q)
 		id, err := strArg(b, "taskId", "taskId", 200)
 		if err != nil {
@@ -788,7 +788,7 @@ func init() {
 		}
 		return findQuestion(q, id, qid)
 	})
-	bop("task_list", true, func(q *Request) (any, error) {
+	gatedObjOp("task_list", true, func(q *Request) (any, error) {
 		b := body(q)
 		c, p := []string{}, []any{}
 		if v := astr(b["projectId"]); v != "" {
@@ -812,7 +812,7 @@ func init() {
 		}
 		return doc{"tasks": out}, nil
 	})
-	bop("task_take", false, func(q *Request) (any, error) {
+	gatedObjOp("task_take", false, func(q *Request) (any, error) {
 		id, err := strArg(body(q), "taskId", "taskId", 200)
 		if err != nil {
 			return nil, err
@@ -835,12 +835,12 @@ func init() {
 		}
 		return taskGet(q, id)
 	})
-	bop("questions_list", true, func(q *Request) (any, error) {
+	gatedObjOp("questions_list", true, func(q *Request) (any, error) {
 		b := body(q)
 		qs, err := questionsList(q, astr(b["taskId"]), astr(b["state"]), astr(b["kind"]))
 		return doc{"questions": qs}, err
 	})
-	bop("questions_answer", false, func(q *Request) (any, error) {
+	gatedObjOp("questions_answer", false, func(q *Request) (any, error) {
 		b := body(q)
 		id, err := strArg(b, "questionId", "questionId", 200)
 		if err != nil {
@@ -870,12 +870,12 @@ func init() {
 		}
 		return findQuestion(q, "", id)
 	})
-	bop("executions_list", true, func(q *Request) (any, error) {
+	gatedObjOp("executions_list", true, func(q *Request) (any, error) {
 		es, err := executionsList(q, body(q))
 		return doc{"executions": es}, err
 	})
-	bop("task_page", true, func(q *Request) (any, error) { return taskPage(q, body(q)) })
-	bop("task_derived_check", true, func(q *Request) (any, error) {
+	gatedObjOp("task_page", true, func(q *Request) (any, error) { return taskPage(q, body(q)) })
+	gatedObjOp("task_derived_check", true, func(q *Request) (any, error) {
 		var n int
 		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*)::int FROM task").Scan(&n); err != nil {
 			return nil, err

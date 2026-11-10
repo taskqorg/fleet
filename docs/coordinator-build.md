@@ -39,7 +39,7 @@ The coordinator is one Go binary, `fleet-coordinator`, built from `go/coordinato
 
 ## HTTP and storage
 
-Routes are registered in `go/coordinator/registry.go` and the area files; `routes.go` and `main.go` hold the session routes and the credential check. `GET /api/health` is public and shows `commit`, `built` and `database`. `GET /api/stream` is the SSE change stream. A request runs in one transaction: a read snapshot for GET, a write otherwise, scoped to the person's projects by row-level security (a write outside scope answers 403).
+Routes are registered in `go/coordinator/registry.go` (the one router) from the domain files; `main.go` holds the credential check. `GET /api/health` is public and shows `commit`, `built` and `database`. `GET /api/stream` is the SSE change stream. A request runs in one transaction: a read snapshot for GET, a write otherwise, scoped to the person's projects by row-level security (a write outside scope answers 403).
 
 The schema is `go/coordinator/schema.sql` (embedded in the binary); [fleet-data-foundation.md](designs/fleet-data-foundation.md) is its specification.
 

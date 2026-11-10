@@ -17,14 +17,14 @@ The PM is not a subsystem. This design adds three general capabilities that any 
 2.  **Scope and focus.** Scope is the director's grants, checked on every call. Focus is a stored filter inside scope that sets what the PM looks at and the default project of new tasks.
 3.  **Watch.** A `watch` document on the existing change log plus a stored next-wake time. Wakes are ordinary queued messages to the PM session.
 
-All code references are to the Go coordinator (`go/coordinator/`); the schema is `go/coordinator/schema.sql`, embedded by `d_schema.go`.
+All code references are to the Go coordinator (`go/coordinator/`); the schema is `go/coordinator/schema.sql`, embedded by `store.go`.
 
 ## The Problem
 
-*   `config/agents/pm.json` exists but can only start workers in its own project. `bound()` in `go/coordinator/b_agent.go` forces every `session_start` into the caller's session `projectId` (`ownProject()`); a session with no project gets 403.
-*   Host agent calls (`POST /api/hosts/agent-tools`, `b_agent.go` `init()`) run in one transaction with the coordinator's `*` scope and `q.person == nil`. The person gate (`guardOp`, `b_people.go`) and row-level security never apply to them, and `director(q)` falls back to the owner.
-*   Only the agent table `agentOps` is reachable from agents. Task operations (`task_create`, `task_update`, `task_page` in `b_tasks.go` `init()`) are not, and `task_create` writes `createdBy = actor(q, "operator")`.
-*   Nothing wakes an agent except a finished child (`wake()`, `b_agent.go`) and a reply. A PM cannot notice a stuck task or a new question by itself.
+*   `config/agents/pm.json` exists but can only start workers in its own project. `bound()` in `go/coordinator/agent.go` forces every `session_start` into the caller's session `projectId` (`ownProject()`); a session with no project gets 403.
+*   Host agent calls (`POST /api/hosts/agent-tools`, `agent.go` `init()`) run in one transaction with the coordinator's `*` scope and `q.person == nil`. The person gate (`guardOp`, `people.go`) and row-level security never apply to them, and `director(q)` falls back to the owner.
+*   Only the agent table `agentOps` is reachable from agents. Task operations (`task_create`, `task_update`, `task_page` in `tasks.go` `init()`) are not, and `task_create` writes `createdBy = actor(q, "operator")`.
+*   Nothing wakes an agent except a finished child (`wake()`, `agent.go`) and a reply. A PM cannot notice a stuck task or a new question by itself.
 *   `fleet-data-foundation.md` says an agent acts with its execution's permissions; `fleet-people-access.md` says executions inherit `directed_by`. The two docs disagree on whose rights an agent call uses.
 
 ## Goals
@@ -86,7 +86,7 @@ Defaults below are used in this design. Each can be changed by the owner without
  person ──starts──> PM session {directedBy, focus, watch?}
                           │ each call
                           ▼
-   POST /api/hosts/agent-tools  (b_agent.go)
+   POST /api/hosts/agent-tools  (agent.go)
      1. binding tx (scope *): host, execution, command proven; director = execution.directedBy
      2. q.person = director, q.agent = execution:<id>; ctx carries fleet.actor
      3. name in agentOps → bound() (own session tree, scope *)
@@ -106,11 +106,11 @@ Defaults below are used in this design. Each can be changed by the owner without
 ### 1. Rights: director, never the profile
 
 *   **Director.** The route proves host, execution and command in a first transaction under `*` (trusted coordinator code), as today. It then resolves the director: `execution.directedBy` (set at enqueue from the session, and changed by a take), else the owner. `q.person` becomes that `*Person` from `q.app.people`; a new field `q.agent = "execution:"+executionID` marks the call as an agent's.
-*   **Actor.** `q.agent` goes into the request context. `Store.once()` (`store.go`) sets `SET LOCAL fleet.actor` from the context next to `fleet.project_ids` and `fleet.person`, so every transaction of the call, including the own transactions of long operations (Lab, pipelines), carries it. `actor(q, fallback)` (`b_people.go`) returns `q.agent` first, so `createdBy`, `askedBy` and `answeredBy` written by an agent name the execution. `director(q)` keeps returning the person.
-*   **Which operations an agent can reach.** A name is resolved in `agentOps` first (agent names win); those run through `bound()` in the binding transaction under `*`, because they act only on the caller's own session tree, whose rows may have `project_id = NULL` and would be hidden by row-level security from a non-owner scope. Any other name is looked up in `operations` and `longOperations` (`registry.go`, `c_glue.go`) and runs through `runOp` (`b_ops.go`) in a new transaction with `scopeOf(director)`. Its `bop` wrapper applies `guardOp` with the director as `q.person`: the architect gate and the project grant check. An owner director gets `*`. `tools/list` publishes `agentOps` plus every operation name the director may call (non-architects do not see `architectOps` names), minus the deny list. The executor's MCP server answers `tools/list` itself, so a profile with `fleetOperations: true` (the PM) gets the same list in its start command (`fleetOperations`, built at dispatch for the director); the executor lists those tools and forwards them to `/api/hosts/agent-tools`.
+*   **Actor.** `q.agent` goes into the request context. `Store.once()` (`store.go`) sets `SET LOCAL fleet.actor` from the context next to `fleet.project_ids` and `fleet.person`, so every transaction of the call, including the own transactions of long operations (Lab, pipelines), carries it. `actor(q, fallback)` (`people.go`) returns `q.agent` first, so `createdBy`, `askedBy` and `answeredBy` written by an agent name the execution. `director(q)` keeps returning the person.
+*   **Which operations an agent can reach.** A name is resolved in `agentOps` first (agent names win); those run through `bound()` in the binding transaction under `*`, because they act only on the caller's own session tree, whose rows may have `project_id = NULL` and would be hidden by row-level security from a non-owner scope. Any other name is looked up in `operations` and `longOperations` (`registry.go`, `pipelines.go`) and runs through `runOp` (`ops.go`) in a new transaction with `scopeOf(director)`. Its `gatedObjOp` wrapper applies `guardOp` with the director as `q.person`: the architect gate and the project grant check. An owner director gets `*`. `tools/list` publishes `agentOps` plus every operation name the director may call (non-architects do not see `architectOps` names), minus the deny list. The executor's MCP server answers `tools/list` itself, so a profile with `fleetOperations: true` (the PM) gets the same list in its start command (`fleetOperations`, built at dispatch for the director); the executor lists those tools and forwards them to `/api/hosts/agent-tools`.
 *   **Deny list** (person-only, exact names, checked before lookup with 403 "Only a person may do this"): `task_take` (people-access §5), and the operations that return a secret, which must never enter a model's context: `hosts_register`, `hosts_rotate_secret` (host secrets, slice 2) and `connections_token_create` (a gateway token). The list is a constant next to `bound()`.
 *   **Host and director.** A host lends a director's rights only when its holder is that director or the owner (owner hosts run taken work, people-access §5); otherwise the call is 403. A call without an execution (`initialize`, `tools/list`) acts for the host's holder; there is no implicit owner fallback.
-*   **Audit.** `putDoc` (`routes.go`) is the single writer of documents. When the kind is `setting-change` and `q.agent` is set, it sets `actor = q.agent` and `onBehalfOf = q.person.Email`. This amends `fleet-data-foundation.md` (agent permissions): an agent acts with its director's grants; the actor stays the execution.
+*   **Audit.** `put` (`records.go`) is the single writer of documents. When the kind is `setting-change` and `q.agent` is set, it sets `actor = q.agent` and `onBehalfOf = q.person.Email`. This amends `fleet-data-foundation.md` (agent permissions): an agent acts with its director's grants; the actor stays the execution.
 *   **Worker lock stays.** A session with `projectId` and no `focus` keeps today's `session_start` branch (`ownProject()` in `bound()`). A session with `focus` uses the focus branch (§2). The branch is chosen by `focus` being present on the session document.
 
 ### 2. Scope and focus
@@ -126,7 +126,7 @@ Defaults below are used in this design. Each can be changed by the owner without
 *   Task operations reach agents through the operation lookup (§1). `bound()` cannot special-case them (they do not pass through it), so the operations read `q.agent`:
     *   `task_create`: when `q.agent` is set, the task is created Held (§4) whatever the caller passes, `createdBy = q.agent` (through `actor()`), `directedBy = director(q)`, and a missing `projectId` comes from a one-project focus. A person may pass `held: true`; persons keep `queued` by default.
     *   `task_update`: when `q.agent` is set, an `action` argument is rejected with 400 "Use task_hold, task_release or task_cancel"; field updates (`title`, `expectedOutcome`, `priority`, `resultDestination`) work as today.
-    *   `task_hold`, `task_release`, `task_cancel`: new operations in `b_tasks.go`, calling `taskTransition()`; available to persons too.
+    *   `task_hold`, `task_release`, `task_cancel`: new operations in `tasks.go`, calling `taskTransition()`; available to persons too.
 *   Context reads are whatever `tools/list` publishes for the director: `task_page`, `task_get`, `questions_list`, `executions_list`, `changes_since`, `project_context`, `pipeline_get`, `lab_*` reads, plus agent `execution_status` and `questions`.
 *   **Avoiding duplicates** is an instruction: the PM profile tells the model to call `task_page` before `task_create`. Fleet does not block similar titles.
 
@@ -154,7 +154,7 @@ Defaults below are used in this design. Each can be changed by the owner without
 
 *   **Watch document.** One document of kind `watch` per session, id `watch:<sessionId>` (document ids are unique across kinds): `{id, sessionId, kinds, cursor, timerMs?, nextWakeAt?, wakes, lastWakeAt, lastError}`. Agent operations `watch_set {kinds, timerMs?}` and `watch_stop`. `watch_set` initialises `cursor` from `head()` (`stream.go`), so a new watch starts from now.
 *   **Who knows the actor.** The `change` table has no actor today. Migration 20 adds `change.actor text NULL`; `fleet_change()` fills it with `current_setting('fleet.actor', true)` (§1). `since()` (`stream.go`) returns `actor` and `projectId`. Rows with null actor (operator UI, system) count as foreign changes.
-*   **When the pass runs.** A ticker in `onStart` (`d_routes.go` pattern) runs `watchPass()` single-flight every `FLEET_WATCH_TICK_MS` (default 15000; tests set it short). It is a setting, not a limit: the owner trades latency for load.
+*   **When the pass runs.** A ticker in `onStart` (`artifact_routes.go` pattern) runs `watchPass()` single-flight every `FLEET_WATCH_TICK_MS` (default 15000; tests set it short). It is a setting, not a limit: the owner trades latency for load.
 *   **One pass, per watch document:**
     1.  Read changes after `cursor` with `since()`, paging by 500 until done, in a read transaction with `scopeOf(director)`, so row-level security drops changes outside scope. Rows with no project (hosts) are visible only to the owner.
     2.  On `resync` (cursor pruned), set `cursor` to head and queue one message "Fleet: change history after your last wake was pruned; re-read your focus with task_page."
@@ -290,12 +290,12 @@ One pull request per stage. Each ends with its check.
 
 ### Target Files to Create/Modify
 
-*   `go/coordinator/b_agent.go`: agent-tools route (director, `q.agent`, operation lookup, deny list, `tools/list`); `bound()` focus branch; `focus_set`, `watch_set`, `watch_stop`; `watchPass()`.
+*   `go/coordinator/agent.go`: agent-tools route (director, `q.agent`, operation lookup, deny list, `tools/list`); `bound()` focus branch; `focus_set`, `watch_set`, `watch_stop`; `watchPass()`.
 *   `go/coordinator/main.go`: `Request.agent`; watch ticker start.
 *   `go/coordinator/store.go`: `fleet.actor` from the context in `once()`.
-*   `go/coordinator/b_people.go`: `actor()` returns `q.agent` first; `people_list`, `people_set`.
-*   `go/coordinator/routes.go`: `putDoc` sets `actor` and `onBehalfOf` on agent `setting-change` rows.
-*   `go/coordinator/b_tasks.go`: Held create, `hold` trigger, `pause_reason`, `task_hold`, `task_release`, `task_cancel`, `held` filter and count.
+*   `go/coordinator/people.go`: `actor()` returns `q.agent` first; `people_list`, `people_set`.
+*   `go/coordinator/sessions.go`: `putDocument` sets `actor` and `onBehalfOf` on agent `setting-change` rows.
+*   `go/coordinator/tasks.go`: Held create, `hold` trigger, `pause_reason`, `task_hold`, `task_release`, `task_cancel`, `held` filter and count.
 *   `go/coordinator/stream.go`: `since()` returns `actor` and `projectId`.
 *   `go/coordinator/schema.sql`: migration 20 (`task.pause_reason`), migration 21 (`change.actor`, `fleet_change()` with the actor, copied from migration 15's latest body).
 *   `packages/view-url/view-url.ts`: `TASK_STATES` gains `held`.

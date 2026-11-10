@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	_ "embed"
+	"encoding/json"
 	"errors"
 	"math/rand/v2"
+	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -175,3 +180,225 @@ func migrate(ctx context.Context, url string) error {
 	}
 	return nil
 }
+
+// unscoped runs fn with the transaction's row scope widened to '*' and restores the person's scope after it:
+// the coordinator's own host and account choice inside a person's request sees every row,
+// and filters in code (people-access §2).
+func unscoped[T any](q *Request, fn func() (T, error)) (T, error) {
+	var zero T
+	if q.tx == nil || q.person == nil || q.person.Owner {
+		return fn()
+	}
+	var ids, person string
+	if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce(current_setting('fleet.project_ids',true),''),coalesce(current_setting('fleet.person',true),'')").Scan(&ids, &person); err != nil {
+		return zero, err
+	}
+	if _, err := q.tx.Exec(q.ctx(), "SELECT set_config('fleet.project_ids','*',true),set_config('fleet.person','',true)"); err != nil {
+		return zero, err
+	}
+	out, err := fn()
+	if _, rerr := q.tx.Exec(q.ctx(), "SELECT set_config('fleet.project_ids',$1,true),set_config('fleet.person',$2,true)", ids, person); rerr != nil && err == nil {
+		err = rerr
+	}
+	return out, err
+}
+
+// Helpers of connections, pipelines and Lab: background requests, transactions, typed rows.
+
+// runningApp: the running coordinator, set by the area's onStart hook (background work and snapshot publishing need the store).
+var runningApp *App
+
+func projectConfigDir() string { return envOr("FLEET_PROJECT_CONFIG_DIRECTORY", "config") }
+func agentProfilesDir() string { return envOr("FLEET_PROFILES_DIRECTORY", "config/agents") }
+func labDir() string           { return envOr("FLEET_LAB_DIRECTORY", "config/lab") }
+
+// bodyObject: the request body as a JSON object; absent or null is an empty object.
+func bodyObject(q *Request) (doc, error) {
+	b := doc{}
+	if len(q.body) == 0 || string(q.body) == "null" {
+		return b, nil
+	}
+	if json.Unmarshal(q.body, &b) != nil {
+		return nil, fail(400, "Invalid body")
+	}
+	return b, nil
+}
+
+// numOK: a JSON number or a SQL integer column (pgx scans integer as int32, smallint as int16).
+func numOK(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case int64:
+		return float64(x), true
+	case int32:
+		return float64(x), true
+	case int16:
+		return float64(x), true
+	case int:
+		return float64(x), true
+	}
+	return 0, false
+}
+
+func intOK(v any) (int64, bool) {
+	f, ok := numOK(v)
+	if !ok || f != float64(int64(f)) || f > 1<<53 || f < -(1<<53) {
+		return 0, false
+	}
+	return int64(f), true
+}
+
+func keysOnly(b doc, allowed ...string) bool {
+	for k := range b {
+		ok := false
+		for _, a := range allowed {
+			if k == a {
+				ok = true
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// queryRows: rows as maps (column name -> value); jsonb decodes to JSON values, timestamps to time.Time.
+func queryRows(q *Request, sql string, args ...any) ([]doc, error) {
+	rs, err := q.tx.Query(q.ctx(), sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	out, err := pgx.CollectRows(rs, pgx.RowToMap)
+	if out == nil {
+		out = []map[string]any{}
+	}
+	return out, err
+}
+
+func ownerEmailOf(a *App) string {
+	for _, p := range a.people {
+		if p.Owner {
+			return p.Email
+		}
+	}
+	return "owner"
+}
+
+// director: the request person, else the owner (timers, hosts).
+func directorOf(q *Request) string {
+	if q.person != nil {
+		return q.person.Email
+	}
+	return ownerEmailOf(q.app)
+}
+
+// writeTx runs fn in its own write transaction under lock (GLOBAL when empty), as the coordinator.
+func writeTx(ctx context.Context, a *App, lock string, fn func(q *Request) error) error {
+	return a.store.Tx(ctx, nil, true, lock, func(tx pgx.Tx) error {
+		return fn(backgroundRequest(ctx, a, tx))
+	})
+}
+
+func readTx(ctx context.Context, a *App, fn func(q *Request) error) error {
+	return a.store.Tx(ctx, nil, false, "", func(tx pgx.Tx) error { return fn(backgroundRequest(ctx, a, tx)) })
+}
+
+// backgroundRequest: a request value for background work (no person: the coordinator's own scope).
+func backgroundRequest(ctx context.Context, a *App, tx pgx.Tx) *Request {
+	hr, _ := http.NewRequestWithContext(ctx, "POST", "/", nil)
+	return &Request{r: hr, tx: tx, app: a}
+}
+
+// askRow inserts one question; returns its id.
+func askRow(q *Request, kind, text string, projectID any, options any, askedBy string, data doc) (string, error) {
+	id := newID()
+	var opts any
+	if options != nil {
+		opts = jsonBytes(options)
+	}
+	if data == nil {
+		data = doc{}
+	}
+	err := exec(q, "INSERT INTO question(id,kind,project_id,text,options,asked_by,data) VALUES($1,$2,$3,$4,$5,$6,$7)", id, kind, projectID, text, opts, askedBy, jsonBytes(data))
+	return id, err
+}
+
+// insertExecution inserts a typed execution row unless its id or request_id exists.
+func insertExecution(q *Request, v doc) (bool, error) {
+	state := astr(v["state"])
+	if state == "" {
+		state = "preparing"
+	}
+	var cfg any
+	if v["configRef"] != nil {
+		cfg = jsonBytes(v["configRef"])
+	}
+	data := v["data"]
+	if data == nil {
+		data = doc{}
+	}
+	var id string
+	err := q.tx.QueryRow(q.ctx(), `INSERT INTO execution(id,kind,state,project_id,parent_execution_id,config_ref,data,experiment_id,variant,request_id)
+	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING RETURNING id`,
+		v["id"], v["kind"], state, v["projectId"], v["parentExecutionId"], cfg, jsonBytes(data), v["experimentId"], v["variant"], v["requestId"]).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// writeConnectionCost upserts the connection_cost total of one tool_run.
+func writeConnectionCost(q *Request, id string, projectID any, cost any) error {
+	basis := "measured"
+	var c any
+	if cost == nil {
+		basis = "unavailable"
+	} else {
+		c = jsonBytes(cost)
+	}
+	return exec(q, `INSERT INTO execution_totals(execution_id,project_id,connection_cost,connection_cost_basis) VALUES($1,$2,$3,$4)
+	 ON CONFLICT(execution_id) DO UPDATE SET connection_cost=excluded.connection_cost,connection_cost_basis=excluded.connection_cost_basis,computed_at=now()`, id, projectID, c, basis)
+}
+
+func sortedKeysOf(m map[string]any) []string {
+	k := make([]string, 0, len(m))
+	for x := range m {
+		k = append(k, x)
+	}
+	sort.Strings(k)
+	return k
+}
+
+// canonicalJSON: canonical JSON with sorted keys (equal values give equal hashes).
+func canonicalJSON(v any) string {
+	switch x := v.(type) {
+	case map[string]any:
+		parts := []string{}
+		for _, k := range sortedKeysOf(x) {
+			parts = append(parts, string(jsonBytes(k))+":"+canonicalJSON(x[k]))
+		}
+		return "{" + strings.Join(parts, ",") + "}"
+	case []any:
+		parts := []string{}
+		for _, e := range x {
+			parts = append(parts, canonicalJSON(e))
+		}
+		return "[" + strings.Join(parts, ",") + "]"
+	default:
+		return string(jsonBytes(x))
+	}
+}
+
+func msOf(t any) any {
+	if tt, ok := t.(time.Time); ok {
+		return tt.UnixMilli()
+	}
+	return nil
+}
+
+// The schema is part of the binary: schema.sql next to this file is the schema source (committed).
+
+//go:embed schema.sql
+var schemaSQL string

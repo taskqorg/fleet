@@ -1,6 +1,6 @@
 package main
 
-// Area A: POST /api/hosts/receipts (SL6). Four envelopes: an account inspection result, a project tool call of a native
+// POST /api/hosts/receipts (SL6). Four envelopes: an account inspection result, a project tool call of a native
 // agent, a child (delegation) request, and the status receipt that moves a command and its execution forward only.
 
 import (

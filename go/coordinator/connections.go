@@ -32,11 +32,11 @@ var (
 	stagedKey      = regexp.MustCompile(`^\.([0-9a-f]{12})\.add$`)
 	spoolFile      = regexp.MustCompile(`^\d{4}-\d\d-\d\d\.jsonl$`)
 	connEnded      = map[string]bool{"completed": true, "failed": true, "stopped": true}
-	usageToken     = cRandomToken()
+	usageToken     = randomToken()
 	processStarted = nowMs()
 )
 
-func cRandomToken() string {
+func randomToken() string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	return base64.RawURLEncoding.EncodeToString(b)
@@ -149,7 +149,7 @@ func writeSnapshot(ctx context.Context, a *App) error {
 	snapshotMu.Lock()
 	defer snapshotMu.Unlock()
 	var s doc
-	if err := cRead(ctx, a, func(q *Request) (err error) { s, err = connSnapshot(q); return }); err != nil {
+	if err := readTx(ctx, a, func(q *Request) (err error) { s, err = connSnapshot(q); return }); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(gatewayDir(), 0o750); err != nil {
@@ -183,7 +183,7 @@ func publish(q *Request) {
 func schedulePublish() {
 	publishPending.Lock()
 	defer publishPending.Unlock()
-	if publishQueued || cApp == nil {
+	if publishQueued || runningApp == nil {
 		return
 	}
 	publishQueued = true
@@ -191,7 +191,7 @@ func schedulePublish() {
 		publishPending.Lock()
 		publishQueued = false
 		publishPending.Unlock()
-		if err := writeSnapshot(context.Background(), cApp); err != nil {
+		if err := writeSnapshot(context.Background(), runningApp); err != nil {
 			log.Printf("snapshot: %v", err)
 		}
 	}()
@@ -207,7 +207,7 @@ func connSync(q *Request) error {
 	if err != nil {
 		return nil
 	}
-	owner := cOwnerEmail(q.app)
+	owner := ownerEmailOf(q.app)
 	for _, ent := range entries {
 		name := ent.Name()
 		if !connName.MatchString(name) || !ent.IsDir() {
@@ -274,7 +274,7 @@ func connSync(q *Request) error {
 
 func toolNames(provider string) []any {
 	out := []any{}
-	for _, k := range cSortedKeys(providerTools(provider)) {
+	for _, k := range sortedKeysOf(providerTools(provider)) {
 		out = append(out, k)
 	}
 	return out
@@ -303,13 +303,17 @@ func idList(v any, field string) ([]any, error) {
 }
 
 func init() {
-	// Agent dispatch mints the run token for the profile's connections (a_dispatch.go); the a_hooks default is a stub.
-	cop("connections_list", true, func(q *Request) (any, error) {
+	// Agent dispatch mints the run token for the profile's connections (dispatch.go); the a_hooks default is a stub.
+	gatedOp("connections_list", true, func(q *Request) (any, error) {
 		keys, err := all(q, "connection-key", nil)
 		if err != nil {
 			return nil, err
 		}
-		sort.SliceStable(keys, func(i, j int) bool { a, _ := cNum(keys[i]["addedAt"]); b, _ := cNum(keys[j]["addedAt"]); return a < b })
+		sort.SliceStable(keys, func(i, j int) bool {
+			a, _ := numOK(keys[i]["addedAt"])
+			b, _ := numOK(keys[j]["addedAt"])
+			return a < b
+		})
 		hist, err := rows(q, "SELECT data FROM document WHERE kind='setting-change' AND data->>'target' LIKE 'connection:%' ORDER BY seq")
 		if err != nil {
 			return nil, err
@@ -336,13 +340,13 @@ func init() {
 		}
 		return doc{"providers": providers, "connections": out}, nil
 	})
-	cop("connections_create", false, func(q *Request) (any, error) {
-		b, err := cBody(q)
+	gatedOp("connections_create", false, func(q *Request) (any, error) {
+		b, err := bodyObject(q)
 		if err != nil {
 			return nil, err
 		}
 		name, provider := astr(b["name"]), astr(b["provider"])
-		if !connName.MatchString(name) || providers[provider] == nil || !cKeysOnly(b, "name", "provider", "holder", "comment") {
+		if !connName.MatchString(name) || providers[provider] == nil || !keysOnly(b, "name", "provider", "holder", "comment") {
 			return nil, fail(400, "Expected name and a known provider")
 		}
 		if old, err := maybe(q, "connection:"+name, "api-connection"); err != nil {
@@ -350,7 +354,7 @@ func init() {
 		} else if old != nil {
 			return nil, fail(409, "API key name exists")
 		}
-		holder := cDirector(q)
+		holder := directorOf(q)
 		if h, ok := b["holder"].(string); ok {
 			holder = strings.ToLower(h)
 		}
@@ -370,11 +374,11 @@ func init() {
 		return c, nil
 	})
 	// Owner only. Writes the value file and the row; answers with the fingerprint only.
-	cop("connections_key_add", false, func(q *Request) (any, error) {
+	gatedOp("connections_key_add", false, func(q *Request) (any, error) {
 		if err := connOwner(q); err != nil {
 			return nil, err
 		}
-		b, err := cBody(q)
+		b, err := bodyObject(q)
 		if err != nil {
 			return nil, err
 		}
@@ -421,8 +425,8 @@ func init() {
 		return k, nil
 	})
 	// Rotation (§2): active <-> draining, any -> retired (the value file is deleted; the row stays); disabled -> active is the owner's.
-	cop("connections_key_state", false, func(q *Request) (any, error) {
-		b, err := cBody(q)
+	gatedOp("connections_key_state", false, func(q *Request) (any, error) {
+		b, err := bodyObject(q)
 		if err != nil {
 			return nil, err
 		}
@@ -486,8 +490,8 @@ func init() {
 		publish(q)
 		return k, nil
 	})
-	cop("connections_set_access", false, func(q *Request) (any, error) {
-		b, err := cBody(q)
+	gatedOp("connections_set_access", false, func(q *Request) (any, error) {
+		b, err := bodyObject(q)
 		if err != nil {
 			return nil, err
 		}
@@ -502,7 +506,7 @@ func init() {
 		if a == nil {
 			a = doc{}
 		}
-		if !cKeysOnly(a, "people", "projects", "experiments") {
+		if !keysOnly(a, "people", "projects", "experiments") {
 			return nil, fail(400, "access: {people, projects, experiments}")
 		}
 		people, err := idList(a["people"], "people")
@@ -521,7 +525,7 @@ func init() {
 			return nil, err
 		}
 		next := doc{"people": people, "projects": projects, "experiments": exps}
-		if cCanon(next) != cCanon(c["access"]) {
+		if canonicalJSON(next) != canonicalJSON(c["access"]) {
 			if err := connChange(q, c, "access", c["access"], next); err != nil {
 				return nil, err
 			}
@@ -533,8 +537,8 @@ func init() {
 		}
 		return c, nil
 	})
-	cop("connections_set_intake", false, func(q *Request) (any, error) {
-		b, err := cBody(q)
+	gatedOp("connections_set_intake", false, func(q *Request) (any, error) {
+		b, err := bodyObject(q)
 		if err != nil {
 			return nil, err
 		}
@@ -562,11 +566,11 @@ func init() {
 		return c, nil
 	})
 	// Owner connection tokens (§4): a long-lived bearer for the owner's interactive sessions; the value is answered once.
-	cop("connections_token_create", false, func(q *Request) (any, error) {
+	gatedOp("connections_token_create", false, func(q *Request) (any, error) {
 		if err := connOwner(q); err != nil {
 			return nil, err
 		}
-		b, err := cBody(q)
+		b, err := bodyObject(q)
 		if err != nil {
 			return nil, err
 		}
@@ -589,7 +593,7 @@ func init() {
 				requested = append(requested, s)
 			}
 		}
-		m, err := mint(q, doc{"executionId": "token:" + name, "directedBy": cDirector(q), "personal": name}, requested)
+		m, err := mint(q, doc{"executionId": "token:" + name, "directedBy": directorOf(q), "personal": name}, requested)
 		if err != nil {
 			return nil, err
 		}
@@ -603,7 +607,7 @@ func init() {
 		m["name"] = name
 		return m, nil
 	})
-	cop("connections_token_list", true, func(q *Request) (any, error) {
+	gatedOp("connections_token_list", true, func(q *Request) (any, error) {
 		toks, err := all(q, "run-token", nil)
 		if err != nil {
 			return nil, err
@@ -616,11 +620,11 @@ func init() {
 		}
 		return doc{"tokens": out}, nil
 	})
-	cop("connections_token_revoke", false, func(q *Request) (any, error) {
+	gatedOp("connections_token_revoke", false, func(q *Request) (any, error) {
 		if err := connOwner(q); err != nil {
 			return nil, err
 		}
-		b, err := cBody(q)
+		b, err := bodyObject(q)
 		if err != nil {
 			return nil, err
 		}
@@ -646,8 +650,8 @@ func init() {
 	})
 
 	onStart(func(ctx context.Context, a *App) {
-		cApp = a
-		if err := cTx(ctx, a, "", func(q *Request) error {
+		runningApp = a
+		if err := writeTx(ctx, a, "", func(q *Request) error {
 			if err := revokeSteps(q); err != nil {
 				return err
 			}
@@ -659,16 +663,16 @@ func init() {
 			log.Printf("snapshot: %v", err)
 		}
 		// Spool ingest and token revocation (FLEET_CONNECTION_TICK_MS: test seam, 0 turns it off); usage reconcile every 10 min.
-		every(ctx, cEnvMs("FLEET_CONNECTION_TICK_MS", 3000), func() {
-			if err := cTx(ctx, a, "", connTick); err != nil {
+		every(ctx, envMs("FLEET_CONNECTION_TICK_MS", 3000), func() {
+			if err := writeTx(ctx, a, "", connTick); err != nil {
 				log.Printf("connections tick: %v", err)
 			}
 		})
-		every(ctx, cEnvMs("FLEET_RECONCILE_MS", 600000), func() { connReconcile(ctx, a) })
+		every(ctx, envMs("FLEET_RECONCILE_MS", 600000), func() { connReconcile(ctx, a) })
 	})
 }
 
-func cEnvMs(k string, d int) time.Duration {
+func envMs(k string, d int) time.Duration {
 	var n int
 	if _, err := fmt.Sscan(envOr(k, fmt.Sprint(d)), &n); err != nil {
 		n = d
@@ -735,7 +739,7 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 	if len(granted) == 0 {
 		return doc{"token": nil, "connections": []any{}, "refused": uniq}, nil
 	}
-	token := cRandomToken()
+	token := randomToken()
 	sha := sha256hex([]byte(token))
 	names, specs, refused := []any{}, []any{}, []string{}
 	for _, c := range granted {
@@ -798,7 +802,7 @@ func revokeSteps(q *Request) error {
 		return err
 	}
 	for _, t := range ts {
-		if c, _ := cNum(t["createdAt"]); int64(c) < processStarted {
+		if c, _ := numOK(t["createdAt"]); int64(c) < processStarted {
 			t["revokedAt"] = nowMs()
 			if err := exec(q, "UPDATE document SET data=$2 WHERE id=$1", t["id"], jsonBytes(t)); err != nil {
 				return err
@@ -892,7 +896,7 @@ func connRecord(q *Request, l doc) (bool, error) {
 	if t["personal"] != nil {
 		parent = nil
 	}
-	inserted, err := cCreateExecution(q, doc{"id": id, "kind": "tool_run", "state": state, "projectId": t["projectId"], "parentExecutionId": parent, "experimentId": t["experimentId"], "data": data})
+	inserted, err := insertExecution(q, doc{"id": id, "kind": "tool_run", "state": state, "projectId": t["projectId"], "parentExecutionId": parent, "experimentId": t["experimentId"], "data": data})
 	if err != nil || !inserted {
 		return false, err
 	}
@@ -902,11 +906,11 @@ func connRecord(q *Request, l doc) (bool, error) {
 		}
 	}
 	var cost any
-	if amount, ok := cNum(usage["amount"]); ok {
+	if amount, ok := numOK(usage["amount"]); ok {
 		unit := astr(usage["unit"])
 		cost = doc{"unit": unit, unit: amount, "amount": amount, "connection": l["connection"]}
 	}
-	if err := cWriteConnectionCost(q, id, t["projectId"], cost); err != nil {
+	if err := writeConnectionCost(q, id, t["projectId"], cost); err != nil {
 		return false, err
 	}
 	if d := mapOf(l["disabled"]); d != nil && d["key"] != nil {
@@ -946,7 +950,7 @@ func connDisable(q *Request, fp string, status any) error {
 		return err
 	}
 	st := fmt.Sprint(status)
-	if f, ok := cNum(status); ok {
+	if f, ok := numOK(status); ok {
 		st = fmt.Sprint(int64(f))
 	}
 	k["state"], k["disabledReason"], k["disabledAt"] = "disabled", "provider answered HTTP "+st, nowMs()
@@ -960,7 +964,7 @@ func connDisable(q *Request, fp string, status any) error {
 	if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM question WHERE cause=$1 AND state<>'answered'", cause).Scan(&n); err != nil || n > 0 {
 		return err
 	}
-	id, err := cAsk(q, "operator_decision", fmt.Sprintf("API key %s of %v was refused by the provider (HTTP %s) and is disabled. Re-enable it on the API keys screen once it works again, or retire it.", fp, k["connectionId"], st),
+	id, err := askRow(q, "operator_decision", fmt.Sprintf("API key %s of %v was refused by the provider (HTTP %s) and is disabled. Re-enable it on the API keys screen once it works again, or retire it.", fp, k["connectionId"], st),
 		nil, []any{"seen"}, "fleet", doc{"cause": cause})
 	if err != nil {
 		return err
@@ -979,7 +983,7 @@ func connTick(q *Request) error {
 	if err != nil {
 		return err
 	}
-	s := string(jsonBytes(cSortedKeys(func() map[string]any {
+	s := string(jsonBytes(sortedKeysOf(func() map[string]any {
 		m := map[string]any{}
 		for k, v := range b {
 			if v {
@@ -1032,7 +1036,7 @@ func connReconcile(ctx context.Context, a *App) {
 	if res.StatusCode/100 != 2 || json.NewDecoder(res.Body).Decode(&report) != nil {
 		return
 	}
-	err = cTx(ctx, a, "", func(q *Request) error {
+	err = writeTx(ctx, a, "", func(q *Request) error {
 		for _, r := range anys(report["keys"]) {
 			row := mapOf(r)
 			k, err := maybe(q, "key:"+astr(row["key"]), "connection-key")
@@ -1042,7 +1046,7 @@ func connReconcile(ctx context.Context, a *App) {
 			if k == nil {
 				continue
 			}
-			usage, ok := cNum(row["usage"])
+			usage, ok := numOK(row["usage"])
 			if !ok {
 				rc := mapOf(k["reconcile"])
 				if rc == nil {
@@ -1060,13 +1064,13 @@ func connReconcile(ctx context.Context, a *App) {
 					base = doc{"usage": usage, "at": report["at"]}
 					k["usageBaseline"] = base
 				}
-				at, _ := cNum(base["at"])
+				at, _ := numOK(base["at"])
 				var recorded float64
 				if err := q.tx.QueryRow(q.ctx(), `SELECT coalesce(sum((t.connection_cost->>'amount')::numeric),0)::float8 FROM execution e JOIN execution_totals t ON t.execution_id=e.id
 				 WHERE e.kind='tool_run' AND e.data->>'keyFingerprint'=$1 AND (e.data->>'startedAt')::bigint>=$2`, k["fingerprint"], int64(at)).Scan(&recorded); err != nil {
 					return err
 				}
-				bu, _ := cNum(base["usage"])
+				bu, _ := numOK(base["usage"])
 				delta := usage - bu
 				k["reconcile"] = doc{"at": report["at"], "providerDelta": delta, "recorded": recorded, "difference": delta - recorded}
 			}

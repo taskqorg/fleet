@@ -6,7 +6,7 @@ import (
 	"fleet/contract"
 )
 
-// Area A: POST /api/hosts/poll (SL5). The poll records the host observation and its stores, reconciles delegations,
+// POST /api/hosts/poll (SL5). The poll records the host observation and its stores, reconciles delegations,
 // marks problems, promotes queued messages, runs dispatch, and replies with the polling host's pending commands that may go
 // out now.
 
@@ -129,7 +129,7 @@ func (a *App) poll(q *Request) (any, error) {
 	if err := a.dispatchRun(q, host); err != nil {
 		return nil, err
 	}
-	pending, err := aRows(q, "SELECT data FROM document WHERE kind='command' AND data->>'hostId'=$1 AND data->>'status'='pending' ORDER BY seq", host)
+	pending, err := docRows(q, "SELECT data FROM document WHERE kind='command' AND data->>'hostId'=$1 AND data->>'status'='pending' ORDER BY seq", host)
 	if err != nil {
 		return nil, err
 	}

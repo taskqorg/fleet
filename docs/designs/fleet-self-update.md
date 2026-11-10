@@ -16,10 +16,10 @@ The design copies the CoreQ update model ([coreq.md](https://github.com/taskqorg
 ### Terms
 
 *   **Host, holder, host record**: a machine running Fleet services, the person who holds it, and its record `host:<id>` ([people access §3](fleet-people-access.md#3-hosts-records-secrets-and-trust)).
-*   **Host observation**: document kind `host-observation`, rewritten by the coordinator on every executor poll (`go/coordinator/a_poll.go`).
+*   **Host observation**: document kind `host-observation`, rewritten by the coordinator on every executor poll (`go/coordinator/host_poll.go`).
 *   **Host problem**: an entry in the observation's `problems`, shown by `hosts_list`.
 *   **`hosts_list`, `hosts_update`**: shared operations (R2), callable by agents, the web app and `POST /api/ops/<name>`.
-*   **Needs-you question**: a row in the `question` table addressed to a person, keyed by `cause`; dispatch stall alerts use it (`go/coordinator/a_dispatch.go`).
+*   **Needs-you question**: a row in the `question` table addressed to a person, keyed by `cause`; dispatch stall alerts use it (`go/coordinator/dispatch.go`).
 *   **Setting change**: a `setting-change` document recorded for every host-field change (`hostsUpdate`).
 
 ## The Problem
@@ -218,7 +218,7 @@ All poll changes are additive: an N-1 executor ignores new answer fields and the
 *   **`healthyTarget`**: the coordinator's own `version` when `healthy` exists in its release directory (next to its executable), else the version of `releases/previous` when that has `healthy`, else null (no update offered). Read per request; two `stat` calls.
 *   **`/api/health`** adds `version` and `autoUpdate` of the coordinator machine's host (`hostId` of `pds18-state.json`; `"on"` before the first run); both are not secret.
 *   **`poll`** writes `version` and `update` into the observation it already rebuilds, so one writer owns the row. After `hostProblems`, it appends `{kind: "version-behind"}` when the host's version is older than `previous` of the coordinator's `release.json`. `EdgeProblemKind` becomes `ProblemKind` with both values.
-*   **Needs-you**: extract `openCauseQuestion(q, cause string, addressedTo, projectID any, text string) error` in `a_dispatch.go` from its lines that call `hookTaskAsk` and then set `cause` and `addressed_to`; dispatch and `poll` both use it. `poll` opens a question when `update.state` is `refused` or `failed` and no question with cause `update:<hostId>:<version>` is open or answered (one lookup by cause, so repeated polls add nothing). Kind `operator_decision`, options `["ok"]`, addressed to the host's holder, text `"<hostId>: update to <version> <rolled back|refused> (<reason>)."`. A poll with `state: ok` withdraws open `update:<hostId>:*` questions (`state='withdrawn', cause=NULL`). Dispatch's held-cause filter does not match `update:`, so dispatch never withdraws them.
+*   **Needs-you**: extract `openCauseQuestion(q, cause string, addressedTo, projectID any, text string) error` in `dispatch.go` from its lines that call `askQuestion` and then set `cause` and `addressed_to`; dispatch and `poll` both use it. `poll` opens a question when `update.state` is `refused` or `failed` and no question with cause `update:<hostId>:<version>` is open or answered (one lookup by cause, so repeated polls add nothing). Kind `operator_decision`, options `["ok"]`, addressed to the host's holder, text `"<hostId>: update to <version> <rolled back|refused> (<reason>)."`. A poll with `state: ok` withdraws open `update:<hostId>:*` questions (`state='withdrawn', cause=NULL`). Dispatch's held-cause filter does not match `update:`, so dispatch never withdraws them.
 *   **PDS18 row**: the coordinator's `FLEET_HOST_ID` names its default work host, not its machine, so the machine's host is `hostId` of `/var/lib/fleet-update/pds18-state.json`, which `fleet-update` copies from the PDS18 executor's `update.json` (the executor writes its `hostId` there). For that host the coordinator reads `/var/lib/fleet-update/pds18-state.json` and merges it with the polled `update`: the worse state wins (`failed` > `refused` > `error` > `pending` > `held` > `ok`), and `update.parts` lists coordinator and executor results.
 *   **`hosts_list`** adds `version`, `autoUpdate`, `update` `{version, state, error, at}`.
 *   **Executor**: writes `<data dir>/update/update.json` `{hostId, target, autoUpdate, running, pollOk, pollError, at}` only when a value changes (durably, temp file then rename); sends `version` and `update` in polls.
@@ -345,9 +345,9 @@ Six phases, one pull request each; every phase builds and passes `go test ./...`
 #### Phase 2: protocol expand and coordinator
 
 7.  `contracts/host-protocol.schema.json` (Modify): optional `PollRequest.version`, `PollRequest.update`; `PollReply.target`, `PollReply.autoUpdate`; `EdgeProblemKind` becomes `ProblemKind` with `version-behind`. Regenerate `go/contract/host_protocol_gen.go` (`go generate`).
-8.  `go/coordinator/a_hosts.go` (Modify): `autoUpdate` validation and `setting-change` in `hostsUpdate`; `version`, `autoUpdate`, `update` in `hostsList`; PDS18 state merge for the coordinator machine's host.
-9.  `go/coordinator/a_poll.go` (Modify): store `version`, `update`; `version-behind` after `hostProblems`; answer `target`, `autoUpdate`; needs-you open and withdraw.
-10. `go/coordinator/a_dispatch.go` (Modify): extract `openCauseQuestion`; dispatch calls it.
+8.  `go/coordinator/hosts.go` (Modify): `autoUpdate` validation and `setting-change` in `hostsUpdate`; `version`, `autoUpdate`, `update` in `hostsList`; PDS18 state merge for the coordinator machine's host.
+9.  `go/coordinator/host_poll.go` (Modify): store `version`, `update`; `version-behind` after `hostProblems`; answer `target`, `autoUpdate`; needs-you open and withdraw.
+10. `go/coordinator/dispatch.go` (Modify): extract `openCauseQuestion`; dispatch calls it.
 11. `go/coordinator/health.go` (Modify): `healthyTarget`.
 *   Tests (`go/coordinator/*_test.go` or `tests/go`): `autoUpdate` accepts `on`, `off`, a future and a past `Z` time, refuses `+02:00` and other strings with 400, writes one `setting-change`; `version-behind` absent at N and N-1, present at N-2; `healthyTarget` returns current with marker, previous with marker, null without; a `refused` poll opens one question, a repeat adds none, an `ok` withdraws it; dispatch does not withdraw `update:` causes; the merge picks the worse state.
 

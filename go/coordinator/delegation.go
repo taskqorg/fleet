@@ -1,6 +1,6 @@
 package main
 
-// Area A: delegation. A running agent asks for one child execution through a child receipt; the child
+// delegation. A running agent asks for one child execution through a child receipt; the child
 // starts when its parent completed, with the parent's retained observations bound into its start command; its result goes
 // back to the parent session as a continuation.
 
@@ -180,7 +180,7 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 		history[i], history[j] = history[j], history[i]
 	}
 	with := map[string]bool{}
-	rs, err := cQuery(q, "SELECT DISTINCT execution_id AS id FROM artifact WHERE state='stored' AND execution_id=ANY($1) UNION SELECT DISTINCT data->>'executionId' FROM document WHERE kind='artifact' AND data->>'executionId'=ANY($1)", history)
+	rs, err := queryRows(q, "SELECT DISTINCT execution_id AS id FROM artifact WHERE state='stored' AND execution_id=ANY($1) UNION SELECT DISTINCT data->>'executionId' FROM document WHERE kind='artifact' AND data->>'executionId'=ANY($1)", history)
 	if err != nil {
 		return false, err
 	}
@@ -196,7 +196,7 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	}
 	latest, order := map[string]doc{}, []string{}
 	if source != "" {
-		as, err := aArtifactsOf(q, source)
+		as, err := executionArtifactRecords(q, source)
 		if err != nil {
 			return false, err
 		}
@@ -247,7 +247,7 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	for _, t := range replies {
 		messages = append(messages, doc{"role": "assistant", "text": t})
 	}
-	parentArtifacts, err := aArtifactsOf(q, astr(parent["id"]))
+	parentArtifacts, err := executionArtifactRecords(q, astr(parent["id"]))
 	if err != nil {
 		return false, err
 	}
@@ -283,7 +283,7 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 }
 
 // artifactsOf: the artifact records of an execution without their bodies (the artifacts area serves the kind).
-func aArtifactsOf(q *Request, executionID string) ([]doc, error) {
+func executionArtifactRecords(q *Request, executionID string) ([]doc, error) {
 	return executionArtifacts(q, executionID)
 }
 
@@ -310,7 +310,7 @@ func (a *App) delegationReconcile(q *Request) error {
 			if err != nil {
 				return err
 			}
-			arts, err := aArtifactsOf(q, astr(child["id"]))
+			arts, err := executionArtifactRecords(q, astr(child["id"]))
 			if err != nil {
 				return err
 			}

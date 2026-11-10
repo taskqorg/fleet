@@ -1,4 +1,4 @@
-// Outside tests of the TypeScript routes and operations the Go rewrite had dropped (go/coordinator/b_restored.go).
+// Outside tests of the TypeScript routes and operations the Go rewrite had dropped (go/coordinator/executions.go).
 //   FLEET_TRIAL_TESTS=tests/go/restored.test.ts FLEET_TRIAL_SERVER=go/bin/fleet-coordinator node tests/trial/run.ts
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
