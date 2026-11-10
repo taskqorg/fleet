@@ -227,7 +227,7 @@ export function labExperiments(d:Deps){
    try{ex=JSON.parse((await d.read(f.artifactId)).toString('utf8'))}catch{continue}
    let stored:any;try{stored=(await add({examples:[ex],projectId:run.projectId??null,approved:false})).examples[0]}catch{continue}
    await store.tx(async()=>{if((await q("SELECT 1 FROM question WHERE kind='rating' AND options->>'example_artifact_id'=$1",[stored.artifactId])).length)return;
-    await store.tasks.ask({kind:'rating',projectId:run.projectId??null,text:`Approve drafted example ${stored.id}@${stored.version}? Approving lets the coordinator run its checks: ${(ex.checks??[]).map((c:any)=>c.run).join(' ; ').slice(0,1500)}`,options:{form:'pass_fail',example_artifact_id:stored.artifactId,seed:stored.artifactId},askedBy:'lab',data:{exampleArtifactId:stored.artifactId}})})}}
+    await store.tasks.ask({kind:'rating',projectId:run.projectId??null,text:`Approve drafted example ${stored.id}@${stored.version}? Approving lets the coordinator run its checks:\n${(await d.examples.get(stored.artifactId)).example.checks.map((c:any)=>`${c.id}: ${c.run}`).join('\n')}`,options:{form:'pass_fail',example_artifact_id:stored.artifactId,seed:stored.artifactId},askedBy:'lab',data:{exampleArtifactId:stored.artifactId}})})}}
 
  // Use-case registry for the screen: entries with drift status, fit and maturity.
  function registry(){const dir=join(d.labDirectory,'use-cases'),out:any[]=[];
