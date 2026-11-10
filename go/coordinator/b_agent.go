@@ -1400,9 +1400,16 @@ func init() {
 					focus = focusIDs(s)
 				}
 			}
-			d := firstString(e["directedBy"], ownerEmail(q))
+			// A call without an execution (initialize, tools/list) acts for the host's holder; never an implicit owner.
+			holder := gs(q.host, "holder")
+			d := firstString(e["directedBy"], holder)
 			if q.person = q.app.people[d]; q.person == nil {
 				return fail(403, "Director "+d+" is not a person of this Fleet")
+			}
+			// A host acts with its director's rights only when its holder is that director or the owner (whose hosts
+			// run taken work, people-access §5); another holder's host never borrows a director's grants.
+			if hp := q.app.people[holder]; d != holder && (hp == nil || !hp.Owner) {
+				return fail(403, "Host "+b.HostID+" is held by "+holder+", not the director "+d)
 			}
 			return nil
 		}
@@ -1532,7 +1539,8 @@ func focusSet(q *Request, b doc) (doc, error) {
 }
 
 // agentDenied: operations only a person may call (take, host secrets); docs/designs/fleet-pm-agent.md §1.
-var agentDenied = map[string]bool{"task_take": true, "hosts_register": true, "hosts_rotate_secret": true}
+// Secrets never enter a model's context: the host secret and gateway token operations return one.
+var agentDenied = map[string]bool{"task_take": true, "hosts_register": true, "hosts_rotate_secret": true, "connections_token_create": true}
 
 // agentMay: an operation outside the agent table that the director's role may call (the architect gate of guardOp).
 func agentMay(p *Person, name string) bool {

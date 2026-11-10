@@ -70,7 +70,7 @@ test('PM1 rights: an agent call reads and writes with its director\'s grants, ne
 test('PM2 deny list: take and host secrets stay with people, even for the owner\'s PM (risk: an injected owner PM mints a host secret)', {timeout: 30_000}, async () => {
   const pm = await agent(OWNER, {projectId: PROJECT, role: 'pm'});
   const t = ok(await op('task_create', {projectId: PROJECT, title: 'PM2 ' + randomUUID()}));
-  for (const [name, args] of [['task_take', {taskId: t.id}], ['hosts_register', {id: 'pm2-host'}], ['hosts_rotate_secret', {id: 'trial-host'}]] as const)
+  for (const [name, args] of [['task_take', {taskId: t.id}], ['hosts_register', {id: 'pm2-host'}], ['hosts_rotate_secret', {id: 'trial-host'}], ['connections_token_create', {name: 'pm2'}]] as const)
     assert.equal((await pm.tool(name, args)).status, 403, name);
   assert.equal(ok(await pm.tool('profiles_list')).profiles !== undefined, true, 'the owner\'s PM reaches owner operations');
 });
