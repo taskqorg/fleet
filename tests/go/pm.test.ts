@@ -129,6 +129,8 @@ test('PM6 audit: an agent setting change records the execution as actor and its 
   const people = ok(await pm.tool('people_list')).people;
   assert.ok(people.some((p: any) => p.email === MEMBER));
   assert.equal((await op('people_set', {people}, MEMBER)).status, 403);
+  assert.equal((await op('people_set', {people: [null, ...people]})).status, 400, 'a broken list is refused and the old one stays');
+  assert.equal(ok(await op('people_list')).people.length, people.length);
   assert.deepEqual(ok(await op('people_list', {}, MEMBER)).people.map((p: any) => p.email), [MEMBER]);
   ok(await pm.tool('people_set', {people}));
   const [p] = ok(await op('setting_changes', {target: 'people'})).changes;

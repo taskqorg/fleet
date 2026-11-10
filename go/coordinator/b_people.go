@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"regexp"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func mayAccessProjectID(p *Person, projectID string) bool {
@@ -187,8 +189,20 @@ func init() {
 	bop("setting_changes", true, func(q *Request) (any, error) {
 		// The people list is the owner's: its audit is not shown to architects.
 		owner := q.person == nil || q.person.Owner
-		rs, err := rows(q, "SELECT data FROM document WHERE kind='setting-change' AND ($1='' OR data->>'target'=$1) AND ($2 OR data->>'target'<>'people') ORDER BY seq DESC LIMIT 200", gs(body(q), "target"), owner)
-		return doc{"changes": rs}, err
+		b := body(q)
+		limit := pageLimit(b["limit"], 100)
+		rs, err := rowsOf(q, "SELECT seq,data FROM document WHERE kind='setting-change' AND ($1='' OR data->>'target'=$1) AND ($2 OR data->>'target'<>'people') AND ($3::bigint IS NULL OR seq<$3) ORDER BY seq DESC LIMIT $4",
+			gs(b, "target"), owner, b["before"], limit+1)
+		out := []any{}
+		var next any
+		for i, r := range rs {
+			if i == limit {
+				next = rs[i-1]["seq"]
+				break
+			}
+			out = append(out, r["data"])
+		}
+		return doc{"changes": out, "nextBefore": next}, err
 	})
 	clong("people_set", func(q *Request) (any, error) {
 		if q.person != nil && !q.person.Owner {
@@ -204,18 +218,26 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		if err := q.app.setPeople(q.ctx(), b.People); err != nil {
-			if _, ok := err.(*json.UnmarshalTypeError); ok || strings.HasPrefix(err.Error(), "exactly one") {
-				return nil, fail(400, err.Error())
+		// The file first, so a failed write leaves Fleet on the old list; a failed apply puts the old file back.
+		write := func(raw []byte) error {
+			tmp := q.app.peopleFile + ".tmp"
+			if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+				return err
 			}
+			return os.Rename(tmp, q.app.peopleFile)
+		}
+		if err := write(b.People); err != nil {
 			return nil, err
 		}
-		tmp := q.app.peopleFile + ".tmp"
-		if err := os.WriteFile(tmp, b.People, 0o600); err != nil {
-			return nil, err
-		}
-		if err := os.Rename(tmp, q.app.peopleFile); err != nil {
-			return nil, err
+		if err := q.app.setPeople(q.ctx(), b.People); err != nil {
+			if werr := write(previous); werr != nil {
+				return nil, errors.Join(err, werr)
+			}
+			var pe *pgconn.PgError
+			if errors.As(err, &pe) {
+				return nil, err
+			}
+			return nil, fail(400, err.Error())
 		}
 		var prev, next any
 		json.Unmarshal(previous, &prev)

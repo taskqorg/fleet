@@ -114,7 +114,13 @@ func (a *App) setPeople(ctx context.Context, raw []byte) error {
 	people := map[string]*Person{}
 	owners := 0
 	for _, p := range list {
+		if p == nil || p.Email == "" {
+			return errors.New("every person needs an email")
+		}
 		p.Email = strings.ToLower(p.Email)
+		if people[p.Email] != nil {
+			return errors.New("person " + p.Email + " is listed twice")
+		}
 		if p.Name == "" {
 			p.Name = p.Email
 		}
