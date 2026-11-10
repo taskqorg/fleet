@@ -131,6 +131,7 @@ Log in once per subscription per environment that runs it. The table states prov
 ### Status (slice 5)
 
 *   **Project without the Mac.** `config/projects/desiign` (`Amoenum/desiign`, no repository connection: git runs with the host's own access, like `cs` (organization deploy keys are off), `integration.mode: direct`, environments `owner-mac` and `windows`; roles follow the project's D09: `worker` Claude, `designer` Codex). On the deployed coordinator, Alina is an operator in `people.json` (outside the repository) with a grant on `desiign` only, and `account_update` gives the owner's subscriptions `take.projects: ["desiign"]`, so her work runs on his plans. Her Mac, store and file locations come later.
+*   **Live (2026-11-10, release `3ec7127e5ac1`).** Alina is in `people.json` (operator, `project:desiign`) and in the Cloudflare Access group `fleet-people`, so she signs in at `https://fleet.ufobe.com`. The owner's seven subscriptions have `take.projects: ["desiign"]`. Each host's `FLEET_PROJECT_ROOTS` lists its desiign checkout. Checks: as Alina, `project_list` returns only `desiign`, `/api/projects/cs` is 404 and `/api/accounts` is 403, while the owner sees every project. A task she directed ran on `claude-owner` on `owner-mac` through take (`directedBy` the owner, `takenFrom` Alina) and completed. Gap: `task.taken_from` stays empty; only the execution records the take.
 
 ### 6. Dispatch
 
