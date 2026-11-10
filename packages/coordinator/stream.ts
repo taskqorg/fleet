@@ -5,7 +5,8 @@ import type {FastifyInstance} from 'fastify';
 import type {Store} from './store.ts';
 import {requestPerson,type Person} from './people.ts';
 
-const PING_MS=25_000, DEBOUNCE_MS=50, PRUNE_MS=3_600_000;
+// HELD_MS: the next look when committed changes wait behind an older running transaction (changes.since held).
+const PING_MS=25_000, DEBOUNCE_MS=50, PRUNE_MS=3_600_000, HELD_MS=250;
 
 export function registerStream(app:FastifyInstance,store:Store,config:{retentionDays:number}){
  // person: the stream's viewer; each drain reads in that person's scope (a wake runs outside any request).
@@ -15,10 +16,12 @@ export function registerStream(app:FastifyInstance,store:Store,config:{retention
  const send=(o:Open,event:string|null,data:any,id?:number)=>o.write(`${id!==undefined?`id: ${id}\n`:''}${event?`event: ${event}\n`:''}data: ${JSON.stringify(data)}\n\n`);
  // Reads everything visible after the stream's cursor; a wake during a read is remembered and read again afterwards.
  const drain=async(o:Open)=>{if(o.busy){o.again=true;return}o.busy=true;
+  let held=false;
   try{do{o.again=false;for(;;){const r=await requestPerson.run(o.person,()=>store.read(()=>store.changes.since(o.cursor,1000)));
     if(r.resync){o.cursor=r.cursor;send(o,'resync',{cursor:r.cursor});break}
-    for(const c of r.changes)send(o,null,c,c.seq);o.cursor=r.cursor;if(r.changes.length<1000)break}}while(o.again)}
-  catch(e:any){send(o,'error',{message:String(e?.message??e)})}finally{o.busy=false}};
+    for(const c of r.changes)send(o,null,c,c.seq);o.cursor=r.cursor;held=!!r.held;if(r.changes.length<1000)break}}while(o.again)}
+  catch(e:any){send(o,'error',{message:String(e?.message??e)})}finally{o.busy=false}
+  if(held&&!closed)setTimeout(()=>{if(open.has(o))drain(o)},HELD_MS).unref()};
  const wake=()=>{if(timer||closed)return;timer=setTimeout(()=>{timer=null;for(const o of open)drain(o)},DEBOUNCE_MS)};
 
  app.addHook('onReady',async()=>{

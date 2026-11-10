@@ -149,14 +149,17 @@ export function createStore(url:string,opts:{scope?:string,role?:string}={}){
   // of the last row delivered; a cursor whose row is gone (pruned) or unknown asks the client to resync.
   listen:(channel:string,fn:()=>void)=>db.listen(channel,fn),
   changes:{
-   async since(cursor:number|null,limit=500):Promise<{changes:any[],cursor:number,resync?:true}>{
+   async since(cursor:number|null,limit=500):Promise<{changes:any[],cursor:number,resync?:true,held?:true}>{
     const visible='xid < pg_snapshot_xmin(pg_current_snapshot())';
     const head=async()=>Number((await q(`SELECT seq FROM change WHERE ${visible} ORDER BY xid DESC, seq DESC LIMIT 1`)).rows[0]?.seq??0);
     if(cursor===null)return {changes:[],cursor:await head()};
     let from:any;
     if(cursor>0){from=(await q('SELECT xid::text AS xid, seq FROM change WHERE seq=$1',[cursor])).rows[0];if(!from)return {changes:[],cursor:await head(),resync:true}}
     const rows=(await q(`SELECT seq, kind, id, task_id, session_id, host_id, op FROM change WHERE ${visible}${from?' AND (xid, seq) > ($1::xid8, $2::bigint)':''} ORDER BY xid, seq LIMIT ${Math.max(1,Math.min(1000,Math.floor(limit)))}`,from?[from.xid,from.seq]:[])).rows;
-    return {changes:rows.map(r=>({seq:Number(r.seq),kind:r.kind,id:r.id,taskId:r.task_id,sessionId:r.session_id,hostId:r.host_id,op:r.op})),cursor:rows.length?Number(rows.at(-1).seq):cursor}},
+    // held: committed rows wait behind an older transaction still running anywhere on the server (xids and the snapshot xmin
+    // span every database). They commit no second NOTIFY when that transaction ends, so the reader must look again.
+    const held=rows.length<limit&&(await q(`SELECT 1 FROM change WHERE NOT (${visible}) LIMIT 1`)).rows.length>0;
+    return {changes:rows.map(r=>({seq:Number(r.seq),kind:r.kind,id:r.id,taskId:r.task_id,sessionId:r.session_id,hostId:r.host_id,op:r.op})),cursor:rows.length?Number(rows.at(-1).seq):cursor,...(held?{held:true as const}:{})}},
    // Retention: batches in their own lock scope, never GLOBAL, so writers do not wait for a prune.
    async prune(retentionDays:number,batch=10000):Promise<number>{let total=0;for(;;){const n=await run(async()=>(await q(`DELETE FROM change WHERE seq IN (SELECT seq FROM change WHERE at < now() - make_interval(days => $1) ORDER BY xid, seq LIMIT ${batch}) RETURNING seq`,[retentionDays])).rows.length,'write',false,'change:prune');total+=n;if(n<batch)return total}},
   },

@@ -315,11 +315,9 @@ of scope. The remaining file inventory is in the [executor README](../../crates/
 One slice, ported to Go and to Rust, on one machine, with one prompt and one
 model for the agent, repeated as the trial run plan sets. The candidate slice:
 
-*   Coordinator (both arms): SSE in `packages/coordinator/stream.ts`, the
-    `listen`, `tx` and `changes` parts of `store.ts`, `store.all` with a
-    filter, `POST /api/sessions`, `POST /api/sessions/:id/messages`,
-    `POST /api/hosts/events`, and the poll and receipt routes. This covers
-    Postgres, RLS, LISTEN, HTTP, SSE, and half of the host protocol.
+*   Coordinator (both arms): Postgres, RLS, LISTEN, HTTP, SSE, and half of
+    the host protocol. The exact routes, tables and behaviours are fixed in
+    [Trial slice (L1)](#trial-slice-l1).
 *   Executor (Go arm only, because the executor is already Rust): port
     `native.rs` and build it with `CGO_ENABLED=0` from Linux, the SQLite outbox
     without cgo, one MCP server as a subcommand.
@@ -376,6 +374,206 @@ which L2 already gives.
 
 If no candidate passes the rejection conditions, keep TypeScript and Rust and
 stop after L2-L4.
+
+### Trial slice (L1)
+
+Fixed on 2026-11-10 against `main` after L2-L4 and the Conversations merges.
+Requirements SL1-SL11 below are the slice's own; they live here until open
+question 2 names the requirement file for the whole system. Each has one
+outside test in `tests/trial/slice.test.ts` whose name starts with its
+identifier.
+
+| ID | Requirement | Risk the test guards |
+|---|---|---|
+| SL1 | A browser request carries `Authorization: Bearer <browser secret>` (exact secret, `Bearer` scheme only) and a known `X-Fleet-Person`; otherwise 401, or 403 for an unknown person. | Authorization header parsed loosely |
+| SL2 | A host request is authorized by its own host secret only. An unknown or missing secret is answered 401, never a redirect or another status; a host request carrying `X-Fleet-Person`, or a body `hostId` of another host, is 403. | The executor outbox keeps a row only on 3xx and 401 (`crates/executor/src/outbox.rs`): any other answer drops or completes work it should retry; host impersonation |
+| SL3 | `POST /api/sessions` creates a session directed by the caller; `GET /api/sessions/:id` returns it with `sessionId`, `directedBy`, `messages` and `executions`; an unknown id is 404. | Session row not committed or wrong shape |
+| SL4 | `POST /api/sessions/:id/messages` with exactly `requestId` and `text` (optional `delivery`) queues one execution on the default host and one `start` command; the same `requestId` returns the same execution; any other body is 400 and writes nothing; an unknown session is 404. | Duplicate work on a client retry |
+| SL5 | `POST /api/hosts/poll` records the host observation and returns the pending commands of the polling host only. | Work sent to the wrong machine |
+| SL6 | `POST /api/hosts/receipts` (status receipt) moves the command and execution forward only: a regression is 409, an invalid status 400, a repeated terminal receipt returns `{ok: true}` and changes nothing, another terminal status is 409, a command of another host is 403. | Outbox retries and reordering corrupt state |
+| SL7 | `POST /api/hosts/events` stores each event once with its `data` unchanged; `GET /api/executions/:id/events` returns them in `seq` order. A redelivered batch changes nothing; the same id with other content, a taken `seq`, or an invalid identity refuses the whole batch (409, 409, 400); another host is 403. | The `item`/`data` rename; a partial batch |
+| SL8 | `GET /api/stream` (SSE, `text/event-stream`) sends `ready` with a cursor, then every committed change after it in order with `id:` equal to its `seq`; `?cursor=<seq>` replays exactly the changes after that seq; an invalid cursor is 400. Live changes are woken by `LISTEN fleet_change`. | Lost or repeated live updates |
+| SL9 | A person without grants sees no row outside their scope, by read (404) or by stream (no change frames): row-level security with `fleet.project_ids` per transaction. | Scope not applied |
+| SL10 | Messages written at once on many sessions each get their execution; one `requestId` sent at once yields one execution; none fails. | Transaction and scope-lock layer under concurrency |
+| SL11 | Event batches of one execution sent at once all land, with no `seq` lost. | Execution-scope lock and serialization retry |
+
+**Routes.** Only the parts named here are in the slice; the port may answer
+anything else, and no outside test reaches it.
+
+| Route | In the slice | Out of the slice |
+|---|---|---|
+| every route | the `onRequest` credential check (SL1, SL2), the host `preHandler` body `hostId` check, the per-route transaction (read snapshot for GET, one GLOBAL write otherwise, execution scope for `/api/hosts/events`), RLS scope per person, 42501 as 403 | origin checks (`FLEET_BROWSER_PROXY_AUTH`, `Origin`), public app routes, architect-role routes |
+| `POST /api/ops/hosts_register` | owner registers a host with a minted secret (test setup) | every other operation |
+| `POST /api/sessions`, `GET /api/sessions/:id` | SL3 | `queued`, `questions`, `handoffs`, `transitions`, `forks`, `delegations` may be empty or absent |
+| `POST /api/sessions/:id/messages` | SL4: no profile, no account, no project; harness `codex`; host `FLEET_HOST_ID` | queueing a second message while an execution is active; profiles, accounts, projects, delivery |
+| `POST /api/hosts/poll` | SL5 and the `host-observation` write | delegation reconcile, problem detection, promotion, store observations, project trust |
+| `POST /api/hosts/receipts` | the status receipt (SL6) | account, delegation and project envelopes; the artifact gate on `completed`; native session capture; pipeline and delivery follow-ups |
+| `POST /api/hosts/events` | SL7, SL11 | transport-conflict records and recovery; harness version, child agents and totals |
+| `GET /api/executions/:id/events` | SL7 | |
+| `GET /api/stream` | SL8, SL9 | ping, pruning, the `close` frame |
+
+**Tables and kinds.** `document` (kinds `session`, `message`, `command`,
+`host`, `host-observation`, `event`, `event-delta`), `execution` (typed
+table), `change` (written by the `fleet_change` triggers, which also send
+`NOTIFY fleet_change`), `person` and `person_grant` (mirror of the people
+file), `schema_migration`. The schema is
+`packages/coordinator/db/schema.sql`, unchanged; RLS policies and triggers
+come from it.
+
+**Port target layout.** Both arms start from the same commit and the same
+rules:
+
+*   Rust: crate `crates/coordinator` (binary `fleet-coordinator`), a member
+    of the existing Cargo workspace, so it shares `Cargo.lock` and `target`
+    with the executor. Go: module in `go/` (`go/go.mod`), binary package
+    `go/coordinator`, built to `go/bin/fleet-coordinator` (ignored by git).
+*   The binary serves the slice routes on `127.0.0.1:$PORT` with the same
+    environment as `packages/coordinator/server.ts`: `FLEET_DATABASE_URL`
+    (role `fleet_app`), `FLEET_MIGRATION_DATABASE_URL` (role `fleet`, which
+    applies `packages/coordinator/db/schema.sql` at start in the same
+    `-- migration N` steps and records them in `schema_migration`),
+    `FLEET_PEOPLE_FILE`, `FLEET_BROWSER_SECRET`, `FLEET_HOST_ID`. Migration
+    6's JavaScript document move is a no-op on an empty database; the port
+    records the version without it.
+*   Host protocol types are generated at build time from
+    `contracts/host-protocol.schema.json` and not committed. Rust may reuse
+    the executor's generator (`crates/executor/build.rs`); the Go arm writes
+    its generator in Go as part of its work and the build runs it, so
+    `go build` needs no Node (open question 10).
+*   The arm adds `tests/trial/arms/<language>.json` (keys as in
+    `typescript.json`) and changes nothing under `packages/`, `app/`,
+    `tests/coordinator/` or `tests/trial/` except that file.
+
+**Outside tests and runner.** `node tests/trial/run.ts` is the one command:
+it starts (once per machine) a local PostgreSQL in `~/.cache/fleet-trial/pg`
+(initdb with trust authentication, Unix socket only, port 54329, left running
+for other worktrees), creates a fresh database for this worktree with
+`deploy/infrastructure/fleet-postgres.sql` (only the database name changed),
+starts the coordinator under test on a free port
+(`FLEET_TRIAL_SERVER`, default `node packages/coordinator/server.ts`), runs
+the tests with the base URL and secret in the environment, stops the server
+and drops the database. Tests are TypeScript on Node's test runner with the
+standard library only; they reach the server only over HTTP and SSE.
+Measured on 2026-11-10 (Apple M2, 8 CPUs, load 3): 11 tests; 1.2 s for the
+whole command including setup and teardown, 0.7 s of it the tests.
+
+**Shared-server finding.** Change visibility uses
+`pg_snapshot_xmin(pg_current_snapshot())`, and the snapshot xmin spans every
+database on the server. A transaction still open in another worktree's
+database therefore held committed changes back, and no second `NOTIFY`
+arrived when it ended, so the stream stalled until the next write (SL8 red
+in 1 of 4 parallel worktrees). `changes.since` now reports `held` and the
+stream looks again after 250 ms; a production coordinator had the same stall
+behind any long transaction that writes no change row.
+
+**Planted defects.** `node tests/trial/defects.ts` applies each defect to
+the current coordinator alone, runs the outside tests and restores the file.
+All 17 turn their test red.
+
+| ID | Defect | File | Red test |
+|---|---|---|---|
+| P1 | Event `data` stored as `item` (the `item`/`data` seam rename) | `recovery.ts` | SL7 |
+| P2 | Unknown host secret answered 403, not 401 (outbox rule) | `app.ts` | SL2 |
+| P3 | Unknown host secret answered 200 with an empty poll (outbox rule) | `app.ts` | SL2 |
+| P4 | Events written one by one while the batch is still checked | `recovery.ts` | SL7 |
+| P5 | Write routes without their transaction, message route without its own | `app.ts` | SL10 |
+| P6 | Write transactions take no scope lock | `store.ts` | SL10 |
+| P7 | Events returned in insertion order, not `seq` order | `app.ts` | SL7, SL11 |
+| P8 | Stream resume replays the change at the cursor (`>=`) | `store.ts` | SL8 |
+| P9 | Any authorization scheme accepted before the secret | `app.ts` | SL1 |
+| P10 | A host request may carry a person | `app.ts` | SL2 |
+| P11 | A body `hostId` of another host silently replaced | `app.ts` | SL2 |
+| P12 | A poll returns pending commands of every host | `app.ts` | SL5 |
+| P13 | A person without grants works in the operator scope | `app.ts` | SL9 |
+| P14 | Receipt status regression accepted | `app.ts` | SL6 |
+| P15 | SSE change frames without an `id:` line | `stream.ts` | SL8 |
+| P16 | SSE served as `text/plain` | `stream.ts` | SL8 |
+| P17 | LISTEN on the wrong channel | `stream.ts` | SL8 |
+
+Not covered by an outside test, with the reason:
+
+*   The advisory lock alone (`pg_advisory_xact_lock`): the in-process queue
+    orders writers of one server; the advisory lock matters only for a second
+    process, and the trial runs one.
+*   The `held` re-read: it needs a transaction open in another database
+    during the test, which the tests cannot open over HTTP. It shows under
+    N parallel worktrees (SL8) and in the measurement runs.
+*   Removing only the message route's own `store.tx`: not a defect, because
+    the per-route transaction already covers the handler.
+
+**Behaviour only old tests cover** (for the owner; old tests stay until the
+whole effort ends): everything marked out of the slice above; PGlite as a
+store; nested transactions and savepoints; serialization and deadlock retry
+with backoff; migrations 1-17 data moves; change-log pruning; profiles,
+accounts, projects, tasks, delegation, pipelines, artifacts, lab, threads and
+the agent tools.
+
+### Trial measurement protocol
+
+`node tests/trial/measure.ts <arm> [--runs 5] [--worktrees 4]` measures one
+arm the same way for the baseline and both ports. The arm file
+`tests/trial/arms/<arm>.json` names `setup` (per fresh worktree), `clean`,
+`check` (the command an agent runs before the outside tests), `build` (check
+plus the release artifact), `edit` (file for the one-line edit), `server`,
+`artifact`, `runtime`, `lockfiles`, `roots` and `disk`. The script creates N
+fresh git worktrees of `HEAD` (commit the arm first) under `$TMPDIR`, runs
+`setup` in each, and per run records:
+
+*   cold build (`clean`, then `build`), warm build (`build` again), rebuild
+    after appending one comment line to `edit` (including code generation);
+*   peak resident size of the largest compiler process (`/usr/bin/time -l`)
+    and of the server's process group during the outside tests (sampled every
+    100 ms by `run.ts`);
+*   outside-test time of `run.ts`, including setup and teardown;
+*   edit-to-green with N worktrees at once: the same one-line edit in each,
+    then `check` and `run.ts`, timed per worktree;
+
+and once: artifact size and runtime size, disk per worktree (`du -sk` of the
+`disk` paths), third-party packages in each lockfile, whole and as the
+closure of `roots`.
+
+Results are medians and min-max spreads over green runs. Every run records
+the 1-minute, 5-minute and 15-minute load averages at its start and end. A
+run is marked `comparable=false` when the 1-minute load average before the
+script started exceeded half the logical CPUs, or a process outside the
+script's own process tree used more than one core at the start or end of the
+run (file-event daemons that react to the script's own writes excluded). The
+script refuses nothing.
+
+Not measured by the script: build-fix cycles (counted by the porting worker,
+below), the darwin-arm64 path and a downloaded-file run (L2 rows), the
+generated transcript-event type (read from each arm's generator output).
+
+**Baseline** (`typescript`, current stack, 5 runs, N = 4): BASELINE_TABLE
+
+### Porting task
+
+Both porting workers get this text; only `<LANGUAGE>` differs (`Go` or
+`Rust`).
+
+> Port the Fleet coordinator trial slice to <LANGUAGE>. Read `AGENTS.md`,
+> `fleet.md`, and in `docs/designs/fleet-stack.md` the sections Trial (L1),
+> Trial slice (L1) and Trial measurement protocol; they fix the routes,
+> tables, behaviours, target layout and environment. Work in your own
+> worktree from the commit you were given; the time box is 8 agent-hours.
+>
+> Done means: `FLEET_TRIAL_SERVER=<your binary> node tests/trial/run.ts` is
+> green for all 11 tests SL1-SL11, unchanged; the binary builds from a clean
+> checkout with the documented commands; host protocol types are generated
+> at build time from `contracts/host-protocol.schema.json`; you add
+> `tests/trial/arms/<language>.json` and run
+> `node tests/trial/measure.ts <language>` once. Do not change the outside
+> tests, the schema, the contracts or the TypeScript coordinator. Do not read
+> the TypeScript coordinator's old tests for the slice behaviour; the
+> specification and the outside tests are the requirement.
+>
+> Count build-fix cycles: one cycle is one run of your build command or of
+> `run.ts` that fails, followed by an edit. Keep a log with one line per run:
+> time, command, result (`build-red`, `test-red: SL…`, `green`) and the
+> wall time. Report: total cycles until the first all-green run, cycles that
+> were compiler errors and cycles that were test failures, total agent time,
+> and the log. Then report the measurement table, the third-party packages
+> you added and why, and anything in the specification you found ambiguous.
 
 ### Migration if the language changes
 
@@ -494,15 +692,15 @@ steps below describe what that PR covers.
 
 ### Trial preparation
 
-6.  **Blocked on open question 2.** Assign identifiers to the requirements of the trial slice only, in the file
-    chosen for open question 2, and count them.
-7.  Write external tests for the slice that use only HTTP and the host
-    protocol, and make them green on the current stack. Choose the test
-    language before the port.
-8.  Plant at least 10 bugs, including the two known seam bugs and a violation
-    of the outbox rule for 3xx/401 responses; each must turn a test red. Old tests
-    stay; they are deleted at the end of the whole effort. Give the owner a
-    list of behaviour that only old tests cover.
+6.  Done: the slice's requirements are SL1-SL11 in
+    [Trial slice (L1)](#trial-slice-l1) (11 requirements); open question 2
+    stays open for the rest of the system.
+7.  Done: `tests/trial/slice.test.ts` (TypeScript, Node's test runner,
+    standard library only) and its runner `tests/trial/run.ts`, green on the
+    current stack.
+8.  Done: `tests/trial/defects.ts` plants 17 defects, including both known
+    seam bugs; each turns a test red. The list of behaviour that only old
+    tests cover is in [Trial slice (L1)](#trial-slice-l1).
 
 ### L3: contracts
 
@@ -583,8 +781,7 @@ the phase PR.
 *   **L4:** Rust MCP stdio approach (crate or hand-written JSON-RPC, counted
     against Goal 3); CLI parsing of `fleet-executor mcp <name>`; new module
     files; the outside tests that capture current server behaviour.
-*   **Trial preparation and L1:** test language, runner and directory for the
-    external slice tests; the planted-bug list with file, change and expected
-    red test; worktree naming and per-worktree Postgres database creation;
-    results table format.
+*   **L1:** answered in [Trial slice (L1)](#trial-slice-l1),
+    [Trial measurement protocol](#trial-measurement-protocol) and
+    [Porting task](#porting-task).
 
