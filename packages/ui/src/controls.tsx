@@ -398,7 +398,7 @@ export function Markdown({ text, onCopyFail }: { text: string; onCopyFail?: (e: 
 type Mark = { harness?: string | null; model?: string | null; effort?: string | null };
 /** Agent mark (D4): harness icon and the short label; the model id on hover. */
 export function AgentMark({ harness, model, effort }: Mark) {
-  return <span class="agent-mark">{harness && harness in harnesses && <HarnessMark h={harness as Harness} />}<span class="lbl" data-tip={model ?? undefined}>{agentLabel(model, effort)}</span></span>;
+  return <span class="agent-mark">{harness && harness in harnesses && <HarnessMark h={harness as Harness} />}<span class="lbl" data-tip={model ?? undefined}>{agentLabel(model, effort) || harness /* no model recorded: the harness still names the author */}</span></span>;
 }
 
 /** An operator or agent message: a head line with who wrote it and when (OR-2), then the content; copy on the right (OR-21).
