@@ -1,7 +1,7 @@
 // Operation timing at scale (report only): 100,000 tasks and 5,000 sessions, median of 7 per case.
 // Run: node tests/coordinator/bench-100k.ts [postgres-url]   (default PGlite in memory; a URL must name a disposable, migrated-or-empty database)
 import { createStore } from '../../packages/coordinator/store.ts';
-import { createApp } from '../../packages/coordinator/app.ts';
+import { createApp } from './test-app.ts';
 // Before the change Overview made one more task_page per project; now one grouped call carries every project's counts.
 const url = process.argv[2] ?? 'memory://', N = 100000, S = 5000;
 const store = createStore(url); await store.migrate();

@@ -1,6 +1,6 @@
 // Change feed (docs/designs/fleet-operator-app.md §4): triggers, kind map, (xid, seq) watermark, resync, the SSE route and lists.
 import {test} from 'node:test';import assert from 'node:assert/strict';import http from 'node:http';
-import {createStore} from '../../packages/coordinator/store.ts';import {createApp} from '../../packages/coordinator/app.ts';
+import {createStore} from '../../packages/coordinator/store.ts';import {createApp,OWNER} from './test-app.ts';
 const fresh=async(scope?:string)=>{const s=createStore('memory://',scope?{scope}:{});await s.migrate();return s};
 const read=(s:any,c:number|null)=>s.read(()=>s.changes.since(c));
 
@@ -37,7 +37,7 @@ test('watermark: a change of a transaction still running is not passed by a late
  const s=await fresh();await s.put('session',{id:'x1'});await s.put('session',{id:'x2'});
  const all=(await read(s,0)).changes.map((c:any)=>c.seq);assert.deepEqual(all,[...all].sort((a:number,b:number)=>a-b));await s.close()});
 
-const get=(url:string,cb:(chunk:string)=>void)=>new Promise<http.ClientRequest>(r=>{const q=http.get(url,{headers:{authorization:'Bearer b'}},res=>{res.setEncoding('utf8');res.on('data',cb)});r(q)});
+const get=(url:string,cb:(chunk:string)=>void)=>new Promise<http.ClientRequest>(r=>{const q=http.get(url,{headers:{authorization:'Bearer b','x-fleet-person':OWNER}},res=>{res.setEncoding('utf8');res.on('data',cb)});r(q)});
 test('SSE stream sends ready, then commits made after it opened; resumes from ?cursor=',async()=>{
  const app=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac'});await app.listen({port:0,host:'127.0.0.1'});
  const base=`http://127.0.0.1:${(app.server.address() as any).port}`;const store=(app as any).store;

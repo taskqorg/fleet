@@ -85,3 +85,7 @@ This is a design example, not the current project's measured configuration.
 - Reserving Claude for required work changes allocation policy, not every developer definition. A Codex alternative must still satisfy the selected role, skills, tools and assignment requirements.
 
 The person can inspect one explanation of the planned or actual work without browsing every source. Detailed configuration remains available when needed.
+
+## People and identity
+
+The guard (`deploy/infrastructure/origin_guard.py`) verifies the Cloudflare Access JWT and returns `Authorization: Bearer <browser secret>` and `X-Fleet-Person: <verified e-mail>`; Caddy strips any client-sent `X-Fleet-Person`. The coordinator reads `FLEET_PEOPLE_FILE` (required), the `people.json` of [people and access](designs/fleet-people-access.md) §1: `[{email, name, roles, owner?, grants: [{kind, id}]}]` with exactly one `owner: true`. A browser request without the header is 401; an e-mail not in the file is 403; a host request with the header is 403. `FLEET_ACCESS_OWNER` is removed.

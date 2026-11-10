@@ -1,3 +1,4 @@
+import {requester} from './people.ts';
 // Pipeline format version 2 runner (docs/designs/fleet-lab.md, "Pipeline format version 2", Stage 2 item 20).
 // A run is an ordered chain of api, agent and script steps. The run is the pipeline_run execution (legacy record kind
 // 'pipeline-run', whose steps are the pipeline_step rows `<run>:step:<i>`); each provider call is a tool_run child of its
@@ -89,7 +90,7 @@ export function pipelineRunner(d:Deps){
 
  async function start(o:{id?:string,file:string,projectId:string|null,requestId:string,example?:any,overrides?:any,requestedBy?:any,experimentId?:string,variant?:string,extra?:any}){
   const definition=load(o.file),now=Date.now();
-  const run:any={id:o.id??randomUUID(),projectId:o.projectId,requestId:o.requestId,requestedBy:o.requestedBy??{kind:'operator'},definition,definitionSha256:createHash('sha256').update(JSON.stringify(definition)).digest('hex'),
+  const run:any={id:o.id??randomUUID(),projectId:o.projectId,requestId:o.requestId,requestedBy:o.requestedBy??requester(),definition,definitionSha256:createHash('sha256').update(JSON.stringify(definition)).digest('hex'),
    pipelineId:definition.id,pipeline:o.file,example:o.example??{},overrides:o.overrides??{},experimentId:o.experimentId??undefined,variant:o.variant??undefined,state:'running',startedAt:now,durationMs:null,usage:null,result:null,
    steps:definition.steps.map((s:any)=>({id:s.id,kind:s.kind,...(s.kind==='api'?{tool:s.tool,connection:s.connection}:{}),state:'pending'})),...o.extra};
   await store.put('pipeline-run',run);return run}

@@ -9,7 +9,8 @@
 // shell command run in that directory with FLEET_OUTPUT_DIR set to it, the same contract a Stage 3 script evaluator uses;
 // the directory of the node running this script is appended to PATH, so checks that call node work where node is not on
 // PATH (a systemd unit) and the caller's own PATH order still wins.
-// import posts to $FLEET_URL/api/lab/examples with the operator credential from $FLEET_TOKEN, and sends $FLEET_ORIGIN (else
+// import posts to $FLEET_URL/api/lab/examples with the operator credential from $FLEET_TOKEN and the person e-mail from $FLEET_PERSON
+// (X-Fleet-Person, as the guard sets it), and sends $FLEET_ORIGIN (else
 // $FLEET_BROWSER_ORIGIN, the coordinator's own setting) as Origin when set (a coordinator with FLEET_BROWSER_PROXY_AUTH refuses a POST without its FLEET_BROWSER_ORIGIN);
 // --project ID sets the project.
 import {execFileSync} from 'node:child_process';
@@ -37,8 +38,8 @@ export function checkExample(raw:any,useCases:Set<string>):string[]{let e:Exampl
  if(!runChecks(e,e.inputs).length)problems.push('every check passes on the inputs alone');
  return problems}
 
-export async function importExamples(o:{url:string,token:string,origin?:string,examples:any[],projectId?:string}){
- const headers:Record<string,string>={'content-type':'application/json',authorization:'Bearer '+o.token};if(o.origin)headers.origin=o.origin;
+export async function importExamples(o:{url:string,token:string,origin?:string,person?:string,examples:any[],projectId?:string}){
+ const headers:Record<string,string>={'content-type':'application/json',authorization:'Bearer '+o.token};if(o.origin)headers.origin=o.origin;if(o.person)headers['x-fleet-person']=o.person;
  const r=await fetch(o.url.replace(/\/$/,'')+'/api/lab/examples',{method:'POST',headers,body:JSON.stringify({examples:o.examples,projectId:o.projectId,approved:true})});
  const body=await r.text();if(!r.ok)throw Error(`import failed: ${r.status} ${body}`);return JSON.parse(body) as {examples:any[]}}
 
@@ -49,7 +50,7 @@ async function main(argv:string[]){const [cmd,...rest]=argv,root=resolve(dirname
   for(const x of examples){const p=checkExample(x,useCases);console.log(`${x?.id??'?'}: ${p.length?'FAIL\n  '+p.join('\n  '):Array.isArray(x?.checks)&&!x.checks.length?'no script checks (owner or judge rating)':'ok'}`);if(p.length)bad++}
   console.log(`${examples.length-bad} of ${examples.length} examples pass their checks with no agent`);if(bad)process.exitCode=1;return}
  if(cmd==='import'){const url=process.env.FLEET_URL,token=process.env.FLEET_TOKEN;if(!url||!token)throw Error('FLEET_URL and FLEET_TOKEN required');
-  for(const x of (await importExamples({url,token,origin:process.env.FLEET_ORIGIN||process.env.FLEET_BROWSER_ORIGIN,examples,projectId})).examples)console.log(`${x.id}@${x.version}: ${x.created?'created':'already stored'} ${x.artifactId}`);return}
+  for(const x of (await importExamples({url,token,person:process.env.FLEET_PERSON,origin:process.env.FLEET_ORIGIN||process.env.FLEET_BROWSER_ORIGIN,examples,projectId})).examples)console.log(`${x.id}@${x.version}: ${x.created?'created':'already stored'} ${x.artifactId}`);return}
  throw Error('usage: lab-examples.ts check|import FILE… [--project ID]')}
 
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))main(process.argv.slice(2)).catch(e=>{console.error(e.message);process.exitCode=1});

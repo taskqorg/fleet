@@ -1,6 +1,6 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,readFileSync,writeFileSync} from 'node:fs';import {tmpdir} from 'node:os';
-import {createApp} from '../../packages/coordinator/app.ts';
+import {createApp} from './test-app.ts';
 import {attachStores,upload} from './artifact-helpers.ts';
 test('durable scoped delegation, sequential dispatch, actual results and stop suppression',async()=>{
  const dir=mkdtempSync(tmpdir()+'/fleet-delegate-');mkdirSync(dir+'/profiles');

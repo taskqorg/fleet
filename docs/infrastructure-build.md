@@ -28,7 +28,7 @@ Parent must finish corrected release validation, coordinator auth/ownership chec
 
 ## Repeat installation/check
 
-Preserve protected host env files. Use dedicated root-owned guard source/runtime and fleet user units; install pinned guard dependencies into its isolated venv, never shared Hermes runtime. Run fixture with FLEET_ACCESS_OWNER loaded privately from guard env. Use `systemd-analyze --user verify` for units, then fleet user daemon-reload and enable/start only the guard. Read back active PID/restarts, `ss -ltn`, and missing/forged-JWT403. Never start coordinator/public route as part of guard setup.
+Preserve protected host env files. Use dedicated root-owned guard source/runtime and fleet user units; install pinned guard dependencies into its isolated venv, never shared Hermes runtime. Run the fixture with FLEET_BROWSER_SECRET loaded privately from guard env; the guard accepts any verified Access e-mail and returns it as X-Fleet-Person. Use `systemd-analyze --user verify` for units, then fleet user daemon-reload and enable/start only the guard. Read back active PID/restarts, `ss -ltn`, and missing/forged-JWT403. Never start coordinator/public route as part of guard setup.
 
 Recheck DNS/Access exact identities through API without printing policy identities or tokens. Use `id fleet`, `loginctl show-user fleet -p Linger`, private-file `stat`, Node version as fleet and loopback listener inspection. Caddy must pass validation before parent-authorized graceful reload; no firewall edits or unrelated restarts.
 

@@ -469,3 +469,26 @@ ALTER TABLE artifact ADD CONSTRAINT artifact_role_check CHECK (role IN ('origina
 ALTER TABLE artifact ADD COLUMN approved_at timestamptz NULL;
 -- One live example artifact per project and name (name carries id and version); a purged one does not block a re-import.
 CREATE UNIQUE INDEX artifact_example ON artifact((coalesce(project_id, '')), name) WHERE role = 'example' AND state <> 'deleted';
+
+-- migration 13: people (docs/designs/fleet-people-access.md §1, slice 1). Loaded from people.json by people.ts; the file is the
+-- source of truth and these rows are its last valid load. A person reads their own rows; '*' scope reads all.
+CREATE TABLE person(
+ email text PRIMARY KEY,
+ name text NOT NULL,
+ roles text[] NOT NULL,
+ owner boolean NOT NULL DEFAULT false,
+ loaded_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE person_grant(
+ email text NOT NULL REFERENCES person(email) ON DELETE CASCADE,
+ object_kind text NOT NULL,
+ object_id text NOT NULL,
+ PRIMARY KEY (email, object_kind, object_id)
+);
+CREATE UNIQUE INDEX person_one_owner ON person(owner) WHERE owner;
+ALTER TABLE person ENABLE ROW LEVEL SECURITY;
+ALTER TABLE person FORCE ROW LEVEL SECURITY;
+CREATE POLICY person_scope ON person USING (current_setting('fleet.project_ids', true) = '*' OR email = current_setting('fleet.person', true));
+ALTER TABLE person_grant ENABLE ROW LEVEL SECURITY;
+ALTER TABLE person_grant FORCE ROW LEVEL SECURITY;
+CREATE POLICY person_scope ON person_grant USING (current_setting('fleet.project_ids', true) = '*' OR email = current_setting('fleet.person', true));

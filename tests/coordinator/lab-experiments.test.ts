@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,chmodSync,readFileSync,cpSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
-import {createApp} from '../../packages/coordinator/app.ts';
+import {createApp} from './test-app.ts';
 import {shuffle,parseRating,summarize,agreement} from '../../packages/coordinator/lab/scores.ts';
 import {attachStores} from './artifact-helpers.ts';
 

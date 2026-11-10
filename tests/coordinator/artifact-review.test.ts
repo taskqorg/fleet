@@ -1,7 +1,7 @@
 // Review fixes of PR #25: idempotent commit, final receipts, required declarations, failed-copy backoff and retry, invalid
 // rules reported, lease renewal.
 import {test} from 'node:test';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';import {mkdtempSync,mkdirSync,writeFileSync} from 'node:fs';import {tmpdir} from 'node:os';
-import {createApp} from '../../packages/coordinator/app.ts';import {fakeStore} from './s3-fake.ts';import {upload} from './artifact-helpers.ts';
+import {createApp} from './test-app.ts';import {fakeStore} from './s3-fake.ts';import {upload} from './artifact-helpers.ts';
 const sha=(b:Buffer)=>createHash('sha256').update(b).digest('hex');
 async function setup(){const dir=mkdtempSync(tmpdir()+'/fleet-review-');
  const project=(id:string,locations:string[],extra:any={})=>{mkdirSync(dir+'/projects/'+id,{recursive:true});writeFileSync(dir+'/projects/'+id+'/project.json',JSON.stringify({id,name:id,contextFiles:[],artifact_locations:locations,...extra}))};

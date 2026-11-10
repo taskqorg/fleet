@@ -189,6 +189,8 @@ Five gaps in today's code stop a second person from joining. Each one is load-be
 *   **Owner.** `people.json` marks one entry `owner: true` (Alex). Owner-only operations and the `*` scope check this flag. `FLEET_ACCESS_OWNER` is removed from the guard and from `server.ts`.
 *   **Coordinator.** A browser request without `X-Fleet-Person` is 401. An e-mail not in `person` (and not a live `share`) is 403. The request context carries `person`. Every audit `actor` becomes the person's e-mail; agents keep their execution ID as actor, and program workers keep `program-worker`.
 *   **`me`** returns the person, roles and a `grantsVersion` that is a hash of the person's `people.json` entry.
+*   **Loopback scripts.** A script that calls the coordinator with the browser Bearer directly (on PDS18 loopback, for example `scripts/lab-examples.ts import`) sends `X-Fleet-Person` itself, from `FLEET_PERSON`. The coordinator re-reads `people.json` when its mtime, size or inode changes; after a restart with a broken file it serves the last valid load from the `person` rows.
+*   **Until slice 3.** A person other than the owner may call only `me`; everything else is 403 until per-person visibility (slice 3) lands. Slice 3 removes this gate.
 
 ### 2. Visibility
 

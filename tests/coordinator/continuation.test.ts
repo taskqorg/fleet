@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {createApp} from '../../packages/coordinator/app.ts';
+import {createApp} from './test-app.ts';
 import {attachStores,upload} from './artifact-helpers.ts';
 test('retained artifact differences survive restart and enforce session boundary',async()=>{
  const config={database:mkdtempSync(tmpdir()+'/fleet-diff-')+'/db',browserSecret:'browser',machineSecret:'machine',hostId:'mac',storeEndpointHosts:['127.0.0.1']};
