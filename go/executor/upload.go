@@ -557,32 +557,60 @@ func transferWork(db *sql.DB, c *transferClient, lane string, after afterJob) {
 		var id, kind, bodyText string
 		var attempts int64
 		err := db.QueryRow("SELECT id,kind,body,attempts FROM transfers WHERE state IN ('queued','running') AND "+lane+" AND next_at<=? ORDER BY created_at LIMIT 1", nowMs()).Scan(&id, &kind, &bodyText, &attempts)
+		if err == nil {
+			_, err = db.Exec("UPDATE transfers SET state='running' WHERE id=?", id)
+		}
 		if err != nil {
 			time.Sleep(250 * time.Millisecond)
 			continue
 		}
-		db.Exec("UPDATE transfers SET state='running' WHERE id=?", id)
 		body := decM(bodyText)
 		v, f := runJob(c, db, id, kind, body)
-		cmd, hasCmd := body["command"]
-		switch {
-		case f == nil:
-			db.Exec("UPDATE transfers SET state='done',response=? WHERE id=?", enc(v), id)
-			if hasCmd {
-				queue(db, "/api/hosts/receipts", M{"hostId": c.host, "commandId": jAt(cmd, "id"), "executionId": jAt(cmd, "executionId"), "status": "completed"})
+		// The terminal state and its outbound notices commit together. In this process a failed commit is retried as a
+		// commit, not by running the job again (a crash before the commit leaves the row running, and the job runs again
+		// after restart: transfers resume by their journal row). The cleanup callback runs only after the commit; a crash
+		// between them skips previews and leaves the spool copy.
+		for {
+			err := dbExec{db}.tx(func(x execer) error { return settleJob(x, c.host, id, kind, body, attempts, v, f) })
+			if err == nil {
+				break
 			}
+			fmt.Fprintln(os.Stderr, "executor: transfer journal write failed; retrying:", err)
+			time.Sleep(time.Second)
+		}
+		if f == nil {
 			after(c, db, body, v)
-		case f.retry:
-			db.Exec("UPDATE transfers SET attempts=attempts+1,next_at=?,response=? WHERE id=?", nowMs()+backoff(attempts), enc(M{"state": "retrying", "error": f.msg}), id)
-		default:
-			db.Exec("UPDATE transfers SET state='failed',response=? WHERE id=?", enc(M{"state": "failed", "error": f.msg}), id)
-			if hasCmd {
-				queue(db, "/api/hosts/receipts", M{"hostId": c.host, "commandId": jAt(cmd, "id"), "executionId": jAt(cmd, "executionId"), "status": "failed", "error": f.msg})
-			}
-			// An upload that can never succeed fails its artifact at once, with the store's reason.
-			if kind == "upload" {
-				queue(db, "/api/hosts/artifacts/failed", M{"hostId": c.host, "artifactId": id, "error": f.msg})
-			}
 		}
 	}
+}
+
+// settleJob records a job's outcome: done or failed with the command's final receipt (and, for an upload that can never
+// succeed, the artifact failure), or a retry with backoff.
+func settleJob(x execer, host, id, kind string, body M, attempts int64, v any, f *failure) error {
+	cmd, hasCmd := body["command"]
+	switch {
+	case f == nil:
+		if _, err := x.Exec("UPDATE transfers SET state='done',response=? WHERE id=?", enc(v), id); err != nil {
+			return err
+		}
+		if hasCmd {
+			return queue(x, "/api/hosts/receipts", M{"hostId": host, "commandId": jAt(cmd, "id"), "executionId": jAt(cmd, "executionId"), "status": "completed"})
+		}
+	case f.retry:
+		_, err := x.Exec("UPDATE transfers SET attempts=attempts+1,next_at=?,response=? WHERE id=?", nowMs()+backoff(attempts), enc(M{"state": "retrying", "error": f.msg}), id)
+		return err
+	default:
+		if _, err := x.Exec("UPDATE transfers SET state='failed',response=? WHERE id=?", enc(M{"state": "failed", "error": f.msg}), id); err != nil {
+			return err
+		}
+		if hasCmd {
+			if err := queue(x, "/api/hosts/receipts", M{"hostId": host, "commandId": jAt(cmd, "id"), "executionId": jAt(cmd, "executionId"), "status": "failed", "error": f.msg}); err != nil {
+				return err
+			}
+		}
+		if kind == "upload" {
+			return queue(x, "/api/hosts/artifacts/failed", M{"hostId": host, "artifactId": id, "error": f.msg})
+		}
+	}
+	return nil
 }
