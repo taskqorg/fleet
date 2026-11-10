@@ -184,6 +184,9 @@ test('PM8 profile: a PM session carries its skills and sees the task tools (risk
   const {commands} = ok(await hostCall(OWNER, '/api/hosts/poll', poll));
   const c = commands.find((x: any) => x.executionId === s.executionId && x.kind === 'start');
   assert.deepEqual(JSON.stringify(c).match(/"id":"pm-(tasks|watch|fleet)"/g)?.length, 3, 'three skills in the start command');
+  const offered = (c.payload.fleetOperations ?? []).map((x: any) => x.name);
+  for (const n of ['task_create', 'task_release', 'people_set', 'focus_set', 'watch_set']) assert.ok(offered.includes(n), 'the start command offers ' + n);
+  assert.ok(!offered.includes('task_take'), 'never a person-only tool');
   const pm = await agent(OWNER, {projectId: PROJECT, role: 'pm'});
   const names = await pm.list();
   for (const n of ['task_create', 'task_release', 'watch_set', 'focus_set', 'people_set', 'setting_changes']) assert.ok(names.includes(n), n);

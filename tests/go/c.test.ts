@@ -100,6 +100,12 @@ test('C4 spool line naming a disabled key disables its row and asks the owner on
   writeFileSync(join(dir, day + '.jsonl'), line(randomUUID()) + '\n' + line(randomUUID()) + '\n', {flag: 'a'});
   const key = await until(async () => ok(await op('connections_list')).connections.find((x: any) => x.name === c)?.keys.find((x: any) => x.state === 'disabled'), 'key disabled');
   assert.match(key.disabledReason, /401/);
+  // A dispatch pass (a host poll) withdraws only its own stall questions, never the key question (live stand, 2026-11-10).
+  const cause = `key:${k.fingerprint}:disabled`;
+  await until(async () => ok(await op('questions_list', {state: 'open'})).questions.find((x: any) => x.cause === cause), 'key question');
+  const secret = ok(await op('hosts_register', {id: name('h')})).secret;
+  assert.equal((await fetch(BASE + '/api/hosts/poll', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + secret}, body: JSON.stringify({platform: 'linux', capabilities: [], stores: [], problems: []})})).status, 200);
+  assert.ok(ok(await op('questions_list', {state: 'open'})).questions.some((x: any) => x.cause === cause), 'key question still open after dispatch');
   // A disabled key comes back only through the owner.
   ok(await op('connections_key_state', {keyId: k.fingerprint, state: 'active'}));
 });

@@ -151,7 +151,7 @@ func validNativeProfile(p doc) bool {
 	return validAntigravitySettings(p["settings"]) && !hasTools
 }
 
-var profileOptional = []string{"delegationProfiles", "harness", "instructionRole", "tools", "settings", "fleetTools", "collaborationTools", "gitNetwork", "skills", "connections"}
+var profileOptional = []string{"delegationProfiles", "harness", "instructionRole", "tools", "settings", "fleetTools", "collaborationTools", "gitNetwork", "skills", "connections", "fleetOperations"}
 
 func readTrustedProfile(id string) (doc, error) {
 	if !idPattern.MatchString(id) {

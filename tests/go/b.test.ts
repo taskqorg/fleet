@@ -100,6 +100,17 @@ test('B6c project readiness: a member with the project grant starts it and reads
   ok(await op('execution_status', {executionId: h.executionId}, member));
 });
 
+test('B6b the web answer to an agent question (questions_answer) is delivered to the asking session like reply', async () => {
+  // Risk: the UI answers an agent question, the answer is recorded, but the agent never receives it (live stand, 2026-11-10).
+  const sid = await session();
+  const e = ok(await send(sid, 'start'));
+  const q = ok(await op('ask', {executionId: e.id, requestId: 'q-web', question: 'Which colour?'}));
+  ok(await op('questions_answer', {questionId: q.id, answer: 'blue'}));
+  const s = ok(await call('GET', '/api/sessions/' + sid));
+  assert.equal(s.questions.find((x: any) => x.id === q.id).state, 'answered');
+  assert.match(s.queued[0].text, /blue/);
+});
+
 test('B7 tools: the operation table is served as MCP tools', async () => {
   // Risk: agents and the app lose tools they call by name.
   const list = ok(await call('POST', '/api/tools', {jsonrpc: '2.0', id: 1, method: 'tools/list'}));

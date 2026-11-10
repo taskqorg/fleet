@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -687,7 +688,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	fleetMCP := []any{}
 	if fleetTools {
-		context := M{"hostId": e.host, "commandId": c["id"], "executionId": c["executionId"], "profiles": profiles, "projectId": p["projectId"], "workdir": work, "inputDir": inputDir, "spool": filepath.Join(e.root, "spool")}
+		context := M{"hostId": e.host, "commandId": c["id"], "executionId": c["executionId"], "profiles": profiles, "projectId": p["projectId"], "workdir": work, "inputDir": inputDir, "spool": filepath.Join(e.root, "spool"), "operations": p["fleetOperations"]}
 		args := []any{"mcp", "delegation", filepath.Join(e.root, "journal.sqlite"), enc(context)}
 		server := M{"command": exe(), "args": args}
 		if name == "codex" {
@@ -697,6 +698,11 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			}
 			if jIsStr(p, "projectId") {
 				tools = append(tools, "project_context", "catalogue", "pipeline_run", "direct_search", "pipeline_history", "pipeline_get", "question_ask", "question_history", "account_list")
+			}
+			for _, o := range jArr(p, "fleetOperations") {
+				if n := jStr(o, "name"); n != "" && !slices.Contains(tools, any(n)) {
+					tools = append(tools, n)
+				}
 			}
 			server["tools"] = tools
 			fleetMCP = tools
@@ -912,7 +918,7 @@ func readStdout(r *os.File, rawLog *os.File, w *wire, acpProtocol bool, out chan
 		}
 		if derr != nil {
 			w.mu.Unlock()
-			out <- enc(M{"type": "protocol.failed", "error": "native protocol outcome unconfirmed; no replay"})
+			out <- enc(M{"type": "protocol.failed", "error": "native protocol outcome unconfirmed; no replay", "reason": derr.Error()})
 			return
 		}
 		for _, req := range requests {
