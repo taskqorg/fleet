@@ -18,3 +18,13 @@ qualified before merge. A host selects a successful main run for normal use.
 Each target has a binary and adjacent SHA-256 file, named with the full target
 triple. Checksums detect corruption; GitHub access and selected revision are
 the trust boundary. No signing identity or automatic quarantine removal is added.
+
+## If the executor moves to Go
+
+The Go executor probe (`go/probe/`) built every spike with `CGO_ENABLED=0`
+for linux/amd64, darwin/arm64 and windows/amd64 from one Mac, using pure-Go
+SQLite (`modernc.org/sqlite`) and `github.com/ebitengine/purego` for the
+macOS libproc calls. A Go executor therefore needs no cross-compilation
+toolchain and no native macOS runner, provided one runner building all
+targets is verified in CI (the probe built them on a Mac only). The Linux binary is static, so the glibc 2.39 requirement above no
+longer applies. Signing and quarantine are unchanged.
