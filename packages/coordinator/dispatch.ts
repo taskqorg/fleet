@@ -11,7 +11,9 @@ export type Candidate={subscription:{id:string,name:string,holder:string}|null,h
 type Deps={store:Store,hosts:{list:()=>Promise<Host[]>,maySee:(h:Host,p:string|null|undefined)=>boolean},
  resolve:(selection:string|undefined,harness:string,hostId:string,director?:string|null,projectId?:string|null)=>Promise<any>,
  subscriptionsOf:(projectId:string|null)=>string[],defaultBinding?:string,defaultHost:string,
- budgetsReached:(e:any)=>Promise<{id:string,action:string,reason:string}[]>,claim:(e:any,hostId:string,binding:any)=>Promise<any>};
+ budgetsReached:(e:any)=>Promise<{id:string,action:string,reason:string}[]>,
+ checkouts:(projectId:string|null)=>{hostId:string,checkoutPath:string}[],
+ readings:{latest:()=>Promise<Map<string,any[]>>,overSwitch:(a:any,list:any[]|undefined)=>string|null},claim:(e:any,hostId:string,binding:any)=>Promise<any>};
 const ONLINE_MS=30000; // the existing online rule (accounts.ts connectivity, app.ts HOST_STALE_MS): a poll within the last 30 s
 
 export function dispatcher(d:Deps){
@@ -21,12 +23,14 @@ export function dispatcher(d:Deps){
  const causeOf=(a:any,host:string,message:string)=>/Paused/.test(message)?`subscription:${a.id}:paused`:/not allowed on host/.test(message)?`placement:${host}:${a.harness}`:/held by/.test(message)?`subscription:${a.id}:not-taken`:/ready binding/.test(message)?`subscription:${a.id}:not-ready`:`subscription:${a.id}:refused`;
  // What every candidate list of one poll reads, loaded once per run.
  const context=async()=>{const hosts=(await d.hosts.list()).filter(h=>!h.roles.length);
-  return {hosts,byId:new Map(hosts.map(h=>[h.id,h])),seen:new Map((await store.all('host-observation')).map((o:any)=>[o.id,o.lastSeenAt])),accounts:await store.all('managed-account')}};
+  const obs=await store.all('host-observation');
+  return {hosts,byId:new Map(hosts.map(h=>[h.id,h])),seen:new Map(obs.map((o:any)=>[o.id,o.lastSeenAt])),roots:new Map(obs.map((o:any)=>[o.id,o.projectRoots])),accounts:await store.all('managed-account'),readings:await d.readings.latest()}};
  async function rank(e:any,k?:Awaited<ReturnType<typeof context>>):Promise<Candidate[]>{
   k??=await context();const {byId,seen}=k;
   const x=e.dispatch,director=e.directedBy??null,projectId=x.projectId??null;
   const order=x.host?[x.host]:[...new Set([x.last,d.defaultHost,...k.hosts.map(h=>h.id)])].filter(h=>byId.has(h));
   const named=(v:string)=>(a:any)=>a.id===v||a.name===v||(a.bindings??[]).some((b:any)=>b.binding===v);
+  const checkouts=d.checkouts(projectId);
   const accounts=k.accounts.filter((a:any)=>(a.harness??'codex')===x.harness),out:Candidate[]=[];
   let subs:any[];
   if(x.account){
@@ -50,7 +54,11 @@ export function dispatcher(d:Deps){
    const skip=(reason:string,cause:string)=>{c.skipped=reason;c.cause=cause};
    if(!d.hosts.maySee(h,projectId)){skip(`${id} is held by ${h.holder}, who has no grant on ${projectId}`,`host:${id}:trust`);continue}
    if(h.intake==='paused'){skip(`${id} is Paused`,`host:${id}:paused`);continue}
+   // The project's checkout on this host must sit under the host's FLEET_PROJECT_ROOTS (the executor refuses it otherwise).
+   const roots:string[]|undefined=k.roots.get(id),checkout=x.workingDirectory??checkouts.find(c=>c.hostId===id)?.checkoutPath;
+   if(roots&&checkout&&!roots.some(r=>checkout===r||checkout.startsWith(r.replace(/\/$/,'')+'/'))){skip(`checkout ${checkout}${projectId?` of ${projectId}`:''} is outside FLEET_PROJECT_ROOTS on ${id}`,`host:${id}:roots:${projectId}`);continue}
    if(a){try{c.binding=await d.resolve(a.name,x.harness,id,director,projectId)}catch(err:any){skip(err.message,causeOf(a,id,err.message));continue}
+    const over=d.readings.overSwitch(a,k.readings.get(a.id));if(over){skip(over,`subscription:${a.id}:limit`);continue}
     if(a.harness==='claude'&&a.holder!==h.holder)c.warnings.push(`${h.holder} can read this login (Claude on a host held by someone else)`)}
    else{
     if(x.harness!=='codex'&&!x.account){skip(`no ${x.harness} subscription of ${director} applies`,`director:${director}:${x.harness}`);continue}

@@ -26,6 +26,7 @@ import {labOperations,registerLab} from './lab/routes.ts';
 import {peopleRegistry,requestPerson,actor,mayAccessProject,director} from './people.ts';
 import {dispatcher} from './dispatch.ts';
 import {budgets} from './budgets.ts';
+import {readings} from './readings.ts';
 import {hostRegistry,type Host} from './hosts.ts';
 import type {HostEvents,PollReply,PollRequest,Receipt,AccountReceipt,ProjectReceipt,ChildReceipt} from '../../contracts/generated/host-protocol.ts';
 declare module 'fastify' {interface FastifyRequest {fleetHost:Host}}
@@ -191,21 +192,24 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   if(extra.host!==undefined&&!(await hosts.executionIds()).includes(extra.host))fail(400,'Unknown host '+extra.host);
   // Late choice (§6): queue time records only constraints; dispatch picks host and subscription on a host poll.
   const e:any={...(s.agentConfig?{agentConfig:s.agentConfig,profileSha256:profileDigest(s.agentConfig)}:{}),id:randomUUID(),executionId:'',sessionId:s.id,hostId:null,state:'queued',createdAt:Date.now(),directedBy:s.directedBy,model:s.agentConfig?.model??'gpt-6.1-sol',effort:s.agentConfig?s.agentConfig.effort:'low',
-   dispatch:{harness,projectId:s.projectId??null,account:s.account??null,host:extra.host??null,last:last??null,input,payload:extra.payload??null}};e.executionId=e.id;
+   dispatch:{harness,projectId:s.projectId??null,workingDirectory:s.workingDirectory??null,account:s.account??null,host:extra.host??null,last:last??null,input,payload:extra.payload??null}};e.executionId=e.id;
   Object.assign(e,extra.execution);
   await put('execution',e);await put('message',{id:randomUUID(),sessionId:s.id,executionId:e.id,requestId:requestId,text:input});
   return e;
  });
- const budgetModel=budgets(store);
+ const budgetModel=budgets(store),readingModel=readings(store);
  // The start command of a claimed execution (dispatch.ts): the session as it is now, the chosen host and subscription binding.
  const startCommand=async(e:any,hostId:string,binding:any)=>{const s=await get(e.sessionId,'session'),d=e.dispatch,input=d.input;
   Object.assign(e,{hostId,...(s.account||binding?{requestedAccount:s.account??null,effectiveAccount:binding??{binding:s.account,legacy:true}}:{}),...(binding?.taken?{directedBy:binding.holder,takenFrom:e.directedBy}:{})});
   const command:any={id:randomUUID(),executionId:e.id,sessionId:s.id,hostId,kind:'start',payload:{harness:s.agentConfig?.harness??'codex',...(s.account||binding&&!s.nativeSessionId?{account:binding?.binding??s.account,...(binding?{managedAccount:binding}:{})}:{}),text:input,...(s.projectId?{projectId:s.projectId,project:projects.project_context({projectId:s.projectId}).settings}:{}),...(gitNetwork(s)?{gitNetwork:true}:{}),setup:s.setup??'run',...(s.workingDirectory?{workingDirectory:s.workingDirectory}:{}),model:e.model,effort:e.effort,...(s.agentConfig?{agentConfig:s.agentConfig}:{}),instructions:s.agentConfig?'':'Follow the user request and its scope. Discuss, answer questions, or review existing results when requested; do not create or modify a website unless requested. When creating a static website, deliver output/index.html and retain all source assets. Do not spawn subagents.',...(s.nativeSessionId?{nativeSessionId:s.nativeSessionId}:{}),...(d.payload??{})},status:'pending'};(await agent.decorate(s,e,command));
   await put('execution',e);await put('command',command);
   // An automatic take (the subscription's take rule listed the project): the holder directs the task from now on (§5).
-  if(binding?.taken&&s.deliveryId)await store.tasks.take(s.deliveryId,binding.holder);
+  // The task is the delivery's, or the one the execution is linked to; taken_from is the director before the take.
+  const taskId=binding?.taken?s.deliveryId??(await store.query('SELECT task_id FROM execution WHERE id=$1',[e.id]))[0]?.task_id:null;
+  if(taskId)await store.tasks.take(taskId,binding.holder,e.takenFrom);
   return command};
- const dispatch=dispatcher({store,hosts,resolve:managed.resolve,subscriptionsOf:(id)=>subscriptionsOf(id),defaultBinding:config.defaultAccountBinding,defaultHost:config.hostId,budgetsReached:budgetModel.reached,claim:startCommand});
+ const dispatch=dispatcher({store,hosts,resolve:managed.resolve,subscriptionsOf:(id)=>subscriptionsOf(id),defaultBinding:config.defaultAccountBinding,defaultHost:config.hostId,budgetsReached:budgetModel.reached,readings:readingModel,claim:startCommand,
+  checkouts:(id)=>{if(!id)return [];try{return projects.project_context({projectId:id}).settings.environments??[]}catch{return []}}});
  // Account for a new project session: the named one, else the project preference, else the first enabled account of the harness with a ready binding (on hostId when given). The binding picks the host.
  // Ranking (§6 order, before dispatch): the director's subscriptions before take-rule ones, then the project's subscriptions list.
  const pickAccount=async (harness:string,projectId:string,hostId?:string,directedBy:string|null=director())=>store.unscoped(async()=>{const order:string[]=subscriptionsOf(projectId);
@@ -241,7 +245,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  // replaced on every poll, so a recovered route clears itself.
  const HOST_STALE_MS=30000;
  const hostProblems=(v:PollRequest['problems'])=>Array.isArray(v)?{problems:v.filter(p=>p?.kind==='edge-redirect'&&typeof p.route==='string'&&Number.isSafeInteger(p.status)).slice(0,20).map(p=>({kind:'edge-redirect',route:p.route.slice(0,200),status:p.status,location:typeof p.location==='string'?p.location.slice(0,500):null,detail:typeof p.detail==='string'?p.detail.slice(0,500):null}))}:{};
- app.post<{Body:PollRequest}>('/api/hosts/poll',async(req)=>(await store.tx(async ()=>{(await owned(req.body));await stores.observe(req.body.hostId,req.body.stores);await put('host-observation',{id:req.body.hostId,holder:req.fleetHost.holder,lastSeenAt:Date.now(),...( ['darwin','win32','linux'].includes(req.body.platform)?{platform:req.body.platform}:{} ),...(Array.isArray(req.body.capabilities)&&req.body.capabilities.every((x:any)=>typeof x==='string')?{capabilities:req.body.capabilities}:{}),...hostProblems(req.body.problems)});(await delegates.reconcile());await detectProblems();(await agent.promote());await dispatch.run(req.body.hostId);const pending=await filter(await all('command',{hostId:req.body.hostId,status:'pending'}),(x:any)=>x.hostId===req.body.hostId&&x.status==='pending');
+ app.post<{Body:PollRequest}>('/api/hosts/poll',async(req)=>(await store.tx(async ()=>{(await owned(req.body));await stores.observe(req.body.hostId,req.body.stores);await put('host-observation',{id:req.body.hostId,holder:req.fleetHost.holder,lastSeenAt:Date.now(),...( ['darwin','win32','linux'].includes(req.body.platform)?{platform:req.body.platform}:{} ),...(Array.isArray(req.body.capabilities)&&req.body.capabilities.every((x:any)=>typeof x==='string')?{capabilities:req.body.capabilities}:{}),...(Array.isArray(req.body.projectRoots)&&req.body.projectRoots.every((x:any)=>typeof x==='string')?{projectRoots:req.body.projectRoots}:{}),...hostProblems(req.body.problems)});(await delegates.reconcile());await detectProblems();(await agent.promote());await dispatch.run(req.body.hostId);const pending=await filter(await all('command',{hostId:req.body.hostId,status:'pending'}),(x:any)=>x.hostId===req.body.hostId&&x.status==='pending');
   // ponytail: executions read once for all pending commands; delegates.ready only rewrites the execution of its own start command.
   const executions=await store.many(pending.map((c:any)=>c.executionId),'execution');
   const ready=async (command:any)=>{if(!(await agent.ready(command)))return false;const execution=executions.get(command.executionId)??(await get(command.executionId,'execution'));// Held-host trust (§3): work that carries project content goes only to a host whose holder may see the project;
@@ -441,6 +445,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   hosts_update:(b:any)=>hosts.operations.hosts_update(b,requestPerson.getStore()??null),
   budget_set:(b:any)=>budgetModel.operations.budget_set(b,requestPerson.getStore()??null),
   budgets_list:()=>budgetModel.operations.budgets_list(),
+  subscription_limits:()=>readingModel.operations.subscription_limits(),
   route_decisions:async(b:any)=>({decisions:(await store.query('SELECT execution_id,at,host_id,candidates,winner FROM route_decision WHERE execution_id=$1 ORDER BY at',[str(b?.executionId,'executionId',200)])).map((r:any)=>({executionId:r.execution_id,at:r.at,hostId:r.host_id,candidates:r.candidates,winner:r.winner}))}),
   hosts_rotate_secret:(b:any)=>hosts.operations.hosts_rotate_secret(b,requestPerson.getStore()??null),
   me:async()=>{const p=requestPerson.getStore();return {email:p?.email??null,name:p?.name??null,roles:p?.roles??[],owner:p?.owner??false,grantsVersion:p?.grantsVersion??null,changeLogRetentionDays:retentionDays}},

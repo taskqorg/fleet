@@ -573,3 +573,7 @@ CREATE TABLE budget(
 ALTER TABLE budget ENABLE ROW LEVEL SECURITY;
 ALTER TABLE budget FORCE ROW LEVEL SECURITY;
 CREATE POLICY project_scope ON budget USING (current_setting('fleet.project_ids', true) = '*' OR (scope = 'project' AND scope_id = ANY (string_to_array(current_setting('fleet.project_ids', true), ','))) OR (scope = 'person' AND scope_id = current_setting('fleet.person', true)));
+
+-- migration 19: limit readings (docs/designs/fleet-people-access.md §8, slice 7) are read from limit_reading events; this keeps
+-- that read off a scan of every event.
+CREATE INDEX document_limit_reading ON document(seq) WHERE kind = 'event' AND data->>'type' = 'limit_reading';

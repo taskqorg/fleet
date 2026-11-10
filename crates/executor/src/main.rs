@@ -840,6 +840,8 @@ impl Executor {
                         Ok(line) => {
                             let event: Value = serde_json::from_str(&line)
                                 .unwrap_or(json!({"type":"unparsed","raw":line}));
+                            // Claude's rate_limit_event (status and reset, no percent) becomes a limit_reading (people-access §8).
+                            let event = if harness::name(&l.command["payload"]) == "claude" && event["type"] == "rate_limit_event" { harness::claude_limit_reading(&event) } else { event };
                             let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64;
                             let projection = l.blocks.project(harness::name(&l.command["payload"]), &event, at);
                             if let Some(n) = projection["session"].as_str() {
@@ -1123,7 +1125,7 @@ fn main() -> Result<()> {
         let result = (|| -> Result<()> {
             // A poll the edge answered is asked again every 2 s (outbox::edge_redirect), not every 100 ms.
             if outbox::edge_wait(outbox::POLL) { return Ok(()) }
-            let poll = contracts::PollRequest { host_id: e.host.clone(), platform: platform().into(), capabilities: capabilities(), stores: serde_json::from_value(e.stores())?, problems: outbox::edge_problems(outbox::POLL) };
+            let poll = contracts::PollRequest { host_id: e.host.clone(), platform: platform().into(), capabilities: capabilities(), stores: serde_json::from_value(e.stores())?, problems: outbox::edge_problems(outbox::POLL), project_roots: Some(worktree::reported_roots()) };
             let reply: contracts::PollReply = serde_json::from_value(e.post("/api/hosts/poll", serde_json::to_value(poll)?)?)?;
             // ponytail: commands go on as JSON values; command payloads get schema types when each kind is next changed.
             for c in &reply.commands.into_iter().map(serde_json::to_value).collect::<std::result::Result<Vec<_>, _>>()? {

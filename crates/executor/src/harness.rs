@@ -25,6 +25,12 @@ fn private(p: &Path) -> Result<()> {
     }
     Ok(())
 }
+/// Claude stream-json rate_limit_event to a limit_reading: status and reset time, never a percent.
+pub fn claude_limit_reading(v: &Value) -> Value {
+    let i = v.get("rate_limit_info").unwrap_or(v);
+    let period = match i["rateLimitType"].as_str() { Some("five_hour") => "5h", Some("seven_day") => "weekly", Some("seven_day_opus") => "weekly-opus", Some("seven_day_sonnet") => "weekly-sonnet", Some(other) => other, None => "unknown" };
+    json!({"type":"limit_reading","harness":"claude","readings":[{"period":period,"status":i["status"],"resetsAt":i["resetsAt"].as_u64().map(|s| s * 1000)}],"native":v})
+}
 /// ACP harnesses (people-access §4): Antigravity, and kind `acp`, any agent the host binds with {executable, args, environment}.
 pub fn acp(h: &str) -> bool {
     matches!(h, "antigravity" | "acp")
@@ -646,6 +652,13 @@ mod tests {
         assert_eq!(claude_placement(Some("windows-wsl"), "macos", ""), Err("claude-placement-platform-mismatch"));
         assert_eq!(claude_placement(None, "macos", ""), Err("claude-placement-unset"));
         assert_eq!(claude_placement(Some("linux"), "linux", ""), Err("claude-placement-invalid"));
+    }
+    #[test]
+    fn claude_rate_limit_event_becomes_a_limit_reading() {
+        // Saved shape of Claude Code's stream-json rate_limit_event.
+        let e = claude_limit_reading(&json!({"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1794330000,"rateLimitType":"five_hour"},"session_id":"s"}));
+        assert_eq!(e["readings"][0], json!({"period":"5h","status":"allowed_warning","resetsAt":1794330000000u64}));
+        assert!(e["readings"][0].get("pct").is_none());
     }
     #[test]
     fn fake_launch_routing_resume_and_credentials() {

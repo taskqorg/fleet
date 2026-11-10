@@ -32,6 +32,11 @@ test('Alina-directed work never runs on Simon\'s subscription unless Simon takes
   assert.equal((await call('/api/ops/account_update',{accountId:simonSub.id,take:{projects:['hello-world']}},ALINA)).statusCode,403);
   await ok('/api/ops/account_update',{accountId:simonSub.id,take:{projects:['hello-world']}},SIMON);
   await poll();const t2=await exec(foreign);assert.deepEqual([t2.hostId,t2.directedBy,t2.takenFrom],['mac',SIMON,ALINA]);
+  // An automatic take on task-linked work also takes the task: taken_from is the previous director.
+  const task=await ok('/api/ops/task_create',{projectId:'hello-world',title:'taken automatically'},ALINA);
+  const ts=await session('simon-codex');await store.tx(async()=>{const d=await store.get(ts,'session');d.deliveryId=task.id;await store.put('session',d)});
+  await send(ts,'four');await poll();
+  const tk=(await ok('/api/ops/task_list',{})).tasks.find((t:any)=>t.id===task.id);assert.deepEqual([tk.directedBy,tk.takenFrom,tk.requestedBy],[SIMON,ALINA,ALINA]);
   const rd=(await ok('/api/ops/route_decisions',{executionId:foreign})).decisions;assert.deepEqual(rd.map((x:any)=>!!x.winner),[false,true]);
   const history=(await ok('/api/ops/account_list',{})).accounts.find((a:any)=>a.id===simonSub.id).history;
   assert.deepEqual(history.map((h:any)=>[h.field,h.actor]),[['take',SIMON]]);

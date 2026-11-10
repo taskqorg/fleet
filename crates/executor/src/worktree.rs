@@ -4,6 +4,14 @@ use serde_json::{Value, json};
 use std::{env, fs, path::{Path, PathBuf}, process::{Command, Stdio}};
 
 /// Host-trusted roots only (FLEET_PROJECT_ROOTS, ':'-separated absolute paths); payload checkoutPath must sit under one.
+/// The roots as configured and as resolved, for the coordinator's check (it cannot resolve host paths itself).
+pub fn reported_roots() -> Vec<String> {
+    let mut v: Vec<String> = env::var("FLEET_PROJECT_ROOTS").unwrap_or_default().split(':').filter(|s| s.starts_with('/')).map(str::to_owned).collect();
+    v.extend(project_roots().iter().map(|p| p.to_string_lossy().into_owned()));
+    v.sort();
+    v.dedup();
+    v
+}
 pub fn project_roots() -> Vec<PathBuf> {
     env::var("FLEET_PROJECT_ROOTS").unwrap_or_default().split(':').filter(|s| s.starts_with('/')).filter_map(|s| fs::canonicalize(s).ok()).collect()
 }

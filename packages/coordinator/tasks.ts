@@ -65,9 +65,10 @@ export function taskModel(raw:Raw,executions:Executions){
   return state}
 
  // Take (people-access §5): the taker directs the task from now on; requested_by never changes; executions not yet ended follow.
- async function take(id:string,taker:string){
+ // from: the director the work was taken from, when the task row has none recorded (tasks created before people-access).
+ async function take(id:string,taker:string,from?:string|null){
   const t=await one('SELECT directed_by FROM task WHERE id=$1',[id])??notFound();if(t.directed_by===taker)return;
-  await raw.query('UPDATE task SET directed_by=$2,taken_from=$3,updated_at=now() WHERE id=$1',[id,taker,t.directed_by]);
+  await raw.query('UPDATE task SET directed_by=$2,taken_from=$3,updated_at=now() WHERE id=$1',[id,taker,t.directed_by??from??null]);
   await raw.query("UPDATE execution SET directed_by=$2 WHERE task_id=$1 AND state IN ('preparing','running','waiting')",[id,taker])}
  // Questions: one typed table, one answer path.
  async function ask(v:{kind:'operator_decision'|'agent_question'|'acceptance'|'rating',text:string,projectId?:string|null,taskId?:string|null,executionId?:string|null,sessionId?:string|null,options?:any,askedBy?:string,id?:string,legacyKind?:string,data?:any,askedAt?:number}){

@@ -91,6 +91,11 @@ export const states = {
     online: { label: 'Online', tone: 'success', icon: 'circle-check' },
     offline: { label: 'Offline', tone: 'danger', icon: 'circle-slash' },
   },
+  // A subscription's intake (people-access §7): it accepts new work, or its holder paused it.
+  subscription: {
+    all: { label: 'Accepting work', tone: 'success', icon: 'circle-check' },
+    paused: { label: 'Paused', tone: 'neutral', icon: 'pause' },
+  },
 } as const satisfies Record<string, Record<string, StateDef>>;
 
 export type Family = keyof typeof states;

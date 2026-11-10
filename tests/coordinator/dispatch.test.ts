@@ -1,6 +1,6 @@
 // Slice 6 Dispatch (docs/designs/fleet-people-access.md §6-7, CUJ 5): late choice on a host poll, wait reasons, one question per
 // cause closed when the cause clears, route decisions, budgets as skip reasons.
-import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync} from 'node:fs';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,mkdirSync,writeFileSync} from 'node:fs';
 import {createApp} from './test-app.ts';
 
 test('a Paused host makes two tasks wait with one question; resuming starts them and closes it; a reached pause budget waits',async()=>{
@@ -34,5 +34,22 @@ test('a Paused host makes two tasks wait with one question; resuming starts them
   await poll();assert.equal((await exec(e2)).state,'stopped');
   // Stopping work that never started settles it at once.
   assert.equal((await exec((await call('/api/executions/'+e+'/stop',{})).json().executionId)).state,'stopped');
+ }finally{await app.close()}
+});
+
+test('a project checkout outside the host FLEET_PROJECT_ROOTS is a clear wait reason, not a silent failure',async()=>{
+ const dir=mkdtempSync('/tmp/fleet-roots-');mkdirSync(dir+'/projects/p1',{recursive:true});
+ writeFileSync(dir+'/projects/p1/project.json',JSON.stringify({id:'p1',name:'P1',contextFiles:[],repos:[],environments:[{hostId:'mac',checkoutPath:'/srv/work/p1'}]}));
+ const app=createApp({database:dir+'/db',browserSecret:'b',machineSecret:'m',hostId:'mac',projectConfigDirectory:dir});
+ try{
+  const call=(url:string,payload?:any,machine=false)=>app.inject({method:payload?'POST':'GET',url,headers:{authorization:'Bearer '+(machine?'m':'b')},payload});
+  const poll=async(projectRoots:string[])=>(await call('/api/hosts/poll',{hostId:'mac',projectRoots},true)).json().commands.filter((c:any)=>c.kind==='start');
+  await poll(['/home/agent/projects']);
+  const store=(app as any).store,s=(await call('/api/sessions',{})).json().id;
+  await store.tx(async()=>{const d=await store.get(s,'session');d.projectId='p1';await store.put('session',d)});
+  const e=(await call('/api/sessions/'+s+'/messages',{requestId:'r',text:'x'})).json().id;
+  assert.equal((await poll(['/home/agent/projects'])).length,0);
+  assert.equal((await store.get(e,'execution')).waitReason,'checkout /srv/work/p1 of p1 is outside FLEET_PROJECT_ROOTS on mac');
+  assert.equal((await poll(['/srv/work'])).length,1);
  }finally{await app.close()}
 });
