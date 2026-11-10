@@ -2,9 +2,9 @@
 // at a section of a source document: {repo, path, anchor, commit, sha256}. This recomputes the section's hash from the repo's
 // HEAD and reports entries whose source changed. It warns; it never blocks a launch.
 //
-//   npx tsx scripts/lab-drift.ts            print changed or missing entries; exit 1 when there is any
-//   npx tsx scripts/lab-drift.ts --write    also write source_status into the registry files
-//   npx tsx scripts/lab-drift.ts --pin ID…  accept the current source of these entries (commit, sha256, status current)
+//   pnpm exec tsx scripts/lab-drift.ts            print changed or missing entries; exit 1 when there is any
+//   pnpm exec tsx scripts/lab-drift.ts --write    also write source_status into the registry files
+//   pnpm exec tsx scripts/lab-drift.ts --pin ID…  accept the current source of these entries (commit, sha256, status current)
 //
 // Repos: "fleet" is this checkout; any other repo is <FLEET_LAB_REPOS>/<repo> (default: the directory above this checkout).
 // An absent repo gives status "unavailable" and leaves the stored status alone (CI checks out Fleet only).

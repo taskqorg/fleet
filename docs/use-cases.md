@@ -2,7 +2,7 @@
 
 Scenarios for the [system specification](../fleet.md). These describe accepted behavior, not runtime evidence.
 
-Each use case has a stable anchor (`#uc1` … `#uc11`) that never changes when a title changes; IDs are never renumbered. The Lab registry points at these anchors and stores each section's hash; `npx tsx scripts/lab-drift.ts` reports sections that changed since they were indexed ([fleet-lab.md](designs/fleet-lab.md), Stage 1).
+Each use case has a stable anchor (`#uc1` … `#uc11`) that never changes when a title changes; IDs are never renumbered. The Lab registry points at these anchors and stores each section's hash; `pnpm exec tsx scripts/lab-drift.ts` reports sections that changed since they were indexed ([fleet-lab.md](designs/fleet-lab.md), Stage 1).
 
 <a id="uc1"></a>
 

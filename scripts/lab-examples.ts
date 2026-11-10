@@ -1,7 +1,7 @@
 // Lab examples outside the coordinator (docs/designs/fleet-lab.md, Stage 1).
 //
-//   npx tsx scripts/lab-examples.ts check FILE…    run each example's script checks with no agent
-//   npx tsx scripts/lab-examples.ts import FILE…   send the examples to the coordinator as approved examples
+//   pnpm exec tsx scripts/lab-examples.ts check FILE…    run each example's script checks with no agent
+//   pnpm exec tsx scripts/lab-examples.ts import FILE…   send the examples to the coordinator as approved examples
 //
 // FILE is a JSON file holding one example or an array of them; "-" reads standard input. check validates each example
 // against the registry, then runs its checks twice in a fresh directory: on inputs plus references (every check must pass)

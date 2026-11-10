@@ -1,8 +1,8 @@
 // Converts assetq (Pipe) dataset revisions into Lab examples (docs/designs/fleet-lab.md, Stage 1 item 18; Open Question Q2).
 //
 //   assetq datasets > datasets.json            on a host with the Pipe CLI (owner credential stays there)
-//   npx tsx scripts/lab-import-assetq.ts datasets.json > examples.json
-//   npx tsx scripts/lab-examples.ts import examples.json
+//   pnpm exec tsx scripts/lab-import-assetq.ts datasets.json > examples.json
+//   pnpm exec tsx scripts/lab-examples.ts import examples.json
 //
 // Input: the GET /v1/datasets reply, an array of {id, version, document: {operation, cases: [{id, text, attachments}]}, sha256}
 // (or one such revision). Each case becomes one synthetic example of use case assetq:datasets. Nothing is lost: the case's
