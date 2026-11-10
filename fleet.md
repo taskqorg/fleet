@@ -215,12 +215,12 @@ Go rules:
 - `CGO_ENABLED=0` for every binary, checked in CI. Any need for C is a stop-and-ask.
 - One Go module (`go/`), one `go.sum`; builds use `-mod=readonly`; the default checksum database stays on; `govulncheck` runs in CI as a warning.
 - Contract types are generated at build from `contracts/*.schema.json` by `go/gen`; generated files are not committed.
-- Release binaries are built with `-trimpath` in one Linux CI job for linux/amd64, darwin/arm64 and windows/amd64, each with a SHA-256 file; no macOS runner for Go code.
+- Release binaries are built with `-trimpath` in one Linux CI job, each with a SHA-256 file: the coordinator for linux/amd64, darwin/arm64 and windows/amd64; the executor and the gateway for linux/amd64 and darwin/arm64. No macOS runner.
 - Tests are outside tests over HTTP against a real Postgres (`tests/trial/`, `tests/go/`, the app checks in `tests/ui/`, all through `tests/harness.ts`); each names its requirement and risk.
 
 ## Verification
 
-The merge-gate command is `pnpm install --frozen-lockfile && pnpm run build && cargo build -p fleet-executor && cargo test -p fleet-executor && pnpm test`.
+The merge-gate command is `pnpm install --frozen-lockfile && pnpm run build && (cd go && go generate ./... && go vet ./... && go test ./...) && pnpm test`.
 
 `pnpm run build` also builds the Go coordinator (`go/bin/fleet-coordinator`). `pnpm test` runs the app unit tests and `tests/go/run.sh`: the binary on a fresh database of a local PostgreSQL server (server programs on `PATH`, `tests/harness.ts`), with `tests/trial` and `tests/go` over HTTP.
 

@@ -1,8 +1,7 @@
 # Mac executor candidate
 
-Build: `cargo build --locked -p fleet-executor`.
-Checks: `cargo test --locked -p fleet-executor`.
-The opt-in `python3 tests/executor/native_probe.py` spends two bounded subscription turns; do not include it in unattended tests.
+Build: `(cd go && CGO_ENABLED=0 go build -o bin/fleet-executor ./executor)`.
+Checks: `(cd go && go test ./executor)`.
 
 Run locally with operator-supplied environment:
 
@@ -12,7 +11,7 @@ FLEET_HOST_ID=mac \
 FLEET_DATA_DIR=/absolute/owned/fleet-data \
 FLEET_CODEX_BIN=/absolute/path/to/codex \
 FLEET_HOST_SECRET_FILE="$HOME/.config/fleet/host-secret" \
-"$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)/debug/fleet-executor"
+go/bin/fleet-executor
 ```
 
 Production requires HTTPS and a dedicated private data directory. The token must be provided outside Git and never printed. Candidate launchd recipe: ProgramArguments contains the absolute binary; WorkingDirectory is the owned data directory; EnvironmentVariables contains these five settings supplied in a private plist; RunAtLoad=true and KeepAlive=true. Parent owns activation. No plist installed or service activated.
@@ -33,7 +32,7 @@ One authorized bounded native probe succeeded: thread `01a1bdc6-4937-7211-839e-d
 
 The candidate now runs native stdout ingestion separately from outbound polling. The event loop retains each event and upload obligation in WAL/FULL SQLite before transmission; HTTP failures leave the same JSON payload queued. HTTP exchange has a five-second operation timeout; polling and uploading can delay each other during failed HTTP calls, while native processing continues. Poll cadence is 100ms plus actual exchange time. Host exchange remains outbound only.
 
-Native mapping is isolated in `crates/executor/src/native.rs`. Environment is cleared, then only HOME/PATH/USER/LOGNAME/TMPDIR/CODEX_HOME/LANG/LC_ALL/SSL_CERT_FILE/SSL_CERT_DIR are passed. Fleet credentials and API keys never enter child environment. User config and execpolicy rules are ignored; no account/settings/trust repairs occur. Subscription home remains unchanged. No MCP tools or skills are granted in this website slice. Native shell is workspace-write, network off, approval denied; apps/plugins/browser/computer/image-generation and multi-agent are disabled. Preparation records instruction SHA256 and explicit grants. Actual instruction loading and sandbox enforcement still require the supervised website run.
+Native mapping is isolated in `go/executor/harness_*.go`. Environment is cleared, then only HOME/PATH/USER/LOGNAME/TMPDIR/CODEX_HOME/LANG/LC_ALL/SSL_CERT_FILE/SSL_CERT_DIR are passed. Fleet credentials and API keys never enter child environment. User config and execpolicy rules are ignored; no account/settings/trust repairs occur. Subscription home remains unchanged. No MCP tools or skills are granted in this website slice. Native shell is workspace-write, network off, approval denied; apps/plugins/browser/computer/image-generation and multi-agent are disabled. Preparation records instruction SHA256 and explicit grants. Actual instruction loading and sandbox enforcement still require the supervised website run.
 
 Stop tracks observed descendants by parent linkage plus native creation identity, independent of process group/session. The executor snapshots lineage during each tick and again on stop. It freezes identity-bound observed processes, rescans until no additional descendant is discovered, then signals those exact incarnations with SIGKILL. On macOS the signal uses the CoreQ-derived proc_pidinfo unique-version plus proc_signal_with_audittoken kernel fence; reused PIDs cannot retarget the signal. No name, arbitrary PID or process-group-only kill is used for native cleanup. A native leader exit triggers the same cleanup even before stdout EOF, so an orphan retaining stdout cannot block cleanup. Tracked identities survive reparenting within the running executor.
 
@@ -50,7 +49,7 @@ Static uploads accept relative safe path components and declared static extensio
 
 Raw native JSONL is also fsynced into the owned session directory before event delivery; restart retains it for reconciliation without claiming automatic native history ingestion.
 
-Local proof command: `cargo test --locked -p fleet-executor && cargo build --locked -p fleet-executor && python3 tests/executor/fake_integration.py`. The fake integration uses a real HTTP server and owned fake process group; it checks events before exit, stop plus descendant termination, singleton rejection, failed-upload retry preserving payload and SHA256, completed turn, abrupt executor crash and restart unknown without replay, accepted-before-spawn recovery, missing executable failure, secret exclusion, and resource events. This does not substitute for the supervised native website acceptance.
+Local proof command: `(cd go && go test ./executor)`. Until the Go port (2026-11-11) the proof was the Rust tests plus `tests/executor/fake_integration.py` (deleted with the Rust executor after it passed against the Go binary). That fake integration used a real HTTP server and owned fake process group; it checks events before exit, stop plus descendant termination, singleton rejection, failed-upload retry preserving payload and SHA256, completed turn, abrupt executor crash and restart unknown without replay, accepted-before-spawn recovery, missing executable failure, secret exclusion, and resource events. This does not substitute for the supervised native website acceptance.
 
 No launchd activation, remote deployment, model/account changes, extra native calls or global hooks occurred. Remaining supervised gates: actual website tool/instruction enforcement, coordinator/PDS integration, preview rendering and restart/reconnect on deployed services. Native direct launch/resume evidence above remains the sole real-model probe; it was not repeated after changes to environment/isolation mapping.
 

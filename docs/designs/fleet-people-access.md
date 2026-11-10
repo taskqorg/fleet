@@ -46,7 +46,7 @@ Section numbers §1-§12 are cited by code; keep them.
 
 ### 1. Identity
 
-- **Guard** (`deploy/infrastructure/origin_guard.py`) verifies the Cloudflare Access JWT for any e-mail and returns `Authorization: Bearer <browser secret>` and `X-Fleet-Person: <verified e-mail>`. No owner e-mail check in the guard.
+- **Guard** (`fleet-gateway guard`, `go/gateway/guard.go`) verifies the Cloudflare Access JWT for any e-mail and returns `Authorization: Bearer <browser secret>` and `X-Fleet-Person: <verified e-mail>`. No owner e-mail check in the guard.
 - **Caddy** (`deploy/infrastructure/fleet.caddy.candidate`) strips any client-sent `X-Fleet-Person` at site level next to `-X-Dashq-Subject`; `forward_auth` copies only `Authorization` and `X-Fleet-Person`. Machine routes (`@machine`) skip the guard. The coordinator listens on loopback only.
 - **Access** allows the group `fleet-people`, edited by hand.
 - **Two credential kinds never mix.** A person: browser Bearer plus `X-Fleet-Person`. A host: its host secret and no `X-Fleet-Person`; a host-secret request with the header is 403. A host secret equal to the browser secret is refused.
@@ -84,7 +84,7 @@ Section numbers §1-§12 are cited by code; keep them.
 
 - **Record** `managed-account`: `name`, `harness`, `holder` (person e-mail; the creating person, only the owner names another), `kind` (`personal`; `team_seat` later), `plan`, `intake` (`all`, `paused`; §7), `take: {projects}` (§5), `switchPct` (§6; only for harnesses whose readings carry a percent), `comment`, `bindings` (per host: `binding`, `platform`, `readiness`, `roots`, `lastCheck`). Fleet stores only binding metadata: the paths `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `GEMINI_HOME`, never credential values. A binding belongs to one subscription only.
 - Operations: `account_create`, `account_list`, `account_hosts`, `account_discover`, `account_connect`, `account_login_handoff`, `account_update {accountId, intake?, plan?, comment?, switchPct?, take?, holder?}` (holder or owner; only the owner changes `holder`; one `setting-change` row per changed field, shown in `account_list` history). Login handoff shows the exact executable, argv and environment for that host and never accepts codes or tokens; the person completes the native flow on the host, then Recheck.
-- **Harnesses** `codex`, `claude`, `antigravity` and `acp`. Kind `acp`: the host binding (the native accounts registry entry) gives `executable`, `args` and `environment`, with `{nativeHome}` replaced, served by the same ACP session code, so another ACP agent joins by binding, not code. An `antigravity` entry without `args` uses the built-in binding (`crates/executor/src/antigravity.rs`; argv in `harness.rs`: `agy acp --gemini-dir … --app-data-dir antigravity-cli --include-default-customizations=false`). No binary hash pinning.
+- **Harnesses** `codex`, `claude`, `antigravity` and `acp`. Kind `acp`: the host binding (the native accounts registry entry) gives `executable`, `args` and `environment`, with `{nativeHome}` replaced, served by the same ACP session code, so another ACP agent joins by binding, not code. An `antigravity` entry without `args` uses the built-in binding (`go/executor/harness_acp.go`; argv in `harness.rs`: `agy acp --gemini-dir … --app-data-dir antigravity-cli --include-default-customizations=false`). No binary hash pinning.
 
 #### Logins per harness
 
