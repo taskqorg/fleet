@@ -7,9 +7,10 @@
 // against the registry, then runs its checks twice in a fresh directory: on inputs plus references (every check must pass)
 // and on inputs alone (at least one check must fail, so a check that passes on untouched input is reported). A check is a
 // shell command run in that directory with FLEET_OUTPUT_DIR set to it, the same contract a Stage 3 script evaluator uses;
-// the node running this script comes first on PATH, so checks that call node work where node is not on PATH (a systemd unit).
-// import posts to $FLEET_URL/api/lab/examples with the operator credential from $FLEET_TOKEN, and sends $FLEET_ORIGIN as
-// Origin when set (a coordinator with FLEET_BROWSER_PROXY_AUTH refuses a POST without its FLEET_BROWSER_ORIGIN);
+// the directory of the node running this script is appended to PATH, so checks that call node work where node is not on
+// PATH (a systemd unit) and the caller's own PATH order still wins.
+// import posts to $FLEET_URL/api/lab/examples with the operator credential from $FLEET_TOKEN, and sends $FLEET_ORIGIN (else
+// $FLEET_BROWSER_ORIGIN, the coordinator's own setting) as Origin when set (a coordinator with FLEET_BROWSER_PROXY_AUTH refuses a POST without its FLEET_BROWSER_ORIGIN);
 // --project ID sets the project.
 import {execFileSync} from 'node:child_process';
 import {mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
@@ -24,7 +25,7 @@ export function readExamples(files:string[]):any[]{return files.flatMap(f=>{cons
 export function runChecks(e:Example,files:ExampleFile[]){const dir=mkdtempSync(join(tmpdir(),'lab-example-'));
  try{for(const f of files){mkdirSync(dirname(join(dir,f.path)),{recursive:true});writeFileSync(join(dir,f.path),f.text)}
   const failed:{id:string,output:string}[]=[];
-  for(const c of e.checks){try{execFileSync('sh',['-c',c.run],{cwd:dir,env:{...process.env,FLEET_TOKEN:undefined,FLEET_OUTPUT_DIR:dir,PATH:[dirname(process.execPath),process.env.PATH].filter(Boolean).join(delimiter)},stdio:['ignore','pipe','pipe'],encoding:'utf8'})}
+  for(const c of e.checks){try{execFileSync('sh',['-c',c.run],{cwd:dir,env:{...process.env,FLEET_TOKEN:undefined,FLEET_OUTPUT_DIR:dir,PATH:[process.env.PATH,dirname(process.execPath)].filter(Boolean).join(delimiter)},stdio:['ignore','pipe','pipe'],encoding:'utf8'})}
    catch(x:any){failed.push({id:c.id,output:String(x.stderr||x.stdout||x.message).trim().split('\n').filter(Boolean).pop()??''})}}
   return failed}finally{rmSync(dir,{recursive:true,force:true})}}
 
@@ -48,7 +49,7 @@ async function main(argv:string[]){const [cmd,...rest]=argv,root=resolve(dirname
   for(const x of examples){const p=checkExample(x,useCases);console.log(`${x?.id??'?'}: ${p.length?'FAIL\n  '+p.join('\n  '):Array.isArray(x?.checks)&&!x.checks.length?'no script checks (owner or judge rating)':'ok'}`);if(p.length)bad++}
   console.log(`${examples.length-bad} of ${examples.length} examples pass their checks with no agent`);if(bad)process.exitCode=1;return}
  if(cmd==='import'){const url=process.env.FLEET_URL,token=process.env.FLEET_TOKEN;if(!url||!token)throw Error('FLEET_URL and FLEET_TOKEN required');
-  for(const x of (await importExamples({url,token,origin:process.env.FLEET_ORIGIN,examples,projectId})).examples)console.log(`${x.id}@${x.version}: ${x.created?'created':'already stored'} ${x.artifactId}`);return}
+  for(const x of (await importExamples({url,token,origin:process.env.FLEET_ORIGIN||process.env.FLEET_BROWSER_ORIGIN,examples,projectId})).examples)console.log(`${x.id}@${x.version}: ${x.created?'created':'already stored'} ${x.artifactId}`);return}
  throw Error('usage: lab-examples.ts check|import FILE… [--project ID]')}
 
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))main(process.argv.slice(2)).catch(e=>{console.error(e.message);process.exitCode=1});

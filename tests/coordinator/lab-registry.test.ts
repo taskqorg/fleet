@@ -42,6 +42,11 @@ test('drift check flags a changed source and leaves the others current',()=>{
  writeFileSync(join(repo,'cases.md'),'# Cases\n');git('commit','-qam','three');
  assert.equal(check(entries[1].source,root,base),'missing')});
 
+test('registry loaders skip dotfiles such as macOS ._* copies',()=>{
+ const root=mkdtempSync(join(tmpdir(),'lab-reg-'));mkdirSync(join(root,'use-cases'),{recursive:true});
+ writeFileSync(join(root,'use-cases/x.json'),JSON.stringify([{id:'x:1'}]));writeFileSync(join(root,'use-cases/._x.json'),Buffer.from([0,5,22,7]));
+ assert.deepEqual([...useCaseIds(root)],['x:1'])});
+
 test('registry: unique IDs, required fields, every org repo indexed',()=>{
  const all=loadRegistry(process.cwd()).flatMap(f=>f.entries),ids=all.map((e:any)=>e.id);
  assert.equal(new Set(ids).size,ids.length,'IDs are unique');

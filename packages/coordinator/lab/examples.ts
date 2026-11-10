@@ -20,7 +20,7 @@ const files=(v:any,what:string):ExampleFile[]=>{if(v===undefined)return [];if(!A
 
 // The registry's use-case IDs: an example must point at an indexed use case.
 export function useCaseIds(labDirectory:string){const dir=join(labDirectory,'use-cases'),ids=new Set<string>();
- for(const f of readdirSync(dir).filter(f=>f.endsWith('.json')))for(const e of JSON.parse(readFileSync(join(dir,f),'utf8')))ids.add(e.id);return ids}
+ for(const f of readdirSync(dir).filter(f=>f.endsWith('.json')&&!f.startsWith('.')))for(const e of JSON.parse(readFileSync(join(dir,f),'utf8')))ids.add(e.id);return ids}
 
 // Validates and normalizes one example into its canonical shape (fixed key order, so equal content gives an equal hash).
 export function parseExample(v:any,useCases:Set<string>):Example{
