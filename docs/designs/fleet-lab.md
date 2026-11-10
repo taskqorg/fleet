@@ -12,7 +12,7 @@ Lab adds no run machinery of its own. A trial is a `pipeline_run` execution with
 | Executor | Fleet's Rust process on each host (`crates/executor`). Runs harnesses, scripts, worktrees. |
 | Harness | An agent CLI the executor drives: Codex, Claude, Antigravity. |
 | Profile | A trusted JSON file in `config/agents` naming harness, model, skills and granted connections (`packages/coordinator/profiles.ts`, `crates/executor/src/profile.rs`). |
-| Connection | Fleet's record of one outside provider endpoint, owned by [fleet-connections.md](fleet-connections.md). Example: `pipe-read`. |
+| Connection | Fleet's record of one outside provider endpoint, owned by [fleet-connections.md](fleet-connections.md). Example: `tavily`. |
 | Catalogue / recommendation | `config/catalogue.json` lists methods per project; `recommendation_set` records the chosen method as a `project-recommendation`. |
 | Use case | A registry entry pointing at a use case written in an org repo (Fleet, taskq, pilotq, agentq, dashq, assetq). |
 | Example | One runnable Lab input drawn from a use case. Never a task. |
@@ -81,8 +81,8 @@ Variant `config_ref` = SHA-256 of canonical `{pipeline, overrides}`. Trial `requ
 
 ```json
 {"version":2,"id":"web-research","steps":[
-  {"id":"search","kind":"api","connection":"pipe-read","tool":"web_search","arguments":{"query":"${example.prompt}"}},
-  {"id":"read","kind":"api","connection":"pipe-read","tool":"web_extract","arguments":{"urls":"${steps.search.output.urls}"}},
+  {"id":"search","kind":"api","connection":"tavily","tool":"web_search","arguments":{"query":"${example.prompt}"}},
+  {"id":"read","kind":"api","connection":"tavily","tool":"web_extract","arguments":{"urls":"${steps.search.output.urls}"}},
   {"id":"summary","kind":"agent","profile":"codex-researcher","prompt":"Summarize the files in $FLEET_INPUT_DIR."},
   {"id":"check","kind":"script","command":"scripts/check.sh"}]}
 ```

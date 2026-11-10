@@ -333,7 +333,7 @@ Stages run alongside the people slices.
 *   **Build:** `pnpm run build`, `cargo build -p gateway -p executor`.
 *   **Tests:** `pnpm test`, `cargo test`, `python3 -m pytest deploy/infrastructure tests/executor`.
 *   **Live (stage checks):** C0 restore from the backup alone on a clean container; C1 coordinator stop does not stop web reads, spool ingested with loss 0; C2 rotation with no failed calls, 403 disables a key; C3 a Meshy charge lands as `connection_cost`; C4 the Pipe search below is empty and a Lab web trial completes.
-*   **C4 search:** `rg -i 'pipe[-_ ]?(read|lane|token|config|client|mcp)|pipeConfigPath|pipe\.ufobe|X-Pipe|pipe_search'` over the repository returns nothing ("pipeline" does not match).
+*   **C4 search:** `rg -i 'pipe[-_ ]?(read|lane|token|config|client|mcp)|pipeConfigPath|pipe\.ufobe|X-Pipe|pipe_search' -g '!docs/designs/fleet-connections.md' -g '!evidence/**' -g '!tests/coordinator/fixtures/documents-*.json'` returns nothing ("pipeline" does not match). This design records what was removed, and evidence files and migration fixtures are past records.
 
 --------------------------------------------------------------------------------
 

@@ -2,7 +2,7 @@
 
 One repository-defined Hello World project supplies rules/reference data and a web-research recommendation. An explicit method wins; otherwise project recommendation overrides shared default. One text-defined web_search step is the initial runnable pipeline subset. HTTP, MCP and web views call the same core operations and durable records. Direct sessions remain valid.
 
-Record selected project/method, definition/context snapshots, step inputs/results, actual duration and reported usage. Persist dispatch intent before external effects; restore interrupted running work as unknown without replay. Quota/unavailable errors retain cause and never substitute method/account. Host-only connection configuration provides the existing Pipe client and grant; no credentials or connection paths enter project/profile/model data.
+Record selected project/method, definition/context snapshots, step inputs/results, actual duration and reported usage. Persist dispatch intent before external effects; restore interrupted running work as unknown without replay. Quota/unavailable errors retain cause and never substitute method/account. Connections come from Fleet's API key list through fleet-gateway ([connections](designs/fleet-connections.md)); no credentials or connection paths enter project/profile/model data.
 
 Authorized delivery extension uses a dedicated test repository/destination: project context → catalogue/search pipeline → tracked agent execution → verification/source integration → tracked deploy operation → observed publication, then a second version with retained prior outputs. Completion, integration and publication are separate facts. Local deterministic checks precede real calls/rollout; no unknown operation is replayed.
 

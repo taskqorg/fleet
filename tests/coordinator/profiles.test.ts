@@ -18,7 +18,7 @@ test('native profile validation',()=>{
 test('trusted profiles accept optional skills and connections, reject bad ones',()=>{
  const dir=mkdtempSync('/tmp/fleet-profiles-');const base=JSON.parse(readFileSync('config/agents/baseline.json','utf8'));
  const write=(id:string,extra:any)=>writeFileSync(`${dir}/${id}.json`,JSON.stringify({...base,id,...extra}));
- write('good',{skills:['web-research'],connections:['pipe-read']});write('bad',{skills:['../x']});write('dup',{connections:['a','a']});
+ write('good',{skills:['web-research'],connections:['tavily']});write('bad',{skills:['../x']});write('dup',{connections:['a','a']});
  assert.deepEqual(readTrustedProfile(dir,'good').skills,['web-research']);
  for(const id of ['bad','dup'])assert.throws(()=>readTrustedProfile(dir,id),/Invalid profile/);
  assert.deepEqual(listProfiles(dir).map(p=>p.id),['good']);
