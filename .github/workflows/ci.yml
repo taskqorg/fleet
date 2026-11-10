@@ -55,7 +55,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       # The executor: its unit tests, and the binary the coordinator's end-to-end artifact test runs.
-      - run: cargo build -p fleet-executor -p gateway && cargo test -p fleet-executor -p gateway
+      - run: cargo build -p fleet-executor && cargo test -p fleet-executor
       # The executor protocol scripts (tests/executor): actual executor binary against fake harnesses and transports.
       - run: tests/executor/run.sh
       # pnpm test runs tests/go/run.sh: the Go binary on the runner's own PostgreSQL (tests/harness.ts starts it).
@@ -65,7 +65,8 @@ jobs:
       - name: Pack the release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          mkdir -p release/dist && cp go/bin/fleet-coordinator release/ && cp -r dist/app release/dist/ && cp -r config release/
+          (cd go && for cmd in gateway executor; do CGO_ENABLED=0 go build -trimpath -o bin/fleet-$cmd ./$cmd; done)
+          mkdir -p release/dist && cp go/bin/fleet-coordinator go/bin/fleet-gateway go/bin/fleet-executor release/ && cp -r dist/app release/dist/ && cp -r config release/
           tar -czf fleet-release.tgz -C release .
           sha256sum fleet-release.tgz | tee fleet-release.tgz.sha256
           echo "fleet-release-${GITHUB_SHA}: $(cut -d' ' -f1 fleet-release.tgz.sha256)" >> "$GITHUB_STEP_SUMMARY"
@@ -220,14 +221,14 @@ jobs:
             go version -m "$file" | grep -q 'CGO_ENABLED=0' || { echo "$file: cgo enabled"; exit 1; }
             (cd dist && sha256sum "${file#dist/}" | tee "${file#dist/}.sha256")
           done
-          # The executor: linux/amd64 and darwin/arm64 only (Windows not built: process control needs its own port).
-          for t in linux/amd64 darwin/arm64; do
-            os=${t%/*} arch=${t#*/}
-            file="dist/fleet-executor-$os-$arch"
-            GOOS=$os GOARCH=$arch go build -trimpath -o "$file" ./executor
+          # The gateway (with its `guard` command) and the executor: linux/amd64 and darwin/arm64 only
+          # (Windows not built: executor process control needs its own port).
+          for t in linux/amd64 darwin/arm64; do for cmd in gateway executor; do
+            os=${t%/*} arch=${t#*/} file="dist/fleet-$cmd-${t%/*}-${t#*/}"
+            GOOS=$os GOARCH=$arch go build -trimpath -o "$file" "./$cmd"
             go version -m "$file" | grep -q 'CGO_ENABLED=0' || { echo "$file: cgo enabled"; exit 1; }
             (cd dist && sha256sum "${file#dist/}" | tee "${file#dist/}.sha256")
-          done
+          done; done
       - name: govulncheck (warning only)
         continue-on-error: true
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
@@ -235,26 +236,6 @@ jobs:
         with:
           name: fleet-go-${{ github.sha }}
           path: go/dist/
-          if-no-files-found: error
-  gateway-release:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Build release gateway
-        run: |
-          cargo build --locked --release -p gateway
-          cp target/release/fleet-gateway fleet-gateway-x86_64-unknown-linux-gnu
-          sha256sum fleet-gateway-x86_64-unknown-linux-gnu | tee fleet-gateway-x86_64-unknown-linux-gnu.sha256
-      - uses: actions/upload-artifact@v4
-        with:
-          name: fleet-gateway-x86_64-unknown-linux-gnu-${{ github.sha }}
-          path: |
-            fleet-gateway-x86_64-unknown-linux-gnu
-            fleet-gateway-x86_64-unknown-linux-gnu.sha256
           if-no-files-found: error
   comment:
     needs: build-test-design

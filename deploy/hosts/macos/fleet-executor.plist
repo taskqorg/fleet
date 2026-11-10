@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Fleet executor on the Mac, a LaunchAgent of the executor service user, from the current release
+  (deploy/install-release.sh). Install: replace FLEET_HOME with that user's home, copy to
+  FLEET_HOME/Library/LaunchAgents/com.ufobe.fleet-executor.plist, then: launchctl bootstrap gui/$(id -u) <plist>.
+  FLEET_HOME/.config/fleet/executor.env (mode 0600, never in Git) holds the five settings of docs/executor-build.md
+  as KEY=value lines; launchd has no environment file, so sh reads it before exec.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.ufobe.fleet-executor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>set -a; . FLEET_HOME/.config/fleet/executor.env; set +a; exec FLEET_HOME/releases/current/fleet-executor</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ProcessType</key><string>Background</string>
+  <key>Umask</key><integer>63</integer>
+  <key>StandardOutPath</key><string>FLEET_HOME/Library/Logs/fleet-executor.log</string>
+  <key>StandardErrorPath</key><string>FLEET_HOME/Library/Logs/fleet-executor.log</string>
+</dict>
+</plist>

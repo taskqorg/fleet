@@ -1,9 +1,10 @@
+# Cloudflare Access origin verifier for Caddy's forward_auth (fleet.caddy.candidate), a user unit of fleet:
+# `fleet-gateway guard` from the current release. access-guard.env holds FLEET_BROWSER_SECRET only.
 [Unit]
 Description=Fleet Cloudflare Access origin verifier
 [Service]
-WorkingDirectory=/home/fleet/runtime/access-guard
 EnvironmentFile=/home/fleet/.config/fleet/access-guard.env
-ExecStart=/home/fleet/runtime/guard-venv/bin/python -m uvicorn origin_guard:app --host 127.0.0.1 --port 9471 --no-access-log --limit-concurrency 32
+ExecStart=/home/fleet/releases/current/fleet-gateway guard 127.0.0.1:9471
 Restart=on-failure
 RestartSec=3
 UMask=0077

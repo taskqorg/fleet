@@ -1,4 +1,4 @@
-# fleet-gateway (docs/designs/fleet-connections.md §3), a user unit of fleet. It reads key values from the coordinator's
+# fleet-gateway (docs/designs/fleet-connections.md §3), a user unit of fleet, from the current release (deploy/install-release.sh). It reads key values from the coordinator's
 # secret directory when the snapshot names them, so key changes need no restart. Config /home/fleet/.config/fleet/gateway.json:
 # {"snapshot": "/home/fleet/.local/share/fleet/gateway/snapshot.json", "keys_dir": "/home/fleet/.config/fleet/secrets/connections",
 #  "state_dir": "/home/fleet/.local/share/fleet/gateway/state"}
@@ -8,7 +8,7 @@ Requires=fleet-gateway.socket
 After=fleet-gateway.socket network-online.target
 
 [Service]
-ExecStart=/home/fleet/runtime/fleet-gateway serve /home/fleet/.config/fleet/gateway.json
+ExecStart=/home/fleet/releases/current/fleet-gateway serve /home/fleet/.config/fleet/gateway.json
 Restart=always
 RestartSec=1
 TimeoutStopSec=45
