@@ -196,14 +196,9 @@ func (a *App) routes() http.Handler {
 	}
 	seg := "([^/]+)"
 	table := []trialRoute{
-		r("POST", "/api/ops/"+seg, txWrite, a.op),
 		r("POST", "/api/sessions", txWrite, a.sessionCreate),
 		r("GET", "/api/sessions/"+seg, txRead, a.sessionGet),
 		r("POST", "/api/sessions/"+seg+"/messages", txWrite, a.message),
-		r("POST", "/api/hosts/poll", txWrite, a.poll),
-		r("POST", "/api/hosts/receipts", txWrite, a.receipt),
-		r("POST", "/api/hosts/events", txIngest, a.events),
-		r("GET", "/api/executions/"+seg+"/events", txRead, a.eventsGet),
 		{method: "GET", re: regexp.MustCompile(`^/api/stream$`), kind: txNone, raw: a.serveStream},
 	}
 	mux := a.registered()
