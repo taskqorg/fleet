@@ -185,7 +185,7 @@ try {
   await p.goto(`${origin}/results/page-1`);
   check(await until(async () => (await p.locator('.av-text pre').textContent() ?? '').includes('<script>')), 'HTML shows as source text');
   await p.getByRole('button', { name: 'Run preview' }).click();
-  check(await p.locator('.av-frame iframe').getAttribute('sandbox') === 'allow-scripts allow-forms allow-modals allow-popups', 'HTML preview frame: scripts, no same-origin');
+  check(await p.locator('.av-frame iframe').getAttribute('sandbox') === 'allow-scripts allow-forms allow-modals', 'HTML preview frame: scripts, no same-origin');
   const frame = p.frameLocator('.av-frame iframe');
   check(await until(async () => await frame.locator('body[data-ran="1"]').count() === 1), 'the interactive result runs its script');
   check(await until(async () => await frame.locator('body[data-cookie="blocked"][data-top="blocked"][data-net="blocked"]').count() === 1), 'its script cannot read cookies, reach the app page or call the network');

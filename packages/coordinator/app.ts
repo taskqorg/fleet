@@ -292,10 +292,11 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  // Interactive preview of an HTML or SVG result (design pages, prototypes, games are results that run). Its scripts run in a
  // sandbox WITHOUT allow-same-origin: an opaque origin, so they cannot read Fleet cookies or storage, and connect-src 'none'
  // keeps them from calling Fleet or anything else. The viewer frames it with the same sandbox; opened alone it is the same.
+ // No popups. A script can still navigate its own frame away (CSP cannot stop that), but it holds nothing of Fleet's to send.
  // ponytail: same host as the app; a separate results origin when one is configured would add a second wall.
  app.get('/api/results/:id/preview',async(req:any,r)=>{const a=await artifacts.get(req.params.id);if(a.state!=='stored')fail(404,'Not found');
   const type=a.mediaType||'';if(!/^(text\/html|image\/svg\+xml)\b/.test(type))fail(415,'No interactive preview for '+type);
-  r.header('Content-Security-Policy',"sandbox allow-scripts allow-forms allow-modals allow-popups; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' data: blob:; style-src 'unsafe-inline' data:; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'");
+  r.header('Content-Security-Policy',"sandbox allow-scripts allow-forms allow-modals; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' data: blob:; style-src 'unsafe-inline' data:; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'");
   return r.type(type).send(await artifacts.read(a.id))});
  // Pipeline v2 runner (docs/designs/fleet-lab.md "Pipeline format version 2"): api steps call connections from this host; agent steps are
  // ordinary agent executions with the step's profile (variant overrides applied); script steps are executor script commands.

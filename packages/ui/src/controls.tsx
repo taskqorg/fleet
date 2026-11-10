@@ -316,7 +316,7 @@ export function ArtifactView({ a, src }: { a: ArtifactMeta; src: string }) {
     {kind === 'video' && <div class="av-frame video"><video src={src} controls preload="metadata" /></div>}
     {kind === 'text' && <>
       {page && <div class="bar"><Button label={preview ? 'Show source' : 'Run preview'} icon={preview ? 'type' : 'panels-top-left'} pressed={preview} onClick={() => setPreview(!preview)} /></div>}
-      {preview ? <div class="av-frame page"><iframe src={`${src}/preview`} sandbox="allow-scripts allow-forms allow-modals allow-popups" title={a.name} referrerpolicy="no-referrer" /></div>
+      {preview ? <div class="av-frame page" data-tip="Agent output running in a sandbox: not part of Fleet"><iframe src={`${src}/preview`} sandbox="allow-scripts allow-forms allow-modals" title={a.name} referrerpolicy="no-referrer" /></div>
         : <div class="av-text" onScroll={e => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) more(); }}><pre><code>{text}</code></pre>
           {next < a.size && <div class="muted type-sm">{bytes(next).text} of {bytes(a.size).text}{busy ? ' · loading' : ''}</div>}</div>}
     </>}
