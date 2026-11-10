@@ -93,3 +93,18 @@ test('reconcile: provider usage since the first check minus credits recorded for
   usage=107;await c.reconcile();const k=await key();assert.deepEqual([k.reconcile.providerDelta,k.reconcile.recorded,k.reconcile.difference],[7,2,5]);
   fail=true;await c.reconcile();assert.equal((await key()).reconcile.unknown,'usage HTTP 500');
  }finally{await settle();await f.app.close();srv.close()}});
+
+test('connection budget: reached pause blocks it in the snapshot; an approved ask raises the limit and unblocks',async()=>{const f=setup({connectionTickMs:0});try{await f.app.ready();
+ const c=(f.app as any).connections,store=(f.app as any).store;
+ await f.op('connections_create',{name:'tavily',provider:'tavily'});await f.op('connections_set_access',{connection:'tavily',access:{projects:['*']}});
+ const b=await f.op('budget_set',{scope:'connection',scopeId:'tavily',unit:'credits',limit:3,action:'pause'});
+ const run=await store.tx(()=>c.mint({executionId:'exec-b',directedBy:OWNER},['tavily']));
+ mkdirSync(join(f.gatewayDir,'state','spool'),{recursive:true});
+ writeFileSync(join(f.gatewayDir,'state','spool',new Date().toISOString().slice(0,10)+'.jsonl'),JSON.stringify({callId:'c1',executionId:'exec-b',tokenSha256:sha256(run.token),connection:'tavily',tool:'web_search',status:200,outcome:'ok',usage:{unit:'credits',amount:4},startedAt:Date.now()})+'\n');
+ await store.atomic(()=>c.tick());await settle();assert.deepEqual(f.snapshot().connections.tavily.blocked,['connection']);
+ assert.equal((await f.op('budgets_list')).budgets[0].spend.value,4);
+ const {questionId}=await f.op('budget_ask',{budgetId:b.id,limit:10,reason:'more research'});
+ await f.op('questions_answer',{questionId,answer:'yes'},400);await f.op('questions_answer',{questionId,answer:'approve'});
+ assert.equal((await f.op('budgets_list')).budgets[0].limit,10);
+ await store.atomic(()=>c.tick());await settle();assert.deepEqual(f.snapshot().connections.tavily.blocked,[]);
+}finally{await settle();await f.app.close()}});

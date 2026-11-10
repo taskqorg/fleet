@@ -361,7 +361,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  app.addHook('onClose',async()=>{clearInterval(pipelineTimer)});
  Object.assign(projects,managed.operations);
  // API key connections (fleet-connections.md, C0). Key values live in FLEET_SECRET_DIR; unset, keys cannot be added.
- const connections=connectionRegistry(store,{secretDir:config.secretDir,gatewayDir:config.gatewayDir,gatewayUrl:config.gatewayUrl});
+ const connections=connectionRegistry(store,{secretDir:config.secretDir,gatewayDir:config.gatewayDir,gatewayUrl:config.gatewayUrl,blocked:()=>budgetModel.blockedConnections()});
  Object.assign(projects,connections.operations);
  app.addHook('onReady',async()=>{await store.atomic(()=>connections.sync());await connections.writeSnapshot()});
  // Spool ingest and token revocation every few seconds (connection_tick_seconds: test seam, 0 turns the timer off).
@@ -406,7 +406,8 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  // Lab experiments, scores and ratings (Stage 3). Rating and budget answers arrive through tasks.answer.
  lab=labExperiments({store,runner,examples,labDirectory:config.labDirectory||'config/lab',read:id=>artifacts.readBuffer(id,64*1024*1024),
   stopExecution:executionId=>store.tx(()=>execution_stop({executionId})),catalogue:projectId=>projects.catalogue({projectId}),recommend:(projectId,methodId)=>store.tx(()=>projects.recommendation_set({projectId,methodId}))});
- store.tasks.onAnswer(lab.answers);const labOps=labOperations(lab,examples);
+ // One answer hook: Lab questions, then budget asks.
+ store.tasks.onAnswer({check:async(q:any,a:string)=>{await lab!.answers.check(q,a);await budgetModel.answers.check(q,a,requestPerson.getStore()??null)},after:async(q:any)=>{await lab!.answers.after(q);await budgetModel.answers.after(q)}});const labOps=labOperations(lab,examples);
  // Experiments reconcile on start, and on the pipeline tick as a backstop for answers committed after their hook ran.
  app.addHook('onReady',async()=>{lab!.reconcileAll().catch(e=>app.log.error(e));
   // A finish hook lost to a restart: completed draft runs are imported again (idempotent).
@@ -476,6 +477,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   budget_set:(b:any)=>budgetModel.operations.budget_set(b,requestPerson.getStore()??null),
   budgets_list:()=>budgetModel.operations.budgets_list(),
   subscription_limits:()=>readingModel.operations.subscription_limits(),
+  budget_ask:(b:any)=>budgetModel.operations.budget_ask(b,requestPerson.getStore()??null,(q:any)=>store.tasks.ask(q)),
   route_decisions:async(b:any)=>({decisions:(await store.query('SELECT execution_id,at,host_id,candidates,winner FROM route_decision WHERE execution_id=$1 ORDER BY at',[str(b?.executionId,'executionId',200)])).map((r:any)=>({executionId:r.execution_id,at:r.at,hostId:r.host_id,candidates:r.candidates,winner:r.winner}))}),
   hosts_rotate_secret:(b:any)=>hosts.operations.hosts_rotate_secret(b,requestPerson.getStore()??null),
   me:async()=>{const p=requestPerson.getStore();return {email:p?.email??null,name:p?.name??null,roles:p?.roles??[],owner:p?.owner??false,grantsVersion:p?.grantsVersion??null,changeLogRetentionDays:retentionDays}},

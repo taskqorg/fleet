@@ -95,12 +95,13 @@ impl Drop for Fixture {
 
 fn snapshot(url: &str, keys: &[(&str, &str)], tokens: &[&str], intake: &str, submit_idempotent: bool) -> Value {
     let keys: Vec<Value> = keys.iter().map(|(k, s)| json!({"id": fp(k), "state": s})).collect();
-    let tokens: Vec<Value> = tokens.iter().map(|t| json!({"sha256": sha256(t), "executionId": "exec-1", "connections": ["tavily"]})).collect();
+    let tokens: Vec<Value> = tokens.iter().map(|t| json!({"sha256": sha256(t), "executionId": "exec-1", "projectId": "p1", "connections": ["tavily"]})).collect();
     json!({"schema": 2, "generated_ms": 1,
         "providers": {"tavily": {"baseUrl": url, "usage": {"path": "/usage", "field": "key.usage"}, "tools": {
             "web_search": {"method": "POST", "path": "/search", "unit": "credits", "idempotent": true, "inject": {"include_usage": true}},
-            "submit": {"method": "POST", "path": "/submit", "unit": "credits", "idempotent": submit_idempotent}}}},
-        "connections": {"tavily": {"provider": "tavily", "tools": ["web_search", "submit"], "intake": intake, "keys": keys, "blocked": []}},
+            "submit": {"method": "POST", "path": "/submit", "unit": "credits", "idempotent": submit_idempotent},
+            "status": {"method": "GET", "path": "/tasks/{jobId}", "unit": "credits", "idempotent": true}}}},
+        "connections": {"tavily": {"provider": "tavily", "tools": ["web_search", "submit", "status"], "intake": if intake == "blocked" { "all" } else { intake }, "keys": keys, "blocked": if intake == "blocked" { json!(["project:p1"]) } else { json!([]) }}},
         "tokens": tokens, "usageTokenSha256": sha256("usage-token")})
 }
 
@@ -258,6 +259,20 @@ fn usage_reports_each_key_from_the_provider() {
     assert_eq!(a["usage"], 40.0);
     let b = rows.iter().find(|r| r["key"] == fp("invented-key-b")).unwrap();
     assert!(b["usage"].is_null() && b["unknown"].as_str().unwrap().contains("500"));
+}
+
+#[test]
+fn a_path_field_fills_a_get_and_a_reached_budget_refuses() {
+    let upstream = provider(|_| (200, 0));
+    let gw = Fixture::new(&upstream.url, &["invented-key-a"]);
+    let (status, _, _) = call_raw(gw.port, "POST", "/v1/call/tavily/status", &[("Authorization", &format!("Bearer {TOKEN}"))], r#"{"jobId":"task-7"}"#);
+    assert_eq!(status, 200);
+    assert_eq!(upstream.seen.lock().unwrap()[0].1, "", "a GET sends no body");
+    assert_eq!(call_raw(gw.port, "POST", "/v1/call/tavily/status", &[("Authorization", &format!("Bearer {TOKEN}"))], r#"{"jobId":"../x"}"#).0, 400);
+    gw.write(&snapshot(&gw.url, &[("invented-key-a", "active")], &[TOKEN], "blocked", false));
+    std::thread::sleep(Duration::from_millis(1200));
+    let (status, _, body) = gw.call("web_search", TOKEN);
+    assert_eq!((status, body["error"].as_str()), (403, Some("budget-reached")));
 }
 
 #[test]
