@@ -18,6 +18,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Check out shared rules
+        uses: actions/checkout@v4
+        with:
+          repository: taskqorg/specq
+          ref: d178c809b607d37696fe93b7572d85ed62f883a9
+          path: .specq
+          persist-credentials: false
+      - name: Contract lint
+        run: python3 .specq/engineering/scripts/contract_lint.py fleet.md
+      - name: Test requirement and risk report (warning only)
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 scripts/test-rule-report.py --self-check
+          python3 scripts/test-rule-report.py
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:

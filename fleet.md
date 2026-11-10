@@ -200,6 +200,12 @@ Observation confidence is separate from execution state. Lost contact means curr
 
 Routine work advances automatically. People resolve substantive decisions and exceptions beyond the system's authority; project acceptance rules still apply.
 
+## Verification
+
+The merge-gate command is `pnpm install --frozen-lockfile && pnpm run build && cargo build -p fleet-executor && cargo test -p fleet-executor && pnpm test`.
+
+Each persistent test names the requirement and the risk it protects; follow [specq Testing](https://github.com/taskqorg/specq/blob/d178c809b607d37696fe93b7572d85ed62f883a9/engineering/testing.md). CI reports missing names as warnings.
+
 ## Linked detail
 
 - [Use cases](docs/use-cases.md): end-to-end scenarios connecting the system blocks.
