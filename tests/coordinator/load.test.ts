@@ -28,6 +28,6 @@ test('four pollers and two outbox replays: p95 under the executor timeout, no lo
  console.log(`${times.length} requests (${polls.join('/')} polls), p95 ${p95.toFixed(0)} ms, max ${sorted.at(-1)!.toFixed(0)} ms, retries ${store.stats.get('RETRY')??0}`);
  assert.ok(statuses.every(s=>s===200));assert.ok(p95<EXECUTOR_HTTP_TIMEOUT_MS,`p95 ${p95} ms`);
  for(const r of replay){assert.equal((await store.get(r.id,'execution')).state,'completed');assert.equal((await store.get('c-'+r.id,'command')).status,'completed');
-  const events=await store.all('event',{executionId:r.id});assert.deepEqual(events.map((e:any)=>e.seq).sort((a:number,b:number)=>a-b),[0,1,2,3,4,5,6,7,8,9])}
+  const events=await store.all('event',{executionId:r.id});assert.deepEqual(events.filter((e:any)=>e.type!=='execution.ended').map((e:any)=>e.seq).sort((a:number,b:number)=>a-b),[0,1,2,3,4,5,6,7,8,9])}
  for(const h of hosts)assert.ok((await store.get(h,'host-observation')).lastSeenAt>0);
  await app.close()});

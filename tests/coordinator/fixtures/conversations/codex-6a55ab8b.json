@@ -1,0 +1,970 @@
+{
+"source": "production coordinator, captured 2026-11-10; account fields removed",
+"execution": {
+"id": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0",
+"kind": "agent_run",
+"state": "succeeded",
+"session_id": "c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"harness": "codex",
+"model": "gpt-6.1-sol",
+"effort": "low",
+"started_at": "2026-11-09T21:53:36.764+00:00",
+"ended_at": "2026-11-09T21:53:41.75+00:00",
+"seq": 336588
+},
+"documents": [
+{
+"kind": "message",
+"seq": 336589,
+"data": {
+"id": "5bda3290-52da-4a89-ac38-6031d32bfb7b",
+"text": "hi",
+"requestId": "d496bda9-8f43-4d2b-a0b9-47ff9041d422",
+"sessionId": "c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"executionId": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0"
+}
+},
+{
+"kind": "event",
+"seq": 336607,
+"data": {
+"id": "event:6a55ab8b-e86b-42bb-b5f8-67dd34a392e0:1a5ecae7-0f1e-4368-9e99-efb2bdd6fafe-0",
+"seq": 0,
+"data": {
+"model": "gpt-6.1-sol",
+"tools": {
+"mcp": [],
+"shell": "workspace-write, network disabled, approvals denied",
+"collaborationTools": true
+},
+"effort": "low",
+"skills": [],
+"repairs": false,
+"nativeConfig": "Fleet-owned HOME/CODEX_HOME required; config and execpolicy ignored; AGENTS discovery, skills, memories and hooks disabled; context observations pending",
+"subscription": true,
+"instructionsSha256": "7fefd5ccc39001e5dcb1264daad5403e61216afd32ca6311bd5a8c39b26f50ff"
+},
+"type": "preparation",
+"sessionId": "c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"timestamp": 1794261213691,
+"executionId": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0"
+}
+},
+{
+"kind": "event",
+"seq": 336615,
+"data": {
+"id": "event:6a55ab8b-e86b-42bb-b5f8-67dd34a392e0:1a5ecae7-0f1e-4368-9e99-efb2bdd6fafe-3",
+"seq": 3,
+"data": {
+"cwd": "/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"harness": "codex",
+"version": "codex-cli 0.167.0",
+"platform": "darwin",
+"worktree": false,
+"executable": "/usr/local/bin/codex",
+"fleetTools": true,
+"builtinTools": [
+"exec",
+"wait",
+"request_user_input",
+"request_user_input_async",
+"sleep",
+"followup_task",
+"interrupt_agent",
+"list_agents",
+"send_message",
+"spawn_agent",
+"wait_agent"
+],
+"fleetMcpTools": [
+"session_start",
+"session_deliver",
+"session_transition",
+"session_fork",
+"session_resume",
+"session_handoffs",
+"message_send",
+"queue_list",
+"ask",
+"reply",
+"questions",
+"worker_done",
+"execution_status",
+"artifact_save",
+"artifact_list",
+"artifact_get"
+],
+"collaborationTools": true
+},
+"type": "harness",
+"sessionId": "c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"timestamp": 1794261215302,
+"executionId": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0"
+}
+},
+{
+"kind": "event",
+"seq": 336628,
+"data": {
+"id": "event:6a55ab8b-e86b-42bb-b5f8-67dd34a392e0:1a5ecae7-0f1e-4368-9e99-efb2bdd6fafe-4",
+"seq": 4,
+"data": {
+"type": "protocol.write",
+"bytes": 130,
+"method": "initialize",
+"sha256": "2509cdfb70a3c9e041aa547fa97debba52feaa7aec71e9d191fedd83199610dd",
+"delivery": "written to local transport; native acceptance unknown",
+"requestId": 1,
+"fleetNormalized": {
+"error": null,
+"tools": [],
+"usage": null,
+"native": {
+"type": "protocol.write",
+"bytes": 130,
+"method": "initialize",
+"sha256": "2509cdfb70a3c9e041aa547fa97debba52feaa7aec71e9d191fedd83199610dd",
+"delivery": "written to local transport; native acceptance unknown",
+"requestId": 1
+},
+"harness": "codex",
+"message": null,
+"session": null,
+"messages": [],
+"completed": false,
+"lifecycle": "protocol.write",
+"usageScope": "native report; scope unknown, may be cumulative; not additive",
+"nativeUsage": null,
+"contextUsage": null
+}
+},
+"type": "protocol.write",
+"sessionId": "c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"timestamp": 1794261215420,
+"executionId": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0"
+}
+},
+{
+"kind": "event",
+"seq": 336629,
+"data": {
+"id": "event:6a55ab8b-e86b-42bb-b5f8-67dd34a392e0:1a5ecae7-0f1e-4368-9e99-efb2bdd6fafe-5",
+"seq": 5,
+"data": {
+"type": "protocol.write",
+"bytes": 25,
+"method": "initialized",
+"sha256": "a7a46480650892067559ec67217b69dce68c1eef6b65ec48662dddf6ccef0893",
+"delivery": "written to local transport; native acceptance unknown",
+"requestId": null,
+"fleetNormalized": {
+"error": null,
+"tools": [],
+"usage": null,
+"native": {
+"type": "protocol.write",
+"bytes": 25,
+"method": "initialized",
+"sha256": "a7a46480650892067559ec67217b69dce68c1eef6b65ec48662dddf6ccef0893",
+"delivery": "written to local transport; native acceptance unknown",
+"requestId": null
+},
+"harness": "codex",
+"message": null,
+"session": null,
+"messages": [],
+"completed": false,
+"lifecycle": "protocol.write",
+"usageScope": "native report; scope unknown, may be cumulative; not additive",
+"nativeUsage": null,
+"contextUsage": null
+}
+},
+"type": "protocol.write",
+"sessionId": "c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"timestamp": 1794261216013,
+"executionId": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0"
+}
+},
+{
+"kind": "event",
+"seq": 336630,
+"data": {
+"id": "event:6a55ab8b-e86b-42bb-b5f8-67dd34a392e0:1a5ecae7-0f1e-4368-9e99-efb2bdd6fafe-6",
+"seq": 6,
+"data": {
+"type": "protocol.write",
+"bytes": 591,
+"method": "thread/start",
+"sha256": "14ac086988a808443dae005c661f5e93be1fe453031480957192be42a835b469",
+"delivery": "written to local transport; native acceptance unknown",
+"requestId": 2,
+"fleetNormalized": {
+"error": null,
+"tools": [],
+"usage": null,
+"native": {
+"type": "protocol.write",
+"bytes": 591,
+"method": "thread/start",
+"sha256": "14ac086988a808443dae005c661f5e93be1fe453031480957192be42a835b469",
+"delivery": "written to local transport; native acceptance unknown",
+"requestId": 2
+},
+"harness": "codex",
+"message": null,
+"session": null,
+"messages": [],
+"completed": false,
+"lifecycle": "protocol.write",
+"usageScope": "native report; scope unknown, may be cumulative; not additive",
+"nativeUsage": null,
+"contextUsage": null
+}
+},
+"type": "protocol.write",
+"sessionId": "c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"timestamp": 1794261216013,
+"executionId": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0"
+}
+},
+{
+"kind": "event",
+"seq": 336631,
+"data": {
+"id": "event:6a55ab8b-e86b-42bb-b5f8-67dd34a392e0:1a5ecae7-0f1e-4368-9e99-efb2bdd6fafe-7",
+"seq": 7,
+"data": {
+"type": "protocol.write",
+"bytes": 186,
+"method": "turn/start",
+"sha256": "dc1b0634749ee669c1966189d1569b98c6a9936f49578483081573b7a55c5175",
+"delivery": "written to local transport; native acceptance unknown",
+"requestId": 3,
+"fleetNormalized": {
+"error": null,
+"tools": [],
+"usage": null,
+"native": {
+"type": "protocol.write",
+"bytes": 186,
+"method": "turn/start",
+"sha256": "dc1b0634749ee669c1966189d1569b98c6a9936f49578483081573b7a55c5175",
+"delivery": "written to local transport; native acceptance unknown",
+"requestId": 3
+},
+"harness": "codex",
+"message": null,
+"session": null,
+"messages": [],
+"completed": false,
+"lifecycle": "protocol.write",
+"usageScope": "native report; scope unknown, may be cumulative; not additive",
+"nativeUsage": null,
+"contextUsage": null
+}
+},
+"type": "protocol.write",
+"sessionId": "c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"timestamp": 1794261216013,
+"executionId": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0"
+}
+},
+{
+"kind": "event",
+"seq": 336646,
+"data": {
+"id": "event:6a55ab8b-e86b-42bb-b5f8-67dd34a392e0:1a5ecae7-0f1e-4368-9e99-efb2bdd6fafe-8",
+"seq": 8,
+"data": {
+"type": "thread.started",
+"native": {
+"id": 2,
+"result": {
+"cwd": "/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"model": "gpt-6.1-sol",
+"thread": {
+"id": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"cwd": "/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"name": null,
+"path": "/Users/kirs/Library/Application Support/Fleet/codex/sessions/2026/11/10/rollout-2026-11-10T04-53-35-01a1c24d-68cd-7222-8ec1-9fa04069fe1a.jsonl",
+"extra": null,
+"model": "gpt-6.1-sol",
+"turns": [],
+"source": "vscode",
+"status": {
+"type": "idle"
+},
+"gitInfo": null,
+"preview": "",
+"section": null,
+"agentRole": null,
+"createdAt": 1794261215,
+"ephemeral": false,
+"projectId": null,
+"recencyAt": 1794261215,
+"sessionId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"updatedAt": 1794261215,
+"cliVersion": "0.167.0",
+"originator": "fleet",
+"historyMode": "paginated",
+"environments": [
+{
+"cwd": "/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"environmentId": "local",
+"runtimeWorkspaceRoots": [
+"/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11"
+]
+}
+],
+"forkedFromId": null,
+"threadSource": null,
+"agentNickname": null,
+"modelProvider": "openai",
+"parentThreadId": null,
+"daybreakEnabled": null,
+"reasoningEffort": "low",
+"sectionEnteredAt": null,
+"canAcceptDirectInput": true
+},
+"sandbox": {
+"type": "workspaceWrite",
+"networkAccess": false,
+"writableRoots": [],
+"excludeSlashTmp": false,
+"excludeTmpdirEnvVar": false
+},
+"serviceTier": null,
+"modelProvider": "openai",
+"approvalPolicy": "never",
+"multiAgentMode": "explicitRequestOnly",
+"reasoningEffort": "low",
+"approvalsReviewer": "user",
+"disabledPluginIds": [],
+"instructionSources": [],
+"runtimeWorkspaceRoots": [
+"/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11"
+],
+"activePermissionProfile": null
+}
+},
+"thread_id": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"harnessVersion": "fleet/0.167.0 (Mac OS 27.2.0; arm64) unknown (fleet; 0.1.0)",
+"fleetNormalized": {
+"error": null,
+"tools": [],
+"usage": null,
+"native": {
+"type": "thread.started",
+"native": {
+"id": 2,
+"result": {
+"cwd": "/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"model": "gpt-6.1-sol",
+"thread": {
+"id": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"cwd": "/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"name": null,
+"path": "/Users/kirs/Library/Application Support/Fleet/codex/sessions/2026/11/10/rollout-2026-11-10T04-53-35-01a1c24d-68cd-7222-8ec1-9fa04069fe1a.jsonl",
+"extra": null,
+"model": "gpt-6.1-sol",
+"turns": [],
+"source": "vscode",
+"status": {
+"type": "idle"
+},
+"gitInfo": null,
+"preview": "",
+"section": null,
+"agentRole": null,
+"createdAt": 1794261215,
+"ephemeral": false,
+"projectId": null,
+"recencyAt": 1794261215,
+"sessionId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"updatedAt": 1794261215,
+"cliVersion": "0.167.0",
+"originator": "fleet",
+"historyMode": "paginated",
+"environments": [
+{
+"cwd": "/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"environmentId": "local",
+"runtimeWorkspaceRoots": [
+"/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11"
+]
+}
+],
+"forkedFromId": null,
+"threadSource": null,
+"agentNickname": null,
+"modelProvider": "openai",
+"parentThreadId": null,
+"daybreakEnabled": null,
+"reasoningEffort": "low",
+"sectionEnteredAt": null,
+"canAcceptDirectInput": true
+},
+"sandbox": {
+"type": "workspaceWrite",
+"networkAccess": false,
+"writableRoots": [],
+"excludeSlashTmp": false,
+"excludeTmpdirEnvVar": false
+},
+"serviceTier": null,
+"modelProvider": "openai",
+"approvalPolicy": "never",
+"multiAgentMode": "explicitRequestOnly",
+"reasoningEffort": "low",
+"approvalsReviewer": "user",
+"disabledPluginIds": [],
+"instructionSources": [],
+"runtimeWorkspaceRoots": [
+"/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11"
+],
+"activePermissionProfile": null
+}
+},
+"thread_id": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"harnessVersion": "fleet/0.167.0 (Mac OS 27.2.0; arm64) unknown (fleet; 0.1.0)"
+},
+"harness": "codex",
+"message": null,
+"session": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"messages": [],
+"completed": false,
+"lifecycle": "thread.started",
+"usageScope": "native report; scope unknown, may be cumulative; not additive",
+"nativeUsage": null,
+"contextUsage": null
+}
+},
+"type": "thread.started",
+"sessionId": "c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"timestamp": 1794261216013,
+"executionId": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0"
+}
+},
+{
+"kind": "event",
+"seq": 336656,
+"data": {
+"id": "event:6a55ab8b-e86b-42bb-b5f8-67dd34a392e0:1a5ecae7-0f1e-4368-9e99-efb2bdd6fafe-9",
+"seq": 9,
+"data": {
+"item": {
+"id": "01a1c24d-6e56-7dd1-9cce-123b72ed2579",
+"type": "userMessage",
+"content": [
+{
+"text": "hi",
+"type": "text",
+"text_elements": []
+}
+],
+"clientId": null,
+"startedAtMs": 1794261216857,
+"completedAtMs": 1794261216857
+},
+"type": "item.completed",
+"native": {
+"method": "item/completed",
+"params": {
+"item": {
+"id": "01a1c24d-6e56-7dd1-9cce-123b72ed2579",
+"type": "userMessage",
+"content": [
+{
+"text": "hi",
+"type": "text",
+"text_elements": []
+}
+],
+"clientId": null,
+"startedAtMs": 1794261216857,
+"completedAtMs": 1794261216857
+},
+"turnId": "01a1c24d-692a-7460-83d5-6959c86ac809",
+"threadId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"completedAtMs": 1794261216857
+},
+"emittedAtMs": 1794261216866
+},
+"children": [],
+"fleetNormalized": {
+"error": null,
+"tools": [],
+"usage": null,
+"native": {
+"item": {
+"id": "01a1c24d-6e56-7dd1-9cce-123b72ed2579",
+"type": "userMessage",
+"content": [
+{
+"text": "hi",
+"type": "text",
+"text_elements": []
+}
+],
+"clientId": null,
+"startedAtMs": 1794261216857,
+"completedAtMs": 1794261216857
+},
+"type": "item.completed",
+"native": {
+"method": "item/completed",
+"params": {
+"item": {
+"id": "01a1c24d-6e56-7dd1-9cce-123b72ed2579",
+"type": "userMessage",
+"content": [
+{
+"text": "hi",
+"type": "text",
+"text_elements": []
+}
+],
+"clientId": null,
+"startedAtMs": 1794261216857,
+"completedAtMs": 1794261216857
+},
+"turnId": "01a1c24d-692a-7460-83d5-6959c86ac809",
+"threadId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"completedAtMs": 1794261216857
+},
+"emittedAtMs": 1794261216866
+},
+"children": []
+},
+"harness": "codex",
+"message": {
+"id": "01a1c24d-6e56-7dd1-9cce-123b72ed2579",
+"type": "userMessage",
+"content": [
+{
+"text": "hi",
+"type": "text",
+"text_elements": []
+}
+],
+"clientId": null,
+"startedAtMs": 1794261216857,
+"completedAtMs": 1794261216857
+},
+"session": null,
+"messages": [],
+"completed": false,
+"lifecycle": "item.completed",
+"usageScope": "native report; scope unknown, may be cumulative; not additive",
+"nativeUsage": null,
+"contextUsage": null
+}
+},
+"type": "item.completed",
+"sessionId": "c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"timestamp": 1794261217260,
+"executionId": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0"
+}
+},
+{
+"kind": "event",
+"seq": 336657,
+"data": {
+"id": "event:6a55ab8b-e86b-42bb-b5f8-67dd34a392e0:1a5ecae7-0f1e-4368-9e99-efb2bdd6fafe-10",
+"seq": 10,
+"data": {
+"cost": null,
+"ioBytes": null,
+"coverage": {
+"io": "unknown",
+"cpu": "native leader ps lifetime average, excludes descendants",
+"ram": "native leader rss only",
+"cost": "unknown subscription allocation",
+"disk": "entire executor data directory allocated bytes; not per execution"
+},
+"diskBytes": 3125248,
+"cpuPercent": 0.8,
+"residentBytes": 125485056
+},
+"type": "resource.observation",
+"sessionId": "c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"timestamp": 1794261218781,
+"executionId": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0"
+}
+},
+{
+"kind": "event",
+"seq": 336658,
+"data": {
+"id": "event:6a55ab8b-e86b-42bb-b5f8-67dd34a392e0:1a5ecae7-0f1e-4368-9e99-efb2bdd6fafe-11",
+"seq": 11,
+"data": {
+"item": {
+"id": "msg_0b01c6cd8fabf0d4016af240e2b4b487d0845f1d2e5d1303b1",
+"text": "Hi! What would you like to work on?",
+"type": "agent_message",
+"phase": "final_answer",
+"delivery": null,
+"questions": null,
+"startedAtMs": 1794261218741,
+"completedAtMs": 1794261218791,
+"memoryCitation": null
+},
+"type": "item.completed",
+"native": {
+"method": "item/completed",
+"params": {
+"item": {
+"id": "msg_0b01c6cd8fabf0d4016af240e2b4b487d0845f1d2e5d1303b1",
+"text": "Hi! What would you like to work on?",
+"type": "agentMessage",
+"phase": "final_answer",
+"delivery": null,
+"questions": null,
+"startedAtMs": 1794261218741,
+"completedAtMs": 1794261218791,
+"memoryCitation": null
+},
+"turnId": "01a1c24d-692a-7460-83d5-6959c86ac809",
+"threadId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"completedAtMs": 1794261218791
+},
+"emittedAtMs": 1794261218798
+},
+"children": [],
+"fleetNormalized": {
+"error": null,
+"tools": [],
+"usage": null,
+"native": {
+"item": {
+"id": "msg_0b01c6cd8fabf0d4016af240e2b4b487d0845f1d2e5d1303b1",
+"text": "Hi! What would you like to work on?",
+"type": "agent_message",
+"phase": "final_answer",
+"delivery": null,
+"questions": null,
+"startedAtMs": 1794261218741,
+"completedAtMs": 1794261218791,
+"memoryCitation": null
+},
+"type": "item.completed",
+"native": {
+"method": "item/completed",
+"params": {
+"item": {
+"id": "msg_0b01c6cd8fabf0d4016af240e2b4b487d0845f1d2e5d1303b1",
+"text": "Hi! What would you like to work on?",
+"type": "agentMessage",
+"phase": "final_answer",
+"delivery": null,
+"questions": null,
+"startedAtMs": 1794261218741,
+"completedAtMs": 1794261218791,
+"memoryCitation": null
+},
+"turnId": "01a1c24d-692a-7460-83d5-6959c86ac809",
+"threadId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"completedAtMs": 1794261218791
+},
+"emittedAtMs": 1794261218798
+},
+"children": []
+},
+"harness": "codex",
+"message": {
+"id": "msg_0b01c6cd8fabf0d4016af240e2b4b487d0845f1d2e5d1303b1",
+"text": "Hi! What would you like to work on?",
+"type": "agent_message",
+"phase": "final_answer",
+"delivery": null,
+"questions": null,
+"startedAtMs": 1794261218741,
+"completedAtMs": 1794261218791,
+"memoryCitation": null
+},
+"session": null,
+"messages": [
+{
+"role": "assistant",
+"text": "Hi! What would you like to work on?"
+}
+],
+"completed": false,
+"lifecycle": "item.completed",
+"usageScope": "native report; scope unknown, may be cumulative; not additive",
+"nativeUsage": null,
+"contextUsage": null
+}
+},
+"type": "item.completed",
+"sessionId": "c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"timestamp": 1794261219338,
+"executionId": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0"
+}
+},
+{
+"kind": "event",
+"seq": 336659,
+"data": {
+"id": "event:6a55ab8b-e86b-42bb-b5f8-67dd34a392e0:1a5ecae7-0f1e-4368-9e99-efb2bdd6fafe-12",
+"seq": 12,
+"data": {
+"type": "usage.observation",
+"usage": {
+"last": {
+"inputTokens": 13167,
+"totalTokens": 13181,
+"outputTokens": 14,
+"cachedInputTokens": 11520,
+"cacheWriteInputTokens": 0,
+"reasoningOutputTokens": 0
+},
+"total": {
+"inputTokens": 13167,
+"totalTokens": 13181,
+"outputTokens": 14,
+"cachedInputTokens": 11520,
+"cacheWriteInputTokens": 0,
+"reasoningOutputTokens": 0
+},
+"modelContextWindow": 475000
+},
+"native": {
+"method": "thread/tokenUsage/updated",
+"params": {
+"turnId": "01a1c24d-692a-7460-83d5-6959c86ac809",
+"threadId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"tokenUsage": {
+"last": {
+"inputTokens": 13167,
+"totalTokens": 13181,
+"outputTokens": 14,
+"cachedInputTokens": 11520,
+"cacheWriteInputTokens": 0,
+"reasoningOutputTokens": 0
+},
+"total": {
+"inputTokens": 13167,
+"totalTokens": 13181,
+"outputTokens": 14,
+"cachedInputTokens": 11520,
+"cacheWriteInputTokens": 0,
+"reasoningOutputTokens": 0
+},
+"modelContextWindow": 475000
+}
+},
+"emittedAtMs": 1794261218805
+},
+"fleetNormalized": {
+"error": null,
+"tools": [],
+"usage": {
+"input_tokens": 13167,
+"total_tokens": 13181,
+"output_tokens": 14,
+"cached_input_tokens": 11520,
+"reasoning_output_tokens": 0,
+"cache_write_input_tokens": 0
+},
+"native": {
+"type": "usage.observation",
+"usage": {
+"last": {
+"inputTokens": 13167,
+"totalTokens": 13181,
+"outputTokens": 14,
+"cachedInputTokens": 11520,
+"cacheWriteInputTokens": 0,
+"reasoningOutputTokens": 0
+},
+"total": {
+"inputTokens": 13167,
+"totalTokens": 13181,
+"outputTokens": 14,
+"cachedInputTokens": 11520,
+"cacheWriteInputTokens": 0,
+"reasoningOutputTokens": 0
+},
+"modelContextWindow": 475000
+},
+"native": {
+"method": "thread/tokenUsage/updated",
+"params": {
+"turnId": "01a1c24d-692a-7460-83d5-6959c86ac809",
+"threadId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"tokenUsage": {
+"last": {
+"inputTokens": 13167,
+"totalTokens": 13181,
+"outputTokens": 14,
+"cachedInputTokens": 11520,
+"cacheWriteInputTokens": 0,
+"reasoningOutputTokens": 0
+},
+"total": {
+"inputTokens": 13167,
+"totalTokens": 13181,
+"outputTokens": 14,
+"cachedInputTokens": 11520,
+"cacheWriteInputTokens": 0,
+"reasoningOutputTokens": 0
+},
+"modelContextWindow": 475000
+}
+},
+"emittedAtMs": 1794261218805
+}
+},
+"harness": "codex",
+"message": null,
+"session": null,
+"messages": [],
+"completed": false,
+"lifecycle": "usage.observation",
+"usageScope": "native thread cumulative total; not additive",
+"nativeUsage": {
+"last": {
+"inputTokens": 13167,
+"totalTokens": 13181,
+"outputTokens": 14,
+"cachedInputTokens": 11520,
+"cacheWriteInputTokens": 0,
+"reasoningOutputTokens": 0
+},
+"total": {
+"inputTokens": 13167,
+"totalTokens": 13181,
+"outputTokens": 14,
+"cachedInputTokens": 11520,
+"cacheWriteInputTokens": 0,
+"reasoningOutputTokens": 0
+},
+"modelContextWindow": 475000
+},
+"contextUsage": null
+}
+},
+"type": "usage.observation",
+"sessionId": "c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"timestamp": 1794261219339,
+"executionId": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0"
+}
+},
+{
+"kind": "event",
+"seq": 336660,
+"data": {
+"id": "event:6a55ab8b-e86b-42bb-b5f8-67dd34a392e0:1a5ecae7-0f1e-4368-9e99-efb2bdd6fafe-13",
+"seq": 13,
+"data": {
+"type": "turn.completed",
+"error": null,
+"native": {
+"method": "turn/completed",
+"params": {
+"turn": {
+"id": "01a1c24d-692a-7460-83d5-6959c86ac809",
+"error": null,
+"items": [
+{
+"id": "msg_0b01c6cd8fabf0d4016af240e2b4b487d0845f1d2e5d1303b1",
+"text": "Hi! What would you like to work on?",
+"type": "agentMessage",
+"phase": "final_answer",
+"delivery": null,
+"questions": null,
+"startedAtMs": 1794261218741,
+"completedAtMs": 1794261218791,
+"memoryCitation": null
+}
+],
+"status": "completed",
+"itemsView": "summary",
+"startedAt": 1794261215,
+"durationMs": 3272,
+"rootTurnId": "01a1c24d-692a-7460-83d5-6959c86ac809",
+"completedAt": 1794261218
+},
+"threadId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a"
+},
+"emittedAtMs": 1794261218819
+},
+"fleetNormalized": {
+"error": null,
+"tools": [],
+"usage": null,
+"native": {
+"type": "turn.completed",
+"error": null,
+"native": {
+"method": "turn/completed",
+"params": {
+"turn": {
+"id": "01a1c24d-692a-7460-83d5-6959c86ac809",
+"error": null,
+"items": [
+{
+"id": "msg_0b01c6cd8fabf0d4016af240e2b4b487d0845f1d2e5d1303b1",
+"text": "Hi! What would you like to work on?",
+"type": "agentMessage",
+"phase": "final_answer",
+"delivery": null,
+"questions": null,
+"startedAtMs": 1794261218741,
+"completedAtMs": 1794261218791,
+"memoryCitation": null
+}
+],
+"status": "completed",
+"itemsView": "summary",
+"startedAt": 1794261215,
+"durationMs": 3272,
+"rootTurnId": "01a1c24d-692a-7460-83d5-6959c86ac809",
+"completedAt": 1794261218
+},
+"threadId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a"
+},
+"emittedAtMs": 1794261218819
+}
+},
+"harness": "codex",
+"message": null,
+"session": null,
+"messages": [],
+"completed": true,
+"lifecycle": "turn.completed",
+"usageScope": "native report; scope unknown, may be cumulative; not additive",
+"nativeUsage": null,
+"contextUsage": null
+}
+},
+"type": "turn.completed",
+"sessionId": "c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"timestamp": 1794261219339,
+"executionId": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0"
+}
+},
+{
+"kind": "event",
+"seq": 336661,
+"data": {
+"id": "event:6a55ab8b-e86b-42bb-b5f8-67dd34a392e0:1a5ecae7-0f1e-4368-9e99-efb2bdd6fafe-14",
+"seq": 14,
+"data": {
+"exitCode": 0,
+"stdoutClosed": true,
+"cleanupUnknown": false,
+"observedOwnedProcessesRemaining": false
+},
+"type": "process.closed",
+"sessionId": "c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"timestamp": 1794261219350,
+"executionId": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0"
+}
+}
+]
+}

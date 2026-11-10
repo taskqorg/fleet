@@ -82,7 +82,9 @@ export function taskModel(raw:Raw,executions:Executions){
   if(q.kind==='acceptance'&&!['accepted','rejected'].includes(v.answer))fail(400,'Acceptance answer is accepted or rejected');
   // Lab questions (ratings, budget decisions) are checked and applied by lab/scores.ts through the answer hook, in this transaction.
   if(answerHook)await answerHook.check(q,v.answer);
-  await raw.query("UPDATE question SET answer=$2,answered_by=$3,answered_at=coalesce($4::timestamptz,now()),state='answered' WHERE id=$1",[id,v.answer,v.by,ts(v.at)]);
+  // Only one answer wins: the read above is not locked, so a concurrent answer may have landed since. The loser rereads.
+  const won=await raw.query("UPDATE question SET answer=$2,answered_by=$3,answered_at=coalesce($4::timestamptz,now()),state='answered' WHERE id=$1 AND state='open' RETURNING id",[id,v.answer,v.by,ts(v.at)]);
+  if(!won.length){const now=await one('SELECT * FROM question WHERE id=$1',[id]);if(now?.state==='answered'&&now.answer===v.answer)return now;fail(409,now?.state==='answered'?'Question already answered differently':'Question withdrawn')}
   if(q.task_id){if(q.kind==='acceptance'){const artifacts=v.artifactIds??q.data?.artifactIds??[];
     if(v.answer==='accepted'){await transition(q.task_id,'accepted');await raw.query('UPDATE task SET accepted_by=$2,accepted_at=now(),accepted_artifact_ids=$3 WHERE id=$1',[q.task_id,v.by,artifacts])}
     else await transition(q.task_id,'rejected')}

@@ -36,7 +36,7 @@ Contradictions with the brief: none remain. Additions that change interfaces:
 
 | # | Question | Default |
 |---|---|---|
-| D1 | Must old history survive the block change? | Yes: one-time `reproject`, gated by `--check`. |
+| D1 | Must old history survive the block change? | Overturned by the owner (2026-11-10): no; old records are not re-projected. |
 | D2 | Session with executions for two tasks: where does its early taskless history go? | The first task it got. |
 | D3 | Steer while a question is open. | Steer goes to the execution; it does not answer. The open card stays above the composer. |
 | D4 | Model label source. | Formatter in `format.ts` from the stored model id; no registry. |
