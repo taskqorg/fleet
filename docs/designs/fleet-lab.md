@@ -9,9 +9,9 @@ Lab adds no run machinery of its own. A trial is a `pipeline_run` execution with
 | Term | Meaning |
 |---|---|
 | Coordinator | Fleet's TypeScript server (`packages/coordinator`). Owns Postgres, routes, reconcile. |
-| Executor | Fleet's Rust process on each host (`crates/executor`). Runs harnesses, scripts, worktrees. |
+| Executor | Fleet's Go process on each host (`go/executor`). Runs harnesses, scripts, worktrees. |
 | Harness | An agent CLI the executor drives: Codex, Claude, Antigravity. |
-| Profile | A trusted JSON file in `config/agents` naming harness, model, skills and granted connections (`packages/coordinator/profiles.ts`, `crates/executor/src/profile.rs`). |
+| Profile | A trusted JSON file in `config/agents` naming harness, model, skills and granted connections (`packages/coordinator/profiles.ts`, `go/executor/profile.go`). |
 | Connection | Fleet's record of one outside provider endpoint, owned by [fleet-connections.md](fleet-connections.md). Example: `tavily`. |
 | Catalogue / recommendation | `config/catalogue.json` lists methods per project; `recommendation_set` records the chosen method as a `project-recommendation`. |
 | Use case | A registry entry pointing at a use case written in an org repo (Fleet, taskq, pilotq, agentq, dashq, assetq). |
@@ -93,7 +93,7 @@ The runner is `packages/coordinator/pipelines.ts`; no version-1 reader exists.
 *   References `${example.<field>}` and `${steps.<id>.output.<json path>}` are resolved by the coordinator before the step starts. A missing reference fails the step with `problem: ref:<path>`; there is no default.
 *   `api` step: `{connection, tool, arguments, mode: sync|job}`, default `sync`. In `job` mode the submit output carries `jobId`, kept in the step's `execution.data.jobId`; the coordinator polls tool `job_status {jobId}` on the same connection (answer `{state: running|succeeded|failed, output, usage}`) on every pipeline tick (every 5 s and on every receipt) and resumes polling after a restart. An uncertain outcome is never replayed: a sync call cut by a restart ends `unknown:interrupted`.
 *   `agent` step: `{profile, prompt}` plus variant overrides. Its run is an ordinary agent execution, parent = the step, linked by `pipelineStepId`, on the host its account binding picks. Override `host` pins it to that host with no fallback; a host that cannot run it fails the step with the reason.
-*   `script` step: `{command, timeout_ms?, host?}`, executor command kind `script` (`crates/executor/src/main.rs`): `sh -c` in its own process group (stop kills the group), with `FLEET_INPUT_DIR` and `FLEET_OUTPUT_DIR`; outputs become artifacts. Host: the step's or override's `host`, else the coordinator's default host. Every substituted value is shell-quoted. Not built: the coordinator sending the example fixture's `repo`/`commit`, so a script runs in the trial's own worktree at that commit (the executor supports it; today scripts run in a scratch directory).
+*   `script` step: `{command, timeout_ms?, host?}`, executor command kind `script` (`go/executor/executor.go`): `sh -c` in its own process group (stop kills the group), with `FLEET_INPUT_DIR` and `FLEET_OUTPUT_DIR`; outputs become artifacts. Host: the step's or override's `host`, else the coordinator's default host. Every substituted value is shell-quoted. Not built: the coordinator sending the example fixture's `repo`/`commit`, so a script runs in the trial's own worktree at that commit (the executor supports it; today scripts run in a scratch directory).
 *   Variant overrides: `profile`, `model`, `skills`, `prompt`, `web_route`, `account` (agent steps), `host`.
 *   Inputs reach agent and script steps as start-command `inputs` `[{artifactId, path}]`; the executor downloads them into `FLEET_INPUT_DIR` before the step starts, and the host may read exactly those artifacts. Example `inputs` are staged under `example/`; an example's `references` never enter a run.
 *   A failed step stops later steps; the trial keeps its reason.
@@ -104,10 +104,10 @@ Pipelines in `config/pipelines/`: `web-research`, `hello-search`, `search-basic`
 
 ## Connections: one accounting path (R3.2)
 
-Every provider call goes through one client, `packages/coordinator/connection_call.py`, with two entry points; the connection record, its hash pin and tokens are specified in [fleet-connections.md](fleet-connections.md).
+Every provider call goes through fleet-gateway, from two entry points; the connection record, its hash pin and tokens are specified in [fleet-connections.md](fleet-connections.md).
 
 *   **CLI** (coordinator-side `api` step): `connection_call.py call …`, arguments on stdin, the call line with `output` on stdout.
-*   **MCP** (agent-side): the executor adds `connection_call.py mcp …` (the client embedded in the executor) to the harness MCP config for each connection the profile grants, and allowlists `mcp__<connection>__<tool>` for the record's `tools`.
+*   **MCP** (agent-side): the executor adds `fleet-executor mcp connection …` to the harness MCP config for each connection the profile grants, and allowlists `mcp__<connection>__<tool>` for the record's `tools`.
 *   Both send label = the current step's execution ID and append one line per call to `<calls dir>/.connection-calls.jsonl` (for an agent, `$FLEET_OUTPUT_DIR`): `{tool, request_id, label, outcome: ok|error|unknown, error_code, usage}`. On step completion the coordinator turns each line into a `tool_run` child of the step with `connection_cost {unit: credits, credits, connection}`, basis `measured`, or `unavailable` when the provider reported no usage. API steps read the client's file directly; agent steps' file arrives with the uploaded outputs. Spend lands before the step's state change triggers reconcile.
 *   Error classes: `queue-full`, `http-429`/`432`/`433`, `no-usable-key`, `key-disabled-*`, `provider-unreachable`, `unauthenticated`, an unreachable endpoint, a missing record or a hash mismatch give `infra:<code>`, and the trial is excluded from comparison. `provider-body`, `provider-timeout`, a client timeout or an unreadable reply give outcome `unknown`, problem `unknown:<code>`, never retried. Other failures are `step:<code>`.
 *   Built-in web (R3.4): Claude runs with a `--tools` allowlist from the profile that never includes `WebSearch` or `WebFetch`; `web_route: builtin` adds both. Codex gets `web_search="disabled"`, or `"live"` with `builtin`. Each trial records its web route.

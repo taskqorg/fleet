@@ -74,7 +74,7 @@ Not built: a single attention view over these failures that an operator, archite
 
 ### Checkout sync
 
-The coordinator never touches host checkouts. After a verified merge it sends `base-updated {sha}` to each environment host of the project. The executor (`crates/executor/src/checkout_sync.rs`) fetches and fast-forwards a checkout only if it is clean; otherwise it reports `checkout-dirty`, `fetch-failed` or `not-fast-forward` and leaves it untouched.
+The coordinator never touches host checkouts. After a verified merge it sends `base-updated {sha}` to each environment host of the project. The executor (`go/executor/checkout_sync.go`) fetches and fast-forwards a checkout only if it is clean; otherwise it reports `checkout-dirty`, `fetch-failed` or `not-fast-forward` and leaves it untouched.
 
 ### Not decided
 
@@ -91,13 +91,13 @@ Needs seen in the owner's repositories with no setting yet: submodules (pilotq);
 
 ### Repository access
 
-Credentials stay on the environment where the native tool reads them; Fleet records only which connection a repo uses. The executor gives each execution only the project's credential: the SSH key `<FLEET_CONNECTIONS_DIR>/<connection>/id_ed25519` with `<FLEET_CONNECTIONS_DIR>/known_hosts` (`crates/executor/src/git_access.rs`); the ambient SSH agent and `~/.ssh` config are not used for project git. Agent and delivery git runs non-interactive, with hooks off and cleared environment. Projects on one OS user can still read each other's files through a shell; full separation needs a separate environment.
+Credentials stay on the environment where the native tool reads them; Fleet records only which connection a repo uses. The executor gives each execution only the project's credential: the SSH key `<FLEET_CONNECTIONS_DIR>/<connection>/id_ed25519` with `<FLEET_CONNECTIONS_DIR>/known_hosts` (`go/executor/git_access.go`); the ambient SSH agent and `~/.ssh` config are not used for project git. Agent and delivery git runs non-interactive, with hooks off and cleared environment. Projects on one OS user can still read each other's files through a shell; full separation needs a separate environment.
 
 Not built: GitHub App tokens, fine-grained PAT helpers, `gh` keyring bindings, package registry and cloud credentials per connection, and interactive secret requests.
 
 ### Readiness
 
-`project_readiness` sends one read-only `readiness` command to each environment host (`crates/executor/src/readiness.rs`). Each check is `ok | failed` with a reason code; no raw stderr or secret leaves the host.
+`project_readiness` sends one read-only `readiness` command to each environment host (`go/executor/readiness.go`). Each check is `ok | failed` with a reason code; no raw stderr or secret leaves the host.
 
 - `checkout`: `checkoutPath/.git` exists.
 - `remote`: `git ls-remote --exit-code <remote> HEAD` with the connection's credential; reasons `ls-remote-{network|auth-denied|repo-missing|head-missing|unclassified}-exit-<code>`, `invalid-remote`.
@@ -186,7 +186,7 @@ Not built: review branches and rework loops in pipeline definitions.
 
 ## Host settings: Claude placement
 
-Claude runs only where the host allows it ([Lab](designs/fleet-lab.md)). The setting is `FLEET_CLAUDE_PLACEMENT` in the environment of the executor and of the program worker (`delivery_worker.py`) on that host:
+Claude runs only where the host allows it ([Lab](designs/fleet-lab.md)). The setting is `FLEET_CLAUDE_PLACEMENT` in the executor environment on that host:
 
 | Value | Allowed on | Host |
 |---|---|---|
@@ -208,7 +208,7 @@ API key connections ([connections](designs/fleet-connections.md)) keep key value
 
 ## People and identity
 
-The guard (`deploy/infrastructure/origin_guard.py`) verifies the Cloudflare Access JWT and returns `Authorization: Bearer <browser secret>` and `X-Fleet-Person: <verified e-mail>`; Caddy strips a client-sent `X-Fleet-Person`. The coordinator reads `FLEET_PEOPLE_FILE` (required), the `people.json` of [people and access](designs/fleet-people-access.md): `[{email, name, roles, owner?, grants: [{kind, id}]}]` with exactly one `owner: true`. A browser request without the header is 401; an e-mail not in the file is 403; a host request with the header is 403.
+The guard (`fleet-gateway guard`, `go/gateway/guard.go`) verifies the Cloudflare Access JWT and returns `Authorization: Bearer <browser secret>` and `X-Fleet-Person: <verified e-mail>`; Caddy strips a client-sent `X-Fleet-Person`. The coordinator reads `FLEET_PEOPLE_FILE` (required), the `people.json` of [people and access](designs/fleet-people-access.md): `[{email, name, roles, owner?, grants: [{kind, id}]}]` with exactly one `owner: true`. A browser request without the header is 401; an e-mail not in the file is 403; a host request with the header is 403.
 
 ## Hosts
 

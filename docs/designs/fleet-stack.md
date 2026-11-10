@@ -9,11 +9,11 @@ Every Fleet service is written in Go. The browser app stays TypeScript (Preact, 
 Order:
 
 1. The coordinator (`go/coordinator`), rewritten in one pass ([coordinator rewrite](#coordinator-rewrite)).
-2. The executor (`crates/executor`) and the gateway (`crates/gateway`) together, after the coordinator ([executor and gateway](#executor-and-gateway)). Until then both stay Rust.
+2. The executor (`go/executor`) and the gateway (`go/gateway`) together, after the coordinator ([executor and gateway](#executor-and-gateway)).
 
 Never port two components at once.
 
-Today: the coordinator is Go (`go/coordinator`, one binary); the executor and the gateway are Rust; the probe spikes are in `go/probe/`.
+Today: the coordinator, the executor and the gateway are Go (`go/coordinator`, `go/executor`, `go/gateway`); there is no Rust and no Python in the repository; the probe spikes are in `go/probe/`.
 
 ## Why this stack
 
@@ -48,7 +48,7 @@ The owner's first goal is fast agent work in parallel worktrees: the Mac must st
 
 ## Toolchain
 
-The labels D1-D4 are cited by code comments. Each stays while the TypeScript or Rust code it governs exists.
+The labels D1 and D3 are cited by code comments. Each stays while the code it governs exists.
 
 ### D1. Node 22 and pnpm
 
@@ -58,13 +58,7 @@ The labels D1-D4 are cited by code comments. Each stays while the TypeScript or 
 - The type check is TypeScript 7 (`typescript` 7.0.2, the native compiler) in `pnpm run typecheck`. The app build is esbuild (`app/build.mjs`).
 - Holds for the app, the browser checks and the outside tests.
 
-### D2. Shared Rust target per machine
-
-- Each machine sets `CARGO_TARGET_DIR` in its environment; nothing absolute is committed, so CI keeps the default `target`. `orca.yaml` runs only `pnpm install --frozen-lockfile`.
-- `Cargo.toml` sets `[profile.dev] debug = "line-tables-only"`.
-- Code that finds the executor binary resolves the target directory through `cargo metadata` `target_directory`: `tests/executor/executor-binary.ts` and `tests/executor/executor_binary.py`.
-- Cargo locks the shared directory, so parallel worktree builds queue. sccache was rejected: one more tool, still 300 MB per worktree.
-- Ends when the executor and the gateway are Go.
+The label D2 (shared Rust target per machine) ended with the Rust executor and gateway.
 
 ### D3. Own S3 client
 
@@ -81,23 +75,23 @@ Two sources, each owning one seam ([why](#why-this-stack)):
 
 Rules:
 
-- Types are generated at build time and never committed: TypeScript by `contracts/gen-ts.mjs` (run by `pnpm run typecheck` and `pnpm run build`), Rust by `crates/executor/build.rs`, Go by `go/gen` (`go generate`). `cargo build` and `go build` need no Node.
+- Types are generated at build time and never committed: TypeScript by `contracts/gen-ts.mjs` (run by `pnpm run typecheck` and `pnpm run build`), Go by `go/gen` (`go generate`). `go build` needs no Node. The executor does not use generated types: it keeps host messages as JSON values, since `EventData` is open and a struct would drop native fields.
 - In-repo generators, not `json-schema-to-typescript` and `typify`, which add 15 npm modules and 30 crates (and typify is 0.x); the off-the-shelf output was checked first and typed the union correctly, so only supply chain decided. All generators accept only the keyword subset in [`contracts/README.md`](../../contracts/README.md) and fail on any other keyword, so a schema never yields a silently weaker type.
-- `EventData` is an open object with named fields (`item`, `fleetNormalized`, `harnessVersion`, `children`); unnamed fields pass through (Rust `rest`). A closed union by `type` cannot cover native harness records, whose `type` is their own.
+- `EventData` is an open object with named fields (`item`, `fleetNormalized`, `harnessVersion`, `children`); unnamed fields pass through. A closed union by `type` cannot cover native harness records, whose `type` is their own.
 - Types only, no generated runtime validator: the coordinator's hand checks at the three host routes stay the trust-boundary validation.
 - Command `payload` stays an open object; a command kind gets a schema when it is next changed. Other HTTP routes get schema types when they are next changed.
-- The outbox and store answer share one status table, `outbox::class(status, host_token)` (`crates/executor/src/outbox.rs`): a redirect is an edge condition; 401 is an edge condition for the coordinator and a rejection for a store; 429 and 5xx retry; other 4xx are rejected.
+- The outbox and store answer share one status table, `statusClass(status, hostToken)` (`go/executor/outbox.go`): a redirect is an edge condition; 401 is an edge condition for the coordinator and a rejection for a store; 429 and 5xx retry; other 4xx are rejected.
 
 The generators were checked against off-the-shelf output for the transcript event union before the choice ([`evidence/l3/`](../../evidence/l3/)).
 
 ## MCP servers as executor subcommands (L4)
 
-- The executor starts delegation and design-rules as `fleet-executor mcp <name>` (`crates/executor/src/mcp.rs`, `profile.rs`); no Python process serves them. `tests/executor/mcp-replay.test.ts` replays the stdio exchanges captured from the former Python servers (`tests/executor/fixtures/mcp.json`).
-- Connection MCP stays `python3 connection_call.py` until Connections replaces it ([connections](fleet-connections.md)); `delivery_worker.py` likewise. `deploy/infrastructure/origin_guard.py` stays: it guards the origin independently of MCP. The remaining Python and its removal conditions are listed in the [executor README](../../crates/executor/README.md#remaining-python).
+- The executor starts delegation, design-rules and connection servers as `fleet-executor mcp <name>` (`go/executor/mcp_*.go`); no Python process serves them. `tests/executor/mcp-replay.test.ts` replays the stdio exchanges captured from the former Python servers (`tests/executor/fixtures/mcp.json`) against the Go binary.
+- The Access origin guard is the gateway's `guard` command (`go/gateway/guard.go`), formerly `origin_guard.py`.
 
 ## Go code
 
-The rules are in [`fleet.md`](../../fleet.md#stack): standard library first, `CGO_ENABLED=0`, one module `go/` with one `go.sum`, `-mod=readonly`, the checksum database on, `govulncheck` as a warning, contract types from `go/gen`, `-trimpath` release binaries from one Linux job. The schema is embedded in the binary: `go generate` copies `packages/coordinator/db/schema.sql` (the schema source, unchanged) next to `d_schema.go`; the copy is not committed. The CI job `go` vets, runs `go test` and cross-builds `go/coordinator` for linux/amd64, darwin/arm64 and windows/amd64, checks each binary for `CGO_ENABLED=0`, writes a SHA-256 file per binary and uploads the workflow artifact `fleet-go-<sha>`. Nested modules under `go/probe/` are outside that module and outside CI.
+The rules are in [`fleet.md`](../../fleet.md#stack): standard library first, `CGO_ENABLED=0`, one module `go/` with one `go.sum`, `-mod=readonly`, the checksum database on, `govulncheck` as a warning, contract types from `go/gen`, `-trimpath` release binaries from one Linux job. The schema is embedded in the binary: `go generate` copies `packages/coordinator/db/schema.sql` (the schema source, unchanged) next to `d_schema.go`; the copy is not committed. The CI job `go` vets, runs `go test` and cross-builds `go/coordinator` for linux/amd64, darwin/arm64 and windows/amd64 and `go/executor` and `go/gateway` for linux/amd64 and darwin/arm64, checks each binary for `CGO_ENABLED=0`, writes a SHA-256 file per binary and uploads the workflow artifact `fleet-go-<sha>`. Nested modules under `go/probe/` are outside that module and outside CI.
 
 ### Third-party Go modules
 
@@ -128,7 +122,7 @@ The coordinator was rewritten in Go in one pass (owner direction 2026-11-11: no 
 - Four areas worked in parallel in `go/coordinator`. Each area's files are named `<area>_*.go`. Routes register from `init()` through `registry.go`: `route`, `longRoute` (no surrounding transaction), `publicRoute` (before the credential check), `operation` (`/api/ops/{name}`) and `onStart` (background tickers).
 - The seams were `packages/coordinator/db/schema.sql` and `contracts/*.schema.json`; both stayed unchanged.
 - Tests are outside tests over HTTP: `tests/trial`, `tests/go` and the app checks in `tests/ui`. All of them start the binary through `tests/harness.ts` on a fresh database with the PDS18 roles.
-- The cutover deleted `packages/coordinator` (except `db/schema.sql`), PGlite, `pg`, Fastify, the esbuild server bundle and `tests/coordinator`. `connection_call.py` moved to `crates/executor/`, which embeds it for connection MCP servers. The release is the Go binary plus `dist/app`.
+- The cutover deleted `packages/coordinator` (except `db/schema.sql`), PGlite, `pg`, Fastify, the esbuild server bundle and `tests/coordinator`. The release is the Go binaries plus `dist/app`.
 
 Not built: delivery (`delivery_create`, `delivery_generate`, `delivery_step`, `delivery_get`, `delivery_history`, `session_deliver`, `delivery_worker.py`). The TypeScript code never completed a delivery: no executor handled `delivery-step` commands, and nothing launched the worker. It was meant to do the following:
 
@@ -142,16 +136,15 @@ Not built: artifact placement (`placement.ts`: copies across project `artifact_l
 
 ## Executor and gateway
 
-The executor and the gateway move after the coordinator, together, behind the unchanged `/api/hosts/*`, one host at a time, with the previous binary behind a symlink as rollback.
+Both were ported to Go in one pass after the coordinator (owner direction 2026-11-11), with no compatibility layer and no fallback to the Rust binaries, behind the unchanged `/api/hosts/*` and `contracts/*.schema.json`. The executor is `go/executor` (binary `fleet-executor`), the gateway `go/gateway` (`fleet-gateway`, with its `guard` command).
 
-The probe in `go/probe/` showed that the executor needs no C compiler ([evidence](../../evidence/fleet-stack.md#executor-probe)):
+- Journal: `modernc.org/sqlite`, the same `journal.sqlite` tables, WAL, `synchronous=FULL`. The probe showed 0 lost acknowledged commits in the crash test at about 14k commits/s ([evidence](../../evidence/fleet-stack.md#executor-probe)). A standard-library journal was rejected ([why](#why-this-stack)).
+- macOS kernel calls: `github.com/ebitengine/purego` for `proc_pidinfo` and `proc_signal_with_audittoken`; the signal is refused when the private symbol is missing. Linux identity-bound signals use `os.Process` with pidfd. `golang.org/x/sys/unix` for `Openat`, `Statfs`, `Flock` and the terminal check.
+- Preview memory cap: `prlimit --as=<bytes>` in the ffmpeg command line on Linux (Go has no `pre_exec`); on macOS `RLIMIT_AS` is not enforced, as before.
+- The executor writes OSC 7501 program status to stderr when stderr is a terminal (working, blocked with kind `auth` on an edge answer to the poll, done, error).
+- Tests: `go test ./executor` (fake harnesses, a fake coordinator over HTTP) and the Node MCP replay in `tests/executor`.
 
-- Journal: `modernc.org/sqlite` keeps `journal.sqlite`, its SQL, WAL across processes, the Python protocol tests and in-place upgrade (queued receipts and non-terminal commands survive). It lost 0 acknowledged commits in the crash test at about 14k commits/s. Fallback: `ncruces/go-sqlite3` (fewer modules, 4 MB larger binary, one unexplained read anomaly).
-- A standard-library journal was rejected ([why](#why-this-stack)).
-- macOS kernel calls: `github.com/ebitengine/purego` for `proc_pidinfo` and `proc_signal_with_audittoken`; `golang.org/x/sys/unix` for `Openat`, `Statfs` and `SysctlKinfoProc`. Linux identity-bound signals need only the standard library (`os.Process` with pidfd). The Rust refusal when the private libproc symbol is missing is kept.
-- Losses against Rust: about 4 MB more binary; no `pre_exec`, so the preview `RLIMIT_AS` cap needs a re-exec wrapper or a racy `prlimit`; macOS `getpwuid` needs purego or a `$HOME` fallback.
-
-Before the port: choose the `RLIMIT_AS` mechanism. Not built: a Linux run of the signal (pidfd) and crash checks in CI. Windows builds, but process control and file safety need their own port (job objects, `LockFileEx`, `os.Root`, ACL checks); Windows without WSL is not a target.
+Not built: Windows executor and gateway (process control and file safety need their own port: job objects, `LockFileEx`, `os.Root`, ACL checks); a Linux run of the pidfd signal and crash checks in CI.
 
 ## Trial (L1)
 
@@ -166,7 +159,7 @@ Requirements SL1-SL11 are the slice's own. Each has one outside test in `tests/t
 | ID | Requirement | Risk the test guards |
 |---|---|---|
 | SL1 | A browser request carries `Authorization: Bearer <browser secret>` (exact secret, `Bearer` scheme only) and a known `X-Fleet-Person`; otherwise 401, or 403 for an unknown person. | Authorization header parsed loosely |
-| SL2 | A host request is authorized by its own host secret only. An unknown or missing secret is answered 401, never a redirect or another status; a host request carrying `X-Fleet-Person`, or a body `hostId` of another host, is 403. | The executor outbox keeps a row only on 3xx and 401 (`crates/executor/src/outbox.rs`): any other answer drops or completes work it should retry; host impersonation |
+| SL2 | A host request is authorized by its own host secret only. An unknown or missing secret is answered 401, never a redirect or another status; a host request carrying `X-Fleet-Person`, or a body `hostId` of another host, is 403. | The executor outbox keeps a row only on 3xx and 401 (`go/executor/outbox.go`): any other answer drops or completes work it should retry; host impersonation |
 | SL3 | `POST /api/sessions` creates a session directed by the caller; `GET /api/sessions/:id` returns it with `sessionId`, `directedBy`, `messages` and `executions`; an unknown id is 404. | Session row not committed or wrong shape |
 | SL4 | `POST /api/sessions/:id/messages` with exactly `requestId` and `text` (optional `delivery`) queues one execution with no host yet; the same `requestId` returns the same execution; any other body is 400 and writes nothing; an unknown session is 404. | Duplicate work on a client retry |
 | SL5 | `POST /api/hosts/poll` records the host observation; a poll of the default host (`FLEET_HOST_ID`) claims a queued execution and creates its `start` command; a poll returns the pending commands of the polling host only. | Work sent to the wrong machine |
@@ -245,7 +238,7 @@ Results are medians and min-max spreads over green runs; a difference inside the
 | The compiled trial arms were measured under load | Go and Rust speed numbers are pessimistic | Rerun `measure.ts go` on an idle machine |
 | The rewrite drops a behaviour the TypeScript coordinator had | A screen or host call stops working | Each area lists ported routes and dropped behaviour in its pull request; the app checks in `tests/ui` run against the binary |
 | `encoding/json` matches keys case-insensitively | A validated field differs from the stored one | Validated values are stored; case variants of identity keys are refused (`go/coordinator`) |
-| The executor's private libproc symbol disappears | Identity-bound signals on macOS stop working | Refuse to signal when the symbol is missing, as Rust does today |
+| The executor's private libproc symbol disappears | Identity-bound signals on macOS stop working | The executor refuses to signal when the symbol is missing |
 | An unsigned darwin binary is quarantined | Mac hosts cannot run the CI build | [Executor delivery](fleet-executor-delivery.md); signing is an open question |
 
 ## Open questions

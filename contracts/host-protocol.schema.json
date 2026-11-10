@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "Host protocol and event payloads (fleet-stack L3 stage 1). Source for packages/coordinator, app and crates/executor types; see contracts/README.md for the supported keyword subset.",
+  "$comment": "Host protocol and event payloads (fleet-stack L3 stage 1). Source for go/coordinator and app types; see contracts/README.md for the supported keyword subset.",
   "$defs": {
     "ChildRequest": {"type": "object", "required": ["requestId", "profileId", "input"], "properties": {"requestId": {"type": "string"}, "profileId": {"type": "string"}, "input": {"type": "string"}}},
     "ChildReceipt": {"type": "object", "required": ["hostId", "commandId", "executionId", "delegation"], "properties": {"hostId": {"type": "string"}, "commandId": {"type": "string"}, "executionId": {"type": "string"}, "delegation": {"$ref": "#/$defs/ChildRequest"}}},

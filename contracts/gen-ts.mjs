@@ -1,5 +1,5 @@
 // TypeScript types from contracts/*.schema.json (fleet-stack L3). Run by `pnpm run typecheck` and `pnpm run build`; the
-// output in contracts/generated/ is not committed. crates/executor/build.rs reads the same files for Rust. Both accept only
+// output in contracts/generated/ is not committed. go/gen reads the same files for Go. Both accept only
 // the keyword subset in contracts/README.md and fail on anything else, so a schema never yields a silently weaker type.
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 
@@ -10,7 +10,7 @@ const SCALAR = { string: 'string', integer: 'number', number: 'number', boolean:
 function type(s, at) {
   for (const k of Object.keys(s)) if (!KEYS.has(k)) throw Error(`${at}: unsupported keyword ${k}`);
   if (s.$ref) return s.$ref.replace(/^#\/\$defs\//, '');
-  if (s.enum && /[.[]/.test(at)) throw Error(`${at}: an enum must be a $defs entry (Rust needs its name)`);
+  if (s.enum && /[.[]/.test(at)) throw Error(`${at}: an enum must be a $defs entry (Go needs its name)`);
   if (s.enum) return s.enum.map((v) => JSON.stringify(v)).join(' | ');
   if (s.type === undefined) return 'unknown';
   if (Array.isArray(s.type)) return s.type.map((t) => type({ ...s, type: t }, at)).join(' | ');
@@ -18,7 +18,7 @@ function type(s, at) {
   if (s.type === 'object') {
     const props = Object.entries(s.properties ?? {});
     if (!props.length) return 'Record<string, unknown>';
-    if (/[.[]/.test(at)) throw Error(`${at}: an object with properties must be a $defs entry (Rust needs its name)`);
+    if (/[.[]/.test(at)) throw Error(`${at}: an object with properties must be a $defs entry (Go needs its name)`);
     const req = new Set(s.required ?? []);
     return `{\n${props.map(([k, v]) => `  ${JSON.stringify(k)}${req.has(k) ? '' : '?'}: ${type(v, `${at}.${k}`).replace(/\n/g, '\n  ')};`).join('\n')}\n}`;
   }

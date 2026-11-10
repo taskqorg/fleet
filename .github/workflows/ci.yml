@@ -54,10 +54,9 @@ jobs:
           cache-dependency-path: go/go.sum
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      # The executor: its unit tests, and the binary the coordinator's end-to-end artifact test runs.
-      - run: cargo build -p fleet-executor && cargo test -p fleet-executor
-      # The executor protocol scripts (tests/executor): actual executor binary against fake harnesses and transports.
-      - run: tests/executor/run.sh
+      # The executor's MCP adapter from Node against the Go binary: replayed stdio exchanges and artifact path confinement.
+      # Its Go tests run in the go job.
+      - run: (cd go && CGO_ENABLED=0 go build -o bin/fleet-executor ./executor) && FLEET_EXECUTOR_BIN="$PWD/go/bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts
       # pnpm test runs tests/go/run.sh: the Go binary on the runner's own PostgreSQL (tests/harness.ts starts it).
       - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pnpm test
       # Deploys use exactly this release, and only from a push to main in this repository, never a pull request run
@@ -65,8 +64,8 @@ jobs:
       - name: Pack the release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          (cd go && CGO_ENABLED=0 go build -trimpath -o bin/fleet-gateway ./gateway)
-          mkdir -p release/dist && cp go/bin/fleet-coordinator go/bin/fleet-gateway release/ && cp -r dist/app release/dist/ && cp -r config release/
+          (cd go && CGO_ENABLED=0 go build -trimpath -o bin/fleet-gateway ./gateway && CGO_ENABLED=0 go build -trimpath -o bin/fleet-executor ./executor)
+          mkdir -p release/dist && cp go/bin/fleet-coordinator go/bin/fleet-gateway go/bin/fleet-executor release/ && cp -r dist/app release/dist/ && cp -r config release/
           tar -czf fleet-release.tgz -C release .
           sha256sum fleet-release.tgz | tee fleet-release.tgz.sha256
           echo "fleet-release-${GITHUB_SHA}: $(cut -d' ' -f1 fleet-release.tgz.sha256)" >> "$GITHUB_STEP_SUMMARY"
@@ -105,17 +104,6 @@ jobs:
             docs/design-system/book/index.html
             docs/design-system/pages/mockups.html
           if-no-files-found: warn
-  # The executor protocol scripts on macOS, where Claude placement 'mac' lets claude_mcp.py run (it skips on plain Linux).
-  executor-macos:
-    runs-on: macos-15
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - run: cargo build -p fleet-executor
-      - run: tests/executor/run.sh
   # The filter-path check (docs/designs/fleet-view-urls-and-list-path.md §4): its own job, so it does not slow build-test-design.
   filter-check:
     runs-on: ubuntu-24.04
@@ -158,39 +146,6 @@ jobs:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
       - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pnpm run check:conversations
-  executor-release:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-          - runner: macos-15
-            target: aarch64-apple-darwin
-    runs-on: ${{ matrix.runner }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Build release executor
-        shell: bash
-        run: |
-          start=$SECONDS
-          rustup target add '${{ matrix.target }}'
-          cargo build --locked --release -p fleet-executor --target '${{ matrix.target }}'
-          file='fleet-executor-${{ matrix.target }}'
-          cp 'target/${{ matrix.target }}/release/fleet-executor' "$file"
-          shasum -a 256 "$file" | tee "$file.sha256"
-          echo "${{ matrix.target }}: $((SECONDS-start)) seconds; $(wc -c < "$file") bytes" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: fleet-executor-${{ matrix.target }}-${{ github.sha }}
-          path: |
-            fleet-executor-${{ matrix.target }}
-            fleet-executor-${{ matrix.target }}.sha256
-          if-no-files-found: error
   # Go code (docs/designs/fleet-stack.md): vet, then one Linux job cross-builds every target without cgo.
   go:
     runs-on: ubuntu-24.04

@@ -64,7 +64,7 @@ export function links(text: string): { line: number; target: string }[] {
 
 const CITE = /(?<![A-Za-z0-9_.-])(?<![A-Za-z0-9_-]\/)docs\/[A-Za-z0-9_./-]+\.(?:md|html)(?:#[A-Za-z0-9_-]+)?/g;
 const BINARY = /\.(png|jpe?g|gif|webp|ico|pdf|woff2?|ttf|otf|zip|gz|tgz|sqlite|wasm)$/i;
-const LOCK = /(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|Cargo\.lock)$/;
+const LOCK = /(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock)$/;
 
 function selfCheck() {
   const ok = (c: boolean, m: string) => { if (!c) { console.error('self-check failed:', m); process.exit(1); } };
