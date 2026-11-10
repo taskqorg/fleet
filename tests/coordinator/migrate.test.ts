@@ -24,6 +24,6 @@ test('forward, verify and reverse round-trip a SQLite records file',async()=>{co
  assert.equal((await verify(sqlite,store)).ok,false);
  const back=await reverse(sqlite,store,dir+'/rollback.sqlite',cut);assert.equal(back.written,2);
  assert.equal((await verify(dir+'/rollback.sqlite',store)).ok,true);
- const db=new Database(dir+'/rollback.sqlite',{readOnly:true});const rows=db.prepare("SELECT id,data FROM records WHERE kind='execution' ORDER BY rowid").all() as any[];db.close();
+ const db=new Database(dir+'/rollback.sqlite',{readOnly:true,timeout:5000});const rows=db.prepare("SELECT id,data FROM records WHERE kind='execution' ORDER BY rowid").all() as any[];db.close();
  assert.deepEqual(rows.map(r=>[r.id,JSON.parse(r.data).state]),[['e1','completed'],['e2','failed'],['e3','queued']]);
  await assert.rejects(reverse(sqlite,store,dir+'/rollback.sqlite'),/Output exists/);await store.close()});
