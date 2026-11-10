@@ -833,9 +833,13 @@ func init() {
 		}
 		// An agent's question is answered by delivering the reply to its session (agent tool reply); recording the
 		// answer alone left the asker without it.
-		if ok, err := has(q, "SELECT 1 FROM question WHERE id=$1 AND legacy_kind='question'", id); err != nil {
+		if aq, err := first(q, "SELECT project_id FROM question WHERE id=$1 AND legacy_kind='question'", id); err != nil {
 			return nil, err
-		} else if ok {
+		} else if aq != nil {
+			// The reply reaches another session: the person must have that session's project, as for any project op.
+			if p := q.person; p != nil && !p.Owner && !mayAccessProjectID(p, gs(aq, "project_id")) {
+				return nil, errNotFound
+			}
 			if _, err := agentReply(q, doc{"questionId": id, "answer": answer}); err != nil {
 				return nil, err
 			}
