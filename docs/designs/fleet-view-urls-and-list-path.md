@@ -282,7 +282,7 @@ It also prints the fixture load time, the migration 10 backfill time and the gro
 
 ### Future Improvements
 
-* **Node toolchain slice (planned):** exact pins, `--ignore-scripts`, an allowlist and audit policy, a decision on `better-sqlite3`, a shared content-addressed store for esbuild, tsc and Playwright outside the worktrees, the six front-end packages vendored as hashed ESM, and a Bun trial for tooling. See the brief, Key Decisions item 6.
+* **Node toolchain slice (done, see [fleet-toolchain.md](fleet-toolchain.md); it chose pnpm 10 with `minimumReleaseAge` over vendoring and a Bun trial):** exact pins, `--ignore-scripts`, an allowlist and audit policy, a decision on `better-sqlite3`, a shared content-addressed store for esbuild, tsc and Playwright outside the worktrees, the six front-end packages vendored as hashed ESM, and a Bun trial for tooling. See the brief, Key Decisions item 6.
 * **`sessions_list`** with the same side-table pattern.
 * **Overview** calls `task_page` once per project; it gets faster with §3, and one aggregate read would remove the per-project calls.
 * **Per-operation timing** in `runOp` and a slow-query log, needed for the production re-measurement.
