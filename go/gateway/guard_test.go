@@ -95,9 +95,10 @@ func TestGuardAdmitsOnlyVerifiedAccessIdentity(t *testing.T) {
 	expect(t, status(good), 503, "key outage")
 }
 
-// Requirement: an unknown key id inside a fresh key set is answered from the cache (fleet-people-access).
-// Risk: tokens with arbitrary kid values force one key-set fetch each, serialized behind the guard's lock.
-func TestUnknownKeyIdInFreshSetFetchesOnce(t *testing.T) {
+// Requirement: an unknown key id is refused from a key set younger than 30 s and refetches an older one
+// (fleet-people-access). Risk: arbitrary kid values force one fetch each behind the guard's lock, or a rotated
+// Access key locks the owner out until the whole set ages out.
+func TestUnknownKeyIdRefetchesAtMostEvery30s(t *testing.T) {
 	var hits atomic.Int32
 	certs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
@@ -118,4 +119,8 @@ func TestUnknownKeyIdInFreshSetFetchesOnce(t *testing.T) {
 	}
 	wg.Wait()
 	expect(t, hits.Load(), int32(1), "key-set fetches")
+	g.fetched = time.Now().Add(-unknownRefetch - time.Second)
+	g.verify(head + ".e30.AA")
+	g.verify(head + ".e30.AA")
+	expect(t, hits.Load(), int32(2), "fetches after 30 s")
 }

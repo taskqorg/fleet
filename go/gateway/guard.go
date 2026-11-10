@@ -19,6 +19,8 @@ const (
 	accessIssuer   = "https://graduz.cloudflareaccess.com"
 	accessAudience = "352f4c75fdee7abac35e5ee8739ab622de4a368725eedac025c33b4e32df1ab0"
 	keysLifetime   = 5 * time.Minute
+	// An unknown kid refetches a set older than this (a rotation); younger sets refuse it from the cache.
+	unknownRefetch = 30 * time.Second
 )
 
 // guard answers Caddy's forward_auth: a verified Access JWT gets 204 with the browser credential and the person's e-mail;
@@ -28,7 +30,7 @@ type guard struct {
 	certsURL string
 	client   *http.Client
 	lock     sync.Mutex
-	// The last fetched key set; an id it lacks stays unknown until the set ages out.
+	// The last fetched key set; an id it lacks stays unknown until the set is unknownRefetch old.
 	keys    map[string]*rsa.PublicKey
 	fetched time.Time
 	// Closed when the running fetch ends; nil when none runs. The fetch itself runs outside lock.
@@ -49,13 +51,14 @@ func newGuard(secret, certsURL string) *guard {
 func (g *guard) key(id string) (*rsa.PublicKey, error) {
 	for waited := false; ; waited = true {
 		g.lock.Lock()
-		if g.keys != nil && time.Since(g.fetched) < keysLifetime {
-			k := g.keys[id]
-			g.lock.Unlock()
-			if k == nil {
-				return nil, errUnknownKey
+		if age := time.Since(g.fetched); g.keys != nil && age < keysLifetime {
+			if k := g.keys[id]; k != nil || waited || age < unknownRefetch {
+				g.lock.Unlock()
+				if k == nil {
+					return nil, errUnknownKey
+				}
+				return k, nil
 			}
-			return k, nil
 		}
 		if waited {
 			g.lock.Unlock()
