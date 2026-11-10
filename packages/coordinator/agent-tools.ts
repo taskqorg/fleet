@@ -190,11 +190,13 @@ export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise
  // binding (picks the host). Idempotent per (projectId, requestId). Optional text starts the first turn.
  // A task a session works for (docs/designs/fleet-conversations.md, "Thread scope"): it exists, and a project session only
  // takes a task of its own project.
- const taskFor=async(taskId:any,projectId:string|null|undefined)=>{const t=(await store.query('SELECT id,project_id FROM task WHERE id=$1',[str(taskId,'taskId')]))[0]??fail(404,'Unknown task');
-  if(projectId&&t.project_id&&t.project_id!==projectId)fail(409,'Task belongs to another project');return t.id as string};
+ // exact: host agents (bound) need the task in exactly their own project; the operator may attach a projectless session.
+ const taskFor=async(taskId:any,projectId:string|null|undefined,exact=false)=>{const t=(await store.query('SELECT id,project_id FROM task WHERE id=$1',[str(taskId,'taskId')]))[0]??fail(404,'Unknown task');
+  if(exact?(t.project_id??null)!==(projectId??null):projectId&&t.project_id!==projectId)fail(409,'Task belongs to another project');return t.id as string};
  // session_task_attach: a taskless session joins a task's thread. Nothing is copied: the session records the task, its next
  // executions carry it, and its earlier taskless executions belong to the task's thread by the membership rule (D2).
- async function attach(b:any){const s=await get(str(b?.sessionId,'sessionId'),'session'),taskId=await taskFor(b?.taskId,s.projectId);
+ async function attach(b:any){const s=await get(str(b?.sessionId,'sessionId'),'session'),taskId=await taskFor(b?.taskId,s.projectId,b?.boundProject!==undefined);
+  if(b?.boundProject!==undefined&&s.projectId!==b.boundProject)fail(403,'Project belongs to another agent');
   if(s.taskId===taskId)return {sessionId:s.id,taskId,existing:true};
   const other=(await store.query('SELECT task_id FROM execution WHERE session_id=$1 AND task_id IS NOT NULL AND task_id<>$2 LIMIT 1',[s.id,taskId]))[0];
   if(s.taskId||other)fail(409,'Session already belongs to a task');
@@ -207,7 +209,7 @@ export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise
   // callerExecutionId is trusted only from a host agent (bound(), no request person); a person directs their own sessions.
   const person=requestPerson.getStore(),directedBy=person?person.email:typeof b.callerExecutionId==='string'?(await get(b.callerExecutionId,'execution').catch(()=>null))?.directedBy:undefined;
   const account=b.account??(await deps.pickAccount?.(profile.harness??'codex',projectId,b.hostId,directedBy));
-  const taskId=b.taskId!==undefined?await taskFor(b.taskId,projectId):undefined;
+  const taskId=b.taskId!==undefined?await taskFor(b.taskId,projectId,true):undefined;
   const s:any={id:randomUUID(),createdAt:Date.now(),projectId,agentConfig:profile,startRequest:key,...(taskId?{taskId}:{}),...(directedBy?{directedBy}:{}),...(b.role?{role:b.role}:{}),...(account?{account}:{}),...(b.setup?{setup:b.setup}:{}),...(typeof b.hostId==='string'&&b.hostId?{hostId:b.hostId}:{}),...(typeof b.callerSessionId==='string'?{createdBySessionId:b.callerSessionId}:{}),...(typeof b.callerExecutionId==='string'?{createdByExecutionId:b.callerExecutionId}:{})};
   await put('session',s);const first=typeof b.text==='string'&&b.text?(await submit({sessionId:s.id,requestId:'start:'+requestId,text:b.text})):null;
   return {sessionId:s.id,projectId,taskId:taskId??null,role:b.role??null,profileId:profile.id,account:account??null,executionId:first&&!first.queued?first.id:null,hostId:first?.hostId??null}}
@@ -266,7 +268,7 @@ export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise
    const p=await ownProject(a);a.projectId=p;a.callerSessionId=own;a.callerExecutionId=executionId;
    const roles=Object.values((await deps.project?.(p))?.roles??{});if(a.profileId!==undefined&&!roles.includes(a.profileId))fail(403,'Profile not in project roles');
    if(a.account!==undefined&&!(await all('managed-account')).some(m=>m.enabled&&(m.id===a.account||m.name===a.account)))fail(403,'Account not available')}
-  else{a.sessionId=a.sessionId??own;(await mine(a.sessionId));if(name==='session_fork')a.callerSessionId=own}
+  else{a.sessionId=a.sessionId??own;(await mine(a.sessionId));if(name==='session_fork')a.callerSessionId=own;if(name==='session_task_attach')a.boundProject=await ownProject({})}
   if(name==='session_transition'){
    // Host agents may hand a session to another agent type, but only to an existing profile and a registered,
    // enabled account with a ready binding on this host (resolve also keeps Claude off PDS).

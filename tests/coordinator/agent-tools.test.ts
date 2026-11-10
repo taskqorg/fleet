@@ -137,6 +137,8 @@ test('a session starts for a task or a taskless session attaches to one; its thr
   // A taskless session with history attaches: its earlier execution joins the task thread unchanged (task_id stays null).
   const b=(await op('session_start',{projectId:'p1',role:'pm',requestId:'b',text:'early'})).body;
   assert.equal((await op('session_task_attach',{sessionId:b.sessionId,taskId:elsewhere})).status,409);
+  // As a host agent sees it (bound sets boundProject): a task outside exactly its project, a projectless one included, is refused.
+  const loose=(await op('task_create',{title:'L'})).body.id;assert.equal((await op('session_task_attach',{sessionId:b.sessionId,taskId:loose,boundProject:'p1'})).status,409);
   assert.deepEqual((await op('session_task_attach',{sessionId:b.sessionId,taskId:task})).body,{sessionId:b.sessionId,taskId:task});
   assert.equal((await op('session_task_attach',{sessionId:b.sessionId,taskId:task})).body.existing,true);
   assert.equal((await op('session_task_attach',{sessionId:b.sessionId,taskId:other})).status,409);
