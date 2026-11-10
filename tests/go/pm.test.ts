@@ -137,3 +137,37 @@ test('PM6 audit: an agent setting change records the execution as actor and its 
   assert.deepEqual([p.actor, p.onBehalfOf], ['execution:' + pm.executionId, OWNER]);
   ok(await op('hosts_update', {id: hostId, intake: 'all'}));
 });
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+const queuedTexts = async (sessionId: string) => ok(await call('GET', '/api/sessions/' + sessionId, undefined, as(OWNER))).queued.map((m: any) => m.text as string);
+
+test('PM7 watch: foreign changes in focus wake the PM with one message, its own changes never do, and the timer wakes it (risk: a PM misses a question, or loops on its own edits)', {timeout: 30_000}, async () => {
+  const pm = await agent(OWNER, {});
+  ok(await pm.tool('focus_set', {projectIds: [PROJECT]}));
+  ok(await pm.tool('watch_set', {kinds: ['task', 'question']}));
+  assert.ok([403, 404].includes((await op('watch_stop', {sessionId: pm.sessionId}, MEMBER)).status), 'only its director changes a watch');
+  ok(await pm.tool('task_create', {title: 'PM7 own ' + randomUUID()}));
+  await sleep(800);
+  assert.deepEqual(await queuedTexts(pm.sessionId), [], 'own changes do not wake');
+  const foreign = ok(await op('task_create', {projectId: PROJECT, title: 'PM7 foreign ' + randomUUID()}));
+  ok(await op('task_create', {projectId: OTHER, title: 'PM7 outside focus ' + randomUUID()}));
+  const worker = await agent(OWNER, {projectId: PROJECT, role: 'pm'});
+  const asked = ok(await worker.tool('ask', {requestId: randomUUID(), question: 'Which README?'}));
+  await sleep(800);
+  const texts = await queuedTexts(pm.sessionId);
+  assert.equal(texts.length, 1, JSON.stringify(texts));
+  assert.match(texts[0], new RegExp(`task ${foreign.id} now queued`));
+  assert.match(texts[0], new RegExp(`question ${asked.questionId ?? asked.id}`));
+  assert.doesNotMatch(texts[0], /outside focus/);
+  ok(await op('task_create', {projectId: PROJECT, title: 'PM7 while busy ' + randomUUID()}));
+  await sleep(800);
+  assert.equal((await queuedTexts(pm.sessionId)).length, 1, 'a queued wake covers later changes');
+  const w = ok(await pm.tool('watch_get')).watch;
+  assert.equal(w.wakes, 1);
+  ok(await pm.tool('watch_set', {kinds: ['task'], timerMs: 300}));
+  await sleep(1000);
+  assert.equal(ok(await pm.tool('watch_get')).watch.wakes, 1, 'no timer wake while a wake is queued');
+  ok(await worker.tool('watch_set', {kinds: ['execution'], timerMs: 300}));
+  await sleep(1000);
+  assert.deepEqual((await queuedTexts(worker.sessionId)).filter(t => /watch timer/.test(t)).length, 1, 'the stored timer wakes an idle watch once per queued wake');
+});

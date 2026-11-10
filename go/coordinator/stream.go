@@ -92,6 +92,8 @@ type change struct {
 	SessionID *string `json:"sessionId"`
 	HostID    *string `json:"hostId"`
 	Op        string  `json:"op"`
+	ProjectID *string `json:"-"` // watch only (fleet-pm-agent.md §5); not in the stream contract
+	Actor     *string `json:"-"`
 }
 
 const visible = "xid < pg_snapshot_xmin(pg_current_snapshot())"
@@ -109,7 +111,7 @@ func since(ctx context.Context, tx pgx.Tx, cursor int64, limit int) (out []chang
 			return
 		}
 	}
-	q := "SELECT seq,kind,id,task_id,session_id,host_id,op FROM change WHERE " + visible
+	q := "SELECT seq,kind,id,task_id,session_id,host_id,op,project_id,actor FROM change WHERE " + visible
 	args := []any{}
 	if xid != "" {
 		q += " AND (xid, seq) > ($1::xid8, $2::bigint)"
@@ -121,7 +123,7 @@ func since(ctx context.Context, tx pgx.Tx, cursor int64, limit int) (out []chang
 	}
 	out, err = pgx.CollectRows(rs, func(r pgx.CollectableRow) (change, error) {
 		var c change
-		return c, r.Scan(&c.Seq, &c.Kind, &c.ID, &c.TaskID, &c.SessionID, &c.HostID, &c.Op)
+		return c, r.Scan(&c.Seq, &c.Kind, &c.ID, &c.TaskID, &c.SessionID, &c.HostID, &c.Op, &c.ProjectID, &c.Actor)
 	})
 	if err != nil {
 		return

@@ -152,7 +152,7 @@ Defaults below are used in this design. Each can be changed by the owner without
 
 ### 5. Watch mode
 
-*   **Watch document.** One document of kind `watch` per session, id = session id: `{id, sessionId, kinds, cursor, timerMs?, nextWakeAt?, wakes, lastWakeAt, lastError}`. Agent operations `watch_set {kinds, timerMs?}` and `watch_stop`. `watch_set` initialises `cursor` from `head()` (`stream.go`), so a new watch starts from now.
+*   **Watch document.** One document of kind `watch` per session, id `watch:<sessionId>` (document ids are unique across kinds): `{id, sessionId, kinds, cursor, timerMs?, nextWakeAt?, wakes, lastWakeAt, lastError}`. Agent operations `watch_set {kinds, timerMs?}` and `watch_stop`. `watch_set` initialises `cursor` from `head()` (`stream.go`), so a new watch starts from now.
 *   **Who knows the actor.** The `change` table has no actor today. Migration 20 adds `change.actor text NULL`; `fleet_change()` fills it with `current_setting('fleet.actor', true)` (§1). `since()` (`stream.go`) returns `actor` and `projectId`. Rows with null actor (operator UI, system) count as foreign changes.
 *   **When the pass runs.** A ticker in `onStart` (`d_routes.go` pattern) runs `watchPass()` single-flight every `FLEET_WATCH_TICK_MS` (default 15000; tests set it short). It is a setting, not a limit: the owner trades latency for load.
 *   **One pass, per watch document:**
