@@ -11,6 +11,7 @@ import { Overview } from './views/overview.tsx';
 import { Tasks } from './views/tasks.tsx';
 import { Conversations } from './views/conversations.tsx';
 import { Hosts } from './views/hosts.tsx';
+import { Lab } from './views/lab.tsx';
 
 // The view of each screen the registry marks `app: true` (the type requires every one). Nav and routes follow registry
 // order. A list screen takes an optional focus segment, so focusing a row never unmounts the list.
@@ -19,6 +20,7 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
   tasks: { focus: true, view: p => <Tasks id={p.id} /> },
   conversations: { focus: true, view: p => <Conversations id={p.id} /> },
   hosts: { focus: true, view: p => <Hosts id={p.id} /> },
+  lab: { focus: true, view: p => <Lab id={p.id} /> },
 };
 const BUILT = workspaces.filter(w => w.app).map(w => ({ ...w, ...SCREENS[w.id as AppScreen] }));
 const NAV: NavItem[] = BUILT;
@@ -44,7 +46,6 @@ function App() {
     <Switch>
       <Route path="/"><Redirect to="/overview" /></Route>
       {BUILT.map(s => <Route key={s.id} path={s.focus ? `/${s.id}/:id?` : `/${s.id}`}>{(p: { id?: string }) => s.view(p)}</Route>)}
-      <Route path="/lab"><Empty text="Lab is being rebuilt." /></Route>
       <Route><Empty text="This page does not exist." action={<Button label="Overview" icon="house" onClick={() => go('/overview')} />} /></Route>
     </Switch>
   </AppShell>;

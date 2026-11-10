@@ -19,6 +19,8 @@ import {artifactModel,type Artifacts} from './artifacts.ts';
 import {placementWorker} from './placement.ts';
 import {labExamples} from './lab/examples.ts';
 import {pipelineRunner} from './pipelines.ts';
+import {labExperiments} from './lab/experiments.ts';
+import {labOperations,registerLab} from './lab/routes.ts';
 export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRetentionDays?:number,nativeHostIds?:string[],database:string,store?:Store,browserSecret:string,machineSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,storeSecrets?:string,storeEndpointHosts?:string[],cfAccessFile?:string,defaultArtifactLocations?:string[],artifactRetryWindowMs?:number,placementIntervalMs?:number,projectConfigDirectory?:string,connectionsDir?:string,connectionClient?:string[],pipelineTickMs?:number,integrationHostId?:string,publicationHostId?:string,testSiteRoot?:string,defaultAccountBinding?:string,labDirectory?:string}) {
  if(!config.browserSecret||!config.machineSecret||config.browserSecret===config.machineSecret) throw Error('Distinct credentials required');
  if(config.browserProxyAuth&&!config.browserOrigin)throw Error('Proxy browser auth requires configured browser origin');
@@ -28,7 +30,7 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  // there are none and every app path is a 404.
  const screens:string[]=(()=>{try{const v=JSON.parse(readFileSync(join(resolve(config.appDir??'dist/app'),'screens.json'),'utf8'));return Array.isArray(v)?v.filter((x:any)=>typeof x==='string'&&/^[a-z]+$/.test(x)):[]}catch{return []}})();
  const APP_ROUTES=screens.flatMap(s=>['/'+s,'/'+s+'/:id']);
- const PUBLIC_ROUTES=new Set(['/',...APP_ROUTES,'/assets/*','/sw.js','/manifests/:name','/icons/:name','/lab']);
+ const PUBLIC_ROUTES=new Set(['/',...APP_ROUTES,'/assets/*','/sw.js','/manifests/:name','/icons/:name','/lab','/lab/:id']);
  const sessionList=sessionModel({query:(s:string,p?:any[])=>store.query(s,p??[])});
  // No artifact bytes pass through the coordinator (design §3): Fastify's default body limit applies.
  const app=Fastify();
@@ -44,7 +46,8 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  const ingestRoutes=new Set(['/api/hosts/events']);
  const longRoutes=new Set(['/api/stream','/assets/*','/assets/','/api/hosts/artifacts/list','/api/hosts/artifacts/reserve','/api/hosts/artifacts/parts','/api/hosts/artifacts/commit','/api/hosts/artifacts/verified','/api/hosts/artifacts/renew','/api/hosts/artifacts/failed','/api/hosts/artifacts/declare','/api/hosts/artifacts/get','/api/hosts/artifacts/read','/api/results/:id','/api/pipeline-runs','/api/pipelines/:id/runs','/api/project-operations/:name','/api/project-tools','/api/ops/:name','/api/tools','/api/hosts/receipts','/api/agent-tools','/api/hosts/agent-tools']);
  // Reads (GET, HEAD) run in a read-only snapshot; every other route is one GLOBAL write (store.atomic) unless it is host ingest.
- app.addHook('onRoute',(o:any)=>{if(longRoutes.has(o.url))return;const h=o.handler,method=[o.method].flat()[0];
+ // Lab experiment routes call operations (runOp opens their transactions); reconcile needs committed state.
+ app.addHook('onRoute',(o:any)=>{if(longRoutes.has(o.url)||/^\/api\/lab\/(experiments|ratings|scores|registry)/.test(o.url))return;const h=o.handler,method=[o.method].flat()[0];
   o.handler=['GET','HEAD'].includes(method)?function(this:any,req:any,reply:any){return store.read(()=>h.call(this,req,reply))}
    :ingestRoutes.has(o.url)?function(this:any,req:any,reply:any){return store.atomic(()=>h.call(this,req,reply),ingestScope(req))}
    :function(this:any,req:any,reply:any){return store.atomic(()=>h.call(this,req,reply))}});
@@ -78,7 +81,7 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  app.get('/manifests/:name',async(req:any,r)=>{if(!/^[a-z]+\.webmanifest$/.test(req.params.name))fail(404,'Unknown manifest');return appFile('manifests/'+req.params.name,'application/manifest+json')(req,r)});
  app.get('/icons/:name',async(req:any,r)=>{if(!/^[a-z0-9-]+\.svg$/.test(req.params.name))fail(404,'Unknown icon');return appFile('icons/'+req.params.name,'image/svg+xml')(req,r)});
  // /lab: the app's "Lab is being rebuilt" page until Stage 3 of docs/designs/fleet-lab.md.
- for(const route of [...APP_ROUTES,'/lab'])app.get(route,appFile('index.html','text/html'));
+ for(const route of new Set([...APP_ROUTES,'/lab','/lab/:id']))app.get(route,appFile('index.html','text/html'));
  app.get('/test-sites/:project/:file',async(req:any,r)=>{if(!config.testSiteRoot||!['hello-world','hello-world-alt'].includes(req.params.project)||!/^[a-zA-Z0-9_-]+\.(html|css)$/.test(req.params.file))fail(404,'Unknown test site');const root=realpathSync(resolve(config.testSiteRoot!,req.params.project)),path=realpathSync(resolve(root,'current',req.params.file));if(!path.startsWith(root+sep))fail(403,'Test-site path rejected');r.header('Content-Security-Policy',"sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src data:; frame-ancestors 'self'");return r.type(req.params.file.endsWith('.css')?'text/css':'text/html').send(readFileSync(path))});
  const profiles_list=()=>({profiles:listProfiles(config.profilesDirectory||'config/agents')});
  app.get('/api/profiles',async()=>profiles_list());
@@ -202,7 +205,10 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  // Pipeline v2 runner (docs/designs/fleet-lab.md Stage 2): api steps call connections from this host; agent steps are
  // ordinary agent executions with the step's profile (variant overrides applied); script steps are executor script commands.
  const configDir=config.projectConfigDirectory||'config',profilesDir=config.profilesDirectory||'config/agents';
+ let lab:ReturnType<typeof labExperiments>|undefined;
  const runner=pipelineRunner({store:store as any,directory:configDir,connectionsDir:config.connectionsDir,client:config.connectionClient,
+  // A Lab run's end moves its experiment; a completed draft-examples run proposes its drafted examples.
+  onFinish:run=>{if(!lab)return;if(run.experimentId)lab.reconcile(run.experimentId).catch(e=>app.log.error(e));if(run.pipelineId==='draft-examples'&&run.state==='completed')lab.importDrafts(run,b=>examples.add(b)).catch(e=>app.log.error(e))},
   save:o=>artifacts.saveObject(o),read:id=>artifacts.read(id).then(async (b:any)=>Buffer.isBuffer(b)?b:Buffer.from(await new Response(b).arrayBuffer())),
   artifactsOf:async id=>(await artifacts.list({executionId:id})).filter((a:any)=>a.state==='stored').map((a:any)=>({id:a.id,path:a.name,sha256:a.sha256})),
   unsettled:async id=>(await artifacts.list({executionId:id})).filter((a:any)=>a.state==='pending').length,
@@ -226,7 +232,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   const {references:_,...withoutReferences}=example;example=withoutReferences;
   return {run:await runner.start({file,projectId:b.projectId??null,requestId:b.requestId,example,overrides:b.overrides??{},extra:{signature}})}});
   if('old' in created)return created.old;runner.advance(created.run.id).catch(()=>{});return created.run});
- app.addHook('onReady',async()=>{pipelineTimer=setInterval(()=>{if(ticking)return;ticking=true;runner.tick().finally(()=>{ticking=false})},config.pipelineTickMs??5000);pipelineTimer.unref?.()});
+ app.addHook('onReady',async()=>{pipelineTimer=setInterval(()=>{if(ticking)return;ticking=true;runner.tick().then(()=>lab?.reconcileRunning()).catch(()=>{}).finally(()=>{ticking=false})},config.pipelineTickMs??5000);pipelineTimer.unref?.()});
  app.addHook('onClose',async()=>{clearInterval(pipelineTimer)});
  Object.assign(projects,managed.operations);
  // Success rule (design §3, P3-D2): a start command reported completed waits for the execution's required artifacts; a
@@ -259,6 +265,12 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  app.post('/api/lab/examples',async(req:any)=>examples.add(req.body??{}));
  app.get('/api/lab/examples',async(req:any)=>examples.list({state:req.query?.state}));
  app.get('/api/lab/examples/:id',async(req:any)=>examples.get(req.params.id));
+ // Lab experiments, scores and ratings (Stage 3). Rating and budget answers arrive through tasks.answer.
+ lab=labExperiments({store,runner,examples,labDirectory:config.labDirectory||'config/lab',read:id=>artifacts.readBuffer(id,64*1024*1024),
+  stopExecution:executionId=>store.tx(()=>execution_stop({executionId})),catalogue:projectId=>projects.catalogue({projectId}),recommend:(projectId,methodId)=>store.tx(()=>projects.recommendation_set({projectId,methodId}))});
+ store.tasks.onAnswer(lab.answers);const labOps=labOperations(lab,examples);
+ // Experiments reconcile on start, and on the pipeline tick as a backstop for answers committed after their hook ran.
+ app.addHook('onReady',async()=>{lab!.reconcileAll().catch(e=>app.log.error(e))});
  const placement=placementWorker(store,{stores,artifacts,locations,rules:rulesOf,queueCommand:(h,k,p)=>store.tx(()=>queueCommand(h,k,p)),retryWindowMs:()=>config.artifactRetryWindowMs??86400000,onExpired:(id:string)=>store.tx(()=>settle(id,'artifact retry window passed'))});
  Object.assign(projects,{
   artifact_list:async(b:any)=>({artifacts:await artifacts.list({executionId:b?.executionId,taskId:b?.taskId,mediaType:b?.mediaType,projectId:b?.projectId})}),
@@ -312,10 +324,11 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   task_derived_check:async()=>store.tasks.derivedDrift(),
   me:async()=>({email:config.ownerEmail??null,roles:['operator','architect'],grantsVersion:'1',changeLogRetentionDays:retentionDays}),
  };
- const ops:Record<string,(b:any)=>any>={...typedOps,...projects,...transportRecovery.operations,...agent.operations,session_create,session_profile,session_archive,execution_stop,session_get,execution_differences,execution_events,profiles_list};
+ const ops:Record<string,(b:any)=>any>={...typedOps,...projects,...transportRecovery.operations,...agent.operations,session_create,session_profile,session_archive,execution_stop,session_get,execution_differences,execution_events,profiles_list,...labOps};
  registerStream(app,store,{retentionDays});
  const runOp=async (n:string,b:any)=>{const op=ops[n];if(!op)fail(404,'Unknown operation');return READ_OPERATIONS.has(n)?store.read(()=>op(b??{})):LONG_OPERATIONS.has(n)?op(b??{}):op===projects[n]||op===transportRecovery.operations[n]?store.atomic(()=>op(b??{})):(await store.tx(()=>op(b??{})))};
  app.post('/api/ops/:name',async(req:any)=>(await runOp(req.params.name,req.body)));
+ registerLab(app,labOps,runOp);
  app.post('/api/tools',async(req:any)=>{const q=req.body;if(q?.method==='initialize')return {jsonrpc:'2.0',id:q.id,result:{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fleet',version:'1'}}};if(q?.method==='tools/list')return {jsonrpc:'2.0',id:q.id,result:{tools:Object.keys(ops).map(name=>({name,inputSchema:{type:'object'}}))}};if(q?.method!=='tools/call'||!ops[q.params?.name])fail(400,'Unknown tool');return {jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text:JSON.stringify(await runOp(q.params.name,q.params.arguments))}]}}});
  app.addHook('onClose',async()=>{if(ownStore)await store.close()});return app;
 }

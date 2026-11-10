@@ -19,7 +19,7 @@ export function mapLegacyState(legacy:string|undefined,previous?:State):{state:S
   case 'waiting':return {state:'waiting',observation:'confirmed'};
   case 'completed':return {state:'succeeded',observation:'confirmed'};
   case 'failed':case 'quota':case 'unavailable':return {state:'failed',observation:'confirmed'};
-  case 'stopped':return {state:'cancelled',observation:'confirmed'};
+  case 'stopped':case 'cancelled':return {state:'cancelled',observation:'confirmed'};
   default:return {state:previous??'preparing',observation:'unconfirmed'};
  }
 }
@@ -58,9 +58,10 @@ export function executionModel(raw:Raw){
  // Pipeline run with one pipeline_step row per step (§7); steps link to the run by parent_execution_id.
  async function putPipeline(run:any){
   const {steps=[],...rest}=run,{state,observation}=mapLegacyState(run.state==='running'?'started':run.state,await previousState(run.id));
-  await raw.query(`INSERT INTO execution(id,kind,state,observation,project_id,task_id,started_at,ended_at,legacy_kind,legacy_id,data,config_ref) VALUES($1,'pipeline_run',$2,$3,$4,$5,$6,$7,'pipeline-run',$1,$8,$9)
-   ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,task_id=coalesce(execution.task_id,excluded.task_id),started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,config_ref=excluded.config_ref`,
-   [run.id,state,observation,run.projectId??null,run.requestedBy?.deliveryId??null,ts(run.startedAt),ts(run.finishedAt),clean(rest),clean({method:run.selectedMethod??null,definitionSha256:run.definitionSha256??null})]);
+  // A Lab trial's row is inserted first (createExecution with request_id, variant and the variant's config_ref); a put keeps them.
+  await raw.query(`INSERT INTO execution(id,kind,state,observation,project_id,task_id,started_at,ended_at,legacy_kind,legacy_id,data,config_ref,experiment_id,variant) VALUES($1,'pipeline_run',$2,$3,$4,$5,$6,$7,'pipeline-run',$1,$8,$9,$10,$11)
+   ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,task_id=coalesce(execution.task_id,excluded.task_id),started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,config_ref=CASE WHEN execution.variant IS NULL THEN excluded.config_ref ELSE execution.config_ref END,legacy_kind='pipeline-run',legacy_id=excluded.legacy_id,experiment_id=coalesce(execution.experiment_id,excluded.experiment_id),variant=coalesce(execution.variant,excluded.variant)`,
+   [run.id,state,observation,run.projectId??null,run.requestedBy?.deliveryId??null,ts(run.startedAt),ts(run.finishedAt),clean(rest),clean({method:run.selectedMethod??null,definitionSha256:run.definitionSha256??null}),run.experimentId??null,run.variant??null]);
   for(const [i,step] of steps.entries()){const s=mapLegacyState(step.state==='running'?'started':step.state);
    await raw.query(`INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,legacy_kind,legacy_id,data) VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,'pipeline-step',$7,$8)
     ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,data=excluded.data,problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,

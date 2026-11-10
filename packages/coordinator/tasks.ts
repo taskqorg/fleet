@@ -64,7 +64,7 @@ export function taskModel(raw:Raw,executions:Executions){
   return state}
 
  // Questions: one typed table, one answer path.
- async function ask(v:{kind:'operator_decision'|'agent_question'|'acceptance',text:string,projectId?:string|null,taskId?:string|null,executionId?:string|null,sessionId?:string|null,options?:any,askedBy?:string,id?:string,legacyKind?:string,data?:any,askedAt?:number}){
+ async function ask(v:{kind:'operator_decision'|'agent_question'|'acceptance'|'rating',text:string,projectId?:string|null,taskId?:string|null,executionId?:string|null,sessionId?:string|null,options?:any,askedBy?:string,id?:string,legacyKind?:string,data?:any,askedAt?:number}){
   let taskId=v.taskId??null,projectId=v.projectId??null;
   if(!taskId&&v.executionId){const e=await one('SELECT task_id,project_id FROM execution WHERE id=$1',[v.executionId]);taskId=e?.task_id??null;projectId??=e?.project_id??null}
   const id=v.id??randomUUID();
@@ -79,12 +79,16 @@ export function taskModel(raw:Raw,executions:Executions){
   if(q.state==='answered'){if(q.answer!==v.answer)fail(409,'Question already answered differently');return q}
   if(q.state!=='open')fail(409,'Question withdrawn');
   if(q.kind==='acceptance'&&!['accepted','rejected'].includes(v.answer))fail(400,'Acceptance answer is accepted or rejected');
+  // Lab questions (ratings, budget decisions) are checked and applied by lab/scores.ts through the answer hook, in this transaction.
+  if(answerHook)await answerHook.check(q,v.answer);
   await raw.query("UPDATE question SET answer=$2,answered_by=$3,answered_at=coalesce($4::timestamptz,now()),state='answered' WHERE id=$1",[id,v.answer,v.by,ts(v.at)]);
   if(q.task_id){if(q.kind==='acceptance'){const artifacts=v.artifactIds??q.data?.artifactIds??[];
     if(v.answer==='accepted'){await transition(q.task_id,'accepted');await raw.query('UPDATE task SET accepted_by=$2,accepted_at=now(),accepted_artifact_ids=$3 WHERE id=$1',[q.task_id,v.by,artifacts])}
     else await transition(q.task_id,'rejected')}
    else await settle(q.task_id)}
-  return await one('SELECT * FROM question WHERE id=$1',[id])}
+  const done=await one('SELECT * FROM question WHERE id=$1',[id]);if(answerHook)await answerHook.after(done);return done}
+ let answerHook:{check:(q:any,answer:string)=>Promise<void>|void,after:(q:any)=>Promise<void>}|null=null;
+ const onAnswer=(h:typeof answerHook)=>{answerHook=h};
  const questionView=(q:any)=>({id:q.id,kind:q.kind,projectId:q.project_id,taskId:q.task_id,executionId:q.execution_id,sessionId:q.session_id,text:q.text,options:q.options,askedBy:q.asked_by,askedAt:q.asked_at,answer:q.answer,answeredBy:q.answered_by,answeredAt:q.answered_at,state:q.state,artifactIds:q.data?.artifactIds??undefined});
  const questions=async(f:{taskId?:string,state?:string,kind?:string}={})=>{const c:string[]=[],p:any[]=[];for(const [k,col] of [['taskId','task_id'],['state','state'],['kind','kind']] as const)if(f[k]){p.push(f[k]);c.push(`${col}=$${p.length}`)}
   return (await raw.query(`SELECT * FROM question${c.length?' WHERE '+c.join(' AND '):''} ORDER BY seq`,p)).map(questionView)};
@@ -215,6 +219,6 @@ export function taskModel(raw:Raw,executions:Executions){
   question:questionAdapter('question'),
   'project-question':questionAdapter('project-question'),
  };
- return {adapters,create,update,get,list,page,summary,membership,derivedDrift,transition,settle,depend,ask,answer,questions};
+ return {adapters,create,update,get,list,page,summary,membership,derivedDrift,transition,settle,depend,ask,answer,questions,onAnswer};
 }
 export type Tasks=ReturnType<typeof taskModel>;

@@ -48,6 +48,28 @@ export const states = {
     failed: { label: 'Failed', tone: 'danger', icon: 'octagon-x' },
     cancelled: { label: 'Stopped', tone: 'neutral', icon: 'circle-slash' },
   },
+  experiment: {
+    draft: { label: 'Draft', tone: 'neutral', icon: 'circle-dashed' },
+    running: { label: 'Running', tone: 'running', icon: 'activity' },
+    paused: { label: 'Paused', tone: 'attention', icon: 'circle-pause' },
+    stopped: { label: 'Stopped', tone: 'neutral', icon: 'circle-slash' },
+    done: { label: 'Done', tone: 'success', icon: 'circle-check' },
+  },
+  /** A Lab trial (pipeline run): unknown is an outcome nobody can prove (never replayed). */
+  trial: {
+    running: { label: 'Running', tone: 'running', icon: 'activity' },
+    completed: { label: 'Completed', tone: 'success', icon: 'circle-check' },
+    failed: { label: 'Failed', tone: 'danger', icon: 'octagon-x' },
+    unknown: { label: 'Unknown', tone: 'attention', icon: 'circle-question-mark' },
+    cancelled: { label: 'Cancelled', tone: 'neutral', icon: 'circle-slash' },
+  },
+  /** Use-case registry drift (scripts/lab-drift.ts). */
+  source: {
+    current: { label: 'Current', tone: 'success', icon: 'check' },
+    changed: { label: 'Changed', tone: 'attention', icon: 'triangle-alert' },
+    missing: { label: 'Missing', tone: 'danger', icon: 'circle-x' },
+    unavailable: { label: 'Unavailable', tone: 'neutral', icon: 'circle-dashed' },
+  },
   host: {
     online: { label: 'Online', tone: 'success', icon: 'circle-check' },
     offline: { label: 'Offline', tone: 'danger', icon: 'circle-slash' },
@@ -68,7 +90,7 @@ export const workspaces = [
   { id: 'projects', label: 'Projects', icon: 'folder-open', group: 'Operator', app: false },
   { id: 'agents', label: 'Agents', icon: 'bot', group: 'Architect', app: false },
   { id: 'hosts', label: 'Hosts', icon: 'panels-top-left', group: 'Architect', app: true },
-  { id: 'laboratory', label: 'Laboratory', icon: 'chart-no-axes-column', group: 'Architect', app: false },
+  { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', group: 'Architect', app: true },
   { id: 'access', label: 'Access', icon: 'shield', group: 'Architect', app: false },
 ] as const satisfies readonly { id: string; label: string; icon: IconName; group: string; app: boolean }[];
 export type AppScreen = Extract<(typeof workspaces)[number], { app: true }>['id'];

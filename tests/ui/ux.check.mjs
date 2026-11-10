@@ -11,7 +11,7 @@ import { gzipSync } from 'node:zlib';
 const page = new URL('../../docs/design-system/pages/mockups.html', import.meta.url).href;
 const shots = new URL('../../design-report/shots/', import.meta.url);
 mkdirSync(shots, { recursive: true });
-const ROUTES = ['/overview', '/tasks', '/tasks/9989', '/tasks/9978', '/results', '/hosts', '/laboratory'];
+const ROUTES = ['/overview', '/tasks', '/tasks/9989', '/tasks/9978', '/results', '/hosts', '/lab'];
 const DETAIL_ROUTES = ['/tasks/9989', '/tasks/9978', '/results'];
 const INJECT = process.env.UX_INJECT || '';
 const TARGET_JS = 200 * 1024, TARGET_MS = 100;

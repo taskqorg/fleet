@@ -271,7 +271,7 @@ function App() {
       <Route path="/tasks"><Tasks /></Route>
       <Route path="/results"><Results /></Route>
       <Route path="/hosts"><Hosts /></Route>
-      <Route path="/laboratory"><Laboratory /></Route>
+      <Route path="/lab"><Laboratory /></Route>
       <Route path="/"><Overview /></Route>
       <Route path="/overview"><Overview /></Route>
       <Route><Empty text="This section is not mocked up in stage 3." action={<Button label="Overview" icon="house" onClick={() => go('/overview')} />} /></Route>
