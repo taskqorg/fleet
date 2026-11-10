@@ -1,4 +1,4 @@
-// Lab scores (docs/designs/fleet-lab.md "Ratings", Stage 3 item 27). A score is one row of the score table: one trial (or N
+// Lab scores (docs/designs/fleet-lab.md "Ratings"). A score is one row of the score table: one trial (or N
 // trials for pick_best), one evaluator and its version, one form. Forms are never averaged together; a correction is a new
 // row with replaces_score_id, and the replaced row drops out of every view. Evaluators: script (the example's checks, run by
 // the coordinator over the trial's files), judge (a pipeline run whose last step writes {value, rationale}) and the owner

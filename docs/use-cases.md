@@ -161,7 +161,7 @@ Status: accepted. Source: this section; Lab registry entry `fleet:UC7` in [`conf
 
 An architect supplies a specification and configures a developer with SDD instructions. The agent implements the project through ordinary execution. The architect reviews the product, records shortcomings and discusses changes in a session.
 
-Run another variant with changed instructions, skills or orchestration; compare result quality, human intervention, repeated work and recorded costs under the [experiment contract](lab.md). The same process can evaluate PM behavior. SDD is a candidate method, not a Fleet requirement.
+Run another variant with changed instructions, skills or orchestration; compare result quality, human intervention, repeated work and recorded costs under the [experiment contract](designs/fleet-lab.md). The same process can evaluate PM behavior. SDD is a candidate method, not a Fleet requirement.
 
 Once a method is useful, recommend it for relevant assignments within the selected scope. Project work uses that recommendation under the normal selection rules; previous results remain unchanged unless explicitly reworked.
 
@@ -195,7 +195,7 @@ For a compiler, compare compilation time and resource use while retaining correc
 
 Status: accepted. Source: this section; Lab registry entry `fleet:UC10` in [`config/lab/use-cases/fleet.json`](../config/lab/use-cases/fleet.json).
 
-A person asks an agent where a project's work spends time and resources. Both inspect [work analysis](work-analysis.md), including preparation, questions, retries, merge, CI and cleanup, and drill down to supporting executions.
+A person asks an agent where a project's work spends time and resources. Both inspect [work analysis](designs/fleet-lab.md#work-analysis), including preparation, questions, retries, merge, CI and cleanup, and drill down to supporting executions.
 
 They discuss a suspected inefficiency, change a skill, configuration or workflow, and evaluate it through the same laboratory mechanism. Keep missing measurements visible and compare results before applying the improvement; a proposed saving is not a measured saving.
 

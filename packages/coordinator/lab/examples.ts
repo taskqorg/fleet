@@ -1,4 +1,4 @@
-// Lab examples (docs/designs/fleet-lab.md, "Use-case registry and examples"; Stage 1). An example is one runnable Lab input
+// Lab examples (docs/designs/fleet-lab.md "Use-case registry and examples"). An example is one runnable Lab input
 // drawn from a use case of config/lab/use-cases/*.json. It is stored as a lab-scope artifact with role 'example': the
 // canonical example JSON, named examples/<id>@<version>.json; its hash is the artifact's content hash. approved_at is set
 // when the owner approves it (an owner import approves directly; agent-drafted examples arrive proposed in Stage 2).

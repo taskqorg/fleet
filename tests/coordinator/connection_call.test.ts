@@ -1,4 +1,4 @@
-// Connection client (docs/designs/fleet-lab.md Stage 2, item 25): hash pin, and identical call lines from both entry points.
+// Connection client (docs/designs/fleet-lab.md "Connections: one accounting path"): hash pin, and identical call lines from both entry points.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';

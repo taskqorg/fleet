@@ -113,7 +113,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  app.get('/sw.js',appFile('sw.js','text/javascript'));
  app.get('/manifests/:name',async(req:any,r)=>{if(!/^[a-z]+\.webmanifest$/.test(req.params.name))fail(404,'Unknown manifest');return appFile('manifests/'+req.params.name,'application/manifest+json')(req,r)});
  app.get('/icons/:name',async(req:any,r)=>{if(!/^[a-z0-9-]+\.svg$/.test(req.params.name))fail(404,'Unknown icon');return appFile('icons/'+req.params.name,'image/svg+xml')(req,r)});
- // /lab: the app's "Lab is being rebuilt" page until Stage 3 of docs/designs/fleet-lab.md.
+ // /lab and /lab/:id: the Lab screen (docs/designs/fleet-lab.md "/lab screen").
  for(const route of new Set([...APP_ROUTES,'/lab','/lab/:id']))app.get(route,appFile('index.html','text/html'));
  app.get('/test-sites/:project/:file',async(req:any,r)=>{if(!config.testSiteRoot||!['hello-world','hello-world-alt'].includes(req.params.project)||!/^[a-zA-Z0-9_-]+\.(html|css)$/.test(req.params.file))fail(404,'Unknown test site');const root=realpathSync(resolve(config.testSiteRoot!,req.params.project)),path=realpathSync(resolve(root,'current',req.params.file));if(!path.startsWith(root+sep))fail(403,'Test-site path rejected');r.header('Content-Security-Policy',"sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src data:; frame-ancestors 'self'");return r.type(req.params.file.endsWith('.css')?'text/css':'text/html').send(readFileSync(path))});
  const profiles_list=()=>({profiles:listProfiles(config.profilesDirectory||'config/agents')});
@@ -260,7 +260,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  app.post('/api/hosts/stores',async(req:any)=>{const b=req.body??{};(await owned({hostId:b.hostId}));return store.tx(()=>stores.register(b.hostId,b.store,req.fleetHost.holder))});
  // Results stream from a verified copy with the same sandbox as before (no size limit; bytes never sit in the coordinator).
  app.get('/api/results/:id',async(req:any,r)=>{const a=await artifacts.get(req.params.id);if(a.state!=='stored')fail(404,'Not found');r.header('Content-Security-Policy',"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:");return r.type(a.mediaType||'application/octet-stream').send(await artifacts.read(a.id))});
- // Pipeline v2 runner (docs/designs/fleet-lab.md Stage 2): api steps call connections from this host; agent steps are
+ // Pipeline v2 runner (docs/designs/fleet-lab.md "Pipeline format version 2"): api steps call connections from this host; agent steps are
  // ordinary agent executions with the step's profile (variant overrides applied); script steps are executor script commands.
  const configDir=config.projectConfigDirectory||'config',profilesDir=config.profilesDirectory||'config/agents';
  let lab:ReturnType<typeof labExperiments>|undefined;
@@ -318,7 +318,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   await put('command',{id:randomUUID(),executionId:id,sessionId:sid,hostId,kind,status:'pending',payload})};
  artifacts=artifactModel(store,{stores,locations,access:()=>accessToken(config.cfAccessFile),retryWindowMs:()=>config.artifactRetryWindowMs??86400000,queueCommand:(h,k,p)=>store.tx(()=>queueCommand(h,k,p)),onSettled:(id:string)=>store.tx(()=>settle(id))});
  store.registerKind('artifact',artifacts.adapter);
- // Lab examples (docs/designs/fleet-lab.md Stage 1): owner import, list, read. Experiments and the screen come in Stage 3.
+ // Lab examples (docs/designs/fleet-lab.md "Use-case registry and examples"): owner import, list, read.
  const examples=labExamples(store,artifacts,config.labDirectory||'config/lab');
  app.post('/api/lab/examples',async(req:any)=>examples.add(req.body??{}));
  app.get('/api/lab/examples',async(req:any)=>examples.list({state:req.query?.state}));

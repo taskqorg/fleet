@@ -17,6 +17,6 @@ Native session resume differs from handoff to another harness using retained con
 
 Agents may organize their internal work. Retain available tool and child-agent observations without requiring each action to become a Fleet task. Delegated work needing Fleet lifecycle or budget control uses Fleet operations.
 
-Native token usage is one observation, not total assignment cost or infrastructure consumption. Missing observations remain unknown under [work analysis](work-analysis.md).
+Native token usage is one observation, not total assignment cost or infrastructure consumption. Missing observations remain unknown under [work analysis](designs/fleet-lab.md#work-analysis).
 
 AgentQ is a reuse candidate. The [source review](runtime-boundary-review.md) does not establish native qualification.

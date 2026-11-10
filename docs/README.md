@@ -6,7 +6,7 @@
 
 | Topic | Target file | Summary | Merges into the target |
 |---|---|---|---|
-| Lab | [designs/fleet-lab.md](designs/fleet-lab.md) | Experiments over example sets, variants, evaluators, Promote, the `/lab` screen; build stages. | [lab.md](lab.md), [work-analysis.md](work-analysis.md) |
+| Lab | [designs/fleet-lab.md](designs/fleet-lab.md) | Experiments over examples, variants, evaluators and budgets, Promote, the `/lab` screen, work analysis. | |
 | Operator app | [designs/fleet-operator-app.md](designs/fleet-operator-app.md) | The operator web app, its sections and live change feed. | [interfaces.md](interfaces.md), [designs/legacy-inventory.md](designs/legacy-inventory.md) |
 | View URLs and list path | [designs/fleet-view-urls-and-list-path.md](designs/fleet-view-urls-and-list-path.md) | How a view URL is built and parsed; the filtered list path and its check. | none |
 | Conversations | [designs/fleet-conversations.md](designs/fleet-conversations.md) | One thread per task, paging, typed transcript blocks, question and result cards, the Results page. | [conversations-no-reply-rca.md](conversations-no-reply-rca.md) |
