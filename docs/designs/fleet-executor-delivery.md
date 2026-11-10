@@ -1,30 +1,41 @@
-# Executor delivery (L2)
+# Executor delivery
 
-Scope: build executor files in CI; fetching is manual and changes no deployment.
+How executor files are built in CI, published and fetched by a host. Fetching is manual and changes no deployment. Language and port order: [stack](fleet-stack.md).
 
-Use native runners: Ubuntu 24.04 for x86_64-unknown-linux-gnu and macOS 15
-for aarch64-apple-darwin. Native macOS avoids a cross-compilation toolchain
-for bundled SQLite and kernel calls. No new dependencies. Linux requires
-glibc 2.39 or newer; PDS18 documents Ubuntu 26.04. WSL compatibility depends
-on its distribution and remains unqualified until run there.
+## Build
 
-Publish Actions artifacts with the coordinator's existing default retention,
-as confirmed by the coordinator for this phase. Lasting publication remains
-stack-design question 7. After expiry a host cannot fetch that revision from
-that run; an already downloaded file remains usable. No GitHub Releases.
+- The CI job `executor-release` builds `cargo build --locked --release -p fleet-executor` on native runners: Ubuntu 24.04 for `x86_64-unknown-linux-gnu`, macOS 15 for `aarch64-apple-darwin`. Native macOS avoids a cross toolchain for bundled SQLite and kernel calls. No new dependencies.
+- Each target gets `fleet-executor-<triple>` and `fleet-executor-<triple>.sha256`, uploaded as the workflow artifact `fleet-executor-<triple>-<commit sha>`. The job summary records build seconds and bytes.
+- The job runs on pull requests too, so a downloaded Mac binary can be checked before merge. A host uses only a successful run of a push to `main`.
+- Linux needs glibc 2.39 or newer (Ubuntu 24.04 build). PDS18 is x86_64 ([PDS Codex environment](../pds-codex-environment.md)); the Mac is arm64. WSL uses the Linux file; its distribution must meet the glibc requirement. Windows without WSL is not a target.
+- The gateway follows the same pattern for Linux only (`gateway-release`, artifact `fleet-gateway-x86_64-unknown-linux-gnu-<sha>`).
 
-PR runs also upload executor candidates so the downloaded Mac binary can be
-qualified before merge. A host selects a successful main run for normal use.
-Each target has a binary and adjacent SHA-256 file, named with the full target
-triple. Checksums detect corruption; GitHub access and selected revision are
-the trust boundary. No signing identity or automatic quarantine removal is added.
+## Publication and trust
 
-## If the executor moves to Go
+- Files are workflow artifacts with the default Actions retention, like the coordinator archive. After expiry that run cannot supply that revision; an already downloaded file stays usable. No GitHub Releases. Not built: lasting publication, an update source and who starts an update.
+- SHA-256 detects corruption, not a publisher. GitHub access and the selected revision are the trust boundary.
+- macOS files are not Developer ID signed or notarized. No signing identity and no automatic quarantine removal are added. Not built: signing.
 
-The Go executor probe (`go/probe/`) built every spike with `CGO_ENABLED=0`
-for linux/amd64, darwin/arm64 and windows/amd64 from one Mac, using pure-Go
-SQLite (`modernc.org/sqlite`) and `github.com/ebitengine/purego` for the
-macOS libproc calls. A Go executor therefore needs no cross-compilation
-toolchain and no native macOS runner, provided one runner building all
-targets is verified in CI (the probe built them on a Mac only). The Linux binary is static, so the glibc 2.39 requirement above no
-longer applies. Signing and quarantine are unchanged.
+## Fetch a CI release manually
+
+With an authenticated GitHub CLI, choose a successful main CI run for the exact full commit SHA, then download and verify in an empty directory:
+
+```sh
+revision=<full-commit-sha>
+run=<successful-main-ci-run-id>
+target=aarch64-apple-darwin # Linux/WSL: x86_64-unknown-linux-gnu
+gh run view "$run" --repo taskqorg/fleet --json headSha,event,headBranch,conclusion
+# Require headSha == revision, event == push, headBranch == main, conclusion == success.
+gh run download "$run" --repo taskqorg/fleet \
+  --name "fleet-executor-$target-$revision" --dir executor-download
+(cd executor-download && shasum -a 256 -c "fleet-executor-$target.sha256") && \
+  chmod +x "executor-download/fleet-executor-$target"
+```
+
+Stop on any mismatch or failed command. Use the file only after verification; activating or replacing an installed executor is separate operator work. Keep a verified local copy if the revision must outlive retention.
+
+CLI downloads normally carry no quarantine attribute. If macOS refuses to run the file, inspect it with `xattr -l <file>` and record the refusal before any operator-approved signing or quarantine change.
+
+## After the executor moves to Go
+
+The Go executor builds with `CGO_ENABLED=0` for every target from one Linux job, like the coordinator in the CI job `go` ([stack](fleet-stack.md#executor-and-gateway)). The native macOS runner and the glibc requirement then fall away: the Linux binary is static. Signing and quarantine are unchanged. Not built: the Go executor.

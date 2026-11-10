@@ -153,7 +153,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      # The release layout without node_modules: the bundled coordinator must start and serve (docs/designs/fleet-toolchain.md D4).
+      # The release layout without node_modules: the bundled coordinator must start and serve (docs/designs/fleet-stack.md D4).
       - run: node tests/coordinator/release-smoke.ts
         env:
           FLEET_TEST_PG: postgresql://postgres:postgres@localhost:5432
@@ -213,7 +213,7 @@ jobs:
             fleet-executor-${{ matrix.target }}
             fleet-executor-${{ matrix.target }}.sha256
           if-no-files-found: error
-  # Go code (docs/designs/fleet-language.md): vet, then one Linux job cross-builds every target without cgo.
+  # Go code (docs/designs/fleet-stack.md): vet, then one Linux job cross-builds every target without cgo.
   go:
     runs-on: ubuntu-24.04
     permissions:

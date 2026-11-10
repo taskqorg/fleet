@@ -1,4 +1,4 @@
-// Starts the bundled coordinator from a copy of the release layout with no node_modules (docs/designs/fleet-toolchain.md D4),
+// Starts the bundled coordinator from a copy of the release layout with no node_modules (docs/designs/fleet-stack.md D4),
 // through a "current" symlink as on PDS18, against the PDS18 roles: migrations as the owner fleet, the store as fleet_app
 // (pg-test.ts recreateFleetDatabase). Checks the operator app, one authenticated op and the migrate-sqlite CLI. A missing asset
 // or a dependency the bundle did not include fails here, not on PDS18.

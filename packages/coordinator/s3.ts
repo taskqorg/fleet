@@ -1,4 +1,4 @@
-// The S3 subset Fleet uses against Garage, signed with AWS Signature Version 4 (docs/designs/fleet-toolchain.md D3).
+// The S3 subset Fleet uses against Garage, signed with AWS Signature Version 4 (docs/designs/fleet-stack.md D3).
 // It keeps what the @aws-sdk/client-s3 client was configured with: region 'garage', path-style URLs, no request or response
 // checksums (WHEN_REQUIRED, and nothing we call requires one), Cloudflare Access headers added after signing so they are
 // never part of the signature, and the SDK's standard retry: 3 attempts, jittered exponential backoff, on 500/502/503/504,

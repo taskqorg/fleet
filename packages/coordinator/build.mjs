@@ -1,4 +1,4 @@
-// Coordinator build (docs/designs/fleet-toolchain.md D1): a clean dist, then one esbuild bundle per entry at the paths the
+// Coordinator build (docs/designs/fleet-stack.md D1): a clean dist, then one esbuild bundle per entry at the paths the
 // compiled files had, so every import.meta.url asset path stays the same. server.js is a two-line entry that turns source
 // maps on before the bundle loads (Node parses maps only for modules loaded after that), so every start path gets them.
 import {rmSync,writeFileSync} from 'node:fs';
