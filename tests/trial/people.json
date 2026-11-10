@@ -1,0 +1,4 @@
+[
+  {"email": "owner@trial.test", "name": "Owner", "roles": ["operator", "architect"], "owner": true},
+  {"email": "outsider@trial.test", "name": "Outsider", "roles": ["operator"], "grants": []}
+]
