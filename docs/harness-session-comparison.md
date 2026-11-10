@@ -1,5 +1,7 @@
 # Harness session comparison
 
+> Historical record. It was written against the TypeScript coordinator and the Rust and Python executor, which the Go port deleted; file names in it are not current code. Current code: `go/coordinator`, `go/executor`, `go/gateway` ([stack](designs/fleet-stack.md)).
+
 Read-only source research, 2026-11-09. Recommendation for owner decision, not implementation approval. No tests, builds, native/model calls, services or authentication changes were performed. Live Fleet and successful/failed native histories remain unchanged. Codex app-server is a mode of the installed executable speaking a local protocol over stdio; using it does not require a remote server, broker or new deployed service.
 
 ## Sources and revisions

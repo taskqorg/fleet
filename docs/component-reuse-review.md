@@ -1,5 +1,7 @@
 # Component reuse review
 
+> Historical record. It was written against the TypeScript coordinator and the Rust and Python executor, which the Go port deleted; file names in it are not current code. Current code: `go/coordinator`, `go/executor`, `go/gateway` ([stack](designs/fleet-stack.md)).
+
 Source-based assessment against the distributed contracts, 2026-11-09. Candidates below are not adopted dependencies, deployment instructions or proven end-to-end capabilities.
 
 ## Evidence and candidates

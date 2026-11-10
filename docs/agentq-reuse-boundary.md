@@ -1,5 +1,7 @@
 # Minimal native-session reuse boundary
 
+> Historical record. It was written against the TypeScript coordinator and the Rust and Python executor, which the Go port deleted; file names in it are not current code. Current code: `go/coordinator`, `go/executor`, `go/gateway` ([stack](designs/fleet-stack.md)).
+
 Read-only decision aid, 2026-11-09. Owner intent: «agentq подключать - я не уверен - это прототип ... основная мысль - t3 code, orca, наш прототиа agentq - уже имеют многое и много надо оттуда просто подсматривать и брать.» AgentQ is a developed prototype and reference, not a selected dependency. This report authorizes no implementation.
 
 ## Inspected snapshots and licenses

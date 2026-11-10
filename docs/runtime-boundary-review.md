@@ -1,5 +1,7 @@
 # Runtime boundary review
 
+> Historical record. It was written against the TypeScript coordinator and the Rust and Python executor, which the Go port deleted; file names in it are not current code. Current code: `go/coordinator`, `go/executor`, `go/gateway` ([stack](designs/fleet-stack.md)).
+
 Source review, 2026-11-09. Accepted ownership is defined in [runtime integration](runtime-integration.md). Existing code is evidence, not a template or runtime qualification.
 
 ## Evidence

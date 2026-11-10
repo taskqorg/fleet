@@ -1,5 +1,7 @@
 # Codex resume developer-context repair
 
+> Historical record. It was written against the TypeScript coordinator and the Rust and Python executor, which the Go port deleted; file names in it are not current code. Current code: `go/coordinator`, `go/executor`, `go/gateway` ([stack](designs/fleet-stack.md)).
+
 2026-11-09. Zero native/model turns or native thread operations were made in this dispatch. Existing saved native histories and the failed A/B evidence remain unchanged. The repair is source-backed and deterministically exercised through the actual executor; native B acceptance is still pending a separately authorized budget.
 
 ## What failed and why

@@ -1,3 +1,5 @@
+> Historical record. It was written against the TypeScript coordinator and the Rust and Python executor, which the Go port deleted; file names in it are not current code. Current code: `go/coordinator`, `go/executor`, `go/gateway` ([stack](designs/fleet-stack.md)).
+
 
 ## Worker goblin: T1, T10, T12–T16 on fleet-hello-world (2026-11-09)
 

@@ -1,5 +1,7 @@
 # Prototype implementation plan (T1–T16)
 
+> Historical record. It was written against the TypeScript coordinator and the Rust and Python executor, which the Go port deleted; file names in it are not current code. Current code: `go/coordinator`, `go/executor`, `go/gateway` ([stack](designs/fleet-stack.md)).
+
 2026-11-09. Planning only. Basis: [architecture breadth plan](architecture-breadth-plan.md) T1–T16, [configuration](configuration.md), [layered isolation](designs/fleet-people-access.md#isolation-layers), [agent tools inventory](agent-tools-inventory.md), [PDS Codex environment](pds-codex-environment.md), [resources and auth](designs/fleet-people-access.md#4-subscriptions).
 
 Stand: coordinator `candidate-ccc2d24e023d`; executors on Mac (Claude, Codex, Antigravity) and PDS (Codex, Antigravity). Claude never runs on PDS.

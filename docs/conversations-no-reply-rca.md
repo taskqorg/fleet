@@ -1,5 +1,7 @@
 # Conversations: messages got no visible reply (2026-11-10)
 
+> Historical record. It was written against the TypeScript coordinator and the Rust and Python executor, which the Go port deleted; file names in it are not current code. Current code: `go/coordinator`, `go/executor`, `go/gateway` ([stack](designs/fleet-stack.md)).
+
 The owner sent messages in Conversations on fleet.ufobe.com and saw no answer. Two links were broken.
 
 ## 1. The app never rendered replies (all sessions)

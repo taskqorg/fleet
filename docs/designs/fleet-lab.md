@@ -11,7 +11,7 @@ Lab adds no run machinery of its own. A trial is a `pipeline_run` execution with
 | Coordinator | Fleet's TypeScript server (`packages/coordinator`). Owns Postgres, routes, reconcile. |
 | Executor | Fleet's Go process on each host (`go/executor`). Runs harnesses, scripts, worktrees. |
 | Harness | An agent CLI the executor drives: Codex, Claude, Antigravity. |
-| Profile | A trusted JSON file in `config/agents` naming harness, model, skills and granted connections (`packages/coordinator/profiles.ts`, `go/executor/profile.go`). |
+| Profile | A trusted JSON file in `config/agents` naming harness, model, skills and granted connections (`listProfiles` in `go/coordinator/b_projects.go`, `go/executor/profile.go`). |
 | Connection | Fleet's record of one outside provider endpoint, owned by [fleet-connections.md](fleet-connections.md). Example: `tavily`. |
 | Catalogue / recommendation | `config/catalogue.json` lists methods per project; `recommendation_set` records the chosen method as a `project-recommendation`. |
 | Use case | A registry entry pointing at a use case written in an org repo (Fleet, taskq, pilotq, agentq, dashq, assetq). |
@@ -87,7 +87,7 @@ Variant `config_ref` = SHA-256 of canonical `{pipeline, overrides}`. Trial `requ
   {"id":"check","kind":"script","command":"scripts/check.sh"}]}
 ```
 
-The runner is `packages/coordinator/pipelines.ts`; no version-1 reader exists.
+The runner is `go/coordinator/c_pipelines.go`; no version-1 reader exists.
 
 *   Every step writes `output.json` plus any files. An agent or script step without `output.json` gets `{files: [...]}` from the coordinator. Later steps receive all earlier steps' artifacts in `FLEET_INPUT_DIR/<step id>/`.
 *   References `${example.<field>}` and `${steps.<id>.output.<json path>}` are resolved by the coordinator before the step starts. A missing reference fails the step with `problem: ref:<path>`; there is no default.
@@ -98,7 +98,7 @@ The runner is `packages/coordinator/pipelines.ts`; no version-1 reader exists.
 *   Inputs reach agent and script steps as start-command `inputs` `[{artifactId, path}]`; the executor downloads them into `FLEET_INPUT_DIR` before the step starts, and the host may read exactly those artifacts. Example `inputs` are staged under `example/`; an example's `references` never enter a run.
 *   A failed step stops later steps; the trial keeps its reason.
 *   Profile skills (`config/skills/<id>/SKILL.md`, sent in the start command): Claude gets them as a local plugin (`--plugin-dir` with the `Skill` tool; `--disable-slash-commands` stays only when no skill is granted); Codex gets them in the developer instructions.
-*   Direct start: `POST /api/pipelines/:id/runs` `{requestId, projectId?, exampleArtifactId? | example?, overrides?}`; the same `requestId` returns the same run; an example artifact must be approved. `GET /api/pipeline-runs/:id` reads a run. The `direct_search` and `pipeline_run` operations in `projects.ts` use the same runner.
+*   Direct start: `POST /api/pipelines/:id/runs` `{requestId, projectId?, exampleArtifactId? | example?, overrides?}`; the same `requestId` returns the same run; an example artifact must be approved. `GET /api/pipeline-runs/:id` reads a run. The `direct_search` and `pipeline_run` project operations use the same runner.
 
 Pipelines in `config/pipelines/`: `web-research`, `hello-search`, `search-basic`, `draft-examples`, `judge-pass-fail`, `judge-scale`.
 
@@ -106,7 +106,7 @@ Pipelines in `config/pipelines/`: `web-research`, `hello-search`, `search-basic`
 
 Every provider call goes through fleet-gateway, from two entry points; the connection record, its hash pin and tokens are specified in [fleet-connections.md](fleet-connections.md).
 
-*   **CLI** (coordinator-side `api` step): `connection_call.py call …`, arguments on stdin, the call line with `output` on stdout.
+*   **In-process** (coordinator-side `api` step): one gateway call with the step's run token; the answer is the call line with `output`.
 *   **MCP** (agent-side): the executor adds `fleet-executor mcp connection …` to the harness MCP config for each connection the profile grants, and allowlists `mcp__<connection>__<tool>` for the record's `tools`.
 *   Both send label = the current step's execution ID and append one line per call to `<calls dir>/.connection-calls.jsonl` (for an agent, `$FLEET_OUTPUT_DIR`): `{tool, request_id, label, outcome: ok|error|unknown, error_code, usage}`. On step completion the coordinator turns each line into a `tool_run` child of the step with `connection_cost {unit: credits, credits, connection}`, basis `measured`, or `unavailable` when the provider reported no usage. API steps read the client's file directly; agent steps' file arrives with the uploaded outputs. Spend lands before the step's state change triggers reconcile.
 *   Error classes: `queue-full`, `http-429`/`432`/`433`, `no-usable-key`, `key-disabled-*`, `provider-unreachable`, `unauthenticated`, an unreachable endpoint, a missing record or a hash mismatch give `infra:<code>`, and the trial is excluded from comparison. `provider-body`, `provider-timeout`, a client timeout or an unreadable reply give outcome `unknown`, problem `unknown:<code>`, never retried. Other failures are `step:<code>`.
@@ -132,7 +132,7 @@ Every provider call goes through fleet-gateway, from two entry points; the conne
 
 ## Experiment reconcile
 
-`reconcileExperiment(id)` in `packages/coordinator/lab/experiments.ts` runs on coordinator start, after every Lab execution reaches a final state, after each owner action and answer, and on the pipeline tick for running experiments. It runs under the store scope lock `experiment:<id>` (`pg_advisory_xact_lock`). Script checks run before the transaction, never under the lock.
+`labReconcile` (`go/coordinator/c_lab.go`) runs on coordinator start, after every Lab execution reaches a final state, after each owner action and answer, and on the pipeline tick for running experiments. It runs under the store scope lock `experiment:<id>` (`pg_advisory_xact_lock`). Script checks run before the transaction, never under the lock.
 
 1.  Load the experiment, its executions, scores and spend.
 2.  Stop rules, first match wins and is recorded: owner stop; budget with action `stop`.
@@ -166,7 +166,7 @@ Not built: token and money units, per-iteration or per-trial scope, projected-ov
 `question.kind = 'rating'`, options `{form, experiment_id, trial_ids, seed}`, created by the owner from the matrix (`POST /api/lab/ratings {experimentId, form, trialIds}`); never blocking.
 
 *   Forms: `pass_fail` (answer `pass|fail[: tags]`, one trial), `scale` (`1..5[: note]`, one trial), `pick_best` (the chosen trial ID, two or more trials shown blind as A, B, … in an order shuffled by `seed`).
-*   The answer hook (`tasks.onAnswer`) checks and applies Lab answers in the answering transaction (`packages/coordinator/lab/scores.ts`); reconcile follows.
+*   The answer hook (`runAnswerChecks`, `go/coordinator/c_glue.go`) checks and applies Lab answers in the answering transaction; reconcile follows.
 *   Evaluators, named `<kind>:<ref>:<form>`: `script:example.checks:pass_fail|metric` (the coordinator runs the example's checks over the trial's files: example inputs, then each step's files at the top level, later steps winning); `judge:<pipeline id>:pass_fail|scale` (one pipeline run per evaluator and trial; its example is the original prompt plus the trial's files under `trial/`; its last `output.json` is `{value, rationale}`; profile `codex-judge`); `human:owner:<form>`. A failed judge run or invalid value counts as evaluated with no score. Forms are never averaged together.
 *   Agreement = owner `pass_fail` vs judge `pass_fail` on the same trial, plus owner `pick_best` vs the judge's single best `scale` score of that group.
 *   Correction: `POST /api/lab/scores/:id/correct {value, rationale}` writes a new score that replaces the old.
@@ -177,17 +177,17 @@ Not built: the order-swapped blind `pick_best` judge.
 
 `app/src/views/lab.tsx`, from `packages/ui` only; page rules in [laboratory.md](../design-system/pages/laboratory.md). `/lab`: experiments list, use-case registry with drift and maturity, examples awaiting approval. `/lab/<experiment id>`: matrix (rows examples, columns variants; cell state, score with form, spend with basis, running time, confounders, link to execution; cancel and retry cell), spend against budgets, agreement, rating queue, Promote. Workspace `lab`. Experiment creation is an API call; the screen covers everything after it.
 
-Routes (each also an operation `lab_*`, `packages/coordinator/lab/routes.ts`): `POST|GET /api/lab/experiments`, `GET /api/lab/experiments/:id` (trials, scores, spend), `POST …/:id/{launch,stop,resume}`, `POST …/:id/cells/:cell/{cancel,retry}`, `POST …/:id/promote {variant}`, `POST|GET /api/lab/ratings`, `GET /api/lab/ratings/:id`, `POST /api/lab/scores/:id/correct`, `GET /api/lab/registry`. Errors: 400 invalid body, 404 unknown ID, 409 wrong state.
+Routes (each also an operation `lab_*`, `go/coordinator/c_lab.go`): `POST|GET /api/lab/experiments`, `GET /api/lab/experiments/:id` (trials, scores, spend), `POST …/:id/{launch,stop,resume}`, `POST …/:id/cells/:cell/{cancel,retry}`, `POST …/:id/promote {variant}`, `POST|GET /api/lab/ratings`, `GET /api/lab/ratings/:id`, `POST /api/lab/scores/:id/correct`, `GET /api/lab/registry`. Errors: 400 invalid body, 404 unknown ID, 409 wrong state.
 
 Promote returns `{cataloguePatch, method, recommendation}`: a catalogue method entry (pipeline, overrides, `config_ref`, source experiment) as a JSON patch for the owner to commit; the recommendation is set once a catalogue method carries the variant's `configRef`. Nothing promotes automatically.
 
 ## Claude on WSL (R3.8)
 
-Host setting `FLEET_CLAUDE_PLACEMENT` (`mac | windows-wsl`, [configuration.md](../configuration.md)) decides where Claude may run; readiness verifies it (WSL detected from the kernel release) and checks the login file under Fleet's config directory. `delivery_worker.py` applies the same rule.
+Host setting `FLEET_CLAUDE_PLACEMENT` (`mac | windows-wsl`, [configuration.md](../configuration.md)) decides where Claude may run; readiness verifies it (WSL detected from the kernel release) and checks the login file under Fleet's config directory. The delivery worker (not built) applies the same rule.
 
 ## Removal in one cut (R3.1)
 
-The old lab (`lab.ts`, `lab-ui.ts`, `lab.rs`, `/legacy/lab`, its `/api/lab/*` and `/api/experiments` routes and stored documents) is gone. Profile code lives in `profiles.ts` and `profile.rs`; profiles are listed by `GET /api/profiles`. Paired delegation is an `ab` experiment; delivery comparison is removed.
+The old lab (its pages, its `/api/lab/*` and `/api/experiments` routes and stored documents) is gone. Profile code lives in `go/coordinator/b_projects.go` and `go/executor/profile.go`; profiles are listed by `GET /api/profiles`. Paired delegation is an `ab` experiment; delivery comparison is removed.
 
 Not built: removal of Pipe's method evaluation in the Pipe repo (after the assetq import).
 

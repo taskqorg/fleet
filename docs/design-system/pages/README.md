@@ -14,4 +14,4 @@ Page specs map [inventory](../inventory.md) items to patterns and controls. The 
 | Pipelines | Architect | [pipelines.md](pipelines.md) (mockup only) |
 | Catalogue | Architect | [catalogue.md](catalogue.md) (mockup only) |
 
-The operator app (`app/`, [design](../../designs/fleet-operator-app.md)) builds the Overview, Tasks, Conversations and Hosts pages for real. `npm run check:design` runs `tests/ui/app.check.ts` on it.
+The operator app (`app/`, [design](../../designs/fleet-operator-app.md)) builds the Overview, Tasks, Conversations and Hosts pages for real. `pnpm run check:design` runs `tests/ui/app.check.ts` on it.
