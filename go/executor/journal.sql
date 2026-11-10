@@ -9,3 +9,9 @@ CREATE TABLE IF NOT EXISTS delegation_requests(id TEXT PRIMARY KEY,body TEXT NOT
 CREATE TABLE IF NOT EXISTS outbox(route TEXT NOT NULL,body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS outbox_failed(route TEXT NOT NULL,body TEXT NOT NULL,status INTEGER NOT NULL,reason TEXT NOT NULL,failed_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS transfers(id TEXT PRIMARY KEY,kind TEXT NOT NULL,body TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'queued',response TEXT,attempts INTEGER NOT NULL DEFAULT 0,next_at INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL);
+
+-- version 2
+-- Process ownership survives an executor crash: a launch row is written before spawn, owned rows (pid with its start-time
+-- identity) as processes are observed; both go when the run is reaped. A restart kills what survives before polling.
+CREATE TABLE launches(execution TEXT PRIMARY KEY,command TEXT NOT NULL,session TEXT NOT NULL,grp INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE owned(execution TEXT NOT NULL,pid INTEGER NOT NULL,identity TEXT NOT NULL,PRIMARY KEY(execution,pid));
