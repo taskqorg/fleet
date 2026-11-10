@@ -1,1 +1,1 @@
-{"version":2,"id":"hello-search","steps":[{"id":"search","kind":"api","connection":"pipe-read","tool":"web_search","arguments":{"query":"${example.query}","max_results":5,"search_depth":"basic"}}]}
+{"version":2,"id":"hello-search","steps":[{"id":"search","kind":"api","connection":"tavily","tool":"web_search","arguments":{"query":"${example.query}","max_results":5,"search_depth":"basic"}}]}

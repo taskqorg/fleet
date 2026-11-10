@@ -51,7 +51,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       # The executor: its unit tests, and the binary the coordinator's end-to-end artifact test runs.
-      - run: cargo build -p fleet-executor && cargo test -p fleet-executor
+      - run: cargo build -p fleet-executor -p gateway && cargo test -p fleet-executor -p gateway
       # The executor protocol scripts (tests/executor): actual executor binary against fake harnesses and transports.
       - run: tests/executor/run.sh
       - run: pnpm test
@@ -212,6 +212,26 @@ jobs:
           path: |
             fleet-executor-${{ matrix.target }}
             fleet-executor-${{ matrix.target }}.sha256
+          if-no-files-found: error
+  gateway-release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build release gateway
+        run: |
+          cargo build --locked --release -p gateway
+          cp target/release/fleet-gateway fleet-gateway-x86_64-unknown-linux-gnu
+          sha256sum fleet-gateway-x86_64-unknown-linux-gnu | tee fleet-gateway-x86_64-unknown-linux-gnu.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fleet-gateway-x86_64-unknown-linux-gnu-${{ github.sha }}
+          path: |
+            fleet-gateway-x86_64-unknown-linux-gnu
+            fleet-gateway-x86_64-unknown-linux-gnu.sha256
           if-no-files-found: error
   comment:
     needs: build-test-design

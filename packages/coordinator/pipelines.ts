@@ -49,8 +49,10 @@ export function resolveRefs(v:any,ctx:{example:any,outputs:Record<string,any>},q
 type Deps={
  store:{get:(id:string,kind:string)=>Promise<any>,put:(kind:string,v:any)=>Promise<unknown>,all:(kind:string,f?:any)=>Promise<any[]>,query:(sql:string,p?:any[])=>Promise<any[]>,atomic:<T>(fn:()=>Promise<T>|T)=>Promise<T>,outside:<T>(fn:()=>T)=>T,executions:any},
  directory:string,
- // Host directory of connection records <dir>/<connection>/connection.json (FLEET_CONNECTIONS_DIR of the coordinator host).
- connectionsDir?:string,
+ // Per-run tokens and spool ingest (connections.ts): an api step's call carries a token minted for its step row.
+ connections?:{mint:(run:any,requested:string[])=>Promise<{token:string|null}>,published:()=>Promise<void>,revoke:(executionId:string)=>Promise<void>,ingest:()=>Promise<number>},
+ // The gateway this coordinator calls (FLEET_GATEWAY_URL; loopback on PDS18).
+ gatewayUrl?:string,
  save:(o:{projectId:string|null,scope:'lab'|'prod',executionId:string,name:string,bytes:Buffer,mediaType:string})=>Promise<{id:string}>,
  artifactsOf:(executionId:string)=>Promise<{id:string,path:string,sha256:string}[]>,
  // Artifacts of an execution not yet stored (upload or copy still running); a step completes only when this is 0.
@@ -70,12 +72,18 @@ export function pipelineRunner(d:Deps){
  const client=d.client??['python3',fileURLToPath(new URL('./connection_call.py',import.meta.url))];
  const inflight=new Set<string>();const chains=new Map<string,Promise<any>>();
 
- // One provider call through the connection client; resolves to the call line (with output) the client printed.
- function call(connection:string,label:string,callsDir:string,tool:string,args:any):Promise<any>{
-  if(!d.connectionsDir||!/^[a-z0-9-]+$/.test(connection))return Promise.resolve({tool,outcome:'error',error_code:'connection-unavailable',usage:null,output:null});
-  return new Promise(res=>{const child=spawn(client[0],[...client.slice(1),'call',resolve(d.connectionsDir!,connection,'connection.json'),label,callsDir,tool],{env:{PATH:process.env.PATH},stdio:['pipe','pipe','ignore']});
+ // One provider call through the connection client with a token for this step row, revoked after the call; the gateway's
+ // spool line becomes the step's tool_run (ingested here, so the row exists when the step moves on).
+ async function call(run:any,connection:string,executionId:string,tool:string,args:any):Promise<any>{
+  const minted=d.connections&&d.gatewayUrl&&/^[a-z0-9-]+$/.test(connection)?await store.atomic(()=>d.connections!.mint({executionId,directedBy:run.requestedBy?.email??null,projectId:run.projectId??null,experimentId:run.experimentId??null,step:true},[connection])):null;
+  if(!minted?.token)return {tool,outcome:'error',error_code:'connection-unavailable',usage:null,output:null};
+  await d.connections!.published();// the gateway must see the token before the call
+  try{return await new Promise<any>(res=>{const child=spawn(client[0],[...client.slice(1),'call',connection,tool],{env:{PATH:process.env.PATH,FLEET_RUN_TOKEN:minted.token!,FLEET_GATEWAY_URL:d.gatewayUrl!},stdio:['pipe','pipe','ignore']});
    let out='';child.stdout.on('data',b=>out+=b);child.on('error',()=>res({tool,outcome:'error',error_code:'client-unavailable',usage:null,output:null}));
    child.on('close',()=>{try{res(JSON.parse(out))}catch{res({tool,outcome:'unknown',error_code:'invalid-response',usage:null,output:null})}});child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify(args))})}
+  finally{await store.atomic(async()=>{await d.connections!.revoke(executionId);await d.connections!.ingest()})}}
+ // Credits of the tool_run children of an execution (every call the step made, agent-side or coordinator-side).
+ const creditsOf=async(executionId:string)=>{const [r]=await store.query(`SELECT count(*)::int AS calls,coalesce(sum((t.connection_cost->>'credits')::numeric),0)::float8 AS credits FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.parent_execution_id=$1 AND e.kind='tool_run'`,[executionId]);return r.calls?{credits:r.credits}:null};
 
  // Calls file lines become tool_run children of the step with connection_cost (basis measured when Pipe reported usage).
  async function recordCalls(run:any,stepId:string,text:string,connection:string|null,prefix='call'){
@@ -129,9 +137,8 @@ export function pipelineRunner(d:Deps){
    catch(e:any){if(!e.ref)throw e;s.startedAt=Date.now();await failStep(run,i,'ref:'+e.ref,'Missing reference '+e.ref);return 'wait'}
    s.state='running';s.startedAt=Date.now();
    if(def.kind==='api'){s.arguments=resolved;await store.put('pipeline-run',run);inflight.add(row);
-    try{const tool=def.tool,dir=mkdtempSync(join(tmpdir(),'fleet-step-'));
-     const line=await call(def.connection,row,dir,tool,resolved);const text=await readFile(dir+'/.connection-calls.jsonl','utf8').catch(()=>'');
-     await recordCalls(run,row,text,def.connection);await rm(dir,{recursive:true,force:true});
+    try{const tool=def.tool;
+     const line=await call(run,def.connection,row,tool,resolved);
      if(line.outcome!=='ok'){await failStep(run,i,problemOf(line.outcome,line.error_code),'Connection call '+line.outcome+': '+(line.error_code??''));return 'wait'}
      if(def.mode==='job'){if(typeof line.output?.jobId!=='string'){await failStep(run,i,'step:no-job-id','Job submit returned no jobId');return 'wait'}s.jobId=line.output.jobId;s.polls=0;await store.put('pipeline-run',run);await store.query("UPDATE execution SET data=data||jsonb_build_object('jobId',$2::text) WHERE id=$1",[row,s.jobId]);return 'wait'}
      await completeStep(run,i,line.output,{usage:line.usage??null});return 'again'}finally{inflight.delete(row)}}
@@ -143,8 +150,8 @@ export function pipelineRunner(d:Deps){
   // Running.
   if(def.kind==='api'&&def.mode!=='job'){if(inflight.has(row))return 'wait';await failStep(run,i,'unknown:interrupted','Coordinator restarted during the call; outcome unknown, not replayed');return 'wait'}
   if(def.kind==='api'){if(inflight.has(row))return 'wait';inflight.add(row);
-   try{const dir=mkdtempSync(join(tmpdir(),'fleet-poll-'));const line=await call(def.connection,row+':poll',dir,'job_status',{jobId:s.jobId});
-    await rm(dir,{recursive:true,force:true});s.polls=(s.polls??0)+1;
+   try{const line=await call(run,def.connection,row,'job_status',{jobId:s.jobId});
+    s.polls=(s.polls??0)+1;
     if(line.outcome!=='ok'){if(line.outcome==='unknown')return 'wait';await failStep(run,i,problemOf(line.outcome,line.error_code),'Job poll failed: '+line.error_code);return 'wait'}
     const st=line.output?.state;if(st==='succeeded'){await completeStep(run,i,line.output.output??{},{usage:line.output.usage??null});
      if(line.output.usage)await recordCalls(run,row,JSON.stringify({tool:def.tool,request_id:s.jobId,outcome:'ok',error_code:null,usage:line.output.usage})+'\n',def.connection,'job');return 'again'}
@@ -156,13 +163,11 @@ export function pipelineRunner(d:Deps){
   if(e.state!=='completed'){await failStep(run,i,e.state==='stopped'?'step:cancelled':'step:'+(e.error?.code??'failed'),e.error?.message??('Step execution '+e.state));return 'wait'}
   // Uploads can finish after the completion receipt: wait until every file of the step's execution is stored.
   if(await d.unsettled(s.executionId))return 'wait';
-  const arts=await d.artifactsOf(s.executionId),calls=arts.find(a=>/(^|\/)\.connection-calls\.jsonl$/.test(a.path)),own=arts.find(a=>/^(output\/)?output\.json$/.test(a.path));
-  if(calls)await recordCalls(run,row,(await d.read(calls.id)).toString('utf8'),null);
+  const arts=await d.artifactsOf(s.executionId),own=arts.find(a=>/^(output\/)?output\.json$/.test(a.path));
+  if(d.connections)await store.atomic(()=>d.connections!.ingest());
   let output:any;if(own){try{output=JSON.parse((await d.read(own.id)).toString('utf8'))}catch{output=undefined}}
   output??={files:arts.map(a=>a.path.replace(/^output\//,'')).filter(p=>!p.split('/').some(x=>x.startsWith('.')))};
-  const lines=calls?(await d.read(calls.id)).toString('utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch{return {}}}):[];
-  const credits=lines.reduce((a:number,l:any)=>a+(Number.isFinite(l.usage?.credits)?l.usage.credits:0),0);
-  await completeStep(run,i,output,{usage:lines.length?{credits}:null});return 'again'}
+  await completeStep(run,i,output,{usage:await creditsOf(s.executionId)});return 'again'}
 
  async function advanceOnce(runId:string){
   for(;;){const run=await store.get(runId,'pipeline-run').catch(()=>null);if(!run||run.state!=='running'||run.definition?.version!==2)return run;

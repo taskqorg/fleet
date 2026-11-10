@@ -98,7 +98,7 @@ export function taskModel(raw:Raw,executions:Executions){
   const done=await one('SELECT * FROM question WHERE id=$1',[id]);if(answerHook)await answerHook.after(done);return done}
  let answerHook:{check:(q:any,answer:string)=>Promise<void>|void,after:(q:any)=>Promise<void>}|null=null;
  const onAnswer=(h:typeof answerHook)=>{answerHook=h};
- const questionView=(q:any)=>({id:q.id,kind:q.kind,projectId:q.project_id,taskId:q.task_id,executionId:q.execution_id,sessionId:q.session_id,text:q.text,options:q.options,askedBy:q.asked_by,askedAt:q.asked_at,answer:q.answer,answeredBy:q.answered_by,answeredAt:q.answered_at,state:q.state,artifactIds:q.data?.artifactIds??undefined});
+ const questionView=(q:any)=>({id:q.id,kind:q.kind,projectId:q.project_id,taskId:q.task_id,executionId:q.execution_id,sessionId:q.session_id,text:q.text,options:q.options,askedBy:q.asked_by,askedAt:q.asked_at,answer:q.answer,answeredBy:q.answered_by,answeredAt:q.answered_at,state:q.state,artifactIds:q.data?.artifactIds??undefined,cause:q.data?.cause??undefined});
  const questions=async(f:{taskId?:string,state?:string,kind?:string}={})=>{const c:string[]=[],p:any[]=[];for(const [k,col] of [['taskId','task_id'],['state','state'],['kind','kind']] as const)if(f[k]){p.push(f[k]);c.push(`${col}=$${p.length}`)}
   return (await raw.query(`SELECT * FROM question${c.length?' WHERE '+c.join(' AND '):''} ORDER BY seq`,p)).map(questionView)};
 

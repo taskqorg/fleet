@@ -5,6 +5,7 @@ import {mkdtempSync,mkdirSync,writeFileSync,chmodSync,readFileSync,cpSync} from 
 import {fileURLToPath} from 'node:url';
 import {createApp} from './test-app.ts';
 import {shuffle,parseRating,summarize,agreement} from '../../packages/coordinator/lab/scores.ts';
+import {gatewayConfig,seedConnections} from './fake-gateway.ts';
 import {attachStores} from './artifact-helpers.ts';
 
 const fake=fileURLToPath(new URL('./fixtures/fake_connection.py',import.meta.url));
@@ -14,9 +15,9 @@ function setup(){
  for(const [id,conn,extra] of [['lab-ok','ok',{}],['lab-full','full',{}],['lab-job','job',{mode:'job'}]] as const)writeFileSync(`${dir}/pipelines/${id}.json`,JSON.stringify({...search(conn,extra),id}));
  for(const [conn,answer] of [['ok','ok'],['full','queue-full'],['job','job']]){mkdirSync(`${dir}/connections/${conn}`,{recursive:true});writeFileSync(`${dir}/connections/${conn}/connection.json`,JSON.stringify({answer,log:dir+'/calls.log',jobState:dir+'/job.state'}));chmodSync(`${dir}/connections/${conn}/connection.json`,0o600)}
  writeFileSync(dir+'/calls.log','');writeFileSync(dir+'/job.state','running');
- const config={database:dir+'/db',browserSecret:'b',machineSecret:'m',hostId:'host',projectConfigDirectory:dir,profilesDirectory:dir+'/agents',connectionsDir:dir+'/connections',connectionClient:['python3',fake],storeEndpointHosts:['127.0.0.1'],pipelineTickMs:100};
+ const config={database:dir+'/db',browserSecret:'b',machineSecret:'m',hostId:'host',projectConfigDirectory:dir,profilesDirectory:dir+'/agents',...gatewayConfig(dir),storeEndpointHosts:['127.0.0.1'],pipelineTickMs:100};
  return {dir,config,calls:()=>readFileSync(dir+'/calls.log','utf8').split('\n').filter(Boolean).length}}
-const boot=async(config:any)=>{const app:any=createApp(config);await app.ready();await attachStores(app,'m',['host']);return app};
+const boot=async(config:any)=>{const app:any=createApp(config);await app.ready();await seedConnections(app,config.projectConfigDirectory);await attachStores(app,'m',['host']);return app};
 const call=async(app:any,method:string,url:string,payload?:any,status=200)=>{const r=await app.inject({method,url,headers:{authorization:'Bearer b'},...(payload!==undefined?{payload}:{})});assert.equal(r.statusCode,status,r.body);return r.json()};
 const op=(app:any,name:string,b:any,status=200)=>call(app,'POST','/api/ops/'+name,b,status);
 const until=async(app:any,id:string,ok:(e:any)=>boolean)=>{for(let i=0;i<300;i++){const e=await call(app,'GET','/api/lab/experiments/'+id);if(ok(e))return e;await new Promise(x=>setTimeout(x,50))}throw Error("timeout "+JSON.stringify(await call(app,"GET","/api/lab/experiments/"+id)).slice(0,3000))};
@@ -47,14 +48,14 @@ test('A/B: concurrent reconciles launch one trial per cell, script scores land o
   const done=await until(app,e.id,x=>x.state==='done');
   assert.equal(done.trials.length,4);assert.equal(s.calls(),4);assert.equal(done.stopReason,'complete');
   assert.ok(done.trials.every((t:any)=>t.comparable&&t.spend.credits===2&&t.spend.basis==='measured'));
-  assert.equal(done.spend.pipe_credits.value,8);assert.equal(done.spend.trials.value,4);
+  assert.equal(done.spend.credits.value,8);assert.equal(done.spend.trials.value,4);
   assert.equal(done.scores.filter((x:any)=>x.evaluator==='script:example.checks:pass_fail').length,4);
   // Spread: each variant's summary covers both repeats.
   assert.deepEqual(done.variants[0].summary['script:example.checks:pass_fail'],{form:'pass_fail',n:2,passed:2});
   assert.equal(done.cells.length,2);assert.equal(done.cells[0].trials.length,2);
   await app.close();app=await boot(s.config);await new Promise(x=>setTimeout(x,500));
   const again=await call(app,'GET','/api/lab/experiments/'+e.id);
-  assert.equal(again.trials.length,4);assert.equal(s.calls(),4);assert.equal(again.spend.pipe_credits.value,8);assert.equal(again.scores.length,4);
+  assert.equal(again.trials.length,4);assert.equal(s.calls(),4);assert.equal(again.spend.credits.value,8);assert.equal(again.scores.length,4);
   // Promote: a catalogue patch for the owner; no method has this config_ref yet, so no recommendation.
   const p=await call(app,'POST',`/api/lab/experiments/${e.id}/promote`,{variant:'skill'});
   assert.equal(p.cataloguePatch[0].value.configRef,e.variants[1].config_ref);assert.equal(p.recommendation,null);
@@ -73,7 +74,7 @@ test('budgets: pause asks once and resumes; stop ends with its reason; warn only
   await op(app,'questions_answer',{questionId:qs[0].id,answer:'resume'});
   const done=await until(app,e.id,x=>x.state==='done');assert.equal(done.trials.length,4);
   assert.equal((await op(app,'questions_list',{kind:'operator_decision'})).questions.length,1);
-  const st=await call(app,'POST','/api/lab/experiments',{...ab(ex),budgets:[{unit:'trials',limit:2,action:'stop'},{unit:'pipe_calls',limit:1,action:'warn'}]});
+  const st=await call(app,'POST','/api/lab/experiments',{...ab(ex),budgets:[{unit:'trials',limit:2,action:'stop'},{unit:'calls',limit:1,action:'warn'}]});
   await call(app,'POST',`/api/lab/experiments/${st.id}/launch`);
   const stopped=await until(app,st.id,x=>x.state==='stopped');assert.equal(stopped.stopReason,'budget:trials');assert.equal(stopped.trials.length,2);
   assert.ok(stopped.budgets[0].firedAt);assert.equal((await op(app,'questions_list',{kind:'operator_decision'})).questions.length,1);

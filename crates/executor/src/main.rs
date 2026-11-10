@@ -442,23 +442,27 @@ impl Executor {
             o["platform"] = json!(platform());
             harness_observation = Some(o);
         }
-        // Granted connections (Lab Stage 2): one connection_call.py MCP server each, labelled with the pipeline step (or this
-        // execution); calls are recorded in FLEET_OUTPUT_DIR/.connection-calls.jsonl, uploaded with the other outputs.
+        // Granted connections (fleet-connections.md §5): one connection_call.py MCP server each, calling fleet-gateway with
+        // this run's token. The token and gateway URL reach the servers through the harness environment, never a file or argv.
         let mut connection_tools: Vec<String> = vec![];
-        let label = p["connectionLabel"].as_str().or(c["executionId"].as_str()).unwrap_or("").to_string();
-        for conn in p["agentConfig"]["connections"].as_array().into_iter().flatten().filter_map(Value::as_str) {
-            let dir = env::var_os("FLEET_CONNECTIONS_DIR").map(PathBuf::from).unwrap_or_default();
-            let (record, tools) = match profile::connection_record(&dir, conn) {
-                Ok(r) => r,
-                Err(e) => {
-                    self.event(&c, 1, "preparation.failed", json!({"reason":e}))?;
-                    return self.finish(&c, "failed", native.as_deref());
-                }
-            };
+        let granted = p["connections"].as_array().cloned().unwrap_or_default();
+        if !granted.is_empty() {
+            let gateway = env::var("FLEET_GATEWAY_URL").unwrap_or_default();
+            if gateway.is_empty() || !p["runToken"].is_string() {
+                self.event(&c, 1, "preparation.failed", json!({"reason":"connections granted but FLEET_GATEWAY_URL or the run token is missing"}))?;
+                return self.finish(&c, "failed", native.as_deref());
+            }
+            cmd.env("FLEET_RUN_TOKEN", p["runToken"].as_str().unwrap_or("")).env("FLEET_GATEWAY_URL", &gateway);
+        }
+        for spec in &granted {
+            let Some(conn) = spec["name"].as_str().filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')) else { continue };
+            let tools: Vec<String> = spec["tools"].as_array().into_iter().flatten().filter_map(|t| t["name"].as_str())
+                .filter(|t| !t.is_empty() && t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')).map(str::to_owned).collect();
             // -I: isolated, so nothing in the agent's working directory or environment is imported by the client.
-            let args = json!(["-I", "-c", profile::CONNECTION_CLIENT, "mcp", record, label, output_dir]);
+            let args = json!(["-I", "-c", profile::CONNECTION_CLIENT, "mcp", conn, spec.to_string()]);
             if harness::name(p) == "codex" {
-                cmd.args(["-c",&format!("mcp_servers.{conn}.command=\"python3\""),"-c",&format!("mcp_servers.{conn}.args={args}"),"-c",&format!("mcp_servers.{conn}.required=true"),"-c",&format!("mcp_servers.{conn}.enabled_tools={}",json!(tools))]);
+                cmd.args(["-c",&format!("mcp_servers.{conn}.command=\"python3\""),"-c",&format!("mcp_servers.{conn}.args={args}"),"-c",&format!("mcp_servers.{conn}.required=true"),"-c",&format!("mcp_servers.{conn}.enabled_tools={}",json!(tools)),
+                    "-c",&format!("mcp_servers.{conn}.env_vars={}",json!(["FLEET_RUN_TOKEN","FLEET_GATEWAY_URL","FLEET_CF_ACCESS_FILE","HOME"]))]);
                 for t in &tools { cmd.args(["-c",&format!("mcp_servers.{conn}.tools.{t}.approval_mode=\"approve\"")]); }
             } else {
                 claude_servers[conn] = json!({"command":"python3","args":args});

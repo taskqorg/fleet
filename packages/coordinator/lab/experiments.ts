@@ -11,7 +11,7 @@ import {labScores,runChecks,parseRating,checkValue,shuffle,agreement,summarize,t
 const fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};
 
 const KINDS=['single','ab'];// 'loop' arrives with strategies in Stage 4
-const UNITS=['trials','wall_ms','pipe_calls','pipe_credits'],ACTIONS=['warn','pause','stop'];
+const UNITS=['trials','wall_ms','calls','credits'],ACTIONS=['warn','pause','stop'];
 const OVERRIDES=['profile','model','skills','prompt','web_route','account','host'];
 const FINAL=new Set(['completed','failed','unknown','cancelled']);
 const ident=(v:any,what:string)=>typeof v==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(v)?v:fail(400,'Invalid '+what);
@@ -73,7 +73,7 @@ export function labExperiments(d:Deps){
    FROM execution WHERE experiment_id=$1 AND kind='pipeline_run'`,[id]);
   const [c]=await q(`SELECT count(*)::int AS calls,coalesce(sum((t.connection_cost->>'credits')::numeric),0)::float8 AS credits,count(*) FILTER (WHERE t.connection_cost_basis IS DISTINCT FROM 'measured')::int AS unmeasured
    FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.experiment_id=$1 AND e.kind='tool_run'`,[id]);
-  return {trials:{value:t.trials,basis:'measured'},wall_ms:{value:Math.round(t.wall_ms),basis:'measured'},pipe_calls:{value:c.calls,basis:'measured'},pipe_credits:{value:c.credits,basis:c.unmeasured?'partial':'measured',unmeasured:c.unmeasured}}}
+  return {trials:{value:t.trials,basis:'measured'},wall_ms:{value:Math.round(t.wall_ms),basis:'measured'},calls:{value:c.calls,basis:'measured'},credits:{value:c.credits,basis:c.unmeasured?'partial':'measured',unmeasured:c.unmeasured}}}
 
  // Lab runs of the experiment (trials and judges), as run records with their steps, plus the problem column.
  const runsOf=async(id:string):Promise<any[]>=>{const rows=await q(`SELECT id,variant,problem FROM execution WHERE experiment_id=$1 AND kind='pipeline_run' AND legacy_kind='pipeline-run' ORDER BY seq`,[id]);
@@ -143,8 +143,8 @@ export function labExperiments(d:Deps){
    const last=latest(trials),missing=exp.examples.length*exp.variants.length*exp.repeats-last.size;
    // A budget reached with nothing left to launch changes nothing: the experiment finishes.
    const s:any=await spend(id),budgets=missing>0?exp.budgets:[];let state='running',reason:string|null=null,changed=false;
-   for(const b of budgets.filter((b:any)=>b.action==='stop'))if(!b.firedAt&&s[b.unit].value>=b.limit){b.firedAt=Date.now();changed=true;state='stopped';reason='budget:'+b.unit;break}
-   if(state==='running')for(const b of budgets.filter((b:any)=>b.action!=='stop'))if(!b.firedAt&&s[b.unit].value>=b.limit){b.firedAt=Date.now();changed=true;
+   for(const b of budgets.filter((b:any)=>b.action==='stop'))if(!b.firedAt&&s[b.unit]?.value>=b.limit){b.firedAt=Date.now();changed=true;state='stopped';reason='budget:'+b.unit;break}
+   if(state==='running')for(const b of budgets.filter((b:any)=>b.action!=='stop'))if(!b.firedAt&&s[b.unit]?.value>=b.limit){b.firedAt=Date.now();changed=true;
     if(b.action==='pause'){state='paused';
      await store.tasks.ask({kind:'operator_decision',projectId:exp.project_id,text:`Lab budget reached: ${b.unit} ${s[b.unit].value} of ${b.limit}. Running trials finish; resume launches or stop the experiment?`,options:['resume','stop'],askedBy:'lab',data:{experimentId:id,budget:b.unit}});break}}
    if(changed||state!=='running')await q('UPDATE experiment SET budgets=$2,state=$3,stop_reason=coalesce($4,stop_reason) WHERE id=$1',[id,JSON.stringify(budgets),state,reason]);
@@ -238,7 +238,7 @@ export function labExperiments(d:Deps){
 
  async function get(id:string){const exp=await row(id),runs=await runsOf(id),trials=trialsOf(runs),cur=await scores.current(id),s=await spend(id);
   const stepRows=await q(`SELECT data->>'pipelineRunId' AS run,host_id,harness,harness_version,model FROM execution WHERE experiment_id=$1 AND data ? 'pipelineStepId' AND data ? 'agentConfig'`,[id]);
-  const credits=await q(`SELECT split_part(e.parent_execution_id,':step:',1) AS run,count(*)::int AS calls,coalesce(sum((t.connection_cost->>'credits')::numeric),0)::float8 AS credits,count(*) FILTER (WHERE t.connection_cost_basis IS DISTINCT FROM 'measured')::int AS unmeasured FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.experiment_id=$1 AND e.kind='tool_run' GROUP BY 1`,[id]);
+  const credits=await q(`SELECT coalesce(e.data->>'pipelineRunId',split_part(e.parent_execution_id,':step:',1)) AS run,count(*)::int AS calls,coalesce(sum((t.connection_cost->>'credits')::numeric),0)::float8 AS credits,count(*) FILTER (WHERE t.connection_cost_basis IS DISTINCT FROM 'measured')::int AS unmeasured FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.experiment_id=$1 AND e.kind='tool_run' GROUP BY 1`,[id]);
   const trialView=(t:any)=>{const st=stepRows.filter((x:any)=>x.run===t.id),c=credits.find((x:any)=>x.run===t.id);
    return {id:t.id,cell:t.cell,state:t.state,problem:t.problem,comparable:comparable(t),startedAt:t.startedAt,finishedAt:t.finishedAt??null,durationMs:t.durationMs,
     spend:{calls:c?.calls??0,credits:c?.credits??0,basis:c?.unmeasured?'partial':'measured'},

@@ -99,8 +99,8 @@ function Experiment({ id }: { id: string }) {
     <Totals items={[
       { label: 'Trials', m: e.spend.trials, kind: 'count', note: note('trials') },
       { label: 'Wall time', m: { ...e.spend.wall_ms, value: e.spend.wall_ms.value / 1000 }, kind: 'duration', note: note('wall_ms') },
-      { label: 'Pipe calls', m: e.spend.pipe_calls, kind: 'count', note: note('pipe_calls') },
-      { label: 'Pipe credits', m: { value: e.spend.pipe_credits.value, basis: 'measured', partial: e.spend.pipe_credits.unmeasured ? `${e.spend.pipe_credits.unmeasured} calls without usage` : undefined }, kind: 'count', note: note('pipe_credits') },
+      { label: 'API calls', m: e.spend.calls, kind: 'count', note: note('calls') },
+      { label: 'Credits', m: { value: e.spend.credits.value, basis: 'measured', partial: e.spend.credits.unmeasured ? `${e.spend.credits.unmeasured} calls without usage` : undefined }, kind: 'count', note: note('credits') },
     ]} />
     <section class="panel"><header class="panel-h"><Icon name="rows-3" /><h2>Matrix</h2><span class="muted">{e.examples.length} × {e.variants.length} × {e.repeats}</span><span class="grow" />
       {sel.length === 1 && <><Button label="Pass or fail" icon="check" onClick={() => rate('pass_fail')} /><Button label="Scale 1–5" icon="sliders-horizontal" onClick={() => rate('scale')} /></>}
