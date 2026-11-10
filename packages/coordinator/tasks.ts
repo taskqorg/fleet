@@ -64,6 +64,11 @@ export function taskModel(raw:Raw,executions:Executions){
   if(state==='queued'&&target!=='queued')await step('first_execution');
   return state}
 
+ // Take (people-access §5): the taker directs the task from now on; requested_by never changes; executions not yet ended follow.
+ async function take(id:string,taker:string){
+  const t=await one('SELECT directed_by FROM task WHERE id=$1',[id])??notFound();if(t.directed_by===taker)return;
+  await raw.query('UPDATE task SET directed_by=$2,taken_from=$3,updated_at=now() WHERE id=$1',[id,taker,t.directed_by]);
+  await raw.query("UPDATE execution SET directed_by=$2 WHERE task_id=$1 AND state IN ('preparing','running','waiting')",[id,taker])}
  // Questions: one typed table, one answer path.
  async function ask(v:{kind:'operator_decision'|'agent_question'|'acceptance'|'rating',text:string,projectId?:string|null,taskId?:string|null,executionId?:string|null,sessionId?:string|null,options?:any,askedBy?:string,id?:string,legacyKind?:string,data?:any,askedAt?:number}){
   let taskId=v.taskId??null,projectId=v.projectId??null;
@@ -97,12 +102,14 @@ export function taskModel(raw:Raw,executions:Executions){
   return (await raw.query(`SELECT * FROM question${c.length?' WHERE '+c.join(' AND '):''} ORDER BY seq`,p)).map(questionView)};
 
  // Tasks.
- async function create(v:{id?:string,projectId?:string|null,title:string,expectedOutcome?:string|null,priority?:string,completionRequirements?:any,resultDestination?:string|null,deliveryMethod?:any,createdBy?:string,dependsOn?:string[],legacyKind?:string,data?:any,createdAt?:number}){
+ async function create(v:{id?:string,projectId?:string|null,title:string,expectedOutcome?:string|null,priority?:string,completionRequirements?:any,resultDestination?:string|null,deliveryMethod?:any,createdBy?:string,directedBy?:string|null,dependsOn?:string[],legacyKind?:string,data?:any,createdAt?:number}){
   if(typeof v.title!=='string'||!v.title.trim()||v.title.length>500)fail(400,'Expected task title');
   const id=v.id??randomUUID(),priority=priorityClass(v.priority??'normal');
   // priority is left to the column default ('normal'); before migration 8 (migration 6 replays legacy records) it is an integer.
   await raw.query('INSERT INTO task(id,project_id,title,expected_outcome,completion_requirements,result_destination,delivery_method,created_by,created_at,legacy_kind,legacy_id,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,coalesce($9::timestamptz,now()),$10,$11,$12)',
    [id,v.projectId??null,v.title,v.expectedOutcome??null,clean(v.completionRequirements??{}),v.resultDestination??null,v.deliveryMethod?clean(v.deliveryMethod):null,v.createdBy??null,ts(v.createdAt),v.legacyKind??null,v.legacyKind?id:null,clean(v.data??{})]);
+  // Separate statement: migration 6 replays legacy tasks before migration 17 adds the columns; they carry no director.
+  if(v.directedBy)await raw.query('UPDATE task SET directed_by=$2,requested_by=$2 WHERE id=$1',[id,v.directedBy]);
   if(priority!=='normal')await raw.query('UPDATE task SET priority=$2 WHERE id=$1',[id,priority]);
   for(const d of v.dependsOn??[])await depend(id,d,'blocks');
   return id}
@@ -114,7 +121,7 @@ export function taskModel(raw:Raw,executions:Executions){
   for(const [k,col] of [['title','title'],['expectedOutcome','expected_outcome'],['priority','priority'],['resultDestination','result_destination']] as const)if(b[k]!==undefined){
    if(k!=='priority'&&(typeof b[k]!=='string'||b[k].length>4000))fail(400,'Invalid '+k);await raw.query(`UPDATE task SET ${col}=$2,updated_at=now() WHERE id=$1`,[t.id,k==='priority'?priorityClass(b[k]):b[k]])}
   return get(t.id)}
- const view=(t:any)=>({id:t.id,projectId:t.project_id,title:t.title,expectedOutcome:t.expected_outcome,state:t.state,waitReason:t.wait_reason,priority:t.priority,completionRequirements:t.completion_requirements,resultDestination:t.result_destination,deliveryMethod:t.delivery_method,acceptedBy:t.accepted_by,acceptedAt:t.accepted_at,acceptedArtifactIds:t.accepted_artifact_ids,createdBy:t.created_by,createdAt:t.created_at,updatedAt:t.updated_at,legacyKind:t.legacy_kind,legacyId:t.legacy_id});
+ const view=(t:any)=>({id:t.id,projectId:t.project_id,title:t.title,expectedOutcome:t.expected_outcome,state:t.state,waitReason:t.wait_reason,priority:t.priority,completionRequirements:t.completion_requirements,resultDestination:t.result_destination,deliveryMethod:t.delivery_method,acceptedBy:t.accepted_by,acceptedAt:t.accepted_at,acceptedArtifactIds:t.accepted_artifact_ids,createdBy:t.created_by,directedBy:t.directed_by,requestedBy:t.requested_by,takenFrom:t.taken_from,createdAt:t.created_at,updatedAt:t.updated_at,legacyKind:t.legacy_kind,legacyId:t.legacy_id});
  // tasks.get: the stored task with its derived progress, cost and latest result (task_view), executions, dependencies, questions.
  async function get(id:string){const t=await taskRow(id),d=await one('SELECT * FROM task_view WHERE task_id=$1',[id]);
   return {...view(t),progress:{executions:Number(d.execution_count),byState:d.executions_by_state},cost:d.totals,latestResult:d.latest_result,openQuestions:d.open_questions,
@@ -226,6 +233,6 @@ export function taskModel(raw:Raw,executions:Executions){
   question:questionAdapter('question'),
   'project-question':questionAdapter('project-question'),
  };
- return {adapters,create,update,get,list,page,summary,membership,derivedDrift,transition,settle,depend,ask,answer,questions,onAnswer};
+ return {adapters,create,update,get,list,page,summary,membership,derivedDrift,transition,settle,depend,take,ask,answer,questions,onAnswer};
 }
 export type Tasks=ReturnType<typeof taskModel>;
