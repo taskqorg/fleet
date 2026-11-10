@@ -66,7 +66,7 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 ## Open Questions
 
 *   **Q1. Meshy job semantics (decided).** Submit, then poll; the job ID is kept in `execution.data.jobId`. Meshy's API takes no idempotency key (checked in its Image to 3D reference), so a submit is never retried or failed over. On an unknown outcome or a 5xx, Fleet first reads the key's newest tasks (`recent_tasks`, `sort_by=-created_at`) and adopts the one task created since the call started; with none or several, the step ends `unknown:submit-unconfirmed`, visible, and nothing is sent again (owner decision).
-*   **Q2. Reconcile source per provider.** Tavily exposes per-key usage; Meshy and model APIs differ. C2 ships reconcile for Tavily only.
+*   **Q2. Reconcile source per provider.** Tavily exposes per-key usage; Meshy and model APIs differ. C2 ships reconcile for Tavily only. Hugging Face and Google AI have no per-key usage endpoint: Google AI records `tokens` (`usageMetadata.totalTokenCount`) from each reply, basis `measured`; Hugging Face records basis `unavailable`; neither is reconciled and the screen says so ([asset pipelines D2](fleet-asset-pipelines.md#settled-with-defaults-owner-can-overturn)).
 
 ## Critical User Journeys (CUJs)
 
@@ -174,6 +174,7 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 *   Lab units `pipe_calls` and `pipe_credits` become `calls` and `credits`.
 *   **As built (C3).** `budget_set` with `scope: connection` counts that connection's `tool_run` rows: unit `calls`, or the amount of the provider's own unit (`credits`), optionally per `period`. The action is a setting with default `warn` (owner rule outside Lab): `warn` and `pause` show on the budget and the person can ask for more; only a reached `stop` connection budget, set by the owner, becomes `blocked: ['connection']` in the snapshot on the next tick, and the gateway answers `budget-reached`. The gateway also refuses a run whose `person:`, `project:` or `experiment:` scope is listed; person, project and experiment budgets that name a connection are not built yet. `budget_ask {budgetId, limit, reason}` raises one question (`budget:<id>:ask`); only the owner's `approve` writes the new limit, audited with both people.
 *   **Meshy (C3).** Catalogue tools `image_to_3d` (not idempotent), `job_status` (`GET .../{jobId}`: a `{field}` in a catalogue path takes that body field) and `recent_tasks`. The job step maps Meshy's task (`status`, `model_urls`, `consumed_credits`) to the job shape; the credits land as `connection_cost` when the task succeeds.
+*   **Next providers (not built).** Meshy `multi_image_to_3d`, `multi_job_status` and `multi_recent_tasks`; providers `huggingface` (`inference`) and `google-ai` (`generate_content`). A `{field}` path value is checked against a catalogue pattern before a key is attached; `connections_key_add` takes the value from stdin only. Their keys move from the owner's Mac Keychain through `connections_key_add`, csgo tools call the gateway, and each Keychain copy is deleted after the first good call and a backup listing its fingerprint ([asset pipelines §1](fleet-asset-pipelines.md#1-keys-and-providers-s1)).
 
 ### 7. Deleting Pipe (stage C4)
 
@@ -183,7 +184,7 @@ One cut, no bridge:
 *   **Hosts:** remove the Pipe MCP server and `~/.config/pipe/read.json` on every host.
 *   **PDS18 and Cloudflare:** stop and remove `pipe-read*` units, users and directories; remove the read-grant snapshot, project grants, the `pipe.ufobe.com` read route, its guard exemption and the read-lane probe; revoke Pipe project tokens.
 *   **DashQ:** remove the shipper enrolment.
-*   **assetq:** archive the repository (decision 8).
+*   **assetq:** archive the repository (decision 8). AssetQ itself (service, database, `pipe.ufobe.com`) and the leftover `connections/pipe-read` file on PDS18 are removed by [asset pipelines §2](fleet-asset-pipelines.md#2-deleting-assetq-s2-after-s1).
 
 ## Alternatives Considered
 

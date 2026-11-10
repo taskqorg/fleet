@@ -14,7 +14,7 @@ Lab adds no run machinery of its own. A trial is a `pipeline_run` execution with
 | Profile | A trusted JSON file in `config/agents` naming harness, model, skills and granted connections (`listProfiles` in `go/coordinator/projects.go`, `go/executor/profile.go`). |
 | Connection | Fleet's record of one outside provider endpoint, owned by [fleet-connections.md](fleet-connections.md). Example: `tavily`. |
 | Catalogue / recommendation | `config/catalogue.json` lists methods per project; `recommendation_set` records the chosen method as a `project-recommendation`. |
-| Use case | A registry entry pointing at a use case written in an org repo (Fleet, taskq, pilotq, agentq, dashq, assetq). |
+| Use case | A registry entry pointing at a use case written in an org repo. Current sources: Fleet, csgo, desiign; replaced prototypes (taskq, pilotq, agentq, dashq, assetq) keep their entries marked with `status` and `maps_to` ([asset pipelines](fleet-asset-pipelines.md#3-registry-s3)). |
 | Example | One runnable Lab input drawn from a use case. Never a task. |
 | Experiment | One whole comparison: examples × variants × repeats. Kind `single`, `ab` or `loop`. |
 | Variant | A label plus overrides of the pipeline; hashed into `config_ref`. |
@@ -35,7 +35,7 @@ Lab adds no run machinery of its own. A trial is a `pipeline_run` execution with
 | R3.7 | Budget action is configurable: "pause and ask" and "stop" are both supported. |
 | R3.8 | Claude on Windows is WSL only; Claude runs on the Mac and on Windows. |
 | R3.9 | Provider keys live in the coordinator's 0600 secret directory with encrypted backup; Postgres holds metadata only ([fleet-connections.md](fleet-connections.md)). |
-| R3.10 | First pipelines: web research; Codex vs Claude page with and without a skill; Meshy asset pipeline once qualified. |
+| R3.10 | First pipelines: web research; Codex vs Claude page with and without a skill; Meshy asset pipeline once qualified. Asset pipelines, judges per use case, `loop` and the character pipeline: [fleet-asset-pipelines.md](fleet-asset-pipelines.md). |
 | Q1 | Storage is two Postgres tables, not JSON documents and not ClickHouse. |
 | Q2 | Closed with nothing to convert: Pipe's assetq database held 0 dataset revisions (checked at the Lab Stage 1 deploy), so the importer was deleted with Pipe ([connections](fleet-connections.md) C4). |
 | Q3 | No coded judge-to-owner agreement threshold; the screen shows agreement and the owner decides when loops run unattended. |
@@ -93,8 +93,8 @@ The runner is `go/coordinator/pipelines.go`; no version-1 reader exists.
 *   References `${example.<field>}` and `${steps.<id>.output.<json path>}` are resolved by the coordinator before the step starts. A missing reference fails the step with `problem: ref:<path>`; there is no default.
 *   `api` step: `{connection, tool, arguments, mode: sync|job}`, default `sync`. In `job` mode the submit output carries `jobId`, kept in the step's `execution.data.jobId`; the coordinator polls tool `job_status {jobId}` on the same connection (answer `{state: running|succeeded|failed, output, usage}`) on every pipeline tick (every 5 s and on every receipt) and resumes polling after a restart. An uncertain outcome is never replayed: a sync call cut by a restart ends `unknown:interrupted`.
 *   `agent` step: `{profile, prompt}` plus variant overrides. Its run is an ordinary agent execution, parent = the step, linked by `pipelineStepId`, on the host its account binding picks. Override `host` pins it to that host with no fallback; a host that cannot run it fails the step with the reason.
-*   `script` step: `{command, timeout_ms?, host?}`, executor command kind `script` (`go/executor/executor.go`): `sh -c` in its own process group (stop kills the group), with `FLEET_INPUT_DIR` and `FLEET_OUTPUT_DIR`; outputs become artifacts. Host: the step's or override's `host`, else the coordinator's default host. Every substituted value is shell-quoted. Not built: the coordinator sending the example fixture's `repo`/`commit`, so a script runs in the trial's own worktree at that commit (the executor supports it; today scripts run in a scratch directory).
-*   Variant overrides: `profile`, `model`, `skills`, `prompt`, `web_route`, `account` (agent steps), `host`.
+*   `script` step (Blender steps pin the Mac, [asset pipelines §4](fleet-asset-pipelines.md#4-asset-pipelines-s4)): `{command, timeout_ms?, host?}`, executor command kind `script` (`go/executor/executor.go`): `sh -c` in its own process group (stop kills the group), with `FLEET_INPUT_DIR` and `FLEET_OUTPUT_DIR`; outputs become artifacts. Host: the step's or override's `host`, else the coordinator's default host. Every substituted value is shell-quoted. Not built: the coordinator sending the example fixture's `repo`/`commit`, so a script runs in the trial's own worktree at that commit (the executor supports it; today scripts run in a scratch directory).
+*   Variant overrides: `profile`, `model`, `skills`, `prompt`, `web_route`, `account` (agent steps), `host`, `arguments` (`api` steps: `{<step id>: {<argument>: value}}`, merged over the step's arguments before references resolve; not built, [asset pipelines §4](fleet-asset-pipelines.md#4-asset-pipelines-s4)).
 *   Inputs reach agent and script steps as start-command `inputs` `[{artifactId, path}]`; the executor downloads them into `FLEET_INPUT_DIR` before the step starts, and the host may read exactly those artifacts. Example `inputs` are staged under `example/`; an example's `references` never enter a run.
 *   A failed step stops later steps; the trial keeps its reason.
 *   Profile skills (`config/skills/<id>/SKILL.md`, sent in the start command): Claude gets them as a local plugin (`--plugin-dir` with the `Skill` tool; `--disable-slash-commands` stays only when no skill is granted); Codex gets them in the developer instructions.
@@ -114,13 +114,14 @@ Every provider call goes through fleet-gateway, from two entry points; the conne
 
 ## Use-case registry and examples
 
-*   Use cases are repo files `config/lab/use-cases/<project>.json` for fleet, taskq, pilotq, agentq, dashq and assetq, hand-indexed. Entry: `{id: "<project>:<source id>", source {repo, path, anchor, commit, sha256}, source_status, actor, goal, expected_outcome, checks[], lab_fit: work|behavior|none, tags, maturity}`. IDs never renumber.
+*   Use cases are repo files `config/lab/use-cases/<project>.json`, hand-indexed. Entry: `{id: "<project>:<source id>", source {repo, path, anchor, commit, sha256}, source_status, status?, maps_to?, actor, goal, expected_outcome, checks[], lab_fit: work|behavior|none, tags, maturity}`. IDs never renumber.
+    *   `status`: `current | obsolete | duplicate | to-design`, absent = current; `maps_to`: the `fleet:` use cases that cover an obsolete or duplicate entry. Every prototype is replaced by Fleet, so its entries carry `lab_fit: none` and a status. A use case with several sources has one entry per source (`fleet:UC2#csgo-437`). Schema: [asset pipelines §3](fleet-asset-pipelines.md#3-registry-s3). Not built.
     *   `anchor` names one section of the source: an explicit `<a id="…">` or a heading with that GitHub slug (to the next heading of the same or higher level), else one table row whose first cell starts with the anchor. `sha256` hashes that section at `commit`, so an edit elsewhere is not drift.
     *   `source_status`: `current | changed | missing`. A repo that is not checked out reports `unavailable` and leaves the stored status alone.
     *   `lab_fit`: `work` = an agent produces a checkable result; `behavior` = an agent's conduct is judged; `none` = not exercised by Lab.
     *   `maturity`: `indexed | example drafted | synthetic ready | calibrated | linked to a real task`.
 *   Drift check `scripts/lab-drift.ts` recomputes hashes from each repo's `HEAD` (`FLEET_LAB_REPOS`, default the directory above the Fleet checkout) and prints changed or missing entries; `--write` stores `source_status`; `--pin <id…>` accepts the current source. CI runs it on Fleet's own entries as a warning; it never blocks.
-*   Examples are artifacts: scope `lab`, `role: example`, name `examples/<id>@<version>.json`, hash = content hash. JSON `{id, use_case_id, version, origin: synthetic|task:<id>, fixture: {repo, commit}|null, prompt, inputs[], references[], checks[], split: tune|held_out}`. `inputs[]` and `references[]` are files `{path, text}`; `references` are one known-good result. `checks[]` are `{id, run}`: a shell command run in the trial's output directory with `FLEET_OUTPUT_DIR` set; exit 0 passes.
+*   Examples are artifacts: scope `lab`, `role: example`, name `examples/<id>@<version>.json`, hash = content hash. JSON `{id, use_case_id, version, origin: synthetic|task:<id>, fixture: {repo, commit}|null, prompt, inputs[], references[], checks[], split: tune|held_out}`. `inputs[]` and `references[]` are files `{path, text}`, or binary `{path, sha256, media_type}` stored next to the seed (not built, [asset pipelines §4](fleet-asset-pipelines.md#4-asset-pipelines-s4)); `references` are one known-good result. `checks[]` are `{id, run}`: a shell command run in the trial's output directory with `FLEET_OUTPUT_DIR` set; exit 0 passes.
     *   An `id@version` never changes content; other content under it is refused (409). The coordinator writes the artifact itself, stored and verified like a backfilled artifact; a refused batch stores nothing.
     *   Approval is `artifact.approved_at`, null while proposed.
     *   "Checks pass with no agent": on inputs plus references every check passes; on inputs alone at least one fails. `scripts/lab-examples.ts check` runs this; the test suite runs it on every seed.
@@ -171,7 +172,7 @@ Not built: token and money units, per-iteration or per-trial scope, projected-ov
 *   Agreement = owner `pass_fail` vs judge `pass_fail` on the same trial, plus owner `pick_best` vs the judge's single best `scale` score of that group.
 *   Correction: `POST /api/lab/scores/:id/correct {value, rationale}` writes a new score that replaces the old.
 
-Not built: the order-swapped blind `pick_best` judge.
+Not built: the order-swapped blind `pick_best` judge (designed in [asset pipelines §5](fleet-asset-pipelines.md#5-judges-s5)).
 
 ## `/lab` screen
 
@@ -189,7 +190,7 @@ Host setting `FLEET_CLAUDE_PLACEMENT` (`mac | windows-wsl`, [configuration.md](.
 
 The old lab (its pages, its `/api/lab/*` and `/api/experiments` routes and stored documents) is gone. Profile code lives in `go/coordinator/projects.go` and `go/executor/profile.go`; profiles are listed by `GET /api/profiles`. Paired delegation is an `ab` experiment; delivery comparison is removed.
 
-Not built: removal of Pipe's method evaluation in the Pipe repo (after the assetq import).
+Not built: deleting AssetQ (the rest of Pipe: service, database, route, repository) in one cut, keeping only the `fleet:UC2` crate seed ([asset pipelines §2](fleet-asset-pipelines.md#2-deleting-assetq-s2-after-s1)).
 
 ## Work analysis
 
