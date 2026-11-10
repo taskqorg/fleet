@@ -1,6 +1,6 @@
 package main
 
-// Area A: budgets (docs/designs/fleet-people-access.md §9) and provider limit readings, which dispatch applies.
+// budgets (docs/designs/fleet-people-access.md §9) and provider limit readings, which dispatch applies.
 
 import (
 	"fmt"
@@ -94,7 +94,7 @@ func budgetSet(q *Request) (any, error) {
 		id, b["scope"], b["scopeId"], b["unit"], limit, period, action, q.person.Email); err != nil {
 		return nil, err
 	}
-	rs, err := cQuery(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action,set_by,set_at FROM budget WHERE id=$1`, id)
+	rs, err := queryRows(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action,set_by,set_at FROM budget WHERE id=$1`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +103,7 @@ func budgetSet(q *Request) (any, error) {
 
 func budgetAsk(q *Request) (any, error) {
 	b := q.obj()
-	rs, err := cQuery(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit FROM budget WHERE id=$1`, b["budgetId"])
+	rs, err := queryRows(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit FROM budget WHERE id=$1`, b["budgetId"])
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func budgetDelete(q *Request) (any, error) {
 }
 
 func budgetsList(q *Request) (any, error) {
-	rs, err := cQuery(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action,set_by,set_at FROM budget ORDER BY set_at`)
+	rs, err := queryRows(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action,set_by,set_at FROM budget ORDER BY set_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +184,7 @@ type reachedBudget struct{ id, action, reason string }
 func budgetsReached(q *Request, e doc) ([]reachedBudget, error) {
 	d, _ := e["dispatch"].(map[string]any)
 	project := astr(d["projectId"])
-	rs, err := cQuery(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action FROM budget WHERE (scope='project' AND scope_id=$1) OR (scope='person' AND scope_id=$2)`, project, astr(e["directedBy"]))
+	rs, err := queryRows(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action FROM budget WHERE (scope='project' AND scope_id=$1) OR (scope='person' AND scope_id=$2)`, project, astr(e["directedBy"]))
 	if err != nil {
 		return nil, err
 	}

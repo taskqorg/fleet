@@ -27,7 +27,7 @@ const icons = JSON.parse(readFileSync(new URL('packages/ui/icons.json', root), '
 const reg = await build({ entryPoints: [new URL('packages/ui/src/registry.ts', root).pathname], bundle: true, format: 'esm', write: false, loader: { '.json': 'json' } });
 const { workspaces } = await import('data:text/javascript;base64,' + Buffer.from(reg.outputFiles[0].text).toString('base64'));
 const VIEWS = Object.fromEntries(workspaces.filter(w => w.app).map(w => [w.id, ['Fleet ' + w.label, w.icon]]));
-// The coordinator serves index.html for these screens only (go/coordinator/d_routes.go appRoutes).
+// The coordinator serves index.html for these screens only (go/coordinator/artifact_routes.go appRoutes).
 writeFileSync(new URL('screens.json', out), JSON.stringify(Object.keys(VIEWS)));
 const accent = tokens.color.light.accent;
 for (const [view, [name, icon]] of Object.entries(VIEWS)) {

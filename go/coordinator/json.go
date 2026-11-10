@@ -30,7 +30,7 @@ func js(v any) string            { b, _ := json.Marshal(v); return string(b) }
 func jsonBytes(v any) []byte     { b, _ := json.Marshal(v); return b }
 
 // clone deep-copies a JSON value (maps and slices), so a stored record never aliases another.
-func clone(v any) any { var out any; json.Unmarshal([]byte(js(v)), &out); return out }
+func clone(v any) any { var out any; json.Unmarshal(jsonBytes(v), &out); return out }
 
 // firstString: the first non-empty string among vs, else "".
 func firstString(vs ...any) string {

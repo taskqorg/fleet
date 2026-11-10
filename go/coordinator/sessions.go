@@ -272,11 +272,11 @@ func sessionCreate(q *Request) (doc, error) {
 func sessionArg(b doc) (string, error) { return strArg(b, "sessionId", "sessionId", 0) }
 
 func init() {
-	broute("POST /api/sessions", func(q *Request) (any, error) { return sessionCreate(q) })
-	broute("GET /api/sessions/{id}", func(q *Request) (any, error) { return sessionGet(q, q.r.PathValue("id")) })
-	broute("POST /api/sessions/{id}/profile", func(q *Request) (any, error) { return sessionProfile(q, q.r.PathValue("id"), body(q)) })
+	gatedRoute("POST /api/sessions", func(q *Request) (any, error) { return sessionCreate(q) })
+	gatedRoute("GET /api/sessions/{id}", func(q *Request) (any, error) { return sessionGet(q, q.r.PathValue("id")) })
+	gatedRoute("POST /api/sessions/{id}/profile", func(q *Request) (any, error) { return sessionProfile(q, q.r.PathValue("id"), body(q)) })
 	// POST /api/sessions/{id}/messages: exactly requestId and text (optional delivery); one execution per requestId.
-	broute("POST /api/sessions/{id}/messages", func(q *Request) (any, error) {
+	gatedRoute("POST /api/sessions/{id}/messages", func(q *Request) (any, error) {
 		s, err := get(q, q.r.PathValue("id"), "session")
 		if err != nil {
 			return nil, err
@@ -303,7 +303,7 @@ func init() {
 		}
 		return submit(q, doc{"sessionId": s["id"], "requestId": v["requestId"], "text": v["text"], "delivery": v["delivery"]})
 	})
-	broute("GET /api/executions/{id}/delegations", func(q *Request) (any, error) {
+	gatedRoute("GET /api/executions/{id}/delegations", func(q *Request) (any, error) {
 		id := q.r.PathValue("id")
 		if _, err := get(q, id, "execution"); err != nil {
 			return nil, err
@@ -311,15 +311,15 @@ func init() {
 		ds, err := delegationsWhere(q, "delegation->>'parentExecutionId'=$1 OR delegation->>'childExecutionId'=$1 OR delegation->>'continuationExecutionId'=$1", id)
 		return doc{"delegations": ds}, err
 	})
-	bop("session_create", false, func(q *Request) (any, error) { return sessionCreate(q) })
-	bop("session_get", true, func(q *Request) (any, error) {
+	gatedObjOp("session_create", false, func(q *Request) (any, error) { return sessionCreate(q) })
+	gatedObjOp("session_get", true, func(q *Request) (any, error) {
 		sid, err := sessionArg(body(q))
 		if err != nil {
 			return nil, err
 		}
 		return sessionGet(q, sid)
 	})
-	bop("session_profile", false, func(q *Request) (any, error) {
+	gatedObjOp("session_profile", false, func(q *Request) (any, error) {
 		b := body(q)
 		sid, err := sessionArg(b)
 		if err != nil {
@@ -328,15 +328,15 @@ func init() {
 		delete(b, "sessionId")
 		return sessionProfile(q, sid, b)
 	})
-	bop("session_archive", false, func(q *Request) (any, error) {
+	gatedObjOp("session_archive", false, func(q *Request) (any, error) {
 		sid, err := sessionArg(body(q))
 		if err != nil {
 			return nil, err
 		}
 		return sessionArchive(q, sid)
 	})
-	bop("sessions_list", true, func(q *Request) (any, error) { return sessionsPage(q, body(q)) })
-	bop("list_membership", true, func(q *Request) (any, error) {
+	gatedObjOp("sessions_list", true, func(q *Request) (any, error) { return sessionsPage(q, body(q)) })
+	gatedObjOp("list_membership", true, func(q *Request) (any, error) {
 		b := body(q)
 		idsAny, ok := b["ids"].([]any)
 		if !ok || len(idsAny) > 1000 {
@@ -393,5 +393,5 @@ func init() {
 		return doc{"lists": out}, nil
 	})
 	// /api/tools: the operation table as MCP tools, each call in its own transaction.
-	blongRoute("POST /api/tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet", operations, agentDescriptions) })
+	gatedLongRoute("POST /api/tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet", operations, agentDescriptions) })
 }

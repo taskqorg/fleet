@@ -112,7 +112,7 @@ func (o orderedDoc) MarshalJSON() ([]byte, error) {
 }
 
 func useCases() ([]doc, error) {
-	dir := filepath.Join(cLabDir(), "use-cases")
+	dir := filepath.Join(labDir(), "use-cases")
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -156,7 +156,7 @@ func parseExample(v any, ids map[string]bool) (orderedDoc, doc, error) {
 	if !ids[uc] {
 		return nil, nil, fail(400, "Unknown use case "+uc)
 	}
-	version, ok := cInt(e["version"])
+	version, ok := intOK(e["version"])
 	if !ok || version < 1 {
 		return nil, nil, fail(400, "Invalid version")
 	}
@@ -251,7 +251,7 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 		old   doc
 	}
 	existing := func(name string) (doc, error) {
-		rs, err := cQuery(q, "SELECT id,content_hash,approved_at FROM artifact WHERE role='example' AND state<>'deleted' AND name=$1 AND coalesce(project_id,'')=$2", name, cStrOr(projectID))
+		rs, err := queryRows(q, "SELECT id,content_hash,approved_at FROM artifact WHERE role='example' AND state<>'deleted' AND name=$1 AND coalesce(project_id,'')=$2", name, strOr(projectID))
 		if err != nil || len(rs) == 0 {
 			return nil, err
 		}
@@ -267,7 +267,7 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 		bytes = append(bytes, '\n')
 		name := fmt.Sprintf("examples/%v@%v.json", meta["id"], meta["version"])
 		hash := sha256hex(bytes)
-		pid := cStrOr(projectID)
+		pid := strOr(projectID)
 		if pid == "" {
 			pid = "_"
 		}
@@ -305,7 +305,7 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 			if approved {
 				at = time.Now()
 			}
-			rs, err := cQuery(q, `INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,role,state,approved_at) VALUES($1,$2,'lab',$3,$4,'application/json',$5,'example','stored',$6)
+			rs, err := queryRows(q, `INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,role,state,approved_at) VALUES($1,$2,'lab',$3,$4,'application/json',$5,'example','stored',$6)
 			 ON CONFLICT (coalesce(project_id,''),name) WHERE role='example' AND state<>'deleted' DO NOTHING RETURNING id`, id, projectID, h, len(p.bytes), p.name, at)
 			if err != nil {
 				return nil, err
@@ -345,7 +345,7 @@ func labExamplesList(q *Request, state any) (doc, error) {
 	default:
 		return nil, fail(400, "Invalid state")
 	}
-	rs, err := cQuery(q, "SELECT id,project_id,name,content_hash,approved_at,created_at FROM artifact WHERE role='example' AND state='stored'"+cond+" ORDER BY name")
+	rs, err := queryRows(q, "SELECT id,project_id,name,content_hash,approved_at,created_at FROM artifact WHERE role='example' AND state='stored'"+cond+" ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -361,14 +361,14 @@ func labExamplesList(q *Request, state any) (doc, error) {
 }
 
 func labExampleGet(q *Request, id string) (doc, error) {
-	rs, err := cQuery(q, "SELECT id,approved_at FROM artifact WHERE id=$1 AND role='example'", id)
+	rs, err := queryRows(q, "SELECT id,approved_at FROM artifact WHERE id=$1 AND role='example'", id)
 	if err != nil {
 		return nil, err
 	}
 	if len(rs) == 0 {
 		return nil, fail(404, "Unknown example")
 	}
-	b, err := artifactBytes(cCtx(q), q.app, id, 8<<20)
+	b, err := artifactBytes(withTx(q), q.app, id, 8<<20)
 	if err != nil {
 		return nil, err
 	}
@@ -409,14 +409,14 @@ func checkValue(form string, v any, trials []any) error {
 	case "pass_fail":
 		_, ok = v.(bool)
 	case "scale":
-		n, isInt := cInt(v)
+		n, isInt := intOK(v)
 		ok = isInt && n >= 1 && n <= 5
 	case "pick_best":
 		for _, t := range trials {
 			ok = ok || t == v
 		}
 	case "metric":
-		f, isNum := cNum(v)
+		f, isNum := numOK(v)
 		ok = isNum && !math.IsInf(f, 0) && !math.IsNaN(f)
 	}
 	if !ok {
@@ -511,7 +511,7 @@ func scoreAdd(q *Request, s doc) (string, error) {
 }
 
 func scoresCurrent(q *Request, expID string) ([]doc, error) {
-	rs, err := cQuery(q, "SELECT * FROM score s WHERE experiment_id=$1 AND NOT EXISTS (SELECT 1 FROM score r WHERE r.replaces_score_id=s.id) ORDER BY seq", expID)
+	rs, err := queryRows(q, "SELECT * FROM score s WHERE experiment_id=$1 AND NOT EXISTS (SELECT 1 FROM score r WHERE r.replaces_score_id=s.id) ORDER BY seq", expID)
 	out := []doc{}
 	for _, r := range rs {
 		out = append(out, scoreView(r))
@@ -567,7 +567,7 @@ func agreement(scores []doc) doc {
 					ok = false
 					break
 				}
-				v, _ := cNum(j["value"])
+				v, _ := numOK(j["value"])
 				vals = append(vals, v)
 			}
 			if !ok {
@@ -638,7 +638,7 @@ func summarize(scores []doc, trials []string) doc {
 				e.values = append(e.values, 0)
 			}
 		default:
-			v, _ := cNum(s["value"])
+			v, _ := numOK(s["value"])
 			e.values = append(e.values, v)
 		}
 	}
@@ -673,12 +673,12 @@ func summarize(scores []doc, trials []string) doc {
 
 func evaluatorName(e doc) string { return fmt.Sprintf("%v:%v:%v", e["kind"], e["ref"], e["form"]) }
 func cellKey(ex, variant any, repeat any) string {
-	r, _ := cInt(repeat)
+	r, _ := intOK(repeat)
 	return fmt.Sprintf("%v|%v|%d", ex, variant, r)
 }
 
 func expRow(q *Request, id string) (doc, error) {
-	rs, err := cQuery(q, "SELECT * FROM experiment WHERE id=$1", id)
+	rs, err := queryRows(q, "SELECT * FROM experiment WHERE id=$1", id)
 	if err != nil {
 		return nil, err
 	}
@@ -695,7 +695,7 @@ func expView(r doc) doc {
 }
 
 func expCreate(q *Request, b doc) (doc, error) {
-	if !cKeysOnly(b, "kind", "projectId", "pipelineId", "examples", "variants", "repeats", "evaluators", "budgets", "primaryEvaluator", "strategy") {
+	if !keysOnly(b, "kind", "projectId", "pipelineId", "examples", "variants", "repeats", "evaluators", "budgets", "primaryEvaluator", "strategy") {
 		return nil, fail(400, "Expected kind, projectId, pipelineId, examples, variants, repeats, evaluators, budgets, primaryEvaluator, strategy")
 	}
 	kind := astr(b["kind"])
@@ -769,7 +769,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 			ov = doc{}
 		}
 		o := mapOf(ov)
-		if o == nil || !cKeysOnly(o, labOverrides...) {
+		if o == nil || !keysOnly(o, labOverrides...) {
 			return nil, fail(400, "Variant overrides are "+strings.Join(labOverrides, ", "))
 		}
 		if q.person != nil && !q.person.Owner && (o["host"] != nil || o["account"] != nil || o["profile"] != nil) {
@@ -782,7 +782,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 			return nil, fail(400, "Duplicate variant label")
 		}
 		labels[label] = true
-		variants = append(variants, doc{"label": label, "overrides": o, "config_ref": sha256hex([]byte(cCanon(doc{"pipeline": pipelineID, "overrides": o})))})
+		variants = append(variants, doc{"label": label, "overrides": o, "config_ref": sha256hex([]byte(canonicalJSON(doc{"pipeline": pipelineID, "overrides": o})))})
 	}
 	if kind == "single" && len(variants) != 1 {
 		return nil, fail(400, "A single experiment has one variant")
@@ -792,7 +792,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 	}
 	repeats := int64(1)
 	if b["repeats"] != nil {
-		r, ok := cInt(b["repeats"])
+		r, ok := intOK(b["repeats"])
 		if !ok || r < 1 {
 			return nil, fail(400, "Invalid repeats")
 		}
@@ -840,7 +840,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 		if u != "trials" && u != "wall_ms" && u != "calls" && u != "credits" {
 			return nil, fail(400, "Budget unit is trials, wall_ms, calls, credits")
 		}
-		l, ok := cNum(bu["limit"])
+		l, ok := numOK(bu["limit"])
 		if !ok || !(l > 0) || math.IsInf(l, 0) {
 			return nil, fail(400, "Invalid budget limit")
 		}
@@ -882,7 +882,7 @@ func expSpend(q *Request, id string) (doc, error) {
 }
 
 func expRuns(q *Request, id string) ([]doc, error) {
-	rs, err := cQuery(q, "SELECT id,variant,problem FROM execution WHERE experiment_id=$1 AND kind='pipeline_run' AND legacy_kind='pipeline-run' ORDER BY seq", id)
+	rs, err := queryRows(q, "SELECT id,variant,problem FROM execution WHERE experiment_id=$1 AND kind='pipeline_run' AND legacy_kind='pipeline-run' ORDER BY seq", id)
 	if err != nil {
 		return nil, err
 	}
@@ -920,10 +920,10 @@ func expLatest(trials []doc) ([]string, map[string]doc) {
 		if !ok {
 			order = append(order, k)
 		}
-		a, _ := cNum(c["attempt"])
+		a, _ := numOK(c["attempt"])
 		var oa float64
 		if ok {
-			oa, _ = cNum(mapOf(o["cell"])["attempt"])
+			oa, _ = numOK(mapOf(o["cell"])["attempt"])
 		}
 		if !ok || a > oa {
 			m[k] = t
@@ -940,7 +940,7 @@ func expInsertRun(q *Request, exp doc, requestID, file string, example any, vari
 	if variant != nil {
 		label, cfg = variant["label"], doc{"config_ref": variant["config_ref"]}
 	}
-	ok, err := cCreateExecution(q, doc{"id": id, "kind": "pipeline_run", "state": "preparing", "projectId": exp["project_id"], "experimentId": exp["id"], "variant": label, "requestId": requestID, "configRef": cfg})
+	ok, err := insertExecution(q, doc{"id": id, "kind": "pipeline_run", "state": "preparing", "projectId": exp["project_id"], "experimentId": exp["id"], "variant": label, "requestId": requestID, "configRef": cfg})
 	if err != nil || !ok {
 		return "", err
 	}
@@ -1012,7 +1012,7 @@ func trialFiles(q *Request, trial, example doc) ([]labFile, error) {
 		if rel == "" {
 			continue
 		}
-		b, err := artifactBytes(cCtx(q), q.app, o.ArtifactID, 64<<20)
+		b, err := artifactBytes(withTx(q), q.app, o.ArtifactID, 64<<20)
 		if err != nil {
 			return nil, err
 		}
@@ -1074,8 +1074,8 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 				if err != nil {
 					return false, err
 				}
-				passed, _ := cNum(r["passed"])
-				total, _ := cNum(r["total"])
+				passed, _ := numOK(r["passed"])
+				total, _ := numOK(r["total"])
 				failed := anys(r["failed"])
 				var value any = len(failed) == 0
 				if e["form"] == "metric" {
@@ -1182,7 +1182,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		files  []labFile
 	}
 	todo := map[string]pending{}
-	if err := cRead(ctx, a, func(q *Request) error {
+	if err := readTx(ctx, a, func(q *Request) error {
 		exp, err := expRow(q, id)
 		if err != nil || exp["state"] == "draft" {
 			return err
@@ -1235,7 +1235,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		}
 		checked[id] = r
 	}
-	err := cTx(ctx, a, "experiment:"+id, func(q *Request) error {
+	err := writeTx(ctx, a, "experiment:"+id, func(q *Request) error {
 		exp, err := expRow(q, id)
 		if err != nil || exp["state"] == "draft" {
 			return err
@@ -1254,7 +1254,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			return err
 		}
 		order, last := expLatest(trials)
-		repeats, _ := cInt(exp["repeats"])
+		repeats, _ := intOK(exp["repeats"])
 		total := len(anys(exp["examples"])) * len(anys(exp["variants"])) * int(repeats)
 		missing := total - len(order)
 		s, err := expSpend(q, id)
@@ -1268,8 +1268,8 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		state, changed := "running", false
 		var reason any
 		reached := func(b doc) bool {
-			v, _ := cNum(mapOf(s[astr(b["unit"])])["value"])
-			l, _ := cNum(b["limit"])
+			v, _ := numOK(mapOf(s[astr(b["unit"])])["value"])
+			l, _ := numOK(b["limit"])
 			return b["firedAt"] == nil && v >= l
 		}
 		for _, x := range budgets {
@@ -1289,7 +1289,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 				if b["action"] == "pause" {
 					state = "paused"
 					v := mapOf(s[astr(b["unit"])])["value"]
-					if _, err := cAsk(q, "operator_decision", fmt.Sprintf("Lab budget reached: %v %v of %v. Running trials finish; resume launches or stop the experiment?", b["unit"], v, b["limit"]),
+					if _, err := askRow(q, "operator_decision", fmt.Sprintf("Lab budget reached: %v %v of %v. Running trials finish; resume launches or stop the experiment?", b["unit"], v, b["limit"]),
 						exp["project_id"], []any{"resume", "stop"}, "lab", doc{"experimentId": id, "budget": b["unit"]}); err != nil {
 						return err
 					}
@@ -1307,11 +1307,11 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		}
 		// A trials budget that has not fired caps this pass's launches, so it is reached exactly.
 		room := math.Inf(1)
-		tv, _ := cNum(mapOf(s["trials"])["value"])
+		tv, _ := numOK(mapOf(s["trials"])["value"])
 		for _, x := range budgets {
 			b := mapOf(x)
 			if b["unit"] == "trials" && b["action"] != "warn" && b["firedAt"] == nil {
-				l, _ := cNum(b["limit"])
+				l, _ := numOK(b["limit"])
 				room = math.Min(room, l-tv)
 			}
 		}
@@ -1353,8 +1353,8 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 
 func labReconcileWhere(ctx context.Context, a *App, states string, skipBusy bool) {
 	var ids []string
-	cRead(ctx, a, func(q *Request) error {
-		rs, err := cQuery(q, "SELECT id FROM experiment WHERE state = ANY(string_to_array($1, ','))", states)
+	readTx(ctx, a, func(q *Request) error {
+		rs, err := queryRows(q, "SELECT id FROM experiment WHERE state = ANY(string_to_array($1, ','))", states)
 		for _, r := range rs {
 			ids = append(ids, astr(r["id"]))
 		}
@@ -1377,7 +1377,7 @@ func labReconcileWhere(ctx context.Context, a *App, states string, skipBusy bool
 func labReconcileRunning(ctx context.Context, a *App) { labReconcileWhere(ctx, a, "running", true) }
 
 func expSetState(q *Request, id string, from []string, to string, reason any) error {
-	rs, err := cQuery(q, "UPDATE experiment SET state=$2,stop_reason=coalesce($3,stop_reason) WHERE id=$1 AND state=ANY($4) RETURNING id", id, to, reason, from)
+	rs, err := queryRows(q, "UPDATE experiment SET state=$2,stop_reason=coalesce($3,stop_reason) WHERE id=$1 AND state=ANY($4) RETURNING id", id, to, reason, from)
 	if err != nil {
 		return err
 	}
@@ -1409,11 +1409,11 @@ func expAction(q *Request, id, action string) (doc, error) {
 	var err error
 	switch action {
 	case "launch":
-		err = cWrite(q, "", func(q *Request) error { return expSetState(q, id, []string{"draft"}, "running", nil) })
+		err = writeTxAs(q, "", func(q *Request) error { return expSetState(q, id, []string{"draft"}, "running", nil) })
 	case "stop":
-		err = cWrite(q, "", func(q *Request) error { return expSetState(q, id, []string{"running", "paused"}, "stopped", "owner") })
+		err = writeTxAs(q, "", func(q *Request) error { return expSetState(q, id, []string{"running", "paused"}, "stopped", "owner") })
 	case "resume":
-		err = cWrite(q, "", func(q *Request) error { return expSetState(q, id, []string{"paused"}, "running", nil) })
+		err = writeTxAs(q, "", func(q *Request) error { return expSetState(q, id, []string{"paused"}, "running", nil) })
 	default:
 		return nil, fail(400, "action is launch, stop or resume")
 	}
@@ -1492,12 +1492,12 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 		}
 		c := mapOf(t["cell"])
 		var rid string
-		if err := cWrite(q, "experiment:"+id, func(q *Request) error {
+		if err := writeTxAs(q, "experiment:"+id, func(q *Request) error {
 			if err := exec(q, "UPDATE experiment SET state='running' WHERE id=$1 AND state='done'", id); err != nil {
 				return err
 			}
-			rep, _ := cInt(c["repeat"])
-			att, _ := cInt(c["attempt"])
+			rep, _ := intOK(c["repeat"])
+			att, _ := intOK(c["attempt"])
 			var err error
 			rid, err = expLaunchTrial(q, exp, findPin(exp, c["example"]), findVariant(exp, c["variant"]), rep, att+1)
 			return err
@@ -1604,7 +1604,7 @@ func expRate(q *Request, b doc) (doc, error) {
 	} else if form == "pass_fail" {
 		text = "Pass or fail this output"
 	}
-	qid, err := cAsk(q, "rating", text, exp["project_id"], doc{"form": form, "experiment_id": eid, "trial_ids": ids, "seed": newID()}, "operator", doc{"experimentId": eid})
+	qid, err := askRow(q, "rating", text, exp["project_id"], doc{"form": form, "experiment_id": eid, "trial_ids": ids, "seed": newID()}, "operator", doc{"experimentId": eid})
 	if err != nil {
 		return nil, err
 	}
@@ -1613,7 +1613,7 @@ func expRate(q *Request, b doc) (doc, error) {
 
 // labRating: outputs in the seeded order, labelled A, B, ...; never the variant.
 func labRating(q *Request, qid string) (doc, error) {
-	rs, err := cQuery(q, "SELECT * FROM question WHERE id=$1", qid)
+	rs, err := queryRows(q, "SELECT * FROM question WHERE id=$1", qid)
 	if err != nil {
 		return nil, err
 	}
@@ -1649,7 +1649,7 @@ func labRating(q *Request, qid string) (doc, error) {
 }
 
 func labRatings(q *Request, experimentID, state any) (doc, error) {
-	rs, err := cQuery(q, "SELECT id FROM question WHERE kind='rating' AND ($1::text IS NULL OR options->>'experiment_id'=$1) AND ($2::text IS NULL OR state::text=$2) ORDER BY seq", experimentID, state)
+	rs, err := queryRows(q, "SELECT id FROM question WHERE kind='rating' AND ($1::text IS NULL OR options->>'experiment_id'=$1) AND ($2::text IS NULL OR state::text=$2) ORDER BY seq", experimentID, state)
 	if err != nil {
 		return nil, err
 	}
@@ -1664,7 +1664,7 @@ func labRatings(q *Request, experimentID, state any) (doc, error) {
 	return doc{"ratings": out}, nil
 }
 
-// labAnswerCheck and labAnswerAfter: the answer hook for questions_answer (area B calls both inside its transaction:
+// labAnswerCheck and labAnswerAfter: the answer hook for questions_answer (questions_answer calls both inside its transaction:
 // check before recording the answer, after once it is recorded). question: the question row (snake_case columns).
 func labAnswerCheck(q *Request, question doc, answer string) error {
 	o := mapOf(question["options"])
@@ -1733,7 +1733,7 @@ func labAnswerAfter(q *Request, question doc) error {
 // rating question; the owner's pass approves it. A file that is not a valid example is skipped.
 func importDrafts(ctx context.Context, a *App, run doc) {
 	var files []fileRef
-	cRead(ctx, a, func(q *Request) (err error) { files, err = pipelineOutputs(q, run, -1); return })
+	readTx(ctx, a, func(q *Request) (err error) { files, err = pipelineOutputs(q, run, -1); return })
 	for _, f := range files {
 		if !draftExample.MatchString(f.Path) {
 			continue
@@ -1746,7 +1746,7 @@ func importDrafts(ctx context.Context, a *App, run doc) {
 		if json.Unmarshal(b, &ex) != nil {
 			continue
 		}
-		cTx(ctx, a, "", func(q *Request) error {
+		writeTx(ctx, a, "", func(q *Request) error {
 			res, err := labExamplesAdd(q, doc{"examples": []any{ex}, "projectId": run["projectId"], "approved": false})
 			if err != nil {
 				return nil
@@ -1765,7 +1765,7 @@ func importDrafts(ctx context.Context, a *App, run doc) {
 			for _, c := range anys(mapOf(got["example"])["checks"]) {
 				lines = append(lines, fmt.Sprintf("%v: %v", mapOf(c)["id"], mapOf(c)["run"]))
 			}
-			_, err = cAsk(q, "rating", fmt.Sprintf("Approve drafted example %v@%v? Approving lets the coordinator run its checks:\n%s", st["id"], st["version"], strings.Join(lines, "\n")),
+			_, err = askRow(q, "rating", fmt.Sprintf("Approve drafted example %v@%v? Approving lets the coordinator run its checks:\n%s", st["id"], st["version"], strings.Join(lines, "\n")),
 				run["projectId"], doc{"form": "pass_fail", "example_artifact_id": aid, "seed": aid}, "lab", doc{"exampleArtifactId": aid})
 			return err
 		})
@@ -1790,11 +1790,11 @@ func expGet(q *Request, id string) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	stepRows, err := cQuery(q, `SELECT data->>'pipelineRunId' AS run,host_id,harness,harness_version,model FROM execution WHERE experiment_id=$1 AND data ? 'pipelineStepId' AND data ? 'agentConfig'`, id)
+	stepRows, err := queryRows(q, `SELECT data->>'pipelineRunId' AS run,host_id,harness,harness_version,model FROM execution WHERE experiment_id=$1 AND data ? 'pipelineStepId' AND data ? 'agentConfig'`, id)
 	if err != nil {
 		return nil, err
 	}
-	credits, err := cQuery(q, `SELECT coalesce(e.data->>'pipelineRunId',split_part(e.parent_execution_id,':step:',1)) AS run,count(*)::int AS calls,coalesce(sum((t.connection_cost->>'credits')::numeric),0)::float8 AS credits,
+	credits, err := queryRows(q, `SELECT coalesce(e.data->>'pipelineRunId',split_part(e.parent_execution_id,':step:',1)) AS run,count(*)::int AS calls,coalesce(sum((t.connection_cost->>'credits')::numeric),0)::float8 AS credits,
 	 count(*) FILTER (WHERE t.connection_cost_basis IS DISTINCT FROM 'measured')::int AS unmeasured FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.experiment_id=$1 AND e.kind='tool_run' GROUP BY 1`, id)
 	if err != nil {
 		return nil, err
@@ -1823,7 +1823,7 @@ func expGet(q *Request, id string) (doc, error) {
 		for _, c := range credits {
 			if c["run"] == t["id"] {
 				spend["calls"], spend["credits"] = c["calls"], c["credits"]
-				if n, _ := cNum(c["unmeasured"]); n > 0 {
+				if n, _ := numOK(c["unmeasured"]); n > 0 {
 					spend["basis"] = "partial"
 				}
 			}
@@ -1868,8 +1868,8 @@ func expGet(q *Request, id string) (doc, error) {
 				}
 			}
 			sort.SliceStable(ts, func(i, j int) bool {
-				a, _ := cNum(mapOf(ts[i]["cell"])["repeat"])
-				b, _ := cNum(mapOf(ts[j]["cell"])["repeat"])
+				a, _ := numOK(mapOf(ts[i]["cell"])["repeat"])
+				b, _ := numOK(mapOf(ts[j]["cell"])["repeat"])
 				return a < b
 			})
 			keys, comp := []any{}, []string{}
@@ -1945,7 +1945,7 @@ var labOps = map[string]struct {
 	}},
 	"lab_experiment_create": {false, false, func(q *Request, b doc) (any, error) { return expCreate(q, b) }},
 	"lab_experiments_list": {false, true, func(q *Request, b doc) (any, error) {
-		rs, err := cQuery(q, "SELECT * FROM experiment ORDER BY seq DESC")
+		rs, err := queryRows(q, "SELECT * FROM experiment ORDER BY seq DESC")
 		out := []any{}
 		for _, r := range rs {
 			out = append(out, expView(r))
@@ -2016,7 +2016,7 @@ var labOps = map[string]struct {
 
 // scoreCorrect: a correction keeps the trials, evaluator and form; only a current score can be corrected.
 func scoreCorrect(q *Request, id string, b doc) (doc, error) {
-	rs, err := cQuery(q, "SELECT * FROM score WHERE id=$1", id)
+	rs, err := queryRows(q, "SELECT * FROM score WHERE id=$1", id)
 	if err != nil {
 		return nil, err
 	}
@@ -2048,7 +2048,7 @@ func scoreCorrect(q *Request, id string, b doc) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	rs, err = cQuery(q, "SELECT * FROM score WHERE id=$1", nid)
+	rs, err = queryRows(q, "SELECT * FROM score WHERE id=$1", nid)
 	if err != nil {
 		return nil, err
 	}
@@ -2075,8 +2075,8 @@ func init() {
 	for name, op := range labOps {
 		name, op := name, op
 		if op.long {
-			clong(name, func(q *Request) (any, error) {
-				b, err := cBody(q)
+			longOp(name, func(q *Request) (any, error) {
+				b, err := bodyObject(q)
 				if err != nil {
 					return nil, err
 				}
@@ -2084,8 +2084,8 @@ func init() {
 			})
 			continue
 		}
-		cop(name, op.read, func(q *Request) (any, error) {
-			b, err := cBody(q)
+		gatedOp(name, op.read, func(q *Request) (any, error) {
+			b, err := bodyObject(q)
 			if err != nil {
 				return nil, err
 			}
@@ -2093,7 +2093,7 @@ func init() {
 		})
 	}
 	r := func(pattern, name string, body func(q *Request) (doc, error)) {
-		blongRoute(pattern, func(q *Request) (any, error) {
+		gatedLongRoute(pattern, func(q *Request) (any, error) {
 			b, err := body(q)
 			if err != nil {
 				return nil, err
@@ -2101,7 +2101,7 @@ func init() {
 			return runLabOp(name, q, b)
 		})
 	}
-	bodyOf := func(q *Request) (doc, error) { return cBody(q) }
+	bodyOf := func(q *Request) (doc, error) { return bodyObject(q) }
 	none := func(q *Request) (doc, error) { return doc{}, nil }
 	r("POST /api/lab/examples", "lab_examples_add", bodyOf)
 	r("GET /api/lab/examples", "lab_examples_list", func(q *Request) (doc, error) {
@@ -2126,7 +2126,7 @@ func init() {
 		})
 	}
 	r("POST /api/lab/experiments/{id}/promote", "lab_promote", func(q *Request) (doc, error) {
-		b, err := cBody(q)
+		b, err := bodyObject(q)
 		return doc{"experimentId": q.r.PathValue("id"), "variant": b["variant"]}, err
 	})
 	r("POST /api/lab/ratings", "lab_rating_create", bodyOf)
@@ -2141,7 +2141,7 @@ func init() {
 	})
 	r("GET /api/lab/ratings/{id}", "lab_rating_get", func(q *Request) (doc, error) { return doc{"questionId": q.r.PathValue("id")}, nil })
 	r("POST /api/lab/scores/{id}/correct", "lab_score_correct", func(q *Request) (doc, error) {
-		b, err := cBody(q)
+		b, err := bodyObject(q)
 		if b != nil {
 			b["scoreId"] = q.r.PathValue("id")
 		}
@@ -2154,7 +2154,7 @@ func init() {
 			labReconcileWhere(ctx, a, "running,paused,stopped", false)
 			// A finish hook lost to a restart: completed draft runs are imported again (idempotent).
 			var runs []doc
-			cRead(ctx, a, func(q *Request) (err error) {
+			readTx(ctx, a, func(q *Request) (err error) {
 				runs, err = runsWhere(q, "data->>'pipelineId'='draft-examples' AND data->>'state'='completed'")
 				return
 			})

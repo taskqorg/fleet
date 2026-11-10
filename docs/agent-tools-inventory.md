@@ -50,7 +50,7 @@ Path prefixes: Orca `O/` = `src/main/runtime/rpc/methods/orchestration/`, `W/` =
 
 | Capability | Orca | T3 Code | Fleet current | Recommendation |
 |---|---|---|---|---|
-| Create session | `worker-start` (chat or terminal, agent alias, model/effort) | `ThreadMessageIntake.launchThread` → `openSession`+`startTurn` | `POST /api/sessions` (`go/coordinator/routes.go`), the executor launches the harness (`go/executor/harness_command.go`) | Keep Fleet. |
+| Create session | `worker-start` (chat or terminal, agent alias, model/effort) | `ThreadMessageIntake.launchThread` → `openSession`+`startTurn` | `POST /api/sessions` (`go/coordinator/sessions.go`), the executor launches the harness (`go/executor/harness_command.go`) | Keep Fleet. |
 | Send / continue | `send`; a follow-up to a finished worker becomes its next task | `sendToThread`; `steerTurn` steers a running turn | `POST /api/sessions/:id/messages`; `409` while active | Copy T3's **queued message + steer** so a message to a busy session is queued or steered, not refused (`T/ProviderTurnControlService.ts`, `queued-message.promote-to-steer`). |
 | Resume | Resume-argv template for every agent; session captured at `worker_done` | Adapter `resumeThread` (Codex `thread/resume`, Claude SDK `resume`) | Codex app-server resume + `inject_items` (proven); Claude `--resume` (unproven); agy ACP `session/resume`/`load` | Copy Orca's **per-agent resume table** and session capture as the data. Qualify Claude through T3's SDK `resume` path. |
 | Fork | None (a retry is a fresh start) | `thread.fork`: native `forkThread` (Codex `thread/fork`, Claude `forkSession`), otherwise `prepareForkDelta` | None | Copy T3 `ThreadForkService` + `ContextHandoffService.prepareForkDelta`. This also answers a session stuck in `unknown`: fork it and leave the original inspectable. |
@@ -61,7 +61,7 @@ Path prefixes: Orca `O/` = `src/main/runtime/rpc/methods/orchestration/`, `W/` =
 | List / inspect | `worker-list/show/read`, liveness + suggested `next` | `readThreadSnapshot`, `isLive` | Session/execution/events/differences/results APIs | Add Orca's **liveness enum + suggested next action** to the execution view. |
 | Recovery of unknown/stuck | Proof only; `request-show --retry-request`; restart recovery of terminals | Startup/shutdown reconcile; optional auto-continue; force on an unresponsive interrupt | `unknown` blocks the session; narrow transport recovery (`packages/coordinator/recovery.ts`) | Copy T3's **startup reconcile** (`ProviderRuntimeRecoveryService.ts`) on the executor side, plus fork-to-continue (above). No promotion without evidence. |
 | Multi-environment placement | Worktree modes; `--on <env>` remote by Dispatch ID | Worktree strategies, recreate a missing worktree; relay environments | One host from config (`config.hostId`) | Copy Orca's **worktree modes + remote by id** when a second host exists. The operator chooses the host (setting, not rule). |
-| Routing / balancing | Agent aliases from config; group messaging `@idle` | None (user picks the instance) | Managed account resolution per execution (`go/coordinator/a_accounts.go`) | Owner-configured setting only. Copy Orca's config **agent aliases**. No caps. |
+| Routing / balancing | Agent aliases from config; group messaging `@idle` | None (user picks the instance) | Managed account resolution per execution (`go/coordinator/accounts.go`) | Owner-configured setting only. Copy Orca's config **agent aliases**. No caps. |
 | Agent-facing tool set | CLI + skills + injected preamble | Adapter MCP tools/resources | Project/recovery tools (`/api/project-tools`, `/api/recovery-tools`) | Expose the rows above as Fleet tools over one core state (R2), following Orca's preamble pattern. |
 
 ## Port first
@@ -75,7 +75,7 @@ Path prefixes: Orca `O/` = `src/main/runtime/rpc/methods/orchestration/`, `W/` =
 
 ## Port results (2026-11-09)
 
-Coordinator-only port, now `go/coordinator/b_agent.go` (agent tool table `agentOps`, resume argv). Agent tools are exposed to agents only as `POST /api/hosts/agent-tools` (machine auth, bound to the command's execution). The operator reaches the same operations through `/api/ops/:name` and MCP `/api/tools` (operator credential); the unbound `/api/agent-operations/:name` and `/api/agent-tools` were removed (2026-11-10). Storage uses new record kinds only (`handoff`, `session-fork`, `session-transition`, `queued-message`, `question`, `worker-done`, `reconciliation`), so existing data stays as is. The executor did not change. Outside tests: `tests/go`.
+Coordinator-only port, now `go/coordinator/agent.go` (agent tool table `agentOps`, resume argv). Agent tools are exposed to agents only as `POST /api/hosts/agent-tools` (machine auth, bound to the command's execution). The operator reaches the same operations through `/api/ops/:name` and MCP `/api/tools` (operator credential); the unbound `/api/agent-operations/:name` and `/api/agent-tools` were removed (2026-11-10). Storage uses new record kinds only (`handoff`, `session-fork`, `session-transition`, `queued-message`, `question`, `worker-done`, `reconciliation`), so existing data stays as is. The executor did not change. Outside tests: `tests/go`.
 
 | # | Row | Status |
 |---|---|---|

@@ -82,12 +82,12 @@ func (a *App) refreshPeople(ctx context.Context) error {
 				return err
 			}
 		}
-		if err := cTx(ctx, a, "", func(q *Request) error {
+		if err := writeTx(ctx, a, "", func(q *Request) error {
 			var n int
 			if err := q.tx.QueryRow(ctx, "SELECT count(*) FROM question WHERE state='open' AND data->>'peopleFile'='true'").Scan(&n); err != nil || n > 0 {
 				return err
 			}
-			_, err := cAsk(q, "operator_decision", "people.json is not valid: "+problem+". Fleet keeps the last valid list of people until the file is fixed.", nil, []any{"fixed"}, "fleet", doc{"peopleFile": true})
+			_, err := askRow(q, "operator_decision", "people.json is not valid: "+problem+". Fleet keeps the last valid list of people until the file is fixed.", nil, []any{"fixed"}, "fleet", doc{"peopleFile": true})
 			return err
 		}); err != nil {
 			return err

@@ -1,4 +1,4 @@
-// Operation plumbing of area B: the person gate on every operation and runOp for the MCP tool servers.
+// Operation plumbing: the person gate on every operation and runOp for the MCP tool servers.
 package main
 
 import (
@@ -7,8 +7,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// bop registers an operation behind the architect gate and the project grant check.
-func bop(name string, read bool, h handler) {
+// gatedObjOp registers an operation behind the architect gate and the project grant check.
+func gatedObjOp(name string, read bool, h handler) {
 	operation(name, read, func(q *Request) (any, error) {
 		if err := q.app.guardOp(q, name, q.body); err != nil {
 			return nil, err
@@ -22,7 +22,7 @@ func bop(name string, read bool, h handler) {
 
 // runOp runs a named operation in its own transaction in the person's scope (q.tx is nil: called from a longRoute).
 func (a *App) runOp(q *Request, name string, b json.RawMessage) (any, error) {
-	if h, ok := longOperations[name]; ok { // area C: opens its own transactions
+	if h, ok := longOperations[name]; ok { // opens its own transactions
 		sub := *q
 		sub.body, sub.tx = b, nil
 		return h(&sub)
@@ -43,8 +43,8 @@ func (a *App) runOp(q *Request, name string, b json.RawMessage) (any, error) {
 	return out, err
 }
 
-// broute, blongRoute: route and longRoute behind the person gate of routes (architect routes, named project grants).
-func broute(pattern string, h handler) {
+// gatedRoute, gatedLongRoute: route and longRoute behind the person gate of routes (architect routes, named project grants).
+func gatedRoute(pattern string, h handler) {
 	route(pattern, func(q *Request) (any, error) {
 		if err := q.app.guardRoute(q); err != nil {
 			return nil, err
@@ -53,7 +53,7 @@ func broute(pattern string, h handler) {
 	})
 }
 
-func blongRoute(pattern string, h handler) {
+func gatedLongRoute(pattern string, h handler) {
 	longRoute(pattern, func(q *Request) (any, error) {
 		if err := q.app.guardRoute(q); err != nil {
 			return nil, err

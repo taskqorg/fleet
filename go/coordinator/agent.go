@@ -1342,7 +1342,7 @@ var agentOps = map[string]registeredOp{}
 func agentOp(name string, read bool, h func(*Request, doc) (doc, error)) {
 	f := func(q *Request) (any, error) { return h(q, body(q)) }
 	agentOps[name] = registeredOp{read, f}
-	bop(name, read, f)
+	gatedObjOp(name, read, f)
 }
 
 func init() {
