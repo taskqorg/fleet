@@ -268,10 +268,18 @@ fn artifact(ctx: &Value, name: &str, q: &Value, db: &mut Connection) -> Result<V
     };
     Ok(match result {
         Ok(v) => text(v, None),
-        Err(e) => text(
-            json!({"error":format!("artifact tool refused: {e}")}),
-            Some(true),
-        ),
+        Err(e) if e.is::<rusqlite::Error>() => return Err(e),
+        Err(e) => {
+            let message = if e.is::<std::io::Error>() {
+                "path must be a regular file inside your working area, not a link".into()
+            } else {
+                e.to_string()
+            };
+            text(
+                json!({"error":format!("artifact tool refused: {message}")}),
+                Some(true),
+            )
+        }
     })
 }
 fn delegation(req: &Value, ctx: &Value, db: &mut Connection) -> Result<Value> {
