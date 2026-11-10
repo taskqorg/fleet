@@ -595,7 +595,7 @@ The shapes are copied from t3code (`apps/server/src/mcp/toolkits/attachment/tool
     *   `access.status` lists people, grants, shares and expiry dates.
     *   It compares the `fleet-people` group with Fleet's list and reports every difference as a problem with an action: add, remove or ignore.
     *   `access.status` also lists the hand edits still needed, for example a person in `people.json` who is missing from the group.
-*   **Agents.** An agent acts with its execution's permissions, never with a person's. Sharing with a new email is an operator action. An agent can only propose it as an `operator_decision` question.
+*   **Agents.** An agent acts with its director's grants (the execution's `directedBy`, [fleet-pm-agent.md](fleet-pm-agent.md) §1); the actor of its writes stays the execution, never the person. Sharing with a new email is an operator action. An agent can only propose it as an `operator_decision` question.
 
 ### 11. Hosts, environments and stores
 
