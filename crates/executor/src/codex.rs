@@ -186,7 +186,11 @@ impl Session {
             } else { vec![] };
             return Ok((
                 vec![],
-                Some(json!({"type":"item.completed","item":item,"children":children,"native":v})),
+                Some(serde_json::to_value(crate::contracts::EventData {
+                    item: Some(serde_json::from_value(item).map_err(|e| format!("codex item: {e}"))?),
+                    rest: serde_json::Map::from_iter([("type".into(), json!("item.completed")), ("children".into(), json!(children)), ("native".into(), v.clone())]),
+                    ..Default::default()
+                }).map_err(|e| e.to_string())?),
                 false,
             ));
         }

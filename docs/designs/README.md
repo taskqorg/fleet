@@ -8,6 +8,7 @@ Technical designs, briefs and their reviews. A design here is accepted direction
 * `fleet-lab.md`: the Fleet Lab (experiments, examples, evaluators, Promote) in stages; `lab-brief.md` is its brief and `reviews/fleet-lab/` its review.
 * `fleet-people-access.md`: people, identity, per-host secrets, holders, subscriptions, take, dispatch, intake, readings and budgets. `people-access-brief.md` is its brief; `reviews/people-access/` holds the terms research and the review.
 * `fleet-pm-agent.md`: the PM agent: director-scoped agent tools, task tools, Held tasks, focus, watch mode. `pm-agent-brief.md` is its brief; `reviews/pm-agent/` its review.
+* `fleet-l3-contracts.md`: fleet-stack L3 stage 1: one JSON Schema for event payloads and the host protocol, generators, the reversal check.
 * `fleet-connections.md`: API key connections, the Fleet gateway copied from Pipe's read lane, per-run tokens, call methods and deleting Pipe.
 * `fleet-conversations.md`: the Conversations screen: one thread per task, paging both ways, typed transcript blocks, copy, question and result cards, the Results page. `conversations-brief.md` is its brief and `reviews/conversations/` its review.
 * `legacy-inventory.md`: what the removed legacy pages did and which app section rebuilds each gap.
