@@ -4,6 +4,8 @@ import {createStore} from './store.ts';
 // FLEET_DATABASE_URL: the coordinator role (fleet_app on PDS18, e.g. postgresql://fleet_app@/fleet?host=/var/run/postgresql).
 // FLEET_MIGRATION_DATABASE_URL: the owner role (fleet) that applies db/schema.sql on start; defaults to FLEET_DATABASE_URL.
 if(!process.env.FLEET_PEOPLE_FILE)throw Error('FLEET_PEOPLE_FILE required');
+// A background promise that fails (a store error in a timer, a fire-and-forget read) is logged, never a process exit.
+process.on('unhandledRejection',e=>console.error('unhandled rejection',e));
 const database=process.env.FLEET_DATABASE_URL;if(!database)throw Error('FLEET_DATABASE_URL required');
 const owner=createStore(process.env.FLEET_MIGRATION_DATABASE_URL||database);await owner.migrate();await owner.close();
 const store=createStore(database);
