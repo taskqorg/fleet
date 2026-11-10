@@ -451,12 +451,12 @@ The rules below were revised after the Phase 3 review (`docs/designs/fleet-data-
 
 *   **Tables.**
     *   `event`: execution state changes, questions, errors and harness lifecycle.
-    *   `span`: model calls, tool calls and shell commands, with tokens (input, output, cache read, cache write), duration and status.
+    *   `span`: all timed work of every service, not only inside executions: model calls, tool calls and shell commands with tokens, and also routes, passes, outbound calls and host and process readings. Shape, engine, transport and rules are in [telemetry](fleet-telemetry.md#1-record-model).
     *   `measurement`: CPU, memory, rate-limit signals and connection cost, each with its `basis`. Connection cost rows carry `connection_id`, `amount`, and `currency` or `credits`.
-    *   `host_metric`: host health, disk, harness versions and reachability.
+    *   `host_metric` is dropped: host and store readings are `check` spans in `span` ([telemetry](fleet-telemetry.md#2-what-is-recorded)).
 *   **Columns copied from Postgres at ingest.** `project_id`, `task_id`, `experiment_id`, `account_id`, `host_id` and `execution_id`. Every query can then filter by permission and group without a join.
-*   **Engine and keys.** `ReplacingMergeTree`, partitioned by month and `ORDER BY (project_id, execution_id, seq)`. The sort key is the deduplication key, so a retried outbox batch with the same `seq` collapses to one row. `ts` is a plain column.
-*   **Reading without double counts.** Duplicates disappear only when ClickHouse merges parts in the background. Every query that sums therefore reads with `FINAL`, or takes one value per `seq` with `argMax`. No TTL by default. A project retention rule can add one later.
+*   **Engine and keys (`event`, `measurement`).** `ReplacingMergeTree`, partitioned by month and `ORDER BY (project_id, execution_id, seq)`. The sort key is the deduplication key, so a retried outbox batch with the same `seq` collapses to one row. `ts` is a plain column. `span` uses plain `MergeTree` with insert tokens ([telemetry §4](fleet-telemetry.md#4-storage-transport-retention)).
+*   **Reading without double counts.** Duplicates disappear only when ClickHouse merges parts in the background. Every query that sums `event` or `measurement` therefore reads with `FINAL`, or takes one value per `seq` with `argMax`. No TTL by default. A project retention rule can add one later.
 
 ### 5. Executor: harness adapters, outbox and redaction
 
@@ -475,7 +475,7 @@ The rules below were revised after the Phase 3 review (`docs/designs/fleet-data-
     *   First pass, in the executor: it replaces every secret value it injected (connection credentials, git key material, the Fleet machine token, provider tokens) with `«redacted:<name>»` before writing to the outbox or uploading.
     *   Second pass, in the coordinator: a pattern scan for common token formats. A match is masked before the row is stored, and logged as a `redaction_miss` event with the pattern name only.
     *   Coverage: the two passes catch values Fleet injected and values in the listed token formats. They do not catch a secret an agent reads from disk in an unknown format, or a harness login token that is not injected by Fleet. A secret found later is removed with the forced purge (§3).
-*   **Host metrics.** The executor adds periodic `host_metric` reports to the existing host observation: disk, load, harness versions and reachable stores.
+*   **Host metrics.** The executor sends a `host.heartbeat` check span each minute with disk, load, harness versions, reachable stores and process readings ([telemetry](fleet-telemetry.md#2-what-is-recorded)).
 
 ### 6. Operations for people and agents
 
@@ -607,7 +607,7 @@ The shapes are copied from t3code (`apps/server/src/mcp/toolkits/attachment/tool
     *   free disk;
     *   the running Fleet services, with their resource settings and current use.
 
-    The data comes from the existing host observation plus `host_metric`. Nothing is entered by hand.
+    The data comes from the existing host observation plus `host.heartbeat` spans. Nothing is entered by hand.
 *   **Settings are Fleet data, applied on the host.** Table `host_setting(host_id, key, value, updated_by, updated_at, applied_at, apply_error)`. Settings in this design:
     *   `store.capacity_bytes`: the executor applies it to Garage through the Garage admin API, as a layout capacity change.
     *   `service.<name>.memory_max` and `service.<name>.cpu_quota`: the executor applies them with `systemctl --user set-property` to its own Fleet user units, such as ClickHouse and Garage.

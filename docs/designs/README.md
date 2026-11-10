@@ -15,6 +15,8 @@ Technical designs, briefs and their reviews. A design here is accepted direction
 * `fleet-docs-governance.md`: document kinds and their life, what an agent may add, EGM outputs outside the tree, the warning-only docs report and `docs-order` issue, the proposed specq rule, and the docs rework plan.
 * `fleet-executor-delivery.md`: executor release files built in CI and how a host fetches them.
 * `fleet-self-update.md`: releases by tag on GitHub Releases with provenance, the `fleet-update` timer on every host, PDS18 order, rollback, `autoUpdate`, versions in `hosts_list`.
+* `fleet-telemetry.md`: one span per operation across all services in ClickHouse, trace context, process CPU and memory, the rules pass, telemetry operations and the System screen read panels.
+* `fleet-system-management.md`: host remove, archive, delete and purge with previews, worktree removal on delivery, problems as needs-you questions, Postgres backups and restore drill, the audit journal and the System screen.
 * `legacy-inventory.md`: what the removed legacy pages did and which app section rebuilds each gap.
 * `entity-ids-brief.md`: human entity codes such as `T-FLT-42`.
 * `web-stack-brief.md`: front-end stack choice.
