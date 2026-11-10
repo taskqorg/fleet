@@ -164,6 +164,7 @@ type Request struct {
 	r      *http.Request
 	person *Person
 	host   map[string]any
+	agent  string // execution:<id> when a host agent calls on behalf of person (its director)
 	body   json.RawMessage
 	tx     pgx.Tx
 	params []string
