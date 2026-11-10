@@ -972,7 +972,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 *   **Type / Scope**: Dependencies.
 *   **Proposed Changes**:
     *   Add `pg`, `@types/pg`, `@clickhouse/client`, and `@electric-sql/pglite` (dev). S3 was first `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner`; `packages/coordinator/s3.ts` has replaced them (fleet-toolchain.md D3).
-    *   Keep `better-sqlite3` and `@types/better-sqlite3` until Phase 7, for the migration tool only.
+    *   Keep `better-sqlite3` and `@types/better-sqlite3` until Phase 7, for the migration tool only. (Done earlier: the toolchain slice replaced them with `node:sqlite`, fleet-toolchain.md D4.)
 *   **Why**: The new stores.
 
 ##### 10. `packages/coordinator/db/schema.sql` (Create)
@@ -999,7 +999,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
 
 *   **Type / Scope**: Coordinator HTTP application.
 *   **Proposed Changes**:
-    *   Remove `better-sqlite3` and the `records` table creation at line 19.
+    *   Remove `better-sqlite3` and the `records` table creation at line 19. (Done.)
     *   Accept a `store` from `createStore`.
     *   Make every handler `await` the store.
     *   Turn `db.transaction(() => …)` blocks, such as `/api/hosts/poll` at line 114, into `store.tx(async t => …)`.
@@ -1398,7 +1398,7 @@ Order: 21, 22, 24 (with its legacy adapter), 26c (backfill), 26b and the other r
 ##### 50. `package.json` and `packages/coordinator/migrate-sqlite.ts` (Modify)
 
 *   **Type / Scope**: Retirement.
-*   **Proposed Changes**: After 30 days without a rollback, remove `better-sqlite3`, `@types/better-sqlite3` and `FLEET_DATABASE`, and archive the SQLite file to `/backup/fleet/`. `tests/coordinator/lab-packaged.ts` stops setting `FLEET_DATABASE`.
+*   **Proposed Changes**: After 30 days without a rollback, remove `migrate-sqlite.ts` (it uses `node:sqlite`; `better-sqlite3` is already gone, fleet-toolchain.md D4) and `FLEET_DATABASE`, and archive the SQLite file to `/backup/fleet/`.
 *   **Why**: G7. The old store is retired.
 
 #### Tests
@@ -1500,9 +1500,9 @@ Order: 21, 22, 24 (with its legacy adapter), 26c (backfill), 26b and the other r
 
 ### Verification Plan
 
-*   **Compilation/Build**: `npm run build`, `cargo build --release -p executor`.
-*   **Unit Tests**: `npm test`, `cargo test -p executor`, `python3 -I tests/executor/<file>.py` for each executor protocol test.
-*   **Static Analysis & Linting**: `tsc --noEmit` (strict settings from `tsconfig.json`), `cargo clippy -- -D warnings`.
+*   **Compilation/Build**: `pnpm run build` (type check, then esbuild bundle), `cargo build --release -p fleet-executor`.
+*   **Unit Tests**: `pnpm test`, `cargo test -p fleet-executor`, `python3 -I tests/executor/<file>.py` for each executor protocol test.
+*   **Static Analysis & Linting**: `pnpm run typecheck` (TypeScript 7 native compiler, strict settings from `tsconfig.json`), `cargo clippy -- -D warnings`.
 *   **Test Coverage Requirement**: Every branch named in items 51, 53 and 54 has a test. No numeric coverage target.
 *   **E2E/Integration**: After each phase, run live on PDS18 and the Mac:
     *   **Phase 1:** T1 and T14 from `docs/test-results-T1-T16.md` pass again on Postgres, and `migrate-sqlite verify` reports no difference.

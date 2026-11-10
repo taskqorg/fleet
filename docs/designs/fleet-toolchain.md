@@ -1,6 +1,6 @@
 # Fleet toolchain
 
-Status: draft for owner approval. Decisions D1–D4 below were approved by the coordinator during brainstorm.
+Status: implemented. Decisions D1–D4 were approved by the coordinator during brainstorm. All five phases are merged (#41, #43, #44, #45, #46; the last at `422dcf9`). The release deploy waits for the coordinator. The decisions below are kept as written; where the code later moved, the implementation notes say so.
 
 ## Problem
 
@@ -71,7 +71,7 @@ The bundle stays where the compiled file is today: `dist/packages/coordinator/se
 4. **`s3.ts`.** Remove `@aws-sdk/*` and add SigV4 vector tests. The live tunnel check runs after approval.
 5. **Bundled release.** Bundle with a sourcemap, add the CI job that runs from a release copy, update the infrastructure doc. Deploy only when the coordinator authorizes it.
 
-Expected end state: about 135 production packages instead of 163 (24 SDK, `better-sqlite3` with its install helpers). Dev packages also drop `tsx` and `@types/better-sqlite3`., 5 MB `node_modules` per extra worktree, one shared `target` per machine, a build under 0.3 s and no `node_modules` on PDS18. Each phase's PR records the exact numbers it measured.
+Expected end state: about 135 production packages instead of 163 (24 SDK, `better-sqlite3` with its install helpers). Dev packages also drop `tsx` and `@types/better-sqlite3`. Other targets: 5 MB `node_modules` per extra worktree, one shared `target` per machine, a build under 0.3 s and no `node_modules` on PDS18. Each phase's PR records the exact numbers it measured.
 
 ## Risks
 
@@ -82,9 +82,10 @@ Expected end state: about 135 production packages instead of 163 (24 SDK, `bette
 
 ## Implementation notes
 
+- After the merge, three details differ from D2 and D4. Executor paths are resolved in two shared helpers, `tests/coordinator/executor-binary.ts` and `tests/executor/executor_binary.py`, through `cargo metadata` `target_directory`, not in each file. `dist/packages/coordinator/server.js` is a two-line entry that turns source maps on and loads the bundle `server-main.js` (with `server-main.js.map`). Lab Stage 2 replaced `pipe_search.py` with `connection_call.py` and added `config/lab` and `config/skills` to the assets. `docs/infrastructure-build.md` has the current layout.
 - PRs: #41 (phase 1), #43 (phase 2), #44 (phase 3), #45 (phase 4), #46 (phase 5). Each one is stacked on the one before.
 - `minimumReleaseAge` is 1440 minutes (one day), not seven days. The dependencies pinned when we switched were 4 to 8 days old, so a seven-day limit rejected them.
 - The type check is TypeScript 7.0.2, the stable release of the native compiler, not the `tsgo` preview. Warm, it takes 0.25 s; `tsc` 5.9 took 2.9 s.
 - Because of `node:sqlite`, Node 22 prints an ExperimentalWarning when the migration CLI and its tests run. That is expected. `engines.node` is `>=22.18`.
 - Live S3 check, 2026-11-10, from PDS18 through the pds18, mac and windows tunnels with Access headers. It covered put, get, head, delete, a 256 MiB multipart upload through presigned parts, UploadPartCopy, CopyObject, and a presigned GET whose SHA-256 matched. It passed on all three stores, and the test prefix was empty afterwards.
-- Cloudflare finding (infrastructure, not the client): on a store hostname, the first HEAD of a key with a cacheable extension (for example `.bin`) returned 403. Cloudflare served that HEAD as a GET to the origin, so the SigV4 signature did not match, and it may have cached the object at the edge. Fleet keys are content hashes and `.pending/<id>.<store>`, so they have no such extension. A cache-bypass rule on the `fleet-store-*` hostnames would remove the risk. That is a Cloudflare configuration change and needs the owner's decision.
+- Cloudflare finding (infrastructure, not the client): on a store hostname, the first HEAD of a key with a cacheable extension (for example `.bin`) returned 403. Cloudflare served that HEAD as a GET to the origin, so the SigV4 signature did not match, and it may have cached the object at the edge. Fleet keys are content hashes and `.pending/<id>.<store>`, so they have no such extension. The owner approved a cache-bypass rule on the `fleet-store-*` hostnames; it was added on 2026-11-10 and verified (see docs/infrastructure-build.md).
