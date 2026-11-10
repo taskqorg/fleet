@@ -437,7 +437,11 @@ impl Gateway {
             let usage = serde_json::from_slice::<Value>(&bytes).ok().and_then(|v| v["usage"][&tool.unit].as_u64());
             let (outcome, error) =
                 if status.is_success() { ("ok", None) } else { ("error", Some(format!("provider-{}", status.as_u16()))) };
-            let problem = (status.as_u16() == 403).then(|| (id.clone(), String::from_utf8_lossy(&bytes[..bytes.len().min(500)]).into_owned()));
+            // The provider's own words, cut to 500 bytes, with the key value removed in case the provider echoed it.
+            let problem = (status.as_u16() == 403).then(|| {
+                let text = String::from_utf8_lossy(&bytes[..bytes.len().min(500)]).replace(&value, "[key]");
+                (id.clone(), text)
+            });
             return Answer { status, body: bytes, retry_after, outcome, error, key: Some(id.clone()), usage, disabled: None, problem };
         }
         refusal(StatusCode::BAD_GATEWAY, "error", "provider-unreachable", &format!("no key reached the provider; last failure: {last_failure}"))

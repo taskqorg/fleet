@@ -72,7 +72,7 @@ export function connectionRegistry(store:Store,config:{secretDir?:string,gateway
    if(k.state==='disabled'&&to!=='retired')owner();// a disabled key comes back only through the owner (G3)
    if(to===k.state)return k;await change(c,'key:'+k.fingerprint,k.state,to);
    if(to==='retired'){const file=join(dirOf(c.name),k.fingerprint);after(()=>rmSync(file,{force:true}))}
-   Object.assign(k,{state:to,updatedAt:Date.now()});if(to==='active'){delete k.disabledReason;delete k.disabledAt;k.enabledAt=Date.now()}await put('connection-key',k);publish();return k},
+   Object.assign(k,{state:to,updatedAt:Date.now()});if(to==='active'){delete k.disabledReason;delete k.disabledAt;delete k.problem;k.enabledAt=Date.now()}await put('connection-key',k);publish();return k},
   connections_set_access:async(b:any)=>{const c=await byName(b?.connection);holderOrOwner(c);const a=b.access??{};
    if(Object.keys(a).some(k=>!['people','projects','experiments'].includes(k)))fail(400,'access: {people, projects, experiments}');
    const next={people:list(a.people??[],'people').map(e=>e.toLowerCase()),projects:list(a.projects??[],'projects'),experiments:list(a.experiments??[],'experiments')};
