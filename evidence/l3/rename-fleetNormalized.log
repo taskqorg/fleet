@@ -2,7 +2,6 @@
 packages/coordinator/recovery.ts(15,39): error TS2551: Property 'fleetNormalized' does not exist on type 'EventData'. Did you mean 'normalized'?
 exit=1
 ## app: tsc -p app
-app/src/transcript.ts(19,57): error TS2551: Property 'fleetNormalized' does not exist on type 'EventData'. Did you mean 'normalized'?
 packages/coordinator/recovery.ts(15,39): error TS2551: Property 'fleetNormalized' does not exist on type 'EventData'. Did you mean 'normalized'?
 exit=1
 ## executor: cargo build
