@@ -1,0 +1,29 @@
+[
+ {
+  "id": "assetq:datasets",
+  "source": {
+   "repo": "assetq",
+   "path": "docs/method-evaluation.md",
+   "anchor": "immutable-inputs-and-bounded-execution",
+   "commit": "a8696098455d5cdbb1e9305ef0c47c888e72bd78",
+   "sha256": "827c1b70c53fa05e2890a2bff8b6edf7f82e699dfbfc57a2046885161e3624f8"
+  },
+  "source_status": "current",
+  "actor": "architect",
+  "goal": "Compare Pipe methods on registered dataset cases (id, text, attachments)",
+  "expected_outcome": "Each case runs through each method; technical outcome, usage and the owner judgment are recorded per sample",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "assetq",
+   "pipe"
+  ],
+  "maturity": "synthetic ready"
+ }
+]

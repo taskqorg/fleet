@@ -1,0 +1,371 @@
+[
+ {
+  "id": "taskq:UC-01",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-01-start-work-on-a-project",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "f58692a291cf22e5a84de7c258a52e255ec7dd3fb968a5473250e5d3650eb70e"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Start work on a project",
+  "expected_outcome": "the intended project is registered, its board is accessible, and admission scope is clear.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "taskq:UC-02",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-02-manage-a-project-through-an-agent",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "13f0d7367f74f6b550b2ec8b4e63b840acb6ded803df4eb82b78a43b25a2fe39"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Manage a project through an agent",
+  "expected_outcome": "each request is accounted for once through a task, task update or direct response.",
+  "checks": [],
+  "lab_fit": "behavior",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "taskq:UC-03",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-03-move-from-idea-to-implementation",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "e5ff032fa1b89103d654d0da85c7742a7efc7e2abaab3a246365ad7f84689bc8"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Move from idea to implementation",
+  "expected_outcome": "requirements, tasks and execution order agree. Completed planning is not a completed product.",
+  "checks": [],
+  "lab_fit": "behavior",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "taskq:UC-04",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-04-admit-urgent-work-without-exceeding-limits",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "9ef1b16683c61868039512331d9be79526714164e1e219869f68e209438253b0"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Admit urgent work without exceeding limits",
+  "expected_outcome": "urgent work receives priority without bypassing execution constraints.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "taskq:UC-05",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-05-select-work-in-natural-language",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "fea5ce7190b4fcba7097cc48546a1addb9b9427d1e7143cb41581ec11338ee28"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Select work in natural language",
+  "expected_outcome": "execution matches the confirmed intent; the owner can inspect the translation.",
+  "checks": [],
+  "lab_fit": "behavior",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "taskq:UC-06",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-06-complete-work-across-five-repositories",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "36678c199dcf575fcaf6ff27869a01a281e029a47e438ea8008a55d7344770f5"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Complete work across five repositories",
+  "expected_outcome": "reproducible work across the required repositories; preserved output and verifiable cleanup.",
+  "checks": [],
+  "lab_fit": "work",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "taskq:UC-07",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-07-turn-a-large-plan-into-dependent-and-parallel-tasks",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "b53ad7e557d58544c6c81ddef689f154f102b79fa32016eb1f047a1bb9b97484"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Turn a large plan into dependent and parallel tasks",
+  "expected_outcome": "the plan becomes an inspectable queue. Dependencies determine order; capacity and capabilities bound parallelism.",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "synthetic ready"
+ },
+ {
+  "id": "taskq:UC-08",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-08-control-worker-access",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "4c6c796dfda2403890964deb2593249f5dbf153c6d7131132252c137da49db11"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Control worker access",
+  "expected_outcome": "operator intent matches effective access; project/task content cannot grant authority.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "taskq:UC-09",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-09-answer-without-leaving-the-task",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "6f77b62d2904fadbcd6a8116884be3ea25fecd7ad5f18c9765a76d573a8a20a1"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Answer without leaving the task",
+  "expected_outcome": "the intended task receives one owner answer, without opening an external agent.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "taskq:UC-10",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-10-continue-through-another-agent-or-client",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "546f07846e509ed42ad7652a3fff69657ddbc3dedaff3302cea57d97d8ffb277"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Continue through another agent or client",
+  "expected_outcome": "management can change while board work remains intact. Provider migration is a separate operation.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "taskq:UC-11",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-11-work-with-agent-desktops-closed",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "4abfbddcfd97629f2ae445f6ccd9345c1c248e15d802d7f8927eb2c50f0aca04"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Work with agent desktops closed",
+  "expected_outcome": "no external agent desktop is needed for the supported headless path. Planning and runtime adapters require end-to-end qualification.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "taskq:UC-12",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-12-control-computers-with-different-resources-and-access",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "f534143ccd997904c3b079f21656409a1c0a002dc35af97753b72198a2189bba"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Control computers with different resources and access",
+  "expected_outcome": "the owner can explain where work runs and why it waits. Shared budgets/fairness remain Q4 work.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "taskq:UC-13",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-13-interrupt-recover-and-switch-work",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "ddce87fc194a2ff47ee0312e72db89ae13080f6725829e5c6bdc14e8b87b1157"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Interrupt, recover and switch work",
+  "expected_outcome": "visible state and recoverable work; no duplicate launch/publication. Policy choices D12; runtime gates G1/G2/G3 remain.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "taskq:UC-14",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-14-review-evidence-and-deliver",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "0a435d79727cfd4e412a1a19692a7833b9ccc94a8c1fac21b0ac76c660ae3325"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Review evidence and deliver",
+  "expected_outcome": "the owner knows what is verified and delivered. D04/D10 and G4/G7 govern outstanding behavior.",
+  "checks": [],
+  "lab_fit": "behavior",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "taskq:UC-15",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-15-inspect-the-system-in-daily-use",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "d4052f10cda3c63944614cfca2f076a3b9c0d2b09db9e2f93bbdd78becadc2f8"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Inspect the system in daily use",
+  "expected_outcome": "common control remains compact and inspectable; native matrix and G8 qualify real platform behavior.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "taskq:UC-16",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-16-describe-and-revise-a-tray-icon",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "ad03ad8ce2773cf2a863a561a9de72c14cb041d767fd5afa9c3a36e148febe71"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Describe and revise a tray icon",
+  "expected_outcome": "",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "synthetic ready"
+ },
+ {
+  "id": "taskq:UC-17",
+  "source": {
+   "repo": "taskq",
+   "path": "docs/use-cases/README.md",
+   "anchor": "uc-17-plan-and-supervise-through-a-remote-chat-agent",
+   "commit": "21d09b91dbeed82983135f6a4f19e40a9e555c2b",
+   "sha256": "1d5d1f1a9b1178a9e8983acdc8c75baa641131d7de0d940c5268f5da6ce1b25f"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Plan and supervise through a remote chat agent",
+  "expected_outcome": "a replaceable remote PM provides planning and owner control while TaskQ executes independently. Covers UC-02/03/07/09/10/12/14 without a second queue.",
+  "checks": [],
+  "lab_fit": "behavior",
+  "tags": [
+   "taskq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ }
+]
