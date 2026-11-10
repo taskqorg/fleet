@@ -294,10 +294,23 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  // keeps them from calling Fleet or anything else. The viewer frames it with the same sandbox; opened alone it is the same.
  // No popups. A script can still navigate its own frame away (CSP cannot stop that), but it holds nothing of Fleet's to send.
  // ponytail: same host as the app; a separate results origin when one is configured would add a second wall.
+ // The page's own files (logo.svg, style.css, app.js beside index.html in the same run) are inlined as data: URLs when served:
+ // requests from the opaque origin would be cross-site and carry no Access cookie. Common CDNs load over https.
+ // ponytail: whole sibling files are inlined (memory per preview = page plus its files); a separate results origin with its own
+ // credentials would let the frame fetch them by URL instead.
  app.get('/api/results/:id/preview',async(req:any,r)=>{const a=await artifacts.get(req.params.id);if(a.state!=='stored')fail(404,'Not found');
   const type=a.mediaType||'';if(!/^(text\/html|image\/svg\+xml)\b/.test(type))fail(415,'No interactive preview for '+type);
-  r.header('Content-Security-Policy',"sandbox allow-scripts allow-forms allow-modals; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' data: blob:; style-src 'unsafe-inline' data:; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'");
-  return r.type(type).send(await artifacts.read(a.id))});
+  r.header('Content-Security-Policy',"sandbox allow-scripts allow-forms allow-modals; default-src 'none'; script-src https: 'unsafe-inline' 'unsafe-eval' data: blob:; style-src https: 'unsafe-inline' data:; img-src https: data: blob:; media-src https: data: blob:; font-src https: data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'");
+  if(!/^text\/html\b/.test(type)||!a.executionId)return r.type(type).send(await artifacts.read(a.id));
+  const html=(await artifacts.readBuffer(a.id,Number(a.size)||0)).toString('utf8'),dir=String(a.name??'').split('/').slice(0,-1);
+  const siblings=new Map<string,any>((await all('artifact',{executionId:a.executionId},['contentBase64'])).map((x:any)=>[String(x.path),x]));
+  const inline=new Map<string,string>();
+  for(const m of html.matchAll(/\b(?:src|href)\s*=\s*["']([^"'#?]+)(?:[?#][^"']*)?["']/gi)){const ref=m[1];if(/^[a-z][a-z0-9+.-]*:|^\/\//i.test(ref)||ref.startsWith('/')||inline.has(ref))continue;
+   const parts=[...dir];for(const seg of ref.split('/')){if(seg==='..')parts.pop();else if(seg&&seg!=='.')parts.push(seg)}
+   const f=siblings.get(parts.join('/'));if(!f)continue;
+   const bytes=await artifacts.readBuffer(f.artifactId??f.id,Number(f.size)||0);inline.set(ref,`data:${f.mediaType||'application/octet-stream'};base64,${bytes.toString('base64')}`)}
+  const out=html.replace(/(\b(?:src|href)\s*=\s*["'])([^"'#?]+)((?:[?#][^"']*)?["'])/gi,(all,pre,ref,post)=>inline.has(ref)?pre+inline.get(ref)+post.replace(/^[?#][^"']*/,''):all);
+  return r.type(type).send(out)});
  // Pipeline v2 runner (docs/designs/fleet-lab.md "Pipeline format version 2"): api steps call connections from this host; agent steps are
  // ordinary agent executions with the step's profile (variant overrides applied); script steps are executor script commands.
  const configDir=config.projectConfigDirectory||'config',profilesDir=config.profilesDirectory||'config/agents';

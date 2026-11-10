@@ -39,6 +39,12 @@ test('upload: staging, re-hash by the store host, promotion to the content key; 
  const pv=await app.inject({url:'/api/results/'+small+'/preview',headers:{authorization:'Bearer b'}});assert.equal(pv.statusCode,200);
  const csp=String(pv.headers['content-security-policy']);assert.match(csp,/sandbox allow-scripts/);assert.doesNotMatch(csp,/allow-same-origin/);assert.match(csp,/connect-src 'none'/);
  assert.equal((await app.inject({url:'/api/results/'+bin+'/preview',headers:{authorization:'Bearer b'}})).statusCode,415);
+ // A design page loads its own files (inlined from the same run) and CDN files (https), never Fleet by URL.
+ await upload(app,'m',{hostId:'mac',executionId:'e1',path:'site/logo.svg',content:'<svg xmlns="http://www.w3.org/2000/svg"/>',mediaType:'image/svg+xml'});
+ const page=await upload(app,'m',{hostId:'mac',executionId:'e1',path:'site/index.html',content:'<img src="logo.svg"><img src="./logo.svg?v=1"><script src="https://cdn.jsdelivr.net/npm/x@1/x.js"></script><a href="missing.css">',mediaType:'text/html'});
+ const prev=await app.inject({url:'/api/results/'+page+'/preview',headers:{authorization:'Bearer b'}});
+ assert.equal((prev.body.match(/src="data:image\/svg\+xml;base64,/g)??[]).length,2);assert.match(prev.body,/src="https:\/\/cdn\.jsdelivr\.net/);assert.match(prev.body,/href="missing\.css"/);
+ assert.match(String(prev.headers['content-security-policy']),/img-src https: data:/);
  // Results page reads: newest first in pages, filtered by state, media family, name and project.
  const list=async(b:any)=>(await app.inject({method:'POST',url:'/api/ops/artifact_list',headers:{authorization:'Bearer b'},payload:b})).json();
  const p1=await list({limit:2});assert.equal(p1.artifacts.length,2);assert.ok(p1.artifacts[0].seq>p1.artifacts[1].seq);assert.equal(typeof p1.nextBefore,'number');
@@ -46,7 +52,7 @@ test('upload: staging, re-hash by the store host, promotion to the content key; 
  assert.ok((await list({limit:50,mediaType:'text/'})).artifacts.every((x:any)=>x.mediaType.startsWith('text/')));
  assert.deepEqual((await list({limit:50,q:'tool'})).artifacts.map((x:any)=>x.name),['tool.bin']);
  assert.equal((await list({limit:50,states:['failed']})).artifacts.length,0);assert.equal((await list({limit:50,projectIds:['nope']})).artifacts.length,0);
- assert.deepEqual((await (app as any).store.all('artifact',{sessionId:'s1'})).map((x:any)=>x.path),['model.glb','script.stderr','copy.glb','index.html','tool.bin']);
+ assert.deepEqual((await (app as any).store.all('artifact',{sessionId:'s1'})).map((x:any)=>x.path),['model.glb','script.stderr','copy.glb','index.html','tool.bin','site/logo.svg','site/index.html']);
  await app.close()});
 
 test('a wrong hash fails and never overwrites a verified object; sizes, leases and stores are checked',async()=>{const {app,s,A,fake,call}=await setup();await register(call,fake);
