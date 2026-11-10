@@ -562,6 +562,10 @@ func artifactReserve(q *Request) (any, error) {
 	var b map[string]any
 	decode(q.body, &b)
 	sv := func(k string) string { s, _ := b[k].(string); return s }
+	// The execution is required before anything is read: hostOwned checks its host only when it is named.
+	if sv("executionId") == "" {
+		return nil, fail(400, "Expected executionId")
+	}
 	id := sv("artifactId")
 	if !artifactIDPattern.MatchString(id) {
 		id = uuid()
