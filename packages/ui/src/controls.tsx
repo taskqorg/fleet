@@ -340,7 +340,7 @@ export function ArtifactView({ a, src }: { a: ArtifactMeta; src: string }) {
     if (fmt === 'svg') return <div class="av-frame"><img src={src} alt={a.name} /></div>;
     if (fmt === 'markdown') return scroller(<Markdown text={text} />);
     if (fmt === 'json') return scroller(<pre><code>{next < a.size ? text : pretty(text)}</code></pre>);
-    const [head, ...rows] = parseCsv(text);
+    const all = parseCsv(text), [head, ...rows] = next < a.size ? all.slice(0, -1) : all; // the last row of a partial page may be cut
     return scroller(<table class="av-table"><thead><tr>{(head ?? []).map((h, i) => <th key={i}>{h}</th>)}</tr></thead><tbody>{rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>)}</tbody></table>);
   };
   return <div class="av" data-ui="artifact-view">
@@ -349,7 +349,7 @@ export function ArtifactView({ a, src }: { a: ArtifactMeta; src: string }) {
     {kind === 'text' && <>
       <div class="bar">
         {fmt && <Button label={mode === 'preview' ? 'Source' : 'Preview'} icon={mode === 'preview' ? 'type' : 'panels-top-left'} onClick={flip} />}
-        <Button label="Copy source" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(text).catch(e => setErr(e.message))} />
+        <Button label="Copy source" icon={actions.copy} iconOnly kind="quiet" onClick={() => (next < a.size ? fetch(src, { credentials: 'same-origin' }).then(r => r.text()) : Promise.resolve(text)).then(copyText).catch(e => setErr(e.message))} />
       </div>
       {fmt && mode === 'preview' ? rendered() : scroller(<pre><code>{text}</code></pre>)}
     </>}
