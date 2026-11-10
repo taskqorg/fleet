@@ -382,7 +382,7 @@ Six phases, one pull request each; every phase builds and passes `go test ./...`
 
 ### Verification Plan
 
-*   **Build**: `pnpm run build`; `cd go && go generate ./... && go build ./...`.
+*   **Build**: `pnpm run build`; `cd go && go build ./...`.
 *   **Unit tests**: `cd go && go vet ./... && go test ./...`.
 *   **Release dry run**: replaced by the first real release (owner's call): tag on `main`, PDS18 and the other hosts update themselves; a rollback test with a deliberately broken selftest on a test tag.
 *   **Live**: first tag on `main`; `hosts_list` shows PDS18 then every executor at the new version with `update.state: ok`.
