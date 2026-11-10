@@ -130,8 +130,9 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
  async function get(id:string,hostId?:string){const legacyDoc=await legacyDocument(id);if(legacyDoc)return {id:legacyDoc.id,legacyId:legacyDoc.id,projectId:null as string|null,executionId:legacyDoc.executionId,name:legacyDoc.path,mediaType:legacyDoc.mediaType,size:legacyDoc.size,sha256:legacyDoc.sha256,state:'stored',availability:'available',copies:[]};const a=await row(id),copies=await store.query('SELECT store_id,state,verified_at FROM artifact_copy WHERE artifact_id=$1 ORDER BY store_id',[a.id]);
   const s=a.state==='stored'?await source(a,hostId):undefined;
   return {...view(a),copies:copies.map((c:any)=>({storeId:c.store_id,state:c.state})),availability:a.state!=='stored'?a.state:s?'available':'unavailable',...(s?{url:await presign(s,hostId??'',new GetObjectCommand({Bucket:s.bucket,Key:keyOf(a),ResponseContentType:a.media_type}))}:{})}}
- async function list(f:{executionId?:string,taskId?:string,mediaType?:string,projectId?:string}={}){const c:string[]=[],p:any[]=[];
+ async function list(f:{executionId?:string,taskId?:string,mediaType?:string,projectId?:string,noExamples?:boolean}={}){const c:string[]=[],p:any[]=[];
   for(const [k,col] of [['executionId','execution_id'],['taskId','task_id'],['mediaType','media_type'],['projectId','project_id']] as const)if(typeof f[k]==='string'){p.push(f[k]);c.push(`${col}=$${p.length}`)}
+  if(f.noExamples)c.push("role<>'example'");
   return (await store.query(`SELECT * FROM artifact${c.length?' WHERE '+c.join(' AND '):''} ORDER BY seq`,p)).map((r:any)=>view({...r,size:Number(r.size)}))}
 
  // Forced purge (operator): every store, now where reachable, pending where not; the hash is refused from then on.
@@ -188,18 +189,22 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
    return legacySelect(c.join(''),p,d.join(''),dp)},
   many:async(ids:string[])=>new Map((await legacySelect(' AND (a.id=ANY($1) OR a.legacy_id=ANY($1))',[ids],' AND id=ANY($1)',[ids])).map(r=>[r.id,r])),
  };
+ // An object the coordinator writes itself (backfill, Lab examples): it hashed the bytes, so the object goes straight to its
+ // content key when that key is absent. Null when no store of the project's locations is reachable.
+ async function writeObject(projectId:string|null,scope:'lab'|'prod',bytes:Buffer,mediaType:string){const target=await select(deps.locations(projectId),'');if(!target)return null;
+  const hash=(await import('node:crypto')).createHash('sha256').update(bytes).digest('hex'),key=keyOf({project_id:projectId,scope,content_hash:hash} as ArtifactRow);
+  const exists=await s3(target).send(new HeadObjectCommand({Bucket:target.bucket,Key:key})).then(()=>true,()=>false);if(!exists)await s3(target).send(new PutObjectCommand({Bucket:target.bucket,Key:key,Body:bytes,ContentType:mediaType}));
+  return {target,hash}}
  // Backfill (Phase 3 item 26c): base64 documents move to a store of their project's locations, one at a time, idempotently.
  // The coordinator computed the hash itself, so the object is written straight to its content key when that key is absent.
  async function backfill(limit=50){let moved=0;
   for(const r of await store.query("SELECT data FROM document WHERE kind='artifact' ORDER BY seq LIMIT $1",[limit])){const d=r.data,bytes=Buffer.from(d.contentBase64??'','base64');
    const e=d.executionId?await store.executions.get(d.executionId).catch(()=>null):null,projectId=e?.projectId??null,scope=e?.experimentId?'lab' as const:'prod' as const;
-   const target=await select(deps.locations(projectId),'');if(!target)break;
-   const hash=(await import('node:crypto')).createHash('sha256').update(bytes).digest('hex'),a={project_id:projectId,scope,content_hash:hash} as ArtifactRow,key=keyOf(a);
-   const exists=await s3(target).send(new HeadObjectCommand({Bucket:target.bucket,Key:key})).then(()=>true,()=>false);if(!exists)await s3(target).send(new PutObjectCommand({Bucket:target.bucket,Key:key,Body:bytes,ContentType:d.mediaType??'application/octet-stream'}));
+   const w=await writeObject(projectId,scope,bytes,d.mediaType??'application/octet-stream');if(!w)break;const {target,hash}=w;
    const id=randomUUID();await store.tx(async()=>{await store.query("INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,task_id,state,legacy_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'stored',$10) ON CONFLICT(legacy_id) DO NOTHING",[id,projectId,scope,hash,bytes.length,d.mediaType??'application/octet-stream',d.path??d.id,d.executionId??null,e?.taskId??null,d.id]);
     await store.query("INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) SELECT id,$2,$3,'verified',now() FROM artifact WHERE legacy_id=$1 ON CONFLICT DO NOTHING",[d.id,target.id,projectId]);
     await store.query("DELETE FROM document WHERE kind='artifact' AND id=$1",[d.id])});moved++}
   return moved}
- return {backfill,reserve,parts,commit,renew,declare,verified,read,readBuffer,get,list,purge,expireLeases,requirement,adapter,s3,presign,keyOf,stagingOf,row,select,PART_SIZE};
+ return {backfill,writeObject,reserve,parts,commit,renew,declare,verified,read,readBuffer,get,list,purge,expireLeases,requirement,adapter,s3,presign,keyOf,stagingOf,row,select,PART_SIZE};
 }
 export type Artifacts=ReturnType<typeof artifactModel>;

@@ -1,0 +1,31 @@
+{
+ "id": "taskq-uc07-plan-split",
+ "use_case_id": "taskq:UC-07",
+ "version": 1,
+ "origin": "synthetic",
+ "fixture": null,
+ "prompt": "Read plan.md and turn it into tasks. Write tasks.json: a JSON array of {\"id\", \"title\", \"depends_on\": [ids]}, one task per plan step, no duplicate tasks, dependencies exactly as the plan states them, no cycles.",
+ "inputs": [
+  {
+   "path": "plan.md",
+   "text": "# Plan: export of task history\n\n1. Define the export file format (JSON lines, one task per line).\n2. Add a database query that pages through task history; it needs the format.\n3. Add the CLI command `export-history`; it needs the query.\n4. Add an HTTP route for the export; it needs the query.\n5. Write tests for the CLI command and the route.\n6. Document the command and the route; this can start once the format is defined.\n"
+  }
+ ],
+ "references": [
+  {
+   "path": "tasks.json",
+   "text": "[\n {\n  \"id\": \"format\",\n  \"title\": \"Define the export file format\",\n  \"depends_on\": []\n },\n {\n  \"id\": \"query\",\n  \"title\": \"Add the paging history query\",\n  \"depends_on\": [\n   \"format\"\n  ]\n },\n {\n  \"id\": \"cli\",\n  \"title\": \"Add the export-history CLI command\",\n  \"depends_on\": [\n   \"query\"\n  ]\n },\n {\n  \"id\": \"route\",\n  \"title\": \"Add the HTTP export route\",\n  \"depends_on\": [\n   \"query\"\n  ]\n },\n {\n  \"id\": \"tests\",\n  \"title\": \"Test the CLI command and the route\",\n  \"depends_on\": [\n   \"cli\",\n   \"route\"\n  ]\n },\n {\n  \"id\": \"docs\",\n  \"title\": \"Document the command and the route\",\n  \"depends_on\": [\n   \"format\"\n  ]\n }\n]\n"
+  }
+ ],
+ "checks": [
+  {
+   "id": "graph",
+   "run": "node -e \"const t=JSON.parse(require('fs').readFileSync('tasks.json','utf8'));if(!Array.isArray(t)||t.length<6)throw Error('expected 6 or more tasks');const ids=new Set(t.map(x=>x.id));if(ids.size!==t.length)throw Error('duplicate id');if(new Set(t.map(x=>x.title.toLowerCase())).size!==t.length)throw Error('duplicate title');for(const x of t)for(const d of x.depends_on)if(!ids.has(d))throw Error('missing dependency '+d);const seen=new Map();const visit=id=>{if(seen.get(id)===1)throw Error('cycle at '+id);if(seen.get(id)===2)return;seen.set(id,1);for(const d of t.find(x=>x.id===id).depends_on)visit(d);seen.set(id,2)};t.forEach(x=>visit(x.id))\""
+  },
+  {
+   "id": "order",
+   "run": "node -e \"const t=JSON.parse(require('fs').readFileSync('tasks.json','utf8'));const by=n=>t.find(x=>new RegExp(n,'i').test(x.title));const q=by('query'),c=by('cli|command'),r=by('route|http');if(!q||!c||!r)throw Error('query, CLI and route tasks expected');if(!c.depends_on.includes(q.id)||!r.depends_on.includes(q.id))throw Error('CLI and route must depend on the query')\""
+  }
+ ],
+ "split": "tune"
+}

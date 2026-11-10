@@ -17,7 +17,8 @@ import {agentTools} from './agent-tools.js';
 import {storeRegistry,accessToken} from './stores.js';
 import {artifactModel,type Artifacts} from './artifacts.js';
 import {placementWorker} from './placement.js';
-export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRetentionDays?:number,nativeHostIds?:string[],database:string,store?:Store,browserSecret:string,machineSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,storeSecrets?:string,storeEndpointHosts?:string[],cfAccessFile?:string,defaultArtifactLocations?:string[],artifactRetryWindowMs?:number,placementIntervalMs?:number,projectConfigDirectory?:string,pipeConnectionFile?:string,integrationHostId?:string,publicationHostId?:string,testSiteRoot?:string,defaultAccountBinding?:string}) {
+import {labExamples} from './lab/examples.js';
+export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRetentionDays?:number,nativeHostIds?:string[],database:string,store?:Store,browserSecret:string,machineSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,storeSecrets?:string,storeEndpointHosts?:string[],cfAccessFile?:string,defaultArtifactLocations?:string[],artifactRetryWindowMs?:number,placementIntervalMs?:number,projectConfigDirectory?:string,pipeConnectionFile?:string,integrationHostId?:string,publicationHostId?:string,testSiteRoot?:string,defaultAccountBinding?:string,labDirectory?:string}) {
  if(!config.browserSecret||!config.machineSecret||config.browserSecret===config.machineSecret) throw Error('Distinct credentials required');
  if(config.browserProxyAuth&&!config.browserOrigin)throw Error('Proxy browser auth requires configured browser origin');
  const ownStore=!config.store,store=config.store??createStore(config.database),{all,get,put}=store;
@@ -181,13 +182,14 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   if(typeof b.commandId==='string'){const c=await get(b.commandId,'command').catch(()=>null);
    const named=c?.kind==='delivery-step'?(c.payload?.files??[]).map((f:any)=>f?.artifactId):['artifact-copy','artifact-verify'].includes(c?.kind)?[c.payload?.artifactId]:[];
    if(c&&c.hostId===b.hostId&&['pending','accepted','started'].includes(c.status)&&named.some((x:any)=>typeof x==='string'&&(x===a.id||x===a.legacyId)))return a}
-  if(typeof b.executionId==='string'){(await owned(b));const e=await store.executions.get(b.executionId);if(a.executionId===e.id||(e.projectId&&a.projectId===e.projectId))return a}
+  // Lab examples hold reference results: no agent reads them through the host routes (Stage 2 hands a trial its inputs only).
+  if(typeof b.executionId==='string'){(await owned(b));const e=await store.executions.get(b.executionId);if((a as any).role!=='example'&&(a.executionId===e.id||(e.projectId&&a.projectId===e.projectId)))return a}
   return fail(403,'Artifact not readable by this host')};
  app.post('/api/hosts/artifacts/get',hostArtifact(async b=>artifacts.get((await hostMayRead(b)).id,b.hostId)));
  app.post('/api/hosts/artifacts/read',async(req:any,r:any)=>{const b=req.body??{};(await owned({hostId:b.hostId}));const a=await hostMayRead(b);return r.type(a.mediaType||'application/octet-stream').send(await artifacts.read(a.id))});
  // artifact_list for an agent: artifacts of its own project (or its own execution when it has no project).
  app.post('/api/hosts/artifacts/list',async(req:any)=>{const b=req.body??{};(await owned(b));const e=await store.executions.get(text(b.executionId,200));const f=b.filter??{};
-  return {artifacts:await artifacts.list({executionId:!e.projectId?e.id:typeof f.executionId==='string'?f.executionId:undefined,taskId:typeof f.taskId==='string'?f.taskId:undefined,mediaType:typeof f.mediaType==='string'?f.mediaType:undefined,projectId:e.projectId??undefined})}});
+  return {artifacts:await artifacts.list({executionId:!e.projectId?e.id:typeof f.executionId==='string'?f.executionId:undefined,taskId:typeof f.taskId==='string'?f.taskId:undefined,mediaType:typeof f.mediaType==='string'?f.mediaType:undefined,projectId:e.projectId??undefined,noExamples:true})}});
  app.post('/api/hosts/stores',async(req:any)=>{const b=req.body??{};(await owned({hostId:b.hostId}));return store.tx(()=>stores.register(b.hostId,b.store))});
  // Results stream from a verified copy with the same sandbox as before (no size limit; bytes never sit in the coordinator).
  app.get('/api/results/:id',async(req:any,r)=>{const a=await artifacts.get(req.params.id);if(a.state!=='stored')fail(404,'Not found');r.header('Content-Security-Policy',"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:");return r.type(a.mediaType||'application/octet-stream').send(await artifacts.read(a.id))});
@@ -218,6 +220,11 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   await put('command',{id:randomUUID(),executionId:id,sessionId:sid,hostId,kind,status:'pending',payload})};
  artifacts=artifactModel(store,{stores,locations,access:()=>accessToken(config.cfAccessFile),retryWindowMs:()=>config.artifactRetryWindowMs??86400000,queueCommand:(h,k,p)=>store.tx(()=>queueCommand(h,k,p)),onSettled:(id:string)=>store.tx(()=>settle(id))});
  store.registerKind('artifact',artifacts.adapter);
+ // Lab examples (docs/designs/fleet-lab.md Stage 1): owner import, list, read. Experiments and the screen come in Stage 3.
+ const examples=labExamples(store,artifacts,config.labDirectory||'config/lab');
+ app.post('/api/lab/examples',async(req:any)=>examples.add(req.body??{}));
+ app.get('/api/lab/examples',async(req:any)=>examples.list({state:req.query?.state}));
+ app.get('/api/lab/examples/:id',async(req:any)=>examples.get(req.params.id));
  const placement=placementWorker(store,{stores,artifacts,locations,rules:rulesOf,queueCommand:(h,k,p)=>store.tx(()=>queueCommand(h,k,p)),retryWindowMs:()=>config.artifactRetryWindowMs??86400000,onExpired:(id:string)=>store.tx(()=>settle(id,'artifact retry window passed'))});
  Object.assign(projects,{
   artifact_list:async(b:any)=>({artifacts:await artifacts.list({executionId:b?.executionId,taskId:b?.taskId,mediaType:b?.mediaType,projectId:b?.projectId})}),

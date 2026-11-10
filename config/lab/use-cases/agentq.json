@@ -1,0 +1,149 @@
+[
+ {
+  "id": "agentq:A1",
+  "source": {
+   "repo": "agentq",
+   "path": "docs/spec/VERIFICATION.md",
+   "anchor": "A1",
+   "commit": "1f0c7221e1d796294988adebb079e40a7168f89d",
+   "sha256": "88171223f1f46890188ec655e3bb36722dee150100c2de762156766015837474"
+  },
+  "source_status": "current",
+  "actor": "owner",
+  "goal": "One-link onboarding",
+  "expected_outcome": "selected real client round trip; correct installation/agent visible centrally; repeat preserves unrelated configuration",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "agentq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "agentq:A2",
+  "source": {
+   "repo": "agentq",
+   "path": "docs/spec/VERIFICATION.md",
+   "anchor": "A2",
+   "commit": "1f0c7221e1d796294988adebb079e40a7168f89d",
+   "sha256": "cc53b812e90662a9dad66d4dfa5b806a22762a5001d5959956044a8497eb6cf6"
+  },
+  "source_status": "current",
+  "actor": "owner",
+  "goal": "Upgrade",
+  "expected_outcome": "owned optimizer integrations retired; native work and saved-chat resume intact; foreign edits retained",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "agentq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "agentq:A3",
+  "source": {
+   "repo": "agentq",
+   "path": "docs/spec/VERIFICATION.md",
+   "anchor": "A3",
+   "commit": "1f0c7221e1d796294988adebb079e40a7168f89d",
+   "sha256": "ecde8b4f7910617d0bb6e1c833ae1c3144dce72de4d54d23bd681fdaddfa462f"
+  },
+  "source_status": "current",
+  "actor": "owner",
+  "goal": "New release",
+  "expected_outcome": "verified stage; transactional activation; startup migration or reported conflict; identities/history unchanged and actual version visible",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "agentq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "agentq:A4",
+  "source": {
+   "repo": "agentq",
+   "path": "docs/spec/VERIFICATION.md",
+   "anchor": "A4",
+   "commit": "1f0c7221e1d796294988adebb079e40a7168f89d",
+   "sha256": "5c919c7be0e5486fd491c7884dd965ea71e15da24db19091c3a54febcdf55442"
+  },
+  "source_status": "current",
+  "actor": "owner",
+  "goal": "Record hook/exporter unavailable, duplicate delivery or full storage",
+  "expected_outcome": "work preserved or direct access restored; no double count; truthful backlog/incident",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "agentq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "agentq:A5",
+  "source": {
+   "repo": "agentq",
+   "path": "docs/spec/VERIFICATION.md",
+   "anchor": "A5",
+   "commit": "1f0c7221e1d796294988adebb079e40a7168f89d",
+   "sha256": "6d808a9d8bab0938f3599fce6ff83650727b3bd156392901ea2fab5ae968881c"
+  },
+  "source_status": "current",
+  "actor": "owner",
+  "goal": "Dry-run",
+  "expected_outcome": "uninstall; native client access; only owned components removed, reused tools/later edits preserved; repeat no-op",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "agentq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "agentq:A6",
+  "source": {
+   "repo": "agentq",
+   "path": "docs/spec/VERIFICATION.md",
+   "anchor": "A6",
+   "commit": "1f0c7221e1d796294988adebb079e40a7168f89d",
+   "sha256": "21fa2a01cf0b9e87ee928a12af8d28c22402e8f54d2111033e0a445d74ec9cb7"
+  },
+  "source_status": "current",
+  "actor": "owner",
+  "goal": "Two owners/profiles/runtimes",
+  "expected_outcome": "correlated usage/health; dashboard and agent query agree; members cannot read another owner's data",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "agentq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "agentq:A7",
+  "source": {
+   "repo": "agentq",
+   "path": "docs/spec/VERIFICATION.md",
+   "anchor": "A7",
+   "commit": "1f0c7221e1d796294988adebb079e40a7168f89d",
+   "sha256": "f31e2528a4aaa75d99a1b73781ce0aed56d0ab3aac33fa8d4c0c2c9ce4566437"
+  },
+  "source_status": "current",
+  "actor": "owner",
+  "goal": "One real launch per runtime for each failure: no client, old client, no login, exhausted quota, untrusted folder, missing root, unenforceable policy, unwritable log",
+  "expected_outcome": "refused before spawn with its cause and no tokens; repair; same launch runs; hook loss or telemetry outage; work completes, degraded visible; client waiting for input; visible starting or stall state with its age, cancellable",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "agentq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ }
+]
