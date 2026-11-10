@@ -28,7 +28,7 @@ fn private(p: &Path) -> Result<()> {
 /// Claude stream-json rate_limit_event to a limit_reading: status and reset time, never a percent.
 pub fn claude_limit_reading(v: &Value) -> Value {
     let i = v.get("rate_limit_info").unwrap_or(v);
-    let period = match i["rateLimitType"].as_str() { Some("five_hour") => "5h", Some("seven_day" | "seven_day_opus" | "seven_day_sonnet") => "weekly", Some(other) => other, None => "unknown" };
+    let period = match i["rateLimitType"].as_str() { Some("five_hour") => "5h", Some("seven_day") => "weekly", Some("seven_day_opus") => "weekly-opus", Some("seven_day_sonnet") => "weekly-sonnet", Some(other) => other, None => "unknown" };
     json!({"type":"limit_reading","harness":"claude","readings":[{"period":period,"status":i["status"],"resetsAt":i["resetsAt"].as_u64().map(|s| s * 1000)}],"native":v})
 }
 /// ACP harnesses (people-access §4): Antigravity, and kind `acp`, any agent the host binds with {executable, args, environment}.

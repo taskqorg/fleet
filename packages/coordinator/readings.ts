@@ -18,10 +18,13 @@ export function readings(store:Store){
     state:resetsAt!==null&&resetsAt<=Date.now()?'unknown':'known'};
    out.set(r.account_id,[...(out.get(r.account_id)??[]),reading])}
   return out};
- // The switch point (§6): skip a subscription whose latest known percent reading is at or over its switchPct.
- const overSwitch=(a:any,list:Reading[]|undefined)=>{if(typeof a.switchPct!=='number')return null;
-  const r=(list??[]).filter(x=>x.state==='known'&&x.pct!==null&&x.pct>=a.switchPct).sort((x,y)=>y.pct!-x.pct!)[0];
-  return r?`switch point ${a.switchPct} %; reading ${r.pct} % (${r.period}), ${Math.max(0,Math.round((Date.now()-r.at)/60000))} min old`:null};
+ // Skips (§6): the provider rejected (status, Claude), or a percent reading at or over the switchPct. Only readings that know
+ // when their limit period ends count: one without resetsAt could otherwise block the subscription forever.
+ const overSwitch=(a:any,list:Reading[]|undefined)=>{const live=(list??[]).filter(x=>x.state==='known'&&x.resetsAt!==null),old=(r:Reading)=>`${Math.max(0,Math.round((Date.now()-r.at)/60000))} min old`;
+  const rejected=live.find(x=>x.status==='rejected');if(rejected)return `provider limit reached (${rejected.period}), ${old(rejected)}`;
+  if(typeof a.switchPct!=='number')return null;
+  const r=live.filter(x=>x.pct!==null&&x.pct>=a.switchPct).sort((x,y)=>y.pct!-x.pct!)[0];
+  return r?`switch point ${a.switchPct} %; reading ${r.pct} % (${r.period}), ${old(r)}`:null};
  const operations={
   // Limits view: every visible subscription with its readings; none is "unknown".
   subscription_limits:async()=>{const map=await latest();return {serverNow:Date.now(),subscriptions:(await store.all('managed-account')).map((a:any)=>({id:a.id,name:a.name,harness:a.harness,holder:a.holder,intake:a.intake,switchPct:a.switchPct??null,readings:map.get(a.id)??[]}))}},

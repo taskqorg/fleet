@@ -30,6 +30,7 @@ export function dispatcher(d:Deps){
   const x=e.dispatch,director=e.directedBy??null,projectId=x.projectId??null;
   const order=x.host?[x.host]:[...new Set([x.last,d.defaultHost,...k.hosts.map(h=>h.id)])].filter(h=>byId.has(h));
   const named=(v:string)=>(a:any)=>a.id===v||a.name===v||(a.bindings??[]).some((b:any)=>b.binding===v);
+  const checkouts=d.checkouts(projectId);
   const accounts=k.accounts.filter((a:any)=>(a.harness??'codex')===x.harness),out:Candidate[]=[];
   let subs:any[];
   if(x.account){
@@ -54,8 +55,8 @@ export function dispatcher(d:Deps){
    if(!d.hosts.maySee(h,projectId)){skip(`${id} is held by ${h.holder}, who has no grant on ${projectId}`,`host:${id}:trust`);continue}
    if(h.intake==='paused'){skip(`${id} is Paused`,`host:${id}:paused`);continue}
    // The project's checkout on this host must sit under the host's FLEET_PROJECT_ROOTS (the executor refuses it otherwise).
-   const roots:string[]|undefined=k.roots.get(id),checkout=d.checkouts(projectId).find(c=>c.hostId===id)?.checkoutPath;
-   if(roots&&checkout&&!roots.some(r=>checkout===r||checkout.startsWith(r.replace(/\/$/,'')+'/'))){skip(`checkout ${checkout} of ${projectId} is outside FLEET_PROJECT_ROOTS on ${id}`,`host:${id}:roots:${projectId}`);continue}
+   const roots:string[]|undefined=k.roots.get(id),checkout=x.workingDirectory??checkouts.find(c=>c.hostId===id)?.checkoutPath;
+   if(roots&&checkout&&!roots.some(r=>checkout===r||checkout.startsWith(r.replace(/\/$/,'')+'/'))){skip(`checkout ${checkout}${projectId?` of ${projectId}`:''} is outside FLEET_PROJECT_ROOTS on ${id}`,`host:${id}:roots:${projectId}`);continue}
    if(a){try{c.binding=await d.resolve(a.name,x.harness,id,director,projectId)}catch(err:any){skip(err.message,causeOf(a,id,err.message));continue}
     const over=d.readings.overSwitch(a,k.readings.get(a.id));if(over){skip(over,`subscription:${a.id}:limit`);continue}
     if(a.harness==='claude'&&a.holder!==h.holder)c.warnings.push(`${h.holder} can read this login (Claude on a host held by someone else)`)}

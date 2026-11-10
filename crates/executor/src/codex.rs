@@ -224,9 +224,10 @@ impl Session {
 /// Codex rate-limit snapshot to a limit_reading event: one reading per window, its period named from its duration.
 pub fn limit_reading(r: &Value, native: &Value) -> Value {
     let window = |w: &Value| {
-        let mins = w.get("windowDurationMins").or(w.get("window_minutes")).and_then(Value::as_u64);
+        let get = |a: &str, b: &str| w.get(a).filter(|x| !x.is_null()).or(w.get(b)).cloned().unwrap_or(Value::Null);
+        let mins = get("windowDurationMins", "window_minutes").as_u64();
         let period = match mins { Some(300) => "5h".to_string(), Some(10080) => "weekly".to_string(), Some(m) => format!("{m}m"), None => "unknown".into() };
-        json!({"period":period,"pct":w.get("usedPercent").or(w.get("used_percent")),"resetsAt":w.get("resetsAt").or(w.get("resets_at")).and_then(Value::as_u64).map(|s| s * 1000)})
+        json!({"period":period,"pct":get("usedPercent", "used_percent"),"resetsAt":get("resetsAt", "resets_at").as_u64().map(|s| s * 1000)})
     };
     let readings: Vec<Value> = ["primary", "secondary"].iter().filter_map(|k| r.get(*k).filter(|w| w.is_object()).map(window)).collect();
     json!({"type":"limit_reading","harness":"codex","readings":readings,"native":native})

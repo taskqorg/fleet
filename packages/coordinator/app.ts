@@ -192,7 +192,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   if(extra.host!==undefined&&!(await hosts.executionIds()).includes(extra.host))fail(400,'Unknown host '+extra.host);
   // Late choice (§6): queue time records only constraints; dispatch picks host and subscription on a host poll.
   const e:any={...(s.agentConfig?{agentConfig:s.agentConfig,profileSha256:profileDigest(s.agentConfig)}:{}),id:randomUUID(),executionId:'',sessionId:s.id,hostId:null,state:'queued',createdAt:Date.now(),directedBy:s.directedBy,model:s.agentConfig?.model??'gpt-6.1-sol',effort:s.agentConfig?s.agentConfig.effort:'low',
-   dispatch:{harness,projectId:s.projectId??null,account:s.account??null,host:extra.host??null,last:last??null,input,payload:extra.payload??null}};e.executionId=e.id;
+   dispatch:{harness,projectId:s.projectId??null,workingDirectory:s.workingDirectory??null,account:s.account??null,host:extra.host??null,last:last??null,input,payload:extra.payload??null}};e.executionId=e.id;
   Object.assign(e,extra.execution);
   await put('execution',e);await put('message',{id:randomUUID(),sessionId:s.id,executionId:e.id,requestId:requestId,text:input});
   return e;
@@ -205,8 +205,8 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   await put('execution',e);await put('command',command);
   // An automatic take (the subscription's take rule listed the project): the holder directs the task from now on (§5).
   // The task is the delivery's, or the one the execution is linked to; taken_from is the director before the take.
-  const taskId=s.deliveryId??(await store.query('SELECT task_id FROM execution WHERE id=$1',[e.id]))[0]?.task_id;
-  if(binding?.taken&&taskId)await store.tasks.take(taskId,binding.holder,e.takenFrom);
+  const taskId=binding?.taken?s.deliveryId??(await store.query('SELECT task_id FROM execution WHERE id=$1',[e.id]))[0]?.task_id:null;
+  if(taskId)await store.tasks.take(taskId,binding.holder,e.takenFrom);
   return command};
  const dispatch=dispatcher({store,hosts,resolve:managed.resolve,subscriptionsOf:(id)=>subscriptionsOf(id),defaultBinding:config.defaultAccountBinding,defaultHost:config.hostId,budgetsReached:budgetModel.reached,readings:readingModel,claim:startCommand,
   checkouts:(id)=>{if(!id)return [];try{return projects.project_context({projectId:id}).settings.environments??[]}catch{return []}}});

@@ -16,7 +16,7 @@ export function Hosts({ id }: { id?: string }) {
   const { data, state } = useDoc<any>('hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
   const now = data ? data.serverNow + (Date.now() - data.fetchedAt) : Date.now();
   // Limits (people-access §8): the latest reading per subscription and limit period, with its age; none is unknown, never zero.
-  const limits = useDoc<any>('subscription-limits', async () => await op('subscription_limits', {}), c => c.kind === 'event' || c.kind === 'managed-account', 30000);
+  const limits = useDoc<any>('subscription-limits', async () => await op('subscription_limits', {}), c => c.kind === 'managed-account', 30000);
   if (!data) return <><header class="page-h"><h1>Hosts</h1></header><Empty text="Loading…" /></>;
   const fresh = (h: any) => !!h.lastSeenAt && now - h.lastSeenAt < data.staleAfterMs;
   const sel = data.hosts.find((h: any) => h.id === id);
