@@ -1125,7 +1125,7 @@ fn main() -> Result<()> {
         let result = (|| -> Result<()> {
             // A poll the edge answered is asked again every 2 s (outbox::edge_redirect), not every 100 ms.
             if outbox::edge_wait(outbox::POLL) { return Ok(()) }
-            let poll = contracts::PollRequest { host_id: e.host.clone(), platform: platform().into(), capabilities: capabilities(), stores: serde_json::from_value(e.stores())?, problems: outbox::edge_problems(outbox::POLL) };
+            let poll = contracts::PollRequest { host_id: e.host.clone(), platform: platform().into(), capabilities: capabilities(), stores: serde_json::from_value(e.stores())?, problems: outbox::edge_problems(outbox::POLL), project_roots: Some(worktree::project_roots().iter().map(|p| p.to_string_lossy().into_owned()).collect()) };
             let reply: contracts::PollReply = serde_json::from_value(e.post("/api/hosts/poll", serde_json::to_value(poll)?)?)?;
             // ponytail: commands go on as JSON values; command payloads get schema types when each kind is next changed.
             for c in &reply.commands.into_iter().map(serde_json::to_value).collect::<std::result::Result<Vec<_>, _>>()? {

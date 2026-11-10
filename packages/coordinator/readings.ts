@@ -14,7 +14,7 @@ export function readings(store:Store){
    ORDER BY x.account_id, r->>'period', d.seq DESC`);
   const out=new Map<string,Reading[]>();
   for(const r of rows){const v=r.reading,resetsAt=typeof v.resetsAt==='number'?v.resetsAt:null;
-   const reading:Reading={period:v.period??'unknown',pct:typeof v.pct==='number'?v.pct:null,status:typeof v.status==='string'?v.status:null,resetsAt,at:new Date(r.at).getTime(),hostId:r.host_id,
+   const reading:Reading={period:v.period??'unknown',pct:typeof v.pct==='number'&&v.pct>=0&&v.pct<=100?v.pct:null,status:typeof v.status==='string'?v.status:null,resetsAt,at:new Date(r.at).getTime(),hostId:r.host_id,
     state:resetsAt!==null&&resetsAt<=Date.now()?'unknown':'known'};
    out.set(r.account_id,[...(out.get(r.account_id)??[]),reading])}
   return out};

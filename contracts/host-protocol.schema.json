@@ -22,7 +22,8 @@
         "platform": {"type": "string"},
         "capabilities": {"type": "array", "items": {"type": "string"}},
         "stores": {"$comment": "store::report output; described when stores are next changed", "type": "array", "items": {}},
-        "problems": {"type": "array", "items": {"$ref": "#/$defs/EdgeProblem"}}
+        "problems": {"type": "array", "items": {"$ref": "#/$defs/EdgeProblem"}},
+        "projectRoots": {"$comment": "FLEET_PROJECT_ROOTS as the executor resolved them; a project checkout outside them is a host problem", "type": "array", "items": {"type": "string"}}
       }
     },
     "EdgeProblem": {

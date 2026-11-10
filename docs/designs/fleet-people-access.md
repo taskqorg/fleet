@@ -170,6 +170,8 @@ Not built (all of §8); `quota` is reported as `unknown`.
 - They land in `execution_totals.rate_limit_last` and a per-subscription latest reading `{at, pct?, status?, period, resetsAt}` on the binding.
 - Screens show a reading's age; no reading is "unknown", never zero. A subscription's provider limit is a reading, not a budget.
 
+**As built (slice 7).** The executor turns Codex `account/rateLimits/updated` (it carries no thread, so it was dropped) and Claude `rate_limit_event` into `limit_reading` events `{harness, readings: [{period, pct?|status?, resetsAt}]}`. The latest reading per subscription and period is read from those events (joined to the execution's `account_id`), so host ingest writes nothing outside its execution; `execution_totals.rate_limit_last` takes the run's last one. Readings are accepted only from the host the execution runs on, and a percent outside 0-100 is ignored. `subscription_limits` serves the Hosts page panel "Subscription limits"; `switchPct` skips a subscription in dispatch with "switch point N %; reading M % (period), K min old". Also with this slice: the executor reports its `FLEET_PROJECT_ROOTS` in each poll (`projectRoots`), and dispatch skips a host where the project's checkout sits outside them with that reason, instead of a failing run; an automatic take on task-linked work records `task.taken_from`.
+
 ### 9. Budgets
 
 Not built beyond Lab: experiments have `budgets` in `lab/experiments.ts`.
