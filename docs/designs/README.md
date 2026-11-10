@@ -11,6 +11,7 @@ Technical designs, briefs and their reviews. A design here is accepted direction
 * `fleet-connections.md`: API key connections, the Fleet gateway copied from Pipe's read lane, per-run tokens, call methods and deleting Pipe.
 * `fleet-conversations.md`: the Conversations screen: one thread per task, paging both ways, typed transcript blocks, copy, question and result cards, the Results page. `conversations-brief.md` is its brief.
 * `fleet-stack.md`: stack plan: rule delivery (Step 0), executor delivery, JSON Schema contracts and Python MCP servers as executor subcommands on the current stack, then a measured Go and Rust trial. `fleet-stack-brief.md` is its brief and `reviews/fleet-stack/` its review.
+* `fleet-docs-governance.md`: document kinds and their life, what an agent may add, EGM outputs outside the tree, the warning-only docs report and `docs-order` issue, the proposed specq rule, and the docs rework plan.
 * `fleet-toolchain.md`: build, bundle and release toolchain.
 * `fleet-executor-delivery.md`: executor release artifacts and delivery.
 * `legacy-inventory.md`: what the removed legacy pages did and which app section rebuilds each gap.
