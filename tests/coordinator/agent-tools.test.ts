@@ -97,9 +97,11 @@ test('session_start binds a project session; finished child wakes its creator; s
  const [pc]=await poll();assert.equal(pc.payload.projectId,'p1');assert.equal(pc.payload.gitNetwork,true);
  const child=await tool(pc,'session_start',{role:'worker',requestId:'w1',text:'Do it'});
  assert.equal((await call('/api/hosts/agent-tools',{hostId:'mac',commandId:pc.id,executionId:pc.executionId,request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'session_start',arguments:{projectId:'other',role:'worker',requestId:'w2'}}}},true)).statusCode,403);
- // Readiness only of the caller's own project.
+ // Readiness from a host agent: the caller reads its own readiness runs.
  const rd=(args:any)=>call('/api/hosts/agent-tools',{hostId:'mac',commandId:pc.id,executionId:pc.executionId,request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'project_readiness',arguments:args}}},true);
- assert.equal((await rd({projectId:'other'})).statusCode,403);assert.equal(JSON.parse((await rd({})).json().result.content[0].text).projectId,'p1');
+ const ready=JSON.parse((await rd({projectId:'p1'})).json().result.content[0].text);assert.equal(ready.projectId,'p1');
+ const rs=(await op('execution_status',{executionId:ready.hosts[0].executionId})).sessionId;
+ assert.equal(JSON.parse((await call('/api/hosts/agent-tools',{hostId:'mac',commandId:pc.id,executionId:pc.executionId,request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'execution_status',arguments:{sessionId:rs}}}},true)).json().result.content[0].text).executionId,ready.hosts[0].executionId,'the caller reads its readiness run');
  await done(pc);const cc=(await poll()).find((x:any)=>x.sessionId===child.sessionId);await done(cc);
  const wake=(await poll()).find((x:any)=>x.sessionId===pm.sessionId);assert.match(wake.payload.text,new RegExp('your session '+child.sessionId));
  const d=await tool(wake,'session_deliver',{sessionId:child.sessionId});assert.equal(d.branch,'fleet/'+child.sessionId);
