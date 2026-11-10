@@ -1,5 +1,5 @@
 // Layout rules checked on a rendered page (docs/design-system/owner-rules.md, "How each rule is checked").
-// Requirement: OR-24 three columns and no top bar, OR-25 one scroll per column, OR-26 the whole row opens, OR-27 open in the work area.
+// Requirement: OR-28 one format per value (prose never in mono, headers never wrap); OR-24 three columns and no top bar, OR-25 one scroll per column, OR-26 the whole row opens, OR-27 open in the work area.
 // Risk: these cannot be seen in source text, so a page breaks them while every source check stays quiet (D19).
 // Used by ux.check.mjs (mockups) and app.check.ts (built app). Call it last for a page: the row click navigates.
 import type { Page } from 'playwright';
@@ -23,6 +23,14 @@ export async function layoutFindings(p: Page): Promise<string[]> {
       const s = getComputedStyle(e), r = e.getBoundingClientRect();
       if (/fixed|sticky|absolute/.test(s.position) && r.width * r.height > innerWidth * innerHeight * 0.3) out.push(`OR-27 ${s.position} panel over the page: ${name(e)}`);
     }
+      // OR-28 (formats.md): prose set in mono (mono is for codes, ids, paths, hashes, models and aligned numbers),
+      // and a column header that wraps or is cut.
+      for (const el of document.querySelectorAll('[data-ui=app-shell] span, [data-ui=app-shell] button, [data-ui=app-shell] div')) {
+        if (!(el.getBoundingClientRect().width > 0 && getComputedStyle(el).visibility !== 'hidden') || el.children.length || el.closest('pre,code,kbd,.code,textarea,.md')) continue;
+        const words = (el.textContent ?? '').trim().split(/\s+/).filter(w => /^[A-Za-z]{3,}$/.test(w));
+        if (words.length >= 4 && /mono/i.test(getComputedStyle(el).fontFamily.split(',')[0])) out.push(`OR-28 prose in mono: "${(el.textContent ?? '').trim().slice(0, 50)}"`);
+      }
+      for (const el of document.querySelectorAll('.vl-head > span')) if (el.getBoundingClientRect().width > 0 && (el.scrollWidth > el.clientWidth + 1 || el.getBoundingClientRect().height > 24)) out.push(`OR-28 column header wraps or is cut: "${(el.textContent ?? '').trim()}"`);
     return [...new Set(out)];
   });
   // OR-26: a click on the row's left padding, away from the title, opens it.

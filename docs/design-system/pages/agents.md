@@ -6,7 +6,7 @@
 
 **Layout.** [App shell](../patterns/app-shell.md), [list and detail](../patterns/list-detail.md), with the [definition editor](../patterns/definition-editor.md) in the work area. The work area uses the [draft bar](../controls/draft-bar.md), [setting fields](../controls/setting-field.md), [choices](../controls/choice.md) and [detail sections](../controls/detail-section.md).
 
-**Catalogue row.** State, name; on the second line the harness, model and role; on the right the run count or the number of unsaved changes. Filters: harness, role.
+**Catalogue row.** State, name; on the second line the harness, model and role; on the right the run count over 30 days (a draft shows by its state icon, not a word, [formats](../formats.md#rows-and-columns)). Filters: harness, role.
 
 | Inventory item (Agents) | Shown by |
 |---|---|

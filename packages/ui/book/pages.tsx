@@ -278,13 +278,13 @@ const CAT_COLS = { '--cols': '1.25rem minmax(0,1fr) auto' };
 
 type AgentDef = { id: string; state: StateOf<'definition'>; h: Harness; model: string; role: string; right: string };
 const AGENT_DEFS: AgentDef[] = [
-  { id: 'claude-reviewer', state: 'draft', h: 'claude', model: 'sonnet', role: 'reviewer', right: '2 changes' },
+  { id: 'claude-reviewer', state: 'draft', h: 'claude', model: 'sonnet', role: 'reviewer', right: '57' },
   { id: 'pm', state: 'ready', h: 'codex', model: 'gpt-6.1-sol', role: 'PM', right: '412' },
   { id: 'claude-worker', state: 'ready', h: 'claude', model: 'opus', role: 'worker', right: '1,204' },
   { id: 'codex-researcher', state: 'ready', h: 'codex', model: 'gpt-6.1', role: 'worker', right: '96' },
   { id: 'codex-judge', state: 'ready', h: 'codex', model: 'gpt-6.1', role: 'judge', right: '340' },
   { id: 'antigravity-worker', state: 'unchecked', h: 'antigravity', model: 'gemini-3', role: 'worker', right: '0' },
-  { id: 'design-rules-data', state: 'incompatible', h: 'antigravity', model: 'gemini-3', role: 'worker', right: 'blocked' },
+  { id: 'design-rules-data', state: 'incompatible', h: 'antigravity', model: 'gemini-3', role: 'worker', right: '0' },
 ];
 const HARNESS_TOOLS = ['Read', 'Glob', 'Grep', 'Bash (read-only)', 'Edit', 'Write', 'WebFetch', 'Agent'];
 
@@ -386,7 +386,7 @@ const RENDER_RUN: StepItem[] = [
 ];
 type PipeDef = { id: string; state: ComponentChildren; facts: string; right: string };
 const PIPE_DEFS: PipeDef[] = [
-  { id: 'issue-to-pr', state: <StateBadge family="definition" state="draft" compact />, facts: '9 steps · 7 agents · shared', right: '1 change' },
+  { id: 'issue-to-pr', state: <StateBadge family="definition" state="draft" compact />, facts: '9 steps · 7 agents · shared', right: '2h' },
   { id: 'render-props', state: <StateBadge family="execution" state="failed" compact />, facts: '3 steps · csgo', right: '4m' },
   { id: 'web-research', state: <StateBadge family="execution" state="succeeded" compact />, facts: '4 steps · 1 agent · shared', right: '12m' },
   { id: 'compare-3d-methods', state: <StateBadge family="execution" state="running" compact />, facts: '5 steps · 2 agents · csgo', right: 'now' },
@@ -424,7 +424,7 @@ function Pipelines({ id = 'issue-to-pr' }: { id?: string }) {
   const list = <>
     <PageHead title="Pipelines"><Button label="New pipeline" icon="plus" iconOnly kind="primary" /></PageHead>
     <Panel><div class="vl-wrap" style={CAT_COLS}>
-      {PIPE_DEFS.map(p => <CatRow key={p.id} id={p.id} sel={p.id === id} onOpen={() => go(p.id === 'render-props' ? '/pipelines/render-props' : '/pipelines')} state={p.state} right={p.right}><span class="id">{p.facts}</span></CatRow>)}
+      {PIPE_DEFS.map(p => <CatRow key={p.id} id={p.id} sel={p.id === id} onOpen={() => go(p.id === 'render-props' ? '/pipelines/render-props' : '/pipelines')} state={p.state} right={p.right}><span class="facts">{p.facts}</span></CatRow>)}
     </div></Panel>
   </>;
   return <ListDetail list={list} detailKey={id} detail={<DefinitionEditor key={id} label={id} crumb={failed ? 'csgo · config/pipelines/render-props.json · run 41 at 94e588a' : 'shared · config/pipelines/issue-to-pr.json · 5eefade'}
@@ -464,7 +464,7 @@ function Catalogue() {
   const list = <>
     <PageHead title="Catalogue" />
     <Panel><div class="vl-wrap" style={CAT_COLS}>
-      {CAPS.map(c => <CatRow key={c.id} id={c.id} sel={c.id === sel} onOpen={() => setSel(c.id)} state={<StateBadge family="definition" state={c.state} compact />} right={c.right}><span class="id">{c.facts}</span></CatRow>)}
+      {CAPS.map(c => <CatRow key={c.id} id={c.id} sel={c.id === sel} onOpen={() => setSel(c.id)} state={<StateBadge family="definition" state={c.state} compact />} right={c.right}><span class="facts">{c.facts}</span></CatRow>)}
     </div></Panel>
   </>;
   return <ListDetail list={list} detailKey={sel ?? undefined} detail={sel && <DefinitionEditor label={sel} crumb="shared · config/catalogue.json · 5eefade" title={sel}
@@ -474,15 +474,15 @@ function Catalogue() {
         <KvRow icon="arrow-down" label="Input" meta={<span class="mono">prompt · max sources</span>} />
         <KvRow icon="arrow-up" label="Result" meta={<span class="mono">summary.md · sources · pages (optional)</span>} />
       </DetailSection>
-      <DetailSection title="Methods: ways to provide it">
-        <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1.4fr) 5rem minmax(0,1.2fr) 4rem 4rem 4.5rem minmax(0,1fr)' }}>
-          <div class="vl-head" role="row"><span /><span>Method</span><span>Scope</span><span>Runs</span><span class="r">Quality</span><span class="r">Time</span><span class="r">Cost</span><span>Recommended for</span></div>
-          <div role="row" class="vl-row static"><StateBadge family="definition" state="ready" compact /><span class="title">Source discovery</span><span class="muted">shared</span><span class="mono">search-basic.json</span>
-            <span class="r"><Num m={m(0.82)} kind="count" /></span><span class="r"><Num m={m(8)} kind="duration" /></span><span class="r"><Num m={m(0.02)} kind="money" /></span><span>everyone, by default</span></div>
-          <div role="row" class="vl-row static"><StateBadge family="definition" state="ready" compact /><span class="title">Summary with sources</span><span class="muted">shared</span><span class="mono">web-research.json</span>
-            <span class="r"><Num m={m(0.91)} kind="count" /></span><span class="r"><Num m={m(130)} kind="duration" /></span><span class="r"><Num m={m(0.38, 'estimated', 'tokens')} kind="money" /></span><span>dashq, fleet</span></div>
-          <div role="row" class="vl-row static"><StateBadge family="definition" state="unchecked" compact /><span class="title">Guided delivery</span><span class="muted">csgo</span><span class="mono">prop-search.json</span>
-            <span class="r"><Num m={m(null, 'unavailable', 'not assessed')} kind="count" /></span><span class="r"><Num m={m(null, 'unavailable', 'not assessed')} kind="duration" /></span><span class="r"><Num m={m(null, 'unavailable', 'not assessed')} kind="money" /></span><span class="muted">nobody yet</span></div>
+      <DetailSection title="Methods">
+        <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1.4fr) 4rem minmax(0,1fr) 4rem 4rem 4.5rem minmax(0,1.2fr)' }}>
+          <div class="vl-head" role="row"><span /><span>Method</span><span>Scope</span><span>Runs</span><span class="r">Quality</span><span class="r">Time</span><span class="r">Cost</span><span>For</span></div>
+          <div role="row" class="vl-row static"><StateBadge family="definition" state="ready" compact /><span class="title">Source discovery</span><span class="muted">shared</span><span class="mono" data-tip="config/pipelines/search-basic.json">search-basic</span>
+            <span class="r"><Num m={m(0.82)} kind="score" /></span><span class="r"><Num m={m(8)} kind="duration" /></span><span class="r"><Num m={m(0.02)} kind="money" /></span><span>everyone</span></div>
+          <div role="row" class="vl-row static"><StateBadge family="definition" state="ready" compact /><span class="title">Summary with sources</span><span class="muted">shared</span><span class="mono" data-tip="config/pipelines/web-research.json">web-research</span>
+            <span class="r"><Num m={m(0.91)} kind="score" /></span><span class="r"><Num m={m(130)} kind="duration" /></span><span class="r"><Num m={m(0.38, 'estimated', 'tokens')} kind="money" /></span><span>dashq, fleet</span></div>
+          <div role="row" class="vl-row static"><StateBadge family="definition" state="unchecked" compact /><span class="title">Guided delivery</span><span class="muted">csgo</span><span class="mono" data-tip="config/pipelines/prop-search.json">prop-search</span>
+            <span class="r"><Num m={m(null, 'unavailable', 'not assessed')} kind="score" /></span><span class="r"><Num m={m(null, 'unavailable', 'not assessed')} kind="duration" /></span><span class="r"><Num m={m(null, 'unavailable', 'not assessed')} kind="money" /></span><span class="muted">nobody yet</span></div>
         </div>
       </DetailSection>
       <DetailSection title="Which method a call uses">

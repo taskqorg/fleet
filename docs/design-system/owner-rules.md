@@ -1,6 +1,6 @@
 # Owner rules
 
-Read this first in every design or UI session. These rules are what the owner likes and wants to see, and they apply everywhere. They are instructions, not gates. `npm run check:design` warns where it can see a breach.
+Read this first in every design or UI session. These rules are what the owner likes and wants to see, and they apply everywhere. They are instructions, not gates. `pnpm run check:design` warns where it can see a breach.
 
 Source wording: [specq owner preferences P1–P16](https://github.com/taskqorg/specq/blob/main/design/owner-preferences.md). Decisions: [D6](decisions.md).
 
@@ -35,6 +35,7 @@ If an owner rule conflicts with common practice, the owner rule wins. Two except
 | **OR-25 One scroll per column** | A column has at most one vertical scroller, and it is a plain browser scroller. A scroller never sits inside another one, and the page itself does not scroll. Only code and wide tables scroll sideways, inside their own frame. |
 | **OR-26 The whole row opens** | A click anywhere on a list row opens the item. Controls inside the row (pin, checkbox, menu) act on their own. Never make the person aim at the title. |
 | **OR-27 Open in the work area** | A task, conversation, result, host or any other opened item fills the work area. It is never a floating, sticky or overlaid panel, at any width. |
+| **OR-28 One format per value** | Each kind of value (code, time, duration, count, money, score, state, person, agent, path, hash) has one look everywhere, listed in [formats](formats.md). Mono is for codes and numbers, never for sentences. Each screen shows first what the owner comes to it for ([what each screen answers](formats.md#what-each-screen-answers)). |
 
 ## How each rule is checked
 
@@ -42,9 +43,9 @@ A rule without a check is kept only by reading it, so each rule names its check.
 
 | Check | Rules | Where |
 |---|---|---|
-| Rendered page (mockups and the built app) | OR-14, OR-24, OR-25, OR-26, OR-27 | `tests/ui/layout.check.ts` |
+| Rendered page (mockups and the built app) | OR-14, OR-24, OR-25, OR-26, OR-27, OR-28 (mono prose, wrapped headers) | `tests/ui/layout.check.ts`; `tests/ui/layout-break.check.mjs` proves each layout check fires on an injected breach |
 | Rendered page (mockups) | OR-17, OR-18, OR-19, OR-22 | `tests/ui/ux.check.mjs`, `tests/ui/trace.check.mjs` |
 | Source text | OR-2, OR-7, OR-8, OR-9, OR-15 | `RULES` in `packages/ui/scripts/check-design.mjs` |
-| Reading only | OR-1, OR-3 to OR-6, OR-10 to OR-13, OR-16, OR-20, OR-21, OR-23 | The reviewer and the owner. |
+| Reading only | OR-1, OR-3 to OR-6, OR-10 to OR-13, OR-16, OR-20, OR-21, OR-23, the rest of OR-28 | The reviewer and the owner. |
 
 A new rule is added together with its check, or with a row in "Reading only".

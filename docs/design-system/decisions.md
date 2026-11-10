@@ -280,3 +280,12 @@ Each check was proven once with `UX_INJECT=<defect>`, which produced its warning
 * **Built:** the controls [step list](controls/step-list.md), [draft bar](controls/draft-bar.md) and [choice](controls/choice.md), the `DefinitionEditor` pattern, the `definition` state family and the step kinds in the registry, and the mockup routes `#/agents`, `#/pipelines`, `#/pipelines/render-props`, `#/catalogue`.
 * **Not done:** the app screens and the operations they need. The screen for skills is not designed.
 
+
+## 2026-11-11 D21: One format per value, and messages that copy well
+
+* **Problem (owner):** the screens mixed formats for the same kind of value, so the eye jumped: sentences in mono, times boxed in one place and plain in another, words and counts in the same column, scores formatted as counts, headers that wrapped, file names cut into stubs. Conversations showed neither time nor author on a message, and a copied message lost both.
+* **Rule:** OR-28 One format per value, with [formats](formats.md) as the one table: type use, every value kind and its helper, rows and columns, the copy format, and what each screen answers.
+* **Applied in `packages/ui`, not per screen:** a neutral age is plain and only an alert age is boxed; setting values are sans and left-aligned; step bands and step errors are sans; row facts use `.facts`, not `.id`; column headers never wrap. Mockups: Catalogue quality is a score, run files show their stem, headers shortened; catalogue rows hold one kind of value on the right.
+* **Conversations:** each message has a head line with author and age. Thread text blocks now carry `at` and the sender (`sentBy` on new messages). Copy writes `text/plain` (a `**who · 11 Nov 14:03**` line per message) and `text/html` with only `b`, `i`, `code`, `pre`, `a`, `br`; `thread_export` takes `tz`.
+* **Checks:** `layout.check.ts` warns on prose in mono and wrapped headers; `layout-break.check.mjs` injects a breach of each layout rule and fails if a check stays quiet.
+* **Not done:** person names (only emails exist, so the email's local part is shown); the Lab app screen does not yet show score against the baseline per variant.
