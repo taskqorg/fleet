@@ -91,6 +91,16 @@ func enqueue(q *Request, s doc, input, requestID string, payload, execution doc,
 		}
 	}
 	ac := gm(s, "agentConfig")
+	if _, given := payload["skills"]; !given && len(cList(ac["skills"])) > 0 { // a session profile's skills, as pipeline steps get them
+		skills, err := profileSkills(ac)
+		if err != nil {
+			return nil, err
+		}
+		if payload == nil {
+			payload = doc{}
+		}
+		payload["skills"] = skills
+	}
 	id := uuid()
 	e := doc{"id": id, "executionId": id, "sessionId": s["id"], "hostId": nil, "state": "queued", "createdAt": now(), "directedBy": s["directedBy"], "model": "gpt-6.1-sol", "effort": "low",
 		"dispatch": doc{"harness": harnessOf(s), "projectId": s["projectId"], "workingDirectory": s["workingDirectory"], "account": s["account"], "host": nilIf(host), "last": nilIf(last), "input": input, "payload": payload}}
