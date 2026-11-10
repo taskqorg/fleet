@@ -1,7 +1,6 @@
-// Outside tests of Go rewrite area A (host side: poll and dispatch, receipts, host events, host and budget operations).
-// HTTP only, against FLEET_TRIAL_URL; the same file runs against the TypeScript coordinator and the Go binary:
-//   FLEET_TRIAL_TESTS=tests/go/a.test.ts node tests/trial/run.ts
-//   FLEET_TRIAL_TESTS=tests/go/a.test.ts FLEET_TRIAL_SERVER=go/bin/fleet-coordinator node tests/trial/run.ts
+// Outside tests of dispatch (host side: poll and dispatch, receipts, host events, host and budget operations).
+// HTTP only, against FLEET_TRIAL_URL:
+//   FLEET_TRIAL_TESTS=tests/go/dispatch.test.ts FLEET_TRIAL_SERVER=go/bin/fleet-coordinator node tests/trial/run.ts
 // Each test names its requirement and the risk it guards.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,7 +30,7 @@ async function queued() {
 }
 const execution = async (sessionId: string, id: string) => ok(await call('GET', `/api/sessions/${sessionId}`, undefined, owner)).executions.find((x: any) => x.id === id);
 
-test('A1 a paused host takes no work: the execution waits with the skip reason and one stall question, and starts once intake is open (risk: dispatch ignores a holder setting or never releases its question)', {timeout: 30_000}, async () => {
+test('A1 a paused host takes no work: the execution waits with the skip reason and one stall question, and starts once intake is open (requirement: docs/work-allocation.md holder settings; risk: dispatch ignores a holder setting or never releases its question)', {timeout: 30_000}, async () => {
   const h = await host('trial-host');
   ok(await h('/api/hosts/poll', poll));
   ok(await op('hosts_update', {id: 'trial-host', intake: 'paused'}));
@@ -50,7 +49,7 @@ test('A1 a paused host takes no work: the execution waits with the skip reason a
   assert.ok(decisions.at(-1).winner?.host === 'trial-host');
 });
 
-test('A2 a reached stop budget stops queued work of its director at the next poll (risk: budgets shown but never enforced)', {timeout: 30_000}, async () => {
+test('A2 a reached stop budget stops queued work of its director at the next poll (requirement: fleet.md R3 resources, stop budgets; risk: budgets shown but never enforced)', {timeout: 30_000}, async () => {
   const h = await host('trial-host');
   const b = ok(await op('budget_set', {scope: 'person', scopeId: OWNER, unit: 'wall_ms', limit: 0, action: 'stop'}));
   try {
@@ -61,7 +60,7 @@ test('A2 a reached stop budget stops queued work of its director at the next pol
   } finally { ok(await op('budget_delete', {id: b.id})); }
 });
 
-test('A3 a start receipt binds the native session; another native id for it is 409; a terminal receipt sets finishedAt once (risk: a resumed run attaches to the wrong conversation)', {timeout: 30_000}, async () => {
+test('A3 a start receipt binds the native session; another native id for it is 409; a terminal receipt sets finishedAt once (requirement: docs/execution-contract.md native session; risk: a resumed run attaches to the wrong conversation)', {timeout: 30_000}, async () => {
   const h = await host('trial-host');
   const {sessionId, executionId} = await queued();
   const command = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === executionId);
@@ -74,7 +73,7 @@ test('A3 a start receipt binds the native session; another native id for it is 4
   assert.equal(e.state, 'completed'); assert.equal(typeof e.finishedAt, 'number');
 });
 
-test('A4 an event whose seq another event holds is retained as a blocked transport conflict, visible to transport_inspect (risk: a host resend overwrites or silently drops an event)', {timeout: 30_000}, async () => {
+test('A4 an event whose seq another event holds is retained as a blocked transport conflict, visible to transport_inspect (requirement: docs/execution-contract.md event transport; risk: a host resend overwrites or silently drops an event)', {timeout: 30_000}, async () => {
   const h = await host('trial-host');
   const {executionId} = await queued();
   ok(await h('/api/hosts/poll', poll));
@@ -86,7 +85,7 @@ test('A4 an event whose seq another event holds is retained as a blocked transpo
   assert.equal(r.eventCount, 1);
 });
 
-test('A5 stopping work no host has taken settles it as stopped with its stop command (risk: a stop before dispatch leaves the execution open forever)', {timeout: 30_000}, async () => {
+test('A5 stopping work no host has taken settles it as stopped with its stop command (requirement: fleet.md task states; risk: a stop before dispatch leaves the execution open forever)', {timeout: 30_000}, async () => {
   const {sessionId, executionId} = await queued();
   const c = ok(await call('POST', `/api/executions/${executionId}/stop`, {}, owner));
   assert.equal(c.kind, 'stop'); assert.equal(c.status, 'stopped');
@@ -94,7 +93,7 @@ test('A5 stopping work no host has taken settles it as stopped with its stop com
   assert.equal(e.state, 'stopped'); assert.equal(e.stopDetail, 'stopped before dispatch');
 });
 
-test('A6 hosts: a duplicate id is 409, a host secret never shows, the list carries the last poll (risk: a second host shadows the first or a secret leaks)', {timeout: 30_000}, async () => {
+test('A6 hosts: a duplicate id is 409, a host secret never shows, the list carries the last poll (requirement: docs/designs/fleet-people-access.md host secrets; risk: a second host shadows the first or a secret leaks)', {timeout: 30_000}, async () => {
   const h = await host('trial-host');
   assert.equal((await op('hosts_register', {id: 'trial-host'})).status, 409);
   ok(await h('/api/hosts/poll', {...poll, platform: 'linux', capabilities: ['x']}));

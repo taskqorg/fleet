@@ -1,7 +1,7 @@
-// Outside tests of Go rewrite area D (artifacts, stores, results, the built app). HTTP only, against FLEET_TRIAL_URL; an
+// Outside tests of artifacts, stores, results and the public routes of the built app. HTTP only, against FLEET_TRIAL_URL; an
 // in-process fake S3 plays the store. Run:
 //   FLEET_STORE_ENDPOINT_HOSTS=127.0.0.1 FLEET_DEFAULT_ARTIFACT_LOCATIONS=trial-host FLEET_STORE_SECRETS=$(mktemp -d) \
-//   FLEET_TRIAL_TESTS=tests/go/d.test.ts FLEET_TRIAL_SERVER=go/bin/fleet-coordinator node tests/trial/run.ts
+//   FLEET_TRIAL_TESTS=tests/go/artifacts.test.ts FLEET_TRIAL_SERVER=go/bin/fleet-coordinator node tests/trial/run.ts
 // Each test names its requirement and the risk it guards. SigV4 itself is checked against the AWS vector in go test.
 import {after, test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,7 +28,7 @@ async function host(id: string) {
   return (path: string, body: unknown) => call('POST', path, body, {authorization: 'Bearer ' + secret});
 }
 
-test('Artifact write protocol and result bytes (artifacts.ts reserve/parts/commit/verified, GET /api/results Range). Risk: an executor upload never becomes a readable result, or a Range read returns the wrong bytes.', {timeout: 30_000}, async () => {
+test('Artifact write protocol and result bytes (artifacts.ts reserve/parts/commit/verified, GET /api/results Range). Requirement: docs/designs/fleet-data-foundation.md results. Risk: an executor upload never becomes a readable result, or a Range read returns the wrong bytes.', {timeout: 30_000}, async () => {
   const h = await host('trial-host');
   ok(await h('/api/hosts/stores', {store: {id: 'trial-store', bucket: 'fleet', endpoint: `http://127.0.0.1:${s3port}`, accessKeyId: 'k', secretAccessKey: 's'}}));
   const {sessionId} = ok(await call('POST', '/api/sessions', {}, owner));
@@ -54,7 +54,7 @@ test('Artifact write protocol and result bytes (artifacts.ts reserve/parts/commi
   assert.deepEqual(listed.artifacts.map((a: any) => a.state), ['stored']);
 });
 
-test('Store registry: only an allowed endpoint host, and the free-space warning marks a store full (stores.ts). Risk: a host points the coordinator and its signatures at any URL, or a full store keeps receiving uploads.', async () => {
+test('Store registry: only an allowed endpoint host, and the free-space warning marks a store full (stores.ts). Requirement: docs/designs/fleet-data-foundation.md stores. Risk: a host points the coordinator and its signatures at any URL, or a full store keeps receiving uploads.', async () => {
   const h = await host('second-host');
   const bad = await h('/api/hosts/stores', {store: {id: 'evil', bucket: 'b', endpoint: 'https://evil.example', accessKeyId: 'k', secretAccessKey: 's'}});
   assert.equal(bad.status, 403);
@@ -65,13 +65,13 @@ test('Store registry: only an allowed endpoint host, and the free-space warning 
   assert.ok(problems.some((p: any) => p.kind === 'store-full' && p.storeId === 'second-store'));
 });
 
-test('The built app is public, the API is not (app.ts PUBLIC_ROUTES). Risk: the browser cannot load the app shell, or result bytes are served without credentials.', async () => {
+test('The built app is public, the API is not (app.ts PUBLIC_ROUTES). Requirement: docs/designs/fleet-people-access.md public routes. Risk: the browser cannot load the app shell, or result bytes are served without credentials.', async () => {
   const root = await call('GET', '/');
   assert.equal(root.status, 302); assert.equal(root.headers.get('location'), '/overview');
   assert.equal((await call('GET', '/api/results/anything')).status, 401);
 });
 
-test('GET /api/health is public and /api/stream pings an idle stream (TypeScript stream: a ping every 25 s). Risk: deploys cannot see the running commit or the database, or proxies and Access drop an idle stream.', {timeout: 10_000}, async () => {
+test('GET /api/health is public and /api/stream pings an idle stream (TypeScript stream: a ping every 25 s). Requirement: docs/designs/fleet-operator-app.md /api/stream. Risk: deploys cannot see the running commit or the database, or proxies and Access drop an idle stream.', {timeout: 10_000}, async () => {
   const h = await call('GET', '/api/health');
   assert.equal(h.status, 200); assert.equal(h.body.database, 'ok'); assert.ok('commit' in h.body && 'built' in h.body);
   assert.ok(!JSON.stringify(h.body).includes(SECRET));
@@ -83,6 +83,6 @@ test('GET /api/health is public and /api/stream pings an idle stream (TypeScript
   assert.match(text, /^event: ready/); assert.ok(text.includes('\n: ping\n'), 'no ping within 5 s (FLEET_STREAM_PING_MS=300)');
 });
 
-test('review 7: every grouping the view-url codec writes is accepted by task_page (packages/view-url TASK_GROUPS). Risk: a list URL the app produces answers 400.', async () => {
+test('review 7: every grouping the view-url codec writes is accepted by task_page (packages/view-url TASK_GROUPS). Requirement: docs/designs/fleet-view-urls-and-list-path.md. Risk: a list URL the app produces answers 400.', async () => {
   for (const group of TASK_GROUPS) ok(await call('POST', '/api/ops/task_page', {group, limit: 1}, owner));
 });
