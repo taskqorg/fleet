@@ -17,11 +17,6 @@ import (
 	"time"
 )
 
-// execer is *sql.DB or *sql.Tx.
-type execer interface {
-	Exec(query string, args ...any) (sql.Result, error)
-}
-
 func outboxSchema(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS outbox(route TEXT NOT NULL,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS outbox_failed(route TEXT NOT NULL,body TEXT NOT NULL,status INTEGER NOT NULL,reason TEXT NOT NULL,failed_at INTEGER NOT NULL);`); err != nil {
 		return err
@@ -289,7 +284,7 @@ var heldOnly atomic.Bool
 // execution. 5xx and network errors stop the flush and retry later.
 func flush(db *sql.DB, url, token, host string) error {
 	type row struct {
-		n          int64
+		n           int64
 		route, body string
 	}
 	rs, err := db.Query("SELECT rowid,route,body FROM outbox ORDER BY rowid")

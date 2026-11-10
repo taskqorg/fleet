@@ -85,7 +85,7 @@ func gitEnv(project, repo any, dir string) ([]string, error) {
 }
 
 // setEnv replaces or adds KEY=VALUE entries in a command environment (nil Env means the parent's).
-func setEnv(c *exec.Cmd, kv ...string) {
+func setEnvKV(c *exec.Cmd, kv ...string) {
 	if c.Env == nil {
 		c.Env = os.Environ()
 	}
@@ -125,6 +125,6 @@ func indexByte(s string, b byte) int {
 
 func gitApply(c *exec.Cmd, vars []string) {
 	unsetEnv(c, "SSH_AUTH_SOCK")
-	setEnv(c, "GIT_TERMINAL_PROMPT=0")
-	setEnv(c, vars...)
+	setEnvKV(c, "GIT_TERMINAL_PROMPT=0")
+	setEnvKV(c, vars...)
 }

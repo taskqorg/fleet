@@ -657,7 +657,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	outputDir, inputDir := filepath.Join(work, "output"), filepath.Join(dir, "input")
 	os.MkdirAll(outputDir, 0o755)
 	os.MkdirAll(inputDir, 0o755)
-	setEnv(cmd, "FLEET_OUTPUT_DIR="+outputDir, "FLEET_INPUT_DIR="+inputDir)
+	setEnvKV(cmd, "FLEET_OUTPUT_DIR="+outputDir, "FLEET_INPUT_DIR="+inputDir)
 	if err := e.stageInputs(p, inputDir, c["executionId"]); err != nil {
 		return fail(1, err.Error())
 	}
@@ -719,10 +719,10 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		if gateway == "" || !jIsStr(p, "runToken") {
 			return fail(1, "connections granted but FLEET_GATEWAY_URL or the run token is missing")
 		}
-		setEnv(cmd, "FLEET_RUN_TOKEN="+jStr(p, "runToken"), "FLEET_GATEWAY_URL="+gateway)
+		setEnvKV(cmd, "FLEET_RUN_TOKEN="+jStr(p, "runToken"), "FLEET_GATEWAY_URL="+gateway)
 		// The harness runs with its own HOME, so the client cannot find the executor's Access file by default: name it.
 		if f := accessFile(); f != "" && isFile(f) {
-			setEnv(cmd, "FLEET_CF_ACCESS_FILE="+f)
+			setEnvKV(cmd, "FLEET_CF_ACCESS_FILE="+f)
 		}
 	}
 	for _, spec := range granted {

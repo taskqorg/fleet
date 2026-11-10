@@ -107,7 +107,7 @@ type failure struct {
 	msg   string
 }
 
-func (f *failure) Error() string { return f.msg }
+func (f *failure) Error() string             { return f.msg }
 func retryf(f string, a ...any) *failure     { return &failure{true, fmt.Sprintf(f, a...)} }
 func permanentf(f string, a ...any) *failure { return &failure{false, fmt.Sprintf(f, a...)} }
 

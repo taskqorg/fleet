@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -56,10 +55,10 @@ func jAt(v any, keys ...string) any {
 	return v
 }
 
-func jStr(v any, keys ...string) string { s, _ := jAt(v, keys...).(string); return s }
-func jIsStr(v any, keys ...string) bool { _, ok := jAt(v, keys...).(string); return ok }
-func jObj(v any, keys ...string) M      { m, _ := jAt(v, keys...).(M); return m }
-func jArr(v any, keys ...string) []any  { a, _ := jAt(v, keys...).([]any); return a }
+func jStr(v any, keys ...string) string  { s, _ := jAt(v, keys...).(string); return s }
+func jIsStr(v any, keys ...string) bool  { _, ok := jAt(v, keys...).(string); return ok }
+func jObj(v any, keys ...string) M       { m, _ := jAt(v, keys...).(M); return m }
+func jArr(v any, keys ...string) []any   { a, _ := jAt(v, keys...).([]any); return a }
 func jIsTrue(v any, keys ...string) bool { b, _ := jAt(v, keys...).(bool); return b }
 
 // boolOr returns the boolean at keys, or def when it is not a boolean.
@@ -110,5 +109,3 @@ func sortedKeys(m M) []string {
 	sort.Strings(k)
 	return k
 }
-
-func itoa(n int) string { return strconv.Itoa(n) }
