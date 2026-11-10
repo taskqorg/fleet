@@ -70,6 +70,16 @@ export const states = {
     missing: { label: 'Missing', tone: 'danger', icon: 'circle-x' },
     unavailable: { label: 'Unavailable', tone: 'neutral', icon: 'circle-dashed' },
   },
+  key: {
+    active: { label: 'Active', tone: 'success', icon: 'circle-check' },
+    draining: { label: 'Draining', tone: 'attention', icon: 'circle-pause' },
+    disabled: { label: 'Disabled', tone: 'danger', icon: 'circle-slash' },
+    retired: { label: 'Retired', tone: 'neutral', icon: 'circle-dashed' },
+  },
+  intake: {
+    all: { label: 'Open', tone: 'success', icon: 'circle-check' },
+    paused: { label: 'Paused', tone: 'attention', icon: 'circle-pause' },
+  },
   host: {
     online: { label: 'Online', tone: 'success', icon: 'circle-check' },
     offline: { label: 'Offline', tone: 'danger', icon: 'circle-slash' },
@@ -91,6 +101,7 @@ export const workspaces = [
   { id: 'agents', label: 'Agents', icon: 'bot', group: 'Architect', app: false },
   { id: 'hosts', label: 'Hosts', icon: 'panels-top-left', group: 'Architect', app: true },
   { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', group: 'Architect', app: true },
+  { id: 'keys', label: 'API keys', icon: 'shield', group: 'Architect', app: true },
   { id: 'access', label: 'Access', icon: 'shield', group: 'Architect', app: false },
 ] as const satisfies readonly { id: string; label: string; icon: IconName; group: string; app: boolean }[];
 export type AppScreen = Extract<(typeof workspaces)[number], { app: true }>['id'];

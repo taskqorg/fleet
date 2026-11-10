@@ -5,6 +5,7 @@
 # Host-only env files (0600, never committed):
 #   /home/fleet/.config/fleet/clickhouse.env      CLICKHOUSE_USER, CLICKHOUSE_PASSWORD
 #   /home/fleet/.config/fleet/backup-garage.env   RCLONE_CONFIG_FLEETSTORE_* for a read-only Garage key
+#   /home/fleet/.config/fleet/backup-age.env      FLEET_BACKUP_AGE_RECIPIENT, FLEET_SECRET_DIR (API key values, fleet-connections.md)
 set -eu
 umask 077
 root=/backup/fleet
@@ -28,6 +29,17 @@ curl -fsS -H @- http://127.0.0.1:9480/ \
 
 # Garage: copy the fleet bucket over loopback S3. Objects are immutable and hash-keyed.
 rclone sync fleetstore:fleet "$dest/garage/fleet" --checksum
+
+# API key values: SOPS/age-encrypted tar of the secret directory; the age identity stays off this host.
+# Restore: SOPS_AGE_KEY=<identity> sops decrypt --input-type json --output-type binary secrets.sops.json | tar -x -C <secret dir>
+if [ -f /home/fleet/.config/fleet/backup-age.env ]; then
+    set -a
+    # shellcheck source=/dev/null
+    . /home/fleet/.config/fleet/backup-age.env
+    set +a
+    tar -C "$FLEET_SECRET_DIR" -cf - . |
+        sops encrypt --age "$FLEET_BACKUP_AGE_RECIPIENT" --input-type binary --output-type json /dev/stdin > "$dest/secrets.sops.json"
+fi
 
 # Keep the 5 newest day directories.
 # shellcheck disable=SC2012 # names are fixed YYYY-MM-DD
