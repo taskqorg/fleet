@@ -15,6 +15,8 @@ export function Hosts({ id }: { id?: string }) {
   // server's clock (serverNow) so a skewed browser clock does not mark hosts offline.
   const { data, state } = useDoc<any>('hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
   const now = data ? data.serverNow + (Date.now() - data.fetchedAt) : Date.now();
+  // Limits (people-access §8): the latest reading per subscription and limit period, with its age; none is unknown, never zero.
+  const limits = useDoc<any>('subscription-limits', async () => await op('subscription_limits', {}), c => c.kind === 'event' || c.kind === 'managed-account', 30000);
   if (!data) return <><header class="page-h"><h1>Hosts</h1></header><Empty text="Loading…" /></>;
   const fresh = (h: any) => !!h.lastSeenAt && now - h.lastSeenAt < data.staleAfterMs;
   const sel = data.hosts.find((h: any) => h.id === id);
@@ -32,6 +34,16 @@ export function Hosts({ id }: { id?: string }) {
           <HarnessCounts counts={h.runningByHarness} label={`${h.id} workers by harness`} />
           <span class="r"><Num m={{ value: h.queued, basis: 'measured' }} kind="count" /></span>
           <FillBar total={null} segments={[]} />
+        </div>)}
+      </div>
+    </section>
+    <section class="panel"><header class="panel-h"><h2>Subscription limits</h2></header>
+      <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(6rem,1fr) minmax(0,20rem)' }}>
+        <div class="vl-head" role="row"><span /><span>Subscription</span><span>Limit periods</span></div>
+        {(limits.data?.subscriptions ?? []).map((a: any) => <div key={a.id} role="row" class="vl-row static">
+          <StateBadge family="subscription" state={a.intake === 'paused' ? 'paused' : 'all'} compact />
+          <span class="title">{a.name}<span class="id">{a.harness}</span></span>
+          <span>{a.readings.length ? a.readings.map((r: any) => <span key={r.period} class={r.state === 'unknown' ? 'muted' : undefined}>{r.period} {r.state === 'unknown' ? 'unknown' : r.pct !== null ? <><Num m={{ value: r.pct, basis: 'measured' }} kind="count" />%</> : r.status} <AgeChip t={r.at} now={now} /> </span>) : <span class="muted">unknown</span>}</span>
         </div>)}
       </div>
     </section>

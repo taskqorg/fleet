@@ -135,7 +135,9 @@ export function executionModel(raw:Raw){
  // Totals before Phase 4 (ClickHouse): wall-clock time from started_at and ended_at is measured; every other measure is unavailable.
  async function writeTotals(id:string){await raw.query(`INSERT INTO execution_totals(execution_id,project_id,wall_ms,wall_ms_basis,computed_at)
    SELECT id,project_id,CASE WHEN started_at IS NOT NULL AND ended_at IS NOT NULL THEN (extract(epoch FROM ended_at-started_at)*1000)::bigint END,CASE WHEN started_at IS NOT NULL AND ended_at IS NOT NULL THEN 'measured' ELSE 'unavailable' END,now() FROM execution WHERE id=$1
-   ON CONFLICT(execution_id) DO UPDATE SET project_id=excluded.project_id,wall_ms=excluded.wall_ms,wall_ms_basis=excluded.wall_ms_basis,computed_at=excluded.computed_at`,[id])}
+   ON CONFLICT(execution_id) DO UPDATE SET project_id=excluded.project_id,wall_ms=excluded.wall_ms,wall_ms_basis=excluded.wall_ms_basis,computed_at=excluded.computed_at`,[id]);
+  // The run's last provider limit reading (people-access §8), from its limit_reading events.
+  await raw.query(`UPDATE execution_totals SET rate_limit_last=r.data->'data',rate_limit_last_basis='measured' FROM (SELECT data FROM document WHERE kind='event' AND data->>'executionId'=$1 AND data->>'type'='limit_reading' ORDER BY seq DESC LIMIT 1) r WHERE execution_id=$1`,[id])}
  const ended=async(id:string)=>!!(await one('SELECT 1 AS x FROM execution WHERE id=$1 AND ended_at IS NOT NULL',[id]));
  // Executions bound to a host, account or environment that nothing registered (example: 6b00f0fb waiting for host 'pds18').
  // Rule (design §1): a problem explains why an open execution cannot run. It is set and cleared only while the execution is open;

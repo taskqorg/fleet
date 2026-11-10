@@ -840,6 +840,8 @@ impl Executor {
                         Ok(line) => {
                             let event: Value = serde_json::from_str(&line)
                                 .unwrap_or(json!({"type":"unparsed","raw":line}));
+                            // Claude's rate_limit_event (status and reset, no percent) becomes a limit_reading (people-access §8).
+                            let event = if harness::name(&l.command["payload"]) == "claude" && event["type"] == "rate_limit_event" { harness::claude_limit_reading(&event) } else { event };
                             let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64;
                             let projection = l.blocks.project(harness::name(&l.command["payload"]), &event, at);
                             if let Some(n) = projection["session"].as_str() {

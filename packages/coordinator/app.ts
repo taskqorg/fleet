@@ -26,6 +26,7 @@ import {labOperations,registerLab} from './lab/routes.ts';
 import {peopleRegistry,requestPerson,actor,mayAccessProject,director} from './people.ts';
 import {dispatcher} from './dispatch.ts';
 import {budgets} from './budgets.ts';
+import {readings} from './readings.ts';
 import {hostRegistry,type Host} from './hosts.ts';
 import type {HostEvents,PollReply,PollRequest,Receipt,AccountReceipt,ProjectReceipt,ChildReceipt} from '../../contracts/generated/host-protocol.ts';
 declare module 'fastify' {interface FastifyRequest {fleetHost:Host}}
@@ -196,7 +197,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   await put('execution',e);await put('message',{id:randomUUID(),sessionId:s.id,executionId:e.id,requestId:requestId,text:input});
   return e;
  });
- const budgetModel=budgets(store);
+ const budgetModel=budgets(store),readingModel=readings(store);
  // The start command of a claimed execution (dispatch.ts): the session as it is now, the chosen host and subscription binding.
  const startCommand=async(e:any,hostId:string,binding:any)=>{const s=await get(e.sessionId,'session'),d=e.dispatch,input=d.input;
   Object.assign(e,{hostId,...(s.account||binding?{requestedAccount:s.account??null,effectiveAccount:binding??{binding:s.account,legacy:true}}:{}),...(binding?.taken?{directedBy:binding.holder,takenFrom:e.directedBy}:{})});
@@ -205,7 +206,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   // An automatic take (the subscription's take rule listed the project): the holder directs the task from now on (§5).
   if(binding?.taken&&s.deliveryId)await store.tasks.take(s.deliveryId,binding.holder);
   return command};
- const dispatch=dispatcher({store,hosts,resolve:managed.resolve,subscriptionsOf:(id)=>subscriptionsOf(id),defaultBinding:config.defaultAccountBinding,defaultHost:config.hostId,budgetsReached:budgetModel.reached,claim:startCommand});
+ const dispatch=dispatcher({store,hosts,resolve:managed.resolve,subscriptionsOf:(id)=>subscriptionsOf(id),defaultBinding:config.defaultAccountBinding,defaultHost:config.hostId,budgetsReached:budgetModel.reached,readings:readingModel,claim:startCommand});
  // Account for a new project session: the named one, else the project preference, else the first enabled account of the harness with a ready binding (on hostId when given). The binding picks the host.
  // Ranking (§6 order, before dispatch): the director's subscriptions before take-rule ones, then the project's subscriptions list.
  const pickAccount=async (harness:string,projectId:string,hostId?:string,directedBy:string|null=director())=>store.unscoped(async()=>{const order:string[]=subscriptionsOf(projectId);
@@ -441,6 +442,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   hosts_update:(b:any)=>hosts.operations.hosts_update(b,requestPerson.getStore()??null),
   budget_set:(b:any)=>budgetModel.operations.budget_set(b,requestPerson.getStore()??null),
   budgets_list:()=>budgetModel.operations.budgets_list(),
+  subscription_limits:()=>readingModel.operations.subscription_limits(),
   route_decisions:async(b:any)=>({decisions:(await store.query('SELECT execution_id,at,host_id,candidates,winner FROM route_decision WHERE execution_id=$1 ORDER BY at',[str(b?.executionId,'executionId',200)])).map((r:any)=>({executionId:r.execution_id,at:r.at,hostId:r.host_id,candidates:r.candidates,winner:r.winner}))}),
   hosts_rotate_secret:(b:any)=>hosts.operations.hosts_rotate_secret(b,requestPerson.getStore()??null),
   me:async()=>{const p=requestPerson.getStore();return {email:p?.email??null,name:p?.name??null,roles:p?.roles??[],owner:p?.owner??false,grantsVersion:p?.grantsVersion??null,changeLogRetentionDays:retentionDays}},

@@ -160,6 +160,10 @@ impl Session {
             return Ok((vec![], None, false));
         }
         let p = &v["params"];
+        // Limit readings (people-access §8): the account-wide notification carries no thread; forward it as limit_reading.
+        if v["method"] == "account/rateLimits/updated" {
+            return Ok((vec![], Some(limit_reading(&p["rateLimits"], v)), false));
+        }
         if p["threadId"].as_str() != self.thread.as_deref() {
             return Ok((vec![], None, false));
         }
@@ -217,9 +221,29 @@ impl Session {
         Ok((vec![], None, false))
     }
 }
+/// Codex rate-limit snapshot to a limit_reading event: one reading per window, its period named from its duration.
+pub fn limit_reading(r: &Value, native: &Value) -> Value {
+    let window = |w: &Value| {
+        let mins = w.get("windowDurationMins").or(w.get("window_minutes")).and_then(Value::as_u64);
+        let period = match mins { Some(300) => "5h".to_string(), Some(10080) => "weekly".to_string(), Some(m) => format!("{m}m"), None => "unknown".into() };
+        json!({"period":period,"pct":w.get("usedPercent").or(w.get("used_percent")),"resetsAt":w.get("resetsAt").or(w.get("resets_at")).and_then(Value::as_u64).map(|s| s * 1000)})
+    };
+    let readings: Vec<Value> = ["primary", "secondary"].iter().filter_map(|k| r.get(*k).filter(|w| w.is_object()).map(window)).collect();
+    json!({"type":"limit_reading","harness":"codex","readings":readings,"native":native})
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rate_limits_become_a_limit_reading() {
+        // Saved shape of the Codex app-server notification (account/rateLimits/updated).
+        let mut s = Session::new("/r".into(), None, json!({"model":"m"}));
+        let (_, e, _) = s.receive(&json!({"method":"account/rateLimits/updated","params":{"rateLimits":{"primary":{"usedPercent":92,"windowDurationMins":10080,"resetsAt":1794400000},"secondary":{"usedPercent":12,"windowDurationMins":300,"resetsAt":1794320000}}}})).unwrap();
+        let e = e.unwrap();
+        assert_eq!(e["type"], "limit_reading");
+        assert_eq!(e["readings"][0], json!({"period":"weekly","pct":92,"resetsAt":1794400000000u64}));
+        assert_eq!(e["readings"][1]["period"], "5h");
+    }
     #[test]
     fn collab_child_recorded_on_parent() {
         let mut s = Session::new("/r".into(), None, json!({"model":"m"}));
