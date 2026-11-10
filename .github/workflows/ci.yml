@@ -54,6 +54,8 @@ jobs:
           cache-dependency-path: go/go.sum
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      # /api/health reports vcs.modified as dirty; a build from the CI checkout must be clean (untracked files count).
+      - run: go version -m go/bin/fleet-coordinator | grep -q 'vcs.modified=false' || { git status --porcelain; exit 1; }
       # The executor's MCP adapter from Node against the Go binary: replayed stdio exchanges and artifact path confinement.
       # Its Go tests run in the go job.
       - run: (cd go && CGO_ENABLED=0 go build -o bin/fleet-executor ./executor) && FLEET_EXECUTOR_BIN="$PWD/go/bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts
