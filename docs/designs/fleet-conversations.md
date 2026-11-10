@@ -552,6 +552,8 @@ Shared conventions for every item:
 
 ### Stage 4: Results
 
+*   **As built (Stage 4 notes)**: the viewer body is `ArtifactView` in `packages/ui` (image and video in fixed-ratio frames, text in 64 KB `Range` pages loaded on scroll, HTML and SVG as source with an optional `sandbox=""` preview, download otherwise) inside `ResultViewer`, whose download is a real link. `GET /api/results/:id` serves one `Range` part (206/416), drops scripts from its CSP and sends `Content-Disposition: attachment` for types without a view. `artifact_list` gains `states`, `since`, `q` (name), a media family (`image/`) and newest-first pages (`limit`, `before`, `nextBefore`); it lists the `artifact` table only, and legacy `artifact` documents (moved by the backfill) open by id. The delivery stage shows on the result of the session's newest ended run. Result cards link each artifact by name to its Results entry.
+
 #### 24. `packages/ui/src/controls.tsx` (Modify)
 
 *   **Type / Scope**: UI control.

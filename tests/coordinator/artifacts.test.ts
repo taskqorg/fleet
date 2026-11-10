@@ -28,7 +28,14 @@ test('upload: staging, re-hash by the store host, promotion to the content key; 
  // Results stream with the old sandbox headers; the legacy record shape serves session reads.
  const small=await upload(app,'m',{hostId:'mac',executionId:'e1',path:'index.html',content:'<h1>x</h1>',mediaType:'text/html'});
  const r=await app.inject({url:'/api/results/'+small,headers:{authorization:'Bearer b'}});assert.equal(r.statusCode,200);assert.equal(r.body,'<h1>x</h1>');assert.match(String(r.headers['content-security-policy']),/sandbox/);
- assert.deepEqual((await (app as any).store.all('artifact',{sessionId:'s1'})).map((x:any)=>x.path),['model.glb','script.stderr','copy.glb','index.html']);
+ // No scripts in result pages; one Range part for paged text; types without a view download.
+ assert.doesNotMatch(String(r.headers['content-security-policy']),/allow-scripts|script-src/);assert.equal(r.headers['content-disposition'],undefined);
+ const part=await app.inject({url:'/api/results/'+small,headers:{authorization:'Bearer b',range:'bytes=1-2'}});assert.equal(part.statusCode,206);assert.equal(part.body,'h1');assert.equal(part.headers['content-range'],'bytes 1-2/10');
+ assert.equal((await app.inject({url:'/api/results/'+small,headers:{authorization:'Bearer b',range:'bytes=-3'}})).body,'h1>');
+ assert.equal((await app.inject({url:'/api/results/'+small,headers:{authorization:'Bearer b',range:'bytes=50-'}})).statusCode,416);
+ const bin=await upload(app,'m',{hostId:'mac',executionId:'e1',path:'tool.bin',content:'xx',mediaType:'application/octet-stream'});
+ assert.match(String((await app.inject({url:'/api/results/'+bin,headers:{authorization:'Bearer b'}})).headers['content-disposition']),/^attachment; filename="tool.bin"/);
+ assert.deepEqual((await (app as any).store.all('artifact',{sessionId:'s1'})).map((x:any)=>x.path),['model.glb','script.stderr','copy.glb','index.html','tool.bin']);
  await app.close()});
 
 test('a wrong hash fails and never overwrites a verified object; sizes, leases and stores are checked',async()=>{const {app,s,A,fake,call}=await setup();await register(call,fake);

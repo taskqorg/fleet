@@ -13,7 +13,7 @@ import {delegation} from './delegation.ts';
 import {registerProjects} from './projects.ts';
 import {accounts} from './accounts.ts';
 import {connectionRegistry} from './connections.ts';
-import {delivery} from './delivery.ts';
+import {delivery,deliveryStage} from './delivery.ts';
 import {agentTools} from './agent-tools.ts';
 import {threads} from './threads.ts';
 import {storeRegistry,accessToken} from './stores.ts';
@@ -139,7 +139,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  app.get('/api/sessions/:id',async(req:any)=>(await session_get({sessionId:req.params.id})));
  // Conversation threads (docs/designs/fleet-conversations.md): pages of typed blocks per task or session, search and export.
  // feedCursor is read in the same snapshot as the page, so the client follows the feed from there and misses no row.
- const thread=threads({query:store.query,artifacts:async(executionId:string)=>all('artifact',{executionId},['contentBase64']),cursor:async()=>(await store.changes.since(null)).cursor});
+ const thread=threads({stage:async(sessionId:string)=>deliveryStage((await all('delivery')).filter((d:any)=>d.sourceSessionId===sessionId||d.sessionId===sessionId).sort((a:any,b:any)=>(a.createdAt??0)-(b.createdAt??0)).at(-1)?.state),query:store.query,artifacts:async(executionId:string)=>all('artifact',{executionId},['contentBase64']),cursor:async()=>(await store.changes.since(null)).cursor});
  const thread_entries=(b:any)=>thread.entries(b),thread_blocks=(b:any)=>thread.blocks(b),thread_search=(b:any)=>thread.search(b),thread_export=(b:any)=>thread.exportText(b,store.read);
  const threadKey=(req:any)=>req.params.scope==='task'?{task:req.params.id}:req.params.scope==='session'?{session:req.params.id}:fail(404,'Unknown thread scope');
  const intOf=(v:any)=>v===undefined?undefined:/^\d+$/.test(v)?Number(v):fail(400,'Expected integer');
@@ -277,7 +277,18 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   return {artifacts:await artifacts.list({executionId:!e.projectId?e.id:typeof f.executionId==='string'?f.executionId:undefined,taskId:typeof f.taskId==='string'?f.taskId:undefined,mediaType:typeof f.mediaType==='string'?f.mediaType:undefined,projectId:e.projectId??undefined,noExamples:true})}});
  app.post('/api/hosts/stores',async(req:any)=>{const b=req.body??{};(await owned({hostId:b.hostId}));return store.tx(()=>stores.register(b.hostId,b.store,req.fleetHost.holder))});
  // Results stream from a verified copy with the same sandbox as before (no size limit; bytes never sit in the coordinator).
- app.get('/api/results/:id',async(req:any,r)=>{const a=await artifacts.get(req.params.id);if(a.state!=='stored')fail(404,'Not found');r.header('Content-Security-Policy',"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:");return r.type(a.mediaType||'application/octet-stream').send(await artifacts.read(a.id))});
+ // Result bytes (docs/designs/fleet-conversations.md "Results and the artifact viewer"): agent output is untrusted. No scripts
+ // run (sandbox without allow-scripts, no script-src), types without a view download as attachments, and one Range part lets
+ // the viewer read large text in pages.
+ app.get('/api/results/:id',async(req:any,r)=>{const a=await artifacts.get(req.params.id);if(a.state!=='stored')fail(404,'Not found');
+  const type=a.mediaType||'application/octet-stream',size=Number(a.size)||0,viewable=/^(image|video|text)\//.test(type)||/^application\/(json|xml)/.test(type);
+  r.header('Content-Security-Policy',"sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; media-src 'self'").header('Accept-Ranges','bytes');
+  if(!viewable)r.header('Content-Disposition',`attachment; filename="${String(a.name??a.id).replace(/[^\w.-]+/g,'_')}"`);
+  const m=/^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range??''));
+  if(m&&size>0&&(m[1]||m[2])){const start=m[1]?Number(m[1]):Math.max(0,size-Number(m[2])),end=m[1]&&m[2]?Math.min(Number(m[2]),size-1):size-1;
+   if(start>=size||start>end)return r.code(416).header('Content-Range',`bytes */${size}`).send();
+   return r.code(206).header('Content-Range',`bytes ${start}-${end}/${size}`).header('Content-Length',String(end-start+1)).type(type).send(await artifacts.read(a.id,[start,end]))}
+  return r.type(type).send(await artifacts.read(a.id))});
  // Pipeline v2 runner (docs/designs/fleet-lab.md "Pipeline format version 2"): api steps call connections from this host; agent steps are
  // ordinary agent executions with the step's profile (variant overrides applied); script steps are executor script commands.
  const configDir=config.projectConfigDirectory||'config',profilesDir=config.profilesDirectory||'config/agents';
@@ -356,7 +367,10 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   for(const r of await all('pipeline-run',{pipelineId:'draft-examples',state:'completed'}))lab!.importDrafts(r,b=>examples.add(b)).catch(e=>app.log.error(e))});
  const placement=placementWorker(store,{stores,artifacts,locations,rules:rulesOf,queueCommand:(h,k,p)=>store.tx(()=>queueCommand(h,k,p)),retryWindowMs:()=>config.artifactRetryWindowMs??86400000,onExpired:(id:string)=>store.tx(()=>settle(id,'artifact retry window passed'))});
  Object.assign(projects,{
-  artifact_list:async(b:any)=>({artifacts:await artifacts.list({executionId:b?.executionId,taskId:b?.taskId,mediaType:b?.mediaType,projectId:b?.projectId})}),
+  // With limit: newest first, one page, nextBefore for the next page (Results page). Without: every row, as before.
+  artifact_list:async(b:any)=>{const limit=b?.limit===undefined?undefined:Number.isSafeInteger(b.limit)&&b.limit>0?b.limit:fail(400,'Expected positive integer limit');
+   const rows=await artifacts.list({executionId:b?.executionId,taskId:b?.taskId,mediaType:b?.mediaType,projectId:b?.projectId,states:Array.isArray(b?.states)?b.states.filter((x:any)=>typeof x==='string'):undefined,since:typeof b?.since==='number'?b.since:undefined,q:typeof b?.q==='string'?b.q:undefined,limit:limit===undefined?undefined:limit+1,before:Number.isSafeInteger(b?.before)?b.before:undefined});
+   if(limit===undefined)return {artifacts:rows};const more=rows.length>limit,page=rows.slice(0,limit);return {artifacts:page,nextBefore:more?page.at(-1)!.seq:null}},
   artifact_get:(b:any)=>artifacts.get(text(b?.artifactId,200)),
   artifact_purge:(b:any)=>artifacts.purge({contentHash:b?.contentHash,projectId:b?.projectId,scope:b?.scope,reason:b?.reason}),
   artifact_rule_preview:(b:any)=>placement.previewRule(b?.projectId??null,b?.rule),

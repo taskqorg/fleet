@@ -41,6 +41,13 @@ for (const [sid, x, word] of [['task-a', 'ta1', 'Alpha'], ['task-b', 'tb1', 'Bra
   await store.put('message', { id: 'm-' + x, sessionId: sid, executionId: x, text: `${word} question` });
   await store.put('event', { id: 'e-' + x, sessionId: sid, executionId: x, type: 'item.completed', seq: 0, data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: `${word} reply` }] } } });
 }
+// Results (Stage 4): rows in the artifact table for the list, legacy documents (bytes inline) for the viewer.
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+const LOG = Array.from({ length: 6000 }, (_, i) => `line ${i} of the build log`).join('\n');
+await store.put('artifact', { id: 'shot-1', executionId: 'x1', sessionId: S, path: 'screenshot.png', mediaType: 'image/png', size: Buffer.from(PNG, 'base64').length, contentBase64: PNG });
+await store.put('artifact', { id: 'log-1', executionId: 'x1', sessionId: S, path: 'build.log', mediaType: 'text/plain', size: Buffer.byteLength(LOG), contentBase64: Buffer.from(LOG).toString('base64') });
+await store.put('artifact', { id: 'page-1', executionId: 'x1', sessionId: S, path: 'index.html', mediaType: 'text/html', size: 40, contentBase64: Buffer.from('<h1>hi</h1><script>window.top.x=1</script>').toString('base64') });
+for (const [i, st] of ['stored', 'pending', 'failed'].entries()) await store.query("INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES($1,null,'prod',$2,$3,$4,$5,'x1',$6)", ['row-' + i, 'h' + i, 10 + i, i ? 'text/plain' : 'image/png', `result-${i}.${i ? 'txt' : 'png'}`, st]);
 await store.tasks.ask({ kind: 'agent_question', text: 'Use Postgres 17?', options: ['yes', 'no'], executionId: 'x1', sessionId: S, askedBy: 'agent' });
 
 let target = 0;
@@ -160,6 +167,24 @@ try {
   await p.evaluate(() => navigator.clipboard.writeText(''));
   await p.keyboard.press('Meta+a'); await p.keyboard.press('Meta+c');
   check(await until(async () => { const t = await p.evaluate(() => navigator.clipboard.readText()); return t.startsWith('---') && t.includes('Alpha question') && t.includes('Bravo reply'); }), 'Cmd+A then Cmd+C copies the whole thread');
+  // Results page: state first, filters, and the viewer for an image, a long text read in pages, and HTML without scripts.
+  await p.goto(`${origin}/results`);
+  check(await until(async () => await p.locator('.vl-row', { hasText: 'result-0.png' }).count() === 1), 'results page lists results');
+  check(await p.locator('.vl-row').first().locator('[data-ui=state-badge]').count() === 1, 'each result row starts with its state');
+  await p.locator('[data-ui=state-counters] button[aria-label^="Failed"]').click();
+  check(await until(async () => await p.locator('.vl-row').count() === 1 && await p.locator('.vl-row', { hasText: 'result-2.txt' }).count() === 1), 'state filter narrows the list');
+  await p.goto(`${origin}/results/shot-1`);
+  check(await until(async () => await p.locator('.av-frame img').evaluate((i: any) => i.complete && i.naturalWidth === 1).catch(() => false)), 'image result shows in the viewer');
+  await p.goto(`${origin}/results/log-1`);
+  check(await until(async () => (await p.locator('.av-text pre').textContent() ?? '').includes('line 10 of')), 'text result shows its first page');
+  const firstPage = (await p.locator('.av-text pre').textContent())!.length;
+  for (let i = 0; i < 6; i++) { await p.locator('.av-text').evaluate(e => { e.scrollTop = e.scrollHeight; }); await p.waitForTimeout(200); }
+  check((await p.locator('.av-text pre').textContent())!.includes('line 5999 of'), `long text loads further pages on scroll (first page ${firstPage} chars)`);
+  await p.goto(`${origin}/results/page-1`);
+  check(await until(async () => (await p.locator('.av-text pre').textContent() ?? '').includes('<script>')), 'HTML shows as source text');
+  await p.getByRole('button', { name: 'Preview (no scripts)' }).click();
+  check(await p.locator('.av-frame iframe[sandbox=""]').count() === 1, 'HTML preview is a sandboxed frame without scripts');
+  check(await p.evaluate(() => (window as any).x === undefined), 'the result page script did not run');
   check(!errors.length, `no page errors${errors.length ? ': ' + errors.join('; ') : ''}`);
   if (rtt.length) time('thread_entries page round trip (median)', [...rtt].sort((x, y) => x - y)[rtt.length >> 1]);
 } finally { await b.close(); await app.close(); proxy.close(); }

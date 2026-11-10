@@ -133,8 +133,8 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
   const stores=(await deps.stores.list()).filter(s=>copies.some((c:any)=>c.store_id===s.id)&&s.state!=='unreachable'&&!blocked.has(s.id));
   return stores.find(s=>s.host_id===hostId)??stores[0]}
  // Coordinator reads of the bytes (delivery results, website sources, differences): streamed from a verified copy.
- async function read(id:string):Promise<Readable>{const legacyDoc=await legacyDocument(id);if(legacyDoc)return (await import('node:stream')).Readable.from([Buffer.from(legacyDoc.contentBase64??'','base64')]);const a=await row(id);if(a.state!=='stored')fail(409,'Artifact not stored');const s=await source(a)??fail(503,'Artifact unavailable: no reachable store holds a verified copy');
-  return await s3(s).get(s.bucket,keyOf(a))}
+ async function read(id:string,range?:[number,number]):Promise<Readable>{const legacyDoc=await legacyDocument(id);if(legacyDoc){const b=Buffer.from(legacyDoc.contentBase64??'','base64');return (await import('node:stream')).Readable.from([range?b.subarray(range[0],range[1]+1):b])}const a=await row(id);if(a.state!=='stored')fail(409,'Artifact not stored');const s=await source(a)??fail(503,'Artifact unavailable: no reachable store holds a verified copy');
+  return await s3(s).get(s.bucket,keyOf(a),range)}
  // Coordinator code reads bounded content only: an artifact larger than maxBytes is refused before any byte is read.
  const readBuffer=async(id:string,maxBytes:number)=>{const doc=await legacyDocument(id),size=doc?Number(doc.size??0):(await row(id)).size;if(size>maxBytes)fail(413,`Artifact larger than ${maxBytes} bytes`);
   const chunks:Buffer[]=[];let n=0;for await(const c of await read(id)){n+=c.length;if(n>maxBytes)fail(413,`Artifact larger than ${maxBytes} bytes`);chunks.push(Buffer.from(c))}return Buffer.concat(chunks)};
@@ -143,10 +143,18 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
  async function get(id:string,hostId?:string){const legacyDoc=await legacyDocument(id);if(legacyDoc)return {id:legacyDoc.id,legacyId:legacyDoc.id,projectId:null as string|null,executionId:legacyDoc.executionId,name:legacyDoc.path,mediaType:legacyDoc.mediaType,size:legacyDoc.size,sha256:legacyDoc.sha256,state:'stored',availability:'available',copies:[]};const a=await row(id),copies=await store.query('SELECT store_id,state,verified_at FROM artifact_copy WHERE artifact_id=$1 ORDER BY store_id',[a.id]);
   const s=a.state==='stored'?await source(a,hostId):undefined;
   return {...view(a),copies:copies.map((c:any)=>({storeId:c.store_id,state:c.state})),availability:a.state!=='stored'?a.state:s?'available':'unavailable',...(s?{url:presign(s,hostId??'','GET',keyOf(a),{'response-content-type':a.media_type})}:{})}}
- async function list(f:{executionId?:string,taskId?:string,mediaType?:string,projectId?:string,noExamples?:boolean}={}){const c:string[]=[],p:any[]=[];
-  for(const [k,col] of [['executionId','execution_id'],['taskId','task_id'],['mediaType','media_type'],['projectId','project_id']] as const)if(typeof f[k]==='string'){p.push(f[k]);c.push(`${col}=$${p.length}`)}
+ // Results page filters (docs/designs/fleet-conversations.md Stage 4): mediaType ending in '/' matches a family (image/),
+ // states, since (ms), and newest-first pages by seq (limit, before) when limit is given; without limit, every row in seq order.
+ async function list(f:{executionId?:string,taskId?:string,mediaType?:string,projectId?:string,noExamples?:boolean,states?:string[],since?:number,q?:string,limit?:number,before?:number}={}){const c:string[]=[],p:any[]=[];
+  for(const [k,col] of [['executionId','execution_id'],['taskId','task_id'],['projectId','project_id']] as const)if(typeof f[k]==='string'){p.push(f[k]);c.push(`${col}=$${p.length}`)}
+  if(typeof f.mediaType==='string'){p.push(f.mediaType.endsWith('/')?f.mediaType.replace(/[\\%_]/g,'\\$&')+'%':f.mediaType);c.push(f.mediaType.endsWith('/')?`media_type LIKE $${p.length}`:`media_type=$${p.length}`)}
+  if(Array.isArray(f.states)&&f.states.length){p.push(f.states);c.push(`state=ANY($${p.length})`)}
+  if(Number.isFinite(f.since)){p.push(new Date(f.since!).toISOString());c.push(`created_at>=$${p.length}`)}
+  if(typeof f.q==='string'&&f.q){p.push('%'+f.q.replace(/[\\%_]/g,'\\$&')+'%');c.push(`name ILIKE $${p.length}`)}
   if(f.noExamples)c.push("role<>'example'");
-  return (await store.query(`SELECT * FROM artifact${c.length?' WHERE '+c.join(' AND '):''} ORDER BY seq`,p)).map((r:any)=>view({...r,size:Number(r.size)}))}
+  const paged=Number.isSafeInteger(f.limit)&&f.limit!>0;if(paged&&Number.isSafeInteger(f.before)){p.push(f.before);c.push(`seq<$${p.length}`)}
+  const rows=await store.query(`SELECT * FROM artifact${c.length?' WHERE '+c.join(' AND '):''} ORDER BY seq${paged?` DESC LIMIT ${f.limit!+1}`:''}`,p);
+  return rows.slice(0,paged?f.limit:undefined).map((r:any)=>({...view({...r,size:Number(r.size)}),seq:Number(r.seq),createdAt:new Date(r.created_at).getTime()}))}
 
  // Forced purge (operator): every store, now where reachable, pending where not; the hash is refused from then on.
  async function purge(b:{contentHash:string,projectId?:string|null,scope?:string,reason:string}){const hash=sha(b.contentHash),reason=typeof b.reason==='string'&&b.reason?b.reason.slice(0,500):fail(400,'Expected reason');
