@@ -36,6 +36,8 @@ export function labExperiments(d:Deps){
   if(b.kind==='loop')fail(400,'Loop experiments need strategies (Stage 4)');if(!KINDS.includes(b.kind))fail(400,'Invalid kind');
   if(b.strategy!==undefined)fail(400,'strategy is for loop experiments');
   const projectId=ident(b.projectId,'projectId'),pipelineId=ident(b.pipelineId,'pipelineId');runner.load(pipelineId+'.json');
+  // Agent steps start only in a configured project: an unknown one would fail every trial at its first agent step.
+  if(!await d.catalogue(projectId).then(()=>true,()=>false))fail(400,'Unknown project '+projectId);
   if(!Array.isArray(b.examples)||!b.examples.length)fail(400,'Expected examples (approved example artifact IDs)');
   const examples:any[]=[];for(const id of b.examples){const ex=await d.examples.get(ident(id,'example artifact')).catch((e:any)=>e.statusCode===404?fail(400,'Unknown example '+id):Promise.reject(e));
    if(ex.state!=='approved')fail(409,`Example ${id} is not approved`);const hash=(await q('SELECT content_hash FROM artifact WHERE id=$1',[id]))[0].content_hash;
@@ -235,7 +237,7 @@ export function labExperiments(d:Deps){
    out.push({id:e.id,goal:e.goal,source:e.source,source_status:e.source_status,lab_fit:e.lab_fit,maturity:e.maturity,checks:e.checks});return out}
 
  async function get(id:string){const exp=await row(id),runs=await runsOf(id),trials=trialsOf(runs),cur=await scores.current(id),s=await spend(id);
-  const stepRows=await q(`SELECT data->>'pipelineRunId' AS run,host_id,harness,harness_version,model FROM execution WHERE experiment_id=$1 AND data ? 'pipelineStepId'`,[id]);
+  const stepRows=await q(`SELECT data->>'pipelineRunId' AS run,host_id,harness,harness_version,model FROM execution WHERE experiment_id=$1 AND data ? 'pipelineStepId' AND data ? 'agentConfig'`,[id]);
   const credits=await q(`SELECT split_part(e.parent_execution_id,':step:',1) AS run,count(*)::int AS calls,coalesce(sum((t.connection_cost->>'credits')::numeric),0)::float8 AS credits,count(*) FILTER (WHERE t.connection_cost_basis IS DISTINCT FROM 'measured')::int AS unmeasured FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.experiment_id=$1 AND e.kind='tool_run' GROUP BY 1`,[id]);
   const trialView=(t:any)=>{const st=stepRows.filter((x:any)=>x.run===t.id),c=credits.find((x:any)=>x.run===t.id);
    return {id:t.id,cell:t.cell,state:t.state,problem:t.problem,comparable:comparable(t),startedAt:t.startedAt,finishedAt:t.finishedAt??null,durationMs:t.durationMs,

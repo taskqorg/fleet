@@ -10,7 +10,7 @@ import {attachStores} from './artifact-helpers.ts';
 const fake=fileURLToPath(new URL('./fixtures/fake_connection.py',import.meta.url));
 const search=(conn:string,extra={})=>({version:2,id:'x',steps:[{id:'search',kind:'api',connection:conn,tool:'web_search',arguments:{query:'${example.prompt}'},...extra}]});
 function setup(){
- const dir=mkdtempSync('/tmp/fleet-lab-');mkdirSync(dir+'/pipelines');mkdirSync(dir+'/projects');cpSync('config/agents',dir+'/agents',{recursive:true});
+ const dir=mkdtempSync('/tmp/fleet-lab-');mkdirSync(dir+'/pipelines');mkdirSync(dir+'/projects');cpSync('config/agents',dir+'/agents',{recursive:true});cpSync('config/projects/hello-world',dir+'/projects/hello-world',{recursive:true});cpSync('config/catalogue.json',dir+'/catalogue.json');
  for(const [id,conn,extra] of [['lab-ok','ok',{}],['lab-full','full',{}],['lab-job','job',{mode:'job'}]] as const)writeFileSync(`${dir}/pipelines/${id}.json`,JSON.stringify({...search(conn,extra),id}));
  for(const [conn,answer] of [['ok','ok'],['full','queue-full'],['job','job']]){mkdirSync(`${dir}/connections/${conn}`,{recursive:true});writeFileSync(`${dir}/connections/${conn}/connection.json`,JSON.stringify({answer,log:dir+'/calls.log',jobState:dir+'/job.state'}));chmodSync(`${dir}/connections/${conn}/connection.json`,0o600)}
  writeFileSync(dir+'/calls.log','');writeFileSync(dir+'/job.state','running');
@@ -22,7 +22,7 @@ const op=(app:any,name:string,b:any,status=200)=>call(app,'POST','/api/ops/'+nam
 const until=async(app:any,id:string,ok:(e:any)=>boolean)=>{for(let i=0;i<300;i++){const e=await call(app,'GET','/api/lab/experiments/'+id);if(ok(e))return e;await new Promise(x=>setTimeout(x,50))}throw Error("timeout "+JSON.stringify(await call(app,"GET","/api/lab/experiments/"+id)).slice(0,3000))};
 const example={id:'t-search',use_case_id:'fleet:UC5',version:1,origin:'synthetic',fixture:null,prompt:'hello',inputs:[],references:[],checks:[{id:'url',run:'grep -q example.com output.json'}],split:'tune'};
 const seed=async(app:any)=>(await call(app,'POST','/api/lab/examples',{examples:[example],approved:true})).examples[0].artifactId;
-const ab=(ex:string,pipelineId='lab-ok',more:any={})=>({kind:'ab',projectId:'fleet',pipelineId,examples:[ex],variants:[{label:'baseline'},{label:'skill',overrides:{skills:['x']}}],repeats:2,evaluators:[{kind:'script',ref:'example.checks',form:'pass_fail'},{kind:'human',ref:'owner',form:'pick_best'}],...more});
+const ab=(ex:string,pipelineId='lab-ok',more:any={})=>({kind:'ab',projectId:'hello-world',pipelineId,examples:[ex],variants:[{label:'baseline'},{label:'skill',overrides:{skills:['x']}}],repeats:2,evaluators:[{kind:'script',ref:'example.checks',form:'pass_fail'},{kind:'human',ref:'owner',form:'pick_best'}],...more});
 
 test('seeded shuffle is stable; rating answers parse per form; forms never combine',()=>{
  const ids=['a','b','c','d','e'];assert.deepEqual(shuffle(ids,'s1'),shuffle(ids,'s1'));assert.deepEqual([...shuffle(ids,'s1')].sort(),ids);
@@ -38,7 +38,7 @@ test('seeded shuffle is stable; rating answers parse per form; forms never combi
 test('A/B: concurrent reconciles launch one trial per cell, script scores land once, spend counted once, restart relaunches nothing',async()=>{
  const s=setup();let app=await boot(s.config);
  try{const ex=await seed(app);
-  await call(app,'POST','/api/lab/experiments',{...ab(ex),kind:'loop'},400);
+  await call(app,'POST','/api/lab/experiments',{...ab(ex),kind:'loop'},400);await call(app,'POST','/api/lab/experiments',{...ab(ex),projectId:'nope'},400);
   const e=await call(app,'POST','/api/lab/experiments',ab(ex));assert.equal(e.state,'draft');
   assert.notEqual(e.variants[0].config_ref,e.variants[1].config_ref);
   // Two launches at once: one wins, the other is a wrong-state 409; reconcile is serial, so each cell has one trial.
@@ -84,10 +84,10 @@ test('budgets: pause asks once and resumes; stop ends with its reason; warn only
 test('infra-failed and cancelled trials are excluded; retry raises the attempt',async()=>{
  const s=setup();const app=await boot(s.config);
  try{const ex=await seed(app);
-  const f=await call(app,'POST','/api/lab/experiments',{kind:'single',projectId:'fleet',pipelineId:'lab-full',examples:[ex],variants:[{label:'baseline'}],evaluators:[{kind:'script',ref:'example.checks',form:'pass_fail'}]});
+  const f=await call(app,'POST','/api/lab/experiments',{kind:'single',projectId:'hello-world',pipelineId:'lab-full',examples:[ex],variants:[{label:'baseline'}],evaluators:[{kind:'script',ref:'example.checks',form:'pass_fail'}]});
   await call(app,'POST',`/api/lab/experiments/${f.id}/launch`);const fd=await until(app,f.id,x=>x.state==='done');
   assert.equal(fd.trials[0].problem,'infra:queue-full');assert.equal(fd.trials[0].comparable,false);assert.equal(fd.scores.length,0);
-  const j=await call(app,'POST','/api/lab/experiments',{kind:'single',projectId:'fleet',pipelineId:'lab-job',examples:[ex],variants:[{label:'baseline'}]});
+  const j=await call(app,'POST','/api/lab/experiments',{kind:'single',projectId:'hello-world',pipelineId:'lab-job',examples:[ex],variants:[{label:'baseline'}]});
   await call(app,'POST',`/api/lab/experiments/${j.id}/launch`);const running=await until(app,j.id,x=>x.trials.length===1&&x.trials[0].state==='running');
   const cell=encodeURIComponent('t-search@1|baseline|0');
   await call(app,'POST',`/api/lab/experiments/${j.id}/cells/${cell}/retry`,undefined,409);
@@ -113,7 +113,7 @@ test('owner ratings: blind seeded order, answers become scores, a correction rep
   const pf=await call(app,'POST','/api/lab/ratings',{experimentId:e.id,form:'pass_fail',trialIds:[t1]});
   await op(app,'questions_answer',{questionId:pf.id,answer:'fail: missing source'});
   // A judge score on the same trial (as a judge run would write): agreement compares it with the owner's pass_fail.
-  await app.store.query("INSERT INTO score(id,experiment_id,project_id,trial_ids,evaluator,evaluator_version,form,value) VALUES('j1',$1,'fleet',$2,'judge:j:pass_fail','1','pass_fail','true')",[e.id,[t1]]);
+  await app.store.query("INSERT INTO score(id,experiment_id,project_id,trial_ids,evaluator,evaluator_version,form,value) VALUES('j1',$1,'hello-world',$2,'judge:j:pass_fail','1','pass_fail','true')",[e.id,[t1]]);
   let x=await call(app,'GET','/api/lab/experiments/'+e.id);
   const pick=x.scores.find((s:any)=>s.form==='pick_best');assert.deepEqual([pick.value,pick.trialIds,pick.questionId],[t2,[t1,t2],r.id]);
   assert.deepEqual(x.agreement,{compared:1,matched:0,percent:0});
