@@ -93,7 +93,9 @@ func (s *Store) once(ctx context.Context, sc *Scope, write bool, lock string, fn
 	if !write {
 		opts = pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}
 	}
-	return pgx.BeginTxFunc(ctx, s.pool, opts, func(tx pgx.Tx) error {
+	var t pgx.Tx
+	err := pgx.BeginTxFunc(ctx, s.pool, opts, func(tx pgx.Tx) error {
+		t = tx
 		if a, _ := ctx.Value(actorKey{}).(string); a != "" {
 			if _, err := tx.Exec(ctx, "SELECT set_config('fleet.actor',$1,true)", a); err != nil {
 				return err
@@ -111,6 +113,23 @@ func (s *Store) once(ctx context.Context, sc *Scope, write bool, lock string, fn
 		}
 		return fn(tx)
 	})
+	if hooks, _ := endHooks.LoadAndDelete(t); hooks != nil {
+		for _, h := range *hooks.(*[]func(bool)) {
+			h(err == nil)
+		}
+	}
+	return err
+}
+
+// endHooks: effects outside the database (files) registered by onEnd, keyed by their transaction.
+var endHooks sync.Map
+
+// onEnd runs fn when tx has ended, in the caller's goroutine: committed true only after a confirmed commit. A retried
+// attempt ends with committed false before the next attempt runs.
+func onEnd(tx pgx.Tx, fn func(committed bool)) {
+	v, _ := endHooks.LoadOrStore(tx, &[]func(bool){})
+	hooks := v.(*[]func(bool))
+	*hooks = append(*hooks, fn)
 }
 
 var migrationSplit = regexp.MustCompile(`(?m)^-- migration (\d+)`)

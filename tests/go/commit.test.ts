@@ -6,7 +6,7 @@
 import {after, before, test} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
-import {randomBytes, randomUUID} from 'node:crypto';
+import {createHash, randomBytes, randomUUID} from 'node:crypto';
 import {copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync} from 'node:fs';
 import {homedir, tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -62,4 +62,28 @@ test('M1 a migration applied by another coordinator while this one waited for th
     try { process.kill(-second.pid!, 'SIGKILL'); } catch {}
     await otherDone;
   }
+});
+
+const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+const name = (p: string) => p + '-' + randomUUID().slice(0, 8);
+async function tavily() {
+  const conn = name('tavily');
+  ok(await op('connections_create', {name: conn, provider: 'tavily'}));
+  ok(await op('connections_set_access', {connection: conn, access: {projects: ['*']}}));
+  return conn;
+}
+
+test('S1 a past spool file stays until its imported lines are committed (requirement: every gateway call is accounted once; risk: a failed commit after the file was deleted loses the billable calls in it)', async () => {
+  const conn = await tavily();
+  const m = ok(await op('connections_token_create', {name: name('t'), connections: [conn]}));
+  const callId = randomUUID(), dir = join(GATEWAY_DIR, 'state', 'spool'), file = join(dir, '2020-01-01.jsonl');
+  mkdirSync(dir, {recursive: true});
+  failCommitOn('fail_spool', `execution NEW.id = 'call:${callId}'`);
+  writeFileSync(file, JSON.stringify({callId, tokenSha256: sha(m.token), executionId: 'token:x', tool: 'web_search', connection: conn, outcome: 'ok', startedAt: Date.now(), ms: 5}) + '\n');
+  await sleep(1500); // several connection ticks, each failing at commit
+  assert.ok(existsSync(file), 'the spool file was deleted although its lines never committed');
+  clear('fail_spool', 'execution');
+  for (let i = 0; i < 50 && existsSync(file); i++) await sleep(100);
+  assert.equal(existsSync(file), false, 'the spool file stays after a committed import');
+  assert.equal(c.sql(`SELECT count(*) FROM execution WHERE id='call:${callId}'`).trim(), '1');
 });

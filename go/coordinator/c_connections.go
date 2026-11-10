@@ -774,7 +774,7 @@ func revokeSteps(q *Request) error {
 }
 
 // Spool ingest (§3): every gateway line becomes one tool_run with connection_cost, idempotent by callId. A past day's
-// file is deleted once read. A line naming a disabled key disables its row and asks the owner once.
+// file is deleted once its lines are committed. A line naming a disabled key disables its row and asks the owner once.
 func connIngest(q *Request) (int, error) {
 	if gatewayDir() == "" {
 		return 0, nil
@@ -818,7 +818,13 @@ func connIngest(q *Request) (int, error) {
 			publish()
 		}
 		if f[:10] < yesterday {
-			os.Remove(filepath.Join(dir, f))
+			// Retired only once the imported lines are committed; a re-read after a lost commit is deduplicated by callId.
+			path := filepath.Join(dir, f)
+			onEnd(q.tx, func(committed bool) {
+				if committed {
+					os.Remove(path)
+				}
+			})
 		}
 	}
 	return added, nil
