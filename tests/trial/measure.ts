@@ -19,16 +19,19 @@ const arm: Arm = JSON.parse(readFileSync(join(root, 'tests/trial/arms', armName 
 const sh = (cmd: string, cwd: string) => execFileSync('sh', ['-c', cmd], {cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1 << 28});
 const ms = (t: number) => Math.round(performance.now() - t);
 
-// Machine load. Not comparable: a 1-minute load average above half the logical CPUs, or another process above one core.
-// File-event daemons are left out of the process check: they react to this script's own checkouts and builds.
-const OWN_ECHO = /^(fseventsd|mds|mds_stores|mdworker|mdworker_shared|revisiond)$/;
+// Machine load. A run is not comparable when the machine was busy before this script started (1-minute load average above
+// half the logical CPUs; later load averages include this script's own builds) or when a process outside this script's
+// process tree uses more than one core at the start or end of the run. File-event daemons are left out: they react to
+// this script's own checkouts and builds.
 const CPUS = availableParallelism();
+const OWN_ECHO = /^(fseventsd|mds|mds_stores|mdworker|mdworker_shared|revisiond)$/;
 function load() {
   const avg = sh('sysctl -n vm.loadavg 2>/dev/null || cat /proc/loadavg', root).replace(/[{}]/g, '').trim().split(/\s+/).slice(0, 3).map(Number);
-  const own = new Set<number>([process.pid]);
-  const heavy = sh('ps -A -o pid=,ppid=,%cpu=,comm=', root).split('\n').map(l => l.trim().match(/^(\d+)\s+(\d+)\s+([\d.]+)\s+(.*)$/)).filter(Boolean)
-    .map(m => ({pid: Number(m![1]), ppid: Number(m![2]), cpu: Number(m![3]), comm: m![4].split('/').pop()!})).filter(p => p.cpu > 100 && !own.has(p.ppid) && !own.has(p.pid) && !OWN_ECHO.test(p.comm))
-    .map(p => `${p.comm}:${Math.round(p.cpu)}%`);
+  const ps = sh('ps -A -o pid=,ppid=,%cpu=,comm=', root).split('\n').map(l => l.trim().match(/^(\d+)\s+(\d+)\s+([\d.]+)\s+(.*)$/)).filter(Boolean)
+    .map(m => ({pid: Number(m![1]), ppid: Number(m![2]), cpu: Number(m![3]), comm: m![4].split('/').pop()!}));
+  const parent = new Map(ps.map(p => [p.pid, p.ppid]));
+  const ours = (pid: number) => { for (let p: number | undefined = pid, i = 0; p && i < 64; p = parent.get(p), i++) if (p === process.pid) return true; return false; };
+  const heavy = ps.filter(p => p.cpu > 100 && !ours(p.pid) && !OWN_ECHO.test(p.comm)).map(p => `${p.comm}:${Math.round(p.cpu)}%`);
   return {load1: avg[0], load5: avg[1], load15: avg[2], heavy, quiet: avg[0] <= CPUS / 2 && heavy.length === 0};
 }
 
@@ -53,7 +56,7 @@ function outside(wt: string): Promise<{ok: boolean, line: Record<string, string>
   return new Promise(res => { let out = '';
     const p = spawn(process.execPath, [join(wt, 'tests/trial/run.ts')], {cwd: wt, env: {...process.env, FLEET_TRIAL_SERVER: arm.server}, stdio: ['ignore', 'pipe', 'pipe']});
     p.stdout.on('data', d => out += d); p.stderr.on('data', d => out += d);
-    p.on('exit', code => { const m = out.match(/trial-run (.*)$/m); res({ok: code === 0, line: Object.fromEntries((m?.[1] ?? '').split(' ').filter(Boolean).map(kv => kv.split('=')))}); }); });
+    p.on('exit', code => { const m = out.match(/trial-run (.*)$/m); if (code) { const f = join(tmpdir(), 'fleet-trial', `red-${Date.now()}.txt`); mkdirSync(join(tmpdir(), 'fleet-trial'), {recursive: true}); writeFileSync(f, out); console.error('red outside run: ' + f); } res({ok: code === 0, line: Object.fromEntries((m?.[1] ?? '').split(' ').filter(Boolean).map(kv => kv.split('=')))}); }); });
 }
 function runAsync(cmd: string, cwd: string) { return new Promise<boolean>(res => spawn('sh', ['-c', cmd], {cwd, stdio: 'ignore'}).on('exit', c => res(c === 0))); }
 
@@ -116,7 +119,7 @@ for (let r = 0; r < RUNS; r++) {
   const par = await Promise.all(wts.map(async (wt, i) => { const t = performance.now(); const back = edit(wt, r * 100 + i);
     const built = await runAsync(arm.check, wt); const t1 = ms(t); const green = built && (await outside(wt)).ok; back(); return {ok: green, checkMs: t1, ms: ms(t)}; }));
   const after = load();
-  const run = {run: r + 1, comparable: before.quiet && after.quiet, loadStart: before, loadEnd: after, coldMs: cold.ms, coldPeakRssKb: cold.peakRssKb, warmMs: warm.ms, rebuildMs: rebuild.ms, rebuildPeakRssKb: rebuild.peakRssKb,
+  const run = {run: r + 1, comparable: started.quiet && !before.heavy.length && !after.heavy.length, loadStart: before, loadEnd: after, coldMs: cold.ms, coldPeakRssKb: cold.peakRssKb, warmMs: warm.ms, rebuildMs: rebuild.ms, rebuildPeakRssKb: rebuild.peakRssKb,
     outsideOk: test.ok, outsideTotalMs: Number(test.line.total_ms), outsideSetupMs: Number(test.line.setup_ms), outsideTestsMs: Number(test.line.tests_ms), serverPeakRssKb: Number(test.line.server_peak_rss_kb),
     parallelOk: par.every(p => p.ok), parallelEditToGreenMs: par.map(p => p.ms), parallelCheckMs: par.map(p => p.checkMs)};
   runs.push(run);
