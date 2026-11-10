@@ -833,7 +833,7 @@ func init() {
 		}
 		// An agent's question is answered by delivering the reply to its session (agent tool reply); recording the
 		// answer alone left the asker without it.
-		if aq, err := first(q, "SELECT project_id FROM question WHERE id=$1 AND legacy_kind='question'", id); err != nil {
+		if aq, err := first(q, "SELECT coalesce(q.project_id,s.data->>'projectId') AS project_id FROM question q LEFT JOIN document s ON s.kind='session' AND s.id=q.session_id WHERE q.id=$1 AND q.legacy_kind='question'", id); err != nil {
 			return nil, err
 		} else if aq != nil {
 			// The reply reaches another session: the person must have that session's project, as for any project op.
