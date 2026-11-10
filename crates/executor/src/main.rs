@@ -419,7 +419,7 @@ impl Executor {
         if fleet_tools {
             let context = json!({"hostId":self.host,"commandId":c["id"],"executionId":c["executionId"],"profiles":profiles,"projectId":p["projectId"],"workdir":workdir.clone().unwrap_or_else(|| dir.clone()),"inputDir":input_dir,"spool":self.root.join("spool")});
             let args = json!(["-c",include_str!("delegation.py"),self.root.join("journal.sqlite"),context.to_string()]);
-            if matches!(harness::name(p), "claude" | "antigravity") {
+            if (harness::name(p) == "claude" || harness::acp(harness::name(p))) {
                 claude_servers["fleet"] = json!({"command":"python3","args":args});
             } else {
                 cmd.args(["-c","mcp_servers.fleet.command=\"python3\"","-c",&format!("mcp_servers.fleet.args={args}"),"-c","mcp_servers.fleet.required=true"]);
@@ -475,7 +475,7 @@ impl Executor {
             harness::claude_mcp(&mut cmd, p.get("agentConfig").unwrap_or(p), &claude_servers, &extra);
         }
         let codex_protocol = harness::name(p) == "codex";
-        let acp_protocol = harness::name(p) == "antigravity";
+        let acp_protocol = harness::acp(harness::name(p));
         if codex_protocol {
             cmd = codex::command(&cmd);
         }

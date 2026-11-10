@@ -2,7 +2,7 @@
 // intake, harnesses}. Each host has its own secret; only its SHA-256 is stored. The coordinator derives the host from the
 // secret on every /api/hosts/* request and never trusts a hostId in the body.
 // roles: 'inspector-for:<hostId>' (runs account inspections and integration for that host), 'publication' (runs delivery).
-import {createHash,randomBytes} from 'node:crypto';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import type {Store} from './store.ts';
 import {mayAccessProject,type Person} from './people.ts';
 
@@ -37,6 +37,13 @@ export function hostRegistry(store:Store,people:{personFor:(e:string|undefined)=
    const h:Host={id:b.id,name:typeof b.name==='string'?b.name:b.id,holder,platform:typeof b.platform==='string'?b.platform:'unknown',roles,secretHash:b.secretSha256??secretHash(secret!),intake:'all',harnesses,createdAt:Date.now()};
    distinct(h.secretHash);if((await list()).some(x=>x.secretHash===h.secretHash))fail(409,'Secret already used by another host');
    await save(h);return {host:view(h),...(secret?{secret}:{})}},
+  // Holder or owner: intake (all|paused) and where each harness may run (harnesses.<name>.allowed). One setting-change row per
+  // changed field; acts at the next start.
+  hosts_update:async(b:any,p:Person|null)=>{const h=await byId(b?.id)??fail(404,'Unknown host');if(!p||(!p.owner&&p.email!==h.holder))fail(403,'Only the holder or the owner changes this host');
+   const next:any={};if(b.intake!==undefined){if(!['all','paused'].includes(b.intake))fail(400,'intake: all or paused');next.intake=b.intake}
+   if(b.harnesses!==undefined){if(typeof b.harnesses!=='object'||Object.values(b.harnesses).some((v:any)=>typeof v?.allowed!=='boolean'))fail(400,'harnesses: {<name>: {allowed}}');next.harnesses={...h.harnesses,...b.harnesses}}
+   for(const [field,value] of Object.entries(next))if(JSON.stringify((h as any)[field])!==JSON.stringify(value))await store.put('setting-change',{id:randomUUID(),target:'host:'+h.id,field,previous:(h as any)[field]??null,value,actor:p!.email,at:Date.now()});
+   Object.assign(h,next);await save(h);return {host:view(h)}},
   // Replaces the hash; the old secret stops at once.
   hosts_rotate_secret:async(b:any,p:Person|null)=>{owner(p);const h=await byId(b?.id)??fail(404,'Unknown host');
    if(b.secretSha256!==undefined&&!HASH.test(b.secretSha256))fail(400,'secretSha256 must be 64 hex characters');

@@ -44,7 +44,8 @@ test('Alina sees only desiign and her own host; architect operations 403; the ow
   const feed=async(person:string)=>(await json('changes_since',{cursor:0},person)).changes.map((c:any)=>c.taskId??c.id);
   assert.ok(!(await feed(ALINA)).includes(other));assert.ok((await feed(ALINA)).length>0);assert.ok((await feed(OWNER)).includes(other));
   // Architect views: 403 for an operator.
-  for(const name of ['account_list','lab_experiments_list'])assert.equal((await op(name,{},ALINA)).statusCode,403,name);
+  assert.deepEqual((await json('account_list',{},ALINA)).accounts,[]);
+  for(const name of ['account_hosts','lab_experiments_list'])assert.equal((await op(name,{},ALINA)).statusCode,403,name);
   assert.equal((await app.inject({method:'GET',url:'/api/accounts',headers:{authorization:'Bearer browser','x-fleet-person':ALINA}})).statusCode,403);
  }finally{await app.close();await s.close()}
 });

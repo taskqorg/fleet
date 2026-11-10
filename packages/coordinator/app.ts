@@ -22,7 +22,7 @@ import {labExamples} from './lab/examples.ts';
 import {pipelineRunner} from './pipelines.ts';
 import {labExperiments} from './lab/experiments.ts';
 import {labOperations,registerLab} from './lab/routes.ts';
-import {peopleRegistry,requestPerson,actor,mayAccessProject} from './people.ts';
+import {peopleRegistry,requestPerson,actor,mayAccessProject,director} from './people.ts';
 import {hostRegistry,type Host} from './hosts.ts';
 import type {HostEvents,PollReply,PollRequest,Receipt} from '../../contracts/generated/host-protocol.ts';
 declare module 'fastify' {interface FastifyRequest {fleetHost:Host}}
@@ -91,9 +91,12 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   return {projectIds:(p.roles.includes('architect')?',':'')+ids.join(','),person:p.email}});
  const ARCHITECT_OPS=/^(account_|lab_|connection|recovery|reconcil|transport_|artifact_rule|profiles_list)/,ARCHITECT_ROUTES=/^\/api\/(lab|accounts|recovery|reconciliation|recovery-tools|profiles)(\/|$)/;
  const opName=(req:any)=>['/api/ops/:name','/api/project-operations/:name'].includes(req.routeOptions?.url)?req.params?.name:['/api/tools','/api/project-tools'].includes(req.routeOptions?.url)&&req.body?.method==='tools/call'?req.body?.params?.name:null;
+ // Held-row exception (§2, decision 15): a holder works with their own subscription (the operation's accountId) without the
+ // architect role, lists the subscriptions they hold and creates their own.
+ const ownSubscription=async(name:string|null,b:any,p:any)=>!!name&&/^account_/.test(name)&&(['account_list','account_create'].includes(name)||typeof b?.accountId==='string'&&(await store.unscoped(()=>get(b.accountId,'managed-account').catch(()=>null)))?.holder===p.email);
  app.addHook('preHandler',async(req:any)=>{const p=req.person;if(!p||p.owner)return;const name=opName(req),route=req.routeOptions?.url??'';
   const args=req.body?.method==='tools/call'?req.body?.params?.arguments:req.body;
-  if((name&&ARCHITECT_OPS.test(name)||ARCHITECT_ROUTES.test(route))&&!p.roles.includes('architect'))fail(403,'Architect role required');
+  if((name&&ARCHITECT_OPS.test(name)||ARCHITECT_ROUTES.test(route))&&!p.roles.includes('architect')&&!(await ownSubscription(name,args,p)))fail(403,'Architect role required');
   // Project settings and context come from config files, outside row-level security: a named project must be granted.
   const projectId=args?.projectId??(route.startsWith('/api/projects/:')?req.params?.id??req.params?.project:undefined)??req.query?.projectId;
   if(typeof projectId==='string'&&!mayAccessProject(p,projectId))fail(404,'Unknown project')});
@@ -118,7 +121,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  app.get('/test-sites/:project/:file',async(req:any,r)=>{if(!config.testSiteRoot||!['hello-world','hello-world-alt'].includes(req.params.project)||!/^[a-zA-Z0-9_-]+\.(html|css)$/.test(req.params.file))fail(404,'Unknown test site');const root=realpathSync(resolve(config.testSiteRoot!,req.params.project)),path=realpathSync(resolve(root,'current',req.params.file));if(!path.startsWith(root+sep))fail(403,'Test-site path rejected');r.header('Content-Security-Policy',"sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src data:; frame-ancestors 'self'");return r.type(req.params.file.endsWith('.css')?'text/css':'text/html').send(readFileSync(path))});
  const profiles_list=()=>({profiles:listProfiles(config.profilesDirectory||'config/agents')});
  app.get('/api/profiles',async()=>profiles_list());
- const session_create=async ()=>{const s={id:randomUUID(),createdAt:Date.now()};await put('session',s);return {sessionId:s.id,...s}};
+ const session_create=async ()=>{const s={id:randomUUID(),createdAt:Date.now(),directedBy:director()};await put('session',s);return {sessionId:s.id,...s}};
  app.post('/api/sessions',async()=>(await store.tx(session_create)));
  const session_profile=async ({sessionId,...body}:any)=>{const req={body};
   const s=(await get(sessionId,'session'));if(!req.body||Object.keys(req.body).some(k=>!['profileId','account','workingDirectory'].includes(k))||typeof req.body.profileId!=='string')fail(400,'Expected profileId only');
@@ -168,13 +171,17 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  app.get('/api/executions/:id/differences',async(req:any)=>(await execution_differences({executionId:req.params.id,previous:req.query.previous})));
  const execution_events=async (b:any)=>{(await get(b?.executionId,'execution'));return {events:(await all('event',{executionId:b.executionId})).filter(x=>x.executionId===b.executionId&&x.type!=='execution.ended').sort((a,b)=>a.seq-b.seq)}};
  app.get('/api/executions/:id/events',async(req:any)=>(await execution_events({executionId:req.params.id})));
- const managed=accounts(app,store,{...config,hosts});
+ const managed=accounts(app,store,{...config,hosts,personFor:people.personFor});
  // Git network for agents: profile gitNetwork wins; default on for pm/reviewer/worker sessions of projects with repos.
  const gitNetwork=(s:any)=>s.agentConfig?.gitNetwork??(!!s.projectId&&['pm','reviewer','worker'].includes(s.role)&&projects.project_context({projectId:s.projectId}).settings.repos.length>0);
  // extra: payload fields for the start command and fields for the execution record (pipeline agent steps).
  // Host and account choice is the coordinator's own work: it reads every host and account (store.unscoped, §2).
  const enqueue=(s:any,input:string,requestId:string,extra:{payload?:any,execution?:any,host?:string}={})=>store.unscoped(async()=>{
   // Execution host follows the account binding: the session's last host first, then the default host, then extra native hosts.
+  // Director (§5): the session's, else inherited from the execution or pipeline run that created it, else the request person
+  // (the owner for timers and workers). Agents never set it.
+  if(!s.directedBy){const from=async(id:any,kind:string)=>typeof id==='string'?await get(id,kind).catch(()=>null):null;
+   s.directedBy=(await from(s.createdByExecutionId,'execution'))?.directedBy??(await from(s.parentExecutionId,'execution'))?.directedBy??(await from(s.pipelineRunId,'pipeline-run'))?.requestedBy?.email??director();await put('session',s)}
   const harness=s.agentConfig?.harness??'codex',last=(await all('execution',{sessionId:s.id})).filter(x=>x.sessionId===s.id&&x.hostId).at(-1)?.hostId;
   // A pipeline agent step with overrides.host, or a session started with hostId, runs only there: no fallback, the resolve error is the refusal.
   if(extra.host===undefined&&s.hostId)extra={...extra,host:s.hostId};
@@ -182,15 +189,23 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   if(extra.host!==undefined&&!executionHosts.includes(extra.host))fail(400,'Unknown host '+extra.host);
   const candidates=extra.host!==undefined?[extra.host]:[...new Set([last,config.hostId,...executionHosts].filter((h:any)=>executionHosts.includes(h)))];
   let hostId=config.hostId,binding:any;const errors:any[]=[];
-  for(const h of candidates){try{binding=(await managed.resolve(s.account,harness,h));hostId=h;errors.length=0;break}catch(error){errors.push(error)}}
+  for(const h of candidates){try{binding=(await managed.resolve(s.account,harness,h,s.directedBy,s.projectId??null));hostId=h;errors.length=0;break}catch(error){errors.push(error)}}
   if(errors.length)throw errors.find((x:any)=>x.statusCode===403)??errors[candidates.indexOf(config.hostId)]??errors[0];
-  const e={...(s.agentConfig?{agentConfig:s.agentConfig,profileSha256:profileDigest(s.agentConfig)}:{}),...(s.account||binding?{requestedAccount:s.account??null,effectiveAccount:binding??{binding:s.account,legacy:true}}:{}),id:randomUUID(),executionId:'',sessionId:s.id,hostId,state:'queued',createdAt:Date.now(),model:s.agentConfig?.model??'gpt-6.1-sol',effort:s.agentConfig?s.agentConfig.effort:'low'};e.executionId=e.id;
+  const e={...(s.agentConfig?{agentConfig:s.agentConfig,profileSha256:profileDigest(s.agentConfig)}:{}),...(s.account||binding?{requestedAccount:s.account??null,effectiveAccount:binding??{binding:s.account,legacy:true}}:{}),id:randomUUID(),executionId:'',sessionId:s.id,hostId,state:'queued',createdAt:Date.now(),directedBy:binding?.taken?binding.holder:s.directedBy,...(binding?.taken?{takenFrom:s.directedBy}:{}),model:s.agentConfig?.model??'gpt-6.1-sol',effort:s.agentConfig?s.agentConfig.effort:'low'};e.executionId=e.id;
   const command:any={id:randomUUID(),executionId:e.id,sessionId:s.id,hostId,kind:'start',payload:{harness:s.agentConfig?.harness??'codex',...(s.account||binding&&!s.nativeSessionId?{account:binding?.binding??s.account,...(binding?{managedAccount:binding}:{})}:{}),text:input,...(s.projectId?{projectId:s.projectId,project:projects.project_context({projectId:s.projectId}).settings}:{}),...(gitNetwork(s)?{gitNetwork:true}:{}),setup:s.setup??'run',...(s.workingDirectory?{workingDirectory:s.workingDirectory}:{}),model:e.model,effort:e.effort,...(s.agentConfig?{agentConfig:s.agentConfig}:{}),instructions:s.agentConfig?'':'Follow the user request and its scope. Discuss, answer questions, or review existing results when requested; do not create or modify a website unless requested. When creating a static website, deliver output/index.html and retain all source assets. Do not spawn subagents.',...(s.nativeSessionId?{nativeSessionId:s.nativeSessionId}:{}),...extra.payload},status:'pending'};Object.assign(e,extra.execution);(await agent.decorate(s,e,command));
   await put('execution',e);await put('message',{id:randomUUID(),sessionId:s.id,executionId:e.id,requestId:requestId,text:input});
-  await put('command',command);return e;
+  await put('command',command);
+  // An automatic take (the subscription's take rule listed the project): the holder directs the task from now on (§5).
+  if(binding?.taken&&s.deliveryId)await store.tasks.take(s.deliveryId,binding.holder);
+  return e;
  });
  // Account for a new project session: the named one, else the project preference, else the first enabled account of the harness with a ready binding (on hostId when given). The binding picks the host.
- const pickAccount=async (harness:string,projectId:string,hostId?:string)=>store.unscoped(async()=>{const ms=(await all('managed-account')).filter(m=>m.enabled&&(m.harness??'codex')===harness&&(m.bindings??[]).some((b:any)=>b.readiness==='ready'&&(!hostId||b.hostId===hostId)));const pref=(await managed.preferred(projectId));return (ms.find(m=>m.name===pref)??ms[0])?.name});
+ // Ranking (§6 order, before dispatch): the director's subscriptions before take-rule ones, then the project's subscriptions list.
+ const pickAccount=async (harness:string,projectId:string,hostId?:string,directedBy:string|null=director())=>store.unscoped(async()=>{const order:string[]=subscriptionsOf(projectId);
+  const ms=(await all('managed-account')).filter(m=>m.intake!=='paused'&&(m.harness??'codex')===harness&&(m.holder===directedBy||(m.take?.projects??[]).includes(projectId))&&(m.bindings??[]).some((b:any)=>b.readiness==='ready'&&(!hostId||b.hostId===hostId)));
+  const rank=(m:any)=>(m.holder===directedBy?0:1e6)+(order.includes(m.name)?order.indexOf(m.name):order.includes(m.id)?order.indexOf(m.id):1e5);
+  return ms.sort((a:any,b:any)=>rank(a)-rank(b))[0]?.name});
+ const subscriptionsOf=(projectId:string|null)=>{if(!projectId)return [];try{return projects.project_context({projectId}).settings.subscriptions??[]}catch{return []}};
  // Known host: configured, or has polled at least once (a host-observation).
  const knownHost=async(hostId:string)=>store.unscoped(async()=>(await hosts.ids()).includes(hostId)||!!(await all('host-observation',{id:hostId})).find(h=>h.id===hostId));
  agent=agentTools(store,{knownHost,browserOrigin:config.browserOrigin,directory:config.profilesDirectory||'config/agents',hostId:config.hostId,enqueue,pickAccount,deliver:async (b:any)=>(await deliveryRuntime.operations.session_deliver(b)),project:(projectId:string)=>projects.project_context({projectId}).settings,resolveAccount:async(account:string,harness:string)=>{let last:any;for(const h of new Set([config.hostId,...(await hosts.executionIds())])){try{const r=await managed.resolve(account,harness,h);if(r)return r}catch(e){last=e}}if(last)throw last}});
@@ -342,7 +357,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   store_set_free_space_warning:(b:any)=>stores.setFreeSpaceWarning(b?.storeId,b?.bytes),
   artifact_copy_retry:(b:any)=>placement.retryCopy(text(b?.artifactId,200),text(b?.storeId,200)),
  });
- deliveryRuntime=delivery(store,{...config,hosts},enqueue,projects,managed.resolve,managed.preferred,(id:string)=>artifacts.readBuffer(id,1024*1024));
+ deliveryRuntime=delivery(store,{...config,hosts},enqueue,projects,managed.resolve,async(id:string)=>subscriptionsOf(id)[0],(id:string)=>artifacts.readBuffer(id,1024*1024));
  Object.assign(projects,deliveryRuntime.operations);
  app.addHook('onReady',()=>store.atomic(async()=>{await deliveryRuntime.advance();await agent.reconcile()}));
  // Placement runs on its own timer (placement_interval_seconds, default 60 s); 0 turns the timer off (tests run it directly).
@@ -355,7 +370,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  // Tasks, questions and executions (design §1-2). Operator answers carry the person's e-mail; agents answer through reply.
  const str=(v:any,name:string,max=4000)=>typeof v==='string'&&v.length>0&&v.length<=max?v:fail(400,'Expected '+name);
  const typedOps={
-  task_create:async(b:any)=>{const id=await store.tasks.create({projectId:b.projectId??null,title:str(b.title,'title',500),expectedOutcome:b.expectedOutcome??null,priority:b.priority,completionRequirements:b.completionRequirements,resultDestination:b.resultDestination??null,createdBy:actor('operator'),dependsOn:Array.isArray(b.dependsOn)?b.dependsOn.map((x:any)=>str(x,'dependsOn',200)):[]});return store.tasks.get(id)},
+  task_create:async(b:any)=>{const id=await store.tasks.create({projectId:b.projectId??null,title:str(b.title,'title',500),expectedOutcome:b.expectedOutcome??null,priority:b.priority,completionRequirements:b.completionRequirements,resultDestination:b.resultDestination??null,createdBy:actor('operator'),directedBy:director(),dependsOn:Array.isArray(b.dependsOn)?b.dependsOn.map((x:any)=>str(x,'dependsOn',200)):[]});return store.tasks.get(id)},
   task_update:(b:any)=>store.tasks.update({...b,taskId:str(b?.taskId,'taskId',200)}),
   task_get:(b:any)=>store.tasks.get(str(b?.taskId,'taskId',200)),
   // Asks the operator to accept a task's stored results (design §2 Acceptance); the default artifacts are the task's stored originals.
@@ -364,6 +379,10 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
    const id=await store.tasks.ask({kind:'acceptance',taskId:t.id,projectId:t.projectId,text:typeof b.text==='string'?b.text.slice(0,2000):'Accept the result of: '+t.title,options:['accepted','rejected'],askedBy:actor('operator'),data:{artifactIds:ids}});
    return (await store.tasks.questions({taskId:t.id})).find((q:any)=>q.id===id)},
   task_list:async(b:any)=>({tasks:await store.tasks.list({projectId:b?.projectId,state:b?.state})}),
+  // Take (§5): the person directs the task from now on; they need a grant on its project.
+  task_take:async(b:any)=>{const t=await store.tasks.get(str(b?.taskId,'taskId',200));const p=requestPerson.getStore();
+   if(!p||!mayAccessProject(p,t.projectId))fail(403,'Take needs a grant on the task project');
+   await store.tasks.take(t.id,p!.email);await put('setting-change',{id:randomUUID(),target:'task:'+t.id,field:'directedBy',previous:t.directedBy,value:p!.email,actor:p!.email,at:Date.now()});return store.tasks.get(t.id)},
   questions_list:async(b:any)=>({questions:await store.tasks.questions({taskId:b?.taskId,state:b?.state,kind:b?.kind})}),
   questions_answer:async(b:any)=>{const q=await store.tasks.answer(str(b?.questionId,'questionId',200),{answer:str(b.answer,'answer'),by:actor('operator'),artifactIds:Array.isArray(b.artifactIds)?b.artifactIds:undefined});return (await store.tasks.questions({})).find(x=>x.id===q.id)},
   executions_list:async(b:any)=>({executions:await store.executions.list({taskId:b?.taskId,projectId:b?.projectId,parentExecutionId:b?.parentExecutionId,problem:b?.problem===true})}),
@@ -383,6 +402,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
     problems:o?.lastSeenAt&&Date.now()-o.lastSeenAt<HOST_STALE_MS?o?.problems??[]:[],runningByHarness:by,running:Object.values(by).reduce((a,n)=>a+n,0),slots:null,queued:queued.find((q:any)=>q.host_id===id)?.n??0,stores:'unavailable'}})}},
   task_derived_check:async()=>store.tasks.derivedDrift(),
   hosts_register:(b:any)=>hosts.operations.hosts_register(b,requestPerson.getStore()??null),
+  hosts_update:(b:any)=>hosts.operations.hosts_update(b,requestPerson.getStore()??null),
   hosts_rotate_secret:(b:any)=>hosts.operations.hosts_rotate_secret(b,requestPerson.getStore()??null),
   me:async()=>{const p=requestPerson.getStore();return {email:p?.email??null,name:p?.name??null,roles:p?.roles??[],owner:p?.owner??false,grantsVersion:p?.grantsVersion??null,changeLogRetentionDays:retentionDays}},
  };

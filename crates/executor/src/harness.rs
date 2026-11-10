@@ -25,9 +25,13 @@ fn private(p: &Path) -> Result<()> {
     }
     Ok(())
 }
+/// ACP harnesses (people-access §4): Antigravity, and kind `acp`, any agent the host binds with {executable, args, environment}.
+pub fn acp(h: &str) -> bool {
+    matches!(h, "antigravity" | "acp")
+}
 pub fn command(dir: &Path, native: Option<&str>, p: &Value) -> Result<(Command, Option<Vec<u8>>)> {
     let h = name(p);
-    if (h != "antigravity" && p.get("settings").is_some())
+    if (!acp(h) && p.get("settings").is_some())
         || p.get("environment").is_some()
         || (h == "codex" && p.get("tools").is_some())
     {
@@ -35,7 +39,7 @@ pub fn command(dir: &Path, native: Option<&str>, p: &Value) -> Result<(Command, 
             "requested native settings/environment/tools mapping unsupported",
         ));
     }
-    if !matches!(h, "codex" | "claude" | "antigravity") {
+    if !(matches!(h, "codex" | "claude") || acp(h)) {
         return Err(fail("unknown harness"));
     }
     if h == "codex" && p.get("account").is_none() {
@@ -106,7 +110,7 @@ fn command_registry(
     if !home.is_dir() || !nh.is_dir() {
         return Err(fail("homes must be directories"));
     }
-    let credential_home = if matches!(h, "antigravity" | "claude") && a["credentialAuthority"] == "native-current" {
+    let credential_home = if (acp(h) || h == "claude") && a["credentialAuthority"] == "native-current" {
         let path = Path::new(
             a["credentialHome"]
                 .as_str()
@@ -140,7 +144,7 @@ fn command_registry(
     if h == "claude" {
         claude_placement_here().map_err(|e| fail(&format!("Claude is ineligible on this host: {e}")))?;
     }
-    if matches!(h, "antigravity" | "claude") {
+    if (acp(h) || h == "claude") {
         binding["transport"] = json!(if h == "claude" { "stream-json" } else { "acp-1.5.3" });
         binding["credentialAuthority"] = a["credentialAuthority"].clone();
         binding["credentialHome"] = credential_home
@@ -174,7 +178,7 @@ fn command_registry(
             None,
         ));
     }
-    if (h != "antigravity" && p.get("settings").is_some()) || p.get("environment").is_some() {
+    if (!acp(h) && p.get("settings").is_some()) || p.get("environment").is_some() {
         return Err(fail("unmapped native settings/environment"));
     }
     let required_role = if h == "claude" { "system" } else { "user" };
@@ -288,14 +292,25 @@ fn command_registry(
         if let Some(home) = credential_home {
             c.env("HOME", home);
         }
-        c.env("GEMINI_HOME", nh)
-            .args(["acp", "--gemini-dir"])
-            .arg(nh)
-            .args([
-                "--app-data-dir",
-                "antigravity-cli",
-                "--include-default-customizations=false",
-            ]);
+        // The binding's args and environment, with {nativeHome} replaced; Antigravity's built-in binding when none is given.
+        let sub = |v: &str| v.replace("{nativeHome}", &nh.to_string_lossy());
+        let args: Vec<String> = match a.get("args") {
+            Some(v) => v.as_array().filter(|x| x.iter().all(Value::is_string)).ok_or(fail("binding args must be strings"))?.iter().map(|x| sub(x.as_str().unwrap())).collect(),
+            None if h == "acp" => return Err(fail("acp binding needs args")),
+            None => ["acp", "--gemini-dir", "{nativeHome}", "--app-data-dir", "antigravity-cli", "--include-default-customizations=false"].iter().map(|x| sub(x)).collect(),
+        };
+        match a.get("environment") {
+            Some(v) => {
+                for (k, x) in v.as_object().ok_or(fail("binding environment must be an object"))? {
+                    c.env(k, sub(x.as_str().ok_or(fail("binding environment values must be strings"))?));
+                }
+            }
+            None if h == "acp" => {}
+            None => {
+                c.env("GEMINI_HOME", nh);
+            }
+        }
+        c.args(args);
         if let Some(sandbox) = p["settings"]["sandbox"].as_bool() {
             c.arg(format!("--sandbox={sandbox}"));
         }
@@ -371,7 +386,7 @@ fn tools(h: &str, v: &Value) -> Vec<Value> {
     if h == "claude" {
         return v["message"]["content"].as_array().into_iter().flatten().filter(|b| matches!(b["type"].as_str(),Some("tool_use"|"tool_result"))).map(|b|json!({"id":b.get("id").or(b.get("tool_use_id")),"name":b.get("name"),"arguments":b.get("input"),"result":b.get("content"),"error":b.get("is_error")})).collect();
     }
-    if h == "antigravity"
+    if acp(h)
         && matches!(
             v["update"]["sessionUpdate"].as_str(),
             Some("tool_call" | "tool_call_update")
@@ -382,16 +397,16 @@ fn tools(h: &str, v: &Value) -> Vec<Value> {
             json!({"id":b["toolCallId"],"name":b.get("name").or(b.get("title")),"arguments":b.get("rawInput"),"result":b.get("rawOutput").filter(|v| !v.is_null() && !v.as_object().is_some_and(|o|o.is_empty())).or(b.get("content")).or(b.get("rawOutput")),"status":b["status"],"kind":b["kind"]}),
         ];
     }
-    if h == "antigravity" && v["step_update"]["step_type"] == "tool" {
+    if acp(h) && v["step_update"]["step_type"] == "tool" {
         let b = &v["step_update"];
         return vec![
             json!({"id":b["step_index"],"name":b["tool_name"],"arguments":b["tool_info"]["parameters"],"result":b["tool_info"]["result"],"status":b["state"]}),
         ];
     }
-    if h == "antigravity" && v["type"] == "PLANNER_RESPONSE" {
+    if acp(h) && v["type"] == "PLANNER_RESPONSE" {
         return v["tool_calls"].as_array().into_iter().flatten().map(|b|json!({"id":b["id"],"name":b["name"],"arguments":b.get("arguments").or(b.get("args")),"result":null,"status":"requested"})).collect();
     }
-    if h == "antigravity" && v["type"] == "TOOL_RESPONSE" {
+    if acp(h) && v["type"] == "TOOL_RESPONSE" {
         return vec![
             json!({"id":v["tool_call_id"],"name":null,"arguments":null,"result":v.get("content").or(v.get("result")),"status":v["status"]}),
         ];
@@ -477,7 +492,7 @@ pub fn project(h: &str, v: &Value) -> Value {
     };
     let message = match h {
         "claude" => v.get("message"),
-        "antigravity" => v.get("step_update").or(v.get("result")),
+        "antigravity" | "acp" => v.get("step_update").or(v.get("result")),
         _ => v.get("item"),
     };
     json!({"harness":h,"session":session,"completed":success,"lifecycle":v.get("type").or(v.get("event")),"error":v.get("error").or(v.pointer("/result/error")),"message":message,"tools":tools(h,v),"usage":usage(v),"nativeUsage":v.get("usage").or(v.pointer("/result/usage")),"contextUsage":if v["update"]["sessionUpdate"]=="usage_update" {json!({"used":v["update"]["used"],"capacity":v["update"]["size"],"scope":"native context window; not additive billing usage"})}else{Value::Null},"usageScope":if h=="codex" && v.get("usage").is_some_and(|u|u.get("total").is_some()) {"native thread cumulative total; not additive"} else {"native report; scope unknown, may be cumulative; not additive"},"native":v})
@@ -542,7 +557,7 @@ impl Blocks {
         p
     }
     fn chunk(&self, h: &str, v: &Value) -> Option<(String, String)> {
-        if h != "antigravity" { return None; }
+        if !acp(h) { return None; }
         let kind = match v["update"]["sessionUpdate"].as_str() { Some("agent_message_chunk") => "text", Some("agent_thought_chunk") => "reasoning", _ => {
             return v["step_update"]["text_delta"].as_str().map(|t| ("text".into(), t.into()));
         } };
@@ -594,7 +609,7 @@ impl Blocks {
                     }
                 }
             }
-            "antigravity" => {
+            "antigravity" | "acp" => {
                 if let Some(r) = v["result"]["response"].as_str() { out.extend(text_block("text", r.into())); }
                 let u = &v["update"];
                 if matches!(u["sessionUpdate"].as_str(), Some("tool_call" | "tool_call_update")) {
@@ -747,6 +762,20 @@ print(json.dumps({'harness':h,'home':os.environ['HOME'],'args':sys.argv[1:]}))
         assert!(args.contains(&"acp".into()));
         assert!(args.contains(&"--sandbox=false".into()));
         assert!(args.contains(&"--include-default-customizations=false".into()));
+        // Kind acp: the binding's own args and environment, {nativeHome} filled in; Antigravity's args are the built-in binding.
+        let nh = root.join("antigravity-native");
+        let mut acp = accounts.clone();
+        acp["other-acp"] = json!({"harness":"acp","home":root.join("antigravity-home"),"nativeHome":nh,"executable":fake,"args":["acp","--home","{nativeHome}"],"environment":{"AGENT_HOME":"{nativeHome}"}});
+        acp["bare-acp"] = json!({"harness":"acp","home":root.join("antigravity-home"),"nativeHome":nh,"executable":fake});
+        std::fs::write(&registry, acp.to_string()).unwrap();
+        let p = json!({"harness":"acp","account":"other-acp","model":"native-model","text":"x","effort":null});
+        let (c, _) = command_registry(&root.join("antigravity-work"), None, &p, &registry).unwrap();
+        let args: Vec<_> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(args, ["acp", "--home", &nh.to_string_lossy()]);
+        assert!(c.get_envs().any(|(k, v)| k == "AGENT_HOME" && v == Some(nh.as_os_str())));
+        assert!(!c.get_envs().any(|(k, _)| k == "GEMINI_HOME"));
+        let bare = json!({"harness":"acp","account":"bare-acp","model":"native-model","text":"x","effort":null});
+        assert!(command_registry(&root.join("antigravity-work"), None, &bare, &registry).unwrap_err().to_string().contains("acp binding needs args"));
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
