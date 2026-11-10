@@ -222,9 +222,13 @@ func TestJournalVersioned(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	var v int
+	var v, tables int
 	db.QueryRow("PRAGMA user_version").Scan(&v)
-	if want := strings.Count(journalSQL, "\n-- version "); v != want || count(db, "transfers") != 0 {
+	if want := strings.Count(journalSQL, "\n-- version "); v != want {
 		t.Fatalf("user_version %d, want %d", v, want)
+	}
+	db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('commands','sessions','delegation_requests','outbox','outbox_failed','transfers')").Scan(&tables)
+	if tables != 6 {
+		t.Fatalf("%d of 6 journal tables", tables)
 	}
 }

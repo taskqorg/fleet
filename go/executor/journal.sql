@@ -1,5 +1,6 @@
 -- The executor journal (SQLite). Each "-- version N" section runs once, in order, and sets PRAGMA user_version to N.
--- Add a change as a new section at the end; never edit an applied one.
+-- Add a change as a new section at the end; never edit an applied one. Sections run inside one transaction, so
+-- statements SQLite refuses there (VACUUM, PRAGMA journal_mode) do not belong here.
 
 -- version 1
 CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,body TEXT NOT NULL,terminal INTEGER DEFAULT 0);
