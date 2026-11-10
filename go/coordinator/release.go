@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -51,6 +52,9 @@ var releaseDir = func() string {
 	}
 	return filepath.Dir(exe)
 }
+
+// ownRelease: release.json of the running binary's release, read once (it does not change under a running binary).
+var ownRelease = sync.OnceValue(func() struct{ Version, Previous string } { return releaseJSON(releaseDir()) })
 
 func releaseJSON(dir string) (r struct{ Version, Previous string }) {
 	if b, err := os.ReadFile(filepath.Join(dir, "release.json")); err == nil {
@@ -184,7 +188,9 @@ func updateQuestion(q *Request, host string, holder any, r UpdateResult) error {
 		reason = *r.Error
 	}
 	what := "refused"
-	if reason == "unhealthy" {
+	if r.State == UpdateStateFailed {
+		what = "failed"
+	} else if reason == "unhealthy" {
 		what = "rolled back"
 	}
 	return openCauseQuestion(q, cause, holder, nil, host+": update to "+r.Version+" "+what+" ("+reason+").")

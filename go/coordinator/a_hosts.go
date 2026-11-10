@@ -371,9 +371,13 @@ func hostsList(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	records, err := hostList(q)
+	list, err := hostList(q)
 	if err != nil {
 		return nil, err
+	}
+	records := map[any]doc{}
+	for _, r := range list {
+		records[r["id"]] = r
 	}
 	now := now()
 	out := []doc{}
@@ -405,10 +409,8 @@ func hostsList(q *Request) (any, error) {
 		h := doc{"id": id, "configured": inList(configured, id), "platform": nil, "lastSeenAt": nil, "capabilities": []any{}, "problems": []any{},
 			"runningByHarness": by, "running": total, "slots": nil, "queued": n, "stores": "unavailable",
 			"version": nil, "autoUpdate": "on", "update": nil}
-		for _, r := range records {
-			if r["id"] == id {
-				h["autoUpdate"] = autoUpdateOf(r)
-			}
+		if r := records[id]; r != nil {
+			h["autoUpdate"] = autoUpdateOf(r)
 		}
 		if id == q.app.hostID {
 			h["update"] = mergeUpdate(nil)

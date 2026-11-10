@@ -1,5 +1,7 @@
 package main
 
+import "errors"
+
 // Area A: POST /api/hosts/poll (SL5). The poll records the host observation and its stores, reconciles delegations,
 // marks problems, promotes queued messages, runs dispatch, and replies with the polling host's pending commands that may go
 // out now.
@@ -74,17 +76,27 @@ func (a *App) poll(q *Request) (any, error) {
 	if v, ok := b["version"].(string); ok {
 		obs["version"] = v
 		// N-1 is served without a flag; N-2 and older show version-behind (work still runs).
-		if olderVersion(v, releaseJSON(releaseDir()).Previous) {
-			ps = append(ps, doc{"kind": string(ProblemKindVersionBehind)})
+		if prev := ownRelease().Previous; olderVersion(v, prev) {
+			ps = append(ps, doc{"kind": string(ProblemKindVersionBehind), "route": "", "status": 0, "location": nil,
+				"detail": "executor " + v + ", coordinator serves " + prev + " and newer"})
 		}
 	}
 	if ps != nil {
 		obs["problems"] = ps
 	}
-	if r, ok := decodeUpdate(b["update"]); ok {
-		obs["update"] = r
-		if err := updateQuestion(q, host, q.host["holder"], r); err != nil {
+	upd := b["update"]
+	if host == a.hostID {
+		upd = mergeUpdate(upd) // PDS18: the coordinator side's result from fleet-update joins the executor's
+	}
+	if r, ok := decodeUpdate(upd); ok {
+		obs["update"] = upd
+		// Polls run about every 100 ms: the question is looked at only when the result changes.
+		if prev, err := getDoc(q, host, "host-observation"); err != nil && !errors.Is(err, errNotFound) {
 			return nil, err
+		} else if js(mapOf(prev)["update"]) != js(upd) {
+			if err := updateQuestion(q, host, q.host["holder"], r); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := put(q, "host-observation", obs); err != nil {

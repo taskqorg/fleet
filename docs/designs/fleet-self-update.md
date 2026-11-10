@@ -123,7 +123,7 @@ Owner rule (2026-11-11): standard library first; sigstore only for a guarantee E
 *   **Job `gate`** (`contents: read`, `actions: read`, checkout with `fetch-depth: 0`):
     *   Refuse a tag whose name is not `v<N>.<yymmdd>.<M>` (strict regex `^v[1-9][0-9]*\.[0-9]{6}\.(0|[1-9][0-9]*)$`) with `yymmdd` the UTC date of the annotated tag's tagger date (lightweight tag: the commit date), or whose commit is not an ancestor of `origin/main`, or whose version is not newer than the current latest release.
     *   Find the `ci` run with `gh run list --workflow ci --commit <sha> --event push --branch main --json databaseId,status`. No run yet: poll every 30 s. Then `gh run watch <id>` until it completes. Both waits end at the gate job's `timeout-minutes` (GitHub's default 360). Proceed only when job `build-test-design` concluded `success`; other jobs do not gate, as on `main` today. A timeout fails the release; the owner re-runs the workflow, no new tag needed.
-    *   Output `previous`: the latest earlier `v*` tag (empty for the first release).
+    *   Output `previous`: the version of the latest published release (empty for the first release); a tag whose release never published is skipped.
 *   **Job `build`** (`needs: gate`, `contents: read`): `deploy/build-release.sh <commit> out <version> <previous> linux/amd64 darwin/arm64`, the one build script for releases and local trials. Each tarball `fleet-<ver>-<os>-<arch>.tgz` holds `fleet-coordinator`, `fleet-gateway`, `fleet-executor`, `fleet-update`, `dist/app/`, `config/`, `deploy/` (unit files, `install-release.sh`, `status.sh`) and `release.json` `{version, previous, commit, target, builtAt}`. Runs every linux binary's `selftest`. Uploads the tarballs with `actions/upload-artifact`.
 *   **Job `selftest-macos`** (`needs: build`, `runs-on: macos-14`, `contents: read`): downloads the darwin tarball, runs each binary's `selftest` (COREQ-R25).
 *   **Job `migrate-check`** (`needs: build`, `contents: read`): on the runner's PostgreSQL, start the new coordinator (migrates), stop it, start the `previous` release's coordinator on that database and require `/api/health` 200. Skipped when `previous` is empty. This enforces "expand in N, contract in N+1".
@@ -153,11 +153,11 @@ Subcommands:
 Releases root `R`: `~/releases` of the service user; on PDS18 `/home/fleet/releases` (coordinator side) and `/opt/fleet-agent/releases` (PDS18 executor, root-owned, so `fleet-agent` cannot replace its own executor).
 
 *   `R/<ver>/`: unpacked tarball, directories 0755 and files read-only. Prune `chmod`s before removing.
-*   `R/current`, `R/previous`: symlinks, replaced atomically (`current.tmp-<pid>`, then rename). Units keep `ExecStart=…/releases/current/<binary>`.
+*   `R/current`, `R/previous`: relative symlinks (`current -> <ver>`), replaced atomically (`current.tmp-<pid>`, then rename). Units keep `ExecStart=…/releases/current/<binary>`.
 *   `R/<ver>/starts`, `R/<ver>/healthy`: unhealthy start count, healthy marker (COREQ-R16).
 *   State directory `S`: executor hosts `<data dir>/update/`; PDS18 `/var/lib/fleet-update/` (root, 0755) with `stage/` (0700). `S/update-state.json` (PDS18: `S/pds18-state.json`, 0644, with keys `coordinator` and `executor`, one `last` each) holds `{refused: {"<ver>": "<reason>"}, last: {version, state, error, at}}`, written durably (COREQ-R22). `S/update.lock` is `flock`ed for the whole run.
 *   The running version is read from `R/current/release.json`, never from the link name.
-*   Prune at start: leftover `stage/` and `.tmp` entries; every `R/<ver>/` that is neither `current` nor `previous`; on PDS18 every dump in `/backup/fleet/pre-deploy/` except those of `current` and `previous` (the same rule).
+*   Prune at start: leftover `stage/` and `.tmp` entries; every `R/<ver>/` that is neither `current` nor `previous`; on PDS18 every dump in `/backup/fleet/pre-deploy/` except those of `current`, `previous` and refused versions (a rolled-back release ran its migrations; its dump is the state before them).
 
 #### 3.2 One run
 
@@ -171,7 +171,7 @@ Releases root `R`: `~/releases` of the service user; on PDS18 `/home/fleet/relea
 6.  Verify: the Ed25519 signature of `SHA256SUMS` against the compiled-in key, then the tarball's SHA-256 against its line (COREQ-R11, with a key instead of a certificate identity). `release.json` of the unpacked tree must name the candidate version.
 7.  Unpack in the stage, run `selftest` of each binary this host runs (COREQ-R25).
 8.  `pds18` mode: `runuser -u postgres -- pg_dump -Fc -d fleet -f /backup/fleet/pre-deploy/fleet-pre-<ver>.dump`.
-9.  Install: `pds18` mode copies the staged tree to `/home/fleet/releases/<ver>/`, owner `fleet`; executor mode renames `.tmp` to `R/<ver>/`. Write `previous` = old `current`, then `current` = `<ver>`. Running binaries are never written in place (COREQ-R13).
+9.  Install: `pds18` mode copies the staged tree to `/home/fleet/releases/<ver>/`, owned by root and readable by `fleet`, every write through Go's `os.Root` so a symlink the `fleet` user plants cannot lead root out of that directory; executor mode renames `.tmp` to `R/<ver>/`. Write `previous` = old `current`, then `current` = `<ver>`. Running binaries are never written in place (COREQ-R13).
 10. Restart (3.3), then health (3.4).
 11. Write `last` in state.
 
@@ -190,7 +190,7 @@ A truncated download fails the digest; to keep it transient, a digest mismatch i
 
 *   `pds18` mode, coordinator side: `systemctl --user -M fleet@ restart fleet fleet-gateway fleet-access-guard` (root drives the `fleet` user manager; needs linger for `fleet`, systemd 248+). After the coordinator side is healthy, the same run installs the same version into `/opt/fleet-agent/releases` and runs `systemctl --user -M fleet-agent@ restart fleet-executor`. That unit is the shared Linux unit plus the drop-in `deploy/infrastructure/fleet-executor-pds18.conf` (`ExecStart=/opt/fleet-agent/releases/current/fleet-executor`). Its `update.json` is at `/home/fleet-agent/.local/state/fleet/executor/update/update.json` (the default data directory of `fleet-agent`); executor health on PDS18 reads it. The PDS18 executor follows in the same run, not a later one.
 *   Executor mode: Linux/WSL `systemctl --user restart fleet-executor`; macOS `launchctl kickstart -k gui/<uid>/com.ufobe.fleet-executor`.
-*   After a healthy `pds18` install, the run copies the verified `fleet-update` to `/opt/fleet/update/fleet-update` (root-owned, temp file then rename): the root unit runs that path, so root never executes a file `fleet` can write.
+*   After a healthy `pds18` install, the run copies the verified `fleet-update` from its root-owned stage (never from `/home/fleet`) to `/opt/fleet/update/fleet-update` (root-owned, temp file then rename): the root unit runs that path, so root never executes a file `fleet` can write.
 
 #### 3.4 Health and rollback
 

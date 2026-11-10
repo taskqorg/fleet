@@ -66,7 +66,12 @@ func newFixture(t *testing.T) *fixture {
 	f.u = newUpdater(pub)
 	f.u.base, f.u.target, f.u.window, f.u.tick = srv.URL, "linux-amd64", 50*time.Millisecond, 5*time.Millisecond
 	f.root = t.TempDir()
-	f.p = &part{name: "executor", root: f.root, stage: f.root, bins: []string{"fleet-executor"}, st: &State{},
+	r, err := openReleases(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.Close() })
+	f.p = &part{r: r, name: "executor", root: f.root, stage: f.root, bins: []string{"fleet-executor"}, st: &State{},
 		restart: func() error { f.restarts++; return nil },
 		health: func(ver string) probe {
 			if p, ok := f.health[ver]; ok {
@@ -135,7 +140,7 @@ func TestInstallAndNeverDowngrade(t *testing.T) {
 	}
 	f.release("1.261111.2", 0)
 	f.run("1.261111.2")
-	pruneReleases(f.root)
+	pruneReleases(f.p.r)
 	if exists(filepath.Join(f.root, "1.261111.0")) || !exists(filepath.Join(f.root, "1.261111.1")) {
 		t.Fatal("prune kept the wrong releases")
 	}
@@ -271,15 +276,31 @@ func TestExecutorHealth(t *testing.T) {
 	}
 }
 
+func TestSymlinkOutOfReleasesRefused(t *testing.T) {
+	f := newFixture(t)
+	f.release("1.261111.0", 0)
+	outside := t.TempDir()
+	os.Symlink(outside, filepath.Join(f.root, "1.261111.0.tmp")) // planted by the releases directory's owner
+	f.p.stage = t.TempDir()                                      // PDS18 shape: staged elsewhere, copied in
+	f.run("1.261111.0")
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("wrote through a symlink out of the releases root: %v", entries)
+	}
+}
+
 func TestPruneDumps(t *testing.T) {
 	root, dumps := t.TempDir(), t.TempDir()
-	os.Symlink(filepath.Join(root, "1.261111.2"), filepath.Join(root, "current"))
-	os.Symlink(filepath.Join(root, "1.261111.1"), filepath.Join(root, "previous"))
+	os.Symlink("1.261111.2", filepath.Join(root, "current"))
+	os.Symlink("1.261111.1", filepath.Join(root, "previous"))
 	for _, v := range []string{"1.261111.0", "1.261111.1", "1.261111.2"} {
 		os.WriteFile(filepath.Join(dumps, "fleet-pre-"+v+".dump"), nil, 0o600)
 	}
-	pruneDumps(dumps, root)
-	if exists(filepath.Join(dumps, "fleet-pre-1.261111.0.dump")) || !exists(filepath.Join(dumps, "fleet-pre-1.261111.1.dump")) {
+	os.WriteFile(filepath.Join(dumps, "fleet-pre-1.261111.3.dump"), nil, 0o600)
+	r, _ := os.OpenRoot(root)
+	defer r.Close()
+	pruneDumps(dumps, r, &State{Refused: map[string]string{"1.261111.3": "unhealthy"}})
+	if exists(filepath.Join(dumps, "fleet-pre-1.261111.0.dump")) || !exists(filepath.Join(dumps, "fleet-pre-1.261111.1.dump")) ||
+		!exists(filepath.Join(dumps, "fleet-pre-1.261111.3.dump")) {
 		t.Fatal("wrong dumps pruned")
 	}
 }

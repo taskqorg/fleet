@@ -80,13 +80,16 @@ const (
 )
 
 // part is one installation on this host: its releases root, the binaries it runs and how to restart and probe them.
+// Every file operation under the releases root goes through r: on PDS18 root works in /home/fleet/releases, a directory
+// the fleet user owns, and os.Root refuses any symlink out of it. Links are relative (current -> <ver>).
 type part struct {
-	name, root, stage, owner string
-	bins                     []string
-	dump                     bool
-	restart                  func() error
-	health                   func(ver string) probe
-	st                       *State
+	r                 *os.Root
+	name, root, stage string
+	bins              []string
+	dump              bool
+	restart           func() error
+	health            func(ver string) probe
+	st                *State
 }
 
 type updater struct {
@@ -126,10 +129,10 @@ func (u *updater) held(autoUpdate string) bool {
 
 // cycle is one run of one part (section 3.2). It returns the result to record, or nil when nothing changed.
 func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Result {
-	running := releaseVersion(filepath.Join(p.root, "current"))
+	running := rootVersion(p.r, "current")
 	// A release without a healthy marker is still being checked (pending, an interrupted run, a first install).
 	var resumed *Result
-	if running != "" && !exists(filepath.Join(p.root, "current", "healthy")) {
+	if _, err := p.r.Stat("current/healthy"); running != "" && err != nil {
 		if resumed = u.settle(p, running, false); resumed.State != "ok" {
 			return resumed
 		}
@@ -176,7 +179,7 @@ func (r refusal) Error() string { return string(r) }
 // fetch downloads, verifies and selftests release ver into <stage>/<ver>.tmp and returns that directory.
 func (u *updater) fetch(p *part, ver string) (string, error) {
 	dir := filepath.Join(p.stage, ver+".tmp")
-	if exists(filepath.Join(dir, "release.json")) && p.stage != p.root {
+	if releaseVersion(dir) == ver && p.stage != p.root {
 		return dir, nil // staged and verified earlier in this run (PDS18 coordinator side)
 	}
 	os.RemoveAll(dir)
@@ -324,7 +327,7 @@ func writeFrom(path string, r io.Reader, mode fs.FileMode) error {
 	return f.Close()
 }
 
-// install puts the staged tree at <root>/<ver> (read-only files, owner p.owner) and switches current and previous.
+// install puts the staged tree at <root>/<ver> (read-only files) and switches current and previous.
 func (u *updater) install(p *part, ver, staged string) error {
 	if p.dump {
 		file := "/backup/fleet/pre-deploy/fleet-pre-" + ver + ".dump"
@@ -332,28 +335,14 @@ func (u *updater) install(p *part, ver, staged string) error {
 			return fmt.Errorf("pg_dump: %w", err)
 		}
 	}
-	tmp, final := filepath.Join(p.root, ver+".tmp"), filepath.Join(p.root, ver)
-	if staged != tmp {
-		removeTree(tmp)
-		if err := copyTree(staged, tmp); err != nil {
+	tmp := ver + ".tmp"
+	if staged != filepath.Join(p.root, tmp) {
+		p.r.RemoveAll(tmp)
+		if err := copyTree(staged, p.r, tmp); err != nil {
 			return err
 		}
 	}
-	if p.owner != "" {
-		uid, gid, err := lookupOwner(p.owner)
-		if err != nil {
-			return err
-		}
-		if err := filepath.WalkDir(tmp, func(path string, _ fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			return os.Lchown(path, uid, gid)
-		}); err != nil {
-			return err
-		}
-	}
-	if err := filepath.WalkDir(tmp, func(path string, d fs.DirEntry, err error) error {
+	if err := fs.WalkDir(p.r.FS(), tmp, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -361,37 +350,36 @@ func (u *updater) install(p *part, ver, staged string) error {
 		if err != nil {
 			return err
 		}
-		return os.Chmod(path, info.Mode().Perm()&^0o222)
+		return p.r.Chmod(path, info.Mode().Perm()&^0o222)
 	}); err != nil {
 		return err
 	}
-	removeTree(final)
-	if err := os.Rename(tmp, final); err != nil {
+	p.r.RemoveAll(ver)
+	if err := p.r.Rename(tmp, ver); err != nil {
 		return err
 	}
-	if old, err := os.Readlink(filepath.Join(p.root, "current")); err == nil && filepath.Base(old) != ver {
-		if err := relink(p.root, "previous", old); err != nil {
+	if old, err := p.r.Readlink("current"); err == nil && filepath.Base(old) != ver {
+		if err := relink(p.r, "previous", filepath.Base(old)); err != nil {
 			return err
 		}
 	}
-	return relink(p.root, "current", final)
+	return relink(p.r, "current", ver)
 }
 
-// relink points <root>/<name> at target atomically.
-func relink(root, name, target string) error {
-	tmp := filepath.Join(root, name+".tmp-"+strconv.Itoa(os.Getpid()))
-	os.Remove(tmp)
-	if err := os.Symlink(target, tmp); err != nil {
+// relink points <root>/<name> at the relative target atomically.
+func relink(r *os.Root, name, target string) error {
+	tmp := name + ".tmp-" + strconv.Itoa(os.Getpid())
+	r.Remove(tmp)
+	if err := r.Symlink(target, tmp); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(root, name))
+	return r.Rename(tmp, name)
 }
 
 // settle restarts and probes ver up to three unhealthy starts, then rolls back (section 3.4). restart false first
 // probes the running release without a restart (resume of an earlier run).
 func (u *updater) settle(p *part, ver string, restart bool) *Result {
-	dir := filepath.Join(p.root, ver)
-	startsFile := filepath.Join(dir, "starts")
+	startsFile, healthyFile := ver+"/starts", ver+"/healthy"
 	for {
 		if restart {
 			if err := p.restart(); err != nil {
@@ -401,29 +389,29 @@ func (u *updater) settle(p *part, ver string, restart bool) *Result {
 		restart = true
 		switch u.probe(p, ver) {
 		case up:
-			os.Remove(startsFile)
-			if err := os.WriteFile(filepath.Join(dir, "healthy"), []byte(u.now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
+			p.r.Remove(startsFile)
+			if err := p.r.WriteFile(healthyFile, []byte(u.now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 				return u.result(ver, "error", err.Error())
 			}
 			return u.result(ver, "ok", "")
 		case waiting:
 			return u.result(ver, "pending", "coordinator not reachable from the executor")
 		}
-		b, _ := os.ReadFile(startsFile)
+		b, _ := p.r.ReadFile(startsFile)
 		n, _ := strconv.Atoi(strings.TrimSpace(string(b)))
 		n++
-		os.WriteFile(startsFile, []byte(strconv.Itoa(n)+"\n"), 0o644)
+		p.r.WriteFile(startsFile, []byte(strconv.Itoa(n)+"\n"), 0o644)
 		log.Printf("%s %s: unhealthy start %d", p.name, ver, n)
 		if n < 3 {
 			continue
 		}
-		prev, err := os.Readlink(filepath.Join(p.root, "previous"))
+		prev, err := p.r.Readlink("previous")
 		if err != nil || filepath.Base(prev) == ver {
 			r := u.result(ver, "failed", "unhealthy, no previous release")
 			r.Error = "unhealthy"
 			return r
 		}
-		if err := relink(p.root, "current", prev); err != nil {
+		if err := relink(p.r, "current", filepath.Base(prev)); err != nil {
 			return u.result(ver, "failed", err.Error())
 		}
 		if err := p.restart(); err != nil {
@@ -445,7 +433,7 @@ func (u *updater) probe(p *part, ver string) probe {
 
 func (u *updater) coordinatorSelf() (ver, autoUpdate string) {
 	var h struct{ Version, AutoUpdate, Database string }
-	resp, err := u.client.Get(u.coordURL)
+	resp, err := (&http.Client{Timeout: 3 * time.Second}).Get(u.coordURL)
 	if err != nil {
 		return "", "on" // not answering: an update may repair it
 	}
@@ -517,6 +505,38 @@ func command(argv ...string) func() error {
 	}
 }
 
+// rootVersion reads version from <name>/release.json under r; "" when absent.
+func rootVersion(r *os.Root, name string) string {
+	var v struct{ Version string }
+	if b, err := r.ReadFile(name + "/release.json"); err == nil {
+		json.Unmarshal(b, &v)
+	}
+	return v.Version
+}
+
+// openReleases opens the releases root as an os.Root, refusing a symlink in its place (checked again after opening).
+func openReleases(dir string) (*os.Root, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	before, err := os.Lstat(dir)
+	if err != nil {
+		return nil, err
+	}
+	if !before.IsDir() {
+		return nil, fmt.Errorf("%s is not a directory", dir)
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	if after, err := r.Stat("."); err != nil || !os.SameFile(before, after) {
+		r.Close()
+		return nil, fmt.Errorf("%s changed while opening", dir)
+	}
+	return r, nil
+}
+
 // releaseVersion reads version from <dir>/release.json; "" when absent.
 func releaseVersion(dir string) string {
 	var r struct{ Version string }
@@ -575,41 +595,35 @@ func lock(path string) (unlock func(), ok bool, err error) {
 	return func() { f.Close() }, true, nil
 }
 
-// removeTree removes a release directory whose files and directories may be read-only.
-func removeTree(dir string) {
-	filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err == nil && d.IsDir() {
-			os.Chmod(path, 0o755)
-		}
-		return nil
-	})
-	os.RemoveAll(dir)
-}
-
 // pruneReleases keeps current and previous: removes every other <ver>/ and leftover .tmp entries.
-func pruneReleases(root string) {
+func pruneReleases(r *os.Root) {
 	keep := map[string]bool{}
 	for _, l := range []string{"current", "previous"} {
-		if t, err := os.Readlink(filepath.Join(root, l)); err == nil {
+		if t, err := r.Readlink(l); err == nil {
 			keep[filepath.Base(t)] = true
 		}
 	}
-	entries, _ := os.ReadDir(root)
+	entries, _ := fs.ReadDir(r.FS(), ".")
 	for _, e := range entries {
 		n := e.Name()
 		if strings.Contains(n, ".tmp") || verRe.MatchString(n) && !keep[n] {
-			removeTree(filepath.Join(root, n))
+			r.RemoveAll(n)
 		}
 	}
 }
 
-// pruneDumps keeps the pre-deploy dumps of current and previous of root.
-func pruneDumps(dir, root string) {
+// pruneDumps keeps the pre-deploy dumps of current and previous of r and of refused versions (a rolled-back
+// release ran its migrations; its dump is the state before them).
+func pruneDumps(dir string, r *os.Root, st *State) {
 	keep := map[string]bool{}
 	for _, l := range []string{"current", "previous"} {
-		if t, err := os.Readlink(filepath.Join(root, l)); err == nil {
+		if t, err := r.Readlink(l); err == nil {
 			keep["fleet-pre-"+filepath.Base(t)+".dump"] = true
 		}
+	}
+	for v := range st.Refused { // ponytail: kept until removed by hand; a cap if refused releases pile up
+
+		keep["fleet-pre-"+v+".dump"] = true
 	}
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
@@ -619,7 +633,8 @@ func pruneDumps(dir, root string) {
 	}
 }
 
-func copyTree(src, dst string) error {
+// copyTree copies the trusted stage tree src into dst under r.
+func copyTree(src string, r *os.Root, dst string) error {
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -627,13 +642,26 @@ func copyTree(src, dst string) error {
 		rel, _ := filepath.Rel(src, path)
 		to := filepath.Join(dst, rel)
 		if d.IsDir() {
-			return os.MkdirAll(to, 0o755)
+			return r.MkdirAll(to, 0o755)
 		}
 		info, err := d.Info()
 		if err != nil {
 			return err
 		}
-		return copyFile(path, to, info.Mode().Perm())
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		out, err := r.OpenFile(to, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(out, in); err != nil {
+			out.Close()
+			return err
+		}
+		return out.Close()
 	})
 }
 

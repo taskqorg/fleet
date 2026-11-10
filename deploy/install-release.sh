@@ -31,8 +31,8 @@ else
   rm -rf "$target" && mv "$partial" "$target"
 fi
 old=$(readlink "$releases/current" || true)
-[ -n "$old" ] && [ "$old" != "$target" ] && ln -sfn "$old" "$releases/previous"
-ln -sfn "$target" "$releases/current"
+[ -n "$old" ] && [ "$(basename "$old")" != "$(basename "$target")" ] && ln -sfn "$(basename "$old")" "$releases/previous"
+ln -sfn "$(basename "$target")" "$releases/current"  # relative links: fleet-update works through os.Root
 status working 60 "switched to $(basename "$target")"
 if [ "$(uname)" = Darwin ]; then
   agent=gui/$(id -u)/com.ufobe.fleet-executor

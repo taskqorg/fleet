@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/user"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -97,17 +96,21 @@ func (u *updater) runExecutor() error {
 		restart = []string{"launchctl", "kickstart", "-k", "gui/" + strconv.Itoa(os.Getuid()) + "/com.ufobe.fleet-executor"}
 	}
 	root := filepath.Join(home, "releases")
-	p := &part{name: "executor", root: root, stage: root, bins: []string{"fleet-executor", "fleet-update"},
+	r, err := openReleases(root)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	p := &part{r: r, name: "executor", root: root, stage: root, bins: []string{"fleet-executor", "fleet-update"},
 		restart: command(restart...), health: u.executorHealth(signal), st: st}
-	pruneReleases(root)
+	pruneReleases(r)
 	var in signalFile
 	if !readJSON(signal, &in) {
 		log.Print("no update.json yet: the executor has not polled")
 		return nil
 	}
-	r := u.cycle(p, in.AutoUpdate, func() string { return in.Target })
-	if r != nil {
-		st.Last = r
+	if res := u.cycle(p, in.AutoUpdate, func() string { return in.Target }); res != nil {
+		st.Last = res
 		return writeJSON(stateFile, st, 0o600)
 	}
 	return nil
@@ -137,14 +140,24 @@ func (u *updater) runPDS18() error {
 		return err
 	}
 	defer os.RemoveAll(stage)
-	pruneReleases(coordRoot)
-	pruneReleases(execRoot)
-	pruneDumps("/backup/fleet/pre-deploy", coordRoot)
-	coord := &part{name: "coordinator", root: coordRoot, stage: stage, owner: "fleet", dump: true,
+	coordR, err := openReleases(coordRoot)
+	if err != nil {
+		return err
+	}
+	defer coordR.Close()
+	execR, err := openReleases(execRoot)
+	if err != nil {
+		return err
+	}
+	defer execR.Close()
+	pruneReleases(coordR)
+	pruneReleases(execR)
+	pruneDumps("/backup/fleet/pre-deploy", coordR, st["coordinator"])
+	coord := &part{r: coordR, name: "coordinator", root: coordRoot, stage: stage, dump: true,
 		bins:    []string{"fleet-coordinator", "fleet-gateway", "fleet-executor", "fleet-update"},
 		restart: command("systemctl", "--user", "-M", "fleet@", "restart", "fleet", "fleet-gateway", "fleet-access-guard"),
 		health:  u.coordinatorHealth, st: st["coordinator"]}
-	exec := &part{name: "executor", root: execRoot, stage: stage, bins: []string{"fleet-executor"},
+	exec := &part{r: execR, name: "executor", root: execRoot, stage: stage, bins: []string{"fleet-executor"},
 		restart: command("systemctl", "--user", "-M", "fleet-agent@", "restart", "fleet-executor"),
 		health:  u.executorHealth("/home/fleet-agent/.local/state/fleet/executor/update/update.json"), st: st["executor"]}
 	_, autoUpdate := u.coordinatorSelf()
@@ -154,16 +167,17 @@ func (u *updater) runPDS18() error {
 		if err := save(); err != nil {
 			return err
 		}
-		if r.State == "ok" {
-			if err := installUpdater(filepath.Join(coordRoot, r.Version, "fleet-update"), "/opt/fleet/update/fleet-update"); err != nil {
+		// From the root-owned stage, never from /home/fleet; a resumed check (no stage this run) leaves the copy as is.
+		if src := filepath.Join(stage, r.Version+".tmp", "fleet-update"); r.State == "ok" && exists(src) {
+			if err := installUpdater(src, "/opt/fleet/update/fleet-update"); err != nil {
 				log.Print("copy fleet-update to /opt/fleet/update: ", err)
 			}
 		}
 	}
 	// The PDS18 executor follows the coordinator side in the same run, to its healthy version only.
 	healthy := func() string {
-		v := releaseVersion(filepath.Join(coordRoot, "current"))
-		if v == "" || !exists(filepath.Join(coordRoot, "current", "healthy")) {
+		v := rootVersion(coordR, "current")
+		if _, err := coordR.Stat("current/healthy"); v == "" || err != nil {
 			return ""
 		}
 		return v
@@ -185,14 +199,4 @@ func installUpdater(src, dst string) error {
 		return err
 	}
 	return os.Rename(tmp, dst)
-}
-
-func lookupOwner(name string) (uid, gid int, err error) {
-	u, err := user.Lookup(name)
-	if err != nil {
-		return 0, 0, err
-	}
-	uid, _ = strconv.Atoi(u.Uid)
-	gid, _ = strconv.Atoi(u.Gid)
-	return uid, gid, nil
 }
