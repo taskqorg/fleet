@@ -21,6 +21,7 @@ fleet.ufobe.com {
             reverse_proxy 127.0.0.1:8742
         }
         request_header -Authorization
+        # fleet-access-guard.service: `fleet-gateway guard` checks the Access JWT and adds the Bearer and X-Fleet-Person.
         forward_auth 127.0.0.1:9471 {
             uri /verify
             copy_headers Authorization X-Fleet-Person

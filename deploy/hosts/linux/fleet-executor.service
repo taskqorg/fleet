@@ -1,0 +1,20 @@
+# Fleet executor on a Linux host (PDS18) or WSL, a systemd user unit of the executor service user, from the current
+# release (deploy/install-release.sh). Install: copy to ~/.config/systemd/user/, then
+#   systemctl --user daemon-reload && systemctl --user enable --now fleet-executor
+# (WSL needs systemd=true in /etc/wsl.conf; `loginctl enable-linger` keeps it running without a login).
+# ~/.config/fleet/executor.env (mode 0600, never in Git): FLEET_COORDINATOR_URL, FLEET_HOST_ID, FLEET_DATA_DIR,
+# FLEET_CODEX_BIN, FLEET_HOST_SECRET_FILE (docs/executor-build.md).
+[Unit]
+Description=Fleet executor
+After=network-online.target
+
+[Service]
+EnvironmentFile=%h/.config/fleet/executor.env
+ExecStart=%h/releases/current/fleet-executor
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
