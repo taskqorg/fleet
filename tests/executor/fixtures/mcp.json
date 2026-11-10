@@ -70,12 +70,23 @@
           }
         }
       },
-      "broken"
+      "broken",
+      "{",
+      "[",
+      "{\"id\":}",
+      "{\"id\":1,}",
+      "{\"id\":1 \"method\":\"x\"}",
+      "{\"id\" 1}",
+      "{\"id\":1}:",
+      "{\"id\":\"abc}",
+      "{\"id\":\"\\q\"}",
+      "{\"id\":1e}",
+      "{\"id\":01}"
     ],
     "expected": {
       "replies": [
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "protocolVersion": "2024-11-05",
@@ -89,7 +100,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "protocolVersion": "custom",
@@ -103,12 +114,12 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {}
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "tools": [
@@ -130,7 +141,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32601,
@@ -138,7 +149,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32601,
@@ -146,7 +157,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -166,7 +177,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32601,
@@ -174,7 +185,95 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
           "id": null,
           "error": {
             "code": -32700,
@@ -237,12 +336,23 @@
           "name": "unknown",
           "arguments": {}
         }
-      }
+      },
+      "{",
+      "[",
+      "{\"id\":}",
+      "{\"id\":1,}",
+      "{\"id\":1 \"method\":\"x\"}",
+      "{\"id\" 1}",
+      "{\"id\":1}:",
+      "{\"id\":\"abc}",
+      "{\"id\":\"\\q\"}",
+      "{\"id\":1e}",
+      "{\"id\":01}"
     ],
     "expected": {
       "replies": [
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "protocolVersion": "2024-11-05",
@@ -251,12 +361,12 @@
             },
             "serverInfo": {
               "name": "fleet-delegation",
-              "version": 1
+              "version": "1"
             }
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "protocolVersion": "custom",
@@ -265,17 +375,17 @@
             },
             "serverInfo": {
               "name": "fleet-delegation",
-              "version": 1
+              "version": "1"
             }
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {}
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "tools": [
@@ -532,7 +642,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -540,11 +650,99 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
             "message": "Unsupported method"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting property name enclosed in double quotes: line 2 column 1 (char 2)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting value: line 2 column 1 (char 2)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting value: line 1 column 7 (char 6)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting property name enclosed in double quotes: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ':' delimiter: line 1 column 7 (char 6)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Extra data: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Invalid control character at: line 1 column 12 (char 11)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Invalid \\escape: line 1 column 8 (char 7)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
           }
         }
       ],
@@ -1190,12 +1388,23 @@
             "input": "x"
           }
         }
-      }
+      },
+      "{",
+      "[",
+      "{\"id\":}",
+      "{\"id\":1,}",
+      "{\"id\":1 \"method\":\"x\"}",
+      "{\"id\" 1}",
+      "{\"id\":1}:",
+      "{\"id\":\"abc}",
+      "{\"id\":\"\\q\"}",
+      "{\"id\":1e}",
+      "{\"id\":01}"
     ],
     "expected": {
       "replies": [
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "protocolVersion": "2024-11-05",
@@ -1204,12 +1413,12 @@
             },
             "serverInfo": {
               "name": "fleet-delegation",
-              "version": 1
+              "version": "1"
             }
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "protocolVersion": "custom",
@@ -1218,17 +1427,17 @@
             },
             "serverInfo": {
               "name": "fleet-delegation",
-              "version": 1
+              "version": "1"
             }
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {}
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "tools": [
@@ -1880,7 +2089,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -1888,7 +2097,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -1896,7 +2105,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -1923,7 +2132,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -1950,7 +2159,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -1958,7 +2167,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -1966,7 +2175,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -1974,7 +2183,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -1997,7 +2206,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -2005,7 +2214,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2028,7 +2237,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -2036,7 +2245,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2059,7 +2268,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -2067,7 +2276,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2090,7 +2299,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -2098,7 +2307,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2121,7 +2330,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -2129,7 +2338,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2152,7 +2361,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -2160,7 +2369,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2183,7 +2392,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -2191,7 +2400,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2214,7 +2423,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -2222,7 +2431,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2245,7 +2454,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -2253,7 +2462,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2265,7 +2474,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2277,7 +2486,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2289,7 +2498,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2301,7 +2510,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2313,7 +2522,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2325,7 +2534,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2337,7 +2546,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2349,7 +2558,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2361,7 +2570,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2373,7 +2582,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2385,7 +2594,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2397,7 +2606,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2409,7 +2618,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2424,7 +2633,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2439,7 +2648,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2454,7 +2663,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2469,7 +2678,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2484,7 +2693,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2499,7 +2708,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2514,7 +2723,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2529,7 +2738,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2544,7 +2753,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2559,7 +2768,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -2567,7 +2776,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -2575,7 +2784,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2591,7 +2800,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2607,7 +2816,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": null,
           "error": {
             "code": -32602,
@@ -2615,7 +2824,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -2623,7 +2832,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -2631,7 +2840,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
@@ -2639,7 +2848,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -2654,11 +2863,99 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "error": {
             "code": -32602,
             "message": "Invalid child request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting property name enclosed in double quotes: line 2 column 1 (char 2)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting value: line 2 column 1 (char 2)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting value: line 1 column 7 (char 6)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting property name enclosed in double quotes: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ':' delimiter: line 1 column 7 (char 6)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Extra data: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Invalid control character at: line 1 column 12 (char 11)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Invalid \\escape: line 1 column 8 (char 7)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
           }
         }
       ],
@@ -2798,7 +3095,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -2813,7 +3110,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -2828,7 +3125,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -2843,7 +3140,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -2858,7 +3155,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -2873,7 +3170,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -2888,7 +3185,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -2903,7 +3200,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -2918,7 +3215,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -2933,7 +3230,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -2948,7 +3245,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -2963,7 +3260,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -2978,7 +3275,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -3127,7 +3424,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -3142,7 +3439,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -3157,7 +3454,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -3172,7 +3469,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -3187,7 +3484,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -3202,7 +3499,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -3217,7 +3514,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -3232,7 +3529,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -3247,7 +3544,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -3262,7 +3559,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -3277,7 +3574,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -3292,7 +3589,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -3307,7 +3604,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -3670,12 +3967,23 @@
             "artifact_id": "failed"
           }
         }
-      }
+      },
+      "{",
+      "[",
+      "{\"id\":}",
+      "{\"id\":1,}",
+      "{\"id\":1 \"method\":\"x\"}",
+      "{\"id\" 1}",
+      "{\"id\":1}:",
+      "{\"id\":\"abc}",
+      "{\"id\":\"\\q\"}",
+      "{\"id\":1e}",
+      "{\"id\":01}"
     ],
     "expected": {
       "replies": [
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3694,7 +4002,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3709,7 +4017,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3724,7 +4032,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3739,7 +4047,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3754,7 +4062,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3769,7 +4077,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3784,7 +4092,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3799,7 +4107,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3814,7 +4122,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3829,7 +4137,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3844,7 +4152,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3859,7 +4167,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3874,7 +4182,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3889,7 +4197,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3904,7 +4212,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3919,7 +4227,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3934,7 +4242,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3949,7 +4257,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3964,7 +4272,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3979,7 +4287,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -3994,7 +4302,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -4009,7 +4317,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -4024,7 +4332,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -4039,7 +4347,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -4055,7 +4363,7 @@
           }
         },
         {
-          "jsonrpc": 2.0,
+          "jsonrpc": "2.0",
           "id": 1,
           "result": {
             "content": [
@@ -4068,6 +4376,94 @@
                 }
               }
             ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting property name enclosed in double quotes: line 2 column 1 (char 2)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting value: line 2 column 1 (char 2)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting value: line 1 column 7 (char 6)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting property name enclosed in double quotes: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ':' delimiter: line 1 column 7 (char 6)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Extra data: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Invalid control character at: line 1 column 12 (char 11)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Invalid \\escape: line 1 column 8 (char 7)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
           }
         }
       ],
@@ -4207,7 +4603,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4222,7 +4618,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4237,7 +4633,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4252,7 +4648,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4267,7 +4663,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4282,7 +4678,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4297,7 +4693,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4312,7 +4708,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4327,7 +4723,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4342,7 +4738,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4357,7 +4753,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4372,7 +4768,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4387,7 +4783,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4531,7 +4927,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4546,7 +4942,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4561,7 +4957,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4576,7 +4972,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4591,7 +4987,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4606,7 +5002,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4621,7 +5017,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4636,7 +5032,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4651,7 +5047,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4666,7 +5062,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4681,7 +5077,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4696,7 +5092,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},
@@ -4711,7 +5107,7 @@
             "hostId": "host",
             "request": {
               "id": 1,
-              "jsonrpc": 2.0,
+              "jsonrpc": "2.0",
               "method": "tools/call",
               "params": {
                 "arguments": {},

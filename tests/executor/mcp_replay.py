@@ -8,11 +8,14 @@ BINARY = sys.argv[1] if len(sys.argv)>1 and not CAPTURE else None
 
 def normalize(v, root):
     if isinstance(v, str):
-        try: return normalize(json.loads(v), root)
-        except (ValueError, TypeError): pass
         return re.sub(r'[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', '<uuid>', v.replace(str(root), '<root>'))
     if isinstance(v, list): return [normalize(x,root) for x in v]
-    if isinstance(v, dict): return {k:normalize(x,root) for k,x in v.items()}
+    if isinstance(v, dict):
+        result={k:normalize(x,root) for k,x in v.items()}
+        if v.get('type')=='text' and isinstance(v.get('text'),str):
+            try:result['text']=normalize(json.loads(v['text']),root)
+            except ValueError:pass
+        return result
     return v
 
 def run(server, context, requests):
@@ -41,7 +44,7 @@ def run(server, context, requests):
                 p.stdin.write((req if isinstance(req,str) else json.dumps(req))+'\n');p.stdin.flush()
                 if isinstance(req,dict) and 'id' not in req:continue
                 assert select.select([p.stdout],[],[],10)[0], 'MCP reply did not arrive within 10 seconds'
-                line=p.stdout.readline();assert line, p.stderr.read();replies.append(normalize(json.loads(line),root))
+                line=p.stdout.readline();assert line, "MCP exited without a reply";replies.append(normalize(json.loads(line),root))
             p.stdin.close();assert p.wait(timeout=5)==0,p.stderr.read()
             db=sqlite3.connect(root/'journal.sqlite');effects={name:[normalize(json.loads(r[0]),root) for r in db.execute(f'SELECT body FROM {name} ORDER BY rowid')] for name in ['outbox','delegation_requests','transfers']};db.close()
         finally:
@@ -68,6 +71,7 @@ if CAPTURE:
     rejected += [call(name) for name in ['session_start','session_deliver','session_transition','session_fork','session_resume','session_handoffs','message_send','queue_list','ask','reply','questions','worker_done','execution_status']]
     rejected += [call('artifact_save',{'path':'sub/a.txt'}),call('artifact_list'),call('artifact_get',{'artifact_id':'failed'})]
     cases.append({'server':'delegation','context':{**ctx,'_response':{'error':'rejected'},'_transferState':'failed','_transferResponse':{'error':'rejected','state':'failed'}},'requests':rejected})
+    for case in cases:case['requests'] += ['{','[','{"id":}','{"id":1,}','{"id":1 "method":"x"}','{"id" 1}','{"id":1}:','{"id":"abc}','{"id":"\\q"}','{"id":1e}','{"id":01}']
     for case in cases:case['expected']=run(case['server'],case['context'],case['requests'])
     FIXTURE.write_text(json.dumps(cases,indent=2)+'\n');print('Captured',sum(len(c['expected']['replies']) for c in cases),'replies')
 else:

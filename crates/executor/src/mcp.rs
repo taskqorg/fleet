@@ -447,6 +447,93 @@ fn delegation(req: &Value, ctx: &Value, db: &mut Connection) -> Result<Value> {
         Some(error),
     ))
 }
+// Preserve the Python adapter's JSON decoder diagnostics on the newline transport.
+fn parse_error(raw: &str, error: &serde_json::Error) -> String {
+    let detail = error.to_string();
+    let prefix: usize = raw
+        .split_inclusive('\n')
+        .take(error.line().saturating_sub(1))
+        .map(str::len)
+        .sum();
+    let mut offset = if error.column() == 0 {
+        prefix.saturating_sub(1)
+    } else {
+        prefix + error.column() - 1
+    }
+    .min(raw.len());
+    let message = if detail.starts_with("EOF while parsing a string") {
+        let mut start = 0;
+        let mut quoted = false;
+        let mut escaped = false;
+        for (i, c) in raw.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if c == '\\' && quoted {
+                escaped = true;
+                continue;
+            }
+            if c == '"' {
+                if !quoted {
+                    start = i
+                }
+                quoted = !quoted
+            }
+        }
+        offset = start;
+        "Unterminated string starting at"
+    } else if detail.starts_with("EOF") {
+        offset = raw.len();
+        if raw.trim_end().ends_with(['{', ',']) && !detail.contains("list") {
+            "Expecting property name enclosed in double quotes"
+        } else if raw.trim_end().ends_with(['[', ':', ',']) || detail.contains("value") {
+            "Expecting value"
+        } else {
+            "Expecting ',' delimiter"
+        }
+    } else if detail.starts_with("key must be a string")
+        || detail.starts_with("trailing comma") && raw.as_bytes().get(offset) == Some(&b'}')
+    {
+        "Expecting property name enclosed in double quotes"
+    } else if detail.starts_with("trailing characters") {
+        "Extra data"
+    } else if detail.starts_with("expected `:`") {
+        "Expecting ':' delimiter"
+    } else if detail.starts_with("expected `,`") {
+        "Expecting ',' delimiter"
+    } else if detail.starts_with("control character") {
+        "Invalid control character at"
+    } else if detail.starts_with("invalid escape") {
+        offset = offset.saturating_sub(1);
+        "Invalid \\escape"
+    } else if detail.starts_with("invalid number") {
+        if raw
+            .as_bytes()
+            .get(offset)
+            .is_some_and(|b| !b.is_ascii_digit())
+        {
+            offset = offset.saturating_sub(1)
+        }
+        "Expecting ',' delimiter"
+    } else {
+        "Expecting value"
+    };
+    while !raw.is_char_boundary(offset) {
+        offset = offset.saturating_sub(1)
+    }
+    let position = raw[..offset].chars().count();
+    let line = raw[..offset].bytes().filter(|b| *b == b'\n').count() + 1;
+    let column = raw[..offset]
+        .rsplit('\n')
+        .next()
+        .unwrap_or("")
+        .chars()
+        .count()
+        + 1;
+    format!("{message}: line {line} column {column} (char {position})")
+}
+
 pub fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(2).collect();
     let server = args.first().ok_or("MCP server required")?;
@@ -467,15 +554,22 @@ pub fn run() -> Result<()> {
         _ => return Err("unknown MCP server".into()),
     };
     let mut stdout = std::io::stdout().lock();
-    for line in std::io::stdin().lock().lines() {
-        let parsed = serde_json::from_str::<Value>(&line?);
+    let stdin = std::io::stdin();
+    let mut input = stdin.lock();
+    let mut raw = String::new();
+    loop {
+        raw.clear();
+        if input.read_line(&mut raw)? == 0 {
+            break;
+        }
+        let parsed = serde_json::from_str::<Value>(&raw);
         let req = match parsed {
             Ok(v) => v,
-            Err(_) => {
+            Err(error) => {
                 let (code, message) = if server == "design-rules" {
-                    (-32700, "Invalid request")
+                    (-32700, "Invalid request".to_string())
                 } else {
-                    (-32602, "Expecting value: line 1 column 1 (char 0)")
+                    (-32602, parse_error(&raw, &error))
                 };
                 writeln!(
                     stdout,
