@@ -1,3 +1,0 @@
-# Orca runs this when it creates a worktree.
-scripts:
-  setup: pnpm install --frozen-lockfile
