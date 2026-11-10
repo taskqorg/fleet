@@ -21,7 +21,9 @@ func watchSet(q *Request, b doc) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := get(q, sid, "session"); err != nil {
+	if s, err := get(q, sid, "session"); err != nil {
+		return nil, err
+	} else if err := directs(q, s); err != nil {
 		return nil, err
 	}
 	kinds := strList(b["kinds"])
@@ -63,6 +65,11 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
+		if s, err := get(q, sid, "session"); err != nil {
+			return nil, err
+		} else if err := directs(q, s); err != nil {
+			return nil, err
+		}
 		return doc{"sessionId": sid, "stopped": true}, exec(q, "DELETE FROM document WHERE kind='watch' AND id=$1", "watch:"+sid)
 	})
 	agentOp("watch_get", true, func(q *Request, b doc) (doc, error) {
@@ -82,6 +89,7 @@ func init() {
 }
 
 // watchPass: one pass over every watch, each in its own write transaction (§5 steps 1-9).
+// ponytail: each watch takes the GLOBAL write lock briefly every tick; a read-only pre-check first if many watches show.
 func watchPass(ctx context.Context, a *App) {
 	var ids []string
 	if err := a.store.Tx(ctx, nil, false, "", func(tx pgx.Tx) error {
@@ -165,7 +173,7 @@ func watchOne(q *Request, wid string) error {
 			}
 			if !slices.Contains(kinds, c.Kind) || seen[c.Kind+c.ID] ||
 				(c.Actor != nil && own[*c.Actor]) || (c.SessionID != nil && (children[*c.SessionID] || *c.SessionID == id)) ||
-				(focus != nil && !slices.Contains(focus, p)) || (!dir.Owner && !mayAccessProjectID(dir, p)) {
+				(focus != nil && c.Kind != "host" && !slices.Contains(focus, p)) || (!dir.Owner && !mayAccessProjectID(dir, p)) {
 				continue
 			}
 			seen[c.Kind+c.ID] = true
@@ -180,8 +188,12 @@ func watchOne(q *Request, wid string) error {
 			break
 		}
 	}
-	w["cursor"] = cursor
 	nowMs := time.Now().UnixMilli()
+	timer := w["timerMs"] != nil && int64(num(w["nextWakeAt"])) <= nowMs
+	if len(parts) == 0 && !timer && cursor == start {
+		return nil // nothing to send or move: no write
+	}
+	w["cursor"] = cursor
 	send := func(rid, text string) error {
 		if _, err := submit(q, doc{"sessionId": id, "requestId": rid, "text": text}); err != nil {
 			return err
@@ -194,7 +206,9 @@ func watchOne(q *Request, wid string) error {
 			return err
 		}
 	}
-	if at := int64(num(w["nextWakeAt"])); w["timerMs"] != nil && at <= nowMs {
+	if timer && len(parts) > 0 { // the change wake also serves as the timer wake
+		w["nextWakeAt"] = nowMs + int64(num(w["timerMs"]))
+	} else if at := int64(num(w["nextWakeAt"])); timer {
 		if err := send(fmt.Sprintf("timer:%s:%d", id, at), "Fleet: watch timer; review your focus with task_page and questions_list"); err != nil {
 			return err
 		}
@@ -227,13 +241,17 @@ func classify(q *Request, c change) (string, error) {
 		}
 		return "question " + c.ID + " on task " + firstString(r["task_id"], "none"), nil
 	case "execution":
-		r, err := first(q, "SELECT 1 AS x FROM execution WHERE id=$1 AND state='failed'", c.ID)
+		r, err := first(q, "SELECT CASE WHEN state='failed' THEN 'failed' ELSE 'unknown' END AS s FROM execution WHERE id=$1 AND (state='failed' OR observation='unconfirmed')", c.ID)
 		if err != nil || r == nil {
 			return "", err
 		}
-		return "execution " + c.ID + " failed", nil
-	case "host":
-		return "host " + c.ID + " changed", nil
+		return "execution " + c.ID + " " + gs(r, "s"), nil
+	case "host": // only reported problems (§5 table)
+		r, err := first(q, "SELECT 1 AS x FROM document WHERE kind='host-observation' AND id=$1 AND jsonb_array_length(coalesce(data->'problems','[]'))>0", c.ID)
+		if err != nil || r == nil {
+			return "", err
+		}
+		return "host " + c.ID + " reports problems", nil
 	}
 	return "", nil
 }

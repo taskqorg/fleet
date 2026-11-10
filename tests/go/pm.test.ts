@@ -145,6 +145,7 @@ test('PM7 watch: foreign changes in focus wake the PM with one message, its own 
   const pm = await agent(OWNER, {});
   ok(await pm.tool('focus_set', {projectIds: [PROJECT]}));
   ok(await pm.tool('watch_set', {kinds: ['task', 'question']}));
+  assert.ok([403, 404].includes((await op('watch_stop', {sessionId: pm.sessionId}, MEMBER)).status), 'only its director changes a watch');
   ok(await pm.tool('task_create', {title: 'PM7 own ' + randomUUID()}));
   await sleep(800);
   assert.deepEqual(await queuedTexts(pm.sessionId), [], 'own changes do not wake');
