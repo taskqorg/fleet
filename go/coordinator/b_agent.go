@@ -929,7 +929,10 @@ func executionStatus(q *Request, b doc) (doc, error) {
 	case e["stopRequested"] == true:
 		next = "execution_status"
 	}
-	readiness, err := rows(q, "SELECT data->'data' FROM document WHERE kind='event' AND data->>'executionId'=$1 AND data->>'type'='readiness' ORDER BY seq", eid)
+	// Host events carry no project: read them unscoped, the execution itself was read in the person's scope above.
+	readiness, err := unscoped(q, func() ([]doc, error) {
+		return rows(q, "SELECT data->'data' FROM document WHERE kind='event' AND data->>'executionId'=$1 AND data->>'type'='readiness' ORDER BY seq", eid)
+	})
 	if err != nil {
 		return nil, err
 	}
