@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import Database from 'better-sqlite3';import {mkdtempSync} from 'node:fs';import {tmpdir} from 'node:os';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync as Database} from 'node:sqlite';import {mkdtempSync} from 'node:fs';import {tmpdir} from 'node:os';
 import {createStore} from '../../packages/coordinator/store.ts';import {forward,verify,reverse} from '../../packages/coordinator/migrate-sqlite.ts';
 // Fixture shaped like var/fleet.sqlite: the records table, interleaved kinds, nested JSON, base64 artifacts, unicode, project ids, upserted rows.
 const fixture=(path:string)=>{const db=new Database(path);db.exec('CREATE TABLE records(kind TEXT,id TEXT PRIMARY KEY,data TEXT)');const put=db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE records.kind=excluded.kind');const add=(kind:string,v:any)=>put.run(kind,v.id,JSON.stringify(v));
@@ -24,6 +24,6 @@ test('forward, verify and reverse round-trip a SQLite records file',async()=>{co
  assert.equal((await verify(sqlite,store)).ok,false);
  const back=await reverse(sqlite,store,dir+'/rollback.sqlite',cut);assert.equal(back.written,2);
  assert.equal((await verify(dir+'/rollback.sqlite',store)).ok,true);
- const db=new Database(dir+'/rollback.sqlite',{readonly:true});const rows=db.prepare("SELECT id,data FROM records WHERE kind='execution' ORDER BY rowid").all() as any[];db.close();
+ const db=new Database(dir+'/rollback.sqlite',{readOnly:true});const rows=db.prepare("SELECT id,data FROM records WHERE kind='execution' ORDER BY rowid").all() as any[];db.close();
  assert.deepEqual(rows.map(r=>[r.id,JSON.parse(r.data).state]),[['e1','completed'],['e2','failed'],['e3','queued']]);
  await assert.rejects(reverse(sqlite,store,dir+'/rollback.sqlite'),/Output exists/);await store.close()});

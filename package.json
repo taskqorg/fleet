@@ -20,7 +20,6 @@
     "@fastify/static": "8.3.0",
     "@preact/signals": "2.11.4",
     "@tanstack/virtual-core": "3.19.11",
-    "better-sqlite3": "12.4.1",
     "fastify": "5.12.8",
     "pg": "8.23.1",
     "preact": "11.2.0",
@@ -28,7 +27,6 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.15",
-    "@types/better-sqlite3": "7.6.13",
     "@types/node": "22.18.0",
     "@types/pg": "8.23.1",
     "esbuild": "0.28.2",
