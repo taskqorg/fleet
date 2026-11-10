@@ -64,6 +64,7 @@ type State struct {
 
 // signalFile is <data dir>/update/update.json, written by the executor from its poll answers.
 type signalFile struct {
+	HostID     string `json:"hostId"`
 	Target     string `json:"target"`
 	AutoUpdate string `json:"autoUpdate"`
 	Running    string `json:"running"`
@@ -108,9 +109,7 @@ func newUpdater(key ed25519.PublicKey) *updater {
 	return &updater{base: releasesURL, key: key, target: runtime.GOOS + "-" + runtime.GOARCH,
 		client: &http.Client{Timeout: 10 * time.Minute}, now: time.Now, window: 30 * time.Second, tick: time.Second,
 		coordURL: "http://127.0.0.1:9470/api/health", gatewayURL: "http://127.0.0.1:8742/healthz",
-		dumpCmd: func(ver, file string) error {
-			return command("runuser", "-u", "postgres", "--", "pg_dump", "-Fc", "-d", "fleet", "-f", file)()
-		}}
+		dumpCmd: pgDump}
 }
 
 func (u *updater) result(ver, state, msg string) *Result {
@@ -493,6 +492,26 @@ func (u *updater) latest() string {
 	var l struct{ Version string }
 	json.Unmarshal(b, &l)
 	return l.Version
+}
+
+// pgDump runs pg_dump as postgres; root writes the file (postgres cannot write /backup/fleet/pre-deploy).
+func pgDump(_, file string) error {
+	f, err := os.OpenFile(file+".tmp", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	c := exec.Command("runuser", "-u", "postgres", "--", "pg_dump", "-Fc", "-d", "fleet")
+	var stderr bytes.Buffer
+	c.Stdout, c.Stderr = f, &stderr
+	err = c.Run()
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(file + ".tmp")
+		return fmt.Errorf("%v %s", err, bytes.TrimSpace(stderr.Bytes()))
+	}
+	return os.Rename(file+".tmp", file)
 }
 
 func command(argv ...string) func() error {

@@ -164,13 +164,13 @@ Releases root `R`: `~/releases` of the service user; on PDS18 `/home/fleet/relea
 1.  Take `update.lock`; if held, exit 0. Prune.
 2.  Read the inputs.
     *   Executor mode: `<data dir>/update/update.json` `{target, autoUpdate, running, pollOk, pollError, at}`, written by the executor from its last poll answer. Missing file: exit (the executor has not polled yet).
-    *   `pds18` mode: `version` and `autoUpdate` from `GET 127.0.0.1:9470/api/health` (the coordinator reports `autoUpdate` of its own host record). Coordinator not answering: treat as `"on"`, so an update can repair it. Candidate from `https://github.com/taskqorg/fleet/releases/latest/download/latest.json`.
+    *   `pds18` mode: `version` and `autoUpdate` from `GET 127.0.0.1:9470/api/health` (the coordinator reports `autoUpdate` of its machine's host record). Coordinator not answering: treat as `"on"`, so an update can repair it. Candidate from `https://github.com/taskqorg/fleet/releases/latest/download/latest.json`.
 3.  `autoUpdate` is `"off"` or a future time: record `held`, exit.
 4.  Candidate: executor mode `target`; `pds18` mode `latest.json.version`. Stop when not newer than the running version (COREQ-R14), refused in state, or not matching the strict version regex of section 1 (stricter than COREQ-R12 step 2).
 5.  Download the tarball for this `<os>-<arch>`, `SHA256SUMS` and `SHA256SUMS.sig` from `https://github.com/taskqorg/fleet/releases/download/v<ver>/` into the stage (`S/stage/` on PDS18; `R/<ver>.tmp/` elsewhere). Streamed to disk; no size cap beyond the checksum.
 6.  Verify: the Ed25519 signature of `SHA256SUMS` against the compiled-in key, then the tarball's SHA-256 against its line (COREQ-R11, with a key instead of a certificate identity). `release.json` of the unpacked tree must name the candidate version.
 7.  Unpack in the stage, run `selftest` of each binary this host runs (COREQ-R25).
-8.  `pds18` mode: `runuser -u postgres -- pg_dump -Fc -d fleet -f /backup/fleet/pre-deploy/fleet-pre-<ver>.dump`.
+8.  `pds18` mode: `runuser -u postgres -- pg_dump -Fc -d fleet`, its output written by root to `/backup/fleet/pre-deploy/fleet-pre-<ver>.dump` (the directory is not writable by `postgres`).
 9.  Install: `pds18` mode copies the staged tree to `/home/fleet/releases/<ver>/`, owned by root and readable by `fleet`, every write through Go's `os.Root` so a symlink the `fleet` user plants cannot lead root out of that directory; executor mode renames `.tmp` to `R/<ver>/`. Write `previous` = old `current`, then `current` = `<ver>`. Running binaries are never written in place (COREQ-R13).
 10. Restart (3.3), then health (3.4).
 11. Write `last` in state.
@@ -216,12 +216,12 @@ All poll changes are additive: an N-1 executor ignores new answer fields and the
 *   **Poll body** (`contracts/host-protocol.schema.json` `PollRequest`): optional `version` and `update` (`last` of the host's `update-state.json`).
 *   **Poll answer** (`PollReply`): `target` (`healthyTarget`) and `autoUpdate` of the polling host.
 *   **`healthyTarget`**: the coordinator's own `version` when `healthy` exists in its release directory (next to its executable), else the version of `releases/previous` when that has `healthy`, else null (no update offered). Read per request; two `stat` calls.
-*   **`/api/health`** adds `version` and `autoUpdate` of the coordinator's own host (`FLEET_HOST_ID` of the coordinator, `pds18`); both are not secret.
+*   **`/api/health`** adds `version` and `autoUpdate` of the coordinator machine's host (`hostId` of `pds18-state.json`; `"on"` before the first run); both are not secret.
 *   **`poll`** writes `version` and `update` into the observation it already rebuilds, so one writer owns the row. After `hostProblems`, it appends `{kind: "version-behind"}` when the host's version is older than `previous` of the coordinator's `release.json`. `EdgeProblemKind` becomes `ProblemKind` with both values.
 *   **Needs-you**: extract `openCauseQuestion(q, cause string, addressedTo, projectID any, text string) error` in `a_dispatch.go` from its lines that call `hookTaskAsk` and then set `cause` and `addressed_to`; dispatch and `poll` both use it. `poll` opens a question when `update.state` is `refused` or `failed` and no question with cause `update:<hostId>:<version>` is open or answered (one lookup by cause, so repeated polls add nothing). Kind `operator_decision`, options `["ok"]`, addressed to the host's holder, text `"<hostId>: update to <version> <rolled back|refused> (<reason>)."`. A poll with `state: ok` withdraws open `update:<hostId>:*` questions (`state='withdrawn', cause=NULL`). Dispatch's held-cause filter does not match `update:`, so dispatch never withdraws them.
-*   **PDS18 row**: for its own host the coordinator also reads `/var/lib/fleet-update/pds18-state.json` and merges it with the polled `update`: the worse state wins (`failed` > `refused` > `error` > `pending` > `held` > `ok`), and `update.parts` lists coordinator and executor results.
+*   **PDS18 row**: the coordinator's `FLEET_HOST_ID` names its default work host, not its machine, so the machine's host is `hostId` of `/var/lib/fleet-update/pds18-state.json`, which `fleet-update` copies from the PDS18 executor's `update.json` (the executor writes its `hostId` there). For that host the coordinator reads `/var/lib/fleet-update/pds18-state.json` and merges it with the polled `update`: the worse state wins (`failed` > `refused` > `error` > `pending` > `held` > `ok`), and `update.parts` lists coordinator and executor results.
 *   **`hosts_list`** adds `version`, `autoUpdate`, `update` `{version, state, error, at}`.
-*   **Executor**: writes `<data dir>/update/update.json` `{target, autoUpdate, running, pollOk, pollError, at}` only when a value changes (durably, temp file then rename); sends `version` and `update` in polls.
+*   **Executor**: writes `<data dir>/update/update.json` `{hostId, target, autoUpdate, running, pollOk, pollError, at}` only when a value changes (durably, temp file then rename); sends `version` and `update` in polls.
 
 ### 5. Config defaults and env
 
@@ -345,7 +345,7 @@ Six phases, one pull request each; every phase builds and passes `go test ./...`
 #### Phase 2: protocol expand and coordinator
 
 7.  `contracts/host-protocol.schema.json` (Modify): optional `PollRequest.version`, `PollRequest.update`; `PollReply.target`, `PollReply.autoUpdate`; `EdgeProblemKind` becomes `ProblemKind` with `version-behind`. Regenerate `go/coordinator/protocol_gen.go` (`go generate`).
-8.  `go/coordinator/a_hosts.go` (Modify): `autoUpdate` validation and `setting-change` in `hostsUpdate`; `version`, `autoUpdate`, `update` in `hostsList`; PDS18 state merge for the coordinator's own host.
+8.  `go/coordinator/a_hosts.go` (Modify): `autoUpdate` validation and `setting-change` in `hostsUpdate`; `version`, `autoUpdate`, `update` in `hostsList`; PDS18 state merge for the coordinator machine's host.
 9.  `go/coordinator/a_poll.go` (Modify): store `version`, `update`; `version-behind` after `hostProblems`; answer `target`, `autoUpdate`; needs-you open and withdraw.
 10. `go/coordinator/a_dispatch.go` (Modify): extract `openCauseQuestion`; dispatch calls it.
 11. `go/coordinator/health.go` (Modify): `healthyTarget`.

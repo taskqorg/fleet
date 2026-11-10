@@ -412,12 +412,12 @@ func hostsList(q *Request) (any, error) {
 		if r := records[id]; r != nil {
 			h["autoUpdate"] = autoUpdateOf(r)
 		}
-		if id == q.app.hostID {
+		if id == pds18Host() {
 			h["update"] = mergeUpdate(nil)
 		}
 		if o != nil {
 			h["platform"], h["lastSeenAt"], h["version"] = o["platform"], o["lastSeenAt"], o["version"]
-			if id == q.app.hostID {
+			if id == pds18Host() {
 				h["update"] = mergeUpdate(o["update"])
 			} else {
 				h["update"] = o["update"]

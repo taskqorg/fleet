@@ -1706,7 +1706,7 @@ func (e *executor) exchange() error {
 		body["update"] = u
 	}
 	a := send(e.url, e.token, pollRoute, body)
-	sig := updateSignal{Running: version, AutoUpdate: "on"}
+	sig := updateSignal{HostID: e.host, Running: version, AutoUpdate: "on"}
 	if lastSignal != nil {
 		sig.Target, sig.AutoUpdate = lastSignal.Target, lastSignal.AutoUpdate
 	}
