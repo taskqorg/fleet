@@ -138,6 +138,39 @@ jobs:
       - run: node --test --test-concurrency=1 tests/coordinator/*.test.ts
         env:
           FLEET_TEST_PG: postgresql://postgres:postgres@localhost:5432
+  executor-release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build release executor
+        shell: bash
+        run: |
+          start=$SECONDS
+          rustup target add '${{ matrix.target }}'
+          cargo build --locked --release -p fleet-executor --target '${{ matrix.target }}'
+          file='fleet-executor-${{ matrix.target }}'
+          cp 'target/${{ matrix.target }}/release/fleet-executor' "$file"
+          shasum -a 256 "$file" | tee "$file.sha256"
+          echo "${{ matrix.target }}: $((SECONDS-start)) seconds; $(wc -c < "$file") bytes" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fleet-executor-${{ matrix.target }}-${{ github.sha }}
+          path: |
+            fleet-executor-${{ matrix.target }}
+            fleet-executor-${{ matrix.target }}.sha256
+          if-no-files-found: error
   comment:
     needs: build-test-design
     if: always() && github.event_name == 'pull_request'
