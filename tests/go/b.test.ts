@@ -71,7 +71,8 @@ test('B5 thread: a session thread pages its execution boundary and the operator 
   const after = ok(await call('GET', `/api/threads/session/${sid}/entries?limit=10&after=${page.first}`));
   assert.deepEqual(after.entries.map((b: any) => b.key), [page.last]);
   const md = await fetch(BASE + `/api/threads/session/${sid}/export`, {headers: {authorization: 'Bearer ' + SECRET, 'x-fleet-person': OWNER}});
-  assert.match(await md.text(), /\*\*You:\*\*\n\nthread text/);
+  // formats.md "Copy": a bold "author · 10 Nov 21:30" line, then the body.
+  assert.match(await md.text(), /\*\*[^*\n]+ · \d{1,2} [A-Z][a-z]{2} \d\d:\d\d\*\*\nthread text/);
   assert.equal((await call('GET', `/api/threads/session/${randomUUID()}/entries?limit=1`)).status, 404);
 });
 
