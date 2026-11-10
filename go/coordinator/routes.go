@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -109,12 +108,6 @@ func decode(raw json.RawMessage, v any) error {
 		return fail(400, "Invalid body")
 	}
 	return nil
-}
-
-func init() {
-	longRoute("GET /api/stream", func(q *Request) (any, error) {
-		return raw(func(w http.ResponseWriter) error { return q.app.serveStream(q, w) }), nil
-	})
 }
 
 func hostOf(q *Request) string { return q.host["hostId"].(string) }

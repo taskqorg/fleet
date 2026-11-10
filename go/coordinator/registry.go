@@ -98,7 +98,8 @@ func (a *App) registered() *http.ServeMux {
 	return mux
 }
 
-// routes is the server handler: the registered mux; an unmatched path is a JSON 404 after the credential check.
+// routes is the server handler: the registered mux; GET /api/stream after the credential check; any other unmatched
+// path is a JSON 404 after the credential check.
 func (a *App) routes() http.Handler {
 	mux := a.registered()
 	return http.HandlerFunc(func(w http.ResponseWriter, hr *http.Request) {
@@ -108,11 +109,17 @@ func (a *App) routes() http.Handler {
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		err := a.authorize(&Request{r: hr, app: a})
-		if err == nil {
+		q := &Request{r: hr, app: a}
+		err := a.authorize(q)
+		if err == nil && hr.Method == "GET" && hr.URL.Path == "/api/stream" {
+			// The stream runs its own short reads: no body, no person gate, no surrounding transaction (stream.go).
+			err = a.serveStream(q, w)
+		} else if err == nil {
 			err = fail(404, "Route "+hr.Method+":"+hr.URL.Path+" not found")
 		}
-		writeError(w, err)
+		if err != nil {
+			writeError(w, err)
+		}
 	})
 }
 
