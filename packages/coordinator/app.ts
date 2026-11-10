@@ -123,10 +123,12 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  // Git network for agents: profile gitNetwork wins; default on for pm/reviewer/worker sessions of projects with repos.
  const gitNetwork=(s:any)=>s.agentConfig?.gitNetwork??(!!s.projectId&&['pm','reviewer','worker'].includes(s.role)&&projects.project_context({projectId:s.projectId}).settings.repos.length>0);
  // extra: payload fields for the start command and fields for the execution record (pipeline agent steps).
- const enqueue=async (s:any,input:string,requestId:string,extra:{payload?:any,execution?:any}={})=>{
+ const enqueue=async (s:any,input:string,requestId:string,extra:{payload?:any,execution?:any,host?:string}={})=>{
   // Execution host follows the account binding: the session's last host first, then the default host, then extra native hosts.
   const harness=s.agentConfig?.harness??'codex',last=(await all('execution',{sessionId:s.id})).filter(x=>x.sessionId===s.id&&x.hostId).at(-1)?.hostId;
-  const candidates=[...new Set([last,config.hostId,...(config.nativeHostIds??[])].filter((h:any)=>h===config.hostId||(config.nativeHostIds??[]).includes(h)))];
+  // A pipeline agent step with overrides.host runs only there: no fallback, the resolve error becomes the step problem.
+  if(extra.host!==undefined&&![config.hostId,...(config.nativeHostIds??[])].includes(extra.host))fail(400,'Unknown host '+extra.host);
+  const candidates=extra.host!==undefined?[extra.host]:[...new Set([last,config.hostId,...(config.nativeHostIds??[])].filter((h:any)=>h===config.hostId||(config.nativeHostIds??[]).includes(h)))];
   let hostId=config.hostId,binding:any;const errors:any[]=[];
   for(const h of candidates){try{binding=(await managed.resolve(s.account,harness,h));hostId=h;errors.length=0;break}catch(error){errors.push(error)}}
   if(errors.length)throw errors.find((x:any)=>x.statusCode===403)??errors[candidates.indexOf(config.hostId)]??errors[0];
@@ -211,7 +213,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
    if(overrides.web_route!==undefined&&!['connections','builtin'].includes(overrides.web_route))fail(400,'web_route must be connections or builtin');
    const skills=(profile.skills??[]).map((id:string)=>{if(!/^[a-z0-9-]{1,80}$/.test(id))fail(400,'Invalid skill');return {id,text:readFileSync(resolve(configDir,'skills',id,'SKILL.md'),'utf8')}});
    const s={id:randomUUID(),createdAt:Date.now(),agentConfig:profile,...(overrides.account?{account:overrides.account}:{}),...(run.projectId?{projectId:run.projectId}:{}),pipelineRunId:run.id};await put('session',s);
-   const e=await store.atomic(()=>enqueue(s,prompt,'pipeline:'+stepExecutionId,{payload:{inputs,skills,webRoute:overrides.web_route??'connections',connectionLabel:stepExecutionId},execution:{pipelineStepId:stepExecutionId,pipelineRunId:run.id,...(run.experimentId?{experimentId:run.experimentId}:{})}}));return e.id},
+   const e=await store.atomic(()=>enqueue(s,prompt,'pipeline:'+stepExecutionId,{...(overrides.host!==undefined?{host:String(overrides.host)}:{}),payload:{inputs,skills,webRoute:overrides.web_route??'connections',connectionLabel:stepExecutionId},execution:{pipelineStepId:stepExecutionId,pipelineRunId:run.id,...(run.experimentId?{experimentId:run.experimentId}:{})}}));return e.id},
   startScript:async({run,stepExecutionId,command,timeoutMs,hostId,inputs})=>store.atomic(async()=>{const s={id:randomUUID(),createdAt:Date.now(),...(run.projectId?{projectId:run.projectId}:{}),pipelineRunId:run.id};await put('session',s);
    const e:any={id:randomUUID(),executionId:'',sessionId:s.id,hostId:hostId??config.hostId,state:'queued',createdAt:Date.now(),pipelineStepId:stepExecutionId,pipelineRunId:run.id,...(run.experimentId?{experimentId:run.experimentId}:{})};e.executionId=e.id;
    await put('execution',e);await put('command',{id:randomUUID(),executionId:e.id,sessionId:s.id,hostId:e.hostId,kind:'script',payload:{command,inputs,...(timeoutMs?{timeout_ms:timeoutMs}:{})},status:'pending'});return e.id})});
