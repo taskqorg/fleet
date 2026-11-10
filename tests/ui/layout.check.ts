@@ -16,6 +16,7 @@ export async function layoutFindings(p: Page): Promise<string[]> {
     const ld = document.querySelector('[data-ui=list-detail]');
     if (!shown(document.querySelector('[data-ui=nav-rail]'))) out.push('OR-24 navigation column missing');
     if (innerWidth >= 1100 && ld && [...ld.children].filter(shown).length < 2) out.push('OR-24 control column or work area missing');
+    if (document.querySelector('[data-ui=app-shell]') && !document.querySelector('[data-ui=nav-rail] .brand')) out.push('OR-24 the product name is not in the navigation');
     if (document.documentElement.scrollHeight > innerHeight + 1) out.push(`OR-25 the page itself scrolls (${document.documentElement.scrollHeight} px in a ${innerHeight} px window)`);
     for (const e of document.querySelectorAll('[data-ui=app-shell] *')) {
       // The outer one counts as a scroller by its style alone: it scrolls as soon as its column grows.
@@ -35,7 +36,7 @@ export async function layoutFindings(p: Page): Promise<string[]> {
   });
   // OR-26: a click on the row's left padding, away from the title, opens it.
   // A row with a title link but no row-link class would never open from its edge, so it is picked too.
-  const row = await p.$('.vl-row:not(.sel):not(.grp):has(.row-link, a.title)');
+  const row = await p.$('.vl-row:not(.sel):not(.grp):has(.row-link, a.title), .kv li:has(.row-link)');
   const box = await row?.boundingBox();
   if (row && box) {
     const before = p.url();

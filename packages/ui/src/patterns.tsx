@@ -129,7 +129,7 @@ export function AppShell({ nav, current, onGo, waiting, children }: {
   const toggle = () => { setMini(!mini); try { localStorage.setItem('fleet.nav.mini', mini ? '0' : '1'); } catch { /* not remembered */ } };
   // OR-26: a click anywhere on a row follows the row's link. Controls in the row keep their own action; a text selection is not a click.
   const openRow = (e: MouseEvent) => {
-    const t = e.target as HTMLElement, link = t.closest?.('.vl-row')?.querySelector<HTMLElement>('.row-link');
+    const t = e.target as HTMLElement, link = t.closest?.('.vl-row, .kv li')?.querySelector<HTMLElement>('.row-link');
     if (!link || t.closest('a,button,input,textarea,select,label') || !(getSelection()?.isCollapsed ?? true)) return;
     link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }));
   };

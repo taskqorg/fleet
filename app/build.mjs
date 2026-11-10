@@ -22,7 +22,7 @@ const main = files.find(f => /assets\/main-.*\.js$/.test(f));
 // Latin and Cyrillic only; the browser fetches a file when a page uses its unicode-range, and the service worker precaches them all.
 const fontFiles = [];
 let fontCss = '';
-for (const [pkg, weights] of [['ibm-plex-sans', [400, 500, 600]], ['ibm-plex-mono', [400, 600]]]) for (const w of weights) {
+for (const [pkg, weights] of [['ibm-plex-sans', [400, 500, 600]], ['ibm-plex-mono', [400, 500, 600]]]) for (const w of weights) {
   const dir = new URL(`node_modules/@fontsource/${pkg}/`, root);
   for (const face of readFileSync(new URL(`${w}.css`, dir), 'utf8').match(/@font-face\s*\{[^}]*\}/g)) {
     const file = face.match(/url\(\.\/(files\/[^)]*-(?:latin|cyrillic)-\d+-normal\.woff2)\)/)?.[1];

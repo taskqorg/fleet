@@ -6,7 +6,7 @@ The main user is an operator who handles dozens of tasks a day, and an architect
 
 ## 1. Density and calm
 
-* **Dense by default.** A table row is one line, about 32 px tall on desktop. A catalogue row in the control column is two lines, 44 px: title, then its secondary facts. A desktop screen shows at least 16 task rows without scrolling. No decorative cards, hero areas or large empty margins.
+* **Dense by default.** A table row is one line, about 32 px tall on desktop. A catalogue row in the control column is two lines, 44 px: title, then its secondary facts. A desktop screen shows about 15 task rows without scrolling. No decorative cards, hero areas or large empty margins.
 * **Calm by default.** Colour carries meaning only: state, attention, measurement basis. Everything else is neutral. At most one accent colour on a screen, used for the primary action and the focus ring.
 * **One attention level per signal.** Problems and waiting decisions use the attention colour; normal running work does not. A screen where everything is highlighted is a defect.
 * **Numbers are tabular.** Numbers use tabular figures and right alignment in columns, so they line up and do not shift while they update.
