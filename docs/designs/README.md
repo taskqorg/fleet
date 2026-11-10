@@ -6,7 +6,7 @@ Technical designs, briefs and their reviews. A design here is accepted direction
 * `fleet-operator-app.md`: the operator web app and its live change feed; `reviews/fleet-operator-app/` is its review.
 * `fleet-view-urls-and-list-path.md`: view URLs and the list path.
 * `fleet-lab.md`: the Fleet Lab (experiments, examples, evaluators, Promote) and work analysis.
-* `fleet-people-access.md`: people, identity, per-host secrets, holders, subscriptions, take, dispatch, intake, readings and budgets. `people-access-brief.md` is its brief; `reviews/people-access/terms-research.md` holds the terms research.
+* `fleet-people-access.md`: people, identity, per-host secrets, holders, subscriptions and logins, isolation layers, take, dispatch, intake, readings and budgets.
 * `fleet-pm-agent.md`: the PM agent: director-scoped agent tools, task tools, Held tasks, focus, watch mode. `pm-agent-brief.md` is its brief.
 * `fleet-l3-contracts.md`: fleet-stack L3 stage 1: one JSON Schema for event payloads and the host protocol, generators, the reversal check.
 * `fleet-connections.md`: API key connections, the Fleet gateway copied from Pipe's read lane, per-run tokens, call methods and deleting Pipe.
