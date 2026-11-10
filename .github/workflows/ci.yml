@@ -65,8 +65,8 @@ jobs:
       - name: Pack the release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          (cd go && CGO_ENABLED=0 go build -trimpath -o bin/fleet-gateway ./gateway)
-          mkdir -p release/dist && cp go/bin/fleet-coordinator go/bin/fleet-gateway release/ && cp -r dist/app release/dist/ && cp -r config release/
+          (cd go && for cmd in gateway executor; do CGO_ENABLED=0 go build -trimpath -o bin/fleet-$cmd ./$cmd; done)
+          mkdir -p release/dist && cp go/bin/fleet-coordinator go/bin/fleet-gateway go/bin/fleet-executor release/ && cp -r dist/app release/dist/ && cp -r config release/
           tar -czf fleet-release.tgz -C release .
           sha256sum fleet-release.tgz | tee fleet-release.tgz.sha256
           echo "fleet-release-${GITHUB_SHA}: $(cut -d' ' -f1 fleet-release.tgz.sha256)" >> "$GITHUB_STEP_SUMMARY"
@@ -221,13 +221,14 @@ jobs:
             go version -m "$file" | grep -q 'CGO_ENABLED=0' || { echo "$file: cgo enabled"; exit 1; }
             (cd dist && sha256sum "${file#dist/}" | tee "${file#dist/}.sha256")
           done
-          # The gateway (and its `guard` command) runs on PDS18 and the hosts that serve connections: no Windows build.
-          for t in linux/amd64 darwin/arm64; do
-            os=${t%/*} arch=${t#*/} file="dist/fleet-gateway-$os-$arch"
-            GOOS=$os GOARCH=$arch go build -trimpath -o "$file" ./gateway
+          # The gateway (with its `guard` command) and the executor: linux/amd64 and darwin/arm64 only
+          # (Windows not built: executor process control needs its own port).
+          for t in linux/amd64 darwin/arm64; do for cmd in gateway executor; do
+            os=${t%/*} arch=${t#*/} file="dist/fleet-$cmd-${t%/*}-${t#*/}"
+            GOOS=$os GOARCH=$arch go build -trimpath -o "$file" "./$cmd"
             go version -m "$file" | grep -q 'CGO_ENABLED=0' || { echo "$file: cgo enabled"; exit 1; }
             (cd dist && sha256sum "${file#dist/}" | tee "${file#dist/}.sha256")
-          done
+          done; done
       - name: govulncheck (warning only)
         continue-on-error: true
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
