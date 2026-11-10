@@ -246,15 +246,20 @@ func readSnapshot(path string) ([]byte, *snapshot, error) {
 
 // ---------------------------------------------------------------- spool
 
-// spool keeps one JSON line per call in <state>/spool/<day>.jsonl; a line that cannot be written counts in the persisted lost counter.
+// spool keeps one JSON line per call in <state>/spool/<day>.jsonl.
+// Durability contract: append returns only after the line is fsynced (and, for a new day file, its directory entry),
+// so a call answered to its caller survives a machine crash. A line that cannot be made durable counts in the lost
+// counter, persisted in <state>/spool-lost; lostRecorded is false while that counter on disk is behind the real one.
 type spool struct {
-	dir   string
-	lost  atomic.Uint64
-	write sync.Mutex
+	dir          string
+	lost         atomic.Uint64
+	lostRecorded atomic.Bool
+	write        sync.Mutex
 }
 
 func openSpool(stateDir string) (*spool, error) {
 	s := &spool{dir: filepath.Join(stateDir, "spool")}
+	s.lostRecorded.Store(true)
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return nil, fmt.Errorf("spool directory: %w", err)
 	}
@@ -269,18 +274,42 @@ func (s *spool) append(line map[string]any) {
 	s.write.Lock()
 	defer s.write.Unlock()
 	data, _ := json.Marshal(line)
-	file, err := os.OpenFile(filepath.Join(s.dir, day(nowMs())+".jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err == nil {
-		_, err = file.Write(append(data, '\n'))
-		if closeErr := file.Close(); err == nil {
-			err = closeErr
-		}
-	}
-	if err != nil {
+	if err := s.appendDurably(append(data, '\n')); err != nil {
 		lost := s.lost.Add(1)
 		logf("spool write failed (%v); lost %d", err, lost)
-		writeAtomic(filepath.Join(filepath.Dir(s.dir), "spool-lost"), []byte(strconv.FormatUint(lost, 10)))
+		path := filepath.Join(filepath.Dir(s.dir), "spool-lost")
+		if err := writeAtomic(path, []byte(strconv.FormatUint(lost, 10))); err != nil {
+			s.lostRecorded.Store(false)
+			logf("lost counter not persisted (%v); %s is behind by at least one line", err, path)
+		} else {
+			s.lostRecorded.Store(true)
+		}
 	}
+}
+
+func (s *spool) appendDurably(data []byte) error {
+	path := filepath.Join(s.dir, day(nowMs())+".jsonl")
+	_, statErr := os.Stat(path)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = file.Write(data)
+	if err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil && statErr != nil {
+		// A new file: its name is durable only once the directory is synced.
+		var dir *os.File
+		if dir, err = os.Open(s.dir); err == nil {
+			err = dir.Sync()
+			dir.Close()
+		}
+	}
+	return err
 }
 
 // ---------------------------------------------------------------- service
@@ -657,7 +686,7 @@ func (g *gateway) health() map[string]any {
 		"snapshot": map[string]any{"revision": s.revision, "age_s": max(int64(nowMs())-int64(*s.GeneratedMs), 0) / 1000,
 			"tokens": len(s.tokens), "rejected": g.rejected.Load()},
 		"keys":  map[string]any{"total": keys, "usable": usable, "disabled": disabled},
-		"spool": map[string]any{"lost": g.spool.lost.Load()},
+		"spool": map[string]any{"lost": g.spool.lost.Load(), "lostRecorded": g.spool.lostRecorded.Load()},
 	}
 }
 

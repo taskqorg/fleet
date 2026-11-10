@@ -408,3 +408,16 @@ func TestProviderRedirectIsNeverFollowed(t *testing.T) {
 	lines, _ := gw.spool()
 	expect(t, lines[0]["outcome"], "unknown", "outcome")
 }
+
+// Requirement: every billable call is either durably spooled or counted as lost (fleet-connections.md §3).
+// Risk: when the lost counter cannot be persisted either, the loss is silent after a restart.
+func TestSpoolLossMarkerFailureIsReported(t *testing.T) {
+	upstream := newProvider(t, func(string) int { return 200 })
+	gw := newFixture(t, upstream.url, "invented-key-a")
+	state := filepath.Join(gw.dir, "state")
+	os.RemoveAll(filepath.Join(state, "spool"))
+	os.WriteFile(filepath.Join(state, "spool"), nil, 0o600) // the spool directory is now a file: writes fail
+	os.Mkdir(filepath.Join(state, "spool-lost.tmp"), 0o700) // and the lost counter cannot be written
+	gw.call("web_search", testToken)
+	expect(t, field(gw.health(), "spool"), map[string]any{"lost": 1, "lostRecorded": false}, "spool health")
+}
