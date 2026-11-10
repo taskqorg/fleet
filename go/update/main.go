@@ -131,8 +131,9 @@ func (u *updater) runPDS18() error {
 	readJSON(stateFile, &st)
 	const execSignal = "/home/fleet-agent/.local/state/fleet/executor/update/update.json"
 	var sig signalFile
-	if readJSON(execSignal, &sig) && sig.HostID != "" {
-		st.HostID = sig.HostID // the coordinator shows these results on that host's row
+	hostChanged := false
+	if readJSON(execSignal, &sig) && sig.HostID != "" && sig.HostID != st.HostID {
+		st.HostID, hostChanged = sig.HostID, true // the coordinator shows these results on that host's row
 	}
 	stage := filepath.Join(s, "stage")
 	os.RemoveAll(stage)
@@ -184,6 +185,9 @@ func (u *updater) runPDS18() error {
 	}
 	if r := u.cycle(exec, autoUpdate, healthy); r != nil {
 		exec.st.Last = r
+		return save()
+	}
+	if hostChanged {
 		return save()
 	}
 	return nil
