@@ -467,5 +467,5 @@ UPDATE execution SET experiment_id = NULL, variant = NULL, data = data - 'experi
 ALTER TABLE artifact DROP CONSTRAINT artifact_role_check;
 ALTER TABLE artifact ADD CONSTRAINT artifact_role_check CHECK (role IN ('original', 'thumbnail', 'poster', 'example'));
 ALTER TABLE artifact ADD COLUMN approved_at timestamptz NULL;
--- One example artifact per project and name (name carries id and version).
-CREATE UNIQUE INDEX artifact_example ON artifact((coalesce(project_id, '')), name) WHERE role = 'example';
+-- One live example artifact per project and name (name carries id and version); a purged one does not block a re-import.
+CREATE UNIQUE INDEX artifact_example ON artifact((coalesce(project_id, '')), name) WHERE role = 'example' AND state <> 'deleted';

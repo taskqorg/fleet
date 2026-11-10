@@ -450,7 +450,9 @@ Stage 0 exit: a trial inserted by SQL fixture (experiment row + `pipeline_run` w
 *   Added while building Stage 1: the exit needs stored examples, and the code had no way for the coordinator to write one (artifact `role` allowed only `original|thumbnail|poster`, every write went through an executor upload, and there was no approval field).
 *   `-- migration 12`: `role` adds `example`; `artifact.approved_at timestamptz NULL`; unique index on `(coalesce(project_id, ''), name) WHERE role = 'example'`.
 *   `POST /api/lab/examples` `{examples[], projectId?, approved?}` → `{examples: [{artifactId, id, version, hash, created}]}` (400 invalid example or unknown use case, 409 other content under an existing `id@version` or no reachable store); `GET /api/lab/examples?state=proposed|approved`; `GET /api/lab/examples/:artifactId` → `{artifactId, state, example}`. Operator credential, like every `/api` route.
-*   `artifacts.ts` `writeObject` (shared with backfill) writes an object the coordinator hashed itself.
+*   `artifacts.ts` `writeObject` (shared with backfill) writes an object the coordinator hashed itself. An import refuses purged content (as `reserve` does) and checks every example before writing any, so a refused batch stores nothing.
+*   Agents never see examples: the host artifact routes (`artifact_list`, `artifact_get`) skip role `example`, because references are known-good answers. Stage 2 hands a trial its example inputs only.
+*   `config/lab` ships in `dist/config/lab`; the coordinator reads the registry from there (`FLEET_LAB_DIRECTORY` overrides).
 *   `scripts/lab-examples.ts check|import`.
 *   Five owner-written `work` seeds: `fleet:UC1` page, `fleet:UC5` web research (for the `web-research` pipeline, the API-step example), `fleet:UC9` faster code, `taskq:UC-07` plan to tasks, `taskq:UC-16` tray icon.
 

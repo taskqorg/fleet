@@ -39,22 +39,26 @@ export const exampleName=(e:{id:string,version:number})=>`examples/${e.id}@${e.v
 export function labExamples(store:Store,artifacts:Artifacts,labDirectory:string){
  // Import: an identical example (same id, version and content) returns the stored artifact; other content under the same id
  // and version is refused, since a version never changes. A new version is a new artifact.
+ const existing=async(name:string,projectId:string|null)=>(await store.query("SELECT id,content_hash,approved_at FROM artifact WHERE role='example' AND state<>'deleted' AND name=$1 AND coalesce(project_id,'')=$2",[name,projectId??'']))[0];
  async function add(b:{examples:any[],projectId?:string|null,approved?:boolean}){
   if(!Array.isArray(b?.examples)||!b.examples.length)fail(400,'Expected examples');
   const projectId=b.projectId==null?null:ident(b.projectId,'projectId'),useCases=useCaseIds(labDirectory),list=b.examples.map(x=>parseExample(x,useCases));
+  // First pass: every conflict is found before anything is written, so a refused batch stores nothing.
+  const planned=[];
+  for(const e of list){const bytes=Buffer.from(JSON.stringify(e,null,1)+'\n'),name=exampleName(e),hash=createHash('sha256').update(bytes).digest('hex');
+   if((await store.query("SELECT 1 FROM purged_hash WHERE project_id=$1 AND scope='lab' AND content_hash=$2",[projectId??'_',hash])).length)fail(409,`${name}: content was purged`);
+   const old=await existing(name,projectId);if(old&&old.content_hash!==hash)fail(409,`${name} exists with other content; raise version`);
+   planned.push({e,bytes,name,hash,old})}
   const out=[];
-  for(const e of list){const bytes=Buffer.from(JSON.stringify(e,null,1)+'\n'),name=exampleName(e);
-   const existing=async()=>(await store.query("SELECT id,content_hash,approved_at FROM artifact WHERE role='example' AND name=$1 AND coalesce(project_id,'')=$2",[name,projectId??'']))[0];
-   const hash=createHash('sha256').update(bytes).digest('hex');let old=await existing();
-   if(!old){const w=await artifacts.writeObject(projectId,'lab',bytes,'application/json')??fail(409,'No reachable store in the project locations'),artifactId=randomUUID();
+  for(const p of planned){let old=p.old;
+   if(!old){const w=await artifacts.writeObject(projectId,'lab',p.bytes,'application/json')??fail(409,'No reachable store in the project locations'),artifactId=randomUUID();
     // A concurrent import of the same name inserts nothing here (unique index) and is then compared like an existing one.
-    const inserted=await store.tx(async()=>{const r=await store.query("INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,role,state,approved_at) VALUES($1,$2,'lab',$3,$4,'application/json',$5,'example','stored',$6) ON CONFLICT (coalesce(project_id,''),name) WHERE role='example' DO NOTHING RETURNING id",[artifactId,projectId,w.hash,bytes.length,name,b.approved?new Date():null]);
+    const inserted=await store.tx(async()=>{const r=await store.query("INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,role,state,approved_at) VALUES($1,$2,'lab',$3,$4,'application/json',$5,'example','stored',$6) ON CONFLICT (coalesce(project_id,''),name) WHERE role='example' AND state<>'deleted' DO NOTHING RETURNING id",[artifactId,projectId,w.hash,p.bytes.length,p.name,b.approved?new Date():null]);
      if(r.length)await store.query("INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES($1,$2,$3,'verified',now())",[artifactId,w.target.id,projectId]);return r.length>0});
-    if(inserted){out.push({artifactId,id:e.id,version:e.version,hash,created:true});continue}
-    old=await existing()??fail(500,'Example row missing after conflict')}
-   if(old.content_hash!==hash)fail(409,`${name} exists with other content; raise version`);
+    if(inserted){out.push({artifactId,id:p.e.id,version:p.e.version,hash:p.hash,created:true});continue}
+    old=await existing(p.name,projectId)??fail(500,'Example row missing after conflict');if(old.content_hash!==p.hash)fail(409,`${p.name} exists with other content; raise version`)}
    if(b.approved&&!old.approved_at)await store.tx(()=>store.query("UPDATE artifact SET approved_at=now() WHERE id=$1",[old.id]));
-   out.push({artifactId:old.id,id:e.id,version:e.version,hash,created:false})}
+   out.push({artifactId:old.id,id:p.e.id,version:p.e.version,hash:p.hash,created:false})}
   return {examples:out}}
  async function list(q:{state?:string}={}){if(q.state!==undefined&&!['proposed','approved'].includes(q.state))fail(400,'Invalid state');
   const rows=await store.query(`SELECT id,project_id,name,content_hash,approved_at,created_at FROM artifact WHERE role='example' AND state='stored'${q.state==='approved'?' AND approved_at IS NOT NULL':q.state==='proposed'?' AND approved_at IS NULL':''} ORDER BY name`);

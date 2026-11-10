@@ -23,11 +23,12 @@ export const slug=(heading:string)=>heading.trim().toLowerCase().replace(/[^\p{L
 // The anchored text: a section (an explicit <a id> line or a heading with that slug, up to the next heading of the same or a
 // higher level) or one table row whose first cell starts with the anchor. Null when the anchor is not in the text.
 export function section(text:string,anchor:string):string|null{
- const lines=text.split('\n'),level=(l:string)=>/^(#+) /.exec(l)?.[1].length??0;
+ // Lines inside fenced code blocks are never headings.
+ let fenced=false;const lines=text.split('\n'),level=lines.map(l=>{const fence=/^\s*(```|~~~)/.test(l),inside=fenced||fence;if(fence)fenced=!fenced;return inside?0:/^(#+) /.exec(l)?.[1].length??0});
  let start=lines.findIndex(l=>l.trim()===`<a id="${anchor}"></a>`);
- if(start>=0){while(start<lines.length&&!level(lines[start]))start++}
- else start=lines.findIndex(l=>level(l)>0&&slug(l.replace(/^#+ /,''))===anchor);
- if(start>=0&&start<lines.length){const n=level(lines[start]);let end=start+1;while(end<lines.length&&!(level(lines[end])&&level(lines[end])<=n))end++;return lines.slice(start,end).join('\n').trim()}
+ if(start>=0){while(start<lines.length&&!level[start])start++}
+ else start=lines.findIndex((l,i)=>level[i]>0&&slug(l.replace(/^#+ /,''))===anchor);
+ if(start>=0&&start<lines.length){const n=level[start];let end=start+1;while(end<lines.length&&!(level[end]&&level[end]<=n))end++;return lines.slice(start,end).join('\n').trim()}
  const row=lines.find(l=>new RegExp(`^\\|\\s*${anchor.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}(\\s|\\|)`).test(l));
  return row?row.trim():null}
 

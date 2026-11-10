@@ -18,7 +18,8 @@ test('section: explicit anchor, heading slug, table row',()=>{
  assert.equal(section(doc,'uc1'),'## UC1. First\n\nText one.\n\n### Detail\n\nMore.');
  assert.equal(section(doc,'uc-02-second-case')?.split('\n')[0],'## UC-02. Second case');
  assert.equal(section(doc,'L01'),'| L01 PILOTQ-R1 | Row one |');
- assert.equal(section(doc,'nope'),null)});
+ assert.equal(section(doc,'nope'),null);
+ assert.equal(section('## A\n\n```sh\n# not a heading\n```\n\nafter\n\n## B\n','a'),'## A\n\n```sh\n# not a heading\n```\n\nafter','a fenced # line does not end the section')});
 
 test('drift check flags a changed source and leaves the others current',()=>{
  const base=mkdtempSync(join(tmpdir(),'lab-drift-')),repo=join(base,'other'),root=join(base,'fleet');
@@ -79,6 +80,9 @@ test('POST /api/lab/examples stores approved lab artifacts; same content is idem
  assert.equal((await call('POST','/api/lab/examples',{examples:[{...ex,prompt:'other'}]})).statusCode,409);
  assert.equal((await call('POST','/api/lab/examples',{examples:[{...ex,prompt:'other',version:2}]})).json().examples[0].created,true);
  assert.equal((await call('POST','/api/lab/examples',{examples:[{...ex,use_case_id:'fleet:UC99'}]})).statusCode,400);
+ // A refused batch stores nothing: the new example before the conflicting one is not written.
+ assert.equal((await call('POST','/api/lab/examples',{examples:[{...ex,id:'batch-new'},{...ex,prompt:'other'}]})).statusCode,409);
+ assert.equal((await app.store.query("SELECT 1 FROM artifact WHERE name='examples/batch-new@1.json'")).length,0);
  assert.equal((await call('POST','/api/lab/examples',{examples:[{...ex,inputs:[{path:'../x',text:''}]}]})).statusCode,400);
  const list=(await call('GET','/api/lab/examples?state=approved')).json().examples;assert.deepEqual(list.map((x:any)=>x.name),['examples/fleet-uc1-about-page@1.json']);
  assert.equal((await call('GET','/api/lab/examples?state=proposed')).json().examples.length,1);

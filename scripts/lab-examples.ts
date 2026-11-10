@@ -21,7 +21,7 @@ export function readExamples(files:string[]):any[]{return files.flatMap(f=>{cons
 export function runChecks(e:Example,files:ExampleFile[]){const dir=mkdtempSync(join(tmpdir(),'lab-example-'));
  try{for(const f of files){mkdirSync(dirname(join(dir,f.path)),{recursive:true});writeFileSync(join(dir,f.path),f.text)}
   const failed:{id:string,output:string}[]=[];
-  for(const c of e.checks){try{execFileSync('sh',['-c',c.run],{cwd:dir,env:{...process.env,FLEET_OUTPUT_DIR:dir},stdio:['ignore','pipe','pipe'],encoding:'utf8'})}
+  for(const c of e.checks){try{execFileSync('sh',['-c',c.run],{cwd:dir,env:{...process.env,FLEET_TOKEN:undefined,FLEET_OUTPUT_DIR:dir},stdio:['ignore','pipe','pipe'],encoding:'utf8'})}
    catch(x:any){failed.push({id:c.id,output:String(x.stderr||x.stdout||x.message).trim().split('\n').filter(Boolean).pop()??''})}}
   return failed}finally{rmSync(dir,{recursive:true,force:true})}}
 

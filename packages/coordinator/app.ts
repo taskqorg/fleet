@@ -183,7 +183,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
    const named=c?.kind==='delivery-step'?(c.payload?.files??[]).map((f:any)=>f?.artifactId):['artifact-copy','artifact-verify'].includes(c?.kind)?[c.payload?.artifactId]:[];
    if(c&&c.hostId===b.hostId&&['pending','accepted','started'].includes(c.status)&&named.some((x:any)=>typeof x==='string'&&(x===a.id||x===a.legacyId)))return a}
   // Lab examples hold reference results: no agent reads them through the host routes (Stage 2 hands a trial its inputs only).
-  if(typeof b.executionId==='string'){(await owned(b));const e=await store.executions.get(b.executionId);if((await artifacts.row(a.id).catch(()=>null))?.role!=='example'&&(a.executionId===e.id||(e.projectId&&a.projectId===e.projectId)))return a}
+  if(typeof b.executionId==='string'){(await owned(b));const e=await store.executions.get(b.executionId);if((a as any).role!=='example'&&(a.executionId===e.id||(e.projectId&&a.projectId===e.projectId)))return a}
   return fail(403,'Artifact not readable by this host')};
  app.post('/api/hosts/artifacts/get',hostArtifact(async b=>artifacts.get((await hostMayRead(b)).id,b.hostId)));
  app.post('/api/hosts/artifacts/read',async(req:any,r:any)=>{const b=req.body??{};(await owned({hostId:b.hostId}));const a=await hostMayRead(b);return r.type(a.mediaType||'application/octet-stream').send(await artifacts.read(a.id))});
