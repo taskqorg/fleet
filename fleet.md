@@ -200,6 +200,20 @@ Observation confidence is separate from execution state. Lost contact means curr
 
 Routine work advances automatically. People resolve substantive decisions and exceptions beyond the system's authority; project acceptance rules still apply.
 
+## Stack
+
+Fleet's services move to Go, one language for all of them: the coordinator first, then the executor and the gateway after a probe confirms the executor builds without a C compiler. The browser app stays TypeScript. Reason: one build from any machine for every platform, at equal speed for Fleet's workload; evidence, module table and migration order are in the [language decision](docs/designs/fleet-language.md).
+
+Go rules:
+
+- Standard library first: `net/http` (routing, SSE), `encoding/json`, `log/slog`. Each third-party module has one row in the [module table](docs/designs/fleet-language.md#third-party-go-modules): module, what it replaces, why the standard library does not cover it.
+- Allowed now: `github.com/jackc/pgx/v5`, used directly, not through `database/sql`, because LISTEN and connection options need its own API. ClickHouse through its HTTP interface with `net/http`. S3 (Garage) through a hand-written SigV4 signer; `minio-go` would add 19 compiled-in modules.
+- `CGO_ENABLED=0` for every binary, checked in CI. Any need for C is a stop-and-ask.
+- One Go module (`go/`), one `go.sum`; builds use `-mod=readonly`; the default checksum database stays on; `govulncheck` runs in CI as a warning.
+- Contract types are generated at build from `contracts/*.schema.json` by `go/gen`; generated files are not committed.
+- Release binaries are built with `-trimpath` in one Linux CI job for linux/amd64, darwin/arm64 and windows/amd64, each with a SHA-256 file; no macOS runner for Go code.
+- Tests are outside tests over HTTP against a real Postgres, as in `tests/trial/`; each names its requirement and risk.
+
 ## Verification
 
 The merge-gate command is `pnpm install --frozen-lockfile && pnpm run build && cargo build -p fleet-executor && cargo test -p fleet-executor && pnpm test`.

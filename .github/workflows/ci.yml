@@ -213,6 +213,44 @@ jobs:
             fleet-executor-${{ matrix.target }}
             fleet-executor-${{ matrix.target }}.sha256
           if-no-files-found: error
+  # Go code (docs/designs/fleet-language.md): vet, then one Linux job cross-builds every target without cgo.
+  go:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      CGO_ENABLED: '0'
+      GOFLAGS: -mod=readonly
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - run: go generate ./... && go vet ./...
+      - name: Cross-build
+        run: |
+          mkdir -p dist
+          for t in linux/amd64 darwin/arm64 windows/amd64; do
+            os=${t%/*} arch=${t#*/} ext=; [ "$os" = windows ] && ext=.exe
+            file="dist/fleet-coordinator-$os-$arch$ext"
+            GOOS=$os GOARCH=$arch go build -trimpath -o "$file" ./coordinator
+            go version -m "$file" | grep -q 'CGO_ENABLED=0' || { echo "$file: cgo enabled"; exit 1; }
+            (cd dist && sha256sum "${file#dist/}" | tee "${file#dist/}.sha256")
+          done
+      - name: govulncheck (warning only)
+        continue-on-error: true
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fleet-go-${{ github.sha }}
+          path: go/dist/
+          if-no-files-found: error
   gateway-release:
     runs-on: ubuntu-24.04
     permissions:
