@@ -16,9 +16,9 @@ var receiptRank = map[string]int{"pending": 0, "accepted": 1, "started": 2, "unk
 // projectReceiptOps: the project operations a native agent may call through a receipt.
 var projectReceiptOps = []string{"project_context", "catalogue", "pipeline_run", "direct_search", "pipeline_history", "pipeline_get", "question_ask", "question_history", "account_list"}
 
-// hookProjectReceipt runs one project operation for a native agent (projects area: the operation, its native-agent actor
+// projectReceipt runs one project operation for a native agent (projects area: the operation, its native-agent actor
 // and the early return of a started pipeline run). Default: the registered operation in this transaction.
-var hookProjectReceipt = func(q *Request, operation string, args doc, agent doc) (any, error) {
+func projectReceipt(q *Request, operation string, args doc, agent doc) (any, error) {
 	if operation == "account_list" {
 		return agentAccountList(q, args, agent)
 	}
@@ -47,7 +47,7 @@ func (a *App) receipt(q *Request) (any, error) {
 		return nil, err
 	}
 	if ended != "" {
-		go hookPipelineOnExecution(a, ended)
+		go pipelineOnExecution(a, ended)
 	}
 	return out, nil
 }
@@ -124,7 +124,7 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 			args[k] = v
 		}
 		args["projectId"] = s["projectId"]
-		r, err := hookProjectReceipt(q, astr(d["operation"]), args, doc{"kind": "native-agent", "executionId": b["executionId"], "sessionId": s["id"]})
+		r, err := projectReceipt(q, astr(d["operation"]), args, doc{"kind": "native-agent", "executionId": b["executionId"], "sessionId": s["id"]})
 		return r, "", err
 	}
 	if b["delegation"] != nil {
@@ -157,7 +157,7 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 		if err != nil {
 			return nil, "", err
 		}
-		known, err := hookAgentKnownNative(q, e)
+		known, err := agentKnownNative(q, e)
 		if err != nil {
 			return nil, "", err
 		}
@@ -193,7 +193,7 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 		if len(declared) > 10000 {
 			declared = declared[:10000]
 		}
-		gate, err := hookArtifactGate(q, e, declared)
+		gate, err := artifactGate(q, e, declared)
 		if err != nil {
 			return nil, "", err
 		}
@@ -213,7 +213,7 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 		if len([]rune(native)) > 300 {
 			return nil, "", fail(400, "Invalid text")
 		}
-		if err := hookAgentCaptureNative(q, e, native); err != nil {
+		if err := agentCaptureNative(q, e, native); err != nil {
 			return nil, "", err
 		}
 	}
@@ -223,11 +223,11 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 		if state == "failed" && status == "completed" {
 			reported = "failed"
 		}
-		if err := hookAgentOnReceipt(q, c, e, reported); err != nil {
+		if err := agentOnReceipt(q, c, e, reported); err != nil {
 			return nil, "", err
 		}
 		if legacyTerminal(e) {
-			if err := hookAgentPromote(q); err != nil {
+			if err := agentPromote(q); err != nil {
 				return nil, "", err
 			}
 		}

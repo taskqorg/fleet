@@ -126,7 +126,7 @@ func notifyHolder(q *Request, holder, text string) error {
 	if q.person == nil || !q.person.Owner || q.person.Email == holder {
 		return nil
 	}
-	id, err := hookTaskAsk(q, doc{"kind": "operator_decision", "text": text, "options": []any{"ok"}, "askedBy": q.person.Email, "data": doc{"notice": "owner-override"}})
+	id, err := askQuestion(q, doc{"kind": "operator_decision", "text": text, "options": []any{"ok"}, "askedBy": q.person.Email, "data": doc{"notice": "owner-override"}})
 	if err != nil {
 		return err
 	}

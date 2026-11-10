@@ -13,22 +13,6 @@ import (
 func init() {
 	operation("execution_stop", false, func(q *Request) (any, error) { return executionStop(q, q.obj()["executionId"]) })
 	route("POST /api/executions/{id}/stop", func(q *Request) (any, error) { return executionStop(q, q.r.PathValue("id")) })
-	cStopExecution = func(ctx context.Context, a *App, id string) error {
-		return a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
-			_, err := executionStop(&Request{app: a, tx: tx, r: (&http.Request{}).WithContext(ctx)}, id)
-			return err
-		})
-	}
-	cBlockedConnections = blockedConnections
-	answerHooks = append(answerHooks, answerHook{
-		check: func(q *Request, question doc, answer string) error {
-			return budgetAnswerCheck(question, answer, q.person)
-		},
-		after: budgetAnswerAfter,
-	})
-	hookPipelineOnExecution = pipelineOnExecution
-	hookArtifactGate = artifactGate
-	artifactSettled = settleWaiting
 }
 
 // executionStop: one stop command; an execution no host can confirm is settled here.
@@ -191,4 +175,12 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 		go pipelineOnExecution(a, ended)
 	}
 	return err
+}
+
+// stopExecution: execution_stop in its own transaction (Lab cell stop).
+func stopExecution(ctx context.Context, a *App, id string) error {
+	return a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
+		_, err := executionStop(&Request{app: a, tx: tx, r: (&http.Request{}).WithContext(ctx)}, id)
+		return err
+	})
 }

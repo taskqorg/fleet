@@ -16,22 +16,13 @@ import (
 // longOperations: operations that open their own transactions (q.tx nil). runOp (b_ops.go) runs them without one.
 var longOperations = map[string]handler{}
 
-// answerHooks: checked before a question's answer is recorded and run after, in the same transaction.
-// question is the row (snake_case columns); in after, its answer column holds the answer.
-type answerHook struct {
-	check func(q *Request, question doc, answer string) error
-	after func(q *Request, question doc) error
-}
-
-var answerHooks = []answerHook{{labAnswerCheck, labAnswerAfter}}
-
+// Answer checks run before a question's answer is recorded and the after steps run after, in the same transaction:
+// Lab, then budgets. question is the row (snake_case columns); in after, its answer column holds the answer.
 func runAnswerChecks(q *Request, question doc, answer string) error {
-	for _, h := range answerHooks {
-		if err := h.check(q, question, answer); err != nil {
-			return err
-		}
+	if err := labAnswerCheck(q, question, answer); err != nil {
+		return err
 	}
-	return nil
+	return budgetAnswerCheck(question, answer, q.person)
 }
 
 func runAnswerAfter(q *Request, id string) error {
@@ -39,12 +30,10 @@ func runAnswerAfter(q *Request, id string) error {
 	if err != nil || row == nil {
 		return err
 	}
-	for _, h := range answerHooks {
-		if err := h.after(q, row); err != nil {
-			return err
-		}
+	if err := labAnswerAfter(q, row); err != nil {
+		return err
 	}
-	return nil
+	return budgetAnswerAfter(q, row)
 }
 
 // cop: an area C operation behind the same person gate as every other operation.
@@ -165,21 +154,6 @@ func cPID(v any) *string {
 }
 
 func init() {
-	cArtifactSave = func(q *Request, projectID any, scope, executionID, name string, b []byte, media string) (string, error) {
-		id, _, err := saveObject(cCtx(q), q.app, cPID(projectID), scope, executionID, name, b, media)
-		return id, err
-	}
-	cArtifactWriteObject = func(q *Request, projectID any, scope string, b []byte, media string) (string, string, error) {
-		s, hash, err := writeObject(cCtx(q), q.app, cPID(projectID), scope, b, media)
-		if err != nil {
-			return "", "", err
-		}
-		return hash, s.ID, nil
-	}
-	cArtifactRead = artifactBytes
-}
-
-func init() {
 	for _, inv := range []string{"pipeline", "direct"} {
 		inv := inv
 		name := map[string]string{"pipeline": "pipeline_run", "direct": "direct_search"}[inv]
@@ -189,65 +163,6 @@ func init() {
 	}
 	blongRoute("POST /api/pipeline-runs", func(q *Request) (any, error) { return runPipeline(q, "pipeline") })
 
-	cRecommend = func(q *Request, projectID, methodID string) (any, error) {
-		sub := *q
-		sub.body = cJSON(doc{"projectId": projectID, "methodId": methodID})
-		return projectOps["recommendation_set"].h(&sub)
-	}
-	cProjectKnown = func(q *Request, id string) bool { _, err := catalogue(q, id); return err == nil }
-
-	// Agent step: the step's trusted profile with the variant overrides, its skills, a session of the
-	// run, and an ordinary queued execution.
-	cStartAgentStep = func(q *Request, run, step doc, stepExecutionID, prompt string, inputs []any, overrides doc) (string, error) {
-		pid := astr(step["profile"])
-		if overrides["profile"] != nil {
-			pid = astr(overrides["profile"])
-		}
-		profile, err := readTrustedProfile(pid)
-		if err != nil {
-			return "", err
-		}
-		if v, ok := overrides["model"]; ok {
-			profile["model"] = v
-		}
-		if v, ok := overrides["skills"]; ok {
-			profile["skills"] = v
-		}
-		web := "connections"
-		if v, ok := overrides["web_route"]; ok {
-			if v != "connections" && v != "builtin" {
-				return "", fail(400, "web_route must be connections or builtin")
-			}
-			web = astr(v)
-		}
-		skills, err := profileSkills(profile)
-		if err != nil {
-			return "", err
-		}
-		s := doc{"id": uuid(), "createdAt": now(), "agentConfig": profile, "pipelineRunId": run["id"]}
-		if overrides["account"] != nil {
-			s["account"] = overrides["account"]
-		}
-		if run["projectId"] != nil {
-			s["projectId"] = run["projectId"]
-		}
-		if err := putDoc(q, "session", s); err != nil {
-			return "", err
-		}
-		execution := doc{"pipelineStepId": stepExecutionID, "pipelineRunId": run["id"]}
-		if run["experimentId"] != nil {
-			execution["experimentId"] = run["experimentId"]
-		}
-		host := ""
-		if overrides["host"] != nil {
-			host = fmt.Sprint(overrides["host"])
-		}
-		e, err := enqueue(q, s, prompt, "pipeline:"+stepExecutionID, doc{"inputs": inputs, "skills": skills, "webRoute": web}, execution, host)
-		if err != nil {
-			return "", err
-		}
-		return astr(e["id"]), nil
-	}
 }
 
 // cCtx: the request context carrying its transaction, so area D's helpers (dTx) run in it instead of taking the lock again.
@@ -273,4 +188,78 @@ func profileSkills(profile doc) ([]any, error) {
 		skills = append(skills, doc{"id": id, "text": string(text)})
 	}
 	return skills, nil
+}
+
+func artifactSave(q *Request, projectID any, scope, executionID, name string, b []byte, media string) (string, error) {
+	id, _, err := saveObject(cCtx(q), q.app, cPID(projectID), scope, executionID, name, b, media)
+	return id, err
+}
+
+func artifactWriteObject(q *Request, projectID any, scope string, b []byte, media string) (string, string, error) {
+	s, hash, err := writeObject(cCtx(q), q.app, cPID(projectID), scope, b, media)
+	if err != nil {
+		return "", "", err
+	}
+	return hash, s.ID, nil
+}
+
+func recommend(q *Request, projectID, methodID string) (any, error) {
+	sub := *q
+	sub.body = cJSON(doc{"projectId": projectID, "methodId": methodID})
+	return projectOps["recommendation_set"].h(&sub)
+}
+
+func projectKnown(q *Request, id string) bool { _, err := catalogue(q, id); return err == nil }
+
+// Agent step: the step's trusted profile with the variant overrides, its skills, a session of the
+// run, and an ordinary queued execution.
+func startAgentStep(q *Request, run, step doc, stepExecutionID, prompt string, inputs []any, overrides doc) (string, error) {
+	pid := astr(step["profile"])
+	if overrides["profile"] != nil {
+		pid = astr(overrides["profile"])
+	}
+	profile, err := readTrustedProfile(pid)
+	if err != nil {
+		return "", err
+	}
+	if v, ok := overrides["model"]; ok {
+		profile["model"] = v
+	}
+	if v, ok := overrides["skills"]; ok {
+		profile["skills"] = v
+	}
+	web := "connections"
+	if v, ok := overrides["web_route"]; ok {
+		if v != "connections" && v != "builtin" {
+			return "", fail(400, "web_route must be connections or builtin")
+		}
+		web = astr(v)
+	}
+	skills, err := profileSkills(profile)
+	if err != nil {
+		return "", err
+	}
+	s := doc{"id": uuid(), "createdAt": now(), "agentConfig": profile, "pipelineRunId": run["id"]}
+	if overrides["account"] != nil {
+		s["account"] = overrides["account"]
+	}
+	if run["projectId"] != nil {
+		s["projectId"] = run["projectId"]
+	}
+	if err := putDoc(q, "session", s); err != nil {
+		return "", err
+	}
+	execution := doc{"pipelineStepId": stepExecutionID, "pipelineRunId": run["id"]}
+	if run["experimentId"] != nil {
+		execution["experimentId"] = run["experimentId"]
+	}
+	host := ""
+	if overrides["host"] != nil {
+		host = fmt.Sprint(overrides["host"])
+	}
+	e, err := enqueue(q, s, prompt, "pipeline:"+stepExecutionID, doc{"inputs": inputs, "skills": skills, "webRoute": web}, execution, host)
+	if err != nil {
+		return "", err
+	}
+	return astr(e["id"]), nil
 }

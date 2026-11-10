@@ -394,7 +394,6 @@ func ruleArg(q *Request) (*string, artifactRule, error) {
 }
 
 func init() {
-	hookPlacement = func(a *App) error { _, _, err := runPlacement(context.Background(), a); return err }
 	// Retention rules: the operator previews the effect, then confirms; editing a rule changes its hash.
 	operation("artifact_rule_preview", true, func(q *Request) (any, error) {
 		if err := operatorOnly(q); err != nil {
@@ -466,3 +465,5 @@ func init() {
 		return doc{"retrying": true}, nil
 	})
 }
+
+func placementPass(a *App) error { _, _, err := runPlacement(context.Background(), a); return err }

@@ -741,14 +741,12 @@ func (a *App) mcp(q *Request, server string, ops map[string]registeredOp, descri
 	return doc{"jsonrpc": "2.0", "id": rpc.ID, "result": doc{"content": []doc{{"type": "text", "text": js(out)}}}}, nil
 }
 
-// A project's artifact_locations for the artifacts area; the default list when it names none.
-func init() {
-	artifactLocations = func(a *App, projectID *string) []string {
-		if projectID != nil {
-			if l := strList(projectSettingsOf(*projectID)["artifact_locations"]); len(l) > 0 {
-				return l
-			}
+// artifactLocations: a project's artifact_locations; the default list when it names none.
+func artifactLocations(a *App, projectID *string) []string {
+	if projectID != nil {
+		if l := strList(projectSettingsOf(*projectID)["artifact_locations"]); len(l) > 0 {
+			return l
 		}
-		return defaultLocations
 	}
+	return defaultLocations
 }

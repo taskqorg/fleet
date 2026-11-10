@@ -36,10 +36,6 @@ var (
 	processStarted = now()
 )
 
-// cBlockedConnections: connections whose budget is reached, provided by the budgets area;
-// nil means none are blocked.
-var cBlockedConnections func(q *Request) (map[string]bool, error)
-
 func cRandomToken() string {
 	b := make([]byte, 32)
 	rand.Read(b)
@@ -97,13 +93,11 @@ func connKeys(q *Request, name string) ([]doc, error) {
 // Snapshot (§3). Built in its own read transaction, so it shows only committed rows.
 func connSnapshot(q *Request) (doc, error) {
 	blocked := map[string]bool{}
-	if cBlockedConnections != nil {
-		b, err := cBlockedConnections(q)
-		if err != nil {
-			return nil, err
-		}
-		blocked = b
+	b, err := blockedConnections(q)
+	if err != nil {
+		return nil, err
 	}
+	blocked = b
 	conns := doc{}
 	all, err := cAll(q, "api-connection")
 	if err != nil {
@@ -310,7 +304,6 @@ func idList(v any, field string) ([]any, error) {
 
 func init() {
 	// Agent dispatch mints the run token for the profile's connections (a_dispatch.go); the a_hooks default is a stub.
-	hookConnectionsMint = mint
 	cop("connections_list", true, func(q *Request) (any, error) {
 		keys, err := cAll(q, "connection-key")
 		if err != nil {
@@ -982,28 +975,26 @@ func connTick(q *Request) error {
 	if _, err := connIngest(q); err != nil {
 		return err
 	}
-	if cBlockedConnections != nil {
-		b, err := cBlockedConnections(q)
-		if err != nil {
-			return err
-		}
-		s := string(cJSON(cSortedKeys(func() map[string]any {
-			m := map[string]any{}
-			for k, v := range b {
-				if v {
-					m[k] = true
-				}
+	b, err := blockedConnections(q)
+	if err != nil {
+		return err
+	}
+	s := string(cJSON(cSortedKeys(func() map[string]any {
+		m := map[string]any{}
+		for k, v := range b {
+			if v {
+				m[k] = true
 			}
-			return m
-		}())))
-		if s != lastBlocked {
-			onEnd(q.tx, func(committed bool) { // a rolled-back pass leaves lastBlocked so the next pass republishes
-				if committed {
-					lastBlocked = s
-					schedulePublish()
-				}
-			})
 		}
+		return m
+	}())))
+	if s != lastBlocked {
+		onEnd(q.tx, func(committed bool) { // a rolled-back pass leaves lastBlocked so the next pass republishes
+			if committed {
+				lastBlocked = s
+				schedulePublish()
+			}
+		})
 	}
 	open, err := rows(q, "SELECT data FROM document WHERE kind='run-token' AND NOT data ? 'revokedAt' AND NOT data ? 'step' AND NOT data ? 'personal'")
 	if err != nil {

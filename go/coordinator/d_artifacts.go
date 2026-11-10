@@ -38,8 +38,6 @@ const (
 // Hooks other areas set: settling a waiting execution once its artifacts settle (receipts area), and a project's
 // artifact_locations (projects area). Defaults: nothing to settle; FLEET_DEFAULT_ARTIFACT_LOCATIONS (default pds18).
 var (
-	artifactSettled    = func(ctx context.Context, a *App, executionID string) error { return nil }
-	artifactLocations  = func(a *App, projectID *string) []string { return defaultLocations }
 	defaultLocations   = splitList(envOr("FLEET_DEFAULT_ARTIFACT_LOCATIONS", "pds18"))
 	storeEndpointHosts = splitList(os.Getenv("FLEET_STORE_ENDPOINT_HOSTS"))
 	storeSecretsDir    = envOr("FLEET_STORE_SECRETS", "var/stores")
@@ -669,7 +667,7 @@ func artifactReserve(q *Request) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := artifactSettled(ctx, a, e.ID); err != nil {
+		if err := settleWaiting(ctx, a, e.ID); err != nil {
 			return nil, err
 		}
 		return doc{"artifactId": id, "state": "stored", "storeId": at.ID}, nil
@@ -927,7 +925,7 @@ func reject(ctx context.Context, a *App, x *Artifact, s *StoreRow, key, why stri
 	if err != nil || x.ExecutionID == nil {
 		return err
 	}
-	return artifactSettled(ctx, a, *x.ExecutionID)
+	return settleWaiting(ctx, a, *x.ExecutionID)
 }
 
 // artifactRefused: the host reports the store refused an upload permanently; the artifact fails now with its reason.
@@ -1060,7 +1058,7 @@ func artifactVerified(q *Request) (any, error) {
 		return nil, err
 	}
 	if x.ExecutionID != nil {
-		if err := artifactSettled(ctx, a, *x.ExecutionID); err != nil {
+		if err := settleWaiting(ctx, a, *x.ExecutionID); err != nil {
 			return nil, err
 		}
 	}

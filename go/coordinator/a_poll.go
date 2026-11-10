@@ -14,9 +14,6 @@ func init() {
 	route("POST /api/hosts/poll", func(q *Request) (any, error) { return q.app.poll(q) })
 }
 
-// hookProjectIDs: every configured project id (problem detection reads each project's environments).
-var hookProjectIDs = projectIDs
-
 func hostProblems(v any) []any {
 	out := []any{}
 	list, ok := v.([]any)
@@ -114,8 +111,8 @@ func (a *App) poll(q *Request) (any, error) {
 		return nil, err
 	}
 	envs := map[string][]string{}
-	for _, p := range hookProjectIDs() {
-		if st, err := hookProjectSettings(p); err == nil {
+	for _, p := range projectIDs() {
+		if st, err := projectSettingsByID(p); err == nil {
 			hs := []string{}
 			for _, x := range anys(st["environments"]) {
 				hs = append(hs, astr(mapOf(x)["hostId"]))
@@ -126,7 +123,7 @@ func (a *App) poll(q *Request) (any, error) {
 	if err := detectProblems(q, ids, envs); err != nil {
 		return nil, err
 	}
-	if err := hookAgentPromote(q); err != nil {
+	if err := agentPromote(q); err != nil {
 		return nil, err
 	}
 	if err := a.dispatchRun(q, host); err != nil {
@@ -138,7 +135,7 @@ func (a *App) poll(q *Request) (any, error) {
 	}
 	out := []doc{}
 	for _, c := range pending {
-		ok, err := hookAgentReady(q, c)
+		ok, err := agentReady(q, c)
 		if err != nil {
 			return nil, err
 		}
