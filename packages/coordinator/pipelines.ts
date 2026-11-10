@@ -143,7 +143,9 @@ export function pipelineRunner(d:Deps){
      // task created since the call started is adopted, otherwise the outcome stays unknown and nothing is sent again.
      if(def.mode==='job'&&line.outcome!=='ok'&&(line.outcome==='unknown'||/^http-5\d\d$/.test(line.error_code??''))){
       const recent=await call(run,def.connection,row,'recent_tasks',{});const tasks=Array.isArray(recent.output)?recent.output:recent.output?.result??[];
-      const mine=recent.outcome==='ok'?tasks.filter((t:any)=>typeof t?.id==='string'&&Number(t.created_at)>=s.startedAt-5000):[];
+      // A task another execution already owns is never adopted; a task that names its input must name this step's image.
+      const owned=new Set((await store.query("SELECT data->>'jobId' AS id FROM execution WHERE data ? 'jobId'")).map((r:any)=>r.id));
+      const mine=recent.outcome==='ok'?tasks.filter((t:any)=>typeof t?.id==='string'&&Number(t.created_at)>=s.startedAt-5000&&!owned.has(t.id)&&(t.image_url===undefined||t.image_url===resolved?.image_url)):[];
       if(mine.length===1){line.outcome='ok';line.output={jobId:mine[0].id};s.adoptedAfter=line.error_code}
       else{await failStep(run,i,'unknown:submit-unconfirmed',`Job submit ${line.error_code}; ${recent.outcome!=='ok'?'recent tasks unreadable':mine.length+' matching tasks'}; not sent again`);return 'wait'}}
      if(line.outcome!=='ok'){await failStep(run,i,problemOf(line.outcome,line.error_code),'Connection call '+line.outcome+': '+(line.error_code??''));return 'wait'}

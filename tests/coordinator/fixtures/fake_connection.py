@@ -16,7 +16,7 @@ with open(r['log'], 'a') as f:
 if run is None:
     out = {'outcome': 'error', 'error_code': 'unauthenticated', 'usage': None, 'output': {'error': 'unauthenticated'}}
 elif r['answer'].startswith('meshy') and tool == 'recent_tasks':
-    out = {'outcome': 'ok', 'error_code': None, 'usage': None, 'output': {'result': [{'id': 'task-9', 'created_at': int(time.time() * 1000)}]}}
+    out = {'outcome': 'ok', 'error_code': None, 'usage': None, 'output': {'result': [{'id': 'task-9', 'created_at': int(time.time() * 1000)}, {'id': 'task-10', 'created_at': int(time.time() * 1000)}]}}
 elif r['answer'].startswith('meshy') and tool == 'job_status':
     state = Path(r['jobState']).read_text().strip()
     out = {'outcome': 'ok', 'error_code': None, 'usage': None, 'output': {'status': 'SUCCEEDED' if state == 'succeeded' else 'IN_PROGRESS', 'model_urls': {'glb': 'm.glb'}, 'consumed_credits': 30}}
