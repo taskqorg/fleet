@@ -4,8 +4,8 @@ The coordinator is one Go binary, `fleet-coordinator`, built from `go/coordinato
 
 ## Build
 
-- `pnpm run go:build` runs `go generate ./...` (protocol types from `contracts/host-protocol.schema.json`; `schema.sql` copied from `packages/coordinator/db/schema.sql` and embedded) and writes `go/bin/fleet-coordinator`.
-- `pnpm run build` also type-checks and bundles the app into `dist/app`, which the coordinator serves.
+- `pnpm run go:build` runs `go generate ./...` (protocol types from `contracts/host-protocol.schema.json`; `schema.sql` copied from `packages/coordinator/db/schema.sql` and embedded) and writes `go/bin/fleet-coordinator`, `fleet-executor`, `fleet-gateway` and `fleet-update`.
+- `pnpm run app:build` type-checks and bundles the app into `dist/app`, which the coordinator serves; `pnpm run build` runs both.
 - `deploy/build-release.sh` builds the release tarball with all three binaries; [deploy/README.md](../deploy/README.md) owns release and install.
 
 ## Run

@@ -62,7 +62,7 @@ Before the trial, on an Apple M2: `node tests/trial/run.ts` against the TypeScri
 
 ## Executor probe
 
-Owner's Mac, Go 1.27.3, arm64; spikes in `go/probe/` (pull request #115). Rust executor for reference: 68 s cold build, 5.9 MB release binary.
+Owner's Mac, Go 1.27.3, arm64; spikes were in `go/probe/` (pull request #115; deleted after the port). Rust executor for reference: 68 s cold build, 5.9 MB release binary.
 
 | | journal (stdlib) | `modernc.org/sqlite` v1.62.0 | `ncruces/go-sqlite3` v0.37.0 |
 |---|---|---|---|
