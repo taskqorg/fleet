@@ -64,6 +64,9 @@ func init() {
 		return artifactGetView(withTx(q), q.app, truncate(b.ArtifactID, 200), "")
 	})
 	operation("artifact_purge", false, func(q *Request) (any, error) {
+		if err := operatorOnly(q); err != nil {
+			return nil, err
+		}
 		var b struct {
 			ContentHash, Reason string
 			ProjectID, Scope    *string
@@ -90,6 +93,9 @@ func init() {
 		return doc{"stores": all, "problems": problems}, nil
 	})
 	operation("store_set_free_space_warning", false, func(q *Request) (any, error) {
+		if err := operatorOnly(q); err != nil {
+			return nil, err
+		}
 		var b struct {
 			StoreID string
 			Bytes   *float64
@@ -668,4 +674,13 @@ func (n noDirs) Open(name string) (http.File, error) {
 		return nil, os.ErrNotExist
 	}
 	return f, nil
+}
+
+// operatorOnly: purge and store settings change every project's bytes; the owner or an architect only (TypeScript let any
+// person call them, inside row-level security).
+func operatorOnly(q *Request) error {
+	if q.person == nil || !(q.person.Owner || contains(q.person.Roles, "architect")) {
+		return fail(403, "Architect role required")
+	}
+	return nil
 }
