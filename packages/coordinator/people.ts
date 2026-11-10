@@ -32,6 +32,8 @@ export function parsePeople(textValue:string):Map<string,Person>{
 // The person of the current request. Set around each route handler (app.ts); null for host and program-worker traffic.
 export const requestPerson=new AsyncLocalStorage<Person|null>();
 // Who acted, for audit rows: the request person's e-mail, else the given fallback (an execution, 'program-worker').
+// The one project-grant rule: the owner sees every project, others those of their project grants.
+export const mayAccessProject=(p:Person|null|undefined,projectId:string|null|undefined)=>!!p&&(p.owner||!!projectId&&p.grants.some(g=>g.kind==='project'&&g.id===projectId));
 export const actor=(fallback='system')=>requestPerson.getStore()?.email??fallback;
 // requestedBy of a run: the request person, else the operator role (timers, Lab reconcile).
 export const requester=()=>{const p=requestPerson.getStore();return p?{kind:'person',email:p.email}:{kind:'operator'}};

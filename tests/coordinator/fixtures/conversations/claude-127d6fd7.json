@@ -1,5 +1,5 @@
 {
-"source": "production coordinator, captured 2026-11-10; account fields removed",
+"source": "production coordinator, captured 2026-11-10; account fields removed; fleetNormalized is the executor projection of the native record (fleet-executor reproject)",
 "execution": {
 "id": "127d6fd7-0808-4b11-8f73-85d818d75fbd",
 "kind": "agent_run",
@@ -223,14 +223,89 @@
 "slash_commands": [],
 "fast_mode_state": "off",
 "fleetNormalized": {
+"blocks": [],
+"completed": false,
+"contextUsage": null,
 "error": null,
-"tools": [],
-"usage": null,
+"harness": "claude",
+"lifecycle": "system",
+"message": null,
 "native": {
+"additional_directories": [],
+"agents": [
+"claude",
+"Explore",
+"general-purpose",
+"Plan",
+"statusline-setup",
+"web-fetch"
+],
+"analytics_disabled": false,
+"apiKeySource": "none",
+"capabilities": [
+"interrupt_receipt_v1",
+"interrupt_cancel_queued_v1",
+"interrupt_send_now_v1",
+"interrupt_requeue_taken_v1",
+"msg_lifecycle_v1",
+"request_marker_lists_v1",
+"ask_user_question_unanswered_v1",
+"lifecycle_wakeup_source_v1",
+"sdk_mcp_tools_list_changed",
+"sdk_mcp_manifests",
+"mcp_read_resource_v1",
+"mcp_tool_ui_meta_v1",
+"ui_surface_v1",
+"mcp_call_result_not_for_model_v1",
+"mcp_call_check_permissions_v1"
+],
+"claude_code_version": "2.1.319",
 "cwd": "/Users/Shared/fleet/owner-mac/sessions/efcca254-8df7-43c8-85d4-d44c4b6af75f/worktree",
-"type": "system",
-"uuid": "18a70776-bf23-4c17-8f4e-c294e6352163",
+"fast_mode_disabled_reason": "sdk_opt_in_required",
+"fast_mode_state": "off",
+"mcp_servers": [
+{
+"name": "fleet",
+"source": "dynamic",
+"status": "connected"
+}
+],
+"memory_paths": {
+"auto": "/Users/kirs/Library/Application Support/Fleet/accounts/claude/native/projects/-Users-kirs-Projects-fleet-hello-world/memory/"
+},
+"messaging_socket_path": "/tmp/cc-socks/8344.sock",
 "model": "claude-sonnet-5-5",
+"original_cwd": "/Users/Shared/fleet/owner-mac/sessions/efcca254-8df7-43c8-85d4-d44c4b6af75f/worktree",
+"output_style": "default",
+"per_turn_effort_active": true,
+"permissionMode": "dontAsk",
+"plugins": [
+{
+"name": "cc-plugin-agents-md",
+"path": "builtin",
+"source": "cc-plugin-agents-md@builtin"
+},
+{
+"name": "cc-plugin-telemetry",
+"path": "builtin",
+"source": "cc-plugin-telemetry@builtin"
+},
+{
+"name": "cc-plugin-privacy",
+"path": "builtin",
+"source": "cc-plugin-privacy@builtin"
+},
+{
+"name": "cc-plugin-plugin-authoring",
+"path": "builtin",
+"source": "cc-plugin-plugin-authoring@builtin"
+}
+],
+"product_feedback_disabled": false,
+"session_id": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
+"skills": [],
+"slash_commands": [],
+"subtype": "init",
 "tools": [
 "Bash",
 "Edit",
@@ -265,92 +340,17 @@
 "mcp__fleet__session_transition",
 "mcp__fleet__worker_done"
 ],
-"agents": [
-"claude",
-"Explore",
-"general-purpose",
-"Plan",
-"statusline-setup",
-"web-fetch"
-],
-"skills": [],
-"plugins": [
-{
-"name": "cc-plugin-agents-md",
-"path": "builtin",
-"source": "cc-plugin-agents-md@builtin"
-},
-{
-"name": "cc-plugin-telemetry",
-"path": "builtin",
-"source": "cc-plugin-telemetry@builtin"
-},
-{
-"name": "cc-plugin-privacy",
-"path": "builtin",
-"source": "cc-plugin-privacy@builtin"
-},
-{
-"name": "cc-plugin-plugin-authoring",
-"path": "builtin",
-"source": "cc-plugin-plugin-authoring@builtin"
-}
-],
-"subtype": "init",
-"view_mode": "default",
-"session_id": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
-"mcp_servers": [
-{
-"name": "fleet",
-"source": "dynamic",
-"status": "connected"
-}
-],
-"apiKeySource": "none",
-"capabilities": [
-"interrupt_receipt_v1",
-"interrupt_cancel_queued_v1",
-"interrupt_send_now_v1",
-"interrupt_requeue_taken_v1",
-"msg_lifecycle_v1",
-"request_marker_lists_v1",
-"ask_user_question_unanswered_v1",
-"lifecycle_wakeup_source_v1",
-"sdk_mcp_tools_list_changed",
-"sdk_mcp_manifests",
-"mcp_read_resource_v1",
-"mcp_tool_ui_meta_v1",
-"ui_surface_v1",
-"mcp_call_result_not_for_model_v1",
-"mcp_call_check_permissions_v1"
-],
-"memory_paths": {
-"auto": "/Users/kirs/Library/Application Support/Fleet/accounts/claude/native/projects/-Users-kirs-Projects-fleet-hello-world/memory/"
-},
-"original_cwd": "/Users/Shared/fleet/owner-mac/sessions/efcca254-8df7-43c8-85d4-d44c4b6af75f/worktree",
-"output_style": "default",
-"permissionMode": "dontAsk",
-"slash_commands": [],
-"fast_mode_state": "off",
-"analytics_disabled": false,
-"claude_code_version": "2.1.319",
+"type": "system",
 "ultrathink_available": false,
-"messaging_socket_path": "/tmp/cc-socks/8344.sock",
-"additional_directories": [],
-"per_turn_effort_active": true,
 "ultrathink_typed_raises": false,
-"fast_mode_disabled_reason": "sdk_opt_in_required",
-"product_feedback_disabled": false
+"uuid": "18a70776-bf23-4c17-8f4e-c294e6352163",
+"view_mode": "default"
 },
-"harness": "claude",
-"message": null,
-"session": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
-"messages": [],
-"completed": false,
-"lifecycle": "system",
-"usageScope": "native report; scope unknown, may be cumulative; not additive",
 "nativeUsage": null,
-"contextUsage": null
+"session": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
+"tools": [],
+"usage": null,
+"usageScope": "native report; scope unknown, may be cumulative; not additive"
 },
 "analytics_disabled": false,
 "claude_code_version": "2.1.319",
@@ -439,94 +439,95 @@
 "request_id": "req_011Cgt5UGywBT55H1vSgUwY7",
 "session_id": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
 "fleetNormalized": {
-"error": null,
-"tools": [],
-"usage": null,
-"native": {
-"type": "assistant",
-"uuid": "8a241c50-0b09-4009-ba1d-a69bc9fa1820",
-"message": {
-"id": "msg_011Cgt5UHC5emZYAejEhLmhv",
-"role": "assistant",
-"type": "message",
-"model": "claude-sonnet-5-5",
-"usage": {
-"speed": "standard",
-"input_tokens": 2,
-"service_tier": "standard",
-"inference_geo": "global",
-"output_tokens": 6,
-"cache_creation": {
-"ephemeral_1h_input_tokens": 595,
-"ephemeral_5m_input_tokens": 0
-},
-"cache_read_input_tokens": 11358,
-"cache_creation_input_tokens": 595
-},
-"content": [
+"blocks": [
 {
-"text": "Shalom! How can I help?",
-"type": "text"
-}
-],
-"container": null,
-"diagnostics": null,
-"stop_reason": null,
-"stop_details": null,
-"stop_sequence": null,
-"context_management": null,
-"input_transformations": []
-},
-"timestamp": "2026-11-09T21:38:50.818Z",
-"request_id": "req_011Cgt5UGywBT55H1vSgUwY7",
-"session_id": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
-"parent_tool_use_id": null
-},
-"harness": "claude",
-"message": {
-"id": "msg_011Cgt5UHC5emZYAejEhLmhv",
-"role": "assistant",
-"type": "message",
-"model": "claude-sonnet-5-5",
-"usage": {
-"speed": "standard",
-"input_tokens": 2,
-"service_tier": "standard",
-"inference_geo": "global",
-"output_tokens": 6,
-"cache_creation": {
-"ephemeral_1h_input_tokens": 595,
-"ephemeral_5m_input_tokens": 0
-},
-"cache_read_input_tokens": 11358,
-"cache_creation_input_tokens": 595
-},
-"content": [
-{
-"text": "Shalom! How can I help?",
-"type": "text"
-}
-],
-"container": null,
-"diagnostics": null,
-"stop_reason": null,
-"stop_details": null,
-"stop_sequence": null,
-"context_management": null,
-"input_transformations": []
-},
-"session": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
-"messages": [
-{
-"role": "assistant",
-"text": "Shalom! How can I help?"
+"kind": "text",
+"markdown": "Shalom! How can I help?",
+"role": "agent"
 }
 ],
 "completed": false,
+"contextUsage": null,
+"error": null,
+"harness": "claude",
 "lifecycle": "assistant",
-"usageScope": "native report; scope unknown, may be cumulative; not additive",
+"message": {
+"container": null,
+"content": [
+{
+"text": "Shalom! How can I help?",
+"type": "text"
+}
+],
+"context_management": null,
+"diagnostics": null,
+"id": "msg_011Cgt5UHC5emZYAejEhLmhv",
+"input_transformations": [],
+"model": "claude-sonnet-5-5",
+"role": "assistant",
+"stop_details": null,
+"stop_reason": null,
+"stop_sequence": null,
+"type": "message",
+"usage": {
+"cache_creation": {
+"ephemeral_1h_input_tokens": 595,
+"ephemeral_5m_input_tokens": 0
+},
+"cache_creation_input_tokens": 595,
+"cache_read_input_tokens": 11358,
+"inference_geo": "global",
+"input_tokens": 2,
+"output_tokens": 6,
+"service_tier": "standard",
+"speed": "standard"
+}
+},
+"native": {
+"message": {
+"container": null,
+"content": [
+{
+"text": "Shalom! How can I help?",
+"type": "text"
+}
+],
+"context_management": null,
+"diagnostics": null,
+"id": "msg_011Cgt5UHC5emZYAejEhLmhv",
+"input_transformations": [],
+"model": "claude-sonnet-5-5",
+"role": "assistant",
+"stop_details": null,
+"stop_reason": null,
+"stop_sequence": null,
+"type": "message",
+"usage": {
+"cache_creation": {
+"ephemeral_1h_input_tokens": 595,
+"ephemeral_5m_input_tokens": 0
+},
+"cache_creation_input_tokens": 595,
+"cache_read_input_tokens": 11358,
+"inference_geo": "global",
+"input_tokens": 2,
+"output_tokens": 6,
+"service_tier": "standard",
+"speed": "standard"
+}
+},
+"parent_tool_use_id": null,
+"request_id": "req_011Cgt5UGywBT55H1vSgUwY7",
+"session_id": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
+"timestamp": "2026-11-09T21:38:50.818Z",
+"type": "assistant",
+"uuid": "8a241c50-0b09-4009-ba1d-a69bc9fa1820"
+},
 "nativeUsage": null,
-"contextUsage": null
+"session": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
+"tools": [],
+"usage": null,
+"usageScope": "native report; scope unknown, may be cumulative; not additive"
 },
 "parent_tool_use_id": null
 },
@@ -547,38 +548,38 @@
 "uuid": "c3718b15-7821-4af7-bdee-422fd02cb82e",
 "session_id": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
 "fleetNormalized": {
+"blocks": [],
+"completed": false,
+"contextUsage": null,
 "error": null,
-"tools": [],
-"usage": null,
+"harness": "claude",
+"lifecycle": "rate_limit_event",
+"message": null,
 "native": {
-"type": "rate_limit_event",
-"uuid": "c3718b15-7821-4af7-bdee-422fd02cb82e",
-"session_id": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
 "rate_limit_info": {
-"status": "allowed",
-"resetsAt": 1794805200,
+"isUsingOverage": false,
+"overageDisabledReason": "org_level_disabled",
 "overageStatus": "rejected",
 "rateLimitType": "seven_day",
-"isUsingOverage": false,
+"resetsAt": 1794805200,
+"status": "allowed",
 "unifiedWindows": {
 "seven_day": {
-"status": "allowed",
 "resetsAt": 1794805200,
+"status": "allowed",
 "utilization": 0.19
 }
-},
-"overageDisabledReason": "org_level_disabled"
 }
 },
-"harness": "claude",
-"message": null,
-"session": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
-"messages": [],
-"completed": false,
-"lifecycle": "rate_limit_event",
-"usageScope": "native report; scope unknown, may be cumulative; not additive",
+"session_id": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
+"type": "rate_limit_event",
+"uuid": "c3718b15-7821-4af7-bdee-422fd02cb82e"
+},
 "nativeUsage": null,
-"contextUsage": null
+"session": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
+"tools": [],
+"usage": null,
+"usageScope": "native report; scope unknown, may be cumulative; not additive"
 },
 "rate_limit_info": {
 "status": "allowed",
@@ -702,174 +703,174 @@
 "duration_api_ms": 21123,
 "fast_mode_state": "off",
 "fleetNormalized": {
+"blocks": [],
+"completed": true,
+"contextUsage": null,
 "error": null,
+"harness": "claude",
+"lifecycle": "result",
+"message": null,
+"native": {
+"api_error_status": null,
+"credential_expires_at": "2026-12-09T00:52:26.453Z",
+"duration_api_ms": 21123,
+"duration_ms": 2989,
+"fast_mode_disabled_reason": "sdk_opt_in_required",
+"fast_mode_state": "off",
+"first_content_frame_ms": 2447,
+"is_error": false,
+"modelUsage": {
+"claude-sonnet-5-5": {
+"cacheCreationEphemeral1hInputTokens": 22802,
+"cacheCreationEphemeral5mInputTokens": 0,
+"cacheCreationInputTokens": 22802,
+"cacheReadInputTokens": 61818,
+"canonicalModel": "claude-sonnet-5-5",
+"contextWindow": 1000000,
+"costBasis": "list",
+"costUSD": 0.1091458,
+"inputTokens": 18,
+"maxOutputTokens": 128000,
+"outputTokens": 1172,
+"provider": "firstParty",
+"thinkingTokens": 26,
+"webSearchRequests": 0
+}
+},
+"model_usage_since_last_result": {
+"claude-sonnet-5-5": {
+"cacheCreationEphemeral1hInputTokens": 595,
+"cacheCreationEphemeral5mInputTokens": 0,
+"cacheCreationInputTokens": 595,
+"cacheReadInputTokens": 11358,
+"canonicalModel": "claude-sonnet-5-5",
+"contextWindow": 1000000,
+"costBasis": "list",
+"costUSD": 0.0036398,
+"inputTokens": 2,
+"maxOutputTokens": 128000,
+"outputTokens": 12,
+"provider": "firstParty",
+"thinkingTokens": 0,
+"webSearchRequests": 0
+}
+},
+"num_turns": 1,
+"permission_denials": [],
+"queued_turn_count": 0,
+"result": "Shalom! How can I help?",
+"result_index": 0,
+"safety_stops": 0,
+"session_id": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
+"stop_reason": "end_turn",
+"subagent_stats": {
+"by_type": {},
+"completed": 0,
+"failed": 0,
+"killed": {
+"parent": 0,
+"system": 0,
+"user": 0
+},
+"max_depth": 0,
+"refused": {
+"budget": 0,
+"concurrency_limit": 0,
+"depth_limit": 0
+},
+"requested": {
+"background": 0,
+"foreground": 0,
+"unset": 0
+},
+"spawned": 0,
+"spawned_by_subagents": 0,
+"started_in_background": 0
+},
+"subtype": "success",
+"terminal_reason": "completed",
+"time_to_request_ms": 413,
+"total_cost_usd": 0.1091458,
+"ttft_ms": 2959,
+"ttft_stream_ms": 2447,
+"type": "result",
+"usage": {
+"cache_creation": {
+"ephemeral_1h_input_tokens": 595,
+"ephemeral_5m_input_tokens": 0
+},
+"cache_creation_input_tokens": 595,
+"cache_read_input_tokens": 11358,
+"fallback_credit": null,
+"inference_geo": "global",
+"input_tokens": 2,
+"iterations": [
+{
+"cache_creation": {
+"ephemeral_1h_input_tokens": 595,
+"ephemeral_5m_input_tokens": 0
+},
+"cache_creation_input_tokens": 595,
+"cache_read_input_tokens": 11358,
+"input_tokens": 2,
+"output_tokens": 12,
+"type": "message"
+}
+],
+"output_tokens": 12,
+"output_tokens_details": {
+"thinking_tokens": 0
+},
+"server_tool_use": {
+"web_fetch_requests": 0,
+"web_search_requests": 0
+},
+"service_tier": "standard",
+"speed": "standard"
+},
+"uuid": "e0b897e3-e659-46d9-a5e1-b5edbdcd0ad4"
+},
+"nativeUsage": {
+"cache_creation": {
+"ephemeral_1h_input_tokens": 595,
+"ephemeral_5m_input_tokens": 0
+},
+"cache_creation_input_tokens": 595,
+"cache_read_input_tokens": 11358,
+"fallback_credit": null,
+"inference_geo": "global",
+"input_tokens": 2,
+"iterations": [
+{
+"cache_creation": {
+"ephemeral_1h_input_tokens": 595,
+"ephemeral_5m_input_tokens": 0
+},
+"cache_creation_input_tokens": 595,
+"cache_read_input_tokens": 11358,
+"input_tokens": 2,
+"output_tokens": 12,
+"type": "message"
+}
+],
+"output_tokens": 12,
+"output_tokens_details": {
+"thinking_tokens": 0
+},
+"server_tool_use": {
+"web_fetch_requests": 0,
+"web_search_requests": 0
+},
+"service_tier": "standard",
+"speed": "standard"
+},
+"session": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
 "tools": [],
 "usage": {
 "input_tokens": 2,
 "output_tokens": 12
 },
-"native": {
-"type": "result",
-"uuid": "e0b897e3-e659-46d9-a5e1-b5edbdcd0ad4",
-"usage": {
-"speed": "standard",
-"iterations": [
-{
-"type": "message",
-"input_tokens": 2,
-"output_tokens": 12,
-"cache_creation": {
-"ephemeral_1h_input_tokens": 595,
-"ephemeral_5m_input_tokens": 0
-},
-"cache_read_input_tokens": 11358,
-"cache_creation_input_tokens": 595
-}
-],
-"input_tokens": 2,
-"service_tier": "standard",
-"inference_geo": "global",
-"output_tokens": 12,
-"cache_creation": {
-"ephemeral_1h_input_tokens": 595,
-"ephemeral_5m_input_tokens": 0
-},
-"fallback_credit": null,
-"server_tool_use": {
-"web_fetch_requests": 0,
-"web_search_requests": 0
-},
-"output_tokens_details": {
-"thinking_tokens": 0
-},
-"cache_read_input_tokens": 11358,
-"cache_creation_input_tokens": 595
-},
-"result": "Shalom! How can I help?",
-"subtype": "success",
-"ttft_ms": 2959,
-"is_error": false,
-"num_turns": 1,
-"modelUsage": {
-"claude-sonnet-5-5": {
-"costUSD": 0.1091458,
-"provider": "firstParty",
-"costBasis": "list",
-"inputTokens": 18,
-"outputTokens": 1172,
-"contextWindow": 1000000,
-"canonicalModel": "claude-sonnet-5-5",
-"thinkingTokens": 26,
-"maxOutputTokens": 128000,
-"webSearchRequests": 0,
-"cacheReadInputTokens": 61818,
-"cacheCreationInputTokens": 22802,
-"cacheCreationEphemeral1hInputTokens": 22802,
-"cacheCreationEphemeral5mInputTokens": 0
-}
-},
-"session_id": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
-"duration_ms": 2989,
-"stop_reason": "end_turn",
-"result_index": 0,
-"safety_stops": 0,
-"subagent_stats": {
-"failed": 0,
-"killed": {
-"user": 0,
-"parent": 0,
-"system": 0
-},
-"by_type": {},
-"refused": {
-"budget": 0,
-"depth_limit": 0,
-"concurrency_limit": 0
-},
-"spawned": 0,
-"completed": 0,
-"max_depth": 0,
-"requested": {
-"unset": 0,
-"background": 0,
-"foreground": 0
-},
-"spawned_by_subagents": 0,
-"started_in_background": 0
-},
-"total_cost_usd": 0.1091458,
-"ttft_stream_ms": 2447,
-"duration_api_ms": 21123,
-"fast_mode_state": "off",
-"terminal_reason": "completed",
-"api_error_status": null,
-"queued_turn_count": 0,
-"permission_denials": [],
-"time_to_request_ms": 413,
-"credential_expires_at": "2026-12-09T00:52:26.453Z",
-"first_content_frame_ms": 2447,
-"fast_mode_disabled_reason": "sdk_opt_in_required",
-"model_usage_since_last_result": {
-"claude-sonnet-5-5": {
-"costUSD": 0.0036398,
-"provider": "firstParty",
-"costBasis": "list",
-"inputTokens": 2,
-"outputTokens": 12,
-"contextWindow": 1000000,
-"canonicalModel": "claude-sonnet-5-5",
-"thinkingTokens": 0,
-"maxOutputTokens": 128000,
-"webSearchRequests": 0,
-"cacheReadInputTokens": 11358,
-"cacheCreationInputTokens": 595,
-"cacheCreationEphemeral1hInputTokens": 595,
-"cacheCreationEphemeral5mInputTokens": 0
-}
-}
-},
-"harness": "claude",
-"message": null,
-"session": "a985d1e4-05ca-41b8-ab05-2d4c8360b386",
-"messages": [],
-"completed": true,
-"lifecycle": "result",
-"usageScope": "native report; scope unknown, may be cumulative; not additive",
-"nativeUsage": {
-"speed": "standard",
-"iterations": [
-{
-"type": "message",
-"input_tokens": 2,
-"output_tokens": 12,
-"cache_creation": {
-"ephemeral_1h_input_tokens": 595,
-"ephemeral_5m_input_tokens": 0
-},
-"cache_read_input_tokens": 11358,
-"cache_creation_input_tokens": 595
-}
-],
-"input_tokens": 2,
-"service_tier": "standard",
-"inference_geo": "global",
-"output_tokens": 12,
-"cache_creation": {
-"ephemeral_1h_input_tokens": 595,
-"ephemeral_5m_input_tokens": 0
-},
-"fallback_credit": null,
-"server_tool_use": {
-"web_fetch_requests": 0,
-"web_search_requests": 0
-},
-"output_tokens_details": {
-"thinking_tokens": 0
-},
-"cache_read_input_tokens": 11358,
-"cache_creation_input_tokens": 595
-},
-"contextUsage": null
+"usageScope": "native report; scope unknown, may be cumulative; not additive"
 },
 "terminal_reason": "completed",
 "api_error_status": null,

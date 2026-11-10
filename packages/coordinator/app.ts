@@ -22,7 +22,7 @@ import {labExamples} from './lab/examples.ts';
 import {pipelineRunner} from './pipelines.ts';
 import {labExperiments} from './lab/experiments.ts';
 import {labOperations,registerLab} from './lab/routes.ts';
-import {peopleRegistry,requestPerson,actor} from './people.ts';
+import {peopleRegistry,requestPerson,actor,mayAccessProject} from './people.ts';
 import {hostRegistry,type Host} from './hosts.ts';
 import type {HostEvents,PollReply,PollRequest,Receipt} from '../../contracts/generated/host-protocol.ts';
 declare module 'fastify' {interface FastifyRequest {fleetHost:Host}}
@@ -78,14 +78,27 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   const named=req.headers['x-fleet-person'];
   if(machine){if(named!==undefined)fail(403,'Host requests carry no person');}
   else{if(typeof named!=='string'||!named)fail(401,'Person required');await people.refresh();const p=people.personFor(named as string);if(!p)fail(403,'Unknown person');
-   // Until per-person visibility ships (people-access slice 3), only the owner works in Fleet; others may only read me.
-   if(!p!.owner&&!(route==='/api/ops/:name'&&(req.params as any)?.name==='me'))fail(403,'Only the owner until visibility ships');(req as any).person=p}
+   (req as any).person=p}
   if(!machine&&config.browserProxyAuth&&!['GET','HEAD','OPTIONS'].includes(req.method)&&req.headers.origin!==config.browserOrigin)fail(403,'Origin required');
   if(!machine&&req.headers.origin&&req.headers.origin!==(config.browserOrigin??`${req.protocol}://${req.headers.host}`)) fail(403,'Origin rejected');
  });
  // The body hostId of a host request is the derived host: a different one is 403, a missing one is filled in.
  app.addHook('preHandler',async(req:any)=>{const h=req.fleetHost;if(!h||!req.body||typeof req.body!=='object')return;
   if(req.body.hostId!==undefined&&req.body.hostId!==h.id)fail(403,'Host rejected');req.body.hostId=h.id});
+ // Visibility (§2): a person other than the owner works in the scope of their grants (row-level security per transaction) plus
+ // the rows they hold; architect views need the architect role, except on a row the person holds.
+ store.setScope(()=>{const p=requestPerson.getStore();if(!p||p.owner)return null;const ids=p.grants.filter(g=>g.kind==='project').map(g=>g.id);
+  return {projectIds:(p.roles.includes('architect')?',':'')+ids.join(','),person:p.email}});
+ const ARCHITECT_OPS=/^(account_|lab_|connection|recovery|reconcil|transport_|artifact_rule|profiles_list)/,ARCHITECT_ROUTES=/^\/api\/(lab|accounts|recovery|reconciliation|recovery-tools|profiles)(\/|$)/;
+ const opName=(req:any)=>['/api/ops/:name','/api/project-operations/:name'].includes(req.routeOptions?.url)?req.params?.name:['/api/tools','/api/project-tools'].includes(req.routeOptions?.url)&&req.body?.method==='tools/call'?req.body?.params?.name:null;
+ app.addHook('preHandler',async(req:any)=>{const p=req.person;if(!p||p.owner)return;const name=opName(req),route=req.routeOptions?.url??'';
+  const args=req.body?.method==='tools/call'?req.body?.params?.arguments:req.body;
+  if((name&&ARCHITECT_OPS.test(name)||ARCHITECT_ROUTES.test(route))&&!p.roles.includes('architect'))fail(403,'Architect role required');
+  // Project settings and context come from config files, outside row-level security: a named project must be granted.
+  const projectId=args?.projectId??(route.startsWith('/api/projects/:')?req.params?.id??req.params?.project:undefined)??req.query?.projectId;
+  if(typeof projectId==='string'&&!mayAccessProject(p,projectId))fail(404,'Unknown project')});
+ // A write outside the person's scope is refused by row-level security (42501): answer 403, not 500.
+ app.setErrorHandler((e:any,_req:any,reply:any)=>{if(e?.code==='42501'){e.statusCode=403;e.message='Not in your scope'}reply.send(e)});
  let artifacts:Artifacts;
  let deliveryRuntime:ReturnType<typeof delivery>,agent:ReturnType<typeof agentTools>,pipelineTimer:any,ticking=false;
  const related=async (d:any)=>({...d,parentState:(await get(d.parentExecutionId,'execution')).state,childState:(await get(d.childExecutionId,'execution')).state,continuationState:d.continuationExecutionId?(await get(d.continuationExecutionId,'execution')).state:null});
@@ -118,11 +131,11 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   s.agentConfig=readTrustedProfile(config.profilesDirectory||'config/agents',req.body.profileId);await put('session',s);return {sessionId:s.id,profileId:s.agentConfig.id,account:s.account};
  };
  app.post('/api/sessions/:id/profile',async(req:any)=>(await store.tx(async ()=>(await session_profile({...req.body,sessionId:req.params.id})))));
- const session_get=async (b:any)=>{const s=(await get(b?.sessionId,'session'));return {...s,...(await agent.sessionView(s.id)),sessionId:s.id,delegations:(await map((await all('delegation')).filter(d=>d.parentSessionId===s.id||d.childSessionId===s.id),related)),messages:(await all('message',{sessionId:s.id})).filter(x=>x.sessionId===s.id),executions:(await all('execution',{sessionId:s.id})).filter(x=>x.sessionId===s.id),events:[...await all('event',{sessionId:s.id}),...await all('event-delta',{sessionId:s.id})].filter(x=>x.sessionId===s.id&&x.type!=='execution.ended'),results:(await all('artifact',{sessionId:s.id},['contentBase64'])).filter(x=>x.sessionId===s.id).map(({contentBase64,...x})=>x)}};
+ const session_get=async (b:any)=>{const s=(await get(b?.sessionId,'session'));return {...s,...(await agent.sessionView(s.id)),sessionId:s.id,delegations:(await map((await all('delegation')).filter(d=>d.parentSessionId===s.id||d.childSessionId===s.id),related)),messages:(await all('message',{sessionId:s.id})).filter(x=>x.sessionId===s.id),executions:(await all('execution',{sessionId:s.id})).filter(x=>x.sessionId===s.id)}};
  app.get('/api/sessions/:id',async(req:any)=>(await session_get({sessionId:req.params.id})));
  // Conversation threads (docs/designs/fleet-conversations.md): pages of typed blocks per task or session, search and export.
  // feedCursor is read in the same snapshot as the page, so the client follows the feed from there and misses no row.
- const thread=threads({query:store.query,artifacts:async(executionId:string)=>artifacts.list({executionId}),cursor:async()=>(await store.changes.since(null)).cursor});
+ const thread=threads({query:store.query,artifacts:async(executionId:string)=>all('artifact',{executionId},['contentBase64']),cursor:async()=>(await store.changes.since(null)).cursor});
  const thread_entries=(b:any)=>thread.entries(b),thread_blocks=(b:any)=>thread.blocks(b),thread_search=(b:any)=>thread.search(b),thread_export=(b:any)=>thread.exportText(b,store.read);
  const threadKey=(req:any)=>req.params.scope==='task'?{task:req.params.id}:req.params.scope==='session'?{session:req.params.id}:fail(404,'Unknown thread scope');
  const intOf=(v:any)=>v===undefined?undefined:/^\d+$/.test(v)?Number(v):fail(400,'Expected integer');
@@ -134,7 +147,6 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  app.get('/api/threads/:scope/:id/export',async(req:any,reply:any)=>{const {Readable}=await import('node:stream');const b={key:threadKey(req),from:pointOf(req.query.from),to:pointOf(req.query.to)};
   await store.read(()=>thread.entries({key:b.key,limit:1}));// 404 before the stream starts
   return reply.type('text/markdown; charset=utf-8').send(Readable.from(thread.exportPages(b,store.read)))});
- app.get('/api/sessions/:id/events',async(req:any)=>{(await get(req.params.id,'session'));const after=Number(req.query.after??-1),limit=Number(req.query.limit??100);if(!Number.isSafeInteger(after)||!Number.isSafeInteger(limit)||limit<1||limit>500)fail(400,'Invalid page');const events=(await all('event',{sessionId:req.params.id})).filter(x=>x.sessionId===req.params.id&&x.type!=='execution.ended').slice(after+1,after+1+limit);return {events,nextCursor:events.length?after+events.length:after}});
  const execution_differences=async (b:any)=>{
   const current=(await get(b?.executionId,'execution')),previous=(await get(text(b?.previous,300),'execution'));
   if(current.sessionId!==previous.sessionId)fail(403,'Different session');
@@ -160,7 +172,8 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  // Git network for agents: profile gitNetwork wins; default on for pm/reviewer/worker sessions of projects with repos.
  const gitNetwork=(s:any)=>s.agentConfig?.gitNetwork??(!!s.projectId&&['pm','reviewer','worker'].includes(s.role)&&projects.project_context({projectId:s.projectId}).settings.repos.length>0);
  // extra: payload fields for the start command and fields for the execution record (pipeline agent steps).
- const enqueue=async (s:any,input:string,requestId:string,extra:{payload?:any,execution?:any,host?:string}={})=>{
+ // Host and account choice is the coordinator's own work: it reads every host and account (store.unscoped, §2).
+ const enqueue=(s:any,input:string,requestId:string,extra:{payload?:any,execution?:any,host?:string}={})=>store.unscoped(async()=>{
   // Execution host follows the account binding: the session's last host first, then the default host, then extra native hosts.
   const harness=s.agentConfig?.harness??'codex',last=(await all('execution',{sessionId:s.id})).filter(x=>x.sessionId===s.id&&x.hostId).at(-1)?.hostId;
   // A pipeline agent step with overrides.host, or a session started with hostId, runs only there: no fallback, the resolve error is the refusal.
@@ -175,11 +188,11 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   const command:any={id:randomUUID(),executionId:e.id,sessionId:s.id,hostId,kind:'start',payload:{harness:s.agentConfig?.harness??'codex',...(s.account||binding&&!s.nativeSessionId?{account:binding?.binding??s.account,...(binding?{managedAccount:binding}:{})}:{}),text:input,...(s.projectId?{projectId:s.projectId,project:projects.project_context({projectId:s.projectId}).settings}:{}),...(gitNetwork(s)?{gitNetwork:true}:{}),setup:s.setup??'run',...(s.workingDirectory?{workingDirectory:s.workingDirectory}:{}),model:e.model,effort:e.effort,...(s.agentConfig?{agentConfig:s.agentConfig}:{}),instructions:s.agentConfig?'':'Follow the user request and its scope. Discuss, answer questions, or review existing results when requested; do not create or modify a website unless requested. When creating a static website, deliver output/index.html and retain all source assets. Do not spawn subagents.',...(s.nativeSessionId?{nativeSessionId:s.nativeSessionId}:{}),...extra.payload},status:'pending'};Object.assign(e,extra.execution);(await agent.decorate(s,e,command));
   await put('execution',e);await put('message',{id:randomUUID(),sessionId:s.id,executionId:e.id,requestId:requestId,text:input});
   await put('command',command);return e;
- };
+ });
  // Account for a new project session: the named one, else the project preference, else the first enabled account of the harness with a ready binding (on hostId when given). The binding picks the host.
- const pickAccount=async (harness:string,projectId:string,hostId?:string)=>{const ms=(await all('managed-account')).filter(m=>m.enabled&&(m.harness??'codex')===harness&&(m.bindings??[]).some((b:any)=>b.readiness==='ready'&&(!hostId||b.hostId===hostId)));const pref=(await managed.preferred(projectId));return (ms.find(m=>m.name===pref)??ms[0])?.name};
+ const pickAccount=async (harness:string,projectId:string,hostId?:string)=>store.unscoped(async()=>{const ms=(await all('managed-account')).filter(m=>m.enabled&&(m.harness??'codex')===harness&&(m.bindings??[]).some((b:any)=>b.readiness==='ready'&&(!hostId||b.hostId===hostId)));const pref=(await managed.preferred(projectId));return (ms.find(m=>m.name===pref)??ms[0])?.name});
  // Known host: configured, or has polled at least once (a host-observation).
- const knownHost=async(hostId:string)=>(await hosts.ids()).includes(hostId)||!!(await all('host-observation',{id:hostId})).find(h=>h.id===hostId);
+ const knownHost=async(hostId:string)=>store.unscoped(async()=>(await hosts.ids()).includes(hostId)||!!(await all('host-observation',{id:hostId})).find(h=>h.id===hostId));
  agent=agentTools(store,{knownHost,browserOrigin:config.browserOrigin,directory:config.profilesDirectory||'config/agents',hostId:config.hostId,enqueue,pickAccount,deliver:async (b:any)=>(await deliveryRuntime.operations.session_deliver(b)),project:(projectId:string)=>projects.project_context({projectId}).settings,resolveAccount:async(account:string,harness:string)=>{let last:any;for(const h of new Set([config.hostId,...(await hosts.executionIds())])){try{const r=await managed.resolve(account,harness,h);if(r)return r}catch(e){last=e}}if(last)throw last}});
  // Executions bound to a host, account or environment nothing registered are marked with a problem (design §1).
  const detectProblems=async()=>{const environments:Record<string,string[]>={};for(const id of projects.project_list?(await projects.project_list()).projects.map((p:any)=>p.id):[]){try{environments[id]=projects.project_context({projectId:id}).settings.environments.map((e:any)=>e.hostId)}catch{}}
@@ -205,7 +218,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  // replaced on every poll, so a recovered route clears itself.
  const HOST_STALE_MS=30000;
  const hostProblems=(v:PollRequest['problems'])=>Array.isArray(v)?{problems:v.filter(p=>p?.kind==='edge-redirect'&&typeof p.route==='string'&&Number.isSafeInteger(p.status)).slice(0,20).map(p=>({kind:'edge-redirect',route:p.route.slice(0,200),status:p.status,location:typeof p.location==='string'?p.location.slice(0,500):null,detail:typeof p.detail==='string'?p.detail.slice(0,500):null}))}:{};
- app.post<{Body:PollRequest}>('/api/hosts/poll',async(req)=>(await store.tx(async ()=>{(await owned(req.body));await stores.observe(req.body.hostId,req.body.stores);await put('host-observation',{id:req.body.hostId,lastSeenAt:Date.now(),...( ['darwin','win32','linux'].includes(req.body.platform)?{platform:req.body.platform}:{} ),...(Array.isArray(req.body.capabilities)&&req.body.capabilities.every((x:any)=>typeof x==='string')?{capabilities:req.body.capabilities}:{}),...hostProblems(req.body.problems)});(await delegates.reconcile());await detectProblems();(await agent.promote());const pending=await filter(await all('command',{hostId:req.body.hostId,status:'pending'}),(x:any)=>x.hostId===req.body.hostId&&x.status==='pending');
+ app.post<{Body:PollRequest}>('/api/hosts/poll',async(req)=>(await store.tx(async ()=>{(await owned(req.body));await stores.observe(req.body.hostId,req.body.stores);await put('host-observation',{id:req.body.hostId,holder:req.fleetHost.holder,lastSeenAt:Date.now(),...( ['darwin','win32','linux'].includes(req.body.platform)?{platform:req.body.platform}:{} ),...(Array.isArray(req.body.capabilities)&&req.body.capabilities.every((x:any)=>typeof x==='string')?{capabilities:req.body.capabilities}:{}),...hostProblems(req.body.problems)});(await delegates.reconcile());await detectProblems();(await agent.promote());const pending=await filter(await all('command',{hostId:req.body.hostId,status:'pending'}),(x:any)=>x.hostId===req.body.hostId&&x.status==='pending');
   // ponytail: executions read once for all pending commands; delegates.ready only rewrites the execution of its own start command.
   const executions=await store.many(pending.map((c:any)=>c.executionId),'execution');
   const ready=async (command:any)=>{if(!(await agent.ready(command)))return false;const execution=executions.get(command.executionId)??(await get(command.executionId,'execution'));// Held-host trust (§3): work that carries project content goes only to a host whose holder may see the project;
@@ -244,7 +257,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  // artifact_list for an agent: artifacts of its own project (or its own execution when it has no project).
  app.post('/api/hosts/artifacts/list',async(req:any)=>{const b=req.body??{};(await owned(b));const e=await store.executions.get(text(b.executionId,200));const f=b.filter??{};
   return {artifacts:await artifacts.list({executionId:!e.projectId?e.id:typeof f.executionId==='string'?f.executionId:undefined,taskId:typeof f.taskId==='string'?f.taskId:undefined,mediaType:typeof f.mediaType==='string'?f.mediaType:undefined,projectId:e.projectId??undefined,noExamples:true})}});
- app.post('/api/hosts/stores',async(req:any)=>{const b=req.body??{};(await owned({hostId:b.hostId}));return store.tx(()=>stores.register(b.hostId,b.store))});
+ app.post('/api/hosts/stores',async(req:any)=>{const b=req.body??{};(await owned({hostId:b.hostId}));return store.tx(()=>stores.register(b.hostId,b.store,req.fleetHost.holder))});
  // Results stream from a verified copy with the same sandbox as before (no size limit; bytes never sit in the coordinator).
  app.get('/api/results/:id',async(req:any,r)=>{const a=await artifacts.get(req.params.id);if(a.state!=='stored')fail(404,'Not found');r.header('Content-Security-Policy',"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:");return r.type(a.mediaType||'application/octet-stream').send(await artifacts.read(a.id))});
  // Pipeline v2 runner (docs/designs/fleet-lab.md Stage 2): api steps call connections from this host; agent steps are
@@ -325,7 +338,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   artifact_purge:(b:any)=>artifacts.purge({contentHash:b?.contentHash,projectId:b?.projectId,scope:b?.scope,reason:b?.reason}),
   artifact_rule_preview:(b:any)=>placement.previewRule(b?.projectId??null,b?.rule),
   artifact_rule_confirm:(b:any)=>placement.confirmRule(b?.projectId??null,b?.rule,actor('operator')),
-  stores_list:async()=>{const all=await stores.list();return {stores:all,problems:[...all.filter(s=>s.state==='full').map(s=>({kind:'store-full',storeId:s.id,hostId:s.host_id,capacityBytes:s.capacity_bytes,freeSpaceWarningBytes:s.free_space_warning_bytes,actions:['store_set_free_space_warning','project artifact_locations','artifact_rule_confirm']})),...placement.problems()]}},
+  stores_list:async()=>{const all=await stores.list();return {stores:all,problems:[...all.filter(s=>s.state==='full').map(s=>({kind:'store-full',storeId:s.id,hostId:s.host_id,capacityBytes:s.capacity_bytes,freeSpaceWarningBytes:s.free_space_warning_bytes,actions:['store_set_free_space_warning','project artifact_locations','artifact_rule_confirm']})),...placement.problems().filter((x:any)=>{const p=requestPerson.getStore();return !p||p.owner||(!!x.projectId&&mayAccessProject(p,x.projectId))})]}},
   store_set_free_space_warning:(b:any)=>stores.setFreeSpaceWarning(b?.storeId,b?.bytes),
   artifact_copy_retry:(b:any)=>placement.retryCopy(text(b?.artifactId,200),text(b?.storeId,200)),
  });

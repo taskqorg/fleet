@@ -2,8 +2,8 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages } from './registry.ts';
-import { type Measured, type Kind, measured, age, bytes, exact, percent } from './format.ts';
-import { VirtualList } from './virtual-list.tsx';
+import { type Measured, type Kind, measured, age, bytes, exact, percent, duration, agentLabel } from './format.ts';
+import { VirtualList, type VirtualListHandle } from './virtual-list.tsx';
 import tokens from '../tokens.json';
 
 const ROW = parseInt(tokens.size.row);
@@ -341,24 +341,110 @@ export const Stale = ({ at, now, onRefresh }: { at: number; now: number; onRefre
   <span class="stale" data-ui="status-states">updated {age(at, now).text} <Button label="Refresh" icon={actions.retry} iconOnly onClick={onRefresh} /></span>
 );
 
-/* ---------- Live transcript (transcript-viewer.md) ---------- */
+/* ---------- Thread rows (transcript-viewer.md; docs/designs/fleet-conversations.md) ---------- */
 
-export type Entry = { id: string; t: number; who?: string; text?: string; call?: { name: string; state: string; secs: number }; gap?: string };
-export function Transcript({ entries, label, now }: { entries: Entry[]; label: string; now: number }) {
-  const [q, setQ] = useState('');
-  const shown = q ? entries.filter(e => (e.text ?? e.call?.name ?? '').toLowerCase().includes(q.toLowerCase())) : entries;
-  return (
-    <div class="transcript" data-ui="transcript-viewer">
-      <div class="tr-tool"><label class="search"><Icon name={actions.search} /><input type="search" placeholder="Search transcript" aria-label="Search transcript" value={q}
-        onInput={e => setQ((e.target as HTMLInputElement).value)} /></label><span class="count">{shown.length} of {entries.length}</span></div>
-      <VirtualList class="tr-body" items={shown} getKey={e => e.id} rowHeight={ROW} dynamic follow="bottom" label={label} render={e => (
-        e.gap ? <div class="tr-gap"><Icon name="triangle-alert" />{e.gap}</div>
-          : <div class="tr-e"><time data-tip={exact(e.t)}>{age(e.t, now).text}</time>{e.call
-            ? <span class="call"><Icon name="square" />{e.call.name} · {e.call.state} · {e.call.secs}s</span>
-            : <span><b>{e.who}</b> {e.text}</span>}</div>
-      )} />
-    </div>
-  );
+/** Writes text to the clipboard; the caller shows a failure (status line with retry). */
+export const copyText = (text: string) => navigator.clipboard.writeText(text);
+
+/** Markdown as text: fenced code blocks get their own copy button, inline code is mono. Raw HTML is never rendered. */
+// ponytail: fences and inline code only; headings, lists and links stay plain text until a renderer is chosen for the book.
+export function Markdown({ text, onCopyFail }: { text: string; onCopyFail?: (e: unknown) => void }) {
+  const parts = text.split(/^```[^\n]*\n([\s\S]*?)^```[ \t]*$/m);
+  return <div class="md">{parts.map((part, i) => i % 2
+    ? <div class="code" key={i}><pre><code>{part.replace(/\n$/, '')}</code></pre><span class="code-copy"><Button label="Copy code" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(part.replace(/\n$/, '')).catch(e => onCopyFail?.(e))} /></span></div>
+    : <p key={i}>{part.split(/(`[^`\n]+`)/).map((x, j) => j % 2 ? <code key={j}>{x.slice(1, -1)}</code> : x)}</p>)}</div>;
+}
+
+type Mark = { harness?: string | null; model?: string | null; effort?: string | null };
+/** Agent mark (D4): harness icon and the short label; the model id on hover. */
+export function AgentMark({ harness, model, effort }: Mark) {
+  return <span class="agent-mark">{harness && harness in harnesses && <HarnessMark h={harness as Harness} />}<span class="lbl" data-tip={model ?? undefined}>{agentLabel(model, effort)}</span></span>;
+}
+
+/** An operator or agent reply: content first, the service zone (agent mark, copy) on the right (OR-21). */
+export function TextRow({ who, markdown, mark, onCopyFail }: { who: 'operator' | 'agent'; markdown: string; mark?: Mark; onCopyFail?: (e: unknown) => void }) {
+  return <div class={`th-row th-text ${who}`} data-ui="thread-row">
+    <div class="th-main">{who === 'operator' && <span class="who">You</span>}<Markdown text={markdown} onCopyFail={onCopyFail} /></div>
+    <span class="th-svc">{who === 'agent' && mark && <AgentMark {...mark} />}<Button label="Copy reply" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(markdown).catch(e => onCopyFail?.(e))} /></span>
+  </div>;
+}
+
+const raw = (v: unknown) => typeof v === 'string' ? v : JSON.stringify(v, null, 1) ?? '';
+const fenced = (v: unknown) => { const t = raw(v), ticks = '`'.repeat(Math.max(3, ...[...t.matchAll(/`+/g)].map(m => m[0].length + 1))); return ticks + '\n' + t + '\n' + ticks; };
+/** Raw tool input or output: preformatted as is (never parsed as markdown), with its own copy. */
+function CodeBlock({ text, onCopyFail }: { text: string; onCopyFail?: (e: unknown) => void }) {
+  return <div class="md"><div class="code"><pre><code>{text}</code></pre><span class="code-copy"><Button label="Copy code" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(text).catch(e => onCopyFail?.(e))} /></span></div></div>;
+}
+/** A collapsed one-line row that opens downward on click; the clicked header stays where it is (OR-23). */
+function Fold({ icon, head, body, open, onToggle, copy, onCopyFail }: { icon: IconName; head: ComponentChildren; body: ComponentChildren; open: boolean; onToggle: () => void; copy: string; onCopyFail?: (e: unknown) => void }) {
+  return <div class={`th-row th-fold${open ? ' open' : ''}`} data-ui="thread-row">
+    <button type="button" class="th-head" aria-expanded={open} onClick={onToggle}><span class={`chev${open ? ' open' : ''}`}><Icon name="chevron-down" /></span><Icon name={icon} />{head}</button>
+    <span class="th-svc"><Button label="Copy" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(copy).catch(e => onCopyFail?.(e))} /></span>
+    {open && <div class="th-body">{body}</div>}
+  </div>;
+}
+export function ToolRow({ name, input, output, state, startedAt, endedAt, open, onToggle, onCopyFail }: { name: string; input: unknown; output: unknown; state: string; startedAt?: number | null; endedAt?: number | null; open: boolean; onToggle: () => void; onCopyFail?: (e: unknown) => void }) {
+  const secs = startedAt != null && endedAt != null ? duration((endedAt - startedAt) / 1000).text : null;
+  const copy = [`Tool ${name} (${state})`, input != null ? fenced(input) : '', output != null ? fenced(output) : ''].filter(Boolean).join('\n\n');
+  return <Fold icon="terminal" open={open} onToggle={onToggle} copy={copy} onCopyFail={onCopyFail}
+    head={<span class="th-line"><span class="mono">{String(name)}</span><span class={`svc${['failed', 'unfinished'].includes(state) ? ' t-danger' : ''}`}>{state}</span>{secs && <span class="svc">{secs}</span>}</span>}
+    body={<>{input != null && <CodeBlock text={raw(input)} onCopyFail={onCopyFail} />}{output != null && <CodeBlock text={raw(output)} onCopyFail={onCopyFail} />}</>} />;
+}
+export function ReasoningRow({ markdown, open, onToggle, onCopyFail }: { markdown: string; open: boolean; onToggle: () => void; onCopyFail?: (e: unknown) => void }) {
+  return <Fold icon="bot" open={open} onToggle={onToggle} copy={markdown} onCopyFail={onCopyFail}
+    head={<span class="th-line"><span>Reasoning</span><span class="svc ell">{markdown.split('\n')[0]}</span></span>} body={<Markdown text={markdown} onCopyFail={onCopyFail} />} />;
+}
+/** A question in the thread (DecisionBlock); answered, it collapses to one line with the answer and who gave it. */
+export function QuestionRow({ text, options, state, answer, answeredBy, askedAt, answeredAt, now, onAnswer }: { text: string; options: string[]; state: string; answer?: string; answeredBy?: string; askedAt?: number | null; answeredAt?: number | null; now: number; onAnswer?: (a: string) => void }) {
+  return <div class="th-row th-q" data-ui="thread-row"><DecisionBlock question={text} askedBy="agent" addressedTo="you" since={askedAt ?? now} now={now}
+    options={options.map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
+    answered={state === 'answered' && answer !== undefined ? { by: answeredBy ?? 'operator', answer, at: answeredAt ?? now, delivered: true } : undefined} onAnswer={onAnswer} /></div>;
+}
+/** Results of an execution end: artifact links (Stage 4 adds names, the delivery stage and the viewer). */
+export function ResultRow({ artifactIds, stage }: { artifactIds: string[]; stage?: Stage }) {
+  return <div class="th-row th-result" data-ui="thread-row"><Icon name="file-text" /><span class="th-line">{artifactIds.map(id => <a key={id} class="mono" href={`/api/results/${encodeURIComponent(id)}`} target="_blank" rel="noopener">{id.slice(0, 8)}</a>)}</span>{stage && <StageChip stage={stage} />}</div>;
+}
+/** An execution start: state, agent mark, duration chip, and Stop while it runs (CUJ 5). */
+export function BoundaryRow({ executionId, state, mark, startedAt, endedAt, now, onStop, stopReason }: { executionId: string; state: StateOf<'execution'>; mark: Mark; startedAt?: number | null; endedAt?: number | null; now: number; onStop?: () => void; stopReason?: string }) {
+  const secs = startedAt != null ? ((endedAt ?? now) - startedAt) / 1000 : null;
+  return <div class="th-row th-boundary" data-ui="thread-row"><StateBadge family="execution" state={state} compact /><span class="id">{executionId.slice(0, 8)}</span><span class="grow" />
+    <span class="th-svc"><AgentMark {...mark} />{secs !== null && <span class="chip-age">{duration(secs).text}</span>}{onStop && <Button label="Stop" icon="pause" iconOnly disabledReason={stopReason} onClick={onStop} />}</span></div>;
+}
+
+/** A search field for one scope (a thread): Enter searches. */
+export function SearchField({ label, value, onInput, onSearch }: { label: string; value: string; onInput: (v: string) => void; onSearch: () => void }) {
+  return <label class="search"><Icon name={actions.search} /><input type="search" placeholder={label} aria-label={label} value={value}
+    onInput={e => onInput((e.target as HTMLInputElement).value)} onKeyDown={e => { if (e.key === 'Enter') onSearch(); }} /></label>;
+}
+export type ThreadBlock = { kind: string; key: string; executionId?: string; [k: string]: any };
+/**
+ * A thread: one row per block in a measured VirtualList that follows the bottom, loads older rows upward (onStart) and
+ * newer ones downward (onEnd), and jumps through `handle`. Open tool and reasoning rows are kept by key across the window.
+ */
+export function Thread({ blocks, label, now, marked, handle, pending, onStart, onEnd, onStop, stopReason, onAnswer, onCopyFail }: {
+  blocks: ThreadBlock[]; label: string; now: number; marked?: string | null; handle?: { current: VirtualListHandle | null }; pending?: { count: number; onJump: () => void };
+  onStart?: () => void; onEnd?: () => void; onStop?: (executionId: string) => void; stopReason?: string;
+  onAnswer?: (questionId: string, answer: string) => void; onCopyFail?: (e: unknown) => void;
+}) {
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const toggle = (k: string) => setOpen(o => { const n = new Set(o); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const markOf = (b: ThreadBlock): Mark => ({ harness: b.harness, model: b.model, effort: b.effort });
+  const row = (b: ThreadBlock) => {
+    switch (b.kind) {
+      case 'text': return <TextRow who={b.role === 'operator' ? 'operator' : 'agent'} markdown={b.markdown ?? ''} mark={markOf(b)} onCopyFail={onCopyFail} />;
+      case 'tool': return <ToolRow name={b.name} input={b.input} output={b.output} state={b.state} startedAt={b.startedAt} endedAt={b.endedAt} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
+      case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
+      case 'question': return <QuestionRow text={b.text} options={b.options ?? []} state={b.state} answer={b.answer} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} />;
+      case 'result': return <ResultRow artifactIds={b.artifactIds ?? []} stage={b.stage} />;
+      case 'boundary': return <BoundaryRow executionId={b.executionId!} state={b.state} mark={markOf(b)} startedAt={b.startedAt} endedAt={b.endedAt} now={now} stopReason={stopReason}
+        onStop={onStop && ['preparing', 'running', 'waiting'].includes(b.state) ? () => onStop(b.executionId!) : undefined} />;
+      default: return null;
+    }
+  };
+  return <div class="transcript" data-ui="transcript-viewer">
+    <VirtualList class="tr-body" items={blocks} getKey={b => b.key} rowHeight={ROW} dynamic follow="bottom" label={label} handle={handle} pending={pending} onStart={onStart} onEnd={onEnd}
+      rowClass={b => b.key === marked ? 'marked' : ''} render={row} />
+  </div>;
 }
 
 /* ---------- Split button (split-button.md) ---------- */

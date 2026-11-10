@@ -4,7 +4,7 @@
 // roles: 'inspector-for:<hostId>' (runs account inspections and integration for that host), 'publication' (runs delivery).
 import {createHash,randomBytes} from 'node:crypto';
 import type {Store} from './store.ts';
-import type {Person} from './people.ts';
+import {mayAccessProject,type Person} from './people.ts';
 
 export type Host={id:string,name:string,holder:string,platform:string,roles:string[],secretHash:string,intake:'all'|'paused',harnesses:Record<string,{allowed:boolean}>,createdAt:number};
 export const secretHash=(secret:string)=>createHash('sha256').update(secret).digest('hex');
@@ -20,8 +20,7 @@ export function hostRegistry(store:Store,people:{personFor:(e:string|undefined)=
  // A host whose holder is no longer in people.json is refused.
  const fromSecret=async(secret:string)=>{if(!secret)return null;const h=secretHash(secret),x=(await list()).find(x=>x.secretHash===h);return x&&people.personFor(x.holder)?x:null};
  // A host held by the owner sees every project; a host held by someone else sees only projects its holder has a grant on.
- const maySee=(host:Host,projectId:string|null|undefined)=>{const p=people.personFor(host.holder);if(!p)return false;if(p.owner)return true;
-  return !!projectId&&p.grants.some(g=>g.kind==='project'&&g.id===projectId)};
+ const maySee=(host:Host,projectId:string|null|undefined)=>mayAccessProject(people.personFor(host.holder),projectId);
  const owner=(p:Person|null|undefined)=>{if(!p?.owner)fail(403,'Only the owner manages hosts')};
  // The two credential kinds never match (§1).
  const distinct=(hash:string)=>{if(hash===secretHash(browserSecret))fail(400,'A host secret must differ from the browser secret')};

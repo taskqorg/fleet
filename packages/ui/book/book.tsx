@@ -3,9 +3,9 @@ import { render, type ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import {
   Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, ExecTree, DecisionBlock, ResultViewer, SplitButton, NavRail, StatStrip,
-  SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Transcript, TaskListView, workspaces, states, actions,
+  SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions,
   Composer, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
-  type Entry, type Family, type Stage,
+  type ThreadBlock, type Family, type Stage,
 } from '../src/index.ts';
 import { NAV } from './nav.ts';
 import { NOW, min, hr, tasks, mkTask, TREE, transcript, hosts, type Task } from './fixtures.ts';
@@ -142,15 +142,15 @@ function ListDemo() {
 }
 
 function TranscriptDemo() {
-  const [entries, setEntries] = useState<Entry[]>(transcript);
+  const [blocks, setBlocks] = useState<ThreadBlock[]>(transcript);
   const [on, setOn] = useState(false);
   useEffect(() => {
     if (!on) return;
-    const t = setInterval(() => setEntries(es => [...es, { id: `n${es.length}`, t: Date.now(), who: 'Assistant', text: `Streamed entry ${es.length}. API key [masked] not used.` }]), 700);
+    const t = setInterval(() => setBlocks(bs => [...bs, { kind: 'text', key: `${1000 + bs.length}:0`, role: 'agent', harness: 'codex', model: 'gpt-6.1-sol', effort: 'low', markdown: `Streamed reply ${bs.length}.` }]), 700);
     return () => clearInterval(t);
   }, [on]);
-  return <div class="pane"><Transcript entries={entries} label="Transcript" now={Date.now()} />
-    <div class="bar"><Button label={on ? 'Stop' : 'Stream'} icon={on ? 'pause' : 'activity'} pressed={on} onClick={() => setOn(!on)} /><span class="muted type-sm">Times are relative; exact time on hover. At the bottom it follows; scroll up and it holds still.</span></div></div>;
+  return <div class="pane"><Thread blocks={blocks} label="Transcript" now={Date.now()} onStop={() => setOn(false)} onAnswer={() => {}} />
+    <div class="bar"><Button label={on ? 'Stop' : 'Stream'} icon={on ? 'pause' : 'activity'} pressed={on} onClick={() => setOn(!on)} /><span class="muted type-sm">Tool and reasoning rows open downward. At the bottom it follows; scroll up and it holds still.</span></div></div>;
 }
 
 function RailDemo() {

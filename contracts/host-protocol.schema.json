@@ -109,19 +109,9 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "messages": {"type": "array", "items": {"$ref": "#/$defs/NormalizedMessage"}},
         "usage": {},
         "usageScope": {"type": "string"},
         "deltaOf": {"type": ["string", "null"]}
-      }
-    },
-    "NormalizedMessage": {
-      "type": "object",
-      "required": ["role", "text"],
-      "properties": {
-        "role": {"type": "string"},
-        "text": {"type": "string"},
-        "delta": {"type": "boolean"}
       }
     },
     "OutboxFailed": {

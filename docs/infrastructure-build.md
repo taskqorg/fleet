@@ -126,3 +126,16 @@ From migration 6, every Fleet table has `FORCE ROW LEVEL SECURITY`, so `pg_dump`
 - The Cloudflare Access app Pipe (`ceca8493-b59a-44fc-b3ac-c203014cc44d`, `pipe.ufobe.com`) got one more policy, `fleet-machines` (`dd4eda75-2458-4c73-9755-2d380781d473`, `non_identity`, only the service token `fleet-machines`); the existing policies are unchanged. Without Access headers the host still redirects to the Access login; with them and no Pipe bearer the lane answers 401.
 - Agent-side Pipe calls from WSL still fail with 403: behind Access, the AssetQ origin guard (`assetq-access-guard`, hermes) accepts only the `ufobe-site-agents` service token. Left as is by owner decision (2026-11-10): Pipe gets no more work and is replaced by Fleet Connections. Pipeline api steps run on the coordinator and are not affected.
 - Follow-up: `pipe-read-snapshot.service` points to `/nonexistent/pipe` and its timer is inactive; left as is until Pipe moves into Fleet. Nothing publishes the snapshot automatically, so the manual file is not overwritten.
+
+## Executor release files (L2)
+
+The `executor-release` CI matrix publishes native Linux x86_64 and macOS arm64
+binaries plus adjacent SHA-256 files, as separate Actions artifacts beside the
+coordinator artifact. PR runs publish candidates for qualification; main push
+runs supply manually selected host files. See [manual download and verification](executor-build.md#fetch-a-ci-release-manually-l2).
+The matrix summary records build seconds and file bytes per target.
+Retention is the same default as the coordinator artifact. Expiry removes the
+ability to fetch that revision from that run; lasting publication remains stack
+question 7. `deploy/build-release.sh` continues to pack the coordinator only:
+executor files come from the native CI matrix, not the coordinator's build host.
+No deployment or auto-update is added.

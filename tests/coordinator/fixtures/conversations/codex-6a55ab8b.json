@@ -1,5 +1,5 @@
 {
-"source": "production coordinator, captured 2026-11-10; account fields removed",
+"source": "production coordinator, captured 2026-11-10; account fields removed; fleetNormalized is the executor projection of the native record (fleet-executor reproject)",
 "execution": {
 "id": "6a55ab8b-e86b-42bb-b5f8-67dd34a392e0",
 "kind": "agent_run",
@@ -117,26 +117,26 @@
 "delivery": "written to local transport; native acceptance unknown",
 "requestId": 1,
 "fleetNormalized": {
+"blocks": [],
+"completed": false,
+"contextUsage": null,
 "error": null,
+"harness": "codex",
+"lifecycle": "protocol.write",
+"message": null,
+"native": {
+"bytes": 130,
+"delivery": "written to local transport; native acceptance unknown",
+"method": "initialize",
+"requestId": 1,
+"sha256": "2509cdfb70a3c9e041aa547fa97debba52feaa7aec71e9d191fedd83199610dd",
+"type": "protocol.write"
+},
+"nativeUsage": null,
+"session": null,
 "tools": [],
 "usage": null,
-"native": {
-"type": "protocol.write",
-"bytes": 130,
-"method": "initialize",
-"sha256": "2509cdfb70a3c9e041aa547fa97debba52feaa7aec71e9d191fedd83199610dd",
-"delivery": "written to local transport; native acceptance unknown",
-"requestId": 1
-},
-"harness": "codex",
-"message": null,
-"session": null,
-"messages": [],
-"completed": false,
-"lifecycle": "protocol.write",
-"usageScope": "native report; scope unknown, may be cumulative; not additive",
-"nativeUsage": null,
-"contextUsage": null
+"usageScope": "native report; scope unknown, may be cumulative; not additive"
 }
 },
 "type": "protocol.write",
@@ -159,26 +159,26 @@
 "delivery": "written to local transport; native acceptance unknown",
 "requestId": null,
 "fleetNormalized": {
+"blocks": [],
+"completed": false,
+"contextUsage": null,
 "error": null,
+"harness": "codex",
+"lifecycle": "protocol.write",
+"message": null,
+"native": {
+"bytes": 25,
+"delivery": "written to local transport; native acceptance unknown",
+"method": "initialized",
+"requestId": null,
+"sha256": "a7a46480650892067559ec67217b69dce68c1eef6b65ec48662dddf6ccef0893",
+"type": "protocol.write"
+},
+"nativeUsage": null,
+"session": null,
 "tools": [],
 "usage": null,
-"native": {
-"type": "protocol.write",
-"bytes": 25,
-"method": "initialized",
-"sha256": "a7a46480650892067559ec67217b69dce68c1eef6b65ec48662dddf6ccef0893",
-"delivery": "written to local transport; native acceptance unknown",
-"requestId": null
-},
-"harness": "codex",
-"message": null,
-"session": null,
-"messages": [],
-"completed": false,
-"lifecycle": "protocol.write",
-"usageScope": "native report; scope unknown, may be cumulative; not additive",
-"nativeUsage": null,
-"contextUsage": null
+"usageScope": "native report; scope unknown, may be cumulative; not additive"
 }
 },
 "type": "protocol.write",
@@ -201,26 +201,26 @@
 "delivery": "written to local transport; native acceptance unknown",
 "requestId": 2,
 "fleetNormalized": {
+"blocks": [],
+"completed": false,
+"contextUsage": null,
 "error": null,
+"harness": "codex",
+"lifecycle": "protocol.write",
+"message": null,
+"native": {
+"bytes": 591,
+"delivery": "written to local transport; native acceptance unknown",
+"method": "thread/start",
+"requestId": 2,
+"sha256": "14ac086988a808443dae005c661f5e93be1fe453031480957192be42a835b469",
+"type": "protocol.write"
+},
+"nativeUsage": null,
+"session": null,
 "tools": [],
 "usage": null,
-"native": {
-"type": "protocol.write",
-"bytes": 591,
-"method": "thread/start",
-"sha256": "14ac086988a808443dae005c661f5e93be1fe453031480957192be42a835b469",
-"delivery": "written to local transport; native acceptance unknown",
-"requestId": 2
-},
-"harness": "codex",
-"message": null,
-"session": null,
-"messages": [],
-"completed": false,
-"lifecycle": "protocol.write",
-"usageScope": "native report; scope unknown, may be cumulative; not additive",
-"nativeUsage": null,
-"contextUsage": null
+"usageScope": "native report; scope unknown, may be cumulative; not additive"
 }
 },
 "type": "protocol.write",
@@ -243,26 +243,26 @@
 "delivery": "written to local transport; native acceptance unknown",
 "requestId": 3,
 "fleetNormalized": {
+"blocks": [],
+"completed": false,
+"contextUsage": null,
 "error": null,
+"harness": "codex",
+"lifecycle": "protocol.write",
+"message": null,
+"native": {
+"bytes": 186,
+"delivery": "written to local transport; native acceptance unknown",
+"method": "turn/start",
+"requestId": 3,
+"sha256": "dc1b0634749ee669c1966189d1569b98c6a9936f49578483081573b7a55c5175",
+"type": "protocol.write"
+},
+"nativeUsage": null,
+"session": null,
 "tools": [],
 "usage": null,
-"native": {
-"type": "protocol.write",
-"bytes": 186,
-"method": "turn/start",
-"sha256": "dc1b0634749ee669c1966189d1569b98c6a9936f49578483081573b7a55c5175",
-"delivery": "written to local transport; native acceptance unknown",
-"requestId": 3
-},
-"harness": "codex",
-"message": null,
-"session": null,
-"messages": [],
-"completed": false,
-"lifecycle": "protocol.write",
-"usageScope": "native report; scope unknown, may be cumulative; not additive",
-"nativeUsage": null,
-"contextUsage": null
+"usageScope": "native report; scope unknown, may be cumulative; not additive"
 }
 },
 "type": "protocol.write",
@@ -352,41 +352,47 @@
 "thread_id": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
 "harnessVersion": "fleet/0.167.0 (Mac OS 27.2.0; arm64) unknown (fleet; 0.1.0)",
 "fleetNormalized": {
+"blocks": [],
+"completed": false,
+"contextUsage": null,
 "error": null,
-"tools": [],
-"usage": null,
+"harness": "codex",
+"lifecycle": "thread.started",
+"message": null,
 "native": {
-"type": "thread.started",
+"harnessVersion": "fleet/0.167.0 (Mac OS 27.2.0; arm64) unknown (fleet; 0.1.0)",
 "native": {
 "id": 2,
 "result": {
+"activePermissionProfile": null,
+"approvalPolicy": "never",
+"approvalsReviewer": "user",
 "cwd": "/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"disabledPluginIds": [],
+"instructionSources": [],
 "model": "gpt-6.1-sol",
-"thread": {
-"id": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
-"cwd": "/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11",
-"name": null,
-"path": "/Users/kirs/Library/Application Support/Fleet/codex/sessions/2026/11/10/rollout-2026-11-10T04-53-35-01a1c24d-68cd-7222-8ec1-9fa04069fe1a.jsonl",
-"extra": null,
-"model": "gpt-6.1-sol",
-"turns": [],
-"source": "vscode",
-"status": {
-"type": "idle"
+"modelProvider": "openai",
+"multiAgentMode": "explicitRequestOnly",
+"reasoningEffort": "low",
+"runtimeWorkspaceRoots": [
+"/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11"
+],
+"sandbox": {
+"excludeSlashTmp": false,
+"excludeTmpdirEnvVar": false,
+"networkAccess": false,
+"type": "workspaceWrite",
+"writableRoots": []
 },
-"gitInfo": null,
-"preview": "",
-"section": null,
+"serviceTier": null,
+"thread": {
+"agentNickname": null,
 "agentRole": null,
-"createdAt": 1794261215,
-"ephemeral": false,
-"projectId": null,
-"recencyAt": 1794261215,
-"sessionId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
-"updatedAt": 1794261215,
+"canAcceptDirectInput": true,
 "cliVersion": "0.167.0",
-"originator": "fleet",
-"historyMode": "paginated",
+"createdAt": 1794261215,
+"cwd": "/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11",
+"daybreakEnabled": null,
 "environments": [
 {
 "cwd": "/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11",
@@ -396,49 +402,43 @@
 ]
 }
 ],
+"ephemeral": false,
+"extra": null,
 "forkedFromId": null,
-"threadSource": null,
-"agentNickname": null,
+"gitInfo": null,
+"historyMode": "paginated",
+"id": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"model": "gpt-6.1-sol",
 "modelProvider": "openai",
+"name": null,
+"originator": "fleet",
 "parentThreadId": null,
-"daybreakEnabled": null,
+"path": "/Users/kirs/Library/Application Support/Fleet/codex/sessions/2026/11/10/rollout-2026-11-10T04-53-35-01a1c24d-68cd-7222-8ec1-9fa04069fe1a.jsonl",
+"preview": "",
+"projectId": null,
 "reasoningEffort": "low",
+"recencyAt": 1794261215,
+"section": null,
 "sectionEnteredAt": null,
-"canAcceptDirectInput": true
+"sessionId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"source": "vscode",
+"status": {
+"type": "idle"
 },
-"sandbox": {
-"type": "workspaceWrite",
-"networkAccess": false,
-"writableRoots": [],
-"excludeSlashTmp": false,
-"excludeTmpdirEnvVar": false
-},
-"serviceTier": null,
-"modelProvider": "openai",
-"approvalPolicy": "never",
-"multiAgentMode": "explicitRequestOnly",
-"reasoningEffort": "low",
-"approvalsReviewer": "user",
-"disabledPluginIds": [],
-"instructionSources": [],
-"runtimeWorkspaceRoots": [
-"/Users/Shared/fleet/owner-mac/sessions/c2c11096-a08e-4b86-88d9-eb6c46785b11"
-],
-"activePermissionProfile": null
+"threadSource": null,
+"turns": [],
+"updatedAt": 1794261215
+}
 }
 },
 "thread_id": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
-"harnessVersion": "fleet/0.167.0 (Mac OS 27.2.0; arm64) unknown (fleet; 0.1.0)"
+"type": "thread.started"
 },
-"harness": "codex",
-"message": null,
-"session": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
-"messages": [],
-"completed": false,
-"lifecycle": "thread.started",
-"usageScope": "native report; scope unknown, may be cumulative; not additive",
 "nativeUsage": null,
-"contextUsage": null
+"session": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"tools": [],
+"usage": null,
+"usageScope": "native report; scope unknown, may be cumulative; not additive"
 }
 },
 "type": "thread.started",
@@ -494,72 +494,72 @@
 },
 "children": [],
 "fleetNormalized": {
+"blocks": [],
+"completed": false,
+"contextUsage": null,
 "error": null,
-"tools": [],
-"usage": null,
-"native": {
-"item": {
-"id": "01a1c24d-6e56-7dd1-9cce-123b72ed2579",
-"type": "userMessage",
+"harness": "codex",
+"lifecycle": "item.completed",
+"message": {
+"clientId": null,
+"completedAtMs": 1794261216857,
 "content": [
 {
 "text": "hi",
-"type": "text",
-"text_elements": []
+"text_elements": [],
+"type": "text"
 }
 ],
-"clientId": null,
+"id": "01a1c24d-6e56-7dd1-9cce-123b72ed2579",
 "startedAtMs": 1794261216857,
-"completedAtMs": 1794261216857
+"type": "userMessage"
 },
-"type": "item.completed",
 "native": {
+"children": [],
+"item": {
+"clientId": null,
+"completedAtMs": 1794261216857,
+"content": [
+{
+"text": "hi",
+"text_elements": [],
+"type": "text"
+}
+],
+"id": "01a1c24d-6e56-7dd1-9cce-123b72ed2579",
+"startedAtMs": 1794261216857,
+"type": "userMessage"
+},
+"native": {
+"emittedAtMs": 1794261216866,
 "method": "item/completed",
 "params": {
+"completedAtMs": 1794261216857,
 "item": {
-"id": "01a1c24d-6e56-7dd1-9cce-123b72ed2579",
-"type": "userMessage",
+"clientId": null,
+"completedAtMs": 1794261216857,
 "content": [
 {
 "text": "hi",
-"type": "text",
-"text_elements": []
+"text_elements": [],
+"type": "text"
 }
 ],
-"clientId": null,
+"id": "01a1c24d-6e56-7dd1-9cce-123b72ed2579",
 "startedAtMs": 1794261216857,
-"completedAtMs": 1794261216857
+"type": "userMessage"
 },
-"turnId": "01a1c24d-692a-7460-83d5-6959c86ac809",
 "threadId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
-"completedAtMs": 1794261216857
-},
-"emittedAtMs": 1794261216866
-},
-"children": []
-},
-"harness": "codex",
-"message": {
-"id": "01a1c24d-6e56-7dd1-9cce-123b72ed2579",
-"type": "userMessage",
-"content": [
-{
-"text": "hi",
-"type": "text",
-"text_elements": []
+"turnId": "01a1c24d-692a-7460-83d5-6959c86ac809"
 }
-],
-"clientId": null,
-"startedAtMs": 1794261216857,
-"completedAtMs": 1794261216857
 },
-"session": null,
-"messages": [],
-"completed": false,
-"lifecycle": "item.completed",
-"usageScope": "native report; scope unknown, may be cumulative; not additive",
+"type": "item.completed"
+},
 "nativeUsage": null,
-"contextUsage": null
+"session": null,
+"tools": [],
+"usage": null,
+"usageScope": "native report; scope unknown, may be cumulative; not additive"
 }
 },
 "type": "item.completed",
@@ -635,68 +635,69 @@
 },
 "children": [],
 "fleetNormalized": {
-"error": null,
-"tools": [],
-"usage": null,
-"native": {
-"item": {
-"id": "msg_0b01c6cd8fabf0d4016af240e2b4b487d0845f1d2e5d1303b1",
-"text": "Hi! What would you like to work on?",
-"type": "agent_message",
-"phase": "final_answer",
-"delivery": null,
-"questions": null,
-"startedAtMs": 1794261218741,
-"completedAtMs": 1794261218791,
-"memoryCitation": null
-},
-"type": "item.completed",
-"native": {
-"method": "item/completed",
-"params": {
-"item": {
-"id": "msg_0b01c6cd8fabf0d4016af240e2b4b487d0845f1d2e5d1303b1",
-"text": "Hi! What would you like to work on?",
-"type": "agentMessage",
-"phase": "final_answer",
-"delivery": null,
-"questions": null,
-"startedAtMs": 1794261218741,
-"completedAtMs": 1794261218791,
-"memoryCitation": null
-},
-"turnId": "01a1c24d-692a-7460-83d5-6959c86ac809",
-"threadId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
-"completedAtMs": 1794261218791
-},
-"emittedAtMs": 1794261218798
-},
-"children": []
-},
-"harness": "codex",
-"message": {
-"id": "msg_0b01c6cd8fabf0d4016af240e2b4b487d0845f1d2e5d1303b1",
-"text": "Hi! What would you like to work on?",
-"type": "agent_message",
-"phase": "final_answer",
-"delivery": null,
-"questions": null,
-"startedAtMs": 1794261218741,
-"completedAtMs": 1794261218791,
-"memoryCitation": null
-},
-"session": null,
-"messages": [
+"blocks": [
 {
-"role": "assistant",
-"text": "Hi! What would you like to work on?"
+"kind": "text",
+"markdown": "Hi! What would you like to work on?",
+"role": "agent"
 }
 ],
 "completed": false,
+"contextUsage": null,
+"error": null,
+"harness": "codex",
 "lifecycle": "item.completed",
-"usageScope": "native report; scope unknown, may be cumulative; not additive",
+"message": {
+"completedAtMs": 1794261218791,
+"delivery": null,
+"id": "msg_0b01c6cd8fabf0d4016af240e2b4b487d0845f1d2e5d1303b1",
+"memoryCitation": null,
+"phase": "final_answer",
+"questions": null,
+"startedAtMs": 1794261218741,
+"text": "Hi! What would you like to work on?",
+"type": "agent_message"
+},
+"native": {
+"children": [],
+"item": {
+"completedAtMs": 1794261218791,
+"delivery": null,
+"id": "msg_0b01c6cd8fabf0d4016af240e2b4b487d0845f1d2e5d1303b1",
+"memoryCitation": null,
+"phase": "final_answer",
+"questions": null,
+"startedAtMs": 1794261218741,
+"text": "Hi! What would you like to work on?",
+"type": "agent_message"
+},
+"native": {
+"emittedAtMs": 1794261218798,
+"method": "item/completed",
+"params": {
+"completedAtMs": 1794261218791,
+"item": {
+"completedAtMs": 1794261218791,
+"delivery": null,
+"id": "msg_0b01c6cd8fabf0d4016af240e2b4b487d0845f1d2e5d1303b1",
+"memoryCitation": null,
+"phase": "final_answer",
+"questions": null,
+"startedAtMs": 1794261218741,
+"text": "Hi! What would you like to work on?",
+"type": "agentMessage"
+},
+"threadId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
+"turnId": "01a1c24d-692a-7460-83d5-6959c86ac809"
+}
+},
+"type": "item.completed"
+},
 "nativeUsage": null,
-"contextUsage": null
+"session": null,
+"tools": [],
+"usage": null,
+"usageScope": "native report; scope unknown, may be cumulative; not additive"
 }
 },
 "type": "item.completed",
@@ -760,92 +761,92 @@
 "emittedAtMs": 1794261218805
 },
 "fleetNormalized": {
+"blocks": [],
+"completed": false,
+"contextUsage": null,
 "error": null,
-"tools": [],
-"usage": {
-"input_tokens": 13167,
-"total_tokens": 13181,
-"output_tokens": 14,
-"cached_input_tokens": 11520,
-"reasoning_output_tokens": 0,
-"cache_write_input_tokens": 0
-},
+"harness": "codex",
+"lifecycle": "usage.observation",
+"message": null,
 "native": {
-"type": "usage.observation",
-"usage": {
-"last": {
-"inputTokens": 13167,
-"totalTokens": 13181,
-"outputTokens": 14,
-"cachedInputTokens": 11520,
-"cacheWriteInputTokens": 0,
-"reasoningOutputTokens": 0
-},
-"total": {
-"inputTokens": 13167,
-"totalTokens": 13181,
-"outputTokens": 14,
-"cachedInputTokens": 11520,
-"cacheWriteInputTokens": 0,
-"reasoningOutputTokens": 0
-},
-"modelContextWindow": 475000
-},
 "native": {
+"emittedAtMs": 1794261218805,
 "method": "thread/tokenUsage/updated",
 "params": {
-"turnId": "01a1c24d-692a-7460-83d5-6959c86ac809",
 "threadId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
 "tokenUsage": {
 "last": {
-"inputTokens": 13167,
-"totalTokens": 13181,
-"outputTokens": 14,
-"cachedInputTokens": 11520,
 "cacheWriteInputTokens": 0,
-"reasoningOutputTokens": 0
+"cachedInputTokens": 11520,
+"inputTokens": 13167,
+"outputTokens": 14,
+"reasoningOutputTokens": 0,
+"totalTokens": 13181
 },
+"modelContextWindow": 475000,
 "total": {
-"inputTokens": 13167,
-"totalTokens": 13181,
-"outputTokens": 14,
-"cachedInputTokens": 11520,
 "cacheWriteInputTokens": 0,
-"reasoningOutputTokens": 0
-},
-"modelContextWindow": 475000
+"cachedInputTokens": 11520,
+"inputTokens": 13167,
+"outputTokens": 14,
+"reasoningOutputTokens": 0,
+"totalTokens": 13181
 }
 },
-"emittedAtMs": 1794261218805
+"turnId": "01a1c24d-692a-7460-83d5-6959c86ac809"
 }
 },
-"harness": "codex",
-"message": null,
-"session": null,
-"messages": [],
-"completed": false,
-"lifecycle": "usage.observation",
-"usageScope": "native thread cumulative total; not additive",
+"type": "usage.observation",
+"usage": {
+"last": {
+"cacheWriteInputTokens": 0,
+"cachedInputTokens": 11520,
+"inputTokens": 13167,
+"outputTokens": 14,
+"reasoningOutputTokens": 0,
+"totalTokens": 13181
+},
+"modelContextWindow": 475000,
+"total": {
+"cacheWriteInputTokens": 0,
+"cachedInputTokens": 11520,
+"inputTokens": 13167,
+"outputTokens": 14,
+"reasoningOutputTokens": 0,
+"totalTokens": 13181
+}
+}
+},
 "nativeUsage": {
 "last": {
-"inputTokens": 13167,
-"totalTokens": 13181,
-"outputTokens": 14,
-"cachedInputTokens": 11520,
 "cacheWriteInputTokens": 0,
-"reasoningOutputTokens": 0
+"cachedInputTokens": 11520,
+"inputTokens": 13167,
+"outputTokens": 14,
+"reasoningOutputTokens": 0,
+"totalTokens": 13181
 },
+"modelContextWindow": 475000,
 "total": {
-"inputTokens": 13167,
-"totalTokens": 13181,
-"outputTokens": 14,
-"cachedInputTokens": 11520,
 "cacheWriteInputTokens": 0,
-"reasoningOutputTokens": 0
+"cachedInputTokens": 11520,
+"inputTokens": 13167,
+"outputTokens": 14,
+"reasoningOutputTokens": 0,
+"totalTokens": 13181
+}
 },
-"modelContextWindow": 475000
+"session": null,
+"tools": [],
+"usage": {
+"cache_write_input_tokens": 0,
+"cached_input_tokens": 11520,
+"input_tokens": 13167,
+"output_tokens": 14,
+"reasoning_output_tokens": 0,
+"total_tokens": 13181
 },
-"contextUsage": null
+"usageScope": "native thread cumulative total; not additive"
 }
 },
 "type": "usage.observation",
@@ -894,52 +895,52 @@
 "emittedAtMs": 1794261218819
 },
 "fleetNormalized": {
+"blocks": [],
+"completed": true,
+"contextUsage": null,
 "error": null,
-"tools": [],
-"usage": null,
+"harness": "codex",
+"lifecycle": "turn.completed",
+"message": null,
 "native": {
-"type": "turn.completed",
 "error": null,
 "native": {
+"emittedAtMs": 1794261218819,
 "method": "turn/completed",
 "params": {
+"threadId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a",
 "turn": {
-"id": "01a1c24d-692a-7460-83d5-6959c86ac809",
+"completedAt": 1794261218,
+"durationMs": 3272,
 "error": null,
+"id": "01a1c24d-692a-7460-83d5-6959c86ac809",
 "items": [
 {
-"id": "msg_0b01c6cd8fabf0d4016af240e2b4b487d0845f1d2e5d1303b1",
-"text": "Hi! What would you like to work on?",
-"type": "agentMessage",
-"phase": "final_answer",
+"completedAtMs": 1794261218791,
 "delivery": null,
+"id": "msg_0b01c6cd8fabf0d4016af240e2b4b487d0845f1d2e5d1303b1",
+"memoryCitation": null,
+"phase": "final_answer",
 "questions": null,
 "startedAtMs": 1794261218741,
-"completedAtMs": 1794261218791,
-"memoryCitation": null
+"text": "Hi! What would you like to work on?",
+"type": "agentMessage"
 }
 ],
-"status": "completed",
 "itemsView": "summary",
-"startedAt": 1794261215,
-"durationMs": 3272,
 "rootTurnId": "01a1c24d-692a-7460-83d5-6959c86ac809",
-"completedAt": 1794261218
-},
-"threadId": "01a1c24d-68cd-7222-8ec1-9fa04069fe1a"
-},
-"emittedAtMs": 1794261218819
+"startedAt": 1794261215,
+"status": "completed"
+}
 }
 },
-"harness": "codex",
-"message": null,
-"session": null,
-"messages": [],
-"completed": true,
-"lifecycle": "turn.completed",
-"usageScope": "native report; scope unknown, may be cumulative; not additive",
+"type": "turn.completed"
+},
 "nativeUsage": null,
-"contextUsage": null
+"session": null,
+"tools": [],
+"usage": null,
+"usageScope": "native report; scope unknown, may be cumulative; not additive"
 }
 },
 "type": "turn.completed",

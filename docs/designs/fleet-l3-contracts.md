@@ -52,3 +52,7 @@ it is next changed. Delegation and account receipts (written by the Python MCP s
 `outbox::class(status, host_token)` is the one table: a redirect is an edge condition; 401 is an edge condition only
 for the coordinator (the host token), and a rejection for a store; 429 and 5xx are retried; other 4xx are rejected.
 `outbox::classify` and `upload::store_answer` both use it.
+
+## Note after merging main (Conversations Stage 2)
+
+The app no longer reads raw events (`app/src/transcript.ts` was deleted; the Conversations screen reads thread blocks, another route, out of this stage), and `fleetNormalized.messages` was removed from the executor, so `NormalizedMessage` left the schema. Event payloads are now read by the coordinator (ingest) and written by the executor.

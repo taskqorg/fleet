@@ -5,7 +5,7 @@ import { useState } from 'preact/hooks';
 import { Router, Route, Switch, useLocation } from 'wouter-preact';
 import { useHashLocation } from 'wouter-preact/use-hash-location';
 import {
-  AppShell, TaskListView, StatStrip, DecisionBlock, ProblemRow, FillBar, StateBadge, Num, Totals, AgeChip, ExecTree, Transcript,
+  AppShell, TaskListView, StatStrip, DecisionBlock, ProblemRow, FillBar, StateBadge, Num, Totals, AgeChip, ExecTree, Thread,
   ResultViewer, SettingField, SplitButton, Button, Empty, VirtualList, Icon, Stale, StateCounters, FilterBar,
   ListDetail, NeedsYou, OpsSummary, ListFrame, OutcomeBlock, DetailSection, KvRow, HarnessCounts, type TaskRow,
 } from '../src/index.ts';
@@ -122,7 +122,7 @@ function TaskDetail({ t, onClose }: { t: TaskRow; onClose: () => void }) {
     {t.state === 'failed' && <ProblemRow severity="failure" title="render-07 failed" facts="exit 1 · dependants not started" actions={[{ label: 'Retry step', primary: true }, { label: 'Open log' }]} />}
     <div class="tabs detail-tabs" role="tablist">{['Executions', 'Transcript', 'Results'].map(x => <button type="button" role="tab" key={x} aria-selected={tab === x} onClick={() => setTab(x)}>{x}</button>)}</div>
     {tab === 'Executions' && <ExecTree nodes={TREE} now={NOW} label="Executions" />}
-    {tab === 'Transcript' && <div class="pane"><Transcript entries={transcript()} label="Transcript" now={NOW} /></div>}
+    {tab === 'Transcript' && <div class="pane"><Thread blocks={transcript()} label="Transcript" now={NOW} /></div>}
     {tab === 'Results' && <ResultViewer name="index.html" type="diff" size={4200} source="Worker · codex" tab={rtab} onTab={setRtab} tabs={['Diff', 'Preview', 'Checks 3']}
       copies={[{ where: 'windows', state: 'stored' }, { where: 'mac', state: 'pending' }]}>
       {rtab === 'Diff' ? <pre class="diff"><span class="del">- &lt;h1&gt;Welcome&lt;/h1&gt;</span><span class="add">+ &lt;h1&gt;Good things work together.&lt;/h1&gt;</span></pre> : <Empty text={`${rtab} viewer`} />}
