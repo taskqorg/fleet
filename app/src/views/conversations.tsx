@@ -44,7 +44,7 @@ export function Conversations({ id }: { id?: string }) {
           : !rows.length ? <Empty text="No conversations yet." action={<Button label="New conversation" onClick={create} />} />
           : <VirtualList items={rows} getKey={r => r.id} rowHeight={ROW} follow="top" label="Conversations" onEnd={list.more}
             columns="1.25rem minmax(0,1fr) 2rem 1.25rem" rowClass={r => r.id === id ? 'sel' : ''}
-                        render={r => <>
+            render={r => <>
               <span class="lead"><StateBadge family="session" state={r.state} compact /></span>
               <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.title ?? 'New conversation'}</a><span class="id">{r.id.slice(0, 8)}</span>{isHarness(r.harness) && <HarnessMark h={r.harness} />}</span>
               <span class="r">{r.openQuestions ? <span class="chip-age t-attention alert" aria-label={`${r.openQuestions} open questions`}>{r.openQuestions}</span> : ''}</span>
