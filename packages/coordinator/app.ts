@@ -86,7 +86,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  app.addHook('preHandler',async(req:any)=>{const h=req.fleetHost;if(!h||!req.body||typeof req.body!=='object')return;
   if(req.body.hostId!==undefined&&req.body.hostId!==h.id)fail(403,'Host rejected');req.body.hostId=h.id});
  // Visibility (§2): a person other than the owner works in the scope of their grants (row-level security per transaction) plus
- // the rows they hold; architect views need the architect role, except on a row the person holds.
+ // the rows they hold; architect views need the architect role (the held-row exception is not built).
  store.setScope(()=>{const p=requestPerson.getStore();if(!p||p.owner)return null;const ids=p.grants.filter(g=>g.kind==='project').map(g=>g.id);
   return {projectIds:(p.roles.includes('architect')?',':'')+ids.join(','),person:p.email}});
  const ARCHITECT_OPS=/^(account_|lab_|connection|recovery|reconcil|transport_|artifact_rule|profiles_list)/,ARCHITECT_ROUTES=/^\/api\/(lab|accounts|recovery|reconciliation|recovery-tools|profiles)(\/|$)/;

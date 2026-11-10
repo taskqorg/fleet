@@ -1,6 +1,6 @@
 # Project setup and access
 
-2026-11-09. Research/design only: no native calls, logins, credential reads, code changes or deploys. Basis: [fleet.md](../fleet.md), [architecture breadth plan](architecture-breadth-plan.md), [resources and auth](resources-and-auth-model.md), [multi-account same env](multi-account-same-env.md), [layered isolation](layered-isolation-model.md), [PDS Codex environment](pds-codex-environment.md), [agent tools inventory](agent-tools-inventory.md), `packages/coordinator/{projects,delivery,agent-tools,accounts}.ts`, `delivery_worker.py`, `crates/executor/src/main.rs` (`git()`, `FLEET_PROJECT_ROOTS`, `worktree`), Orca `src/main/github/*` and repository GitHub account settings, T3 Code `apps/server/src/{vcs/GitVcsDriverCore,secrets/*}.ts`.
+2026-11-09. Research/design only: no native calls, logins, credential reads, code changes or deploys. Basis: [fleet.md](../fleet.md), [architecture breadth plan](architecture-breadth-plan.md), [resources and auth](designs/fleet-people-access.md#4-subscriptions), [multi-account same env](designs/fleet-people-access.md#4-subscriptions), [layered isolation](designs/fleet-people-access.md#isolation-layers), [PDS Codex environment](pds-codex-environment.md), [agent tools inventory](agent-tools-inventory.md), `packages/coordinator/{projects,delivery,agent-tools,accounts}.ts`, `delivery_worker.py`, `crates/executor/src/main.rs` (`git()`, `FLEET_PROJECT_ROOTS`, `worktree`), Orca `src/main/github/*` and repository GitHub account settings, T3 Code `apps/server/src/{vcs/GitVcsDriverCore,secrets/*}.ts`.
 
 Owner question: the basic procedure for setting up a project so an agent can really work. No new limits or gates are proposed.
 
@@ -19,7 +19,7 @@ Takeaway: both references keep credentials **on the environment** in the tool's 
 
 ## Model per layer
 
-A project adds no new isolation mechanism. It references resources that live on the existing layers ([layered isolation](layered-isolation-model.md)).
+A project adds no new isolation mechanism. It references resources that live on the existing layers ([layered isolation](designs/fleet-people-access.md#isolation-layers)).
 
 | Layer | Project resource | Where the credential lives | Fleet records |
 |---|---|---|---|

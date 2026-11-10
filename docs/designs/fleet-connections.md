@@ -3,7 +3,6 @@
 *   **Author:** Alex Kirs
 *   **Status:** Proposed
 *   **Date:** 2026-11-10
-*   **Brief:** [people-access-brief.md](people-access-brief.md) "Connections"; its "Owner Decisions, Round 2" is binding.
 *   **Companion:** [fleet-people-access.md](fleet-people-access.md) (people, subscriptions, dispatch, budgets). This design answers data foundation Q9.
 
 --------------------------------------------------------------------------------
