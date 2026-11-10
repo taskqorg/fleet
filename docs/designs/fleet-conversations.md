@@ -542,11 +542,11 @@ Shared conventions for every item:
 #### 22. `app/src/selection.ts` (Create) and `tests/ui/selection.test.ts` (Create)
 
 *   **Type / Scope**: app state and test.
-*   **Proposed Changes**: Selection `{ start, end }` over `(key, offset)`, highlight ranges for rendered rows, Shift+click, Cmd+A; Cmd+C and whole-thread copy as in "Copy". Tests for range order, offsets in text blocks, and whole non-text blocks.
+*   **Proposed Changes**: Selection `{ start, end }` over `(key, offset)`, highlight for rendered rows, Shift+click, Cmd+A; Cmd+C and whole-thread copy (a toolbar button) as in "Copy". As built, cross-message selection takes whole rows (a plain click marks the start, Shift+click selects up to a row); native browser selection stays for part of one row. The key handler reads the selection through a ref, because effects run after paint. Tests for range order, offsets in text blocks, and whole non-text blocks.
 
 #### 23. `app/src/url.ts` and `app/src/views/conversations.tsx` (Modify)
 
-*   **Proposed Changes**: Thread URLs `/conversations/task/<taskId>` and `/conversations/session/<sessionId>`. Opening a session URL whose session has an execution with a `task_id` replaces the URL with that task's URL (first task, per the membership rule). Boundary rows between sessions and executions.
+*   **Proposed Changes**: The URL stays `/conversations/<sessionId>`; `session_get` returns `threadKey`, the thread of the session's first task (D2) or the session itself, and the detail shows that thread, so any session of a task opens the whole task. Pages return `sessionIds` so the live feed follows every session of a task thread. (Changed in Stage 3: no second URL form or redirect is needed.) Boundary rows between sessions and executions.
 
 ### Stage 4: Results
 

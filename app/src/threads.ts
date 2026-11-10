@@ -7,14 +7,14 @@ import { subscribe, type Change } from './feed.ts';
 
 export type Block = { kind: 'text' | 'tool' | 'reasoning' | 'question' | 'result' | 'boundary'; key: string; executionId?: string; [k: string]: any };
 export type ThreadKey = { task: string } | { session: string };
-export type Page = { entries: Block[]; first: string | null; last: string | null; hasBefore: boolean; hasAfter: boolean; total?: number; feedCursor: number };
+export type Page = { key?: ThreadKey; entries: Block[]; first: string | null; last: string | null; hasBefore: boolean; hasAfter: boolean; total?: number; feedCursor: number; sessionIds?: string[] };
 /** fresh: entries fed past `last` while newer history is not loaded (after a jump); the pill counts them. */
-export type Win = { blocks: Block[]; first: string | null; last: string | null; hasBefore: boolean; hasAfter: boolean; total: number; fresh: number; freshKeys?: string[] };
+export type Win = { blocks: Block[]; first: string | null; last: string | null; hasBefore: boolean; hasAfter: boolean; total: number; fresh: number; freshKeys?: string[]; sessionIds?: string[]; key?: ThreadKey };
 
 const parts = (k: string) => k.split(':').map(Number);
 export const cmpKey = (a: string, b: string) => { const [x, i] = parts(a), [y, j] = parts(b); return x - y || i - j; };
 
-export const fromPage = (p: Page, total = 0): Win => ({ blocks: p.entries, first: p.first, last: p.last, hasBefore: p.hasBefore, hasAfter: p.hasAfter, total: p.total ?? total, fresh: 0 });
+export const fromPage = (p: Page, total = 0): Win => ({ key: p.key, sessionIds: p.sessionIds, blocks: p.entries, first: p.first, last: p.last, hasBefore: p.hasBefore, hasAfter: p.hasAfter, total: p.total ?? total, fresh: 0 });
 /** Older page above the window. */
 export function prepend(w: Win, p: Page): Win {
   const add = w.first ? p.entries.filter(b => cmpKey(b.key, w.first!) < 0) : p.entries;
@@ -51,7 +51,7 @@ export function fed(w: Win, entries: Block[], removed: string[] = []): Win {
   return { ...w, blocks, first, last, total, fresh, freshKeys };
 }
 /** Change-feed rows that can touch a session thread; thread_blocks checks membership on the server. */
-export const touches = (c: Change, sessionIds: Set<string>) => ['event', 'execution', 'question', 'artifact'].includes(c.kind) && (c.kind === 'question' || (!!c.sessionId && sessionIds.has(c.sessionId)));
+export const touches = (c: Change, sessionIds: Set<string>, taskId?: string) => ['event', 'execution', 'question', 'artifact'].includes(c.kind) && (c.kind === 'question' || (!!taskId && c.taskId === taskId) || (!!c.sessionId && sessionIds.has(c.sessionId)));
 
 const PAGE = 100;
 /** One thread's window: newest on open, older and newer pages, jump around a key, and live blocks from the feed. */
@@ -61,12 +61,16 @@ export function useThread(key: ThreadKey | null) {
   const ref = useRef<Win | null>(null); ref.current = win;
   const busy = useRef(false), gen = useRef(0), again = useRef<'before' | 'after' | null>(null);
   const id = key ? JSON.stringify(key) : null;
-  const sessions = key && 'session' in key ? new Set([key.session]) : new Set<string>();
+  // The sessions of the thread (a task thread spans several): listed with every page, and joined live when an execution of the
+  // task starts in another session. A ref, because the feed subscription outlives the render that made it.
+  const follow = useRef({ sessions: new Set<string>(), task: undefined as string | undefined });
   const apply = (f: (w: Win) => Win) => setWin(w => w && f(w));
   const fetchBlocks = async (cs: Change[], g: number) => {
-    const rows = cs.filter(c => touches(c, sessions)).map(c => ({ kind: c.kind, id: c.id }));
+    const f = follow.current;
+    for (const c of cs) if (f.task && c.kind === 'execution' && c.taskId === f.task && c.sessionId) f.sessions.add(c.sessionId);
+    const rows = cs.filter(c => touches(c, f.sessions, f.task)).map(c => ({ kind: c.kind, id: c.id }));
     if (!rows.length || !key) return;
-    const r = await op<{ entries: Block[]; removed?: string[] }>('thread_blocks', { key, rows });
+    const r = await op<{ entries: Block[]; removed?: string[] }>('thread_blocks', { key: ref.current?.key ?? key, rows });
     if (g === gen.current) apply(w => fed(w, r.entries, r.removed));
   };
   // Changes committed after the page's snapshot: read from its feed cursor, so no row is skipped.
@@ -80,12 +84,13 @@ export function useThread(key: ThreadKey | null) {
   const load = async (args: object, place: (p: Page) => void) => {
     if (!key) return;
     const g = gen.current;
-    try { const p = await op<Page>('thread_entries', { key, limit: PAGE, ...args }); if (g !== gen.current) return; place(p); setError(null); await catchUp(p.feedCursor, g); }
+    try { const p = await op<Page>('thread_entries', { key: ref.current?.key ?? key, resolve: true, limit: PAGE, ...args }); if (g !== gen.current) return;
+      if (p.key) follow.current.task = 'task' in p.key ? p.key.task : undefined; for (const s of p.sessionIds ?? []) follow.current.sessions.add(s); place(p); setError(null); await catchUp(p.feedCursor, g); }
     catch (e: any) { if (g === gen.current) setError(e.message); }
   };
   const newest = () => { gen.current++; return load({}, p => setWin(fromPage(p))); };
   useEffect(() => {
-    setWin(null); if (!key) return;
+    setWin(null); ref.current = null; follow.current = { sessions: new Set(key && 'session' in key ? [key.session] : []), task: key && 'task' in key ? key.task : undefined }; if (!key) return;
     newest();
     return subscribe({ resync: newest, changes: cs => { if (ref.current) fetchBlocks(cs, gen.current).catch(() => {}); } });
   }, [id]);
