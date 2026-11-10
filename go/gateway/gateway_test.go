@@ -392,3 +392,19 @@ func TestListenRefusesNonLoopback(t *testing.T) {
 		t.Fatal("bound a non-loopback address")
 	}
 }
+
+// Requirement: a provider call is sent at most as the tool's replay rule allows (fleet-connections.md §2).
+// Risk: Go's client follows a 307/308 with the same method and body, so a redirected POST is charged a second time.
+func TestProviderRedirectIsNeverFollowed(t *testing.T) {
+	second := newProvider(t, func(string) int { return 200 })
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, second.url+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(first.Close)
+	gw := newFixture(t, first.URL, "invented-key-a")
+	status, _, body := gw.call("submit", testToken)
+	expect(t, []any{status, body["error"]}, []any{502, "provider-redirect"}, "redirected submit")
+	expect(t, len(second.calls()), 0, "redirect target calls")
+	lines, _ := gw.spool()
+	expect(t, lines[0]["outcome"], "unknown", "outcome")
+}

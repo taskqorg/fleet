@@ -332,7 +332,8 @@ func newGateway(c *config) (*gateway, error) {
 		return nil, fmt.Errorf("state directory: %w", err)
 	}
 	g := &gateway{config: c, disabled: map[string]disabledKey{}, current: map[string]int{}, started: time.Now(),
-		client: &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, IdleConnTimeout: 90 * time.Second, MaxIdleConnsPerHost: 64}}}
+		// Redirects are never followed: a 307/308 resends the method and body, which could charge a call twice.
+		client: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, IdleConnTimeout: 90 * time.Second, MaxIdleConnsPerHost: 64}}}
 	if text, err := os.ReadFile(filepath.Join(c.StateDir, "disabled-keys")); err == nil {
 		for _, line := range strings.Split(string(text), "\n") {
 			var id string
@@ -542,6 +543,12 @@ func (g *gateway) call(name string, c *connection, p *provider, t *tool, path st
 			continue
 		}
 		status := response.StatusCode
+		if status >= 300 && status <= 399 {
+			// Not followed; whether the provider acted before redirecting is not known.
+			a := refusal(502, "unknown", "provider-redirect", fmt.Sprintf("the provider answered HTTP %d; the redirect is not followed", status))
+			a.key = id
+			return a
+		}
 		if status == 401 || status == 402 {
 			a := refusal(502, "error", fmt.Sprintf("key-disabled-%d", status), fmt.Sprintf("the provider refused key %s with HTTP %d; the key is disabled", id, status))
 			a.key, a.disabled = id, status
