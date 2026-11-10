@@ -15,6 +15,7 @@ test('retained artifact differences survive restart and enforce session boundary
  await artifact(first.id,'index.html','old');await artifact(first.id,'old.txt','removed');
  await call('/api/hosts/receipts',{hostId:'mac',commandId:command.id,executionId:first.id,status:'completed'},true);
  const second=(await call(`/api/sessions/${session}/messages`,{requestId:'2',text:'second'})).json();
+ await call('/api/hosts/poll',{hostId:'mac'},true);
  await artifact(second.id,'index.html','new');await artifact(second.id,'new.txt','added');
  await app.close();app=createApp(config);
  const url=`/api/executions/${second.id}/differences?previous=${first.id}`;

@@ -50,6 +50,9 @@ test('Alina sees only desiign and her own host; architect operations 403; the ow
   await json('account_update',{accountId:mine.id,intake:'paused'},ALINA);
   assert.deepEqual((await json('account_list',{},ALINA)).accounts.map((a:any)=>[a.name,a.history.map((h:any)=>h.field)]),[['alina-codex',['intake']]]);
   assert.equal((await json('account_list')).accounts.length,1);
+  // The owner overrides her setting: she is told, with a question only she (and the owner) can read.
+  await json('account_update',{accountId:mine.id,intake:'all'});
+  assert.ok((await json('questions_list',{},ALINA)).questions.some((q:any)=>/The owner changed intake of your subscription alina-codex/.test(q.text)));
   for(const name of ['account_hosts','lab_experiments_list'])assert.equal((await op(name,{},ALINA)).statusCode,403,name);
   assert.equal((await app.inject({method:'GET',url:'/api/accounts',headers:{authorization:'Bearer browser','x-fleet-person':ALINA}})).statusCode,403);
  }finally{await app.close();await s.close()}

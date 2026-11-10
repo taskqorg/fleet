@@ -20,16 +20,19 @@ test('Alina-directed work never runs on Simon\'s subscription unless Simon takes
   const session=async(account:string)=>{const s=(await call('/api/sessions',{},ALINA)).json();const store=(app as any).store;
    await store.tx(async()=>{const d=await store.get(s.sessionId,'session');d.projectId='hello-world';await store.put('session',d)});
    await ok('/api/sessions/'+s.sessionId+'/profile',{profileId:'baseline',account},ALINA);return s.sessionId};
-  const send=(sid:string,requestId:string)=>call('/api/sessions/'+sid+'/messages',{requestId,text:'x'},ALINA);
-  const own=(await send(await session('alina-codex'),'one'));assert.equal(own.statusCode,200,own.body);assert.equal(own.json().directedBy,ALINA);
-  const foreign=await send(await session('simon-codex'),'two');assert.equal(foreign.statusCode,409);assert.match(foreign.body,/held by simon@example.test/);
-  // Without a subscription, the host's own login (the owner's on this host) never runs Alina's work.
-  const bare=(await call('/api/sessions',{},ALINA)).json();assert.equal((await send(bare.sessionId,'bare')).statusCode,409);
+  const send=async(sid:string,requestId:string)=>{const r=await call('/api/sessions/'+sid+'/messages',{requestId,text:'x'},ALINA);assert.equal(r.statusCode,200,r.body);return r.json().id};
+  const store=(app as any).store,poll=()=>host('/api/hosts/poll',{hostId:'mac',platform:'darwin'}),exec=(id:string)=>store.get(id,'execution');
+  await poll();
+  const own=await send(await session('alina-codex'),'one');await poll();assert.deepEqual([(await exec(own)).hostId,(await exec(own)).directedBy],['mac',ALINA]);
+  // Simon's subscription does not run Alina's work: it waits with the reason.
+  const foreign=await send(await session('simon-codex'),'two');await poll();const f=await exec(foreign);assert.equal(f.hostId,null);assert.match(f.waitReason,/held by simon@example.test/);
+  // Without a named subscription, dispatch ranks Alina's own; the owner's host login never runs her work.
+  const bare=(await call('/api/sessions',{},ALINA)).json().sessionId;const b=await send(bare,'bare');await poll();assert.equal((await exec(b)).effectiveAccount.accountName,'alina-codex');
   // Only the holder (or the owner) changes a subscription; the change is audited.
   assert.equal((await call('/api/ops/account_update',{accountId:simonSub.id,take:{projects:['hello-world']}},ALINA)).statusCode,403);
   await ok('/api/ops/account_update',{accountId:simonSub.id,take:{projects:['hello-world']}},SIMON);
-  const taken=await send(await session('simon-codex'),'three');assert.equal(taken.statusCode,200,taken.body);
-  assert.deepEqual([taken.json().directedBy,taken.json().takenFrom],[SIMON,ALINA]);
+  await poll();const t2=await exec(foreign);assert.deepEqual([t2.hostId,t2.directedBy,t2.takenFrom],['mac',SIMON,ALINA]);
+  const rd=(await ok('/api/ops/route_decisions',{executionId:foreign})).decisions;assert.deepEqual(rd.map((x:any)=>!!x.winner),[false,true]);
   const history=(await ok('/api/ops/account_list',{})).accounts.find((a:any)=>a.id===simonSub.id).history;
   assert.deepEqual(history.map((h:any)=>[h.field,h.actor]),[['take',SIMON]]);
   // Task take: the owner takes Alina's task; requested_by never changes.
