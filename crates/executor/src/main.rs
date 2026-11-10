@@ -73,7 +73,12 @@ struct Executor {
     declared: std::cell::RefCell<Vec<String>>,
     store_report: std::cell::RefCell<(Option<std::time::Instant>, Value)>,
 }
+/// Host platform for the coordinator. A WSL host whose Claude placement is `windows-wsl` counts as Windows (`win32`), the
+/// rule the coordinator's Claude gates (accounts.ts) and delivery_worker.py apply; any other Linux host stays `linux`.
 fn platform() -> &'static str {
+    if harness::claude_placement_here() == Ok("windows-wsl") {
+        return "win32";
+    }
     match env::consts::OS {
         "macos" => "darwin",
         "windows" => "win32",
@@ -645,6 +650,10 @@ impl Executor {
                 None => return refuse("timeout_ms must be a positive integer"),
             },
         };
+        let (output, input) = (dir.join("output"), dir.join("input"));
+        fs::create_dir_all(&output)?;
+        fs::create_dir_all(&input)?;
+        let (stdout, stderr) = (fs::File::create(output.join("script.stdout"))?, fs::File::create(output.join("script.stderr"))?);
         let (work, trial) = match (worktree::repo_path(p, &self.host), p["commit"].as_str()) {
             (Some(repo), Some(commit)) => match worktree::trial(&dir, &repo, commit, &worktree::project_roots(), &[&self.root, &self.sessions]) {
                 Ok((w, top)) => (w.clone(), Some((top, w))),
@@ -653,22 +662,23 @@ impl Executor {
             (None, None) => (dir.clone(), None),
             _ => return refuse("script needs both a repository and a commit, or neither"),
         };
-        let (output, input) = (dir.join("output"), dir.join("input"));
-        fs::create_dir_all(&output)?;
-        fs::create_dir_all(&input)?;
+        let drop_trial = || if let Some((top, w)) = &trial { worktree::remove_trial(top, w); };
         let mut cmd = worktree::clean(Command::new("sh"));
         cmd.args(["-c", command])
             .current_dir(&work)
             .process_group(0)
             .stdin(Stdio::null())
-            .stdout(fs::File::create(output.join("script.stdout"))?)
-            .stderr(fs::File::create(output.join("script.stderr"))?)
+            .stdout(stdout)
+            .stderr(stderr)
             .env("FLEET_INPUT_DIR", &input)
             .env("FLEET_OUTPUT_DIR", &output)
             .env("FLEET_SESSION_ID", session);
         let mut child = match cmd.spawn() {
             Ok(child) => child,
-            Err(e) => return refuse(&format!("script spawn failed: {e}")),
+            Err(e) => {
+                drop_trial();
+                return refuse(&format!("script spawn failed: {e}"));
+            }
         };
         let pid = child.id();
         let identity = match native::identity(pid) {
@@ -676,6 +686,7 @@ impl Executor {
             Err(_) => {
                 unsafe { libc::killpg(pid as i32, libc::SIGKILL) };
                 let _ = child.wait();
+                drop_trial();
                 return self.finish(c, "unknown", None);
             }
         };
@@ -820,6 +831,9 @@ impl Executor {
                     let mut declared = vec![];
                     if output.is_dir() {
                         if let Err(_) = self.artifacts(&output, &output, &execution, &mut declared) {
+                            if let Some((top, w)) = &l.trial {
+                                worktree::remove_trial(top, w);
+                            }
                             return self
                                 .finish(&l.command, "failed", l.native.as_deref())
                                 .map(|_| true);

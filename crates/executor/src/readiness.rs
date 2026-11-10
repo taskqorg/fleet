@@ -53,8 +53,8 @@ pub fn run(project: &Value, host: &str, registry: Option<&Path>) -> Value {
         }
     }
     let harnesses: Vec<&Value> = project["roles"].as_object().into_iter().flat_map(|m| m.values()).collect();
+    let accounts = registry.and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice::<Value>(&b).ok());
     if !harnesses.is_empty() {
-        let accounts = registry.and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice::<Value>(&b).ok());
         match accounts.as_ref().and_then(Value::as_object) {
             None => checks.push(check("accounts", host, Some("registry-unavailable".into()))),
             Some(m) => for (name, a) in m.iter().filter(|(_, a)| harnesses.contains(&&a["harness"])) {
@@ -64,20 +64,22 @@ pub fn run(project: &Value, host: &str, registry: Option<&Path>) -> Value {
         }
     }
     if harnesses.iter().any(|h| *h == "claude") {
-        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-        checks.extend(claude_checks(host, crate::harness::claude_placement_here(), home.as_deref()));
+        let homes: Vec<&str> = accounts.as_ref().and_then(Value::as_object).into_iter().flat_map(|m| m.values()).filter(|a| a["harness"] == "claude").filter_map(|a| a["nativeHome"].as_str()).collect();
+        checks.extend(claude_checks(host, crate::harness::claude_placement_here(), &homes));
     }
     let ok = checks.iter().all(|c| c["status"] == "ok");
     json!({"hostId":host,"ok":ok,"checks":checks})
 }
 
-/// Claude placement, and on WSL the subscription login: the file Claude writes under CLAUDE_CONFIG_DIR when that is
-/// `<fleet config dir>/claude` (`~/.config/fleet/claude/.credentials.json`, docs/configuration.md). Only presence is checked.
-fn claude_checks(host: &str, placement: Result<&str, &str>, home: Option<&Path>) -> Vec<Value> {
+/// Claude placement, and on WSL the subscription login of each Claude account: `.credentials.json` in its nativeHome (Claude's
+/// CLAUDE_CONFIG_DIR; `~/.config/fleet/claude` by convention, docs/configuration.md). Only presence is checked.
+fn claude_checks(host: &str, placement: Result<&str, &str>, native_homes: &[&str]) -> Vec<Value> {
     let mut out = vec![check("claude-placement", host, placement.err().map(String::from))];
     if placement == Ok("windows-wsl") {
-        let login = home.map(|h| h.join(".config/fleet/claude/.credentials.json"));
-        out.push(check("claude-login", host, (!login.is_some_and(|p| p.is_file())).then(|| "claude-login-absent".into())));
+        if native_homes.is_empty() { out.push(check("claude-login", host, Some("claude-account-absent".into()))); }
+        for h in native_homes {
+            out.push(check("claude-login", h, (!Path::new(h).join(".credentials.json").is_file()).then(|| "claude-login-absent".into())));
+        }
     }
     out
 }
@@ -88,12 +90,14 @@ mod tests {
     #[test]
     fn claude_placement_and_login() {
         let home = std::env::temp_dir().join(format!("fleet-claude-login-{}", std::process::id()));
-        std::fs::create_dir_all(home.join(".config/fleet/claude")).unwrap();
-        assert_eq!(claude_checks("h", Ok("mac"), Some(&home)).len(), 1);
-        assert_eq!(claude_checks("h", Err("claude-placement-unset"), Some(&home))[0]["reason"], "claude-placement-unset");
-        assert_eq!(claude_checks("h", Ok("windows-wsl"), Some(&home))[1]["reason"], "claude-login-absent");
-        std::fs::write(home.join(".config/fleet/claude/.credentials.json"), "{}").unwrap();
-        assert!(claude_checks("h", Ok("windows-wsl"), Some(&home)).iter().all(|c| c["status"] == "ok"));
+        std::fs::create_dir_all(&home).unwrap();
+        let h = [home.to_str().unwrap()];
+        assert_eq!(claude_checks("h", Ok("mac"), &h).len(), 1);
+        assert_eq!(claude_checks("h", Err("claude-placement-unset"), &h)[0]["reason"], "claude-placement-unset");
+        assert_eq!(claude_checks("h", Ok("windows-wsl"), &[])[1]["reason"], "claude-account-absent");
+        assert_eq!(claude_checks("h", Ok("windows-wsl"), &h)[1]["reason"], "claude-login-absent");
+        std::fs::write(home.join(".credentials.json"), "{}").unwrap();
+        assert!(claude_checks("h", Ok("windows-wsl"), &h).iter().all(|c| c["status"] == "ok"));
     }
     #[test]
     fn ls_remote_reasons() {

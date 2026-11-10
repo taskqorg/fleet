@@ -461,4 +461,4 @@ CREATE OR REPLACE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$
 CREATE TRIGGER experiment_change AFTER INSERT OR UPDATE OR DELETE ON experiment FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE TRIGGER score_change AFTER INSERT OR UPDATE OR DELETE ON score FOR EACH ROW EXECUTE FUNCTION fleet_change();
 DELETE FROM document WHERE kind = 'experiment';
-UPDATE execution SET experiment_id = NULL, variant = NULL WHERE experiment_id IS NOT NULL;
+UPDATE execution SET experiment_id = NULL, variant = NULL, data = data - 'experimentId' WHERE experiment_id IS NOT NULL OR data ? 'experimentId';

@@ -303,7 +303,16 @@ pub fn claude_placement(setting: Option<&str>, os: &str, kernel_release: &str) -
         Some(_) => Err("claude-placement-invalid"),
     }
 }
+#[cfg(test)]
+thread_local! {
+    /// Tests set the placement per thread instead of mutating the process environment.
+    pub static TEST_PLACEMENT: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
 pub fn claude_placement_here() -> std::result::Result<&'static str, &'static str> {
+    #[cfg(test)]
+    if let Some(v) = TEST_PLACEMENT.with(|p| p.get()) {
+        return claude_placement(Some(v), std::env::consts::OS, &std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default());
+    }
     let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
     claude_placement(std::env::var("FLEET_CLAUDE_PLACEMENT").ok().as_deref(), std::env::consts::OS, &release)
 }
@@ -504,10 +513,9 @@ mod tests {
         use std::io::Write;
         use std::process::Stdio;
         // The placement this platform allows, so the Claude launch path runs on Mac and WSL; elsewhere Claude is refused.
-        // Only this test reads the variable.
         let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
-        let here = if cfg!(target_os = "macos") { "mac" } else if release.to_ascii_lowercase().contains("microsoft") { "windows-wsl" } else { "" };
-        unsafe { std::env::set_var("FLEET_CLAUDE_PLACEMENT", here) };
+        let here = if cfg!(target_os = "macos") { "mac" } else if release.to_ascii_lowercase().contains("microsoft") { "windows-wsl" } else { "unset" };
+        TEST_PLACEMENT.with(|p| p.set(Some(here)));
         let root = std::env::temp_dir().join(format!("fleet-multiharness-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let fake = root.join("native");

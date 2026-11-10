@@ -11,6 +11,9 @@ def claude_placement_ok(setting,platform,release):
     # Same rule as the executor (crates/executor/src/harness.rs claude_placement): FLEET_CLAUDE_PLACEMENT is 'mac' on macOS or
     # 'windows-wsl' on Linux under WSL (kernel release names Microsoft); unset or mismatched means Claude is ineligible here.
     return (setting=='mac' and platform=='darwin') or (setting=='windows-wsl' and platform.startswith('linux') and 'microsoft' in release.lower())
+def host_platform():
+    # A WSL host with Claude placement windows-wsl counts as Windows, as in the executor's poll (main.rs platform()).
+    return 'win32' if claude_placement_ok(os.environ.get('FLEET_CLAUDE_PLACEMENT',''),sys.platform,os.uname().release) and sys.platform.startswith('linux') else sys.platform
 def account_environment(binding,harness):
     env={'HOME':binding.get('credentialHome') if binding.get('credentialAuthority')=='native-current' else binding['home']}
     env[{'codex':'CODEX_HOME','claude':'CLAUDE_CONFIG_DIR','antigravity':'GEMINI_HOME'}[harness]]=binding['nativeHome']
@@ -107,7 +110,7 @@ def main():
                     else:
                         binding=registry.get(p['binding'])
                         result=account_status(binding,harness) if binding and binding.get('harness')==harness else {'readiness':'unavailable','reason':'binding-absent','nativeLoginObserved':None,'quota':'unknown'}
-                        api('receipts',{**body,'accountObservation':{'accountId':p['accountId'],'binding':p['binding'],'platform':sys.platform,**result}})
+                        api('receipts',{**body,'accountObservation':{'accountId':p['accountId'],'binding':p['binding'],'platform':host_platform(),**result}})
                         result={**result,'accountId':p['accountId'],'binding':p['binding'],'authChanged':False}
                     save(body,'account-readiness.json',json.dumps(result).encode(),'application/json')
                     shutil.rmtree(workspace);state.write_text(json.dumps({'state':'completed'}));api('receipts',{**body,'status':'completed'});continue

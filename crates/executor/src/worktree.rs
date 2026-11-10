@@ -108,7 +108,12 @@ pub fn trial(dir: &Path, repo: &str, commit: &str, roots: &[PathBuf], forbidden:
     let paths: Vec<PathBuf> = out.lines().filter_map(|l| fs::canonicalize(l.trim()).ok()).collect();
     if !o.status.success() || paths.len() != 2 || !paths.iter().all(|p| inside(p)) { return Err("repository outside configured project roots".into()); }
     let w = dir.join("trial");
-    if w.join(".git").exists() { return Ok((w, paths[0].clone())); }
+    if w.join(".git").exists() {
+        // A retried command reuses its trial, but only at the pinned commit.
+        let head = git().arg("-C").arg(&w).args(["rev-parse", "HEAD"]).output()?;
+        if !String::from_utf8_lossy(&head.stdout).trim().eq_ignore_ascii_case(commit) { return Err("trial worktree exists at another commit".into()); }
+        return Ok((w, paths[0].clone()));
+    }
     if !git().arg("-C").arg(&paths[0]).args(["worktree", "add", "--detach"]).arg(&w).arg(commit).output()?.status.success() {
         return Err("git worktree add failed (commit missing?)".into());
     }
@@ -180,6 +185,8 @@ mod tests {
         assert_eq!(fs::read_to_string(w1.join("f")).unwrap(), "one");
         assert!(!w1.join(".env.local").exists());
         assert_eq!(trial(&s1, r, &pinned, &roots, &[]).unwrap().0, w1);
+        let head = String::from_utf8(Command::new("git").arg("-C").arg(&repo).args(["rev-parse", "HEAD"]).output().unwrap().stdout).unwrap().trim().to_string();
+        assert!(trial(&s1, r, &head, &roots, &[]).is_err(), "an existing trial at another commit is refused");
         assert!(trial(&s1, r, "HEAD", &roots, &[]).is_err());
         assert!(trial(&root.join("s3"), r, &pinned, &[], &[]).is_err());
         assert!(remove_trial(&top, &w1) && !w1.exists());

@@ -67,9 +67,9 @@ Claude runs only where the host's setting allows it ([fleet-lab.md](designs/flee
 | `windows-wsl` | Linux under WSL; detected from the kernel release string (`/proc/sys/kernel/osrelease` names Microsoft) | windows (WSL user `alexk`) |
 | unset | nowhere: Claude is refused | PDS18 |
 
-A value that does not match the platform is refused too (`claude-placement-platform-mismatch`). Readiness reports a `claude-placement` check for projects with a Claude role.
+A value that does not match the platform is refused too (`claude-placement-platform-mismatch`). A WSL host with `windows-wsl` reports platform `win32` to the coordinator, so its Claude gates treat it as Windows. Readiness reports a `claude-placement` check for projects with a Claude role.
 
-On WSL the Claude subscription login lives under Fleet's config directory: the Claude account's `nativeHome` (Claude's `CLAUDE_CONFIG_DIR`) is `~/.config/fleet/claude`, so the login file is `~/.config/fleet/claude/.credentials.json` (the name Claude writes). Readiness checks only that the file is present (`claude-login`); it never reads it. The owner logs in once with `CLAUDE_CONFIG_DIR=~/.config/fleet/claude claude` as `alexk`.
+On WSL the Claude subscription login lives under Fleet's config directory: the Claude account's `nativeHome` (Claude's `CLAUDE_CONFIG_DIR`) is `~/.config/fleet/claude`, so the login file is `~/.config/fleet/claude/.credentials.json` (the name Claude writes). Readiness checks, for each Claude account in the host's native registry, only that `<nativeHome>/.credentials.json` is present (`claude-login`); it never reads it. The owner logs in once with `CLAUDE_CONFIG_DIR=~/.config/fleet/claude claude` as `alexk`.
 
 ## Illustrative CSGO configuration
 
