@@ -208,6 +208,19 @@ Built from `packages/ui` only, per `docs/design-system/owner-rules.md`.
 - Built: hosts list and stores list filtered by row-level security.
 - Not built: **Subscriptions** (`/subscriptions`): holder, harness, plan, intake, reading with age and reset countdown, hosts, take rule, comment, terms warnings. **Hosts:** holder, intake, placement, secret rotation. **Task and execution:** directed by, taken from, connection, route decision. **Project settings:** order list, file locations with preview, repository delivery. **Budgets** with spend, basis, age and Ask for more.
 
+## Agent access to the web app
+
+Agents (the orchestrator, a PM, development workers in worktrees) open the deployed `https://fleet.ufobe.com` without the owner signing in. They use the existing service token `ufobe-site-agents` (`~/.config/ufobe-agents/README.md` on the Mac; the same file for root and hermes on PDS18). No new mechanism.
+
+- **Access.** Application `Fleet` (`d96d8ee0-0150-4f70-85d5-ac9b88af12b1`, domain `fleet.ufobe.com`) has policy `site-agents` (`b0ee3b61-7777-4779-bc97-29e027cac7bb`, `non_identity`, precedence 2, include service token `e5e8fd24-42b1-44cf-8b48-056119b70056`) next to `Fleet people` (`55aff54c-e181-4a53-be03-d016a8290b8c`). Nothing else changed; the `/api/hosts/*` and `/v1/call` applications keep their own policies.
+- **Guard.** A service-token JWT has no `email` claim; it has `common_name` (the token's client ID). The guard sends `X-Fleet-Person: <common_name>` when `email` is absent; a `common_name` with `@` is refused.
+- **Person.** `people.json` has `{"email": "site-agents", "name": "Site agents", "roles": ["operator", "architect"], "accessCommonName": "<client ID>", "grants": [{"kind": "*", "id": "*"}]}`. The coordinator maps a header equal to an `accessCommonName` to that person. The value lives only in the deployed file, never in Git.
+- **Rights.** Grant `{kind: "*"}` is owner-equivalent (`fullAccess`, `go/coordinator/b_people.go`): scope `*` and every owner check, except `people_set`, which stays the owner's. It is a setting: the owner narrows it by replacing the grant with project grants or by removing roles.
+- **Actor.** Every request is the person `site-agents`: audit `actor`, `setting-change`, `directedBy` and telemetry show `site-agents`, never the owner. `me` returns `owner: false`.
+- **Use.** Send `CF-Access-Client-Id` and `CF-Access-Client-Secret` from the sourced env file. curl: two `-H` headers. Playwright or Chromium: `extraHTTPHeaders` on a context used only for `fleet.ufobe.com`, so the secret never goes to another host. See [AGENTS.md](../../AGENTS.md#opening-the-deployed-web-app).
+- **Smoke check.** `deploy/infrastructure/agent-access-smoke.sh` opens `/`, `/tasks`, `/lab` and `/api/accounts`, then the `/api/ops` reads `me` (is `site-agents`) and `project_list` (not empty).
+- **Gap.** After a restart with a malformed `people.json`, the people come from the `person` rows, which have no `accessCommonName`; agents get 403 until the file is fixed.
+
 ## Slices
 
 Slices 1-4 land before any non-owner host joins.
