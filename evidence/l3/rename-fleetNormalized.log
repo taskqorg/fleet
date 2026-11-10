@@ -1,0 +1,14 @@
+## coordinator: tsc
+packages/coordinator/recovery.ts(15,39): error TS2551: Property 'fleetNormalized' does not exist on type 'EventData'. Did you mean 'normalized'?
+exit=1
+## app: tsc -p app
+packages/coordinator/recovery.ts(15,39): error TS2551: Property 'fleetNormalized' does not exist on type 'EventData'. Did you mean 'normalized'?
+exit=1
+## executor: cargo build
+error[E0609]: no field `fleet_normalized` on type `EventData`
+   --> crates/executor/src/main.rs:866:38
+    |
+866 | ...                   retained.fleet_normalized = Some(serde_json::from_value(projection)?);
+    |                                ^^^^^^^^^^^^^^^^ unknown field
+--
+error: could not compile `fleet-executor` (bin "fleet-executor") due to 1 previous error; 1 warning emitted

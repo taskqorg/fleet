@@ -510,7 +510,7 @@ Shared conventions for every item:
 
 #### 16. `app/src/threads.ts` (Create); `app/src/transcript.ts` and `tests/ui/transcript.test.ts` (Delete)
 
-*   **Stage 2 notes**: `session_get` drops `events` and `results`, `/api/sessions/:id/events` is removed (from Stage 1 item 5). Rows live in `Thread` in `packages/ui` (rows of item 19 plus the list), which the book demo also uses. Markdown renders fenced code (with its own copy) and inline code; other markdown stays plain text until a renderer is chosen for the book. Steer is `message_send` with `delivery: 'steer'` while an execution runs.
+*   **Stage 2 notes**: `session_get` drops `events` and `results`, `/api/sessions/:id/events` is removed (from Stage 1 item 5). Rows live in `Thread` in `packages/ui` (rows of item 19 plus the list), which the book demo also uses. Markdown renders through `packages/ui/src/markdown.ts` (parse) and `markdown.tsx` (Preact nodes, never HTML strings): headings, lists, tables, quotes, rules, fenced code with its own copy, inline code, emphasis, and links only for http, https and mailto. The conversation detail fills the viewport height below the top bar. Steer is `message_send` with `delivery: 'steer'` while an execution runs.
 
 *   **Type / Scope**: app state.
 *   **Proposed Changes**: Window state per thread key: loaded blocks, `first`, `last`, `hasBefore`, `hasAfter`, `feedCursor`; the live insert rule and jump from "Read path" in the Technical Plan. Nothing reads `data.item`.

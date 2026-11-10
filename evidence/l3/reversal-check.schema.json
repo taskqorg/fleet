@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TranscriptEvent",
+  "oneOf": [
+    {"$ref": "#/$defs/ItemCompleted"},
+    {"$ref": "#/$defs/TurnCompleted"},
+    {"$ref": "#/$defs/OutboxFailed"}
+  ],
+  "$defs": {
+    "Item": {"type": "object", "required": ["type"], "properties": {"type": {"type": "string"}, "text": {"type": "string"}, "command": {"type": "string"}, "status": {"type": "string"}}},
+    "ItemCompleted": {"type": "object", "required": ["type", "seq", "data"], "properties": {"type": {"type": "string", "enum": ["item.completed"]}, "seq": {"type": "integer", "minimum": 0}, "data": {"type": "object", "required": ["item"], "properties": {"item": {"$ref": "#/$defs/Item"}}}}},
+    "TurnCompleted": {"type": "object", "required": ["type", "seq", "data"], "properties": {"type": {"type": "string", "enum": ["turn.completed"]}, "seq": {"type": "integer", "minimum": 0}, "data": {"type": "object", "properties": {"stopReason": {"type": "string"}}}}},
+    "OutboxFailed": {"type": "object", "required": ["type", "seq", "data"], "properties": {"type": {"type": "string", "enum": ["outbox.failed"]}, "seq": {"type": "integer", "minimum": 0}, "data": {"type": "object", "required": ["route", "status", "reason"], "properties": {"route": {"type": "string"}, "status": {"type": "integer"}, "reason": {"type": "string"}}}}}
+  }
+}
