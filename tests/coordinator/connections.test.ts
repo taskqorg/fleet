@@ -78,3 +78,18 @@ test('run tokens: access filters connections, the snapshot holds only the hash, 
  await store.tx(async()=>store.put('execution',{...(await store.get('exec-1','execution')),state:'completed'}));await store.atomic(()=>c.tick());await settle();
  assert.deepEqual(f.snapshot().tokens,[]);
 }finally{await settle();await f.app.close()}});
+
+test('reconcile: provider usage since the first check minus credits recorded for the key; unknown stays unknown',async()=>{
+ const {createServer}=await import('node:http');let usage=100,fail=false;
+ const srv=createServer((_q,r)=>{r.setHeader('content-type','application/json');r.end(JSON.stringify({at:Date.now(),keys:[fail?{connection:'tavily',key:FP,usage:null,unknown:'usage HTTP 500'}:{connection:'tavily',key:FP,usage}]}))});
+ await new Promise<void>(r=>srv.listen(0,'127.0.0.1',r));
+ const f=setup({gatewayUrl:`http://127.0.0.1:${(srv.address() as any).port}`,connectionTickMs:0,reconcileMs:0});try{await f.app.ready();const c=(f.app as any).connections,store=(f.app as any).store;
+  await f.op('connections_create',{name:'tavily',provider:'tavily'});await f.op('connections_key_add',{connection:'tavily',value:VALUE});
+  await c.reconcile();const key=async()=>(await f.op('connections_list')).connections[0].keys[0];
+  assert.deepEqual((await key()).reconcile.difference,0);
+  // 7 credits used at the provider, 2 of them through Fleet: 5 elsewhere.
+  await store.tx(async()=>{await store.executions.createExecution({id:'call:x',kind:'tool_run',state:'succeeded',data:{keyFingerprint:FP,startedAt:Date.now()+1}});
+   await store.query(`INSERT INTO execution_totals(execution_id,connection_cost,connection_cost_basis) VALUES('call:x',$1,'measured')`,[JSON.stringify({unit:'credits',credits:2,amount:2})])});
+  usage=107;await c.reconcile();const k=await key();assert.deepEqual([k.reconcile.providerDelta,k.reconcile.recorded,k.reconcile.difference],[7,2,5]);
+  fail=true;await c.reconcile();assert.equal((await key()).reconcile.unknown,'usage HTTP 500');
+ }finally{await settle();await f.app.close();srv.close()}});

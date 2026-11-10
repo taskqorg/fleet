@@ -3,8 +3,9 @@
 // that got no answer may be sent again with another key; inject: body fields the gateway always sets; description and
 // inputSchema: the MCP tool the run sees.
 export type Tool={method:'POST'|'GET',path:string,unit:string,idempotent:boolean,inject?:Record<string,unknown>,description:string,inputSchema:any};
-export const providers:Record<string,{baseUrl:string,instructions:string,tools:Record<string,Tool>}>={
- tavily:{baseUrl:'https://api.tavily.com',
+// usage: the provider's per-key usage report used by reconcile (GET path, dotted field with the number).
+export const providers:Record<string,{baseUrl:string,instructions:string,usage?:{path:string,field:string},tools:Record<string,Tool>}>={
+ tavily:{baseUrl:'https://api.tavily.com',usage:{path:'/usage',field:'key.usage'},
   instructions:'Use web_search to discover pages and web_extract to read chosen HTTP(S) pages. Fleet holds the provider keys and records each call. Prefer these tools over any built-in web tool. If a call fails, report the returned reason; do not look for a provider key or another route.',
   tools:{
   web_search:{method:'POST',path:'/search',unit:'credits',idempotent:true,inject:{include_usage:true},
