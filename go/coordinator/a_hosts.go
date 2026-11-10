@@ -245,7 +245,7 @@ func hostsRegister(q *Request) (any, error) {
 	if s, ok := b["platform"].(string); ok {
 		platform = s
 	}
-	h := doc{"id": id, "name": name, "holder": holder, "platform": platform, "roles": roles, "secretHash": hash, "intake": "all", "harnesses": harnesses, "createdAt": now()}
+	h := doc{"id": id, "name": name, "holder": holder, "platform": platform, "roles": roles, "secretHash": hash, "intake": "all", "harnesses": harnesses, "createdAt": nowMs()}
 	if err := saveHost(q, h); err != nil {
 		return nil, err
 	}
@@ -303,7 +303,7 @@ func hostsUpdate(q *Request) (any, error) {
 			continue
 		}
 		changed = append(changed, f)
-		if err := put(q, "setting-change", doc{"id": uuid(), "target": "host:" + astr(h["id"]), "holder": h["holder"], "field": f, "previous": h[f], "value": v, "actor": q.person.Email, "at": now()}); err != nil {
+		if err := put(q, "setting-change", doc{"id": newID(), "target": "host:" + astr(h["id"]), "holder": h["holder"], "field": f, "previous": h[f], "value": v, "actor": q.person.Email, "at": nowMs()}); err != nil {
 			return nil, err
 		}
 	}
@@ -379,7 +379,7 @@ func hostsList(q *Request) (any, error) {
 	for _, r := range list {
 		records[r["id"]] = r
 	}
-	now := now()
+	now := nowMs()
 	out := []doc{}
 	for _, id := range ids {
 		var o doc

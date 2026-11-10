@@ -2,8 +2,6 @@ package main
 
 // Small project and agent lookups shared across domains.
 
-func anys(v any) []any { xs, _ := v.([]any); return xs }
-
 func projectSetting(projectID any, key string) any {
 	p, ok := projectID.(string)
 	if !ok || p == "" {
@@ -21,7 +19,7 @@ func agentReady(q *Request, c doc) (bool, error) {
 	if c["kind"] != "steer" {
 		return true, nil
 	}
-	e, err := aget(q, c["executionId"], "execution")
+	e, err := get(q, c["executionId"], "execution")
 	return err == nil && !legacyTerminal(e), err
 }
 

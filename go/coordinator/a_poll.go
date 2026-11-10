@@ -63,7 +63,7 @@ func (a *App) poll(q *Request) (any, error) {
 	if err := storesObserve(q.ctx(), q.tx, host, b["stores"]); err != nil {
 		return nil, err
 	}
-	obs := doc{"id": host, "holder": q.host["holder"], "lastSeenAt": now()}
+	obs := doc{"id": host, "holder": q.host["holder"], "lastSeenAt": nowMs()}
 	if inList([]string{"darwin", "win32", "linux"}, astr(b["platform"])) {
 		obs["platform"] = b["platform"]
 	}
@@ -92,7 +92,7 @@ func (a *App) poll(q *Request) (any, error) {
 	if r, ok := decodeUpdate(upd); ok {
 		obs["update"] = upd
 		// Polls run about every 100 ms: the question is looked at only when the result changes.
-		if prev, err := getDoc(q, host, "host-observation"); err != nil && !errors.Is(err, errNotFound) {
+		if prev, err := get(q, host, "host-observation"); err != nil && !errors.Is(err, errNotFound) {
 			return nil, err
 		} else if js(mapOf(prev)["update"]) != js(upd) {
 			if err := updateQuestion(q, host, q.host["holder"], r); err != nil {
@@ -142,7 +142,7 @@ func (a *App) poll(q *Request) (any, error) {
 		if !ok {
 			continue
 		}
-		e, err := aget(q, c["executionId"], "execution")
+		e, err := get(q, c["executionId"], "execution")
 		if err != nil {
 			return nil, err
 		}
@@ -162,7 +162,7 @@ func (a *App) poll(q *Request) (any, error) {
 			}
 		}
 		// The ready filter may rewrite the command (delegation inputs): reply with it as stored now.
-		fresh, err := aget(q, c["id"], "command")
+		fresh, err := get(q, c["id"], "command")
 		if err != nil {
 			return nil, err
 		}

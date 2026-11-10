@@ -35,7 +35,7 @@ func (a *App) delegationRequest(q *Request, b doc, c doc) (any, error) {
 	if _, ok := r["requestId"].(string); !ok {
 		return nil, fail(400, "Invalid delegation request")
 	}
-	parent, err := aget(q, c["executionId"], "execution")
+	parent, err := get(q, c["executionId"], "execution")
 	if err != nil {
 		return nil, err
 	}
@@ -65,14 +65,14 @@ func (a *App) delegationRequest(q *Request, b doc, c doc) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	ps, err := aget(q, parent["sessionId"], "session")
+	ps, err := get(q, parent["sessionId"], "session")
 	if err != nil {
 		return nil, err
 	}
 	if astr(nonNil(profile["harness"], "codex")) != astr(nonNil(pcfg["harness"], "codex")) {
 		return nil, fail(403, "Cross-harness child needs an explicit account binding")
 	}
-	session := doc{"id": uuid(), "createdAt": now(), "agentConfig": profile, "parentExecutionId": parent["id"]}
+	session := doc{"id": newID(), "createdAt": nowMs(), "agentConfig": profile, "parentExecutionId": parent["id"]}
 	if ps["account"] != nil {
 		session["account"] = ps["account"]
 	}
@@ -87,7 +87,7 @@ func (a *App) delegationRequest(q *Request, b doc, c doc) (any, error) {
 	if err := put(q, "execution", child); err != nil {
 		return nil, err
 	}
-	d := doc{"id": uuid(), "parentExecutionId": parent["id"], "parentSessionId": parent["sessionId"], "childExecutionId": child["id"], "childSessionId": session["id"],
+	d := doc{"id": newID(), "parentExecutionId": parent["id"], "parentSessionId": parent["sessionId"], "childExecutionId": child["id"], "childSessionId": session["id"],
 		"request": r, "resultRoute": doc{"sessionId": parent["sessionId"]}, "state": "pending"}
 	return d, put(q, "delegation", d)
 }
@@ -122,7 +122,7 @@ func (a *App) fetchSources(id string, files []doc) {
 		ctx := context.Background()
 		a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
 			q := &Request{app: a, tx: tx, r: (&http.Request{}).WithContext(ctx)}
-			d, err := aget(q, id, "delegation")
+			d, err := get(q, id, "delegation")
 			if err != nil {
 				return err
 			}
@@ -139,7 +139,7 @@ func (a *App) fetchSources(id string, files []doc) {
 // delegationReady: whether a start command of this execution may go out now (parent completed, inputs bound).
 func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	if e["continuationOf"] != nil {
-		c, err := aget(q, e["continuationOf"], "execution")
+		c, err := get(q, e["continuationOf"], "execution")
 		if err != nil {
 			return false, err
 		}
@@ -150,7 +150,7 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	if e["parentExecutionId"] == nil {
 		return true, nil
 	}
-	parent, err := aget(q, e["parentExecutionId"], "execution")
+	parent, err := get(q, e["parentExecutionId"], "execution")
 	if err != nil || parent["state"] != "completed" {
 		return false, err
 	}
@@ -294,11 +294,11 @@ func (a *App) delegationReconcile(q *Request) error {
 		return err
 	}
 	for _, d := range ds {
-		parent, err := aget(q, d["parentExecutionId"], "execution")
+		parent, err := get(q, d["parentExecutionId"], "execution")
 		if err != nil {
 			return err
 		}
-		child, err := aget(q, d["childExecutionId"], "execution")
+		child, err := get(q, d["childExecutionId"], "execution")
 		if err != nil {
 			return err
 		}
@@ -326,7 +326,7 @@ func (a *App) delegationReconcile(q *Request) error {
 			}
 			continue
 		}
-		s, err := aget(q, parent["sessionId"], "session")
+		s, err := get(q, parent["sessionId"], "session")
 		if err != nil {
 			return err
 		}

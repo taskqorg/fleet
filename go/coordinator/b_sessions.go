@@ -44,10 +44,10 @@ func sessionWhere(f doc, p *[]any, withState bool) ([]string, error) {
 }
 
 func sessionRow(x doc) doc {
-	d := gm(x, "data")
-	ac := gm(d, "agentConfig")
+	d := mapOf(x["data"])
+	ac := mapOf(d["agentConfig"])
 	title := any(nil)
-	if t := []rune(gs(x, "first_message")); len(t) > 0 {
+	if t := []rune(astr(x["first_message"])); len(t) > 0 {
 		title = string(t[:min(200, len(t))])
 	}
 	harness := x["harness"]
@@ -59,7 +59,7 @@ func sessionRow(x doc) doc {
 }
 
 func sessionsPage(q *Request, b doc) (doc, error) {
-	f := gm(b, "filter")
+	f := mapOf(b["filter"])
 	if f == nil {
 		f = doc{}
 	}
@@ -89,7 +89,7 @@ func sessionsPage(q *Request, b doc) (doc, error) {
 		return nil, err
 	}
 	for _, r := range cr {
-		counts[gs(r, "state")] = r["n"]
+		counts[astr(r["state"])] = r["n"]
 	}
 	page := []doc{}
 	for i, r := range rs {
@@ -194,11 +194,11 @@ func sessionProfile(q *Request, sid string, b doc) (doc, error) {
 			return nil, fail(400, "Invalid working directory")
 		}
 		s["workingDirectory"] = ws
-		if err := putDoc(q, "session", s); err != nil {
+		if err := put(q, "session", s); err != nil {
 			return nil, err
 		}
 	}
-	if gs(s, "nativeSessionId") != "" {
+	if astr(s["nativeSessionId"]) != "" {
 		return sessionTransition(q, doc{"sessionId": sid, "profileId": pid, "account": b["account"]})
 	}
 	p, err := readTrustedProfile(pid)
@@ -211,7 +211,7 @@ func sessionProfile(q *Request, sid string, b doc) (doc, error) {
 		delete(s, "account")
 	}
 	s["agentConfig"] = p
-	return doc{"sessionId": sid, "profileId": p["id"], "account": s["account"]}, putDoc(q, "session", s)
+	return doc{"sessionId": sid, "profileId": p["id"], "account": s["account"]}, put(q, "session", s)
 }
 
 // sessionArchive: one teardown command on the last execution's host.
@@ -226,10 +226,10 @@ func sessionArchive(q *Request, sid string) (doc, error) {
 	}
 	var last doc
 	for _, e := range es {
-		if !terminalLegacy(e) && gs(e, "state") != "unknown" {
+		if !terminalLegacy(e) && astr(e["state"]) != "unknown" {
 			return nil, fail(409, "Execution active")
 		}
-		if gs(e, "hostId") != "" {
+		if astr(e["hostId"]) != "" {
 			last = e
 		}
 	}
@@ -239,27 +239,27 @@ func sessionArchive(q *Request, sid string) (doc, error) {
 		}
 		return old[0], nil
 	}
-	s["archivedAt"] = now()
-	if err := putDoc(q, "session", s); err != nil {
+	s["archivedAt"] = nowMs()
+	if err := put(q, "session", s); err != nil {
 		return nil, err
 	}
 	if last == nil {
 		return doc{"sessionId": sid, "archivedAt": s["archivedAt"], "teardown": nil}, nil
 	}
 	payload := doc{}
-	if p := gs(s, "projectId"); p != "" {
+	if p := astr(s["projectId"]); p != "" {
 		payload["projectId"], payload["project"] = p, projectSettingsOf(p)
 	}
-	if w := gs(s, "workingDirectory"); w != "" {
+	if w := astr(s["workingDirectory"]); w != "" {
 		payload["workingDirectory"] = w
 	}
-	c := doc{"id": uuid(), "executionId": last["id"], "sessionId": sid, "hostId": last["hostId"], "kind": "teardown", "payload": payload, "status": "pending"}
-	return c, putDoc(q, "command", c)
+	c := doc{"id": newID(), "executionId": last["id"], "sessionId": sid, "hostId": last["hostId"], "kind": "teardown", "payload": payload, "status": "pending"}
+	return c, put(q, "command", c)
 }
 
 func sessionCreate(q *Request) (doc, error) {
-	s := doc{"id": uuid(), "createdAt": now(), "directedBy": director(q)}
-	if err := putDoc(q, "session", s); err != nil {
+	s := doc{"id": newID(), "createdAt": nowMs(), "directedBy": director(q)}
+	if err := put(q, "session", s); err != nil {
 		return nil, err
 	}
 	out := doc{"sessionId": s["id"]}
@@ -350,11 +350,11 @@ func init() {
 		out := []doc{}
 		for _, x := range lists {
 			l, _ := x.(map[string]any)
-			f := gm(l, "filter")
+			f := mapOf(l["filter"])
 			if f == nil {
 				f = doc{}
 			}
-			switch gs(l, "name") {
+			switch astr(l["name"]) {
 			case "tasks":
 				rs, err := taskMembership(q, f, l["group"], ids)
 				if err != nil {

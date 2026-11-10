@@ -119,7 +119,6 @@ func dExec(ctx context.Context, a *App, sql string, args ...any) error {
 	return dTx(ctx, a, func(tx pgx.Tx) error { _, err := tx.Exec(ctx, sql, args...); return err })
 }
 
-func str(m map[string]any, k string) string { s, _ := m[k].(string); return s }
 func i64(m map[string]any, k string) int64 {
 	switch v := m[k].(type) {
 	case int64:
@@ -259,7 +258,7 @@ func storeRegister(q *Request, hostID string, b map[string]any, holder string) (
 	ctx := q.ctx()
 	if r, err := dOne(ctx, a, "SELECT host_id FROM store WHERE id=$1", id); err != nil {
 		return nil, err
-	} else if r != nil && str(r, "host_id") != hostID {
+	} else if r != nil && astr(r["host_id"]) != hostID {
 		return nil, fail(403, "Store belongs to another host")
 	}
 	intOrNil := func(v any) any {
@@ -282,7 +281,7 @@ func storeRegister(q *Request, hostID string, b map[string]any, holder string) (
 	// The upsert's WHERE makes ownership part of the write: a store of another host is unchanged, and so is its key.
 	if r, err := dOne(ctx, a, "SELECT host_id FROM store WHERE id=$1", id); err != nil {
 		return nil, err
-	} else if r == nil || str(r, "host_id") != hostID {
+	} else if r == nil || astr(r["host_id"]) != hostID {
 		return nil, fail(403, "Store belongs to another host")
 	}
 	if err := os.MkdirAll(storeSecretsDir, 0o700); err != nil {
@@ -571,13 +570,13 @@ func artifactReserve(q *Request) (any, error) {
 	}
 	id := sv("artifactId")
 	if !artifactIDPattern.MatchString(id) {
-		id = uuid()
+		id = newID()
 	}
 	if old, err := dOne(ctx, a, "SELECT state,execution_id FROM artifact WHERE id=$1", id); err != nil {
 		return nil, err
 	} else if old != nil {
 		// A retry of the same reservation only: another execution's artifact id is refused, not described.
-		if str(old, "execution_id") != eb.ExecutionID {
+		if astr(old["execution_id"]) != eb.ExecutionID {
 			return nil, fail(409, "Artifact id in use")
 		}
 		c, _ := dOne(ctx, a, "SELECT store_id FROM artifact_copy WHERE artifact_id=$1 AND state IN ('pending','copying','verified') ORDER BY state LIMIT 1", id)
@@ -876,14 +875,14 @@ func artifactCommit(q *Request) (any, error) {
 func queueCommand(ctx context.Context, a *App, hostID, kind string, payload doc) error {
 	return dTx(ctx, a, func(tx pgx.Tx) error {
 		q := &Request{r: (&http.Request{}).WithContext(ctx), tx: tx}
-		sid, id := uuid(), uuid()
-		if err := putDoc(q, "session", doc{"id": sid, "createdAt": now(), "actor": "program-worker"}); err != nil {
+		sid, id := newID(), newID()
+		if err := put(q, "session", doc{"id": sid, "createdAt": nowMs(), "actor": "program-worker"}); err != nil {
 			return err
 		}
-		if err := putExecution(q, doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hostID, "state": "queued", "createdAt": now(), "actor": "program-worker", "artifactId": payload["artifactId"]}); err != nil {
+		if err := putExecution(q, doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hostID, "state": "queued", "createdAt": nowMs(), "actor": "program-worker", "artifactId": payload["artifactId"]}); err != nil {
 			return err
 		}
-		return putDoc(q, "command", doc{"id": uuid(), "executionId": id, "sessionId": sid, "hostId": hostID, "kind": kind, "status": "pending", "payload": payload})
+		return put(q, "command", doc{"id": newID(), "executionId": id, "sessionId": sid, "hostId": hostID, "kind": kind, "status": "pending", "payload": payload})
 	})
 }
 
@@ -953,18 +952,18 @@ func artifactRefused(q *Request) (any, error) {
 		return nil, err
 	}
 	for _, c := range cs {
-		s := &StoreRow{ID: str(c, "store_id")}
+		s := &StoreRow{ID: astr(c["store_id"])}
 		for i := range all {
 			if all[i].ID == s.ID {
 				s = &all[i]
 			}
 		}
-		if up := str(c, "upload_id"); up != "" && s.Bucket != "" {
+		if up := astr(c["upload_id"]); up != "" && s.Bucket != "" {
 			if t, err := tunnel(s); err == nil {
-				t.AbortMultipartUpload(s.Bucket, str(c, "staging_key"), up)
+				t.AbortMultipartUpload(s.Bucket, astr(c["staging_key"]), up)
 			}
 		}
-		if err := reject(ctx, a, x, s, str(c, "staging_key"), why); err != nil {
+		if err := reject(ctx, a, x, s, astr(c["staging_key"]), why); err != nil {
 			return nil, err
 		}
 	}
@@ -1106,7 +1105,7 @@ func source(ctx context.Context, a *App, x *Artifact, hostID string) (*StoreRow,
 			continue
 		}
 		for _, r := range rs {
-			if str(r, "store_id") == s.ID {
+			if astr(r["store_id"]) == s.ID {
 				if s.HostID == hostID {
 					return s, nil
 				}
@@ -1320,7 +1319,7 @@ func artifactPurge(ctx context.Context, a *App, hash string, projectID, scope *s
 		for _, c := range cs {
 			var s *StoreRow
 			for j := range all {
-				if all[j].ID == str(c, "store_id") {
+				if all[j].ID == astr(c["store_id"]) {
 					s = &all[j]
 				}
 			}
@@ -1328,7 +1327,7 @@ func artifactPurge(ctx context.Context, a *App, hash string, projectID, scope *s
 			if s != nil && s.State != "unreachable" {
 				if t, err := tunnel(s); err == nil {
 					t.Delete(s.Bucket, keyOf(x))
-					if k := str(c, "staging_key"); k != "" {
+					if k := astr(c["staging_key"]); k != "" {
 						t.Delete(s.Bucket, k)
 					}
 				}
@@ -1337,7 +1336,7 @@ func artifactPurge(ctx context.Context, a *App, hash string, projectID, scope *s
 			} else {
 				pending++
 			}
-			if err := dExec(ctx, a, "UPDATE artifact_copy SET state=$3 WHERE artifact_id=$1 AND store_id=$2", x.ID, str(c, "store_id"), state); err != nil {
+			if err := dExec(ctx, a, "UPDATE artifact_copy SET state=$3 WHERE artifact_id=$1 AND store_id=$2", x.ID, astr(c["store_id"]), state); err != nil {
 				return nil, err
 			}
 		}
@@ -1356,22 +1355,22 @@ func expireLeases(ctx context.Context, a *App) error {
 	}
 	all, _ := storeList(ctx, a)
 	for _, c := range stale {
-		s := &StoreRow{ID: str(c, "store_id")}
+		s := &StoreRow{ID: astr(c["store_id"])}
 		for i := range all {
 			if all[i].ID == s.ID {
 				s = &all[i]
 			}
 		}
-		x, err := artifactRow(ctx, a, str(c, "artifact_id"))
+		x, err := artifactRow(ctx, a, astr(c["artifact_id"]))
 		if err != nil {
 			continue
 		}
-		if up := str(c, "upload_id"); up != "" && s.Bucket != "" && s.State != "unreachable" {
+		if up := astr(c["upload_id"]); up != "" && s.Bucket != "" && s.State != "unreachable" {
 			if t, err := tunnel(s); err == nil {
-				t.AbortMultipartUpload(s.Bucket, str(c, "staging_key"), up)
+				t.AbortMultipartUpload(s.Bucket, astr(c["staging_key"]), up)
 			}
 		}
-		if err := reject(ctx, a, x, s, str(c, "staging_key"), "upload lease expired"); err != nil {
+		if err := reject(ctx, a, x, s, astr(c["staging_key"]), "upload lease expired"); err != nil {
 			return err
 		}
 	}
@@ -1512,7 +1511,7 @@ func saveObject(ctx context.Context, a *App, projectID *string, scope, execution
 	if err != nil {
 		return "", "", err
 	}
-	id := uuid()
+	id := newID()
 	err = dTx(ctx, a, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'stored')", id, projectID, scope, hash, len(data), media, name, executionID); err != nil {
 			return err

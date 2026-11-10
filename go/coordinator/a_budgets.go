@@ -87,7 +87,7 @@ func budgetSet(q *Request) (any, error) {
 	}
 	id, ok := b["id"].(string)
 	if !ok {
-		id = uuid()
+		id = newID()
 	}
 	if err := exec(q, `INSERT INTO budget(id,scope,scope_id,unit,"limit",period,action,set_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
     ON CONFLICT(id) DO UPDATE SET scope=excluded.scope,scope_id=excluded.scope_id,unit=excluded.unit,"limit"=excluded."limit",period=excluded.period,action=excluded.action,set_by=excluded.set_by,set_at=now()`,
@@ -226,5 +226,5 @@ func budgetAnswerAfter(q *Request, qn doc) error {
 	if err := exec(q, `UPDATE budget SET "limit"=$2,set_by=$3,set_at=now() WHERE id=$1`, a["budgetId"], a["limit"], by); err != nil {
 		return err
 	}
-	return put(q, "setting-change", doc{"id": uuid(), "target": fmt.Sprint("budget:", a["budgetId"]), "field": "limit", "value": a["limit"], "askedBy": a["askedBy"], "actor": qn["answered_by"], "at": now()})
+	return put(q, "setting-change", doc{"id": newID(), "target": fmt.Sprint("budget:", a["budgetId"]), "field": "limit", "value": a["limit"], "askedBy": a["askedBy"], "actor": qn["answered_by"], "at": nowMs()})
 }

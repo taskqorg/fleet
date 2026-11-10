@@ -26,21 +26,21 @@ func executionDifferences(q *Request, id, previousID string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if str(current, "sessionId") != str(previous, "sessionId") {
+	if astr(current["sessionId"]) != astr(previous["sessionId"]) {
 		return nil, fail(403, "Different session")
 	}
-	before, err := executionArtifacts(q, str(previous, "id"))
+	before, err := executionArtifacts(q, astr(previous["id"]))
 	if err != nil {
 		return nil, err
 	}
-	after, err := executionArtifacts(q, str(current, "id"))
+	after, err := executionArtifacts(q, astr(current["id"]))
 	if err != nil {
 		return nil, err
 	}
 	byPath := func(xs []doc) map[string]doc {
 		m := map[string]doc{}
 		for _, x := range xs {
-			m[str(x, "path")] = x
+			m[astr(x["path"])] = x
 		}
 		return m
 	}
@@ -59,7 +59,7 @@ func executionDifferences(q *Request, id, previousID string) (any, error) {
 		if x == nil {
 			return []string{}, nil
 		}
-		b, err := artifactBytes(q.ctx(), q.app, str(x, "artifactId"), differenceTextLimit)
+		b, err := artifactBytes(q.ctx(), q.app, astr(x["artifactId"]), differenceTextLimit)
 		if err != nil {
 			return nil, err
 		}
@@ -101,7 +101,7 @@ func executionDifferences(q *Request, id, previousID string) (any, error) {
 			state = "added"
 		case r == nil:
 			state = "removed"
-		case str(l, "sha256") == str(r, "sha256"):
+		case astr(l["sha256"]) == astr(r["sha256"]):
 			state = "unchanged"
 		}
 		files = append(files, doc{"path": p, "textChange": change, "state": state, "previous": ref(l), "current": ref(r)})
@@ -114,7 +114,7 @@ var testSiteFile = regexp.MustCompile(`^[a-zA-Z0-9_-]+\.(html|css)$`)
 func init() {
 	bop("execution_differences", true, func(q *Request) (any, error) {
 		b := body(q)
-		return executionDifferences(q, str(b, "executionId"), str(b, "previous"))
+		return executionDifferences(q, astr(b["executionId"]), astr(b["previous"]))
 	})
 	broute("GET /api/executions/{id}/differences", func(q *Request) (any, error) {
 		return executionDifferences(q, q.r.PathValue("id"), q.r.URL.Query().Get("previous"))

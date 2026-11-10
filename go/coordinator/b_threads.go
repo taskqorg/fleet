@@ -55,11 +55,11 @@ func (k threadKey) view() doc {
 }
 
 func threadKeyOf(b doc) (threadKey, error) {
-	k := gm(b, "key")
-	if t := gs(k, "task"); t != "" {
+	k := mapOf(b["key"])
+	if t := astr(k["task"]); t != "" {
 		return threadKey{task: t}, nil
 	}
-	if s := gs(k, "session"); s != "" {
+	if s := astr(k["session"]); s != "" {
 		return threadKey{session: s}, nil
 	}
 	return threadKey{}, fail(400, "Expected key {task} or {session}")
@@ -101,8 +101,8 @@ func members(q *Request, key threadKey) (map[string]member, []string, error) {
 	}
 	m, ids := map[string]member{}, []string{}
 	for _, r := range rs {
-		m[gs(r, "id")] = member{r, int64(num(r["seq"]))}
-		ids = append(ids, gs(r, "id"))
+		m[astr(r["id"])] = member{r, int64(num(r["seq"]))}
+		ids = append(ids, astr(r["id"]))
 	}
 	return m, ids, nil
 }
@@ -173,7 +173,7 @@ func threadRows(q *Request, ids []string, dir, from string, limit int, extra str
 	rs, err := rowsOf(q, sql, append([]any{ids, from, limit}, params...)...)
 	out := []trow{}
 	for _, r := range rs {
-		out = append(out, trow{int64(num(r["seq"])), gs(r, "src"), gm(r, "v")})
+		out = append(out, trow{int64(num(r["seq"])), astr(r["src"]), mapOf(r["v"])})
 	}
 	return out, err
 }
@@ -189,7 +189,7 @@ func streamText(q *Request, executionID, id string) (string, bool, error) {
 	for _, p := range parts {
 		bs, _ := p["b"].([]any)
 		for _, x := range bs {
-			sb.WriteString(gs(x.(map[string]any), "markdown"))
+			sb.WriteString(astr(x.(map[string]any)["markdown"]))
 		}
 	}
 	return sb.String(), true, err
@@ -211,16 +211,16 @@ func expand(q *Request, r trow, m map[string]member) ([]doc, error) {
 		}
 		return []doc{{"kind": "text", "key": at(0), "executionId": v["executionId"], "role": "operator", "markdown": t, "plain": t, "at": tsMs(v["at"]), "by": v["sentBy"]}}, nil
 	case "event-delta":
-		text, open, err := streamText(q, gs(v, "executionId"), gs(v, "deltaOf"))
+		text, open, err := streamText(q, astr(v["executionId"]), astr(v["deltaOf"]))
 		if err != nil || !open {
 			return nil, err
 		}
 		kind := "text"
-		if strings.HasPrefix(gs(v, "deltaOf"), "reasoning:") {
+		if strings.HasPrefix(astr(v["deltaOf"]), "reasoning:") {
 			kind = "reasoning"
 		}
 		b := doc{"kind": kind, "key": at(0), "executionId": v["executionId"], "markdown": text, "plain": text, "stream": "open", "at": tsMs(v["at"])}
-		if e.doc != nil && terminalState[gs(e.doc, "state")] {
+		if e.doc != nil && terminalState[astr(e.doc["state"])] {
 			b["stream"] = "cut-off"
 		}
 		if kind == "text" {
@@ -240,19 +240,19 @@ func expand(q *Request, r trow, m map[string]member) ([]doc, error) {
 			b[k] = y
 		}
 		b["key"], b["executionId"], b["at"] = at(i), v["executionId"], tsMs(v["at"])
-		if gs(b, "kind") == "text" {
+		if astr(b["kind"]) == "text" {
 			b["role"] = firstString(src["role"], "agent")
 			for k, y := range mark(e.doc) {
 				b[k] = y
 			}
 		}
-		if k := gs(b, "kind"); k == "text" || k == "reasoning" {
-			b["plain"] = gs(src, "markdown")
+		if k := astr(b["kind"]); k == "text" || k == "reasoning" {
+			b["plain"] = astr(src["markdown"])
 		}
 		own = append(own, b)
 	}
-	if gs(v, "type") == "execution.ended" {
-		arts, err := storedArtifacts(q, gs(v, "executionId"))
+	if astr(v["type"]) == "execution.ended" {
+		arts, err := storedArtifacts(q, astr(v["executionId"]))
 		if err != nil {
 			return nil, err
 		}
@@ -314,7 +314,7 @@ func side(q *Request, m map[string]member, ids []string, dir string, from *bkey,
 			seen[r.seq] = true
 			var bs []doc
 			if r.src == "execution" {
-				bs = []doc{boundary(m[gs(r.v, "id")])}
+				bs = []doc{boundary(m[astr(r.v["id"])])}
 			} else if bs, err = expand(q, r, m); err != nil {
 				return nil, false, err
 			}
@@ -356,7 +356,7 @@ func threadTotal(q *Request, m map[string]member, ids []string) (int64, error) {
 	n += int64(len(m))
 	ss, err := rowsOf(q, "SELECT data->>'executionId' AS e,data->'data'->'fleetNormalized'->>'deltaOf' AS id FROM document WHERE kind='event-delta' AND data->>'executionId'=ANY($1) AND data->'data'->'fleetNormalized'->>'opens'='true'", ids)
 	for _, x := range ss {
-		if _, open, err := streamText(q, gs(x, "e"), gs(x, "id")); err != nil {
+		if _, open, err := streamText(q, astr(x["e"]), astr(x["id"])); err != nil {
 			return 0, err
 		} else if open {
 			n++
@@ -379,7 +379,7 @@ func keyOfSession(q *Request, sid string) (threadKey, error) {
 	if err != nil {
 		return threadKey{}, err
 	}
-	if tid := gs(t, "t"); tid != "" {
+	if tid := astr(t["t"]); tid != "" {
 		return threadKey{task: tid}, nil
 	}
 	return threadKey{session: sid}, nil
@@ -465,7 +465,7 @@ func threadEntries(q *Request, b doc) (doc, error) {
 	}
 	sessions, seen := []any{}, map[string]bool{}
 	for _, id := range ids {
-		if s := gs(m[id].doc, "session_id"); s != "" && !seen[s] {
+		if s := astr(m[id].doc["session_id"]); s != "" && !seen[s] {
 			seen[s] = true
 			sessions = append(sessions, s)
 		}
@@ -487,7 +487,7 @@ func eventRow(q *Request, sql string, args ...any) ([]trow, error) {
 	rs, err := rowsOf(q, "SELECT seq,kind AS src,"+rowExpr+" AS v FROM document WHERE "+sql, args...)
 	out := []trow{}
 	for _, r := range rs {
-		out = append(out, trow{int64(num(r["seq"])), gs(r, "src"), gm(r, "v")})
+		out = append(out, trow{int64(num(r["seq"])), astr(r["src"]), mapOf(r["v"])})
 	}
 	return out, err
 }
@@ -518,7 +518,7 @@ func threadBlocks(q *Request, b doc) (doc, error) {
 	}
 	for _, x := range named {
 		c, _ := x.(map[string]any)
-		id, kind := gs(c, "id"), gs(c, "kind")
+		id, kind := astr(c["id"]), astr(c["kind"])
 		if id == "" || kind == "" {
 			continue
 		}
@@ -540,7 +540,7 @@ func threadBlocks(q *Request, b doc) (doc, error) {
 			if err != nil {
 				return nil, err
 			}
-			if e := gs(r, "e"); e != "" {
+			if e := astr(r["e"]); e != "" {
 				if _, ok := m[e]; ok {
 					rs, err := eventRow(q, "id=$1 AND kind='event'", "ended:"+e)
 					if err != nil {
@@ -585,7 +585,7 @@ func threadBlocks(q *Request, b doc) (doc, error) {
 	}
 	byKey := map[string]doc{}
 	for _, x := range out {
-		byKey[gs(x, "key")] = x
+		byKey[astr(x["key"])] = x
 	}
 	entries := []doc{}
 	for _, x := range byKey {
@@ -596,13 +596,13 @@ func threadBlocks(q *Request, b doc) (doc, error) {
 }
 
 func searchable(b doc) string {
-	switch gs(b, "kind") {
+	switch astr(b["kind"]) {
 	case "text", "reasoning":
 		return firstString(b["plain"], b["markdown"])
 	case "tool":
 		return strings.Join([]string{fmt.Sprint(b["name"]), jsOr(b["input"]), jsOr(b["output"])}, " ")
 	case "question":
-		return gs(b, "text") + " " + gs(b, "answer")
+		return astr(b["text"]) + " " + astr(b["answer"])
 	}
 	return ""
 }
@@ -684,10 +684,10 @@ func threadSearch(q *Request, b doc) (doc, error) {
 				}
 				t := searchable(x)
 				i := strings.Index(strings.ToLower(t), needle)
-				if i < 0 || seen[gs(x, "key")] {
+				if i < 0 || seen[astr(x["key"])] {
 					continue
 				}
-				seen[gs(x, "key")] = true
+				seen[astr(x["key"])] = true
 				rs := []rune(t)
 				ri := len([]rune(t[:i]))
 				snip := ""
@@ -739,15 +739,15 @@ func clipTime(ms any, loc *time.Location) string {
 
 // whoOf: the author line of a text block: the person (email local part) or the agent as harness, model and effort.
 func whoOf(b doc) string {
-	if gs(b, "role") == "operator" {
-		if e := gs(b, "by"); e != "" {
+	if astr(b["role"]) == "operator" {
+		if e := astr(b["by"]); e != "" {
 			return strings.SplitN(e, "@", 2)[0]
 		}
 		return "You"
 	}
 	parts := []string{}
 	for _, k := range []string{"harness", "model", "effort"} {
-		if v := gs(b, k); v != "" {
+		if v := astr(b[k]); v != "" {
 			parts = append(parts, v)
 		}
 	}
@@ -761,10 +761,10 @@ func markdownOf(b doc, from, to *point, loc *time.Location) string {
 	cut := func(s string) string {
 		rs := []rune(s)
 		a, z := 0, len(rs)
-		if from != nil && from.key == gs(b, "key") {
+		if from != nil && from.key == astr(b["key"]) {
 			a = min(from.offset, len(rs))
 		}
-		if to != nil && to.key == gs(b, "key") {
+		if to != nil && to.key == astr(b["key"]) {
 			z = min(to.offset, len(rs))
 		}
 		if a > z {
@@ -772,7 +772,7 @@ func markdownOf(b doc, from, to *point, loc *time.Location) string {
 		}
 		return string(rs[a:z])
 	}
-	switch gs(b, "kind") {
+	switch astr(b["kind"]) {
 	case "text":
 		head := whoOf(b)
 		if t := clipTime(b["at"], loc); t != "" {
@@ -791,8 +791,8 @@ func markdownOf(b doc, from, to *point, loc *time.Location) string {
 		}
 		return s
 	case "question":
-		s := "**Question:** " + gs(b, "text")
-		if a := gs(b, "answer"); a != "" {
+		s := "**Question:** " + astr(b["text"])
+		if a := astr(b["answer"]); a != "" {
 			s += "\n\n**Answer:** " + a
 		}
 		return s + "\n"
@@ -801,11 +801,11 @@ func markdownOf(b doc, from, to *point, loc *time.Location) string {
 	case "boundary":
 		parts := []string{}
 		for _, k := range []string{"harness", "model", "effort"} {
-			if v := gs(b, k); v != "" {
+			if v := astr(b[k]); v != "" {
 				parts = append(parts, v)
 			}
 		}
-		id := gs(b, "executionId")
+		id := astr(b["executionId"])
 		return fmt.Sprintf("---\n*Execution %s · %s · %v*\n", id[:min(8, len(id))], strings.Join(parts, " "), b["state"])
 	}
 	return ""
@@ -826,8 +826,8 @@ func replyText(q *Request, executionID string) ([]string, error) {
 			return nil, err
 		}
 		for _, b := range bs {
-			if gs(b, "kind") == "text" && gs(b, "role") == "agent" && gs(b, "markdown") != "" {
-				out = append(out, gs(b, "markdown"))
+			if astr(b["kind"]) == "text" && astr(b["role"]) == "agent" && astr(b["markdown"]) != "" {
+				out = append(out, astr(b["markdown"]))
 			}
 		}
 		if !more {
@@ -895,7 +895,7 @@ func init() {
 		}
 		var from, to *point
 		for i, k := range []string{"from", "to"} {
-			if p := gm(b, k); p != nil {
+			if p := mapOf(b[k]); p != nil {
 				kk, err := parseKey(p["key"])
 				if err != nil {
 					return nil, err
@@ -1041,7 +1041,7 @@ func exportPages(q *Request, key threadKey, from, to *point, loc *time.Location,
 
 // tzOf: the reader's time zone for copied times (body "tz", an IANA name); UTC when absent or unknown.
 func tzOf(b doc) *time.Location {
-	if l, err := time.LoadLocation(gs(b, "tz")); err == nil && gs(b, "tz") != "" {
+	if l, err := time.LoadLocation(astr(b["tz"])); err == nil && astr(b["tz"]) != "" {
 		return l
 	}
 	return time.UTC

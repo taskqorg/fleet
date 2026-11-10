@@ -124,7 +124,7 @@ func runPipeline(q *Request, invocation string) (any, error) {
 			source = "explicit"
 		}
 		var method doc
-		for _, m := range cList(c["methods"]) {
+		for _, m := range anys(c["methods"]) {
 			if mapOf(m)["id"] == want {
 				method = mapOf(m)
 			}
@@ -176,7 +176,7 @@ func cCtx(q *Request) context.Context {
 // profileSkills: the SKILL.md texts of a profile's skills (config/skills/<id>/SKILL.md), as an execution payload carries them.
 func profileSkills(profile doc) ([]any, error) {
 	skills := []any{}
-	for _, x := range cList(profile["skills"]) {
+	for _, x := range anys(profile["skills"]) {
 		id, _ := x.(string)
 		if !skillID.MatchString(id) {
 			return nil, fail(400, "Invalid skill")
@@ -205,7 +205,7 @@ func artifactWriteObject(q *Request, projectID any, scope string, b []byte, medi
 
 func recommend(q *Request, projectID, methodID string) (any, error) {
 	sub := *q
-	sub.body = cJSON(doc{"projectId": projectID, "methodId": methodID})
+	sub.body = jsonBytes(doc{"projectId": projectID, "methodId": methodID})
 	return projectOps["recommendation_set"].h(&sub)
 }
 
@@ -239,14 +239,14 @@ func startAgentStep(q *Request, run, step doc, stepExecutionID, prompt string, i
 	if err != nil {
 		return "", err
 	}
-	s := doc{"id": uuid(), "createdAt": now(), "agentConfig": profile, "pipelineRunId": run["id"]}
+	s := doc{"id": newID(), "createdAt": nowMs(), "agentConfig": profile, "pipelineRunId": run["id"]}
 	if overrides["account"] != nil {
 		s["account"] = overrides["account"]
 	}
 	if run["projectId"] != nil {
 		s["projectId"] = run["projectId"]
 	}
-	if err := putDoc(q, "session", s); err != nil {
+	if err := put(q, "session", s); err != nil {
 		return "", err
 	}
 	execution := doc{"pipelineStepId": stepExecutionID, "pipelineRunId": run["id"]}

@@ -41,17 +41,17 @@ func mime(name string) string {
 	path := name
 	for {
 		ext := extension(path)
-		suffix, ok := str(get(mimeTable, "suffixes", strings.ToLower(ext)))
+		suffix, ok := str(jAt(mimeTable, "suffixes", strings.ToLower(ext)))
 		if !ok || ext == "" {
 			break
 		}
 		path = path[:len(path)-len(ext)] + suffix
 	}
 	ext := extension(path)
-	if has(get(mimeTable, "encodings"), ext) {
+	if has(jAt(mimeTable, "encodings"), ext) {
 		ext = extension(path[:len(path)-len(ext)])
 	}
-	if t, ok := str(get(mimeTable, "types", strings.ToLower(ext))); ok {
+	if t, ok := str(jAt(mimeTable, "types", strings.ToLower(ext))); ok {
 		return t
 	}
 	return "application/octet-stream"
@@ -79,7 +79,7 @@ func openInside(workdir string, parts []string) (*os.File, error) {
 }
 
 func artifactSave(ctx, q any, db dbExec) (any, error) {
-	path, ok := str(get(q, "path"))
+	path, ok := str(jAt(q, "path"))
 	if !ok {
 		return nil, refusal("path must be a file inside your working area")
 	}
@@ -97,7 +97,7 @@ func artifactSave(ctx, q any, db dbExec) (any, error) {
 	if len(parts) == 0 {
 		return nil, refusal("path must be a file inside your working area")
 	}
-	workdir, ok := str(get(ctx, "workdir"))
+	workdir, ok := str(jAt(ctx, "workdir"))
 	if !ok {
 		return nil, refusal("workdir")
 	}
@@ -114,7 +114,7 @@ func artifactSave(ctx, q any, db dbExec) (any, error) {
 		return nil, refusal("path must be a regular file with one link")
 	}
 	key := newID()
-	spoolDir, ok := str(get(ctx, "spool"))
+	spoolDir, ok := str(jAt(ctx, "spool"))
 	if !ok {
 		return nil, refusal("spool")
 	}
@@ -134,23 +134,23 @@ func artifactSave(ctx, q any, db dbExec) (any, error) {
 		return nil, err
 	}
 	name := strings.Join(parts, "/")
-	body := obj{"path": spool, "spool": true, "previews": true, "name": name, "mediaType": mime(name), "executionId": get(ctx, "executionId"), "required": get(q, "required") == true}
-	if truth(get(q, "name")) {
-		body["name"] = get(q, "name")
+	body := M{"path": spool, "spool": true, "previews": true, "name": name, "mediaType": mime(name), "executionId": jAt(ctx, "executionId"), "required": jAt(q, "required") == true}
+	if truth(jAt(q, "name")) {
+		body["name"] = jAt(q, "name")
 	}
-	if truth(get(q, "media_type")) {
-		body["mediaType"] = get(q, "media_type")
+	if truth(jAt(q, "media_type")) {
+		body["mediaType"] = jAt(q, "media_type")
 	}
 	if err := db.tx(func(x execer) error {
-		if _, err := x.Exec("INSERT INTO transfers(id,kind,body,created_at) VALUES(?,'upload',?,?)", key, encode(body), nowMS()); err != nil {
+		if _, err := x.Exec("INSERT INTO transfers(id,kind,body,created_at) VALUES(?,'upload',?,?)", key, enc(body), nowMs()); err != nil {
 			return err
 		}
 		if body["required"] == true {
 			if _, err := x.Exec("CREATE TABLE IF NOT EXISTS outbox(route TEXT NOT NULL,body TEXT NOT NULL)"); err != nil {
 				return err
 			}
-			decl := obj{"hostId": get(ctx, "hostId"), "executionId": get(ctx, "executionId"), "name": body["name"]}
-			_, err := x.Exec("INSERT INTO outbox(route,body) VALUES('/api/hosts/artifacts/declare',?)", encode(decl))
+			decl := M{"hostId": jAt(ctx, "hostId"), "executionId": jAt(ctx, "executionId"), "name": body["name"]}
+			_, err := x.Exec("INSERT INTO outbox(route,body) VALUES('/api/hosts/artifacts/declare',?)", enc(decl))
 			return err
 		}
 		return nil
@@ -159,7 +159,7 @@ func artifactSave(ctx, q any, db dbExec) (any, error) {
 	}
 	r, err := wait(db.DB, "transfers", key, 30, true)
 	if r == nil && err == nil {
-		r = obj{"artifactId": key, "state": "pending"}
+		r = M{"artifactId": key, "state": "pending"}
 	}
 	return r, err
 }
@@ -167,20 +167,20 @@ func artifactSave(ctx, q any, db dbExec) (any, error) {
 func artifactCall(ctx any, name string, q any, db dbExec) (any, error) {
 	var spec any
 	for _, t := range mcpTools(ctx)["tools"].([]any) {
-		if get(t, "name") == name {
-			spec = get(t, "inputSchema")
+		if jAt(t, "name") == name {
+			spec = jAt(t, "inputSchema")
 		}
 	}
-	qo, ok := q.(obj)
+	qo, ok := q.(M)
 	bad := !ok
 	for k, v := range qo {
 		_, isS := v.(string)
 		_, isB := v.(bool)
-		bad = bad || !has(get(spec, "properties"), k) || !(isS || isB)
+		bad = bad || !has(jAt(spec, "properties"), k) || !(isS || isB)
 	}
-	req, _ := get(spec, "required").([]any)
+	req, _ := jAt(spec, "required").([]any)
 	for _, k := range req {
-		bad = bad || !has(qo, sv(k))
+		bad = bad || !has(qo, jStr(k))
 	}
 	if bad {
 		return nil, errors.New("Invalid artifact tool arguments")
@@ -192,20 +192,20 @@ func artifactCall(ctx any, name string, q any, db dbExec) (any, error) {
 	} else {
 		key := newID()
 		kind, seconds := "get", 600
-		body := obj{"executionId": get(ctx, "executionId"), "artifactId": get(q, "artifact_id"), "inputDir": get(ctx, "inputDir")}
+		body := M{"executionId": jAt(ctx, "executionId"), "artifactId": jAt(q, "artifact_id"), "inputDir": jAt(ctx, "inputDir")}
 		if name == "artifact_list" {
 			kind, seconds = "list", 20
-			body = obj{"executionId": get(ctx, "executionId"), "filter": obj{"executionId": get(q, "execution_id"), "taskId": get(q, "task_id"), "mediaType": get(q, "media_type")}}
+			body = M{"executionId": jAt(ctx, "executionId"), "filter": M{"executionId": jAt(q, "execution_id"), "taskId": jAt(q, "task_id"), "mediaType": jAt(q, "media_type")}}
 		}
-		if _, err := db.Exec("INSERT INTO transfers(id,kind,body,created_at) VALUES(?,?,?,?)", key, kind, encode(body), nowMS()); err != nil {
+		if _, err := db.Exec("INSERT INTO transfers(id,kind,body,created_at) VALUES(?,?,?,?)", key, kind, enc(body), nowMs()); err != nil {
 			return nil, dbe(err)
 		}
 		result, err = wait(db.DB, "transfers", key, seconds, false)
 		if err == nil {
-			if r, ok := result.(obj); ok {
+			if r, ok := result.(M); ok {
 				r["transferId"] = key
 			} else {
-				result = obj{"state": "pending", "transferId": key, "instruction": "Still in progress on this host; list artifacts later."}
+				result = M{"state": "pending", "transferId": key, "instruction": "Still in progress on this host; list artifacts later."}
 			}
 		}
 	}
@@ -217,9 +217,9 @@ func artifactCall(ctx any, name string, q any, db dbExec) (any, error) {
 	case errors.As(err, &de):
 		return nil, err
 	case errors.As(err, &rf):
-		return mcpText(obj{"error": "artifact tool refused: " + string(rf)}, &yes), nil
+		return mcpText(M{"error": "artifact tool refused: " + string(rf)}, &yes), nil
 	}
-	return mcpText(obj{"error": "artifact tool refused: " + notLink}, &yes), nil
+	return mcpText(M{"error": "artifact tool refused: " + notLink}, &yes), nil
 }
 
 type execer interface {

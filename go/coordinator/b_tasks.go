@@ -76,7 +76,7 @@ func taskTransition(q *Request, id, trigger, reason string) (string, error) {
 		return "", err
 	}
 	rule := taskTransitions[trigger]
-	state := gs(t, "state")
+	state := astr(t["state"])
 	if !slices.Contains(rule.from, state) {
 		return "", fail(409, fmt.Sprintf("Task %s cannot %s", state, strings.Replace(trigger, "_", " ", 1)))
 	}
@@ -101,12 +101,12 @@ func taskTransition(q *Request, id, trigger, reason string) (string, error) {
 			return "", err
 		}
 	}
-	if trigger == "release" && gs(t, "pause_reason") != "held" {
+	if trigger == "release" && astr(t["pause_reason"]) != "held" {
 		return "", fail(409, "Paused by a person: resume it")
 	}
 	to := rule.to
 	if to == "previous" {
-		to = gs(t, "state_before_pause")
+		to = astr(t["state_before_pause"])
 	}
 	var wr, before any
 	if to == "waiting" {
@@ -133,7 +133,7 @@ func settleTask(q *Request, id, target string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	state := gs(t, "state")
+	state := astr(t["state"])
 	if !openTask[state] || state == "paused" {
 		return state, nil
 	}
@@ -188,7 +188,7 @@ func takeTask(q *Request, id, taker, from string) error {
 	if err != nil {
 		return err
 	}
-	if gs(t, "directed_by") == taker {
+	if astr(t["directed_by"]) == taker {
 		return nil
 	}
 	prev := firstString(t["directed_by"], from)
@@ -200,20 +200,20 @@ func takeTask(q *Request, id, taker, from string) error {
 
 // askQuestion: v has kind, text and optional id, projectId, taskId, executionId, sessionId, options, askedBy, legacyKind, data, askedAt.
 func askQuestion(q *Request, v doc) (string, error) {
-	taskID, projectID := gs(v, "taskId"), gs(v, "projectId")
-	if taskID == "" && gs(v, "executionId") != "" {
+	taskID, projectID := astr(v["taskId"]), astr(v["projectId"])
+	if taskID == "" && astr(v["executionId"]) != "" {
 		e, err := first(q, "SELECT task_id,project_id FROM execution WHERE id=$1", v["executionId"])
 		if err != nil {
 			return "", err
 		}
 		if e != nil {
-			taskID = gs(e, "task_id")
+			taskID = astr(e["task_id"])
 			if projectID == "" {
-				projectID = gs(e, "project_id")
+				projectID = astr(e["project_id"])
 			}
 		}
 	}
-	id := firstString(v["id"], uuid())
+	id := firstString(v["id"], newID())
 	var options any
 	if v["options"] != nil {
 		options = js(v["options"])
@@ -244,16 +244,16 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 	if qu == nil {
 		return nil, errNotFound
 	}
-	if gs(qu, "state") == "answered" {
-		if gs(qu, "answer") != answer {
+	if astr(qu["state"]) == "answered" {
+		if astr(qu["answer"]) != answer {
 			return nil, fail(409, "Question already answered differently")
 		}
 		return qu, nil
 	}
-	if gs(qu, "state") != "open" {
+	if astr(qu["state"]) != "open" {
 		return nil, fail(409, "Question withdrawn")
 	}
-	if gs(qu, "kind") == "acceptance" && answer != "accepted" && answer != "rejected" {
+	if astr(qu["kind"]) == "acceptance" && answer != "accepted" && answer != "rejected" {
 		return nil, fail(400, "Acceptance answer is accepted or rejected")
 	}
 	if err := runAnswerChecks(q, qu, answer); err != nil { // area C: Lab and budget answers
@@ -265,10 +265,10 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 	}
 	if tag.RowsAffected() == 0 {
 		now, _ := first(q, "SELECT * FROM question WHERE id=$1", id)
-		if gs(now, "state") == "answered" && gs(now, "answer") == answer {
+		if astr(now["state"]) == "answered" && astr(now["answer"]) == answer {
 			return now, nil
 		}
-		if gs(now, "state") == "answered" {
+		if astr(now["state"]) == "answered" {
 			return nil, fail(409, "Question already answered differently")
 		}
 		return nil, fail(409, "Question withdrawn")
@@ -276,8 +276,8 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 	if err := runAnswerAfter(q, id); err != nil {
 		return nil, err
 	}
-	if t := gs(qu, "task_id"); t != "" {
-		if gs(qu, "kind") == "acceptance" {
+	if t := astr(qu["task_id"]); t != "" {
+		if astr(qu["kind"]) == "acceptance" {
 			if answer == "accepted" {
 				if _, err := taskTransition(q, t, "accepted", ""); err != nil {
 					return nil, err
@@ -285,7 +285,7 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 				ids := []string{}
 				src := artifactIDs
 				if src == nil {
-					src, _ = gm(qu, "data")["artifactIds"].([]any)
+					src, _ = mapOf(qu["data"])["artifactIds"].([]any)
 				}
 				for _, x := range src {
 					if s, ok := x.(string); ok {
@@ -339,7 +339,7 @@ func createTask(q *Request, v doc) (string, error) {
 	if strings.TrimSpace(title) == "" || len([]rune(title)) > 500 {
 		return "", fail(400, "Expected task title")
 	}
-	id := firstString(v["id"], uuid())
+	id := firstString(v["id"], newID())
 	pr := v["priority"]
 	if pr == nil {
 		pr = "normal"
@@ -357,7 +357,7 @@ func createTask(q *Request, v doc) (string, error) {
 		id, v["projectId"], title, v["expectedOutcome"], js(cr), v["resultDestination"], v["createdBy"], held); err != nil {
 		return "", err
 	}
-	if d := gs(v, "directedBy"); d != "" {
+	if d := astr(v["directedBy"]); d != "" {
 		if err := exec(q, "UPDATE task SET directed_by=$2,requested_by=$2 WHERE id=$1", id, d); err != nil {
 			return "", err
 		}
@@ -387,7 +387,7 @@ const executionCols = `id,kind,state,observation,last_seen_at AS "lastSeenAt",pr
 func executionsList(q *Request, f doc) ([]doc, error) {
 	c, p := []string{}, []any{}
 	for _, x := range [][2]string{{"taskId", "task_id"}, {"projectId", "project_id"}, {"parentExecutionId", "parent_execution_id"}} {
-		if v := gs(f, x[0]); v != "" {
+		if v := astr(f[x[0]]); v != "" {
 			p = append(p, v)
 			c = append(c, fmt.Sprintf("%s=$%d", x[1], len(p)))
 		}
@@ -552,7 +552,7 @@ func taskSummary(q *Request, f doc, group any, groupCounts bool) (doc, []doc, er
 		return nil, nil, err
 	}
 	for _, r := range rs {
-		byState[gs(r, "state")] = r["n"]
+		byState[astr(r["state"])] = r["n"]
 	}
 	groups := []doc{}
 	if name == "none" {
@@ -576,19 +576,19 @@ func taskSummary(q *Request, f doc, group any, groupCounts bool) (doc, []doc, er
 	}
 	by := map[string]doc{}
 	for _, g := range groups {
-		by[gs(g, "key")] = zeroCounts(listStates)
+		by[astr(g["key"])] = zeroCounts(listStates)
 	}
 	rs, err = rowsOf(q, "SELECT "+G.sql+" AS g,"+stateSQL+" AS state,count(*) AS n "+from+where(cc)+" GROUP BY 1,2", cp...)
 	if err != nil {
 		return nil, nil, err
 	}
 	for _, r := range rs {
-		if c := by[gs(r, "g")]; c != nil {
-			c[gs(r, "state")] = r["n"]
+		if c := by[astr(r["g"])]; c != nil {
+			c[astr(r["state"])] = r["n"]
 		}
 	}
 	for _, g := range groups {
-		g["counts"] = by[gs(g, "key")]
+		g["counts"] = by[astr(g["key"])]
 	}
 	return byState, groups, nil
 }
@@ -602,7 +602,7 @@ func total(c doc) float64 {
 }
 
 func taskPage(q *Request, b doc) (any, error) {
-	f := gm(b, "filter")
+	f := mapOf(b["filter"])
 	if f == nil {
 		f = doc{}
 	}
@@ -670,17 +670,6 @@ func taskMembership(q *Request, f doc, group any, ids []string) ([]doc, error) {
 		out = append(out, taskListRow(r))
 	}
 	return out, err
-}
-
-func strList(v any) []string {
-	out := []string{}
-	xs, _ := v.([]any)
-	for _, x := range xs {
-		if s, ok := x.(string); ok {
-			out = append(out, s)
-		}
-	}
-	return out
 }
 
 func init() {
@@ -775,7 +764,7 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		if gs(t, "state") != "in_progress" {
+		if astr(t["state"]) != "in_progress" {
 			return nil, fail(409, "Task is not in progress")
 		}
 		ids, ok := b["artifactIds"].([]any)
@@ -789,7 +778,7 @@ func init() {
 				ids = append(ids, r["id"])
 			}
 		}
-		text := "Accept the result of: " + gs(t, "title")
+		text := "Accept the result of: " + astr(t["title"])
 		if s, ok := b["text"].(string); ok {
 			text = string([]rune(s)[:min(len([]rune(s)), 2000)])
 		}
@@ -802,11 +791,11 @@ func init() {
 	bop("task_list", true, func(q *Request) (any, error) {
 		b := body(q)
 		c, p := []string{}, []any{}
-		if v := gs(b, "projectId"); v != "" {
+		if v := astr(b["projectId"]); v != "" {
 			p = append(p, v)
 			c = append(c, fmt.Sprintf("t.project_id=$%d", len(p)))
 		}
-		if v := gs(b, "state"); v != "" {
+		if v := astr(b["state"]); v != "" {
 			p = append(p, v)
 			c = append(c, fmt.Sprintf(stateSQL+"=$%d", len(p)))
 		}
@@ -833,14 +822,14 @@ func init() {
 			return nil, err
 		}
 		p := q.person
-		if p == nil || !mayAccessProjectID(p, gs(t, "project_id")) {
+		if p == nil || !mayAccessProjectID(p, astr(t["project_id"])) {
 			return nil, fail(403, "Take needs a grant on the task project")
 		}
-		if gs(t, "directed_by") != p.Email {
+		if astr(t["directed_by"]) != p.Email {
 			if err := takeTask(q, id, p.Email, ""); err != nil {
 				return nil, err
 			}
-			if err := putDoc(q, "setting-change", doc{"id": uuid(), "target": "task:" + id, "projectId": t["project_id"], "field": "directedBy", "previous": t["directed_by"], "value": p.Email, "actor": p.Email, "at": now()}); err != nil {
+			if err := put(q, "setting-change", doc{"id": newID(), "target": "task:" + id, "projectId": t["project_id"], "field": "directedBy", "previous": t["directed_by"], "value": p.Email, "actor": p.Email, "at": nowMs()}); err != nil {
 				return nil, err
 			}
 		}
@@ -848,7 +837,7 @@ func init() {
 	})
 	bop("questions_list", true, func(q *Request) (any, error) {
 		b := body(q)
-		qs, err := questionsList(q, gs(b, "taskId"), gs(b, "state"), gs(b, "kind"))
+		qs, err := questionsList(q, astr(b["taskId"]), astr(b["state"]), astr(b["kind"]))
 		return doc{"questions": qs}, err
 	})
 	bop("questions_answer", false, func(q *Request) (any, error) {
@@ -867,7 +856,7 @@ func init() {
 			return nil, err
 		} else if aq != nil {
 			// The reply reaches another session: the person must have that session's project, as for any project op.
-			if p := q.person; p != nil && !p.Owner && !mayAccessProjectID(p, gs(aq, "project_id")) {
+			if p := q.person; p != nil && !p.Owner && !mayAccessProjectID(p, astr(aq["project_id"])) {
 				return nil, errNotFound
 			}
 			if _, err := agentReply(q, doc{"questionId": id, "answer": answer}); err != nil {

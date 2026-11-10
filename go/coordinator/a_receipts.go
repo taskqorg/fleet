@@ -57,7 +57,7 @@ func commandOf(q *Request, b doc, msg string) (doc, error) {
 	if err := ownedBody(q, b); err != nil {
 		return nil, err
 	}
-	c, err := aget(q, b["commandId"], "command")
+	c, err := get(q, b["commandId"], "command")
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +73,7 @@ func ownedBody(q *Request, b doc) error {
 		return fail(403, "Host rejected")
 	}
 	if id := b["executionId"]; id != nil && id != "" {
-		e, err := aget(q, id, "execution")
+		e, err := get(q, id, "execution")
 		if err != nil {
 			return err
 		}
@@ -89,7 +89,7 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 		if err := ownedBody(q, b); err != nil {
 			return nil, "", err
 		}
-		c, err := aget(q, b["commandId"], "command")
+		c, err := get(q, b["commandId"], "command")
 		if err != nil {
 			return nil, "", err
 		}
@@ -108,11 +108,11 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 		if err := ownedBody(q, b); err != nil {
 			return nil, "", err
 		}
-		c, err := aget(q, b["commandId"], "command")
+		c, err := get(q, b["commandId"], "command")
 		if err != nil {
 			return nil, "", err
 		}
-		s, err := aget(q, c["sessionId"], "session")
+		s, err := get(q, c["sessionId"], "session")
 		if err != nil {
 			return nil, "", err
 		}
@@ -153,7 +153,7 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 	native, hasNative := b["nativeSessionId"].(string)
 	hasNative = hasNative && native != ""
 	if hasNative {
-		e, err := aget(q, b["executionId"], "execution")
+		e, err := get(q, b["executionId"], "execution")
 		if err != nil {
 			return nil, "", err
 		}
@@ -169,7 +169,7 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 	if err := put(q, "command", c); err != nil {
 		return nil, "", err
 	}
-	e, err := aget(q, b["executionId"], "execution")
+	e, err := get(q, b["executionId"], "execution")
 	if err != nil {
 		return nil, "", err
 	}
@@ -178,7 +178,7 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 	if !wasFinal && kind != "steer" && (kind != "stop" || status == "stopped") {
 		e["state"] = status
 	}
-	e["updatedAt"] = now()
+	e["updatedAt"] = nowMs()
 	if status == "started" && e["startedAt"] == nil {
 		e["startedAt"] = e["updatedAt"]
 	}
@@ -242,7 +242,7 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 // agentAccountList: the subscriptions a native agent's work may use (its director's, or taken for its project), without
 // host roots or bindings. Fixed: the TypeScript coordinator handed a native agent every subscription with every host's roots.
 func agentAccountList(q *Request, args doc, agent doc) (any, error) {
-	e, err := aget(q, agent["executionId"], "execution")
+	e, err := get(q, agent["executionId"], "execution")
 	if err != nil {
 		return nil, err
 	}

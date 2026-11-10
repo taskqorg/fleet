@@ -307,7 +307,7 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 					continue
 				}
 			}
-			if !(float64(now())-k.seen[id] < onlineMs) {
+			if !(float64(nowMs())-k.seen[id] < onlineMs) {
 				skip(id+" is offline", "host:"+id+":offline")
 				continue
 			}
@@ -397,7 +397,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		}
 	}
 	for _, id := range ids {
-		e, err := aget(q, id, "execution")
+		e, err := get(q, id, "execution")
 		if err != nil {
 			return err
 		}
@@ -519,7 +519,7 @@ func openCauseQuestion(q *Request, cause string, addressedTo, projectID any, tex
 
 // startCommand: the start command of a claimed execution, from the session as it is now and the chosen binding.
 func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, error) {
-	s, err := aget(q, e["sessionId"], "session")
+	s, err := get(q, e["sessionId"], "session")
 	if err != nil {
 		return nil, err
 	}
@@ -581,7 +581,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	for k, v := range mapOf(d["payload"]) {
 		p[k] = v
 	}
-	command := doc{"id": uuid(), "executionId": e["id"], "sessionId": s["id"], "hostId": host, "kind": "start", "payload": p, "status": "pending"}
+	command := doc{"id": newID(), "executionId": e["id"], "sessionId": s["id"], "hostId": host, "kind": "start", "payload": p, "status": "pending"}
 	if err := agentDecorate(q, s, e, command); err != nil {
 		return nil, err
 	}

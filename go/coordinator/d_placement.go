@@ -183,8 +183,8 @@ func placeOne(ctx context.Context, a *App, x *Artifact, stores []StoreRow, byID,
 	}
 	verified := []*StoreRow{}
 	for _, c := range copies {
-		if str(c, "state") == "verified" {
-			if s := byID[str(c, "store_id")]; s != nil {
+		if astr(c["state"]) == "verified" {
+			if s := byID[astr(c["store_id"])]; s != nil {
 				verified = append(verified, s)
 			}
 		}
@@ -203,12 +203,12 @@ func placeOne(ctx context.Context, a *App, x *Artifact, stores []StoreRow, byID,
 		}
 		var c map[string]any
 		for _, y := range copies {
-			if str(y, "store_id") == s.ID {
+			if astr(y["store_id"]) == s.ID {
 				c = y
 			}
 		}
 		if c != nil {
-			switch str(c, "state") {
+			switch astr(c["state"]) {
 			case "verified", "pending", "copying", "purge_pending":
 				continue
 			case "failed":
@@ -324,7 +324,7 @@ func deleteArtifact(ctx context.Context, a *App, x *Artifact, by string) error {
 		return err
 	}
 	for _, c := range cs {
-		s, err := storeGet(ctx, a, str(c, "store_id"))
+		s, err := storeGet(ctx, a, astr(c["store_id"]))
 		if err != nil {
 			return err
 		}
@@ -355,14 +355,14 @@ func reconcilePurges(ctx context.Context, a *App) error {
 		return err
 	}
 	for _, c := range rs {
-		s, err := storeGet(ctx, a, str(c, "store_id"))
+		s, err := storeGet(ctx, a, astr(c["store_id"]))
 		if err != nil || s.State == "unreachable" {
 			continue
 		}
 		if t, err := tunnel(s); err == nil {
-			t.Delete(s.Bucket, keyOf(&Artifact{ProjectID: strp(c, "project_id"), Scope: str(c, "scope"), ContentHash: str(c, "content_hash")}))
+			t.Delete(s.Bucket, keyOf(&Artifact{ProjectID: strp(c, "project_id"), Scope: astr(c["scope"]), ContentHash: astr(c["content_hash"])}))
 		}
-		if err := dExec(ctx, a, "UPDATE artifact_copy SET state='deleted' WHERE artifact_id=$1 AND store_id=$2", str(c, "artifact_id"), s.ID); err != nil {
+		if err := dExec(ctx, a, "UPDATE artifact_copy SET state='deleted' WHERE artifact_id=$1 AND store_id=$2", astr(c["artifact_id"]), s.ID); err != nil {
 			return err
 		}
 	}
@@ -371,12 +371,12 @@ func reconcilePurges(ctx context.Context, a *App) error {
 
 // expireWaiting: executions waiting for their artifacts longer than the retry window fail (P3-D2).
 func expireWaiting(ctx context.Context, a *App) error {
-	rs, err := dRows(ctx, conn(ctx, a), "SELECT id FROM execution WHERE legacy_kind='execution' AND data->>'state'='waiting' AND data->>'waitReason'='artifacts' AND coalesce((data->>'waitingSince')::bigint,0) < $1", now()-int64(retryWindowMS))
+	rs, err := dRows(ctx, conn(ctx, a), "SELECT id FROM execution WHERE legacy_kind='execution' AND data->>'state'='waiting' AND data->>'waitReason'='artifacts' AND coalesce((data->>'waitingSince')::bigint,0) < $1", nowMs()-int64(retryWindowMS))
 	if err != nil {
 		return err
 	}
 	for _, r := range rs {
-		if err := settleWaitingAs(ctx, a, str(r, "id"), "artifact retry window passed"); err != nil {
+		if err := settleWaitingAs(ctx, a, astr(r["id"]), "artifact retry window passed"); err != nil {
 			return err
 		}
 	}

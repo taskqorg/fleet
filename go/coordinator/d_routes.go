@@ -586,7 +586,7 @@ func latestReadings(ctx context.Context, a *App) (map[string][]Reading, error) {
 		}
 		if t, ok := v["resetsAt"].(float64); ok {
 			r.ResetsAt = &t
-			if t <= float64(now()) {
+			if t <= float64(nowMs()) {
 				r.State = "unknown"
 			}
 		}
@@ -615,13 +615,13 @@ func subscriptionLimits(q *Request) (any, error) {
 		}
 		subs = append(subs, doc{"id": id, "name": x["name"], "harness": x["harness"], "holder": x["holder"], "intake": x["intake"], "switchPct": x["switchPct"], "readings": rd})
 	}
-	return doc{"serverNow": now(), "subscriptions": subs}, nil
+	return doc{"serverNow": nowMs(), "subscriptions": subs}, nil
 }
 
 // readingOverSwitch: the dispatch skip (§6) for an account: provider rejected, or a percent at or over switchPct. Only
 // readings that know when their period ends count. Empty when none applies. For the dispatch area.
 func readingOverSwitch(account map[string]any, list []Reading) string {
-	old := func(r Reading) string { return strconv.FormatInt(max(0, (now()-r.At+30000)/60000), 10) + " min old" }
+	old := func(r Reading) string { return strconv.FormatInt(max(0, (nowMs()-r.At+30000)/60000), 10) + " min old" }
 	var best *Reading
 	sw, hasSw := account["switchPct"].(float64)
 	for i := range list {
