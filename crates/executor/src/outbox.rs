@@ -10,7 +10,9 @@ pub fn schema(db: &Connection) -> rusqlite::Result<()> {
     db.execute_batch("CREATE TABLE IF NOT EXISTS outbox(route TEXT NOT NULL,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS outbox_failed(route TEXT NOT NULL,body TEXT NOT NULL,status INTEGER NOT NULL,reason TEXT NOT NULL,failed_at INTEGER NOT NULL);")?;
     // A 401 used to set rows aside; it is a credential condition of the host, not of the row, so those rows go back to the
     // queue (their receipts finish executions that otherwise stay running).
-    db.execute_batch("BEGIN; INSERT INTO outbox(route,body) SELECT route,body FROM outbox_failed WHERE status=401 ORDER BY rowid; DELETE FROM outbox_failed WHERE status=401; COMMIT;")
+    let tx = db.unchecked_transaction()?;
+    tx.execute_batch("INSERT INTO outbox(route,body) SELECT route,body FROM outbox_failed WHERE status=401 ORDER BY rowid; DELETE FROM outbox_failed WHERE status=401;")?;
+    tx.commit()
 }
 
 /// One classification of a coordinator answer, shared by the outbox and the transfer client so the two cannot drift.
