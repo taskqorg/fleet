@@ -16,6 +16,12 @@ export function exact(t: number): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** Moment of a message in a copied or pasted text: "11 Nov 14:03", with the year when it is not this year (formats.md "Copy"). */
+export function stamp(t: number, now: number): string {
+  const d = new Date(t);
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}${d.getFullYear() === new Date(now).getFullYear() ? '' : ' ' + d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** Age of a past moment: now, 40s, 4m, 2h, 3d, then 12 Nov, then 12 Nov 2025. */
 export function age(t: number, now: number): Formatted {
   const s = Math.max(0, Math.floor((now - t) / 1000));

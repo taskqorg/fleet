@@ -145,7 +145,7 @@ func questionBlock(qu doc, seq int64) doc {
 	return b
 }
 
-const rowExpr = `jsonb_build_object('id',id,'executionId',data->>'executionId','type',data->>'type','text',data->'text','blocks',data->'data'->'fleetNormalized'->'blocks','deltaOf',data->'data'->'fleetNormalized'->'deltaOf','closes',data->'data'->'fleetNormalized'->'closes')`
+const rowExpr = `jsonb_build_object('id',id,'executionId',data->>'executionId','type',data->>'type','text',data->'text','blocks',data->'data'->'fleetNormalized'->'blocks','deltaOf',data->'data'->'fleetNormalized'->'deltaOf','closes',data->'data'->'fleetNormalized'->'closes','at',updated_at,'sentBy',data->>'sentBy')`
 
 type trow struct {
 	seq int64
@@ -209,7 +209,7 @@ func expand(q *Request, r trow, m map[string]member) ([]doc, error) {
 		if !ok {
 			return nil, nil
 		}
-		return []doc{{"kind": "text", "key": at(0), "executionId": v["executionId"], "role": "operator", "markdown": t, "plain": t}}, nil
+		return []doc{{"kind": "text", "key": at(0), "executionId": v["executionId"], "role": "operator", "markdown": t, "plain": t, "at": tsMs(v["at"]), "by": v["sentBy"]}}, nil
 	case "event-delta":
 		text, open, err := streamText(q, gs(v, "executionId"), gs(v, "deltaOf"))
 		if err != nil || !open {
@@ -219,7 +219,7 @@ func expand(q *Request, r trow, m map[string]member) ([]doc, error) {
 		if strings.HasPrefix(gs(v, "deltaOf"), "reasoning:") {
 			kind = "reasoning"
 		}
-		b := doc{"kind": kind, "key": at(0), "executionId": v["executionId"], "markdown": text, "plain": text, "stream": "open"}
+		b := doc{"kind": kind, "key": at(0), "executionId": v["executionId"], "markdown": text, "plain": text, "stream": "open", "at": tsMs(v["at"])}
 		if e.doc != nil && terminalState[gs(e.doc, "state")] {
 			b["stream"] = "cut-off"
 		}
@@ -239,7 +239,7 @@ func expand(q *Request, r trow, m map[string]member) ([]doc, error) {
 		for k, y := range src {
 			b[k] = y
 		}
-		b["key"], b["executionId"] = at(i), v["executionId"]
+		b["key"], b["executionId"], b["at"] = at(i), v["executionId"], tsMs(v["at"])
 		if gs(b, "kind") == "text" {
 			b["role"] = firstString(src["role"], "agent")
 			for k, y := range mark(e.doc) {
@@ -724,7 +724,40 @@ type point struct {
 	offset int
 }
 
-func markdownOf(b doc, from, to *point) string {
+// clipTime: the compact time of a copied message (OR-2, design-system/formats.md "Copy"): 11 Nov 14:03, with the year when it is not this year.
+func clipTime(ms any, loc *time.Location) string {
+	n, ok := ms.(int64)
+	if !ok {
+		return ""
+	}
+	t := time.UnixMilli(n).In(loc)
+	if t.Year() != time.Now().In(loc).Year() {
+		return t.Format("2 Jan 2006 15:04")
+	}
+	return t.Format("2 Jan 15:04")
+}
+
+// whoOf: the author line of a text block: the person (email local part) or the agent as harness, model and effort.
+func whoOf(b doc) string {
+	if gs(b, "role") == "operator" {
+		if e := gs(b, "by"); e != "" {
+			return strings.SplitN(e, "@", 2)[0]
+		}
+		return "You"
+	}
+	parts := []string{}
+	for _, k := range []string{"harness", "model", "effort"} {
+		if v := gs(b, k); v != "" {
+			parts = append(parts, v)
+		}
+	}
+	if len(parts) == 0 {
+		return "Agent"
+	}
+	return strings.Join(parts, " ")
+}
+
+func markdownOf(b doc, from, to *point, loc *time.Location) string {
 	cut := func(s string) string {
 		rs := []rune(s)
 		a, z := 0, len(rs)
@@ -741,14 +774,11 @@ func markdownOf(b doc, from, to *point) string {
 	}
 	switch gs(b, "kind") {
 	case "text":
-		who := "You"
-		if gs(b, "role") != "operator" {
-			who = "Agent"
-			if mo := gs(b, "model"); mo != "" {
-				who += " (" + mo + ")"
-			}
+		head := whoOf(b)
+		if t := clipTime(b["at"], loc); t != "" {
+			head += " · " + t
 		}
-		return fmt.Sprintf("**%s:**\n\n%s\n", who, cut(firstString(b["plain"], b["markdown"])))
+		return fmt.Sprintf("**%s**\n%s\n", head, cut(firstString(b["plain"], b["markdown"])))
 	case "reasoning":
 		return fmt.Sprintf("*Reasoning:*\n\n%s\n", cut(firstString(b["plain"], b["markdown"])))
 	case "tool":
@@ -879,7 +909,7 @@ func init() {
 			}
 		}
 		var sb strings.Builder
-		err = exportPages(q, key, from, to, func(s string) error { sb.WriteString(s); return nil })
+		err = exportPages(q, key, from, to, tzOf(b), func(s string) error { sb.WriteString(s); return nil })
 		return doc{"markdown": sb.String()}, err
 	})
 	broute("GET /api/threads/{scope}/{id}/entries", func(q *Request) (any, error) {
@@ -944,7 +974,7 @@ func init() {
 		return raw(func(w http.ResponseWriter) error {
 			w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 			fl, _ := w.(http.Flusher)
-			return exportPages(q, key, from, to, func(s string) error {
+			return exportPages(q, key, from, to, time.UTC, func(s string) error {
 				_, err := w.Write([]byte(s))
 				if fl != nil {
 					fl.Flush()
@@ -956,7 +986,7 @@ func init() {
 }
 
 // exportPages: the thread as markdown, 500 blocks per page; each page in its own snapshot when q.tx is nil.
-func exportPages(q *Request, key threadKey, from, to *point, emit func(string) error) error {
+func exportPages(q *Request, key threadKey, from, to *point, loc *time.Location, emit func(string) error) error {
 	var after *bkey
 	if from != nil {
 		k := mustKey(from.key)
@@ -994,7 +1024,7 @@ func exportPages(q *Request, key threadKey, from, to *point, emit func(string) e
 				done = true
 				break
 			}
-			parts = append(parts, markdownOf(x, from, to))
+			parts = append(parts, markdownOf(x, from, to, loc))
 		}
 		if len(parts) > 0 {
 			if err := emit(strings.Join(parts, "\n") + "\n"); err != nil {
@@ -1007,4 +1037,12 @@ func exportPages(q *Request, key threadKey, from, to *point, emit func(string) e
 		k := mustKey(bs[len(bs)-1]["key"])
 		after = &k
 	}
+}
+
+// tzOf: the reader's time zone for copied times (body "tz", an IANA name); UTC when absent or unknown.
+func tzOf(b doc) *time.Location {
+	if l, err := time.LoadLocation(gs(b, "tz")); err == nil && gs(b, "tz") != "" {
+		return l
+	}
+	return time.UTC
 }

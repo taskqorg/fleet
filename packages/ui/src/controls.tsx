@@ -5,6 +5,7 @@ import { type IconName, type Family, type StateOf, type StateDef, type Tone, typ
 import { type Measured, type Kind, measured, age, bytes, exact, percent, duration, agentLabel } from './format.ts';
 import { VirtualList, type VirtualListHandle } from './virtual-list.tsx';
 import { parse, renderBlocks } from './markdown.tsx';
+import { author, clipMessage, writeClip } from './clip.ts';
 import tokens from '../tokens.json';
 
 const ROW = parseInt(tokens.size.row);
@@ -400,11 +401,16 @@ export function AgentMark({ harness, model, effort }: Mark) {
   return <span class="agent-mark">{harness && harness in harnesses && <HarnessMark h={harness as Harness} />}<span class="lbl" data-tip={model ?? undefined}>{agentLabel(model, effort)}</span></span>;
 }
 
-/** An operator or agent reply: content first, the service zone (agent mark, copy) on the right (OR-21). */
-export function TextRow({ who, markdown, mark, onCopyFail }: { who: 'operator' | 'agent'; markdown: string; mark?: Mark; onCopyFail?: (e: unknown) => void }) {
+/** An operator or agent message: a head line with who wrote it and when (OR-2), then the content; copy on the right (OR-21).
+ *  Copy writes the head line and the body as plain markdown and as chat-safe HTML (clip.ts, formats.md "Copy"). */
+export function TextRow({ who, markdown, mark, by, at, now, onCopyFail }: { who: 'operator' | 'agent'; markdown: string; mark?: Mark; by?: string | null; at?: number | null; now?: number; onCopyFail?: (e: unknown) => void }) {
+  const t = now ?? Date.now(), name = author({ role: who, by, ...mark });
   return <div class={`th-row th-text ${who}`} data-ui="thread-row">
-    <div class="th-main">{who === 'operator' && <span class="who">You</span>}<Markdown text={markdown} onCopyFail={onCopyFail} /></div>
-    <span class="th-svc">{who === 'agent' && mark && <AgentMark {...mark} />}<Button label="Copy reply" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(markdown).catch(e => onCopyFail?.(e))} /></span>
+    <div class="th-main">
+      <div class="th-who">{who === 'operator' ? <span class="who" data-tip={by ?? undefined}>{name}</span> : <AgentMark {...(mark ?? {})} />}
+        {at ? <span class="when" data-tip={exact(at)} aria-label={age(at, t).long}>{age(at, t).text}</span> : null}</div>
+      <Markdown text={markdown} onCopyFail={onCopyFail} /></div>
+    <span class="th-svc"><Button label="Copy message" icon={actions.copy} iconOnly kind="quiet" onClick={() => writeClip(clipMessage(name, at, t, markdown)).catch(e => onCopyFail?.(e))} /></span>
   </div>;
 }
 
@@ -474,7 +480,7 @@ export function Thread({ blocks, label, now, marked, selected, onRowClick, showS
   const markOf = (b: ThreadBlock): Mark => ({ harness: b.harness, model: b.model, effort: b.effort });
   const row = (b: ThreadBlock) => {
     switch (b.kind) {
-      case 'text': return <TextRow who={b.role === 'operator' ? 'operator' : 'agent'} markdown={b.markdown ?? ''} mark={markOf(b)} onCopyFail={onCopyFail} />;
+      case 'text': return <TextRow who={b.role === 'operator' ? 'operator' : 'agent'} markdown={b.markdown ?? ''} mark={markOf(b)} by={b.by} at={b.at} now={now} onCopyFail={onCopyFail} />;
       case 'tool': return <ToolRow name={b.name} input={b.input} output={b.output} state={b.state} startedAt={b.startedAt} endedAt={b.endedAt} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'question': return <QuestionRow text={b.text} options={b.options ?? []} state={b.state} answer={b.answer} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} />;

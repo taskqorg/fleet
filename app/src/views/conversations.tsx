@@ -5,6 +5,7 @@ import { useLocation } from 'wouter-preact';
 import {
   ListDetail, ListFrame, FilterBar, StateCounters, RowCheck, VirtualList, StateBadge, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection, type VirtualListHandle,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf,
+  writeClip,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
 import { op, online } from '../api.ts';
@@ -63,12 +64,13 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const key: ThreadKey = thread.win?.key ?? { session: id };
   // A plain click marks where a selection starts (no tint, so reading stays quiet); Shift+click selects up to that row.
   const [sel, setSel] = useState<Selection>(null), pickFrom = useRef<string | null>(null);
-  // Cmd+A selects the thread; Cmd+C copies the selected rows as markdown from the server. The clipboard write starts inside the
+  // Cmd+A selects the thread; Cmd+C copies the selected rows from the server as markdown and chat-safe HTML. The clipboard write starts inside the
   // key handler with a promise, so the browser keeps the user gesture while the export loads.
   const copySel = (s0: NonNullable<Selection>) => {
     try {
-      const text = op<{ markdown: string }>('thread_export', { key, ...range(s0) }).then(r => new Blob([r.markdown], { type: 'text/plain' }));
-      navigator.clipboard.write([new ClipboardItem({ 'text/plain': text })]).catch(e => copyFail(e, () => copySel(s0)));
+      // Both formats (formats.md "Copy"); times in the reader's own zone.
+      const text = op<{ markdown: string }>('thread_export', { key, ...range(s0), tz: Intl.DateTimeFormat().resolvedOptions().timeZone }).then(r => r.markdown);
+      writeClip(text).catch(e => copyFail(e, () => copySel(s0)));
     } catch (e) { copyFail(e, () => copySel(s0)); } // no async clipboard (plain http): say so instead of failing silently
   };
   // The key handler reads the latest selection through a ref: effects run after paint, and a key can come first.

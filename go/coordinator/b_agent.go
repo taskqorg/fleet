@@ -113,7 +113,7 @@ func enqueue(q *Request, s doc, input, requestID string, payload, execution doc,
 	if err := put(q, "execution", e); err != nil {
 		return nil, err
 	}
-	return e, putDoc(q, "message", doc{"id": uuid(), "sessionId": s["id"], "executionId": id, "requestId": requestID, "text": input, "projectId": s["projectId"]})
+	return e, putDoc(q, "message", doc{"id": uuid(), "sessionId": s["id"], "executionId": id, "requestId": requestID, "text": input, "projectId": s["projectId"], "sentBy": director(q)})
 }
 
 func refreshProfile(s doc) error {
