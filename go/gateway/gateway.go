@@ -543,7 +543,9 @@ func (g *gateway) call(name string, c *connection, p *provider, t *tool, path st
 			a.key, a.disabled = id, status
 			return a
 		}
-		// Success and every other provider reply, quota and 429 included, reach the caller unchanged.
+		// Success and every other provider reply, quota and 429 included, reach the caller unchanged, except that a key
+		// value the provider echoed is replaced: the caller never sees a key.
+		data = bytes.ReplaceAll(data, []byte(value), []byte("[key]"))
 		a := &answer{status: status, body: data, retryAfter: response.Header.Get("Retry-After"), outcome: "ok", key: id}
 		var reply struct {
 			Usage map[string]json.RawMessage `json:"usage"`
