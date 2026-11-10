@@ -102,7 +102,10 @@ func goType(s schema, where string) (string, bool) {
 			fail("%s: an object with properties must be a $defs entry", where)
 		}
 		if values, ok := s["additionalProperties"].(map[string]any); ok {
-			vt, _ := goType(values, where+".*")
+			vt, null := goType(values, where+".*")
+			if null {
+				fail("%s: a map value cannot be null", where)
+			}
 			return "map[string]" + vt, null
 		}
 		return "map[string]json.RawMessage", null

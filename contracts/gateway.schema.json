@@ -36,7 +36,7 @@
       "projectId": {"type": "string"},
       "experimentId": {"type": "string"}}},
     "CallOutcome": {"type": "string", "enum": ["ok", "error", "unknown"]},
-    "CallLine": {"$comment": "One provider call: a spool line written by the gateway, and the result of the coordinator's in-process call (which adds output and leaves the spool-only fields empty).", "type": "object", "required": ["callId", "connection", "tool", "status", "outcome", "startedAt", "ms"], "properties": {
+    "CallLine": {"$comment": "One provider call: a spool line written by the gateway, and the result of contract.GatewayCall (coordinator api steps, executor connection MCP server), which adds output and leaves the spool-only fields (usage, key fields, startedAt, ms) empty; provider usage stays inside output.", "type": "object", "required": ["callId", "connection", "tool", "status", "outcome", "startedAt", "ms"], "properties": {
       "callId": {"type": "string"},
       "executionId": {"type": "string"},
       "tokenSha256": {"type": "string"},

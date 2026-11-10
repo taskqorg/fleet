@@ -163,7 +163,7 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 ### 5. Call methods
 
 *   **HTTP:** `POST /v1/call/<connection>/<tool>`, body the tool's JSON, `Authorization: Bearer <run token>`. Replies copy the lane's table (`unauthenticated`, `bad-request`, `no-usable-key`, `key-disabled-<status>`, `provider-unreachable`, `provider-body`, `provider-timeout`; provider status passes through).
-*   **Pipeline calls:** the coordinator makes `api` step calls in-process over HTTP with the step's run token. A call answers one line `{tool, callId, outcome, error_code, usage, output}`; error classification (`infra:`/`unknown:`/`step:` problems in fleet-lab.md) stays.
+*   **Pipeline calls:** the coordinator makes `api` step calls in-process over HTTP with the step's run token. A call answers one `CallLine` (`contract.GatewayCall`, shared with the executor's connection MCP server): `{tool, connection, callId, status, outcome, errorCode?, output}`; error classification (`infra:`/`unknown:`/`step:` problems in fleet-lab.md) stays.
 *   **MCP:** `fleet-executor mcp connection <connection> <spec>` (`go/executor/mcp_connection.go`), one stdio MCP server per connection; the start command's `connections: [{name, instructions, tools: [{name, description, inputSchema}]}]` gives the spec, so hosts need no connection files. The executor adds it to each run's MCP config and allowlists `mcp__<connection>__<tool>`, (`go/executor/executor.go`).
 *   The local `.connection-calls.jsonl` file is deleted: the spool is the record, so an agent cannot edit its own costs.
 *   **Built-in web** stays off unless the profile says `web_route: builtin` (fleet-lab.md R3.4).

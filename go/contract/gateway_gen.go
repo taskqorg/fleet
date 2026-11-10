@@ -17,7 +17,7 @@ type CallKeyProblem struct {
 	Status  int64  `json:"status"`
 }
 
-// CallLine: One provider call: a spool line written by the gateway, and the result of the coordinator's in-process call (which adds output and leaves the spool-only fields empty).
+// CallLine: One provider call: a spool line written by the gateway, and the result of contract.GatewayCall (coordinator api steps, executor connection MCP server), which adds output and leaves the spool-only fields (usage, key fields, startedAt, ms) empty; provider usage stays inside output.
 type CallLine struct {
 	CallId         string           `json:"callId"`
 	Connection     string           `json:"connection"`

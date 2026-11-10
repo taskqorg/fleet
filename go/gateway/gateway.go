@@ -568,7 +568,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 			Usage map[string]json.RawMessage `json:"usage"`
 		}
 		if json.Unmarshal(data, &reply) == nil {
-			if amount, err := strconv.ParseInt(string(reply.Usage[t.Unit]), 10, 64); err == nil {
+			if amount, err := strconv.ParseInt(string(reply.Usage[t.Unit]), 10, 64); err == nil && amount >= 0 {
 				a.usage = &amount
 			}
 		}

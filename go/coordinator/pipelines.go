@@ -729,8 +729,7 @@ func startScript(q *Request, run doc, stepExecutionID, command string, timeout a
 // connCallFor: one provider call with a token minted for the step row, revoked after the call; the gateway's spool line
 // becomes the step's tool_run (ingested here, so the row exists when the step moves on).
 func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, tool string, args any) contract.CallLine {
-	code := "connection-unavailable"
-	unavailable := contract.CallLine{Tool: tool, Connection: connection, Outcome: contract.CallOutcomeError, ErrorCode: &code}
+	unavailable := contract.CallLine{Tool: tool, Connection: connection, Outcome: contract.CallOutcomeError, ErrorCode: ptr("connection-unavailable")}
 	if gatewayURL() == "" || !regexp.MustCompile(`^[a-z0-9-]+$`).MatchString(connection) {
 		return unavailable
 	}
@@ -872,9 +871,10 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			code := deref(line.ErrorCode)
 			if job && line.Outcome != contract.CallOutcomeOk && (line.Outcome == contract.CallOutcomeUnknown || http5xx.MatchString(code)) {
 				recent := connCallFor(ctx, a, run, connection, row, "recent_tasks", doc{})
-				tasks := anys(callOutput(recent))
+				listed := callOutput(recent)
+				tasks := anys(listed)
 				if tasks == nil {
-					tasks = anys(mapOf(callOutput(recent))["result"])
+					tasks = anys(mapOf(listed)["result"])
 				}
 				owned := map[string]bool{}
 				readTx(ctx, a, func(q *Request) error {
@@ -929,8 +929,9 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 					return exec(q, "UPDATE execution SET data=data||jsonb_build_object('jobId',$2::text) WHERE id=$1", row, jobID)
 				})
 			}
+			out := callOutput(line)
 			return true, tx(func(q *Request) error {
-				return completeStep(q, run, i, callOutput(line), doc{"usage": mapOf(callOutput(line))["usage"]})
+				return completeStep(q, run, i, out, doc{"usage": mapOf(out)["usage"]})
 			})
 		}
 		var execID string

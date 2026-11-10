@@ -10,11 +10,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -840,11 +837,15 @@ func connIngest(q *Request) (int, error) {
 		if err != nil {
 			continue
 		}
+		// Only complete lines: the gateway may be writing the last one; the next pass reads it.
+		b = b[:bytes.LastIndexByte(b, '\n')+1]
 		sc := bufio.NewScanner(bytes.NewReader(b))
 		sc.Buffer(make([]byte, 1<<20), 16<<20)
 		for sc.Scan() {
 			var l contract.CallLine
-			if json.Unmarshal(sc.Bytes(), &l) != nil {
+			if err := json.Unmarshal(sc.Bytes(), &l); err != nil {
+				// Kept in the file until its day is retired; a line here means the gateway and the contract disagree.
+				log.Printf("spool %s: line not imported: %v", f, err)
 				continue
 			}
 			ok, err := connRecord(q, l)
@@ -1078,76 +1079,13 @@ func connReconcile(ctx context.Context, a *App) {
 	}
 }
 
-// gatewayCall: one in-process call through fleet-gateway (docs/designs/fleet-connections.md §5). Returns the call line
-// with outcome ok|error|unknown, errorCode, the gateway's callId and the provider's reply as output.
-var gatewayUnknown = map[string]bool{"provider-body": true, "provider-timeout": true, "client-timeout": true, "invalid-response": true}
-var providerCode = regexp.MustCompile(`^provider-\d+$`)
-
+// gatewayCall: one in-process call through fleet-gateway (contract.GatewayCall).
 func gatewayCall(ctx context.Context, token, connection, tool string, args any) contract.CallLine {
-	line := contract.CallLine{Tool: tool, Connection: connection, Outcome: contract.CallOutcomeError}
-	fail := func(outcome contract.CallOutcome, code string) contract.CallLine {
-		line.Outcome, line.ErrorCode = outcome, &code
-		return line
+	var header map[string]string
+	if strings.HasPrefix(gatewayURL(), "https://") {
+		header = cfAccessHeaders()
 	}
-	url := gatewayURL()
-	if url == "" || token == "" {
-		return fail(contract.CallOutcomeError, "connection-unavailable")
-	}
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, "POST", url+"/v1/call/"+connection+"/"+tool, bytes.NewReader(jsonBytes(args)))
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "fleet-connection/1")
-	if strings.HasPrefix(url, "https://") {
-		for k, v := range cfAccessHeaders() {
-			req.Header.Set(k, v)
-		}
-	}
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		var op *net.OpError
-		switch {
-		case errors.Is(err, context.DeadlineExceeded):
-			return fail(contract.CallOutcomeUnknown, "client-timeout")
-		case errors.As(err, &op) && op.Op == "dial":
-			return fail(contract.CallOutcomeError, "unreachable") // not connected: nothing was sent
-		default:
-			return fail(contract.CallOutcomeUnknown, "unreachable")
-		}
-	}
-	defer res.Body.Close()
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return fail(contract.CallOutcomeUnknown, "connection-lost")
-	}
-	line.CallId, line.Status = res.Header.Get("x-fleet-call-id"), int64(res.StatusCode)
-	ok := res.StatusCode/100 == 2
-	if json.Valid(body) {
-		line.Output = body
-	} else {
-		if len(body) > 2000 {
-			body = body[:2000]
-		}
-		line.Output = jsonBytes(doc{"text": strings.ToValidUTF8(string(body), "�")})
-		if ok {
-			return fail(contract.CallOutcomeUnknown, "invalid-response")
-		}
-	}
-	if ok {
-		line.Outcome = contract.CallOutcomeOk
-		return line
-	}
-	errHeader := res.Header.Get("x-fleet-error")
-	code := errHeader
-	if errHeader == "" || providerCode.MatchString(errHeader) {
-		code = fmt.Sprintf("http-%d", res.StatusCode)
-	}
-	outcome := contract.CallOutcomeError
-	if res.Header.Get("x-fleet-outcome") == "unknown" || gatewayUnknown[code] {
-		outcome = contract.CallOutcomeUnknown
-	}
-	return fail(outcome, code)
+	return contract.GatewayCall(ctx, gatewayURL(), token, connection, tool, jsonBytes(args), header)
 }
 
 func cfAccessHeaders() map[string]string {
