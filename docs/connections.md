@@ -8,6 +8,6 @@ Track availability, usage, errors and known remaining quotas. Missing provider d
 
 [Work allocation](work-allocation.md) uses connection quotas across hosts and applies operator controls for harness preferences, required-only use and prohibitions. Shared accounts do not acquire a separate quota on each machine.
 
-Account switching and method substitution are distinct. Use another eligible account automatically only under configured rules. Method changes follow the [selection and fallback contract](capabilities-and-pipelines.md#discovery-selection-and-fallback); an explicitly selected method is not silently replaced. Before retrying, resolve uncertain prior outcomes under the shared recovery rules.
+Account switching and method substitution are distinct. Use another eligible account automatically only under configured rules. Method changes follow the [selection and fallback contract](configuration.md#discovery-selection-and-fallback); an explicitly selected method is not silently replaced. Before retrying, resolve uncertain prior outcomes under the shared recovery rules.
 
 Operators see the affected work, interruption cause and available continuation actions. Architects see connection usage across projects, account availability and configuration. Continuation may use another authorized account, wait for quota recovery or select another method.

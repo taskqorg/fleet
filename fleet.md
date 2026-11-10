@@ -41,7 +41,7 @@ Retain assessments as knowledge. Changing a recommendation is a separate archite
 
 ### Work management
 
-A project groups the goal, context, rules and work for a product or area. Follow the [project context](docs/project-context.md) baseline for files, materials and reusable methods.
+A project groups the goal, context, rules and work for a product or area. Follow the [project context](docs/configuration.md#project-context) baseline for files, materials and reusable methods.
 
 Configure these areas as needed, using shared defaults:
 
@@ -133,7 +133,7 @@ A personal desktop may be explicitly connected as an environment; an agent can r
 
 ### Tools and pipelines
 
-Distinguish [capability, method and tool](docs/capabilities-and-pipelines.md): the expected outcome, its implementation and its callable interface. A pipeline is a system-executed process implementing a method, not a list of instructions for its caller to execute.
+Distinguish [capability, method and tool](docs/configuration.md#capabilities-methods-and-tools): the expected outcome, its implementation and its callable interface. A pipeline is a system-executed process implementing a method, not a list of instructions for its caller to execute.
 
 - Catalogue: describe tools, methods and pipelines, their purpose, inputs, results, usage conditions and current recommendations.
 - Connections: provide access to harness tools, MCP, external APIs, system services and Fleet's own operations and data. Credentials stay in connections, tools and environments, outside versioned files; agents receive capability through tools, never credentials.
@@ -215,6 +215,6 @@ Each persistent test names the requirement and the risk it protects; follow [spe
 - [System operations](docs/system-operations.md): operation groups, contracts and agent communication semantics.
 - [Experiments](docs/lab.md): reproduce recorded work, compare changes and apply improvements to products.
 - [Interface workflows](docs/interfaces.md): operator and architect activities and contextual actions.
-- [Capabilities and pipelines](docs/capabilities-and-pipelines.md): callable outcomes, alternative methods and system-executed workflows.
+- [Capabilities and pipelines](docs/configuration.md#capabilities-methods-and-tools): callable outcomes, alternative methods and system-executed workflows.
 
 The connected delivery prototype uses repository project context, shared catalogue/search operations, durable operator decisions, managed account metadata and tracked native/program workers; [the slice contract](docs/project-pipeline-prototype.md) defines its supported subset. Source integration, task completion and publication remain separate observations.
