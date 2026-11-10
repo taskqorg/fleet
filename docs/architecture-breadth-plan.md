@@ -14,7 +14,7 @@ Legend: **L** proven live (real native/provider/host), **F** fake/fixture only, 
 | B2 | Environments, hosts, accounts/bindings, subscriptions and isolation | fleet.md §Environments, [resources and auth](resources-and-auth-model.md), [layered isolation](layered-isolation-model.md) |
 | B3 | Sessions: create, continue, resume, fork, handoff, steer, queue, stop | fleet.md §Agent execution, [execution continuity](execution-continuity.md) |
 | B4 | Work management: projects, tasks, questions, results, completion | fleet.md §Work management |
-| B5 | Pipelines/programs and catalogue (methods, recommendations) | fleet.md §Tools and pipelines, [capabilities and pipelines](capabilities-and-pipelines.md) |
+| B5 | Pipelines/programs and catalogue (methods, recommendations) | fleet.md §Tools and pipelines, [capabilities and pipelines](configuration.md#capabilities-methods-and-tools) |
 | B6 | Laboratory: experiments, variants, assessments, recommendations, balancing settings | fleet.md §Observation and evaluation, [experiments](designs/fleet-lab.md) |
 | B7 | Agent tool surface over Fleet (MCP) | fleet.md R2, §Tools and pipelines last paragraph |
 | B8 | Web on the same operations as agents (one API/MCP surface) | fleet.md R2, [interfaces](interfaces.md) |
@@ -149,7 +149,7 @@ Not needed to freeze (deferred to V1): generic DAG engine performance, Windows h
 
 ## 7. Project setup and access tests (added)
 
-From [project setup and access](project-setup-and-access.md). Real environments, no secret values in records or logs.
+From [project setup and access](configuration.md#project-setup). Real environments, no secret values in records or logs.
 
 ### T9. Project readiness (B4 B2 B13)
 - Setup: project with one repo, a deploy-key or `gh` connection on Mac and PDS, worker profile bound to Codex accounts on both.
@@ -170,7 +170,7 @@ From [project setup and access](project-setup-and-access.md). Real environments,
 
 ## 8. Project settings tests (added)
 
-From [project settings matrix](project-settings-matrix.md). Real repos `taskqorg/fleet-hello-world*`, real executors, settings only from `project.json`.
+From [project settings matrix](configuration.md#project-settings). Real repos `taskqorg/fleet-hello-world*`, real executors, settings only from `project.json`.
 
 ### T12. Worktree setup script runs a build (B1 B13)
 - Setup: repo with `scripts.setup` = install + build that writes `dist/marker`; `setupStart: wait-for-setup`; `startFromOrigin: true`.
