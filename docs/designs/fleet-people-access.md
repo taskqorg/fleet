@@ -241,6 +241,10 @@ Five gaps in today's code stop a second person from joining. Each one is load-be
 *   **Harness placement.** The Claude 403s are gone. A harness may run on a host unless `host.harnesses.<name>.allowed` is `false`; `hosts_update {id, intake?, harnesses?}` (holder or owner) changes it, one `setting-change` row per field. The executor's `FLEET_CLAUDE_PLACEMENT` check stays as it is.
 *   **ACP.** Harness kind `acp`: the host binding (the native accounts registry entry) gives `executable`, `args` and `environment`, with `{nativeHome}` replaced. An `antigravity` entry without `args` uses the built-in Antigravity binding with unchanged args.
 
+### Status (slice 5)
+
+*   **Project without the Mac.** `config/projects/desiign` (`Amoenum/desiign`, connection `desiign` as a deploy key with write, `integration.mode: direct`, environments `owner-mac` and `windows`; roles follow the project's D09: `worker` Claude, `designer` Codex). Alina is an operator in `people.json` with a grant on `desiign` only; the owner's subscriptions carry `take.projects: ["desiign"]`, so her work runs on his plans. Her Mac, store and file locations come later.
+
 ### 6. Dispatch
 
 `dispatch(pollingHostId)` runs inside `/api/hosts/poll`, in the same transaction, for queued agent executions, oldest first. Queue time records only constraints: project, harness, profile, director, priority, an optional explicit subscription or host.
