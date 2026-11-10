@@ -12,6 +12,7 @@ import { Tasks } from './views/tasks.tsx';
 import { Conversations } from './views/conversations.tsx';
 import { Hosts } from './views/hosts.tsx';
 import { Lab } from './views/lab.tsx';
+import { Keys } from './views/keys.tsx';
 
 // The view of each screen the registry marks `app: true` (the type requires every one). Nav and routes follow registry
 // order. A list screen takes an optional focus segment, so focusing a row never unmounts the list.
@@ -21,6 +22,7 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
   conversations: { focus: true, view: p => <Conversations id={p.id} /> },
   hosts: { focus: true, view: p => <Hosts id={p.id} /> },
   lab: { focus: true, view: p => <Lab id={p.id} /> },
+  keys: { focus: true, view: p => <Keys id={p.id} /> },
 };
 const BUILT = workspaces.filter(w => w.app).map(w => ({ ...w, ...SCREENS[w.id as AppScreen] }));
 const NAV: NavItem[] = BUILT;
