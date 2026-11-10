@@ -1,22 +1,41 @@
 #!/bin/sh
-# Builds a coordinator release tarball from a commit, the way the PDS18 releases are made:
-#   deploy/build-release.sh <commit> <out-dir>   writes <out-dir>/fleet-<12-char commit>.tgz
-# The tarball holds dist/, package.json, the pnpm lockfile and workspace settings, and release.json; the server installs
-# production dependencies with `corepack pnpm install --prod --frozen-lockfile`. COPYFILE_DISABLE=1 keeps macOS tar from
-# adding AppleDouble ._* files (release 4a4e006 carried 151 of them, and the coordinator read ._*.json as registry files).
+# Builds the Fleet release from a commit: one tarball per target with the Go coordinator, gateway and executor,
+# the built web app and the shipped config, all from a clean `git archive`:
+#   deploy/build-release.sh <commit> <out-dir> [os/arch ...]     default targets: linux/amd64 darwin/arm64
+# writes <out-dir>/fleet-<12-char commit>-<os>-<arch>.tgz and its .sha256. Layout inside (the same on every host):
+#   fleet-coordinator  fleet-gateway  fleet-executor  dist/app/  config/  release.json
+# Binaries are static (CGO_ENABLED=0). PDS18 and WSL use linux/amd64, the Mac darwin/arm64. Windows is not built.
+# COPYFILE_DISABLE=1 keeps macOS tar from adding AppleDouble ._* files.
 set -eu
-[ $# -eq 2 ] || { echo 'usage: deploy/build-release.sh <commit> <out-dir>' >&2; exit 2; }
+. "$(dirname "$0")/status.sh"
+[ $# -ge 2 ] || { echo 'usage: deploy/build-release.sh <commit> <out-dir> [os/arch ...]' >&2; exit 2; }
 out=$(cd "$2" && pwd)
 cd "$(dirname "$0")/.."
 commit=$(git rev-parse --short=12 "$1^{commit}")
+shift 2
+[ $# -gt 0 ] || set -- linux/amd64 darwin/arm64
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+trap 'code=$?; rm -rf "$work"; [ "$code" -eq 0 ] || status error "" "build failed"' EXIT
+status working 5 "extracting $commit"
 git archive "$commit" | tar -x -C "$work"
 cd "$work"
-# corepack runs the pnpm pinned in package.json, the same one the server installs with.
+status working 15 "building the web app"
 corepack pnpm install --frozen-lockfile
-corepack pnpm run build
-printf '{"commit":"%s","built":"%s"}\n' "$commit" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > release.json
-COPYFILE_DISABLE=1 tar --no-xattrs -czf "$out/fleet-$commit.tgz" dist package.json pnpm-lock.yaml pnpm-workspace.yaml release.json
-if tar -tzf "$out/fleet-$commit.tgz" | grep -q '\(^\|/\)\._'; then echo "AppleDouble files in the tarball" >&2; exit 1; fi
-shasum -a 256 "$out/fleet-$commit.tgz" 2>/dev/null || sha256sum "$out/fleet-$commit.tgz"
+node app/build.mjs
+step=0
+for target in "$@"; do
+  os=${target%/*} arch=${target#*/} stage="$work/stage-$os-$arch"
+  status working $((30 + 60 * step / $#)) "building $os/$arch"
+  mkdir -p "$stage/dist"
+  (cd go && go generate ./... && for cmd in coordinator gateway executor; do
+    CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-X main.version=$commit" -o "$stage/fleet-$cmd" "./$cmd"
+  done)
+  cp -R dist/app "$stage/dist/" && cp -R config "$stage/"
+  printf '{"commit":"%s","target":"%s","built":"%s"}\n' "$commit" "$target" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$stage/release.json"
+  file="fleet-$commit-$os-$arch.tgz"
+  COPYFILE_DISABLE=1 tar --no-xattrs -czf "$out/$file" -C "$stage" .
+  if tar -tzf "$out/$file" | grep -q '\(^\|/\)\._'; then echo "AppleDouble files in $file" >&2; exit 1; fi
+  (cd "$out" && { shasum -a 256 "$file" 2>/dev/null || sha256sum "$file"; } > "$file.sha256" && cat "$file.sha256")
+  step=$((step + 1))
+done
+status done 100 "built $commit for $*"
