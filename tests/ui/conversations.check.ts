@@ -32,6 +32,14 @@ await store.tx(async () => {
     await store.put('event', { id: `e${i}`, sessionId: S, executionId: 'x1', type: 'item.completed', seq: i, data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: reply }, { kind: 'tool', name: `tool-${i}`, input: { step: i }, output: 'ok\n'.repeat(1 + i % 4), state: 'completed', startedAt: 1, endedAt: 2001 }] } } });
   }
 });
+// A task thread over two sessions (Stage 3).
+const T = await store.tasks.create({ title: 'Ship the hero copy' });
+for (const [sid, x, word] of [['task-a', 'ta1', 'Alpha'], ['task-b', 'tb1', 'Bravo']] as const) {
+  await store.put('session', { id: sid, createdAt: Date.now() });
+  await store.tx(() => store.executions.createExecution({ id: x, kind: 'agent_run', taskId: T, sessionId: sid, hostId: 'pds18', harness: 'codex', model: 'gpt-6.1-sol', state: 'succeeded' }));
+  await store.put('message', { id: 'm-' + x, sessionId: sid, executionId: x, text: `${word} question` });
+  await store.put('event', { id: 'e-' + x, sessionId: sid, executionId: x, type: 'item.completed', seq: 0, data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: `${word} reply` }] } } });
+}
 await store.tasks.ask({ kind: 'agent_question', text: 'Use Postgres 17?', options: ['yes', 'no'], executionId: 'x1', sessionId: S, askedBy: 'agent' });
 
 let target = 0;
@@ -136,6 +144,19 @@ try {
   await x2.getByRole('button', { name: 'Stop' }).click();
   check(await until(async () => (await store.all('command', { executionId: 'x2', kind: 'stop' })).length === 1), 'Stop on one boundary sends a stop for that execution');
   check((await store.all('command', { executionId: 'x1', kind: 'stop' })).length === 0, 'the other execution gets no stop');
+  // Task thread: a session of a task shows the whole task; Shift+click selects across rows and Cmd+C copies their markdown.
+  await p.goto(`${origin}/conversations/task-a`);
+  check(await until(async () => await visible(p, 'Alpha reply') && await visible(p, 'Bravo reply')), 'a task session shows both sessions of the task');
+  check(await p.locator('.th-boundary .id', { hasText: 'task-b' }).count() === 1, 'boundary rows name their session');
+  await p.locator('.th-text', { hasText: 'Alpha question' }).click();
+  await p.locator('.th-text', { hasText: 'Bravo reply' }).click({ modifiers: ['Shift'] });
+  check(await p.locator('.vl-row.picked').count() >= 4, 'shift+click selects the rows in between');
+  await p.keyboard.press('Meta+c');
+  const clip = await until(async () => /Alpha question[\s\S]*Alpha reply[\s\S]*Bravo question[\s\S]*Bravo reply/.test(await p.evaluate(() => navigator.clipboard.readText())));
+  check(clip, 'Cmd+C copies the selected rows as markdown');
+  await p.evaluate(() => navigator.clipboard.writeText(''));
+  await p.keyboard.press('Meta+a'); await p.keyboard.press('Meta+c');
+  check(await until(async () => { const t = await p.evaluate(() => navigator.clipboard.readText()); return t.startsWith('---') && t.includes('Alpha question') && t.includes('Bravo reply'); }), 'Cmd+A then Cmd+C copies the whole thread');
   check(!errors.length, `no page errors${errors.length ? ': ' + errors.join('; ') : ''}`);
   if (rtt.length) time('thread_entries page round trip (median)', [...rtt].sort((x, y) => x - y)[rtt.length >> 1]);
 } finally { await b.close(); await app.close(); proxy.close(); }

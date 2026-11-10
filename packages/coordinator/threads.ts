@@ -88,7 +88,7 @@ export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promis
   else if(b?.around!==undefined){const k=parseKey(b.around),l=await side(m,'<',k,Math.floor(limit/2)),r=await side(m,'>',k,limit-Math.floor(limit/2),true);
    entries=[...l.blocks,...r.blocks];hasBefore=l.more||(Math.floor(limit/2)===0&&(await side(m,'<',k,1)).blocks.length>0);hasAfter=r.more;withTotal=true}
   else{const r=await side(m,'<',null,limit);entries=r.blocks;hasBefore=r.more;withTotal=true}
-  return {entries,first:entries[0]?.key??null,last:entries.at(-1)?.key??null,hasBefore,hasAfter,...(withTotal?{total:await total(m)}:{}),feedCursor:await deps.cursor()}}
+  return {entries,first:entries[0]?.key??null,last:entries.at(-1)?.key??null,hasBefore,hasAfter,sessionIds:[...new Set([...m.values()].map(e=>e.session_id).filter(Boolean))],...(withTotal?{total:await total(m)}:{}),feedCursor:await deps.cursor()}}
  // thread_blocks: the blocks of rows named by fed changes (change kind and id), when they belong to the thread.
  async function blocks(b:any){const key=threadKey(b),m=await members(key),ids=[...m.keys()];
   const named=Array.isArray(b?.rows)?b.rows.filter((r:any)=>typeof r?.id==='string'&&typeof r?.kind==='string'):fail(400,'Expected rows [{kind,id}]');
@@ -148,7 +148,9 @@ export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promis
  async function replyText(executionId:string):Promise<string[]>{const e=(await query("SELECT id,session_id,harness,model,config_ref->>'effort' AS effort,state,started_at,ended_at,seq FROM execution WHERE id=$1",[executionId]))[0];if(!e)return [];
   const m=new Map([[e.id,{...e,seq:Number(e.seq)}]]),out:string[]=[];let after:Key|null=null;
   for(;;){const r=await side(m,'>',after,500);for(const b of r.blocks)if(b.kind==='text'&&b.role==='agent'&&b.markdown)out.push(b.markdown);if(!r.more)return out;after=parseKey(r.blocks.at(-1).key)}}
- return {entries,blocks,search,exportPages,exportText,replyText,threadKey,markdown};
+ // The thread a session shows (design "Thread scope", D2): the thread of the first task the session got, else its own.
+ async function keyOf(sessionId:string):Promise<ThreadKey>{const t=(await query('SELECT task_id FROM execution WHERE session_id=$1 AND task_id IS NOT NULL ORDER BY seq LIMIT 1',[sessionId]))[0]?.task_id;return t?{task:t}:{session:sessionId}}
+ return {keyOf,entries,blocks,search,exportPages,exportText,replyText,threadKey,markdown};
 }
 export type Threads=ReturnType<typeof threads>;
 // Reply text for readers that need no results or feed (delegation, context handoff).

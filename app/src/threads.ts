@@ -7,14 +7,14 @@ import { subscribe, type Change } from './feed.ts';
 
 export type Block = { kind: 'text' | 'tool' | 'reasoning' | 'question' | 'result' | 'boundary'; key: string; executionId?: string; [k: string]: any };
 export type ThreadKey = { task: string } | { session: string };
-export type Page = { entries: Block[]; first: string | null; last: string | null; hasBefore: boolean; hasAfter: boolean; total?: number; feedCursor: number };
+export type Page = { entries: Block[]; first: string | null; last: string | null; hasBefore: boolean; hasAfter: boolean; total?: number; feedCursor: number; sessionIds?: string[] };
 /** fresh: entries fed past `last` while newer history is not loaded (after a jump); the pill counts them. */
-export type Win = { blocks: Block[]; first: string | null; last: string | null; hasBefore: boolean; hasAfter: boolean; total: number; fresh: number; freshKeys?: string[] };
+export type Win = { blocks: Block[]; first: string | null; last: string | null; hasBefore: boolean; hasAfter: boolean; total: number; fresh: number; freshKeys?: string[]; sessionIds?: string[] };
 
 const parts = (k: string) => k.split(':').map(Number);
 export const cmpKey = (a: string, b: string) => { const [x, i] = parts(a), [y, j] = parts(b); return x - y || i - j; };
 
-export const fromPage = (p: Page, total = 0): Win => ({ blocks: p.entries, first: p.first, last: p.last, hasBefore: p.hasBefore, hasAfter: p.hasAfter, total: p.total ?? total, fresh: 0 });
+export const fromPage = (p: Page, total = 0): Win => ({ sessionIds: p.sessionIds, blocks: p.entries, first: p.first, last: p.last, hasBefore: p.hasBefore, hasAfter: p.hasAfter, total: p.total ?? total, fresh: 0 });
 /** Older page above the window. */
 export function prepend(w: Win, p: Page): Win {
   const add = w.first ? p.entries.filter(b => cmpKey(b.key, w.first!) < 0) : p.entries;
@@ -61,7 +61,8 @@ export function useThread(key: ThreadKey | null) {
   const ref = useRef<Win | null>(null); ref.current = win;
   const busy = useRef(false), gen = useRef(0), again = useRef<'before' | 'after' | null>(null);
   const id = key ? JSON.stringify(key) : null;
-  const sessions = key && 'session' in key ? new Set([key.session]) : new Set<string>();
+  // The sessions of the thread (a task thread spans several); the server lists them with every page.
+  const sessions = new Set([...(win?.sessionIds ?? []), ...(key && 'session' in key ? [key.session] : [])]);
   const apply = (f: (w: Win) => Win) => setWin(w => w && f(w));
   const fetchBlocks = async (cs: Change[], g: number) => {
     const rows = cs.filter(c => touches(c, sessions)).map(c => ({ kind: c.kind, id: c.id }));

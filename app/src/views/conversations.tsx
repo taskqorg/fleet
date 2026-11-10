@@ -10,7 +10,8 @@ import tokens from '../../../packages/ui/tokens.json';
 import { op, online } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
-import { useThread } from '../threads.ts';
+import { useThread, type ThreadKey } from '../threads.ts';
+import { click, all, inside, range, type Selection } from '../selection.ts';
 
 const ROW = parseInt(tokens.size.row);
 type SessionRow = { id: string; title: string | null; state: StateOf<'session'>; harness: string | null; openQuestions: number; sortKey: (string | number)[] };
@@ -59,7 +60,29 @@ export function Conversations({ id }: { id?: string }) {
 function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const [, go] = useLocation();
   const { data: s, error, state } = useDoc<any>(`session:${id}`, () => op('session_get', { sessionId: id }), c => c.sessionId === id && c.kind !== 'event');
-  const thread = useThread({ session: id });
+  // A session that got a task shows the task's thread (design "Thread scope"); the key comes with the session read.
+  const key: ThreadKey | null = s ? (s.threadKey ?? { session: id }) : null;
+  const thread = useThread(key);
+  // A plain click marks where a selection starts (no tint, so reading stays quiet); Shift+click selects up to that row.
+  const [sel, setSel] = useState<Selection>(null), pickFrom = useRef<string | null>(null);
+  // Cmd+A selects the thread; Cmd+C copies the selected rows as markdown from the server. The clipboard write starts inside the
+  // key handler with a promise, so the browser keeps the user gesture while the export loads.
+  const copySel = (s0: NonNullable<Selection>) => {
+    const text = op<{ markdown: string }>('thread_export', { key, ...range(s0) }).then(r => new Blob([r.markdown], { type: 'text/plain' }));
+    navigator.clipboard.write([new ClipboardItem({ 'text/plain': text })]).catch(e => setFailure({ text: `Copy failed: ${e?.message ?? e}`, retry: () => copySel(s0) }));
+  };
+  // The key handler reads the latest selection through a ref: effects run after paint, and a key can come first.
+  const live = useRef({ sel, copySel }); live.current = { sel, copySel };
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      const sel = live.current.sel, copySel = live.current.copySel;
+      if (!(e.metaKey || e.ctrlKey) || (e.target as HTMLElement)?.closest?.('input,textarea')) return;
+      if (e.key === 'a' && (e.target as HTMLElement)?.closest?.('.conversation')) { e.preventDefault(); setSel(all()); }
+      // A native selection inside one row is the browser's own copy.
+      if (e.key === 'c' && sel && (getSelection()?.isCollapsed ?? true)) { e.preventDefault(); copySel(sel); }
+    };
+    addEventListener('keydown', on); return () => removeEventListener('keydown', on);
+  }, []);
   const [failure, setFailure] = useState<{ text: string; retry?: () => void } | null>(null);
   const [q, setQ] = useState(''), [hits, setHits] = useState<{ key: string; snippet: string }[] | null>(null), [hit, setHit] = useState(0), [marked, setMarked] = useState<string | null>(null);
   const handle = useRef<VirtualListHandle | null>(null);
@@ -71,7 +94,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const copyFail = (e: unknown) => setFailure({ text: `Copy failed: ${(e as any)?.message ?? e}` });
   // A jump replaces the window with entries around the hit, then puts the hit row in view and marks it.
   const open = async (list: { key: string }[], i: number) => { if (!list[i]) return; setHit(i); setMarked(list[i].key); await thread.jump(list[i].key); setJumpTo(list[i].key); };
-  const search = () => run(async () => { if (!q.trim()) { setHits(null); setMarked(null); return; } const r = await op('thread_search', { key: { session: id }, q, limit: 100 }); setHits(r.hits); await open(r.hits, 0); });
+  const search = () => run(async () => { if (!q.trim()) { setHits(null); setMarked(null); return; } const r = await op('thread_search', { key, q, limit: 100 }); setHits(r.hits); await open(r.hits, 0); });
   if (error && !s) return <article class="detail" data-ui="detail" tabIndex={-1}><ErrorBanner text={`Conversation did not load: ${error}`} /></article>;
   if (!s) return <article class="detail" data-ui="detail" tabIndex={-1}><Skeleton rows={6} /></article>;
   const running = (e: any) => !['completed', 'failed', 'stopped', 'unknown', 'succeeded', 'cancelled'].includes(e.state);
@@ -88,11 +111,12 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
       <Button label="Previous hit" icon="arrow-up" iconOnly disabledReason={!hits || hit <= 0 ? 'no earlier hit' : undefined} onClick={() => hits && open(hits, hit - 1)} />
       <Button label="Next hit" icon="arrow-down" iconOnly disabledReason={!hits || hit >= hits.length - 1 ? 'no later hit' : undefined} onClick={() => hits && open(hits, hit + 1)} />
       <OfflineMarker state={state} now={now} />
+      <Button label="Copy thread" icon="copy" iconOnly onClick={() => copySel(all()!)} />
       <Button label="Fork" icon="copy" iconOnly disabledReason={off ? 'offline' : undefined} onClick={() => { const requestId = reqId(); run(async () => { const f = await op('session_fork', { sessionId: id, requestId }); go(nextUrl(location.pathname + location.search, 'conversations', { focus: f.sessionId })); }); }} />
     </header>
     <div class="status-line" role="status">{failure ? <ErrorBanner text={failure.text} onRetry={failure.retry} /> : thread.error ? <ErrorBanner text={`Thread did not load: ${thread.error}`} onRetry={thread.newest} /> : null}</div>
     <div class="pane">
-      {!w ? <Skeleton rows={6} /> : <Thread blocks={w.blocks} label="Transcript" now={now} marked={marked} handle={handle} onStart={thread.older} onEnd={thread.newer}
+      {!w ? <Skeleton rows={6} /> : <Thread blocks={w.blocks} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k)} onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? k, false), k, true)); }} showSession={!!key && 'task' in key} handle={handle} onStart={thread.older} onEnd={thread.newer}
         stopReason={off ? 'offline' : undefined} onStop={x => run(() => op('execution_stop', { executionId: x }))}
         onAnswer={(questionId, answer) => run(() => op('questions_answer', { questionId, answer }))} onCopyFail={copyFail}
         pending={{ count: w.fresh, onJump: () => { setMarked(null); setHits(null); thread.newest(); } }} />}
