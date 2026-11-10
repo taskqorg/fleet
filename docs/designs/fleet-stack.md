@@ -118,7 +118,7 @@ Not added:
 - S3 (Garage): a hand-written SigV4 signer on `crypto/hmac` and `crypto/sha256`. `minio-go` v7.4.1 would compile in 19 third-party modules (26 in `go.sum`); the signer adds 0, and `s3.ts` already proves the subset in 125 lines.
 - `govulncheck` is a tool run at a pinned version, not a module of Fleet's code.
 
-Planned with the executor port (Not built: no Go code imports them yet):
+Allowed for the executor port (Not built: no Go code imports them yet):
 
 | Module | Replaces | Why the standard library does not cover it |
 | --- | --- | --- |
@@ -159,7 +159,7 @@ The probe in `go/probe/` showed that the executor needs no C compiler ([evidence
 - macOS kernel calls: `github.com/ebitengine/purego` for `proc_pidinfo` and `proc_signal_with_audittoken`; `golang.org/x/sys/unix` for `Openat`, `Statfs` and `SysctlKinfoProc`. Linux identity-bound signals need only the standard library (`os.Process` with pidfd). The Rust refusal when the private libproc symbol is missing is kept.
 - Losses against Rust: about 4 MB more binary; no `pre_exec`, so the preview `RLIMIT_AS` cap needs a re-exec wrapper or a racy `prlimit`; macOS `getpwuid` needs purego or a `$HOME` fallback.
 
-Before the port: run the Linux binaries in CI (pidfd and the crash test) and choose the `RLIMIT_AS` mechanism. Windows builds, but process control and file safety need their own port (job objects, `LockFileEx`, `os.Root`, ACL checks); Windows without WSL is not a target.
+Before the port: choose the `RLIMIT_AS` mechanism. Not built: a Linux run of the signal (pidfd) and crash checks in CI. Windows builds, but process control and file safety need their own port (job objects, `LockFileEx`, `os.Root`, ACL checks); Windows without WSL is not a target.
 
 ## Trial (L1)
 
