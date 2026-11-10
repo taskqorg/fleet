@@ -21,7 +21,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run typecheck
       - run: pnpm run build
       # The executor: its unit tests, and the binary the coordinator's end-to-end artifact test runs.
       - run: cargo build -p fleet-executor && cargo test -p fleet-executor

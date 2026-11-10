@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild packages/coordinator/server.ts packages/coordinator/migrate-sqlite.ts --bundle --platform=node --format=esm --target=node22 --packages=external --sourcemap --outdir=dist/packages/coordinator && node packages/coordinator/package-assets.mjs && node app/build.mjs",
-    "start": "node --enable-source-maps dist/packages/coordinator/server.js",
+    "build": "pnpm run typecheck && node packages/coordinator/build.mjs && node packages/coordinator/package-assets.mjs && node app/build.mjs",
+    "start": "node dist/packages/coordinator/server.js",
     "test": "node --test tests/coordinator/*.test.ts tests/ui/*.test.ts",
     "book": "node packages/ui/scripts/build-book.mjs",
     "check:design": "node packages/ui/scripts/check-design.mjs",
@@ -35,5 +35,8 @@
     "playwright": "1.56.1",
     "typescript": "7.0.2"
   },
-  "packageManager": "pnpm@10.34.9"
+  "packageManager": "pnpm@10.34.9",
+  "engines": {
+    "node": ">=22.18"
+  }
 }
