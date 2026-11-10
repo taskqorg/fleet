@@ -1,12 +1,12 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,mkdirSync,writeFileSync} from 'node:fs';import {tmpdir} from 'node:os';
-import {createApp} from '../../packages/coordinator/app.ts';import {createStore} from '../../packages/coordinator/store.ts';
+import {createApp,OWNER} from './test-app.ts';import {createStore} from '../../packages/coordinator/store.ts';
 // Defects found on the first live Phase 2 run (PR #20): acceptance answer 404, missing parent links, problem on a succeeded step.
 test('question_answer answers an acceptance question and completes the task',async()=>{const app=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac'});await app.ready();const s=(app as any).store;
  await s.tx(async()=>{await s.put('execution',{id:'g',executionId:'g',sessionId:'sx',hostId:'mac',state:'completed',startedAt:1,finishedAt:2,deliveryId:'d'});
   await s.put('delivery',{id:'d',projectId:'p',requestId:'r',task:'Page',state:'merged',steps:[{kind:'generate',executionId:'g',state:'completed'}]})});
  const acc=(await s.tasks.questions({taskId:'d',kind:'acceptance'}))[0];
  for(const url of ['/api/project-operations/question_answer','/api/ops/question_answer']){const r=await app.inject({method:'POST',url,headers:{authorization:'Bearer b'},payload:{questionId:acc.id,answer:'accepted'}});assert.equal(r.statusCode,200,url+' '+r.body);assert.equal(r.json().state,'answered')}
- const t=await s.tasks.get('d');assert.deepEqual([t.state,t.acceptedBy],['completed','operator']);
+ const t=await s.tasks.get('d');assert.deepEqual([t.state,t.acceptedBy],['completed',OWNER]);
  assert.equal((await app.inject({method:'POST',url:'/api/ops/question_answer',headers:{authorization:'Bearer b'},payload:{questionId:'missing',answer:'x'}})).statusCode,404);await app.close()});
 test('sessions started by a host agent link their executions to the calling execution',async()=>{
  const dir=mkdtempSync(tmpdir()+'/fleet-parent-');mkdirSync(dir+'/projects/p1',{recursive:true});mkdirSync(dir+'/agents');

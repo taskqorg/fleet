@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {createApp} from '../../packages/coordinator/app.ts';import {createStore} from '../../packages/coordinator/store.ts';import {volume} from './volume-fixture.ts';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {createApp} from './test-app.ts';import {createStore} from '../../packages/coordinator/store.ts';import {volume} from './volume-fixture.ts';
 // Runs on PGlite; set FLEET_TEST_DATABASE_URL to a disposable Postgres database to exercise real SERIALIZABLE conflicts.
 import {PG,recreateFleetDatabase} from './pg-test.ts';
 // FLEET_TEST_DATABASE_URL: one disposable database; else, with FLEET_TEST_PG, the owner URL of a fresh "fleet" database (pg-test.ts).

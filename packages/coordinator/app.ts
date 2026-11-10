@@ -21,7 +21,8 @@ import {labExamples} from './lab/examples.ts';
 import {pipelineRunner} from './pipelines.ts';
 import {labExperiments} from './lab/experiments.ts';
 import {labOperations,registerLab} from './lab/routes.ts';
-export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRetentionDays?:number,nativeHostIds?:string[],database:string,store?:Store,browserSecret:string,machineSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,storeSecrets?:string,storeEndpointHosts?:string[],cfAccessFile?:string,defaultArtifactLocations?:string[],artifactRetryWindowMs?:number,placementIntervalMs?:number,projectConfigDirectory?:string,connectionsDir?:string,connectionClient?:string[],pipelineTickMs?:number,integrationHostId?:string,publicationHostId?:string,testSiteRoot?:string,defaultAccountBinding?:string,labDirectory?:string}) {
+import {peopleRegistry,requestPerson,actor} from './people.ts';
+export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRetentionDays?:number,nativeHostIds?:string[],database:string,store?:Store,browserSecret:string,machineSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,storeSecrets?:string,storeEndpointHosts?:string[],cfAccessFile?:string,defaultArtifactLocations?:string[],artifactRetryWindowMs?:number,placementIntervalMs?:number,projectConfigDirectory?:string,connectionsDir?:string,connectionClient?:string[],pipelineTickMs?:number,integrationHostId?:string,publicationHostId?:string,testSiteRoot?:string,defaultAccountBinding?:string,labDirectory?:string}) {
  if(!config.browserSecret||!config.machineSecret||config.browserSecret===config.machineSecret) throw Error('Distinct credentials required');
  if(config.browserProxyAuth&&!config.browserOrigin)throw Error('Proxy browser auth requires configured browser origin');
  const ownStore=!config.store,store=config.store??createStore(config.database),{all,get,put}=store;
@@ -51,7 +52,10 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
   o.handler=['GET','HEAD'].includes(method)?function(this:any,req:any,reply:any){return store.read(()=>h.call(this,req,reply))}
    :ingestRoutes.has(o.url)?function(this:any,req:any,reply:any){return store.atomic(()=>h.call(this,req,reply),ingestScope(req))}
    :function(this:any,req:any,reply:any){return store.atomic(()=>h.call(this,req,reply))}});
+ // Every handler runs with the request person (people.ts actor()); host routes run with none.
+ app.addHook('onRoute',(o:any)=>{const h=o.handler;o.handler=function(this:any,req:any,reply:any){return requestPerson.run(req.person??null,()=>h.call(this,req,reply))}});
  if(ownStore)app.addHook('onReady',()=>store.migrate());
+ const people=peopleRegistry(config.peopleFile,store);app.addHook('onReady',()=>people.refresh());
  const fail=(code:number,message:string)=>{throw Object.assign(Error(message),{statusCode:code})};
  const text=(v:any,max=32000):string=>typeof v==='string'&&v.length>0&&v.length<=max?v:fail(400,'Invalid text');
  const equal=(a:string,b:string)=>Buffer.byteLength(a)===Buffer.byteLength(b)&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
@@ -64,6 +68,10 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
   const machine=typeof route==='string'&&route.startsWith('/api/hosts/');
   const supplied=(req.headers.authorization||'').replace(/^Bearer /,'');
   if(!equal(supplied,machine?config.machineSecret:config.browserSecret)) fail(401,'Unauthorized');
+  // Two credential kinds never mix (§1): a host never carries a person; a browser request carries the person the guard verified.
+  const named=req.headers['x-fleet-person'];
+  if(machine){if(named!==undefined)fail(403,'Host requests carry no person');}
+  else{if(typeof named!=='string'||!named)fail(401,'Person required');await people.refresh();const p=people.personFor(named as string);if(!p)fail(403,'Unknown person');(req as any).person=p}
   if(!machine&&config.browserProxyAuth&&!['GET','HEAD','OPTIONS'].includes(req.method)&&req.headers.origin!==config.browserOrigin)fail(403,'Origin required');
   if(!machine&&req.headers.origin&&req.headers.origin!==(config.browserOrigin??`${req.protocol}://${req.headers.host}`)) fail(403,'Origin rejected');
  });
@@ -288,7 +296,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   artifact_get:(b:any)=>artifacts.get(text(b?.artifactId,200)),
   artifact_purge:(b:any)=>artifacts.purge({contentHash:b?.contentHash,projectId:b?.projectId,scope:b?.scope,reason:b?.reason}),
   artifact_rule_preview:(b:any)=>placement.previewRule(b?.projectId??null,b?.rule),
-  artifact_rule_confirm:(b:any)=>placement.confirmRule(b?.projectId??null,b?.rule,'operator'),
+  artifact_rule_confirm:(b:any)=>placement.confirmRule(b?.projectId??null,b?.rule,actor('operator')),
   stores_list:async()=>{const all=await stores.list();return {stores:all,problems:[...all.filter(s=>s.state==='full').map(s=>({kind:'store-full',storeId:s.id,hostId:s.host_id,capacityBytes:s.capacity_bytes,freeSpaceWarningBytes:s.free_space_warning_bytes,actions:['store_set_free_space_warning','project artifact_locations','artifact_rule_confirm']})),...placement.problems()]}},
   store_set_free_space_warning:(b:any)=>stores.setFreeSpaceWarning(b?.storeId,b?.bytes),
   artifact_copy_retry:(b:any)=>placement.retryCopy(text(b?.artifactId,200),text(b?.storeId,200)),
@@ -303,20 +311,20 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  app.decorate('artifacts',artifacts);app.decorate('placement',placement);app.decorate('stores',stores);
  // One operation table: served as MCP tools (/api/tools) and as POST /api/ops/<name>; the web UI calls the same names.
  // ponytail: per-feature routes stay as aliases of the operations.
- // Tasks, questions and executions (design §1-2). Operator answers carry by 'operator'; agents answer through reply.
+ // Tasks, questions and executions (design §1-2). Operator answers carry the person's e-mail; agents answer through reply.
  const str=(v:any,name:string,max=4000)=>typeof v==='string'&&v.length>0&&v.length<=max?v:fail(400,'Expected '+name);
  const typedOps={
-  task_create:async(b:any)=>{const id=await store.tasks.create({projectId:b.projectId??null,title:str(b.title,'title',500),expectedOutcome:b.expectedOutcome??null,priority:b.priority,completionRequirements:b.completionRequirements,resultDestination:b.resultDestination??null,createdBy:'operator',dependsOn:Array.isArray(b.dependsOn)?b.dependsOn.map((x:any)=>str(x,'dependsOn',200)):[]});return store.tasks.get(id)},
+  task_create:async(b:any)=>{const id=await store.tasks.create({projectId:b.projectId??null,title:str(b.title,'title',500),expectedOutcome:b.expectedOutcome??null,priority:b.priority,completionRequirements:b.completionRequirements,resultDestination:b.resultDestination??null,createdBy:actor('operator'),dependsOn:Array.isArray(b.dependsOn)?b.dependsOn.map((x:any)=>str(x,'dependsOn',200)):[]});return store.tasks.get(id)},
   task_update:(b:any)=>store.tasks.update({...b,taskId:str(b?.taskId,'taskId',200)}),
   task_get:(b:any)=>store.tasks.get(str(b?.taskId,'taskId',200)),
   // Asks the operator to accept a task's stored results (design §2 Acceptance); the default artifacts are the task's stored originals.
   task_request_acceptance:async(b:any)=>{const t=await store.tasks.get(str(b?.taskId,'taskId',200));if(t.state!=='in_progress')fail(409,'Task is not in progress');
    const ids=Array.isArray(b.artifactIds)?b.artifactIds:(await artifacts.list({taskId:t.id})).filter((a:any)=>a.state==='stored'&&a.role==='original').map((a:any)=>a.id);
-   const id=await store.tasks.ask({kind:'acceptance',taskId:t.id,projectId:t.projectId,text:typeof b.text==='string'?b.text.slice(0,2000):'Accept the result of: '+t.title,options:['accepted','rejected'],askedBy:'operator',data:{artifactIds:ids}});
+   const id=await store.tasks.ask({kind:'acceptance',taskId:t.id,projectId:t.projectId,text:typeof b.text==='string'?b.text.slice(0,2000):'Accept the result of: '+t.title,options:['accepted','rejected'],askedBy:actor('operator'),data:{artifactIds:ids}});
    return (await store.tasks.questions({taskId:t.id})).find((q:any)=>q.id===id)},
   task_list:async(b:any)=>({tasks:await store.tasks.list({projectId:b?.projectId,state:b?.state})}),
   questions_list:async(b:any)=>({questions:await store.tasks.questions({taskId:b?.taskId,state:b?.state,kind:b?.kind})}),
-  questions_answer:async(b:any)=>{const q=await store.tasks.answer(str(b?.questionId,'questionId',200),{answer:str(b.answer,'answer'),by:'operator',artifactIds:Array.isArray(b.artifactIds)?b.artifactIds:undefined});return (await store.tasks.questions({})).find(x=>x.id===q.id)},
+  questions_answer:async(b:any)=>{const q=await store.tasks.answer(str(b?.questionId,'questionId',200),{answer:str(b.answer,'answer'),by:actor('operator'),artifactIds:Array.isArray(b.artifactIds)?b.artifactIds:undefined});return (await store.tasks.questions({})).find(x=>x.id===q.id)},
   executions_list:async(b:any)=>({executions:await store.executions.list({taskId:b?.taskId,projectId:b?.projectId,parentExecutionId:b?.parentExecutionId,problem:b?.problem===true})}),
   // Operator app reads (docs/designs/fleet-operator-app.md §6); agents can call them too.
   changes_since:(b:any)=>{const c=b?.cursor;if(c!==null&&c!==undefined&&(!Number.isSafeInteger(c)||c<0))fail(400,'Invalid cursor');return store.changes.since(c??null,b?.limit??500)},
@@ -333,7 +341,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
     return {id,configured:configured.includes(id),platform:o?.platform??null,lastSeenAt:o?.lastSeenAt??null,capabilities:o?.capabilities??[],// A host that stopped polling shows no problems: its staleness is the signal, not a report that may be days old.
     problems:o?.lastSeenAt&&Date.now()-o.lastSeenAt<HOST_STALE_MS?o?.problems??[]:[],runningByHarness:by,running:Object.values(by).reduce((a,n)=>a+n,0),slots:null,queued:queued.find((q:any)=>q.host_id===id)?.n??0,stores:'unavailable'}})}},
   task_derived_check:async()=>store.tasks.derivedDrift(),
-  me:async()=>({email:config.ownerEmail??null,roles:['operator','architect'],grantsVersion:'1',changeLogRetentionDays:retentionDays}),
+  me:async()=>{const p=requestPerson.getStore();return {email:p?.email??null,name:p?.name??null,roles:p?.roles??[],owner:p?.owner??false,grantsVersion:p?.grantsVersion??null,changeLogRetentionDays:retentionDays}},
  };
  const ops:Record<string,(b:any)=>any>={...typedOps,...projects,...transportRecovery.operations,...agent.operations,session_create,session_profile,session_archive,execution_stop,session_get,execution_differences,execution_events,profiles_list,...labOps};
  registerStream(app,store,{retentionDays});

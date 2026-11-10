@@ -11,6 +11,7 @@ import {convert} from '../../scripts/lab-import-assetq.ts';
 import {useCaseIds} from '../../packages/coordinator/lab/examples.ts';
 import {dbApp} from './pg-test.ts';
 import {attachStores} from './artifact-helpers.ts';
+import {OWNER} from './test-app.ts';
 
 const doc='# Cases\n\n<a id="uc1"></a>\n\n## UC1. First\n\nText one.\n\n### Detail\n\nMore.\n\n## UC-02. Second case\n\nText two.\n\n## Rows\n\n| ID | Goal |\n|---|---|\n| L01 PILOTQ-R1 | Row one |\n| L010 | Not L01 |\n';
 
@@ -111,5 +112,5 @@ test('import sends FLEET_ORIGIN, so it works behind browser proxy auth',async()=
  const app:any=await dbApp({browserSecret:'b',machineSecret:'m',hostId:'mac',storeEndpointHosts:['127.0.0.1'],browserProxyAuth:true,browserOrigin:'https://fleet.example'});
  await app.ready();await attachStores(app,'m',['mac']);const url=await app.listen({host:'127.0.0.1',port:0});
  const ex=JSON.parse(readFileSync('config/lab/examples/fleet-uc1-about-page.json','utf8'));
- try{await assert.rejects(importExamples({url,token:'b',examples:[ex]}),/403/);
-  assert.equal((await importExamples({url,token:'b',origin:'https://fleet.example',examples:[ex]})).examples[0].created,true)}finally{await app.close()}});
+ try{await assert.rejects(importExamples({url,token:'b',person:OWNER,examples:[ex]}),/403/);
+  assert.equal((await importExamples({url,token:'b',person:OWNER,origin:'https://fleet.example',examples:[ex]})).examples[0].created,true)}finally{await app.close()}});

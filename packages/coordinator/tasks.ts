@@ -1,3 +1,4 @@
+import {actor as who} from './people.ts';
 // Tasks and questions (design Technical Plan §2, Phase 2 item 18). A task is a production work item; its executions, results
 // and questions are linked by task_id. Only state and wait_reason are stored, and they change only through transition() here.
 // A legacy delivery is a task row (field and state mapping in §2); the legacy 'delivery', 'question' and 'project-question'
@@ -107,7 +108,7 @@ export function taskModel(raw:Raw,executions:Executions){
   await raw.query('INSERT INTO task_dependency(task_id,depends_on_task_id,kind,project_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',[id,on,kind,t?.project_id??null])}
  // Operator changes: title, outcome and priority directly; state only through transitions.
  async function update(b:any){const t=await taskRow(b?.taskId);
-  const action=b.action;if(action!==undefined){const map:Record<string,Trigger>={pause:'pause',resume:'resume',cancel:'cancel',fail:'operator_fail'};if(!map[action])fail(400,'Unknown task action');await transition(t.id,map[action],{by:'operator'})}
+  const action=b.action;if(action!==undefined){const map:Record<string,Trigger>={pause:'pause',resume:'resume',cancel:'cancel',fail:'operator_fail'};if(!map[action])fail(400,'Unknown task action');await transition(t.id,map[action],{by:who('operator')})}
   for(const [k,col] of [['title','title'],['expectedOutcome','expected_outcome'],['priority','priority'],['resultDestination','result_destination']] as const)if(b[k]!==undefined){
    if(k!=='priority'&&(typeof b[k]!=='string'||b[k].length>4000))fail(400,'Invalid '+k);await raw.query(`UPDATE task SET ${col}=$2,updated_at=now() WHERE id=$1`,[t.id,k==='priority'?priorityClass(b[k]):b[k]])}
   return get(t.id)}
@@ -181,7 +182,7 @@ export function taskModel(raw:Raw,executions:Executions){
   const exists=await one('SELECT id,state FROM task WHERE id=$1',[r.id]);
   const title=(r.task??(r.sourceSessionId?'Deliver session '+r.sourceSessionId:'Delivery '+r.id)).split('\n')[0].slice(0,200);
   const req={requestId:r.requestId??null,signature:r.signature??null},method={methodId:r.methodId??null,profileId:r.profileId??null,account:r.account??null,invocation:r.invocation??null,branch:r.branch??null};
-  if(!exists)await create({id:r.id,projectId:r.projectId??null,title,expectedOutcome:r.task??null,completionRequirements:req,deliveryMethod:method,createdBy:r.sourceSessionId?'session:'+r.sourceSessionId:'operator',legacyKind:'delivery',data:r,createdAt:r.createdAt});
+  if(!exists)await create({id:r.id,projectId:r.projectId??null,title,expectedOutcome:r.task??null,completionRequirements:req,deliveryMethod:method,createdBy:r.sourceSessionId?'session:'+r.sourceSessionId:who('operator'),legacyKind:'delivery',data:r,createdAt:r.createdAt});
   // Write only when something changed: the delivery advance re-saves every record on each coordinator start.
   else await raw.query('UPDATE task SET project_id=$2,title=$3,expected_outcome=$4,completion_requirements=$5,delivery_method=$6,data=$7,updated_at=now() WHERE id=$1 AND (project_id,title,expected_outcome,completion_requirements,delivery_method,data) IS DISTINCT FROM ($2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb)',[r.id,r.projectId??null,title,r.task??null,clean(req),clean(method),clean(r)]);
   if(r.previousDeliveryId&&await one('SELECT 1 AS x FROM task WHERE id=$1',[r.previousDeliveryId]))await depend(r.id,r.previousDeliveryId,'revision_of');

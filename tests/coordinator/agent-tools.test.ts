@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,mkdirSync,writeFileSync} from 'node:fs';import {tmpdir} from 'node:os';
-import {createApp} from '../../packages/coordinator/app.ts';
+import {createApp} from './test-app.ts';
 import {decideTransition} from '../../packages/coordinator/agent-tools.ts';
 import {resumeArgv,forkArgv} from '../../packages/coordinator/resume-argv.ts';
 test('agent tools: queue, handoff, fork, resume, ask/reply, worker_done, stop outcome, reconcile (fake native)',async()=>{

@@ -9,7 +9,7 @@ import origin_guard as guard
 
 key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 guard.keys = SimpleNamespace(get_signing_key_from_jwt=lambda _: SimpleNamespace(key=key.public_key()))
-claims = dict(iss=guard.ISSUER, aud=guard.AUDIENCE, email=guard.OWNER,
+claims = dict(iss=guard.ISSUER, aud=guard.AUDIENCE, email='Owner@Example.invalid',
               sub='fixture', iat=int(time.time()), exp=int(time.time()) + 60)
 def encode(value):
     return jwt.encode(value, key, algorithm='RS256')
@@ -20,11 +20,16 @@ async def main():
             r = await c.get('/verify', headers={'cf-access-jwt-assertion': token})
             if r.status_code == 204:
                 assert r.headers['authorization'] == 'Bearer ' + guard.BROWSER_SECRET
+                assert r.headers['x-fleet-person'] == jwt.decode(token, options={'verify_signature': False})['email'].lower()
             else:
-                assert 'authorization' not in r.headers
+                assert 'authorization' not in r.headers and 'x-fleet-person' not in r.headers
             return r.status_code
         assert await status(encode(claims)) == 204
-        for change in ({'iss':'wrong'}, {'aud':'wrong'}, {'email':'denied@example.invalid'}, {'exp':1}, {'iat':int(time.time())+3600}):
+        # Any verified e-mail passes the guard; the coordinator maps it to a person or answers 403.
+        assert await status(encode(claims | {'email':'alina@example.invalid'})) == 204
+        r = await c.get('/verify', headers={'cf-access-jwt-assertion': encode(claims), 'X-Fleet-Person': 'forged@example.invalid'})
+        assert r.headers['x-fleet-person'] == 'owner@example.invalid'
+        for change in ({'iss':'wrong'}, {'aud':'wrong'}, {'email':''}, {'exp':1}, {'iat':int(time.time())+3600}):
             assert await status(encode(claims | change)) == 403
         for field in ('exp','iat','sub','email'):
             assert await status(encode({k:v for k,v in claims.items() if k != field})) == 403
@@ -37,5 +42,5 @@ async def main():
             raise jwt.PyJWKClientConnectionError('fixture')
         guard.keys = SimpleNamespace(get_signing_key_from_jwt=unavailable)
         assert await status(encode(claims)) == 503
-    print('PASS: positive fixture; issuer/audience/owner/time/required claims/signature/algorithm/header/key outage negatives')
+    print('PASS: positive fixture; issuer/audience/e-mail header/time/required claims/signature/algorithm/header/key outage negatives')
 asyncio.run(main())

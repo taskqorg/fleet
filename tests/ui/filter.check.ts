@@ -6,7 +6,7 @@
 import http from 'node:http';
 import { chromium, type Page } from 'playwright';
 import { createStore } from '../../packages/coordinator/store.ts';
-import { createApp } from '../../packages/coordinator/app.ts';
+import { createApp } from '../coordinator/test-app.ts';
 
 const argv = process.argv.slice(2);
 const ASSERT = argv.includes('--assert');

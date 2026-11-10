@@ -6,7 +6,7 @@ import http from 'node:http';
 import { mkdirSync } from 'node:fs';
 import { chromium } from 'playwright';
 import { createStore } from '../../packages/coordinator/store.ts';
-import { createApp } from '../../packages/coordinator/app.ts';
+import { createApp } from '../coordinator/test-app.ts';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : 'design-report/app';
 mkdirSync(shots, { recursive: true });

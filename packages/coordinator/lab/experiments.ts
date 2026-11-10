@@ -1,3 +1,4 @@
+import {actor as who} from '../people.ts';
 // Lab experiments (docs/designs/fleet-lab.md "Experiment reconcile", "Budgets", "Ratings"; Stage 3 items 26-29).
 // An experiment is one comparison: pinned approved examples × variants × repeats of one v2 pipeline. A trial is a
 // pipeline_run execution with experiment_id, variant and request_id set; a judge run is one with variant null.
@@ -198,7 +199,7 @@ export function labExperiments(d:Deps){
   if(form==='pick_best'?ids.length<2:ids.length!==1)fail(400,form==='pick_best'?'pick_best rates two or more trials':`${form} rates one trial`);
   const trials=trialsOf(await runsOf(exp.id));for(const t of ids){const x=trials.find(y=>y.id===t)??fail(400,'Unknown trial '+t);if(!comparable(x))fail(409,'Trial '+t+' has no comparable result')}
   const seed=randomUUID();
-  const qid=await store.tx(()=>store.tasks.ask({kind:'rating',projectId:exp.project_id,text:form==='pick_best'?`Pick the best of ${ids.length} outputs`:form==='pass_fail'?'Pass or fail this output':'Rate this output from 1 to 5',options:{form,experiment_id:exp.id,trial_ids:ids,seed},askedBy:'operator',data:{experimentId:exp.id}}));
+  const qid=await store.tx(()=>store.tasks.ask({kind:'rating',projectId:exp.project_id,text:form==='pick_best'?`Pick the best of ${ids.length} outputs`:form==='pass_fail'?'Pass or fail this output':'Rate this output from 1 to 5',options:{form,experiment_id:exp.id,trial_ids:ids,seed},askedBy:who('lab'),data:{experimentId:exp.id}}));
   return rating(qid)}
  // The rating as the screen shows it: outputs in the seeded order, labelled A, B, …; never the variant.
  async function rating(qid:string){const r=(await q('SELECT * FROM question WHERE id=$1',[qid]))[0]??fail(404,'Unknown question');const o=r.options??{};

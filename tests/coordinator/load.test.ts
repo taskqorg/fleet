@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {createApp} from '../../packages/coordinator/app.ts';import {createStore} from '../../packages/coordinator/store.ts';import {volume} from './volume-fixture.ts';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {createApp} from './test-app.ts';import {createStore} from '../../packages/coordinator/store.ts';import {volume} from './volume-fixture.ts';
 // Live traffic shape (PDS18, Nov 2026): four hosts polling while two executor outboxes replay 100 events and 10 receipts.
 // Runs on PGlite; set FLEET_TEST_DATABASE_URL to a disposable Postgres database for real lock and isolation behaviour.
 import {PG,recreateFleetDatabase} from './pg-test.ts';

@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';import {mkdtempSync,mkdirSync,writeFileSync} from 'node:fs';import {tmpdir} from 'node:os';
-import {createApp} from '../../packages/coordinator/app.ts';import {fakeStore} from './s3-fake.ts';import {upload} from './artifact-helpers.ts';
+import {createApp} from './test-app.ts';import {fakeStore} from './s3-fake.ts';import {upload} from './artifact-helpers.ts';
 const sha=(b:Buffer)=>createHash('sha256').update(b).digest('hex');
 async function setup(opts:{access?:boolean,taskArtifacts?:string[]}={}){const dir=mkdtempSync(tmpdir()+'/fleet-artifacts-');mkdirSync(dir+'/projects/p1',{recursive:true});
  writeFileSync(dir+'/projects/p1/project.json',JSON.stringify({id:'p1',name:'P1',contextFiles:[]}));
