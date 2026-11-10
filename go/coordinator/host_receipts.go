@@ -178,11 +178,12 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 	}
 	wasFinal := terminal(e)
 	kind := c["kind"]
+	lost := false
 	if !wasFinal && kind != "steer" && (kind != "stop" || status == "stopped") {
 		if s, ok := receiptState[status]; ok {
 			e["state"], e["observation"] = s, "confirmed"
 		} else { // 'unknown': the host lost track; the state stays, unconfirmed
-			e["observation"] = "unconfirmed"
+			e["observation"], lost = "unconfirmed", true
 		}
 	}
 	e["updatedAt"] = nowMs()
@@ -240,7 +241,7 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 		}
 	}
 	ended := ""
-	if terminal(e) || unconfirmed(e) {
+	if terminal(e) || lost {
 		ended = astr(e["id"])
 	}
 	return doc{"ok": true}, ended, nil

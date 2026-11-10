@@ -592,6 +592,6 @@ ALTER TYPE execution_kind ADD VALUE 'host_job';
 
 -- migration 23: one execution record (docs/designs/fleet-data-foundation.md §7): its state and observation live in their
 -- columns only, in the typed vocabulary, with the real kind and harness; data keeps the open remainder.
-UPDATE execution SET kind = 'host_job', harness = NULL WHERE legacy_kind = 'execution' AND data->>'actor' = 'program-worker';
+UPDATE execution SET kind = 'host_job', harness = NULL WHERE legacy_kind = 'execution' AND (data->>'actor' = 'program-worker' OR data ? 'pipelineStepId');
 UPDATE execution SET harness = coalesce(data->'agentConfig'->>'harness', 'codex') WHERE legacy_kind = 'execution' AND kind = 'agent_run';
 UPDATE execution SET data = data - 'state' - 'observation', legacy_kind = NULL, legacy_id = NULL WHERE legacy_kind = 'execution';

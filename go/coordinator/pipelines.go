@@ -1031,7 +1031,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 		return false, err
 	}
 	st := astr(e["state"])
-	if !terminalTyped[st] {
+	if !terminal(e) {
 		return false, nil // an unconfirmed state is not final: the host may still report the real outcome
 	}
 	if st != "succeeded" {

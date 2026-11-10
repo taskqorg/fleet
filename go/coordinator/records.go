@@ -132,7 +132,7 @@ var terminalTyped = map[string]bool{"succeeded": true, "failed": true, "cancelle
 const execKinds = "kind IN ('agent_run','host_job')"
 
 // putExecution: the one writer of an execution record (kind agent_run or host_job). state is the typed execution state
-// (stateOrder); observation is 'confirmed' unless the record says 'unconfirmed'. Both live in their columns only, then
+// (stateOrder); observation stays 'unconfirmed' only while the state does not move. kind is fixed by the first write. Both live in their columns only, then
 // the record's task settles.
 func putExecution(q *Request, e doc) error {
 	id := astr(e["id"])
@@ -144,8 +144,8 @@ func putExecution(q *Request, e doc) error {
 	if _, ok := stateOrder[state]; !ok {
 		return fmt.Errorf("execution %s: unknown state %q", id, state)
 	}
-	observation := "confirmed"
-	if e["observation"] == "unconfirmed" {
+	observation := "confirmed" // a writer that moves the state knows it
+	if e["observation"] == "unconfirmed" && state == prev {
 		observation = "unconfirmed"
 	}
 	kind := "agent_run"
@@ -202,7 +202,7 @@ func putExecution(q *Request, e doc) error {
 	}
 	err = exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,task_id,experiment_id,variant,parent_execution_id,session_id,account_id,host_id,harness,model,config_ref,started_at,ended_at,data)
 	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-	 ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,task_id=coalesce(execution.task_id,excluded.task_id),
+	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,task_id=coalesce(execution.task_id,excluded.task_id),
 	  experiment_id=excluded.experiment_id,variant=excluded.variant,parent_execution_id=excluded.parent_execution_id,session_id=excluded.session_id,account_id=excluded.account_id,host_id=excluded.host_id,
 	  harness=excluded.harness,model=excluded.model,config_ref=excluded.config_ref,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
 	  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,

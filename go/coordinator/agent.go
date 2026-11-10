@@ -1331,7 +1331,7 @@ var agentDescriptions = map[string]string{
 	"reply":               "Answer a question; delivered to the asker as its next message",
 	"questions":           "List questions",
 	"worker_done":         "Report the current execution done (checked against the current execution; captures native session)",
-	"execution_status":    "Execution state, stop outcome proven|unknown, suggested next action and resume info",
+	"execution_status":    "Execution state (preparing, running, waiting, succeeded, failed, cancelled; observation unconfirmed when the host lost track), stop outcome proven|unknown, suggested next action and resume info",
 	"focus_set":           "Set a session's focus: projectIds (list in your grants) or \"*\"; with one project it is the default projectId of task_create and session_start, and task_page lists only the focus",
 	"reconcile":           "Settle coordinator-owned queue/handoff state and report unproven executions",
 }
