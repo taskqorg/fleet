@@ -9,7 +9,7 @@ type Store={all:(kind:string,filter?:object,omit?:string[])=>Promise<any[]>,get:
 const digest=(v:any)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const fail=(statusCode:number,message:string):never=>{throw Object.assign(Error(message),{statusCode})};
 // Project definition subset (docs/prototype-implementation-plan.md W1). Absent key = default below; unknown keys are reported in unknownKeys, never dropped silently.
-const SETTINGS_DEFAULTS:any={repos:[],environments:[],roles:{},worktree:{envMode:'worktree',baseRef:null,startFromOrigin:true,branchPrefix:'fleet',linkPaths:[],sharedDirectories:[]},scripts:{setup:null,teardown:null},setupStart:'wait',integration:{mode:'pr',mergeMethod:'squash',autoMerge:true,syncCheckoutAfterMerge:true},cleanup:{keepWhen:['uncommitted','teardown-failed']},identity:null};
+const SETTINGS_DEFAULTS:any={repos:[],environments:[],roles:{},worktree:{envMode:'worktree',baseRef:null,startFromOrigin:true,branchPrefix:'fleet',linkPaths:[],sharedDirectories:[]},scripts:{setup:null,teardown:null},setupStart:'wait',integration:{mode:'pr',mergeMethod:'squash',autoMerge:true,syncCheckoutAfterMerge:true},cleanup:{keepWhen:['uncommitted','teardown-failed']},identity:null,subscriptions:[]};
 const TOP_KEYS=['id','name','capability','recommendedMethod','contextFiles','artifact_locations','artifact_rules',...Object.keys(SETTINGS_DEFAULTS)];
 const ITEM_KEYS:any={repos:['id','remote','forge','defaultBranch','connection','path'],environments:['hostId','checkoutPath','repo'],identity:['name','email']};
 const ENUMS:any={'worktree.envMode':['worktree','local'],setupStart:['wait','background'],'integration.mode':['pr','direct'],'integration.mergeMethod':['squash','merge','rebase'],'repos.forge':['github','gitlab']};
@@ -21,6 +21,8 @@ export function projectSettings(p:any){
  const out:any={};
  for(const [k,d] of Object.entries(SETTINGS_DEFAULTS) as [string,any][]){
   const v=p[k];if(v===undefined){out[k]=structuredClone(d);continue}
+  // subscriptions (people-access §6): ordered subscription names or IDs for the project's work; replaces project-account.
+  if(k==='subscriptions'){if(!Array.isArray(v)||v.some((x:any)=>typeof x!=='string'))bad(k);out[k]=v;continue}
   if(k==='roles'){if(!isObj(v)||Object.values(v).some(x=>typeof x!=='string'))bad(k);out[k]=v;continue}
   if(Array.isArray(d)){if(!Array.isArray(v))bad(k);out[k]=v.map((item:any,i:number)=>{if(!isObj(item))bad(k);for(const x of Object.keys(item)){if(!ITEM_KEYS[k].includes(x))unknownKeys.push(`${k}[${i}].${x}`);else if(typeof item[x]!=='string')bad(`${k}[${i}].${x}`)}if(k==='repos'){if(!item.remote)bad(k+'.remote');check('repos.forge',item.forge??'github',null);return {forge:'github',defaultBranch:'main',...item}}if(!item.hostId||!item.checkoutPath)bad(k);return item});continue}
   if(k==='identity'){if(!isObj(v))bad(k);for(const x of Object.keys(v))if(!ITEM_KEYS.identity.includes(x))unknownKeys.push('identity.'+x);out[k]=v;continue}

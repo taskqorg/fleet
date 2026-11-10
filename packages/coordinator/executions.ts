@@ -52,6 +52,8 @@ export function executionModel(raw:Raw){
     harness=excluded.harness,model=excluded.model,config_ref=excluded.config_ref,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
     problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
    [e.id,kindOf(e),state,observation,l.projectId,l.taskId,e.experimentId??null,e.experimentId?e.agentConfig?.id??null:null,l.parent,e.sessionId??null,e.effectiveAccount?.accountId??e.accountId??null,e.hostId??null,harness,e.model??null,clean(config),ts(e.startedAt),ts(e.finishedAt),clean(e)]);
+  // Separate statement: migration 6 replays legacy records before migration 17 adds the column; they carry no director.
+  if(e.directedBy)await raw.query('UPDATE execution SET directed_by=$2 WHERE id=$1 AND directed_by IS DISTINCT FROM $2',[e.id,e.directedBy]);
   // A record written already ended (migration replay) has no live end to place in its thread.
   if(TERMINAL.has(state)&&!(prev&&TERMINAL.has(prev))){await writeTotals(e.id);if(prev)await writeEnded(e.id)}
  }
