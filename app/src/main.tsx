@@ -2,7 +2,7 @@
 import { render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation } from 'wouter-preact';
-import { AppShell, Empty, Button, type NavItem } from '../../packages/ui/src/index';
+import { AppShell, Empty, Button, workspaces, type NavItem, type AppScreen } from '../../packages/ui/src/index';
 import { op, signedOut } from './api';
 import { startFeed } from './feed';
 import { startStore } from './store';
@@ -12,13 +12,16 @@ import { Tasks } from './views/tasks';
 import { Conversations } from './views/conversations';
 import { Hosts } from './views/hosts';
 
-const NAV: NavItem[] = [
-  { id: 'overview', label: 'Overview', icon: 'house', group: 'Operator' },
-  { id: 'tasks', label: 'Tasks', icon: 'list', group: 'Operator' },
-  { id: 'conversations', label: 'Conversations', icon: 'messages-square', group: 'Operator' },
-  { id: 'hosts', label: 'Hosts', icon: 'panels-top-left', group: 'Architect' },
-  { id: 'legacy', label: 'Legacy views', icon: 'history', group: 'Other' },
-];
+// The view of each screen the registry marks `app: true` (the type requires every one). Nav and routes follow registry
+// order. A list screen takes an optional focus segment, so focusing a row never unmounts the list.
+const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) => any }> = {
+  overview: { focus: false, view: () => <Overview /> },
+  tasks: { focus: true, view: p => <Tasks id={p.id} /> },
+  conversations: { focus: true, view: p => <Conversations id={p.id} /> },
+  hosts: { focus: true, view: p => <Hosts id={p.id} /> },
+};
+const BUILT = workspaces.filter(w => w.app).map(w => ({ ...w, ...SCREENS[w.id as AppScreen] }));
+const NAV: NavItem[] = [...BUILT, { id: 'legacy', label: 'Legacy views', icon: 'history', group: 'Other' }];
 
 function App() {
   const [loc, go] = useLocation();
@@ -40,12 +43,7 @@ function App() {
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
     <Switch>
       <Route path="/"><Redirect to="/overview" /></Route>
-      <Route path="/overview"><Overview /></Route>
-      {/* One route per list view with an optional focus segment, so focusing a row never unmounts the list. */}
-      <Route path="/tasks/:id?">{(p: { id?: string }) => <Tasks id={p.id} />}</Route>
-      <Route path="/conversations/:id?">{(p: { id?: string }) => <Conversations id={p.id} />}</Route>
-      <Route path="/hosts/:id">{(p: { id: string }) => <Hosts id={p.id} />}</Route>
-      <Route path="/hosts"><Hosts /></Route>
+      {BUILT.map(s => <Route key={s.id} path={s.focus ? `/${s.id}/:id?` : `/${s.id}`}>{(p: { id?: string }) => s.view(p)}</Route>)}
       <Route><Empty text="This page does not exist." action={<Button label="Overview" icon="house" onClick={() => go('/overview')} />} /></Route>
     </Switch>
   </AppShell>;

@@ -23,7 +23,11 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  if(config.browserProxyAuth&&!config.browserOrigin)throw Error('Proxy browser auth requires configured browser origin');
  const ownStore=!config.store,store=config.store??createStore(config.database),{all,get,put}=store;
  const retentionDays=config.changeLogRetentionDays??7;if(!(retentionDays>0))throw Error('Invalid change log retention');
- const PUBLIC_ROUTES=new Set(['/','/overview','/tasks','/tasks/:id','/conversations','/conversations/:id','/hosts','/hosts/:id','/assets/*','/sw.js','/manifests/:name','/icons/:name','/lab','/projects','/recovery','/accounts']);
+ // App screens come from the build (dist/app/screens.json, written from the registry's app workspaces); before a build
+ // there are none and every app path is a 404.
+ const screens:string[]=(()=>{try{const v=JSON.parse(readFileSync(join(resolve(config.appDir??'dist/app'),'screens.json'),'utf8'));return Array.isArray(v)?v.filter((x:any)=>typeof x==='string'&&/^[a-z]+$/.test(x)):[]}catch{return []}})();
+ const APP_ROUTES=screens.flatMap(s=>['/'+s,'/'+s+'/:id']);
+ const PUBLIC_ROUTES=new Set(['/',...APP_ROUTES,'/assets/*','/sw.js','/manifests/:name','/icons/:name','/lab','/projects','/recovery','/accounts']);
  const LEGACY_ROUTES=new Set(['/legacy','/legacy/lab','/legacy/projects','/legacy/recovery','/legacy/accounts']);
  const sessionList=sessionModel({query:(s:string,p?:any[])=>store.query(s,p??[])});
  // No artifact bytes pass through the coordinator (design §3): Fastify's default body limit applies.
@@ -75,7 +79,7 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  app.get('/sw.js',appFile('sw.js','text/javascript'));
  app.get('/manifests/:name',async(req:any,r)=>{if(!/^[a-z]+\.webmanifest$/.test(req.params.name))fail(404,'Unknown manifest');return appFile('manifests/'+req.params.name,'application/manifest+json')(req,r)});
  app.get('/icons/:name',async(req:any,r)=>{if(!/^[a-z0-9-]+\.svg$/.test(req.params.name))fail(404,'Unknown icon');return appFile('icons/'+req.params.name,'image/svg+xml')(req,r)});
- for(const route of ['/overview','/tasks','/tasks/:id','/conversations','/conversations/:id','/hosts','/hosts/:id'])app.get(route,appFile('index.html','text/html'));
+ for(const route of APP_ROUTES)app.get(route,appFile('index.html','text/html'));
  app.get('/test-sites/:project/:file',async(req:any,r)=>{if(!config.testSiteRoot||!['hello-world','hello-world-alt'].includes(req.params.project)||!/^[a-zA-Z0-9_-]+\.(html|css)$/.test(req.params.file))fail(404,'Unknown test site');const root=realpathSync(resolve(config.testSiteRoot!,req.params.project)),path=realpathSync(resolve(root,'current',req.params.file));if(!path.startsWith(root+sep))fail(403,'Test-site path rejected');r.header('Content-Security-Policy',"sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src data:; frame-ancestors 'self'");return r.type(req.params.file.endsWith('.css')?'text/css':'text/html').send(readFileSync(path))});
  const profiles_list=()=>({profiles:listProfiles(config.profilesDirectory||'config/agents')});
  app.get('/api/profiles',async()=>profiles_list());
