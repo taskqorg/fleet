@@ -1,0 +1,212 @@
+[
+ {
+  "id": "dashq:DQ-01",
+  "source": {
+   "repo": "dashq",
+   "path": "docs/design/operator-redesign/scenarios-and-data.md",
+   "anchor": "DQ-01",
+   "commit": "7918539db4ffeafbde72a3b0352af2f906e78914",
+   "sha256": "276e40f31c79f93ec582c14ffde2d99c74e4c227e41e649f953d2b223184d871"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Start the day; understand the whole system",
+  "expected_outcome": "Hosts, useful current evidence, work and direct human actions are readable together. Unknown, stale, partial and historical data remain distinct.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "dashq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "dashq:DQ-02",
+  "source": {
+   "repo": "dashq",
+   "path": "docs/design/operator-redesign/scenarios-and-data.md",
+   "anchor": "DQ-02",
+   "commit": "7918539db4ffeafbde72a3b0352af2f906e78914",
+   "sha256": "8302f8a7a70e646a0bd609fc2259800dbc69073f5dd4081a68085ba3d5241141"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Something changed during absence",
+  "expected_outcome": "Compare a named window/checkpoint; show new, ongoing and independently resolved conditions with source times and coverage. No baseline means comparison unavailable.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "dashq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "dashq:DQ-03",
+  "source": {
+   "repo": "dashq",
+   "path": "docs/design/operator-redesign/scenarios-and-data.md",
+   "anchor": "DQ-03",
+   "commit": "7918539db4ffeafbde72a3b0352af2f906e78914",
+   "sha256": "b8805e9e76bf810f9924c51fed3140d2d4c7e2ec20453267fe63c2bc61c330c4"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Server/resource/service problem",
+  "expected_outcome": "Open affected host/resource, timeline, check evidence and relevant work; propose a permitted next step; verify the source after action. Closing a task alone is not recovery.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "dashq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "dashq:DQ-04",
+  "source": {
+   "repo": "dashq",
+   "path": "docs/design/operator-redesign/scenarios-and-data.md",
+   "anchor": "DQ-04",
+   "commit": "7918539db4ffeafbde72a3b0352af2f906e78914",
+   "sha256": "8112dee14ce71a4993970fa8809b24aa27c7e45ba384370ecd797b620599623d"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Agent silent, failing, unauthenticated or unexpectedly slow",
+  "expected_outcome": "Separate runtime, login, request, task attempt, tool, integration and exporter evidence. Show observed last progress and missing probes; silence alone is not a diagnosis.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "dashq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "dashq:DQ-05",
+  "source": {
+   "repo": "dashq",
+   "path": "docs/design/operator-redesign/scenarios-and-data.md",
+   "anchor": "DQ-05",
+   "commit": "7918539db4ffeafbde72a3b0352af2f906e78914",
+   "sha256": "94d61be675c34b854268a7abc0bbb473d0f8e1479c497f4c874efe35b37c2211"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Ready work exists but nothing appears to start",
+  "expected_outcome": "Explain assignment, admission, dependencies, scope, capacity, policy and failures with their source revisions. Distinguish idle, held, running without recent progress and unobserved.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "dashq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "dashq:DQ-06",
+  "source": {
+   "repo": "dashq",
+   "path": "docs/design/operator-redesign/scenarios-and-data.md",
+   "anchor": "DQ-06",
+   "commit": "7918539db4ffeafbde72a3b0352af2f906e78914",
+   "sha256": "6c03d47a2bdf2d4c0c45c64001e69049262592d90be21b5f1d4c92d257a44ef8"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Answer/manage a task from DashQ",
+  "expected_outcome": "Use the complete released TaskQ view and controls; preserve exact choice IDs, context, revision, operation ID and receipt. Retry reconciles uncertain delivery.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "dashq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "dashq:DQ-07",
+  "source": {
+   "repo": "dashq",
+   "path": "docs/design/operator-redesign/scenarios-and-data.md",
+   "anchor": "DQ-07",
+   "commit": "7918539db4ffeafbde72a3b0352af2f906e78914",
+   "sha256": "c31eee65bfe36534e852345d5f89a885d6e4d7f30e00456eea01d3a22e835770"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Ask PM to diagnose, plan or create work",
+  "expected_outcome": "Same TaskQ conversation workspace and project context; inspect plan/effects and per-operation readback; preserve draft across navigation/outage. Worker attempts stay separate.",
+  "checks": [],
+  "lab_fit": "behavior",
+  "tags": [
+   "dashq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "dashq:DQ-08",
+  "source": {
+   "repo": "dashq",
+   "path": "docs/design/operator-redesign/scenarios-and-data.md",
+   "anchor": "DQ-08",
+   "commit": "7918539db4ffeafbde72a3b0352af2f906e78914",
+   "sha256": "804ea9e7c57c935ddc8779da51fdd513106f8054ffc7d92f7903bc23c5bf3190"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Find where time, tokens and cost go",
+  "expected_outcome": "Drill from project/host/runtime/attempt to measured stages/calls. Separate wall time, summed overlapping execution, queue waits and missing coverage; no invented cost/savings.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "dashq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "dashq:DQ-09",
+  "source": {
+   "repo": "dashq",
+   "path": "docs/design/operator-redesign/scenarios-and-data.md",
+   "anchor": "DQ-09",
+   "commit": "7918539db4ffeafbde72a3b0352af2f906e78914",
+   "sha256": "b9b93c9d5438af945f18164d8309cf5f4f0fa99528c7d0d74a9831c1cc8928cc"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Determine whether telemetry itself is trustworthy",
+  "expected_outcome": "Follow emitted → locally queued → durably accepted → projected → exported → queryable, retaining gaps and reasons at each qualified stage.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "dashq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "dashq:DQ-10",
+  "source": {
+   "repo": "dashq",
+   "path": "docs/design/operator-redesign/scenarios-and-data.md",
+   "anchor": "DQ-10",
+   "commit": "7918539db4ffeafbde72a3b0352af2f906e78914",
+   "sha256": "a28197ad7004bd7639961ea831469392b095838598ea67b6460f4898a29002ed"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Source/network/store unavailable, then recovers",
+  "expected_outcome": "Other products continue; keep last-known state and drafts; reconcile delivery without duplicates. Scoped direct links and agent queries expose the same meaning.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "dashq",
+   "operator"
+  ],
+  "maturity": "indexed"
+ }
+]

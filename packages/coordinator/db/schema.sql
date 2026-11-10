@@ -462,3 +462,10 @@ CREATE TRIGGER experiment_change AFTER INSERT OR UPDATE OR DELETE ON experiment 
 CREATE TRIGGER score_change AFTER INSERT OR UPDATE OR DELETE ON score FOR EACH ROW EXECUTE FUNCTION fleet_change();
 DELETE FROM document WHERE kind = 'experiment';
 UPDATE execution SET experiment_id = NULL, variant = NULL, data = data - 'experimentId' WHERE experiment_id IS NOT NULL OR data ? 'experimentId';
+-- migration 12: Lab examples (docs/designs/fleet-lab.md Stage 1). An example is a lab-scope artifact with role 'example' (the
+-- example JSON, written by the coordinator); approved_at is set when the owner approves it and stays null while proposed.
+ALTER TABLE artifact DROP CONSTRAINT artifact_role_check;
+ALTER TABLE artifact ADD CONSTRAINT artifact_role_check CHECK (role IN ('original', 'thumbnail', 'poster', 'example'));
+ALTER TABLE artifact ADD COLUMN approved_at timestamptz NULL;
+-- One example artifact per project and name (name carries id and version).
+CREATE UNIQUE INDEX artifact_example ON artifact((coalesce(project_id, '')), name) WHERE role = 'example';

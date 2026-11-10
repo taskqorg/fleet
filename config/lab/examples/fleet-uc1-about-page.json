@@ -1,0 +1,47 @@
+{
+ "id": "fleet-uc1-about-page",
+ "use_case_id": "fleet:UC1",
+ "version": 1,
+ "origin": "synthetic",
+ "fixture": null,
+ "prompt": "This static site has one page, index.html. Add a page about.html titled \"About Fleet\" with the heading <h1>About Fleet</h1>, one paragraph describing Fleet, and the same navigation as index.html. Add a link to about.html in the navigation of both pages.",
+ "inputs": [
+  {
+   "path": "index.html",
+   "text": "<!doctype html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>Fleet</title></head>\n<body>\n<nav><a href=\"index.html\">Home</a></nav>\n<h1>Fleet</h1>\n<p>Agents at work.</p>\n</body>\n</html>\n"
+  }
+ ],
+ "references": [
+  {
+   "path": "index.html",
+   "text": "<!doctype html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>Fleet</title></head>\n<body>\n<nav><a href=\"index.html\">Home</a> <a href=\"about.html\">About</a></nav>\n<h1>Fleet</h1>\n<p>Agents at work.</p>\n</body>\n</html>\n"
+  },
+  {
+   "path": "about.html",
+   "text": "<!doctype html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>About Fleet</title></head>\n<body>\n<nav><a href=\"index.html\">Home</a> <a href=\"about.html\">About</a></nav>\n<h1>About Fleet</h1>\n<p>Fleet runs coding agents on several hosts and keeps every run inspectable.</p>\n</body>\n</html>\n"
+  }
+ ],
+ "checks": [
+  {
+   "id": "page-exists",
+   "run": "test -f about.html"
+  },
+  {
+   "id": "heading",
+   "run": "grep -q '<h1>About Fleet</h1>' about.html"
+  },
+  {
+   "id": "title",
+   "run": "grep -q '<title>About Fleet</title>' about.html"
+  },
+  {
+   "id": "nav-index",
+   "run": "grep -q 'href=\"about.html\"' index.html"
+  },
+  {
+   "id": "nav-about",
+   "run": "grep -q 'href=\"index.html\"' about.html"
+  }
+ ],
+ "split": "tune"
+}

@@ -17,7 +17,8 @@ import {agentTools} from './agent-tools.js';
 import {storeRegistry,accessToken} from './stores.js';
 import {artifactModel,type Artifacts} from './artifacts.js';
 import {placementWorker} from './placement.js';
-export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRetentionDays?:number,nativeHostIds?:string[],database:string,store?:Store,browserSecret:string,machineSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,storeSecrets?:string,storeEndpointHosts?:string[],cfAccessFile?:string,defaultArtifactLocations?:string[],artifactRetryWindowMs?:number,placementIntervalMs?:number,projectConfigDirectory?:string,pipeConnectionFile?:string,integrationHostId?:string,publicationHostId?:string,testSiteRoot?:string,defaultAccountBinding?:string}) {
+import {labExamples} from './lab/examples.js';
+export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRetentionDays?:number,nativeHostIds?:string[],database:string,store?:Store,browserSecret:string,machineSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,storeSecrets?:string,storeEndpointHosts?:string[],cfAccessFile?:string,defaultArtifactLocations?:string[],artifactRetryWindowMs?:number,placementIntervalMs?:number,projectConfigDirectory?:string,pipeConnectionFile?:string,integrationHostId?:string,publicationHostId?:string,testSiteRoot?:string,defaultAccountBinding?:string,labDirectory?:string}) {
  if(!config.browserSecret||!config.machineSecret||config.browserSecret===config.machineSecret) throw Error('Distinct credentials required');
  if(config.browserProxyAuth&&!config.browserOrigin)throw Error('Proxy browser auth requires configured browser origin');
  const ownStore=!config.store,store=config.store??createStore(config.database),{all,get,put}=store;
@@ -218,6 +219,11 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   await put('command',{id:randomUUID(),executionId:id,sessionId:sid,hostId,kind,status:'pending',payload})};
  artifacts=artifactModel(store,{stores,locations,access:()=>accessToken(config.cfAccessFile),retryWindowMs:()=>config.artifactRetryWindowMs??86400000,queueCommand:(h,k,p)=>store.tx(()=>queueCommand(h,k,p)),onSettled:(id:string)=>store.tx(()=>settle(id))});
  store.registerKind('artifact',artifacts.adapter);
+ // Lab examples (docs/designs/fleet-lab.md Stage 1): owner import, list, read. Experiments and the screen come in Stage 3.
+ const examples=labExamples(store,artifacts,config.labDirectory||'config/lab');
+ app.post('/api/lab/examples',async(req:any)=>examples.add(req.body??{}));
+ app.get('/api/lab/examples',async(req:any)=>examples.list({state:req.query?.state}));
+ app.get('/api/lab/examples/:id',async(req:any)=>examples.get(req.params.id));
  const placement=placementWorker(store,{stores,artifacts,locations,rules:rulesOf,queueCommand:(h,k,p)=>store.tx(()=>queueCommand(h,k,p)),retryWindowMs:()=>config.artifactRetryWindowMs??86400000,onExpired:(id:string)=>store.tx(()=>settle(id,'artifact retry window passed'))});
  Object.assign(projects,{
   artifact_list:async(b:any)=>({artifacts:await artifacts.list({executionId:b?.executionId,taskId:b?.taskId,mediaType:b?.mediaType,projectId:b?.projectId})}),

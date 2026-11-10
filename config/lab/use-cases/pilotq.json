@@ -1,0 +1,422 @@
+[
+ {
+  "id": "pilotq:L01",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L01",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "314cab12627e3bc6c835edaa35e8abff75dd7420f0f539812320b67eb0ef18b4"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Send a request while a run slot is busy; then free capacity",
+  "expected_outcome": "Acknowledgement follows durable commit; queued is not running; reaction receipt avoids a redundant text acknowledgement; reaction failure falls back to text; a queue wait over 30 seconds gets one observed queue-depth notice; waiting has a reason and does not trigger a hung-run warning",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L02",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L02",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "c12825ec510a27048f3d8eb5275630480fa351236326e90f3f62403e6a368bd9"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Start a Codex turn in a forum topic",
+  "expected_outcome": "Typing stays in the correct topic, continues through a long active call within its inactivity bound, follows section 12's rate bound and stops on wait/cancel/terminal state; its timer/failure never extends a deadline, creates work or blocks a final reply",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L03",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L03",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "699e9eaec9f03b54e3aad356af1079dfcdf7815e3922f7b540de0fc378728868"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Emit factual tool/task progress, a stall and subsequent recovery",
+  "expected_outcome": "Coalesced status reflects evidence; incident notices deduplicate across restart; no raw secrets/reasoning; a reset timer alone cannot claim recovery; final/question/failure is not starved by edits",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L04",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L04",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "9ecd81b9a907e7f198faffa7b360963a2b878b1dda8c2923fd3148d7286308b8"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Spawn a Codex process that never emits an event",
+  "expected_outcome": "First-event watch still fires within the configured bound; request becomes recoverable/failed with notice; slot and process resources are released or fenced",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L05",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L05",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "67a014376250136d9c478c5db4f608870b34f51bcdb3002559a1da4d74200e6d"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Run a chatty model, a quiet tool and compaction",
+  "expected_outcome": "Runtime events renew inactivity; timers do not. No fixed turn-duration or call cap; stop and inactivity preserve completed findings and report unconfirmed effects without replay (§5, §7)",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L06",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L06",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "80caae5c30aef46c372c02530c7fc9965fc6835a5b8dab36038f50638a2a4cd7"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Fill the normal queue, then issue authorized stop/status/reset",
+  "expected_outcome": "Control remains responsive within budgets; generation blocks stale effects/replies; old receipts remain queryable; revoked/unknown actor gets no effect or reply; reset does not recreate or lose active TaskQ work",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L07",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L07",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "ccdf256e0d7ae626c7fc5a717729b2279626bf654f31a32ddb6deb1d9d8cf645"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Deliver native events and a candidate tool call",
+  "expected_outcome": "No partial/invalid effect; no guessed success; optional diagnostic can be ignored safely; explicit failed/uncertain outcome retains evidence; typed tools retain the verified effect boundary; native tools use §5 service-user authority and no automatic replay",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L08",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L08",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "ffc98be7bbbad415acd4bd52be69555687730947d676903cd9c62409bc92a5ff"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Provider or transport fails during a request",
+  "expected_outcome": "Auth/quota/transport reasons differ; no busy loop or billed-key fallback; one logical-operation budget survives restart; server wait honored; stale authorization rechecked before resumed effects",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L09",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L09",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "d6f8888c9d76ddfaab4d61fc4095eac76c97951423b4f92bdd60f398f4a68f70"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Resume a thread after subscription credentials expire",
+  "expected_outcome": "Explicit required-login state; refresh does not discard conversation; different account binding is not adopted silently; old effects are reconciled before continuation; live entitlement/renewal is a separate release check",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L10",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L10",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "ac6408cac811af61634f857fdef74b054efa96011923caf0f550eb00c91caa01"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Start with a pinned Codex and a reviewed Telegram manifest",
+  "expected_outcome": "Component readiness shows the precise missing prerequisite; no unsafe executable admission; remaining read-only status is honest; actual model-visible tools match the reviewed inventory; mocks do not establish production entitlement",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L11",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L11",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "4e03b78c9bfbf9016c4ea6018f1724e885d3df31e7cdee01c5ccc7b2d4896ae0"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Final answer needs several messages with Unicode and code blocks",
+  "expected_outcome": "Stable persisted text/chunk IDs; receipt-aware ordered continuation; only ambiguous chunks risk bounded duplicates; formatting fallback preserves meaning; no model/tool rerun or false delivered state",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L12",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L12",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "0586d700c3344b6f2ace00917e5327db489d1b35bc4810dc2dc35a680df7827c"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Queue slow progress edits and then a terminal result",
+  "expected_outcome": "Final revision cannot be overwritten; replacement stays in the same authorized route; superseded cosmetic work drops without dropping the final result or regenerating it",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L13",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L13",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "91e93d1e80b73847d78f44faa9f5b97a91cec1f33f1cf483c320156b9fc8e4ab"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Serve DM, ordinary group, General and named forum topics",
+  "expected_outcome": "Identity/routing preserved; delivery is held with an actionable incident; no fallback to wider chat or private DM; administrative remap is explicit and does not change the original effect authority",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L14",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L14",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "55bf825d17ce0c5ba25c4c74fdc8fc330b7c2f63febd51dbe5307a0e1d2f9071"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Interleave text, album parts, edits and replies from two people/topics",
+  "expected_outcome": "Each admitted input remains accounted for; bounded assembly preserves author/route/revision; no cross-person merge or swallowed text; unsupported content gets an explicit outcome only for authorized senders",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L15",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L15",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "ca109edb242a5999ce2e4ac0362e94e0935ab038cbff1390a4243ff971e99402"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Plan restart/update with accepted input, a running manager and pending output",
+  "expected_outcome": "Persisted work survives; stale descendants are terminated/fenced; original pending requests reconcile; no startup backlog discard; TaskQ worker continues under TaskQ ownership; new readiness follows recovery checks",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L16",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L16",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "b236f23ae9fc8b858aa0c1993454d6eb79e10b923d65b78c67dd72dbd98cbb32"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Persist work, then lose its timer/event notification",
+  "expected_outcome": "Periodic scan recovers work without a user nudge; dirty key reruns once; one failing key does not block others; no duplicate create/effect/delivery obligation; external call does not hold the DB transaction",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L17",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L17",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "74ef76736fe516d76ba8be7e58efb4e8994ea23f3147a128441de03cb73257d9"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Run deadlines/backoff, then change wall clock and restart",
+  "expected_outcome": "Monotonic live deadlines remain bounded; restart does not reset attempts or grant unlimited extra run time; invalid time evidence is explicit rather than healthy",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L18",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L18",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "09522507d1a1662e6d5fe63c50f43b853f39bc843928605dcfd054875839b1d0"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Independently break ingress, dispatch, model, delivery and the service process",
+  "expected_outcome": "Correct component becomes stale/unknown; external monitor detects total service failure; no claim of successful Telegram alert when delivery is down; recovery notice requires fresh evidence; no alert/restart storm",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L19",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L19",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "85697d450d45dfe29264bac0e35391813912b938409ec102943c504579a5dc79"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Stress one route and resource budgets during another normal conversation",
+  "expected_outcome": "Bounds and fair service hold; uncommitted input is not acknowledged; raw secrets/message bodies do not leak into diagnostics; resources/child handles are released; telemetry failure does not block the core flow",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "pilotq:L20",
+  "source": {
+   "repo": "pilotq",
+   "path": "docs/acceptance.md",
+   "anchor": "L20",
+   "commit": "1fcfb3a47cb4e10b3b8a67addec0319bb3506a2e",
+   "sha256": "29f074d4aca713f2cb0acf750f6417da74fda7c62a5cdfdfe3c82423435d6b6d"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Upgrade a pinned PilotQ/Codex/config/schema set with accepted work, then roll back",
+  "expected_outcome": "Current/previous version and compatibility are explicit; incompatible downgrade stops safely; receipts and native mappings survive compatible rollback; restored effects reconcile with TaskQ; actual Linux service and storage proof is separate from fake traces",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "pilotq",
+   "acceptance"
+  ],
+  "maturity": "indexed"
+ }
+]

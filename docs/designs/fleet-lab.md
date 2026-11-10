@@ -201,9 +201,19 @@ Both entry points send label = the current step's execution ID (UUID; fits Pipe'
 ### Use-case registry and examples
 
 *   Use cases are repo files: `config/lab/use-cases/<project>.json`, entries `{id: "<project>:<source id>", source {repo, path, anchor, commit, sha256}, source_status, actor, goal, expected_outcome, checks[], lab_fit: work|behavior|none, tags, maturity}`. Hand-indexed. IDs never renumber.
-*   Examples are artifacts (one source of truth, not repo files): `role: example`, JSON `{id, use_case_id, version, origin: synthetic|task:<id>, fixture, prompt, inputs[], references[], checks[], split: tune|held_out}`, hash = artifact content hash.
-*   Drafting (R3.6): pipeline `config/pipelines/draft-examples.json` (agent step) writes proposed example artifacts; each gets a `rating` question with form `pass_fail`; a pass marks the artifact approved. Experiments pin approved example artifacts by ID and hash.
-*   Drift check `scripts/lab-drift.ts` recomputes source hashes, writes `source_status`. Warns in CI and on launch; never blocks.
+    *   `anchor` names one section of the source file: an explicit `<a id="…">` line or a heading with that GitHub slug (the section runs to the next heading of the same or a higher level), or else one table row whose first cell starts with the anchor (pilotq `L01`, agentq `A1`, dashq `DQ-01`). `sha256` is the hash of that section's text at `commit`, so an edit elsewhere in the file is not drift.
+    *   `source_status`: `current | changed | missing` (file or anchor gone). An org repo that is not checked out reports `unavailable` and leaves the stored status alone.
+    *   `lab_fit`: `work` = an agent produces a checkable result; `behavior` = an agent's conduct is what is judged (PM, review); `none` = product behavior Lab does not exercise.
+    *   `checks[]`: `{kind: script|judge|human, ref, metric}`; `maturity`: `indexed | example drafted | synthetic ready | calibrated | linked to a real task`.
+*   Examples are artifacts (one source of truth): scope `lab`, `role: example`, name `examples/<id>@<version>.json`, JSON `{id, use_case_id, version, origin: synthetic|task:<id>, fixture: {repo, commit}|null, prompt, inputs[], references[], checks[], split: tune|held_out}`, hash = artifact content hash.
+    *   `inputs[]` and `references[]` are files `{path, text}` (relative path). `inputs` are what the trial starts with; `references` are one known-good result.
+    *   `checks[]` are `{id, run}`: a shell command run in the trial's output directory with `FLEET_OUTPUT_DIR` set; exit 0 = pass. Stage 3 script evaluators run the same commands.
+    *   An `id@version` never changes content: importing other content under the same `id@version` is refused (409); a change is a new version. The coordinator writes the example artifact itself (no execution), stored and verified like a backfilled artifact.
+    *   Approval is `artifact.approved_at` (migration 12): set on approval, null while proposed.
+    *   "Checks pass with no agent" means: on inputs plus references every check passes, and on inputs alone at least one check fails (so a check that passes untouched input is caught). `scripts/lab-examples.ts check` runs this; the test suite runs it on every seed.
+*   Owner-written examples (Stage 1) start as seed files `config/lab/examples/*.json`, reviewed in the PR (the review is the approval), and are imported with `scripts/lab-examples.ts import` into approved example artifacts. After import the artifact is the source of truth; a seed edit needs a new `version` and a new import.
+*   Drafting (R3.6, Stage 2): pipeline `config/pipelines/draft-examples.json` (agent step) writes proposed example artifacts; each gets a `rating` question with form `pass_fail`; a pass marks the artifact approved. Experiments pin approved example artifacts by ID and hash.
+*   Drift check `scripts/lab-drift.ts` recomputes source hashes from each repo's `HEAD` and prints changed or missing entries; `--write` stores `source_status`; `--pin <id…>` accepts the current source after review. Warns in CI and (Stage 3) on launch; never blocks.
 
 ### Experiment reconcile
 
@@ -421,19 +431,32 @@ Stage 0 exit: a trial inserted by SQL fixture (experiment row + `pipeline_run` w
 
 #### 16. `config/lab/use-cases/{fleet,taskq,pilotq,agentq,dashq,assetq}.json` (Create)
 
-*   Hand-indexed entries with `lab_fit`. Skip `dashq/.taskq/specq/` copies.
+*   Hand-indexed entries with `lab_fit`. Skip `dashq/.taskq/specq/` copies. Sources: Fleet `docs/use-cases.md` UC1–UC11; taskq `docs/use-cases/README.md` UC-01–UC-17; pilotq `docs/acceptance.md` L01–L20 (the brief's "about 67 rows" counted the same L rows repeated in later qualification tables); agentq `docs/spec/VERIFICATION.md` A1–A7; dashq `docs/design/operator-redesign/scenarios-and-data.md` DQ-01–DQ-10; assetq one entry `assetq:datasets` (`docs/method-evaluation.md`; the datasets themselves live in Pipe's database, not in a file). 66 entries.
 
 #### 17. `scripts/lab-drift.ts` (Create), `.github/workflows/ci.yml` (Modify)
 
-*   Recompute hashes, print changed entries; CI step `continue-on-error: true`.
+*   Recompute hashes, print changed entries; CI step `continue-on-error: true`. CI checks out Fleet only, so CI checks Fleet's own entries; other repos are checked where they are checked out (`FLEET_LAB_REPOS`, default the directory above the Fleet checkout).
 
 #### 18. `scripts/lab-import-assetq.ts` (Create)
 
-*   Convert assetq dataset cases (`id, text, attachments`) to example artifacts (`origin: synthetic`, approved).
+*   Convert assetq dataset cases (`id, text, attachments`) to examples (`origin: synthetic`, approved), use case `assetq:datasets`. Input is the `GET /v1/datasets` reply (`assetq datasets`), exported where the Pipe CLI and its credential already are; the case text is the prompt and the whole case (dataset identity, operation, attachment object IDs) is the input file `assetq-case.json`, so nothing is lost. Pipe scored these cases by owner judgment only, so they carry no script checks. The output goes to `scripts/lab-examples.ts import`.
 
 #### 19. `docs/use-cases.md` (Modify)
 
-*   Stable anchors, Source and Status lines.
+*   Stable anchors (`<a id="ucN">`), Source and Status lines (Status `accepted`; Source names the registry entry).
+
+#### 19a. Examples (Create): `packages/coordinator/lab/examples.ts`, `scripts/lab-examples.ts`, `config/lab/examples/*.json`; `app.ts`, `artifacts.ts`, `db/schema.sql` (Modify)
+
+*   Added while building Stage 1: the exit needs stored examples, and the code had no way for the coordinator to write one (artifact `role` allowed only `original|thumbnail|poster`, every write went through an executor upload, and there was no approval field).
+*   `-- migration 12`: `role` adds `example`; `artifact.approved_at timestamptz NULL`; unique index on `(coalesce(project_id, ''), name) WHERE role = 'example'`.
+*   `POST /api/lab/examples` `{examples[], projectId?, approved?}` → `{examples: [{artifactId, id, version, hash, created}]}` (400 invalid example or unknown use case, 409 other content under an existing `id@version` or no reachable store); `GET /api/lab/examples?state=proposed|approved`; `GET /api/lab/examples/:artifactId` → `{artifactId, state, example}`. Operator credential, like every `/api` route.
+*   `artifacts.ts` `writeObject` (shared with backfill) writes an object the coordinator hashed itself.
+*   `scripts/lab-examples.ts check|import`.
+*   Five owner-written `work` seeds: `fleet:UC1` page, `fleet:UC5` web research (for the `web-research` pipeline, the API-step example), `fleet:UC9` faster code, `taskq:UC-07` plan to tasks, `taskq:UC-16` tray icon.
+
+#### 19b. `tests/coordinator/lab-registry.test.ts` (Create)
+
+*   Section rules; drift flags a changed section and leaves others current; registry shape; every seed passes its checks with no agent and a vacuous check is caught; assetq conversion is lossless; example import is idempotent, refuses changed content under the same version, validates use case and paths.
 
 Stage 1 exit: drift check flags a changed source; at least five `work` examples exist; their script checks pass with no agent.
 
@@ -516,7 +539,7 @@ Stage 4 exit: a loop improves the primary score on held-out examples; restart ne
 
 ### External (Pipe repo)
 
-*   After Stage 1 item 18: remove method-evaluation endpoints, recommendations and benchmark site; `pipe.md` notes `source` = Fleet step execution ID.
+*   After Stage 1 item 18 has imported the live datasets: remove method-evaluation endpoints, recommendations and benchmark site; `pipe.md` notes `source` = Fleet step execution ID.
 
 ### Verification Plan
 

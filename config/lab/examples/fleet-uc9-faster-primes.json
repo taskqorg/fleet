@@ -1,0 +1,35 @@
+{
+ "id": "fleet-uc9-faster-primes",
+ "use_case_id": "fleet:UC9",
+ "version": 1,
+ "origin": "synthetic",
+ "fixture": null,
+ "prompt": "primes.js exports primesBelow(n). Make it at least five times faster without changing its results. baseline/primes.js is the original for comparison; do not change it.",
+ "inputs": [
+  {
+   "path": "primes.js",
+   "text": "// Returns the primes below n, in ascending order.\nfunction primesBelow(n) {\n  const out = [];\n  for (let i = 2; i < n; i++) {\n    let prime = true;\n    for (let d = 2; d < i; d++) if (i % d === 0) { prime = false; break; }\n    if (prime) out.push(i);\n  }\n  return out;\n}\nmodule.exports = { primesBelow };\n"
+  },
+  {
+   "path": "baseline/primes.js",
+   "text": "// Returns the primes below n, in ascending order.\nfunction primesBelow(n) {\n  const out = [];\n  for (let i = 2; i < n; i++) {\n    let prime = true;\n    for (let d = 2; d < i; d++) if (i % d === 0) { prime = false; break; }\n    if (prime) out.push(i);\n  }\n  return out;\n}\nmodule.exports = { primesBelow };\n"
+  }
+ ],
+ "references": [
+  {
+   "path": "primes.js",
+   "text": "// Returns the primes below n, in ascending order (sieve of Eratosthenes).\nfunction primesBelow(n) {\n  if (n < 3) return [];\n  const composite = new Uint8Array(n);\n  const out = [];\n  for (let i = 2; i < n; i++) {\n    if (composite[i]) continue;\n    out.push(i);\n    for (let j = i * i; j < n; j += i) composite[j] = 1;\n  }\n  return out;\n}\nmodule.exports = { primesBelow };\n"
+  }
+ ],
+ "checks": [
+  {
+   "id": "same-results",
+   "run": "node -e \"const a=require('./primes.js').primesBelow,b=require('./baseline/primes.js').primesBelow;for(const n of [0,1,2,3,10,97,1000,20000])if(JSON.stringify(a(n))!==JSON.stringify(b(n)))throw Error('different result for n='+n)\""
+  },
+  {
+   "id": "five-times-faster",
+   "run": "node -e \"const a=require('./primes.js').primesBelow,b=require('./baseline/primes.js').primesBelow;const t=f=>{const s=process.hrtime.bigint();f(60000);return Number(process.hrtime.bigint()-s)};t(a);t(b);const fa=Math.min(t(a),t(a),t(a)),fb=Math.min(t(b),t(b),t(b));if(fb<5*fa)throw Error('expected 5x faster than baseline, got '+(fb/fa).toFixed(1)+'x')\""
+  }
+ ],
+ "split": "tune"
+}

@@ -2,7 +2,13 @@
 
 Scenarios for the [system specification](../fleet.md). These describe accepted behavior, not runtime evidence.
 
+Each use case has a stable anchor (`#uc1` … `#uc11`) that never changes when a title changes; IDs are never renumbered. The Lab registry points at these anchors and stores each section's hash; `npx tsx scripts/lab-drift.ts` reports sections that changed since they were indexed ([fleet-lab.md](designs/fleet-lab.md), Stage 1).
+
+<a id="uc1"></a>
+
 ## UC1. Create a website page
+
+Status: accepted. Source: this section; Lab registry entry `fleet:UC1` in [`config/lab/use-cases/fleet.json`](../config/lab/use-cases/fleet.json).
 
 Use the [Hello World example](website-example.md) as the first representative design exercise, then progress to deployment, revisions, fixes and more complex pages. Its example exchanges are not a universal required workflow.
 
@@ -33,7 +39,11 @@ The operator receives accessible page materials, check evidence and the [result 
 - Task to execution: supply the required materials, rules and capabilities.
 - Execution to result: make materials accessible, checks clear and completion requirements satisfied.
 
+<a id="uc2"></a>
+
 ## UC2. Compare and recommend 3D methods
+
+Status: accepted. Source: this section; Lab registry entry `fleet:UC2` in [`config/lab/use-cases/fleet.json`](../config/lab/use-cases/fleet.json).
 
 Two pipelines create 3D objects. An architect wants to compare their suitability for game characters and environment props, then make the findings available to project agents.
 
@@ -60,7 +70,11 @@ Repeat the experiment with a new method and update the recommendation when appro
 
 The task produces an accessible 3D object with check evidence and a traceable method choice. The recommendation helps selection; it does not establish that this task's result meets its requirements.
 
+<a id="uc3"></a>
+
 ## UC3. Handle failure and interruption
+
+Status: accepted. Source: this section; Lab registry entry `fleet:UC3` in [`config/lab/use-cases/fleet.json`](../config/lab/use-cases/fleet.json).
 
 A task has an active execution or external operation. The operator must see what happened and what can continue.
 
@@ -73,7 +87,11 @@ A task has an active execution or external operation. The operator must see what
 
 Pausing or cancelling after merge leaves the merged changes intact. Any rollback needs a separate decision under the task rules.
 
+<a id="uc4"></a>
+
 ## UC4. Run a pipeline with a failed step
+
+Status: accepted. Source: this section; Lab registry entry `fleet:UC4` in [`config/lab/use-cases/fleet.json`](../config/lab/use-cases/fleet.json).
 
 A project pipeline renders a batch of 3D assets in three steps: prepare inputs, render each asset, assemble a catalogue page. A worker chose the pipeline for a task under the [catalogue selection rules](../fleet.md#tools-and-pipelines).
 
@@ -95,7 +113,11 @@ The operator sees the run as the definition combined with step states, including
 - Failure to rerun: retained outputs survive the failed run; reuse follows the [input and configuration rules](../fleet.md#tools-and-pipelines). Repeat failed or changed steps and affected dependants unless a full rerun is forced.
 - Run to result: the task completes only when assembled results reach their destination and the task's completion requirements hold.
 
+<a id="uc5"></a>
+
 ## UC5. Qualify an agent and use it in project work
+
+Status: accepted. Source: this section; Lab registry entry `fleet:UC5` in [`config/lab/use-cases/fleet.json`](../config/lab/use-cases/fleet.json).
 
 An architect prepares an agent configuration and a pipeline for a catalogue kind of work. A project operator will use the recommended method through a PM session.
 
@@ -121,13 +143,21 @@ An architect prepares an agent configuration and a pipeline for a catalogue kind
 - Human interfaces and agent queries enforce the same permissions. A recommendation does not grant access to its supporting project history.
 - A result links to its execution and actual configuration; a recommendation links to its assessment and supporting runs.
 
+<a id="uc6"></a>
+
 ## UC6. Refine a character through conversation
+
+Status: accepted. Source: this section; Lab registry entry `fleet:UC6` in [`config/lab/use-cases/fleet.json`](../config/lab/use-cases/fleet.json).
 
 An operator supplies references in a session and requests a playable character. The agent uses project requirements and an applicable method, or investigates without a predefined pipeline. Results and checks appear in the conversation with links to their executions.
 
 The operator reports damaged hands. The agent reworks the relevant material and affected checks, retaining earlier results for comparison. The operator need not navigate separate step or experiment screens. Inspecting internals or comparing methods remains available through the same underlying records.
 
+<a id="uc7"></a>
+
 ## UC7. Evaluate a development approach
+
+Status: accepted. Source: this section; Lab registry entry `fleet:UC7` in [`config/lab/use-cases/fleet.json`](../config/lab/use-cases/fleet.json).
 
 An architect supplies a specification and configures a developer with SDD instructions. The agent implements the project through ordinary execution. The architect reviews the product, records shortcomings and discusses changes in a session.
 
@@ -135,7 +165,11 @@ Run another variant with changed instructions, skills or orchestration; compare 
 
 Once a method is useful, recommend it for relevant assignments within the selected scope. Project work uses that recommendation under the normal selection rules; previous results remain unchanged unless explicitly reworked.
 
+<a id="uc8"></a>
+
 ## UC8. Execute delegated or event-initiated work
+
+Status: accepted. Source: this section; Lab registry entry `fleet:UC8` in [`config/lab/use-cases/fleet.json`](../config/lab/use-cases/fleet.json).
 
 An operator supplies a prepared specification and delegates implementation. Alternatively, a configured monitoring event initiates investigation under [event rules](system-operations.md#event-initiated-work). Both use ordinary assignments and execution.
 
@@ -145,19 +179,31 @@ For an alert, return a concise finding, evidence, impact and proposed next actio
 
 The operator sees progress, questions and results without keeping a session open. Project instructions may change planning style, agent roles and permitted automatic actions without changing the execution mechanism.
 
+<a id="uc9"></a>
+
 ## UC9. Improve measurable work within a budget
+
+Status: accepted. Source: this section; Lab registry entry `fleet:UC9` in [`config/lab/use-cases/fleet.json`](../config/lab/use-cases/fleet.json).
 
 An architect assigns an optimization objective, requirements and budget using ordinary instructions. An agent iterates through changes, trials and measurements, optionally delegating work to other sessions. Follow [iterative improvement](lab.md#iterative-improvement) for shared budget accounting, comparison and stopping.
 
 For a compiler, compare compilation time and resource use while retaining correctness checks. Return qualifying candidates, measurements and costs; the newest candidate need not be the best. Human comments remain available alongside numeric results.
 
+<a id="uc10"></a>
+
 ## UC10. Analyze and improve project operations
+
+Status: accepted. Source: this section; Lab registry entry `fleet:UC10` in [`config/lab/use-cases/fleet.json`](../config/lab/use-cases/fleet.json).
 
 A person asks an agent where a project's work spends time and resources. Both inspect [work analysis](work-analysis.md), including preparation, questions, retries, merge, CI and cleanup, and drill down to supporting executions.
 
 They discuss a suspected inefficiency, change a skill, configuration or workflow, and evaluate it through the same laboratory mechanism. Keep missing measurements visible and compare results before applying the improvement; a proposed saving is not a measured saving.
 
+<a id="uc11"></a>
+
 ## UC11. Balance a distributed fleet
+
+Status: accepted. Source: this section; Lab registry entry `fleet:UC11` in [`config/lab/use-cases/fleet.json`](../config/lab/use-cases/fleet.json).
 
 A persistent Linux server coordinates project and laboratory work. Mac and Windows hosts provide additional environments and may disconnect. Register their capabilities and apply [allocation rules](work-allocation.md); a single-machine test does not qualify this scenario.
 
