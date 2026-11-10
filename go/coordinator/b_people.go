@@ -6,10 +6,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"os"
 	"regexp"
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func mayAccessProjectID(p *Person, projectID string) bool {
@@ -47,8 +52,11 @@ func director(q *Request) string {
 	return ownerEmail(q)
 }
 
-// actor: the request person, else the fallback (an execution, 'operator').
+// actor: the calling agent execution, else the request person, else the fallback (an execution, 'operator').
 func actor(q *Request, fallback string) string {
+	if q.agent != "" {
+		return q.agent
+	}
 	if q.person != nil {
 		return q.person.Email
 	}
@@ -161,5 +169,83 @@ func init() {
 			roles = []string{}
 		}
 		return doc{"email": p.Email, "name": p.Name, "roles": roles, "owner": p.Owner, "grantsVersion": grantsVersion(p), "changeLogRetentionDays": 7}, nil
+	})
+}
+
+// people_list and people_set: people.json as operations (docs/designs/fleet-pm-agent.md §8). A non-owner sees only
+// themself, as the person row-level policy does; only the owner sets the list, written atomically and reloaded.
+func init() {
+	bop("people_list", true, func(q *Request) (any, error) {
+		out := []*Person{}
+		for _, p := range q.app.people {
+			if q.person == nil || q.person.Owner || p.Email == q.person.Email {
+				out = append(out, p)
+			}
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Email < out[j].Email })
+		return doc{"people": out}, nil
+	})
+	// setting_changes: the audit of settings, newest first, optionally of one target (host:<id>, people, ...).
+	bop("setting_changes", true, func(q *Request) (any, error) {
+		// The people list is the owner's: its audit is not shown to architects.
+		owner := q.person == nil || q.person.Owner
+		b := body(q)
+		limit := pageLimit(b["limit"], 100)
+		rs, err := rowsOf(q, "SELECT seq,data FROM document WHERE kind='setting-change' AND ($1='' OR data->>'target'=$1) AND ($2 OR data->>'target'<>'people') AND ($3::bigint IS NULL OR seq<$3) ORDER BY seq DESC LIMIT $4",
+			gs(b, "target"), owner, b["before"], limit+1)
+		out := []any{}
+		var next any
+		for i, r := range rs {
+			if i == limit {
+				next = rs[i-1]["seq"]
+				break
+			}
+			out = append(out, r["data"])
+		}
+		return doc{"changes": out, "nextBefore": next}, err
+	})
+	clong("people_set", func(q *Request) (any, error) {
+		if q.person != nil && !q.person.Owner {
+			return nil, fail(403, "Only the owner sets people")
+		}
+		var b struct {
+			People json.RawMessage `json:"people"`
+		}
+		if json.Unmarshal(q.body, &b) != nil || len(b.People) == 0 || b.People[0] != '[' {
+			return nil, fail(400, "Expected people: the whole people.json list")
+		}
+		previous, err := os.ReadFile(q.app.peopleFile)
+		if err != nil {
+			return nil, err
+		}
+		// The file first, so a failed write leaves Fleet on the old list; a failed apply puts the old file back.
+		write := func(raw []byte) error {
+			tmp := q.app.peopleFile + ".tmp"
+			if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+				return err
+			}
+			return os.Rename(tmp, q.app.peopleFile)
+		}
+		if err := write(b.People); err != nil {
+			return nil, err
+		}
+		if err := q.app.setPeople(q.ctx(), b.People); err != nil {
+			if werr := write(previous); werr != nil {
+				return nil, errors.Join(err, werr)
+			}
+			var pe *pgconn.PgError
+			if errors.As(err, &pe) {
+				return nil, err
+			}
+			return nil, fail(400, err.Error())
+		}
+		var prev, next any
+		json.Unmarshal(previous, &prev)
+		json.Unmarshal(b.People, &next)
+		err = q.app.store.Tx(q.ctx(), nil, true, "", func(tx pgx.Tx) error {
+			q.tx = tx
+			return putDoc(q, "setting-change", doc{"id": uuid(), "target": "people", "field": "people", "previous": prev, "value": next, "actor": actor(q, "operator"), "at": now()})
+		})
+		return doc{"people": len(q.app.people)}, err
 	})
 }

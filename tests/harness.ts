@@ -6,9 +6,9 @@
 // (default ~/.cache/fleet-trial/pg; created with initdb and started on first use), FLEET_TRIAL_PGPORT (default 54329).
 import {execFileSync, spawn} from 'node:child_process';
 import {createHash, randomBytes} from 'node:crypto';
-import {existsSync, mkdirSync, readFileSync} from 'node:fs';
+import {copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync} from 'node:fs';
 import {createServer} from 'node:net';
-import {homedir} from 'node:os';
+import {homedir, tmpdir} from 'node:os';
 import {basename, join} from 'node:path';
 
 export const root = new URL('../', import.meta.url).pathname;
@@ -41,10 +41,13 @@ export async function startCoordinator(o: {name?: string, env?: Record<string, s
     .replace(/DATABASE fleet\b/g, `DATABASE ${db}`).replace(/datname = 'fleet'/, `datname = '${db}'`).replace(/^\\connect fleet$/m, `\\connect ${db}`);
   try { psql(['-d', 'postgres'], roles); } catch { psql(['-d', 'postgres'], roles); } // two worktrees at once: the loser retries
   const url = (user: string) => `postgresql://${user}@/${db}?host=${encodeURIComponent(pgdata)}&port=${pgport}`;
+  // A copy: people_set rewrites the file it was started with.
+  const people = join(mkdtempSync(join(tmpdir(), 'fleet-people-')), 'people.json');
+  copyFileSync(o.people ?? join(root, 'tests/trial/people.json'), people);
   const port = await freePort(), secret = randomBytes(24).toString('hex'), base = `http://127.0.0.1:${port}`;
   const server = spawn(process.env.FLEET_TRIAL_SERVER || 'go/bin/fleet-coordinator', {cwd: root, shell: true, detached: true, stdio: ['ignore', 'inherit', 'inherit'], env: {...process.env,
     PORT: String(port), FLEET_DATABASE_URL: url('fleet_app'), FLEET_MIGRATION_DATABASE_URL: url('fleet'),
-    FLEET_PEOPLE_FILE: o.people ?? join(root, 'tests/trial/people.json'), FLEET_BROWSER_SECRET: secret, FLEET_HOST_ID: 'trial-host', ...o.env}});
+    FLEET_PEOPLE_FILE: people, FLEET_BROWSER_SECRET: secret, FLEET_HOST_ID: 'trial-host', ...o.env}});
   let exited = false; server.on('exit', () => { exited = true; });
   // A crashed caller must not leave the coordinator running (it holds the caller's stdout open).
   process.on('exit', () => { if (!exited) try { process.kill(-server.pid!, 'SIGKILL'); } catch {} });

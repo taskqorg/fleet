@@ -5,6 +5,7 @@
 # Releases unpack into $FLEET_RELEASES (default ~/releases) as <name>/; `current` points at the active one and `previous`
 # at the one before. Restarted: the systemd user units fleet, fleet-gateway, fleet-access-guard and
 # fleet-executor that are installed here (Linux, WSL), or the launchd agent com.ufobe.fleet-executor (macOS).
+# Where fleet runs, it waits up to 30 s for GET /api/health on 127.0.0.1:9470 (database reachable).
 set -eu
 . "$(dirname "$0")/status.sh"
 releases=${FLEET_RELEASES:-$HOME/releases}
@@ -35,6 +36,11 @@ else
     status working 75 "restarting $unit"
     systemctl --user restart "$unit.service"
   done
+  if systemctl --user cat fleet.service >/dev/null 2>&1; then
+    status working 90 "waiting for coordinator health"
+    i=0; until curl -fsS -m 3 http://127.0.0.1:9470/api/health >/dev/null 2>&1; do
+      i=$((i+1)); [ $i -lt 30 ] || { echo "coordinator health check failed" >&2; exit 1; }; sleep 1; done
+  fi
   if systemctl --user is-active --quiet fleet-gateway.socket; then
     curl -fsS http://127.0.0.1:8742/healthz >/dev/null || { echo "gateway health check failed" >&2; exit 1; }
   fi

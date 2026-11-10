@@ -138,6 +138,9 @@ const providersJSON = `
     "method": "POST",
     "path": "/v1/systemone",
     "unit": "input_tokens",
+    "headers": {
+     "TypeSafe-Danger-Zone-Images": "true"
+    },
     "idempotent": true,
     "description": "Answer questions about state. Body {model, state, questions: {<id>: {type, instructions, criteria?}}, assets?}. Returns answers, model and usage.",
     "inputSchema": {

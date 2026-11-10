@@ -15,6 +15,7 @@ export const states = {
     queued: { label: 'Queued', tone: 'neutral', icon: 'list-ordered' },
     in_progress: { label: 'In progress', tone: 'running', icon: 'activity' },
     waiting: { label: 'Waiting', tone: 'attention', icon: 'bell' },
+    held: { label: 'Held', tone: 'attention', icon: 'circle-pause' },
     paused: { label: 'Paused', tone: 'neutral', icon: 'pause' },
     completed: { label: 'Completed', tone: 'success', icon: 'circle-check' },
     failed: { label: 'Failed', tone: 'danger', icon: 'octagon-x' },

@@ -54,6 +54,9 @@ func getDoc(q *Request, id, kind string) (doc, error) {
 }
 
 func putDoc(q *Request, kind string, v doc) error {
+	if kind == "setting-change" && q.agent != "" { // an agent's change: the execution acts for its director (fleet-pm-agent.md §1)
+		v["actor"], v["onBehalfOf"] = q.agent, q.person.Email
+	}
 	b, _ := json.Marshal(v)
 	var project any
 	if p, ok := v["projectId"].(string); ok {
@@ -92,12 +95,12 @@ func putExecution(q *Request, e doc) error {
 		}
 		return nil
 	}
-	_, err := q.tx.Exec(q.ctx(), `INSERT INTO execution(id,kind,state,observation,session_id,host_id,harness,model,config_ref,started_at,ended_at,legacy_kind,legacy_id,data,directed_by)
-	 VALUES($1,'agent_run',$2,$3,$4,$5,'codex',$6,$7,$8,$9,'execution',$1,$10,$11)
-	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,host_id=excluded.host_id,model=excluded.model,
+	_, err := q.tx.Exec(q.ctx(), `INSERT INTO execution(id,kind,state,observation,session_id,host_id,harness,model,config_ref,started_at,ended_at,legacy_kind,legacy_id,data,directed_by,project_id)
+	 VALUES($1,'agent_run',$2,$3,$4,$5,'codex',$6,$7,$8,$9,'execution',$1,$10,$11,$12)
+	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,project_id=coalesce(execution.project_id,excluded.project_id),observation=excluded.observation,host_id=excluded.host_id,model=excluded.model,
 	  started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,directed_by=excluded.directed_by,
 	  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-		e["id"], state, observation, e["sessionId"], e["hostId"], e["model"], cfg, ms("startedAt"), ms("finishedAt"), b, e["directedBy"])
+		e["id"], state, observation, e["sessionId"], e["hostId"], e["model"], cfg, ms("startedAt"), ms("finishedAt"), b, e["directedBy"], nilIf(firstString(e["projectId"], gm(e, "dispatch")["projectId"])))
 	return err
 }
 

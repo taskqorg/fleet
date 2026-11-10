@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -90,6 +91,16 @@ func enqueue(q *Request, s doc, input, requestID string, payload, execution doc,
 		}
 	}
 	ac := gm(s, "agentConfig")
+	if _, given := payload["skills"]; !given && len(cList(ac["skills"])) > 0 { // a session profile's skills, as pipeline steps get them
+		skills, err := profileSkills(ac)
+		if err != nil {
+			return nil, err
+		}
+		if payload == nil {
+			payload = doc{}
+		}
+		payload["skills"] = skills
+	}
 	id := uuid()
 	e := doc{"id": id, "executionId": id, "sessionId": s["id"], "hostId": nil, "state": "queued", "createdAt": now(), "directedBy": s["directedBy"], "model": "gpt-6.1-sol", "effort": "low",
 		"dispatch": doc{"harness": harnessOf(s), "projectId": s["projectId"], "workingDirectory": s["workingDirectory"], "account": s["account"], "host": nilIf(host), "last": nilIf(last), "input": input, "payload": payload}}
@@ -102,7 +113,7 @@ func enqueue(q *Request, s doc, input, requestID string, payload, execution doc,
 	if err := put(q, "execution", e); err != nil {
 		return nil, err
 	}
-	return e, putDoc(q, "message", doc{"id": uuid(), "sessionId": s["id"], "executionId": id, "requestId": requestID, "text": input})
+	return e, putDoc(q, "message", doc{"id": uuid(), "sessionId": s["id"], "executionId": id, "requestId": requestID, "text": input, "projectId": s["projectId"]})
 }
 
 func refreshProfile(s doc) error {
@@ -1259,6 +1270,11 @@ func sessionStart(q *Request, b doc) (doc, error) {
 		if taskID, err = taskFor(q, b["taskId"], pid, true); err != nil {
 			return nil, err
 		}
+		if held, err := has(q, "SELECT 1 FROM task WHERE id=$1 AND pause_reason='held'", taskID); err != nil {
+			return nil, err
+		} else if held && q.agent != "" { // Held waits for the person (fleet-pm-agent.md §4)
+			return nil, fail(409, "Task is Held: release it first")
+		}
 	}
 	s := doc{"id": uuid(), "createdAt": now(), "projectId": pid, "agentConfig": profile, "startRequest": key}
 	for k, v := range map[string]string{"taskId": taskID, "directedBy": directedBy, "role": gs(b, "role"), "account": account, "setup": gs(b, "setup"), "hostId": gs(b, "hostId"), "createdBySessionId": gs(b, "callerSessionId"), "createdByExecutionId": gs(b, "callerExecutionId")} {
@@ -1298,6 +1314,7 @@ var agentDescriptions = map[string]string{
 	"questions":           "List questions",
 	"worker_done":         "Report the current execution done (checked against the current execution; captures native session)",
 	"execution_status":    "Execution state, stop outcome proven|unknown, suggested next action and resume info",
+	"focus_set":           "Set a session's focus: projectIds (list in your grants) or \"*\"; with one project it is the default projectId of task_create and session_start, and task_page lists only the focus",
 	"reconcile":           "Settle coordinator-owned queue/handoff state and report unproven executions",
 }
 
@@ -1346,6 +1363,7 @@ func init() {
 	})
 	agentOp("worker_done", false, workerDone)
 	agentOp("execution_status", true, executionStatus)
+	agentOp("focus_set", false, focusSet)
 	agentOp("reconcile", false, func(q *Request, _ doc) (doc, error) { return agentReconcile(q) })
 
 	// /api/hosts/agent-tools: an executor's agent calls a tool; every call is bound to the calling execution's session.
@@ -1367,13 +1385,16 @@ func init() {
 			} `json:"params"`
 		}
 		json.Unmarshal(b.Request, &rpc)
-		var out any
-		read := agentOps[rpc.Params.Name].read
-		err := q.app.store.Tx(q.ctx(), nil, !read, "", func(tx pgx.Tx) error {
-			q.tx = tx
+		name := rpc.Params.Name
+		// The director's rights, the execution as actor (docs/designs/fleet-pm-agent.md §1).
+		q.agent = "execution:" + b.ExecutionID
+		q.r = q.r.WithContext(context.WithValue(q.ctx(), actorKey{}, q.agent))
+		var focus []string // nil: no focus or "*"
+		prove := func() error {
+			e := doc{}
 			if b.ExecutionID != "" {
-				e, err := getExecution(q, b.ExecutionID)
-				if err != nil {
+				var err error
+				if e, err = getExecution(q, b.ExecutionID); err != nil {
 					return err
 				}
 				if gs(e, "hostId") != b.HostID {
@@ -1387,30 +1408,198 @@ func init() {
 			if gs(c, "executionId") != b.ExecutionID || gs(c, "hostId") != b.HostID {
 				return fail(403, "Command rejected")
 			}
-			if rpc.Method != "tools/call" {
-				q.body = b.Request
-				out, err = q.app.mcp(q, "fleet-agent", agentOps, agentDescriptions)
-				return err
+			if sid := gs(e, "sessionId"); sid != "" {
+				if s, err := maybe(q, sid, "session"); err != nil {
+					return err
+				} else if s != nil {
+					focus = focusIDs(s)
+				}
 			}
-			if _, ok := agentOps[rpc.Params.Name]; !ok {
-				return fail(400, "Unknown agent tool")
+			// A call without an execution (initialize, tools/list) acts for the host's holder; never an implicit owner.
+			holder := gs(q.host, "holder")
+			d := firstString(e["directedBy"], holder)
+			if q.person = q.app.people[d]; q.person == nil {
+				return fail(403, "Director "+d+" is not a person of this Fleet")
 			}
-			var args doc
-			json.Unmarshal(rpc.Params.Arguments, &args)
-			r, err := bound(q, rpc.Params.Name, args, b.ExecutionID)
-			if err != nil {
-				return err
+			// A host acts with its director's rights only when its holder is that director or the owner (whose hosts
+			// run taken work, people-access §5); another holder's host never borrows a director's grants.
+			if hp := q.app.people[holder]; d != holder && (hp == nil || !hp.Owner) {
+				return fail(403, "Host "+b.HostID+" is held by "+holder+", not the director "+d)
 			}
-			out = doc{"jsonrpc": "2.0", "id": nil, "result": doc{"content": []doc{{"type": "text", "text": js(r)}}}}
+			return nil
+		}
+		wrap := func(r any) doc {
 			var id struct {
 				ID any `json:"id"`
 			}
 			json.Unmarshal(b.Request, &id)
-			out.(doc)["id"] = id.ID
+			return doc{"jsonrpc": "2.0", "id": id.ID, "result": doc{"content": []doc{{"type": "text", "text": js(r)}}}}
+		}
+		agentTool, isAgent := agentOps[name]
+		if rpc.Method == "tools/call" && !isAgent {
+			if agentDenied[name] {
+				return nil, fail(403, "Only a person may do this")
+			}
+			if b.ExecutionID == "" {
+				return nil, fail(403, "Execution rejected")
+			}
+			if err := q.app.store.Tx(q.ctx(), nil, false, "", func(tx pgx.Tx) error { q.tx = tx; return prove() }); err != nil {
+				return nil, err
+			}
+			q.tx = nil
+			if !agentMay(q.person, name) {
+				return nil, fail(400, "Unknown agent tool")
+			}
+			var a doc
+			json.Unmarshal(rpc.Params.Arguments, &a)
+			if a == nil {
+				a = doc{}
+			}
+			if f := gm(a, "filter"); name == "task_page" && focus != nil && (f == nil || f["projectId"] == nil) {
+				if f == nil {
+					f = doc{}
+				}
+				f["projectId"], a["filter"] = focus, f // focus filters reads without a project (§2)
+			}
+			if name == "task_create" && a["projectId"] == nil && len(focus) == 1 {
+				a["projectId"] = focus[0] // one focus project is the default (§2)
+			}
+			args := json.RawMessage(js(a))
+			r, err := q.app.runOp(q, name, args)
+			if err != nil {
+				return nil, err
+			}
+			return wrap(r), nil
+		}
+		var out any
+		err := q.app.store.Tx(q.ctx(), nil, !agentTool.read, "", func(tx pgx.Tx) error {
+			q.tx = tx
+			if err := prove(); err != nil {
+				return err
+			}
+			if rpc.Method != "tools/call" {
+				q.body = b.Request
+				var err error
+				out, err = q.app.mcp(q, "fleet-agent", agentTools(q.person), agentDescriptions)
+				return err
+			}
+			var args doc
+			json.Unmarshal(rpc.Params.Arguments, &args)
+			r, err := bound(q, name, args, b.ExecutionID)
+			if err != nil {
+				return err
+			}
+			out = wrap(r)
 			return nil
 		})
 		return out, err
 	})
+}
+
+// focusIDs: the session's focus projects; nil for no focus or "*" (every project in scope).
+func focusIDs(s doc) []string {
+	f, _ := s["focus"].(map[string]any)
+	if f == nil || f["projectIds"] == "*" {
+		return nil
+	}
+	return strList(f["projectIds"])
+}
+
+// focusProject: the project of a call in a focused session: the given one (inside focus and the director's grants), or
+// the single focus project.
+func focusProject(q *Request, s doc, given any) (string, error) {
+	ids, all := focusIDs(s), gm(s, "focus")["projectIds"] == "*"
+	p, _ := given.(string)
+	if p == "" {
+		if all || len(ids) != 1 {
+			return "", fail(400, "Expected projectId: the session focus holds several projects")
+		}
+		p = ids[0]
+	}
+	if !all && !slices.Contains(ids, p) {
+		return "", fail(403, "Project outside the session focus")
+	}
+	if !mayAccessProjectID(q.person, p) || projectSettingsOf(p) == nil {
+		return "", fail(404, "Unknown project")
+	}
+	return p, nil
+}
+
+// directs: a person changes only sessions they direct (the owner any); an agent call is already bound to its own
+// session tree by bound().
+func directs(q *Request, s doc) error {
+	if q.agent != "" || q.person == nil || q.person.Owner || gs(s, "directedBy") == q.person.Email {
+		return nil
+	}
+	return fail(403, "Session is directed by someone else")
+}
+
+// focusSet: a session's focus, a list of projects in the caller's grants or "*" (docs/designs/fleet-pm-agent.md §2).
+func focusSet(q *Request, b doc) (doc, error) {
+	sid, err := strArg(b, "sessionId", "sessionId", 0)
+	if err != nil {
+		return nil, err
+	}
+	s, err := get(q, sid, "session")
+	if err != nil {
+		return nil, err
+	}
+	if err := directs(q, s); err != nil {
+		return nil, err
+	}
+	var v any = "*"
+	if b["projectIds"] != "*" {
+		xs, ok := b["projectIds"].([]any)
+		ids := strList(b["projectIds"])
+		if !ok || len(ids) != len(xs) {
+			return nil, fail(400, `Expected projectIds: a list of project ids or "*"`)
+		}
+		for _, id := range ids {
+			if projectSettingsOf(id) == nil || (q.person != nil && !mayAccessProjectID(q.person, id)) {
+				return nil, fail(404, "Unknown project")
+			}
+		}
+		v = ids
+	}
+	s["focus"] = doc{"projectIds": v}
+	if err := putDoc(q, "session", s); err != nil {
+		return nil, err
+	}
+	return doc{"sessionId": sid, "focus": s["focus"]}, nil
+}
+
+// agentDenied: operations only a person may call (take, host secrets); docs/designs/fleet-pm-agent.md §1.
+// Secrets never enter a model's context: the host secret and gateway token operations return one.
+var agentDenied = map[string]bool{"task_take": true, "hosts_register": true, "hosts_rotate_secret": true, "connections_token_create": true}
+
+// agentMay: an operation outside the agent table that the director's role may call (the architect gate of guardOp).
+func agentMay(p *Person, name string) bool {
+	if agentDenied[name] {
+		return false
+	}
+	_, op := operations[name]
+	_, long := longOperations[name]
+	// account_*: guardOp lets a holder manage their own subscription, so the tools stay offered and guardOp decides.
+	return (op || long) && (p.Owner || hasRole(p, "architect") || !architectOps.MatchString(name) || strings.HasPrefix(name, "account_"))
+}
+
+// agentTools: the agent table plus every operation the director may call, as published by tools/list.
+func agentTools(p *Person) map[string]registeredOp {
+	out := map[string]registeredOp{}
+	for n, o := range operations {
+		if agentMay(p, n) {
+			out[n] = o
+		}
+	}
+	for n := range longOperations {
+		if agentMay(p, n) {
+			out[n] = registeredOp{}
+		}
+	}
+	for n, o := range agentOps {
+		out[n] = o
+	}
+	return out
 }
 
 // bound: host-run agents act only on their own session (or one they created); lists never default to all sessions.
@@ -1427,6 +1616,9 @@ func bound(q *Request, name string, a doc, executionID string) (doc, error) {
 		s, err := get(q, own, "session")
 		if err != nil {
 			return "", err
+		}
+		if _, ok := s["focus"]; ok {
+			return focusProject(q, s, a["projectId"])
 		}
 		p := gs(s, "projectId")
 		if v, ok := a["projectId"]; p == "" || (ok && v != p) {
@@ -1561,3 +1753,14 @@ func bound(q *Request, name string, a doc, executionID string) (doc, error) {
 }
 
 var _ = errors.New
+
+// fleetOperations: name and description of every tool the director may call, for the
+// executor's tool list of a profile with fleetOperations (its MCP server forwards them to /api/hosts/agent-tools).
+func fleetOperations(p *Person) []doc {
+	out := []doc{}
+	for n := range agentTools(p) { // the agent table too: the executor's own list predates focus_set and watch_*
+		out = append(out, doc{"name": n, "description": firstString(agentDescriptions[n], "Fleet operation "+n+" (POST /api/ops/"+n+" body as arguments)")})
+	}
+	slices.SortFunc(out, func(a, b doc) int { return strings.Compare(gs(a, "name"), gs(b, "name")) })
+	return out
+}

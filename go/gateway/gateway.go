@@ -106,6 +106,7 @@ type tool struct {
 	Idempotent bool                       `json:"idempotent"`
 	Unit       string                     `json:"unit"`
 	Inject     map[string]json.RawMessage `json:"inject"`
+	Headers    map[string]string          `json:"headers"` // fixed request headers, e.g. a provider's opt-in flag
 }
 
 type provider struct {
@@ -450,7 +451,7 @@ func (g *gateway) usable(c *connection) []string {
 }
 
 // send makes one provider request; the timeout covers the answer and, separately, reading its body.
-func (g *gateway) send(method, url, value string, body []byte) (*http.Response, []byte, error) {
+func (g *gateway) send(method, url, value string, body []byte, headers map[string]string) (*http.Response, []byte, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var timedOut atomic.Bool
@@ -466,6 +467,9 @@ func (g *gateway) send(method, url, value string, body []byte) (*http.Response, 
 	}
 	request.Header.Set("Authorization", "Bearer "+value)
 	request.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		request.Header.Set(k, v)
+	}
 	response, err := g.client.Do(request)
 	if err != nil {
 		if timedOut.Load() {
@@ -509,7 +513,7 @@ func (g *gateway) call(name string, c *connection, p *provider, t *tool, path st
 			lastFailure = "key " + id + " has no value file"
 			continue
 		}
-		response, data, err := g.send(t.Method, p.BaseURL+path, value, body)
+		response, data, err := g.send(t.Method, p.BaseURL+path, value, body, t.Headers)
 		var cut errBody
 		switch {
 		case errors.Is(err, context.DeadlineExceeded) && response == nil:
@@ -584,7 +588,7 @@ func (g *gateway) usageReport() map[string]any {
 				continue
 			}
 			row := map[string]any{"connection": name, "key": k.ID, "usage": nil}
-			response, data, err := g.send("GET", p.BaseURL+p.Usage.Path, value, nil)
+			response, data, err := g.send("GET", p.BaseURL+p.Usage.Path, value, nil, nil)
 			switch {
 			case errors.Is(err, context.DeadlineExceeded) && response == nil:
 				row["unknown"] = "usage request timed out"

@@ -71,6 +71,18 @@ test('The built app is public, the API is not (app.ts PUBLIC_ROUTES). Risk: the 
   assert.equal((await call('GET', '/api/results/anything')).status, 401);
 });
 
+test('GET /api/health is public and /api/stream pings an idle stream (TypeScript stream: a ping every 25 s). Risk: deploys cannot see the running commit or the database, or proxies and Access drop an idle stream.', {timeout: 10_000}, async () => {
+  const h = await call('GET', '/api/health');
+  assert.equal(h.status, 200); assert.equal(h.body.database, 'ok'); assert.ok('commit' in h.body && 'built' in h.body);
+  assert.ok(!JSON.stringify(h.body).includes(SECRET));
+  const ac = new AbortController(), r = await fetch(BASE + '/api/stream', {headers: owner, signal: ac.signal});
+  const reader = r.body!.getReader(), dec = new TextDecoder(); let text = '';
+  const end = Date.now() + 5000;
+  while (!text.includes('\n: ping\n') && Date.now() < end) { const {value, done} = await reader.read(); if (done) break; text += dec.decode(value); }
+  ac.abort();
+  assert.match(text, /^event: ready/); assert.ok(text.includes('\n: ping\n'), 'no ping within 5 s (FLEET_STREAM_PING_MS=300)');
+});
+
 test('review 7: every grouping the view-url codec writes is accepted by task_page (packages/view-url TASK_GROUPS). Risk: a list URL the app produces answers 400.', async () => {
   for (const group of TASK_GROUPS) ok(await call('POST', '/api/ops/task_page', {group, limit: 1}, owner));
 });

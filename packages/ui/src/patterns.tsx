@@ -51,7 +51,7 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
     if (view.group === 'none') return pinnedFirst.map(t => ({ kind: 'task', t }));
     const g = view.group;
     const keyOf = (t: TaskRow) => String(g === 'priority' ? t.priority : g === 'state' ? t.state : g === 'project' ? t.project : g === 'agent' ? t.agent : t.host);
-    const order = g === 'priority' ? ['0', '1', '2'] : g === 'state' ? ['waiting', 'failed', 'in_progress', 'queued', 'paused', 'completed', 'cancelled'] : [...new Set(pinnedFirst.map(keyOf))].sort();
+    const order = g === 'priority' ? ['0', '1', '2'] : g === 'state' ? ['waiting', 'failed', 'in_progress', 'queued', 'held', 'paused', 'completed', 'cancelled'] : [...new Set(pinnedFirst.map(keyOf))].sort();
     const head = (k: string): { label: string; icon: IconName; tone: Tone } => {
       if (g === 'priority') return { label: `Priority ${k}`, icon: k === '0' ? 'triangle-alert' : 'list-ordered', tone: k === '0' ? 'danger' : 'neutral' };
       if (g === 'state') { const d = states.task[k as StateOf<'task'>] as StateDef; return { label: d.label, icon: d.icon, tone: d.tone }; }
