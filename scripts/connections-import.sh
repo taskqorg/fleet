@@ -12,8 +12,10 @@ while IFS= read -r line || [ -n "$line" ]; do
     value=$(printf '%s' "$line" | tr -d '[:space:]')
     [ -n "$value" ] || continue
     fp=$(printf '%s' "$value" | sha256sum | cut -c1-12)
-    printf '%s\n' "$value" > "$dir/$fp"
-    chown "$user:$user" "$dir/$fp"; chmod 0600 "$dir/$fp"
+    # A new file renamed into place: root never writes through a link the directory's user may have planted.
+    tmp=$(mktemp "$dir/.import.XXXXXX")
+    printf '%s\n' "$value" > "$tmp"
+    chown "$user:$user" "$tmp"; chmod 0600 "$tmp"; mv -f "$tmp" "$dir/$fp"
     n=$((n + 1)); echo "$connection key $fp"
 done < "$keys"
 echo "$n keys in $dir"

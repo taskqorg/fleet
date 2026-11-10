@@ -311,8 +311,8 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  app.addHook('onReady',async()=>{pipelineTimer=setInterval(()=>{if(ticking)return;ticking=true;runner.tick().then(()=>lab?.reconcileRunning()).catch(()=>{}).finally(()=>{ticking=false})},config.pipelineTickMs??5000);pipelineTimer.unref?.()});
  app.addHook('onClose',async()=>{clearInterval(pipelineTimer)});
  Object.assign(projects,managed.operations);
- // API key connections (fleet-connections.md, C0). Key values: FLEET_SECRET_DIR in production, a temporary folder otherwise.
- const connections=connectionRegistry(store,{secretDir:config.secretDir??mkdtempSync(join(tmpdir(),'fleet-secrets-')),gatewayDir:config.gatewayDir});
+ // API key connections (fleet-connections.md, C0). Key values live in FLEET_SECRET_DIR; unset, keys cannot be added.
+ const connections=connectionRegistry(store,{secretDir:config.secretDir,gatewayDir:config.gatewayDir});
  Object.assign(projects,connections.operations);
  app.addHook('onReady',async()=>{await store.atomic(()=>connections.sync());await connections.writeSnapshot()});
  app.decorate('connections',connections);

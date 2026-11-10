@@ -44,4 +44,13 @@ test('key values are owner only; API keys are architect views',async()=>{
   await f.op('connections_list',{},403,'op@fleet.test');
   assert.equal((await f.op('connections_list',{},200,'arch@fleet.test')).connections.length,1);
   await f.op('connections_set_intake',{connection:'tavily',intake:'paused'},403,'arch@fleet.test');// not the holder
+  // A key the gateway disabled comes back only through the owner, also by way of draining.
+  await f.op('connections_key_add',{connection:'tavily',value:VALUE});await f.op('connections_set_access',{connection:'tavily',access:{}});
+  const store=(f.app as any).store;await store.tx(async()=>store.put('connection-key',{...(await store.get('key:'+FP,'connection-key')),state:'disabled',disabledReason:'401'}));
+  // holder change: give the architect the connection
+  await store.tx(async()=>store.put('api-connection',{...(await store.get('connection:tavily','api-connection')),holder:'arch@fleet.test'}));
+  await f.op('connections_key_state',{keyId:FP,state:'draining'},403,'arch@fleet.test');await f.op('connections_key_state',{keyId:FP,state:'active'},403,'arch@fleet.test');
+  await f.op('connections_set_intake',{connection:'tavily',intake:'paused'},200,'arch@fleet.test');// the holder may
+  await f.op('connections_key_state',{keyId:FP,state:'active'});
+  await settle();
  }finally{await f.app.close()}});

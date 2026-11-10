@@ -10,7 +10,6 @@ const ids = (v: string) => v.split(',').map(x => x.trim()).filter(Boolean);
 
 export function Keys({ id }: { id?: string }) {
   const [, go] = useLocation();
-  const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const { data } = useDoc<any>('api-keys', () => op('connections_list', {}), c => c.kind === 'api-connection' || c.kind === 'connection-key' || c.kind === 'setting-change');
   const now = Date.now();
@@ -47,12 +46,8 @@ export function Keys({ id }: { id?: string }) {
           {k.state === 'active' && <Button label="Drain" icon="pause" iconOnly onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'draining' })} />}
           {(k.state === 'draining' || k.state === 'disabled') && <Button label="Activate" icon="play" iconOnly onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'active' })} />}
           {k.state !== 'retired' && <Button label="Retire" icon="trash-2" iconOnly kind="danger" onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'retired' })} />}</>} />)}
-      <div class="setting">
-        <label for="key-add">Add key</label>
-        <div class="val"><input id="key-add" type="password" autocomplete="off" value={value} onInput={e => setValue((e.target as HTMLInputElement).value)} />
-          <Button label="Add" kind="primary" disabledReason={value ? undefined : 'Paste a key value'} onClick={() => { const v = value; setValue(''); run('connections_key_add', { connection: sel.name, value: v }); }} /></div>
-        <div class="help">Owner only. Stored on the coordinator host; Fleet shows only its fingerprint.</div>
-      </div>
+      <SettingField label="Add key" value="" secret help="Owner only. Stored on the coordinator host; Fleet shows only its fingerprint." now={now} status={{ kind: 'applied', at: sel.createdAt }}
+        onSave={v => { if (v.trim()) run('connections_key_add', { connection: sel.name, value: v.trim() }); }} />
     </DetailSection>
     <DetailSection title="Access">
       <SettingField label="Projects" value={sel.access.projects.join(', ')} help="Project ids, or * for every project" now={now} status={{ kind: 'applied', at: sel.updatedAt ?? sel.createdAt }}

@@ -37,8 +37,10 @@ if [ -f /home/fleet/.config/fleet/backup-age.env ]; then
     # shellcheck source=/dev/null
     . /home/fleet/.config/fleet/backup-age.env
     set +a
-    tar -C "$FLEET_SECRET_DIR" -cf - . |
-        sops encrypt --age "$FLEET_BACKUP_AGE_RECIPIENT" --input-type binary --output-type json /dev/stdin > "$dest/secrets.sops.json"
+    # tar to a file first: a pipe would hide a tar failure (sh has no pipefail) and keep a partial copy.
+    tar -C "$FLEET_SECRET_DIR" -cf "$dest/secrets.tar" .
+    sops encrypt --age "$FLEET_BACKUP_AGE_RECIPIENT" --input-type binary --output-type json "$dest/secrets.tar" > "$dest/secrets.sops.json"
+    rm -f "$dest/secrets.tar"
 fi
 
 # Keep the 5 newest day directories.
