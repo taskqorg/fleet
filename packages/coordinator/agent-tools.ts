@@ -188,6 +188,19 @@ export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise
  const roleHarness=(v:string)=>{const p=roleProfile(v);return p?p.harness??'codex':v};
  // Start a new session bound to a project: profile from the role (or profileId), account from the project
  // binding (picks the host). Idempotent per (projectId, requestId). Optional text starts the first turn.
+ // A task a session works for (docs/designs/fleet-conversations.md, "Thread scope"): it exists, and a project session only
+ // takes a task of its own project.
+ // exact: host agents (bound) need the task in exactly their own project; the operator may attach a projectless session.
+ const taskFor=async(taskId:any,projectId:string|null|undefined,exact=false)=>{const t=(await store.query('SELECT id,project_id FROM task WHERE id=$1',[str(taskId,'taskId')]))[0]??fail(404,'Unknown task');
+  if(exact?(t.project_id??null)!==(projectId??null):projectId&&t.project_id!==projectId)fail(409,'Task belongs to another project');return t.id as string};
+ // session_task_attach: a taskless session joins a task's thread. Nothing is copied: the session records the task, its next
+ // executions carry it, and its earlier taskless executions belong to the task's thread by the membership rule (D2).
+ async function attach(b:any){const s=await get(str(b?.sessionId,'sessionId'),'session'),taskId=await taskFor(b?.taskId,s.projectId,b?.boundProject!==undefined);
+  if(b?.boundProject!==undefined&&s.projectId!==b.boundProject)fail(403,'Project belongs to another agent');
+  if(s.taskId===taskId)return {sessionId:s.id,taskId,existing:true};
+  const other=(await store.query('SELECT task_id FROM execution WHERE session_id=$1 AND task_id IS NOT NULL AND task_id<>$2 LIMIT 1',[s.id,taskId]))[0];
+  if(s.taskId||other)fail(409,'Session already belongs to a task');
+  s.taskId=taskId;await put('session',s);return {sessionId:s.id,taskId}}
  async function start(b:any){const projectId=str(b?.projectId,'projectId'),requestId=str(b.requestId,'requestId'),project=(await deps.project?.(projectId))??fail(404,'Unknown project');
   const key=projectId+':'+requestId,old=(await all('session',{startRequest:key})).find(s=>s.startRequest===key);if(old)return {sessionId:old.id,projectId,role:old.role??null,profileId:old.agentConfig?.id,account:old.account??null,existing:true};
   const profileId=b.profileId??(b.role?project.roles?.[b.role]:undefined),profile=typeof profileId==='string'&&roleProfile(profileId)||fail(400,'Expected profileId or a role mapped to a profile');
@@ -196,9 +209,10 @@ export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise
   // callerExecutionId is trusted only from a host agent (bound(), no request person); a person directs their own sessions.
   const person=requestPerson.getStore(),directedBy=person?person.email:typeof b.callerExecutionId==='string'?(await get(b.callerExecutionId,'execution').catch(()=>null))?.directedBy:undefined;
   const account=b.account??(await deps.pickAccount?.(profile.harness??'codex',projectId,b.hostId,directedBy));
-  const s:any={id:randomUUID(),createdAt:Date.now(),projectId,agentConfig:profile,startRequest:key,...(directedBy?{directedBy}:{}),...(b.role?{role:b.role}:{}),...(account?{account}:{}),...(b.setup?{setup:b.setup}:{}),...(typeof b.hostId==='string'&&b.hostId?{hostId:b.hostId}:{}),...(typeof b.callerSessionId==='string'?{createdBySessionId:b.callerSessionId}:{}),...(typeof b.callerExecutionId==='string'?{createdByExecutionId:b.callerExecutionId}:{})};
+  const taskId=b.taskId!==undefined?await taskFor(b.taskId,projectId,true):undefined;
+  const s:any={id:randomUUID(),createdAt:Date.now(),projectId,agentConfig:profile,startRequest:key,...(taskId?{taskId}:{}),...(directedBy?{directedBy}:{}),...(b.role?{role:b.role}:{}),...(account?{account}:{}),...(b.setup?{setup:b.setup}:{}),...(typeof b.hostId==='string'&&b.hostId?{hostId:b.hostId}:{}),...(typeof b.callerSessionId==='string'?{createdBySessionId:b.callerSessionId}:{}),...(typeof b.callerExecutionId==='string'?{createdByExecutionId:b.callerExecutionId}:{})};
   await put('session',s);const first=typeof b.text==='string'&&b.text?(await submit({sessionId:s.id,requestId:'start:'+requestId,text:b.text})):null;
-  return {sessionId:s.id,projectId,role:b.role??null,profileId:profile.id,account:account??null,executionId:first&&!first.queued?first.id:null,hostId:first?.hostId??null}}
+  return {sessionId:s.id,projectId,taskId:taskId??null,role:b.role??null,profileId:profile.id,account:account??null,executionId:first&&!first.queued?first.id:null,hostId:first?.hostId??null}}
  // Operator-app links (docs/designs/fleet-view-urls-and-list-path.md §1): the same codec the app uses; no database access.
  const viewLink=async(b:any)=>{const hasView=b?.view!==undefined,hasUrl=b?.url!==undefined;if(hasView===hasUrl)fail(400,'Expected view or url');
   if(hasUrl){if(typeof b.url!=='string')fail(400,'Expected url');const view=parseView(b.url,deps.browserOrigin?{origin:deps.browserOrigin}:{}); /* no configured origin: any origin */if(!view)fail(400,'Not a Fleet view URL');return {view}}
@@ -206,7 +220,7 @@ export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise
   const path=formatView(b.view);return {url:deps.browserOrigin?new URL(path,deps.browserOrigin).href:null,path}};
  const operations:Record<string,(b:any)=>Promise<any>>={
   view_link:viewLink,
-  session_start:start,session_deliver:async b=>(await deps.deliver?.(b))??fail(503,'Delivery unavailable'),
+  session_start:start,session_task_attach:attach,session_deliver:async b=>(await deps.deliver?.(b))??fail(503,'Delivery unavailable'),
   project_readiness:readiness,
   session_transition:transition,session_fork:fork,session_resume:resume,
   session_handoffs:async b=>({handoffs:(await all('handoff',{sessionId:str(b?.sessionId,'sessionId')})).filter(h=>h.sessionId===str(b?.sessionId,'sessionId'))}),
@@ -219,7 +233,8 @@ export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise
   session_transition:'Switch profile/harness/account/model; returns reuse|switch_model_in_session|restart_and_resume|create_with_handoff and hands context to a new native session',
   session_fork:'Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown',
   session_resume:'Native resume/fork argv and captured native sessions for a session',session_handoffs:'Context handoffs of a session with delivery state',
-  session_start:'Start a new session in a project: projectId, requestId, role (project roles map) or profileId, optional account/hostId, text, setup run|skip. The creator is woken when it finishes',
+  session_start:'Start a new session in a project: projectId, requestId, role (project roles map) or profileId, optional account/hostId, taskId (the session works for that task of the project), text, setup run|skip. The creator is woken when it finishes',
+  session_task_attach:'Attach a taskless session to a task (sessionId, taskId): it joins the task thread; earlier turns join without copying',
   session_deliver:'Open a PR from a project session branch (<prefix>/<sessionId>, pushed by the agent) and let Fleet merge it after checks; call again with the same sessionId to read its state',
   project_readiness:'Check a project per environment host: remote reachable, checkout, setup script, bound account login; read results with execution_status',
   message_send:'Send a message; starts a turn, or queues/steers it while the session is busy',queue_list:'Queued messages',
@@ -253,7 +268,7 @@ export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise
    const p=await ownProject(a);a.projectId=p;a.callerSessionId=own;a.callerExecutionId=executionId;
    const roles=Object.values((await deps.project?.(p))?.roles??{});if(a.profileId!==undefined&&!roles.includes(a.profileId))fail(403,'Profile not in project roles');
    if(a.account!==undefined&&!(await all('managed-account')).some(m=>m.enabled&&(m.id===a.account||m.name===a.account)))fail(403,'Account not available')}
-  else{a.sessionId=a.sessionId??own;(await mine(a.sessionId));if(name==='session_fork')a.callerSessionId=own}
+  else{a.sessionId=a.sessionId??own;(await mine(a.sessionId));if(name==='session_fork')a.callerSessionId=own;if(name==='session_task_attach')a.boundProject=await ownProject({})}
   if(name==='session_transition'){
    // Host agents may hand a session to another agent type, but only to an existing profile and a registered,
    // enabled account with a ready binding on this host (resolve also keeps Claude off PDS).

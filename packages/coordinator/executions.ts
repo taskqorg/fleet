@@ -37,7 +37,7 @@ export function executionModel(raw:Raw){
   // Parent: the delegating, continued or pipeline execution (the pipeline step for a step's agent or script run), the handoff source, the agent execution that started the session
   // (session_start from a host agent), or the source of a fork for the fork's first execution.
   const parent=e.parentExecutionId??e.continuationOf??(e.pipelineStepId??e.pipelineRunId)??handoff?.turns?.at?.(-1)??s?.createdByExecutionId??(s?.forkOf?.executionId&&!(await one('SELECT 1 AS x FROM execution WHERE session_id=$1 AND id<>$2 AND legacy_kind=$3 LIMIT 1',[s.id,e.id,'execution']))?s.forkOf.executionId:undefined);
-  return {projectId:e.projectId??s?.projectId??null,taskId:e.deliveryId??s?.deliveryId??null,parent:parent??null}};
+  return {projectId:e.projectId??s?.projectId??null,taskId:e.deliveryId??s?.deliveryId??s?.taskId??null,parent:parent??null}};
 
  // Upsert of a legacy execution record. Typed-only columns (task_id once set, harness_version, problem, last_seen_at)
  // belong to their own writers and are not overwritten here.
