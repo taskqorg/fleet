@@ -26,7 +26,7 @@ Ordinary sessions run one-off work and experiments without a pipeline. Formalise
 
 ## Project settings
 
-Every setting is per project; absent key means the default below. The coordinator reads every `config/projects/<id>/project.json` (no fixed list) and `projectSettings` in `packages/coordinator/projects.ts` validates it: a wrong type or enum value fails the project (500 `Invalid project setting <key>`); an unknown key is kept out and listed in `unknownKeys`, never dropped silently.
+Every setting is per project; absent key means the default below. The coordinator reads every `config/projects/<id>/project.json` (no fixed list) and `projectSettings` in `go/coordinator/b_projects.go` validates it: a wrong type or enum value fails the project (500 `Invalid project setting <key>`); an unknown key is kept out and listed in `unknownKeys`, never dropped silently.
 
 | Key | Default | Values and effect |
 |---|---|---|
@@ -43,7 +43,7 @@ Every setting is per project; absent key means the default below. The coordinato
 | `scripts.setup` | `null` | Runs once in a new worktree with `FLEET_ROOT_PATH`, `FLEET_WORKTREE_PATH`, `FLEET_SESSION_ID`, a cleared environment (`PATH`, `HOME`, `SSH_AUTH_SOCK`, `LANG` only). Failure stops preparation (`setup-failed`). Per start `setup: run\|skip` (default run). |
 | `setupStart` | `wait` | `wait` \| `background`. Not built: `background`; the agent always starts after setup. |
 | `scripts.teardown` | `null` | Runs at session finish before worktree removal; same environment as setup. |
-| `cleanup.keepWhen` | `["uncommitted","teardown-failed"]` | The worktree is kept when dirty (Fleet links excluded) or when teardown failed; otherwise removed and the branch deleted with safe `git branch -d`. Not built: other values; the rule is fixed in `worktree.rs`. |
+| `cleanup.keepWhen` | `["uncommitted","teardown-failed"]` | The worktree is kept when dirty (Fleet links excluded) or when teardown failed; otherwise removed and the branch deleted with safe `git branch -d`. Not built: other values; the rule is fixed in `go/executor/worktree.go`. |
 | `integration.mode` | `pr` | `pr`: branch, pull request, merge after checks. `direct`: push to the default branch. |
 | `integration.mergeMethod` | `squash` | `squash` \| `merge` \| `rebase`. |
 | `integration.autoMerge` | `true` | Fleet merges the pull request itself after checks pass (`gh pr merge --<method>`); `false` leaves it open for a reviewer or the owner. |

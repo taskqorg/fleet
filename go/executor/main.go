@@ -27,10 +27,10 @@ type Session interface {
 	Steer(text, commandID string) map[string]any
 }
 
-// Harness is one agent harness (codex, claude, antigravity, acp): harness.rs, codex.rs and antigravity.rs. Part E2
-// implements it and registers each in Harnesses from init(). Order of calls in run(), as in main.rs:
+// Harness is one agent harness (codex, claude, antigravity, acp). Part E2
+// implements it and registers each in Harnesses from init(). Order of calls in run():
 //
-//	cmd, stdin := h.Command(dir, native, p)   // harness::command; codex without account: native.rs command_at (exec form)
+//	cmd, stdin := h.Command(dir, native, p)   // codex without account: the exec form
 //	... the executor appends env, cwd, profile flags, codex -c/--disable flags ...
 //	h.WireMCP(cmd, p, servers, extra)         // claude: --mcp-config/--allowedTools; codex: -c mcp_servers.* flags; ACP: no-op
 //	cmd, s := h.Protocol(cmd, root, native, p, servers) // codex: codex::command (app-server, keeps -c/--enable/--disable) + Session
@@ -52,7 +52,7 @@ type Blocks interface {
 }
 
 // Filled by part E2: Harnesses keyed by harness name ("codex", "claude", "antigravity", "acp"), NewBlocks, and runMCP
-// (the `mcp` subcommand, mcp.rs).
+// (the `mcp` subcommand).
 var (
 	Harnesses = map[string]Harness{}
 	NewBlocks func() Blocks

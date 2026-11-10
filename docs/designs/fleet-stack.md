@@ -31,6 +31,7 @@ The owner's first goal is fast agent work in parallel worktrees: the Mac must st
 | Standard library first; pgx; own SigV4 | `database/sql`; `minio-go` | No stdlib Postgres driver, and `database/sql` hides LISTEN. `minio-go` compiles in 19 modules, the signer 0. |
 | `modernc.org/sqlite`, purego (executor) | stdlib journal; cgo | Journal: hand-written queries and cross-process waits, cannot read existing files (breaks Python tests, in-place upgrade), 200 commits/s against 14k/s, no Windows build. modernc lost 0 acknowledged commits under kill -9; purego reaches libproc without C. |
 | One-pass rewrite by four parallel areas | Go front door proxying to TypeScript | No live users and no data to keep: the speed of development decides (owner, 2026-11-11). A proxy would keep two coordinators and their shared-lock ordering alive. |
+| Typed seams after the port (quality round, 2026-11-11) | hand checks on raw JSON | After the port the generated types were used in 0 places, and every live regression came through a seam (host protocol, `jsonb` payloads, app operations). |
 
 ## Delivery order and change cycles
 
@@ -87,11 +88,26 @@ The generators were checked against off-the-shelf output for the transcript even
 ## MCP servers as executor subcommands (L4)
 
 - The executor starts delegation, design-rules and connection servers as `fleet-executor mcp <name>` (`go/executor/mcp_*.go`); no Python process serves them. `tests/executor/mcp-replay.test.ts` replays the stdio exchanges captured from the former Python servers (`tests/executor/fixtures/mcp.json`) against the Go binary.
-- The Access origin guard is the gateway's `guard` command (`go/gateway/guard.go`), formerly `origin_guard.py`.
+- The Access origin guard is the gateway's `guard` command (`go/gateway/guard.go`).
 
 ## Go code
 
 The rules are in [`fleet.md`](../../fleet.md#stack): standard library first, `CGO_ENABLED=0`, one module `go/` with one `go.sum`, `-mod=readonly`, the checksum database on, `govulncheck` as a warning, contract types from `go/gen`, `-trimpath` release binaries from one Linux job. The schema is embedded in the binary: `go generate` copies `packages/coordinator/db/schema.sql` (the schema source, unchanged) next to `d_schema.go`; the copy is not committed. The CI job `go` vets, runs `go test` and cross-builds `go/coordinator` for linux/amd64, darwin/arm64 and windows/amd64 and `go/executor` and `go/gateway` for linux/amd64 and darwin/arm64, checks each binary for `CGO_ENABLED=0`, writes a SHA-256 file per binary and uploads the workflow artifact `fleet-go-<sha>`. Nested modules under `go/probe/` are outside that module and outside CI.
+
+### Target state
+
+The goal of the quality round (2026-11-11). Each line stays `Not built:` until the code lands.
+
+1. Not built: one shared generated package `go/contract`, built from `contracts/*.schema.json` and imported by coordinator, executor and gateway. Generated Go code and `schema.sql` are committed next to their users; a fresh clone runs `go build ./... && go vet ./...` with no prior step; CI fails on `go generate` drift.
+2. Not built: contracts `host-protocol` (every `/api/hosts/*` route, one envelope per route, per-kind command payloads, Fleet event types), `ops` (request and reply per operation, SSE `Change`, thread `Block`), `agent-tools` (MCP input schemas, generated `mcp-tools.json`), `profile` (one validator for both sides) and `gateway` (snapshot, call line). Handlers decode into structs and refuse unknown fields on closed types. Vendor-owned payloads (native harness records, provider bodies, usage) stay raw.
+3. Not built: the app calls `op<'name'>` with types generated from `ops`; `Change` and `Block` come from the same source.
+4. Not built: core records (execution, command, session, question, task) are structs with one writer and one state vocabulary; typed tables are scanned into structs; no `legacy_kind`, no duplicated `data.state`.
+5. Not built: the coordinator stays one `package main` with files named by domain, no area prefixes, no hook variables or glue files (direct calls), one router, one transaction wrapper, one auth path and one JSON helper set per binary.
+6. Not built: outside tests named by domain and requirement, one non-owner scope file, binaries built with `-race` for tests. CI: a `go` job (generate diff, vet, race, outside tests, cross-build and the release from the same outputs), an `app` job and one `browser` job with cached Chromium.
+7. Not built: every correctness finding of the round fixed with a failing-then-passing test.
+8. Not built: docs and code comments name Go paths; nothing points at deleted TypeScript, Rust or Python.
+
+Not doing: many internal packages by domain; typing all untyped references; protobuf, OpenAPI, sqlc, an ORM or a runtime schema validator; rewriting outside tests in Go; replacing Preact; closed types for vendor records; protocol versioning now; replacing SQLite in the executor (the store needs queries and cross-process waits).
 
 ### Third-party Go modules
 
@@ -124,15 +140,13 @@ The coordinator was rewritten in Go in one pass (owner direction 2026-11-11: no 
 - Tests are outside tests over HTTP: `tests/trial`, `tests/go` and the app checks in `tests/ui`. All of them start the binary through `tests/harness.ts` on a fresh database with the PDS18 roles.
 - The cutover deleted `packages/coordinator` (except `db/schema.sql`), PGlite, `pg`, Fastify, the esbuild server bundle and `tests/coordinator`. The release is the Go binaries plus `dist/app`.
 
-Not built: delivery (`delivery_create`, `delivery_generate`, `delivery_step`, `delivery_get`, `delivery_history`, `session_deliver`, `delivery_worker.py`). The TypeScript code never completed a delivery: no executor handled `delivery-step` commands, and nothing launched the worker. It was meant to do the following:
+Not built: delivery (`delivery_create`, `delivery_generate`, `delivery_step`, `delivery_get`, `delivery_history`, `session_deliver` and the delivery worker). The TypeScript coordinator never completed a delivery: no executor handled `delivery-step` commands, and nothing launched the worker. It was meant to do the following:
 
 - The operator confirms a static-site task with a project question.
 - A research pipeline run, or a retained run, feeds a Codex generation run (gpt-6.1-sol, low effort). That run writes `output/index.html` and CSS with a Sources section.
 - A program worker integrates the bounded HTML/CSS artifacts into the project repo (pull request, then merge after checks) and publishes them.
 - After a verified merge, `base-updated` asks every environment host to fast-forward its clean checkout.
 - `session_deliver` opens and merges the pull request of an agent session's pushed branch `<branchPrefix>/<sessionId>`.
-
-Not built: artifact placement (`placement.ts`: copies across project `artifact_locations`, artifact rules, `artifact_copy_retry`). `stores_list` reports full stores only.
 
 ## Executor and gateway
 
@@ -178,7 +192,7 @@ Requirements SL1-SL11 are the slice's own. Each has one outside test in `tests/t
 | `POST /api/ops/hosts_register` | owner registers a host with a minted secret (test setup) | every other operation |
 | `POST /api/sessions`, `GET /api/sessions/:id` | SL3 | `queued`, `questions`, `handoffs`, `transitions`, `forks`, `delegations` may be empty or absent |
 | `POST /api/sessions/:id/messages` | SL4: no profile, no account, no project; harness `codex`; the execution waits for dispatch | queueing a second message while an execution is active; profiles, accounts, projects, delivery |
-| `POST /api/hosts/poll` | SL5, the `host-observation` write, and the dispatch claim (`dispatch.ts`) in its simplest case: no subscriptions, the default host polling | ranking over subscriptions and hosts, budgets, wait reasons and stall questions, delegation reconcile, problem detection, promotion, store observations, project trust |
+| `POST /api/hosts/poll` | SL5, the `host-observation` write, and the dispatch claim (`go/coordinator/a_dispatch.go`) in its simplest case: no subscriptions, the default host polling | ranking over subscriptions and hosts, budgets, wait reasons and stall questions, delegation reconcile, problem detection, promotion, store observations, project trust |
 | `POST /api/hosts/receipts` | the status receipt (SL6) | account, delegation and project envelopes; the artifact gate on `completed`; native session capture; pipeline and delivery follow-ups |
 | `POST /api/hosts/events` | SL7, SL11 | transport-conflict records and recovery; harness version, child agents and totals |
 | `GET /api/executions/:id/events` | SL7 | |
@@ -190,29 +204,29 @@ Requirements SL1-SL11 are the slice's own. Each has one outside test in `tests/t
 
 **Runner.** `node tests/trial/run.ts` is the one command. It starts, once per machine, a local PostgreSQL in `~/.cache/fleet-trial/pg` (trust authentication, Unix socket only, port 54329, left running for other worktrees), creates a fresh database for this worktree with `deploy/infrastructure/fleet-postgres.sql`, starts the coordinator under test on a free port (`tests/harness.ts`; `FLEET_TRIAL_SERVER`, default `go/bin/fleet-coordinator`), runs the tests with the base URL and secret in the environment, stops the server and drops the database. Tests are TypeScript on Node's test runner, standard library only, and reach the server only over HTTP and SSE.
 
-**Shared-server rule.** Change visibility uses `pg_snapshot_xmin(pg_current_snapshot())`, which spans every database on the server, so a transaction open in another database holds committed changes back and no second `NOTIFY` arrives when it ends. `changes.since` reports `held`, and the stream looks again after 250 ms (`HELD_MS` in `packages/coordinator/stream.ts`). The same stall applies in production behind any long transaction that writes no change row.
+**Shared-server rule.** Change visibility uses `pg_snapshot_xmin(pg_current_snapshot())`, which spans every database on the server, so a transaction open in another database holds committed changes back and no second `NOTIFY` arrives when it ends. `changes.since` reports `held`, and the stream looks again after 250 ms (`heldWait` in `go/coordinator/stream.go`). The same stall applies in production behind any long transaction that writes no change row.
 
-**Planted defects.** The trial planted its defects in the TypeScript coordinator (`tests/trial/defects.ts`, deleted with it); each turned its test red.
+**Planted defects.** The trial planted these defects in the TypeScript coordinator, since deleted; each turned its test red.
 
-| ID | Defect | File | Red test |
-|---|---|---|---|
-| P1 | Event `data` stored as `item` (the `item`/`data` seam rename) | `recovery.ts` | SL7 |
-| P2 | Unknown host secret answered 403, not 401 (outbox rule) | `app.ts` | SL2 |
-| P3 | Unknown host secret answered 200 with an empty poll (outbox rule) | `app.ts` | SL2 |
-| P4 | Events written one by one while the batch is still checked | `recovery.ts` | SL7 |
-| P5 | Write routes without their transaction, message route without its own | `app.ts` | SL10 |
-| P6 | Write transactions take no scope lock | `store.ts` | SL10 |
-| P7 | Events returned in insertion order, not `seq` order | `app.ts` | SL7, SL11 |
-| P8 | Stream resume replays the change at the cursor (`>=`) | `store.ts` | SL8 |
-| P9 | Any authorization scheme accepted before the secret | `app.ts` | SL1 |
-| P10 | A host request may carry a person | `app.ts` | SL2 |
-| P11 | A body `hostId` of another host silently replaced | `app.ts` | SL2 |
-| P12 | A poll returns pending commands of every host | `app.ts` | SL5 |
-| P13 | A person without grants works in the operator scope | `app.ts` | SL9 |
-| P14 | Receipt status regression accepted | `app.ts` | SL6 |
-| P15 | SSE change frames without an `id:` line | `stream.ts` | SL8 |
-| P16 | SSE served as `text/plain` | `stream.ts` | SL8 |
-| P17 | LISTEN on the wrong channel | `stream.ts` | SL8 |
+| ID | Defect | Red test |
+|---|---|---|
+| P1 | Event `data` stored as `item` (the `item`/`data` seam rename) | SL7 |
+| P2 | Unknown host secret answered 403, not 401 (outbox rule) | SL2 |
+| P3 | Unknown host secret answered 200 with an empty poll (outbox rule) | SL2 |
+| P4 | Events written one by one while the batch is still checked | SL7 |
+| P5 | Write routes without their transaction, message route without its own | SL10 |
+| P6 | Write transactions take no scope lock | SL10 |
+| P7 | Events returned in insertion order, not `seq` order | SL7, SL11 |
+| P8 | Stream resume replays the change at the cursor (`>=`) | SL8 |
+| P9 | Any authorization scheme accepted before the secret | SL1 |
+| P10 | A host request may carry a person | SL2 |
+| P11 | A body `hostId` of another host silently replaced | SL2 |
+| P12 | A poll returns pending commands of every host | SL5 |
+| P13 | A person without grants works in the operator scope | SL9 |
+| P14 | Receipt status regression accepted | SL6 |
+| P15 | SSE change frames without an `id:` line | SL8 |
+| P16 | SSE served as `text/plain` | SL8 |
+| P17 | LISTEN on the wrong channel | SL8 |
 
 Not covered by an outside test: the advisory lock alone (it matters only for a second process; the slice runs one), the `held` re-read (it needs a transaction open in another database), and removing only the message route's own `store.tx` (the per-route transaction already covers it).
 

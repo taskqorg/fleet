@@ -1,7 +1,7 @@
 // fleet-gateway: the only process that uses API key values at run time (docs/designs/fleet-connections.md §3).
 // Ported from crates/gateway: loopback socket, snapshot adoption every second with a retained last-valid copy,
 // disabled-key persistence, provider error mapping, a spool file and a lost counter. The `guard` command is the
-// Cloudflare Access origin verifier that was deploy/infrastructure/origin_guard.py.
+// Cloudflare Access origin verifier (docs/designs/fleet-stack.md L4).
 package main
 
 import (

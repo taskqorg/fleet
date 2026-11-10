@@ -31,7 +31,7 @@ func init() {
 	artifactSettled = settleWaiting
 }
 
-// executionStop (app.ts execution_stop): one stop command; an execution no host can confirm is settled here.
+// executionStop: one stop command; an execution no host can confirm is settled here.
 func executionStop(q *Request, id any) (any, error) {
 	e, err := aget(q, id, "execution")
 	if err != nil {
@@ -135,7 +135,7 @@ func artifactGate(q *Request, e doc, declared []any) (doc, error) {
 	return doc{}, nil
 }
 
-// settleWaiting (app.ts settle): a waiting execution finishes once its artifacts are settled.
+// settleWaiting: a waiting execution finishes once its artifacts are settled.
 func settleWaiting(ctx context.Context, a *App, id string) error {
 	return settleWaitingAs(ctx, a, id, "")
 }

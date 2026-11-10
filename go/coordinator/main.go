@@ -1,5 +1,5 @@
 // Fleet coordinator, trial slice (docs/designs/fleet-stack.md#trial-slice-l1): the routes, tables and behaviours of
-// SL1-SL11, ported from packages/coordinator. Environment as packages/coordinator/server.ts.
+// SL1-SL11. Environment: docs/coordinator-build.md.
 package main
 
 //go:generate go run ../gen ../../contracts/host-protocol.schema.json main protocol_gen.go
@@ -93,7 +93,8 @@ func main() {
 	}
 }
 
-// loadPeople loads people.json at start; refreshPeople (b_request.go) re-reads it when it changes.
+// loadPeople loads people.json at start (docs/designs/fleet-people-access.md); refreshPeople (b_request.go) re-reads it
+// when it changes.
 func (a *App) loadPeople(ctx context.Context, file string) error {
 	a.peopleFile = file
 	return a.refreshPeople(ctx)
@@ -187,7 +188,7 @@ func (q *Request) ctx() context.Context { return q.r.Context() }
 
 type handler func(*Request) (any, error)
 
-// route kinds: per-route transaction as in app.ts (read snapshot for GET, one GLOBAL write otherwise, execution scope for
+// route kinds: per-route transaction (read snapshot for GET, one GLOBAL write otherwise, execution scope for
 // host ingest); stream runs its own short reads.
 const (
 	txRead = iota

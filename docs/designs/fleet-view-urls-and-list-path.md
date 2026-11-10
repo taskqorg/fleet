@@ -30,23 +30,23 @@ The Node toolchain cleanup from the brief is a separate, later slice (see Future
 
 ## The Problem
 
-Measured in the brief on local PGlite (in-process coordinator, generated tasks with every fifth task running, Chromium):
+Measured in the brief on the TypeScript coordinator with an embedded database (in-process coordinator, generated tasks with every fifth task running, Chromium):
 
-* Every filter, grouping or "All" change makes the state counters disappear, replaces the list with a loading skeleton, and creates the list element again. Scroll and focus are lost. Cause: `useLiveList` in `app/src/live.ts` calls `setPage(EMPTY)` on every key change; `StateCounters` draws nothing for undefined counts; `tasks.tsx` shows `<Skeleton>` while `!list.at`.
+* Every filter, grouping or "All" change makes the state counters disappear, replaces the list with a loading skeleton, and creates the list element again. Scroll and focus are lost. Cause: the old `useLiveList` list hook called `setPage(EMPTY)` on every key change; `StateCounters` draws nothing for undefined counts; `tasks.tsx` shows `<Skeleton>` while `!list.at`.
 * Typing "hero" in search sends four `task_page` requests and blanks the list four times.
 * `task_page` computes four correlated subqueries (current harness, last host, first start, open questions) for every task in the table before it filters, three times per call. At 20,000 tasks, grouping by agent takes 194 ms over HTTP and grows with history, not with the page. The operation layer adds about 1 to 2 ms and is not the cause.
 * The URL carries only `state`, `group` and `q`. Presets live in local preferences, so a copied link does not reproduce the view, and agents have no documented way to build one.
-* **Drift found:** D4 decided "one normalized entity store on Preact Signals". The current `live.ts` keeps each list in component state (`useState`) with no shared store. Going Back or switching nav tabs therefore starts from the IndexedDB copy or a skeleton.
+* **Drift found:** D4 decided "one normalized entity store on Preact Signals". The old list hook kept each list in component state (`useState`) with no shared store. Going Back or switching nav tabs therefore starts from the IndexedDB copy or a skeleton.
 
 ## Goals
 
 * A filter, grouping, search, preset or selection change keeps the filter bar, counters and current rows on screen. New data replaces them in place; the list element is never re-created after the first load.
 * Back, Forward and returning to a view through the nav rail show the last known rows in the first frame, then refresh in place.
 * Search sends one request per typing pause (no key for 300 ms); a newer request supersedes the older one.
-* `task_page` over HTTP: median under 300 ms at 20,000 tasks for each filter and grouping case of the check, on local PGlite (asserted). The 20,000 → 100,000 growth factor is reported, not asserted, because counts and search stay proportional to the matching set (see §3).
+* `task_page` over HTTP: median under 300 ms at 20,000 tasks for each filter and grouping case of the check, on the operator's machine against the coordinator binary (asserted by `pnpm run check:filter`). The 20,000 → 100,000 growth factor is reported, not asserted, because counts and search stay proportional to the matching set (see §3).
 * Every view state is in the URL in one canonical form. A link opens the same list, the same focused row and the same checked rows for any operator with access.
 * Agents build and read view links through one operation, with the same code the app uses.
-* `npm run check:filter` fails on any regression of the asserted goals.
+* `pnpm run check:filter` fails on any regression of the asserted goals.
 
 ## Non-Goals
 
@@ -61,7 +61,7 @@ Measured in the brief on local PGlite (in-process coordinator, generated tasks w
 ## Open Questions
 
 * **Eviction of cached lists.** The store keeps the ordered ids of visited lists in memory. Whether and when to drop them is decided from a measurement of real memory use, not a number chosen now; until then a list's ids are dropped when the page reloads.
-* **Live Postgres numbers.** Targets are set on PGlite. Production is re-measured after rollout with per-operation timing.
+* **Live Postgres numbers.** Targets are set on a local database. Production is re-measured after rollout with per-operation timing.
 
 ## Critical User Journeys (CUJs)
 
@@ -196,7 +196,7 @@ Migration 10 in `packages/coordinator/db/schema.sql` (migration 9 is the artifac
 * **Change feed:** a `task_derived_change` trigger calls `fleet_change`, replaced (`CREATE OR REPLACE`) with one more branch: table `task_derived` gives kind `task`, id and task id `task_id`, and the row's `project_id`. `task.updated_at` does not move on derived changes.
 * **Backfill:** the migration sets `fleet.project_ids` to `*` itself and inserts one row per existing task from `task_derived_values`, before the change trigger exists, so it writes no change row per task.
 * **Indexes:** `execution_task_seq ON execution(task_id, seq DESC)`, which replaces `execution_task`, and `task_priority_order ON task((CASE priority ...), seq DESC, id)` for the default page order. No indexes on `task_derived(agent|host)`: the group order uses `coalesce(...)`, which plain indexes cannot serve.
-* **Query** (`packages/coordinator/tasks.ts`). The CTE with correlated subqueries is removed. Filters: `state`, `projectId` (one id, null, or a list of both), `search`.
+* **Query** (`taskPage`, `go/coordinator/b_tasks.go`). The CTE with correlated subqueries is removed. Filters: `state`, `projectId` (one id, null, or a list of both), `search`.
   * The page joins `task_derived` (LEFT JOIN, so a task missing its row still lists with empty values) only where it is needed: for agent and host grouping the order needs it; otherwise the page is chosen on `task` alone and only its rows are joined.
   * `summary(filter, group)` returns per-state counts (the `WHERE` without the state filter, so every counter keeps its number) and group summaries (joined only for agent and host). `page` and `list_membership` both use it.
   * The group expression comes from the fixed `GROUPS` map, `{ sql, derived }` per grouping, checked with `Object.hasOwn`; only map values are interpolated.
@@ -290,161 +290,17 @@ It also prints the fixture load time, the migration 10 backfill time and the gro
 
 --------------------------------------------------------------------------------
 
-## Detailed Implementation Plan
+## Implementation
 
-Six phases. Each ends with `npm run build` and `npm test` passing and is one commit.
+Built: the codec `packages/view-url/view-url.ts` (`tests/ui/view-url.test.ts`); `task_derived` and its triggers in `packages/coordinator/db/schema.sql`; the query in `taskPage` (`go/coordinator/b_tasks.go`); the entity store `app/src/store.ts` with `app/src/offline.ts` (`tests/ui/store.test.ts`, `tests/ui/lists.test.ts`); the filter check `tests/ui/filter.check.ts`.
 
-### Phase 1: Codec
+Not built: the `view_link` operation (§1, CUJ 3); the Go coordinator has no route for it.
 
-#### 1. `packages/view-url/view-url.ts` (Create)
+### Verification
 
-* **Type / Scope:** TypeScript module, no imports.
-* **Proposed Changes:** `ViewName`, `View`, the key table per view, `parseView`, `formatView`, `listKey`, `toPageParams` as in Technical Plan §1. Kept outside `packages/ui` because the root `tsconfig.json` excludes `packages/ui`; the root build compiles it to `dist/packages/view-url/view-url.js` for the coordinator, and esbuild bundles it for the app.
-
-#### 2. `packages/ui/src/index.ts` (Modify)
-
-* **Proposed Changes:** re-export the codec (`export * from '../../view-url/view-url'`) so the app keeps one import path.
-
-#### 3. `app/tsconfig.json` (Modify)
-
-* **Proposed Changes:** add `"../packages/view-url"` to `include` (paths there are relative to `app/`).
-
-#### 4. `tests/ui/view-url.test.ts` (Create)
-
-* **Type / Scope:** unit test (`node:test`, run by `npm test`).
-* **Proposed Changes:** round trip per view; canonical ordering of keys and values; defaults omitted; percent-encoded comma; `project=-` as null; invalid values dropped; `archived`; empty `sel` omitted; focus not in `sel` kept; `preset` kept as given; unknown keys kept in `extra` and excluded from `listKey`; today's links (`/tasks?state=a,b&group=agent&q=x`, `/tasks/<uuid>`) parse.
-
-### Phase 2: Derived table and query
-
-#### 5. `packages/coordinator/db/schema.sql` (Modify)
-
-* **Proposed Changes:** `-- migration 10: ...` section with the table, row-level security, `fleet_task_derived`, the triggers, the `fleet_change` replacement that adds the `task_derived` kind line, the indexes and the backfill (Technical Plan §3). The migration runner splits statements at a semicolon that ends a line, so each function is written on one line, as migration 8 does.
-
-#### 6. `packages/coordinator/tasks.ts` (Modify)
-
-* **Proposed Changes:** `page` and `membership` join `task_derived`; the CTE `base` is removed; `PageFilter.projectId` becomes `(string | null)[] | string | null` (a single value is still accepted); three statements as in §3; group name as a parameter; `derivedDrift()` added (the task insert trigger creates the `task_derived` row).
-
-#### 7. `tests/coordinator/task-derived.test.ts` (Create)
-
-* **Type / Scope:** coordinator test on PGlite.
-* **Proposed Changes:**
-  * Through store code paths: create, first execution, execution state changes, pause, resume, cancel, question ask and answer; after each step assert the `task_derived` values and an empty `derivedDrift()`.
-  * Execution moved to another task and a deleted execution, through raw SQL (no store path deletes executions); both tasks recomputed.
-  * A change row of kind `task` appears when a derived value changes and none when it does not; `task.updated_at` unchanged.
-  * Row-level security, with the pattern of the existing test in `tasks.test.ts` (`SET LOCAL ROLE fleet_app_test`, a `NOBYPASSRLS` role, because PGlite's default user is a superuser): a writer scoped to `p1` writing an execution of a task whose questions are in project `q` stores the full count; a task moved from `p1` to `q` moves its `task_derived` row and is no longer visible to a `p1` reader.
-  * An execution inserted before its task in one transaction: after commit, `task_derived.project_id` equals the task's.
-  * Two concurrent transactions with raw SQL (two PGlite connections are not available, so this runs only when a Postgres `DATABASE_URL` is set, otherwise skipped with a message): both insert executions of one task; final values are correct.
-  * Backfill: `migrate(9)`, write data, `migrate()`, assert values.
-
-#### 8. `tests/coordinator/tasks.test.ts` (Modify)
-
-* **Proposed Changes:** the old CTE query is kept in the test as the reference; for a fixed fixture, the new `page` returns the same rows, order, counts and groups for every group, with and without a state filter, with search, with one and several projects.
-
-### Phase 3: Coordinator operations
-
-#### 9. `packages/coordinator/app.ts` (Modify)
-
-* **Proposed Changes:** `task_derived_check` in `typedOps`; `list_membership` returns `groups` for grouped task lists; `agentTools(...)` receives a new `browserOrigin` dependency from `config.browserOrigin`.
-
-#### 10. `packages/coordinator/agent-tools.ts` (Modify)
-
-* **Proposed Changes:** `view_link` is defined here (imports `../view-url/view-url.js`), because agent MCP calls dispatch only `agent.operations`, and `app.ts` spreads `agent.operations` into the shared table, so browser `/api/ops` gets it too. Add it to `operations`, to `descriptions` ("Build a Fleet operator-app link from a view, or parse a link into a view"), and to `bound()` as a branch that passes the arguments through without adding `sessionId` or checking ownership. A new `browserOrigin?: string` field in the `deps` type supplies the origin.
-
-#### 11. `packages/coordinator/store.ts` (Modify)
-
-* **Proposed Changes:** add `view_link` and `task_derived_check` to `READ_OPERATIONS`.
-
-#### 12. `tests/coordinator/api.test.ts` (Modify)
-
-* **Proposed Changes:** `view_link` both directions, foreign origin 400, missing origin returns `url: null`; `task_derived_check` returns no drift on fixtures; `list_membership` returns groups.
-
-### Phase 4: App store and views
-
-#### 13. `app/src/store.ts` (Create)
-
-* **Type / Scope:** entity store on Preact Signals.
-* **Proposed Changes:** `records`, `lists`, `docs`; `useList` and `useDoc` as in Technical Plan §2; one feed subscription (`startStore()`); IndexedDB through `offline.ts` with keys `list:<listKey>` and `doc:<name>`, snapshots built lazily at write time; cursors per record and list; `AbortController` per view; `freshness` moved from `live.ts`. `offline.ts` lost `lowestCursor()` (the feed starts at the server head) and gained `onClear` and `pruneKeys`. The URL hooks are in `app/src/url.ts`.
-
-#### 14. `app/src/live.ts` (Delete)
-
-* **Proposed Changes:** replaced by `store.ts` in the same commit as items 15 to 20.
-
-#### 15. `app/src/lists.ts` (Modify)
-
-* **Proposed Changes:** `applyMembership(ids: string[], keys: Record<string, SortKey>, changed: Iterable<string>, matched: Row[], complete: boolean): { ids, keys }`; the caller writes `records`. `touched`, `chunks` and `compareKeys` unchanged.
-
-#### 16. `app/src/api.ts` (Modify)
-
-* **Proposed Changes:** `op(name, body, { signal }?)`; an abort throws `OpError('aborted', 0)` and does not set `online` to false.
-
-#### 17. `app/src/main.tsx` (Modify)
-
-* **Proposed Changes:** `/tasks/:id?` and `/conversations/:id?` as single routes; `startStore()` next to `startFeed`.
-
-#### 18. `app/src/views/tasks.tsx` (Modify)
-
-* **Proposed Changes:** view from `parseView`, writes through `formatView` (push for discrete changes; one push then replace for search); `useList`; 300 ms search debounce; skeleton only when nothing was ever shown; pending and error states; checkbox cell and `sel`; presets applied by expanding keys and highlighted by key match.
-
-#### 19. `app/src/views/conversations.tsx` (Modify)
-
-* **Proposed Changes:** the same for the sessions list.
-
-#### 20. `app/src/views/overview.tsx`, `app/src/views/hosts.tsx` (Modify)
-
-* **Proposed Changes:** `useLiveRecord` replaced by `useDoc` with the same arguments.
-
-#### 21. `app/src/prefs.ts` (Modify)
-
-* **Proposed Changes:** saved views store `{ name, view: View }`. An old entry `{ name, states, group }` is read as `{ name, view: { view: 'tasks', state: states, group } }` and written back in the new form.
-
-#### 22. `tests/ui/lists.test.ts` (Modify)
-
-* **Proposed Changes:** the new `applyMembership` signature; ordering by per-list keys; the same record placed differently in a priority list and an agent list; anchor kept when rows are inserted above.
-
-### Phase 5: Controls, book and check
-
-#### 23. `packages/ui/src/controls.tsx` (Modify)
-
-* **Proposed Changes:** `StateCounters` gets a `pending` prop (dimmed); a `RowCheck` control (checkbox cell, Space toggles).
-
-#### 24. `packages/ui/src/patterns.tsx` (Modify)
-
-* **Proposed Changes:** `ListFrame` gets a `pending` prop that shows the thin progress bar in its header.
-
-#### 25. `packages/ui/book/book.tsx` (Modify)
-
-* **Proposed Changes:** one new component section, `['list-pending', 'Updating list: pending counters and rows, row checks', 'row-check', ...]`, showing `StateCounters` and `ListFrame` pending and `RowCheck` rows, so `npm run check:design` covers them. Screen pages in `pages.tsx` are unchanged.
-
-#### 26. `tests/ui/filter.check.ts` (Modify)
-
-* **Proposed Changes:** `--assert` and `--sizes` as in Technical Plan §4, plus a rule that a search after Back starts a new history entry.
-
-#### 27. `package.json` (Modify)
-
-* **Proposed Changes:** `check:filter`: `npm run build && tsx tests/ui/filter.check.ts --assert`.
-
-### Phase 6: Docs
-
-#### 28. `docs/designs/fleet-operator-app.md` (Modify)
-
-* **Proposed Changes:** the routing section links to this design for the URL contract and marks the code-redirect direction as owned by the D17 slice; D4 is implemented by `app/src/store.ts`.
-
-#### 29. `docs/designs/fleet-data-foundation.md` (Modify)
-
-* **Proposed Changes:** §2: the `task_derived` table; G2: derived values are stored once in `task_derived`, kept by triggers and checked for drift; §12: the invariant that execution-scope writers never write trigger columns, and the task_derived row lock as a second guard with ascending id order.
-
-#### 30. `docs/designs/fleet-operator-app.md` §6 (Modify, same commit as item 28)
-
-* **Proposed Changes:** `view_link` and `task_derived_check` added to the operation list there (the only document that lists operator-app operations by name); `list_membership` gains `groups`.
-
-### Verification Plan
-
-* **Compilation/Build:** `npm run build`.
-* **Unit Tests:** `npm test` (view-url, lists, store, task-derived, tasks, api, delivery-restart).
-* **CI jobs:** `build-test-design`; `filter-check` (`npm run check:filter`, Chromium); `postgres-roles` (the whole coordinator suite and every migration on PostgreSQL 18 with the PDS18 roles from `deploy/infrastructure/fleet-postgres.sql`, `tests/coordinator/pg-test.ts`).
-* **Static Analysis & Linting:** `npx tsc -p app/tsconfig.json --noEmit`; `npm run check:design`.
-* **E2E/Integration:** `npm run check:filter`; `npx tsx tests/ui/app.check.ts` reports no missing parts with the merged routes.
-* **Metrics:** settle time per case at 3,000 and 20,000 tasks, `task_page` median over HTTP, growth factor to 100,000, fixture load time. Recorded in the PRs.
+* Build and tests: `pnpm run build`; `pnpm test`.
+* Filter check: `pnpm run check:filter` (Chromium) asserts the settle times up to 20,000 tasks and reports 100,000.
+* Design: `pnpm run check:design`.
 
 --------------------------------------------------------------------------------
 

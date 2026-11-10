@@ -70,7 +70,7 @@ func getExecution(q *Request, id string) (doc, error) {
 	return one(q, "SELECT data FROM execution WHERE id=$1 AND legacy_kind='execution'", id)
 }
 
-// Legacy state of the API record -> typed execution state (packages/coordinator/executions.ts mapLegacyState).
+// Legacy state of the API record -> typed execution state.
 var typedState = map[string]string{"queued": "preparing", "accepted": "preparing", "pending": "preparing", "started": "running",
 	"running": "running", "waiting": "waiting", "completed": "succeeded", "failed": "failed", "stopped": "cancelled", "cancelled": "cancelled"}
 

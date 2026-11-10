@@ -1,5 +1,5 @@
 // Area C seams to areas A and B: the person gate on area C operations, long operations (their own transactions), the
-// question answer hooks, pipeline_run and direct_search (projects.ts runPipeline), and the agent step start.
+// question answer hooks, pipeline_run and direct_search, and the agent step start.
 package main
 
 import (
@@ -16,7 +16,7 @@ import (
 // longOperations: operations that open their own transactions (q.tx nil). runOp (b_ops.go) runs them without one.
 var longOperations = map[string]handler{}
 
-// answerHooks: checked before a question's answer is recorded and run after, in the same transaction (tasks.ts onAnswer).
+// answerHooks: checked before a question's answer is recorded and run after, in the same transaction.
 // question is the row (snake_case columns); in after, its answer column holds the answer.
 type answerHook struct {
 	check func(q *Request, question doc, answer string) error
@@ -196,7 +196,7 @@ func init() {
 	}
 	cProjectKnown = func(q *Request, id string) bool { _, err := catalogue(q, id); return err == nil }
 
-	// Agent step (app.ts startAgent): the step's trusted profile with the variant overrides, its skills, a session of the
+	// Agent step: the step's trusted profile with the variant overrides, its skills, a session of the
 	// run, and an ordinary queued execution.
 	cStartAgentStep = func(q *Request, run, step doc, stepExecutionID, prompt string, inputs []any, overrides doc) (string, error) {
 		pid := astr(step["profile"])

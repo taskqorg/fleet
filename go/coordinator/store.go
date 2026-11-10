@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Store: one pool of the coordinator role with the operator scope '*' as a startup option (packages/coordinator/store.ts).
+// Store: one pool of the coordinator role with the operator scope '*' as a startup option (docs/designs/fleet-data-foundation.md §12).
 // A transaction of a person other than the owner sets fleet.project_ids and fleet.person for itself (SET LOCAL).
 type Store struct {
 	pool  *pgxpool.Pool

@@ -1,6 +1,6 @@
 package main
 
-// Area A: subscriptions and their host bindings (accounts.ts). A subscription is a 'managed-account' document; logins stay
+// Area A: subscriptions and their host bindings (docs/designs/fleet-people-access.md). A subscription is a 'managed-account' document; logins stay
 // on the holder's host, Fleet keeps only what hosts observe.
 
 import (
@@ -645,7 +645,7 @@ func accountCatalogue(q *Request, b doc, host string) (any, error) {
 	return doc{"ok": true}, err
 }
 
-// resolveAccount: the ready binding of a subscription on a host for this director (accounts.ts resolve); nil when none applies.
+// resolveAccount: the ready binding of a subscription on a host for this director; nil when none applies.
 func resolveAccount(q *Request, selection *string, harness, host string, director, projectID any) (doc, error) {
 	requested := ""
 	if selection != nil {

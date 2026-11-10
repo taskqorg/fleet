@@ -1,6 +1,6 @@
 package main
 
-// Area A: delegation (delegation.ts). A running agent asks for one child execution through a child receipt; the child
+// Area A: delegation. A running agent asks for one child execution through a child receipt; the child
 // starts when its parent completed, with the parent's retained observations bound into its start command; its result goes
 // back to the parent session as a continuation.
 
@@ -365,7 +365,7 @@ func (a *App) delegationReconcile(q *Request) error {
 			d["continuationExecutionId"], d["state"] = next["id"], "delivered"
 			return put(q, "delegation", d)
 		}
-		// ponytail: a failed delivery is recorded on the delegation (as delegation.ts does); its partial writes stay in the
+		// ponytail: a failed delivery is recorded on the delegation; its partial writes stay in the
 		// poll transaction, which has no savepoint here.
 		if err := deliver(); err != nil {
 			d["routingError"] = err.Error()

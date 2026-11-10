@@ -1,6 +1,6 @@
 package main
 
-// Area A: POST /api/hosts/poll (app.ts). The poll records the host observation and its stores, reconciles delegations,
+// Area A: POST /api/hosts/poll (SL5). The poll records the host observation and its stores, reconciles delegations,
 // marks problems, promotes queued messages, runs dispatch, and replies with the polling host's pending commands that may go
 // out now.
 

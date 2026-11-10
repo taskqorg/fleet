@@ -30,7 +30,7 @@ func capture(pid int) (token, error) {
 	if err != nil {
 		return token{}, err
 	}
-	id, err := identity(pid) // checked after the pidfd is open, as native.rs does
+	id, err := identity(pid) // checked after the pidfd is open
 	return token{p, id}, err
 }
 

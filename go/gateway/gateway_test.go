@@ -1,5 +1,5 @@
 // Gateway behaviour through the real server and a scripted provider (fleet-connections.md §2-3), ported from
-// crates/gateway/tests/gateway.rs. Risk covered: a token, key or snapshot rule that passes in isolation but fails in the
+// the Rust gateway's integration tests. Risk covered: a token, key or snapshot rule that passes in isolation but fails in the
 // running server, and a key value that leaks to the caller or the spool.
 package main
 

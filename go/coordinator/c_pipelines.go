@@ -1,4 +1,4 @@
-// Pipeline format version 2 runner (packages/coordinator/pipelines.ts, docs/designs/fleet-lab.md "Pipeline format version 2").
+// Pipeline format version 2 runner (docs/designs/fleet-lab.md "Pipeline format version 2").
 // A run is an ordered chain of api, agent and script steps: the pipeline_run execution (legacy record kind 'pipeline-run')
 // with one pipeline_step row `<run>:step:<i>` per step; each provider call is a tool_run child of its step. Every step
 // leaves an output.json artifact. pipelineAdvance(runId) moves a run forward and is safe to call any time; a sync api call
@@ -32,11 +32,11 @@ var (
 
 // Hooks other areas provide. Unset, the step or call fails with a clear reason instead of a crash.
 var (
-	// cArtifactSave stores bytes as a stored artifact of executionId (artifacts.ts saveObject; area D). Returns its id.
+	// cArtifactSave stores bytes as a stored artifact of executionId (area D). Returns its id.
 	cArtifactSave func(q *Request, projectID any, scope, executionID, name string, b []byte, mediaType string) (string, error)
-	// cArtifactRead reads a stored artifact's bytes up to max (artifacts.ts readBuffer; area D).
+	// cArtifactRead reads a stored artifact's bytes up to max (area D).
 	cArtifactRead func(ctx context.Context, a *App, id string, max int64) ([]byte, error)
-	// cStartAgentStep starts an agent step's execution (app.ts startAgent: trusted profile with overrides, skills, session,
+	// cStartAgentStep starts an agent step's execution (trusted profile with overrides, skills, session,
 	// enqueue; area B's submit path). Returns the execution id.
 	cStartAgentStep func(q *Request, run, step doc, stepExecutionID, prompt string, inputs []any, overrides doc) (string, error)
 	// cStopExecution stops an execution (execution_stop; area A).
@@ -228,7 +228,7 @@ func resolveRefs(v any, example any, outputs doc, quote bool) (any, error) {
 	return v, nil
 }
 
-// Legacy state of a run or step record -> typed execution state (executions.ts mapLegacyState).
+// Legacy state of a run or step record -> typed execution state.
 func runState(legacy string) (string, string) {
 	switch legacy {
 	case "queued", "accepted", "pending":
@@ -254,7 +254,7 @@ func msTime(v any) any {
 	return nil
 }
 
-// putRun writes the pipeline_run row and one pipeline_step row per step (executions.ts putPipeline).
+// putRun writes the pipeline_run row and one pipeline_step row per step.
 func putRun(q *Request, run doc) error {
 	rest := doc{}
 	for k, v := range run {
@@ -423,7 +423,7 @@ func pipelineAdvance(a *App, runID string) {
 	}()
 }
 
-// pipelineWait polls until the run leaves running (projects.ts pipeline_run waits for a direct search).
+// pipelineWait polls until the run leaves running (pipeline_run waits for a direct search).
 func pipelineWait(ctx context.Context, a *App, runID string) (doc, error) {
 	for {
 		var r doc
@@ -712,7 +712,7 @@ func inputsFor(q *Request, run doc, i int) ([]any, error) {
 	return out, nil
 }
 
-// startScript: a script command for the executor, as its own session and execution (app.ts startScript).
+// startScript: a script command for the executor, as its own session and execution.
 func startScript(q *Request, run doc, stepExecutionID, command string, timeout any, hostID string, inputs []any) (string, error) {
 	sid := uuid()
 	s := doc{"id": sid, "createdAt": now(), "pipelineRunId": run["id"]}

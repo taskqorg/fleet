@@ -1,7 +1,7 @@
 package main
 
 // Area D routes: host artifact protocol, store registration, result bytes and preview, artifact and store operations,
-// subscription limits, the built app, and the store/lease ticker (packages/coordinator/app.ts).
+// subscription limits, the built app, and the store/lease ticker.
 
 import (
 	"context"
@@ -125,7 +125,7 @@ func init() {
 		return r, nil
 	})
 	operation("subscription_limits", true, subscriptionLimits)
-	// changes_since: the stream's read for the app's catch-up and polling fallback (stream.ts); no cursor is the head.
+	// changes_since: the stream's read for the app's catch-up and polling fallback; no cursor is the head.
 	operation("changes_since", true, func(q *Request) (any, error) {
 		var b struct {
 			Cursor *float64 `json:"cursor"`
@@ -543,7 +543,7 @@ func resultPreview(q *Request) (any, error) {
 	}), nil
 }
 
-// ---- readings (packages/coordinator/readings.ts) ----
+// ---- provider limit readings ----
 
 type Reading struct {
 	Period   string   `json:"period"`

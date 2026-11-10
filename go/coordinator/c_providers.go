@@ -1,5 +1,5 @@
-// Provider catalogue (packages/coordinator/providers.ts, docs/designs/fleet-connections.md §1): code, not a table; the
-// coordinator copies it into the gateway snapshot. Kept as the JSON the TypeScript module produced.
+// Provider catalogue (docs/designs/fleet-connections.md §1): code, not a table; the
+// coordinator copies it into the gateway snapshot. Kept as the JSON the TypeScript coordinator produced.
 package main
 
 import "encoding/json"

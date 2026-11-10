@@ -1,4 +1,4 @@
-// Operation plumbing of area B: the person gate on every operation (app.ts preHandler) and runOp for the MCP tool servers.
+// Operation plumbing of area B: the person gate on every operation and runOp for the MCP tool servers.
 package main
 
 import (
