@@ -45,7 +45,9 @@ func knownHost(q *Request, id string) (bool, error) {
 	if id == defaultHost() {
 		return true, nil
 	}
-	return has(q, "SELECT 1 FROM document WHERE (kind='host' AND id='host:'||$1) OR (kind='host-observation' AND id=$1)", id)
+	return unscoped(q, func() (bool, error) {
+		return has(q, "SELECT 1 FROM document WHERE (kind='host' AND id='host:'||$1) OR (kind='host-observation' AND id=$1)", id)
+	})
 }
 
 // enqueue: a queued execution and its message (app.ts enqueue). Late choice: host and subscription are picked at dispatch.
@@ -1089,14 +1091,14 @@ func projectReadiness(q *Request, b doc) (doc, error) {
 			continue
 		}
 		sid, id := uuid(), uuid()
-		s := doc{"id": sid, "createdAt": now(), "actor": "program-worker"}
+		s := doc{"id": sid, "createdAt": now(), "actor": "program-worker", "projectId": pid}
 		if c := gs(b, "callerSessionId"); c != "" {
 			s["readinessOfSessionId"] = c
 		}
 		if err := putDoc(q, "session", s); err != nil {
 			return nil, err
 		}
-		if err := put(q, "execution", doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hid, "state": "queued", "createdAt": now(), "actor": "program-worker"}); err != nil {
+		if err := put(q, "execution", doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hid, "state": "queued", "createdAt": now(), "actor": "program-worker", "projectId": pid}); err != nil {
 			return nil, err
 		}
 		roles := doc{}
@@ -1113,7 +1115,7 @@ func projectReadiness(q *Request, b doc) (doc, error) {
 			pr[k] = v
 		}
 		pr["roles"] = roles
-		if err := putDoc(q, "command", doc{"id": uuid(), "executionId": id, "sessionId": sid, "hostId": hid, "kind": "readiness", "status": "pending", "payload": doc{"projectId": pid, "project": pr}}); err != nil {
+		if err := putDoc(q, "command", doc{"id": uuid(), "executionId": id, "sessionId": sid, "hostId": hid, "projectId": pid, "kind": "readiness", "status": "pending", "payload": doc{"projectId": pid, "project": pr}}); err != nil {
 			return nil, err
 		}
 		hosts = append(hosts, doc{"hostId": hid, "executionId": id})
@@ -1178,7 +1180,7 @@ func pickAccount(q *Request, harness, projectID, hostID, directedBy string) (str
 	if p := projectSettingsOf(projectID); p != nil {
 		order = strList(p["subscriptions"])
 	}
-	ms, err := rows(q, "SELECT data FROM document WHERE kind='managed-account' ORDER BY seq")
+	ms, err := unscoped(q, func() ([]doc, error) { return rows(q, "SELECT data FROM document WHERE kind='managed-account' ORDER BY seq") })
 	if err != nil {
 		return "", err
 	}

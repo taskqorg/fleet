@@ -89,6 +89,17 @@ test('B6 ask and reply: an answer reaches the asking session as its next message
   assert.equal((await op('reply', {questionId: q.id, answer: 'red'})).status, 409);
 });
 
+test('B6c project readiness: a member with the project grant starts it and reads its result', async () => {
+  // Risk: readiness rows carry no project, so row-level security refuses every non-owner (403 Not in your scope).
+  const member = 'member@trial.test';
+  const secret = ok(await op('hosts_register', {id: 'owner-mac'})).secret;
+  assert.equal((await fetch(BASE + '/api/hosts/poll', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + secret}, body: JSON.stringify({platform: 'darwin', capabilities: [], stores: [], problems: []})})).status, 200);
+  const r = ok(await op('project_readiness', {projectId: 'fleet-hello-world'}, member));
+  const h = r.hosts.find((x: any) => x.hostId === 'owner-mac');
+  assert.ok(h?.executionId, JSON.stringify(r));
+  ok(await op('execution_status', {executionId: h.executionId}, member));
+});
+
 test('B6b the web answer to an agent question (questions_answer) is delivered to the asking session like reply', async () => {
   // Risk: the UI answers an agent question, the answer is recorded, but the agent never receives it (live stand, 2026-11-10).
   const sid = await session();
