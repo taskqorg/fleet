@@ -56,14 +56,14 @@ func connDir(name string) (string, error) {
 }
 
 func connOwner(q *Request) error {
-	if q.person != nil && !q.person.Owner {
+	if q.person != nil && !fullAccess(q.person) {
 		return fail(403, "Only the owner handles key values")
 	}
 	return nil
 }
 
 func connHolderOrOwner(q *Request, c doc) error {
-	if q.person != nil && !q.person.Owner && q.person.Email != c["holder"] {
+	if q.person != nil && !fullAccess(q.person) && q.person.Email != c["holder"] {
 		return fail(403, "Only the holder or the owner changes this API key")
 	}
 	return nil
@@ -356,7 +356,7 @@ func init() {
 		if h, ok := b["holder"].(string); ok {
 			holder = strings.ToLower(h)
 		}
-		if q.person != nil && !q.person.Owner && holder != q.person.Email {
+		if q.person != nil && !fullAccess(q.person) && holder != q.person.Email {
 			return nil, fail(403, "Only the owner creates an API key for another person")
 		}
 		comment := astr(b["comment"])

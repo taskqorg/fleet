@@ -77,6 +77,11 @@ func TestGuardAdmitsOnlyVerifiedAccessIdentity(t *testing.T) {
 		[]string{"Bearer invented-browser-secret", "owner@example.invalid"}, "admitted")
 	// Any verified e-mail passes the guard; the coordinator maps it to a person or answers 403.
 	expect(t, status(sign(t, key, "RS256", claims(map[string]any{"email": "alina@example.invalid"}, ""))), 204, "other e-mail")
+	// A service token (no e-mail, sub "") passes as its common_name; the coordinator maps it through people.json.
+	w = check(map[string][]string{"Cf-Access-Jwt-Assertion": {sign(t, key, "RS256", claims(map[string]any{"sub": "", "common_name": "Fixture.access"}, "email"))}})
+	expect(t, []int{w.Code}, []int{204}, "service token")
+	expect(t, w.Header().Get("X-Fleet-Person"), "fixture.access", "service token identity")
+	expect(t, status(sign(t, key, "RS256", claims(map[string]any{"common_name": "a@b"}, "email"))), 403, "common name shaped as e-mail")
 	for _, change := range []map[string]any{{"iss": "wrong"}, {"aud": "wrong"}, {"email": ""}, {"exp": 1}, {"iat": now + 3600}, {"email": 7}} {
 		expect(t, status(sign(t, key, "RS256", claims(change, ""))), 403, "changed claim")
 	}

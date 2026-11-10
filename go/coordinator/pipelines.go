@@ -1191,7 +1191,7 @@ func pipelineRunCreate(q *Request) (doc, error) {
 		if !keysOnly(overrides, labOverrides...) {
 			return nil, fail(400, "overrides are "+strings.Join(labOverrides, ", "))
 		}
-		if q.person != nil && !q.person.Owner && (overrides["host"] != nil || overrides["account"] != nil || overrides["profile"] != nil) {
+		if q.person != nil && !fullAccess(q.person) && (overrides["host"] != nil || overrides["account"] != nil || overrides["profile"] != nil) {
 			return nil, fail(403, "Only the owner overrides host, account or profile")
 		}
 		run, err := pipelineStart(q, doc{"file": file, "projectId": b["projectId"], "requestId": rid, "example": example, "overrides": overrides, "extra": doc{"signature": signature}})
