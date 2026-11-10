@@ -2,7 +2,7 @@
 
 Fleet Lab is where the owner tests how Fleet's agents work, on `/lab` and through the `lab_*` operations. The thing under test is a **pipeline**: an ordered chain of agent, API and script steps. Lab runs a pipeline over **examples** in an **experiment**, scores the results with scripts, judge agents or owner ratings, and lets the owner promote a winning variant into the project's recommendation. Lab also owns work analysis: the same retained history, queried to find what to improve.
 
-Lab adds no run machinery of its own. A trial is a `pipeline_run` execution with `experiment_id` and `variant` set and `task_id` null; its steps are `pipeline_step` executions; each provider call is a `tool_run`. Outputs are lab-scope artifacts. Owner ratings are questions. Lab's own storage is two tables (`experiment`, `score`), one column (`execution.request_id`), the use-case registry and example seeds in `config/lab/`.
+Lab adds no run machinery of its own. A trial is a `pipeline_run` execution with `experiment_id` and `variant` set and `task_id` null; its steps are `pipeline_step` executions; each provider call is a `tool_run`. Outputs are lab-scope artifacts. Owner ratings are questions. Lab's own storage is three tables (`experiment`, `score`, `experiment_note`), two columns (`execution.request_id`, `execution.reuse_key`), the use-case registry and example seeds in `config/lab/`. The work query and the price table are in [fleet-analytics.md](fleet-analytics.md).
 
 ## Glossary
 
@@ -21,6 +21,15 @@ Lab adds no run machinery of its own. A trial is a `pipeline_run` execution with
 | Trial | One variant on one example, one repeat. |
 | Cell | `<example id@version>|<variant>|<repeat>`; its trials differ by attempt. |
 | Attempt | Retry counter of a cell. Starts at 0; raised only by the owner's "retry cell". |
+| Lab group | The set of experiments that test one step of one use case; the comparison screen groups by it. Not the `fleet.md` end-to-end use case. |
+| Suite | A sorted set of `example id@hash`. Two results compare only on the same suite and evaluator version. |
+| Experiment record | Goal, hypothesis, decision rule and decision of an experiment. Not the system audit journal. |
+| Production reference | Numbers a project reports for its current step, outside Fleet. Context only, never a comparison row. |
+| Baseline variant | The variant that runs the current method inside Fleet; every other variant is compared with it. |
+| Noise floor | The spread of the baseline variant over its repeats. |
+| Coverage | confident answers / all answers. Escalation share = 1 − coverage. |
+| Selective accuracy | correct confident answers / confident answers. |
+| Confidence band | Thresholds in the variant config (so hashed) that split a typed answer into confident yes, confident no, and the middle band that abstains or escalates. |
 
 ## Owner decisions
 
@@ -36,7 +45,7 @@ Lab adds no run machinery of its own. A trial is a `pipeline_run` execution with
 | R3.8 | Claude on Windows is WSL only; Claude runs on the Mac and on Windows. |
 | R3.9 | Provider keys live in the coordinator's 0600 secret directory with encrypted backup; Postgres holds metadata only ([fleet-connections.md](fleet-connections.md)). |
 | R3.10 | First pipelines: web research; Codex vs Claude page with and without a skill; Meshy asset pipeline once qualified. Asset pipelines, judges per use case, `loop` and the character pipeline: [fleet-asset-pipelines.md](fleet-asset-pipelines.md). |
-| Q1 | Storage is two Postgres tables, not JSON documents and not ClickHouse. |
+| Q1 | Storage is Postgres tables, not JSON documents and not ClickHouse: `experiment` (with its [record](#experiment-record) columns), `score`, and the append-only `experiment_note`. Amended 2026-11-11: the record needs typed columns and notes; a journal artifact would be a legacy stopgap. |
 | Q2 | Closed with nothing to convert: Pipe's assetq database held 0 dataset revisions (checked at the Lab Stage 1 deploy), so the importer was deleted with Pipe ([connections](fleet-connections.md) C4). |
 | Q3 | No coded judge-to-owner agreement threshold; the screen shows agreement and the owner decides when loops run unattended. |
 | — | Lab runs at `background` priority. Repeats per example are configurable. Rating starts with a few basic forms. |
@@ -75,7 +84,45 @@ experiment ─┬─< execution(pipeline_run, variant)  = trial
 
 States: `draft → running ⇄ paused → stopped | done`. Variants and examples are fixed at create. Not built: editing them in `draft`. Retrying a cell of a `done` experiment returns it to `running`.
 
-Variant `config_ref` = SHA-256 of canonical `{pipeline, overrides}`. Trial `request_id` = `lab:` + SHA-256 of `[experiment, iteration, example, variant, repeat, attempt]`, unique (`execution_request`).
+Variant `config_ref` = SHA-256 of canonical `{pipeline, overrides}`. Trial `request_id` = `lab:` + SHA-256 of `[experiment, iteration, example, variant, repeat, attempt]`, unique (`execution_request`). Neither identifies the work across experiments; that is the [reuse key](#reuse-key).
+
+## Experiment record
+
+The record turns an experiment into a decision. Columns on `experiment`: `goal`, `hypothesis`, `primary_evaluator`, `decision_rule`, `lab_group`, `decision` (`adopt <variant> | keep baseline | inconclusive | pending`), `decision_reason`, `decided_by`, `decided_at`.
+
+- **Frozen at launch.** Launch is refused (400) without `goal`, `hypothesis`, `primary_evaluator` and `decision_rule`. From launch on, these fields, the variants and the suite are fixed.
+- **Amendments are visible.** A change after launch is an `experiment_note` row `{experiment_id, kind: amendment | note, field, old, new, text, author, at}`, append-only, shown on the experiment page with its time relative to the first trial result. Notes are never edited or deleted.
+- **Decision.** At close the coordinator applies the frozen `decision_rule` to the [statistics](#statistics) and writes `decision` with `decided_by` null as the proposal. An agent may write `decision_reason`. A person confirms or overrides; an override needs a reason and is an amendment.
+- An automatic stop (budget `stop`, owner stop) leaves `decision: pending`.
+- Scores outlive their experiment: `score.experiment_id` no longer cascades on delete, so a deleted experiment cannot erase evidence a decision cited. Deleting an experiment with a decision is refused (409).
+- Record kinds stay distinct: a trial is a run; a score is an assessment; Promote writes the recommendation. The decision is the experiment's own field and is what the [model-selection skill](fleet-pm-agent.md#9-pm-profile) cites.
+
+## Statistics
+
+One Go function computes every comparison: the experiment matrix, the Lab group comparison, `analytics_query` consumers and later gates. No second implementation.
+
+- Input: two variants on one suite, one evaluator version. Output: per-example paired difference of the primary evaluator, its mean, a 95% interval clustered by example, and `n` (examples), always printed.
+- When `n` is too small for the interval to mean anything, the output says "too few examples" and no interval is drawn. The threshold is a setting with a permissive default.
+- Repeats of a near-deterministic variant (repeat spread 0 on the noise floor check) count as one.
+- Typed-answer variants also report coverage, selective accuracy and escalation share, per example tag (for example language).
+- Bands are tuned on `tune` examples; results are reported on `held_out` only.
+- Rows from different suites or evaluator versions are never averaged; the screen shows them side by side with the reason.
+
+## Reuse key
+
+`execution.reuse_key` = SHA-256 of canonical `[pipeline content hash, overrides, resolved model ID per step, harness version, example content hash, evaluator version, repeat index]`. A resolved model ID is the one the provider answered, never an alias. Pipeline content is hashed, not its file name.
+
+- Before inserting a cell, reconcile looks for a `completed` trial with the same key in the same project and reuses it by reference instead of running it again. Any change to the inputs gives a new key, so fresh trials run.
+- An experiment may re-run a sample of reused trials (`reuse_check: {share}`, off by default). When a re-run differs by more than the noise floor, every trial with that key is marked `stale` and no longer reused.
+- The cross-experiment comparison reads trials by reuse key and suite; it is built after the key.
+
+## Project data in examples
+
+A project's raw data (names, texts, translations) is stored in Fleet as ordinary `inline` example artifacts (owner answer 2026-11-11). Preparation comes first: examples, labels, the project's export and Lab experiments on stored data; no test task runs on the project itself until the owner says so.
+
+Trial outputs of typed decisions are `{answer, p, answered_by, tokens}`. A project export follows a versioned schema: step ID, row ID, input, label, tag (for example language), production cost and basis, split. Its production numbers become the production reference, never a comparison row.
+
+Not adopted: fetching example text at run time or importing externally run trials; neither earns its place while project data may be stored.
 
 ## Pipeline format version 2
 
@@ -178,6 +225,8 @@ Not built: the order-swapped blind `pick_best` judge (designed in [asset pipelin
 
 `app/src/views/lab.tsx`, from `packages/ui` only; page rules in [laboratory.md](../design-system/pages/laboratory.md). `/lab`: experiments list, use-case registry with drift and maturity, examples awaiting approval. `/lab/<experiment id>`: matrix (rows examples, columns variants; cell state, score with form, spend with basis, running time, confounders, link to execution; cancel and retry cell), spend against budgets, agreement, rating queue, Promote. Workspace `lab`. Experiment creation is an API call; the screen covers everything after it.
 
+Analytics view on the same screen, dark theme first: the experiment list in plain words (goal, hypothesis, decision, when) and, per Lab group, the variant comparison from [statistics](#statistics): primary evaluator difference with interval and `n`, coverage and escalation share where typed, cost with basis and price source, p50 time, per tag. A row is identified by variant label plus `config_ref`; the kind of variant (model override, other pipeline, `api` step) is shown as text. No combined score, no ranking.
+
 Routes (each also an operation `lab_*`, `go/coordinator/lab.go`): `POST|GET /api/lab/experiments`, `GET /api/lab/experiments/:id` (trials, scores, spend), `POST …/:id/{launch,stop,resume}`, `POST …/:id/cells/:cell/{cancel,retry}`, `POST …/:id/promote {variant}`, `POST|GET /api/lab/ratings`, `GET /api/lab/ratings/:id`, `POST /api/lab/scores/:id/correct`, `GET /api/lab/registry`. Errors: 400 invalid body, 404 unknown ID, 409 wrong state.
 
 Promote returns `{cataloguePatch, method, recommendation}`: a catalogue method entry (pipeline, overrides, `config_ref`, source experiment) as a JSON patch for the owner to commit; the recommendation is set once a catalogue method carries the variant's `configRef`. Nothing promotes automatically.
@@ -201,4 +250,23 @@ Human interfaces and agents query the same retained work history within their pe
 *   Elapsed task duration differs from summed execution time across parallel work. Nested usage is not counted again in parent totals. Estimates and unavailable data are never exact values or zero.
 *   An operator or architect may discuss history with an agent, find repeated or expensive work, and test a change as an experiment; findings are not limited to predefined categories. Production and Lab measurements stay linked to their executions in one history store.
 
-Not built: work-analysis views and queries beyond the experiment page and execution records; the coverage and measures above are the target for them.
+Not built: work-analysis views and queries beyond the experiment page and execution records; the coverage and measures above are the target for them. The query contract is [`analytics_query`](fleet-analytics.md#analytics_query).
+
+Production signals (acceptance, rework) find examples worth mining and calibrate judges; they are never shown as a quality score. Grading runs in tiers: script checks, then a typed-decision pre-filter, then an LLM judge for the middle band only, then a person for disagreements only.
+
+## Analytics staging
+
+| Stage | Content | Done when |
+|---|---|---|
+| 0 | Register the project; freeze export schema v1; import examples with labels. | Schema file exists; examples approved |
+| 1 | Smoke test: one `single` experiment with one `api` step on a typed-decision connection; trial output `{answer, p, answered_by, tokens}`; a check that reads `references`. | A `tool_run` row with cost and basis |
+| 2 | Experiment record, frozen at launch, decision at close. | Launch fails without goal and hypothesis; amendments visible |
+| 3 | Price entries and estimated cost per trial. | Matrix shows cost with basis |
+| 4 | First project step: baseline variant vs typed decision with bands, tuned on `tune`, reported on `held_out` per tag, with the statistics function. | A decided experiment |
+| 5 | The `model-selection` skill with its playbook section. | A PM agent answers "which model for step X" citing the experiment |
+| 6 | The analytics view on `/lab`, reading trials through the Lab routes; it switches to `analytics_query` in stage 7 with no second statistics path. | Operator sees record history and comparison |
+| 7 | Grouping columns, `analytics_query`, the reuse key, the cross-experiment comparison. | A PM agent answers production questions from the query |
+| 8 | Cascade experiments, after [script-step gateway access](fleet-connections.md#4-per-run-tokens). | Decisions per step |
+
+Not in this round: ClickHouse spans for Lab, regression gates, `loop`, a combined score or Elo, a money budget unit, judge sampling of production (a setting, off by default), automatic application of merge decisions.
+
