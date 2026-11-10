@@ -79,3 +79,12 @@ Expected end state: about 135 production packages instead of 163 (24 SDK, `bette
 - Our own S3 client owns SigV4 correctness. The vector tests and the live tunnel check cover it.
 - `tsgo` is a preview. It only checks types, so falling back to `tsc --noEmit` is a one-line change.
 - pnpm's strict `node_modules` can expose undeclared transitive imports. The full suite runs in phase 1.
+
+## Implementation notes
+
+- PRs: #41 (phase 1), #43 (phase 2), #44 (phase 3), #45 (phase 4), #46 (phase 5). Each one is stacked on the one before.
+- `minimumReleaseAge` is 1440 minutes (one day), not seven days. The dependencies pinned when we switched were 4 to 8 days old, so a seven-day limit rejected them.
+- The type check is TypeScript 7.0.2, the stable release of the native compiler, not the `tsgo` preview. Warm, it takes 0.25 s; `tsc` 5.9 took 2.9 s.
+- Because of `node:sqlite`, Node 22 prints an ExperimentalWarning when the migration CLI and its tests run. That is expected. `engines.node` is `>=22.18`.
+- Live S3 check, 2026-11-10, from PDS18 through the pds18, mac and windows tunnels with Access headers. It covered put, get, head, delete, a 256 MiB multipart upload through presigned parts, UploadPartCopy, CopyObject, and a presigned GET whose SHA-256 matched. It passed on all three stores, and the test prefix was empty afterwards.
+- Cloudflare finding (infrastructure, not the client): on a store hostname, the first HEAD of a key with a cacheable extension (for example `.bin`) returned 403. Cloudflare served that HEAD as a GET to the origin, so the SigV4 signature did not match, and it may have cached the object at the edge. Fleet keys are content hashes and `.pending/<id>.<store>`, so they have no such extension. A cache-bypass rule on the `fleet-store-*` hostnames would remove the risk. That is a Cloudflare configuration change and needs the owner's decision.
