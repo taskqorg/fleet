@@ -216,11 +216,13 @@ Go rules:
 - One Go module (`go/`), one `go.sum`; builds use `-mod=readonly`; the default checksum database stays on; `govulncheck` runs in CI as a warning.
 - Contract types are generated at build from `contracts/*.schema.json` by `go/gen`; generated files are not committed.
 - Release binaries are built with `-trimpath` in one Linux CI job for linux/amd64, darwin/arm64 and windows/amd64, each with a SHA-256 file; no macOS runner for Go code.
-- Tests are outside tests over HTTP against a real Postgres, as in `tests/trial/`; each names its requirement and risk.
+- Tests are outside tests over HTTP against a real Postgres (`tests/trial/`, `tests/go/`, the app checks in `tests/ui/`, all through `tests/harness.ts`); each names its requirement and risk.
 
 ## Verification
 
 The merge-gate command is `pnpm install --frozen-lockfile && pnpm run build && cargo build -p fleet-executor && cargo test -p fleet-executor && pnpm test`.
+
+`pnpm run build` also builds the Go coordinator (`go/bin/fleet-coordinator`). `pnpm test` runs the app unit tests and `tests/go/run.sh`: the binary on a fresh database of a local PostgreSQL server (server programs on `PATH`, `tests/harness.ts`), with `tests/trial` and `tests/go` over HTTP.
 
 The full gate runs in CI on the pull request, never on the owner’s Mac: several agents work there at once, and each full run takes about 1.5 cores and 1 GB per test file. Locally run only the build of what you changed and the test files that cover it (`node <test file>`); push and read the CI result for everything else.
 

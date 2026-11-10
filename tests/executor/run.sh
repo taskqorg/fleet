@@ -8,3 +8,5 @@ for t in account_status antigravity_acp claude_mcp codex_wire delegation_approva
   out=$(python3 "tests/executor/$t.py" 2>&1) || { echo "$out"; echo "FAILED: $t"; exit 1; }
   echo "$out" | tail -c 400; echo
 done
+# The executor's MCP adapter from Node: replayed stdio exchanges and artifact path confinement.
+node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts

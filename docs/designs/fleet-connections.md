@@ -9,7 +9,7 @@
 
 ## Overview
 
-Fleet reaches outside APIs (Tavily web search and extract today; Meshy and model APIs next) through Pipe, a separate service in the assetq repository. Fleet's `packages/coordinator/connection_call.py` loads Pipe's client library, checks its hash, reads a Pipe token from a host file and sends the Fleet step ID as a free-form label (`X-Pipe-Task`).
+Fleet reaches outside APIs (Tavily web search and extract today; Meshy and model APIs next) through Pipe, a separate service in the assetq repository. Fleet's `connection_call.py` loaded Pipe's client library, checks its hash, reads a Pipe token from a host file and sends the Fleet step ID as a free-form label (`X-Pipe-Task`).
 
 L4 leaves `connection_call.py` and its MCP mode in Python until C1; C1 replaces this path with Fleet's own connections, without a Rust bridge to Pipe.
 
@@ -164,7 +164,7 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 ### 5. Call methods
 
 *   **HTTP:** `POST /v1/call/<connection>/<tool>`, body the tool's JSON, `Authorization: Bearer <run token>`. Replies copy the lane's table (`unauthenticated`, `bad-request`, `no-usable-key`, `key-disabled-<status>`, `provider-unreachable`, `provider-body`, `provider-timeout`; provider status passes through).
-*   **CLI:** `python3 connection_call.py call <connection> <tool>`, body on stdin, one line `{tool, callId, outcome, error_code, usage, output}` on stdout. The file keeps its name and its install path (embedded in the executor by `profile.rs:172`, shipped by `package-assets.mjs`); Pipe is removed from it: no client library load, no hash pin, no label, token from `FLEET_RUN_TOKEN`. Error classification (`UNKNOWN` set, `infra:`/`unknown:`/`step:` problems in fleet-lab.md) stays.
+*   **CLI:** `python3 connection_call.py call <connection> <tool>`, body on stdin, one line `{tool, callId, outcome, error_code, usage, output}` on stdout. The file is `crates/executor/connection_call.py`, embedded in the executor by `profile.rs`; the Go coordinator makes pipeline calls in-process; Pipe is removed from it: no client library load, no hash pin, no label, token from `FLEET_RUN_TOKEN`. Error classification (`UNKNOWN` set, `infra:`/`unknown:`/`step:` problems in fleet-lab.md) stays.
 *   **MCP:** `python3 connection_call.py mcp <connection> <spec>`, one stdio MCP server per connection; the start command's `connections: [{name, instructions, tools: [{name, description, inputSchema}]}]` gives the spec, so hosts need no connection files. The executor adds it to each run's MCP config and allowlists `mcp__<connection>__<tool>`, as it does for `connection_call.py mcp` today.
 *   The local `.connection-calls.jsonl` file is deleted: the spool is the record, so an agent cannot edit its own costs.
 *   **Built-in web** stays off unless the profile says `web_route: builtin` (fleet-lab.md R3.4).
@@ -284,7 +284,7 @@ Stages run alongside the people slices.
 *   Caddy route `/v1/call/*` for remote hosts behind the guard and the `fleet-machines` service token.
 *   Backup: SOPS/age copy of the secret directory and the gateway's retained snapshot and `disabled-keys`.
 
-#### 5. `packages/coordinator/connection_call.py` (Modify) — C1
+#### 5. `connection_call.py` (Modify) — C1, now `crates/executor/connection_call.py`
 
 *   Remove the record file, Pipe client loading, hash check and label. Entry points become `connection_call.py call <connection> <tool> [calls dir]` and `connection_call.py mcp`; the token comes from `FLEET_RUN_TOKEN`, the gateway URL from `FLEET_GATEWAY_URL`. Error classification (`UNKNOWN` set) stays. The local `.connection-calls.jsonl` is no longer written.
 *   The file name stays, so `profile.rs:172` (`include_str!`), `package-assets.mjs:9` and `pipelines.ts:60,69` keep their paths; their arguments change.
