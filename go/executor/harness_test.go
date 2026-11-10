@@ -10,8 +10,8 @@ import (
 	"testing"
 )
 
-func j(s string) obj {
-	var v obj
+func j(s string) M {
+	var v M
 	if err := json.Unmarshal([]byte(s), &v); err != nil {
 		panic(s)
 	}
@@ -22,8 +22,8 @@ func eq(t *testing.T, got any, want string) {
 	t.Helper()
 	var w any
 	json.Unmarshal([]byte(want), &w)
-	if encode(clone(got)) != encode(clone(w)) {
-		t.Fatalf("got %s want %s", encode(got), want)
+	if enc(jClone(got)) != enc(jClone(w)) {
+		t.Fatalf("got %s want %s", enc(got), want)
 	}
 }
 
@@ -41,7 +41,7 @@ func TestBlocksPerHarness(t *testing.T) {
 	eq(t, c.Project("claude", j(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"ok"}]}}`), 30)["blocks"],
 		`[{"kind":"tool","name":"Read","input":{"f":1},"output":"ok","state":"completed","startedAt":10,"endedAt":30}]`)
 	a := NewBlocks()
-	chunk := func(s string) obj {
+	chunk := func(s string) M {
 		return j(`{"type":"acp.update","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"` + s + `"}}}`)
 	}
 	d1, d2 := a.Project("antigravity", chunk("Hel"), 1), a.Project("antigravity", chunk("lo"), 2)
@@ -58,21 +58,21 @@ func TestBlocksPerHarness(t *testing.T) {
 	s.Project("antigravity", j(`{"step_update":{"text_delta":"Hi"}}`), 1)
 	eq(t, s.Project("antigravity", j(`{"event":"result","result":{"status":"SUCCESS","response":"Hi"}}`), 2)["blocks"], `[{"kind":"text","role":"agent","markdown":"Hi"}]`)
 	c.Project("claude", j(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"u","name":"Bash","input":{}}]}}`), 40)
-	if st := get(c.Project("claude", j(`{"type":"result","is_error":false}`), 50)["blocks"].([]any)[0], "state"); st != "unfinished" {
+	if st := jAt(c.Project("claude", j(`{"type":"result","is_error":false}`), 50)["blocks"].([]any)[0], "state"); st != "unfinished" {
 		t.Fatal(st)
 	}
 	e := b.Project("codex", j(`{"type":"item.completed","item":{"type":"error","message":"stream disconnected"}}`), 5)["blocks"].([]any)[0]
-	if get(e, "state") != "failed" || get(e, "output") != "stream disconnected" {
+	if jAt(e, "state") != "failed" || jAt(e, "output") != "stream disconnected" {
 		t.Fatal(e)
 	}
 	u := a.Project("codex", j(`{"type":"unparsed","raw":"x"}`), 7)["blocks"].([]any)[0]
-	if get(u, "name") != "unparsed" || get(u, "output", "raw") != "x" {
+	if jAt(u, "name") != "unparsed" || jAt(u, "output", "raw") != "x" {
 		t.Fatal(u)
 	}
 	// Risk: ACP usage categories merged, or an empty rawOutput hides a diff result.
 	p = project("acp", j(`{"result":{"usage":{"cachedReadTokens":4046,"totalTokens":35281}},"update":{"sessionUpdate":"tool_call_update","toolCallId":"1","rawOutput":{},"content":[{"type":"diff"}]}}`))
-	if get(p, "usage", "cache_read_tokens") != 4046.0 || has(get(p, "usage"), "cached_input_tokens") || get(p["tools"].([]any)[0], "result").([]any)[0].(obj)["type"] != "diff" {
-		t.Fatal(encode(p))
+	if jAt(p, "usage", "cache_read_tokens") != 4046.0 || has(jAt(p, "usage"), "cached_input_tokens") || jAt(p["tools"].([]any)[0], "result").([]any)[0].(M)["type"] != "diff" {
+		t.Fatal(enc(p))
 	}
 }
 
@@ -82,7 +82,7 @@ func TestCodexSession(t *testing.T) {
 		s := &codexSession{root: "/w", resume: resume, profile: j(`{"model":"m","effort":"low","instructions":"dev","text":"task"}`), nextID: 100}
 		r, _, _, _ := s.Receive(j(`{"id":1,"result":{"userAgent":"codex/9"}}`))
 		want := map[bool]string{true: "thread/resume", false: "thread/start"}[resume != ""]
-		if len(r) != 2 || r[1]["method"] != want || get(r[1], "params", "developerInstructions") != "dev" {
+		if len(r) != 2 || r[1]["method"] != want || jAt(r[1], "params", "developerInstructions") != "dev" {
 			t.Fatal(r)
 		}
 		if r, _, _, _ := s.Receive(j(`{"id":1,"result":{}}`)); len(r) != 0 {
@@ -108,15 +108,15 @@ func TestCodexSession(t *testing.T) {
 			t.Fatal("approval granted")
 		}
 		f := s.Steer("more", "cmd")
-		if get(f, "params", "expectedTurnId") != "turn" {
+		if jAt(f, "params", "expectedTurnId") != "turn" {
 			t.Fatal(f)
 		}
-		_, ev, done, _ := s.Receive(obj{"id": f["id"], "error": obj{"code": -1}})
+		_, ev, done, _ := s.Receive(M{"id": f["id"], "error": M{"code": -1}})
 		if ev["type"] != "steer.result" || ev["ok"] != false || done {
 			t.Fatal(ev)
 		}
 		_, ev, _, _ = s.Receive(j(`{"method":"item/completed","params":{"threadId":"thread","turnId":"turn","item":{"type":"collabAgentToolCall","tool":"spawnAgent","receiverThreadIds":["c"],"agentsStates":{"c":{"status":"running"}}}}}`))
-		if ch := ev["children"].([]any)[0]; get(ch, "parentThreadId") != "thread" || get(ch, "binding", "model") != "m" {
+		if ch := ev["children"].([]any)[0]; jAt(ch, "parentThreadId") != "thread" || jAt(ch, "binding", "model") != "m" {
 			t.Fatal(ev)
 		}
 		if _, _, done, _ := s.Receive(j(`{"method":"turn/completed","params":{"threadId":"foreign","turn":{"id":"turn","status":"completed"}}}`)); done {
@@ -142,9 +142,9 @@ func TestACPSession(t *testing.T) {
 	profile := j(`{"model":"g","text":"task","agentConfig":{"instructions":"explicit user","settings":{"mode":"accept-edits"}}}`)
 	opened := `{"id":2,"result":{"sessionId":"s","models":{"availableModels":[{"modelId":"g"}]},"modes":{"availableModes":[{"id":"accept-edits"}]}}}`
 	for _, caps := range []string{`{"loadSession":true}`, `{"sessionCapabilities":{"resume":{}}}`} {
-		s := newACPSession("/w", "s", profile, obj{"fleet": obj{"command": "x", "args": []any{}}})
+		s := newACPSession("/w", "s", profile, M{"fleet": M{"command": "x", "args": []any{}}})
 		r, _, _, err := s.Receive(j(`{"id":1,"result":{"protocolVersion":1,"agentInfo":{"version":"1.5.3"},"agentCapabilities":` + caps + `}}`))
-		if err != nil || get(r[0], "params", "sessionId") != "s" || len(get(r[0], "params", "mcpServers").([]any)) != 1 {
+		if err != nil || jAt(r[0], "params", "sessionId") != "s" || len(jAt(r[0], "params", "mcpServers").([]any)) != 1 {
 			t.Fatal(r, err)
 		}
 		steps := []string{opened, `{"id":3,"result":{}}`, `{"id":4,"result":{}}`}
@@ -154,21 +154,21 @@ func TestACPSession(t *testing.T) {
 				t.Fatal(m, r, err)
 			}
 		}
-		if !strings.Contains(sv(get(r[0], "params", "prompt").([]any)[0].(obj)["text"]), "user role") {
+		if !strings.Contains(jStr(jAt(r[0], "params", "prompt").([]any)[0].(M)["text"]), "user role") {
 			t.Fatal(r)
 		}
-		if r, ev, _, _ := s.Receive(j(`{"id":9,"method":"session/request_permission","params":{}}`)); get(r[0], "result", "outcome", "outcome") != "cancelled" || ev["type"] != "permission.refused" {
+		if r, ev, _, _ := s.Receive(j(`{"id":9,"method":"session/request_permission","params":{}}`)); jAt(r[0], "result", "outcome", "outcome") != "cancelled" || ev["type"] != "permission.refused" {
 			t.Fatal(r)
 		}
 		if _, _, done, _ := s.Receive(j(`{"id":5,"result":{"stopReason":"end_turn"}}`)); !done {
 			t.Fatal("not done")
 		}
 	}
-	s := newACPSession("/w", "", profile, obj{})
+	s := newACPSession("/w", "", profile, M{})
 	if _, _, _, err := s.Receive(j(`{"id":1,"result":{"protocolVersion":1,"agentInfo":{"version":"1.4.0"}}}`)); err == nil {
 		t.Fatal("unqualified runtime accepted")
 	}
-	s = newACPSession("/w", "", profile, obj{})
+	s = newACPSession("/w", "", profile, M{})
 	s.Receive(j(`{"id":1,"result":{"protocolVersion":1,"agentInfo":{"version":"1.5.3"}}}`))
 	if _, _, _, err := s.Receive(j(`{"id":2,"result":{"sessionId":"s","models":{"availableModels":[]}}}`)); err == nil {
 		t.Fatal("unavailable model accepted")
@@ -181,12 +181,12 @@ func TestRegistryCommand(t *testing.T) {
 	mk := func(p string) string { d := root + "/" + p; os.MkdirAll(d, 0o700); return d }
 	work := mk("work")
 	reg := root + "/accounts.json"
-	accounts := obj{"ag": obj{"harness": "antigravity", "home": mk("h"), "nativeHome": mk("nh"), "executable": "/bin/echo"},
-		"cx": obj{"harness": "codex", "home": mk("h2"), "nativeHome": mk("nh2"), "executable": "/bin/echo"}}
-	os.WriteFile(reg, []byte(encode(accounts)), 0o600)
+	accounts := M{"ag": M{"harness": "antigravity", "home": mk("h"), "nativeHome": mk("nh"), "executable": "/bin/echo"},
+		"cx": M{"harness": "codex", "home": mk("h2"), "nativeHome": mk("nh2"), "executable": "/bin/echo"}}
+	os.WriteFile(reg, []byte(enc(accounts)), 0o600)
 	t.Setenv("FLEET_NATIVE_ACCOUNTS", reg)
 	t.Setenv("OPENAI_API_KEY", "leak")
-	c, in, err := Harnesses["antigravity"].Command(work, "", obj{"harness": "antigravity", "account": "ag", "model": "g", "text": "t", "settings": obj{"sandbox": false}})
+	c, in, err := Harnesses["antigravity"].Command(work, "", M{"harness": "antigravity", "account": "ag", "model": "g", "text": "t", "settings": M{"sandbox": false}})
 	if err != nil || in != nil {
 		t.Fatal(err)
 	}
@@ -194,13 +194,13 @@ func TestRegistryCommand(t *testing.T) {
 	if !strings.Contains(args, "acp --gemini-dir "+root+"/nh") || !strings.Contains(args, "--sandbox=false") || strings.Contains(strings.Join(c.Env, " "), "OPENAI") {
 		t.Fatal(c.Args, c.Env)
 	}
-	if _, _, err := Harnesses["antigravity"].Command(work, "retained", obj{"harness": "antigravity", "account": "ag", "model": "g", "text": "t"}); err != nil {
+	if _, _, err := Harnesses["antigravity"].Command(work, "retained", M{"harness": "antigravity", "account": "ag", "model": "g", "text": "t"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Harnesses["codex"].Command(work, "retained", obj{"account": "cx", "text": "t"}); err == nil {
+	if _, _, err := Harnesses["codex"].Command(work, "retained", M{"account": "cx", "text": "t"}); err == nil {
 		t.Fatal("resume under another account binding accepted")
 	}
-	c, _, err = Harnesses["codex"].Command(mk("w2"), "", obj{"account": "cx", "text": "t"})
+	c, _, err = Harnesses["codex"].Command(mk("w2"), "", M{"account": "cx", "text": "t"})
 	if err != nil || c.Args[len(c.Args)-1] != "t" || !slices.Contains(c.Env, "CODEX_HOME="+root+"/nh2") {
 		t.Fatal(err, c)
 	}

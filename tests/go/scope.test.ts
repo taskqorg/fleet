@@ -78,7 +78,7 @@ test('S3a questions: a person cannot answer an agent question of a project they 
   assert.equal(ok(await call('GET', '/api/sessions/' + t.sessionId, undefined, as(OWNER))).questions.find((x: any) => x.id === tq.id).state, 'open');
 });
 
-// Expected to fail: defect found by this file. agentReply (b_agent.go) writes the answered question back with put(), whose
+// Expected to fail: defect found by this file. agentReply (agent.go) writes the answered question back with put(), whose
 // row carries no project, so row-level security refuses the member with 403 "Not in your scope". Owner-only B6b passes.
 test('S3b questions: a member answers an agent question of their project and the answer reaches the asking session (risk: the question project is read from a null column, or the reply write runs outside the member\'s scope)', async () => {
   const s = ok(await start(MEMBER, MINE));

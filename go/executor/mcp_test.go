@@ -33,13 +33,13 @@ func TestConnectionCallOutcomes(t *testing.T) {
 	t.Setenv("FLEET_GATEWAY_URL", gw.URL)
 	t.Setenv("FLEET_RUN_TOKEN", "tok")
 	for tool, want := range map[string][2]any{"ok": {"ok", nil}, "garbled": {"unknown", "invalid-response"}, "provider": {"error", "http-502"}, "timeout": {"unknown", "provider-timeout"}} {
-		r := connectionCall("web", tool, obj{})
+		r := connectionCall("web", tool, M{})
 		if r["outcome"] != want[0] || r["error_code"] != want[1] || r["callId"] != "c1" {
 			t.Fatal(tool, r)
 		}
 	}
 	gw.Close()
-	if r := connectionCall("web", "ok", obj{}); r["outcome"] != "error" || r["error_code"] != "unreachable" {
+	if r := connectionCall("web", "ok", M{}); r["outcome"] != "error" || r["error_code"] != "unreachable" {
 		t.Fatal("refused connection", r)
 	}
 }
@@ -47,10 +47,10 @@ func TestConnectionCallOutcomes(t *testing.T) {
 // Risk: an operation the coordinator offers a profile (fleetOperations) never reaches the model, or a name outside the
 // list is forwarded as an agent call.
 func TestFleetOperationsListed(t *testing.T) {
-	ctx := obj{"operations": []any{obj{"name": "task_create", "description": "d"}, obj{"name": "ask", "description": "dup"}}}
+	ctx := M{"operations": []any{M{"name": "task_create", "description": "d"}, M{"name": "ask", "description": "dup"}}}
 	names := []string{}
 	for _, x := range mcpTools(ctx)["tools"].([]any) {
-		names = append(names, sv(get(x, "name")))
+		names = append(names, jStr(jAt(x, "name")))
 	}
 	n := 0
 	for _, x := range names {
@@ -64,7 +64,7 @@ func TestFleetOperationsListed(t *testing.T) {
 	if n != 11 {
 		t.Fatalf("task_create once and ask once expected, got %v", names)
 	}
-	if len(operationsOf(obj{})) != 0 {
+	if len(operationsOf(M{})) != 0 {
 		t.Fatal("no operations without the list")
 	}
 }

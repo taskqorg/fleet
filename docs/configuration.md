@@ -26,7 +26,7 @@ Ordinary sessions run one-off work and experiments without a pipeline. Formalise
 
 ## Project settings
 
-Every setting is per project; absent key means the default below. The coordinator reads every `config/projects/<id>/project.json` (no fixed list) and `projectSettings` in `go/coordinator/b_projects.go` validates it: a wrong type or enum value fails the project (500 `Invalid project setting <key>`); an unknown key is kept out and listed in `unknownKeys`, never dropped silently.
+Every setting is per project; absent key means the default below. The coordinator reads every `config/projects/<id>/project.json` (no fixed list) and `projectSettings` in `go/coordinator/projects.go` validates it: a wrong type or enum value fails the project (500 `Invalid project setting <key>`); an unknown key is kept out and listed in `unknownKeys`, never dropped silently.
 
 | Key | Default | Values and effect |
 |---|---|---|
