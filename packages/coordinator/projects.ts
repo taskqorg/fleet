@@ -1,4 +1,4 @@
-import {actor as who,requester,requestPerson} from './people.ts';
+import {actor as who,requester,requestPerson,mayAccessProject} from './people.ts';
 import {LONG_OPERATIONS,READ_OPERATIONS} from './store.ts';
 import {readFileSync,realpathSync,readdirSync,existsSync} from 'node:fs';
 import {resolve,sep} from 'node:path';
@@ -60,7 +60,7 @@ export function registerProjects(app:FastifyInstance,store:Store,config:{directo
    const q=(await get(b.questionId,'project-question'));if(typeof b.answer!=='string'||!b.answer||b.answer.length>4000)fail(400,'Expected answer');if(q.state==='answered'){if(q.answer!==b.answer)fail(409,'Answer already recorded');return q}Object.assign(q,{state:'answered',answer:b.answer,answeredAt:Date.now(),answeredBy:who('operator')});await put('project-question',q);return q},
   question_history:async (b:any)=>{project(b.projectId);return {questions:(await all('project-question',{projectId:b.projectId})).filter(q=>q.projectId===b.projectId)}},project_context:(b:any)=>project(b.projectId),catalogue:async (b:any)=>(await catalogue(b.projectId)),pipeline_run:runPipeline,pipeline_get:async (b:any)=>{if(typeof b.runId!=='string'||!b.runId||b.runId.length>200)fail(400,'Expected runId');const r=(await get(b.runId,'pipeline-run'));if(b.projectId&&r.projectId!==b.projectId)fail(403,'Pipeline belongs to another project');return r},pipeline_history:async (b:any)=>{project(b.projectId);return {runs:(await all('pipeline-run',{projectId:b.projectId})).filter(r=>r.projectId===b.projectId)}}};
  // A person other than the owner lists only granted projects (people-access §2).
- operations.project_list=()=>{const p=requestPerson.getStore();return {projects:ids().filter(id=>!p||p.owner||p.grants.some(g=>g.kind==='project'&&g.id===id)).map(project)}};
+ operations.project_list=()=>{const p=requestPerson.getStore();return {projects:ids().filter(id=>!p||mayAccessProject(p,id)).map(project)}};
  app.get('/api/projects',async()=>operations.project_list());
  app.get('/api/projects/:id',async(req:any)=>operations.project_context({projectId:req.params.id}));
  app.get('/api/projects/:id/catalogue',async(req:any)=>(await operations.catalogue({projectId:req.params.id})));

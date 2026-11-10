@@ -516,7 +516,7 @@ CREATE OR REPLACE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$
 -- grants (fleet.project_ids, set per transaction) and every host, subscription or API key connection document, or store, they
 -- hold (fleet.person). The coordinator's own scope '*' is unchanged.
 DROP POLICY project_scope ON document;
-CREATE POLICY project_scope ON document USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')) OR (kind IN ('host', 'managed-account', 'api-connection') AND data->>'holder' = current_setting('fleet.person', true)));
+CREATE POLICY project_scope ON document USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')) OR (kind IN ('host', 'managed-account', 'api-connection') AND data->>'holder' = current_setting('fleet.person', true)) OR (kind = 'host-observation' AND data->>'holder' = current_setting('fleet.person', true)));
 ALTER TABLE store ADD COLUMN holder text NULL;
 DROP POLICY operator_scope ON store;
 CREATE POLICY operator_scope ON store USING (current_setting('fleet.project_ids', true) = '*' OR holder = current_setting('fleet.person', true));

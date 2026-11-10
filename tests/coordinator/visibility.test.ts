@@ -34,6 +34,15 @@ test('Alina sees only desiign and her own host; architect operations 403; the ow
   assert.equal((await op('project_context',{projectId:'hello-world'},ALINA)).statusCode,404);
   assert.equal((await op('task_create',{projectId:'hello-world',title:'x'},ALINA)).statusCode,404);
   assert.equal((await json('task_create',{projectId:'desiign',title:'hers'},ALINA)).createdBy,ALINA);
+  // A write outside her scope (no project) is refused as 403, not 500.
+  assert.equal((await op('task_create',{title:'no project'},ALINA)).statusCode,403);
+  // Her host's own state is visible to her (the observation carries the holder).
+  assert.equal((await app.inject({method:'POST',url:'/api/hosts/poll',headers:{authorization:'Bearer alina-secret-0123456789abcdef0123456789'},payload:{platform:'darwin'}})).statusCode,200);
+  assert.ok((await json('hosts_list',{},ALINA)).hosts[0].lastSeenAt);
+  // The change feed shows her only desiign rows; the owner sees both projects.
+  const other=(await json('task_list')).tasks.find((t:any)=>t.projectId==='hello-world').id;
+  const feed=async(person:string)=>(await json('changes_since',{cursor:0},person)).changes.map((c:any)=>c.taskId??c.id);
+  assert.ok(!(await feed(ALINA)).includes(other));assert.ok((await feed(ALINA)).length>0);assert.ok((await feed(OWNER)).includes(other));
   // Architect views: 403 for an operator.
   for(const name of ['account_list','lab_experiments_list'])assert.equal((await op(name,{},ALINA)).statusCode,403,name);
   assert.equal((await app.inject({method:'GET',url:'/api/accounts',headers:{authorization:'Bearer browser','x-fleet-person':ALINA}})).statusCode,403);

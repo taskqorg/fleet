@@ -49,6 +49,9 @@ const notFound=()=>{throw Object.assign(Error('Not found'),{statusCode:404})};
 export type Scope={projectIds:string,person:string};
 export function createStore(url:string,opts:{scope?:string,role?:string}={}){
  let scopeOf:()=>Scope|null=()=>null;
+ // unscoped(fn): the coordinator's own reads and writes inside a person's request (placement, account and host choice) run
+ // in '*' (§2: dispatch and helpers filter in code).
+ const system=new AsyncLocalStorage<boolean>();const scope=()=>system.getStore()?null:scopeOf();
  const db=backend(url,opts.scope??'*');
  // Legacy kinds served from typed tables (executions.ts, tasks.ts); every other kind is a document.
  const kinds=new Map<string,Adapter>();
@@ -62,7 +65,7 @@ export function createStore(url:string,opts:{scope?:string,role?:string}={}){
  // Query counts by SQL text, for profiling and the poll query budget test.
  const stats=new Map<string,number>();const count=(k:string)=>stats.set(k,(stats.get(k)??0)+1);
  let savepoints=0;
- const q:Query=async(s,p)=>{count(s);const c=current.getStore(),t=c?.t;if(!t||t.done)return scopeOf()?run(()=>q(s,p),/^\s*SELECT/i.test(s)?'read':'write',false):db.query(s,p);
+ const q:Query=async(s,p)=>{count(s);const c=current.getStore(),t=c?.t;if(!t||t.done)return scope()?run(()=>q(s,p),/^\s*(SELECT|WITH)/i.test(s)?'read':'write',false):db.query(s,p);
   // A savepoint is opened lazily, just before the first write inside a nested tx: reads never pay for one, and the state
   // before the first write equals the state at the start of the nested call. Outer frames get theirs first.
   if(c!.frame&&!/^\s*SELECT/i.test(s)){const chain:Frame[]=[];for(let f:Frame|null=c!.frame;f&&!f.sp;f=f.parent)chain.unshift(f);for(const f of chain){f.sp='s'+(++savepoints);count('SAVEPOINT');await t.q('SAVEPOINT '+f.sp)}}
@@ -85,7 +88,7 @@ export function createStore(url:string,opts:{scope?:string,role?:string}={}){
   for(let attempt=0;;attempt++){const t:Tx={q:null as any as Query,done:false,mode,held:new Set(),release:[]};
    try{const out:{v?:T,e?:unknown}=await db.tx(async tq=>{
      t.q=async(s,p)=>{if(t.doomed)throw t.doomed;try{return await tq(s,p)}catch(e){if(retryable(e))t.doomed=e;throw t.doomed??e}};
-     try{const sc=scopeOf();if(sc){if(opts.role)await t.q('SET LOCAL ROLE '+opts.role.replace(/\W/g,''));await t.q("SELECT set_config('fleet.project_ids',$1,true),set_config('fleet.person',$2,true)",[sc.projectIds,sc.person])}
+     try{const sc=scope();if(sc){if(opts.role)await t.q('SET LOCAL ROLE '+opts.role.replace(/\W/g,''));await t.q("SELECT set_config('fleet.project_ids',$1,true),set_config('fleet.person',$2,true)",[sc.projectIds,sc.person])}
      if(mode==='write')await lockIn(t,lock??GLOBAL);const v=await current.run({t},fn);if(t.doomed)throw t.doomed;return {v}}
      catch(e){if(t.doomed)throw t.doomed;if(commitOnError&&!retryable(e))return {e};throw e}finally{t.done=true}},mode);
     if('e' in out)throw out.e;return out.v as T}
@@ -121,6 +124,9 @@ export function createStore(url:string,opts:{scope?:string,role?:string}={}){
   lock:async(key:string)=>{const t=current.getStore()?.t;if(!t||t.done||t.mode!=='write')throw Error('lock() needs a write transaction');await lockIn(t,key)},
   query:(sql:string,params:any[]=[])=>q(sql,params).then(r=>r.rows),
   setScope:(fn:()=>Scope|null)=>{scopeOf=fn},
+  unscoped:async<T>(fn:()=>Promise<T>|T):Promise<T>=>{const t=current.getStore()?.t,sc=scope(),open=!!t&&!t.done&&!!sc;
+   if(open)await t!.q("SELECT set_config('fleet.project_ids','*',true)");
+   try{return await system.run(true,fn)}finally{if(open)await t!.q("SELECT set_config('fleet.project_ids',$1,true)",[sc!.projectIds])}},
   // upTo stops after that migration (tests start from an older schema).
   async migrate(upTo=Infinity){
    await db.exec('CREATE TABLE IF NOT EXISTS schema_migration(version int PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT now())');
