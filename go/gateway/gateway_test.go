@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -391,4 +393,77 @@ func TestListenRefusesNonLoopback(t *testing.T) {
 		l.Close()
 		t.Fatal("bound a non-loopback address")
 	}
+}
+
+// Requirement: a provider call is sent at most as the tool's replay rule allows (fleet-connections.md §2).
+// Risk: Go's client follows a 307/308 with the same method and body, so a redirected POST is charged a second time.
+func TestProviderRedirectIsNeverFollowed(t *testing.T) {
+	second := newProvider(t, func(string) int { return 200 })
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, second.url+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(first.Close)
+	gw := newFixture(t, first.URL, "invented-key-a")
+	status, _, body := gw.call("submit", testToken)
+	expect(t, []any{status, body["error"]}, []any{502, "provider-redirect"}, "redirected submit")
+	expect(t, len(second.calls()), 0, "redirect target calls")
+	lines, _ := gw.spool()
+	expect(t, lines[0]["outcome"], "unknown", "outcome")
+}
+
+// Requirement: every billable call is either durably spooled or counted as lost (fleet-connections.md §3).
+// Risk: when the lost counter cannot be persisted either, the loss is silent after a restart.
+func TestSpoolLossMarkerFailureIsReported(t *testing.T) {
+	upstream := newProvider(t, func(string) int { return 200 })
+	gw := newFixture(t, upstream.url, "invented-key-a")
+	state := filepath.Join(gw.dir, "state")
+	os.RemoveAll(filepath.Join(state, "spool"))
+	os.WriteFile(filepath.Join(state, "spool"), nil, 0o600) // the spool directory is now a file: writes fail
+	os.Mkdir(filepath.Join(state, "spool-lost.tmp"), 0o700) // and the lost counter cannot be written
+	gw.call("web_search", testToken)
+	expect(t, field(gw.health(), "spool"), map[string]any{"lost": 1, "lostRecorded": false}, "spool health")
+}
+
+// Requirement: a caller that gives up releases its provider request (fleet-connections.md §2).
+// Risk: the provider request runs to the gateway timeout, and an idempotent tool fails over to another paid key;
+// a request already sent must still be recorded with outcome unknown.
+func TestCallerCancellationReachesProvider(t *testing.T) {
+	released, stop := make(chan time.Duration, 4), make(chan struct{})
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		begun := time.Now()
+		io.ReadAll(r.Body) // the server notices a closed connection only after the body is read
+		select {
+		case <-r.Context().Done():
+		case <-stop:
+		}
+		released <- time.Since(begun)
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(stop) }) // runs first: no provider handler outlives the test
+	gw := newFixture(t, server.URL, "invented-key-a", "invented-key-b")
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	request, _ := http.NewRequestWithContext(ctx, "POST", "http://"+gw.address+"/v1/call/tavily/web_search", strings.NewReader(`{"query":"q"}`))
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	if _, err := http.DefaultClient.Do(request); err == nil {
+		t.Fatal("caller was answered")
+	}
+	select {
+	case held := <-released:
+		if held > time.Second {
+			t.Fatalf("provider request held %v after the caller left", held)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("provider request not released; %d requests", calls.Load())
+	}
+	for end := time.Now().Add(3 * time.Second); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
+		if lines, _ := gw.spool(); len(lines) == 1 {
+			expect(t, []any{lines[0]["outcome"], lines[0]["errorCode"]}, []any{"unknown", "caller-cancelled"}, "spooled cancel")
+			expect(t, calls.Load(), int32(1), "provider requests")
+			return
+		}
+	}
+	t.Fatal("no spool line")
 }

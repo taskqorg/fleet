@@ -246,15 +246,20 @@ func readSnapshot(path string) ([]byte, *snapshot, error) {
 
 // ---------------------------------------------------------------- spool
 
-// spool keeps one JSON line per call in <state>/spool/<day>.jsonl; a line that cannot be written counts in the persisted lost counter.
+// spool keeps one JSON line per call in <state>/spool/<day>.jsonl.
+// Durability contract: append returns only after the line is fsynced (and, for a new day file, its directory entry),
+// so a call answered to its caller survives a machine crash. A line that cannot be made durable counts in the lost
+// counter, persisted in <state>/spool-lost; lostRecorded is false while that counter on disk is behind the real one.
 type spool struct {
-	dir   string
-	lost  atomic.Uint64
-	write sync.Mutex
+	dir          string
+	lost         atomic.Uint64
+	lostRecorded atomic.Bool
+	write        sync.Mutex
 }
 
 func openSpool(stateDir string) (*spool, error) {
 	s := &spool{dir: filepath.Join(stateDir, "spool")}
+	s.lostRecorded.Store(true)
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return nil, fmt.Errorf("spool directory: %w", err)
 	}
@@ -269,18 +274,42 @@ func (s *spool) append(line map[string]any) {
 	s.write.Lock()
 	defer s.write.Unlock()
 	data, _ := json.Marshal(line)
-	file, err := os.OpenFile(filepath.Join(s.dir, day(nowMs())+".jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err == nil {
-		_, err = file.Write(append(data, '\n'))
-		if closeErr := file.Close(); err == nil {
-			err = closeErr
-		}
-	}
-	if err != nil {
+	if err := s.appendDurably(append(data, '\n')); err != nil {
 		lost := s.lost.Add(1)
 		logf("spool write failed (%v); lost %d", err, lost)
-		writeAtomic(filepath.Join(filepath.Dir(s.dir), "spool-lost"), []byte(strconv.FormatUint(lost, 10)))
+		path := filepath.Join(filepath.Dir(s.dir), "spool-lost")
+		if err := writeAtomic(path, []byte(strconv.FormatUint(lost, 10))); err != nil {
+			s.lostRecorded.Store(false)
+			logf("lost counter not persisted (%v); %s is behind by at least one line", err, path)
+		} else {
+			s.lostRecorded.Store(true)
+		}
 	}
+}
+
+func (s *spool) appendDurably(data []byte) error {
+	path := filepath.Join(s.dir, day(nowMs())+".jsonl")
+	_, statErr := os.Stat(path)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = file.Write(data)
+	if err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil && statErr != nil {
+		// A new file: its name is durable only once the directory is synced.
+		var dir *os.File
+		if dir, err = os.Open(s.dir); err == nil {
+			err = dir.Sync()
+			dir.Close()
+		}
+	}
+	return err
 }
 
 // ---------------------------------------------------------------- service
@@ -332,7 +361,8 @@ func newGateway(c *config) (*gateway, error) {
 		return nil, fmt.Errorf("state directory: %w", err)
 	}
 	g := &gateway{config: c, disabled: map[string]disabledKey{}, current: map[string]int{}, started: time.Now(),
-		client: &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, IdleConnTimeout: 90 * time.Second, MaxIdleConnsPerHost: 64}}}
+		// Redirects are never followed: a 307/308 resends the method and body, which could charge a call twice.
+		client: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, IdleConnTimeout: 90 * time.Second, MaxIdleConnsPerHost: 64}}}
 	if text, err := os.ReadFile(filepath.Join(c.StateDir, "disabled-keys")); err == nil {
 		for _, line := range strings.Split(string(text), "\n") {
 			var id string
@@ -451,8 +481,9 @@ func (g *gateway) usable(c *connection) []string {
 }
 
 // send makes one provider request; the timeout covers the answer and, separately, reading its body.
-func (g *gateway) send(method, url, value string, body []byte, headers map[string]string) (*http.Response, []byte, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+// Cancelling caller ends the request too; it does not undo what the provider already did.
+func (g *gateway) send(caller context.Context, method, url, value string, body []byte, headers map[string]string) (*http.Response, []byte, error) {
+	ctx, cancel := context.WithCancel(caller)
 	defer cancel()
 	var timedOut atomic.Bool
 	timer := time.AfterFunc(g.config.requestTimeout, func() { timedOut.Store(true); cancel() })
@@ -496,7 +527,7 @@ func (e errBody) orNil() error {
 	return e
 }
 
-func (g *gateway) call(name string, c *connection, p *provider, t *tool, path string, body []byte) *answer {
+func (g *gateway) call(ctx context.Context, name string, c *connection, p *provider, t *tool, path string, body []byte) *answer {
 	keys := g.usable(c)
 	if len(keys) == 0 {
 		return refusal(503, "error", "no-usable-key", "no active key; the holder or the owner must act")
@@ -513,9 +544,14 @@ func (g *gateway) call(name string, c *connection, p *provider, t *tool, path st
 			lastFailure = "key " + id + " has no value file"
 			continue
 		}
-		response, data, err := g.send(t.Method, p.BaseURL+path, value, body, t.Headers)
+		response, data, err := g.send(ctx, t.Method, p.BaseURL+path, value, body, t.Headers)
 		var cut errBody
 		switch {
+		case err != nil && ctx.Err() != nil:
+			// The caller left: no failover, and a request already sent may still have been charged.
+			a := refusal(499, "unknown", "caller-cancelled", "the caller cancelled the call")
+			a.key = id
+			return a
 		case errors.Is(err, context.DeadlineExceeded) && response == nil:
 			a := refusal(504, "unknown", "provider-timeout", "the provider did not answer in time")
 			a.key = id
@@ -542,6 +578,12 @@ func (g *gateway) call(name string, c *connection, p *provider, t *tool, path st
 			continue
 		}
 		status := response.StatusCode
+		if status >= 300 && status <= 399 {
+			// Not followed; whether the provider acted before redirecting is not known.
+			a := refusal(502, "unknown", "provider-redirect", fmt.Sprintf("the provider answered HTTP %d; the redirect is not followed", status))
+			a.key = id
+			return a
+		}
 		if status == 401 || status == 402 {
 			a := refusal(502, "error", fmt.Sprintf("key-disabled-%d", status), fmt.Sprintf("the provider refused key %s with HTTP %d; the key is disabled", id, status))
 			a.key, a.disabled = id, status
@@ -574,7 +616,7 @@ func (g *gateway) call(name string, c *connection, p *provider, t *tool, path st
 }
 
 // usageReport is the provider's own per-key usage for every key with a value (reconcile, §2); unknown is reported, never guessed.
-func (g *gateway) usageReport() map[string]any {
+func (g *gateway) usageReport(ctx context.Context) map[string]any {
 	s := g.snapshot.Load()
 	rows := []map[string]any{}
 	for name, c := range s.Connections {
@@ -588,7 +630,7 @@ func (g *gateway) usageReport() map[string]any {
 				continue
 			}
 			row := map[string]any{"connection": name, "key": k.ID, "usage": nil}
-			response, data, err := g.send("GET", p.BaseURL+p.Usage.Path, value, nil, nil)
+			response, data, err := g.send(ctx, "GET", p.BaseURL+p.Usage.Path, value, nil, nil)
 			switch {
 			case errors.Is(err, context.DeadlineExceeded) && response == nil:
 				row["unknown"] = "usage request timed out"
@@ -650,7 +692,7 @@ func (g *gateway) health() map[string]any {
 		"snapshot": map[string]any{"revision": s.revision, "age_s": max(int64(nowMs())-int64(*s.GeneratedMs), 0) / 1000,
 			"tokens": len(s.tokens), "rejected": g.rejected.Load()},
 		"keys":  map[string]any{"total": keys, "usable": usable, "disabled": disabled},
-		"spool": map[string]any{"lost": g.spool.lost.Load()},
+		"spool": map[string]any{"lost": g.spool.lost.Load(), "lostRecorded": g.spool.lostRecorded.Load()},
 	}
 }
 
@@ -682,7 +724,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 401, map[string]string{"error": "unauthenticated", "reason": "the coordinator's usage token is required"})
 			return
 		}
-		writeJSON(w, 200, g.usageReport())
+		writeJSON(w, 200, g.usageReport(r.Context()))
 		return
 	}
 	route, _ := strings.CutPrefix(r.URL.Path, "/v1/call/")
@@ -744,7 +786,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if t.Method != "GET" {
 			sent, _ = json.Marshal(body)
 		}
-		a = g.call(connectionName, c, p, t, path, sent)
+		a = g.call(r.Context(), connectionName, c, p, t, path, sent)
 	}
 	if a.disabled != 0 {
 		g.onDisabled(a.key, a.disabled)

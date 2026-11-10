@@ -19,6 +19,8 @@ const (
 	accessIssuer   = "https://graduz.cloudflareaccess.com"
 	accessAudience = "352f4c75fdee7abac35e5ee8739ab622de4a368725eedac025c33b4e32df1ab0"
 	keysLifetime   = 5 * time.Minute
+	// An unknown kid refetches a set older than this (a rotation); younger sets refuse it from the cache.
+	unknownRefetch = 30 * time.Second
 )
 
 // guard answers Caddy's forward_auth: a verified Access JWT gets 204 with the browser credential and the person's e-mail;
@@ -28,46 +30,80 @@ type guard struct {
 	certsURL string
 	client   *http.Client
 	lock     sync.Mutex
-	keys     map[string]*rsa.PublicKey
-	fetched  time.Time
+	// The last fetched key set; an id it lacks stays unknown until the set is unknownRefetch old.
+	keys    map[string]*rsa.PublicKey
+	fetched time.Time
+	// Closed when the running fetch ends; nil when none runs. The fetch itself runs outside lock.
+	inflight chan struct{}
 }
 
-var errKeysUnavailable = errors.New("signing keys unavailable")
+var (
+	errKeysUnavailable = errors.New("signing keys unavailable")
+	errUnknownKey      = errors.New("unknown signing key")
+)
 
 func newGuard(secret, certsURL string) *guard {
 	return &guard{secret: secret, certsURL: certsURL, client: &http.Client{Timeout: 5 * time.Second}}
 }
 
-// key returns the signing key by id, fetching the key set when it is old or does not hold the id.
+// key returns the signing key by id from a fresh key set, fetching the set when it is old or absent.
+// One fetch runs at a time; other callers wait for its result instead of starting their own.
 func (g *guard) key(id string) (*rsa.PublicKey, error) {
-	g.lock.Lock()
-	defer g.lock.Unlock()
-	if k := g.keys[id]; k != nil && time.Since(g.fetched) < keysLifetime {
-		return k, nil
+	for waited := false; ; waited = true {
+		g.lock.Lock()
+		if age := time.Since(g.fetched); g.keys != nil && age < keysLifetime {
+			if k := g.keys[id]; k != nil || waited || age < unknownRefetch {
+				g.lock.Unlock()
+				if k == nil {
+					return nil, errUnknownKey
+				}
+				return k, nil
+			}
+		}
+		if waited {
+			g.lock.Unlock()
+			return nil, errKeysUnavailable
+		}
+		done := g.inflight
+		if done == nil {
+			done = make(chan struct{})
+			g.inflight = done
+			g.lock.Unlock()
+			keys := g.fetch()
+			g.lock.Lock()
+			if keys != nil {
+				g.keys, g.fetched = keys, time.Now()
+			}
+			g.inflight = nil
+			close(done)
+		}
+		g.lock.Unlock()
+		<-done
 	}
+}
+
+// fetch reads the key set; nil when it cannot be fetched or read.
+func (g *guard) fetch() map[string]*rsa.PublicKey {
 	response, err := g.client.Get(g.certsURL)
 	if err != nil {
-		return nil, errKeysUnavailable
+		return nil
 	}
 	defer response.Body.Close()
 	var set struct {
 		Keys []struct{ Kid, Kty, N, E string } `json:"keys"`
 	}
 	if response.StatusCode != 200 || json.NewDecoder(response.Body).Decode(&set) != nil {
-		return nil, errKeysUnavailable
+		return nil
 	}
-	g.keys, g.fetched = map[string]*rsa.PublicKey{}, time.Now()
+	keys := map[string]*rsa.PublicKey{}
 	for _, k := range set.Keys {
 		n, errN := base64.RawURLEncoding.DecodeString(k.N)
 		e, errE := base64.RawURLEncoding.DecodeString(k.E)
 		if k.Kty == "RSA" && errN == nil && errE == nil && len(e) <= 4 {
-			g.keys[k.Kid] = &rsa.PublicKey{N: new(big.Int).SetBytes(n), E: int(new(big.Int).SetBytes(e).Int64())}
+			keys[k.Kid] = &rsa.PublicKey{N: new(big.Int).SetBytes(n), E: int(new(big.Int).SetBytes(e).Int64())}
 		}
 	}
-	if k := g.keys[id]; k != nil {
-		return k, nil
-	}
-	return nil, errors.New("unknown signing key")
+	return keys
 }
 
 // verify checks an RS256 JWT for the Access issuer and audience and returns its e-mail claim.
