@@ -1,4 +1,4 @@
-# Build and test gate the job; the design report never does (D6, D14).
+# Jobs go, app and browser gate the merge; the design, docs and lab reports never do (D6, D14).
 # ubuntu-24.04 is pinned because Playwright has no Chromium build for ubuntu-latest (26.04) yet.
 # Least privilege: no token scopes by default; the build job reads only, and only the comment job,
 # which checks out no PR code, may write a PR comment.
@@ -12,15 +12,54 @@ on:
     branches: [main]
 permissions: {}
 jobs:
-  build-test-design:
+  # Go (docs/designs/fleet-stack.md): generated-code drift, vet, unit tests with -race, the executor's MCP adapter tests,
+  # the outside tests against a -race coordinator on the runner's PostgreSQL, a Windows compile of the coordinator.
+  # Node only as the test runner: the outside tests import node: builtins, so no pnpm install here.
+  go:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      GOFLAGS: -mod=readonly
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Generated code is committed (go/contract): regenerating must not change it.
+      - run: cd go && go generate ./... && { test -z "$(git status --porcelain)" || { git status --porcelain; git diff; exit 1; }; }
+      - run: cd go && go vet ./... && GOOS=windows GOARCH=amd64 go vet ./coordinator
+      # -race needs cgo on Linux; release binaries stay CGO_ENABLED=0 (deploy/build-release.sh, app job).
+      - run: cd go && CGO_ENABLED=1 go test -race ./...
+      # The outside tests run a -race coordinator; GORACE halts it at the first race, so the test of that moment fails.
+      - name: Build the test binaries
+        run: |
+          cd go
+          CGO_ENABLED=1 go build -race -o bin/fleet-coordinator ./coordinator
+          CGO_ENABLED=0 go build -o bin/fleet-executor ./executor
+      # /api/health reports vcs.modified as dirty; a build from the CI checkout must be clean (untracked files count).
+      - run: go version -m go/bin/fleet-coordinator | grep -q 'vcs.modified=false' || { git status --porcelain; exit 1; }
+      # The executor's MCP adapter from Node against the Go binary: replayed stdio exchanges and artifact path confinement.
+      - run: FLEET_EXECUTOR_BIN="$PWD/go/bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts
+      - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" GORACE=halt_on_error=1 tests/go/run.sh
+      - name: govulncheck (warning only)
+        continue-on-error: true
+        run: cd go && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+  # App and release: contract lint, test-rule report, typecheck and bundle, UI unit tests, then the release tarballs of
+  # every target from deploy/build-release.sh, the same script and flags the release workflow uses.
+  app:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
-      # Full history: the docs report diffs against the merge base or HEAD^.
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           persist-credentials: false
       - name: Check out shared rules
         uses: actions/checkout@v4
@@ -42,6 +81,42 @@ jobs:
         run: |
           node scripts/test-rule-report.ts --self-check
           node scripts/test-rule-report.ts
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run app:build
+      - run: node --test tests/ui/*.test.ts
+      - name: Pack the release
+        run: |
+          mkdir release && deploy/build-release.sh HEAD release "0.0.0-${GITHUB_SHA::12}" "" linux/amd64 darwin/arm64
+          mkdir t && tar -xzf release/fleet-*-linux-amd64.tgz -C t
+          for b in t/fleet-*; do go version -m "$b" | grep -q 'CGO_ENABLED=0' || { echo "$b: cgo enabled"; exit 1; }; done
+          for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/t/$b" selftest); done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fleet-release-${{ github.sha }}
+          path: release/
+          if-no-files-found: error
+  # Browser: one build, Chromium from a cache keyed on the Playwright version, then every browser check in sequence:
+  # filter path (fleet-view-urls-and-list-path.md §4), Conversations (fleet-conversations.md "Browser check"), the
+  # design book and report. The docs and design reports warn only (D6, D14).
+  browser:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      # Full history: the docs report diffs against the merge base or HEAD^.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
       - name: Docs report (warning only)
         if: always()
         continue-on-error: true
@@ -54,22 +129,25 @@ jobs:
           cache-dependency-path: go/go.sum
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      # /api/health reports vcs.modified as dirty; a build from the CI checkout must be clean (untracked files count).
-      - run: go version -m go/bin/fleet-coordinator | grep -q 'vcs.modified=false' || { git status --porcelain; exit 1; }
-      # The executor's MCP adapter from Node against the Go binary: replayed stdio exchanges and artifact path confinement.
-      # Its Go tests run in the go job.
-      - run: (cd go && CGO_ENABLED=0 go build -o bin/fleet-executor ./executor) && FLEET_EXECUTOR_BIN="$PWD/go/bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts
-      # pnpm test runs tests/go/run.sh: the Go binary on the runner's own PostgreSQL (tests/harness.ts starts it).
-      - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pnpm test
+      - id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - id: chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ steps.playwright.outputs.version }}-chromium
+      - if: steps.chromium.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+      - if: steps.chromium.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+      - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/filter.check.ts --assert
+      - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/conversations.check.ts
       # Use-case registry drift (docs/designs/fleet-lab.md "Use-case registry and examples"): warns, never blocks. Only Fleet's own sources are
       # checked here; the other org repos are not checked out, so their entries report nothing.
       - name: Use-case drift (warning only)
         if: always()
         continue-on-error: true
         run: node scripts/lab-drift.ts
-      - name: Install Chromium for the design checks
-        if: always()
-        run: pnpm exec playwright install --with-deps chromium
       - name: Design report (warnings only)
         if: always()
         continue-on-error: true
@@ -87,98 +165,8 @@ jobs:
             docs/design-system/book/index.html
             docs/design-system/pages/mockups.html
           if-no-files-found: warn
-  # The filter-path check (docs/designs/fleet-view-urls-and-list-path.md §4): its own job, so it does not slow build-test-design.
-  filter-check:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
-      - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pnpm run check:filter
-  # The Conversations browser check (docs/designs/fleet-conversations.md, "Browser check"): asserts behaviour, reports timings.
-  conversations-check:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
-      - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pnpm run check:conversations
-  # Go code (docs/designs/fleet-stack.md): vet, then one Linux job cross-builds every target without cgo.
-  go:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    env:
-      CGO_ENABLED: '0'
-      GOFLAGS: -mod=readonly
-    defaults:
-      run:
-        working-directory: go
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
-      # Generated code is committed (go/contract): regenerating must not change it.
-      - run: go generate ./... && { test -z "$(git status --porcelain)" || { git status --porcelain; git diff; exit 1; }; }
-      - run: go vet ./... && go test ./...  # outside tests run in pnpm test (build-test-design)
-      - name: Cross-build
-        run: |
-          mkdir -p dist
-          for t in linux/amd64 darwin/arm64 windows/amd64; do
-            os=${t%/*} arch=${t#*/} ext=; [ "$os" = windows ] && ext=.exe
-            file="dist/fleet-coordinator-$os-$arch$ext"
-            GOOS=$os GOARCH=$arch go build -trimpath -o "$file" ./coordinator
-            go version -m "$file" | grep -q 'CGO_ENABLED=0' || { echo "$file: cgo enabled"; exit 1; }
-            (cd dist && sha256sum "${file#dist/}" | tee "${file#dist/}.sha256")
-          done
-          # The gateway (with its `guard` command), the executor and fleet-update: linux/amd64 and darwin/arm64 only
-          # (Windows not built: executor process control needs its own port).
-          for t in linux/amd64 darwin/arm64; do for cmd in gateway executor update; do
-            os=${t%/*} arch=${t#*/} file="dist/fleet-$cmd-${t%/*}-${t#*/}"
-            GOOS=$os GOARCH=$arch go build -trimpath -o "$file" "./$cmd"
-            go version -m "$file" | grep -q 'CGO_ENABLED=0' || { echo "$file: cgo enabled"; exit 1; }
-            (cd dist && sha256sum "${file#dist/}" | tee "${file#dist/}.sha256")
-          done; done
-      - name: govulncheck (warning only)
-        continue-on-error: true
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
-      - uses: actions/upload-artifact@v4
-        with:
-          name: fleet-go-${{ github.sha }}
-          path: go/dist/
-          if-no-files-found: error
   comment:
-    needs: build-test-design
+    needs: browser
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     permissions:
@@ -215,7 +203,7 @@ jobs:
   # One open issue carries the docs report findings from main (docs/designs/fleet-docs-governance.md#from-warning-to-work):
   # updated each push, created with label docs when missing, closed when only docs.size and docs.delta remain.
   docs-order:
-    needs: build-test-design
+    needs: browser
     if: always() && github.event_name == 'push'
     runs-on: ubuntu-24.04
     permissions:
