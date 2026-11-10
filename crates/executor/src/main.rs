@@ -453,6 +453,10 @@ impl Executor {
                 return self.finish(&c, "failed", native.as_deref());
             }
             cmd.env("FLEET_RUN_TOKEN", p["runToken"].as_str().unwrap_or("")).env("FLEET_GATEWAY_URL", &gateway);
+            // The harness runs with its own HOME, so the client cannot find the executor's Access file by default: name it.
+            if let Some(f) = env::var_os("FLEET_CF_ACCESS_FILE").map(PathBuf::from).or_else(|| env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/fleet/cf-access-machine.env"))).filter(|f| f.is_file()) {
+                cmd.env("FLEET_CF_ACCESS_FILE", f);
+            }
         }
         for spec in &granted {
             let Some(conn) = spec["name"].as_str().filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')) else { continue };
