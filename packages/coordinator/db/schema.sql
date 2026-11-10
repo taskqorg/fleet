@@ -577,3 +577,7 @@ CREATE POLICY project_scope ON budget USING (current_setting('fleet.project_ids'
 -- migration 19: limit readings (docs/designs/fleet-people-access.md §8, slice 7) are read from limit_reading events; this keeps
 -- that read off a scan of every event.
 CREATE INDEX document_limit_reading ON document(seq) WHERE kind = 'event' AND data->>'type' = 'limit_reading';
+
+-- migration 20: Held tasks (docs/designs/fleet-pm-agent.md §4). A Held task is paused with pause_reason 'held': an agent's task
+-- waits for release before its first queue. NULL is an ordinary pause.
+ALTER TABLE task ADD COLUMN pause_reason text NULL;

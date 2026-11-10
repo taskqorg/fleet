@@ -8,7 +8,7 @@ export type View = {
 export type PageParams = { filter: { state?: string[]; search?: string; projectId?: (string | null)[]; archived?: boolean }; group?: string };
 
 // The one source of these lists: the coordinator's task_page and sessions_list import them.
-export const TASK_STATES = ['queued', 'in_progress', 'waiting', 'paused', 'completed', 'failed', 'cancelled'] as const;
+export const TASK_STATES = ['queued', 'in_progress', 'waiting', 'held', 'paused', 'completed', 'failed', 'cancelled'] as const;
 export type TaskState = typeof TASK_STATES[number];
 export const SESSION_STATES = ['idle', 'preparing', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'] as const;
 export type SessionState = typeof SESSION_STATES[number];

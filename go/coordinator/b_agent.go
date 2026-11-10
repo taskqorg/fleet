@@ -1446,6 +1446,9 @@ func init() {
 				}
 				f["projectId"], a["filter"] = focus, f // focus filters reads without a project (§2)
 			}
+			if name == "task_create" && a["projectId"] == nil && len(focus) == 1 {
+				a["projectId"] = focus[0] // one focus project is the default (§2)
+			}
 			args := json.RawMessage(js(a))
 			r, err := q.app.runOp(q, name, args)
 			if err != nil {

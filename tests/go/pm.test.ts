@@ -96,3 +96,25 @@ test('PM4 no project: the owner\'s PM without a project focuses on every project
   const all = ok(await pm.tool('task_page', {limit: 500})).tasks.map((t: any) => t.projectId);
   assert.ok(all.includes(PROJECT) && all.includes(OTHER), 'focus "*" of the owner lists every project');
 });
+
+test('PM5 Held: an agent task starts Held with the execution as creator, and leaves Held only by release (risk: an agent task runs before the person agrees, or a person\'s pause is undone by an agent)', {timeout: 30_000}, async () => {
+  const pm = await agent(MEMBER, {projectId: PROJECT, role: 'pm'});
+  ok(await pm.tool('focus_set', {projectIds: [PROJECT]}));
+  const t = ok(await pm.tool('task_create', {title: 'PM5 ' + randomUUID(), held: false, createdBy: 'operator'}));
+  assert.deepEqual([t.state, t.pauseReason, t.createdBy, t.directedBy, t.projectId], ['paused', 'held', 'execution:' + pm.executionId, MEMBER, PROJECT]);
+  const page = (state: string) => op('task_page', {filter: {state: [state], search: t.title}}).then(r => ok(r));
+  const held = await page('held');
+  assert.deepEqual([held.tasks.map((x: any) => x.id), held.counts.held, held.counts.paused], [[t.id], 1, 0]);
+  assert.equal((await page('paused')).tasks.length, 0, 'a Held task is not an ordinary pause');
+  assert.equal((await pm.tool('task_update', {taskId: t.id, action: 'resume'})).status, 400, 'agents change state only through the task tools');
+  ok(await pm.tool('task_update', {taskId: t.id, expectedOutcome: 'README summary'}));
+  assert.equal(ok(await pm.tool('task_release', {taskId: t.id})).state, 'queued');
+  assert.equal(ok(await pm.tool('task_hold', {taskId: t.id})).pauseReason, 'held');
+  assert.equal(ok(await pm.tool('task_release', {taskId: t.id})).state, 'queued');
+  ok(await op('task_update', {taskId: t.id, action: 'pause'}));
+  assert.equal((await pm.tool('task_release', {taskId: t.id})).status, 409, 'a person\'s pause is resumed by a person');
+  assert.equal((await pm.tool('task_hold', {taskId: t.id})).status, 409);
+  assert.equal(ok(await pm.tool('task_cancel', {taskId: t.id})).state, 'cancelled');
+  const person = ok(await op('task_create', {projectId: PROJECT, title: 'PM5 person ' + randomUUID()}));
+  assert.deepEqual([person.state, person.createdBy], ['queued', OWNER], 'the owner path is unchanged');
+});
