@@ -2,7 +2,7 @@
 
 **Code.** `DefinitionEditor`, with the [draft bar](../controls/draft-bar.md), [choice](../controls/choice.md) and [step list](../controls/step-list.md). Built in the book and the mockups; not in the app.
 
-**Job.** Read and change a definition that lives as a file in git: an agent configuration, a pipeline, a skill, a catalogue entry ([fleet.md, knowledge and rules](../../../fleet.md#knowledge-and-rules)). The file stays the one source; the editor never keeps a copy of its own.
+**Job.** Read and change a definition that lives as a file in git: an agent configuration, a pipeline, a skill, a catalogue entry ([fleet.md, knowledge and rules](../../../fleet.md#knowledge-and-rules)). Saved definitions are revisions in the coordinator's store and apply to the next execution; every revision is mirrored to a private config repository; the file in the code repository is the seed ([fleet-definition-editors.md](../../designs/fleet-definition-editors.md)).
 
 **Where.** The work area of [list and detail](list-detail.md). The control column lists the definitions of one kind. Its first group is "Changed, not saved".
 
@@ -20,7 +20,7 @@
 * *History*: saved revisions.
 
 **Rules.**
-* Saving is a commit; the person sees the diff first. Nothing is saved silently.
+* Saving creates a revision (the button keeps "Save as commit"); the person sees the diff first. Nothing is saved silently.
 * A draft can be tested without saving. The run records the draft's content and its difference from the base.
 * Links open the same object, not a copy: the agent named in a pipeline step opens that agent's editor.
 * Tools grant capability; credentials are never shown or entered here. They stay in [connections](../../connections.md).
