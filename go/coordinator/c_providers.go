@@ -12,7 +12,7 @@ var providers = func() map[string]any {
 	return p
 }()
 
-func providerTools(name string) doc { return cMap(cMap(providers[name])["tools"]) }
+func providerTools(name string) doc { return mapOf(mapOf(providers[name])["tools"]) }
 
 const providersJSON = `
 {

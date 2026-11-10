@@ -16,7 +16,7 @@ The Fleet host executor (Rust binary `fleet-executor`). It runs on each host, po
 
 ## Connections
 
-Talks only to the coordinator's `/api/hosts/*` routes (`packages/coordinator/app.ts`). Protocol tests: `tests/executor`. Host service files: `deploy/hosts`.
+Talks only to the coordinator's `/api/hosts/*` routes (`go/coordinator`). Protocol tests: `tests/executor`. Host service files: `deploy/hosts`.
 
 ## Remaining Python
 
@@ -25,11 +25,9 @@ requires Python on its execution host; no live host was inspected or changed.
 
 | File | Purpose and removal condition |
 |---|---|
-| `packages/coordinator/connection_call.py` | CLI and MCP client of `fleet-gateway` (docs/designs/fleet-connections.md §5); kept while connection MCP runs in Python. |
-| `packages/coordinator/delivery_worker.py` | Program delivery and account inspection on worker hosts; remains Python pending its C1 replacement. L4 does not claim Python-free hosts. |
+| `connection_call.py` | CLI and MCP client of `fleet-gateway` (docs/designs/fleet-connections.md §5), embedded in the executor; kept while connection MCP runs in Python. |
 | `deploy/infrastructure/origin_guard.py` | Origin admission service; kept independently of C1 and MCP. |
 | `deploy/infrastructure/test_origin_guard.py` | Origin guard regression checks; kept while that service exists. |
-| `tests/coordinator/fixtures/fake_connection.py` | Test stand-in for the connection client and the gateway spool; development and CI only. |
 | `tests/executor/account_status.py` | Program worker account observations; retained while the worker exists. |
 | `tests/executor/antigravity_acp.py`, `claude_mcp.py`, `codex_wire.py`, `fake_integration.py` | Fake native harness/transport checks; development and CI only. |
 | `tests/executor/delegation_approval.py`, `delegation_protocol.py`, `project_protocol.py`, `lab_protocol.py` | MCP grants, durable transport and read-only wire checks; development and CI only. The approval check validates Codex config for the Rust subcommand without starting a server. |

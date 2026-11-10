@@ -55,8 +55,8 @@ var (
 	}
 	// hookProfile: readTrustedProfile(directory, id).
 	hookProfile = readTrustedProfile
-	// hookProfileDigest: profileDigest(agentConfig).
-	hookProfileDigest = func(cfg doc) string { return profileDigest(cfg) }
+	// hookProfileDigest: frameHash(agentConfig).
+	hookProfileDigest = func(cfg doc) string { return frameHash(cfg) }
 	// hookReplyText: the assistant reply texts of an execution (threads.ts replyText).
 	hookReplyText = replyText
 	// hookConnectionsMint: a per-run token for granted connections; nil when none.

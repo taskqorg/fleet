@@ -45,7 +45,7 @@ func cRandomToken() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-func fingerprint(v string) string { return cSha([]byte(v))[:12] }
+func fingerprint(v string) string { return sha256hex([]byte(v))[:12] }
 
 func secretDir() string  { return os.Getenv("FLEET_SECRET_DIR") }
 func gatewayDir() string { return os.Getenv("FLEET_GATEWAY_DIR") }
@@ -85,8 +85,8 @@ func connByName(q *Request, name any) (doc, error) {
 }
 
 func connChange(q *Request, c doc, field string, previous, value any) error {
-	return putDoc(q, "setting-change", doc{"id": uuid(), "target": "connection:" + cStr(c["name"]), "holder": c["holder"], "field": field,
-		"previous": previous, "value": value, "actor": cActor(q, "operator"), "at": now()})
+	return putDoc(q, "setting-change", doc{"id": uuid(), "target": "connection:" + astr(c["name"]), "holder": c["holder"], "field": field,
+		"previous": previous, "value": value, "actor": actor(q, "operator"), "at": now()})
 }
 
 func connKeys(q *Request, name string) ([]doc, error) {
@@ -109,7 +109,7 @@ func connSnapshot(q *Request) (doc, error) {
 		return nil, err
 	}
 	for _, c := range all {
-		name := cStr(c["name"])
+		name := astr(c["name"])
 		ks, err := connKeys(q, name)
 		if err != nil {
 			return nil, err
@@ -119,7 +119,7 @@ func connSnapshot(q *Request) (doc, error) {
 			if k["state"] == "retired" {
 				continue
 			}
-			e := doc{"id": strings.TrimPrefix(cStr(k["id"]), "key:"), "state": k["state"]}
+			e := doc{"id": strings.TrimPrefix(astr(k["id"]), "key:"), "state": k["state"]}
 			if k["enabledAt"] != nil {
 				e["enabledAt"] = k["enabledAt"]
 			}
@@ -142,7 +142,7 @@ func connSnapshot(q *Request) (doc, error) {
 		}
 		tokens = append(tokens, doc{"sha256": t["sha256"], "executionId": t["executionId"], "directedBy": t["directedBy"], "projectId": t["projectId"], "experimentId": t["experimentId"], "connections": t["connections"]})
 	}
-	return doc{"schema": 2, "generated_ms": now(), "providers": providers, "connections": conns, "tokens": tokens, "usageTokenSha256": cSha([]byte(usageToken))}, nil
+	return doc{"schema": 2, "generated_ms": now(), "providers": providers, "connections": conns, "tokens": tokens, "usageTokenSha256": sha256hex([]byte(usageToken))}, nil
 }
 
 var snapshotMu sync.Mutex
@@ -305,7 +305,7 @@ func init() {
 				}
 			}
 			for _, h := range hist {
-				if h["target"] == "connection:"+cStr(c["name"]) {
+				if h["target"] == "connection:"+astr(c["name"]) {
 					hs = append(hs, h)
 				}
 			}
@@ -319,7 +319,7 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		name, provider := cStr(b["name"]), cStr(b["provider"])
+		name, provider := astr(b["name"]), astr(b["provider"])
 		if !connName.MatchString(name) || providers[provider] == nil || !cKeysOnly(b, "name", "provider", "holder", "comment") {
 			return nil, fail(400, "Expected name and a known provider")
 		}
@@ -335,7 +335,7 @@ func init() {
 		if q.person != nil && !q.person.Owner && holder != q.person.Email {
 			return nil, fail(403, "Only the owner creates an API key for another person")
 		}
-		comment := cStr(b["comment"])
+		comment := astr(b["comment"])
 		if len(comment) > 2000 {
 			comment = comment[:2000]
 		}
@@ -370,11 +370,11 @@ func init() {
 		} else if old != nil {
 			return nil, fail(409, "Key already added")
 		}
-		dir, err := connDir(cStr(c["name"]))
+		dir, err := connDir(astr(c["name"]))
 		if err != nil {
 			return nil, err
 		}
-		k := doc{"id": "key:" + fp, "connectionId": c["name"], "fingerprint": fp, "state": "active", "addedAt": now(), "addedBy": cActor(q, "operator")}
+		k := doc{"id": "key:" + fp, "connectionId": c["name"], "fingerprint": fp, "state": "active", "addedAt": now(), "addedBy": actor(q, "operator")}
 		if err := putDoc(q, "connection-key", k); err != nil {
 			return nil, err
 		}
@@ -395,7 +395,7 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		id := cStr(b["keyId"])
+		id := astr(b["keyId"])
 		if id != "" && !strings.HasPrefix(id, "key:") {
 			id = "key:" + id
 		}
@@ -413,7 +413,7 @@ func init() {
 		if err := connHolderOrOwner(q, c); err != nil {
 			return nil, err
 		}
-		to := cStr(b["state"])
+		to := astr(b["state"])
 		if to != "active" && to != "draining" && to != "retired" {
 			return nil, fail(400, "state: active, draining or retired")
 		}
@@ -428,7 +428,7 @@ func init() {
 		if to == k["state"] {
 			return k, nil
 		}
-		if err := connChange(q, c, "key:"+cStr(k["fingerprint"]), k["state"], to); err != nil {
+		if err := connChange(q, c, "key:"+astr(k["fingerprint"]), k["state"], to); err != nil {
 			return nil, err
 		}
 		k["state"], k["updatedAt"] = to, now()
@@ -442,8 +442,8 @@ func init() {
 			return nil, err
 		}
 		if to == "retired" {
-			if dir, err := connDir(cStr(c["name"])); err == nil {
-				os.Remove(filepath.Join(dir, cStr(k["fingerprint"])))
+			if dir, err := connDir(astr(c["name"])); err == nil {
+				os.Remove(filepath.Join(dir, astr(k["fingerprint"])))
 			}
 		}
 		publish()
@@ -461,7 +461,7 @@ func init() {
 		if err := connHolderOrOwner(q, c); err != nil {
 			return nil, err
 		}
-		a := cMap(b["access"])
+		a := mapOf(b["access"])
 		if a == nil {
 			a = doc{}
 		}
@@ -508,7 +508,7 @@ func init() {
 		if err := connHolderOrOwner(q, c); err != nil {
 			return nil, err
 		}
-		in := cStr(b["intake"])
+		in := astr(b["intake"])
 		if in != "all" && in != "paused" {
 			return nil, fail(400, "intake: all or paused")
 		}
@@ -633,7 +633,7 @@ func init() {
 
 func cEnvMs(k string, d int) time.Duration {
 	var n int
-	if _, err := fmt.Sscan(cEnv(k, fmt.Sprint(d)), &n); err != nil {
+	if _, err := fmt.Sscan(envOr(k, fmt.Sprint(d)), &n); err != nil {
 		n = d
 	}
 	return time.Duration(n) * time.Millisecond
@@ -660,7 +660,7 @@ func every(ctx context.Context, d time.Duration, fn func()) {
 
 // Per-run tokens (§4): granted are the requested connections that exist, take intake and whose access names the run.
 func connAllowed(c doc, run doc) bool {
-	a := cMap(c["access"])
+	a := mapOf(c["access"])
 	has := func(list string, v any) bool {
 		for _, x := range cList(a[list]) {
 			if x == v {
@@ -699,14 +699,14 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 		return doc{"token": nil, "connections": []any{}, "refused": uniq}, nil
 	}
 	token := cRandomToken()
-	sha := cSha([]byte(token))
+	sha := sha256hex([]byte(token))
 	names, specs, refused := []any{}, []any{}, []string{}
 	for _, c := range granted {
 		names = append(names, c["name"])
-		p := cMap(providers[cStr(c["provider"])])
+		p := mapOf(providers[astr(c["provider"])])
 		tools := []any{}
 		for _, t := range cList(c["tools"]) {
-			if spec := cMap(cMap(p["tools"])[cStr(t)]); spec != nil {
+			if spec := mapOf(mapOf(p["tools"])[astr(t)]); spec != nil {
 				tools = append(tools, doc{"name": t, "description": spec["description"], "inputSchema": spec["inputSchema"]})
 			}
 		}
@@ -744,7 +744,7 @@ func revokeTokens(q *Request, executionID string) error {
 	}
 	for _, t := range ts {
 		t["revokedAt"] = now()
-		if err := cExec(q, "UPDATE document SET data=$2 WHERE id=$1", t["id"], cJSON(t)); err != nil {
+		if err := exec(q, "UPDATE document SET data=$2 WHERE id=$1", t["id"], cJSON(t)); err != nil {
 			return err
 		}
 	}
@@ -763,7 +763,7 @@ func revokeSteps(q *Request) error {
 	for _, t := range ts {
 		if c, _ := cNum(t["createdAt"]); int64(c) < processStarted {
 			t["revokedAt"] = now()
-			if err := cExec(q, "UPDATE document SET data=$2 WHERE id=$1", t["id"], cJSON(t)); err != nil {
+			if err := exec(q, "UPDATE document SET data=$2 WHERE id=$1", t["id"], cJSON(t)); err != nil {
 				return err
 			}
 		}
@@ -827,12 +827,12 @@ func connRecord(q *Request, l doc) (bool, error) {
 	if !ok || l["tokenSha256"] == nil || l["executionId"] == nil {
 		return false, nil
 	}
-	t, err := cGet(q, "run-token:"+cStr(l["tokenSha256"]), "run-token")
+	t, err := cGet(q, "run-token:"+astr(l["tokenSha256"]), "run-token")
 	if err != nil || t == nil {
 		return false, err
 	}
 	id := "call:" + callID
-	usage := cMap(l["usage"])
+	usage := mapOf(l["usage"])
 	state := "failed"
 	if l["outcome"] == "ok" {
 		state = "succeeded"
@@ -854,25 +854,25 @@ func connRecord(q *Request, l doc) (bool, error) {
 		return false, err
 	}
 	if l["outcome"] != "ok" {
-		if err := cExec(q, "UPDATE execution SET problem=$2 WHERE id=$1 AND problem IS NULL", id, problemOf(cStr(l["outcome"]), l["errorCode"])); err != nil {
+		if err := exec(q, "UPDATE execution SET problem=$2 WHERE id=$1 AND problem IS NULL", id, problemOf(astr(l["outcome"]), l["errorCode"])); err != nil {
 			return false, err
 		}
 	}
 	var cost any
 	if amount, ok := cNum(usage["amount"]); ok {
-		unit := cStr(usage["unit"])
+		unit := astr(usage["unit"])
 		cost = doc{"unit": unit, unit: amount, "amount": amount, "connection": l["connection"]}
 	}
 	if err := cWriteConnectionCost(q, id, t["projectId"], cost); err != nil {
 		return false, err
 	}
-	if d := cMap(l["disabled"]); d != nil && d["key"] != nil {
-		if err := connDisable(q, cStr(d["key"]), d["status"]); err != nil {
+	if d := mapOf(l["disabled"]); d != nil && d["key"] != nil {
+		if err := connDisable(q, astr(d["key"]), d["status"]); err != nil {
 			return false, err
 		}
 	}
-	if p := cMap(l["keyProblem"]); p != nil && p["key"] != nil {
-		k, err := cGet(q, "key:"+cStr(p["key"]), "connection-key")
+	if p := mapOf(l["keyProblem"]); p != nil && p["key"] != nil {
+		k, err := cGet(q, "key:"+astr(p["key"]), "connection-key")
 		if err != nil {
 			return false, err
 		}
@@ -922,7 +922,7 @@ func connDisable(q *Request, fp string, status any) error {
 	if err != nil {
 		return err
 	}
-	return cExec(q, "UPDATE question SET cause=$2 WHERE id=$1", id, cause)
+	return exec(q, "UPDATE question SET cause=$2 WHERE id=$1", id, cause)
 }
 
 var lastBlocked string
@@ -956,7 +956,7 @@ func connTick(q *Request) error {
 		return err
 	}
 	for _, t := range open {
-		id := cStr(t["executionId"])
+		id := astr(t["executionId"])
 		var state *string
 		err := q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT data->>'state' FROM execution WHERE id=$1 AND legacy_kind='execution'),'')", id).Scan(&state)
 		if err != nil {
@@ -989,8 +989,8 @@ func connReconcile(ctx context.Context, a *App) {
 	}
 	err = cTx(ctx, a, "", func(q *Request) error {
 		for _, r := range cList(report["keys"]) {
-			row := cMap(r)
-			k, err := cGet(q, "key:"+cStr(row["key"]), "connection-key")
+			row := mapOf(r)
+			k, err := cGet(q, "key:"+astr(row["key"]), "connection-key")
 			if err != nil {
 				return err
 			}
@@ -999,7 +999,7 @@ func connReconcile(ctx context.Context, a *App) {
 			}
 			usage, ok := cNum(row["usage"])
 			if !ok {
-				rc := cMap(k["reconcile"])
+				rc := mapOf(k["reconcile"])
 				if rc == nil {
 					rc = doc{}
 				}
@@ -1010,7 +1010,7 @@ func connReconcile(ctx context.Context, a *App) {
 				rc["at"], rc["unknown"] = report["at"], unknown
 				k["reconcile"] = rc
 			} else {
-				base := cMap(k["usageBaseline"])
+				base := mapOf(k["usageBaseline"])
 				if base == nil {
 					base = doc{"usage": usage, "at": report["at"]}
 					k["usageBaseline"] = base
@@ -1095,7 +1095,7 @@ func gatewayCall(ctx context.Context, token, connection, tool string, args any) 
 	}
 	if ok {
 		line["outcome"], line["output"] = "ok", output
-		if m := cMap(output); m != nil {
+		if m := mapOf(output); m != nil {
 			line["usage"] = m["usage"]
 		}
 		return line

@@ -60,7 +60,7 @@ func (a *App) poll(q *Request) (any, error) {
 	if err := storesObserve(q.ctx(), q.tx, host, b["stores"]); err != nil {
 		return nil, err
 	}
-	obs := doc{"id": host, "holder": q.host["holder"], "lastSeenAt": nowMs()}
+	obs := doc{"id": host, "holder": q.host["holder"], "lastSeenAt": now()}
 	if inList([]string{"darwin", "win32", "linux"}, astr(b["platform"])) {
 		obs["platform"] = b["platform"]
 	}

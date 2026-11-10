@@ -72,11 +72,6 @@ func canonical(v any) string {
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
-func profileDigest(v any) string {
-	h := sha256.Sum256([]byte(canonical(v)))
-	return hex.EncodeToString(h[:])
-}
-
 var idPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,79}$`)
 
 func validAntigravitySettings(v any) bool {

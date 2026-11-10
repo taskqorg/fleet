@@ -307,7 +307,7 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 					continue
 				}
 			}
-			if !(float64(nowMs())-k.seen[id] < onlineMs) {
+			if !(float64(now())-k.seen[id] < onlineMs) {
 				skip(id+" is offline", "host:"+id+":offline")
 				continue
 			}
@@ -373,7 +373,7 @@ func recordDecision(q *Request, e doc, polling string, cs []*candidate, winner *
 	if winner != nil {
 		w = js(doc{"subscription": winner.Subscription, "host": winner.Host})
 	}
-	return aExec(q, "INSERT INTO route_decision(execution_id,project_id,host_id,candidates,winner) VALUES($1,$2,$3,$4,$5)", e["id"], mapOf(e["dispatch"])["projectId"], polling, js(cs), w)
+	return exec(q, "INSERT INTO route_decision(execution_id,project_id,host_id,candidates,winner) VALUES($1,$2,$3,$4,$5)", e["id"], mapOf(e["dispatch"])["projectId"], polling, js(cs), w)
 }
 
 var causeHost = regexp.MustCompile(`^host:([^:]+)`)
@@ -425,7 +425,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			if err := recordDecision(q, e, polling, cs, best); err != nil {
 				return err
 			}
-			if err := aExec(q, "UPDATE execution SET wait_reason=NULL WHERE id=$1", e["id"]); err != nil {
+			if err := exec(q, "UPDATE execution SET wait_reason=NULL WHERE id=$1", e["id"]); err != nil {
 				return err
 			}
 			continue
@@ -456,7 +456,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			if err := put(q, "execution", e); err != nil {
 				return err
 			}
-			if err := aExec(q, "UPDATE execution SET wait_reason=$2 WHERE id=$1", e["id"], reason); err != nil {
+			if err := exec(q, "UPDATE execution SET wait_reason=$2 WHERE id=$1", e["id"], reason); err != nil {
 				return err
 			}
 			if err := recordDecision(q, e, polling, cs, nil); err != nil {
@@ -487,7 +487,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		if h["state"] == "open" {
 			sql = "UPDATE question SET state='withdrawn',cause=NULL WHERE id=$1"
 		}
-		if err := aExec(q, sql, h["id"]); err != nil {
+		if err := exec(q, sql, h["id"]); err != nil {
 			return err
 		}
 	}
@@ -504,7 +504,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		if err != nil {
 			return err
 		}
-		if err := aExec(q, "UPDATE question SET cause=$2,addressed_to=$3 WHERE id=$1", qid, cause, c.director); err != nil {
+		if err := exec(q, "UPDATE question SET cause=$2,addressed_to=$3 WHERE id=$1", qid, cause, c.director); err != nil {
 			return err
 		}
 	}
@@ -597,7 +597,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	if binding != nil && binding["taken"] == true {
 		task := astr(s["deliveryId"])
 		if task == "" {
-			ms, err := aMaps(q, "SELECT task_id FROM execution WHERE id=$1", e["id"])
+			ms, err := cQuery(q, "SELECT task_id FROM execution WHERE id=$1", e["id"])
 			if err != nil {
 				return nil, err
 			}

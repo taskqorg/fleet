@@ -1,4 +1,4 @@
-# The executor binary for these scripts; same rules as tests/coordinator/executor-binary.ts: build first (a shared target
+# The executor binary for these scripts; same rules as tests/executor/executor-binary.ts: build first (a shared target
 # dir may hold another worktree's build), find the target dir through cargo metadata, run a private copy.
 import json,os,shutil,subprocess,tempfile
 def executor_binary():

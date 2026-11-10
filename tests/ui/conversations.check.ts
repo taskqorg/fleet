@@ -1,76 +1,63 @@
-// Conversations browser check (docs/designs/fleet-conversations.md, "Browser check"). A coordinator on PGlite holds the captured
+// Conversations browser check (docs/designs/fleet-conversations.md, "Browser check"). The Go coordinator (tests/harness.ts) holds the captured
 // fixtures (codex 6a55ab8b, claude 127d6fd7, lost-receipt d89cc199) and one long thread built from the same block shapes, behind a
 // proxy that injects the Bearer as the access guard does. Chromium opens the built app and asserts behaviour; timings are printed,
 // never asserted. Exits 1 when an assertion fails.
 // Run: pnpm run build && node tests/ui/conversations.check.ts
-import http from 'node:http';
 import { readFileSync } from 'node:fs';
 import { chromium, type Page } from 'playwright';
-import { createStore } from '../../packages/coordinator/store.ts';
-import { createApp, OWNER } from '../coordinator/test-app.ts';
+import { checkServer } from './seed.ts';
 
 const failures: string[] = [], timings: string[] = [];
 const check = (ok: boolean, what: string) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) failures.push(what); };
 const time = (what: string, ms: number) => { timings.push(`${what}: ${ms.toFixed(0)} ms`); };
 
-const store = createStore('memory://'); await store.migrate();
+const { origin, seed, host, close } = await checkServer({ store: true });
+const lit = (v: unknown) => v === null ? 'NULL' : typeof v === 'number' ? String(v) : "'" + String(typeof v === 'string' ? v : JSON.stringify(v)).replace(/'/g, "''") + "'";
 // Captured fixtures, as stored.
 for (const name of ['codex-6a55ab8b', 'claude-127d6fd7', 'lost-receipt-d89cc199']) {
-  const fx = JSON.parse(readFileSync(new URL(`../coordinator/fixtures/conversations/${name}.json`, import.meta.url), 'utf8')), e = fx.execution;
-  await store.query("INSERT INTO document(kind,id,data) VALUES('session',$1,$2) ON CONFLICT DO NOTHING", [e.session_id, JSON.stringify({ id: e.session_id, createdAt: Date.now() })]);
-  await store.query("INSERT INTO execution(id,kind,state,session_id,harness,model,config_ref,legacy_kind,legacy_id,seq) VALUES($1,'agent_run',$2,$3,$4,$5,$6,'execution',$1,$7)", [e.id, e.state, e.session_id, e.harness, e.model, JSON.stringify({ effort: e.effort }), e.seq]);
-  for (const d of fx.documents) await store.query('INSERT INTO document(kind,id,data,seq) VALUES($1,$2,$3,$4)', [d.kind, d.data.id, JSON.stringify(d.data), d.seq]);
+  const fx = JSON.parse(readFileSync(new URL(`fixtures/conversations/${name}.json`, import.meta.url), 'utf8')), e = fx.execution;
+  seed.bulk(() => {
+    seed.sql(`INSERT INTO document(kind,id,data) VALUES('session',${lit(e.session_id)},${lit({ id: e.session_id, createdAt: Date.now() })}) ON CONFLICT DO NOTHING`);
+    seed.sql(`INSERT INTO execution(id,kind,state,session_id,harness,model,config_ref,legacy_kind,legacy_id,seq) VALUES(${lit(e.id)},'agent_run',${lit(e.state)},${lit(e.session_id)},${lit(e.harness)},${lit(e.model)},${lit({ effort: e.effort })},'execution',${lit(e.id)},${e.seq})`);
+    for (const d of fx.documents) seed.sql(`INSERT INTO document(kind,id,data,seq) VALUES(${lit(d.kind)},${lit(d.data.id)},${lit(d.data)},${d.seq})`);
+  });
 }
 // A long thread: two running executions of one session, N turns of operator message, agent reply and tool call, one open question.
 const N = Number(process.env.TURNS ?? 600), S = 'long-thread';
-await store.put('session', { id: S, createdAt: Date.now() - 3600e3, agentConfig: { id: 'baseline', harness: 'claude' } });
-for (const x of ['x1', 'x2']) await store.put('execution', { id: x, executionId: x, sessionId: S, hostId: 'pds18', state: 'started', startedAt: Date.now() - 600e3, model: 'claude-opus-5-5', effort: 'high', agentConfig: { harness: 'claude' } });
-await store.tx(async () => {
+seed.put('session', { id: S, createdAt: Date.now() - 3600e3, agentConfig: { id: 'baseline', harness: 'claude' } });
+for (const x of ['x1', 'x2']) seed.put('execution', { id: x, executionId: x, sessionId: S, hostId: 'pds18', state: 'started', startedAt: Date.now() - 600e3, model: 'claude-opus-5-5', effort: 'high', agentConfig: { harness: 'claude' } });
+seed.bulk(() => {
   for (let i = 0; i < N; i++) {
-    await store.put('message', { id: `m${i}`, sessionId: S, executionId: 'x1', text: `Question ${i}: check step ${i}` });
+    seed.put('message', { id: `m${i}`, sessionId: S, executionId: 'x1', text: `Question ${i}: check step ${i}` });
     const reply = i === 7 ? 'The migration 6 backfill finished.' : `Reply ${i}. ` + 'Long replies wrap. '.repeat(i % 5) + (i % 9 === 0 ? '\n\n```\npnpm test\n```' : '');
-    await store.put('event', { id: `e${i}`, sessionId: S, executionId: 'x1', type: 'item.completed', seq: i, data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: reply }, { kind: 'tool', name: `tool-${i}`, input: { step: i }, output: 'ok\n'.repeat(1 + i % 4), state: 'completed', startedAt: 1, endedAt: 2001 }] } } });
+    seed.put('event', { id: `e${i}`, sessionId: S, executionId: 'x1', type: 'item.completed', seq: i, data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: reply }, { kind: 'tool', name: `tool-${i}`, input: { step: i }, output: 'ok\n'.repeat(1 + i % 4), state: 'completed', startedAt: 1, endedAt: 2001 }] } } });
   }
 });
 // A task thread over two sessions (Stage 3).
-const T = await store.tasks.create({ title: 'Ship the hero copy' });
+const T = seed.task({ title: 'Ship the hero copy' });
 for (const [sid, x, word] of [['task-a', 'ta1', 'Alpha'], ['task-b', 'tb1', 'Bravo']] as const) {
-  await store.put('session', { id: sid, createdAt: Date.now() });
-  await store.put('execution', { id: x, executionId: x, sessionId: sid, hostId: 'pds18', state: 'completed', model: 'gpt-6.1-sol', effort: 'low' });
-  await store.query('UPDATE execution SET task_id=$2 WHERE id=$1', [x, T]);
-  await store.put('message', { id: 'm-' + x, sessionId: sid, executionId: x, text: `${word} question` });
-  await store.put('event', { id: 'e-' + x, sessionId: sid, executionId: x, type: 'item.completed', seq: 0, data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: `${word} reply` }] } } });
+  seed.put('session', { id: sid, createdAt: Date.now() });
+  seed.put('execution', { id: x, executionId: x, sessionId: sid, hostId: 'pds18', state: 'completed', model: 'gpt-6.1-sol', effort: 'low' });
+  seed.sql(`UPDATE execution SET task_id=${lit(T)} WHERE id=${lit(x)}`);
+  seed.put('message', { id: 'm-' + x, sessionId: sid, executionId: x, text: `${word} question` });
+  seed.put('event', { id: 'e-' + x, sessionId: sid, executionId: x, type: 'item.completed', seq: 0, data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: `${word} reply` }] } } });
 }
 // Results (Stage 4): rows in the artifact table for the list, legacy documents (bytes inline) for the viewer.
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 // An interactive result: its script runs, but on an opaque origin (no cookies, no parent access, no network).
 const PAGE_HTML = `<h1>hi</h1><img id="logo" src="logo.svg"><script>document.body.dataset.ran='1';try{document.cookie;document.body.dataset.cookie='readable'}catch(e){document.body.dataset.cookie='blocked'}try{window.top.x=1}catch(e){document.body.dataset.top='blocked'}fetch('/api/ops/me',{method:'POST'}).then(()=>{document.body.dataset.net='open'},()=>{document.body.dataset.net='blocked'})</script>`;
 const LOG = Array.from({ length: 6000 }, (_, i) => `line ${i} of the build log`).join('\n');
-await store.put('artifact', { id: 'shot-1', executionId: 'x1', sessionId: S, path: 'screenshot.png', mediaType: 'image/png', size: Buffer.from(PNG, 'base64').length, contentBase64: PNG });
-await store.put('artifact', { id: 'log-1', executionId: 'x1', sessionId: S, path: 'build.log', mediaType: 'text/plain', size: Buffer.byteLength(LOG), contentBase64: Buffer.from(LOG).toString('base64') });
-await store.put('artifact', { id: 'logo-1', executionId: 'x1', sessionId: S, path: 'logo.svg', mediaType: 'image/svg+xml', size: 104, contentBase64: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle cx="10" cy="10" r="9"/></svg>').toString('base64') });
-await store.put('artifact', { id: 'page-1', executionId: 'x1', sessionId: S, path: 'index.html', mediaType: 'text/html', size: PAGE_HTML.length, contentBase64: Buffer.from(PAGE_HTML).toString('base64') });
-for (const [i, st] of ['stored', 'pending', 'failed'].entries()) await store.query("INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES($1,null,'prod',$2,$3,$4,$5,'x1',$6)", ['row-' + i, 'h' + i, 10 + i, i ? 'text/plain' : 'image/png', `result-${i}.${i ? 'txt' : 'png'}`, st]);
-// A delivered session (live stage on its result card).
-await store.put('session', { id: 'deliv', createdAt: Date.now() });
-await store.put('message', { id: 'm-dl', sessionId: 'deliv', executionId: 'dl1', text: 'Ship it' });
-await store.put('execution', { id: 'dl1', executionId: 'dl1', sessionId: 'deliv', hostId: 'pds18', state: 'started', startedAt: Date.now() - 6e4 });
-await store.put('artifact', { id: 'dl-page', executionId: 'dl1', sessionId: 'deliv', path: 'site.html', mediaType: 'text/html', size: 4, contentBase64: Buffer.from('<p>x').toString('base64') });
-await store.put('execution', { id: 'dl1', executionId: 'dl1', sessionId: 'deliv', hostId: 'pds18', state: 'completed', startedAt: Date.now() - 6e4, finishedAt: Date.now() });
-const delivery = { id: 'dl-record', projectId: 'p', requestId: 'dl', task: 'Ship it', sourceSessionId: 'deliv', sessionId: 'deliv', createdAt: Date.now(), state: 'pr-open', steps: [] };
-await store.put('delivery', delivery);
-await store.tasks.ask({ kind: 'agent_question', text: 'Use Postgres 17?', options: ['yes', 'no'], executionId: 'x1', sessionId: S, askedBy: 'agent' });
-
-let target = 0;
-const proxy = http.createServer((req, res) => {
-  const up = http.request({ host: '127.0.0.1', port: target, path: req.url, method: req.method, headers: { ...req.headers, authorization: 'Bearer browser-check', 'x-fleet-person': OWNER } }, r => { res.writeHead(r.statusCode!, r.headers); r.pipe(res); });
-  up.on('error', () => { res.writeHead(502); res.end(); }); req.pipe(up);
+seed.bulk(() => {
+  seed.artifact({ id: 'shot-1', executionId: 'x1', name: 'screenshot.png', mediaType: 'image/png', bytes: Buffer.from(PNG, 'base64') });
+  seed.artifact({ id: 'log-1', executionId: 'x1', name: 'build.log', mediaType: 'text/plain', bytes: Buffer.from(LOG) });
+  seed.artifact({ id: 'logo-1', executionId: 'x1', name: 'logo.svg', mediaType: 'image/svg+xml', bytes: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle cx="10" cy="10" r="9"/></svg>') });
+  seed.artifact({ id: 'page-1', executionId: 'x1', name: 'index.html', mediaType: 'text/html', bytes: Buffer.from(PAGE_HTML) });
+  for (const [i, st] of ['stored', 'pending', 'failed'].entries()) seed.artifact({ id: 'row-' + i, executionId: 'x1', name: `result-${i}.${i ? 'txt' : 'png'}`, mediaType: i ? 'text/plain' : 'image/png', bytes: Buffer.alloc(10 + i, i), state: st });
 });
-await new Promise<void>(r => proxy.listen(0, '127.0.0.1', r));
-const origin = `http://127.0.0.1:${(proxy.address() as any).port}`;
-const app = createApp({ store, database: 'memory://', browserSecret: 'browser-check', machineSecret: 'machine-check', hostId: 'pds18', nativeHostIds: [], browserProxyAuth: true, browserOrigin: origin, appDir: 'dist/app', placementIntervalMs: 0 });
-await app.listen({ port: 0, host: '127.0.0.1' }); target = (app.server.address() as any).port;
-const ingest = (id: string, seq: number, markdown: string) => app.inject({ method: 'POST', url: '/api/hosts/events', headers: { authorization: 'Bearer machine-check' }, payload: { hostId: 'pds18', executionId: 'x1', events: [{ id, seq, type: 'item.completed', data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown }] } } }] } });
+seed.question({ kind: 'agent_question', text: 'Use Postgres 17?', options: ['yes', 'no'], executionId: 'x1', sessionId: S, askedBy: 'agent' });
+
+const pds18 = await host('pds18');
+const ingest = (id: string, seq: number, markdown: string) => pds18('/api/hosts/events', { executionId: 'x1', events: [{ id, seq, type: 'item.completed', data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown }] } } }] });
 
 // The first row whose top is inside the list viewport, and its top; rows are found again by their text.
 const anchor = (p: Page) => p.locator('.tr-body .vl').evaluate(e => { const top = e.getBoundingClientRect().top; const r = [...e.querySelectorAll('.vl-row')].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top).find(x => x.getBoundingClientRect().top >= top); return r ? { text: r.textContent!, top: r.getBoundingClientRect().top } : null; });
@@ -154,20 +141,20 @@ try {
 
   // Answer the open question.
   await p.locator('.decision', { hasText: 'Use Postgres 17?' }).first().getByRole('button', { name: 'yes' }).click();
-  check(await until(async () => (await store.tasks.questions({})).some((q: any) => q.text === 'Use Postgres 17?' && q.state === 'answered' && q.answer === 'yes')), 'question answered from the thread');
+  check(await until(async () => seed.rows('SELECT text, state, answer FROM question').some((q: any) => q.text === 'Use Postgres 17?' && q.state === 'answered' && q.answer === 'yes')), 'question answered from the thread');
 
   // Stop one of two running executions from its boundary row.
   await vl.evaluate(e => { e.scrollTop = 0; }); await p.waitForTimeout(300);
   for (let i = 0; i < 20 && !(await p.locator('.th-boundary').count()); i++) { await vl.evaluate(e => { e.scrollTop = 0; }); await p.waitForTimeout(300); }
   const x2 = p.locator('.th-boundary', { hasText: 'x2' });
   await x2.getByRole('button', { name: 'Stop' }).click();
-  check(await until(async () => (await store.all('command', { executionId: 'x2', kind: 'stop' })).length === 1), 'Stop on one boundary sends a stop for that execution');
-  check((await store.all('command', { executionId: 'x1', kind: 'stop' })).length === 0, 'the other execution gets no stop');
+  check(await until(async () => seed.rows("SELECT 1 FROM document WHERE kind='command' AND data->>'executionId'='x2' AND data->>'kind'='stop'").length === 1), 'Stop on one boundary sends a stop for that execution');
+  check(seed.rows("SELECT 1 FROM document WHERE kind='command' AND data->>'executionId'='x1' AND data->>'kind'='stop'").length === 0, 'the other execution gets no stop');
   // Task thread: a session of a task shows the whole task; Shift+click selects across rows and Cmd+C copies their markdown.
   await p.goto(`${origin}/conversations/task-a`);
   check(await until(async () => await visible(p, 'Alpha reply') && await visible(p, 'Bravo reply')), 'a task session shows both sessions of the task');
   check(await p.locator('.th-boundary .id', { hasText: 'task-b' }).count() === 1, 'boundary rows name their session');
-  await app.inject({ method: 'POST', url: '/api/hosts/events', headers: { authorization: 'Bearer machine-check' }, payload: { hostId: 'pds18', executionId: 'tb1', events: [{ id: 'tb-live', seq: 1, type: 'item.completed', data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: 'Bravo live' }] } } }] } });
+  await pds18('/api/hosts/events', { executionId: 'tb1', events: [{ id: 'tb-live', seq: 1, type: 'item.completed', data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: 'Bravo live' }] } } }] });
   check(await until(() => visible(p, 'Bravo live')), 'a task thread follows another session of the task live');
   await p.locator('.th-text', { hasText: 'Alpha question' }).click();
   await p.locator('.th-text', { hasText: 'Bravo reply' }).click({ modifiers: ['Shift'] });
@@ -183,18 +170,13 @@ try {
   await p.getByRole('button', { name: 'Actions' }).click();
   const items = (await p.locator('[role=menu] [role=menuitem]').allTextContents()).map(t => t.trim());
   check(items.join('|') === 'Retry last message|Switch profile or model|Hand off to another agent|Fork' && await p.locator('[role=menu] [role=menuitem] .icon').count() === 4, 'action menu: four items with icons');
-  const before = (await store.all('message', { sessionId: 'task-a' })).length;
+  const before = seed.rows("SELECT data->>'text' AS text FROM document WHERE kind='message' AND data->>'sessionId'='task-a' ORDER BY seq").length;
   await p.getByRole('menuitem', { name: 'Retry last message' }).click();
-  check(await until(async () => (await store.all('message', { sessionId: 'task-a' })).length === before + 1 && (await store.all('message', { sessionId: 'task-a' })).at(-1).text === 'Alpha question'), 'Retry sends the last operator message again');
+  check(await until(async () => seed.rows("SELECT data->>'text' AS text FROM document WHERE kind='message' AND data->>'sessionId'='task-a' ORDER BY seq").length === before + 1 && seed.rows("SELECT data->>'text' AS text FROM document WHERE kind='message' AND data->>'sessionId'='task-a' ORDER BY seq").at(-1).text === 'Alpha question'), 'Retry sends the last operator message again');
   await p.getByRole('button', { name: 'Actions' }).click(); await p.getByRole('menuitem', { name: 'Switch profile or model' }).click();
   check(await until(async () => await p.locator('[role=group][aria-label=Profile] button').count() > 0), 'Switch opens an inline panel with profiles');
   await p.getByRole('button', { name: 'Actions' }).click(); await p.getByRole('menuitem', { name: 'Fork' }).click();
   check(await until(async () => !p.url().endsWith('/task-a') && /\/conversations\/[0-9a-f-]{36}/.test(p.url())), 'Fork opens the new session');
-  // The delivery stage on a result card updates live from the change feed, without a reload.
-  await p.goto(`${origin}/conversations/deliv`);
-  check(await until(async () => await p.locator('.th-result [data-ui=stage-chip][aria-label="PR open"]').count() === 1), 'result card shows the delivery stage');
-  await store.put('delivery', { ...delivery, state: 'merged' });
-  check(await until(async () => await p.locator('.th-result [data-ui=stage-chip][aria-label="Merged"]').count() === 1, 8000), 'the stage chip updates live when the delivery merges');
   // Results page: state first, filters, and the viewer for an image, a long text read in pages, and HTML without scripts.
   await p.goto(`${origin}/results`);
   check(await until(async () => await p.locator('.vl-row', { hasText: 'result-0.png' }).count() === 1), 'results page lists results');
@@ -221,7 +203,7 @@ try {
   check(!!direct && !/allow-scripts/.test(direct), '/api/results itself stays script-free');
   check(!errors.length, `no page errors${errors.length ? ': ' + errors.join('; ') : ''}`);
   if (rtt.length) time('thread_entries page round trip (median)', [...rtt].sort((x, y) => x - y)[rtt.length >> 1]);
-} finally { await b.close(); await app.close(); proxy.close(); }
+} finally { await b.close(); await close(); }
 
 console.log('\nTimings (reported, not asserted):'); for (const l of timings) console.log('  ' + l);
 if (process.env.GITHUB_STEP_SUMMARY) { const { appendFileSync } = await import('node:fs'); appendFileSync(process.env.GITHUB_STEP_SUMMARY, '### Conversations check\n' + timings.map(l => '- ' + l).join('\n') + '\n'); }

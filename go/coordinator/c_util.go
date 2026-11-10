@@ -3,12 +3,9 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -19,18 +16,9 @@ import (
 // cApp: the running coordinator, set by the area's onStart hook (background work and snapshot publishing need the store).
 var cApp *App
 
-func cEnv(k, d string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return d
-}
-
-func cConfigDir() string   { return cEnv("FLEET_PROJECT_CONFIG_DIRECTORY", "config") }
-func cProfilesDir() string { return cEnv("FLEET_PROFILES_DIRECTORY", "config/agents") }
-func cLabDir() string      { return cEnv("FLEET_LAB_DIRECTORY", "config/lab") }
-
-func cSha(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
+func cConfigDir() string   { return envOr("FLEET_PROJECT_CONFIG_DIRECTORY", "config") }
+func cProfilesDir() string { return envOr("FLEET_PROFILES_DIRECTORY", "config/agents") }
+func cLabDir() string      { return envOr("FLEET_LAB_DIRECTORY", "config/lab") }
 
 func cJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 
@@ -52,8 +40,6 @@ func cBody(q *Request) (doc, error) {
 	}
 	return b, nil
 }
-
-func cStr(v any) string { s, _ := v.(string); return s }
 
 func cNum(v any) (float64, bool) {
 	f, ok := v.(float64)
@@ -77,7 +63,6 @@ func cInt(v any) (int64, bool) {
 }
 
 func cList(v any) []any { l, _ := v.([]any); return l }
-func cMap(v any) doc    { m, _ := v.(map[string]any); return m }
 
 func cKeysOnly(b doc, allowed ...string) bool {
 	for k := range b {
@@ -105,11 +90,6 @@ func cQuery(q *Request, sql string, args ...any) ([]doc, error) {
 		out = []map[string]any{}
 	}
 	return out, err
-}
-
-func cExec(q *Request, sql string, args ...any) error {
-	_, err := q.tx.Exec(q.ctx(), sql, args...)
-	return err
 }
 
 // cAll: every document of a kind, oldest first.
@@ -143,13 +123,6 @@ func cDirector(q *Request) string {
 	return cOwnerEmail(q.app)
 }
 
-func cActor(q *Request, fallback string) string {
-	if q.person != nil {
-		return q.person.Email
-	}
-	return fallback
-}
-
 // cTx runs fn in its own write transaction under lock (GLOBAL when empty), as the coordinator.
 func cTx(ctx context.Context, a *App, lock string, fn func(q *Request) error) error {
 	return a.store.Tx(ctx, nil, true, lock, func(tx pgx.Tx) error {
@@ -177,13 +150,13 @@ func cAsk(q *Request, kind, text string, projectID any, options any, askedBy str
 	if data == nil {
 		data = doc{}
 	}
-	err := cExec(q, "INSERT INTO question(id,kind,project_id,text,options,asked_by,data) VALUES($1,$2,$3,$4,$5,$6,$7)", id, kind, projectID, text, opts, askedBy, cJSON(data))
+	err := exec(q, "INSERT INTO question(id,kind,project_id,text,options,asked_by,data) VALUES($1,$2,$3,$4,$5,$6,$7)", id, kind, projectID, text, opts, askedBy, cJSON(data))
 	return id, err
 }
 
 // cCreateExecution inserts a typed execution row unless its id or request_id exists (executions.ts createExecution).
 func cCreateExecution(q *Request, v doc) (bool, error) {
-	state := cStr(v["state"])
+	state := astr(v["state"])
 	if state == "" {
 		state = "preparing"
 	}
@@ -214,7 +187,7 @@ func cWriteConnectionCost(q *Request, id string, projectID any, cost any) error 
 	} else {
 		c = cJSON(cost)
 	}
-	return cExec(q, `INSERT INTO execution_totals(execution_id,project_id,connection_cost,connection_cost_basis) VALUES($1,$2,$3,$4)
+	return exec(q, `INSERT INTO execution_totals(execution_id,project_id,connection_cost,connection_cost_basis) VALUES($1,$2,$3,$4)
 	 ON CONFLICT(execution_id) DO UPDATE SET connection_cost=excluded.connection_cost,connection_cost_basis=excluded.connection_cost_basis,computed_at=now()`, id, projectID, c, basis)
 }
 

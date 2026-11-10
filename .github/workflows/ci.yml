@@ -48,13 +48,36 @@ jobs:
         run: |
           node scripts/docs-report.ts --self-check
           node scripts/docs-report.ts
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       # The executor: its unit tests, and the binary the coordinator's end-to-end artifact test runs.
       - run: cargo build -p fleet-executor -p gateway && cargo test -p fleet-executor -p gateway
       # The executor protocol scripts (tests/executor): actual executor binary against fake harnesses and transports.
       - run: tests/executor/run.sh
-      - run: pnpm test
+      # pnpm test runs tests/go/run.sh: the Go binary on the runner's own PostgreSQL (tests/harness.ts starts it).
+      - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pnpm test
+      # Deploys use exactly this release, and only from a push to main in this repository, never a pull request run
+      # (docs/infrastructure-build.md): the Go binary built above and the built app. Its SHA-256 goes into the job summary.
+      - name: Pack the release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p release/dist && cp go/bin/fleet-coordinator release/ && cp -r dist/app release/dist/ && cp -r config release/
+          tar -czf fleet-release.tgz -C release .
+          sha256sum fleet-release.tgz | tee fleet-release.tgz.sha256
+          echo "fleet-release-${GITHUB_SHA}: $(cut -d' ' -f1 fleet-release.tgz.sha256)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fleet-release-${{ github.sha }}
+          path: |
+            fleet-release.tgz
+            fleet-release.tgz.sha256
+          if-no-files-found: error
       # Use-case registry drift (docs/designs/fleet-lab.md "Use-case registry and examples"): warns, never blocks. Only Fleet's own sources are
       # checked here; the other org repos are not checked out, so their entries report nothing.
       - name: Use-case drift (warning only)
@@ -108,7 +131,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm run check:filter
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pnpm run check:filter
   # The Conversations browser check (docs/designs/fleet-conversations.md, "Browser check"): asserts behaviour, reports timings.
   conversations-check:
     runs-on: ubuntu-24.04
@@ -125,61 +152,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm run check:conversations
-  # The whole coordinator suite with every migration on real PostgreSQL 18 and the PDS18 roles created by
-  # deploy/infrastructure/fleet-postgres.sql (tests/coordinator/pg-test.ts): migrations as the owner fleet (no superuser, no
-  # BYPASSRLS), the store as fleet_app; the concurrency and load tests use the owner URL. PGlite runs as a superuser and
-  # cannot catch privilege errors (the 426d1e2 deploy failed on one).
-  postgres-roles:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 30
-    steps:
-      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run build
-      # The release layout without node_modules: the bundled coordinator must start and serve (docs/designs/fleet-stack.md D4).
-      - run: node tests/coordinator/release-smoke.ts
-        env:
-          FLEET_TEST_PG: postgresql://postgres:postgres@localhost:5432
-      # Deploys use exactly this smoked release, and only from a push to main in this repository, never a pull request
-      # run (docs/infrastructure-build.md). The archive's SHA-256 goes into the job summary; the deploy checks it.
-      - name: Pack the release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          tar -czf fleet-release.tgz package.json dist
-          sha256sum fleet-release.tgz | tee fleet-release.tgz.sha256
-          echo "fleet-release-${GITHUB_SHA}: $(cut -d' ' -f1 fleet-release.tgz.sha256)" >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload the release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
-        with:
-          name: fleet-release-${{ github.sha }}
-          path: |
-            fleet-release.tgz
-            fleet-release.tgz.sha256
-          if-no-files-found: error
-      # The executor binary the end-to-end artifact tests run.
-      - run: cargo build -p fleet-executor
-      # One file at a time: the Postgres-backed tests share the database "fleet" (tests/coordinator/pg-test.ts).
-      - run: node --test --test-concurrency=1 tests/coordinator/*.test.ts
-        env:
-          FLEET_TEST_PG: postgresql://postgres:postgres@localhost:5432
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pnpm run check:conversations
   executor-release:
     strategy:
       fail-fast: false
@@ -232,15 +209,7 @@ jobs:
         with:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
-      - run: go generate ./... && go vet ./... && go test ./...
-      # Outside tests (tests/trial, tests/go) against the binary, on the runner's own PostgreSQL started by tests/trial/run.ts.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Outside tests against the Go coordinator
-        run: |
-          go build -o bin/fleet-coordinator ./coordinator
-          PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" ../tests/go/run.sh
+      - run: go generate ./... && go vet ./... && go test ./...  # outside tests run in pnpm test (build-test-design)
       - name: Cross-build
         run: |
           mkdir -p dist

@@ -18,7 +18,7 @@ import {mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {delimiter,dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {parseExample,useCaseIds,type Example,type ExampleFile} from '../packages/coordinator/lab/examples.ts';
+import {parseExample,useCaseIds,type Example,type ExampleFile} from './lab-example-format.ts';
 
 export function readExamples(files:string[]):any[]{return files.flatMap(f=>{const v=JSON.parse(f==='-'?readFileSync(0,'utf8'):readFileSync(f,'utf8'));return Array.isArray(v)?v:[v]})}
 

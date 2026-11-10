@@ -8,12 +8,12 @@ Every Fleet service is written in Go. The browser app stays TypeScript (Preact, 
 
 Order:
 
-1. The coordinator (`packages/coordinator`), slice by slice behind a Go front door ([coordinator migration order](#coordinator-migration-order)).
+1. The coordinator (`go/coordinator`), rewritten in one pass ([coordinator rewrite](#coordinator-rewrite)).
 2. The executor (`crates/executor`) and the gateway (`crates/gateway`) together, after the coordinator ([executor and gateway](#executor-and-gateway)). Until then both stay Rust.
 
 Never port two components at once.
 
-Today: the coordinator is TypeScript on Node 22; the executor and the gateway are Rust; the Go code is the trial slice in `go/coordinator` and the probe spikes in `go/probe/`. Not built: the Go front door and every migration slice.
+Today: the coordinator is Go (`go/coordinator`, one binary); the executor and the gateway are Rust; the probe spikes are in `go/probe/`.
 
 ## Why this stack
 
@@ -27,11 +27,10 @@ The owner's first goal is fast agent work in parallel worktrees: the Mac must st
 | Go for services | staying on TypeScript | Equal edit-to-green (2.6 s against 2.8 s, inside the spread); 11 third-party packages against 146 in the coordinator closure; one build from any machine for every platform, no C toolchain; server 21 MB against 146 MB. |
 | One language, executor included | Rust executor kept | One toolchain, build job and dependency policy. Lost: Rust's stricter compiler and a smaller binary (executor 5.9 MB against about 10 MB). The Rust slice port needed 0 build-fix cycles, Go 1. |
 | Full gate only in CI | local full gate | Local gates by several agents drove the Mac to load average 223 on 8 cores; one gate took 339 s against the 180 s budget (#103). |
-| Old tests deleted per slice | deleted at the end | They import `packages/coordinator` and cannot run against a Go route. |
 | JSON Schema contracts | `schema.sql` with sqlc; protobuf; OpenAPI | Seam bugs (`ev.item`/`ev.data`, outbox 3xx/401) live in `jsonb` payloads and the table-less host protocol, where `schema.sql` types are raw bytes. protobuf adds `buf` and changes JSON names; OpenAPI cannot describe SSE or host-side events. |
 | Standard library first; pgx; own SigV4 | `database/sql`; `minio-go` | No stdlib Postgres driver, and `database/sql` hides LISTEN. `minio-go` compiles in 19 modules, the signer 0. |
 | `modernc.org/sqlite`, purego (executor) | stdlib journal; cgo | Journal: hand-written queries and cross-process waits, cannot read existing files (breaks Python tests, in-place upgrade), 200 commits/s against 14k/s, no Windows build. modernc lost 0 acknowledged commits under kill -9; purego reaches libproc without C. |
-| Go front door proxying to TypeScript | one-shot rewrite | Moves a few routes per slice, tested against both, rolled back by removing a route from the Go table; feature work continues. |
+| One-pass rewrite by four parallel areas | Go front door proxying to TypeScript | No live users and no data to keep: the speed of development decides (owner, 2026-11-11). A proxy would keep two coordinators and their shared-lock ordering alive. |
 
 ## Delivery order and change cycles
 
@@ -56,26 +55,22 @@ The labels D1-D4 are cited by code comments. Each stays while the TypeScript or 
 - Node 22 (`engines.node` `>=22.18`). Bun and Deno were rejected: they broke tests and did not beat pnpm on install time or disk ([evidence](../../evidence/fleet-stack.md#toolchain-measurements)).
 - pnpm 10, pinned in `packageManager`. `pnpm-workspace.yaml` sets `minimumReleaseAge: 1440` (one day; seven days rejected the pins of the switch) and allows install scripts only for `esbuild`. Every version is pinned.
 - Imports use `.ts` specifiers. `tsconfig.json` sets `noEmit`, `allowImportingTsExtensions` and `erasableSyntaxOnly`; tests and scripts run with Node's native type stripping, without `tsx`.
-- The type check is TypeScript 7 (`typescript` 7.0.2, the native compiler) in `pnpm run typecheck`. The coordinator build is esbuild only (`packages/coordinator/build.mjs`).
-- Ends for the coordinator when its last slice moves to Go; holds for the app, the browser checks and the outside tests.
+- The type check is TypeScript 7 (`typescript` 7.0.2, the native compiler) in `pnpm run typecheck`. The app build is esbuild (`app/build.mjs`).
+- Holds for the app, the browser checks and the outside tests.
 
 ### D2. Shared Rust target per machine
 
 - Each machine sets `CARGO_TARGET_DIR` in its environment; nothing absolute is committed, so CI keeps the default `target`. `orca.yaml` runs only `pnpm install --frozen-lockfile`.
 - `Cargo.toml` sets `[profile.dev] debug = "line-tables-only"`.
-- Code that finds the executor binary resolves the target directory through `cargo metadata` `target_directory`: `tests/coordinator/executor-binary.ts` and `tests/executor/executor_binary.py`.
+- Code that finds the executor binary resolves the target directory through `cargo metadata` `target_directory`: `tests/executor/executor-binary.ts` and `tests/executor/executor_binary.py`.
 - Cargo locks the shared directory, so parallel worktree builds queue. sccache was rejected: one more tool, still 300 MB per worktree.
 - Ends when the executor and the gateway are Go.
 
 ### D3. Own S3 client
 
-`packages/coordinator/s3.ts` signs with SigV4 on `node:crypto` and replaces `@aws-sdk`. It keeps the Garage setup: `region: 'garage'`, path-style URLs, no request or response checksums (`UNSIGNED-PAYLOAD`), one client per store and route, Access headers added after signing and only on an allowed tunnel route, streamed bodies. It covers Put, Head, Get, Delete, Copy, the multipart operations and UploadPartCopy, presigns GET and UploadPart, and retries 3 times with jittered backoff on 5xx, 429/503 and network errors (presigned URLs are not retried). Tests cover the AWS SigV4 vectors. The Go successor follows the same rule: a hand-written signer, no S3 module ([third-party Go modules](#third-party-go-modules)).
+`go/coordinator/d_s3.go` signs with SigV4 on `crypto/hmac` and `crypto/sha256`; no S3 module ([third-party Go modules](#third-party-go-modules)). It keeps the Garage setup: region `garage`, path-style URLs, no request or response checksums, one client per store and route, Access headers and `Accept-Encoding` added after signing (Access headers only on an allowed tunnel route), no redirects. It covers Put, Head, Get with Range, Delete, Copy, the multipart operations and UploadPartCopy, presigns GET and UploadPart, and retries 3 times with jittered backoff on 429, 5xx, throttling codes and network errors. An idle timeout (`FLEET_S3_IDLE_TIMEOUT_MS`, default 60 s) replaces a total request cap. `go test` checks the AWS GET Object vector.
 
-### D4. `node:sqlite` and the bundled server
-
-- `node:sqlite` replaces `better-sqlite3` in `migrate-sqlite.ts` and its tests; the coordinator has no native dependency.
-- The release is the `dist/` tree without `node_modules`: `dist/packages/coordinator/server.js` turns source maps on and loads the esbuild bundle `server-main.js`. The layout and its assets are in [infrastructure build](../infrastructure-build.md). CI starts the bundle from a release copy (`tests/coordinator/release-smoke.ts`).
-- Ends when the coordinator's last slice moves to Go.
+The TypeScript-era label D4 (`node:sqlite` and the bundled Node server) ended with the TypeScript coordinator.
 
 ## Contracts (L3)
 
@@ -97,12 +92,12 @@ The generators were checked against off-the-shelf output for the transcript even
 
 ## MCP servers as executor subcommands (L4)
 
-- The executor starts delegation and design-rules as `fleet-executor mcp <name>` (`crates/executor/src/mcp.rs`, `profile.rs`); no Python process serves them. `tests/coordinator/mcp-replay.test.ts` replays the stdio exchanges captured from the former Python servers (`tests/executor/fixtures/mcp.json`).
+- The executor starts delegation and design-rules as `fleet-executor mcp <name>` (`crates/executor/src/mcp.rs`, `profile.rs`); no Python process serves them. `tests/executor/mcp-replay.test.ts` replays the stdio exchanges captured from the former Python servers (`tests/executor/fixtures/mcp.json`).
 - Connection MCP stays `python3 connection_call.py` until Connections replaces it ([connections](fleet-connections.md)); `delivery_worker.py` likewise. `deploy/infrastructure/origin_guard.py` stays: it guards the origin independently of MCP. The remaining Python and its removal conditions are listed in the [executor README](../../crates/executor/README.md#remaining-python).
 
 ## Go code
 
-The rules are in [`fleet.md`](../../fleet.md#stack): standard library first, `CGO_ENABLED=0`, one module `go/` with one `go.sum`, `-mod=readonly`, the checksum database on, `govulncheck` as a warning, contract types from `go/gen`, `-trimpath` release binaries from one Linux job. The CI job `go` vets and cross-builds `go/coordinator` for linux/amd64, darwin/arm64 and windows/amd64, checks each binary for `CGO_ENABLED=0`, writes a SHA-256 file per binary and uploads the workflow artifact `fleet-go-<sha>`. Nested modules under `go/probe/` are outside that module and outside CI.
+The rules are in [`fleet.md`](../../fleet.md#stack): standard library first, `CGO_ENABLED=0`, one module `go/` with one `go.sum`, `-mod=readonly`, the checksum database on, `govulncheck` as a warning, contract types from `go/gen`, `-trimpath` release binaries from one Linux job. The schema is embedded in the binary: `go generate` copies `packages/coordinator/db/schema.sql` (the schema source, unchanged) next to `d_schema.go`; the copy is not committed. The CI job `go` vets, runs `go test` and cross-builds `go/coordinator` for linux/amd64, darwin/arm64 and windows/amd64, checks each binary for `CGO_ENABLED=0`, writes a SHA-256 file per binary and uploads the workflow artifact `fleet-go-<sha>`. Nested modules under `go/probe/` are outside that module and outside CI.
 
 ### Third-party Go modules
 
@@ -114,8 +109,8 @@ Every module that Go code imports has a row here.
 
 Not added:
 
-- ClickHouse: its HTTP interface through `net/http`.
-- S3 (Garage): a hand-written SigV4 signer on `crypto/hmac` and `crypto/sha256`. `minio-go` v7.4.1 would compile in 19 third-party modules (26 in `go.sum`); the signer adds 0, and `s3.ts` already proves the subset in 125 lines.
+- ClickHouse: its HTTP interface through `net/http` when Fleet needs it; the coordinator has no ClickHouse code.
+- S3 (Garage): a hand-written SigV4 signer on `crypto/hmac` and `crypto/sha256`. `minio-go` v7.4.1 would compile in 19 third-party modules (26 in `go.sum`); the signer adds 0.
 - `govulncheck` is a tool run at a pinned version, not a module of Fleet's code.
 
 Allowed for the executor port (Not built: no Go code imports them yet):
@@ -126,27 +121,24 @@ Allowed for the executor port (Not built: no Go code imports them yet):
 | `github.com/ebitengine/purego` | `libc` `dlsym` | Calls macOS libproc (`proc_pidinfo`, `proc_signal_with_audittoken`) without cgo; no dependencies of its own. |
 | `golang.org/x/sys` | `libc` | `Openat`, `Statfs`, `SysctlKinfoProc`. |
 
-## Coordinator migration order
+## Coordinator rewrite
 
-The Go binary becomes the front door. It serves the routes it owns and passes every other request to the TypeScript coordinator through `net/http/httputil.ReverseProxy`. Both processes share one Postgres; the advisory scope locks (`pg_advisory_xact_lock`) serialize writers across them. `schema.sql` stays the one schema source, is frozen during a slice, and the Go binary applies it at start.
+The coordinator was rewritten in Go in one pass (owner direction 2026-11-11: no live users and no data to keep). There was no reverse proxy, no mixed TypeScript and Go setup, no fallback switch and no data migration. Behaviour that looked like a bug was fixed and noted in the pull request of its area.
 
-Each slice:
+- Four areas worked in parallel in `go/coordinator`. Each area's files are named `<area>_*.go`. Routes register from `init()` through `registry.go`: `route`, `longRoute` (no surrounding transaction), `publicRoute` (before the credential check), `operation` (`/api/ops/{name}`) and `onStart` (background tickers).
+- The seams were `packages/coordinator/db/schema.sql` and `contracts/*.schema.json`; both stayed unchanged.
+- Tests are outside tests over HTTP: `tests/trial`, `tests/go` and the app checks in `tests/ui`. All of them start the binary through `tests/harness.ts` on a fresh database with the PDS18 roles.
+- The cutover deleted `packages/coordinator` (except `db/schema.sql`), PGlite, `pg`, Fastify, the esbuild server bundle and `tests/coordinator`. `connection_call.py` moved to `crates/executor/`, which embeds it for connection MCP servers. The release is the Go binary plus `dist/app`.
 
-- first adds outside tests for its routes in `tests/<area>/`, run against the TypeScript coordinator and then against Go, as `tests/trial/` does;
-- ends with those tests green against Go and the full gate green in CI;
-- deletes the TypeScript code it replaced and the old `tests/coordinator/*.test.ts` files whose subject moved, listed in its pull request (an old test cannot run against a Go route).
+Not built: delivery (`delivery_create`, `delivery_generate`, `delivery_step`, `delivery_get`, `delivery_history`, `session_deliver`, `delivery_worker.py`). The TypeScript code never completed a delivery: no executor handled `delivery-step` commands, and nothing launched the worker. It was meant to do the following:
 
-Rollback for every slice: the previous release symlink while the schema is unchanged. Within a release a route moves back by leaving the Go route table, which hands it to the proxy again.
+- The operator confirms a static-site task with a project question.
+- A research pipeline run, or a retained run, feeds a Codex generation run (gpt-6.1-sol, low effort). That run writes `output/index.html` and CSS with a Sources section.
+- A program worker integrates the bounded HTML/CSS artifacts into the project repo (pull request, then merge after checks) and publishes them.
+- After a verified merge, `base-updated` asks every environment host to fast-forward its clean checkout.
+- `session_deliver` opens and merges the pull request of an agent session's pushed branch `<branchPrefix>/<sessionId>`.
 
-| Slice | Routes and behaviour | Deleted at the end |
-| --- | --- | --- |
-| 1. Front door | Credentials, sessions, messages without profiles, host poll, receipts and events, execution events and the stream (the [trial slice](#trial-slice-l1), SL1-SL11); proxy for the rest; release packaging and the deploy start the Go binary | `tests/trial/arms/typescript.json`; TypeScript stream and session read code; old tests of those routes |
-| 2. Dispatch and execution | Full dispatch ranking, subscriptions, budgets, wait reasons, stall questions; profiles, accounts and projects on message submit; receipt envelopes and the artifact gate; transport-conflict records | `dispatch.ts`, related store code, their old tests |
-| 3. Operations | `/api/ops/*`: projects, tasks, people access, connections, catalogue, architect routes | the matching TypeScript modules and old tests |
-| 4. Pipelines and results | Pipelines, delivery, artifacts and S3, lab, threads, agent tools | the matching modules, `s3.ts`, old tests |
-| 5. Remove TypeScript | Go serves every route; the proxy is removed | `packages/coordinator`, PGlite, the esbuild server bundle, `release-smoke.ts` in its Node form, the remaining old tests and helpers (`pg-test.ts`, `project-fixture.ts`); the `fleet.md` verification command |
-
-Not built: slices 1-5. Not built: outside tests in CI; `tests/trial/` runs only by hand today.
+Not built: artifact placement (`placement.ts`: copies across project `artifact_locations`, artifact rules, `artifact_copy_retry`). `stores_list` reports full stores only.
 
 ## Executor and gateway
 
@@ -165,7 +157,7 @@ Before the port: choose the `RLIMIT_AS` mechanism. Not built: a Linux run of the
 
 The language was chosen by porting one coordinator slice to Go and to Rust and measuring both against the TypeScript coordinator with the same outside tests and script. Go and TypeScript tied on edit-to-green; Rust's one-line rebuild was about 14 times slower; Go has 11 packages in `go.sum` against 156 (TypeScript) and 172 (Rust) in the whole lockfile; both ports reached green inside the time box with at most one build-fix cycle. Numbers: [evidence](../../evidence/fleet-stack.md#language-trial). The Go port is `go/coordinator`; the Rust port was not merged.
 
-The slice and the protocol stay the template for the coordinator migration's outside tests.
+The slice and the protocol are the template for the coordinator's outside tests.
 
 ### Trial slice (L1)
 
@@ -201,13 +193,13 @@ Requirements SL1-SL11 are the slice's own. Each has one outside test in `tests/t
 
 **Tables and kinds.** `document` (kinds `session`, `message`, `command`, `host`, `host-observation`, `event`, `event-delta`), `execution`, `change` (written by the `fleet_change` triggers, which also send `NOTIFY fleet_change`), `person` and `person_grant` (mirror of the people file), `schema_migration`. The schema is `packages/coordinator/db/schema.sql`, unchanged; RLS policies and triggers come from it.
 
-**Port layout.** Go: module `go/`, binary package `go/coordinator`, built to `go/bin/fleet-coordinator` (ignored by git), host protocol types from `go/gen`. The binary serves the slice on `127.0.0.1:$PORT` with the environment of `packages/coordinator/server.ts`: `FLEET_DATABASE_URL` (role `fleet_app`), `FLEET_MIGRATION_DATABASE_URL` (role `fleet`, which applies `schema.sql` at start in the same `-- migration N` steps and records them in `schema_migration`; migration 6's JavaScript document move is a no-op on an empty database), `FLEET_PEOPLE_FILE`, `FLEET_BROWSER_SECRET`, `FLEET_HOST_ID`. Each arm has `tests/trial/arms/<arm>.json` (`typescript.json`, `go.json`).
+**Port layout.** Go: module `go/`, binary package `go/coordinator`, built to `go/bin/fleet-coordinator` (ignored by git), host protocol types from `go/gen`. The binary serves on `127.0.0.1:$PORT` with this environment: `FLEET_DATABASE_URL` (role `fleet_app`), `FLEET_MIGRATION_DATABASE_URL` (role `fleet`, which applies `schema.sql` at start in the same `-- migration N` steps and records them in `schema_migration`; migration 6's JavaScript document move is a no-op on an empty database), `FLEET_PEOPLE_FILE`, `FLEET_BROWSER_SECRET`, `FLEET_HOST_ID`. The measured arm is `tests/trial/arms/go.json`.
 
-**Runner.** `node tests/trial/run.ts` is the one command. It starts, once per machine, a local PostgreSQL in `~/.cache/fleet-trial/pg` (trust authentication, Unix socket only, port 54329, left running for other worktrees), creates a fresh database for this worktree with `deploy/infrastructure/fleet-postgres.sql`, starts the coordinator under test on a free port (`FLEET_TRIAL_SERVER`, default `node packages/coordinator/server.ts`), runs the tests with the base URL and secret in the environment, stops the server and drops the database. Tests are TypeScript on Node's test runner, standard library only, and reach the server only over HTTP and SSE.
+**Runner.** `node tests/trial/run.ts` is the one command. It starts, once per machine, a local PostgreSQL in `~/.cache/fleet-trial/pg` (trust authentication, Unix socket only, port 54329, left running for other worktrees), creates a fresh database for this worktree with `deploy/infrastructure/fleet-postgres.sql`, starts the coordinator under test on a free port (`tests/harness.ts`; `FLEET_TRIAL_SERVER`, default `go/bin/fleet-coordinator`), runs the tests with the base URL and secret in the environment, stops the server and drops the database. Tests are TypeScript on Node's test runner, standard library only, and reach the server only over HTTP and SSE.
 
 **Shared-server rule.** Change visibility uses `pg_snapshot_xmin(pg_current_snapshot())`, which spans every database on the server, so a transaction open in another database holds committed changes back and no second `NOTIFY` arrives when it ends. `changes.since` reports `held`, and the stream looks again after 250 ms (`HELD_MS` in `packages/coordinator/stream.ts`). The same stall applies in production behind any long transaction that writes no change row.
 
-**Planted defects.** `node tests/trial/defects.ts` applies each defect to the TypeScript coordinator alone, runs the outside tests and restores the file. Each must turn its test red.
+**Planted defects.** The trial planted its defects in the TypeScript coordinator (`tests/trial/defects.ts`, deleted with it); each turned its test red.
 
 | ID | Defect | File | Red test |
 |---|---|---|---|
@@ -250,8 +242,8 @@ Results are medians and min-max spreads over green runs; a difference inside the
 
 | Risk | Effect | Mitigation |
 | --- | --- | --- |
-| The compiled trial arms were measured under load | Go and Rust speed numbers are pessimistic | Rerun `measure.ts go` on an idle machine when slice 1 starts |
-| Two coordinators share Postgres during the migration | A write ordering differs between processes | Advisory scope locks in both; SL10 and SL11 run against the mixed setup |
+| The compiled trial arms were measured under load | Go and Rust speed numbers are pessimistic | Rerun `measure.ts go` on an idle machine |
+| The rewrite drops a behaviour the TypeScript coordinator had | A screen or host call stops working | Each area lists ported routes and dropped behaviour in its pull request; the app checks in `tests/ui` run against the binary |
 | `encoding/json` matches keys case-insensitively | A validated field differs from the stored one | Validated values are stored; case variants of identity keys are refused (`go/coordinator`) |
 | The executor's private libproc symbol disappears | Identity-bound signals on macOS stop working | Refuse to signal when the symbol is missing, as Rust does today |
 | An unsigned darwin binary is quarantined | Mac hosts cannot run the CI build | [Executor delivery](fleet-executor-delivery.md); signing is an open question |

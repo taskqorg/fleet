@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// aMaps: rows as column maps.
+// cQuery: rows as column maps.
 // aRows: the first column of each row, a jsonb object.
 func aRows(q *Request, sql string, args ...any) ([]doc, error) {
 	rs, err := q.tx.Query(q.ctx(), sql, args...)
@@ -30,23 +30,6 @@ func aRows(q *Request, sql string, args ...any) ([]doc, error) {
 	return out, err
 }
 
-func aMaps(q *Request, sql string, args ...any) ([]map[string]any, error) {
-	rs, err := q.tx.Query(q.ctx(), sql, args...)
-	if err != nil {
-		return nil, err
-	}
-	out, err := pgx.CollectRows(rs, pgx.RowToMap)
-	if out == nil {
-		out = []map[string]any{}
-	}
-	return out, err
-}
-
-func aExec(q *Request, sql string, args ...any) error {
-	_, err := q.tx.Exec(q.ctx(), sql, args...)
-	return err
-}
-
 func isNotFound(err error) bool { var he *HTTPError; return errors.As(err, &he) && he.Code == 404 }
 
 func astr(v any) string { s, _ := v.(string); return s }
@@ -60,8 +43,6 @@ func nonNil(v ...any) any {
 	}
 	return nil
 }
-
-func nowMs() int64 { return time.Now().UnixMilli() }
 
 func aMsTime(v any) any {
 	f, ok := v.(float64)
@@ -95,16 +76,16 @@ func createExecution(q *Request, v doc) (bool, error) {
 }
 
 func markObservation(q *Request, id any, observation string) error {
-	return aExec(q, "UPDATE execution SET observation=$2::observation,last_seen_at=CASE WHEN $2::text='confirmed' THEN now() ELSE last_seen_at END WHERE id=$1", id, observation)
+	return exec(q, "UPDATE execution SET observation=$2::observation,last_seen_at=CASE WHEN $2::text='confirmed' THEN now() ELSE last_seen_at END WHERE id=$1", id, observation)
 }
 
 func setHarnessVersion(q *Request, id any, version string) error {
-	return aExec(q, "UPDATE execution SET harness_version=$2 WHERE id=$1 AND harness_version IS DISTINCT FROM $2", id, version)
+	return exec(q, "UPDATE execution SET harness_version=$2 WHERE id=$1 AND harness_version IS DISTINCT FROM $2", id, version)
 }
 
 // recordChildren: one child_agent row per child thread a harness reports, under the parent.
 func recordChildren(q *Request, parentID string, children []any) error {
-	ms, err := aMaps(q, "SELECT project_id,task_id,session_id,host_id,harness FROM execution WHERE id=$1", parentID)
+	ms, err := cQuery(q, "SELECT project_id,task_id,session_id,host_id,harness FROM execution WHERE id=$1", parentID)
 	if err != nil || len(ms) == 0 {
 		return err
 	}
@@ -159,7 +140,7 @@ func transition(q *Request, id, state string) (doc, error) {
 	if terminalTyped[cur] || stateOrder[state] < stateOrder[cur] {
 		return nil, fail(409, fmt.Sprintf("Execution %s cannot become %s", cur, state))
 	}
-	if err := aExec(q, `UPDATE execution SET state=$2,problem=CASE WHEN $2::execution_state='succeeded' THEN NULL ELSE problem END,ended_at=CASE WHEN $3 THEN coalesce(ended_at,now()) ELSE ended_at END,started_at=CASE WHEN $2::execution_state IN ('running','waiting') THEN coalesce(started_at,now()) ELSE started_at END WHERE id=$1`, id, state, terminalTyped[state]); err != nil {
+	if err := exec(q, `UPDATE execution SET state=$2,problem=CASE WHEN $2::execution_state='succeeded' THEN NULL ELSE problem END,ended_at=CASE WHEN $3 THEN coalesce(ended_at,now()) ELSE ended_at END,started_at=CASE WHEN $2::execution_state IN ('running','waiting') THEN coalesce(started_at,now()) ELSE started_at END WHERE id=$1`, id, state, terminalTyped[state]); err != nil {
 		return nil, err
 	}
 	if terminalTyped[state] {
@@ -175,7 +156,7 @@ func transition(q *Request, id, state string) (doc, error) {
 
 // detectProblems marks open executions bound to a host, account or environment nothing registered.
 func detectProblems(q *Request, hosts []string, environments map[string][]string) error {
-	return aExec(q, `WITH found AS (SELECT e.id,CASE
+	return exec(q, `WITH found AS (SELECT e.id,CASE
     WHEN e.host_id IS NOT NULL AND NOT (e.host_id=ANY($1) OR EXISTS (SELECT 1 FROM document h WHERE h.kind='host-observation' AND h.id=e.host_id)) THEN 'unregistered host '||e.host_id
     WHEN e.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM document a WHERE a.kind='managed-account' AND a.id=e.account_id) THEN 'unregistered account '||e.account_id
     WHEN e.project_id IS NOT NULL AND e.host_id IS NOT NULL AND jsonb_array_length(coalesce($2::jsonb->e.project_id,'[]'))>0 AND NOT ($2::jsonb->e.project_id) ? e.host_id THEN 'no registered environment of project '||e.project_id||' on host '||e.host_id

@@ -178,7 +178,7 @@ func ingestIn(q *Request, b doc) (any, error) {
 		if c == nil {
 			c = doc{"id": cid, "executionId": xid, "hostId": b["hostId"], "originalEventId": eid, "originalSequence": seq, "frameSha256": digest, "original": ev,
 				"collisionEventId": collision["id"], "supported": previous == nil && ev["type"] == "process.closed" && collision["type"] == "resource.observation",
-				"state": "blocked", "observedAt": nowMs()}
+				"state": "blocked", "observedAt": now()}
 			if err := put(q, "transport-conflict", c); err != nil {
 				return nil, err
 			}
@@ -239,11 +239,11 @@ func ingestIn(q *Request, b doc) (any, error) {
 			return nil, err
 		}
 		if c := p.conflict; c != nil && c["state"] != "delivered" {
-			c["state"], c["deliveredAt"] = "delivered", nowMs()
+			c["state"], c["deliveredAt"] = "delivered", now()
 			if err := put(q, "transport-conflict", c); err != nil {
 				return nil, err
 			}
-			if err := put(q, "transport-audit", doc{"id": uuid(), "executionId": xid, "conflictId": c["id"], "actor": "owning-host", "operation": "retained-transport-delivered", "at": nowMs(), "nativeEffectReplayed": false}); err != nil {
+			if err := put(q, "transport-audit", doc{"id": uuid(), "executionId": xid, "conflictId": c["id"], "actor": "owning-host", "operation": "retained-transport-delivered", "at": now(), "nativeEffectReplayed": false}); err != nil {
 				return nil, err
 			}
 		}
@@ -324,7 +324,7 @@ func transportAuthorize(q *Request, b doc) (any, error) {
 		return nil, fail(400, "Expected exact recovery identity")
 	}
 	// Authorization rewrites the execution's transport records, which host ingest writes too: take its scope as well.
-	if err := aExec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "execution:"+xid); err != nil {
+	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "execution:"+xid); err != nil {
 		return nil, err
 	}
 	c, err := aget(q, b["conflictId"], "transport-conflict")
@@ -370,13 +370,13 @@ func transportAuthorize(q *Request, b doc) (any, error) {
 				top = r
 			}
 		}
-		c["reservedSequence"], c["state"], c["authorizedAt"] = top+1, "authorized", nowMs()
+		c["reservedSequence"], c["state"], c["authorizedAt"] = top+1, "authorized", now()
 		if err := put(q, "transport-conflict", c); err != nil {
 			return nil, err
 		}
 	}
 	if err := put(q, "transport-audit", doc{"id": uuid(), "executionId": c["executionId"], "conflictId": c["id"], "requestId": rid, "signature": frameHash(b),
-		"actor": "operator-authority", "operation": "authorize-retained-transport", "at": nowMs(), "nativeEffectReplayed": false}); err != nil {
+		"actor": "operator-authority", "operation": "authorize-retained-transport", "at": now(), "nativeEffectReplayed": false}); err != nil {
 		return nil, err
 	}
 	return transportInspect(q, b)

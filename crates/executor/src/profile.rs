@@ -169,7 +169,7 @@ pub fn mcp_servers(v: &Value) -> Value {
     servers
 }
 /// Connection client (docs/designs/fleet-lab.md, Connections): the same file the coordinator runs for api steps.
-pub const CONNECTION_CLIENT: &str = include_str!("../../../packages/coordinator/connection_call.py");
+pub const CONNECTION_CLIENT: &str = include_str!("../connection_call.py");
 /// Skill text appended to Codex developer instructions (Fleet's Codex runs with skill and AGENTS.md discovery disabled).
 pub fn with_skills(v: &Value, skills: &Value) -> Value {
     let mut out = v.clone();

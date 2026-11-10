@@ -117,7 +117,7 @@ func accountHosts(q *Request, harness string) ([]doc, error) {
 		if beat != nil {
 			seen = beat["lastSeenAt"]
 			connectivity = "offline"
-			if float64(nowMs())-num(beat["lastSeenAt"]) < 30000 {
+			if float64(now())-num(beat["lastSeenAt"]) < 30000 {
 				connectivity = "online"
 			}
 		}
@@ -228,7 +228,7 @@ func accountCreate(q *Request) (any, error) {
 	}
 	text := func(k string) string { s, _ := b[k].(string); return s }
 	a := doc{"id": uuid(), "name": b["name"], "harness": harness, "holder": holder, "kind": "personal", "plan": text("plan"), "intake": "all",
-		"take": doc{"projects": []any{}}, "switchPct": nil, "comment": text("comment"), "createdAt": nowMs(), "bindings": []any{},
+		"take": doc{"projects": []any{}}, "switchPct": nil, "comment": text("comment"), "createdAt": now(), "bindings": []any{},
 		"login": "Native login on the holder's host, under its protected binding environment: " + loginCommands[harness] + ". Never paste codes or tokens into Fleet. Inspect an existing authorized login first; creation does not authenticate."}
 	return a, put(q, "managed-account", a)
 }
@@ -318,17 +318,17 @@ func accountInspect(q *Request, b doc, catalogue bool) (any, error) {
 	if catalogue {
 		mode = "catalogue"
 	}
-	if err := put(q, "session", doc{"id": sid, "createdAt": nowMs(), "actor": "program-worker"}); err != nil {
+	if err := put(q, "session", doc{"id": sid, "createdAt": now(), "actor": "program-worker"}); err != nil {
 		return nil, err
 	}
-	if err := put(q, "execution", doc{"id": id, "executionId": id, "sessionId": sid, "hostId": integ, "state": "queued", "createdAt": nowMs(), "actor": "program-worker", "accountId": a["id"]}); err != nil {
+	if err := put(q, "execution", doc{"id": id, "executionId": id, "sessionId": sid, "hostId": integ, "state": "queued", "createdAt": now(), "actor": "program-worker", "accountId": a["id"]}); err != nil {
 		return nil, err
 	}
 	if err := put(q, "command", doc{"id": uuid(), "executionId": id, "sessionId": sid, "hostId": integ, "kind": "account-inspect", "status": "pending",
 		"payload": doc{"accountId": a["id"], "harness": a["harness"], "binding": binding, "nativeHostId": host, "mode": mode}}); err != nil {
 		return nil, err
 	}
-	r := doc{"id": uuid(), "accountId": a["id"], "hostId": host, "binding": binding, "executionId": id, "createdAt": nowMs(),
+	r := doc{"id": uuid(), "accountId": a["id"], "hostId": host, "binding": binding, "executionId": id, "createdAt": now(),
 		"loginAction": "Read-only inspection; no authentication changes. Await host result, then explicit login handoff only if needed."}
 	return r, put(q, "account-inspection", r)
 }
@@ -407,7 +407,7 @@ func accountLoginHandoff(q *Request) (any, error) {
 	if a["harness"] == "antigravity" {
 		warning = "Native-current login may replace the shared principal; explicit operator review before any login."
 	}
-	return doc{"observedAt": nowMs(), "basedOnCheckAt": basedOn, "hostId": host["id"], "binding": b["binding"], "environment": binding["environment"], "executable": binding["executable"],
+	return doc{"observedAt": now(), "basedOnCheckAt": basedOn, "hostId": host["id"], "binding": b["binding"], "environment": binding["environment"], "executable": binding["executable"],
 		"command": command, "requiredUserInteraction": interaction, "warning": warning, "quota": "unknown", "authChanged": false}, nil
 }
 
@@ -488,7 +488,7 @@ func accountUpdateBody(q *Request, b doc) (any, error) {
 			continue
 		}
 		changed = append(changed, f)
-		if err := put(q, "setting-change", doc{"id": uuid(), "target": "account:" + astr(a["id"]), "holder": nonNil(next["holder"], a["holder"]), "field": f, "previous": a[f], "value": next[f], "actor": actor, "at": nowMs()}); err != nil {
+		if err := put(q, "setting-change", doc{"id": uuid(), "target": "account:" + astr(a["id"]), "holder": nonNil(next["holder"], a["holder"]), "field": f, "previous": a[f], "value": next[f], "actor": actor, "at": now()}); err != nil {
 			return nil, err
 		}
 	}
@@ -505,7 +505,7 @@ func accountUpdateBody(q *Request, b doc) (any, error) {
 	for k, v := range next {
 		a[k] = v
 	}
-	a["updatedAt"] = nowMs()
+	a["updatedAt"] = now()
 	return a, put(q, "managed-account", a)
 }
 
@@ -556,7 +556,7 @@ func accountReport(q *Request, b doc, host string) (any, error) {
 			previous = x
 		}
 	}
-	observedAt := nowMs()
+	observedAt := now()
 	reason := "legacy-observation"
 	if inList(checkReasons, astr(b["reason"])) {
 		reason = astr(b["reason"])
@@ -641,7 +641,7 @@ func accountCatalogue(q *Request, b doc, host string) (any, error) {
 		}
 		out = append(out, doc{"name": m["name"], "executable": m["executable"], "environment": env, "behaviorApproved": m["behaviorApproved"] == true})
 	}
-	err = put(q, "account-catalogue", doc{"id": "catalogue:" + host + ":" + astr(a["harness"]), "hostId": host, "harness": a["harness"], "observedAt": nowMs(), "bindings": out})
+	err = put(q, "account-catalogue", doc{"id": "catalogue:" + host + ":" + astr(a["harness"]), "hostId": host, "harness": a["harness"], "observedAt": now(), "bindings": out})
 	return doc{"ok": true}, err
 }
 

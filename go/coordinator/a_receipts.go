@@ -178,7 +178,7 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 	if !wasFinal && kind != "steer" && (kind != "stop" || status == "stopped") {
 		e["state"] = status
 	}
-	e["updatedAt"] = nowMs()
+	e["updatedAt"] = now()
 	if status == "started" && e["startedAt"] == nil {
 		e["startedAt"] = e["updatedAt"]
 	}

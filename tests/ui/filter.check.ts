@@ -1,12 +1,10 @@
-// Filter-path check (docs/designs/fleet-view-urls-and-list-path.md §4). For each size: a fresh in-memory coordinator with
-// that many tasks, operation latency in process and over HTTP, then in Chromium every list change (state counter, grouping,
+// Filter-path check (docs/designs/fleet-view-urls-and-list-path.md §4). For each size: a fresh Go coordinator (tests/harness.ts) with
+// that many tasks, operation latency over HTTP, then in Chromium every list change (state counter, grouping,
 // "All", preset, focus, row check, search, Back) watched each animation frame. Prints a report. With --assert it exits 1
 // when a rule fails at a size up to 20,000 tasks; larger sizes are report-only (growth factor).
 // Run: pnpm run build && node tests/ui/filter.check.ts [--assert] [--sizes 3000,20000,100000]
-import http from 'node:http';
 import { chromium, type Page } from 'playwright';
-import { createStore } from '../../packages/coordinator/store.ts';
-import { createApp, OWNER } from '../coordinator/test-app.ts';
+import { checkServer } from './seed.ts';
 
 const argv = process.argv.slice(2);
 const ASSERT = argv.includes('--assert');
@@ -30,26 +28,16 @@ const httpMedians: Record<number, Record<string, number>> = {};
 
 async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch>>) {
   console.log(`== ${N} tasks`);
-  const store = createStore('memory://'); await store.migrate();
+  const { origin, seed, close } = await checkServer();
   let t = performance.now();
-  await store.tx(async () => {
+  seed.bulk(() => {
     for (let i = 0; i < N; i++) {
-      const id = await store.tasks.create({ title: ['Render prop batch', 'Fix CI cache key', 'Rework hero copy', 'Write release notes', 'Compare 3D methods'][i % 5] + ' ' + i, projectId: ['dashq', 'game', 'fleet'][i % 3], priority: ['urgent', 'normal', 'background'][i % 3] });
-      if (i % 5 === 0) { await store.executions.createExecution({ id: 'run-' + i, kind: 'agent_run', taskId: id, projectId: ['dashq', 'game', 'fleet'][i % 3], hostId: ['pds18', 'mac', 'windows'][i % 3], harness: ['codex', 'claude', 'antigravity'][i % 3], state: 'running' }); await store.tasks.transition(id, 'first_execution').catch(() => {}); }
+      const p = ['dashq', 'game', 'fleet'][i % 3];
+      const id = seed.task({ title: ['Render prop batch', 'Fix CI cache key', 'Rework hero copy', 'Write release notes', 'Compare 3D methods'][i % 5] + ' ' + i, projectId: p, priority: ['urgent', 'normal', 'background'][i % 3], ...(i % 5 === 0 ? { state: 'in_progress' } : {}) });
+      if (i % 5 === 0) seed.execution({ id: 'run-' + i, kind: 'agent_run', taskId: id, projectId: p, hostId: ['pds18', 'mac', 'windows'][i % 3], harness: ['codex', 'claude', 'antigravity'][i % 3], state: 'running' });
     }
   });
   console.log(`fixture load: ${((performance.now() - t) / 1000).toFixed(1)} s`);
-  for (const [name, b] of CASES) console.log(`store.tasks.page ${name}: ${(await time(() => store.read(() => store.tasks.page({ ...b, limit: 100 })))).toFixed(1)} ms`);
-
-  let target = 0;
-  const proxy = http.createServer((req, res) => {
-    const up = http.request({ host: '127.0.0.1', port: target, path: req.url, method: req.method, headers: { ...req.headers, authorization: 'Bearer browser-check', 'x-fleet-person': OWNER } }, r => { res.writeHead(r.statusCode!, r.headers); r.pipe(res); });
-    up.on('error', () => { res.writeHead(502); res.end(); }); req.pipe(up);
-  });
-  await new Promise<void>(r => proxy.listen(0, '127.0.0.1', r));
-  const origin = `http://127.0.0.1:${(proxy.address() as any).port}`;
-  const app = createApp({ store, database: 'memory://', browserSecret: 'browser-check', machineSecret: 'machine-check', hostId: 'pds18', nativeHostIds: [], browserProxyAuth: true, browserOrigin: origin, appDir: 'dist/app' });
-  await app.listen({ port: 0, host: '127.0.0.1' }); target = (app.server.address() as any).port;
   httpMedians[N] = {};
   for (const [name, b] of CASES) {
     let bytes = 0;
@@ -106,6 +94,8 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     // A copied link reproduces focus, sel, filters and grouping in a second page.
     const other = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await other.goto(origin + checked); await other.waitForSelector('[data-ui=detail] .detail-title');
+    // The list's page arrives after the detail at 20,000 tasks: wait for the focused row, up to 5 s, before reading the view.
+    await other.waitForSelector('.vl-row.sel', { timeout: 5000 }).catch(() => {});
     const there = await other.evaluate(() => ({ url: location.pathname + location.search, checked: document.querySelectorAll('.vl-row .row-check:checked').length, focusedRow: !!document.querySelector('.vl-row.sel') }));
     await other.close();
     rule(N, there.url === checked && there.checked === 1 && there.focusedRow, `copied link did not reproduce the view: ${JSON.stringify(there)} for ${checked}`);
@@ -124,7 +114,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await page.locator('.fbar input').first().fill(''); await page.locator('.fbar input').first().pressSequentially('copy', { delay: 60 }); await page.waitForTimeout(800);
     await page.goBack(); await page.waitForTimeout(300);
     rule(N, (await url()) === '/tasks', `a search after Back replaced the entry Back returned to (Back now at ${await url()})`);
-  } finally { await page.close(); await app.close(); proxy.close(); }
+  } finally { await page.close(); await close(); }
 }
 
 const browser = await chromium.launch();

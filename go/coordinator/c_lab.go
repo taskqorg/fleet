@@ -74,7 +74,7 @@ func labFiles(v any, what string) ([]any, error) {
 	}
 	seen, out := map[string]bool{}, []any{}
 	for _, x := range l {
-		f := cMap(x)
+		f := mapOf(x)
 		p, _ := f["path"].(string)
 		bad := p == "" || len(p) > 300 || strings.HasPrefix(p, "/")
 		for _, part := range strings.Split(p, "/") {
@@ -145,7 +145,7 @@ func useCases() ([]doc, error) {
 
 // parseExample validates one example into its canonical shape.
 func parseExample(v any, ids map[string]bool) (orderedDoc, doc, error) {
-	e := cMap(v)
+	e := mapOf(v)
 	if e == nil {
 		return nil, nil, fail(400, "Expected an example object")
 	}
@@ -169,7 +169,7 @@ func parseExample(v any, ids map[string]bool) (orderedDoc, doc, error) {
 		return nil, nil, fail(400, "Invalid origin")
 	}
 	var fixture any
-	if f := cMap(e["fixture"]); f != nil {
+	if f := mapOf(e["fixture"]); f != nil {
 		repo, err := labID(f["repo"], "fixture repo")
 		if err != nil {
 			return nil, nil, err
@@ -188,7 +188,7 @@ func parseExample(v any, ids map[string]bool) (orderedDoc, doc, error) {
 	}
 	checks, seen := []any{}, map[string]bool{}
 	for _, x := range cl {
-		c := cMap(x)
+		c := mapOf(x)
 		cid, err := labID(c["id"], "check id")
 		if err != nil {
 			return nil, nil, err
@@ -245,7 +245,7 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 	}
 	ids := map[string]bool{}
 	for _, u := range ucs {
-		ids[cStr(u["id"])] = true
+		ids[astr(u["id"])] = true
 	}
 	type plan struct {
 		meta  doc
@@ -270,7 +270,7 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 		bytes, _ := json.MarshalIndent(ex, "", " ")
 		bytes = append(bytes, '\n')
 		name := fmt.Sprintf("examples/%v@%v.json", meta["id"], meta["version"])
-		hash := cSha(bytes)
+		hash := sha256hex(bytes)
 		pid := cStrOr(projectID)
 		if pid == "" {
 			pid = "_"
@@ -318,7 +318,7 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 				return nil, err
 			}
 			if len(rs) > 0 {
-				if err := cExec(q, "INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES($1,$2,$3,'verified',now())", id, storeID, projectID); err != nil {
+				if err := exec(q, "INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES($1,$2,$3,'verified',now())", id, storeID, projectID); err != nil {
 					return nil, err
 				}
 				out = append(out, doc{"artifactId": id, "id": p.meta["id"], "version": p.meta["version"], "hash": p.hash, "created": true})
@@ -332,7 +332,7 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 			}
 		}
 		if approved && old["approved_at"] == nil {
-			if err := cExec(q, "UPDATE artifact SET approved_at=now() WHERE id=$1", old["id"]); err != nil {
+			if err := exec(q, "UPDATE artifact SET approved_at=now() WHERE id=$1", old["id"]); err != nil {
 				return nil, err
 			}
 		}
@@ -477,8 +477,8 @@ func runChecks(checks []any, files []labFile) (doc, error) {
 	}
 	failed := []any{}
 	for _, x := range checks {
-		c := cMap(x)
-		cmd := osexec.Command("sh", "-c", cStr(c["run"]))
+		c := mapOf(x)
+		cmd := osexec.Command("sh", "-c", astr(c["run"]))
 		cmd.Dir = dir
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "FLEET_OUTPUT_DIR=" + dir}
 		if cmd.Run() != nil {
@@ -496,12 +496,12 @@ func scoreView(r doc) doc {
 
 func scoreAdd(q *Request, s doc) (string, error) {
 	trials := cList(s["trialIds"])
-	if err := checkValue(cStr(s["form"]), s["value"], trials); err != nil {
+	if err := checkValue(astr(s["form"]), s["value"], trials); err != nil {
 		return "", err
 	}
 	ids := []string{}
 	for _, t := range trials {
-		ids = append(ids, cStr(t))
+		ids = append(ids, astr(t))
 	}
 	var rat any
 	if r, ok := s["rationale"].(string); ok {
@@ -511,7 +511,7 @@ func scoreAdd(q *Request, s doc) (string, error) {
 		rat = r
 	}
 	id := uuid()
-	return id, cExec(q, `INSERT INTO score(id,experiment_id,project_id,trial_ids,evaluator,evaluator_version,form,value,source_execution_id,question_id,rationale,replaces_score_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+	return id, exec(q, `INSERT INTO score(id,experiment_id,project_id,trial_ids,evaluator,evaluator_version,form,value,source_execution_id,question_id,rationale,replaces_score_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 		id, s["experimentId"], s["projectId"], ids, s["evaluator"], s["evaluatorVersion"], s["form"], cJSON(s["value"]), s["sourceExecutionId"], s["questionId"], rat, s["replaces"])
 }
 
@@ -539,7 +539,7 @@ func agreement(scores []doc) doc {
 	compared, matched := 0, 0
 	var judges []doc
 	for _, s := range scores {
-		if strings.HasPrefix(cStr(s["evaluator"]), "judge:") {
+		if strings.HasPrefix(astr(s["evaluator"]), "judge:") {
 			judges = append(judges, s)
 		}
 	}
@@ -552,7 +552,7 @@ func agreement(scores []doc) doc {
 		return nil
 	}
 	for _, o := range scores {
-		if !strings.HasPrefix(cStr(o["evaluator"]), "human:") {
+		if !strings.HasPrefix(astr(o["evaluator"]), "human:") {
 			continue
 		}
 		switch o["form"] {
@@ -618,22 +618,22 @@ func summarize(scores []doc, trials []string) doc {
 	for _, s := range scores {
 		mine := false
 		for _, t := range trialIDsOf(s) {
-			mine = mine || in[cStr(t)]
+			mine = mine || in[astr(t)]
 		}
 		if !mine {
 			continue
 		}
-		k := cStr(s["evaluator"])
+		k := astr(s["evaluator"])
 		e := m[k]
 		if e == nil {
-			e = &acc{form: cStr(s["form"])}
+			e = &acc{form: astr(s["form"])}
 			m[k] = e
 			order = append(order, k)
 		}
 		e.n++
 		switch s["form"] {
 		case "pick_best":
-			if in[cStr(s["value"])] {
+			if in[astr(s["value"])] {
 				e.values = append(e.values, 1)
 			}
 		case "pass_fail":
@@ -706,7 +706,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 	if !cKeysOnly(b, "kind", "projectId", "pipelineId", "examples", "variants", "repeats", "evaluators", "budgets", "primaryEvaluator", "strategy") {
 		return nil, fail(400, "Expected kind, projectId, pipelineId, examples, variants, repeats, evaluators, budgets, primaryEvaluator, strategy")
 	}
-	kind := cStr(b["kind"])
+	kind := astr(b["kind"])
 	if kind == "loop" {
 		return nil, fail(400, "Loop experiments need strategies (Stage 4)")
 	}
@@ -753,7 +753,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 		if err := q.tx.QueryRow(q.ctx(), "SELECT content_hash FROM artifact WHERE id=$1", id).Scan(&hash); err != nil {
 			return nil, err
 		}
-		e := cMap(ex["example"])
+		e := mapOf(ex["example"])
 		pin := fmt.Sprintf("%v@%v", e["id"], e["version"])
 		if seen[pin] {
 			return nil, fail(400, "Duplicate example")
@@ -767,7 +767,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 	}
 	variants, labels := []any{}, map[string]bool{}
 	for _, x := range vl {
-		v := cMap(x)
+		v := mapOf(x)
 		label, _ := v["label"].(string)
 		if !labLabel.MatchString(label) {
 			return nil, fail(400, "Invalid variant label")
@@ -776,7 +776,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 		if ov == nil {
 			ov = doc{}
 		}
-		o := cMap(ov)
+		o := mapOf(ov)
 		if o == nil || !cKeysOnly(o, labOverrides...) {
 			return nil, fail(400, "Variant overrides are "+strings.Join(labOverrides, ", "))
 		}
@@ -790,7 +790,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 			return nil, fail(400, "Duplicate variant label")
 		}
 		labels[label] = true
-		variants = append(variants, doc{"label": label, "overrides": o, "config_ref": cSha([]byte(cCanon(doc{"pipeline": pipelineID, "overrides": o})))})
+		variants = append(variants, doc{"label": label, "overrides": o, "config_ref": sha256hex([]byte(cCanon(doc{"pipeline": pipelineID, "overrides": o})))})
 	}
 	if kind == "single" && len(variants) != 1 {
 		return nil, fail(400, "A single experiment has one variant")
@@ -809,8 +809,8 @@ func expCreate(q *Request, b doc) (doc, error) {
 	evaluators := []any{}
 	names := map[string]bool{}
 	for _, x := range cList(b["evaluators"]) {
-		e := cMap(x)
-		k, f, ref := cStr(e["kind"]), cStr(e["form"]), e["ref"]
+		e := mapOf(x)
+		k, f, ref := astr(e["kind"]), astr(e["form"]), e["ref"]
 		switch k {
 		case "script":
 			if ref != "example.checks" || f != "pass_fail" && f != "metric" {
@@ -838,13 +838,13 @@ func expCreate(q *Request, b doc) (doc, error) {
 		names[evaluatorName(ev)] = true
 		evaluators = append(evaluators, ev)
 	}
-	if b["primaryEvaluator"] != nil && !names[cStr(b["primaryEvaluator"])] {
+	if b["primaryEvaluator"] != nil && !names[astr(b["primaryEvaluator"])] {
 		return nil, fail(400, "primaryEvaluator names none of the evaluators")
 	}
 	budgets := []any{}
 	for _, x := range cList(b["budgets"]) {
-		bu := cMap(x)
-		u := cStr(bu["unit"])
+		bu := mapOf(x)
+		u := astr(bu["unit"])
 		if u != "trials" && u != "wall_ms" && u != "calls" && u != "credits" {
 			return nil, fail(400, "Budget unit is trials, wall_ms, calls, credits")
 		}
@@ -852,7 +852,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 		if !ok || !(l > 0) || math.IsInf(l, 0) {
 			return nil, fail(400, "Invalid budget limit")
 		}
-		act := cStr(bu["action"])
+		act := astr(bu["action"])
 		if bu["action"] == nil {
 			act = "pause"
 		}
@@ -862,7 +862,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 		budgets = append(budgets, doc{"unit": u, "limit": l, "action": act})
 	}
 	id := uuid()
-	if err := cExec(q, "INSERT INTO experiment(id,project_id,kind,pipeline_id,examples,variants,repeats,evaluators,primary_evaluator,budgets) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+	if err := exec(q, "INSERT INTO experiment(id,project_id,kind,pipeline_id,examples,variants,repeats,evaluators,primary_evaluator,budgets) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
 		id, projectID, kind, pipelineID, cJSON(examples), cJSON(variants), repeats, cJSON(evaluators), b["primaryEvaluator"], cJSON(budgets)); err != nil {
 		return nil, err
 	}
@@ -896,7 +896,7 @@ func expRuns(q *Request, id string) ([]doc, error) {
 	}
 	out := []doc{}
 	for _, r := range rs {
-		run, err := getRun(q, cStr(r["id"]))
+		run, err := getRun(q, astr(r["id"]))
 		if err != nil {
 			return nil, err
 		}
@@ -922,7 +922,7 @@ func expTrials(runs []doc) []doc {
 func expLatest(trials []doc) ([]string, map[string]doc) {
 	order, m := []string{}, map[string]doc{}
 	for _, t := range trials {
-		c := cMap(t["cell"])
+		c := mapOf(t["cell"])
 		k := cellKey(c["example"], c["variant"], c["repeat"])
 		o, ok := m[k]
 		if !ok {
@@ -931,7 +931,7 @@ func expLatest(trials []doc) ([]string, map[string]doc) {
 		a, _ := cNum(c["attempt"])
 		var oa float64
 		if ok {
-			oa, _ = cNum(cMap(o["cell"])["attempt"])
+			oa, _ = cNum(mapOf(o["cell"])["attempt"])
 		}
 		if !ok || a > oa {
 			m[k] = t
@@ -954,7 +954,7 @@ func expInsertRun(q *Request, exp doc, requestID, file string, example any, vari
 	}
 	ov := doc{}
 	if variant != nil {
-		ov = cMap(variant["overrides"])
+		ov = mapOf(variant["overrides"])
 	}
 	extra["priority"] = "background"
 	_, err = pipelineStart(q, doc{"id": id, "file": file, "projectId": exp["project_id"], "requestId": requestID, "example": example, "overrides": ov,
@@ -964,7 +964,7 @@ func expInsertRun(q *Request, exp doc, requestID, file string, example any, vari
 
 // exampleOf: the pinned example, refused when its content changed; run is the example without references.
 func exampleOf(q *Request, pin doc) (doc, doc, error) {
-	ex, err := labExampleGet(q, cStr(pin["artifact_id"]))
+	ex, err := labExampleGet(q, astr(pin["artifact_id"]))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -973,7 +973,7 @@ func exampleOf(q *Request, pin doc) (doc, doc, error) {
 	if hash != pin["hash"] {
 		return nil, nil, fail(409, fmt.Sprintf("Example %v changed since it was pinned", pin["id"]))
 	}
-	full := cMap(ex["example"])
+	full := mapOf(ex["example"])
 	run := doc{}
 	for k, v := range full {
 		if k != "references" {
@@ -989,8 +989,8 @@ func expLaunchTrial(q *Request, exp, pin, variant doc, repeat, attempt int64) (s
 	if err != nil {
 		return "", err
 	}
-	rid := "lab:" + cSha(cJSON([]any{exp["id"], 0, pin["id"], variant["label"], repeat, attempt}))
-	return expInsertRun(q, exp, rid, cStr(exp["pipeline_id"])+".json", run, variant, doc{"cell": cell})
+	rid := "lab:" + sha256hex(cJSON([]any{exp["id"], 0, pin["id"], variant["label"], repeat, attempt}))
+	return expInsertRun(q, exp, rid, astr(exp["pipeline_id"])+".json", run, variant, doc{"cell": cell})
 }
 
 type labFile struct {
@@ -1008,8 +1008,8 @@ func trialFiles(q *Request, trial, example doc) ([]labFile, error) {
 		m[p] = b
 	}
 	for _, x := range cList(example["inputs"]) {
-		f := cMap(x)
-		set(cStr(f["path"]), []byte(cStr(f["text"])))
+		f := mapOf(x)
+		set(astr(f["path"]), []byte(astr(f["text"])))
 	}
 	outs, err := pipelineOutputs(q, trial, -1)
 	if err != nil {
@@ -1038,8 +1038,8 @@ func trialFiles(q *Request, trial, example doc) ([]labFile, error) {
 
 func findPin(exp doc, id any) doc {
 	for _, p := range cList(exp["examples"]) {
-		if cMap(p)["id"] == id {
-			return cMap(p)
+		if mapOf(p)["id"] == id {
+			return mapOf(p)
 		}
 	}
 	return nil
@@ -1047,8 +1047,8 @@ func findPin(exp doc, id any) doc {
 
 func findVariant(exp doc, label any) doc {
 	for _, v := range cList(exp["variants"]) {
-		if cMap(v)["label"] == label {
-			return cMap(v)
+		if mapOf(v)["label"] == label {
+			return mapOf(v)
 		}
 	}
 	return nil
@@ -1062,7 +1062,7 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 			continue
 		}
 		for _, x := range cList(exp["evaluators"]) {
-			e := cMap(x)
+			e := mapOf(x)
 			if e["kind"] == "human" {
 				continue
 			}
@@ -1074,9 +1074,9 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 			if has {
 				continue
 			}
-			pin := findPin(exp, cMap(t["cell"])["example"])
+			pin := findPin(exp, mapOf(t["cell"])["example"])
 			if e["kind"] == "script" {
-				r := checked[cStr(t["id"])]
+				r := checked[astr(t["id"])]
 				if r == nil {
 					complete = false
 					continue
@@ -1099,19 +1099,19 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 				if len(failed) > 0 {
 					fs := []string{}
 					for _, f := range failed {
-						fs = append(fs, cStr(f))
+						fs = append(fs, astr(f))
 					}
 					rat = "failed: " + strings.Join(fs, ", ")
 				}
 				if _, err := scoreAdd(q, doc{"experimentId": exp["id"], "projectId": exp["project_id"], "trialIds": []any{t["id"]}, "evaluator": name,
-					"evaluatorVersion": cSha(cJSON(full["checks"]))[:16], "form": e["form"], "value": value, "rationale": rat}); err != nil {
+					"evaluatorVersion": sha256hex(cJSON(full["checks"]))[:16], "form": e["form"], "value": value, "rationale": rat}); err != nil {
 					return false, err
 				}
 				continue
 			}
 			var run doc
 			for _, r := range runs {
-				j := cMap(r["judge"])
+				j := mapOf(r["judge"])
 				if j != nil && j["evaluator"] == name && j["trialId"] == t["id"] {
 					run = r
 				}
@@ -1135,7 +1135,7 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 						inputs = append(inputs, doc{"path": "trial/" + f.path, "text": string(f.bytes)})
 					}
 				}
-				jid, err := expInsertRun(q, exp, "lab:"+cSha(cJSON([]any{exp["id"], "judge", name, t["id"]})), cStr(e["ref"])+".json",
+				jid, err := expInsertRun(q, exp, "lab:"+sha256hex(cJSON([]any{exp["id"], "judge", name, t["id"]})), astr(e["ref"])+".json",
 					doc{"prompt": full["prompt"], "form": e["form"], "inputs": inputs}, nil, doc{"judge": doc{"evaluator": name, "trialId": t["id"]}})
 				if err != nil {
 					return false, err
@@ -1146,7 +1146,7 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 				complete = false
 				continue
 			}
-			if !labFinal[cStr(run["state"])] {
+			if !labFinal[astr(run["state"])] {
 				complete = false
 				continue
 			}
@@ -1156,13 +1156,13 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 			steps := cList(run["steps"])
 			var last doc
 			if len(steps) > 0 {
-				last = cMap(cMap(steps[len(steps)-1])["output"])
+				last = mapOf(mapOf(steps[len(steps)-1])["output"])
 			}
-			if checkValue(cStr(e["form"]), last["value"], nil) != nil {
+			if checkValue(astr(e["form"]), last["value"], nil) != nil {
 				continue
 			}
 			ver := "unknown"
-			if d := cStr(run["definitionSha256"]); len(d) >= 16 {
+			if d := astr(run["definitionSha256"]); len(d) >= 16 {
 				ver = d[:16]
 			}
 			if _, err := scoreAdd(q, doc{"experimentId": exp["id"], "projectId": exp["project_id"], "trialIds": []any{t["id"]}, "evaluator": name, "evaluatorVersion": ver,
@@ -1196,7 +1196,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		}
 		hasScript := false
 		for _, e := range cList(exp["evaluators"]) {
-			hasScript = hasScript || cMap(e)["kind"] == "script"
+			hasScript = hasScript || mapOf(e)["kind"] == "script"
 		}
 		if !hasScript {
 			return nil
@@ -1215,12 +1215,12 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			}
 			done := false
 			for _, s := range cur {
-				done = done || strings.HasPrefix(cStr(s["evaluator"]), "script:") && firstTrial(s) == t["id"]
+				done = done || strings.HasPrefix(astr(s["evaluator"]), "script:") && firstTrial(s) == t["id"]
 			}
 			if done {
 				continue
 			}
-			full, _, err := exampleOf(q, findPin(exp, cMap(t["cell"])["example"]))
+			full, _, err := exampleOf(q, findPin(exp, mapOf(t["cell"])["example"]))
 			if err != nil {
 				return err
 			}
@@ -1232,7 +1232,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			if err != nil {
 				return err
 			}
-			checked[cStr(t["id"])] = r
+			checked[astr(t["id"])] = r
 		}
 		return nil
 	}); err != nil {
@@ -1271,27 +1271,27 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		state, changed := "running", false
 		var reason any
 		reached := func(b doc) bool {
-			v, _ := cNum(cMap(s[cStr(b["unit"])])["value"])
+			v, _ := cNum(mapOf(s[astr(b["unit"])])["value"])
 			l, _ := cNum(b["limit"])
 			return b["firedAt"] == nil && v >= l
 		}
 		for _, x := range budgets {
-			b := cMap(x)
+			b := mapOf(x)
 			if b["action"] == "stop" && reached(b) {
-				b["firedAt"], changed, state, reason = now(), true, "stopped", "budget:"+cStr(b["unit"])
+				b["firedAt"], changed, state, reason = now(), true, "stopped", "budget:"+astr(b["unit"])
 				break
 			}
 		}
 		if state == "running" {
 			for _, x := range budgets {
-				b := cMap(x)
+				b := mapOf(x)
 				if b["action"] == "stop" || !reached(b) {
 					continue
 				}
 				b["firedAt"], changed = now(), true
 				if b["action"] == "pause" {
 					state = "paused"
-					v := cMap(s[cStr(b["unit"])])["value"]
+					v := mapOf(s[astr(b["unit"])])["value"]
 					if _, err := cAsk(q, "operator_decision", fmt.Sprintf("Lab budget reached: %v %v of %v. Running trials finish; resume launches or stop the experiment?", b["unit"], v, b["limit"]),
 						exp["project_id"], []any{"resume", "stop"}, "lab", doc{"experimentId": id, "budget": b["unit"]}); err != nil {
 						return err
@@ -1301,7 +1301,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			}
 		}
 		if changed || state != "running" {
-			if err := cExec(q, "UPDATE experiment SET budgets=$2,state=$3,stop_reason=coalesce($4,stop_reason) WHERE id=$1", id, cJSON(budgets), state, reason); err != nil {
+			if err := exec(q, "UPDATE experiment SET budgets=$2,state=$3,stop_reason=coalesce($4,stop_reason) WHERE id=$1", id, cJSON(budgets), state, reason); err != nil {
 				return err
 			}
 		}
@@ -1310,9 +1310,9 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		}
 		// A trials budget that has not fired caps this pass's launches, so it is reached exactly.
 		room := math.Inf(1)
-		tv, _ := cNum(cMap(s["trials"])["value"])
+		tv, _ := cNum(mapOf(s["trials"])["value"])
 		for _, x := range budgets {
-			b := cMap(x)
+			b := mapOf(x)
 			if b["unit"] == "trials" && b["action"] != "warn" && b["firedAt"] == nil {
 				l, _ := cNum(b["limit"])
 				room = math.Min(room, l-tv)
@@ -1322,13 +1322,13 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		for _, p := range cList(exp["examples"]) {
 			for _, v := range cList(exp["variants"]) {
 				for r := int64(0); r < repeats; r++ {
-					if _, ok := last[cellKey(cMap(p)["id"], cMap(v)["label"], r)]; ok {
+					if _, ok := last[cellKey(mapOf(p)["id"], mapOf(v)["label"], r)]; ok {
 						continue
 					}
 					if room <= 0 {
 						break launch
 					}
-					rid, err := expLaunchTrial(q, exp, cMap(p), cMap(v), r, 0)
+					rid, err := expLaunchTrial(q, exp, mapOf(p), mapOf(v), r, 0)
 					if err != nil {
 						return err
 					}
@@ -1341,10 +1341,10 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		}
 		allFinal := true
 		for _, k := range order {
-			allFinal = allFinal && labFinal[cStr(last[k]["state"])]
+			allFinal = allFinal && labFinal[astr(last[k]["state"])]
 		}
 		if len(launched) == 0 && len(order) == total && allFinal && evaluated {
-			return cExec(q, "UPDATE experiment SET state='done',stop_reason='complete' WHERE id=$1 AND state='running'", id)
+			return exec(q, "UPDATE experiment SET state='done',stop_reason='complete' WHERE id=$1 AND state='running'", id)
 		}
 		return nil
 	})
@@ -1359,7 +1359,7 @@ func labReconcileWhere(ctx context.Context, a *App, states string, skipBusy bool
 	cRead(ctx, a, func(q *Request) error {
 		rs, err := cQuery(q, "SELECT id FROM experiment WHERE state = ANY(string_to_array($1, ','))", states)
 		for _, r := range rs {
-			ids = append(ids, cStr(r["id"]))
+			ids = append(ids, astr(r["id"]))
 		}
 		return err
 	})
@@ -1392,16 +1392,7 @@ func expSetState(q *Request, id string, from []string, to string, reason any) er
 		return fail(409, fmt.Sprintf("Experiment is %v", e["state"]))
 	}
 	// A budget question answered by the buttons instead is withdrawn, so a late answer never moves a later pause.
-	return cExec(q, "UPDATE question SET state='withdrawn' WHERE state='open' AND kind='operator_decision' AND data->>'experimentId'=$1", id)
-}
-
-// labAct: owner actions run their own transactions, then reconcile; q.tx is nil (longRoute).
-func labTx(q *Request, lock string, fn func(q *Request) error) error {
-	return q.app.store.Tx(q.ctx(), scopeOf(q.person), true, lock, func(tx pgx.Tx) error {
-		q.tx = tx
-		defer func() { q.tx = nil }()
-		return fn(q)
-	})
+	return exec(q, "UPDATE question SET state='withdrawn' WHERE state='open' AND kind='operator_decision' AND data->>'experimentId'=$1", id)
 }
 
 func labReadTx(q *Request, fn func(q *Request) error) error {
@@ -1421,11 +1412,11 @@ func expAction(q *Request, id, action string) (doc, error) {
 	var err error
 	switch action {
 	case "launch":
-		err = labTx(q, "", func(q *Request) error { return expSetState(q, id, []string{"draft"}, "running", nil) })
+		err = cWrite(q, "", func(q *Request) error { return expSetState(q, id, []string{"draft"}, "running", nil) })
 	case "stop":
-		err = labTx(q, "", func(q *Request) error { return expSetState(q, id, []string{"running", "paused"}, "stopped", "owner") })
+		err = cWrite(q, "", func(q *Request) error { return expSetState(q, id, []string{"running", "paused"}, "stopped", "owner") })
 	case "resume":
-		err = labTx(q, "", func(q *Request) error { return expSetState(q, id, []string{"paused"}, "running", nil) })
+		err = cWrite(q, "", func(q *Request) error { return expSetState(q, id, []string{"paused"}, "running", nil) })
 	default:
 		return nil, fail(400, "action is launch, stop or resume")
 	}
@@ -1443,11 +1434,11 @@ func expAction(q *Request, id, action string) (doc, error) {
 	ucs := map[string]bool{}
 	if err := labReadTx(q, func(q *Request) error {
 		for _, p := range cList(out["examples"]) {
-			ex, err := labExampleGet(q, cStr(cMap(p)["artifact_id"]))
+			ex, err := labExampleGet(q, astr(mapOf(p)["artifact_id"]))
 			if err != nil {
 				return err
 			}
-			ucs[cStr(cMap(ex["example"])["use_case_id"])] = true
+			ucs[astr(mapOf(ex["example"])["use_case_id"])] = true
 		}
 		return nil
 	}); err != nil {
@@ -1456,7 +1447,7 @@ func expAction(q *Request, id, action string) (doc, error) {
 	warnings := []any{}
 	reg, _ := useCases()
 	for _, u := range reg {
-		if ucs[cStr(u["id"])] && u["source_status"] != "current" {
+		if ucs[astr(u["id"])] && u["source_status"] != "current" {
 			warnings = append(warnings, fmt.Sprintf("%v: source %v", u["id"], u["source_status"]))
 		}
 	}
@@ -1485,10 +1476,10 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 		return nil, fail(404, "Unknown cell")
 	}
 	if action == "cancel" {
-		if labFinal[cStr(t["state"])] {
+		if labFinal[astr(t["state"])] {
 			return nil, fail(409, "Trial already finished")
 		}
-		own, err := pipelineCancel(q.ctx(), q.app, cStr(t["id"]))
+		own, err := pipelineCancel(q.ctx(), q.app, astr(t["id"]))
 		if err != nil {
 			return nil, err
 		}
@@ -1496,16 +1487,16 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 			cStopExecution(q.ctx(), q.app, own)
 		}
 	} else {
-		if !labFinal[cStr(t["state"])] {
+		if !labFinal[astr(t["state"])] {
 			return nil, fail(409, "Trial still running; cancel it first")
 		}
 		if exp["state"] == "draft" || exp["state"] == "stopped" {
 			return nil, fail(409, fmt.Sprintf("Experiment is %v", exp["state"]))
 		}
-		c := cMap(t["cell"])
+		c := mapOf(t["cell"])
 		var rid string
-		if err := labTx(q, "experiment:"+id, func(q *Request) error {
-			if err := cExec(q, "UPDATE experiment SET state='running' WHERE id=$1 AND state='done'", id); err != nil {
+		if err := cWrite(q, "experiment:"+id, func(q *Request) error {
+			if err := exec(q, "UPDATE experiment SET state='running' WHERE id=$1 AND state='done'", id); err != nil {
 				return err
 			}
 			rep, _ := cInt(c["repeat"])
@@ -1543,12 +1534,12 @@ func expPromote(q *Request, id, label string) (doc, error) {
 	}
 	slug := strings.Trim(methodSlug.ReplaceAllString(strings.ToLower(label), "-"), "-")
 	method := doc{"id": fmt.Sprintf("%v-%s", exp["pipeline_id"], slug), "name": fmt.Sprintf("%v %s", exp["pipeline_id"], label), "scope": exp["project_id"],
-		"pipeline": cStr(exp["pipeline_id"]) + ".json", "overrides": v["overrides"], "configRef": v["config_ref"], "sourceExperiment": id}
+		"pipeline": astr(exp["pipeline_id"]) + ".json", "overrides": v["overrides"], "configRef": v["config_ref"], "sourceExperiment": id}
 	var existing doc
-	if c, err := catalogue(q, cStr(exp["project_id"])); err == nil {
+	if c, err := catalogue(q, astr(exp["project_id"])); err == nil {
 		for _, m := range cList(c["methods"]) {
-			if cMap(m)["configRef"] == v["config_ref"] {
-				existing = cMap(m)
+			if mapOf(m)["configRef"] == v["config_ref"] {
+				existing = mapOf(m)
 			}
 		}
 	}
@@ -1557,7 +1548,7 @@ func expPromote(q *Request, id, label string) (doc, error) {
 	}
 	var rec any
 	if cRecommend != nil {
-		if rec, err = cRecommend(q, cStr(exp["project_id"]), cStr(existing["id"])); err != nil {
+		if rec, err = cRecommend(q, astr(exp["project_id"]), astr(existing["id"])); err != nil {
 			return nil, err
 		}
 	}
@@ -1573,7 +1564,7 @@ func expRate(q *Request, b doc) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	form := cStr(b["form"])
+	form := astr(b["form"])
 	if form != "pass_fail" && form != "pick_best" && form != "scale" {
 		return nil, fail(400, "form is pass_fail, pick_best or scale")
 	}
@@ -1637,15 +1628,15 @@ func labRating(q *Request, qid string) (doc, error) {
 		return nil, fail(404, "Unknown question")
 	}
 	r := rs[0]
-	o := cMap(r["options"])
+	o := mapOf(r["options"])
 	var runs []doc
-	if eid := cStr(o["experiment_id"]); eid != "" {
+	if eid := astr(o["experiment_id"]); eid != "" {
 		if runs, err = expRuns(q, eid); err != nil {
 			return nil, err
 		}
 	}
 	items := []any{}
-	for i, tid := range labShuffle(cList(o["trial_ids"]), cStr(o["seed"])) {
+	for i, tid := range labShuffle(cList(o["trial_ids"]), astr(o["seed"])) {
 		files := []any{}
 		for _, t := range runs {
 			if t["id"] == tid {
@@ -1671,7 +1662,7 @@ func labRatings(q *Request, experimentID, state any) (doc, error) {
 	}
 	out := []any{}
 	for _, r := range rs {
-		x, err := labRating(q, cStr(r["id"]))
+		x, err := labRating(q, astr(r["id"]))
 		if err != nil {
 			return nil, err
 		}
@@ -1683,8 +1674,8 @@ func labRatings(q *Request, experimentID, state any) (doc, error) {
 // labAnswerCheck and labAnswerAfter: the answer hook for questions_answer (area B calls both inside its transaction:
 // check before recording the answer, after once it is recorded). question: the question row (snake_case columns).
 func labAnswerCheck(q *Request, question doc, answer string) error {
-	o := cMap(question["options"])
-	d := cMap(question["data"])
+	o := mapOf(question["options"])
+	d := mapOf(question["data"])
 	// Lab ratings are the owner's (scored as human:owner; a pass on a drafted example lets the coordinator run its checks)
 	// and budget asks move the owner's spend: owner only.
 	lab := question["kind"] == "rating" && (o["example_artifact_id"] != nil || o["experiment_id"] != nil) || d["experimentId"] != nil && d["budget"] != nil
@@ -1692,7 +1683,7 @@ func labAnswerCheck(q *Request, question doc, answer string) error {
 		return fail(403, "Only the owner answers Lab ratings and budget questions")
 	}
 	if question["kind"] == "rating" {
-		_, _, err := parseRating(cStr(o["form"]), answer, cList(o["trial_ids"]))
+		_, _, err := parseRating(astr(o["form"]), answer, cList(o["trial_ids"]))
 		return err
 	}
 	if d["experimentId"] != nil && d["budget"] != nil && answer != "resume" && answer != "stop" {
@@ -1702,27 +1693,27 @@ func labAnswerCheck(q *Request, question doc, answer string) error {
 }
 
 func labAnswerAfter(q *Request, question doc) error {
-	o, d := cMap(question["options"]), cMap(question["data"])
-	answer := cStr(question["answer"])
+	o, d := mapOf(question["options"]), mapOf(question["data"])
+	answer := astr(question["answer"])
 	eid := ""
 	switch {
 	case question["kind"] == "rating" && o["experiment_id"] != nil:
-		v, rat, err := parseRating(cStr(o["form"]), answer, cList(o["trial_ids"]))
+		v, rat, err := parseRating(astr(o["form"]), answer, cList(o["trial_ids"]))
 		if err != nil {
 			return err
 		}
-		exp, err := expRow(q, cStr(o["experiment_id"]))
+		exp, err := expRow(q, astr(o["experiment_id"]))
 		if err != nil {
 			return err
 		}
-		if _, err := scoreAdd(q, doc{"experimentId": exp["id"], "projectId": exp["project_id"], "trialIds": o["trial_ids"], "evaluator": "human:owner:" + cStr(o["form"]),
+		if _, err := scoreAdd(q, doc{"experimentId": exp["id"], "projectId": exp["project_id"], "trialIds": o["trial_ids"], "evaluator": "human:owner:" + astr(o["form"]),
 			"evaluatorVersion": "1", "form": o["form"], "value": v, "questionId": question["id"], "rationale": rat}); err != nil {
 			return err
 		}
-		eid = cStr(exp["id"])
+		eid = astr(exp["id"])
 	case question["kind"] == "rating" && o["example_artifact_id"] != nil:
 		if v, _, err := parseRating("pass_fail", answer, nil); err == nil && v == true {
-			return cExec(q, "UPDATE artifact SET approved_at=now() WHERE id=$1 AND role='example' AND approved_at IS NULL", o["example_artifact_id"])
+			return exec(q, "UPDATE artifact SET approved_at=now() WHERE id=$1 AND role='example' AND approved_at IS NULL", o["example_artifact_id"])
 		}
 		return nil
 	case d["experimentId"] != nil && d["budget"] != nil:
@@ -1730,10 +1721,10 @@ func labAnswerAfter(q *Request, question doc) error {
 		if answer == "resume" {
 			to = "running"
 		}
-		if err := cExec(q, "UPDATE experiment SET state=$2,stop_reason=CASE WHEN $2='stopped' THEN 'owner' ELSE stop_reason END WHERE id=$1 AND state='paused'", d["experimentId"], to); err != nil {
+		if err := exec(q, "UPDATE experiment SET state=$2,stop_reason=CASE WHEN $2='stopped' THEN 'owner' ELSE stop_reason END WHERE id=$1 AND state='paused'", d["experimentId"], to); err != nil {
 			return err
 		}
-		eid = cStr(d["experimentId"])
+		eid = astr(d["experimentId"])
 	default:
 		return nil
 	}
@@ -1767,8 +1758,8 @@ func importDrafts(ctx context.Context, a *App, run doc) {
 			if err != nil {
 				return nil
 			}
-			st := cMap(cList(res["examples"])[0])
-			aid := cStr(st["artifactId"])
+			st := mapOf(cList(res["examples"])[0])
+			aid := astr(st["artifactId"])
 			var n int
 			if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM question WHERE kind='rating' AND options->>'example_artifact_id'=$1", aid).Scan(&n); err != nil || n > 0 {
 				return err
@@ -1778,8 +1769,8 @@ func importDrafts(ctx context.Context, a *App, run doc) {
 				return err
 			}
 			lines := []string{}
-			for _, c := range cList(cMap(got["example"])["checks"]) {
-				lines = append(lines, fmt.Sprintf("%v: %v", cMap(c)["id"], cMap(c)["run"]))
+			for _, c := range cList(mapOf(got["example"])["checks"]) {
+				lines = append(lines, fmt.Sprintf("%v: %v", mapOf(c)["id"], mapOf(c)["run"]))
 			}
 			_, err = cAsk(q, "rating", fmt.Sprintf("Approve drafted example %v@%v? Approving lets the coordinator run its checks:\n%s", st["id"], st["version"], strings.Join(lines, "\n")),
 				run["projectId"], doc{"form": "pass_fail", "example_artifact_id": aid, "seed": aid}, "lab", doc{"exampleArtifactId": aid})
@@ -1818,7 +1809,7 @@ func expGet(q *Request, id string) (doc, error) {
 	uniq := func(l []any) []any {
 		seen, out := map[string]bool{}, []any{}
 		for _, x := range l {
-			if s := cStr(x); s != "" && !seen[s] {
+			if s := astr(x); s != "" && !seen[s] {
 				seen[s] = true
 				out = append(out, s)
 			}
@@ -1832,7 +1823,7 @@ func expGet(q *Request, id string) (doc, error) {
 				continue
 			}
 			hosts, models = append(hosts, r["host_id"]), append(models, r["model"])
-			h := strings.TrimSpace(strings.Join([]string{cStr(r["harness"]), cStr(r["harness_version"])}, " "))
+			h := strings.TrimSpace(strings.Join([]string{astr(r["harness"]), astr(r["harness_version"])}, " "))
 			harnesses = append(harnesses, h)
 		}
 		spend := doc{"calls": 0, "credits": 0, "basis": "measured"}
@@ -1844,7 +1835,7 @@ func expGet(q *Request, id string) (doc, error) {
 				}
 			}
 		}
-		web := cMap(t["overrides"])["web_route"]
+		web := mapOf(t["overrides"])["web_route"]
 		if web == nil {
 			web = "connections"
 		}
@@ -1865,34 +1856,34 @@ func expGet(q *Request, id string) (doc, error) {
 		out := []string{}
 		for _, k := range order {
 			t := last[k]
-			if match(cMap(t["cell"])) && (!onlyComparable || comparable(t)) {
-				out = append(out, cStr(t["id"]))
+			if match(mapOf(t["cell"])) && (!onlyComparable || comparable(t)) {
+				out = append(out, astr(t["id"]))
 			}
 		}
 		return out
 	}
 	cells := []any{}
 	for _, px := range cList(exp["examples"]) {
-		p := cMap(px)
+		p := mapOf(px)
 		for _, vx := range cList(exp["variants"]) {
-			v := cMap(vx)
+			v := mapOf(vx)
 			ts := []doc{}
 			for _, k := range order {
-				c := cMap(last[k]["cell"])
+				c := mapOf(last[k]["cell"])
 				if c["example"] == p["id"] && c["variant"] == v["label"] {
 					ts = append(ts, last[k])
 				}
 			}
 			sort.SliceStable(ts, func(i, j int) bool {
-				a, _ := cNum(cMap(ts[i]["cell"])["repeat"])
-				b, _ := cNum(cMap(ts[j]["cell"])["repeat"])
+				a, _ := cNum(mapOf(ts[i]["cell"])["repeat"])
+				b, _ := cNum(mapOf(ts[j]["cell"])["repeat"])
 				return a < b
 			})
 			keys, comp := []any{}, []string{}
 			for _, t := range ts {
-				keys = append(keys, cellKey(p["id"], v["label"], cMap(t["cell"])["repeat"]))
+				keys = append(keys, cellKey(p["id"], v["label"], mapOf(t["cell"])["repeat"]))
 				if comparable(t) {
-					comp = append(comp, cStr(t["id"]))
+					comp = append(comp, astr(t["id"]))
 				}
 			}
 			cells = append(cells, doc{"example": p["id"], "variant": v["label"], "trials": keys, "summary": summarize(cur, comp)})
@@ -1900,7 +1891,7 @@ func expGet(q *Request, id string) (doc, error) {
 	}
 	variants := []any{}
 	for _, vx := range cList(exp["variants"]) {
-		v := cMap(cClone(vx))
+		v := mapOf(cClone(vx))
 		v["summary"] = summarize(cur, idsOf(func(c doc) bool { return c["variant"] == v["label"] }, true))
 		variants = append(variants, v)
 	}
@@ -1910,7 +1901,7 @@ func expGet(q *Request, id string) (doc, error) {
 	}
 	judges := []any{}
 	for _, r := range runs {
-		if j := cMap(r["judge"]); j != nil {
+		if j := mapOf(r["judge"]); j != nil {
 			judges = append(judges, doc{"id": r["id"], "state": r["state"], "evaluator": j["evaluator"], "trialId": j["trialId"], "problem": r["problem"]})
 		}
 	}
@@ -1980,10 +1971,10 @@ var labOps = map[string]struct {
 		if err != nil {
 			return nil, err
 		}
-		return expAction(q, id, cStr(b["action"]))
+		return expAction(q, id, astr(b["action"]))
 	}},
 	"lab_cell_action": {true, false, func(q *Request, b doc) (any, error) {
-		act := cStr(b["action"])
+		act := astr(b["action"])
 		if act != "cancel" && act != "retry" {
 			return nil, fail(400, "action is cancel or retry")
 		}
@@ -2040,7 +2031,7 @@ func scoreCorrect(q *Request, id string, b doc) (doc, error) {
 		return nil, fail(404, "Unknown score")
 	}
 	old := rs[0]
-	if err := cExec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "experiment:"+cStr(old["experiment_id"])); err != nil {
+	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "experiment:"+astr(old["experiment_id"])); err != nil {
 		return nil, err
 	}
 	var n int
@@ -2166,7 +2157,7 @@ func init() {
 	r("GET /api/lab/registry", "lab_registry", none)
 
 	pipelineFinished = func(ctx context.Context, a *App, run doc) {
-		if id := cStr(run["experimentId"]); id != "" {
+		if id := astr(run["experimentId"]); id != "" {
 			if err := labReconcile(ctx, a, id); err != nil {
 				log.Printf("lab reconcile %s: %v", id, err)
 			}
