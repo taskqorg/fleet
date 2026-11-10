@@ -243,7 +243,7 @@ Five gaps in today's code stop a second person from joining. Each one is load-be
 
 ### Status (slice 5)
 
-*   **Project without the Mac.** `config/projects/desiign` (`Amoenum/desiign`, connection `desiign` as a deploy key with write, `integration.mode: direct`, environments `owner-mac` and `windows`; roles follow the project's D09: `worker` Claude, `designer` Codex). Alina is an operator in `people.json` with a grant on `desiign` only; the owner's subscriptions carry `take.projects: ["desiign"]`, so her work runs on his plans. Her Mac, store and file locations come later.
+*   **Project without the Mac.** `config/projects/desiign` (`Amoenum/desiign`, connection `desiign` as a deploy key with write, `integration.mode: direct`, environments `owner-mac` and `windows`; roles follow the project's D09: `worker` Claude, `designer` Codex). On the deployed coordinator, Alina is an operator in `people.json` (outside the repository) with a grant on `desiign` only, and `account_update` gives the owner's subscriptions `take.projects: ["desiign"]`, so her work runs on his plans. Her Mac, store and file locations come later.
 
 ### 6. Dispatch
 
