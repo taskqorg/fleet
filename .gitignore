@@ -20,3 +20,6 @@ evidence/multiharness-native-*/
 design-report/
 # EGM briefs, drafts and review reports: working papers, never committed (docs/designs/fleet-docs-governance.md).
 .egm/
+
+# Generated from contracts/*.schema.json at build time (contracts/gen-ts.mjs).
+contracts/generated/

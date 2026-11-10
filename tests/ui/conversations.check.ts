@@ -72,6 +72,12 @@ try {
   let t = performance.now();
   await p.goto(`${origin}/conversations/${S}`);
   check(await until(() => visible(p, `Reply ${N - 1}.`)), 'long thread opens at the newest entry');
+  const h = (await p.locator('.tr-body .vl').boundingBox())!.height; check(h > 500, `thread uses the available height (${Math.round(h)} px of a 900 px window)`);
+  // Markdown renders as structure, never as raw HTML.
+  await ingest('md-1', N + 50, '## Plan\n\n- one\n- **two**\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n> note\n\n[site](https://example.com) [bad](javascript:alert(1)) <b>raw</b>');
+  check(await until(async () => await p.locator('.md h4', { hasText: 'Plan' }).count() === 1), 'markdown heading renders');
+  check(await p.locator('.md li strong', { hasText: 'two' }).count() === 1 && await p.locator('.md table td', { hasText: '2' }).count() >= 1 && await p.locator('.md blockquote').count() >= 1, 'markdown list, table and quote render');
+  check(await p.locator('.md a[href="https://example.com"]').count() === 1 && await p.locator('.md a[href^="javascript"]').count() === 0 && await p.locator('.md b').count() === 0, 'only safe links; raw HTML stays text');
   time('first paint of the newest reply', performance.now() - t);
 
   // Scroll up: older pages load, the row being read moves 0 px.

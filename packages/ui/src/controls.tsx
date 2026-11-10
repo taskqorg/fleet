@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages } from './registry.ts';
 import { type Measured, type Kind, measured, age, bytes, exact, percent, duration, agentLabel } from './format.ts';
 import { VirtualList, type VirtualListHandle } from './virtual-list.tsx';
+import { parse, renderBlocks } from './markdown.tsx';
 import tokens from '../tokens.json';
 
 const ROW = parseInt(tokens.size.row);
@@ -346,13 +347,9 @@ export const Stale = ({ at, now, onRefresh }: { at: number; now: number; onRefre
 /** Writes text to the clipboard; the caller shows a failure (status line with retry). */
 export const copyText = (text: string) => navigator.clipboard.writeText(text);
 
-/** Markdown as text: fenced code blocks get their own copy button, inline code is mono. Raw HTML is never rendered. */
-// ponytail: fences and inline code only; headings, lists and links stay plain text until a renderer is chosen for the book.
+/** Markdown (markdown.tsx): built as nodes, never as HTML; each fenced code block has its own copy button. */
 export function Markdown({ text, onCopyFail }: { text: string; onCopyFail?: (e: unknown) => void }) {
-  const parts = text.split(/^```[^\n]*\n([\s\S]*?)^```[ \t]*$/m);
-  return <div class="md">{parts.map((part, i) => i % 2
-    ? <div class="code" key={i}><pre><code>{part.replace(/\n$/, '')}</code></pre><span class="code-copy"><Button label="Copy code" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(part.replace(/\n$/, '')).catch(e => onCopyFail?.(e))} /></span></div>
-    : <p key={i}>{part.split(/(`[^`\n]+`)/).map((x, j) => j % 2 ? <code key={j}>{x.slice(1, -1)}</code> : x)}</p>)}</div>;
+  return <div class="md">{renderBlocks(parse(text), (code, _lang, k) => <div class="code" key={k}><pre><code>{code}</code></pre><span class="code-copy"><Button label="Copy code" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(code).catch(e => onCopyFail?.(e))} /></span></div>)}</div>;
 }
 
 type Mark = { harness?: string | null; model?: string | null; effort?: string | null };

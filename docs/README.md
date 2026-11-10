@@ -14,6 +14,7 @@
 | Data foundation | [designs/fleet-data-foundation.md](designs/fleet-data-foundation.md) | Postgres store, typed tasks and executions, artifact store, ingest, isolation; to split into store, ingest and isolation. | [state-ownership.md](state-ownership.md), [designs/fleet-data-foundation-review/phase3/live-findings.md](designs/fleet-data-foundation-review/phase3/live-findings.md) |
 | Connections | [designs/fleet-connections.md](designs/fleet-connections.md) | API key connections, the Fleet gateway, per-run tokens, call methods. | [connections.md](connections.md) |
 | Stack | [designs/fleet-stack.md](designs/fleet-stack.md) | Stack plan: rule delivery, JSON Schema contracts, MCP servers as executor subcommands, Go and Rust trial. | [delivery-strategy.md](delivery-strategy.md) |
+| Contracts | [designs/fleet-l3-contracts.md](designs/fleet-l3-contracts.md) | One JSON Schema for event payloads and the host protocol (stack L3, stage 1). | none |
 | Toolchain | [designs/fleet-toolchain.md](designs/fleet-toolchain.md) | Build, bundle and release toolchain. | none |
 | Executor delivery | [designs/fleet-executor-delivery.md](designs/fleet-executor-delivery.md) | Executor release files built in CI and how they are fetched. | none |
 | PM agent | [designs/fleet-pm-agent.md](designs/fleet-pm-agent.md) | Director-scoped agent tools, task tools, Held tasks, focus, watch mode. | [system-operations.md](system-operations.md), [execution-contract.md](execution-contract.md) |
