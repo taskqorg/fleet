@@ -45,7 +45,7 @@ func profileValidate(v any) error {
 			((h == "claude" || acp(h)) && o["effort"] != nil) || badArg(o["model"]) || badText(o["instructions"], 16384) {
 			return errors.New("unsupported native profile role/settings/grants")
 		}
-		known := []string{"id", "harness", "model", "effort", "instructionRole", "instructions", "mcpServers", "tools", "delegationProfiles", "settings", "fleetTools", "collaborationTools", "skills", "connections"}
+		known := []string{"id", "harness", "model", "effort", "instructionRole", "instructions", "mcpServers", "tools", "delegationProfiles", "settings", "fleetTools", "collaborationTools", "skills", "connections", "fleetOperations"}
 		if o == nil {
 			return errors.New("unknown native profile setting")
 		}
@@ -93,7 +93,7 @@ func profileValidate(v any) error {
 	base := jObj(jClone(o))
 	delete(base, "harness")
 	delete(base, "instructionRole")
-	for _, k := range []string{"fleetTools", "collaborationTools"} {
+	for _, k := range []string{"fleetTools", "collaborationTools", "fleetOperations"} {
 		if x, has := base[k]; has {
 			delete(base, k)
 			if _, ok := x.(bool); !ok {

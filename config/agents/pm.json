@@ -8,5 +8,6 @@
     "pm-tasks",
     "pm-watch",
     "pm-fleet"
-  ]
+  ],
+  "fleetOperations": true
 }

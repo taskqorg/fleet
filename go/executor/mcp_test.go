@@ -43,3 +43,28 @@ func TestConnectionCallOutcomes(t *testing.T) {
 		t.Fatal("refused connection", r)
 	}
 }
+
+// Risk: an operation the coordinator offers a profile (fleetOperations) never reaches the model, or a name outside the
+// list is forwarded as an agent call.
+func TestFleetOperationsListed(t *testing.T) {
+	ctx := obj{"operations": []any{obj{"name": "task_create", "description": "d"}, obj{"name": "ask", "description": "dup"}}}
+	names := []string{}
+	for _, x := range mcpTools(ctx)["tools"].([]any) {
+		names = append(names, sv(get(x, "name")))
+	}
+	n := 0
+	for _, x := range names {
+		if x == "task_create" {
+			n++
+		}
+		if x == "ask" {
+			n += 10
+		}
+	}
+	if n != 11 {
+		t.Fatalf("task_create once and ask once expected, got %v", names)
+	}
+	if len(operationsOf(obj{})) != 0 {
+		t.Fatal("no operations without the list")
+	}
+}
