@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -100,6 +101,9 @@ func (a *App) serve(w http.ResponseWriter, hr *http.Request, kind int, h handler
 	if err == nil {
 		err = a.readBody(q)
 	}
+	if err == nil {
+		err = a.guard(q)
+	}
 	if err == nil && kind == txNone {
 		out, err = h(q)
 	} else if err == nil {
@@ -121,4 +125,17 @@ func (a *App) serve(w http.ResponseWriter, hr *http.Request, kind int, h handler
 	if err != nil {
 		writeError(w, err)
 	}
+}
+
+// guard is the app.ts preHandler person gate on every route and operation, whatever registered it: architect operations and
+// routes need the architect role (or the held subscription), a named project must be granted. bop, broute and cop apply the
+// same gate again; it is idempotent.
+func (a *App) guard(q *Request) error {
+	if q.person == nil || q.person.Owner {
+		return nil
+	}
+	if name, ok := strings.CutPrefix(q.r.URL.Path, "/api/ops/"); ok {
+		return a.guardOp(q, name, q.body)
+	}
+	return a.guardRoute(q)
 }
