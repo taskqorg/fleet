@@ -5,3 +5,5 @@
 * `executor/*.py`: protocol and native probes for `crates/executor`; Rust unit tests live in the crate and run with `cargo test`.
 
 CI (`.github/workflows`) runs build, `cargo test`, `pnpm test`, then the design report.
+
+* `../scripts/test-rule-report.ts`: warning-only static requirement/risk inventory for test declarations and Python assertions; `--self-check` checks the inventory logic.

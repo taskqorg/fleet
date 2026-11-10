@@ -18,11 +18,26 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Check out shared rules
+        uses: actions/checkout@v4
+        with:
+          repository: taskqorg/specq
+          ref: 13772b779be68103d0581d61a5f8fe7af2b92dd1
+          path: .specq
+          persist-credentials: false
+      - name: Contract lint
+        run: python3 .specq/engineering/scripts/contract_lint.py fleet.md
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
+      - name: Test requirement and risk report (warning only)
+        if: always()
+        continue-on-error: true
+        run: |
+          node scripts/test-rule-report.ts --self-check
+          node scripts/test-rule-report.ts
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       # The executor: its unit tests, and the binary the coordinator's end-to-end artifact test runs.
