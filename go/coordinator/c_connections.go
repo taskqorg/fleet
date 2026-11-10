@@ -282,6 +282,8 @@ func idList(v any, field string) ([]any, error) {
 }
 
 func init() {
+	// Agent dispatch mints the run token for the profile's connections (a_dispatch.go); the a_hooks default is a stub.
+	hookConnectionsMint = mint
 	cop("connections_list", true, func(q *Request) (any, error) {
 		keys, err := cAll(q, "connection-key")
 		if err != nil {
