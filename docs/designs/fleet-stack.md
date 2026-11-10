@@ -6,14 +6,6 @@ Fleet's languages, toolchain, contract source, rule delivery and the order in wh
 
 Every Fleet service is written in Go. The browser app stays TypeScript (Preact, esbuild).
 
-Why Go, from the [trial](#trial-l1) ([numbers](../../evidence/fleet-stack.md#language-trial)). The owner's first goal is fast agent work in parallel worktrees: the Mac must stay usable with several agents at once.
-
-- Against Rust: each fresh Rust worktree costs a 39 s cold build, 465 MB of disk and 594 MB of compiler memory, and a one-line rebuild takes 7.7 s, about 14 times Go's 0.54 s. Go needs 6.7 s, 191 MB and 395 MB.
-- Against staying on TypeScript: Go edits as fast (edit-to-green 2.6 s against 2.8 s with 4 worktrees, inside the spread), has 11 third-party packages against 146 in the TypeScript coordinator closure, cross-builds every platform from one machine without a C toolchain, and its server peaks at 21 MB against 146 MB for Node.
-- Speed is equal for Fleet's workload (outside tests 1.4 s in every arm), so developer and deploy convenience decided.
-
-Why one language for every service, the executor included: one toolchain, one build job and one dependency policy for every host, and no second compiler in each worktree. What is lost: Rust's stricter compiler (ownership, exhaustive matches, no nil) and a smaller binary (Rust slice 3.6 MB against 15.5 MB for Go; executor 5.9 MB against about 10 MB plus its code). Accepted: the Rust port needed 0 build-fix cycles and Go 1, so the stricter compiler bought nothing measurable on this code.
-
 Order:
 
 1. The coordinator (`packages/coordinator`), slice by slice behind a Go front door ([coordinator migration order](#coordinator-migration-order)).
@@ -23,18 +15,35 @@ Never port two components at once.
 
 Today: the coordinator is TypeScript on Node 22; the executor and the gateway are Rust; the Go code is the trial slice in `go/coordinator` and the probe spikes in `go/probe/`. Not built: the Go front door and every migration slice.
 
+## Why this stack
+
+Reference for reconsidering a choice. Numbers: [evidence](../../evidence/fleet-stack.md); trial on an Apple M2 with 8 CPUs, 4 worktrees at once.
+
+The owner's first goal is fast agent work in parallel worktrees: the Mac must stay usable with several agents at once. Speed is equal for Fleet's workload (outside tests about 1.4 s in every arm), so developer and deploy convenience decided.
+
+| Choice | Compared with | Deciding facts |
+| --- | --- | --- |
+| Go for services | Rust | Per fresh worktree Rust costs a 39 s cold build, 465 MB disk, 594 MB compiler memory; a one-line rebuild 7.7 s against 0.54 s. Go: 6.7 s, 191 MB, 395 MB. |
+| Go for services | staying on TypeScript | Equal edit-to-green (2.6 s against 2.8 s, inside the spread); 11 third-party packages against 146 in the coordinator closure; one build from any machine for every platform, no C toolchain; server 21 MB against 146 MB. |
+| One language, executor included | Rust executor kept | One toolchain, build job and dependency policy. Lost: Rust's stricter compiler and a smaller binary (executor 5.9 MB against about 10 MB). The Rust slice port needed 0 build-fix cycles, Go 1. |
+| Full gate only in CI | local full gate | Local gates by several agents drove the Mac to load average 223 on 8 cores; one gate took 339 s against the 180 s budget (#103). |
+| Old tests deleted per slice | deleted at the end | They import `packages/coordinator` and cannot run against a Go route. |
+| JSON Schema contracts | `schema.sql` with sqlc; protobuf; OpenAPI | Seam bugs (`ev.item`/`ev.data`, outbox 3xx/401) live in `jsonb` payloads and the table-less host protocol, where `schema.sql` types are raw bytes. protobuf adds `buf` and changes JSON names; OpenAPI cannot describe SSE or host-side events. |
+| Standard library first; pgx; own SigV4 | `database/sql`; `minio-go` | No stdlib Postgres driver, and `database/sql` hides LISTEN. `minio-go` compiles in 19 modules, the signer 0. |
+| `modernc.org/sqlite`, purego (executor) | stdlib journal; cgo | Journal: hand-written queries and cross-process waits, cannot read existing files (breaks Python tests, in-place upgrade), 200 commits/s against 14k/s, no Windows build. modernc lost 0 acknowledged commits under kill -9; purego reaches libproc without C. |
+| Go front door proxying to TypeScript | one-shot rewrite | Moves a few routes per slice, tested against both, rolled back by removing a route from the Go table; feature work continues. |
+
 ## Delivery order and change cycles
 
 - Build the operator and architect experiences on the web first. Desktop packaging for Windows, macOS and Linux follows later and reuses the web UI and the shared operations; it adds no second business-logic implementation.
 - Web interface, coordinator and execution hosts change on their own cycles. A UI-only edit rebuilds no executor. Updating the web interface cancels no remote work and restarts no executor. A coordinator update follows the recovery contract ([execution continuity](../execution-continuity.md)).
-- Reason: each part has a different change rate and risk; one cycle for all would make every UI edit pay for native builds and restarts.
 - Interfaces between independently updated components are versioned enough to expose incompatibility. Not built: host protocol versioning ([open questions](#open-questions)).
 - A stack choice is made from measured edit-to-green and edit-to-deploy time, supply chain, maintainability and deploy effort, and is recorded in `fleet.md` before code changes.
 
 ## Rule delivery
 
 - `AGENTS.md` sends every agent attempt to `fleet.md` and the specq shared core at a pinned commit.
-- `fleet.md` names one merge-gate command and a diagnostic time budget of 180 s on an idle Mac ([verification](../../fleet.md#verification)). The full gate runs only in CI; agents run locally only the build and test files of what they changed. Reason: with every agent running the full gate locally, the Mac reached a load average of 223 on 8 cores and one gate took 339 s against the 180 s budget (pull request #103).
+- `fleet.md` names one merge-gate command and a diagnostic time budget of 180 s on an idle Mac ([verification](../../fleet.md#verification)). The full gate runs only in CI ([why](#why-this-stack)).
 - CI runs specq `contract_lint.py` on `fleet.md` and `scripts/test-rule-report.ts`, which reports tests that name no requirement and risk as a warning. Nothing fails because a test lacks a reference.
 - Not built: a `fleet` project in `config/projects/`, so that specq rule delivery also applies to agents Fleet itself dispatches to work on Fleet.
 
@@ -70,8 +79,7 @@ The labels D1-D4 are cited by code comments. Each stays while the TypeScript or 
 
 ## Contracts (L3)
 
-Two sources, each owning one seam. Why not `schema.sql` for everything (the sqlc idea): the known seam bugs (`ev.item` against `ev.data`, the outbox 3xx/401 rule) live in JSON payloads stored in `document.data jsonb` and in the host protocol, which has no table; types generated from `schema.sql` give raw bytes there, so a check would pass while the drift remains. `schema.sql` is also a migration log with triggers and `SECURITY DEFINER` functions, and `store.ts` builds queries at run time. JSON Schema was chosen over protobuf (adds a contract language and the `buf` tool, changes JSON field names) and OpenAPI (no standard way to describe SSE or host-side event payloads), because it describes today's JSON unchanged and generates for TypeScript, Rust and Go.
-
+Two sources, each owning one seam ([why](#why-this-stack)):
 
 - `packages/coordinator/db/schema.sql` owns table rows.
 - `contracts/host-protocol.schema.json` (JSON Schema) owns the host protocol (`/api/hosts/poll` request and reply, status receipts, event batches) and event payloads.
@@ -89,13 +97,10 @@ The generators were checked against off-the-shelf output for the transcript even
 
 ## MCP servers as executor subcommands (L4)
 
-- Reason: the trial and the port needed the executor to be the only writer of `journal.sqlite` and hosts to need no Python for these servers; this work does not depend on the language.
 - The executor starts delegation and design-rules as `fleet-executor mcp <name>` (`crates/executor/src/mcp.rs`, `profile.rs`); no Python process serves them. `tests/coordinator/mcp-replay.test.ts` replays the stdio exchanges captured from the former Python servers (`tests/executor/fixtures/mcp.json`).
 - Connection MCP stays `python3 connection_call.py` until Connections replaces it ([connections](fleet-connections.md)); `delivery_worker.py` likewise. `deploy/infrastructure/origin_guard.py` stays: it guards the origin independently of MCP. The remaining Python and its removal conditions are listed in the [executor README](../../crates/executor/README.md#remaining-python).
 
 ## Go code
-
-Why the standard library first: every third-party module is supply chain to review, pin and update, and the trial's small module count (11 against 146) is one of the reasons Go won; a module is added only where the standard library cannot do the job, with its reason in the table below.
 
 The rules are in [`fleet.md`](../../fleet.md#stack): standard library first, `CGO_ENABLED=0`, one module `go/` with one `go.sum`, `-mod=readonly`, the checksum database on, `govulncheck` as a warning, contract types from `go/gen`, `-trimpath` release binaries from one Linux job. The CI job `go` vets and cross-builds `go/coordinator` for linux/amd64, darwin/arm64 and windows/amd64, checks each binary for `CGO_ENABLED=0`, writes a SHA-256 file per binary and uploads the workflow artifact `fleet-go-<sha>`. Nested modules under `go/probe/` are outside that module and outside CI.
 
@@ -122,8 +127,6 @@ Planned with the executor port (Not built: no Go code imports them yet):
 | `golang.org/x/sys` | `libc` | `Openat`, `Statfs`, `SysctlKinfoProc`. |
 
 ## Coordinator migration order
-
-Why a front door that proxies: the coordinator is the largest component, so a one-shot rewrite would freeze feature work and switch everything at once. With the proxy, each slice moves a few routes, is tested against both implementations, and rolls back by removing one route from the Go table. Why old tests are deleted per slice and not at the end: they import `packages/coordinator` and cannot run against a Go route, so after a slice they test only dead code.
 
 The Go binary becomes the front door. It serves the routes it owns and passes every other request to the TypeScript coordinator through `net/http/httputil.ReverseProxy`. Both processes share one Postgres; the advisory scope locks (`pg_advisory_xact_lock`) serialize writers across them. `schema.sql` stays the one schema source, is frozen during a slice, and the Go binary applies it at start.
 
@@ -152,7 +155,7 @@ The executor and the gateway move after the coordinator, together, behind the un
 The probe in `go/probe/` showed that the executor needs no C compiler ([evidence](../../evidence/fleet-stack.md#executor-probe)):
 
 - Journal: `modernc.org/sqlite` keeps `journal.sqlite`, its SQL, WAL across processes, the Python protocol tests and in-place upgrade (queued receipts and non-terminal commands survive). It lost 0 acknowledged commits in the crash test at about 14k commits/s. Fallback: `ncruces/go-sqlite3` (fewer modules, 4 MB larger binary, one unexplained read anomaly).
-- Why not a standard-library journal, though it adds 0 modules and lost nothing in the crash test: every query, `json_extract` scan, compaction and cross-process wait would be hand-written; it cannot read existing executor files, so the Python protocol tests and in-place upgrade break; it commits about 200/s against 14k/s; and it does not build for Windows (`syscall.Flock`).
+- A standard-library journal was rejected ([why](#why-this-stack)).
 - macOS kernel calls: `github.com/ebitengine/purego` for `proc_pidinfo` and `proc_signal_with_audittoken`; `golang.org/x/sys/unix` for `Openat`, `Statfs` and `SysctlKinfoProc`. Linux identity-bound signals need only the standard library (`os.Process` with pidfd). The Rust refusal when the private libproc symbol is missing is kept.
 - Losses against Rust: about 4 MB more binary; no `pre_exec`, so the preview `RLIMIT_AS` cap needs a re-exec wrapper or a racy `prlimit`; macOS `getpwuid` needs purego or a `$HOME` fallback.
 
