@@ -38,4 +38,4 @@ Left as is: the briefs (`web-stack-brief.md`, `fleet-data-foundation-brief.md`) 
 
 1. Run the Lab store tests (`lab-trial.test.ts`, `lab-registry.test.ts`) through `freshDb` / `appUrl` when `FLEET_TEST_PG` is set, so `postgres-roles` covers `experiment`, `score` and example artifacts as `fleet_app` under RLS.
 2. Data foundation Phase 7: remove `migrate-sqlite.ts` and `FLEET_DATABASE` after the rollback window (item 50 as now written). Its `node:sqlite` ExperimentalWarning goes with it.
-3. Cloudflare cache-bypass rule on `fleet-store-*` hostnames (toolchain implementation notes): owner decision, not done.
+3. Cloudflare cache-bypass rule on `fleet-store-*` hostnames: done 2026-11-10 (owner approved; zone rule `set_cache_settings cache:false`, verified with a `.bin` HEAD on all three tunnels, recorded in docs/infrastructure-build.md). No action left.
