@@ -5,7 +5,6 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,33 +13,52 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Session is one native protocol conversation (codex app-server, ACP). The executor writes Initialize() first, then feeds
-// every stdout frame to Receive: it returns frames to write back, an optional event to journal, and done when the turn
-// reached a terminal outcome. An error means the outcome is unconfirmed; the executor never replays.
+// JSON values are decoded with encoding/json into any (map[string]any, []any, string, float64, bool, nil), the Go form of
+// serde_json::Value in the Rust executor.
+
+// Session is one native stdin/stdout protocol conversation (codex app-server, ACP). The executor writes Initialize()
+// first (through writeFrame, which journals the bytes before the pipe write), then feeds every stdout line to Receive: it
+// returns frames to write back, an optional event to journal, and done when the turn reached a terminal outcome (ACP).
+// An error means the outcome is unconfirmed; the executor never replays.
 type Session interface {
-	Initialize() json.RawMessage
-	Receive(frame json.RawMessage) (requests []json.RawMessage, event json.RawMessage, done bool, err error)
+	Initialize() map[string]any
+	Receive(frame map[string]any) (requests []map[string]any, event map[string]any, done bool, err error)
+	// Steer returns the frame for a `steer` command, or nil when this session cannot steer now (codex: turn/steer with
+	// expectedTurnId; other harnesses return nil). The answer arrives later as an event {type: "steer.result", commandId, ok}.
+	Steer(text, commandID string) map[string]any
 }
 
-// Harness builds the native command for one agent harness (claude, codex, antigravity, ...). Part E2 implements it.
+// Harness is one agent harness (codex, claude, antigravity, acp): harness.rs, codex.rs and antigravity.rs. Part E2
+// implements it and registers each in Harnesses from init(). Order of calls in run(), as in main.rs:
+//
+//	cmd, stdin := h.Command(dir, native, p)   // harness::command; codex without account: native.rs command_at (exec form)
+//	... the executor appends env, cwd, profile flags, codex -c/--disable flags ...
+//	h.WireMCP(cmd, p, servers, extra)         // claude: --mcp-config/--allowedTools; codex: -c mcp_servers.* flags; ACP: no-op
+//	cmd, s := h.Protocol(cmd, root, native, p, servers) // codex: codex::command (app-server, keeps -c/--enable/--disable) + Session
+//	                                          // (fork from p.fork.nativeSessionId when native == ""); ACP: cmd + Session; claude: cmd, nil
+//	every stdout event: h.Normalize(event)    // claude rate_limit_event -> limit_reading; others: unchanged
 type Harness interface {
-	// Name is the harness id from the payload (harness::name).
-	Name() string
-	// Command returns the process to start in dir, resuming native when non-empty, and bytes to write to its stdin
-	// (nil: stdin is not used for the prompt).
-	Command(dir, native string, payload json.RawMessage) (*exec.Cmd, []byte, error)
-	// Session returns the stdin/stdout protocol for this run, or nil when the harness streams plain JSON lines.
-	// servers are the MCP servers the executor wires (fleet delegation, connections).
-	Session(root, native string, payload, servers json.RawMessage) Session
-	// Project maps one native event to the coordinator's block projection (harness::Blocks::project).
-	Project(state *BlockState, event json.RawMessage, at uint64) json.RawMessage
+	Command(dir, native string, p map[string]any) (cmd *exec.Cmd, stdin []byte, err error)
+	// servers: name -> {"command": string, "args": []any, "tools": []string (codex enabled_tools; nil = all), "env": []string
+	// (codex env_vars)}. "fleet" is the executor's own delegation server; others are profile and connection servers.
+	WireMCP(cmd *exec.Cmd, p map[string]any, servers map[string]any, extraTools []string)
+	Protocol(cmd *exec.Cmd, root, native string, p map[string]any, servers map[string]any) (*exec.Cmd, Session)
+	Normalize(event map[string]any) map[string]any
 }
 
-// BlockState carries projection state per execution; E2 owns its fields.
-type BlockState struct{ Data map[string]any }
+// Blocks is the transcript block state of one execution (harness::Blocks): Project returns the normalized projection
+// (session, completed, blocks, ...) of one event; at is the record time in ms.
+type Blocks interface {
+	Project(harness string, event map[string]any, at uint64) map[string]any
+}
 
-// Harnesses is filled by part E2 (init functions in its files) keyed by Name().
-var Harnesses = map[string]Harness{}
+// Filled by part E2: Harnesses keyed by harness name ("codex", "claude", "antigravity", "acp"), NewBlocks, and runMCP
+// (the `mcp` subcommand, mcp.rs).
+var (
+	Harnesses = map[string]Harness{}
+	NewBlocks func() Blocks
+	runMCP    = func([]string) error { return fmt.Errorf("mcp: not built") }
+)
 
 // openJournal opens the journal with the Rust executor's file format and pragmas.
 func openJournal(path string) (*sql.DB, error) {
@@ -64,8 +82,6 @@ var subcommands = map[string]func(args []string) error{
 	"mcp":       func(args []string) error { return runMCP(args) }, // part E2
 	"reproject": func([]string) error { return reproject() },
 }
-
-var runMCP = func([]string) error { return fmt.Errorf("mcp: not built") }
 
 func reproject() error { return fmt.Errorf("reproject: not yet ported") }
 
