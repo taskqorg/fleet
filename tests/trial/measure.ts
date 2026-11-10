@@ -4,7 +4,7 @@
 // It works in fresh git worktrees of HEAD (commit the arm first), never in this checkout. It refuses nothing: a run that
 // starts or ends on a busy machine is recorded and marked comparable=false. Results go to stdout as a table and to
 // $TMPDIR/fleet-trial/<arm>-<time>.json.
-import {execFileSync, spawn} from 'node:child_process';
+import {execFileSync, spawn, spawnSync} from 'node:child_process';
 import {appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync} from 'node:fs';
 import {availableParallelism, cpus, tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -20,12 +20,14 @@ const sh = (cmd: string, cwd: string) => execFileSync('sh', ['-c', cmd], {cwd, e
 const ms = (t: number) => Math.round(performance.now() - t);
 
 // Machine load. Not comparable: a 1-minute load average above half the logical CPUs, or another process above one core.
+// File-event daemons are left out of the process check: they react to this script's own checkouts and builds.
+const OWN_ECHO = /^(fseventsd|mds|mds_stores|mdworker|mdworker_shared|revisiond)$/;
 const CPUS = availableParallelism();
 function load() {
   const avg = sh('sysctl -n vm.loadavg 2>/dev/null || cat /proc/loadavg', root).replace(/[{}]/g, '').trim().split(/\s+/).slice(0, 3).map(Number);
   const own = new Set<number>([process.pid]);
   const heavy = sh('ps -A -o pid=,ppid=,%cpu=,comm=', root).split('\n').map(l => l.trim().match(/^(\d+)\s+(\d+)\s+([\d.]+)\s+(.*)$/)).filter(Boolean)
-    .map(m => ({pid: Number(m![1]), ppid: Number(m![2]), cpu: Number(m![3]), comm: m![4].split('/').pop()!})).filter(p => p.cpu > 100 && !own.has(p.ppid) && !own.has(p.pid))
+    .map(m => ({pid: Number(m![1]), ppid: Number(m![2]), cpu: Number(m![3]), comm: m![4].split('/').pop()!})).filter(p => p.cpu > 100 && !own.has(p.ppid) && !own.has(p.pid) && !OWN_ECHO.test(p.comm))
     .map(p => `${p.comm}:${Math.round(p.cpu)}%`);
   return {load1: avg[0], load5: avg[1], load15: avg[2], heavy, quiet: avg[0] <= CPUS / 2 && heavy.length === 0};
 }
@@ -39,8 +41,8 @@ function timedRss(cmd: string, cwd: string) {
   return {ms: ms(t), peakRssKb: m ? Math.round(Number(m[1]) / (mac ? 1024 : 1)) : null};
 }
 function spawnSyncText(cmd: string, a: string[], cwd: string) {
-  try { const stderr = execFileSync(cmd, a, {cwd, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], maxBuffer: 1 << 28}); return {code: 0, stderr: String(stderr ?? '')}; }
-  catch (e: any) { return {code: e.status ?? 1, stderr: String(e.stderr ?? '')}; }
+  const r = spawnSync(cmd, a, {cwd, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], maxBuffer: 1 << 28});
+  return {code: r.status ?? 1, stderr: r.stderr ?? ''};
 }
 
 // The one-line edit: a comment line appended to the arm's edit file, removed afterwards.
@@ -65,7 +67,7 @@ function modules(): Record<string, number> {
       const deps = new Map<string, string[]>();
       let cur = '';
       for (const line of snap.split('\n')) {
-        const top = line.match(/^  '?(.+?@[^@(':]+)(\(.*\))?'?:$/); if (top) { cur = top[1]; deps.set(cur, []); continue; }
+        const top = line.match(/^  '?(.+?@[^@(':]+)(\(.*\))?'?:( \{\})?$/); if (top) { cur = top[1]; deps.set(cur, []); continue; }
         const dep = line.match(/^      '?([^':]+)'?: '?([^'(\s]+)/); if (dep && cur) deps.get(cur)!.push(dep[1] + '@' + dep[2]);
       }
       out[f + ' (all)'] = deps.size;
