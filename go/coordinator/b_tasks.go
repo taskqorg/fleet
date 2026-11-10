@@ -831,6 +831,16 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
+		// An agent's question is answered by delivering the reply to its session (agent tool reply); recording the
+		// answer alone left the asker without it.
+		if ok, err := has(q, "SELECT 1 FROM question WHERE id=$1 AND legacy_kind='question'", id); err != nil {
+			return nil, err
+		} else if ok {
+			if _, err := agentReply(q, doc{"questionId": id, "answer": answer}); err != nil {
+				return nil, err
+			}
+			return findQuestion(q, "", id)
+		}
 		ids, _ := b["artifactIds"].([]any)
 		if _, err := answerQuestion(q, id, answer, actor(q, "operator"), ids); err != nil {
 			return nil, err
