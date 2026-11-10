@@ -52,7 +52,7 @@ struct PoolInner {
 }
 pub struct Db {
     pool: Arc<PoolInner>,
-    // ponytail: one mutex per key, never removed; a map entry per execution is a few bytes for the process lifetime.
+    // One mutex per scope key while a writer holds or waits on it (removed in begin once unused).
     locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
@@ -140,7 +140,12 @@ impl Db {
     pub async fn begin(&self, mode: &Mode, scope: Option<&Scope>) -> Result<Tx, ApiErr> {
         let lock = match mode {
             Mode::Write(k) => {
-                let m = self.locks.lock().unwrap().entry(k.clone()).or_default().clone();
+                let m = {
+                    let mut map = self.locks.lock().unwrap();
+                    // Keys nobody holds or waits on are dropped, so the map stays as small as the open writers.
+                    map.retain(|_, v| Arc::strong_count(v) > 1);
+                    map.entry(k.clone()).or_default().clone()
+                };
                 Some(m.lock_owned().await)
             }
             Mode::Read => None,
