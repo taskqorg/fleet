@@ -38,6 +38,7 @@ type Person struct {
 type App struct {
 	store         *Store
 	people        map[string]*Person
+	peopleFile    string
 	browserSecret string
 	hostID        string
 	stream        *Broadcast
@@ -99,11 +100,18 @@ func (a *App) loadPeople(ctx context.Context, file string) error {
 	if err != nil {
 		return err
 	}
+	a.peopleFile = file
+	return a.setPeople(ctx, raw)
+}
+
+// setPeople parses and checks a people list, mirrors it into person and person_grant, then makes it current.
+// ponytail: the map swap is not synchronized with concurrent readers; a person edit is rare and owner-only.
+func (a *App) setPeople(ctx context.Context, raw []byte) error {
 	var list []*Person
 	if err := json.Unmarshal(raw, &list); err != nil {
 		return err
 	}
-	a.people = map[string]*Person{}
+	people := map[string]*Person{}
 	owners := 0
 	for _, p := range list {
 		p.Email = strings.ToLower(p.Email)
@@ -113,12 +121,12 @@ func (a *App) loadPeople(ctx context.Context, file string) error {
 		if p.Owner {
 			owners++
 		}
-		a.people[p.Email] = p
+		people[p.Email] = p
 	}
 	if owners != 1 {
 		return errors.New("exactly one person must have owner: true")
 	}
-	return a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
+	err := a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "DELETE FROM person"); err != nil {
 			return err
 		}
@@ -134,6 +142,10 @@ func (a *App) loadPeople(ctx context.Context, file string) error {
 		}
 		return nil
 	})
+	if err == nil {
+		a.people = people
+	}
+	return err
 }
 
 // scopeOf: the owner works in '*' (nil); anyone else in the projects of their grants, plus null-project rows for architects.

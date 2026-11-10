@@ -6,10 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"os"
 	"regexp"
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func mayAccessProjectID(p *Person, projectID string) bool {
@@ -164,5 +167,61 @@ func init() {
 			roles = []string{}
 		}
 		return doc{"email": p.Email, "name": p.Name, "roles": roles, "owner": p.Owner, "grantsVersion": grantsVersion(p), "changeLogRetentionDays": 7}, nil
+	})
+}
+
+// people_list and people_set: people.json as operations (docs/designs/fleet-pm-agent.md §8). A non-owner sees only
+// themself, as the person row-level policy does; only the owner sets the list, written atomically and reloaded.
+func init() {
+	bop("people_list", true, func(q *Request) (any, error) {
+		out := []*Person{}
+		for _, p := range q.app.people {
+			if q.person == nil || q.person.Owner || p.Email == q.person.Email {
+				out = append(out, p)
+			}
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Email < out[j].Email })
+		return doc{"people": out}, nil
+	})
+	// setting_changes: the audit of settings, newest first, optionally of one target (host:<id>, people, ...).
+	bop("setting_changes", true, func(q *Request) (any, error) {
+		rs, err := rows(q, "SELECT data FROM document WHERE kind='setting-change' AND ($1='' OR data->>'target'=$1) ORDER BY seq DESC LIMIT 200", gs(body(q), "target"))
+		return doc{"changes": rs}, err
+	})
+	clong("people_set", func(q *Request) (any, error) {
+		if q.person != nil && !q.person.Owner {
+			return nil, fail(403, "Only the owner sets people")
+		}
+		var b struct {
+			People json.RawMessage `json:"people"`
+		}
+		if json.Unmarshal(q.body, &b) != nil || len(b.People) == 0 || b.People[0] != '[' {
+			return nil, fail(400, "Expected people: the whole people.json list")
+		}
+		previous, err := os.ReadFile(q.app.peopleFile)
+		if err != nil {
+			return nil, err
+		}
+		if err := q.app.setPeople(q.ctx(), b.People); err != nil {
+			if _, ok := err.(*json.UnmarshalTypeError); ok || strings.HasPrefix(err.Error(), "exactly one") {
+				return nil, fail(400, err.Error())
+			}
+			return nil, err
+		}
+		tmp := q.app.peopleFile + ".tmp"
+		if err := os.WriteFile(tmp, b.People, 0o600); err != nil {
+			return nil, err
+		}
+		if err := os.Rename(tmp, q.app.peopleFile); err != nil {
+			return nil, err
+		}
+		var prev, next any
+		json.Unmarshal(previous, &prev)
+		json.Unmarshal(b.People, &next)
+		err = q.app.store.Tx(q.ctx(), nil, true, "", func(tx pgx.Tx) error {
+			q.tx = tx
+			return putDoc(q, "setting-change", doc{"id": uuid(), "target": "people", "field": "people", "previous": prev, "value": next, "actor": actor(q, "operator"), "at": now()})
+		})
+		return doc{"people": len(q.app.people)}, err
 	})
 }

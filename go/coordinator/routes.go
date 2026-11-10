@@ -54,6 +54,9 @@ func getDoc(q *Request, id, kind string) (doc, error) {
 }
 
 func putDoc(q *Request, kind string, v doc) error {
+	if kind == "setting-change" && q.agent != "" { // an agent's change: the execution acts for its director (fleet-pm-agent.md §1)
+		v["actor"], v["onBehalfOf"] = q.agent, q.person.Email
+	}
 	b, _ := json.Marshal(v)
 	var project any
 	if p, ok := v["projectId"].(string); ok {

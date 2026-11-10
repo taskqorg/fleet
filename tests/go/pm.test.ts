@@ -119,3 +119,19 @@ test('PM5 Held: an agent task starts Held with the execution as creator, and lea
   const person = ok(await op('task_create', {projectId: PROJECT, title: 'PM5 person ' + randomUUID()}));
   assert.deepEqual([person.state, person.createdBy], ['queued', OWNER], 'the owner path is unchanged');
 });
+
+test('PM6 audit: an agent setting change records the execution as actor and its director, and people stay owner-only (risk: an agent change looks like the person did it, or a member edits people)', {timeout: 30_000}, async () => {
+  const pm = await agent(OWNER, {projectId: PROJECT, role: 'pm'});
+  const hostId = await hostOf(MEMBER);
+  ok(await pm.tool('hosts_update', {id: hostId, intake: 'paused'}));
+  const [c] = ok(await op('setting_changes', {target: 'host:' + hostId})).changes;
+  assert.deepEqual([c.field, c.previous, c.value, c.actor, c.onBehalfOf], ['intake', 'all', 'paused', 'execution:' + pm.executionId, OWNER]);
+  const people = ok(await pm.tool('people_list')).people;
+  assert.ok(people.some((p: any) => p.email === MEMBER));
+  assert.equal((await op('people_set', {people}, MEMBER)).status, 403);
+  assert.deepEqual(ok(await op('people_list', {}, MEMBER)).people.map((p: any) => p.email), [MEMBER]);
+  ok(await pm.tool('people_set', {people}));
+  const [p] = ok(await op('setting_changes', {target: 'people'})).changes;
+  assert.deepEqual([p.actor, p.onBehalfOf], ['execution:' + pm.executionId, OWNER]);
+  ok(await op('hosts_update', {id: hostId, intake: 'all'}));
+});
