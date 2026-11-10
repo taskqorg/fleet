@@ -62,7 +62,7 @@ function Rating({ r, now }: { r: any; now: number }) {
   const toAnswer = (a: string) => r.form === 'pick_best' ? (r.items.find((i: any) => i.label === a.toUpperCase())?.trialId ?? a) : /^(pass|fail)\b/i.test(a) ? a.replace(/^(pass|fail)/i, m => m.toLowerCase()) : a;
   const shown = (a: string) => r.form === 'pick_best' ? (r.items.find((i: any) => i.trialId === a)?.label ?? a) : a;
   const files = r.items.length > 0 && <div class="stack">{r.items.map((i: any) => <div key={i.label}><b>{i.label}</b>{' '}
-    {i.files.filter((f: any) => !f.path.endsWith('/output.json') || i.files.length === 1).map((f: any) => <a key={f.artifactId} class="id" href={`/api/results/${f.artifactId}`} target="_blank" rel="noopener">{f.path.split('/').slice(1).join('/')}</a>)}</div>)}</div>;
+    {i.files.filter((f: any) => !f.path.endsWith('/output.json') || i.files.length === 1).map((f: any) => <a key={f.artifactId} class="id" href={`/api/results/${f.artifactId}${/\.(html?|svg)$/i.test(f.path) ? '/preview' : ''}`} target="_blank" rel="noopener">{f.path.split('/').slice(1).join('/')}</a>)}</div>)}</div>;
   return <div id={`rating-${r.id}`}><DecisionBlock question={r.text} askedBy="lab" addressedTo="you" since={now} now={now} waits={busy ? 'saving' : 'never blocks'} context={files || undefined} options={opts}
     answered={r.state === 'answered' ? { by: 'you', answer: shown(r.answer), at: now, delivered: true } : undefined}
     onAnswer={a => { setBusy(true); op('questions_answer', { questionId: r.id, answer: toAnswer(a) }).finally(() => setBusy(false)); }} /></div>;

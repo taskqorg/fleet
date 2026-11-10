@@ -13,7 +13,7 @@ import {delegation} from './delegation.ts';
 import {registerProjects} from './projects.ts';
 import {accounts} from './accounts.ts';
 import {connectionRegistry} from './connections.ts';
-import {delivery} from './delivery.ts';
+import {delivery,deliveryStage} from './delivery.ts';
 import {agentTools} from './agent-tools.ts';
 import {threads} from './threads.ts';
 import {storeRegistry,accessToken} from './stores.ts';
@@ -50,7 +50,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  // which no other handler writes: it runs in the execution's scope, in parallel with other executions and with GLOBAL writers.
  const ingestScope=(req:any)=>typeof req.body?.executionId==='string'?executionScope(req.body.executionId):fail(400,'Expected executionId');
  const ingestRoutes=new Set(['/api/hosts/events']);
- const longRoutes=new Set(['/api/stream','/api/threads/:scope/:id/export','/assets/*','/assets/','/api/hosts/artifacts/list','/api/hosts/artifacts/reserve','/api/hosts/artifacts/parts','/api/hosts/artifacts/commit','/api/hosts/artifacts/verified','/api/hosts/artifacts/renew','/api/hosts/artifacts/failed','/api/hosts/artifacts/declare','/api/hosts/artifacts/get','/api/hosts/artifacts/read','/api/results/:id','/api/pipeline-runs','/api/pipelines/:id/runs','/api/project-operations/:name','/api/project-tools','/api/ops/:name','/api/tools','/api/hosts/receipts','/api/hosts/agent-tools']);
+ const longRoutes=new Set(['/api/stream','/api/threads/:scope/:id/export','/assets/*','/assets/','/api/hosts/artifacts/list','/api/hosts/artifacts/reserve','/api/hosts/artifacts/parts','/api/hosts/artifacts/commit','/api/hosts/artifacts/verified','/api/hosts/artifacts/renew','/api/hosts/artifacts/failed','/api/hosts/artifacts/declare','/api/hosts/artifacts/get','/api/hosts/artifacts/read','/api/results/:id','/api/results/:id/preview','/api/pipeline-runs','/api/pipelines/:id/runs','/api/project-operations/:name','/api/project-tools','/api/ops/:name','/api/tools','/api/hosts/receipts','/api/hosts/agent-tools']);
  // Reads (GET, HEAD) run in a read-only snapshot; every other route is one GLOBAL write (store.atomic) unless it is host ingest.
  // Lab experiment routes call operations (runOp opens their transactions); reconcile needs committed state.
  app.addHook('onRoute',(o:any)=>{if(longRoutes.has(o.url)||/^\/api\/lab\/(experiments|ratings|scores|registry)/.test(o.url))return;const h=o.handler,method=[o.method].flat()[0];
@@ -139,7 +139,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  app.get('/api/sessions/:id',async(req:any)=>(await session_get({sessionId:req.params.id})));
  // Conversation threads (docs/designs/fleet-conversations.md): pages of typed blocks per task or session, search and export.
  // feedCursor is read in the same snapshot as the page, so the client follows the feed from there and misses no row.
- const thread=threads({query:store.query,artifacts:async(executionId:string)=>all('artifact',{executionId},['contentBase64']),cursor:async()=>(await store.changes.since(null)).cursor});
+ const thread=threads({stage:async(sessionId:string)=>deliveryStage((await all('delivery')).filter((d:any)=>d.sourceSessionId===sessionId||d.sessionId===sessionId).sort((a:any,b:any)=>(a.createdAt??0)-(b.createdAt??0)).at(-1)?.state),query:store.query,artifacts:async(executionId:string)=>all('artifact',{executionId},['contentBase64']),cursor:async()=>(await store.changes.since(null)).cursor});
  const thread_entries=(b:any)=>thread.entries(b),thread_blocks=(b:any)=>thread.blocks(b),thread_search=(b:any)=>thread.search(b),thread_export=(b:any)=>thread.exportText(b,store.read);
  const threadKey=(req:any)=>req.params.scope==='task'?{task:req.params.id}:req.params.scope==='session'?{session:req.params.id}:fail(404,'Unknown thread scope');
  const intOf=(v:any)=>v===undefined?undefined:/^\d+$/.test(v)?Number(v):fail(400,'Expected integer');
@@ -277,7 +277,27 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   return {artifacts:await artifacts.list({executionId:!e.projectId?e.id:typeof f.executionId==='string'?f.executionId:undefined,taskId:typeof f.taskId==='string'?f.taskId:undefined,mediaType:typeof f.mediaType==='string'?f.mediaType:undefined,projectId:e.projectId??undefined,noExamples:true})}});
  app.post('/api/hosts/stores',async(req:any)=>{const b=req.body??{};(await owned({hostId:b.hostId}));return store.tx(()=>stores.register(b.hostId,b.store,req.fleetHost.holder))});
  // Results stream from a verified copy with the same sandbox as before (no size limit; bytes never sit in the coordinator).
- app.get('/api/results/:id',async(req:any,r)=>{const a=await artifacts.get(req.params.id);if(a.state!=='stored')fail(404,'Not found');r.header('Content-Security-Policy',"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:");return r.type(a.mediaType||'application/octet-stream').send(await artifacts.read(a.id))});
+ // Result bytes (docs/designs/fleet-conversations.md "Results and the artifact viewer"): agent output is untrusted. No scripts
+ // run (sandbox without allow-scripts, no script-src), types without a view download as attachments, and one Range part lets
+ // the viewer read large text in pages.
+ app.get('/api/results/:id',async(req:any,r)=>{const a=await artifacts.get(req.params.id);if(a.state!=='stored')fail(404,'Not found');
+  const type=a.mediaType||'application/octet-stream',size=Number(a.size)||0,viewable=/^(image|video|text)\//.test(type)||/^application\/(json|xml)/.test(type);
+  r.header('Content-Security-Policy',"sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; media-src 'self'").header('Accept-Ranges','bytes');
+  if(!viewable)r.header('Content-Disposition',`attachment; filename="${String(a.name??a.id).replace(/[^\w.-]+/g,'_')}"`);
+  const m=/^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range??''));
+  if(m&&size>0&&(m[1]||m[2])){const start=m[1]?Number(m[1]):Math.max(0,size-Number(m[2])),end=m[1]&&m[2]?Math.min(Number(m[2]),size-1):size-1;
+   if(start>=size||start>end)return r.code(416).header('Content-Range',`bytes */${size}`).send();
+   return r.code(206).header('Content-Range',`bytes ${start}-${end}/${size}`).header('Content-Length',String(end-start+1)).type(type).send(await artifacts.read(a.id,[start,end]))}
+  return r.type(type).send(await artifacts.read(a.id))});
+ // Interactive preview of an HTML or SVG result (design pages, prototypes, games are results that run). Its scripts run in a
+ // sandbox WITHOUT allow-same-origin: an opaque origin, so they cannot read Fleet cookies or storage, and connect-src 'none'
+ // keeps them from calling Fleet or anything else. The viewer frames it with the same sandbox; opened alone it is the same.
+ // No popups. A script can still navigate its own frame away (CSP cannot stop that), but it holds nothing of Fleet's to send.
+ // ponytail: same host as the app; a separate results origin when one is configured would add a second wall.
+ app.get('/api/results/:id/preview',async(req:any,r)=>{const a=await artifacts.get(req.params.id);if(a.state!=='stored')fail(404,'Not found');
+  const type=a.mediaType||'';if(!/^(text\/html|image\/svg\+xml)\b/.test(type))fail(415,'No interactive preview for '+type);
+  r.header('Content-Security-Policy',"sandbox allow-scripts allow-forms allow-modals; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' data: blob:; style-src 'unsafe-inline' data:; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'");
+  return r.type(type).send(await artifacts.read(a.id))});
  // Pipeline v2 runner (docs/designs/fleet-lab.md "Pipeline format version 2"): api steps call connections from this host; agent steps are
  // ordinary agent executions with the step's profile (variant overrides applied); script steps are executor script commands.
  const configDir=config.projectConfigDirectory||'config',profilesDir=config.profilesDirectory||'config/agents';
@@ -356,7 +376,10 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   for(const r of await all('pipeline-run',{pipelineId:'draft-examples',state:'completed'}))lab!.importDrafts(r,b=>examples.add(b)).catch(e=>app.log.error(e))});
  const placement=placementWorker(store,{stores,artifacts,locations,rules:rulesOf,queueCommand:(h,k,p)=>store.tx(()=>queueCommand(h,k,p)),retryWindowMs:()=>config.artifactRetryWindowMs??86400000,onExpired:(id:string)=>store.tx(()=>settle(id,'artifact retry window passed'))});
  Object.assign(projects,{
-  artifact_list:async(b:any)=>({artifacts:await artifacts.list({executionId:b?.executionId,taskId:b?.taskId,mediaType:b?.mediaType,projectId:b?.projectId})}),
+  // With limit: newest first, one page, nextBefore for the next page (Results page). Without: every row, as before.
+  artifact_list:async(b:any)=>{const limit=b?.limit===undefined?undefined:Number.isSafeInteger(b.limit)&&b.limit>0?b.limit:fail(400,'Expected positive integer limit');
+   const rows=await artifacts.list({executionId:b?.executionId,taskId:b?.taskId,mediaType:b?.mediaType,projectId:b?.projectId,states:Array.isArray(b?.states)?b.states.filter((x:any)=>typeof x==='string'):undefined,since:typeof b?.since==='number'?b.since:undefined,q:typeof b?.q==='string'?b.q:undefined,projectIds:Array.isArray(b?.projectIds)?b.projectIds.filter((x:any)=>x===null||typeof x==='string'):undefined,limit,before:Number.isSafeInteger(b?.before)?b.before:undefined});
+   if(limit===undefined)return {artifacts:rows};const more=rows.length>limit,page=rows.slice(0,limit);return {artifacts:page,nextBefore:more?page.at(-1)!.seq:null}},
   artifact_get:(b:any)=>artifacts.get(text(b?.artifactId,200)),
   artifact_purge:(b:any)=>artifacts.purge({contentHash:b?.contentHash,projectId:b?.projectId,scope:b?.scope,reason:b?.reason}),
   artifact_rule_preview:(b:any)=>placement.previewRule(b?.projectId??null,b?.rule),

@@ -80,6 +80,13 @@ export const states = {
     all: { label: 'Open', tone: 'success', icon: 'circle-check' },
     paused: { label: 'Paused', tone: 'attention', icon: 'circle-pause' },
   },
+  /** A stored result or other artifact (Results page, OR-22). */
+  artifact: {
+    stored: { label: 'Stored', tone: 'success', icon: 'save' },
+    pending: { label: 'Uploading', tone: 'running', icon: 'history' },
+    failed: { label: 'Failed', tone: 'danger', icon: 'octagon-x' },
+    deleted: { label: 'Deleted', tone: 'neutral', icon: 'trash-2' },
+  },
   host: {
     online: { label: 'Online', tone: 'success', icon: 'circle-check' },
     offline: { label: 'Offline', tone: 'danger', icon: 'circle-slash' },
@@ -96,7 +103,7 @@ export const workspaces = [
   { id: 'overview', label: 'Overview', icon: 'house', group: 'Operator', app: true },
   { id: 'tasks', label: 'Tasks', icon: 'list', group: 'Operator', app: true },
   { id: 'conversations', label: 'Conversations', icon: 'messages-square', group: 'Operator', app: true },
-  { id: 'results', label: 'Results', icon: 'file-text', group: 'Operator', app: false },
+  { id: 'results', label: 'Results', icon: 'file-text', group: 'Operator', app: true },
   { id: 'projects', label: 'Projects', icon: 'folder-open', group: 'Operator', app: false },
   { id: 'agents', label: 'Agents', icon: 'bot', group: 'Architect', app: false },
   { id: 'hosts', label: 'Hosts', icon: 'panels-top-left', group: 'Architect', app: true },

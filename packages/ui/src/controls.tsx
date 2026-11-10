@@ -263,7 +263,7 @@ export function DecisionBlock(p: DecisionProps) {
 /* ---------- Result viewer shell ---------- */
 
 type ResultProps = {
-  name: string; type: string; size: number; source: string;
+  name: string; type: string; size: number; source: string; href?: string;
   copies: { where: string; state: StateOf<'copy'> }[];
   tabs: string[]; tab: string; onTab: (t: string) => void; children: ComponentChildren;
 };
@@ -277,12 +277,52 @@ export function ResultViewer(p: ResultProps) {
         <span class="grow" />
         <span class="tabs" role="tablist">{p.tabs.map(t => <button type="button" role="tab" key={t} aria-selected={t === p.tab} onClick={() => p.onTab(t)}>{t}</button>)}</span>
         <Button label="Compare" icon="list" iconOnly kbd="c" />
-        <Button label="Download" icon={actions.download} iconOnly />
+        {p.href ? <a class="btn default icon-only" data-ui="button" href={p.href} download={p.name} aria-label="Download" data-tip="Download"><Icon name={actions.download} /></a> : <Button label="Download" icon={actions.download} iconOnly />}
         <Button label="Share" icon={actions.share} iconOnly />
       </header>
       <div class="rv-b" role="tabpanel">{p.children}</div>
     </section>
   );
+}
+
+/* ---------- Artifact view: the body of the result viewer (result-viewer.md) ---------- */
+
+export type ArtifactMeta = { id: string; name: string; mediaType: string; size: number };
+const TEXTUAL = /^(text\/|application\/(json|xml|x-ndjson|javascript|x-yaml|yaml|toml|sql|x-sh))/;
+/** Which view a stored media type gets: image, video, text, or download only. HTML and SVG show as text, never inlined. */
+export const viewOf = (mediaType: string): 'image' | 'video' | 'text' | 'download' =>
+  /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(mediaType) ? 'image' : /^video\//.test(mediaType) ? 'video' : TEXTUAL.test(mediaType) || mediaType === 'image/svg+xml' ? 'text' : 'download';
+const PAGE_BYTES = 65536;
+/**
+ * One stored artifact by media type: image and video in a fixed-ratio frame (no jump when they load, OR-23), text read in
+ * Range pages as the reader scrolls (no cap), HTML and SVG as source or, on request, running in a sandboxed frame without
+ * same-origin access (scripts run, but on an opaque origin with no network); anything else is a download. Bytes come from `src` (GET /api/results/:id).
+ */
+export function ArtifactView({ a, src }: { a: ArtifactMeta; src: string }) {
+  const kind = viewOf(a.mediaType), [text, setText] = useState(''), [next, setNext] = useState(0), [busy, setBusy] = useState(false), [err, setErr] = useState<string | null>(null);
+  const [preview, setPreview] = useState(false), decoder = useRef(new TextDecoder());
+  const more = async () => {
+    if (busy || next >= a.size) return; setBusy(true);
+    try { const r = await fetch(src, { headers: { range: `bytes=${next}-${Math.min(a.size, next + PAGE_BYTES) - 1}` }, credentials: 'same-origin' });
+      if (!r.ok) throw new Error(`${r.status}`); const b = new Uint8Array(await r.arrayBuffer());
+      setText(t => t + decoder.current.decode(b, { stream: next + b.length < a.size })); /* one decoder per artifact: a character split across pages stays whole */ setNext(n => n + b.length); setErr(null); }
+    catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+  };
+  useEffect(() => { setText(''); setNext(0); setPreview(false); decoder.current = new TextDecoder(); }, [a.id]);
+  useEffect(() => { if (kind === 'text' && next === 0 && a.size > 0) more(); }, [a.id, next]);
+  const page = kind === 'text' && /^(text\/html|image\/svg\+xml)/.test(a.mediaType);
+  return <div class="av" data-ui="artifact-view">
+    {kind === 'image' && <div class="av-frame"><img src={src} alt={a.name} loading="lazy" /></div>}
+    {kind === 'video' && <div class="av-frame video"><video src={src} controls preload="metadata" /></div>}
+    {kind === 'text' && <>
+      {page && <div class="bar"><Button label={preview ? 'Show source' : 'Run preview'} icon={preview ? 'type' : 'panels-top-left'} pressed={preview} onClick={() => setPreview(!preview)} /></div>}
+      {preview ? <div class="av-frame page" data-tip="Agent output running in a sandbox: not part of Fleet"><iframe src={`${src}/preview`} sandbox="allow-scripts allow-forms allow-modals" title={a.name} referrerpolicy="no-referrer" /></div>
+        : <div class="av-text" onScroll={e => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) more(); }}><pre><code>{text}</code></pre>
+          {next < a.size && <div class="muted type-sm">{bytes(next).text} of {bytes(a.size).text}{busy ? ' · loading' : ''}</div>}</div>}
+    </>}
+    {kind === 'download' && <Empty text={`${a.mediaType} has no view here.`} />}
+    {err && <ErrorBanner text={`Did not load: ${err}`} onRetry={more} />}
+  </div>;
 }
 
 /* ---------- Setting field ---------- */
@@ -400,8 +440,10 @@ export function QuestionRow({ text, options, state, answer, answeredBy, askedAt,
     answered={state === 'answered' && answer !== undefined ? { by: answeredBy ?? 'operator', answer, at: answeredAt ?? now, delivered: true } : undefined} onAnswer={onAnswer} /></div>;
 }
 /** Results of an execution end: artifact links (Stage 4 adds names, the delivery stage and the viewer). */
-export function ResultRow({ artifactIds, stage }: { artifactIds: string[]; stage?: Stage }) {
-  return <div class="th-row th-result" data-ui="thread-row"><Icon name="file-text" /><span class="th-line">{artifactIds.map(id => <a key={id} class="mono" href={`/api/results/${encodeURIComponent(id)}`} target="_blank" rel="noopener">{id.slice(0, 8)}</a>)}</span>{stage && <StageChip stage={stage} />}</div>;
+/** Results of an execution end: artifact names linking to their Results page entry, and the delivery stage chip. */
+export function ResultRow({ artifacts, stage, onOpen }: { artifacts: ArtifactMeta[]; stage?: Stage; onOpen?: (id: string) => void }) {
+  return <div class="th-row th-result" data-ui="thread-row"><Icon name="file-text" /><span class="th-line">{artifacts.map(a =>
+    <a key={a.id} href={`/results/${encodeURIComponent(a.id)}`} data-tip={`${a.mediaType} · ${bytes(a.size).text}`} onClick={e => { if (onOpen && !e.metaKey && !e.ctrlKey) { e.preventDefault(); onOpen(a.id); } }}>{a.name}</a>)}</span>{stage && stage in stages && <StageChip stage={stage} />}</div>;
 }
 /** An execution start: state, agent mark, duration chip, and Stop while it runs (CUJ 5). */
 export function BoundaryRow({ session, executionId, state, mark, startedAt, endedAt, now, onStop, stopReason }: { session?: string; executionId: string; state: StateOf<'execution'>; mark: Mark; startedAt?: number | null; endedAt?: number | null; now: number; onStop?: () => void; stopReason?: string }) {
@@ -420,10 +462,10 @@ export type ThreadBlock = { kind: string; key: string; executionId?: string; [k:
  * A thread: one row per block in a measured VirtualList that follows the bottom, loads older rows upward (onStart) and
  * newer ones downward (onEnd), and jumps through `handle`. Open tool and reasoning rows are kept by key across the window.
  */
-export function Thread({ blocks, label, now, marked, selected, onRowClick, showSession, handle, pending, onStart, onEnd, onStop, stopReason, onAnswer, onCopyFail }: {
+export function Thread({ blocks, label, now, marked, selected, onRowClick, showSession, onOpenResult, handle, pending, onStart, onEnd, onStop, stopReason, onAnswer, onCopyFail }: {
   blocks: ThreadBlock[]; label: string; now: number; marked?: string | null;
   /** Cross-message selection: rows in it are tinted; a click on a row (Shift extends) selects it, buttons and links excepted. */
-  selected?: (key: string) => boolean; onRowClick?: (key: string, shift: boolean) => void; showSession?: boolean; handle?: { current: VirtualListHandle | null }; pending?: { count: number; onJump: () => void };
+  selected?: (key: string) => boolean; onRowClick?: (key: string, shift: boolean) => void; showSession?: boolean; onOpenResult?: (id: string) => void; handle?: { current: VirtualListHandle | null }; pending?: { count: number; onJump: () => void };
   onStart?: () => void; onEnd?: () => void; onStop?: (executionId: string) => void; stopReason?: string;
   onAnswer?: (questionId: string, answer: string) => void; onCopyFail?: (e: unknown) => void;
 }) {
@@ -436,7 +478,7 @@ export function Thread({ blocks, label, now, marked, selected, onRowClick, showS
       case 'tool': return <ToolRow name={b.name} input={b.input} output={b.output} state={b.state} startedAt={b.startedAt} endedAt={b.endedAt} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'question': return <QuestionRow text={b.text} options={b.options ?? []} state={b.state} answer={b.answer} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} />;
-      case 'result': return <ResultRow artifactIds={b.artifactIds ?? []} stage={b.stage} />;
+      case 'result': return <ResultRow artifacts={b.artifacts ?? (b.artifactIds ?? []).map((id: string) => ({ id, name: id.slice(0, 8), mediaType: '', size: 0 }))} stage={b.stage} onOpen={onOpenResult} />;
       case 'boundary': return <BoundaryRow session={showSession ? b.sessionId : undefined} executionId={b.executionId!} state={b.state} mark={markOf(b)} startedAt={b.startedAt} endedAt={b.endedAt} now={now} stopReason={stopReason}
         onStop={onStop && ['preparing', 'running', 'waiting'].includes(b.state) ? () => onStop(b.executionId!) : undefined} />;
       default: return null;

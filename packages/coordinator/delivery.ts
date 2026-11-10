@@ -7,6 +7,9 @@ import {randomUUID} from 'node:crypto';
 import {readTrustedProfile} from './profiles.ts';
 // shortcut: static-site delivery only; add other worker kinds after a real consumer exists.
 // readArtifact: the bytes of a stored artifact (artifacts.readBuffer); no artifact content sits in records (design §3).
+// Delivery record state to the delivery stage of packages/ui/src/registry.ts (docs/designs/fleet-conversations.md table); other
+// states show no stage, the task state shows failures. No check state is recorded yet, so checks stages are never guessed.
+export const deliveryStage=(state:string|undefined|null):string|null=>({'pr-open':'pr_open',integrating:'merging',merged:'merged',published:'merged'} as Record<string,string>)[state??'']??null;
 export function delivery(store:Docs,config:any,enqueue:(s:any,input:string,requestId:string)=>Promise<any>,projects:Record<string,(b:any,actor?:any)=>Promise<any>>,resolveAccount:(selection:string|undefined,harness:string,hostId:string)=>Promise<any>,preferredAccount:(projectId:string)=>Promise<string|undefined>,readArtifact:(id:string)=>Promise<Buffer>){
  const {all,get,put,atomic}=store;
  const fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};

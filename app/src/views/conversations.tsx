@@ -120,7 +120,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
     </header>
     <div class="status-line" role="status">{failure ? <ErrorBanner text={failure.text} onRetry={failure.retry} /> : thread.error ? <ErrorBanner text={`Thread did not load: ${thread.error}`} onRetry={thread.newest} /> : null}</div>
     <div class="pane">
-      {!w ? <Skeleton rows={6} /> : <Thread blocks={w.blocks} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k)} onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? sel?.start.key ?? k, false), k, true)); pickFrom.current ??= k; }} showSession={!!key && 'task' in key} handle={handle} onStart={thread.older} onEnd={thread.newer}
+      {!w ? <Skeleton rows={6} /> : <Thread blocks={w.blocks} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k)} onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? sel?.start.key ?? k, false), k, true)); pickFrom.current ??= k; }} showSession={!!key && 'task' in key} onOpenResult={r => go('/results/' + encodeURIComponent(r))} handle={handle} onStart={thread.older} onEnd={thread.newer}
         stopReason={off ? 'offline' : undefined} onStop={x => run(() => op('execution_stop', { executionId: x }))}
         onAnswer={(questionId, answer) => run(() => op('questions_answer', { questionId, answer }))} onCopyFail={copyFail}
         pending={{ count: w.fresh, onJump: () => { setMarked(null); setHits(null); thread.newest(); } }} />}
