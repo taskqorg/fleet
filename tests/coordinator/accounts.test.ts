@@ -78,7 +78,7 @@ test('extra native host: accepted, account binding selects host, Claude refused 
  const s=(await f.call('/api/sessions',{})).json();
  assert.equal((await f.call(`/api/sessions/${s.sessionId}/profile`,{profileId:'baseline',account:'fleet-codex-pds'})).statusCode,200);
  const m=await f.call(`/api/sessions/${s.sessionId}/messages`,{requestId:'r1',text:'hi'});assert.equal(m.statusCode,200,m.body);
- assert.equal(m.json().hostId,'pds-native');
+ assert.equal(m.json().hostId,null);// late choice: the host is picked when a host polls (§6)
  const cmd=(await f.host('poll',{hostId:'pds-native',platform:'linux'})).commands.find((x:any)=>x.kind==='start');assert.equal(cmd.executionId,m.json().id);
  assert.equal((await f.host('poll',{hostId:'mac',platform:'darwin'})).commands.filter((x:any)=>x.kind==='start').length,0);
 }finally{await f.app.close()}});

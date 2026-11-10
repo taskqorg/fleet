@@ -118,7 +118,9 @@ test('session_start with hostId runs its turns only on that host; an unknown hos
  const app=createApp({database:dir+'/db',browserSecret:'b',machineSecret:'m',hostId:'mac',nativeHostIds:['win'],projectConfigDirectory:dir,profilesDirectory:dir+'/agents'});
  const op=async(name:string,body:any)=>(await app.inject({method:'POST',url:'/api/ops/'+name,headers:{authorization:'Bearer b'},payload:body}));
  try{
-  assert.equal((await op('session_start',{projectId:'p1',role:'worker',requestId:'h1',hostId:'win',text:'Hi'})).json().hostId,'win');
+  const started=(await op('session_start',{projectId:'p1',role:'worker',requestId:'h1',hostId:'win',text:'Hi'})).json();
+  const poll=async(hostId:string)=>(await app.inject({method:'POST',url:'/api/hosts/poll',headers:{authorization:'Bearer m'},payload:{hostId}})).json().commands.filter((c:any)=>c.kind==='start');
+  assert.equal((await poll('mac')).length,0);assert.equal((await poll('win'))[0].executionId,started.executionId);
   assert.equal((await op('session_start',{projectId:'p1',role:'worker',requestId:'h2',hostId:'nope',text:'Hi'})).statusCode,400);
  }finally{await app.close()}
 });

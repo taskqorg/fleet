@@ -4,7 +4,7 @@
 // roles: 'inspector-for:<hostId>' (runs account inspections and integration for that host), 'publication' (runs delivery).
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import type {Store} from './store.ts';
-import {mayAccessProject,type Person} from './people.ts';
+import {mayAccessProject,notifyHolder,type Person} from './people.ts';
 
 export type Host={id:string,name:string,holder:string,platform:string,roles:string[],secretHash:string,intake:'all'|'paused',harnesses:Record<string,{allowed:boolean}>,createdAt:number};
 export const secretHash=(secret:string)=>createHash('sha256').update(secret).digest('hex');
@@ -43,6 +43,8 @@ export function hostRegistry(store:Store,people:{personFor:(e:string|undefined)=
    const next:any={};if(b.intake!==undefined){if(!['all','paused'].includes(b.intake))fail(400,'intake: all or paused');next.intake=b.intake}
    if(b.harnesses!==undefined){if(!b.harnesses||typeof b.harnesses!=='object'||Array.isArray(b.harnesses)||Object.values(b.harnesses).some((v:any)=>typeof v?.allowed!=='boolean'))fail(400,'harnesses: {<name>: {allowed}}');next.harnesses={...h.harnesses,...b.harnesses}}
    for(const [field,value] of Object.entries(next))if(JSON.stringify((h as any)[field])!==JSON.stringify(value))await store.put('setting-change',{id:randomUUID(),target:'host:'+h.id,holder:h.holder,field,previous:(h as any)[field]??null,value,actor:p!.email,at:Date.now()});
+   const changed=Object.keys(next).filter(f=>JSON.stringify((h as any)[f])!==JSON.stringify(next[f]));
+   if(changed.length)await notifyHolder(store,h.holder,`The owner changed ${changed.join(', ')} of your host ${h.id}.`);
    Object.assign(h,next);await save(h);return {host:view(h)}},
   // Replaces the hash; the old secret stops at once.
   hosts_rotate_secret:async(b:any,p:Person|null)=>{owner(p);const h=await byId(b?.id)??fail(404,'Unknown host');

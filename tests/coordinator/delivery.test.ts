@@ -11,7 +11,20 @@ test('shared project selection and durable operator answer before generation',as
 
 test('a Paused subscription blocks enqueue, preserves history; Claude refused where the host does not allow it',async()=>{
  const root=mkdtempSync('/tmp/fleet-account-test-'),app=createApp({database:root+'/db',browserSecret:'browser',machineSecret:'machine',hostId:'host',defaultAccountBinding:'fleet-codex'});const api=(url:string,payload?:any,machine=false)=>app.inject({method:payload?'POST':'GET',url,headers:{authorization:'Bearer '+(machine?'machine':'browser')},payload});try{
- const a=(await api('/api/accounts',{name:'managed-test',harness:'codex'})).json();await api('/api/hosts/accounts',{hostId:'host',accountId:a.id,binding:'fleet-codex',platform:'darwin',readiness:'ready'},true);const s=(await api('/api/sessions',{})).json();await api('/api/sessions/'+s.id+'/profile',{profileId:'baseline',account:a.name});const first=await api('/api/sessions/'+s.id+'/messages',{requestId:'one',text:'test'});assert.equal(first.statusCode,200);assert.equal(first.json().effectiveAccount.binding,'fleet-codex');await api('/api/accounts/'+a.id,{intake:'paused'});const other=(await api('/api/sessions',{})).json();await api('/api/sessions/'+other.id+'/profile',{profileId:'baseline',account:a.name});assert.equal((await api('/api/sessions/'+other.id+'/messages',{requestId:'two',text:'test'})).statusCode,409);assert.equal((await api('/api/sessions/'+s.id)).json().executions.length,1);assert.equal((await api('/api/sessions/'+other.id)).json().executions.length,0);const alias=(await api('/api/sessions',{})).json();await api('/api/sessions/'+alias.id+'/profile',{profileId:'baseline',account:'fleet-codex'});assert.equal((await api('/api/sessions/'+alias.id+'/messages',{requestId:'alias',text:'test'})).statusCode,409);const legacy=(await api('/api/sessions',{})).json();assert.equal((await api('/api/sessions/'+legacy.id+'/messages',{requestId:'legacy',text:'test'})).statusCode,409);
+ const a=(await api('/api/accounts',{name:'managed-test',harness:'codex'})).json();await api('/api/hosts/accounts',{hostId:'host',accountId:a.id,binding:'fleet-codex',platform:'darwin',readiness:'ready'},true);const s=(await api('/api/sessions',{})).json();await api('/api/sessions/'+s.id+'/profile',{profileId:'baseline',account:a.name});const first=await api('/api/sessions/'+s.id+'/messages',{requestId:'one',text:'test'});assert.equal(first.statusCode,200);
+ // Late choice (§6): the poll claims the work and binds the subscription.
+ const poll=async()=>(await api('/api/hosts/poll',{hostId:'host'},true)).json().commands.filter((c:any)=>c.kind==='start');
+ assert.equal((await poll())[0].payload.managedAccount.binding,'fleet-codex');
+ await api('/api/accounts/'+a.id,{intake:'paused'});
+ // Paused: queued work waits with the reason (no refusal), one question is raised, resuming lets it start and closes it.
+ const waiting=async(id:string)=>(await api('/api/sessions/'+id)).json().executions.at(-1);
+ const ids:string[]=[];for(const account of [a.name,'fleet-codex',undefined]){const x=(await api('/api/sessions',{})).json();if(account)await api('/api/sessions/'+x.id+'/profile',{profileId:'baseline',account});
+  assert.equal((await api('/api/sessions/'+x.id+'/messages',{requestId:'two',text:'test'})).statusCode,200);ids.push(x.id)}
+ assert.equal((await poll()).length,1);// only the first, already claimed
+ for(const id of ids){const e=await waiting(id);assert.equal(e.hostId,null);assert.match(e.waitReason,/Paused/)}
+ const open=async()=>(await api('/api/ops/questions_list',{state:'open'})).json().questions.filter((q:any)=>/Work is waiting/.test(q.text));
+ assert.equal((await open()).length,1);
+ await api('/api/accounts/'+a.id,{intake:'all'});assert.equal((await poll()).length,4);assert.equal((await open()).length,0);
  await api('/api/ops/hosts_update',{id:'host',harnesses:{claude:{allowed:false}}});const claude=(await api('/api/accounts',{name:'claude-test',harness:'claude'})).json();assert.equal((await api('/api/hosts/accounts',{hostId:'host',accountId:claude.id,binding:'fleet-claude',platform:'linux',readiness:'ready'},true)).statusCode,409);
  }finally{await app.close()}
 });

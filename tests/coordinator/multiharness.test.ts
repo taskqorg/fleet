@@ -16,9 +16,11 @@ test('Claude admission follows the host setting for direct and delegated work',a
   await send('/api/hosts/receipts',{hostId:'pds-test',commandId:command.id,executionId:parent.id,status:'started'},true);
   const store=(app as any).store;assert.equal((await send('/api/ops/hosts_update',{id:'pds-test',harnesses:{claude:{allowed:false}}})).statusCode,200);
   const child=await send('/api/hosts/receipts',{hostId:'pds-test',commandId:command.id,executionId:parent.id,delegation:{requestId:'child',profileId:'claude-reviewer',input:'review'}},true);
-  assert.equal(child.statusCode,409);assert.match(child.body,/claude is not allowed on host pds-test/);
+  // Late choice (§6): the work is accepted and waits with the setting as its reason; nothing is refused or started.
+  assert.equal(child.statusCode,200,child.body);
   const direct=(await send('/api/sessions',{})).json().sessionId;await send('/api/sessions/'+direct+'/profile',{profileId:'claude-worker',account:account.name});
-  assert.equal((await send('/api/sessions/'+direct+'/messages',{requestId:'direct',text:'review'})).statusCode,409);
-  assert.equal((await store.all('execution')).length,1);assert.equal((await store.all('delegation')).length,0);
+  const d=(await send('/api/sessions/'+direct+'/messages',{requestId:'direct',text:'review'})).json();
+  assert.equal((await send('/api/hosts/poll',{hostId:'pds-test'},true)).json().commands.filter((c:any)=>c.kind==='start').length,0);
+  const e=await store.get(d.id,'execution');assert.equal(e.hostId,null);assert.match(e.waitReason,/claude is not allowed on host pds-test/);
  }finally{await app.close()}
 });
