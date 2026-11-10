@@ -14,7 +14,8 @@ import { createStore, type Store } from '../../packages/coordinator/store.ts';
 export const PG = process.env.FLEET_TEST_PG;
 const SQL = new URL('../../deploy/infrastructure/fleet-postgres.sql', import.meta.url).pathname;
 const withDb = (base: string, db: string, user?: string) => { const u = new URL(base); if (user) { u.username = user; u.password = user; } u.pathname = '/' + db; return u.toString(); };
-const ownerUrl = () => withDb(PG!, 'fleet', 'fleet'), appUrl = () => withDb(PG!, 'fleet', 'fleet_app');
+const ownerUrl = () => withDb(PG!, 'fleet', 'fleet');
+export const appUrl = () => withDb(PG!, 'fleet', 'fleet_app');
 
 async function admin(sql: string[]) {
   const c = new pg.Client({ connectionString: withDb(PG!, 'postgres') }); await c.connect();

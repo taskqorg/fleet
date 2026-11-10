@@ -92,7 +92,16 @@ jobs:
       # The release layout without node_modules: the bundled coordinator must start and serve (docs/designs/fleet-toolchain.md D4).
       - run: node tests/coordinator/release-smoke.ts
         env:
-          FLEET_SMOKE_PG: postgresql://postgres:postgres@localhost:5432/postgres
+          FLEET_TEST_PG: postgresql://postgres:postgres@localhost:5432
+      # Deploys use exactly this smoked release (docs/infrastructure-build.md).
+      - name: Upload the release
+        uses: actions/upload-artifact@v4
+        with:
+          name: fleet-release-${{ github.sha }}
+          path: |
+            package.json
+            dist/
+          if-no-files-found: error
       # The executor binary the end-to-end artifact tests run.
       - run: cargo build -p fleet-executor
       # One file at a time: the Postgres-backed tests share the database "fleet" (tests/coordinator/pg-test.ts).
