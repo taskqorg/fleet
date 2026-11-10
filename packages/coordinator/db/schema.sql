@@ -492,3 +492,19 @@ CREATE POLICY person_scope ON person USING (current_setting('fleet.project_ids',
 ALTER TABLE person_grant ENABLE ROW LEVEL SECURITY;
 ALTER TABLE person_grant FORCE ROW LEVEL SECURITY;
 CREATE POLICY person_scope ON person_grant USING (current_setting('fleet.project_ids', true) = '*' OR email = current_setting('fleet.person', true));
+
+-- migration 14: host settings (docs/designs/fleet-data-foundation.md §11; people-access slice 2). A setting the executor
+-- applies on its host (store capacity, service limits); applied_at and apply_error are the host's report.
+CREATE TABLE host_setting(
+ host_id text NOT NULL,
+ key text NOT NULL,
+ value jsonb NOT NULL,
+ updated_by text NOT NULL,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ applied_at timestamptz NULL,
+ apply_error text NULL,
+ PRIMARY KEY (host_id, key)
+);
+ALTER TABLE host_setting ENABLE ROW LEVEL SECURITY;
+ALTER TABLE host_setting FORCE ROW LEVEL SECURITY;
+CREATE POLICY operator_scope ON host_setting USING (current_setting('fleet.project_ids', true) = '*');

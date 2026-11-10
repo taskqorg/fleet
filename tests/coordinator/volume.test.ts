@@ -2,7 +2,7 @@ import {test} from 'node:test';import assert from 'node:assert/strict';import {c
 // Budgets measured on the old SQLite build (1967769) with this fixture on the author's Mac: poll 380 ms, session read 18 ms.
 // Postgres before the fix (PGlite, main 1ddecc1): poll 780 ms and 163 queries, session read 30 ms.
 // 21 queries: 20 reads and writes plus the scope lock statement.
-const POLL_MS=380,SESSION_MS=18,POLL_QUERIES=21;
+const POLL_MS=380,SESSION_MS=18,POLL_QUERIES=22; // 22: the host lookup by secret hash (people-access §3)
 test('poll and a session read stay inside the SQLite-era budget at live volume',async()=>{
  const app=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac'});await app.ready();const store=(app as any).store;
  const {docs,sessions}=volume();await store.tx(async()=>{for(const [k,d] of docs)await store.put(k,d)});

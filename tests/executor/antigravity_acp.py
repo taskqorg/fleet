@@ -1,6 +1,6 @@
 """Actual Fleet executor + fake installed ACP executable; real Fleet read-only MCP. Zero model calls."""
 import json,os,pathlib,subprocess,tempfile,threading,time
-import sys as _sys;_sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)));from executor_binary import executor_binary
+import sys as _sys;_sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)));from executor_binary import executor_binary,secret_file
 from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
 root=pathlib.Path(tempfile.mkdtemp(prefix='fleet-acp-fake-'));root.chmod(0o700)
 for d in ['home','native','host']:(root/d).mkdir(mode=0o700)
@@ -9,7 +9,7 @@ fake=root/'agy';fake.write_text('''#!/usr/bin/env python3
 import json,sys,os,pathlib,subprocess,time
 assert sys.argv[1]=='acp';assert '--include-default-customizations=false' in sys.argv
 assert sys.argv[sys.argv.index('--app-data-dir')+1]=='antigravity-cli';assert sys.argv[sys.argv.index('--gemini-dir')+1]==os.environ['GEMINI_HOME']
-assert pathlib.Path(os.environ['HOME']).name=='host';assert 'GOOGLE_API_KEY' not in os.environ and 'FLEET_HOST_TOKEN' not in os.environ
+assert pathlib.Path(os.environ['HOME']).name=='host';assert 'GOOGLE_API_KEY' not in os.environ and 'FLEET_HOST_SECRET_FILE' not in os.environ
 servers=[];model=False;mode=False
 wire=pathlib.Path('fake-wire.jsonl').open('ab')
 def send(v):print(json.dumps(v),flush=True)
@@ -55,7 +55,7 @@ class Handler(BaseHTTPRequestHandler):
    if self.path.endswith('/receipts'):commands[:]=[c for c in commands if c['id']!=b['commandId']]
   self.send_response(200);self.end_headers();self.wfile.write(json.dumps(reply).encode())
 srv=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=srv.serve_forever,daemon=True).start()
-env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}','FLEET_HOST_ID':'fake','FLEET_HOST_TOKEN':'fake','FLEET_DATA_DIR':str(root/'data'),'FLEET_NATIVE_ACCOUNTS':str(registry)}
+env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}','FLEET_HOST_ID':'fake','FLEET_HOST_SECRET_FILE':secret_file('fake-host-secret-0123456789abcdef'),'FLEET_DATA_DIR':str(root/'data'),'FLEET_NATIVE_ACCOUNTS':str(registry)}
 p=subprocess.Popen([executor_binary()],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 def issue(cid,text,session='session',kind='start',execution=None):commands.append({'id':cid,'executionId':execution or cid,'sessionId':session,'kind':kind,'payload':{} if kind=='stop' else {'harness':'antigravity','account':'current','model':profile['model'],'effort':None,'text':text,'agentConfig':profile}})
 def wait(fn):

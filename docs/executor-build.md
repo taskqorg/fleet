@@ -11,7 +11,7 @@ FLEET_COORDINATOR_URL=http://127.0.0.1:8787 \
 FLEET_HOST_ID=mac \
 FLEET_DATA_DIR=/absolute/owned/fleet-data \
 FLEET_CODEX_BIN=/absolute/path/to/codex \
-FLEET_HOST_TOKEN="$OPERATOR_SUPPLIED_TOKEN" \
+FLEET_HOST_SECRET_FILE="$HOME/.config/fleet/host-secret" \
 "$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)/debug/fleet-executor"
 ```
 

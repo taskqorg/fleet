@@ -1,6 +1,6 @@
 """No model calls. HTTP exchange, live child, stop, retries and recovery."""
 import base64,hashlib,json,os,pathlib,signal,sqlite3,subprocess,tempfile,threading,time
-import sys as _sys;_sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)));from executor_binary import executor_binary
+import sys as _sys;_sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)));from executor_binary import executor_binary,secret_file
 from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
 root=pathlib.Path(tempfile.mkdtemp(prefix='fleet-fake-'))
 fake=root/'codex';fake.write_text('''#!/usr/bin/env python3
@@ -26,7 +26,7 @@ if 'app-server' in sys.argv:
   else:return
   original_print(json.dumps(out),**kw)
  builtins.print=protocol_print
-assert 'FLEET_HOST_TOKEN'  not in os.environ
+assert 'FLEET_HOST_SECRET_FILE' not in os.environ
 assert 'OPENAI_API_KEY' not in os.environ
 pathlib.Path('leader.pid').write_text(str(os.getpid()))
 p=pathlib.Path('output');p.mkdir(exist_ok=True);(p/'index.html').write_text('<html>fake</html>')
@@ -46,7 +46,7 @@ class Handler(BaseHTTPRequestHandler):
  def do_POST(self):
   global artifact_attempts
   b=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-  assert self.headers['Authorization']=='Bearer invented-test'
+  assert self.headers['Authorization']=='Bearer invented-test-host-secret-0123456789abcdef'
   with lock:
    if self.path.endswith('/poll'):reply={'commands':commands.copy()}
    else:
@@ -60,7 +60,7 @@ class Handler(BaseHTTPRequestHandler):
      reply={'artifactId':b['artifactId'],'state':'stored'}
   self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(json.dumps(reply).encode())
 srv=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=srv.serve_forever,daemon=True).start()
-env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}','FLEET_HOST_ID':'fake','FLEET_HOST_TOKEN':'invented-test','FLEET_DATA_DIR':str(root/'data'),'FLEET_CODEX_BIN':str(fake),'OPENAI_API_KEY':'invented-excluded'}
+env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}','FLEET_HOST_ID':'fake','FLEET_HOST_SECRET_FILE':secret_file('invented-test-host-secret-0123456789abcdef'),'FLEET_DATA_DIR':str(root/'data'),'FLEET_CODEX_BIN':str(fake),'OPENAI_API_KEY':'invented-excluded'}
 for name in ['home','account']:
  (root/name).mkdir(mode=0o700)
 env['FLEET_NATIVE_HOME']=str(root/'home');env['FLEET_CODEX_HOME']=str(root/'account')

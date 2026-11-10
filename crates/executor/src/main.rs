@@ -73,6 +73,18 @@ struct Executor {
     declared: std::cell::RefCell<Vec<String>>,
     store_report: std::cell::RefCell<(Option<std::time::Instant>, Value)>,
 }
+/// Reads the host secret file: not a symlink, no group or other access, one line.
+fn host_secret(path: PathBuf) -> Result<String> {
+    use std::os::unix::fs::MetadataExt;
+    let m = fs::symlink_metadata(&path)?;
+    if m.file_type().is_symlink() || m.mode() & 0o077 != 0 {
+        return Err(format!("{}: host secret file must be a private file (0600)", path.display()).into());
+    }
+    let s = fs::read_to_string(&path)?.trim().to_string();
+    if s.len() < 32 { return Err("host secret too short".into()); }
+    Ok(s)
+}
+
 /// Host platform for the coordinator. A WSL host whose Claude placement is `windows-wsl` counts as Windows (`win32`), the
 /// rule the coordinator's Claude gates (accounts.ts) and delivery_worker.py apply; any other Linux host stays `linux`.
 fn platform() -> &'static str {
@@ -1041,7 +1053,8 @@ fn main() -> Result<()> {
         db,
         root: root.clone(),
         url: env::var("FLEET_COORDINATOR_URL")?,
-        token: env::var("FLEET_HOST_TOKEN")?,
+        // The host's own secret (people-access §3), from a private file; the coordinator derives the host from it.
+        token: host_secret(env::var_os("FLEET_HOST_SECRET_FILE").ok_or("FLEET_HOST_SECRET_FILE required")?.into())?,
         host: env::var("FLEET_HOST_ID")?,
         live: HashMap::new(),
         sessions: env::var_os("FLEET_SESSIONS_ROOT").map(PathBuf::from).unwrap_or_else(|| root.join("sessions")),

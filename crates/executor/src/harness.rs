@@ -546,7 +546,7 @@ mod tests {
         let fake = root.join("native");
         std::fs::write(&fake,r#"#!/usr/bin/env python3
 import os,sys,json
-assert not any(k in os.environ for k in ['OPENAI_API_KEY','ANTHROPIC_API_KEY','FLEET_HOST_TOKEN','GOOGLE_API_KEY'])
+assert not any(k in os.environ for k in ['OPENAI_API_KEY','ANTHROPIC_API_KEY','FLEET_HOST_SECRET_FILE','GOOGLE_API_KEY'])
 h='claude' if 'CLAUDE_CONFIG_DIR' in os.environ else ('antigravity' if 'GEMINI_HOME' in os.environ else 'codex')
 if h=='antigravity':
  assert 'acp' in sys.argv and '--include-default-customizations=false' in sys.argv

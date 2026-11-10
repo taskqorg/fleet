@@ -1,6 +1,6 @@
 """Actual Fleet executor with a fake Claude running the existing real MCP transports; no model calls."""
 import os,json,pathlib,tempfile,subprocess,threading,time
-import sys as _sys;_sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)));from executor_binary import executor_binary
+import sys as _sys;_sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)));from executor_binary import executor_binary,secret_file
 from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
 root=pathlib.Path(tempfile.mkdtemp(prefix='fleet-claude-mcp-'));root.chmod(0o700)
 for name in ['home','native']:(root/name).mkdir(mode=0o700)
@@ -11,7 +11,7 @@ assert '--not-a-native-option fixture' not in args
 assert sys.stdin.read()=='--not-a-native-option fixture\\n'
 assert get('--permission-mode')=='dontAsk' and '--strict-mcp-config' in args
 assert get('--setting-sources')=='' and get('--tools')=='Read'
-assert 'FLEET_HOST_TOKEN' not in os.environ and 'ANTHROPIC_API_KEY' not in os.environ
+assert 'FLEET_HOST_SECRET_FILE' not in os.environ and 'ANTHROPIC_API_KEY' not in os.environ
 assert os.environ.get('USER') and os.environ.get('LOGNAME')==os.environ['USER']
 assert get('--system-prompt')=='explicit system'
 servers=json.loads(get('--mcp-config'))['mcpServers'];assert set(servers)=={'design-rules','fleet'}
@@ -47,7 +47,7 @@ class Handler(BaseHTTPRequestHandler):
    elif self.path.endswith('/receipts'):commands[:]=[c for c in commands if c['id']!=b['commandId']]
   self.send_response(200);self.end_headers();self.wfile.write(json.dumps(reply).encode())
 srv=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=srv.serve_forever,daemon=True).start()
-env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}','FLEET_HOST_ID':'fake','FLEET_HOST_TOKEN':'fixture','FLEET_DATA_DIR':str(root/'data'),'FLEET_NATIVE_ACCOUNTS':str(registry)}
+env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}','FLEET_HOST_ID':'fake','FLEET_HOST_SECRET_FILE':secret_file('fixture-host-secret-0123456789abcdef'),'FLEET_DATA_DIR':str(root/'data'),'FLEET_NATIVE_ACCOUNTS':str(registry)}
 p=subprocess.Popen([executor_binary()],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 try:
  end=time.monotonic()+20;terminal=[]

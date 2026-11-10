@@ -22,8 +22,9 @@ import {pipelineRunner} from './pipelines.ts';
 import {labExperiments} from './lab/experiments.ts';
 import {labOperations,registerLab} from './lab/routes.ts';
 import {peopleRegistry,requestPerson,actor} from './people.ts';
-export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRetentionDays?:number,nativeHostIds?:string[],database:string,store?:Store,browserSecret:string,machineSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,storeSecrets?:string,storeEndpointHosts?:string[],cfAccessFile?:string,defaultArtifactLocations?:string[],artifactRetryWindowMs?:number,placementIntervalMs?:number,projectConfigDirectory?:string,connectionsDir?:string,connectionClient?:string[],pipelineTickMs?:number,integrationHostId?:string,publicationHostId?:string,testSiteRoot?:string,defaultAccountBinding?:string,labDirectory?:string}) {
- if(!config.browserSecret||!config.machineSecret||config.browserSecret===config.machineSecret) throw Error('Distinct credentials required');
+import {hostRegistry} from './hosts.ts';
+export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRetentionDays?:number,database:string,store?:Store,browserSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,storeSecrets?:string,storeEndpointHosts?:string[],cfAccessFile?:string,defaultArtifactLocations?:string[],artifactRetryWindowMs?:number,placementIntervalMs?:number,projectConfigDirectory?:string,connectionsDir?:string,connectionClient?:string[],pipelineTickMs?:number,testSiteRoot?:string,defaultAccountBinding?:string,labDirectory?:string}) {
+ if(!config.browserSecret) throw Error('Browser credential required');
  if(config.browserProxyAuth&&!config.browserOrigin)throw Error('Proxy browser auth requires configured browser origin');
  const ownStore=!config.store,store=config.store??createStore(config.database),{all,get,put}=store;
  const retentionDays=config.changeLogRetentionDays??7;if(!(retentionDays>0))throw Error('Invalid change log retention');
@@ -55,7 +56,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  // Every handler runs with the request person (people.ts actor()); host routes run with none.
  app.addHook('onRoute',(o:any)=>{const h=o.handler;o.handler=function(this:any,req:any,reply:any){return requestPerson.run(req.person??null,()=>h.call(this,req,reply))}});
  if(ownStore)app.addHook('onReady',()=>store.migrate());
- const people=peopleRegistry(config.peopleFile,store);app.addHook('onReady',()=>people.refresh());
+ const people=peopleRegistry(config.peopleFile,store),hosts=hostRegistry(store,people,config.browserSecret);app.addHook('onReady',()=>people.refresh());
  const fail=(code:number,message:string)=>{throw Object.assign(Error(message),{statusCode:code})};
  const text=(v:any,max=32000):string=>typeof v==='string'&&v.length>0&&v.length<=max?v:fail(400,'Invalid text');
  const equal=(a:string,b:string)=>Buffer.byteLength(a)===Buffer.byteLength(b)&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
@@ -67,7 +68,9 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   if(route&&req.method==='GET'&&PUBLIC_ROUTES.has(route)) return;
   const machine=typeof route==='string'&&route.startsWith('/api/hosts/');
   const supplied=(req.headers.authorization||'').replace(/^Bearer /,'');
-  if(!equal(supplied,machine?config.machineSecret:config.browserSecret)) fail(401,'Unauthorized');
+  // A host is the host its own secret names (§3); a browser request carries the browser secret.
+  if(machine){await people.refresh();const h=await hosts.fromSecret(supplied);if(!h)fail(401,'Unauthorized');(req as any).fleetHost=h}
+  else if(!equal(supplied,config.browserSecret)) fail(401,'Unauthorized');
   // Two credential kinds never mix (§1): a host never carries a person; a browser request carries the person the guard verified.
   const named=req.headers['x-fleet-person'];
   if(machine){if(named!==undefined)fail(403,'Host requests carry no person');}
@@ -77,10 +80,14 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   if(!machine&&config.browserProxyAuth&&!['GET','HEAD','OPTIONS'].includes(req.method)&&req.headers.origin!==config.browserOrigin)fail(403,'Origin required');
   if(!machine&&req.headers.origin&&req.headers.origin!==(config.browserOrigin??`${req.protocol}://${req.headers.host}`)) fail(403,'Origin rejected');
  });
+ // The body hostId of a host request is the derived host: a different one is 403, a missing one is filled in.
+ app.addHook('preHandler',async(req:any)=>{const h=req.fleetHost;if(!h||!req.body||typeof req.body!=='object')return;
+  if(req.body.hostId!==undefined&&req.body.hostId!==h.id)fail(403,'Host rejected');req.body.hostId=h.id});
  let artifacts:Artifacts;
  let deliveryRuntime:ReturnType<typeof delivery>,agent:ReturnType<typeof agentTools>,pipelineTimer:any,ticking=false;
  const related=async (d:any)=>({...d,parentState:(await get(d.parentExecutionId,'execution')).state,childState:(await get(d.childExecutionId,'execution')).state,continuationState:d.continuationExecutionId?(await get(d.continuationExecutionId,'execution')).state:null});
- const owned=async (b:any)=>{if(![config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].filter(Boolean).includes(b.hostId)) fail(403,'Host rejected'); if(b.executionId&&(await store.executions.get(b.executionId)).hostId!==b.hostId) fail(403,'Execution rejected')};
+ // Host routes only: the preHandler has already set b.hostId to the host the secret names.
+ const owned=async (b:any)=>{if(typeof b.hostId!=='string') fail(403,'Host rejected'); if(b.executionId&&(await store.executions.get(b.executionId)).hostId!==b.hostId) fail(403,'Execution rejected')};
  // Operator app (docs/designs/fleet-operator-app.md): '/' opens the Overview. The old pages are gone (docs/designs/legacy-inventory.md).
  app.get('/',async(_,r)=>r.redirect('/overview'));
  // The built app (npm run build -> dist/app); hashed assets are immutable, the entry files are revalidated.
@@ -132,7 +139,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  app.get('/api/executions/:id/differences',async(req:any)=>(await execution_differences({executionId:req.params.id,previous:req.query.previous})));
  const execution_events=async (b:any)=>{(await get(b?.executionId,'execution'));return {events:(await all('event',{executionId:b.executionId})).filter(x=>x.executionId===b.executionId).sort((a,b)=>a.seq-b.seq)}};
  app.get('/api/executions/:id/events',async(req:any)=>(await execution_events({executionId:req.params.id})));
- const managed=accounts(app,store,config);
+ const managed=accounts(app,store,{...config,hosts});
  // Git network for agents: profile gitNetwork wins; default on for pm/reviewer/worker sessions of projects with repos.
  const gitNetwork=(s:any)=>s.agentConfig?.gitNetwork??(!!s.projectId&&['pm','reviewer','worker'].includes(s.role)&&projects.project_context({projectId:s.projectId}).settings.repos.length>0);
  // extra: payload fields for the start command and fields for the execution record (pipeline agent steps).
@@ -141,8 +148,9 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   const harness=s.agentConfig?.harness??'codex',last=(await all('execution',{sessionId:s.id})).filter(x=>x.sessionId===s.id&&x.hostId).at(-1)?.hostId;
   // A pipeline agent step with overrides.host, or a session started with hostId, runs only there: no fallback, the resolve error is the refusal.
   if(extra.host===undefined&&s.hostId)extra={...extra,host:s.hostId};
-  if(extra.host!==undefined&&![config.hostId,...(config.nativeHostIds??[])].includes(extra.host))fail(400,'Unknown host '+extra.host);
-  const candidates=extra.host!==undefined?[extra.host]:[...new Set([last,config.hostId,...(config.nativeHostIds??[])].filter((h:any)=>h===config.hostId||(config.nativeHostIds??[]).includes(h)))];
+  const executionHosts=await hosts.executionIds();
+  if(extra.host!==undefined&&!executionHosts.includes(extra.host))fail(400,'Unknown host '+extra.host);
+  const candidates=extra.host!==undefined?[extra.host]:[...new Set([last,config.hostId,...executionHosts].filter((h:any)=>executionHosts.includes(h)))];
   let hostId=config.hostId,binding:any;const errors:any[]=[];
   for(const h of candidates){try{binding=(await managed.resolve(s.account,harness,h));hostId=h;errors.length=0;break}catch(error){errors.push(error)}}
   if(errors.length)throw errors.find((x:any)=>x.statusCode===403)??errors[candidates.indexOf(config.hostId)]??errors[0];
@@ -154,11 +162,11 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  // Account for a new project session: the named one, else the project preference, else the first enabled account of the harness with a ready binding (on hostId when given). The binding picks the host.
  const pickAccount=async (harness:string,projectId:string,hostId?:string)=>{const ms=(await all('managed-account')).filter(m=>m.enabled&&(m.harness??'codex')===harness&&(m.bindings??[]).some((b:any)=>b.readiness==='ready'&&(!hostId||b.hostId===hostId)));const pref=(await managed.preferred(projectId));return (ms.find(m=>m.name===pref)??ms[0])?.name};
  // Known host: configured, or has polled at least once (a host-observation).
- const knownHost=async(hostId:string)=>[config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].includes(hostId)||!!(await all('host-observation',{id:hostId})).find(h=>h.id===hostId);
- agent=agentTools(store,{knownHost,browserOrigin:config.browserOrigin,directory:config.profilesDirectory||'config/agents',hostId:config.hostId,enqueue,pickAccount,deliver:async (b:any)=>(await deliveryRuntime.operations.session_deliver(b)),project:(projectId:string)=>projects.project_context({projectId}).settings,resolveAccount:async(account:string,harness:string)=>{let last:any;for(const h of [config.hostId,...(config.nativeHostIds??[])]){try{const r=await managed.resolve(account,harness,h);if(r)return r}catch(e){last=e}}if(last)throw last}});
+ const knownHost=async(hostId:string)=>(await hosts.ids()).includes(hostId)||!!(await all('host-observation',{id:hostId})).find(h=>h.id===hostId);
+ agent=agentTools(store,{knownHost,browserOrigin:config.browserOrigin,directory:config.profilesDirectory||'config/agents',hostId:config.hostId,enqueue,pickAccount,deliver:async (b:any)=>(await deliveryRuntime.operations.session_deliver(b)),project:(projectId:string)=>projects.project_context({projectId}).settings,resolveAccount:async(account:string,harness:string)=>{let last:any;for(const h of new Set([config.hostId,...(await hosts.executionIds())])){try{const r=await managed.resolve(account,harness,h);if(r)return r}catch(e){last=e}}if(last)throw last}});
  // Executions bound to a host, account or environment nothing registered are marked with a problem (design §1).
  const detectProblems=async()=>{const environments:Record<string,string[]>={};for(const id of projects.project_list?(await projects.project_list()).projects.map((p:any)=>p.id):[]){try{environments[id]=projects.project_context({projectId:id}).settings.environments.map((e:any)=>e.hostId)}catch{}}
-  return store.executions.detectProblems({hosts:[config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].filter(Boolean) as string[],environments})};
+  return store.executions.detectProblems({hosts:await hosts.ids(),environments})};
  const delegates=delegation(store,config.profilesDirectory||'config/agents',enqueue,(id:string)=>artifacts.readBuffer(id,128000));
  app.get('/api/executions/:id/delegations',async(req:any)=>{(await get(req.params.id,'execution'));return {delegations:(await map((await all('delegation')).filter(d=>d.parentExecutionId===req.params.id||d.childExecutionId===req.params.id||d.continuationExecutionId===req.params.id),related))}});
  app.post('/api/sessions/:id/messages',async(req:any)=>(await store.tx(async ()=>{
@@ -183,7 +191,9 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  app.post('/api/hosts/poll',async(req:any)=>(await store.tx(async ()=>{(await owned(req.body));await stores.observe(req.body.hostId,req.body.stores);await put('host-observation',{id:req.body.hostId,lastSeenAt:Date.now(),...( ['darwin','win32','linux'].includes(req.body.platform)?{platform:req.body.platform}:{} ),...(Array.isArray(req.body.capabilities)&&req.body.capabilities.every((x:any)=>typeof x==='string')?{capabilities:req.body.capabilities}:{}),...hostProblems(req.body.problems)});(await delegates.reconcile());await detectProblems();(await agent.promote());const pending=await filter(await all('command',{hostId:req.body.hostId,status:'pending'}),(x:any)=>x.hostId===req.body.hostId&&x.status==='pending');
   // ponytail: executions read once for all pending commands; delegates.ready only rewrites the execution of its own start command.
   const executions=await store.many(pending.map((c:any)=>c.executionId),'execution');
-  const ready=async (command:any)=>{if(!(await agent.ready(command)))return false;const execution=executions.get(command.executionId)??(await get(command.executionId,'execution'));if(command.kind!=='stop'&&!(await delegates.ready(execution)))return false;return true};const chosen=await filter(pending,ready),fresh=await store.many(chosen.map((x:any)=>x.id),'command');return {commands:await map(chosen,async (x:any)=>fresh.get(x.id)??(await get(x.id,'command')))}})));
+  const ready=async (command:any)=>{if(!(await agent.ready(command)))return false;const execution=executions.get(command.executionId)??(await get(command.executionId,'execution'));// Held-host trust (§3): work that carries project content goes only to a host whose holder may see the project;
+  // control commands (stop, steer, teardown, inspections) of the host's own executions always pass.
+  if(['start','script','delivery-step'].includes(command.kind)&&!hosts.maySee(req.fleetHost,execution.projectId??command.payload?.projectId))return false;if(command.kind!=='stop'&&!(await delegates.ready(execution)))return false;return true};const chosen=await filter(pending,ready),fresh=await store.many(chosen.map((x:any)=>x.id),'command');return {commands:await map(chosen,async (x:any)=>fresh.get(x.id)??(await get(x.id,'command')))}})));
  app.post('/api/hosts/receipts',async(req:any)=>{if(req.body?.accountObservation||req.body?.accountCatalogue)return store.atomic(async()=>{const b=req.body;(await owned(b));const c=(await get(b.commandId,'command')),v=b.accountObservation??b.accountCatalogue;if(c.hostId!==b.hostId||c.executionId!==b.executionId||c.kind!=='account-inspect'||c.payload.accountId!==v.accountId||c.payload.binding!==(v.binding??null))fail(403,'Account inspection ownership rejected');return (b.accountCatalogue?managed.catalogue:managed.report)({...v,hostId:c.payload.nativeHostId})});if(req.body?.delegation?.operation){const b=req.body;(await owned(b));const c=(await get(b.commandId,'command')),session=(await get(c.sessionId,'session')),q=b.delegation;if(c.executionId!==b.executionId||c.hostId!==b.hostId||!session.projectId||q.projectId!==session.projectId||!['project_context','catalogue','pipeline_run','direct_search','pipeline_history','pipeline_get','question_ask','question_history','account_list'].includes(q.operation))fail(403,'Project grant rejected');let started:(run:any)=>void=()=>{};const begun=new Promise<any>(r=>started=r);const call=()=>projects[q.operation]({...q.arguments,projectId:session.projectId},{kind:'native-agent',executionId:b.executionId,sessionId:session.id},started);const result=LONG_OPERATIONS.has(q.operation)?call():store.atomic(call);if(['pipeline_run','direct_search'].includes(q.operation)){const run=await Promise.race([begun,result.then(()=>null,()=>null)]);if(!run)return result;result.catch(async ()=>{const current=(await get(run.id,'pipeline-run'));if(current.state==='running'){current.state='unknown';current.error={code:'dispatch-unknown',message:'Native tool dispatch outcome unconfirmed; inspect original evidence, do not replay'};current.steps[0].state='unknown';current.steps[0].error=current.error;current.durationMs=null;await put('pipeline-run',current)}});return run}return result}return (await store.tx(async ()=>{const b=req.body;(await owned(b));const c=(await get(b.commandId,'command'));if(c.executionId!==b.executionId||c.hostId!==b.hostId)fail(403,'Command rejected');if(b.delegation)return (await delegates.request(b,c));if(!['accepted','started','completed','failed','stopped','unknown'].includes(b.status))fail(400,'Invalid status');const ranks:any={pending:0,accepted:1,started:2,unknown:2,completed:3,failed:3,stopped:3}; if(ranks[b.status]<ranks[c.status]||(ranks[c.status]===3&&b.status!==c.status))fail(409,'Receipt regression'); // A repeated terminal receipt (an outbox retry) changes nothing: the gate and onReceipt ran once.
 if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSessionId){const known=(await agent.knownNative((await get(b.executionId,'execution'))));if(known&&known!==b.nativeSessionId)fail(409,'Native identity conflict')} c.status=b.status;await put('command',c);const e=(await get(b.executionId,'execution'));const wasFinal=['completed','failed','stopped'].includes(e.state);if(!wasFinal&&(c.kind!=='steer'&&(c.kind!=='stop'||b.status==='stopped')))e.state=b.status;e.updatedAt=Date.now();if(b.status==='started'&&!e.startedAt)e.startedAt=e.updatedAt;if(c.kind!=='steer'&&['completed','failed','stopped'].includes(b.status)&&!e.finishedAt)e.finishedAt=e.updatedAt;if(b.error)e.error=b.error;if(['start','script'].includes(c.kind)&&b.status==='completed'&&!wasFinal)Object.assign(e,await artifactGate(e,Array.isArray(b.artifacts)?b.artifacts.slice(0,10000):[]));await put('execution',e);if(b.status!=='unknown')await store.executions.markObservation(e.id,'confirmed');if(b.nativeSessionId&&c.kind==='start')(await agent.captureNative(e,text(b.nativeSessionId,300)));if(e.state!=='waiting'){(await agent.onReceipt(c,e,e.state==='failed'&&b.status==='completed'?'failed':b.status));if(['completed','failed','stopped'].includes(e.state))(await agent.promote());(await deliveryRuntime?.advance())}if(['completed','failed','stopped','unknown'].includes(e.state))setImmediate(()=>runner.onExecution(e.id).catch(()=>{}));return {ok:true}}))});
  const transportRecovery=recovery(app,{...store,transaction:store.tx},owned);
@@ -202,6 +212,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  // A host reads an artifact only for its own command that names it (delivery files, copies), or for its own execution in
  // the artifact's project (agent artifact_get).
  const hostMayRead=async(b:any)=>{const a=await artifacts.get(text(b.artifactId,200));
+  if(a.projectId){const host=await hosts.byId(b.hostId);if(!host||!hosts.maySee(host,a.projectId))fail(403,'Artifact not readable by this host')}
   if(typeof b.commandId==='string'){const c=await get(b.commandId,'command').catch(()=>null);
    const named=c?.kind==='delivery-step'?(c.payload?.files??[]).map((f:any)=>f?.artifactId):['artifact-copy','artifact-verify'].includes(c?.kind)?[c.payload?.artifactId]:[];
    if(c&&c.hostId===b.hostId&&['pending','accepted','started'].includes(c.status)&&named.some((x:any)=>typeof x==='string'&&(x===a.id||x===a.legacyId)))return a}
@@ -301,7 +312,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   store_set_free_space_warning:(b:any)=>stores.setFreeSpaceWarning(b?.storeId,b?.bytes),
   artifact_copy_retry:(b:any)=>placement.retryCopy(text(b?.artifactId,200),text(b?.storeId,200)),
  });
- deliveryRuntime=delivery(store,config,enqueue,projects,managed.resolve,managed.preferred,(id:string)=>artifacts.readBuffer(id,1024*1024));
+ deliveryRuntime=delivery(store,{...config,hosts},enqueue,projects,managed.resolve,managed.preferred,(id:string)=>artifacts.readBuffer(id,1024*1024));
  Object.assign(projects,deliveryRuntime.operations);
  app.addHook('onReady',()=>store.atomic(async()=>{await deliveryRuntime.advance();await agent.reconcile()}));
  // Placement runs on its own timer (placement_interval_seconds, default 60 s); 0 turns the timer off (tests run it directly).
@@ -333,7 +344,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   list_membership:async(b:any)=>{const ids=Array.isArray(b?.ids)&&b.ids.length<=1000?b.ids:fail(400,'Expected at most 1000 ids');if(!Array.isArray(b?.lists)||b.lists.length<1||b.lists.length>2)fail(400,'Expected one or two lists');
    return {lists:await map(b.lists,async(l:any)=>l?.name==='tasks'?{name:'tasks',rows:await store.tasks.membership(l.filter??{},l.group,ids),...(await store.tasks.summary(l.filter??{},l.group))}
     :l?.name==='sessions'?{name:'sessions',rows:await sessionList.membership(l.filter??{},ids),counts:(await sessionList.page({filter:l.filter,limit:1})).counts}:fail(400,'Unknown list'))}},
-  hosts_list:async()=>{const configured=[config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].filter(Boolean) as string[];
+  hosts_list:async()=>{const configured=await hosts.ids();
    const observed=await all('host-observation'),ids=[...new Set([...configured,...observed.map((h:any)=>h.id)])];
    const running=await store.query("SELECT host_id,harness,count(*)::int AS n FROM execution WHERE state IN ('preparing','running') AND host_id IS NOT NULL GROUP BY 1,2");
    const queued=await store.query("SELECT data->>'hostId' AS host_id,count(*)::int AS n FROM document WHERE kind='command' AND data->>'status'='pending' GROUP BY 1");
@@ -341,6 +352,8 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
     return {id,configured:configured.includes(id),platform:o?.platform??null,lastSeenAt:o?.lastSeenAt??null,capabilities:o?.capabilities??[],// A host that stopped polling shows no problems: its staleness is the signal, not a report that may be days old.
     problems:o?.lastSeenAt&&Date.now()-o.lastSeenAt<HOST_STALE_MS?o?.problems??[]:[],runningByHarness:by,running:Object.values(by).reduce((a,n)=>a+n,0),slots:null,queued:queued.find((q:any)=>q.host_id===id)?.n??0,stores:'unavailable'}})}},
   task_derived_check:async()=>store.tasks.derivedDrift(),
+  hosts_register:(b:any)=>hosts.operations.hosts_register(b,requestPerson.getStore()??null),
+  hosts_rotate_secret:(b:any)=>hosts.operations.hosts_rotate_secret(b,requestPerson.getStore()??null),
   me:async()=>{const p=requestPerson.getStore();return {email:p?.email??null,name:p?.name??null,roles:p?.roles??[],owner:p?.owner??false,grantsVersion:p?.grantsVersion??null,changeLogRetentionDays:retentionDays}},
  };
  const ops:Record<string,(b:any)=>any>={...typedOps,...projects,...transportRecovery.operations,...agent.operations,session_create,session_profile,session_archive,execution_stop,session_get,execution_differences,execution_events,profiles_list,...labOps};

@@ -89,3 +89,7 @@ The person can inspect one explanation of the planned or actual work without bro
 ## People and identity
 
 The guard (`deploy/infrastructure/origin_guard.py`) verifies the Cloudflare Access JWT and returns `Authorization: Bearer <browser secret>` and `X-Fleet-Person: <verified e-mail>`; Caddy strips any client-sent `X-Fleet-Person`. The coordinator reads `FLEET_PEOPLE_FILE` (required), the `people.json` of [people and access](designs/fleet-people-access.md) §1: `[{email, name, roles, owner?, grants: [{kind, id}]}]` with exactly one `owner: true`. A browser request without the header is 401; an e-mail not in the file is 403; a host request with the header is 403. `FLEET_ACCESS_OWNER` is removed.
+
+## Hosts
+
+Each host has its own secret (people-access §3). Make it on the host with `scripts/host-secret.sh <file>` (0600, prints only the SHA-256) and register the hash as the owner: `hosts_register {id, name?, holder?, platform?, roles?, harnesses?, secretSha256}`; `hosts_rotate_secret {id, secretSha256}` replaces it and the old secret stops at once. Roles: `inspector-for:<hostId>` (account inspection and integration for that host), `publication` (delivery). The executor reads `FLEET_HOST_SECRET_FILE`; `FLEET_HOST_ID` is only a label, the coordinator derives the host from the secret and answers 403 to a different body `hostId`. The program worker config names `hostSecretFile`. Removed: `FLEET_HOST_TOKEN`, `FLEET_MACHINE_SECRET`, `FLEET_NATIVE_HOST_IDS`, `FLEET_INTEGRATION_HOST_ID`, `FLEET_PUBLICATION_HOST_ID`.
