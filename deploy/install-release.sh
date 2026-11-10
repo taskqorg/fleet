@@ -19,7 +19,7 @@ else
   (cd "$(dirname "$1")" && grep " $(basename "$1")\$" SHA256SUMS | { shasum -a 256 -c 2>/dev/null || sha256sum -c; }) >/dev/null
   partial=$releases/install.tmp-$$
   rm -rf "$partial" && mkdir "$partial"
-  tar -xzf "$1" -C "$partial"
+  tar -xzf "$1" -C "$partial" --no-same-owner  # root keeps its releases root-owned
   version=$(sed -n 's/.*"version":"\([^"]*\)".*/\1/p' "$partial/release.json")
   [ -n "$version" ] || { echo "no version in release.json" >&2; exit 1; }
   target=$releases/$version

@@ -127,12 +127,12 @@ func (u *updater) runPDS18() error {
 	}
 	defer unlock()
 	stateFile := filepath.Join(s, "pds18-state.json")
-	st := map[string]*State{}
+	st := pds18State{Coordinator: &State{}, Executor: &State{}}
 	readJSON(stateFile, &st)
-	for _, k := range []string{"coordinator", "executor"} {
-		if st[k] == nil {
-			st[k] = &State{}
-		}
+	const execSignal = "/home/fleet-agent/.local/state/fleet/executor/update/update.json"
+	var sig signalFile
+	if readJSON(execSignal, &sig) && sig.HostID != "" {
+		st.HostID = sig.HostID // the coordinator shows these results on that host's row
 	}
 	stage := filepath.Join(s, "stage")
 	os.RemoveAll(stage)
@@ -152,14 +152,14 @@ func (u *updater) runPDS18() error {
 	defer execR.Close()
 	pruneReleases(coordR)
 	pruneReleases(execR)
-	pruneDumps("/backup/fleet/pre-deploy", coordR, st["coordinator"])
+	pruneDumps("/backup/fleet/pre-deploy", coordR, st.Coordinator)
 	coord := &part{r: coordR, name: "coordinator", root: coordRoot, stage: stage, dump: true,
 		bins:    []string{"fleet-coordinator", "fleet-gateway", "fleet-executor", "fleet-update"},
 		restart: command("systemctl", "--user", "-M", "fleet@", "restart", "fleet", "fleet-gateway", "fleet-access-guard"),
-		health:  u.coordinatorHealth, st: st["coordinator"]}
+		health:  u.coordinatorHealth, st: st.Coordinator}
 	exec := &part{r: execR, name: "executor", root: execRoot, stage: stage, bins: []string{"fleet-executor"},
 		restart: command("systemctl", "--user", "-M", "fleet-agent@", "restart", "fleet-executor"),
-		health:  u.executorHealth("/home/fleet-agent/.local/state/fleet/executor/update/update.json"), st: st["executor"]}
+		health:  u.executorHealth(execSignal), st: st.Executor}
 	_, autoUpdate := u.coordinatorSelf()
 	save := func() error { return writeJSON(stateFile, st, 0o644) }
 	if r := u.cycle(coord, autoUpdate, u.latest); r != nil {
@@ -187,6 +187,13 @@ func (u *updater) runPDS18() error {
 		return save()
 	}
 	return nil
+}
+
+// pds18State is /var/lib/fleet-update/pds18-state.json, read by the coordinator for the PDS18 executor's host row.
+type pds18State struct {
+	HostID      string `json:"hostId,omitempty"`
+	Coordinator *State `json:"coordinator"`
+	Executor    *State `json:"executor"`
 }
 
 // installUpdater copies the verified fleet-update to the root-owned path the root unit runs.

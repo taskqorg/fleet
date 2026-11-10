@@ -69,6 +69,7 @@ func storeEndpointHosts() []string {
 
 // updateSignal is update.json; written only when a value other than at changes, durably (temp file, then rename).
 type updateSignal struct {
+	HostID     string  `json:"hostId"`
 	Target     *string `json:"target"`
 	AutoUpdate string  `json:"autoUpdate"`
 	Running    string  `json:"running"`
@@ -80,7 +81,7 @@ type updateSignal struct {
 var lastSignal *updateSignal
 
 func writeUpdateSignal(root string, s updateSignal) error {
-	if l := lastSignal; l != nil && l.AutoUpdate == s.AutoUpdate && l.Running == s.Running && l.PollOk == s.PollOk && l.PollError == s.PollError &&
+	if l := lastSignal; l != nil && l.HostID == s.HostID && l.AutoUpdate == s.AutoUpdate && l.Running == s.Running && l.PollOk == s.PollOk && l.PollError == s.PollError &&
 		(l.Target == nil) == (s.Target == nil) && (l.Target == nil || *l.Target == *s.Target) {
 		return nil
 	}

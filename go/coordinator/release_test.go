@@ -56,8 +56,11 @@ func TestMergeUpdateWorseWins(t *testing.T) {
 	old := pds18StateFile
 	t.Cleanup(func() { pds18StateFile = old })
 	pds18StateFile = f
-	os.WriteFile(f, []byte(`{"coordinator":{"last":{"version":"1.261112.0","state":"ok","at":"x"}},
+	os.WriteFile(f, []byte(`{"hostId":"pds18-native","coordinator":{"last":{"version":"1.261112.0","state":"ok","at":"x"}},
 		"executor":{"last":{"version":"1.261112.0","state":"refused","error":"selftest","at":"y"}}}`), 0o644)
+	if pds18Host() != "pds18-native" {
+		t.Fatalf("pds18Host = %q", pds18Host())
+	}
 	m := mergeUpdate(map[string]any{"version": "1.261112.0", "state": "pending", "at": "z"}).(doc)
 	if m["state"] != UpdateStateRefused || m["error"] != "selftest" || len(m["parts"].(doc)) != 2 {
 		t.Fatalf("%v", m)

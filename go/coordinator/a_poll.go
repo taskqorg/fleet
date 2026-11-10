@@ -85,7 +85,7 @@ func (a *App) poll(q *Request) (any, error) {
 		obs["problems"] = ps
 	}
 	upd := b["update"]
-	if host == a.hostID {
+	if host != "" && host == pds18Host() {
 		upd = mergeUpdate(upd) // PDS18: the coordinator side's result from fleet-update joins the executor's
 	}
 	if r, ok := decodeUpdate(upd); ok {

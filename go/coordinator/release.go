@@ -97,8 +97,24 @@ func autoUpdateOf(h doc) string {
 	return "on"
 }
 
-// ownAutoUpdate reads autoUpdate of the coordinator's own host record for /api/health (no request context there).
+// pds18Host: the host id of the executor on the coordinator's machine, as fleet-update records it in pds18-state.json
+// (from that executor's update.json). The coordinator's FLEET_HOST_ID names the default work host, not its machine.
+func pds18Host() string {
+	var st struct {
+		HostID string `json:"hostId"`
+	}
+	if b, err := os.ReadFile(pds18StateFile); err == nil {
+		json.Unmarshal(b, &st)
+	}
+	return st.HostID
+}
+
+// ownAutoUpdate reads autoUpdate of the coordinator machine's host record for /api/health (no request context there).
 func (a *App) ownAutoUpdate(ctx context.Context) string {
+	host := pds18Host()
+	if host == "" {
+		return "on"
+	}
 	tx, err := a.store.pool.Begin(ctx)
 	if err != nil {
 		return "on"
@@ -108,7 +124,7 @@ func (a *App) ownAutoUpdate(ctx context.Context) string {
 	if _, err := tx.Exec(ctx, "SELECT set_config('fleet.project_ids','*',true)"); err != nil {
 		return "on"
 	}
-	if err := tx.QueryRow(ctx, "SELECT data->>'autoUpdate' FROM document WHERE kind='host' AND id=$1", "host:"+a.hostID).Scan(&s); err != nil || s == nil {
+	if err := tx.QueryRow(ctx, "SELECT data->>'autoUpdate' FROM document WHERE kind='host' AND id=$1", "host:"+host).Scan(&s); err != nil || s == nil {
 		return "on"
 	}
 	return *s
@@ -125,16 +141,18 @@ func mergeUpdate(polled any) any {
 	if err != nil {
 		return polled
 	}
-	var st map[string]struct {
-		Last *UpdateResult `json:"last"`
-	}
+	var st map[string]json.RawMessage
 	if json.Unmarshal(b, &st) != nil {
 		return polled
 	}
 	var worst *UpdateResult
 	parts := doc{}
 	for _, k := range []string{"coordinator", "executor"} {
-		if r := st[k].Last; r != nil {
+		var part struct {
+			Last *UpdateResult `json:"last"`
+		}
+		json.Unmarshal(st[k], &part)
+		if r := part.Last; r != nil {
 			parts[k] = r
 			if worst == nil || updateRank[r.State] > updateRank[worst.State] {
 				worst = r
