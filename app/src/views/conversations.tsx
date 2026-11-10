@@ -13,7 +13,7 @@ import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, inside, range, type Selection } from '../selection.ts';
 
-const ROW = parseInt(tokens.size.row);
+const ROW = parseInt(tokens.size['row-2']); // two-line catalogue row
 type SessionRow = { id: string; title: string | null; state: StateOf<'session'>; harness: string | null; openQuestions: number; sortKey: (string | number)[] };
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
 const reqId = () => crypto.randomUUID();
@@ -42,12 +42,10 @@ export function Conversations({ id }: { id?: string }) {
           : list.shownKey === null || (!rows.length && list.pending) ? <Skeleton rows={8} />
           : !rows.length ? <Empty text="No conversations yet." action={<Button label="New conversation" onClick={create} />} />
           : <VirtualList items={rows} getKey={r => r.id} rowHeight={ROW} follow="top" label="Conversations" onEnd={list.more}
-            columns="1.25rem minmax(0,1fr) 1.25rem 2rem 1.25rem" rowClass={r => r.id === id ? 'sel' : ''}
-            header={<><span /><span>Conversation</span><span /><span class="r">Asks</span><span /></>}
-            render={r => <>
+            columns="1.25rem minmax(0,1fr) 2rem 1.25rem" rowClass={r => r.id === id ? 'sel' : ''}
+                        render={r => <>
               <span class="lead"><StateBadge family="session" state={r.state} compact /></span>
-              <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.title ?? 'New conversation'}</a><span class="id">{r.id.slice(0, 8)}</span></span>
-              <span>{isHarness(r.harness) && <HarnessMark h={r.harness} />}</span>
+              <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.title ?? 'New conversation'}</a><span class="id">{r.id.slice(0, 8)}</span>{isHarness(r.harness) && <HarnessMark h={r.harness} />}</span>
               <span class="r">{r.openQuestions ? <span class="chip-age t-attention alert" aria-label={`${r.openQuestions} open questions`}>{r.openQuestions}</span> : ''}</span>
               <RowCheck checked={sel.includes(r.id)} label={'Select ' + (r.title ?? 'conversation')} onToggle={() => toggleSel(r.id)} />
             </>} />}

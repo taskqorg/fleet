@@ -2,6 +2,7 @@
 import { render, type ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import {
+  Choice, DraftBar, StepList, FlowStrip,
   Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, StatStrip,
   SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions,
   Composer, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
@@ -256,6 +257,37 @@ function ThemeButton() {
   return <Button label={`Page theme: ${m}`} onClick={() => setM(modes[(modes.indexOf(m) + 1) % 3])} />;
 }
 
+function StepsDemo() {
+  const [open, setOpen] = useState<string | undefined>('review');
+  const u = { value: null, basis: 'unavailable' as const, reason: 'not started' };
+  return <div class="stack">
+    <FlowStrip label="plan, then a loop of build and two parallel checks, then deliver" nodes={[{ id: 'plan', kind: 'agent' }, { loop: 'until pass · max 3', nodes: [{ id: 'build', kind: 'agent' }, { parallel: [{ id: 'checks', kind: 'program' }, { id: 'review', kind: 'agent', current: open === 'review' }] }] }, { id: 'deliver', kind: 'tool' }]} />
+    <StepList label="Steps" open={open} onOpen={s => setOpen(open === s ? undefined : s)} items={[
+      { id: 'plan', kind: 'agent', executor: <b>claude-worker</b>, reads: 'task', writes: 'plan.md' },
+      { band: 'loop', label: 'Repeat until the review passes · at most 3 rounds' },
+      { id: 'build', kind: 'agent', executor: <b>claude-worker</b>, reads: 'plan.md, review', writes: 'change', inset: true },
+      { band: 'parallel', label: 'In parallel', inset: true },
+      { id: 'checks', kind: 'program', executor: <b>pnpm test</b>, reads: 'change', writes: 'checks.md', inset: true },
+      { id: 'review', kind: 'agent', executor: <b>claude-reviewer</b>, reads: 'change, plan.md', writes: 'review, verdict', inset: true },
+      { id: 'deliver', kind: 'tool', executor: <b>session_deliver</b>, reads: 'change', writes: 'pull request' },
+    ]}><KvRow icon="bot" label="Agent" meta="claude-reviewer" /><KvRow icon="rotate-cw" label="Changes requested" meta="back to build" /></StepList>
+    <StepList label="Steps of a run" items={[
+      { id: 'prepare', kind: 'program', executor: <b>prepare.sh</b>, reads: 'batch', writes: 'inputs/', run: { state: 'succeeded', note: 'reused', time: { value: 0, basis: 'measured' }, cost: u } },
+      { id: 'render', kind: 'tool', executor: <b>render_asset</b>, reads: 'inputs/', writes: 'renders/', run: { state: 'failed', note: '7 of 8', time: { value: 372, basis: 'measured' }, cost: { value: 3.4, basis: 'estimated', reason: 'tokens' }, error: 'asset-07 · exit 1 · CUDA out of memory' } },
+      { id: 'assemble', kind: 'agent', executor: <b>codex-designer</b>, reads: 'renders/', writes: 'page', run: { state: 'waiting', note: 'waits for render', time: u, cost: u } },
+    ]} />
+  </div>;
+}
+function DraftDemo() {
+  const [v, setV] = useState('reviewer');
+  const [many, setMany] = useState(['Read', 'Grep']);
+  return <div class="stack">
+    <DraftBar changes={2} base="4e5bf83" note="New executions keep using the committed revision." actions={[{ label: 'Test', icon: 'play' }, { label: 'Diff' }, { label: 'Save as commit', icon: 'save', primary: true }]} />
+    <Choice label="Role" value={v} onChange={setV} options={['PM', 'worker', 'reviewer', 'judge'].map(r => ({ id: r, label: r }))} />
+    <Choice label="Tools" value={many} onChange={t => setMany(many.includes(t) ? many.filter(x => x !== t) : [...many, t])} options={['Read', 'Glob', 'Grep', 'Edit', 'Write'].map(t => ({ id: t, label: t }))} />
+  </div>;
+}
+
 const SECTIONS: [string, string, string | undefined, () => ComponentChildren, ComponentChildren?][] = [
   ['tokens', 'Tokens', undefined, () => <TokensDemo />, <>Colour carries meaning only. Numbers and IDs use the monospace stack.</>],
   ['navigation', 'Navigation anchors', undefined, () => <NavDemo />, <>OR-3: one stable icon per workspace, from the registry.</>],
@@ -270,6 +302,8 @@ const SECTIONS: [string, string, string | undefined, () => ComponentChildren, Co
   ['list-pending', 'Updating list: pending counters and rows, row checks', 'row-check', () => <PendingDemo />, <>A filter change keeps the last rows and counts on screen, dimmed under a thin bar, until the new answer replaces them in place. Checked rows are the view URL's sel.</>],
   ['data-list', 'Task list view: views, state counters, grouping, filters, virtual list', 'data-list', () => <ListDemo />, <>Saved views per person (pin, unpin, Save view). State counters show totals and filter on click. Group by state or project; groups collapse. Filters expand inline (OR-14). Title takes the space; service fields sit on the right (OR-21). State is an icon with a delayed tooltip (B1, OR-20).</>],
   ['execution-tree', 'Execution tree', 'execution-tree', () => <ExecTree nodes={TREE} now={NOW} label="Executions" />],
+  ['step-list', 'Step list and flow strip', 'step-list', () => <StepsDemo />, <>D20: a pipeline is edited in the list; the picture above is drawn from it and is read-only. Click a step to open it in place. The second list shows a run on top of the same rows.</>],
+  ['draft-bar', 'Draft bar and choice', 'draft-bar', () => <DraftDemo />, <>A definition that differs from its saved revision says so, and saving is a commit. A choice picks one or several of a few fixed options.</>],
   ['transcript-viewer', 'Live transcript', 'transcript-viewer', () => <TranscriptDemo />],
   ['decision-block', 'Decision block', 'decision-block', () => <DecisionDemo />, <>Click Accept or press a while the block has focus: the block collapses to the answered line.</>],
   ['result-viewer', 'Result viewer shell', 'result-viewer', () => <ResultDemo />],

@@ -13,7 +13,7 @@ import { listKey, type View } from '../../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
 import { usePins, useViews } from '../prefs.ts';
 
-const ROW = parseInt(tokens.size.row);
+const ROW = parseInt(tokens.size['row-2']); // two-line catalogue row
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
 type TaskRow = { id: string; title: string; state: StateOf<'task'>; waitReason: string | null; priority: 'urgent' | 'normal' | 'background'; agent: string | null; host: string | null; startedAt: string | null; createdAt: string; projectId: string | null; openQuestions: number; sortKey: (string | number)[] };
 type Item = { kind: 'group'; key: string; label: string; count: number } | { kind: 'task'; t: TaskRow };
@@ -66,14 +66,12 @@ export function Tasks({ id }: { id?: string }) {
           : list.shownKey === null ? <Skeleton rows={8} />
           : !rows.length ? (list.pending ? <Skeleton rows={8} /> : <Empty text={filtered ? 'No tasks match these filters.' : 'No tasks yet.'} action={filtered ? <Button label="Clear filters" onClick={() => { setQuery(''); set({ state: [], q: undefined, project: [] }); }} /> : undefined} />)
           : <VirtualList items={items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.t.id} rowHeight={ROW} follow="top" label="Tasks" onEnd={list.more}
-            columns="1.25rem minmax(0,1fr) 1.25rem 2.75rem 1.75rem 1.25rem" rowClass={i => i.kind === 'group' ? 'grp' : i.t.id === id ? 'sel' : ''}
-            header={<><span /><span>Task</span><span /><span class="r">Age</span><span /><span /></>}
-            render={i => i.kind === 'group'
+            columns="1.25rem minmax(0,1fr) 2.75rem 1.75rem 1.25rem" rowClass={i => i.kind === 'group' ? 'grp' : i.t.id === id ? 'sel' : ''}
+                        render={i => i.kind === 'group'
               ? <GroupHeader icon={rowsGroup === 'priority' ? 'list-ordered' : 'folder-open'} label={i.label} count={i.count} open={!closed.includes(i.key)} onToggle={() => setClosed(c => c.includes(i.key) ? c.filter(x => x !== i.key) : [...c, i.key])} />
               : <>
                 <span class="lead"><StateBadge family="task" state={i.t.state} reason={i.t.waitReason ?? undefined} compact /></span>
-                <span class="tt">{rowsGroup !== 'priority' && <PriorityChip p={i.t.priority} />}<a class="title row-link" href={href({ focus: i.t.id })} onClick={e => { e.preventDefault(); set({ focus: i.t.id }); }}>{i.t.title}</a><span class="id">{i.t.id.slice(0, 8)}</span></span>
-                <span>{i.t.state === 'in_progress' && isHarness(i.t.agent) && <HarnessMark h={i.t.agent} />}</span>
+                <span class="tt">{rowsGroup !== 'priority' && <PriorityChip p={i.t.priority} />}<a class="title row-link" href={href({ focus: i.t.id })} onClick={e => { e.preventDefault(); set({ focus: i.t.id }); }}>{i.t.title}</a><span class="id">{i.t.id.slice(0, 8)}</span>{i.t.state === 'in_progress' && isHarness(i.t.agent) && <HarnessMark h={i.t.agent} />}</span>
                 <span class="r">{ms(i.t.startedAt ?? i.t.createdAt) && <AgeChip t={ms(i.t.startedAt ?? i.t.createdAt)!} now={now} alertAfter={i.t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" />}</span>
                 <Button label={pins.has(i.t.id) ? 'Unpin' : 'Pin'} icon={pins.has(i.t.id) ? 'pin-off' : 'pin'} iconOnly pressed={pins.has(i.t.id)} onClick={() => pins.toggle(i.t.id)} />
                 <RowCheck checked={sel.includes(i.t.id)} label={'Select ' + i.t.title} onToggle={() => toggleSel(i.t.id)} />

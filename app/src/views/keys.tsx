@@ -19,14 +19,12 @@ export function Keys({ id }: { id?: string }) {
   const list = <>
     <header class="page-h"><h1>API keys</h1></header>
     <section class="panel">
-      <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(8rem,1fr) 6rem minmax(0,12rem) 3rem' }}>
-        <div class="vl-head" role="row"><span /><span>Name</span><span>Provider</span><span>Holder</span><span class="r">Keys</span></div>
+      <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
         {data.connections.length === 0 && <Empty text="No API keys yet" />}
         {data.connections.map((c: any) => <div key={c.name} role="row" class={`vl-row static${c.name === id ? ' sel' : ''}`}>
-          <StateBadge family="intake" state={c.intake} compact />
-          <a class="title row-link" href={`/keys/${c.name}`} onClick={e => { e.preventDefault(); go(`/keys/${c.name}`); }}>{c.name}</a>
-          <span>{c.provider}</span><span class="muted">{c.holder}</span>
-          <span class="r">{c.keys.filter((k: any) => k.state === 'active').length}/{c.keys.filter((k: any) => k.state !== 'retired').length}</span>
+          <span class="lead"><StateBadge family="intake" state={c.intake} compact /></span>
+          <span class="tt"><a class="title row-link" href={`/keys/${c.name}`} onClick={e => { e.preventDefault(); go(`/keys/${c.name}`); }}>{c.name}</a><span class="id">{c.provider}</span><span class="muted">{c.holder}</span></span>
+          <span class="r mono" data-tip="Active keys of all keys in use">{c.keys.filter((k: any) => k.state === 'active').length}/{c.keys.filter((k: any) => k.state !== 'retired').length}</span>
         </div>)}
       </div>
     </section>

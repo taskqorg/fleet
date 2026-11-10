@@ -251,3 +251,32 @@ Each check was proven once with `UX_INJECT=<defect>`, which produced its warning
 * **Choice:** the registry workspace `laboratory` becomes `lab` (route `/lab`, `app: true`), so nav, manifests and app routes follow the registry. `/lab` lists experiments and the use-case registry as data lists (state first: experiment state, source drift) and a "Waiting for you" panel with example approvals. `/lab/<id>` is one page: state and actions in the head, spend as totals with each budget's limit and action, the matrix as static rows (rows examples, columns variants; a cell holds a summary per evaluator and one line per repeat: state, select, repeat, time, credits, scores, run link, cancel or retry), variants with spread and Promote, the decision gate (judge-to-owner agreement), and ratings as decision blocks answered from the keyboard (`p`/`f`, `1`–`5`, `a`, `b`, …).
 * **New in the book:** state families `experiment`, `trial` and `source`; matrix row styles `lab-row`, `lab-cell`, `lab-trial`, `lab-patch` in `styles.css`. No new control: the matrix reuses static data-list rows.
 * **Reason:** inventory items of the Laboratory page with no new control; mockup tabs (Compare, Trials, Assessments) give way to one page because a cell already carries its trials.
+
+## 2026-11-11 D19: Three columns, direction B, and a check for every rule
+
+* **Problem (owner):** the app had an empty top bar, the conversation opened as a tall sticky panel that read as a popup, lists scrolled inside the scrolling page, and a row opened only from its title. The look was generic.
+* **Why the rules let it through:** the top bar and the inner list scroller were written into the shell spec; no rule covered the row target; OR-14 was checked by searching source for `role="dialog"`, which a sticky panel does not match. Layout cannot be checked from source text.
+* **Options shown (one live mockup, three styles):** A "Cut" (zero radius, heavy capitals, inverted selection), B "Instrument" (mono labels, hairlines, a state tick, teal accent), C "Tonal" (no lines, soft corners, raised sheet).
+* **Choice (owner):** B, on the three-column layout.
+* **Rules:** OR-24 three columns and no top bar, OR-25 one scroll per column, OR-26 the whole row opens, OR-27 open in the work area. OR-14 now points to OR-27.
+* **Method:** every owner rule names its check ([owner rules](owner-rules.md#how-each-rule-is-checked)). The four new rules are checked on the rendered mockups and the built app by `tests/ui/layout.check.ts`.
+* **Changed specs:** [app shell](patterns/app-shell.md), [list and detail](patterns/list-detail.md), [data list](controls/data-list.md), [navigation rail](controls/nav-rail.md), [principles §1 and §11](principles.md), [tokens](tokens.md). Catalogue rows are two lines (`size-row-2`), which replaces "one line per row" for the control column only.
+* **Direction B in the controls:** state shows as a tick or a plain coloured icon, never a filled box in a list; the current item (row, section, tab) carries a 3 px accent tick; totals are a ruled strip, not boxed cells; state counters are outlined mono chips, filled only when active; the decision block has a left bar; a conversation sits on the plain surface and the operator's messages carry the accent tick; scrollbars are the browser's thin ones.
+* **Colour (owner):** the first build used a teal accent on green-grey neutrals, picked without the owner; the owner rejected it. Three palettes were then shown on the dark tasks mockup: "Mono" (untinted neutrals, ink as the accent), "Graphite and blue", "Warm charcoal and cream". Choice: Mono. Running keeps its blue, because the accent no longer carries it. A palette is an owner choice (process step 2) and is shown before it reaches `tokens.json`.
+* **Dark first (owner works in it):** the columns step up in lightness from navigation to work area in both themes (`rail`, `bg`, `surface`); the checks save a dark screenshot of every route next to the light one.
+* **Type (owner):** IBM Plex Sans and IBM Plex Mono, weights 400, 500 and 600 (mono 400 and 600), Latin and Cyrillic. The app serves the files from its own origin, so \"no web fonts\" becomes \"no font from another origin\" ([tokens](tokens.md#type)). The book and the mockups are single files and do not embed the fonts: they show Plex where it is installed and the system stack elsewhere.
+* **Lab, Hosts, API keys:** moved to the same columns ([laboratory](pages/laboratory.md), [hosts](pages/hosts.md)); their catalogue rows use the two-line shape.
+* **Not done:** the result viewer's text frame scrolls inside the work area; the layout check reports it once the text is long enough.
+
+## 2026-11-11 D20: Editing agents, pipelines and the catalogue
+
+* **Question (owner):** how to edit agents and pipelines so that different scenarios stay clear and simple to set up.
+* **Evidence:** the architect objects and use cases UC4, UC5, UC7 and UC8; the files in `config/`; and a published walkthrough of a "software factory" on Claude Code (labelled issue, intake with a risk rating, spec, build, a gate of plain checks, reviewers chosen by the rating and run in parallel, an approver that merges or escalates, at most three rounds). Its author edits everything as files and through chat and watches a separate dashboard.
+* **Shown to the owner:** one mockup with four scenarios: an agent draft, that factory as a Fleet pipeline, a run with a failed step, a capability with its methods.
+* **Options for the pipeline:** a step list with a read-only flow picture, or a canvas where the graph itself is edited.
+* **Choice (owner):** the step list.
+* **Reason:** one place to edit and no second source; rows carry more text than nodes; the same list shows a run.
+* **Recorded as:** the [definition editor](patterns/definition-editor.md) pattern and the page specs [agents](pages/agents.md), [pipelines](pages/pipelines.md), [catalogue](pages/catalogue.md).
+* **Built:** the controls [step list](controls/step-list.md), [draft bar](controls/draft-bar.md) and [choice](controls/choice.md), the `DefinitionEditor` pattern, the `definition` state family and the step kinds in the registry, and the mockup routes `#/agents`, `#/pipelines`, `#/pipelines/render-props`, `#/catalogue`.
+* **Not done:** the app screens and the operations they need. The screen for skills is not designed.
+

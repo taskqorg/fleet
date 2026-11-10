@@ -4,7 +4,7 @@
 
 **Purpose.** Lets a person answer a question, acceptance or approval where the work is, and in the Overview list of everything waiting ([principles §6](../principles.md#6-decisions-inline)).
 
-**Anatomy.** Block with `attention-soft` fill, `attention-line` border, `radius-md`:
+**Anatomy.** Block with `attention-soft` fill and a 3 px `attention-fg` bar on the left, like the [problem row](problem-row.md) (D19):
 1. Heading: the question ("Accept this result?").
 2. Meta line in `fg-muted`: asked by, addressed to, waiting time as an age chip (OR-18), what waits on it.
 3. Context: short summary and links to evidence (result, checks).

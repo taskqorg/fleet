@@ -29,6 +29,7 @@ This folder is the single knowledge base for Fleet's interface design. It plays 
 3. **Build from the book.** Pages use only recorded tokens, controls and patterns. A need the book does not cover is a change to the book first (step 1).
 4. **One source per rule.** A rule lives in one file; other files link to it.
 5. **Check against the book.** A page review checks it against the principles and the control specs it uses, not against taste.
+6. **A rule comes with its check.** A new owner rule names how it is checked ([owner rules](owner-rules.md#how-each-rule-is-checked)): a check on the rendered page where one is possible, otherwise the reviewer. Layout rules are checked on the rendered page, never by searching source text.
 
 ## Inputs
 

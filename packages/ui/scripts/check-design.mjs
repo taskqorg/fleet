@@ -26,7 +26,7 @@ const RULES = [
   { id: 'tokens', re: /style=\{\{[^}]*\b\d+px/g, where: f => /\.tsx$/.test(f), say: 'raw px in inline style; use a size token' },
   { id: 'OR-8', re: /<svg\b/g, where: f => /\.tsx?$/.test(f), say: 'inline SVG; use <Icon name> from the registry' },
   { id: 'OR-2', re: /\b(toLocaleDateString|toLocaleTimeString|Intl\.DateTimeFormat|Intl\.RelativeTimeFormat)\b|new Date\([^)]*\)\.(getHours|getDate|getMonth)/g, where: f => /\.tsx?$/.test(f) && !/src\/format\.ts$/.test(f), say: 'date formatting outside packages/ui/src/format.ts' },
-  { id: 'layout', re: /100vh/g, where: () => true, say: '100vh breaks inline viewing; size to content' },
+  { id: 'OR-25', re: /100d?vh/g, where: () => true, skip: line => /^\.shell\{/.test(line), say: 'viewport height outside the shell; only .shell takes it (patterns/app-shell.md)' },
   { id: 'OR-7', re: /[↑↓▲▼⬆⬇]/g, where: f => /\.(tsx|html)$/.test(f), say: 'direction arrow; show change with the value tint' },
   { id: 'OR-9', re: /<select\b/g, where: f => /\.tsx$/.test(f), say: 'select; long collections use VirtualList or a searchable scope control' },
   { id: 'OR-15', re: /Back to /g, where: f => /\.(tsx|html)$/.test(f), say: 'text back link; use an icon, or rely on browser Back' },
@@ -36,10 +36,11 @@ for (const f of files) {
   const text = readFileSync(f, 'utf8');
   for (const r of RULES) if (r.where(f)) for (const m of text.matchAll(r.re)) {
     const line = text.slice(0, m.index).split('\n').length;
+    if (r.skip?.(text.split('\n')[line - 1])) continue;
     warn.push(`${relative(root, f)}:${line}  ${r.id}  ${r.say}  [${m[0].slice(0, 30)}]`);
   }
 }
-// OR-14: interactive elements inside floating layers (markup heuristic on tsx).
+// OR-14: interactive elements inside floating layers (markup heuristic on tsx). Sticky or fixed panels are caught on the rendered page (tests/ui/layout.check.ts).
 for (const f of files.filter(f => /\.tsx$/.test(f))) {
   const t = readFileSync(f, 'utf8');
   for (const m of t.matchAll(/role="dialog"|popover=/g)) warn.push(`${relative(root, f)}  OR-14  floating layer found; it may hold only information`);
