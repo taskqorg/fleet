@@ -516,6 +516,25 @@ export function SplitButton({ main, alternatives, kind = 'default' }: {
   );
 }
 
+/* ---------- Action menu: one icon button, a short left-aligned menu with icons (OR-13, OR-14) ---------- */
+
+export function ActionMenu({ label, items, disabledReason }: { label: string; items: { label: string; icon: IconName; onClick: () => void; disabledReason?: string }[]; disabledReason?: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => { if (e instanceof KeyboardEvent ? e.key === 'Escape' : !ref.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('pointerdown', close); document.addEventListener('keydown', close);
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close); };
+  }, [open]);
+  return <span class="split action-menu" data-ui="split-button" ref={ref}>
+    <button type="button" class="btn default icon-only" aria-haspopup="menu" aria-expanded={open} aria-label={label} data-tip={disabledReason ?? label} aria-disabled={!!disabledReason || undefined}
+      onClick={() => !disabledReason && setOpen(!open)}><Icon name={actions.more} /></button>
+    {open && <span class="menu" role="menu">{items.map(a =>
+      <button type="button" role="menuitem" key={a.label} aria-disabled={!!a.disabledReason || undefined} data-tip={a.disabledReason} onClick={() => { if (a.disabledReason) return; setOpen(false); a.onClick(); }}><Icon name={a.icon} />{a.label}</button>)}</span>}
+  </span>;
+}
+
 /* ---------- State counters: quick filter by state with totals (state-counters.md) ---------- */
 
 export function StateCounters<F extends Family>({ family, counts, active, onToggle, onAll, label, pending }: {

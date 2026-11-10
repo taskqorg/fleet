@@ -20,3 +20,5 @@
 **Accessibility.** The chevron is named "More actions for Retry" and carries `aria-haspopup="menu"` and `aria-expanded`. The menu uses `role="menu"` with `menuitem` entries.
 
 **Do.** Put the most common action in the main part. **Don't.** Put more than about six alternatives in the menu; split them by place instead.
+
+**Action menu.** `ActionMenu` in `packages/ui`: an icon-only "more" button that opens the same short left-aligned menu with an icon per item (OR-13, OR-14); items can carry a disabled reason. Used for the Conversations menu actions (retry, switch, hand off, fork).

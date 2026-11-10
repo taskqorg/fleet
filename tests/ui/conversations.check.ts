@@ -170,6 +170,18 @@ try {
   await p.evaluate(() => navigator.clipboard.writeText(''));
   await p.keyboard.press('Meta+a'); await p.keyboard.press('Meta+c');
   check(await until(async () => { const t = await p.evaluate(() => navigator.clipboard.readText()); return t.startsWith('---') && t.includes('Alpha question') && t.includes('Bravo reply'); }), 'Cmd+A then Cmd+C copies the whole thread');
+  // Menu actions (Stage 5): one left-aligned menu with icons; each calls the existing operation.
+  await p.goto(`${origin}/conversations/task-a`); await until(() => visible(p, 'Alpha reply'));
+  await p.getByRole('button', { name: 'Actions' }).click();
+  const items = (await p.locator('[role=menu] [role=menuitem]').allTextContents()).map(t => t.trim());
+  check(items.join('|') === 'Retry last message|Switch profile or model|Hand off to another agent|Fork' && await p.locator('[role=menu] [role=menuitem] .icon').count() === 4, 'action menu: four items with icons');
+  const before = (await store.all('message', { sessionId: 'task-a' })).length;
+  await p.getByRole('menuitem', { name: 'Retry last message' }).click();
+  check(await until(async () => (await store.all('message', { sessionId: 'task-a' })).length === before + 1 && (await store.all('message', { sessionId: 'task-a' })).at(-1).text === 'Alpha question'), 'Retry sends the last operator message again');
+  await p.getByRole('button', { name: 'Actions' }).click(); await p.getByRole('menuitem', { name: 'Switch profile or model' }).click();
+  check(await until(async () => await p.locator('[role=group][aria-label=Profile] button').count() > 0), 'Switch opens an inline panel with profiles');
+  await p.getByRole('button', { name: 'Actions' }).click(); await p.getByRole('menuitem', { name: 'Fork' }).click();
+  check(await until(async () => !p.url().endsWith('/task-a') && /\/conversations\/[0-9a-f-]{36}/.test(p.url())), 'Fork opens the new session');
   // Results page: state first, filters, and the viewer for an image, a long text read in pages, and HTML without scripts.
   await p.goto(`${origin}/results`);
   check(await until(async () => await p.locator('.vl-row', { hasText: 'result-0.png' }).count() === 1), 'results page lists results');

@@ -576,7 +576,7 @@ Shared conventions for every item:
 
 #### 28. `app/src/views/conversations.tsx` (Modify)
 
-*   **Proposed Changes**: The action menu from the "Menu actions" table under "Controls", each entry calling the existing operation.
+*   **Proposed Changes**: The action menu from the "Menu actions" table under "Controls", each entry calling the existing operation. As built: `ActionMenu` in the conversation header (Retry last message, Switch profile or model, Hand off to another agent, Fork; Fork moved into the menu). Switch and Hand off open an inline panel (OR-14) listing profiles (`profiles_list`) and, for hand off, enabled accounts (`account_list`), then call `session_transition`; its decision (reuse, model switch, new session with handoff) shows in the panel and the new execution appears as a boundary.
 
 ### Documentation
 

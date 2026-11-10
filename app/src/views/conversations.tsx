@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  ListDetail, ListFrame, FilterBar, StateCounters, RowCheck, VirtualList, StateBadge, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, type VirtualListHandle,
+  ListDetail, ListFrame, FilterBar, StateCounters, RowCheck, VirtualList, StateBadge, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection, type VirtualListHandle,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
@@ -88,6 +88,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
     addEventListener('keydown', on); return () => removeEventListener('keydown', on);
   }, []);
   const [failure, setFailure] = useState<{ text: string; retry?: () => void } | null>(null);
+  const [panel, setPanel] = useState<'switch' | 'handoff' | null>(null);
   const [q, setQ] = useState(''), [hits, setHits] = useState<{ key: string; snippet: string }[] | null>(null), [hit, setHit] = useState(0), [marked, setMarked] = useState<string | null>(null);
   const handle = useRef<VirtualListHandle | null>(null);
   // The hit is scrolled to once the replaced window is on screen.
@@ -106,6 +107,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const active = (s.executions ?? []).filter(running).at(-1);
   const openQs = (s.questions ?? []).filter((q: any) => q.state === 'open');
   const w = thread.win;
+  const lastMessage: string | undefined = (s.messages ?? []).at(-1)?.text;
   return <article class="detail conversation" data-ui="detail" tabIndex={-1} aria-label="Conversation">
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
@@ -116,8 +118,15 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
       <Button label="Next hit" icon="arrow-down" iconOnly disabledReason={!hits || hit >= hits.length - 1 ? 'no later hit' : undefined} onClick={() => hits && open(hits, hit + 1)} />
       <OfflineMarker state={state} now={now} />
       <Button label="Copy thread as markdown" icon="file-text" iconOnly disabledReason={off ? 'offline' : undefined} onClick={() => copySel(all()!)} />
-      <Button label="Fork" icon="copy" iconOnly disabledReason={off ? 'offline' : undefined} onClick={() => { const requestId = reqId(); run(async () => { const f = await op('session_fork', { sessionId: id, requestId }); go(nextUrl(location.pathname + location.search, 'conversations', { focus: f.sessionId })); }); }} />
+      {/* Menu actions (design "Controls"): each calls the existing operation; the result shows as a new boundary in this thread. */}
+      <ActionMenu label="Actions" disabledReason={off ? 'offline' : undefined} items={[
+        { label: 'Retry last message', icon: 'rotate-ccw', disabledReason: lastMessage ? undefined : 'no message yet', onClick: () => run(() => op('message_send', { sessionId: id, requestId: reqId(), text: lastMessage })) },
+        { label: 'Switch profile or model', icon: 'sliders-horizontal', onClick: () => setPanel('switch') },
+        { label: 'Hand off to another agent', icon: 'bot', onClick: () => setPanel('handoff') },
+        { label: 'Fork', icon: 'git-merge', onClick: () => { const requestId = reqId(); run(async () => { const f = await op('session_fork', { sessionId: id, requestId }); go(nextUrl(location.pathname + location.search, 'conversations', { focus: f.sessionId })); }); } },
+      ]} />
     </header>
+    {panel && <SwitchPanel sessionId={id} handoff={panel === 'handoff'} current={s.agentConfig?.id} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
     <div class="status-line" role="status">{failure ? <ErrorBanner text={failure.text} onRetry={failure.retry} /> : thread.error ? <ErrorBanner text={`Thread did not load: ${thread.error}`} onRetry={thread.newest} /> : null}</div>
     <div class="pane">
       {!w ? <Skeleton rows={6} /> : <Thread blocks={w.blocks} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k)} onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? sel?.start.key ?? k, false), k, true)); pickFrom.current ??= k; }} showSession={!!key && 'task' in key} onOpenResult={r => go('/results/' + encodeURIComponent(r))} handle={handle} onStart={thread.older} onEnd={thread.newer}
@@ -135,4 +144,22 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
       <Composer draftKey={id} disabledReason={off ? 'offline' : undefined} placeholder={active ? 'Steer' : 'Message'}
         onSend={async text => { setFailure(null); try { await op('message_send', { sessionId: id, requestId: reqId(), text, ...(active ? { delivery: 'steer' } : {}) }); } catch (e: any) { setFailure({ text: e.message }); throw e; } }} /></div>
   </article>;
+}
+
+/**
+ * Switch profile or model, or hand off to another agent (design "Menu actions"): session_transition decides reuse, a model
+ * switch in the session, or a new session with a context handoff. An inline panel, never a floating form (OR-14).
+ */
+function SwitchPanel({ sessionId, handoff, current, onDone, run }: { sessionId: string; handoff: boolean; current?: string; onDone: (note?: string) => void; run: (fn: () => Promise<unknown>) => Promise<void> }) {
+  const { data: profiles } = useDoc<any>('profiles', () => op('profiles_list', {}), () => false);
+  const { data: accounts } = useDoc<any>(handoff ? 'accounts' : null, () => op('account_list', {}), c => c.kind === 'host');
+  const [profile, setProfile] = useState<string | null>(null), [account, setAccount] = useState<string | null>(null), [done, setDone] = useState<string | null>(null);
+  const list: any[] = profiles?.profiles ?? [];
+  const named: any[] = (accounts?.accounts ?? []).filter((a: any) => a.enabled);
+  const go = () => run(async () => { const r = await op('session_transition', { sessionId, profileId: profile, ...(account ? { account } : {}) }); setDone(`${r.mode ?? r.decision ?? 'done'}${r.sessionId && r.sessionId !== sessionId ? ` · new session ${String(r.sessionId).slice(0, 8)}` : ''}`); });
+  return <DetailSection title={handoff ? 'Hand off to another agent' : 'Switch profile or model'}>
+    <div class="answers" role="group" aria-label="Profile">{list.map(p => <Button key={p.id} label={`${p.id} · ${p.harness ?? 'codex'} ${p.model ?? ''}`} pressed={profile === p.id} kind={p.id === current ? 'quiet' : 'default'} onClick={() => setProfile(p.id)} />)}</div>
+    {handoff && <div class="answers" role="group" aria-label="Account">{named.map(a => <Button key={a.id} label={`${a.name} · ${a.harness ?? 'codex'}`} pressed={account === a.name} onClick={() => setAccount(account === a.name ? null : a.name)} />)}</div>}
+    <div class="answers"><Button label={handoff ? 'Hand off' : 'Switch'} kind="primary" disabledReason={profile ? undefined : 'pick a profile'} onClick={go} /><Button label="Close" kind="quiet" onClick={() => onDone(done ?? undefined)} />{done && <span class="muted" role="status">{done}</span>}</div>
+  </DetailSection>;
 }
