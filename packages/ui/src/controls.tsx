@@ -443,7 +443,7 @@ export function Thread({ blocks, label, now, marked, selected, onRowClick, showS
   return <div class="transcript" data-ui="transcript-viewer">
     <VirtualList class="tr-body" items={blocks} getKey={b => b.key} rowHeight={ROW} dynamic follow="bottom" label={label} handle={handle} pending={pending} onStart={onStart} onEnd={onEnd}
       rowClass={b => [b.key === marked ? 'marked' : '', selected?.(b.key) ? 'picked' : ''].join(' ')}
-      render={b => <div class="th-pick" onClick={e => { if (!onRowClick || (e.target as HTMLElement).closest('button,a,input') || !(getSelection()?.isCollapsed ?? true) && !e.shiftKey) return; if (e.shiftKey) getSelection()?.removeAllRanges(); ((e.currentTarget as HTMLElement).closest('.vl') as HTMLElement | null)?.focus({ preventScroll: true }); onRowClick(b.key, e.shiftKey); }}>{row(b)}</div>} />
+      render={b => <div class="th-pick" style={{ display: 'contents' }} onClick={e => { if (!onRowClick || (e.target as HTMLElement).closest('button,a,input') || !(getSelection()?.isCollapsed ?? true) && !e.shiftKey) return; if (e.shiftKey) getSelection()?.removeAllRanges(); ((e.currentTarget as HTMLElement).closest('.vl') as HTMLElement | null)?.focus({ preventScroll: true }); onRowClick(b.key, e.shiftKey); }}>{row(b)}</div>} />
   </div>;
 }
 

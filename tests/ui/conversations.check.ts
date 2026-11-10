@@ -36,7 +36,8 @@ await store.tx(async () => {
 const T = await store.tasks.create({ title: 'Ship the hero copy' });
 for (const [sid, x, word] of [['task-a', 'ta1', 'Alpha'], ['task-b', 'tb1', 'Bravo']] as const) {
   await store.put('session', { id: sid, createdAt: Date.now() });
-  await store.tx(() => store.executions.createExecution({ id: x, kind: 'agent_run', taskId: T, sessionId: sid, hostId: 'pds18', harness: 'codex', model: 'gpt-6.1-sol', state: 'succeeded' }));
+  await store.put('execution', { id: x, executionId: x, sessionId: sid, hostId: 'pds18', state: 'completed', model: 'gpt-6.1-sol', effort: 'low' });
+  await store.query('UPDATE execution SET task_id=$2 WHERE id=$1', [x, T]);
   await store.put('message', { id: 'm-' + x, sessionId: sid, executionId: x, text: `${word} question` });
   await store.put('event', { id: 'e-' + x, sessionId: sid, executionId: x, type: 'item.completed', seq: 0, data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: `${word} reply` }] } } });
 }
@@ -148,6 +149,8 @@ try {
   await p.goto(`${origin}/conversations/task-a`);
   check(await until(async () => await visible(p, 'Alpha reply') && await visible(p, 'Bravo reply')), 'a task session shows both sessions of the task');
   check(await p.locator('.th-boundary .id', { hasText: 'task-b' }).count() === 1, 'boundary rows name their session');
+  await app.inject({ method: 'POST', url: '/api/hosts/events', headers: { authorization: 'Bearer machine-check' }, payload: { hostId: 'pds18', executionId: 'tb1', events: [{ id: 'tb-live', seq: 1, type: 'item.completed', data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: 'Bravo live' }] } } }] } });
+  check(await until(() => visible(p, 'Bravo live')), 'a task thread follows another session of the task live');
   await p.locator('.th-text', { hasText: 'Alpha question' }).click();
   await p.locator('.th-text', { hasText: 'Bravo reply' }).click({ modifiers: ['Shift'] });
   check(await p.locator('.vl-row.picked').count() >= 4, 'shift+click selects the rows in between');

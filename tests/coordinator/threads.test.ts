@@ -47,7 +47,7 @@ test('parallel executions interleave by seq; a taskless session that later gets 
   assert.deepEqual(texts(r),['boundary','before task','early reply','boundary','boundary','from a','from b','a again']);
   assert.deepEqual(texts(await f.op.entries({key:{session:'s2'},limit:100})),['boundary','from b']);
   // A session shows the thread of the first task it got; the page lists the thread's sessions for the live feed.
-  assert.deepEqual(await f.s.read(()=>thr(f).keyOf('s1')),{task});assert.deepEqual((await f.op.entries({key:{task},limit:1})).sessionIds.sort(),['s1','s2']);
+  assert.deepEqual(await f.s.read(()=>thr(f).keyOf('s1')),{task});assert.deepEqual((await f.op.entries({key:{session:'s1'},resolve:true,limit:1})).key,{task});assert.deepEqual((await f.op.entries({key:{session:'s1'},limit:1})).key,{session:'s1'});assert.deepEqual((await f.op.entries({key:{task},limit:1})).sessionIds.sort(),['s1','s2']);
  }finally{await f.s.close()}});
 
 test('streams: an open or cut-off stream is one entry at its first chunk; a closed stream is the closing event block',async()=>{const f=await fresh();

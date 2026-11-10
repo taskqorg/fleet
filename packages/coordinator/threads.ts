@@ -80,7 +80,8 @@ export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promis
   return n}
  const pageLimit=(v:any)=>Number.isSafeInteger(v)&&v>0?v:fail(400,'Expected positive integer limit');
  // thread_entries (design "Read path"): newest page, before, after or around a block key; one snapshot with its feed cursor.
- async function entries(b:any){const key=threadKey(b),limit=pageLimit(b?.limit),m=await members(key);
+ // resolve: a session key opens the thread the session shows (its first task's), returned as `key` (one round trip).
+ async function entries(b:any){let key=threadKey(b);if(b?.resolve===true&&'session' in key)key=await keyOf(key.session);const limit=pageLimit(b?.limit),m=await members(key);
   const given=['before','after','around'].filter(k=>b?.[k]!==undefined);if(given.length>1)fail(400,'Expected one of before, after, around');
   let entries:any[],hasBefore=false,hasAfter=false,withTotal=false;
   if(b?.before!==undefined){const r=await side(m,'<',parseKey(b.before),limit);entries=r.blocks;hasBefore=r.more;hasAfter=true}
@@ -88,7 +89,7 @@ export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promis
   else if(b?.around!==undefined){const k=parseKey(b.around),l=await side(m,'<',k,Math.floor(limit/2)),r=await side(m,'>',k,limit-Math.floor(limit/2),true);
    entries=[...l.blocks,...r.blocks];hasBefore=l.more||(Math.floor(limit/2)===0&&(await side(m,'<',k,1)).blocks.length>0);hasAfter=r.more;withTotal=true}
   else{const r=await side(m,'<',null,limit);entries=r.blocks;hasBefore=r.more;withTotal=true}
-  return {entries,first:entries[0]?.key??null,last:entries.at(-1)?.key??null,hasBefore,hasAfter,sessionIds:[...new Set([...m.values()].map(e=>e.session_id).filter(Boolean))],...(withTotal?{total:await total(m)}:{}),feedCursor:await deps.cursor()}}
+  return {key,entries,first:entries[0]?.key??null,last:entries.at(-1)?.key??null,hasBefore,hasAfter,sessionIds:[...new Set([...m.values()].map(e=>e.session_id).filter(Boolean))],...(withTotal?{total:await total(m)}:{}),feedCursor:await deps.cursor()}}
  // thread_blocks: the blocks of rows named by fed changes (change kind and id), when they belong to the thread.
  async function blocks(b:any){const key=threadKey(b),m=await members(key),ids=[...m.keys()];
   const named=Array.isArray(b?.rows)?b.rows.filter((r:any)=>typeof r?.id==='string'&&typeof r?.kind==='string'):fail(400,'Expected rows [{kind,id}]');

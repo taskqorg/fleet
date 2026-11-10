@@ -131,7 +131,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   s.agentConfig=readTrustedProfile(config.profilesDirectory||'config/agents',req.body.profileId);await put('session',s);return {sessionId:s.id,profileId:s.agentConfig.id,account:s.account};
  };
  app.post('/api/sessions/:id/profile',async(req:any)=>(await store.tx(async ()=>(await session_profile({...req.body,sessionId:req.params.id})))));
- const session_get=async (b:any)=>{const s=(await get(b?.sessionId,'session'));return {...s,threadKey:await thread.keyOf(s.id),...(await agent.sessionView(s.id)),sessionId:s.id,delegations:(await map((await all('delegation')).filter(d=>d.parentSessionId===s.id||d.childSessionId===s.id),related)),messages:(await all('message',{sessionId:s.id})).filter(x=>x.sessionId===s.id),executions:(await all('execution',{sessionId:s.id})).filter(x=>x.sessionId===s.id)}};
+ const session_get=async (b:any)=>{const s=(await get(b?.sessionId,'session'));return {...s,...(await agent.sessionView(s.id)),sessionId:s.id,delegations:(await map((await all('delegation')).filter(d=>d.parentSessionId===s.id||d.childSessionId===s.id),related)),messages:(await all('message',{sessionId:s.id})).filter(x=>x.sessionId===s.id),executions:(await all('execution',{sessionId:s.id})).filter(x=>x.sessionId===s.id)}};
  app.get('/api/sessions/:id',async(req:any)=>(await session_get({sessionId:req.params.id})));
  // Conversation threads (docs/designs/fleet-conversations.md): pages of typed blocks per task or session, search and export.
  // feedCursor is read in the same snapshot as the page, so the client follows the feed from there and misses no row.
