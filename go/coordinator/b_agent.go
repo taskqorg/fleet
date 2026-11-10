@@ -1753,3 +1753,14 @@ func bound(q *Request, name string, a doc, executionID string) (doc, error) {
 }
 
 var _ = errors.New
+
+// fleetOperations: name and description of every tool the director may call, for the
+// executor's tool list of a profile with fleetOperations (its MCP server forwards them to /api/hosts/agent-tools).
+func fleetOperations(p *Person) []doc {
+	out := []doc{}
+	for n := range agentTools(p) { // the agent table too: the executor's own list predates focus_set and watch_*
+		out = append(out, doc{"name": n, "description": firstString(agentDescriptions[n], "Fleet operation "+n+" (POST /api/ops/"+n+" body as arguments)")})
+	}
+	slices.SortFunc(out, func(a, b doc) int { return strings.Compare(gs(a, "name"), gs(b, "name")) })
+	return out
+}

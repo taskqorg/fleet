@@ -67,6 +67,11 @@ func mcpTools(ctx any) obj {
 		}
 		out = append(out, t)
 	}
+	for _, o := range operationsOf(ctx) { // the director's operations from the start command (profile fleetOperations)
+		if n := sv(get(o, "name")); !slices.ContainsFunc(out, func(t any) bool { return sv(get(t, "name")) == n }) {
+			out = append(out, obj{"name": n, "description": get(o, "description"), "inputSchema": obj{"type": "object"}})
+		}
+	}
 	return obj{"tools": out}
 }
 
@@ -142,7 +147,7 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 		}
 		return s, nil
 	}
-	agent := slices.Contains(agentTools, name)
+	agent := slices.Contains(agentTools, name) || slices.ContainsFunc(operationsOf(ctx), func(o any) bool { return sv(get(o, "name")) == name })
 	var key string
 	var body obj
 	if agent {
@@ -418,4 +423,10 @@ func mcpRun(args []string) error {
 		fmt.Fprintln(out, encode(reply))
 		out.Flush()
 	}
+}
+
+// operationsOf: the start command's fleetOperations list carried in the server context.
+func operationsOf(ctx any) []any {
+	xs, _ := get(ctx, "operations").([]any)
+	return xs
 }

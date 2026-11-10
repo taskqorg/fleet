@@ -564,6 +564,11 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	p["instructions"] = defaultInstructions
 	if cfg != nil {
 		p["agentConfig"], p["instructions"] = cfg, ""
+		if cfg["fleetOperations"] == true { // the profile opts in to every operation its director may call (fleet-pm-agent.md §1)
+			if dir := q.app.people[firstString(e["directedBy"], ownerEmail(q))]; dir != nil {
+				p["fleetOperations"] = fleetOperations(dir)
+			}
+		}
 	}
 	if s["nativeSessionId"] != nil {
 		p["nativeSessionId"] = s["nativeSessionId"]
