@@ -2,7 +2,7 @@
 # Moves provider keys from a one-key-per-line file into Fleet's secret directory (docs/designs/fleet-connections.md, C0).
 # Run as root on the coordinator host; values are never printed. The coordinator registers the files on its next start.
 # usage: connections-import.sh <keys file> <connection> <secret dir> <owner user>
-# example: connections-import.sh /etc/pipe-read/tavily-keys tavily /home/fleet/.config/fleet/secrets fleet
+# example: connections-import.sh /root/tavily-keys tavily /home/fleet/.config/fleet/secrets fleet
 set -eu
 keys=$1 connection=$2 dir=$3/connections/$2 user=$4
 umask 077

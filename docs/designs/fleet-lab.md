@@ -12,7 +12,7 @@ Lab adds no run machinery of its own. A trial is a `pipeline_run` execution with
 | Executor | Fleet's Rust process on each host (`crates/executor`). Runs harnesses, scripts, worktrees. |
 | Harness | An agent CLI the executor drives: Codex, Claude, Antigravity. |
 | Profile | A trusted JSON file in `config/agents` naming harness, model, skills and granted connections (`packages/coordinator/profiles.ts`, `crates/executor/src/profile.rs`). |
-| Connection | Fleet's record of one outside provider endpoint, owned by [fleet-connections.md](fleet-connections.md). Example: `pipe-read`. |
+| Connection | Fleet's record of one outside provider endpoint, owned by [fleet-connections.md](fleet-connections.md). Example: `tavily`. |
 | Catalogue / recommendation | `config/catalogue.json` lists methods per project; `recommendation_set` records the chosen method as a `project-recommendation`. |
 | Use case | A registry entry pointing at a use case written in an org repo (Fleet, taskq, pilotq, agentq, dashq, assetq). |
 | Example | One runnable Lab input drawn from a use case. Never a task. |
@@ -37,7 +37,7 @@ Lab adds no run machinery of its own. A trial is a `pipeline_run` execution with
 | R3.9 | Provider keys live in the coordinator's 0600 secret directory with encrypted backup; Postgres holds metadata only ([fleet-connections.md](fleet-connections.md)). |
 | R3.10 | First pipelines: web research; Codex vs Claude page with and without a skill; Meshy asset pipeline once qualified. |
 | Q1 | Storage is two Postgres tables, not JSON documents and not ClickHouse. |
-| Q2 | Pipe's datasets convert into Lab examples (`scripts/lab-import-assetq.ts`); Pipe's evaluation is then removed in the Pipe repo. |
+| Q2 | Closed with nothing to convert: Pipe's assetq database held 0 dataset revisions (checked at the Lab Stage 1 deploy), so the importer was deleted with Pipe ([connections](fleet-connections.md) C4). |
 | Q3 | No coded judge-to-owner agreement threshold; the screen shows agreement and the owner decides when loops run unattended. |
 | — | Lab runs at `background` priority. Repeats per example are configurable. Rating starts with a few basic forms. |
 
@@ -81,8 +81,8 @@ Variant `config_ref` = SHA-256 of canonical `{pipeline, overrides}`. Trial `requ
 
 ```json
 {"version":2,"id":"web-research","steps":[
-  {"id":"search","kind":"api","connection":"pipe-read","tool":"web_search","arguments":{"query":"${example.prompt}"}},
-  {"id":"read","kind":"api","connection":"pipe-read","tool":"web_extract","arguments":{"urls":"${steps.search.output.urls}"}},
+  {"id":"search","kind":"api","connection":"tavily","tool":"web_search","arguments":{"query":"${example.prompt}"}},
+  {"id":"read","kind":"api","connection":"tavily","tool":"web_extract","arguments":{"urls":"${steps.search.output.urls}"}},
   {"id":"summary","kind":"agent","profile":"codex-researcher","prompt":"Summarize the files in $FLEET_INPUT_DIR."},
   {"id":"check","kind":"script","command":"scripts/check.sh"}]}
 ```
