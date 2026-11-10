@@ -7,7 +7,6 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {section,hash,check,run,loadRegistry} from '../../scripts/lab-drift.ts';
 import {checkExample,readExamples,runChecks,importExamples} from '../../scripts/lab-examples.ts';
-import {convert} from '../../scripts/lab-import-assetq.ts';
 import {useCaseIds} from '../../packages/coordinator/lab/examples.ts';
 import {dbApp} from './pg-test.ts';
 import {attachStores} from './artifact-helpers.ts';
@@ -64,13 +63,6 @@ test('examples: at least five work examples, each passes its script checks with 
  // A check that passes on untouched input is reported.
  const vacuous={...examples[0],checks:[{id:'true',run:'true'}]};assert.deepEqual(checkExample(vacuous,useCases),['every check passes on the inputs alone']);
  const broken={...examples[0],references:[]};assert.ok(checkExample(broken,useCases).some(p=>p.startsWith('check ')))});
-
-test('assetq dataset cases convert to examples without loss',()=>{
- const rev={id:'crate',version:2,sha256:'ab',document:{operation:'synthetic.generate',cases:[{id:'blue',text:'invented blue crate',attachments:['obj-1']}]}};
- const [e]=convert([rev]);
- assert.equal(e.id,'assetq-crate-blue');assert.equal(e.use_case_id,'assetq:datasets');assert.equal(e.version,2);assert.equal(e.prompt,'invented blue crate');
- assert.deepEqual(JSON.parse(e.inputs[0].text),{dataset:'crate@2',datasetSha256:'ab',operation:'synthetic.generate',case:rev.document.cases[0]});
- assert.deepEqual(checkExample(e,useCaseIds('config/lab')),[])});
 
 test('POST /api/lab/examples stores approved lab artifacts; same content is idempotent, other content needs a new version',async()=>{
  const app:any=await dbApp({browserSecret:'b',machineSecret:'m',hostId:'mac',storeEndpointHosts:['127.0.0.1']});

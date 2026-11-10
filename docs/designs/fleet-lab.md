@@ -37,7 +37,7 @@ Lab adds no run machinery of its own. A trial is a `pipeline_run` execution with
 | R3.9 | Provider keys live in the coordinator's 0600 secret directory with encrypted backup; Postgres holds metadata only ([fleet-connections.md](fleet-connections.md)). |
 | R3.10 | First pipelines: web research; Codex vs Claude page with and without a skill; Meshy asset pipeline once qualified. |
 | Q1 | Storage is two Postgres tables, not JSON documents and not ClickHouse. |
-| Q2 | Pipe's datasets convert into Lab examples (`scripts/lab-import-assetq.ts`); Pipe's evaluation is then removed in the Pipe repo. |
+| Q2 | Closed with nothing to convert: Pipe's assetq database held 0 dataset revisions (checked at the Lab Stage 1 deploy), so the importer was deleted with Pipe ([connections](fleet-connections.md) C4). |
 | Q3 | No coded judge-to-owner agreement threshold; the screen shows agreement and the owner decides when loops run unattended. |
 | — | Lab runs at `background` priority. Repeats per example are configurable. Rating starts with a few basic forms. |
 
