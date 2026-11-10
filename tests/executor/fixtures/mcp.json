@@ -1,0 +1,5215 @@
+[
+  {
+    "server": "design-rules",
+    "context": {
+      "z": "Unicode: \u0416",
+      "a": [
+        1,
+        true,
+        null
+      ]
+    },
+    "requests": [
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "custom"
+        }
+      },
+      {
+        "method": "notifications/initialized"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "ping"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "unknown"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "unknown",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "get_design_rules",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "get_design_rules",
+          "arguments": {
+            "bad": 1
+          }
+        }
+      },
+      "broken",
+      "{",
+      "[",
+      "{\"id\":}",
+      "{\"id\":1,}",
+      "{\"id\":1 \"method\":\"x\"}",
+      "{\"id\" 1}",
+      "{\"id\":1}:",
+      "{\"id\":\"abc}",
+      "{\"id\":\"\\q\"}",
+      "{\"id\":1e}",
+      "{\"id\":01}"
+    ],
+    "expected": {
+      "replies": [
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {
+              "tools": {}
+            },
+            "serverInfo": {
+              "name": "fleet-design-rules",
+              "version": "1.0.0"
+            }
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "protocolVersion": "custom",
+            "capabilities": {
+              "tools": {}
+            },
+            "serverInfo": {
+              "name": "fleet-design-rules",
+              "version": "1.0.0"
+            }
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {}
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "tools": [
+              {
+                "name": "get_design_rules",
+                "description": "Read project website design rules.",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                },
+                "annotations": {
+                  "readOnlyHint": true,
+                  "destructiveHint": false,
+                  "idempotentHint": true
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32601,
+            "message": "Unsupported method, tool or arguments"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32601,
+            "message": "Unsupported method, tool or arguments"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "a": [
+                    1,
+                    true,
+                    null
+                  ],
+                  "z": "Unicode: \u0416"
+                }
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32601,
+            "message": "Unsupported method, tool or arguments"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Invalid request"
+          }
+        }
+      ],
+      "effects": {
+        "outbox": [],
+        "delegation_requests": [],
+        "transfers": []
+      }
+    }
+  },
+  {
+    "server": "delegation",
+    "context": {
+      "hostId": "host",
+      "commandId": "command",
+      "executionId": "execution",
+      "profiles": []
+    },
+    "requests": [
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "custom"
+        }
+      },
+      {
+        "method": "notifications/initialized"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "ping"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "unknown"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "unknown",
+          "arguments": {}
+        }
+      },
+      "{",
+      "[",
+      "{\"id\":}",
+      "{\"id\":1,}",
+      "{\"id\":1 \"method\":\"x\"}",
+      "{\"id\" 1}",
+      "{\"id\":1}:",
+      "{\"id\":\"abc}",
+      "{\"id\":\"\\q\"}",
+      "{\"id\":1e}",
+      "{\"id\":01}"
+    ],
+    "expected": {
+      "replies": [
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {
+              "tools": {}
+            },
+            "serverInfo": {
+              "name": "fleet-delegation",
+              "version": "1"
+            }
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "protocolVersion": "custom",
+            "capabilities": {
+              "tools": {}
+            },
+            "serverInfo": {
+              "name": "fleet-delegation",
+              "version": "1"
+            }
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {}
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "tools": [
+              {
+                "name": "session_start",
+                "description": "Start a new Fleet session in your project: requestId, role (pm|worker|reviewer from the project roles) or profileId, optional text (first turn), setup run|skip. You are woken with a message when it finishes.",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "projectId": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string"
+                    },
+                    "profileId": {
+                      "type": "string"
+                    },
+                    "account": {
+                      "type": "string"
+                    },
+                    "hostId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "setup": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "requestId"
+                  ]
+                }
+              },
+              {
+                "name": "session_deliver",
+                "description": "Ask Fleet to open a PR from a project session branch (fleet/<sessionId>, already pushed) and merge it after checks. Call again with the same sessionId to read the state.",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": []
+                }
+              },
+              {
+                "name": "session_transition",
+                "description": "Fleet agent session tool session_transition (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "profileId": {
+                      "type": "string"
+                    },
+                    "account": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "profileId"
+                  ]
+                }
+              },
+              {
+                "name": "session_fork",
+                "description": "Fleet agent session tool session_fork (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "strategy": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "requestId"
+                  ]
+                }
+              },
+              {
+                "name": "session_resume",
+                "description": "Fleet agent session tool session_resume (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": []
+                }
+              },
+              {
+                "name": "session_handoffs",
+                "description": "Fleet agent session tool session_handoffs (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": []
+                }
+              },
+              {
+                "name": "message_send",
+                "description": "Fleet agent session tool message_send (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "delivery": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "requestId",
+                    "text"
+                  ]
+                }
+              },
+              {
+                "name": "queue_list",
+                "description": "Fleet agent session tool queue_list (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": []
+                }
+              },
+              {
+                "name": "ask",
+                "description": "Fleet agent session tool ask (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "question": {
+                      "type": "string"
+                    },
+                    "resume": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "requestId",
+                    "question"
+                  ]
+                }
+              },
+              {
+                "name": "reply",
+                "description": "Fleet agent session tool reply (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "questionId": {
+                      "type": "string"
+                    },
+                    "answer": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "questionId",
+                    "answer"
+                  ]
+                }
+              },
+              {
+                "name": "questions",
+                "description": "Fleet agent session tool questions (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  },
+                  "required": []
+                }
+              },
+              {
+                "name": "worker_done",
+                "description": "Fleet agent session tool worker_done (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "outcome"
+                  ]
+                }
+              },
+              {
+                "name": "execution_status",
+                "description": "State of your execution, or with sessionId the latest execution of a session you started",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Unsupported method"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Unsupported method"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting property name enclosed in double quotes: line 2 column 1 (char 2)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting value: line 2 column 1 (char 2)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting value: line 1 column 7 (char 6)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting property name enclosed in double quotes: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ':' delimiter: line 1 column 7 (char 6)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Extra data: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Invalid control character at: line 1 column 12 (char 11)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Invalid \\escape: line 1 column 8 (char 7)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+          }
+        }
+      ],
+      "effects": {
+        "outbox": [],
+        "delegation_requests": [],
+        "transfers": []
+      }
+    }
+  },
+  {
+    "server": "delegation",
+    "context": {
+      "hostId": "host",
+      "commandId": "command",
+      "executionId": "execution",
+      "projectId": "project",
+      "profiles": [
+        "reviewer"
+      ],
+      "workdir": "<root>/work",
+      "inputDir": "<root>/in",
+      "spool": "<root>/spool"
+    },
+    "requests": [
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "custom"
+        }
+      },
+      {
+        "method": "notifications/initialized"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "ping"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "unknown"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "unknown",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "request_child",
+          "arguments": {
+            "requestId": "child",
+            "profileId": "reviewer",
+            "input": "review"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "request_child",
+          "arguments": {
+            "requestId": "child",
+            "profileId": "reviewer",
+            "input": "review"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "request_child",
+          "arguments": {
+            "requestId": "child",
+            "profileId": "reviewer",
+            "input": "changed"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "request_child",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "request_child",
+          "arguments": {
+            "requestId": "bad",
+            "profileId": "wrong",
+            "input": "review"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "project_context",
+          "arguments": {
+            "requestId": "project_context"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "project_context",
+          "arguments": {
+            "invalid": true
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "catalogue",
+          "arguments": {
+            "requestId": "catalogue"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "catalogue",
+          "arguments": {
+            "invalid": true
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "pipeline_run",
+          "arguments": {
+            "requestId": "pipeline_run"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "pipeline_run",
+          "arguments": {
+            "invalid": true
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "direct_search",
+          "arguments": {
+            "requestId": "direct_search"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "direct_search",
+          "arguments": {
+            "invalid": true
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "pipeline_history",
+          "arguments": {
+            "requestId": "pipeline_history"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "pipeline_history",
+          "arguments": {
+            "invalid": true
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "pipeline_get",
+          "arguments": {
+            "requestId": "pipeline_get"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "pipeline_get",
+          "arguments": {
+            "invalid": true
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "question_ask",
+          "arguments": {
+            "requestId": "question_ask"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "question_ask",
+          "arguments": {
+            "invalid": true
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "question_history",
+          "arguments": {
+            "requestId": "question_history"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "question_history",
+          "arguments": {
+            "invalid": true
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "account_list",
+          "arguments": {
+            "requestId": "account_list"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "account_list",
+          "arguments": {
+            "invalid": true
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_start",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_deliver",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_transition",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_fork",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_resume",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_handoffs",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "message_send",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "queue_list",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "ask",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "reply",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "questions",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "worker_done",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "execution_status",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_save",
+          "arguments": {
+            "path": "../outside"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_save",
+          "arguments": {
+            "path": "link"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_save",
+          "arguments": {
+            "path": "hard"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_save",
+          "arguments": {
+            "path": "missing"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_save",
+          "arguments": {
+            "path": "sub/a.txt"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_save",
+          "arguments": {
+            "path": ".txt"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_save",
+          "arguments": {
+            "path": "note.MD"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_save",
+          "arguments": {
+            "path": "archive.tgz"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_save",
+          "arguments": {
+            "path": "blob.unknown"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_save",
+          "arguments": {
+            "path": "sub/a.txt",
+            "required": true
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_save",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_save",
+          "arguments": {
+            "path": 3
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_list",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_get",
+          "arguments": {
+            "artifact_id": "artifact"
+          }
+        }
+      },
+      "broken",
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "pipeline_run",
+          "arguments": {
+            "requestId": "pass-through",
+            "query": {
+              "native": "argument"
+            }
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "pipeline_run",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_get",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_list",
+          "arguments": {
+            "extra": "no"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_save",
+          "arguments": {
+            "path": ""
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "request_child",
+          "arguments": {
+            "requestId": "",
+            "profileId": "reviewer",
+            "input": "x"
+          }
+        }
+      },
+      "{",
+      "[",
+      "{\"id\":}",
+      "{\"id\":1,}",
+      "{\"id\":1 \"method\":\"x\"}",
+      "{\"id\" 1}",
+      "{\"id\":1}:",
+      "{\"id\":\"abc}",
+      "{\"id\":\"\\q\"}",
+      "{\"id\":1e}",
+      "{\"id\":01}"
+    ],
+    "expected": {
+      "replies": [
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {
+              "tools": {}
+            },
+            "serverInfo": {
+              "name": "fleet-delegation",
+              "version": "1"
+            }
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "protocolVersion": "custom",
+            "capabilities": {
+              "tools": {}
+            },
+            "serverInfo": {
+              "name": "fleet-delegation",
+              "version": "1"
+            }
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {}
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "tools": [
+              {
+                "name": "request_child",
+                "annotations": {
+                  "readOnlyHint": false,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": true
+                },
+                "description": "Submit separate Fleet work. Reuse requestId on retry. After acceptance finish your turn so the child can run; do not wait or claim completion.",
+                "inputSchema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "requestId",
+                    "profileId",
+                    "input"
+                  ],
+                  "properties": {
+                    "requestId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "profileId": {
+                      "type": "string",
+                      "enum": [
+                        "reviewer"
+                      ]
+                    },
+                    "input": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 32000
+                    }
+                  }
+                }
+              },
+              {
+                "name": "project_context",
+                "annotations": {
+                  "readOnlyHint": true,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false
+                },
+                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+                "inputSchema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "query": {
+                      "type": "string"
+                    },
+                    "methodId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "runId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "catalogue",
+                "annotations": {
+                  "readOnlyHint": true,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false
+                },
+                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+                "inputSchema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "query": {
+                      "type": "string"
+                    },
+                    "methodId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "runId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "pipeline_run",
+                "annotations": {
+                  "readOnlyHint": false,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": true
+                },
+                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+                "inputSchema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "query": {
+                      "type": "string"
+                    },
+                    "methodId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "runId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "direct_search",
+                "annotations": {
+                  "readOnlyHint": false,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": true
+                },
+                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+                "inputSchema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "query": {
+                      "type": "string"
+                    },
+                    "methodId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "runId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "pipeline_history",
+                "annotations": {
+                  "readOnlyHint": true,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false
+                },
+                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+                "inputSchema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "query": {
+                      "type": "string"
+                    },
+                    "methodId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "runId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "pipeline_get",
+                "annotations": {
+                  "readOnlyHint": true,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false
+                },
+                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+                "inputSchema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "query": {
+                      "type": "string"
+                    },
+                    "methodId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "runId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "question_ask",
+                "annotations": {
+                  "readOnlyHint": false,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false
+                },
+                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+                "inputSchema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "query": {
+                      "type": "string"
+                    },
+                    "methodId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "runId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "question_history",
+                "annotations": {
+                  "readOnlyHint": true,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false
+                },
+                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+                "inputSchema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "query": {
+                      "type": "string"
+                    },
+                    "methodId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "runId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "account_list",
+                "annotations": {
+                  "readOnlyHint": true,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false
+                },
+                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+                "inputSchema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "query": {
+                      "type": "string"
+                    },
+                    "methodId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "runId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "artifact_save",
+                "description": "Store a file of your working area as an artifact of this execution now (otherwise FLEET_OUTPUT_DIR is collected when the run ends). required=true makes this run wait for it.",
+                "annotations": {
+                  "readOnlyHint": false,
+                  "destructiveHint": false,
+                  "idempotentHint": false,
+                  "openWorldHint": false
+                },
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "media_type": {
+                      "type": "string"
+                    },
+                    "required": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "name": "artifact_list",
+                "description": "List artifact metadata of this project (or of an execution or task). Never returns content.",
+                "annotations": {
+                  "readOnlyHint": true,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false
+                },
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "execution_id": {
+                      "type": "string"
+                    },
+                    "task_id": {
+                      "type": "string"
+                    },
+                    "media_type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "name": "artifact_get",
+                "description": "Download an artifact into FLEET_INPUT_DIR and return its local path and metadata.",
+                "annotations": {
+                  "readOnlyHint": true,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false
+                },
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "artifact_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "artifact_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "name": "session_start",
+                "description": "Start a new Fleet session in your project: requestId, role (pm|worker|reviewer from the project roles) or profileId, optional text (first turn), setup run|skip. You are woken with a message when it finishes.",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "projectId": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string"
+                    },
+                    "profileId": {
+                      "type": "string"
+                    },
+                    "account": {
+                      "type": "string"
+                    },
+                    "hostId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "setup": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "requestId"
+                  ]
+                }
+              },
+              {
+                "name": "session_deliver",
+                "description": "Ask Fleet to open a PR from a project session branch (fleet/<sessionId>, already pushed) and merge it after checks. Call again with the same sessionId to read the state.",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": []
+                }
+              },
+              {
+                "name": "session_transition",
+                "description": "Fleet agent session tool session_transition (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "profileId": {
+                      "type": "string"
+                    },
+                    "account": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "profileId"
+                  ]
+                }
+              },
+              {
+                "name": "session_fork",
+                "description": "Fleet agent session tool session_fork (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "strategy": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "requestId"
+                  ]
+                }
+              },
+              {
+                "name": "session_resume",
+                "description": "Fleet agent session tool session_resume (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": []
+                }
+              },
+              {
+                "name": "session_handoffs",
+                "description": "Fleet agent session tool session_handoffs (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": []
+                }
+              },
+              {
+                "name": "message_send",
+                "description": "Fleet agent session tool message_send (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "delivery": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "requestId",
+                    "text"
+                  ]
+                }
+              },
+              {
+                "name": "queue_list",
+                "description": "Fleet agent session tool queue_list (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": []
+                }
+              },
+              {
+                "name": "ask",
+                "description": "Fleet agent session tool ask (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "question": {
+                      "type": "string"
+                    },
+                    "resume": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "requestId",
+                    "question"
+                  ]
+                }
+              },
+              {
+                "name": "reply",
+                "description": "Fleet agent session tool reply (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "questionId": {
+                      "type": "string"
+                    },
+                    "answer": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "questionId",
+                    "answer"
+                  ]
+                }
+              },
+              {
+                "name": "questions",
+                "description": "Fleet agent session tool questions (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  },
+                  "required": []
+                }
+              },
+              {
+                "name": "worker_done",
+                "description": "Fleet agent session tool worker_done (bound to this session by the host)",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "outcome"
+                  ]
+                }
+              },
+              {
+                "name": "execution_status",
+                "description": "State of your execution, or with sessionId the latest execution of a session you started",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Unsupported method"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Unsupported method"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "status": "accepted",
+                  "response": {
+                    "childExecutionId": "child",
+                    "result": {
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "reply"
+                        }
+                      ]
+                    }
+                  },
+                  "instruction": "Finish this turn. Child work runs after your completed receipt. Retry only with the same requestId; submission is not completion."
+                }
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "status": "accepted",
+                  "response": {
+                    "childExecutionId": "child",
+                    "result": {
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "reply"
+                        }
+                      ]
+                    }
+                  },
+                  "instruction": "Finish this turn. Child work runs after your completed receipt. Retry only with the same requestId; submission is not completion."
+                }
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Request identity conflict"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid child request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid child request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "childExecutionId": "child",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "reply"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid project request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "childExecutionId": "child",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "reply"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid project request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "childExecutionId": "child",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "reply"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid project request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "childExecutionId": "child",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "reply"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid project request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "childExecutionId": "child",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "reply"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid project request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "childExecutionId": "child",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "reply"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid project request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "childExecutionId": "child",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "reply"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid project request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "childExecutionId": "child",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "reply"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid project request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "childExecutionId": "child",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "reply"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid project request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "reply"
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "artifact tool refused: path must be a file inside your working area"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "artifact tool refused: path must be a regular file inside your working area, not a link"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "artifact tool refused: path must be a regular file with one link"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "artifact tool refused: path must be a regular file inside your working area, not a link"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "artifactId": "artifact",
+                  "state": "done"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "artifactId": "artifact",
+                  "state": "done"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "artifactId": "artifact",
+                  "state": "done"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "artifactId": "artifact",
+                  "state": "done"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "artifactId": "artifact",
+                  "state": "done"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "artifactId": "artifact",
+                  "state": "done"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid artifact tool arguments"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid artifact tool arguments"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "artifactId": "artifact",
+                  "state": "done",
+                  "transferId": "<uuid>"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "artifactId": "artifact",
+                  "state": "done",
+                  "transferId": "<uuid>"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting value: line 1 column 1 (char 0)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "childExecutionId": "child",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "reply"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "A stable requestId is required for effects"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid artifact tool arguments"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid artifact tool arguments"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "artifact tool refused: path must be a file inside your working area"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "error": {
+            "code": -32602,
+            "message": "Invalid child request"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting property name enclosed in double quotes: line 2 column 1 (char 2)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting value: line 2 column 1 (char 2)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting value: line 1 column 7 (char 6)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting property name enclosed in double quotes: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ':' delimiter: line 1 column 7 (char 6)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Extra data: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Invalid control character at: line 1 column 12 (char 11)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Invalid \\escape: line 1 column 8 (char 7)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+          }
+        }
+      ],
+      "effects": {
+        "outbox": [
+          {
+            "commandId": "command",
+            "delegation": {
+              "input": "review",
+              "profileId": "reviewer",
+              "requestId": "child"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "project_context"
+              },
+              "operation": "project_context",
+              "projectId": "project",
+              "requestId": "project_context-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "catalogue"
+              },
+              "operation": "catalogue",
+              "projectId": "project",
+              "requestId": "catalogue-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_run"
+              },
+              "operation": "pipeline_run",
+              "projectId": "project",
+              "requestId": "pipeline_run"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "direct_search"
+              },
+              "operation": "direct_search",
+              "projectId": "project",
+              "requestId": "direct_search"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_history"
+              },
+              "operation": "pipeline_history",
+              "projectId": "project",
+              "requestId": "pipeline_history-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_get"
+              },
+              "operation": "pipeline_get",
+              "projectId": "project",
+              "requestId": "pipeline_get-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "question_ask"
+              },
+              "operation": "question_ask",
+              "projectId": "project",
+              "requestId": "question_ask"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "question_history"
+              },
+              "operation": "question_history",
+              "projectId": "project",
+              "requestId": "question_history-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "account_list"
+              },
+              "operation": "account_list",
+              "projectId": "project",
+              "requestId": "account_list-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_start"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_deliver"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_transition"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_fork"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_resume"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_handoffs"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "message_send"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "queue_list"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "ask"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "reply"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "questions"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "worker_done"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "execution_status"
+              }
+            }
+          },
+          {
+            "hostId": "host",
+            "executionId": "execution",
+            "name": "sub/a.txt"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "query": {
+                  "native": "argument"
+                },
+                "requestId": "pass-through"
+              },
+              "operation": "pipeline_run",
+              "projectId": "project",
+              "requestId": "pass-through"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          }
+        ],
+        "delegation_requests": [
+          {
+            "commandId": "command",
+            "delegation": {
+              "input": "review",
+              "profileId": "reviewer",
+              "requestId": "child"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "project_context"
+              },
+              "operation": "project_context",
+              "projectId": "project",
+              "requestId": "project_context-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "catalogue"
+              },
+              "operation": "catalogue",
+              "projectId": "project",
+              "requestId": "catalogue-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_run"
+              },
+              "operation": "pipeline_run",
+              "projectId": "project",
+              "requestId": "pipeline_run"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "direct_search"
+              },
+              "operation": "direct_search",
+              "projectId": "project",
+              "requestId": "direct_search"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_history"
+              },
+              "operation": "pipeline_history",
+              "projectId": "project",
+              "requestId": "pipeline_history-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_get"
+              },
+              "operation": "pipeline_get",
+              "projectId": "project",
+              "requestId": "pipeline_get-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "question_ask"
+              },
+              "operation": "question_ask",
+              "projectId": "project",
+              "requestId": "question_ask"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "question_history"
+              },
+              "operation": "question_history",
+              "projectId": "project",
+              "requestId": "question_history-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "account_list"
+              },
+              "operation": "account_list",
+              "projectId": "project",
+              "requestId": "account_list-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_start"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_deliver"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_transition"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_fork"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_resume"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_handoffs"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "message_send"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "queue_list"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "ask"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "reply"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "questions"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "worker_done"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "execution_status"
+              }
+            }
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "query": {
+                  "native": "argument"
+                },
+                "requestId": "pass-through"
+              },
+              "operation": "pipeline_run",
+              "projectId": "project",
+              "requestId": "pass-through"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          }
+        ],
+        "transfers": [
+          {
+            "path": "<root>/spool/<uuid>",
+            "spool": true,
+            "previews": true,
+            "name": "sub/a.txt",
+            "mediaType": "text/plain",
+            "executionId": "execution",
+            "required": false
+          },
+          {
+            "path": "<root>/spool/<uuid>",
+            "spool": true,
+            "previews": true,
+            "name": ".txt",
+            "mediaType": "application/octet-stream",
+            "executionId": "execution",
+            "required": false
+          },
+          {
+            "path": "<root>/spool/<uuid>",
+            "spool": true,
+            "previews": true,
+            "name": "note.MD",
+            "mediaType": "application/octet-stream",
+            "executionId": "execution",
+            "required": false
+          },
+          {
+            "path": "<root>/spool/<uuid>",
+            "spool": true,
+            "previews": true,
+            "name": "archive.tgz",
+            "mediaType": "application/x-tar",
+            "executionId": "execution",
+            "required": false
+          },
+          {
+            "path": "<root>/spool/<uuid>",
+            "spool": true,
+            "previews": true,
+            "name": "blob.unknown",
+            "mediaType": "application/octet-stream",
+            "executionId": "execution",
+            "required": false
+          },
+          {
+            "path": "<root>/spool/<uuid>",
+            "spool": true,
+            "previews": true,
+            "name": "sub/a.txt",
+            "mediaType": "text/plain",
+            "executionId": "execution",
+            "required": true
+          },
+          {
+            "executionId": "execution",
+            "filter": {
+              "executionId": null,
+              "taskId": null,
+              "mediaType": null
+            }
+          },
+          {
+            "executionId": "execution",
+            "artifactId": "artifact",
+            "inputDir": "<root>/in"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "server": "delegation",
+    "context": {
+      "hostId": "host",
+      "commandId": "command",
+      "executionId": "execution",
+      "projectId": "project",
+      "profiles": [
+        "reviewer"
+      ],
+      "workdir": "<root>/work",
+      "inputDir": "<root>/in",
+      "spool": "<root>/spool",
+      "_response": {
+        "error": "rejected"
+      },
+      "_transferState": "failed",
+      "_transferResponse": {
+        "error": "rejected",
+        "state": "failed"
+      }
+    },
+    "requests": [
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "request_child",
+          "arguments": {
+            "requestId": "refused",
+            "profileId": "reviewer",
+            "input": "x"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "project_context",
+          "arguments": {
+            "requestId": "project_context"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "catalogue",
+          "arguments": {
+            "requestId": "catalogue"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "pipeline_run",
+          "arguments": {
+            "requestId": "pipeline_run"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "direct_search",
+          "arguments": {
+            "requestId": "direct_search"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "pipeline_history",
+          "arguments": {
+            "requestId": "pipeline_history"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "pipeline_get",
+          "arguments": {
+            "requestId": "pipeline_get"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "question_ask",
+          "arguments": {
+            "requestId": "question_ask"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "question_history",
+          "arguments": {
+            "requestId": "question_history"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "account_list",
+          "arguments": {
+            "requestId": "account_list"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_start",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_deliver",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_transition",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_fork",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_resume",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "session_handoffs",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "message_send",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "queue_list",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "ask",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "reply",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "questions",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "worker_done",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "execution_status",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_save",
+          "arguments": {
+            "path": "sub/a.txt"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_list",
+          "arguments": {}
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "artifact_get",
+          "arguments": {
+            "artifact_id": "failed"
+          }
+        }
+      },
+      "{",
+      "[",
+      "{\"id\":}",
+      "{\"id\":1,}",
+      "{\"id\":1 \"method\":\"x\"}",
+      "{\"id\" 1}",
+      "{\"id\":1}:",
+      "{\"id\":\"abc}",
+      "{\"id\":\"\\q\"}",
+      "{\"id\":1e}",
+      "{\"id\":01}"
+    ],
+    "expected": {
+      "replies": [
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "status": "pending-or-rejected",
+                  "response": {
+                    "error": "rejected"
+                  },
+                  "instruction": "Finish this turn. Child work runs after your completed receipt. Retry only with the same requestId; submission is not completion."
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected"
+                }
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected",
+                  "state": "failed"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected",
+                  "state": "failed",
+                  "transferId": "<uuid>"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": {
+                  "error": "rejected",
+                  "state": "failed",
+                  "transferId": "<uuid>"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting property name enclosed in double quotes: line 2 column 1 (char 2)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting value: line 2 column 1 (char 2)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting value: line 1 column 7 (char 6)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting property name enclosed in double quotes: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ':' delimiter: line 1 column 7 (char 6)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Extra data: line 1 column 9 (char 8)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Invalid control character at: line 1 column 12 (char 11)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Invalid \\escape: line 1 column 8 (char 7)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32602,
+            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+          }
+        }
+      ],
+      "effects": {
+        "outbox": [
+          {
+            "commandId": "command",
+            "delegation": {
+              "input": "x",
+              "profileId": "reviewer",
+              "requestId": "refused"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "project_context"
+              },
+              "operation": "project_context",
+              "projectId": "project",
+              "requestId": "project_context-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "catalogue"
+              },
+              "operation": "catalogue",
+              "projectId": "project",
+              "requestId": "catalogue-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_run"
+              },
+              "operation": "pipeline_run",
+              "projectId": "project",
+              "requestId": "pipeline_run"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "direct_search"
+              },
+              "operation": "direct_search",
+              "projectId": "project",
+              "requestId": "direct_search"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_history"
+              },
+              "operation": "pipeline_history",
+              "projectId": "project",
+              "requestId": "pipeline_history-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_get"
+              },
+              "operation": "pipeline_get",
+              "projectId": "project",
+              "requestId": "pipeline_get-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "question_ask"
+              },
+              "operation": "question_ask",
+              "projectId": "project",
+              "requestId": "question_ask"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "question_history"
+              },
+              "operation": "question_history",
+              "projectId": "project",
+              "requestId": "question_history-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "account_list"
+              },
+              "operation": "account_list",
+              "projectId": "project",
+              "requestId": "account_list-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_start"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_deliver"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_transition"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_fork"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_resume"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_handoffs"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "message_send"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "queue_list"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "ask"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "reply"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "questions"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "worker_done"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "execution_status"
+              }
+            }
+          }
+        ],
+        "delegation_requests": [
+          {
+            "commandId": "command",
+            "delegation": {
+              "input": "x",
+              "profileId": "reviewer",
+              "requestId": "refused"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "project_context"
+              },
+              "operation": "project_context",
+              "projectId": "project",
+              "requestId": "project_context-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "catalogue"
+              },
+              "operation": "catalogue",
+              "projectId": "project",
+              "requestId": "catalogue-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_run"
+              },
+              "operation": "pipeline_run",
+              "projectId": "project",
+              "requestId": "pipeline_run"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "direct_search"
+              },
+              "operation": "direct_search",
+              "projectId": "project",
+              "requestId": "direct_search"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_history"
+              },
+              "operation": "pipeline_history",
+              "projectId": "project",
+              "requestId": "pipeline_history-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "pipeline_get"
+              },
+              "operation": "pipeline_get",
+              "projectId": "project",
+              "requestId": "pipeline_get-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "question_ask"
+              },
+              "operation": "question_ask",
+              "projectId": "project",
+              "requestId": "question_ask"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "question_history"
+              },
+              "operation": "question_history",
+              "projectId": "project",
+              "requestId": "question_history-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "commandId": "command",
+            "delegation": {
+              "arguments": {
+                "requestId": "account_list"
+              },
+              "operation": "account_list",
+              "projectId": "project",
+              "requestId": "account_list-<uuid>"
+            },
+            "executionId": "execution",
+            "hostId": "host"
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_start"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_deliver"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_transition"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_fork"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_resume"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "session_handoffs"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "message_send"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "queue_list"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "ask"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "reply"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "questions"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "worker_done"
+              }
+            }
+          },
+          {
+            "agentToolKey": "command:agent:<uuid>",
+            "commandId": "command",
+            "executionId": "execution",
+            "hostId": "host",
+            "request": {
+              "id": 1,
+              "jsonrpc": "2.0",
+              "method": "tools/call",
+              "params": {
+                "arguments": {},
+                "name": "execution_status"
+              }
+            }
+          }
+        ],
+        "transfers": [
+          {
+            "path": "<root>/spool/<uuid>",
+            "spool": true,
+            "previews": true,
+            "name": "sub/a.txt",
+            "mediaType": "text/plain",
+            "executionId": "execution",
+            "required": false
+          },
+          {
+            "executionId": "execution",
+            "filter": {
+              "executionId": null,
+              "taskId": null,
+              "mediaType": null
+            }
+          },
+          {
+            "executionId": "execution",
+            "artifactId": "failed",
+            "inputDir": "<root>/in"
+          }
+        ]
+      }
+    }
+  }
+]

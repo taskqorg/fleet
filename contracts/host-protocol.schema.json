@@ -2,6 +2,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Host protocol and event payloads (fleet-stack L3 stage 1). Source for packages/coordinator, app and crates/executor types; see contracts/README.md for the supported keyword subset.",
   "$defs": {
+    "ChildRequest": {"type": "object", "required": ["requestId", "profileId", "input"], "properties": {"requestId": {"type": "string"}, "profileId": {"type": "string"}, "input": {"type": "string"}}},
+    "ChildReceipt": {"type": "object", "required": ["hostId", "commandId", "executionId", "delegation"], "properties": {"hostId": {"type": "string"}, "commandId": {"type": "string"}, "executionId": {"type": "string"}, "delegation": {"$ref": "#/$defs/ChildRequest"}}},
+    "ProjectOperation": {"type": "string", "enum": ["project_context", "catalogue", "pipeline_run", "direct_search", "pipeline_history", "pipeline_get", "question_ask", "question_history", "account_list"]},
+    "ProjectArguments": {"$comment": "Native tool arguments are forwarded unchanged to the owning project operation validator.", "type": "object", "additionalProperties": true, "properties": {}},
+    "ProjectRequest": {"type": "object", "required": ["operation", "arguments", "requestId", "projectId"], "properties": {"operation": {"$ref": "#/$defs/ProjectOperation"}, "arguments": {"$ref": "#/$defs/ProjectArguments"}, "requestId": {"type": "string"}, "projectId": {"type": "string"}}},
+    "ProjectReceipt": {"type": "object", "required": ["hostId", "commandId", "executionId", "delegation"], "properties": {"hostId": {"type": "string"}, "commandId": {"type": "string"}, "executionId": {"type": "string"}, "delegation": {"$ref": "#/$defs/ProjectRequest"}}},
+    "AccountRoots": {"type": "object", "required": [], "properties": {"home": {"type": "string"}, "nativeHome": {"type": "string"}, "credentialHome": {"type": "string"}, "credentialAuthority": {"type": "string"}, "executable": {"type": "string"}}},
+    "AccountObservation": {"type": "object", "required": ["accountId", "binding", "platform", "readiness", "nativeLoginObserved", "quota", "reason"], "properties": {"accountId": {"type": "string"}, "binding": {"type": "string"}, "platform": {"type": "string"}, "roots": {"$ref": "#/$defs/AccountRoots"}, "readiness": {"type": "string"}, "nativeLoginObserved": {"type": ["boolean", "null"]}, "quota": {"type": "string"}, "reason": {"type": "string"}}},
+    "AccountEnvironment": {"type": "object", "required": [], "properties": {"HOME": {"type": "string"}, "CODEX_HOME": {"type": "string"}, "CLAUDE_CONFIG_DIR": {"type": "string"}, "GEMINI_HOME": {"type": "string"}}},
+    "AccountBinding": {"type": "object", "required": ["name", "executable", "environment", "behaviorApproved"], "properties": {"name": {"type": "string"}, "executable": {"type": "string"}, "environment": {"$ref": "#/$defs/AccountEnvironment"}, "behaviorApproved": {"type": "boolean"}}},
+    "AccountCatalogue": {"type": "object", "required": ["accountId", "bindings"], "properties": {"accountId": {"type": "string"}, "binding": {"type": ["string", "null"]}, "bindings": {"type": "array", "items": {"$ref": "#/$defs/AccountBinding"}}}},
+    "AccountReceipt": {"type": "object", "required": ["hostId", "commandId", "executionId"], "properties": {"hostId": {"type": "string"}, "commandId": {"type": "string"}, "executionId": {"type": "string"}, "accountObservation": {"$ref": "#/$defs/AccountObservation"}, "accountCatalogue": {"$ref": "#/$defs/AccountCatalogue"}}},
     "PollRequest": {
       "type": "object",
       "required": ["hostId", "platform", "capabilities", "stores", "problems"],
@@ -47,7 +59,7 @@
       }
     },
     "Receipt": {
-      "$comment": "Status receipt. Delegation and account receipts (written by the Python MCP servers) are described in L4.",
+      "$comment": "Execution status receipt; delegation and account envelopes have their own generated types.",
       "type": "object",
       "required": ["hostId", "commandId", "executionId", "status"],
       "properties": {

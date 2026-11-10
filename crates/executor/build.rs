@@ -10,6 +10,7 @@ fn pascal(s: &str) -> String {
     s.split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| !w.is_empty()).map(|w| w[..1].to_uppercase() + &w[1..]).collect()
 }
 fn snake(s: &str) -> String {
+    if s.chars().all(|c| c.is_ascii_uppercase() || c == '_') { return s.to_ascii_lowercase() }
     let mut o = String::new();
     for c in s.chars() {
         if c.is_ascii_uppercase() { o.push('_'); o.push(c.to_ascii_lowercase()) } else if c.is_ascii_alphanumeric() { o.push(c) } else { o.push('_') }

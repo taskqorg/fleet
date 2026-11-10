@@ -1,4 +1,6 @@
 """Deterministic MCP/outbox protocol check. No native calls or network."""
+# fleet-stack L4: preserve MCP grants and durable transport after replacing host Python.
+from executor_binary import executor_binary
 import json
 import os
 import sqlite3
@@ -12,7 +14,7 @@ with tempfile.TemporaryDirectory() as root:
     db.executescript('CREATE TABLE outbox(route TEXT,body TEXT);CREATE TABLE delegation_requests(id TEXT PRIMARY KEY,body TEXT,response TEXT);')
     db.close()
     context = {'hostId': 'mac', 'commandId': 'trusted-command', 'executionId': 'trusted-execution', 'profiles': ['website-reviewer']}
-    process = subprocess.Popen(['python3', 'crates/executor/src/delegation.py', journal, json.dumps(context)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    process = subprocess.Popen([executor_binary(), 'mcp', 'delegation', journal, json.dumps(context)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     try:
         def call(method, params={}):
             process.stdin.write(json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params})+'\n');process.stdin.flush()

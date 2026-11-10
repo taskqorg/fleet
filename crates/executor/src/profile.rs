@@ -164,7 +164,7 @@ pub fn validate_antigravity_settings(settings: Option<&Value>) -> Result<(), &'s
 pub fn mcp_servers(v: &Value) -> Value {
     let mut servers = json!({});
     if let Some(s) = v["mcpServers"].as_array().and_then(|a| a.first()) {
-        servers["design-rules"] = json!({"command":"python3","args":["-c",include_str!("design_rules.py"),s["data"].to_string()]});
+        servers["design-rules"] = json!({"command":std::env::current_exe().expect("executor path"),"args":["mcp","design-rules",s["data"].to_string()]});
     }
     servers
 }
@@ -205,10 +205,10 @@ pub fn apply(c: &mut Command, v: &Value) {
         &format!("developer_instructions={}", v["instructions"]),
     ]);
     if let Some(s) = v["mcpServers"].as_array().unwrap().first() {
-        let args = json!(["-c", include_str!("design_rules.py"), s["data"].to_string()]);
+        let args = json!(["mcp", "design-rules", s["data"].to_string()]);
         c.args([
             "-c",
-            "mcp_servers.design-rules.command=\"python3\"",
+            &format!("mcp_servers.design-rules.command={}",json!(std::env::current_exe().expect("executor path"))),
             "-c",
             &format!("mcp_servers.design-rules.args={args}"),
             "-c",
@@ -224,7 +224,7 @@ pub fn prepare(_dir: &Path, v: &Value) -> Result<Value, Box<dyn std::error::Erro
         );
     }
     Ok(
-        json!({"instructionSources":{"profile":"explicit developer_instructions","personalConfig":"not loaded","personalHome":"not forwarded","projectInstructions":"discovery disabled","skills":"disabled","memories":"disabled","hooks":"disabled","nativeObservation":"pending rollout provenance check"},"requested":v,"profileSha256":hash(v),"instructionsSha256":format!("{:x}",Sha256::digest(v["instructions"].as_str().unwrap().as_bytes())),"grantsSha256":hash(&v["mcpServers"]),"applied":{"model":v["model"],"effort":v["effort"],"instructions":v["instructions"],"mcpServers":v["mcpServers"],"mapping":"developerInstructions on open; acknowledged developer-role thread/inject_items before resumed turn; native model-context application unqualified","availability":"unknown until native call/result","resumeCompatibility":"requested overrides supplied per invocation; actual changed settings unqualified; prior conversation context persists","mcpServerSha256":format!("{:x}",Sha256::digest(include_bytes!("design_rules.py")))}}),
+        json!({"instructionSources":{"profile":"explicit developer_instructions","personalConfig":"not loaded","personalHome":"not forwarded","projectInstructions":"discovery disabled","skills":"disabled","memories":"disabled","hooks":"disabled","nativeObservation":"pending rollout provenance check"},"requested":v,"profileSha256":hash(v),"instructionsSha256":format!("{:x}",Sha256::digest(v["instructions"].as_str().unwrap().as_bytes())),"grantsSha256":hash(&v["mcpServers"]),"applied":{"model":v["model"],"effort":v["effort"],"instructions":v["instructions"],"mcpServers":v["mcpServers"],"mapping":"developerInstructions on open; acknowledged developer-role thread/inject_items before resumed turn; native model-context application unqualified","availability":"unknown until native call/result","resumeCompatibility":"requested overrides supplied per invocation; actual changed settings unqualified; prior conversation context persists","mcpServerSha256":format!("{:x}",Sha256::digest(std::fs::read(std::env::current_exe()?)?))}}),
     )
 }
 #[cfg(test)]
@@ -259,7 +259,7 @@ mod tests {
                 .unwrap();
         c["mcpServers"] = json!([{"id":"design-rules","data":{"heading":"test"}}]);
         validate(&c).unwrap();
-        assert_eq!(mcp_servers(&c)["design-rules"]["command"], "python3");
+        assert_eq!(mcp_servers(&c)["design-rules"]["command"], json!(std::env::current_exe().unwrap()));
         c["mcpServers"][0]["command"] = json!("arbitrary");
         assert!(validate(&c).is_err());
         c = serde_json::from_str(include_str!("../../../config/agents/claude-worker.json"))

@@ -1,3 +1,4 @@
+import type {ChildReceipt} from '../../contracts/generated/host-protocol.ts';
 import {replyText} from './threads.ts';
 
 import {randomUUID} from 'node:crypto';
@@ -15,7 +16,7 @@ export function delegation(store:{all:(k:string,filter?:object,omit?:string[])=>
    catch(e:any){if(e?.statusCode!==503)error='Website text inputs unavailable or exceed 128000 characters'}// 503: no reachable store now; the next poll asks again.
    try{if(texts||error)await store.tx(async()=>{const d=await get(id,'delegation');if(error)d.routingError=error;else d.sourceTexts=texts;await put('delegation',d)})}catch{}finally{fetching.delete(id)}}))};
  return {
- async request(b:any,c:any){
+ async request(b:ChildReceipt,c:any){
   if(Object.keys(b).sort().join()!=='commandId,delegation,executionId,hostId')fail(400,'Invalid delegation envelope');
   const q=b.delegation;
   if(!q||Object.keys(q).sort().join()!=='input,profileId,requestId'||typeof q.requestId!=='string'||!q.requestId||q.requestId.length>200||typeof q.input!=='string'||!q.input||q.input.length>32000)fail(400,'Invalid delegation request');
