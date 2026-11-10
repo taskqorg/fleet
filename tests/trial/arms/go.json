@@ -1,11 +1,11 @@
 {
-  "$comment": "Go arm: go/coordinator (docs/designs/fleet-stack.md#trial-slice-l1). Commands run with sh from the worktree root. GOCACHE is per worktree (go/.cache) so clean gives a real cold build without touching the user's cache; modules come from the shared GOMODCACHE (setup downloads them). go generate runs go/gen, which writes the host protocol types from contracts/host-protocol.schema.json. The outside tests need the binary, so check builds it; the binary is the release artifact, so build equals check.",
+  "$comment": "Go arm: the go/coordinator front door with the TypeScript coordinator behind it (docs/designs/fleet-stack.md#trial-slice-l1). Commands run with sh from the worktree root. GOCACHE is per worktree (go/.cache) so clean gives a real cold build without touching the user's cache; modules come from the shared GOMODCACHE (setup downloads them). go generate runs go/gen, which writes the host protocol types from contracts/host-protocol.schema.json. The outside tests need the binary, so check builds it; the binary is the release artifact, so build equals check.",
   "setup": "cd go && go mod download",
   "clean": "rm -rf go/bin go/coordinator/protocol_gen.go go/.cache",
   "check": "cd go && export GOCACHE=$PWD/.cache && go generate ./... && go build -o bin/fleet-coordinator ./coordinator",
   "build": "cd go && export GOCACHE=$PWD/.cache && go generate ./... && go build -o bin/fleet-coordinator ./coordinator",
   "edit": "go/coordinator/stream.go",
-  "server": "go/bin/fleet-coordinator",
+  "server": "FLEET_TS_SERVER='node packages/coordinator/server.ts' FLEET_GO_SERVER=go/bin/fleet-coordinator sh deploy/start-coordinator.sh",
   "artifact": [
     "go/bin/fleet-coordinator"
   ],

@@ -13,7 +13,7 @@ Order:
 
 Never port two components at once.
 
-Today: the coordinator is TypeScript on Node 22; the executor and the gateway are Rust; the Go code is the trial slice in `go/coordinator` and the probe spikes in `go/probe/`. Not built: the Go front door and every migration slice.
+Today: the Go front door (`go/coordinator`, slice 1) serves session create and read, execution events read and the stream, and passes every other request to the TypeScript coordinator on Node 22; the executor and the gateway are Rust; `go/probe/` holds the probe spikes. Not built: slices 2-5.
 
 ## Why this stack
 
@@ -102,7 +102,7 @@ The generators were checked against off-the-shelf output for the transcript even
 
 ## Go code
 
-The rules are in [`fleet.md`](../../fleet.md#stack): standard library first, `CGO_ENABLED=0`, one module `go/` with one `go.sum`, `-mod=readonly`, the checksum database on, `govulncheck` as a warning, contract types from `go/gen`, `-trimpath` release binaries from one Linux job. The CI job `go` vets and cross-builds `go/coordinator` for linux/amd64, darwin/arm64 and windows/amd64, checks each binary for `CGO_ENABLED=0`, writes a SHA-256 file per binary and uploads the workflow artifact `fleet-go-<sha>`. Nested modules under `go/probe/` are outside that module and outside CI.
+The rules are in [`fleet.md`](../../fleet.md#stack): standard library first, `CGO_ENABLED=0`, one module `go/` with one `go.sum`, `-mod=readonly`, the checksum database on, `govulncheck` as a warning, contract types from `go/gen`, `-trimpath` release binaries from one Linux job. The CI job `go` vets and cross-builds `go/coordinator` for linux/amd64, darwin/arm64 and windows/amd64, checks each binary for `CGO_ENABLED=0`, writes a SHA-256 file per binary and uploads the workflow artifact `fleet-go-<sha>`. Nested modules under `go/probe/` are outside that module and outside CI. The release tree carries the linux/amd64 and darwin/arm64 binaries in `dist/go` (`scripts/build-go-release.sh`, run by `deploy/build-release.sh` and the CI job `postgres-roles`).
 
 ### Third-party Go modules
 
@@ -128,25 +128,42 @@ Allowed for the executor port (Not built: no Go code imports them yet):
 
 ## Coordinator migration order
 
-The Go binary becomes the front door. It serves the routes it owns and passes every other request to the TypeScript coordinator through `net/http/httputil.ReverseProxy`. Both processes share one Postgres; the advisory scope locks (`pg_advisory_xact_lock`) serialize writers across them. `schema.sql` stays the one schema source, is frozen during a slice, and the Go binary applies it at start.
+The Go binary becomes the front door. It serves the routes it owns and passes every other request to the TypeScript coordinator through `net/http/httputil.ReverseProxy`. Both processes share one Postgres; the advisory scope locks (`pg_advisory_xact_lock`) serialize writers across them. `schema.sql` stays the one schema source and is frozen during a slice; the TypeScript coordinator applies it at start and mirrors `people.json` into the person rows, which the Go binary only reads, until slice 5.
+
+`deploy/start-coordinator.sh` starts both: Go on `PORT`, TypeScript on `FLEET_BACKEND_PORT` (default `PORT+1`, loopback) behind it; if either exits the script stops the other and exits non-zero. `FLEET_FRONT_DOOR=typescript` runs the TypeScript coordinator alone on `PORT`.
+
+A route moves to Go only when Go matches today's TypeScript behaviour completely. Within an owned route, a request Go cannot read exactly as Fastify would (another body media type, an empty or invalid JSON body, a prototype key, a percent-encoded path, a GET with a body) passes to TypeScript, which answers it.
 
 Each slice:
 
-- first adds outside tests for its routes in `tests/<area>/`, run against the TypeScript coordinator and then against Go, as `tests/trial/` does;
+- first adds outside tests for its routes in `tests/<area>/`, run against the TypeScript coordinator alone and against the mixed setup, as `tests/trial/` does (CI job `front-door`);
 - ends with those tests green against Go and the full gate green in CI;
-- deletes the TypeScript code it replaced and the old `tests/coordinator/*.test.ts` files whose subject moved, listed in its pull request (an old test cannot run against a Go route).
+- deletes the TypeScript code it replaced and the old `tests/coordinator/*.test.ts` files whose subject moved, listed in its pull request (an old test cannot run against a Go route), once the `FLEET_FRONT_DOOR=typescript` fallback no longer needs that code.
 
 Rollback for every slice: the previous release symlink while the schema is unchanged. Within a release a route moves back by leaving the Go route table, which hands it to the proxy again.
 
 | Slice | Routes and behaviour | Deleted at the end |
 | --- | --- | --- |
-| 1. Front door | Credentials, sessions, messages without profiles, host poll, receipts and events, execution events and the stream (the [trial slice](#trial-slice-l1), SL1-SL11); proxy for the rest; release packaging and the deploy start the Go binary | `tests/trial/arms/typescript.json`; TypeScript stream and session read code; old tests of those routes |
-| 2. Dispatch and execution | Full dispatch ranking, subscriptions, budgets, wait reasons, stall questions; profiles, accounts and projects on message submit; receipt envelopes and the artifact gate; transport-conflict records | `dispatch.ts`, related store code, their old tests |
+| 1. Front door (built) | The browser credential, origin and project-grant checks on its own routes; `POST /api/sessions`, `GET /api/sessions/:id` (with the session view and delegations), `GET /api/executions/:id/events`, `GET /api/stream` ([front door](#front-door-fd), FD1-FD6, and SL1, SL3, SL8, SL9); proxy for the rest; release packaging and the start script | nothing yet: the fallback runs the TypeScript stream and session code, and `measure.ts` reads `tests/trial/arms/typescript.json` |
+| 2. Dispatch and execution | Message submit (`agent.submit`: profiles, accounts, projects, the queue), host poll (store observations, delegation reconcile, problem detection, promotion, full dispatch ranking, subscriptions, budgets, wait reasons, stall questions, the ready filter), receipts (envelopes, the artifact gate, native capture, follow-ups), host events (transport-conflict records, typed execution writes), `hosts_register` | `dispatch.ts`, related store code, their old tests |
 | 3. Operations | `/api/ops/*`: projects, tasks, people access, connections, catalogue, architect routes | the matching TypeScript modules and old tests |
 | 4. Pipelines and results | Pipelines, delivery, artifacts and S3, lab, threads, agent tools | the matching modules, `s3.ts`, old tests |
 | 5. Remove TypeScript | Go serves every route; the proxy is removed | `packages/coordinator`, PGlite, the esbuild server bundle, `release-smoke.ts` in its Node form, the remaining old tests and helpers (`pg-test.ts`, `project-fixture.ts`); the `fleet.md` verification command |
 
-Not built: slices 1-5. Not built: outside tests in CI; `tests/trial/` runs only by hand today.
+Not built: slices 2-5. Not built: removal of the TypeScript code slice 1 replaced; it goes with the fallback.
+
+### Front door (FD)
+
+Requirements FD1-FD6 pin today's TypeScript behaviour where the trial tests do not reach. Each has one outside test in `tests/trial/front-door.test.ts` whose name starts with its identifier.
+
+| ID | Requirement | Risk the test guards |
+|---|---|---|
+| FD1 | Every route Go does not own reaches TypeScript unchanged: public routes without credentials, Fastify's 404 and 414 answers. | The proxy adds a check, drops a redirect or rewrites a body |
+| FD2 | A browser request whose `Origin` differs from the server origin (or `FLEET_BROWSER_ORIGIN`) is 403. | Cross-origin check dropped |
+| FD3 | A person other than the owner who names a project (body or query `projectId`) without a grant is 404 `Unknown project`. | Project content reached outside row-level security |
+| FD4 | `GET /api/sessions/:id` returns `queued`, `questions`, `handoffs`, `transitions`, `forks`, `delegations`, `messages`, `executions`; errors have Fastify's `{statusCode, error, message}`. | The Go read drops fields the operator app reads |
+| FD5 | The stream cursor is read as `Number()` reads it (`' 5 '`, `5e0`, `0x5`); an invalid one is 400 `{error: 'Invalid cursor'}`. | A resume URL that works today is refused |
+| FD6 | Request bodies are accepted or refused as Fastify does (415 for another media type, 400 for empty or invalid JSON). | A body accepted or refused differently |
 
 ## Executor and gateway
 
@@ -201,9 +218,9 @@ Requirements SL1-SL11 are the slice's own. Each has one outside test in `tests/t
 
 **Tables and kinds.** `document` (kinds `session`, `message`, `command`, `host`, `host-observation`, `event`, `event-delta`), `execution`, `change` (written by the `fleet_change` triggers, which also send `NOTIFY fleet_change`), `person` and `person_grant` (mirror of the people file), `schema_migration`. The schema is `packages/coordinator/db/schema.sql`, unchanged; RLS policies and triggers come from it.
 
-**Port layout.** Go: module `go/`, binary package `go/coordinator`, built to `go/bin/fleet-coordinator` (ignored by git), host protocol types from `go/gen`. The binary serves the slice on `127.0.0.1:$PORT` with the environment of `packages/coordinator/server.ts`: `FLEET_DATABASE_URL` (role `fleet_app`), `FLEET_MIGRATION_DATABASE_URL` (role `fleet`, which applies `schema.sql` at start in the same `-- migration N` steps and records them in `schema_migration`; migration 6's JavaScript document move is a no-op on an empty database), `FLEET_PEOPLE_FILE`, `FLEET_BROWSER_SECRET`, `FLEET_HOST_ID`. Each arm has `tests/trial/arms/<arm>.json` (`typescript.json`, `go.json`).
+**Port layout.** Go: module `go/`, binary package `go/coordinator`, built to `go/bin/fleet-coordinator` (ignored by git), host protocol types from `go/gen`. The binary serves the slice on `127.0.0.1:$PORT` with the environment of `packages/coordinator/server.ts`: `FLEET_DATABASE_URL` (role `fleet_app`), `FLEET_MIGRATION_DATABASE_URL` (role `fleet`, which applies `schema.sql` at start in the same `-- migration N` steps and records them in `schema_migration`; migration 6's JavaScript document move is a no-op on an empty database), `FLEET_PEOPLE_FILE`, `FLEET_BROWSER_SECRET`, `FLEET_HOST_ID`. Each arm has `tests/trial/arms/<arm>.json` (`typescript.json`, `go.json`). This describes the trial; since slice 1 the binary is the front door ([migration order](#coordinator-migration-order)): it applies no schema, writes no person rows and needs `FLEET_BACKEND_URL`, and `go.json` starts it through `deploy/start-coordinator.sh`.
 
-**Runner.** `node tests/trial/run.ts` is the one command. It starts, once per machine, a local PostgreSQL in `~/.cache/fleet-trial/pg` (trust authentication, Unix socket only, port 54329, left running for other worktrees), creates a fresh database for this worktree with `deploy/infrastructure/fleet-postgres.sql`, starts the coordinator under test on a free port (`FLEET_TRIAL_SERVER`, default `node packages/coordinator/server.ts`), runs the tests with the base URL and secret in the environment, stops the server and drops the database. Tests are TypeScript on Node's test runner, standard library only, and reach the server only over HTTP and SSE.
+**Runner.** `node tests/trial/run.ts` is the one command; `FLEET_TRIAL_ARM=mixed` runs the Go front door with TypeScript behind it through `deploy/start-coordinator.sh`, and `FLEET_TRIAL_PG` points it at a disposable server instead of the local one (the CI job `front-door` runs both arms). It starts, once per machine, a local PostgreSQL in `~/.cache/fleet-trial/pg` (trust authentication, Unix socket only, port 54329, left running for other worktrees), creates a fresh database for this worktree with `deploy/infrastructure/fleet-postgres.sql`, starts the coordinator under test on a free port (`FLEET_TRIAL_SERVER`, default `node packages/coordinator/server.ts`), runs the tests with the base URL and secret in the environment, stops the server and drops the database. Tests are TypeScript on Node's test runner, standard library only, and reach the server only over HTTP and SSE.
 
 **Shared-server rule.** Change visibility uses `pg_snapshot_xmin(pg_current_snapshot())`, which spans every database on the server, so a transaction open in another database holds committed changes back and no second `NOTIFY` arrives when it ends. `changes.since` reports `held`, and the stream looks again after 250 ms (`HELD_MS` in `packages/coordinator/stream.ts`). The same stall applies in production behind any long transaction that writes no change row.
 
@@ -252,6 +269,7 @@ Results are medians and min-max spreads over green runs; a difference inside the
 | --- | --- | --- |
 | The compiled trial arms were measured under load | Go and Rust speed numbers are pessimistic | Rerun `measure.ts go` on an idle machine when slice 1 starts |
 | Two coordinators share Postgres during the migration | A write ordering differs between processes | Advisory scope locks in both; SL10 and SL11 run against the mixed setup |
+| Go and TypeScript read `people.json` separately | A person edit applies in one process before the other | Both re-read on mtime, size or inode change at each request; only TypeScript writes the person rows |
 | `encoding/json` matches keys case-insensitively | A validated field differs from the stored one | Validated values are stored; case variants of identity keys are refused (`go/coordinator`) |
 | The executor's private libproc symbol disappears | Identity-bound signals on macOS stop working | Refuse to signal when the symbol is missing, as Rust does today |
 | An unsigned darwin binary is quarantined | Mac hosts cannot run the CI build | [Executor delivery](fleet-executor-delivery.md); signing is an open question |

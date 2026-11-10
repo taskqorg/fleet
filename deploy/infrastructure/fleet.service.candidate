@@ -4,7 +4,10 @@ After=network.target
 [Service]
 WorkingDirectory=/home/fleet/releases/current
 EnvironmentFile=/home/fleet/.config/fleet/coordinator.env
-ExecStart=/home/fleet/runtime/node-v22.18.0-linux-x64/bin/node --enable-source-maps /home/fleet/releases/current/dist/packages/coordinator/server.js
+# The Go front door on PORT, the TypeScript coordinator behind it on PORT+1 (deploy/start-coordinator.sh).
+# Fallback to TypeScript alone: FLEET_FRONT_DOOR=typescript in coordinator.env, then restart.
+Environment=FLEET_NODE=/home/fleet/runtime/node-v22.18.0-linux-x64/bin/node
+ExecStart=/home/fleet/releases/current/deploy/start-coordinator.sh
 Restart=on-failure
 RestartSec=3
 UMask=0077

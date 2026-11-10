@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"math"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -141,32 +144,77 @@ func head(ctx context.Context, tx pgx.Tx) (int64, error) {
 	return seq, err
 }
 
-// GET /api/stream (SL8, SL9): ready with a cursor, then every visible change after it with id: <seq>.
-func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
-	var cursor int64 = -1
-	if raw := q.r.URL.Query().Get("cursor"); raw != "" {
-		n, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || n < 0 || n > 1<<53-1 {
-			return fail(400, "Invalid cursor")
+// jsCursor: the cursor as app.ts reads it, Number(raw) then a safe non-negative integer (so " 5 ", "5.0", "5e0" and
+// "0x5" are 5). A repeated key is an array in Fastify's query, which Number makes NaN.
+var jsDecimal = regexp.MustCompile(`^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$`)
+
+func jsCursor(r *http.Request) (cursor int64, given, ok bool) {
+	vs, present := r.URL.Query()["cursor"]
+	if !present {
+		return 0, false, true
+	}
+	if len(vs) != 1 {
+		return 0, true, false
+	}
+	if vs[0] == "" {
+		return 0, false, true
+	}
+	t := strings.Trim(vs[0], " \t\n\v\f\r\u00a0\ufeff\u2028\u2029")
+	var f float64
+	switch {
+	case t == "":
+		return 0, true, true
+	case len(t) > 2 && t[0] == '0' && strings.ContainsRune("xXoObB", rune(t[1])):
+		base := map[byte]int{'x': 16, 'o': 8, 'b': 2}[t[1]|0x20]
+		if strings.ContainsAny(t[2:], "_+-") {
+			return 0, true, false
 		}
-		cursor = n
+		n, err := strconv.ParseUint(t[2:], base, 64)
+		if err != nil {
+			return 0, true, false
+		}
+		f = float64(n)
+	case jsDecimal.MatchString(t):
+		f, _ = strconv.ParseFloat(t, 64)
+	default:
+		return 0, true, false
+	}
+	if f < 0 || f != math.Trunc(f) || f > 1<<53-1 {
+		return 0, true, false
+	}
+	return int64(f), true, true
+}
+
+const pingEvery, debounce = 25 * time.Second, 50 * time.Millisecond
+
+// GET /api/stream (stream.ts): ready with a cursor, then every visible change after it with id: <seq>; a comment ping every
+// 25 s; a close frame when the server stops.
+func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
+	cursor, given, ok := jsCursor(q.r)
+	if !ok {
+		w.Header().Del("Referrer-Policy")
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(400)
+		io.WriteString(w, `{"error":"Invalid cursor"}`)
+		return nil
 	}
 	ctx, sc := q.ctx(), scopeOf(q.person)
 	wake := a.stream.join() // before the first read: a NOTIFY during it is not lost
 	defer a.stream.leave(wake)
-	if cursor < 0 {
+	if !given {
 		if err := a.store.Tx(ctx, sc, false, "", func(tx pgx.Tx) (err error) { cursor, err = head(ctx, tx); return }); err != nil {
-			return err
+			return nil // as stream.ts: the response ends without a status line of its own
 		}
 	}
 	fl, _ := w.(http.Flusher)
 	h := w.Header()
+	h.Del("Referrer-Policy") // a hijacked Fastify reply sends only the headers stream.ts writes
 	h.Set("Content-Type", "text/event-stream; charset=utf-8")
 	h.Set("Cache-Control", "no-cache, no-transform")
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(200)
 	send := func(event string, data any, id int64) {
-		b, _ := json.Marshal(data)
+		b, _ := marshal(data)
 		if id >= 0 {
 			fmt.Fprintf(w, "id: %d\n", id)
 		}
@@ -177,9 +225,11 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 	}
 	send("ready", map[string]int64{"cursor": cursor}, -1)
 	fl.Flush()
-	for {
+	ping := time.NewTicker(pingEvery)
+	defer ping.Stop()
+	for drain := given; ; drain = true {
 		held := false
-		for {
+		for drain {
 			var cs []change
 			var resync bool
 			err := a.store.Tx(ctx, sc, false, "", func(tx pgx.Tx) (err error) {
@@ -209,13 +259,21 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 		if held {
 			timer = time.After(heldWait)
 		}
+	wait:
 		select {
 		case <-ctx.Done():
 			return nil
 		case _, ok := <-wake:
 			if !ok {
+				io.WriteString(w, "event: close\ndata: {}\n\n")
+				fl.Flush()
 				return nil
 			}
+			time.Sleep(debounce)
+		case <-ping.C:
+			io.WriteString(w, ": ping\n\n")
+			fl.Flush()
+			goto wait
 		case <-timer:
 		}
 	}

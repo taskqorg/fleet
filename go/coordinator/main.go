@@ -1,24 +1,27 @@
-// Fleet coordinator, trial slice (docs/designs/fleet-stack.md#trial-slice-l1): the routes, tables and behaviours of
-// SL1-SL11, ported from packages/coordinator. Environment as packages/coordinator/server.ts.
+// Fleet coordinator front door, slice 1 (docs/designs/fleet-stack.md#coordinator-migration-order). It serves the routes in
+// owned() itself and passes every other request, unchanged, to the TypeScript coordinator at FLEET_BACKEND_URL. Both share
+// one Postgres; the TypeScript coordinator applies schema.sql and mirrors people.json into person rows.
+//
+// Environment, as packages/coordinator/server.ts: PORT, FLEET_DATABASE_URL (role fleet_app), FLEET_PEOPLE_FILE,
+// FLEET_BROWSER_SECRET, FLEET_BROWSER_ORIGIN, FLEET_BROWSER_PROXY_AUTH; plus FLEET_BACKEND_URL.
 package main
 
 //go:generate go run ../gen ../../contracts/host-protocol.schema.json main protocol_gen.go
 
 import (
+	"bytes"
 	"context"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -26,23 +29,14 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type Person struct {
-	Email  string   `json:"email"`
-	Name   string   `json:"name"`
-	Roles  []string `json:"roles"`
-	Owner  bool     `json:"owner"`
-	Grants []struct {
-		Kind string `json:"kind"`
-		ID   string `json:"id"`
-	} `json:"grants"`
-}
-
 type App struct {
 	store         *Store
-	people        map[string]*Person
+	people        *People
 	browserSecret string
-	hostID        string
+	browserOrigin string
+	proxyAuth     bool
 	stream        *Broadcast
+	backend       *httputil.ReverseProxy
 }
 
 func main() {
@@ -54,25 +48,22 @@ func main() {
 		}
 		return v
 	}
-	peopleFile, database := need("FLEET_PEOPLE_FILE"), need("FLEET_DATABASE_URL")
-	migration := os.Getenv("FLEET_MIGRATION_DATABASE_URL")
-	if migration == "" {
-		migration = database
-	}
-	if err := migrate(ctx, migration, schemaFile()); err != nil {
+	peopleFile, database, backendURL := need("FLEET_PEOPLE_FILE"), need("FLEET_DATABASE_URL"), need("FLEET_BACKEND_URL")
+	target, err := url.Parse(backendURL)
+	if err != nil {
 		log.Fatal(err)
 	}
 	store, err := openStore(ctx, database)
 	if err != nil {
 		log.Fatal(err)
 	}
-	a := &App{store: store, browserSecret: os.Getenv("FLEET_BROWSER_SECRET"), hostID: os.Getenv("FLEET_HOST_ID")}
-	if a.hostID == "" {
-		a.hostID = "owner-mac"
+	a := &App{store: store, people: &People{file: peopleFile, store: store}, browserSecret: os.Getenv("FLEET_BROWSER_SECRET"),
+		browserOrigin: os.Getenv("FLEET_BROWSER_ORIGIN"), proxyAuth: os.Getenv("FLEET_BROWSER_PROXY_AUTH") == "true"}
+	if a.proxyAuth && a.browserOrigin == "" {
+		log.Fatal("Proxy browser auth requires configured browser origin")
 	}
-	if err := a.loadPeople(ctx, peopleFile); err != nil {
-		log.Fatal(err)
-	}
+	// The Host header passes unchanged: the TypeScript origin check compares Origin with it.
+	a.backend = &httputil.ReverseProxy{Rewrite: func(pr *httputil.ProxyRequest) { pr.SetURL(target); pr.Out.Host = pr.In.Host }}
 	a.stream = listen(ctx, database)
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -83,7 +74,7 @@ func main() {
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGTERM, os.Interrupt)
 		<-ch
-		a.stream.close()
+		a.stream.close() // streams end with a close frame before the server waits for them
 		c, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		srv.Shutdown(c)
@@ -93,96 +84,11 @@ func main() {
 	}
 }
 
-// schemaFile: packages/coordinator/db/schema.sql of this checkout, found from the working directory or the binary.
-func schemaFile() string {
-	rel := "packages/coordinator/db/schema.sql"
-	if exe, err := os.Executable(); err == nil {
-		if p := filepath.Join(filepath.Dir(exe), "../..", rel); exists(p) {
-			return p
-		}
-	}
-	if _, f, _, ok := runtime.Caller(0); ok {
-		if p := filepath.Join(filepath.Dir(f), "../..", rel); exists(p) {
-			return p
-		}
-	}
-	return rel
-}
-
-func exists(p string) bool { _, err := os.Stat(p); return err == nil }
-
-// loadPeople reads people.json once at start and mirrors it into person and person_grant (packages/coordinator/people.ts).
-// ponytail: no mtime re-read and no needs-you question for a broken file; out of the slice.
-func (a *App) loadPeople(ctx context.Context, file string) error {
-	raw, err := os.ReadFile(file)
-	if err != nil {
-		return err
-	}
-	var list []*Person
-	if err := json.Unmarshal(raw, &list); err != nil {
-		return err
-	}
-	a.people = map[string]*Person{}
-	owners := 0
-	for _, p := range list {
-		p.Email = strings.ToLower(p.Email)
-		if p.Name == "" {
-			p.Name = p.Email
-		}
-		if p.Owner {
-			owners++
-		}
-		a.people[p.Email] = p
-	}
-	if owners != 1 {
-		return errors.New("exactly one person must have owner: true")
-	}
-	return a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "DELETE FROM person"); err != nil {
-			return err
-		}
-		for _, p := range list {
-			if _, err := tx.Exec(ctx, "INSERT INTO person(email,name,roles,owner) VALUES($1,$2,$3,$4)", p.Email, p.Name, p.Roles, p.Owner); err != nil {
-				return err
-			}
-			for _, g := range p.Grants {
-				if _, err := tx.Exec(ctx, "INSERT INTO person_grant(email,object_kind,object_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING", p.Email, g.Kind, g.ID); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
-}
-
-// scopeOf: the owner works in '*' (nil); anyone else in the projects of their grants, plus null-project rows for architects.
-func scopeOf(p *Person) *Scope {
-	if p == nil || p.Owner {
-		return nil
-	}
-	ids := []string{}
-	for _, g := range p.Grants {
-		if g.Kind == "project" {
-			ids = append(ids, g.ID)
-		}
-	}
-	prefix := ""
-	for _, r := range p.Roles {
-		if r == "architect" {
-			prefix = ","
-		}
-	}
-	return &Scope{ProjectIDs: prefix + strings.Join(ids, ","), Person: p.Email}
-}
-
-func secretHash(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
-
 // Request: the credential check's outcome and the route's transaction.
 type Request struct {
 	r      *http.Request
 	person *Person
-	host   map[string]any
-	body   json.RawMessage
+	body   map[string]any
 	tx     pgx.Tx
 	params []string
 }
@@ -191,83 +97,103 @@ func (q *Request) ctx() context.Context { return q.r.Context() }
 
 type handler func(*Request) (any, error)
 
-// route kinds: per-route transaction as in app.ts (read snapshot for GET, one GLOBAL write otherwise, execution scope for
-// host ingest); stream runs its own short reads.
-const (
-	txRead = iota
-	txWrite
-	txIngest
-	txNone
-)
-
 type route struct {
 	method string
 	re     *regexp.Regexp
-	kind   int
+	write  bool
 	h      handler
 	raw    func(*Request, http.ResponseWriter) error
 }
 
+// Path parameters as Fastify matches them: one non-empty segment of at most 100 characters (maxParamLength).
+const seg = "([^/]{1,100})"
+
+func (a *App) table() []route {
+	r := func(method, pattern string, write bool, h handler) route {
+		return route{method, regexp.MustCompile("^" + pattern + "$"), write, h, nil}
+	}
+	return []route{
+		r("POST", "/api/sessions", true, a.sessionCreate),
+		r("GET", "/api/sessions/"+seg, false, a.sessionGet),
+		r("GET", "/api/executions/"+seg+"/events", false, a.eventsGet),
+		{method: "GET", re: regexp.MustCompile(`^/api/stream$`), raw: a.serveStream},
+	}
+}
+
+// simpleBody: a request body Go reads exactly as Fastify would. Anything else (another media type, an empty JSON body,
+// invalid JSON, a prototype key, over 1 MiB) goes to TypeScript, which answers it with its own error.
+func simpleBody(hr *http.Request, raw []byte) (map[string]any, bool) {
+	ct := strings.ToLower(strings.TrimSpace(strings.SplitN(hr.Header.Get("Content-Type"), ";", 2)[0]))
+	if len(raw) == 0 && ct == "" {
+		return nil, true
+	}
+	if ct != "application/json" || len(raw) == 0 || len(raw) > 1<<20 || bytes.Contains(raw, []byte("__proto__")) || bytes.Contains(raw, []byte("constructor")) {
+		return nil, false
+	}
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return nil, false
+	}
+	m, _ := v.(map[string]any)
+	return m, true
+}
+
 func (a *App) routes() http.Handler {
-	r := func(method, pattern string, kind int, h handler) route {
-		return route{method, regexp.MustCompile("^" + pattern + "$"), kind, h, nil}
-	}
-	seg := "([^/]+)"
-	table := []route{
-		r("POST", "/api/ops/"+seg, txWrite, a.op),
-		r("POST", "/api/sessions", txWrite, a.sessionCreate),
-		r("GET", "/api/sessions/"+seg, txRead, a.sessionGet),
-		r("POST", "/api/sessions/"+seg+"/messages", txWrite, a.message),
-		r("POST", "/api/hosts/poll", txWrite, a.poll),
-		r("POST", "/api/hosts/receipts", txWrite, a.receipt),
-		r("POST", "/api/hosts/events", txIngest, a.events),
-		r("GET", "/api/executions/"+seg+"/events", txRead, a.eventsGet),
-		{method: "GET", re: regexp.MustCompile(`^/api/stream$`), kind: txNone, raw: a.serveStream},
-	}
+	table := a.table()
 	return http.HandlerFunc(func(w http.ResponseWriter, hr *http.Request) {
+		var rt *route
+		var params []string
+		if hr.URL.RawPath == "" { // a percent-encoded path is matched by Fastify's own decoder
+			for i := range table {
+				if m := table[i].re.FindStringSubmatch(hr.URL.Path); m != nil && table[i].method == hr.Method {
+					rt, params = &table[i], m[1:]
+					break
+				}
+			}
+		}
+		if rt == nil {
+			a.backend.ServeHTTP(w, hr)
+			return
+		}
+		raw, err := io.ReadAll(io.LimitReader(hr.Body, 1<<20+1))
+		if err != nil {
+			return
+		}
+		body, simple := simpleBody(hr, raw)
+		if hr.Method == "GET" && len(raw) > 0 {
+			simple = false
+		}
+		if !simple {
+			hr.Body = io.NopCloser(io.MultiReader(bytes.NewReader(raw), hr.Body))
+			a.backend.ServeHTTP(w, hr)
+			return
+		}
+		q := &Request{r: hr, body: body, params: params}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		q := &Request{r: hr}
-		err := func() error {
+		err = func() error {
 			if err := a.authorize(q); err != nil {
 				return err
 			}
-			for _, rt := range table {
-				m := rt.re.FindStringSubmatch(hr.URL.Path)
-				if m == nil || rt.method != hr.Method {
-					continue
-				}
-				q.params = m[1:]
-				if rt.raw != nil {
-					return rt.raw(q, w)
-				}
-				if err := a.readBody(q); err != nil {
-					return err
-				}
-				var out any
-				lock := ""
-				if rt.kind == txIngest {
-					var b struct {
-						ExecutionID *string `json:"executionId"`
-					}
-					if json.Unmarshal(q.body, &b) != nil || b.ExecutionID == nil {
-						return fail(400, "Expected executionId")
-					}
-					lock = executionScope(*b.ExecutionID)
-				}
-				err := a.store.Tx(q.ctx(), scopeOf(q.person), rt.kind != txRead, lock, func(tx pgx.Tx) error {
-					q.tx = tx
-					var err error
-					out, err = rt.h(q)
-					return err
-				})
-				if err != nil {
-					return err
-				}
-				w.Header().Set("Content-Type", "application/json; charset=utf-8")
-				return json.NewEncoder(w).Encode(out)
+			if rt.raw != nil {
+				return rt.raw(q, w)
 			}
-			return fail(404, "Route "+hr.Method+":"+hr.URL.Path+" not found")
+			var out any
+			if err := a.store.Tx(q.ctx(), scopeOf(q.person), rt.write, "", func(tx pgx.Tx) error {
+				q.tx = tx
+				var err error
+				out, err = rt.h(q)
+				return err
+			}); err != nil {
+				return err
+			}
+			b, err := marshal(out)
+			if err != nil {
+				return err
+			}
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			_, err = w.Write(b)
+			return err
 		}()
 		if err != nil {
 			writeError(w, err)
@@ -275,12 +201,13 @@ func (a *App) routes() http.Handler {
 	})
 }
 
+// writeError answers as Fastify's default error handler: {statusCode, error, message}; 42501 (row-level security) is 403.
 func writeError(w http.ResponseWriter, err error) {
 	var he *HTTPError
 	code, msg := 500, err.Error()
 	if errors.As(err, &he) {
 		code = he.Code
-	} else if pgCode(err) == "42501" { // a write outside the person's scope (row-level security): 403, not 500
+	} else if pgCode(err) == "42501" {
 		code, msg = 403, "Not in your scope"
 	} else {
 		log.Printf("error: %v", err)
@@ -290,94 +217,59 @@ func writeError(w http.ResponseWriter, err error) {
 	json.NewEncoder(w).Encode(map[string]any{"statusCode": code, "error": http.StatusText(code), "message": msg})
 }
 
-// readBody keeps the JSON body and applies the host preHandler: a body hostId of another host is 403, a missing one is the
-// host the secret names.
-func (a *App) readBody(q *Request) error {
-	if q.r.Method == "GET" || q.r.Body == nil {
-		return nil
-	}
-	dec := json.NewDecoder(http.MaxBytesReader(nil, q.r.Body, 1<<20))
-	var raw json.RawMessage
-	if err := dec.Decode(&raw); err != nil {
-		if err.Error() == "EOF" {
-			return nil
-		}
-		return fail(400, "Invalid JSON body")
-	}
-	q.body = raw
-	if q.host == nil {
-		return nil
-	}
-	var obj map[string]json.RawMessage
-	if json.Unmarshal(raw, &obj) != nil || obj == nil {
-		return nil
-	}
-	id := q.host["hostId"].(string)
-	if h, ok := obj["hostId"]; ok {
-		var s string
-		if json.Unmarshal(h, &s) != nil || s != id {
-			return fail(403, "Host rejected")
-		}
-	}
-	obj["hostId"], _ = json.Marshal(id)
-	q.body, _ = json.Marshal(obj)
-	return nil
-}
-
-// authorize is the onRequest credential check (SL1, SL2): a host request is the host its own secret names and carries no
-// person; a browser request carries exactly `Bearer <browser secret>` and a known person.
+// authorize is the browser part of app.ts onRequest and the project-grant preHandler (Go owns no host route): exactly
+// `Bearer <browser secret>`, a known person, the origin rules, and a named project the person may see.
 func (a *App) authorize(q *Request) error {
 	h := q.r.Header
 	supplied := strings.TrimPrefix(h.Get("Authorization"), "Bearer ")
-	_, named := h["X-Fleet-Person"]
-	if strings.HasPrefix(q.r.URL.Path, "/api/hosts/") {
-		host, err := a.hostFromSecret(q.ctx(), supplied)
-		if err != nil {
-			return err
-		}
-		if host == nil {
-			return fail(401, "Unauthorized")
-		}
-		if named {
-			return fail(403, "Host requests carry no person")
-		}
-		q.host = host
-		return nil
-	}
-	if a.browserSecret == "" || subtle.ConstantTimeCompare([]byte(supplied), []byte(a.browserSecret)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(supplied), []byte(a.browserSecret)) != 1 {
 		return fail(401, "Unauthorized")
 	}
 	email := h.Get("X-Fleet-Person")
 	if email == "" {
 		return fail(401, "Person required")
 	}
-	p := a.people[strings.ToLower(email)]
+	p := a.people.personFor(q.ctx(), email)
 	if p == nil {
 		return fail(403, "Unknown person")
 	}
+	origin, hasOrigin := h["Origin"]
+	m := q.r.Method
+	if a.proxyAuth && m != "GET" && m != "HEAD" && m != "OPTIONS" && (!hasOrigin || origin[0] != a.browserOrigin) {
+		return fail(403, "Origin required")
+	}
+	if hasOrigin && origin[0] != "" {
+		want := a.browserOrigin
+		if want == "" {
+			want = "http://" + q.r.Host
+		}
+		if origin[0] != want {
+			return fail(403, "Origin rejected")
+		}
+	}
 	q.person = p
+	if !p.Owner {
+		// args?.projectId ?? req.query?.projectId: a body value of any type other than null wins over the query.
+		var project string
+		var ok bool
+		if v, present := q.body["projectId"]; present && v != nil {
+			project, ok = v.(string)
+		} else {
+			project, ok = firstQuery(q.r, "projectId")
+		}
+		if ok && !p.mayAccessProject(project) {
+			return fail(404, "Unknown project")
+		}
+	}
 	return nil
 }
 
-// hostFromSecret: the host document whose secretHash matches, if its holder is still a person.
-func (a *App) hostFromSecret(ctx context.Context, secret string) (map[string]any, error) {
-	if secret == "" {
-		return nil, nil
+func firstQuery(r *http.Request, k string) (string, bool) {
+	v, ok := r.URL.Query()[k]
+	if !ok || len(v) != 1 { // Fastify gives an array for a repeated key: not a string, so no check
+		return "", false
 	}
-	var data []byte
-	err := a.store.pool.QueryRow(ctx, "SELECT data FROM document WHERE kind='host' AND data->>'secretHash'=$1", secretHash(secret)).Scan(&data)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var host map[string]any
-	json.Unmarshal(data, &host)
-	if holder, _ := host["holder"].(string); a.people[holder] == nil {
-		return nil, nil
-	}
-	return host, nil
+	return v[0], true
 }
 
 func pgCode(err error) string {
@@ -387,5 +279,3 @@ func pgCode(err error) string {
 	}
 	return ""
 }
-
-var _ = fmt.Sprint

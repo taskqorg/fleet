@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"math/rand/v2"
-	"os"
-	"regexp"
-	"strconv"
 	"sync"
 	"time"
 
@@ -25,17 +22,15 @@ type Store struct {
 // Scope: nil is the coordinator's own '*' scope (the owner, hosts).
 type Scope struct{ ProjectIDs, Person string }
 
-// Scope keys. Lock order: GLOBAL before any execution scope; an execution-scope writer never takes GLOBAL.
+// The GLOBAL scope key of app.ts writers; the advisory lock on it orders Go and TypeScript writers alike.
 const GLOBAL = "fleet:write"
-
-func executionScope(id string) string { return "execution:" + id }
 
 type HTTPError struct {
 	Code int
 	Msg  string
 }
 
-func (e *HTTPError) Error() string { return e.Msg }
+func (e *HTTPError) Error() string    { return e.Msg }
 func fail(code int, msg string) error { return &HTTPError{code, msg} }
 
 var errNotFound = fail(404, "Not found")
@@ -103,59 +98,4 @@ func (s *Store) once(ctx context.Context, sc *Scope, write bool, lock string, fn
 		}
 		return fn(tx)
 	})
-}
-
-var migrationSplit = regexp.MustCompile(`(?m)^-- migration (\d+)`)
-
-// migrate applies schema.sql as the owner role: each "-- migration N" section once, in order, in one transaction, recorded
-// in schema_migration. Migration 6's JavaScript document move is a no-op on an empty database and is not ported.
-func migrate(ctx context.Context, url, file string) error {
-	conn, err := pgx.Connect(ctx, url)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(ctx)
-	if _, err := conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS schema_migration(version int PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT now())"); err != nil {
-		return err
-	}
-	done := map[int]bool{}
-	rows, _ := conn.Query(ctx, "SELECT version FROM schema_migration")
-	vs, err := pgx.CollectRows(rows, pgx.RowTo[int32])
-	if err != nil {
-		return err
-	}
-	for _, v := range vs {
-		done[int(v)] = true
-	}
-	text, err := os.ReadFile(file)
-	if err != nil {
-		return err
-	}
-	idx := migrationSplit.FindAllSubmatchIndex(text, -1)
-	for i, m := range idx {
-		version, _ := strconv.Atoi(string(text[m[2]:m[3]]))
-		if done[version] {
-			continue
-		}
-		end := len(text)
-		if i+1 < len(idx) {
-			end = idx[i+1][0]
-		}
-		body := string(text[m[0]:end])
-		err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
-			if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext($1))", GLOBAL); err != nil {
-				return err
-			}
-			// Simple protocol: the whole section runs as one multi-statement query inside the transaction.
-			if _, err := tx.Exec(ctx, body, pgx.QueryExecModeSimpleProtocol); err != nil {
-				return err
-			}
-			_, err := tx.Exec(ctx, "INSERT INTO schema_migration(version) VALUES($1)", version)
-			return err
-		})
-		if err != nil {
-			return errors.New("migration " + strconv.Itoa(version) + ": " + err.Error())
-		}
-	}
-	return nil
 }

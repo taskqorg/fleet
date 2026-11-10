@@ -153,6 +153,12 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      # The Go front door goes into the release tree (dist/go) that the pack step below archives.
+      - run: scripts/build-go-release.sh
       # The release layout without node_modules: the bundled coordinator must start and serve (docs/designs/fleet-stack.md D4).
       - run: node tests/coordinator/release-smoke.ts
         env:
@@ -162,7 +168,7 @@ jobs:
       - name: Pack the release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          tar -czf fleet-release.tgz package.json dist
+          tar -czf fleet-release.tgz package.json dist deploy/start-coordinator.sh
           sha256sum fleet-release.tgz | tee fleet-release.tgz.sha256
           echo "fleet-release-${GITHUB_SHA}: $(cut -d' ' -f1 fleet-release.tgz.sha256)" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload the release
@@ -180,6 +186,46 @@ jobs:
       - run: node --test --test-concurrency=1 tests/coordinator/*.test.ts
         env:
           FLEET_TEST_PG: postgresql://postgres:postgres@localhost:5432
+  # Outside tests (tests/trial) over HTTP and SSE against real PostgreSQL 18 with the PDS18 roles: the TypeScript coordinator
+  # alone, then the Go front door with TypeScript behind it, started by deploy/start-coordinator.sh (docs/designs/fleet-stack.md).
+  front-door:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      FLEET_TRIAL_PG: postgresql://postgres:postgres@localhost:5432
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - run: pnpm install --frozen-lockfile
+      - name: Build the front door
+        working-directory: go
+        run: go generate ./... && CGO_ENABLED=0 go build -mod=readonly -o bin/fleet-coordinator ./coordinator
+      - run: node tests/trial/run.ts
+        env:
+          FLEET_TRIAL_ARM: typescript
+      - run: node tests/trial/run.ts
+        env:
+          FLEET_TRIAL_ARM: mixed
   executor-release:
     strategy:
       fail-fast: false
