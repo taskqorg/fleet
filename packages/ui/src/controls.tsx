@@ -300,15 +300,15 @@ const PAGE_BYTES = 65536;
  */
 export function ArtifactView({ a, src }: { a: ArtifactMeta; src: string }) {
   const kind = viewOf(a.mediaType), [text, setText] = useState(''), [next, setNext] = useState(0), [busy, setBusy] = useState(false), [err, setErr] = useState<string | null>(null);
-  const [preview, setPreview] = useState(false);
+  const [preview, setPreview] = useState(false), decoder = useRef(new TextDecoder());
   const more = async () => {
     if (busy || next >= a.size) return; setBusy(true);
     try { const r = await fetch(src, { headers: { range: `bytes=${next}-${Math.min(a.size, next + PAGE_BYTES) - 1}` }, credentials: 'same-origin' });
       if (!r.ok) throw new Error(`${r.status}`); const b = new Uint8Array(await r.arrayBuffer());
-      setText(t => t + new TextDecoder().decode(b, { stream: next + b.length < a.size })); setNext(n => n + b.length); setErr(null); }
+      setText(t => t + decoder.current.decode(b, { stream: next + b.length < a.size })); /* one decoder per artifact: a character split across pages stays whole */ setNext(n => n + b.length); setErr(null); }
     catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
-  useEffect(() => { setText(''); setNext(0); setPreview(false); }, [a.id]);
+  useEffect(() => { setText(''); setNext(0); setPreview(false); decoder.current = new TextDecoder(); }, [a.id]);
   useEffect(() => { if (kind === 'text' && next === 0 && a.size > 0) more(); }, [a.id, next]);
   const page = kind === 'text' && /^(text\/html|image\/svg\+xml)/.test(a.mediaType);
   return <div class="av" data-ui="artifact-view">
@@ -441,9 +441,9 @@ export function QuestionRow({ text, options, state, answer, answeredBy, askedAt,
 }
 /** Results of an execution end: artifact links (Stage 4 adds names, the delivery stage and the viewer). */
 /** Results of an execution end: artifact names linking to their Results page entry, and the delivery stage chip. */
-export function ResultRow({ artifacts, stage }: { artifacts: ArtifactMeta[]; stage?: Stage }) {
+export function ResultRow({ artifacts, stage, onOpen }: { artifacts: ArtifactMeta[]; stage?: Stage; onOpen?: (id: string) => void }) {
   return <div class="th-row th-result" data-ui="thread-row"><Icon name="file-text" /><span class="th-line">{artifacts.map(a =>
-    <a key={a.id} href={`/results/${encodeURIComponent(a.id)}`} data-tip={`${a.mediaType} · ${bytes(a.size).text}`}>{a.name}</a>)}</span>{stage && stage in stages && <StageChip stage={stage} />}</div>;
+    <a key={a.id} href={`/results/${encodeURIComponent(a.id)}`} data-tip={`${a.mediaType} · ${bytes(a.size).text}`} onClick={e => { if (onOpen && !e.metaKey && !e.ctrlKey) { e.preventDefault(); onOpen(a.id); } }}>{a.name}</a>)}</span>{stage && stage in stages && <StageChip stage={stage} />}</div>;
 }
 /** An execution start: state, agent mark, duration chip, and Stop while it runs (CUJ 5). */
 export function BoundaryRow({ session, executionId, state, mark, startedAt, endedAt, now, onStop, stopReason }: { session?: string; executionId: string; state: StateOf<'execution'>; mark: Mark; startedAt?: number | null; endedAt?: number | null; now: number; onStop?: () => void; stopReason?: string }) {
@@ -462,10 +462,10 @@ export type ThreadBlock = { kind: string; key: string; executionId?: string; [k:
  * A thread: one row per block in a measured VirtualList that follows the bottom, loads older rows upward (onStart) and
  * newer ones downward (onEnd), and jumps through `handle`. Open tool and reasoning rows are kept by key across the window.
  */
-export function Thread({ blocks, label, now, marked, selected, onRowClick, showSession, handle, pending, onStart, onEnd, onStop, stopReason, onAnswer, onCopyFail }: {
+export function Thread({ blocks, label, now, marked, selected, onRowClick, showSession, onOpenResult, handle, pending, onStart, onEnd, onStop, stopReason, onAnswer, onCopyFail }: {
   blocks: ThreadBlock[]; label: string; now: number; marked?: string | null;
   /** Cross-message selection: rows in it are tinted; a click on a row (Shift extends) selects it, buttons and links excepted. */
-  selected?: (key: string) => boolean; onRowClick?: (key: string, shift: boolean) => void; showSession?: boolean; handle?: { current: VirtualListHandle | null }; pending?: { count: number; onJump: () => void };
+  selected?: (key: string) => boolean; onRowClick?: (key: string, shift: boolean) => void; showSession?: boolean; onOpenResult?: (id: string) => void; handle?: { current: VirtualListHandle | null }; pending?: { count: number; onJump: () => void };
   onStart?: () => void; onEnd?: () => void; onStop?: (executionId: string) => void; stopReason?: string;
   onAnswer?: (questionId: string, answer: string) => void; onCopyFail?: (e: unknown) => void;
 }) {
@@ -478,7 +478,7 @@ export function Thread({ blocks, label, now, marked, selected, onRowClick, showS
       case 'tool': return <ToolRow name={b.name} input={b.input} output={b.output} state={b.state} startedAt={b.startedAt} endedAt={b.endedAt} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'question': return <QuestionRow text={b.text} options={b.options ?? []} state={b.state} answer={b.answer} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} />;
-      case 'result': return <ResultRow artifacts={b.artifacts ?? (b.artifactIds ?? []).map((id: string) => ({ id, name: id.slice(0, 8), mediaType: '', size: 0 }))} stage={b.stage} />;
+      case 'result': return <ResultRow artifacts={b.artifacts ?? (b.artifactIds ?? []).map((id: string) => ({ id, name: id.slice(0, 8), mediaType: '', size: 0 }))} stage={b.stage} onOpen={onOpenResult} />;
       case 'boundary': return <BoundaryRow session={showSession ? b.sessionId : undefined} executionId={b.executionId!} state={b.state} mark={markOf(b)} startedAt={b.startedAt} endedAt={b.endedAt} now={now} stopReason={stopReason}
         onStop={onStop && ['preparing', 'running', 'waiting'].includes(b.state) ? () => onStop(b.executionId!) : undefined} />;
       default: return null;

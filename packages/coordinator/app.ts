@@ -369,7 +369,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  Object.assign(projects,{
   // With limit: newest first, one page, nextBefore for the next page (Results page). Without: every row, as before.
   artifact_list:async(b:any)=>{const limit=b?.limit===undefined?undefined:Number.isSafeInteger(b.limit)&&b.limit>0?b.limit:fail(400,'Expected positive integer limit');
-   const rows=await artifacts.list({executionId:b?.executionId,taskId:b?.taskId,mediaType:b?.mediaType,projectId:b?.projectId,states:Array.isArray(b?.states)?b.states.filter((x:any)=>typeof x==='string'):undefined,since:typeof b?.since==='number'?b.since:undefined,q:typeof b?.q==='string'?b.q:undefined,limit:limit===undefined?undefined:limit+1,before:Number.isSafeInteger(b?.before)?b.before:undefined});
+   const rows=await artifacts.list({executionId:b?.executionId,taskId:b?.taskId,mediaType:b?.mediaType,projectId:b?.projectId,states:Array.isArray(b?.states)?b.states.filter((x:any)=>typeof x==='string'):undefined,since:typeof b?.since==='number'?b.since:undefined,q:typeof b?.q==='string'?b.q:undefined,projectIds:Array.isArray(b?.projectIds)?b.projectIds.filter((x:any)=>x===null||typeof x==='string'):undefined,limit,before:Number.isSafeInteger(b?.before)?b.before:undefined});
    if(limit===undefined)return {artifacts:rows};const more=rows.length>limit,page=rows.slice(0,limit);return {artifacts:page,nextBefore:more?page.at(-1)!.seq:null}},
   artifact_get:(b:any)=>artifacts.get(text(b?.artifactId,200)),
   artifact_purge:(b:any)=>artifacts.purge({contentHash:b?.contentHash,projectId:b?.projectId,scope:b?.scope,reason:b?.reason}),

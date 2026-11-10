@@ -145,16 +145,18 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
   return {...view(a),copies:copies.map((c:any)=>({storeId:c.store_id,state:c.state})),availability:a.state!=='stored'?a.state:s?'available':'unavailable',...(s?{url:presign(s,hostId??'','GET',keyOf(a),{'response-content-type':a.media_type})}:{})}}
  // Results page filters (docs/designs/fleet-conversations.md Stage 4): mediaType ending in '/' matches a family (image/),
  // states, since (ms), and newest-first pages by seq (limit, before) when limit is given; without limit, every row in seq order.
- async function list(f:{executionId?:string,taskId?:string,mediaType?:string,projectId?:string,noExamples?:boolean,states?:string[],since?:number,q?:string,limit?:number,before?:number}={}){const c:string[]=[],p:any[]=[];
+ async function list(f:{executionId?:string,taskId?:string,mediaType?:string,projectId?:string,projectIds?:(string|null)[],noExamples?:boolean,states?:string[],since?:number,q?:string,limit?:number,before?:number}={}){const c:string[]=[],p:any[]=[];
   for(const [k,col] of [['executionId','execution_id'],['taskId','task_id'],['projectId','project_id']] as const)if(typeof f[k]==='string'){p.push(f[k]);c.push(`${col}=$${p.length}`)}
   if(typeof f.mediaType==='string'){p.push(f.mediaType.endsWith('/')?f.mediaType.replace(/[\\%_]/g,'\\$&')+'%':f.mediaType);c.push(f.mediaType.endsWith('/')?`media_type LIKE $${p.length}`:`media_type=$${p.length}`)}
+  if(Array.isArray(f.projectIds)&&f.projectIds.length){const named=f.projectIds.filter((x):x is string=>typeof x==='string');p.push(named);c.push(`(project_id=ANY($${p.length})${f.projectIds.includes(null)?' OR project_id IS NULL':''})`)}
   if(Array.isArray(f.states)&&f.states.length){p.push(f.states);c.push(`state=ANY($${p.length})`)}
   if(Number.isFinite(f.since)){p.push(new Date(f.since!).toISOString());c.push(`created_at>=$${p.length}`)}
   if(typeof f.q==='string'&&f.q){p.push('%'+f.q.replace(/[\\%_]/g,'\\$&')+'%');c.push(`name ILIKE $${p.length}`)}
   if(f.noExamples)c.push("role<>'example'");
   const paged=Number.isSafeInteger(f.limit)&&f.limit!>0;if(paged&&Number.isSafeInteger(f.before)){p.push(f.before);c.push(`seq<$${p.length}`)}
   const rows=await store.query(`SELECT * FROM artifact${c.length?' WHERE '+c.join(' AND '):''} ORDER BY seq${paged?` DESC LIMIT ${f.limit!+1}`:''}`,p);
-  return rows.slice(0,paged?f.limit:undefined).map((r:any)=>({...view({...r,size:Number(r.size)}),seq:Number(r.seq),createdAt:new Date(r.created_at).getTime()}))}
+  // Paged: one row past the page, so the caller can tell whether another page exists.
+  return rows.map((r:any)=>({...view({...r,size:Number(r.size)}),seq:Number(r.seq),createdAt:new Date(r.created_at).getTime()}))}
 
  // Forced purge (operator): every store, now where reachable, pending where not; the hash is refused from then on.
  async function purge(b:{contentHash:string,projectId?:string|null,scope?:string,reason:string}){const hash=sha(b.contentHash),reason=typeof b.reason==='string'&&b.reason?b.reason.slice(0,500):fail(400,'Expected reason');

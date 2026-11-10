@@ -35,6 +35,13 @@ test('upload: staging, re-hash by the store host, promotion to the content key; 
  assert.equal((await app.inject({url:'/api/results/'+small,headers:{authorization:'Bearer b',range:'bytes=50-'}})).statusCode,416);
  const bin=await upload(app,'m',{hostId:'mac',executionId:'e1',path:'tool.bin',content:'xx',mediaType:'application/octet-stream'});
  assert.match(String((await app.inject({url:'/api/results/'+bin,headers:{authorization:'Bearer b'}})).headers['content-disposition']),/^attachment; filename="tool.bin"/);
+ // Results page reads: newest first in pages, filtered by state, media family, name and project.
+ const list=async(b:any)=>(await app.inject({method:'POST',url:'/api/ops/artifact_list',headers:{authorization:'Bearer b'},payload:b})).json();
+ const p1=await list({limit:2});assert.equal(p1.artifacts.length,2);assert.ok(p1.artifacts[0].seq>p1.artifacts[1].seq);assert.equal(typeof p1.nextBefore,'number');
+ const p2=await list({limit:2,before:p1.nextBefore});assert.ok(p2.artifacts.every((x:any)=>x.seq<p1.nextBefore));
+ assert.ok((await list({limit:50,mediaType:'text/'})).artifacts.every((x:any)=>x.mediaType.startsWith('text/')));
+ assert.deepEqual((await list({limit:50,q:'tool'})).artifacts.map((x:any)=>x.name),['tool.bin']);
+ assert.equal((await list({limit:50,states:['failed']})).artifacts.length,0);assert.equal((await list({limit:50,projectIds:['nope']})).artifacts.length,0);
  assert.deepEqual((await (app as any).store.all('artifact',{sessionId:'s1'})).map((x:any)=>x.path),['model.glb','script.stderr','copy.glb','index.html','tool.bin']);
  await app.close()});
 

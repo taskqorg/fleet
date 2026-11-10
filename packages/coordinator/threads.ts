@@ -58,7 +58,8 @@ export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promis
    return [{kind,key:at(0),executionId:v.executionId,...(kind==='text'?{role:'agent',...mark(e)}:{}),markdown:text,plain:text,stream:TERMINAL.has(e?.state)?'cut-off':'open'}]}
   const own=(Array.isArray(v.blocks)?v.blocks:[]).map((b:any,i:number)=>({...b,key:at(i),executionId:v.executionId,...(b.kind==='text'?{role:b.role??'agent',...mark(e)}:{}),...(b.kind==='text'||b.kind==='reasoning'?{plain:b.markdown??''}:{})}));
   if(v.type==='execution.ended'){const list=(await deps.artifacts(v.executionId)).filter((a:any)=>a.state===undefined||a.state==='stored').map((a:any)=>({id:a.artifactId??a.id,name:a.path??a.name,mediaType:a.mediaType,size:Number(a.size)||0}));
-   // The delivery of a session shows on the result of its newest ended run, and updates there in place (OR-23).
+   // The delivery of a session shows on the result of its newest ended run, in place (OR-23). It is read with the block: delivery
+   // changes emit no change rows, so an open thread shows a new stage on its next read (ponytail: feed delivery changes when needed).
    const sid=e?.session_id,latest=sid&&deps.stage?(await query("SELECT id FROM execution WHERE session_id=$1 AND kind='agent_run' AND ended_at IS NOT NULL ORDER BY seq DESC LIMIT 1",[sid]))[0]?.id:null;
    const stage=latest===v.executionId?await deps.stage!(sid):null;
    if(list.length||stage)own.push({kind:'result',key:at(own.length),executionId:v.executionId,artifactIds:list.map((a:any)=>a.id),artifacts:list,...(stage?{stage}:{})})}
