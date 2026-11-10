@@ -1,4 +1,4 @@
-// UX checks on the built mockups (D14). Warnings only; never fails. Run after `npm run book`.
+// UX checks on the built mockups (D14). Warnings only; never fails. Run after `pnpm run book`.
 // Catches: repeated words in one region (OR-17), touch targets under 44 px with a coarse pointer,
 // status shown by colour only (WCAG 1.4.1, OR-18), truncated important text (OR-19), detail/outcome
 // outside the viewport at 600 and 1100 px (OR-19), JS size and interaction latency against targets.

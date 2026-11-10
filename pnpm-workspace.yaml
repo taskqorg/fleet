@@ -5,3 +5,6 @@ minimumReleaseAge: 1440
 onlyBuiltDependencies:
   - esbuild
   - better-sqlite3
+# Optional native packages whose install scripts are not needed.
+ignoredBuiltDependencies:
+  - fsevents
