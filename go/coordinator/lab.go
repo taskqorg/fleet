@@ -368,7 +368,7 @@ func labExampleGet(q *Request, id string) (doc, error) {
 	if len(rs) == 0 {
 		return nil, fail(404, "Unknown example")
 	}
-	b, err := artifactBytes(ctxOf(q), q.app, id, 8<<20)
+	b, err := artifactBytes(withTx(q), q.app, id, 8<<20)
 	if err != nil {
 		return nil, err
 	}
@@ -1012,7 +1012,7 @@ func trialFiles(q *Request, trial, example doc) ([]labFile, error) {
 		if rel == "" {
 			continue
 		}
-		b, err := artifactBytes(ctxOf(q), q.app, o.ArtifactID, 64<<20)
+		b, err := artifactBytes(withTx(q), q.app, o.ArtifactID, 64<<20)
 		if err != nil {
 			return nil, err
 		}

@@ -294,7 +294,7 @@ One pull request per stage. Each ends with its check.
 *   `go/coordinator/main.go`: `Request.agent`; watch ticker start.
 *   `go/coordinator/store.go`: `fleet.actor` from the context in `once()`.
 *   `go/coordinator/people.go`: `actor()` returns `q.agent` first; `people_list`, `people_set`.
-*   `go/coordinator/sessions.go`: `putDocument` sets `actor` and `onBehalfOf` on agent `setting-change` rows.
+*   `go/coordinator/records.go`: `putDocument` sets `actor` and `onBehalfOf` on agent `setting-change` rows.
 *   `go/coordinator/tasks.go`: Held create, `hold` trigger, `pause_reason`, `task_hold`, `task_release`, `task_cancel`, `held` filter and count.
 *   `go/coordinator/stream.go`: `since()` returns `actor` and `projectId`.
 *   `go/coordinator/schema.sql`: migration 20 (`task.pause_reason`), migration 21 (`change.actor`, `fleet_change()` with the actor, copied from migration 15's latest body).

@@ -20,23 +20,6 @@ import (
 // read and write a legacy kind inside the request's transaction (q.tx): 'execution' and 'delegation' live on the execution
 // table, every other kind is a document.
 
-// queryRows: rows as column maps.
-// docRows: the first column of each row, a jsonb object.
-func docRows(q *Request, sql string, args ...any) ([]doc, error) {
-	rs, err := q.tx.Query(q.ctx(), sql, args...)
-	if err != nil {
-		return nil, err
-	}
-	out, err := pgx.CollectRows(rs, func(r pgx.CollectableRow) (doc, error) {
-		var d doc
-		return d, r.Scan(&d)
-	})
-	if out == nil {
-		out = []doc{}
-	}
-	return out, err
-}
-
 func isNotFound(err error) bool { var he *HTTPError; return errors.As(err, &he) && he.Code == 404 }
 
 // nonNil: v unless nil, else alt (JavaScript ??).
@@ -170,7 +153,7 @@ func detectProblems(q *Request, hosts []string, environments map[string][]string
 }
 
 func openDelegations(q *Request) ([]doc, error) {
-	return docRows(q, "SELECT delegation FROM execution WHERE delegation IS NOT NULL AND coalesce(delegation->>'continuationExecutionId','')='' AND coalesce(delegation->>'state','')<>'suppressed' ORDER BY seq")
+	return rows(q, "SELECT delegation FROM execution WHERE delegation IS NOT NULL AND coalesce(delegation->>'continuationExecutionId','')='' AND coalesce(delegation->>'state','')<>'suppressed' ORDER BY seq")
 }
 
 // legacyTerminal: a finished legacy execution state.

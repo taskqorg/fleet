@@ -465,5 +465,3 @@ func init() {
 		return doc{"retrying": true}, nil
 	})
 }
-
-func placementPass(a *App) error { _, _, err := runPlacement(context.Background(), a); return err }

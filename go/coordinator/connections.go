@@ -92,12 +92,10 @@ func connKeys(q *Request, name string) ([]doc, error) {
 
 // Snapshot (§3). Built in its own read transaction, so it shows only committed rows.
 func connSnapshot(q *Request) (doc, error) {
-	blocked := map[string]bool{}
-	b, err := blockedConnections(q)
+	blocked, err := blockedConnections(q)
 	if err != nil {
 		return nil, err
 	}
-	blocked = b
 	conns := doc{}
 	connections, err := all(q, "api-connection", nil)
 	if err != nil {
@@ -303,7 +301,7 @@ func idList(v any, field string) ([]any, error) {
 }
 
 func init() {
-	// Agent dispatch mints the run token for the profile's connections (dispatch.go); the a_hooks default is a stub.
+	// Agent dispatch mints the run token for the profile's connections (dispatch.go).
 	gatedOp("connections_list", true, func(q *Request) (any, error) {
 		keys, err := all(q, "connection-key", nil)
 		if err != nil {

@@ -45,7 +45,7 @@ func executionEvents(q *Request) (any, error) {
 	if _, err := get(q, id, "execution"); err != nil {
 		return nil, err
 	}
-	es, err := docRows(q, "SELECT data FROM document WHERE kind='event' AND data->>'executionId'=$1 AND (data->>'type') IS DISTINCT FROM 'execution.ended' ORDER BY (data->'seq')::numeric, seq", id)
+	es, err := rows(q, "SELECT data FROM document WHERE kind='event' AND data->>'executionId'=$1 AND (data->>'type') IS DISTINCT FROM 'execution.ended' ORDER BY (data->'seq')::numeric, seq", id)
 	return doc{"events": es}, err
 }
 
@@ -56,7 +56,7 @@ func frameHash(v any) string {
 }
 
 func eventsWhere(q *Request, f doc) ([]doc, error) {
-	return docRows(q, "SELECT data FROM document WHERE kind IN ('event','event-delta') AND data @> $1 ORDER BY seq", js(f))
+	return rows(q, "SELECT data FROM document WHERE kind IN ('event','event-delta') AND data @> $1 ORDER BY seq", js(f))
 }
 
 func eventKind(v doc) string {
@@ -151,7 +151,7 @@ func ingestIn(q *Request, b doc) (any, error) {
 				previous = p
 			}
 		}
-		at, err := docRows(q, "SELECT data FROM document WHERE kind IN ('event','event-delta') AND data->>'executionId'=$1 AND data->'seq'=to_jsonb($2::bigint)", xid, seq)
+		at, err := rows(q, "SELECT data FROM document WHERE kind IN ('event','event-delta') AND data->>'executionId'=$1 AND data->'seq'=to_jsonb($2::bigint)", xid, seq)
 		if err != nil {
 			return nil, err
 		}
@@ -288,7 +288,7 @@ func transportInspect(q *Request, b doc) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	results, err := executionArtifactRecords(q, astr(e["id"]))
+	results, err := executionArtifacts(q, astr(e["id"]))
 	if err != nil {
 		return nil, err
 	}

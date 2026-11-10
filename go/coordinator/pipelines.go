@@ -1337,7 +1337,7 @@ func runPipeline(q *Request, invocation string) (any, error) {
 
 var skillID = regexp.MustCompile(`^[a-z0-9-]{1,80}$`)
 
-// Artifact helpers (artifacts.go). The caller's transaction rides in the context, so D writes the rows in it.
+// projectIDPtr: a project id field as a pointer, nil when absent.
 func projectIDPtr(v any) *string {
 	if s, ok := v.(string); ok {
 		return &s
@@ -1355,14 +1355,6 @@ func init() {
 	}
 	gatedLongRoute("POST /api/pipeline-runs", func(q *Request) (any, error) { return runPipeline(q, "pipeline") })
 
-}
-
-// ctxOf: the request context carrying its transaction, so the artifact helpers (txCtx) run in it instead of taking the lock again.
-func ctxOf(q *Request) context.Context {
-	if q.tx == nil {
-		return q.ctx()
-	}
-	return context.WithValue(q.ctx(), txKey{}, q.tx)
 }
 
 // profileSkills: the SKILL.md texts of a profile's skills (config/skills/<id>/SKILL.md), as an execution payload carries them.
@@ -1383,12 +1375,12 @@ func profileSkills(profile doc) ([]any, error) {
 }
 
 func artifactSave(q *Request, projectID any, scope, executionID, name string, b []byte, media string) (string, error) {
-	id, _, err := saveObject(ctxOf(q), q.app, projectIDPtr(projectID), scope, executionID, name, b, media)
+	id, _, err := saveObject(withTx(q), q.app, projectIDPtr(projectID), scope, executionID, name, b, media)
 	return id, err
 }
 
 func artifactWriteObject(q *Request, projectID any, scope string, b []byte, media string) (string, string, error) {
-	s, hash, err := writeObject(ctxOf(q), q.app, projectIDPtr(projectID), scope, b, media)
+	s, hash, err := writeObject(withTx(q), q.app, projectIDPtr(projectID), scope, b, media)
 	if err != nil {
 		return "", "", err
 	}

@@ -196,7 +196,7 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	}
 	latest, order := map[string]doc{}, []string{}
 	if source != "" {
-		as, err := executionArtifactRecords(q, source)
+		as, err := executionArtifacts(q, source)
 		if err != nil {
 			return false, err
 		}
@@ -247,7 +247,7 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	for _, t := range replies {
 		messages = append(messages, doc{"role": "assistant", "text": t})
 	}
-	parentArtifacts, err := executionArtifactRecords(q, astr(parent["id"]))
+	parentArtifacts, err := executionArtifacts(q, astr(parent["id"]))
 	if err != nil {
 		return false, err
 	}
@@ -282,11 +282,6 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	return true, put(q, "delegation", d)
 }
 
-// artifactsOf: the artifact records of an execution without their bodies (the artifacts area serves the kind).
-func executionArtifactRecords(q *Request, executionID string) ([]doc, error) {
-	return executionArtifacts(q, executionID)
-}
-
 // delegationReconcile: on every poll, retain finished child results and deliver them as the parent's continuation.
 func (a *App) delegationReconcile(q *Request) error {
 	ds, err := openDelegations(q)
@@ -310,7 +305,7 @@ func (a *App) delegationReconcile(q *Request) error {
 			if err != nil {
 				return err
 			}
-			arts, err := executionArtifactRecords(q, astr(child["id"]))
+			arts, err := executionArtifacts(q, astr(child["id"]))
 			if err != nil {
 				return err
 			}

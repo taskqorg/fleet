@@ -235,7 +235,7 @@ func askQuestion(q *Request, v doc) (string, error) {
 }
 
 // answerQuestion: one answer wins; an acceptance completes (or keeps in progress) its task, other answers unblock it.
-// ponytail: no Lab/budget answer hook here; areas that ask rating or budget questions check their answers themselves.
+// runAnswerChecks and runAnswerAfter apply the Lab and budget rules of the question.
 func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, error) {
 	qu, err := first(q, "SELECT * FROM question WHERE id=$1", id)
 	if err != nil {

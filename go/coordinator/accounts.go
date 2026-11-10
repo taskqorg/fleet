@@ -211,7 +211,7 @@ func accountCreate(q *Request) (any, error) {
 	if !ok {
 		return nil, fail(400, "Expected account name and harness")
 	}
-	same, err := docRows(q, "SELECT data FROM document WHERE kind='managed-account' AND data->>'name'=$1", b["name"])
+	same, err := rows(q, "SELECT data FROM document WHERE kind='managed-account' AND data->>'name'=$1", b["name"])
 	if err != nil {
 		return nil, err
 	}

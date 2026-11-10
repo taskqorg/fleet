@@ -129,7 +129,7 @@ func (a *App) poll(q *Request) (any, error) {
 	if err := a.dispatchRun(q, host); err != nil {
 		return nil, err
 	}
-	pending, err := docRows(q, "SELECT data FROM document WHERE kind='command' AND data->>'hostId'=$1 AND data->>'status'='pending' ORDER BY seq", host)
+	pending, err := rows(q, "SELECT data FROM document WHERE kind='command' AND data->>'hostId'=$1 AND data->>'status'='pending' ORDER BY seq", host)
 	if err != nil {
 		return nil, err
 	}

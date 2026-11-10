@@ -17,7 +17,7 @@ var receiptRank = map[string]int{"pending": 0, "accepted": 1, "started": 2, "unk
 var projectReceiptOps = []string{"project_context", "catalogue", "pipeline_run", "direct_search", "pipeline_history", "pipeline_get", "question_ask", "question_history", "account_list"}
 
 // projectReceipt runs one project operation for a native agent (projects area: the operation, its native-agent actor
-// and the early return of a started pipeline run). Default: the registered operation in this transaction.
+// and the early return of a started pipeline run). Otherwise the registered operation runs in this transaction.
 func projectReceipt(q *Request, operation string, args doc, agent doc) (any, error) {
 	if operation == "account_list" {
 		return agentAccountList(q, args, agent)

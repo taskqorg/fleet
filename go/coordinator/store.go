@@ -205,11 +205,10 @@ func unscoped[T any](q *Request, fn func() (T, error)) (T, error) {
 
 // Helpers of connections, pipelines and Lab: background requests, transactions, typed rows.
 
-// runningApp: the running coordinator, set by the area's onStart hook (background work and snapshot publishing need the store).
+// runningApp: the running coordinator, set at start (background work and snapshot publishing need the store).
 var runningApp *App
 
 func projectConfigDir() string { return envOr("FLEET_PROJECT_CONFIG_DIRECTORY", "config") }
-func agentProfilesDir() string { return envOr("FLEET_PROFILES_DIRECTORY", "config/agents") }
 func labDir() string           { return envOr("FLEET_LAB_DIRECTORY", "config/lab") }
 
 // bodyObject: the request body as a JSON object; absent or null is an empty object.

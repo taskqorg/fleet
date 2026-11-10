@@ -81,6 +81,9 @@ func all(q *Request, kind string, filter doc) ([]doc, error) {
 // get: one record of a kind; a missing or non-string id is not found (404).
 func get(q *Request, anyID any, kind string) (doc, error) {
 	id := astr(anyID)
+	if id == "" {
+		return nil, errNotFound
+	}
 	switch kind {
 	case "execution":
 		return getExecution(q, id)
