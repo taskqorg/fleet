@@ -44,7 +44,7 @@ export async function runChecks(checks:{id:string,run:string}[],files:{path:stri
  finally{rmSync(dir,{recursive:true,force:true})}}
 
 type Q=(sql:string,p?:any[])=>Promise<any[]>;
-export function labScores(query:Q){
+export function labScores(query:Q,tx:<T>(fn:()=>Promise<T>,lock:string)=>Promise<T>){
  const view=(r:any)=>({id:r.id,experimentId:r.experiment_id,trialIds:r.trial_ids,evaluator:r.evaluator,evaluatorVersion:r.evaluator_version,form:r.form,value:r.value,sourceExecutionId:r.source_execution_id,questionId:r.question_id,rationale:r.rationale,replacesScoreId:r.replaces_score_id,createdAt:r.created_at});
  async function add(s:{experimentId:string,projectId:string,trialIds:string[],evaluator:string,evaluatorVersion:string,form:Form,value:any,sourceExecutionId?:string|null,questionId?:string|null,rationale?:string|null,replaces?:string|null}){
   checkValue(s.form,s.value,s.trialIds);const id=randomUUID();
@@ -55,10 +55,10 @@ export function labScores(query:Q){
  const current=async(experimentId:string)=>(await query('SELECT * FROM score s WHERE experiment_id=$1 AND NOT EXISTS (SELECT 1 FROM score r WHERE r.replaces_score_id=s.id) ORDER BY seq',[experimentId])).map(view);
  // A correction keeps the trials, evaluator and form of the score it replaces; only a current score can be corrected.
  async function correct(scoreId:string,b:{value:any,rationale?:string}){
-  const old=(await query('SELECT * FROM score WHERE id=$1',[scoreId]))[0]??fail(404,'Unknown score');
+  return tx(async()=>{const old=(await query('SELECT * FROM score WHERE id=$1',[scoreId]))[0]??fail(404,'Unknown score');
   if((await query('SELECT 1 FROM score WHERE replaces_score_id=$1',[scoreId])).length)fail(409,'Score already corrected');
   const id=await add({experimentId:old.experiment_id,projectId:old.project_id,trialIds:old.trial_ids,evaluator:old.evaluator,evaluatorVersion:old.evaluator_version,form:old.form,value:b.value,questionId:old.question_id,sourceExecutionId:old.source_execution_id,rationale:typeof b.rationale==='string'?b.rationale:null,replaces:scoreId});
-  return view((await query('SELECT * FROM score WHERE id=$1',[id]))[0])}
+  return view((await query('SELECT * FROM score WHERE id=$1',[id]))[0])},'experiment:'+(await query('SELECT experiment_id FROM score WHERE id=$1',[scoreId]))[0]?.experiment_id)}
  return {add,current,correct,view}}
 
 // Judge-to-owner agreement (the decision gate): of the trials both a judge and the owner rated pass_fail, the share where they

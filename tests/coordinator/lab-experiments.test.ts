@@ -73,9 +73,9 @@ test('budgets: pause asks once and resumes; stop ends with its reason; warn only
   await op(app,'questions_answer',{questionId:qs[0].id,answer:'resume'});
   const done=await until(app,e.id,x=>x.state==='done');assert.equal(done.trials.length,4);
   assert.equal((await op(app,'questions_list',{kind:'operator_decision'})).questions.length,1);
-  const st=await call(app,'POST','/api/lab/experiments',{...ab(ex),budgets:[{unit:'pipe_credits',limit:2,action:'stop'},{unit:'pipe_calls',limit:1,action:'warn'}]});
+  const st=await call(app,'POST','/api/lab/experiments',{...ab(ex),budgets:[{unit:'trials',limit:2,action:'stop'},{unit:'pipe_calls',limit:1,action:'warn'}]});
   await call(app,'POST',`/api/lab/experiments/${st.id}/launch`);
-  const stopped=await until(app,st.id,x=>x.state==='stopped');assert.equal(stopped.stopReason,'budget:pipe_credits');
+  const stopped=await until(app,st.id,x=>x.state==='stopped');assert.equal(stopped.stopReason,'budget:trials');assert.equal(stopped.trials.length,2);
   assert.ok(stopped.budgets[0].firedAt);assert.equal((await op(app,'questions_list',{kind:'operator_decision'})).questions.length,1);
   await call(app,'POST',`/api/lab/experiments/${st.id}/resume`,undefined,409);
  }finally{await app.close()}

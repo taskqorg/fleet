@@ -270,7 +270,9 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   stopExecution:executionId=>store.tx(()=>execution_stop({executionId})),catalogue:projectId=>projects.catalogue({projectId}),recommend:(projectId,methodId)=>store.tx(()=>projects.recommendation_set({projectId,methodId}))});
  store.tasks.onAnswer(lab.answers);const labOps=labOperations(lab,examples);
  // Experiments reconcile on start, and on the pipeline tick as a backstop for answers committed after their hook ran.
- app.addHook('onReady',async()=>{lab!.reconcileAll().catch(e=>app.log.error(e))});
+ app.addHook('onReady',async()=>{lab!.reconcileAll().catch(e=>app.log.error(e));
+  // A finish hook lost to a restart: completed draft runs are imported again (idempotent).
+  for(const r of await all('pipeline-run',{pipelineId:'draft-examples',state:'completed'}))lab!.importDrafts(r,b=>examples.add(b)).catch(e=>app.log.error(e))});
  const placement=placementWorker(store,{stores,artifacts,locations,rules:rulesOf,queueCommand:(h,k,p)=>store.tx(()=>queueCommand(h,k,p)),retryWindowMs:()=>config.artifactRetryWindowMs??86400000,onExpired:(id:string)=>store.tx(()=>settle(id,'artifact retry window passed'))});
  Object.assign(projects,{
   artifact_list:async(b:any)=>({artifacts:await artifacts.list({executionId:b?.executionId,taskId:b?.taskId,mediaType:b?.mediaType,projectId:b?.projectId})}),

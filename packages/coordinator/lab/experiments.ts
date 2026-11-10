@@ -26,7 +26,7 @@ type Deps={store:any,runner:any,examples:{get:(id:string)=>Promise<any>},labDire
  catalogue:(projectId:string)=>Promise<any>,recommend:(projectId:string,methodId:string)=>Promise<any>};
 
 export function labExperiments(d:Deps){
- const {store,runner}=d,q=(sql:string,p:any[]=[])=>store.query(sql,p),scores=labScores(q);
+ const {store,runner}=d,q=(sql:string,p:any[]=[])=>store.query(sql,p),scores=labScores(q,(fn,lock)=>store.tx(fn,lock));
  const row=async(id:string)=>(await q('SELECT * FROM experiment WHERE id=$1',[id]))[0]??fail(404,'Unknown experiment');
  const view=(r:any)=>({id:r.id,projectId:r.project_id,kind:r.kind,pipelineId:r.pipeline_id,examples:r.examples,variants:r.variants,repeats:r.repeats,evaluators:r.evaluators,primaryEvaluator:r.primary_evaluator,budgets:r.budgets,state:r.state,stopReason:r.stop_reason,createdAt:r.created_at});
 
@@ -104,17 +104,18 @@ export function labExperiments(d:Deps){
 
  // Automatic evaluators over completed trials. Returns true when every completed trial has a score or a failed run of every
  // automatic evaluator.
- async function evaluate(exp:any,trials:any[],runs:any[],current:any[],launched:string[]){
+ async function evaluate(exp:any,trials:any[],runs:any[],current:any[],launched:string[],checked:Map<string,any>){
   let complete=true;const evs=exp.evaluators.filter((e:any)=>e.kind!=='human');
   for(const t of trials.filter(comparable))for(const e of evs){const name=evaluatorName(e);
    if(current.some(s=>s.evaluator===name&&s.trialIds[0]===t.id))continue;
    const pin=exp.examples.find((p:any)=>p.id===t.cell.example);
-   if(e.kind==='script'){const ex=(await exampleOf(pin)).full;
-    const r=await runChecks(ex.checks,await trialFiles(t,ex));
+   if(e.kind==='script'){const ex=(await exampleOf(pin)).full,r=checked.get(t.id);if(!r){complete=false;continue}
     await scores.add({experimentId:exp.id,projectId:exp.project_id,trialIds:[t.id],evaluator:name,evaluatorVersion:sha(ex.checks).slice(0,16),form:e.form as Form,value:e.form==='metric'?(r.total?r.passed/r.total:0):r.failed.length===0,rationale:r.failed.length?'failed: '+r.failed.join(', '):`${r.passed} of ${r.total} checks pass`});continue}
    // Judge: one pipeline run per (evaluator, trial); its last step writes {value, rationale}. It sees the example's prompt and
    // the trial's files, never the variant.
    const run=runs.find(r=>r.judge?.evaluator===name&&r.judge.trialId===t.id);
+   // Judges launch only while the experiment runs: a paused or stopped experiment spends nothing new.
+   if(!run&&exp.state!=='running'){complete=false;continue}
    if(!run){const ex=(await exampleOf(pin)).full,files=await trialFiles(t,ex);
     const jid=await insertRun(exp,{requestId:'lab:'+sha([exp.id,'judge',name,t.id]),file:e.ref+'.json',example:{prompt:ex.prompt,form:e.form,inputs:files.filter(f=>f.bytes.length<1048576).map(f=>({path:'trial/'+f.path,text:f.bytes.toString('utf8')}))},extra:{judge:{evaluator:name,trialId:t.id}}});if(jid)launched.push(jid);complete=false;continue}
    if(!FINAL.has(run.state)){complete=false;continue}
@@ -125,13 +126,21 @@ export function labExperiments(d:Deps){
 
  async function reconcileOnce(id:string){
   const launched:string[]=[];
+  // Script checks and their file reads run before the transaction, so a slow check never holds the experiment lock.
+  const checked=new Map<string,any>();
+  {const exp=await row(id);if(exp.state==='draft')return;const cur=await scores.current(id);
+   if(exp.evaluators.some((e:any)=>e.kind==='script'))for(const t of trialsOf(await runsOf(id)).filter(comparable)){
+    if(cur.some(x=>x.evaluator.startsWith('script:')&&x.trialIds[0]===t.id))continue;
+    const ex=(await exampleOf(exp.examples.find((p:any)=>p.id===t.cell.example))).full;checked.set(t.id,await runChecks(ex.checks,await trialFiles(t,ex)))}}
   await store.tx(async()=>{const exp=await row(id);if(exp.state==='draft')return;
    const runs=await runsOf(id),trials=trialsOf(runs),cur=await scores.current(id);
-   const evaluated=await evaluate(exp,trials,runs,cur,launched);
+   const evaluated=await evaluate(exp,trials,runs,cur,launched,checked);
    if(exp.state!=='running')return;
    // Stop rules, first match wins: (a) owner stop is the stop action itself; (b) a budget with action stop. Then pause and warn.
    // Each budget action fires once: the budget keeps firedAt, so a resumed experiment does not pause again on the same budget.
-   const s:any=await spend(id),budgets=exp.budgets;let state='running',reason:string|null=null,changed=false;
+   const last=latest(trials),missing=exp.examples.length*exp.variants.length*exp.repeats-last.size;
+   // A budget reached with nothing left to launch changes nothing: the experiment finishes.
+   const s:any=await spend(id),budgets=missing>0?exp.budgets:[];let state='running',reason:string|null=null,changed=false;
    for(const b of budgets.filter((b:any)=>b.action==='stop'))if(!b.firedAt&&s[b.unit].value>=b.limit){b.firedAt=Date.now();changed=true;state='stopped';reason='budget:'+b.unit;break}
    if(state==='running')for(const b of budgets.filter((b:any)=>b.action!=='stop'))if(!b.firedAt&&s[b.unit].value>=b.limit){b.firedAt=Date.now();changed=true;
     if(b.action==='pause'){state='paused';
@@ -140,7 +149,7 @@ export function labExperiments(d:Deps){
    if(state!=='running')return;
    // Missing cells of iteration 0: examples × variants × repeats, attempt 0 unless a retry raised it.
    // A trials budget that has not fired caps this pass's launches, so the budget is reached exactly, not overshot.
-   const last=latest(trials);let room=Math.min(Infinity,...budgets.filter((b:any)=>b.unit==='trials'&&b.action!=='warn'&&!b.firedAt).map((b:any)=>b.limit-s.trials.value));
+   let room=Math.min(...budgets.filter((b:any)=>b.unit==='trials'&&b.action!=='warn'&&!b.firedAt).map((b:any)=>b.limit-s.trials.value));
    launch:for(const pin of exp.examples)for(const v of exp.variants)for(let r=0;r<exp.repeats;r++){if(last.has(cellKey(pin.id,v.label,r)))continue;if(room<=0)break launch;
     const runId=await launchTrial(exp,pin,v,r,0);if(runId){launched.push(runId);room--}}
    const cells=[...last.values()];
@@ -155,7 +164,9 @@ export function labExperiments(d:Deps){
 
  // Owner actions. Each ends with a reconcile.
  async function setState(id:string,from:string[],to:string,reason?:string){const r=await q(`UPDATE experiment SET state=$2,stop_reason=coalesce($3,stop_reason) WHERE id=$1 AND state=ANY($4) RETURNING id`,[id,to,reason??null,from]);
-  if(!r.length){const e=await row(id);fail(409,`Experiment is ${e.state}`)}}
+  if(!r.length){const e=await row(id);fail(409,`Experiment is ${e.state}`)}
+  // A budget question answered by the buttons instead is withdrawn, so a late answer never moves a later pause.
+  await q("UPDATE question SET state='withdrawn' WHERE state='open' AND kind='operator_decision' AND data->>'experimentId'=$1",[id])}
  async function launch(id:string){await store.tx(()=>setState(id,['draft'],'running'));await reconcile(id);const out:any=await get(id);
   // Drift warns on launch, never refuses (registry source_status of the pinned examples' use cases).
   const ucs=new Set<string>();for(const p of out.examples){const ex=await d.examples.get(p.artifact_id);ucs.add(ex.example.use_case_id)}
@@ -197,7 +208,6 @@ export function labExperiments(d:Deps){
 
  // Answer hook (tasks.answer): rating answers become scores; a pass on an example's rating approves the example; a budget
  // question resumes or stops its experiment.
- const toReconcile=new Set<string>();
  const answers={check:async(qn:any,answer:string)=>{
   if(qn.kind==='rating'){const o=qn.options??{};parseRating(o.form,answer,o.trial_ids??[])}
   else if(qn.data?.experimentId&&qn.data?.budget&&!['resume','stop'].includes(answer))fail(400,'Answer resume or stop')},
@@ -207,7 +217,7 @@ export function labExperiments(d:Deps){
   else if(qn.kind==='rating'&&o.example_artifact_id){if(parseRating('pass_fail',qn.answer,[]).value)await q("UPDATE artifact SET approved_at=now() WHERE id=$1 AND role='example' AND approved_at IS NULL",[o.example_artifact_id])}
   else if(qn.data?.experimentId&&qn.data?.budget){await q(`UPDATE experiment SET state=$2,stop_reason=CASE WHEN $2='stopped' THEN 'owner' ELSE stop_reason END WHERE id=$1 AND state='paused'`,[qn.data.experimentId,qn.answer==='resume'?'running':'stopped'])}
   else return;
-  const eid=o.experiment_id??qn.data?.experimentId;if(eid){toReconcile.add(eid);setImmediate(()=>{toReconcile.delete(eid);reconcile(eid).catch(()=>{})})}}};
+  const eid=o.experiment_id??qn.data?.experimentId;if(eid)setImmediate(()=>{reconcile(eid).catch(()=>{})})}};
 
  // Drafted examples (R3.6): when a draft-examples run completes, each examples/*.json file of its steps becomes a proposed
  // example artifact with one pass_fail rating question; the owner's pass approves it. A file that is not a valid example is
@@ -217,7 +227,7 @@ export function labExperiments(d:Deps){
    try{ex=JSON.parse((await d.read(f.artifactId)).toString('utf8'))}catch{continue}
    let stored:any;try{stored=(await add({examples:[ex],projectId:run.projectId??null,approved:false})).examples[0]}catch{continue}
    await store.tx(async()=>{if((await q("SELECT 1 FROM question WHERE kind='rating' AND options->>'example_artifact_id'=$1",[stored.artifactId])).length)return;
-    await store.tasks.ask({kind:'rating',projectId:run.projectId??null,text:`Approve drafted example ${stored.id}@${stored.version}?`,options:{form:'pass_fail',example_artifact_id:stored.artifactId,seed:stored.artifactId},askedBy:'lab',data:{exampleArtifactId:stored.artifactId}})})}}
+    await store.tasks.ask({kind:'rating',projectId:run.projectId??null,text:`Approve drafted example ${stored.id}@${stored.version}? Approving lets the coordinator run its checks: ${(ex.checks??[]).map((c:any)=>c.run).join(' ; ').slice(0,1500)}`,options:{form:'pass_fail',example_artifact_id:stored.artifactId,seed:stored.artifactId},askedBy:'lab',data:{exampleArtifactId:stored.artifactId}})})}}
 
  // Use-case registry for the screen: entries with drift status, fit and maturity.
  function registry(){const dir=join(d.labDirectory,'use-cases'),out:any[]=[];
