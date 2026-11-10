@@ -381,8 +381,9 @@ var causeHost = regexp.MustCompile(`^host:([^:]+)`)
 // dispatchRun: one dispatch pass for a poll of the polling host.
 func (a *App) dispatchRun(q *Request, polling string) error {
 	var ids []string
+	// Only the stall causes this pass raises: a key, budget-ask or other area's question keeps its cause.
 	var held []map[string]any
-	if err := q.tx.QueryRow(q.ctx(), "SELECT (SELECT coalesce(array_agg(id ORDER BY seq),'{}') FROM execution WHERE host_id IS NULL AND state='preparing' AND kind='agent_run'),(SELECT coalesce(json_agg(json_build_object('id',id,'cause',cause,'state',state)),'[]') FROM question WHERE state IN ('open','answered') AND cause IS NOT NULL)").Scan(&ids, &held); err != nil {
+	if err := q.tx.QueryRow(q.ctx(), "SELECT (SELECT coalesce(array_agg(id ORDER BY seq),'{}') FROM execution WHERE host_id IS NULL AND state='preparing' AND kind='agent_run'),(SELECT coalesce(json_agg(json_build_object('id',id,'cause',cause,'state',state)),'[]') FROM question WHERE state IN ('open','answered') AND cause ~ '^(subscription|placement|host|director|execution):|^budget:.*:reached$')").Scan(&ids, &held); err != nil {
 		return err
 	}
 	type stall struct{ reason, director, ask, projectID any }
