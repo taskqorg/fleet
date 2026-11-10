@@ -65,7 +65,7 @@ func executionDifferences(q *Request, id, previousID string) (any, error) {
 		}
 		return strings.Split(string(b), "\n"), nil
 	}
-	small := func(x doc) bool { return x == nil || num(x["size"]) <= differenceTextLimit }
+	small := func(x doc) bool { n, _ := cNum(x["size"]); return x == nil || n <= differenceTextLimit }
 	ref := func(x doc) any {
 		if x == nil {
 			return nil
