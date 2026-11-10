@@ -7,7 +7,7 @@ test('migration 6 moves legacy documents into typed tables without changing any 
  const sources=[...new Set(fixture.map(r=>r.source))];let moved=0;
  for(const source of sources){const rows=fixture.filter(r=>r.source===source),s=createStore('memory://');await s.migrate(5);
   await s.tx(async()=>{for(const r of rows)await s.query('INSERT INTO document(kind,id,data,project_id,seq) VALUES($1,$2,$3,$4,$5)',[r.kind,r.id,JSON.stringify(r.data),typeof r.data?.projectId==='string'?r.data.projectId:null,r.seq])});
-  await s.migrate();
+  await s.migrate(10);
   // Every record reads back as it was, through get and through all() in the old insertion order.
   for(const r of rows)assert.deepEqual(await s.get(r.id,r.kind),r.data,`${source} ${r.kind} ${r.id}`);
   for(const kind of new Set(rows.map(r=>r.kind)))assert.deepEqual((await s.all(kind)).map((x:any)=>x.id),rows.filter(r=>r.kind===kind).map(r=>r.id),`${source} order of ${kind}`);
@@ -26,5 +26,7 @@ test('migration 6 moves legacy documents into typed tables without changing any 
    if((d.data.steps??[]).some((x:any)=>x.executionId&&rows.some(r=>r.kind==='execution'&&r.id===x.executionId&&r.data.state!=='queued')))assert.notEqual(t.state,'queued',d.id);
    if(d.data.questionId)assert.equal(t.questions.find((q:any)=>q.id===d.data.questionId)?.kind,'operator_decision')}
   for(const e of rows.filter(r=>r.kind==='execution'&&r.data.experimentId))assert.equal((await s.executions.get(e.id)).experimentId,e.data.experimentId);
+  // Migration 11 deletes the old lab's experiment documents and unlinks their executions.
+  await s.migrate();assert.equal((await s.query("SELECT count(*)::int AS n FROM document WHERE kind='experiment'"))[0].n,0);assert.equal((await s.query('SELECT count(*)::int AS n FROM execution WHERE experiment_id IS NOT NULL'))[0].n,0);
   moved+=rows.filter(r=>TYPED_KINDS.includes(r.kind)).length;await s.close()}
  console.log(`${fixture.length} documents from ${sources.length} databases, ${moved} moved to typed tables`)});

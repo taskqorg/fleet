@@ -1,7 +1,7 @@
 mod antigravity;
 mod codex;
 mod harness;
-mod lab;
+mod profile;
 mod native;
 mod outbox;
 mod readiness;
@@ -73,7 +73,12 @@ struct Executor {
     declared: std::cell::RefCell<Vec<String>>,
     store_report: std::cell::RefCell<(Option<std::time::Instant>, Value)>,
 }
+/// Host platform for the coordinator. A WSL host whose Claude placement is `windows-wsl` counts as Windows (`win32`), the
+/// rule the coordinator's Claude gates (accounts.ts) and delivery_worker.py apply; any other Linux host stays `linux`.
 fn platform() -> &'static str {
+    if harness::claude_placement_here() == Ok("windows-wsl") {
+        return "win32";
+    }
     match env::consts::OS {
         "macos" => "darwin",
         "windows" => "win32",
@@ -107,6 +112,11 @@ struct Live {
     rx: mpsc::Receiver<String>,
     eof: bool,
     last_sample: std::time::Instant,
+    /// Script commands: the process group stop and timeout kill, the deadline, and the trial worktree (toplevel, path).
+    group: Option<i32>,
+    deadline: Option<std::time::Instant>,
+    timed_out: bool,
+    trial: Option<(PathBuf, PathBuf)>,
 }
 impl Executor {
     /// Existing sessions keep their directory; new ones go under FLEET_SESSIONS_ROOT.
@@ -267,6 +277,9 @@ impl Executor {
             self.db.execute("UPDATE commands SET terminal=1 WHERE id=?", [&cid])?;
             return Ok(());
         }
+        if c["kind"] == "script" {
+            return self.script(&c, &execution, &session);
+        }
         if c["kind"] != "start" && c["kind"] != "input" {
             return self.finish(&c, "failed", None);
         }
@@ -279,7 +292,7 @@ impl Executor {
         }
         let p = &c["payload"];
         if p.get("agentConfig")
-            .is_some_and(|v| lab::validate(v).is_err())
+            .is_some_and(|v| profile::validate(v).is_err())
         {
             return self.finish(&c, "failed", None);
         }
@@ -307,7 +320,7 @@ impl Executor {
             return self.finish(&c, "failed", None);
         }
         let lab_evidence = if let Some(config) = p.get("agentConfig") {
-            match lab::prepare(&dir, config) {
+            match profile::prepare(&dir, config) {
                 Ok(e) => Some(e),
                 Err(_) => return self.finish(&c, "failed", native.as_deref()),
             }
@@ -327,7 +340,7 @@ impl Executor {
         if let Some(mut evidence) = lab_evidence {
             evidence["selection"] = json!({"harness":harness::name(p),"account":p.get("account"),"authority":"trusted host account reference; native observation follows"});
             if harness::name(p) == "codex" {
-                lab::apply(&mut cmd, &p["agentConfig"]);
+                profile::apply(&mut cmd, &p["agentConfig"]);
             }
             self.event(&c, 0, "preparation", evidence)?;
         }
@@ -379,7 +392,7 @@ impl Executor {
             }
         }
         let observed = self.observe_harness(&cmd, harness::name(p));
-        let mut claude_servers = lab::mcp_servers(&p["agentConfig"]);
+        let mut claude_servers = profile::mcp_servers(&p["agentConfig"]);
         let profiles = p["agentConfig"]["delegationProfiles"].as_array().cloned().unwrap_or_default();
         let mut harness_observation = None;
         let mut fleet_mcp: Vec<&str> = vec![];
@@ -595,6 +608,10 @@ impl Executor {
                 eof: false,
                 last_sample: std::time::Instant::now(),
                 wire,
+                group: None,
+                deadline: None,
+                timed_out: false,
+                trial: None,
             },
         );
         if let (Some(o), Some(l)) = (harness_observation, self.live.get_mut(&id(&c, "executionId")?)) {
@@ -605,6 +622,100 @@ impl Executor {
         }
         self.receipt(&c, "started", native.as_deref())?;
         Ok(())
+    }
+    /// Lab script step (docs/designs/fleet-lab.md Stage 0, item 11): `sh -c <command>` in its own process group, in the trial's
+    /// own worktree at the pinned commit (or the session dir when the payload names no repository). Payload: command,
+    /// optional commit with workingDirectory/project, optional timeout_ms. Stop and timeout kill the whole group. The full
+    /// stdout and stderr (output/script.stdout, output/script.stderr) and everything in FLEET_OUTPUT_DIR become artifacts.
+    fn script(&mut self, c: &Value, execution: &str, session: &str) -> Result<()> {
+        use std::os::unix::process::CommandExt;
+        let p = &c["payload"];
+        let dir = self.session_dir(session);
+        fs::create_dir_all(&dir)?;
+        if fs::symlink_metadata(&dir)?.file_type().is_symlink()
+            || !(dir.canonicalize()?.starts_with(self.root.canonicalize()?)
+                || dir.canonicalize()?.starts_with(self.sessions.canonicalize()?))
+        {
+            return self.finish(c, "failed", None);
+        }
+        let refuse = |reason: &str| -> Result<()> {
+            self.event(c, 1, "preparation.failed", json!({"reason":reason}))?;
+            self.finish(c, "failed", None)
+        };
+        let Some(command) = p["command"].as_str().filter(|s| !s.is_empty()) else { return refuse("script command missing") };
+        let timeout = match &p["timeout_ms"] {
+            Value::Null => None,
+            v => match v.as_u64().filter(|ms| *ms > 0) {
+                Some(ms) => Some(Duration::from_millis(ms)),
+                None => return refuse("timeout_ms must be a positive integer"),
+            },
+        };
+        let (output, input) = (dir.join("output"), dir.join("input"));
+        fs::create_dir_all(&output)?;
+        fs::create_dir_all(&input)?;
+        let (stdout, stderr) = (fs::File::create(output.join("script.stdout"))?, fs::File::create(output.join("script.stderr"))?);
+        let (work, trial) = match (worktree::repo_path(p, &self.host), p["commit"].as_str()) {
+            (Some(repo), Some(commit)) => match worktree::trial(&dir, &repo, commit, &worktree::project_roots(), &[&self.root, &self.sessions]) {
+                Ok((w, top)) => (w.clone(), Some((top, w))),
+                Err(e) => return refuse(&e.to_string()),
+            },
+            (None, None) => (dir.clone(), None),
+            _ => return refuse("script needs both a repository and a commit, or neither"),
+        };
+        let drop_trial = || if let Some((top, w)) = &trial { worktree::remove_trial(top, w); };
+        let mut cmd = worktree::clean(Command::new("sh"));
+        cmd.args(["-c", command])
+            .current_dir(&work)
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(stdout)
+            .stderr(stderr)
+            .env("FLEET_INPUT_DIR", &input)
+            .env("FLEET_OUTPUT_DIR", &output)
+            .env("FLEET_SESSION_ID", session);
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                drop_trial();
+                return refuse(&format!("script spawn failed: {e}"));
+            }
+        };
+        let pid = child.id();
+        let identity = match native::identity(pid) {
+            Ok(i) => i,
+            Err(_) => {
+                unsafe { libc::killpg(pid as i32, libc::SIGKILL) };
+                let _ = child.wait();
+                drop_trial();
+                return self.finish(c, "unknown", None);
+            }
+        };
+        // No stdout stream to read: the closed channel marks EOF at once.
+        let (_, rx) = mpsc::channel();
+        self.live.insert(
+            execution.to_string(),
+            Live {
+                child,
+                command: c.clone(),
+                native: None,
+                seq: 2,
+                completed: true,
+                stopped: false,
+                owned: HashMap::from([(pid, identity)]),
+                exit: None,
+                cleanup_unknown: false,
+                rx,
+                eof: false,
+                last_sample: std::time::Instant::now(),
+                wire: None,
+                group: Some(pid as i32),
+                deadline: timeout.map(|t| std::time::Instant::now() + t),
+                timed_out: false,
+                trial,
+            },
+        );
+        self.event(c, 1, "script.started", json!({"commit":p["commit"],"timeoutMs":p["timeout_ms"],"trialWorktree":work}))?;
+        self.receipt(c, "started", None)
     }
     fn finish(&self, c: &Value, status: &str, native: Option<&str>) -> Result<()> {
         let tx = self.db.unchecked_transaction()?;
@@ -636,6 +747,12 @@ impl Executor {
                 }
                 if l.exit.is_none() {
                     l.exit = l.child.try_wait()?;
+                }
+                if l.exit.is_none() && !l.stopped && l.deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                    l.timed_out = true;
+                    l.stopped = true;
+                    l.seq += 1;
+                    self.event(&l.command, l.seq, "script.timeout", json!({"timeoutMs":l.command["payload"]["timeout_ms"]}))?;
                 }
                 if l.exit.is_some() || l.stopped {
                     if l.cleanup().is_err() {
@@ -714,6 +831,9 @@ impl Executor {
                     let mut declared = vec![];
                     if output.is_dir() {
                         if let Err(_) = self.artifacts(&output, &output, &execution, &mut declared) {
+                            if let Some((top, w)) = &l.trial {
+                                worktree::remove_trial(top, w);
+                            }
                             return self
                                 .finish(&l.command, "failed", l.native.as_deref())
                                 .map(|_| true);
@@ -721,10 +841,16 @@ impl Executor {
                     }
                     // The coordinator holds a completed run with required artifacts still uploading as waiting (P3-D2).
                     *self.declared.borrow_mut() = declared;
+                    if let Some((top, w)) = &l.trial {
+                        l.seq += 1;
+                        self.event(&l.command, l.seq, "trial.removed", json!({"removed":worktree::remove_trial(top, w)}))?;
+                    }
                     self.finish(
                         &l.command,
                         if l.cleanup_unknown {
                             "unknown"
+                        } else if l.timed_out {
+                            "failed"
                         } else if l.stopped {
                             "stopped"
                         } else if status.success() && l.completed {
@@ -816,7 +942,7 @@ impl Executor {
     }
 }
 fn capabilities() -> Vec<String> {
-    let mut c: Vec<String> = ["codex","gpt-6.1-sol","low","static-output","steer","native-fork","artifact-store"].map(String::from).to_vec();
+    let mut c: Vec<String> = ["codex","gpt-6.1-sol","low","static-output","steer","native-fork","artifact-store","script"].map(String::from).to_vec();
     if let Some(v) = preview::ffmpeg_version() { c.push(format!("ffmpeg:{v}")); }
     c
 }
@@ -934,6 +1060,60 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn script_executor(root: &std::path::Path) -> Executor {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE commands(id TEXT PRIMARY KEY,body TEXT,terminal INTEGER DEFAULT 0); CREATE TABLE outbox(route TEXT,body TEXT);").unwrap();
+        upload::schema(&db).unwrap();
+        fs::create_dir_all(root.join("spool")).unwrap();
+        Executor { db, root: root.into(), url: String::new(), token: String::new(), host: "fake".into(), live: HashMap::new(), sessions: root.join("sessions"), harness_cache: HashMap::new(), store_cfg: None, declared: Default::default(), store_report: std::cell::RefCell::new((None, json!([]))) }
+    }
+    fn receipts(e: &Executor, cid: &str) -> Vec<String> {
+        let mut st = e.db.prepare("SELECT body FROM outbox WHERE route='/api/hosts/receipts'").unwrap();
+        st.query_map([], |r| r.get::<_, String>(0)).unwrap().map(|b| serde_json::from_str::<Value>(&b.unwrap()).unwrap()).filter(|v| v["commandId"] == cid).map(|v| v["status"].as_str().unwrap().to_string()).collect()
+    }
+    fn settle(e: &mut Executor, execution: &str) {
+        for _ in 0..200 { e.tick().unwrap(); if !e.live.contains_key(execution) { return; } std::thread::sleep(Duration::from_millis(25)); }
+        panic!("script did not settle");
+    }
+    fn group_alive(marker: &std::path::Path) -> bool {
+        let pid: i32 = fs::read_to_string(marker).unwrap().trim().parse().unwrap();
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+    #[test]
+    fn script_output_timeout_and_group_kill() {
+        let root = env::temp_dir().join(format!("fleet-script-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let mut e = script_executor(&root);
+        // Completes: full stdout and the output folder are artifacts, inputs are visible.
+        let ok = json!({"id":"c1","executionId":"x1","sessionId":"s1","kind":"script","payload":{"command":"echo hello; echo result > \"$FLEET_OUTPUT_DIR/r.txt\"; test -d \"$FLEET_INPUT_DIR\""}});
+        e.run(ok).unwrap();
+        settle(&mut e, "x1");
+        assert_eq!(receipts(&e, "c1").last().unwrap(), "completed");
+        assert_eq!(fs::read_to_string(root.join("sessions/s1/output/script.stdout")).unwrap(), "hello\n");
+        let names: Vec<String> = { let mut st = e.db.prepare("SELECT body FROM transfers").unwrap(); st.query_map([], |r| r.get::<_, String>(0)).unwrap().map(|b| serde_json::from_str::<Value>(&b.unwrap()).unwrap()["name"].as_str().unwrap().to_string()).collect() };
+        for n in ["r.txt", "script.stdout", "script.stderr"] { assert!(names.contains(&n.to_string()), "{n} {names:?}"); }
+        // Timeout: a double-forked grandchild (reparented, still in the group) is killed too; the run fails.
+        let slow = json!({"id":"c2","executionId":"x2","sessionId":"s2","kind":"script","payload":{"timeout_ms":300,"command":"(sleep 30 & echo $! > \"$FLEET_OUTPUT_DIR/../pid\"); sleep 30"}});
+        e.run(slow).unwrap();
+        settle(&mut e, "x2");
+        assert_eq!(receipts(&e, "c2").last().unwrap(), "failed");
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!group_alive(&root.join("sessions/s2/pid")));
+        // Stop: the group is killed and the run is stopped.
+        let long = json!({"id":"c3","executionId":"x3","sessionId":"s3","kind":"script","payload":{"command":"sleep 30 & echo $! > \"$FLEET_OUTPUT_DIR/../pid\"; wait"}});
+        e.run(long).unwrap();
+        for _ in 0..100 { if root.join("sessions/s3/pid").exists() { break; } std::thread::sleep(Duration::from_millis(20)); }
+        e.run(json!({"id":"c4","executionId":"x3","sessionId":"s3","kind":"stop","payload":{}})).unwrap();
+        settle(&mut e, "x3");
+        assert_eq!(receipts(&e, "c3").last().unwrap(), "stopped");
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!group_alive(&root.join("sessions/s3/pid")));
+        // Refused: bad timeout, half a trial spec.
+        e.run(json!({"id":"c5","executionId":"x5","sessionId":"s5","kind":"script","payload":{"command":"true","timeout_ms":0}})).unwrap();
+        e.run(json!({"id":"c6","executionId":"x6","sessionId":"s6","kind":"script","payload":{"command":"true","commit":"0000000000000000000000000000000000000000"}})).unwrap();
+        assert_eq!(receipts(&e, "c5").last().unwrap(), "failed");
+        assert_eq!(receipts(&e, "c6").last().unwrap(), "failed");
+    }
     #[test]
     fn refuses_browser_paths() {
         for s in ["../x", "/tmp/x", "", "a/b"] {
@@ -1062,6 +1242,13 @@ impl Live {
         Ok(false)
     }
     fn cleanup(&mut self) -> Result<()> {
+        // Script commands: kill the whole group, including members that left the parent tree. A pid stays reserved while
+        // its process group has members, so the id names our group until killpg reports none (ESRCH), then it is dropped.
+        if let Some(g) = self.group {
+            if unsafe { libc::killpg(g, libc::SIGKILL) } != 0 {
+                self.group = None;
+            }
+        }
         let mut frozen = std::collections::HashSet::new();
         loop {
             self.observe()?;

@@ -56,7 +56,7 @@ Each goal is measured as described in §9. The numbers are targets that are repo
   * First-load JavaScript is reported against 200 KB raw.
   * Click-to-detail is reported against 100 ms.
   * Change-to-screen is reported against 1 s.
-* **G7. The old pages keep working until replaced.** They stay under `/legacy/*` until each one is replaced.
+* **G7. The old pages keep working until replaced.** (Superseded 2026-11-10: the owner removed all legacy pages in one cut with [Lab Stage 0](fleet-lab.md); gaps are in [legacy-inventory.md](legacy-inventory.md).) They stay under `/legacy/*` until each one is replaced.
 
 ## Non-Goals
 

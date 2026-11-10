@@ -25,7 +25,6 @@ test('recovery tools and UI retain browser authority and exact proxy Origin',asy
  assert.equal((await app.inject({method:'POST',url,payload,headers:{authorization:'Bearer machine',origin:'https://fixture.invalid'}})).statusCode,401);
  assert.equal((await app.inject({method:'POST',url,payload,headers:{authorization:'Bearer browser'}})).statusCode,403);
  assert.equal((await app.inject({method:'POST',url,payload,headers:{authorization:'Bearer browser',origin:'https://other.invalid'}})).statusCode,403)}
- assert.equal((await app.inject({url:'/legacy/recovery'})).statusCode,401);
  assert.equal((await app.inject({method:'POST',url:'/api/recovery-tools',payload:{id:1,method:'tools/list'},headers:{authorization:'Bearer browser',origin:'https://fixture.invalid'}})).statusCode,200);
  }finally{await app.close()}
 });

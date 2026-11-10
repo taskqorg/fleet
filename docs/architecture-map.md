@@ -25,7 +25,7 @@ flowchart TD
 | Execution resources | Registered machines, environment readiness, working areas, local processes and resource observations. | [Deployment](deployment.md), [continuity](execution-continuity.md) |
 | Execution integration | Native harness behavior and supported controls; tools and programs without synthetic sessions. | [Runtime boundary](runtime-integration.md), [execution contract](execution-contract.md) |
 
-Laboratory work uses these same blocks with [experiment definitions and comparisons](experiments.md). Balancing is a coordination responsibility. PM is a configured agent. SDD is an evaluable method. Connections supply service access across these blocks; they do not define a separate workflow engine.
+Laboratory work uses these same blocks with [experiment definitions and comparisons](lab.md). Balancing is a coordination responsibility. PM is a configured agent. SDD is an evaluable method. Connections supply service access across these blocks; they do not define a separate workflow engine.
 
 ## Initial physical placement
 

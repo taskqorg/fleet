@@ -14,4 +14,4 @@ Distinguish elapsed task duration from summed execution time across parallel wor
 
 An operator or architect may discuss project history with an agent, identify repeated work or expensive stages, and inspect the evidence. Findings may suggest a skill, instruction, tool, agent configuration, project rule or pipeline change; analysis does not require a predefined optimization category.
 
-Use selected work as input to the [experiment mechanism](experiments.md), compare the change and apply it under existing project and recommendation rules. Production analytics and laboratory measurements remain connected to their actual executions; neither creates a separate history store requirement.
+Use selected work as input to the [experiment mechanism](lab.md), compare the change and apply it under existing project and recommendation rules. Production analytics and laboratory measurements remain connected to their actual executions; neither creates a separate history store requirement.

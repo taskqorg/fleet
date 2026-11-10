@@ -7,6 +7,13 @@ def run(argv, cwd=None):
     if result.returncode: raise RuntimeError('Program command failed: '+argv[0]+' exit '+str(result.returncode))
     return result.stdout.decode().strip()
 
+def claude_placement_ok(setting,platform,release):
+    # Same rule as the executor (crates/executor/src/harness.rs claude_placement): FLEET_CLAUDE_PLACEMENT is 'mac' on macOS or
+    # 'windows-wsl' on Linux under WSL (kernel release names Microsoft); unset or mismatched means Claude is ineligible here.
+    return (setting=='mac' and platform=='darwin') or (setting=='windows-wsl' and platform.startswith('linux') and 'microsoft' in release.lower())
+def host_platform():
+    # A WSL host with Claude placement windows-wsl counts as Windows, as in the executor's poll (main.rs platform()).
+    return 'win32' if claude_placement_ok(os.environ.get('FLEET_CLAUDE_PLACEMENT',''),sys.platform,os.uname().release) and sys.platform.startswith('linux') else sys.platform
 def account_environment(binding,harness):
     env={'HOME':binding.get('credentialHome') if binding.get('credentialAuthority')=='native-current' else binding['home']}
     env[{'codex':'CODEX_HOME','claude':'CLAUDE_CONFIG_DIR','antigravity':'GEMINI_HOME'}[harness]]=binding['nativeHome']
@@ -95,7 +102,7 @@ def main():
                     registry_path=pathlib.Path(config['nativeAccounts']);metadata=registry_path.stat()
                     if registry_path.is_symlink() or metadata.st_uid!=os.getuid() or metadata.st_mode&0o077:raise RuntimeError('Private owned native registry required')
                     registry=json.loads(registry_path.read_text());harness=p['harness']
-                    if harness=='claude' and sys.platform not in ['darwin','win32']:raise RuntimeError('Claude placement denied')
+                    if harness=='claude' and not claude_placement_ok(os.environ.get('FLEET_CLAUDE_PLACEMENT',''),sys.platform,os.uname().release):raise RuntimeError('Claude placement denied')
                     if p.get('mode')=='catalogue':
                         bindings=[{'name':name,'executable':b['executable'],'environment':account_environment(b,harness),'behaviorApproved':b.get('readiness')=='ready'} for name,b in registry.items() if b.get('harness')==harness]
                         api('receipts',{**body,'accountCatalogue':{'accountId':p['accountId'],'bindings':bindings}})
@@ -103,7 +110,7 @@ def main():
                     else:
                         binding=registry.get(p['binding'])
                         result=account_status(binding,harness) if binding and binding.get('harness')==harness else {'readiness':'unavailable','reason':'binding-absent','nativeLoginObserved':None,'quota':'unknown'}
-                        api('receipts',{**body,'accountObservation':{'accountId':p['accountId'],'binding':p['binding'],'platform':sys.platform,**result}})
+                        api('receipts',{**body,'accountObservation':{'accountId':p['accountId'],'binding':p['binding'],'platform':host_platform(),**result}})
                         result={**result,'accountId':p['accountId'],'binding':p['binding'],'authChanged':False}
                     save(body,'account-readiness.json',json.dumps(result).encode(),'application/json')
                     shutil.rmtree(workspace);state.write_text(json.dumps({'state':'completed'}));api('receipts',{**body,'status':'completed'});continue

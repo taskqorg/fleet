@@ -11,7 +11,7 @@ The [architecture baseline and first working slice](delivery-strategy.md#archite
 | Configuration and project context | [Configuration](configuration.md), [project context](project-context.md), [capabilities and pipelines](capabilities-and-pipelines.md) |
 | Work and communication | [Operations](system-operations.md), [execution contract](execution-contract.md), [orchestration](orchestration.md), [state ownership](state-ownership.md) |
 | Resources and runtime | [Deployment](deployment.md), [allocation](work-allocation.md), [connections](connections.md), [continuity](execution-continuity.md), [runtime boundary](runtime-integration.md) |
-| Evaluation | [Experiments](experiments.md), [work analysis](work-analysis.md) |
+| Evaluation | [Lab](lab.md), [work analysis](work-analysis.md) |
 | Product experience | [Interfaces](interfaces.md), [web-first delivery](delivery-strategy.md), [use cases](use-cases.md) |
 
 ## V1 implementation starting point

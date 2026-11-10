@@ -371,7 +371,7 @@ Stages: 0 → 1 → 2 → 3 → 4, one PR each. Each stage leaves a building, te
 
 #### 8. `crates/executor/src/readiness.rs` (Modify)
 
-*   Verify `claude_placement`; WSL detection; login file present at `<fleet config dir>/claude/credentials.json`.
+*   Verify `claude_placement`; WSL detection; login file present at `<fleet config dir>/claude/.credentials.json` (the file Claude writes when `CLAUDE_CONFIG_DIR` is `<fleet config dir>/claude`).
 
 #### 9. Host config schema: `docs/configuration.md` (Modify)
 

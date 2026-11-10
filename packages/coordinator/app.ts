@@ -1,6 +1,6 @@
 import {recovery} from './recovery.js';
 import Fastify from 'fastify';
-import {createStore,type Store,every,filter,map,LONG_OPERATIONS,READ_OPERATIONS,executionScope} from './store.js';
+import {createStore,type Store,filter,map,LONG_OPERATIONS,READ_OPERATIONS,executionScope} from './store.js';
 import {randomUUID,timingSafeEqual,createHash} from 'node:crypto';
 import {mkdirSync,mkdtempSync,readFileSync,realpathSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -8,12 +8,11 @@ import {dirname,join,resolve,sep} from 'node:path';
 import fastifyStatic from '@fastify/static';
 import {registerStream} from './stream.js';
 import {sessionModel} from './sessions.js';
-import {registerLab,profileDigest,readTrustedProfile,listProfiles} from './lab.js';
+import {profileDigest,readTrustedProfile,listProfiles} from './profiles.js';
 import {delegation} from './delegation.js';
 import {registerProjects} from './projects.js';
 import {accounts} from './accounts.js';
 import {delivery} from './delivery.js';
-import {ui} from './ui.js';
 import {agentTools} from './agent-tools.js';
 import {storeRegistry,accessToken} from './stores.js';
 import {artifactModel,type Artifacts} from './artifacts.js';
@@ -27,8 +26,7 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  // there are none and every app path is a 404.
  const screens:string[]=(()=>{try{const v=JSON.parse(readFileSync(join(resolve(config.appDir??'dist/app'),'screens.json'),'utf8'));return Array.isArray(v)?v.filter((x:any)=>typeof x==='string'&&/^[a-z]+$/.test(x)):[]}catch{return []}})();
  const APP_ROUTES=screens.flatMap(s=>['/'+s,'/'+s+'/:id']);
- const PUBLIC_ROUTES=new Set(['/',...APP_ROUTES,'/assets/*','/sw.js','/manifests/:name','/icons/:name','/lab','/projects','/recovery','/accounts']);
- const LEGACY_ROUTES=new Set(['/legacy','/legacy/lab','/legacy/projects','/legacy/recovery','/legacy/accounts']);
+ const PUBLIC_ROUTES=new Set(['/',...APP_ROUTES,'/assets/*','/sw.js','/manifests/:name','/icons/:name','/lab']);
  const sessionList=sessionModel({query:(s:string,p?:any[])=>store.query(s,p??[])});
  // No artifact bytes pass through the coordinator (design §3): Fastify's default body limit applies.
  const app=Fastify();
@@ -55,9 +53,9 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  app.addHook('onRequest',async(req,reply)=>{
   reply.header('X-Content-Type-Options','nosniff').header('Referrer-Policy','no-referrer');
   // Fail closed on the matched route, not the raw URL: only the app shell routes (data comes through /api/*, behind Access and
-  // the guard) and, outside proxy mode, the legacy pages skip the Bearer. Unknown routes and everything else need it.
+  // the guard) skip the Bearer. Unknown routes and everything else need it.
   const route=req.routeOptions?.url;
-  if(route&&req.method==='GET'&&(PUBLIC_ROUTES.has(route)||(!config.browserProxyAuth&&LEGACY_ROUTES.has(route)))) return;
+  if(route&&req.method==='GET'&&PUBLIC_ROUTES.has(route)) return;
   const machine=typeof route==='string'&&route.startsWith('/api/hosts/');
   const supplied=(req.headers.authorization||'').replace(/^Bearer /,'');
   if(!equal(supplied,machine?config.machineSecret:config.browserSecret)) fail(401,'Unauthorized');
@@ -67,11 +65,9 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  let artifacts:Artifacts;
  let deliveryRuntime:ReturnType<typeof delivery>,agent:ReturnType<typeof agentTools>;
  const related=async (d:any)=>({...d,parentState:(await get(d.parentExecutionId,'execution')).state,childState:(await get(d.childExecutionId,'execution')).state,continuationState:d.continuationExecutionId?(await get(d.continuationExecutionId,'execution')).state:null});
- const owned=async (b:any)=>{if(![config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].filter(Boolean).includes(b.hostId)) fail(403,'Host rejected'); if(b.executionId&&(await get(b.executionId,'execution')).hostId!==b.hostId) fail(403,'Execution rejected')};
- app.get('/legacy',async(_,r)=>r.type('text/html').send(ui(config.browserProxyAuth)));
- // Operator app (docs/designs/fleet-operator-app.md): '/' opens the Overview; old page paths moved under /legacy.
+ const owned=async (b:any)=>{if(![config.hostId,config.integrationHostId,config.publicationHostId,...(config.nativeHostIds??[])].filter(Boolean).includes(b.hostId)) fail(403,'Host rejected'); if(b.executionId&&(await store.executions.get(b.executionId)).hostId!==b.hostId) fail(403,'Execution rejected')};
+ // Operator app (docs/designs/fleet-operator-app.md): '/' opens the Overview. The old pages are gone (docs/designs/legacy-inventory.md).
  app.get('/',async(_,r)=>r.redirect('/overview'));
- for(const old of ['lab','projects','recovery','accounts'])app.get('/'+old,async(_,r)=>r.code(301).redirect('/legacy/'+old));
  // The built app (npm run build -> dist/app); hashed assets are immutable, the entry files are revalidated.
  const appDir=resolve(config.appDir??'dist/app');
  if(existsSync(join(appDir,'assets')))app.register(fastifyStatic,{root:join(appDir,'assets'),prefix:'/assets/',immutable:true,maxAge:'365d',index:false});
@@ -79,7 +75,8 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  app.get('/sw.js',appFile('sw.js','text/javascript'));
  app.get('/manifests/:name',async(req:any,r)=>{if(!/^[a-z]+\.webmanifest$/.test(req.params.name))fail(404,'Unknown manifest');return appFile('manifests/'+req.params.name,'application/manifest+json')(req,r)});
  app.get('/icons/:name',async(req:any,r)=>{if(!/^[a-z0-9-]+\.svg$/.test(req.params.name))fail(404,'Unknown icon');return appFile('icons/'+req.params.name,'image/svg+xml')(req,r)});
- for(const route of APP_ROUTES)app.get(route,appFile('index.html','text/html'));
+ // /lab: the app's "Lab is being rebuilt" page until Stage 3 of docs/designs/fleet-lab.md.
+ for(const route of [...APP_ROUTES,'/lab'])app.get(route,appFile('index.html','text/html'));
  app.get('/test-sites/:project/:file',async(req:any,r)=>{if(!config.testSiteRoot||!['hello-world','hello-world-alt'].includes(req.params.project)||!/^[a-zA-Z0-9_-]+\.(html|css)$/.test(req.params.file))fail(404,'Unknown test site');const root=realpathSync(resolve(config.testSiteRoot!,req.params.project)),path=realpathSync(resolve(root,'current',req.params.file));if(!path.startsWith(root+sep))fail(403,'Test-site path rejected');r.header('Content-Security-Policy',"sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src data:; frame-ancestors 'self'");return r.type(req.params.file.endsWith('.css')?'text/css':'text/html').send(readFileSync(path))});
  const profiles_list=()=>({profiles:listProfiles(config.profilesDirectory||'config/agents')});
  app.get('/api/profiles',async()=>profiles_list());
@@ -163,10 +160,10 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  app.post('/api/hosts/poll',async(req:any)=>(await store.tx(async ()=>{(await owned(req.body));await stores.observe(req.body.hostId,req.body.stores);await put('host-observation',{id:req.body.hostId,lastSeenAt:Date.now(),...( ['darwin','win32','linux'].includes(req.body.platform)?{platform:req.body.platform}:{} ),...(Array.isArray(req.body.capabilities)&&req.body.capabilities.every((x:any)=>typeof x==='string')?{capabilities:req.body.capabilities}:{}),...hostProblems(req.body.problems)});(await delegates.reconcile());await detectProblems();(await agent.promote());const pending=await filter(await all('command',{hostId:req.body.hostId,status:'pending'}),(x:any)=>x.hostId===req.body.hostId&&x.status==='pending');
   // ponytail: executions read once for all pending commands; delegates.ready only rewrites the execution of its own start command.
   const executions=await store.many(pending.map((c:any)=>c.executionId),'execution');
-  const ready=async (command:any)=>{if(!(await agent.ready(command)))return false;const execution=executions.get(command.executionId)??(await get(command.executionId,'execution'));if(command.kind!=='stop'&&!(await delegates.ready(execution)))return false;if(!execution.experimentId||command.kind==='stop')return true;const experiment=(await get(execution.experimentId,'experiment'));const index=experiment.trials.findIndex((t:any)=>t.executionId===execution.id);return (await every(experiment.trials.slice(0,index),async(t:any)=>['completed','failed','stopped'].includes((await get(t.executionId,'execution')).state)))};const chosen=await filter(pending,ready),fresh=await store.many(chosen.map((x:any)=>x.id),'command');return {commands:await map(chosen,async (x:any)=>fresh.get(x.id)??(await get(x.id,'command')))}})));
+  const ready=async (command:any)=>{if(!(await agent.ready(command)))return false;const execution=executions.get(command.executionId)??(await get(command.executionId,'execution'));if(command.kind!=='stop'&&!(await delegates.ready(execution)))return false;return true};const chosen=await filter(pending,ready),fresh=await store.many(chosen.map((x:any)=>x.id),'command');return {commands:await map(chosen,async (x:any)=>fresh.get(x.id)??(await get(x.id,'command')))}})));
  app.post('/api/hosts/receipts',async(req:any)=>{if(req.body?.accountObservation||req.body?.accountCatalogue)return store.atomic(async()=>{const b=req.body;(await owned(b));const c=(await get(b.commandId,'command')),v=b.accountObservation??b.accountCatalogue;if(c.hostId!==b.hostId||c.executionId!==b.executionId||c.kind!=='account-inspect'||c.payload.accountId!==v.accountId||c.payload.binding!==(v.binding??null))fail(403,'Account inspection ownership rejected');return (b.accountCatalogue?managed.catalogue:managed.report)({...v,hostId:c.payload.nativeHostId})});if(req.body?.delegation?.operation){const b=req.body;(await owned(b));const c=(await get(b.commandId,'command')),session=(await get(c.sessionId,'session')),q=b.delegation;if(c.executionId!==b.executionId||c.hostId!==b.hostId||!session.projectId||q.projectId!==session.projectId||!['project_context','catalogue','pipeline_run','direct_search','pipeline_history','pipeline_get','question_ask','question_history','account_list'].includes(q.operation))fail(403,'Project grant rejected');let started:(run:any)=>void=()=>{};const begun=new Promise<any>(r=>started=r);const call=()=>projects[q.operation]({...q.arguments,projectId:session.projectId},{kind:'native-agent',executionId:b.executionId,sessionId:session.id},started);const result=LONG_OPERATIONS.has(q.operation)?call():store.atomic(call);if(['pipeline_run','direct_search'].includes(q.operation)){const run=await Promise.race([begun,result.then(()=>null,()=>null)]);if(!run)return result;result.catch(async ()=>{const current=(await get(run.id,'pipeline-run'));if(current.state==='running'){current.state='unknown';current.error={code:'dispatch-unknown',message:'Native tool dispatch outcome unconfirmed; inspect original evidence, do not replay'};current.steps[0].state='unknown';current.steps[0].error=current.error;current.durationMs=null;await put('pipeline-run',current)}});return run}return result}return (await store.tx(async ()=>{const b=req.body;(await owned(b));const c=(await get(b.commandId,'command'));if(c.executionId!==b.executionId||c.hostId!==b.hostId)fail(403,'Command rejected');if(b.delegation)return (await delegates.request(b,c));if(!['accepted','started','completed','failed','stopped','unknown'].includes(b.status))fail(400,'Invalid status');const ranks:any={pending:0,accepted:1,started:2,unknown:2,completed:3,failed:3,stopped:3}; if(ranks[b.status]<ranks[c.status]||(ranks[c.status]===3&&b.status!==c.status))fail(409,'Receipt regression'); // A repeated terminal receipt (an outbox retry) changes nothing: the gate and onReceipt ran once.
-if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSessionId){const known=(await agent.knownNative((await get(b.executionId,'execution'))));if(known&&known!==b.nativeSessionId)fail(409,'Native identity conflict')} c.status=b.status;await put('command',c);const e=(await get(b.executionId,'execution'));const wasFinal=['completed','failed','stopped'].includes(e.state);if(!wasFinal&&(c.kind!=='steer'&&(c.kind!=='stop'||b.status==='stopped')))e.state=b.status;e.updatedAt=Date.now();if(b.status==='started'&&!e.startedAt)e.startedAt=e.updatedAt;if(c.kind!=='steer'&&['completed','failed','stopped'].includes(b.status)&&!e.finishedAt)e.finishedAt=e.updatedAt;if(b.error)e.error=b.error;if(c.kind==='start'&&b.status==='completed'&&!wasFinal)Object.assign(e,await artifactGate(e,Array.isArray(b.artifacts)?b.artifacts.slice(0,10000):[]));await put('execution',e);if(b.status!=='unknown')await store.executions.markObservation(e.id,'confirmed');if(b.nativeSessionId&&c.kind==='start')(await agent.captureNative(e,text(b.nativeSessionId,300)));if(e.state!=='waiting'){(await agent.onReceipt(c,e,e.state==='failed'&&b.status==='completed'?'failed':b.status));if(['completed','failed','stopped'].includes(e.state))(await agent.promote());(await deliveryRuntime?.advance())}return {ok:true}}))});
- const transportRecovery=recovery(app,{...store,transaction:store.tx},owned,!!config.browserProxyAuth);
+if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSessionId){const known=(await agent.knownNative((await get(b.executionId,'execution'))));if(known&&known!==b.nativeSessionId)fail(409,'Native identity conflict')} c.status=b.status;await put('command',c);const e=(await get(b.executionId,'execution'));const wasFinal=['completed','failed','stopped'].includes(e.state);if(!wasFinal&&(c.kind!=='steer'&&(c.kind!=='stop'||b.status==='stopped')))e.state=b.status;e.updatedAt=Date.now();if(b.status==='started'&&!e.startedAt)e.startedAt=e.updatedAt;if(c.kind!=='steer'&&['completed','failed','stopped'].includes(b.status)&&!e.finishedAt)e.finishedAt=e.updatedAt;if(b.error)e.error=b.error;if(['start','script'].includes(c.kind)&&b.status==='completed'&&!wasFinal)Object.assign(e,await artifactGate(e,Array.isArray(b.artifacts)?b.artifacts.slice(0,10000):[]));await put('execution',e);if(b.status!=='unknown')await store.executions.markObservation(e.id,'confirmed');if(b.nativeSessionId&&c.kind==='start')(await agent.captureNative(e,text(b.nativeSessionId,300)));if(e.state!=='waiting'){(await agent.onReceipt(c,e,e.state==='failed'&&b.status==='completed'?'failed':b.status));if(['completed','failed','stopped'].includes(e.state))(await agent.promote());(await deliveryRuntime?.advance())}return {ok:true}}))});
+ const transportRecovery=recovery(app,{...store,transaction:store.tx},owned);
  app.post('/api/hosts/events',async(req:any)=>(await transportRecovery.ingest(req.body)));
 // Artifact routes between executors (or program workers) and the coordinator (design §3 Write protocol). Long routes: each
  // operation takes short transactions around its store calls.
@@ -194,7 +191,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  app.post('/api/hosts/stores',async(req:any)=>{const b=req.body??{};(await owned({hostId:b.hostId}));return store.tx(()=>stores.register(b.hostId,b.store))});
  // Results stream from a verified copy with the same sandbox as before (no size limit; bytes never sit in the coordinator).
  app.get('/api/results/:id',async(req:any,r)=>{const a=await artifacts.get(req.params.id);if(a.state!=='stored')fail(404,'Not found');r.header('Content-Security-Policy',"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:");return r.type(a.mediaType||'application/octet-stream').send(await artifacts.read(a.id))});
- const projects=(registerProjects(app,store,{directory:config.projectConfigDirectory||'config',pipeConnectionFile:config.pipeConnectionFile,proxy:config.browserProxyAuth,searchHostId:config.integrationHostId,readArtifact:(id:string)=>artifacts.readBuffer(id,16*1024*1024)}));
+ const projects=(registerProjects(app,store,{directory:config.projectConfigDirectory||'config',pipeConnectionFile:config.pipeConnectionFile,searchHostId:config.integrationHostId,readArtifact:(id:string)=>artifacts.readBuffer(id,16*1024*1024)}));
  Object.assign(projects,managed.operations);
  // Success rule (design §3, P3-D2): a start command reported completed waits for the execution's required artifacts; a
  // missing or failed one fails it. settle() finishes a waiting execution once its artifacts are settled or the window passed.
@@ -240,9 +237,8 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  app.addHook('onReady',async()=>{if(placementMs>0){let running=false;placementTimer=setInterval(()=>{if(running)return;running=true;/* single flight: a slow pass never overlaps the next */stores.sweep().then(()=>artifacts.backfill()).then(()=>placement.runPlacement()).catch(e=>app.log.error(e)).finally(()=>{running=false})},placementMs);placementTimer.unref()}});
  app.addHook('onClose',async()=>{clearInterval(placementTimer)});
  app.decorate('artifacts',artifacts);app.decorate('placement',placement);app.decorate('stores',stores);
- registerLab(app,{...store,transaction:store.tx},{hostId:config.hostId,profilesDirectory:config.profilesDirectory||'config/agents',browserProxyAuth:config.browserProxyAuth});
  // One operation table: served as MCP tools (/api/tools) and as POST /api/ops/<name>; the web UI calls the same names.
- // ponytail: legacy per-feature routes stay as aliases. UI-only routes left (violations): lab experiment POSTs (/api/experiments*).
+ // ponytail: per-feature routes stay as aliases of the operations.
  // Tasks, questions and executions (design §1-2). Operator answers carry by 'operator'; agents answer through reply.
  const str=(v:any,name:string,max=4000)=>typeof v==='string'&&v.length>0&&v.length<=max?v:fail(400,'Expected '+name);
  const typedOps={

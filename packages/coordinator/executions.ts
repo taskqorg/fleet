@@ -105,9 +105,11 @@ export function executionModel(raw:Raw){
  const openDelegations=async()=>(await raw.query("SELECT delegation FROM execution WHERE delegation IS NOT NULL AND coalesce(delegation->>'continuationExecutionId','')='' AND coalesce(delegation->>'state','')<>'suppressed' ORDER BY seq")).map(r=>r.delegation);
 
  // Typed operations.
- async function createExecution(v:{id:string,kind:'agent_run'|'pipeline_run'|'pipeline_step'|'child_agent'|'tool_run',state?:State,projectId?:string|null,taskId?:string|null,parentExecutionId?:string|null,sessionId?:string|null,hostId?:string|null,harness?:string|null,model?:string|null,configRef?:any,data?:any}){
-  await raw.query(`INSERT INTO execution(id,kind,state,project_id,task_id,parent_execution_id,session_id,host_id,harness,model,config_ref,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(id) DO NOTHING`,
-   [v.id,v.kind,v.state??'preparing',v.projectId??null,v.taskId??null,v.parentExecutionId??null,v.sessionId??null,v.hostId??null,v.harness??null,v.model??null,v.configRef?clean(v.configRef):null,clean(v.data??{})])}
+ async function createExecution(v:{id:string,kind:'agent_run'|'pipeline_run'|'pipeline_step'|'child_agent'|'tool_run',state?:State,projectId?:string|null,taskId?:string|null,parentExecutionId?:string|null,sessionId?:string|null,hostId?:string|null,harness?:string|null,model?:string|null,configRef?:any,data?:any,experimentId?:string|null,variant?:string|null,accountId?:string|null,requestId?:string|null}):Promise<boolean>{
+  // A row whose id or request_id already exists is left as it is; the result says whether this call inserted one.
+  const rows=await raw.query(`INSERT INTO execution(id,kind,state,project_id,task_id,parent_execution_id,session_id,host_id,harness,model,config_ref,data,experiment_id,variant,account_id,request_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT DO NOTHING RETURNING id`,
+   [v.id,v.kind,v.state??'preparing',v.projectId??null,v.taskId??null,v.parentExecutionId??null,v.sessionId??null,v.hostId??null,v.harness??null,v.model??null,v.configRef?clean(v.configRef):null,clean(v.data??{}),v.experimentId??null,v.variant??null,v.accountId??null,v.requestId??null]);
+  return rows.length>0}
  const ORDER:Record<State,number>={preparing:0,waiting:1,running:1,succeeded:2,failed:2,cancelled:2};
  // A state moves forward only: terminal states are final, and running/waiting never go back to preparing.
  async function transition(id:string,state:State){if(!EXECUTION_STATES.includes(state))throw Object.assign(Error('Unknown execution state '+state),{statusCode:400});
@@ -146,6 +148,6 @@ export function executionModel(raw:Raw){
  const list=async(f:{taskId?:string,projectId?:string,problem?:boolean,parentExecutionId?:string}={})=>{const c:string[]=[],p:any[]=[];
   if(f.taskId){p.push(f.taskId);c.push(`task_id=$${p.length}`)}if(f.projectId){p.push(f.projectId);c.push(`project_id=$${p.length}`)}if(f.parentExecutionId){p.push(f.parentExecutionId);c.push(`parent_execution_id=$${p.length}`)}if(f.problem)c.push('problem IS NOT NULL');
   return (await raw.query(`SELECT ${COLS} FROM execution${c.length?' WHERE '+c.join(' AND '):''} ORDER BY seq`,p)).map(row)};
- return {adapters,openDelegations,createExecution,transition,markObservation,setHarnessVersion,recordChildren,writeTotals,ended,detectProblems,get:getTyped,list};
+ return {adapters,openDelegations,createExecution,insertIfAbsent:createExecution,transition,markObservation,setHarnessVersion,recordChildren,writeTotals,ended,detectProblems,get:getTyped,list};
 }
 export type Executions=ReturnType<typeof executionModel>;

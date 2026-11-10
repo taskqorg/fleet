@@ -41,6 +41,8 @@ pub fn validate(v: &Value) -> Result<(), &'static str> {
                         | "settings"
                         | "fleetTools"
                         | "collaborationTools"
+                        | "skills"
+                        | "connections"
                 )
             })
         }) {
@@ -93,24 +95,28 @@ pub fn validate(v: &Value) -> Result<(), &'static str> {
             }
         }
     }
-    if let Some(grants) = base
-        .as_object_mut()
-        .and_then(|o| o.remove("delegationProfiles"))
-    {
-        let ids = grants.as_array().ok_or("invalid delegation grant")?;
-        if ids.len() > 8
-            || ids.iter().any(|id| {
-                id.as_str().is_none_or(|s| {
-                    s.is_empty()
-                        || s.len() > 80
-                        || !s
-                            .bytes()
-                            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    // Id lists: delegation grants, and the profile's skills and connections (unused until Lab Stage 2).
+    for (key, max, err) in [
+        ("delegationProfiles", 8, "invalid delegation grant"),
+        ("skills", 32, "invalid profile skills"),
+        ("connections", 32, "invalid profile connections"),
+    ] {
+        if let Some(list) = base.as_object_mut().and_then(|o| o.remove(key)) {
+            let ids = list.as_array().ok_or(err)?;
+            if ids.len() > max
+                || ids.iter().any(|id| {
+                    id.as_str().is_none_or(|s| {
+                        s.is_empty()
+                            || s.len() > 80
+                            || !s
+                                .bytes()
+                                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                    })
                 })
-            })
-            || ids.iter().enumerate().any(|(i, id)| ids[..i].contains(id))
-        {
-            return Err("invalid delegation grant");
+                || ids.iter().enumerate().any(|(i, id)| ids[..i].contains(id))
+            {
+                return Err(err);
+            }
         }
     }
     if !exact(
@@ -207,6 +213,12 @@ mod tests {
         c = serde_json::from_str(include_str!("../../../config/agents/claude-worker.json"))
             .unwrap();
         c["delegationProfiles"] = json!(["../bad"]);
+        assert!(validate(&c).is_err());
+        c["delegationProfiles"] = json!([]);
+        c["skills"] = json!(["web-research"]);
+        c["connections"] = json!(["pipe-read"]);
+        validate(&c).unwrap();
+        c["connections"] = json!(["pipe-read", "pipe-read"]);
         assert!(validate(&c).is_err());
         assert!(validate_antigravity_settings(Some(&json!({"mcpServers":{}}))).is_err());
     }
