@@ -232,7 +232,15 @@ jobs:
         with:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
-      - run: go generate ./... && go vet ./...
+      - run: go generate ./... && go vet ./... && go test ./...
+      # Outside tests (tests/trial, tests/go) against the binary, on the runner's own PostgreSQL started by tests/trial/run.ts.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Outside tests against the Go coordinator
+        run: |
+          go build -o bin/fleet-coordinator ./coordinator
+          PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" ../tests/go/run.sh
       - name: Cross-build
         run: |
           mkdir -p dist

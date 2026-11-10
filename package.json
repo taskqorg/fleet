@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm run typecheck && node packages/coordinator/build.mjs && node packages/coordinator/package-assets.mjs && node app/build.mjs",
-    "start": "node dist/packages/coordinator/server.js",
+    "start": "go/bin/fleet-coordinator",
     "test": "node --test tests/coordinator/*.test.ts tests/ui/*.test.ts",
     "book": "node packages/ui/scripts/build-book.mjs",
     "check:design": "node packages/ui/scripts/check-design.mjs",

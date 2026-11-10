@@ -26,3 +26,4 @@ contracts/generated/
 go/bin/
 go/coordinator/protocol_gen.go
 go/.cache/
+go/coordinator/schema.sql

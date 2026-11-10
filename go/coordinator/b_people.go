@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-func mayAccessProject(p *Person, projectID string) bool {
+func mayAccessProjectID(p *Person, projectID string) bool {
 	if p == nil {
 		return false
 	}
@@ -86,7 +86,7 @@ func (a *App) guardOp(q *Request, name string, body json.RawMessage) error {
 	if architectOps.MatchString(name) && !hasRole(p, "architect") && !a.ownSubscription(q, name, b) {
 		return fail(403, "Architect role required")
 	}
-	if id, ok := b["projectId"].(string); ok && !mayAccessProject(p, id) {
+	if id, ok := b["projectId"].(string); ok && !mayAccessProjectID(p, id) {
 		return fail(404, "Unknown project")
 	}
 	return nil
@@ -128,7 +128,7 @@ func (a *App) guardRoute(q *Request) error {
 	if s, ok := b["projectId"].(string); ok && id == "" {
 		id = s
 	}
-	if id != "" && !mayAccessProject(p, id) {
+	if id != "" && !mayAccessProjectID(p, id) {
 		return fail(404, "Unknown project")
 	}
 	return nil
