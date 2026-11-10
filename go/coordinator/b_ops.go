@@ -20,13 +20,6 @@ func bop(name string, read bool, h handler) {
 	})
 }
 
-func init() {
-	// The slice's host registration, reached through the operation table once any operation exists (area A owns hosts).
-	operation("hosts_register", false, func(q *Request) (any, error) {
-		return q.app.op(&Request{app: q.app, r: q.r, person: q.person, body: q.body, tx: q.tx, params: []string{"hosts_register"}})
-	})
-}
-
 // runOp runs a named operation in its own transaction in the person's scope (q.tx is nil: called from a longRoute).
 func (a *App) runOp(q *Request, name string, b json.RawMessage) (any, error) {
 	if h, ok := longOperations[name]; ok { // area C: opens its own transactions

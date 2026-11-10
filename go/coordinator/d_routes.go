@@ -121,11 +121,6 @@ func init() {
 		return r, nil
 	})
 	operation("subscription_limits", true, subscriptionLimits)
-	// ponytail: bridge to the trial hosts_register (the ops dispatcher hides the trial table's /api/ops row); the hosts area
-	// replaces it, the integrator deletes duplicates.
-	if _, ok := operations["hosts_register"]; !ok {
-		operation("hosts_register", false, func(q *Request) (any, error) { q.params = []string{"hosts_register"}; return q.app.op(q) })
-	}
 
 	appRoutes()
 
