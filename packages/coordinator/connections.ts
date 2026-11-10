@@ -79,6 +79,14 @@ export function connectionRegistry(store:Store,config:{secretDir?:string,gateway
    if(Object.keys(a).some(k=>!['people','projects','experiments'].includes(k)))fail(400,'access: {people, projects, experiments}');
    const next={people:list(a.people??[],'people').map(e=>e.toLowerCase()),projects:list(a.projects??[],'projects'),experiments:list(a.experiments??[],'experiments')};
    if(JSON.stringify(next)!==JSON.stringify(c.access)){await change(c,'access',c.access,next);c.access=next;c.updatedAt=Date.now();await put('api-connection',c);publish()}return c},
+  // Owner connection tokens (§4): a long-lived bearer for the owner's own interactive sessions (Claude Code, Codex, Hermes)
+  // outside Fleet runs. Owner only; the value is answered once with the MCP spec and kept only as a hash; revoke ends it.
+  connections_token_create:async(b:any)=>{owner();const name=b?.name;if(typeof name!=='string'||!NAME.test(name))fail(400,'Expected token name');
+   if((await all('run-token')).some((t:any)=>t.personal===name&&!t.revokedAt))fail(409,'Token name in use');
+   const requested=Array.isArray(b.connections)?b.connections.filter((x:any)=>typeof x==='string'):[];
+   const minted=await mint({executionId:'token:'+name,directedBy:director(),personal:name},requested);if(!minted.token)fail(409,'No usable connection: '+minted.refused.join(', '));return {name,...minted}},
+  connections_token_list:async()=>({tokens:(await all('run-token')).filter((t:any)=>t.personal).map((t:any)=>({name:t.personal,connections:t.connections,createdAt:t.createdAt,revokedAt:t.revokedAt??null,directedBy:t.directedBy}))}),
+  connections_token_revoke:async(b:any)=>{owner();let n=0;for(const t of await all('run-token'))if(t.personal===b?.name&&!t.revokedAt){t.revokedAt=Date.now();await put('run-token',t);n++}if(!n)fail(404,'Unknown token');publish();return {name:b.name,revoked:true}},
   connections_set_intake:async(b:any)=>{const c=await byName(b?.connection);holderOrOwner(c);if(!['all','paused'].includes(b.intake))fail(400,'intake: all or paused');
    if(c.intake!==b.intake){await change(c,'intake',c.intake,b.intake);c.intake=b.intake;c.updatedAt=Date.now();await put('api-connection',c);publish()}return c},
  };
@@ -88,12 +96,12 @@ export function connectionRegistry(store:Store,config:{secretDir?:string,gateway
  const allowed=(c:any,run:{directedBy?:string|null,projectId?:string|null,experimentId?:string|null})=>{const a=c.access??{};
   const none=!a.people?.length&&!a.projects?.length&&!a.experiments?.length;
   return none?run.directedBy===c.holder:(!!run.directedBy&&a.people?.includes(run.directedBy))||a.projects?.includes('*')||(!!run.projectId&&a.projects?.includes(run.projectId))||(!!run.experimentId&&a.experiments?.includes(run.experimentId))};
- async function mint(run:{executionId:string,directedBy?:string|null,projectId?:string|null,experimentId?:string|null,pipelineRunId?:string|null,step?:boolean},requested:string[]){
+ async function mint(run:{executionId:string,directedBy?:string|null,projectId?:string|null,experimentId?:string|null,pipelineRunId?:string|null,step?:boolean,personal?:string},requested:string[]){
   const granted:any[]=[];
   for(const name of [...new Set(requested)]){const c=await get('connection:'+name,'api-connection').catch(()=>null);if(c&&c.intake==='all'&&allowed(c,run))granted.push(c)}
   if(!granted.length)return {token:null,connections:[],refused:[...new Set(requested)]};
   const token=randomBytes(32).toString('base64url'),sha256=createHash('sha256').update(token).digest('hex');
-  await put('run-token',{id:'run-token:'+sha256,sha256,executionId:run.executionId,directedBy:run.directedBy??null,projectId:run.projectId??null,experimentId:run.experimentId??null,pipelineRunId:run.pipelineRunId??null,...(run.step?{step:true}:{}),connections:granted.map(c=>c.name),createdAt:Date.now()});publish();
+  await put('run-token',{id:'run-token:'+sha256,sha256,executionId:run.executionId,directedBy:run.directedBy??null,projectId:run.projectId??null,experimentId:run.experimentId??null,pipelineRunId:run.pipelineRunId??null,...(run.step?{step:true}:{}),...(run.personal?{personal:run.personal}:{}),connections:granted.map(c=>c.name),createdAt:Date.now()});publish();
   return {token,refused:[...new Set(requested)].filter(n=>!granted.some(c=>c.name===n)),connections:granted.map(c=>({name:c.name,instructions:providers[c.provider].instructions,tools:c.tools.filter((t:string)=>providers[c.provider].tools[t]).map((t:string)=>({name:t,description:providers[c.provider].tools[t].description,inputSchema:providers[c.provider].tools[t].inputSchema}))}))}}
  async function revoke(executionId:string){let changed=false;for(const t of await all('run-token',{executionId}))if(t.executionId===executionId&&!t.revokedAt){t.revokedAt=Date.now();await put('run-token',t);changed=true}if(changed)publish()}
  const ENDED=['completed','failed','stopped'];
@@ -112,8 +120,8 @@ export function connectionRegistry(store:Store,config:{secretDir?:string,gateway
  async function record(l:any){if(typeof l?.callId!=='string'||!l.tokenSha256||!l.executionId)return false;
   const t=await get('run-token:'+l.tokenSha256,'run-token').catch(()=>null);if(!t)return false;
   const id='call:'+l.callId,amount=Number.isFinite(l.usage?.amount)?l.usage.amount:null;
-  const inserted=await store.executions.createExecution({id,kind:'tool_run',state:l.outcome==='ok'?'succeeded':'failed',projectId:t.projectId,parentExecutionId:t.executionId,experimentId:t.experimentId,
-   data:{tool:l.tool,connection:l.connection,...(t.pipelineRunId?{pipelineRunId:t.pipelineRunId}:{}),outcome:l.outcome,errorCode:l.errorCode??null,status:l.status,keyFingerprint:l.keyFingerprint??null,usage:l.usage??null,directedBy:t.directedBy,startedAt:l.startedAt,ms:l.ms}});
+  const inserted=await store.executions.createExecution({id,kind:'tool_run',state:l.outcome==='ok'?'succeeded':'failed',projectId:t.projectId,parentExecutionId:t.personal?null:t.executionId,experimentId:t.experimentId,
+   data:{...(t.personal?{tokenName:t.personal}:{}),tool:l.tool,connection:l.connection,...(t.pipelineRunId?{pipelineRunId:t.pipelineRunId}:{}),outcome:l.outcome,errorCode:l.errorCode??null,status:l.status,keyFingerprint:l.keyFingerprint??null,usage:l.usage??null,directedBy:t.directedBy,startedAt:l.startedAt,ms:l.ms}});
   if(!inserted)return false;
   if(l.outcome!=='ok')await store.query('UPDATE execution SET problem=$2 WHERE id=$1 AND problem IS NULL',[id,problemOf(l.outcome,l.errorCode??null)]);
   await store.query(`INSERT INTO execution_totals(execution_id,project_id,connection_cost,connection_cost_basis) VALUES($1,$2,$3,$4)
@@ -135,7 +143,7 @@ export function connectionRegistry(store:Store,config:{secretDir?:string,gateway
   const runs=await store.many(open.map((t:any)=>t.executionId),'execution');
   // An api step's token is revoked by its caller (and all of them at start, below); any other token goes when its execution
   // ended or is unknown.
-  for(const t of open){if(t.step)continue;const e=runs.get(t.executionId);if(!e||ENDED.includes(e.state))await revoke(t.executionId)}}
+  for(const t of open){if(t.step||t.personal)continue;const e=runs.get(t.executionId);if(!e||ENDED.includes(e.state))await revoke(t.executionId)}}
  // At start no api step call of an earlier process is in flight: their tokens are revoked.
  const started=Date.now();
  async function revokeSteps(){for(const t of await all('run-token'))if(t.step&&!t.revokedAt&&t.createdAt<started){t.revokedAt=Date.now();await put('run-token',t)}}

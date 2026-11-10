@@ -476,6 +476,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   hosts_update:(b:any)=>hosts.operations.hosts_update(b,requestPerson.getStore()??null),
   budget_set:(b:any)=>budgetModel.operations.budget_set(b,requestPerson.getStore()??null),
   budgets_list:()=>budgetModel.operations.budgets_list(),
+  budget_delete:(b:any)=>budgetModel.operations.budget_delete(b,requestPerson.getStore()??null),
   subscription_limits:()=>readingModel.operations.subscription_limits(),
   budget_ask:(b:any)=>budgetModel.operations.budget_ask(b,requestPerson.getStore()??null,(q:any)=>store.tasks.ask(q)),
   route_decisions:async(b:any)=>({decisions:(await store.query('SELECT execution_id,at,host_id,candidates,winner FROM route_decision WHERE execution_id=$1 ORDER BY at',[str(b?.executionId,'executionId',200)])).map((r:any)=>({executionId:r.execution_id,at:r.at,hostId:r.host_id,candidates:r.candidates,winner:r.winner}))}),
