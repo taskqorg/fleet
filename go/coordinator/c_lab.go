@@ -462,7 +462,8 @@ func parseRating(form, answer string, trials []any) (any, any, error) {
 }
 
 // runChecks: each check (a shell command, exit 0 = pass) in a fresh directory holding the files, FLEET_OUTPUT_DIR set to it.
-func runChecks(checks []any, files []labFile) (doc, error) {
+// Cancelling ctx kills the running check and returns ctx's error: the trial stays unscored, never failed.
+func runChecks(ctx context.Context, checks []any, files []labFile) (doc, error) {
 	dir, err := os.MkdirTemp("", "fleet-eval-")
 	if err != nil {
 		return nil, err
@@ -478,10 +479,14 @@ func runChecks(checks []any, files []labFile) (doc, error) {
 	failed := []any{}
 	for _, x := range checks {
 		c := mapOf(x)
-		cmd := osexec.Command("sh", "-c", astr(c["run"]))
+		cmd := osexec.CommandContext(ctx, "sh", "-c", astr(c["run"]))
 		cmd.Dir = dir
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "FLEET_OUTPUT_DIR=" + dir}
-		if cmd.Run() != nil {
+		err := cmd.Run()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if err != nil {
 			failed = append(failed, c["id"])
 		}
 	}
@@ -1187,8 +1192,12 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 	m.Lock()
 	defer m.Unlock()
 	launched := []string{}
-	// Script checks run before the transaction, so a slow check never holds the experiment lock.
-	checked := map[string]doc{}
+	// Script checks run after the read snapshot closed and before the write transaction, so a slow check holds neither.
+	type pending struct {
+		checks []any
+		files  []labFile
+	}
+	todo := map[string]pending{}
 	if err := cRead(ctx, a, func(q *Request) error {
 		exp, err := expRow(q, id)
 		if err != nil || exp["state"] == "draft" {
@@ -1228,15 +1237,19 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			if err != nil {
 				return err
 			}
-			r, err := runChecks(cList(full["checks"]), files)
-			if err != nil {
-				return err
-			}
-			checked[astr(t["id"])] = r
+			todo[astr(t["id"])] = pending{cList(full["checks"]), files}
 		}
 		return nil
 	}); err != nil {
 		return err
+	}
+	checked := map[string]doc{}
+	for id, p := range todo {
+		r, err := runChecks(ctx, p.checks, p.files)
+		if err != nil {
+			return err
+		}
+		checked[id] = r
 	}
 	err := cTx(ctx, a, "experiment:"+id, func(q *Request) error {
 		exp, err := expRow(q, id)
