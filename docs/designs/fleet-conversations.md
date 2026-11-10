@@ -290,9 +290,9 @@ question / artifact / execution rows (same seq) ------+
 
 ### Browser check
 
-`tests/ui/conversations.check.mjs` runs the built app against a coordinator loaded with fixtures captured from real events: codex `6a55ab8b`, claude `127d6fd7` and the lost-receipt case `d89cc199`, with secrets removed. A coordinator test asserts that each fixture's shape matches what the executor writes, so a wrong fixture fails.
+`tests/ui/conversations.check.ts` runs the built app against a coordinator loaded with fixtures captured from real events: codex `6a55ab8b`, claude `127d6fd7` and the lost-receipt case `d89cc199`, with secrets removed. A coordinator test asserts that each fixture's shape matches what the executor writes, so a wrong fixture fails.
 
-It asserts: newest entry visible on open; scroll up loads older pages with 0 px anchor drift; jump to a search hit; expand keeps the header in place; streaming append with the pill; one question answer; cross-message copy text; stop on one of two executions. It prints, without thresholds: time to first paint of the newest reply, page round-trip time, search time, and anchor drift.
+It asserts: newest entry visible on open; scroll up loads older pages with 0 px anchor drift; jump to a search hit; expand keeps the header in place; streaming append with the pill; one question answer; reply copy (cross-message copy is asserted from Stage 3, which builds selection); stop on one of two executions. The fixtures store the executor projection of each native record; the coordinator test checks it equals `fleet-executor reproject` output. It prints, without thresholds: time to first paint of the newest reply, page round-trip time, search time, and anchor drift.
 
 ## Alternatives Considered
 
@@ -501,7 +501,7 @@ Shared conventions for every item:
 
 *   **Proposed Changes**: Replay and collision of `event-delta`; readers use `replyText()`; `multiharness.test.ts` asserts `blocks` instead of `messages`. Add a race test for two different answers to the tasks tests.
 
-#### 15. `tests/ui/conversations.check.mjs` (Create), `package.json` and `.github/workflows/ci.yml` (Modify) — moved to Stage 2, because it asserts the new screen
+#### 15. `tests/ui/conversations.check.ts` (Create), `package.json` and `.github/workflows/ci.yml` (Modify) — moved to Stage 2, because it asserts the new screen
 
 *   **Type / Scope**: browser check, script and CI job.
 *   **Proposed Changes**: The assertions and timing report in "Browser check" (Technical Plan). It reuses the anchor-drift measurement from `tests/ui/scroll.check.mjs`. Script `"check:conversations": "pnpm run build && node tests/ui/conversations.check.mjs"`; CI job `conversations-check` built like `filter-check` (`ci.yml:58`).
@@ -509,6 +509,8 @@ Shared conventions for every item:
 ### Stage 2: Single-session thread
 
 #### 16. `app/src/threads.ts` (Create); `app/src/transcript.ts` and `tests/ui/transcript.test.ts` (Delete)
+
+*   **Stage 2 notes**: `session_get` drops `events` and `results`, `/api/sessions/:id/events` is removed (from Stage 1 item 5). Rows live in `Thread` in `packages/ui` (rows of item 19 plus the list), which the book demo also uses. Markdown renders fenced code (with its own copy) and inline code; other markdown stays plain text until a renderer is chosen for the book. Steer is `message_send` with `delivery: 'steer'` while an execution runs.
 
 *   **Type / Scope**: app state.
 *   **Proposed Changes**: Window state per thread key: loaded blocks, `first`, `last`, `hasBefore`, `hasAfter`, `feedCursor`; the live insert rule and jump from "Read path" in the Technical Plan. Nothing reads `data.item`.

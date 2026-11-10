@@ -475,45 +475,12 @@ pub fn project(h: &str, v: &Value) -> Value {
                 || v["type"] == "turn.completed"
         }
     };
-    let mut messages = Vec::new();
-    if h == "codex" && v["item"]["type"] == "agent_message" {
-        if let Some(text) = v["item"]["text"].as_str() {
-            messages.push(json!({"role":"assistant","text":text}));
-        }
-    }
-    if h == "claude" {
-        for b in v["message"]["content"].as_array().into_iter().flatten() {
-            if b["type"] == "text" {
-                if let Some(text) = b["text"].as_str() {
-                    messages.push(json!({"role":v["message"]["role"].as_str().unwrap_or("assistant"),"text":text}));
-                }
-            }
-        }
-    }
-    if h == "antigravity" {
-        if let Some(text) = v["result"]["response"]
-            .as_str()
-            .or(v["step_update"]["text_delta"].as_str())
-        {
-            messages.push(json!({"role":"assistant","text":text}));
-        }
-    }
-    if h == "antigravity"
-        && matches!(
-            v["update"]["sessionUpdate"].as_str(),
-            Some("agent_message_chunk" | "user_message_chunk")
-        )
-    {
-        if let Some(text) = v["update"]["content"]["text"].as_str() {
-            messages.push(json!({"role":if v["update"]["sessionUpdate"]=="user_message_chunk" {"user"}else{"assistant"},"text":text,"delta":true}));
-        }
-    }
     let message = match h {
         "claude" => v.get("message"),
         "antigravity" => v.get("step_update").or(v.get("result")),
         _ => v.get("item"),
     };
-    json!({"harness":h,"session":session,"completed":success,"lifecycle":v.get("type").or(v.get("event")),"error":v.get("error").or(v.pointer("/result/error")),"message":message,"messages":messages,"tools":tools(h,v),"usage":usage(v),"nativeUsage":v.get("usage").or(v.pointer("/result/usage")),"contextUsage":if v["update"]["sessionUpdate"]=="usage_update" {json!({"used":v["update"]["used"],"capacity":v["update"]["size"],"scope":"native context window; not additive billing usage"})}else{Value::Null},"usageScope":if h=="codex" && v.get("usage").is_some_and(|u|u.get("total").is_some()) {"native thread cumulative total; not additive"} else {"native report; scope unknown, may be cumulative; not additive"},"native":v})
+    json!({"harness":h,"session":session,"completed":success,"lifecycle":v.get("type").or(v.get("event")),"error":v.get("error").or(v.pointer("/result/error")),"message":message,"tools":tools(h,v),"usage":usage(v),"nativeUsage":v.get("usage").or(v.pointer("/result/usage")),"contextUsage":if v["update"]["sessionUpdate"]=="usage_update" {json!({"used":v["update"]["used"],"capacity":v["update"]["size"],"scope":"native context window; not additive billing usage"})}else{Value::Null},"usageScope":if h=="codex" && v.get("usage").is_some_and(|u|u.get("total").is_some()) {"native thread cumulative total; not additive"} else {"native report; scope unknown, may be cumulative; not additive"},"native":v})
 }
 /// Typed transcript blocks (docs/designs/fleet-conversations.md, "Block model"): text, reasoning and tool, the only producer of
 /// reply text. State per execution: tools started and not yet ended (claude tool_use, ACP tool_call) with their start time, and

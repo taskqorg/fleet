@@ -67,6 +67,8 @@ test('execution.ended places the result block; it is written once',async()=>{con
   await f.s.executions.transition('with-result','succeeded').catch(()=>{});
   assert.equal((await f.s.query("SELECT count(*)::int AS n FROM document WHERE data->>'type'='execution.ended'"))[0].n,1);
   const r=await f.op.entries({key:{session:'s3'},limit:10});assert.deepEqual(texts(r),['boundary','result']);assert.deepEqual(r.entries[1].artifactIds,['a1']);
+  await f.s.query("INSERT INTO document(kind,id,data) VALUES('artifact','legacy-a',$1)",[JSON.stringify({id:'legacy-a',executionId:'with-result'})]);
+  assert.deepEqual((await f.op.blocks({key:{session:'s3'},rows:[{kind:'artifact',id:'legacy-a'}]})).entries.map((b:any)=>b.kind),['result']);
  }finally{await f.s.close()}});
 
 test('search finds blocks newest first and a hit opens with around; thread_blocks by fed rows; export with and without a range',async()=>{const f=await fresh();
@@ -86,15 +88,15 @@ test('search finds blocks newest first and a hit opens with around; thread_block
   assert.equal(part,'**You:**\n\nmigration 6 please\n\n**Agent (gpt-6.1-sol):**\n\nMigration\n\n');
  }finally{await f.s.close()}});
 
-test('captured fixtures: native records through the executor projection give blocks for codex, claude and the lost-receipt case',async()=>{const f=await fresh(),bin=executorBinary();
+test('captured fixtures: stored projections equal the executor output and give blocks for codex, claude and the lost-receipt case',async()=>{const f=await fresh(),bin=executorBinary();
  try{for(const name of ['codex-6a55ab8b','claude-127d6fd7','lost-receipt-d89cc199']){const fx=JSON.parse(readFileSync(new URL(`./fixtures/conversations/${name}.json`,import.meta.url),'utf8')),e=fx.execution;
    await f.s.query("INSERT INTO document(kind,id,data) VALUES('session',$1,$2) ON CONFLICT DO NOTHING",[e.session_id,JSON.stringify({id:e.session_id})]);
    await f.s.query("INSERT INTO execution(id,kind,state,session_id,harness,model,config_ref,legacy_kind,legacy_id,seq) VALUES($1,'agent_run',$2,$3,$4,$5,$6,'execution',$1,$7)",[e.id,e.state,e.session_id,e.harness,e.model,JSON.stringify({effort:e.effort}),e.seq]);
-   // Records the harness projected are projected again by the executor binary, as it writes them live.
+   // Shape check: the stored projection is exactly what the executor writes for the native record.
    const native=fx.documents.filter((d:any)=>d.data.data?.fleetNormalized);
    const out=execFileSync(bin,['reproject'],{input:native.map((d:any)=>{const {fleetNormalized,...record}=d.data.data;return JSON.stringify({executionId:e.id,harness:e.harness,timestamp:d.data.timestamp,record})}).join('\n')+'\n',encoding:'utf8'}).trim().split('\n').map(l=>JSON.parse(l));
-   native.forEach((d:any,i:number)=>{d.data.data.fleetNormalized=out[i]});
-   for(const d of fx.documents)await f.s.query('INSERT INTO document(kind,id,data,seq) VALUES($1,$2,$3,$4)',[out[native.indexOf(d)]?.deltaOf!=null?'event-delta':d.kind,d.data.id,JSON.stringify(d.data),d.seq])}
+   native.forEach((d:any,i:number)=>assert.deepEqual(d.data.data.fleetNormalized,out[i],`${name} ${d.data.id}`));
+   for(const d of fx.documents)await f.s.query('INSERT INTO document(kind,id,data,seq) VALUES($1,$2,$3,$4)',[d.kind,d.data.id,JSON.stringify(d.data),d.seq])}
   const reply=async(session:string)=>(await f.op.entries({key:{session},limit:100})).entries;
   const codex=await reply('c2c11096-a08e-4b86-88d9-eb6c46785b11');assert.deepEqual(codex.filter((b:any)=>b.kind==='text').map((b:any)=>[b.role,b.markdown]),[['operator','hi'],['agent','Hi! What would you like to work on?']]);
   const claude=await reply((await f.s.query("SELECT session_id FROM execution WHERE id LIKE '127d6fd7%'"))[0].session_id);

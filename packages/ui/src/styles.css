@@ -123,11 +123,26 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .transcript{display:flex;flex-direction:column}
 .tr-tool{display:flex;gap:var(--space-3);align-items:center;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--line)}
 .tr-body .vl{background:var(--surface-sunken)}
-.tr-e{display:grid;grid-template-columns:var(--size-clock) 1fr;gap:var(--space-3);padding:var(--space-2) var(--space-4)}
-.tr-e time{font-size:var(--font-size-sm);color:var(--fg-muted)}
-.tr-e .call{display:inline-flex;align-items:center;gap:var(--space-2);font-family:var(--font-mono);font-size:var(--font-size-sm)}
-.tr-gap{display:flex;gap:var(--space-2);align-items:center;color:var(--attention-fg);font-size:var(--font-size-sm);padding:var(--space-2) var(--space-4)}
-
+/* Thread rows: content first, service zone on the right (OR-21); folds open downward (OR-23) */
+.th-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--space-3);align-items:start;padding:var(--space-2) var(--space-4)}
+.th-row .th-svc{display:inline-flex;align-items:center;gap:var(--space-2);color:var(--fg-muted);font-size:var(--font-size-sm)}
+.th-text.operator .who{font-weight:var(--font-weight-medium);margin-right:var(--space-2)}
+.th-text.operator{background:var(--surface)}
+.th-head{display:inline-flex;align-items:center;gap:var(--space-2);min-width:0;border:0;background:none;padding:0;color:var(--fg);font:inherit;text-align:left;cursor:pointer}
+.th-line{display:inline-flex;align-items:center;gap:var(--space-3);min-width:0}
+.th-line .svc.t-danger{color:var(--tone-fg)}
+.th-line .ell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.th-body{grid-column:1/-1;min-width:0}
+.th-boundary{display:flex;align-items:center;gap:var(--space-2);border-top:1px solid var(--line);font-size:var(--font-size-sm);color:var(--fg-muted)}
+.th-result{display:flex;align-items:center;gap:var(--space-2)}
+.th-q{display:block}
+.agent-mark{display:inline-flex;align-items:center;gap:var(--space-1);font-family:var(--font-mono)}
+.vl-row.marked{background:var(--selected)}
+.md p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.md code{font-family:var(--font-mono);font-size:var(--font-size-sm)}
+.md .code{position:relative;margin:var(--space-2) 0;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md)}
+.md pre{margin:0;padding:var(--space-3);overflow-x:auto}
+.md .code-copy{position:absolute;top:var(--space-1);right:var(--space-1)}
 /* Decision */
 .decision{border:1px solid var(--attention-line);background:var(--attention-soft);border-radius:var(--radius-md);padding:var(--space-4)}
 .decision .dq{display:flex;align-items:center;gap:var(--space-2);color:var(--attention-fg)}
@@ -366,3 +381,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .lab-cell{display:flex;flex-direction:column;gap:var(--space-1)}
 .lab-trial{display:flex;align-items:center;gap:var(--space-2);font-variant-numeric:tabular-nums}
 .lab-patch{margin:0;padding:var(--space-2) var(--space-4);font-family:var(--font-mono);font-size:var(--font-size-sm);overflow-x:auto}
+/* Conversation detail: the status line overlays the thread top, so it never moves the rows (OR-23) */
+.status-line{position:relative;height:0}
+.status-line>*{position:absolute;left:0;right:0;top:0;z-index:2}
+.composer-bar{display:flex;align-items:center;gap:var(--space-2);padding:0 var(--space-4);min-height:var(--size-control)}

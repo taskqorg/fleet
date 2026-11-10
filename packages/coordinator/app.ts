@@ -129,11 +129,11 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   s.agentConfig=readTrustedProfile(config.profilesDirectory||'config/agents',req.body.profileId);await put('session',s);return {sessionId:s.id,profileId:s.agentConfig.id,account:s.account};
  };
  app.post('/api/sessions/:id/profile',async(req:any)=>(await store.tx(async ()=>(await session_profile({...req.body,sessionId:req.params.id})))));
- const session_get=async (b:any)=>{const s=(await get(b?.sessionId,'session'));return {...s,...(await agent.sessionView(s.id)),sessionId:s.id,delegations:(await map((await all('delegation')).filter(d=>d.parentSessionId===s.id||d.childSessionId===s.id),related)),messages:(await all('message',{sessionId:s.id})).filter(x=>x.sessionId===s.id),executions:(await all('execution',{sessionId:s.id})).filter(x=>x.sessionId===s.id),events:[...await all('event',{sessionId:s.id}),...await all('event-delta',{sessionId:s.id})].filter(x=>x.sessionId===s.id&&x.type!=='execution.ended'),results:(await all('artifact',{sessionId:s.id},['contentBase64'])).filter(x=>x.sessionId===s.id).map(({contentBase64,...x})=>x)}};
+ const session_get=async (b:any)=>{const s=(await get(b?.sessionId,'session'));return {...s,...(await agent.sessionView(s.id)),sessionId:s.id,delegations:(await map((await all('delegation')).filter(d=>d.parentSessionId===s.id||d.childSessionId===s.id),related)),messages:(await all('message',{sessionId:s.id})).filter(x=>x.sessionId===s.id),executions:(await all('execution',{sessionId:s.id})).filter(x=>x.sessionId===s.id)}};
  app.get('/api/sessions/:id',async(req:any)=>(await session_get({sessionId:req.params.id})));
  // Conversation threads (docs/designs/fleet-conversations.md): pages of typed blocks per task or session, search and export.
  // feedCursor is read in the same snapshot as the page, so the client follows the feed from there and misses no row.
- const thread=threads({query:store.query,artifacts:async(executionId:string)=>artifacts.list({executionId}),cursor:async()=>(await store.changes.since(null)).cursor});
+ const thread=threads({query:store.query,artifacts:async(executionId:string)=>all('artifact',{executionId},['contentBase64']),cursor:async()=>(await store.changes.since(null)).cursor});
  const thread_entries=(b:any)=>thread.entries(b),thread_blocks=(b:any)=>thread.blocks(b),thread_search=(b:any)=>thread.search(b),thread_export=(b:any)=>thread.exportText(b,store.read);
  const threadKey=(req:any)=>req.params.scope==='task'?{task:req.params.id}:req.params.scope==='session'?{session:req.params.id}:fail(404,'Unknown thread scope');
  const intOf=(v:any)=>v===undefined?undefined:/^\d+$/.test(v)?Number(v):fail(400,'Expected integer');
@@ -145,7 +145,6 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  app.get('/api/threads/:scope/:id/export',async(req:any,reply:any)=>{const {Readable}=await import('node:stream');const b={key:threadKey(req),from:pointOf(req.query.from),to:pointOf(req.query.to)};
   await store.read(()=>thread.entries({key:b.key,limit:1}));// 404 before the stream starts
   return reply.type('text/markdown; charset=utf-8').send(Readable.from(thread.exportPages(b,store.read)))});
- app.get('/api/sessions/:id/events',async(req:any)=>{(await get(req.params.id,'session'));const after=Number(req.query.after??-1),limit=Number(req.query.limit??100);if(!Number.isSafeInteger(after)||!Number.isSafeInteger(limit)||limit<1||limit>500)fail(400,'Invalid page');const events=(await all('event',{sessionId:req.params.id})).filter(x=>x.sessionId===req.params.id&&x.type!=='execution.ended').slice(after+1,after+1+limit);return {events,nextCursor:events.length?after+events.length:after}});
  const execution_differences=async (b:any)=>{
   const current=(await get(b?.executionId,'execution')),previous=(await get(text(b?.previous,300),'execution'));
   if(current.sessionId!==previous.sessionId)fail(403,'Different session');

@@ -38,8 +38,8 @@ test('the executor collects output, uploads it to its own store and the run comp
   await until('store registration',async()=>(await api('/api/ops/stores_list',{})).stores.find((s:any)=>s.id==='e2e-store'&&s.state==='reachable'));
   const session=(await api('/api/sessions',{})).sessionId;const e=await api('/api/sessions/'+session+'/messages',{requestId:'r1',text:'make a model'});
   const done=await until('run completed',async()=>{const s=await api('/api/sessions/'+session);const x=s.executions.find((x:any)=>x.id===e.id);return ['completed','failed'].includes(x?.state)&&s});
-  const run=done.executions.find((x:any)=>x.id===e.id);assert.equal(run.state,'completed',JSON.stringify(done.events.map((x:any)=>[x.type,x.data]))+stderr);
-  const results=await until('both artifacts stored',async()=>{const r=(await api('/api/sessions/'+session)).results;return r.length===2&&r});
+  const run=done.executions.find((x:any)=>x.id===e.id);assert.equal(run.state,'completed',stderr);
+  const results=await until('both artifacts stored',async()=>{const r=await (app as any).store.all('artifact',{sessionId:session},['contentBase64']);return r.length===2&&r});
   const model=results.find((r:any)=>r.path==='model.glb'),expected=Buffer.concat(Array.from({length:48},(_,i)=>Buffer.alloc(1<<20,i)));
   assert.equal(model.sha256,createHash('sha256').update(expected).digest('hex'));assert.equal(model.mediaType,'model/gltf-binary');
   assert.ok(fake.objects.get(`_/prod/${model.sha256}`)?.equals(expected),'model in the store under its content key');
