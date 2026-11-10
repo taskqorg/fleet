@@ -97,15 +97,15 @@ func runPipeline(q *Request, invocation string) (any, error) {
 	if !cKeysOnly(b, "projectId", "requestId", "query", "methodId", "invocation") || rid == "" || len(rid) > 200 || !isStr || strings.TrimSpace(query) == "" || len(query) > 2000 || b["methodId"] != nil && !methodOK {
 		return nil, fail(400, "Expected projectId, requestId, query and optional methodId")
 	}
-	inv := cStr(b["invocation"])
+	inv := astr(b["invocation"])
 	if inv == "" {
 		inv = "pipeline"
 	}
 	var run doc
 	old := false
 	err = cWrite(q, "", func(q *Request) error {
-		signature := cSha([]byte(cCanon(doc{"projectId": b["projectId"], "query": query, "methodId": b["methodId"], "invocation": inv})))
-		prev, err := runsWhere(q, "data->>'projectId'=$1 AND data->>'requestId'=$2", cStr(b["projectId"]), rid)
+		signature := sha256hex([]byte(cCanon(doc{"projectId": b["projectId"], "query": query, "methodId": b["methodId"], "invocation": inv})))
+		prev, err := runsWhere(q, "data->>'projectId'=$1 AND data->>'requestId'=$2", astr(b["projectId"]), rid)
 		if err != nil {
 			return err
 		}
@@ -119,25 +119,25 @@ func runPipeline(q *Request, invocation string) (any, error) {
 		if inv != "direct" && inv != "pipeline" {
 			return fail(400, "Invalid invocation")
 		}
-		p, err := projectContext(cStr(b["projectId"]))
+		p, err := projectContext(astr(b["projectId"]))
 		if err != nil {
 			return err
 		}
-		c, err := catalogue(q, cStr(b["projectId"]))
+		c, err := catalogue(q, astr(b["projectId"]))
 		if err != nil {
 			return err
 		}
-		want := cStr(b["methodId"])
+		want := astr(b["methodId"])
 		source := c["recommendationSource"]
 		if want == "" {
-			want = cStr(c["recommendedMethod"])
+			want = astr(c["recommendedMethod"])
 		} else {
 			source = "explicit"
 		}
 		var method doc
 		for _, m := range cList(c["methods"]) {
-			if cMap(m)["id"] == want {
-				method = cMap(m)
+			if mapOf(m)["id"] == want {
+				method = mapOf(m)
 			}
 		}
 		if method == nil {
@@ -150,8 +150,8 @@ func runPipeline(q *Request, invocation string) (any, error) {
 	if err != nil || old {
 		return run, err
 	}
-	pipelineAdvance(q.app, cStr(run["id"]))
-	return pipelineWait(q.ctx(), q.app, cStr(run["id"]))
+	pipelineAdvance(q.app, astr(run["id"]))
+	return pipelineWait(q.ctx(), q.app, astr(run["id"]))
 }
 
 var skillID = regexp.MustCompile(`^[a-z0-9-]{1,80}$`)
@@ -199,9 +199,9 @@ func init() {
 	// Agent step (app.ts startAgent): the step's trusted profile with the variant overrides, its skills, a session of the
 	// run, and an ordinary queued execution.
 	cStartAgentStep = func(q *Request, run, step doc, stepExecutionID, prompt string, inputs []any, overrides doc) (string, error) {
-		pid := cStr(step["profile"])
+		pid := astr(step["profile"])
 		if overrides["profile"] != nil {
-			pid = cStr(overrides["profile"])
+			pid = astr(overrides["profile"])
 		}
 		profile, err := readTrustedProfile(pid)
 		if err != nil {
@@ -218,7 +218,7 @@ func init() {
 			if v != "connections" && v != "builtin" {
 				return "", fail(400, "web_route must be connections or builtin")
 			}
-			web = cStr(v)
+			web = astr(v)
 		}
 		skills := []any{}
 		for _, x := range cList(profile["skills"]) {
@@ -254,7 +254,7 @@ func init() {
 		if err != nil {
 			return "", err
 		}
-		return cStr(e["id"]), nil
+		return astr(e["id"]), nil
 	}
 }
 

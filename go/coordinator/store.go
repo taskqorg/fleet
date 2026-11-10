@@ -34,7 +34,7 @@ type HTTPError struct {
 	Msg  string
 }
 
-func (e *HTTPError) Error() string { return e.Msg }
+func (e *HTTPError) Error() string    { return e.Msg }
 func fail(code int, msg string) error { return &HTTPError{code, msg} }
 
 var errNotFound = fail(404, "Not found")

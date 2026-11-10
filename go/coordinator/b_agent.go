@@ -94,7 +94,7 @@ func enqueue(q *Request, s doc, input, requestID string, payload, execution doc,
 	e := doc{"id": id, "executionId": id, "sessionId": s["id"], "hostId": nil, "state": "queued", "createdAt": now(), "directedBy": s["directedBy"], "model": "gpt-6.1-sol", "effort": "low",
 		"dispatch": doc{"harness": harnessOf(s), "projectId": s["projectId"], "workingDirectory": s["workingDirectory"], "account": s["account"], "host": nilIf(host), "last": nilIf(last), "input": input, "payload": payload}}
 	if ac != nil {
-		e["agentConfig"], e["profileSha256"], e["model"], e["effort"] = ac, profileDigest(ac), firstString(ac["model"], "gpt-6.1-sol"), ac["effort"]
+		e["agentConfig"], e["profileSha256"], e["model"], e["effort"] = ac, frameHash(ac), firstString(ac["model"], "gpt-6.1-sol"), ac["effort"]
 	}
 	for k, v := range execution {
 		e[k] = v

@@ -72,7 +72,7 @@ func (a *App) delegationRequest(q *Request, b doc, c doc) (any, error) {
 	if astr(nonNil(profile["harness"], "codex")) != astr(nonNil(pcfg["harness"], "codex")) {
 		return nil, fail(403, "Cross-harness child needs an explicit account binding")
 	}
-	session := doc{"id": uuid(), "createdAt": nowMs(), "agentConfig": profile, "parentExecutionId": parent["id"]}
+	session := doc{"id": uuid(), "createdAt": now(), "agentConfig": profile, "parentExecutionId": parent["id"]}
 	if ps["account"] != nil {
 		session["account"] = ps["account"]
 	}
@@ -180,7 +180,7 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 		history[i], history[j] = history[j], history[i]
 	}
 	with := map[string]bool{}
-	rs, err := aMaps(q, "SELECT DISTINCT execution_id AS id FROM artifact WHERE state='stored' AND execution_id=ANY($1) UNION SELECT DISTINCT data->>'executionId' FROM document WHERE kind='artifact' AND data->>'executionId'=ANY($1)", history)
+	rs, err := cQuery(q, "SELECT DISTINCT execution_id AS id FROM artifact WHERE state='stored' AND execution_id=ANY($1) UNION SELECT DISTINCT data->>'executionId' FROM document WHERE kind='artifact' AND data->>'executionId'=ANY($1)", history)
 	if err != nil {
 		return false, err
 	}

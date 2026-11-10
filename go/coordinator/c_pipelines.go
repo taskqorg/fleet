@@ -21,13 +21,13 @@ import (
 )
 
 var (
-	stepIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-	pipelineFile  = regexp.MustCompile(`^[a-z0-9-]+\.json$`)
-	infraCode     = regexp.MustCompile(`^(queue-full|no-usable-key|http-429|http-432|http-433|key-disabled-\d+|provider-unreachable|unreachable|unauthenticated|connection-unavailable|client-hash-mismatch)$`)
-	pipeRefPattern    = regexp.MustCompile(`\$\{([^}]+)\}`)
-	wholeRef      = regexp.MustCompile(`^\$\{([^}]+)\}$`)
-	http5xx       = regexp.MustCompile(`^http-5\d\d$`)
-	ownOutput     = regexp.MustCompile(`^(output/)?output\.json$`)
+	stepIDPattern  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+	pipelineFile   = regexp.MustCompile(`^[a-z0-9-]+\.json$`)
+	infraCode      = regexp.MustCompile(`^(queue-full|no-usable-key|http-429|http-432|http-433|key-disabled-\d+|provider-unreachable|unreachable|unauthenticated|connection-unavailable|client-hash-mismatch)$`)
+	pipeRefPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
+	wholeRef       = regexp.MustCompile(`^\$\{([^}]+)\}$`)
+	http5xx        = regexp.MustCompile(`^http-5\d\d$`)
+	ownOutput      = regexp.MustCompile(`^(output/)?output\.json$`)
 )
 
 // Hooks other areas provide. Unset, the step or call fails with a clear reason instead of a crash.
@@ -67,7 +67,7 @@ func validatePipeline(d doc) (doc, error) {
 	if v, _ := cNum(d["version"]); v != 2 {
 		return bad("version must be 2")
 	}
-	if !stepIDPattern.MatchString(cStr(d["id"])) {
+	if !stepIDPattern.MatchString(astr(d["id"])) {
 		return bad("id")
 	}
 	steps := cList(d["steps"])
@@ -77,13 +77,13 @@ func validatePipeline(d doc) (doc, error) {
 	allowed := map[string][]string{"api": {"id", "kind", "connection", "tool", "arguments", "mode"}, "agent": {"id", "kind", "profile", "prompt"}, "script": {"id", "kind", "command", "timeout_ms", "host"}}
 	seen := map[string]bool{}
 	for _, x := range steps {
-		s := cMap(x)
-		id := cStr(s["id"])
+		s := mapOf(x)
+		id := astr(s["id"])
 		if s == nil || !stepIDPattern.MatchString(id) || seen[id] || id == "example" {
 			return bad(fmt.Sprintf("step id %v", s["id"]))
 		}
 		seen[id] = true
-		kind := cStr(s["kind"])
+		kind := astr(s["kind"])
 		keys, ok := allowed[kind]
 		if !ok {
 			return bad(fmt.Sprintf("step kind %v", s["kind"]))
@@ -98,7 +98,7 @@ func validatePipeline(d doc) (doc, error) {
 			_, isStr := s["connection"].(string)
 			_, toolStr := s["tool"].(string)
 			mode, hasMode := s["mode"]
-			if !isStr || !toolStr || cMap(s["arguments"]) == nil && cList(s["arguments"]) == nil || hasMode && mode != "sync" && mode != "job" {
+			if !isStr || !toolStr || mapOf(s["arguments"]) == nil && cList(s["arguments"]) == nil || hasMode && mode != "sync" && mode != "job" {
 				return bad("api step " + id)
 			}
 		case "agent":
@@ -111,7 +111,7 @@ func validatePipeline(d doc) (doc, error) {
 		case "script":
 			t, has := s["timeout_ms"]
 			n, isInt := cInt(t)
-			if cStr(s["command"]) == "" || has && !(isInt && n > 0) {
+			if astr(s["command"]) == "" || has && !(isInt && n > 0) {
 				return bad("script step " + id)
 			}
 		}
@@ -161,7 +161,7 @@ func resolveRefs(v any, example any, outputs doc, quote bool) (any, error) {
 			return nil, &refError{path}
 		}
 		for _, p := range parts {
-			m := cMap(cur)
+			m := mapOf(cur)
 			if m == nil {
 				if l, ok := cur.([]any); ok {
 					var i int
@@ -262,14 +262,14 @@ func putRun(q *Request, run doc) error {
 			rest[k] = v
 		}
 	}
-	state, obs := runState(cStr(run["state"]))
+	state, obs := runState(astr(run["state"]))
 	if state == "" {
 		if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT state::text FROM execution WHERE id=$1),'preparing')", run["id"]).Scan(&state); err != nil {
 			return err
 		}
 	}
 	cfg := doc{"method": run["selectedMethod"], "definitionSha256": run["definitionSha256"]}
-	if err := cExec(q, `INSERT INTO execution(id,kind,state,observation,project_id,started_at,ended_at,legacy_kind,legacy_id,data,config_ref,experiment_id,variant)
+	if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,started_at,ended_at,legacy_kind,legacy_id,data,config_ref,experiment_id,variant)
 	 VALUES($1,'pipeline_run',$2,$3,$4,$5,$6,'pipeline-run',$1,$7,$8,$9,$10)
 	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
 	  config_ref=CASE WHEN execution.variant IS NULL THEN excluded.config_ref ELSE execution.config_ref END,legacy_kind='pipeline-run',legacy_id=excluded.legacy_id,
@@ -278,8 +278,8 @@ func putRun(q *Request, run doc) error {
 		return err
 	}
 	for i, x := range cList(run["steps"]) {
-		s := cMap(x)
-		st, sobs := runState(cStr(s["state"]))
+		s := mapOf(x)
+		st, sobs := runState(astr(s["state"]))
 		if st == "" {
 			st = "preparing"
 		}
@@ -291,7 +291,7 @@ func putRun(q *Request, run doc) error {
 		if id == nil {
 			id = fmt.Sprint(i)
 		}
-		if err := cExec(q, `INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,legacy_kind,legacy_id,data) VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,'pipeline-step',$7,$8)
+		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,legacy_kind,legacy_id,data) VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,'pipeline-step',$7,$8)
 		 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,data=excluded.data,
 		  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
 			stepRow(run, i), st, sobs, run["projectId"], run["id"], msTime(s["startedAt"]), id, cJSON(data)); err != nil {
@@ -307,7 +307,7 @@ func withSteps(q *Request, runs []doc) ([]doc, error) {
 	}
 	ids := []string{}
 	for _, r := range runs {
-		ids = append(ids, cStr(r["id"]))
+		ids = append(ids, astr(r["id"]))
 	}
 	steps, err := cQuery(q, "SELECT parent_execution_id AS run,data FROM execution WHERE legacy_kind='pipeline-step' AND parent_execution_id=ANY($1) ORDER BY (data->>'index')::int", ids)
 	if err != nil {
@@ -317,7 +317,7 @@ func withSteps(q *Request, runs []doc) ([]doc, error) {
 		list := []any{}
 		for _, s := range steps {
 			if s["run"] == r["id"] {
-				d := cMap(s["data"])
+				d := mapOf(s["data"])
 				delete(d, "index")
 				list = append(list, d)
 			}
@@ -359,17 +359,17 @@ func requester(q *Request) doc {
 // pipelineStart writes a new run record (runner.start). o: id?, file, projectId, requestId, example, overrides, requestedBy,
 // experimentId, variant, extra.
 func pipelineStart(q *Request, o doc) (doc, error) {
-	def, err := loadPipeline(cStr(o["file"]))
+	def, err := loadPipeline(astr(o["file"]))
 	if err != nil {
 		return nil, err
 	}
-	id := cStr(o["id"])
+	id := astr(o["id"])
 	if id == "" {
 		id = uuid()
 	}
 	steps := []any{}
 	for _, x := range cList(def["steps"]) {
-		s := cMap(x)
+		s := mapOf(x)
 		e := doc{"id": s["id"], "kind": s["kind"], "state": "pending"}
 		if s["kind"] == "api" {
 			e["tool"], e["connection"] = s["tool"], s["connection"]
@@ -383,7 +383,7 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 		return d
 	}
 	run := doc{"id": id, "projectId": o["projectId"], "requestId": o["requestId"], "requestedBy": or("requestedBy", requester(q)), "definition": def,
-		"definitionSha256": cSha(cJSON(def)), "pipelineId": def["id"], "pipeline": o["file"], "example": or("example", doc{}), "overrides": or("overrides", doc{}),
+		"definitionSha256": sha256hex(cJSON(def)), "pipelineId": def["id"], "pipeline": o["file"], "example": or("example", doc{}), "overrides": or("overrides", doc{}),
 		"state": "running", "startedAt": now(), "durationMs": nil, "usage": nil, "result": nil, "steps": steps}
 	if o["experimentId"] != nil {
 		run["experimentId"] = o["experimentId"]
@@ -391,7 +391,7 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 	if o["variant"] != nil {
 		run["variant"] = o["variant"]
 	}
-	for k, v := range cMap(o["extra"]) {
+	for k, v := range mapOf(o["extra"]) {
 		run[k] = v
 	}
 	return run, putRun(q, run)
@@ -450,7 +450,7 @@ func pipelineOnExecution(a *App, executionID string) {
 	cRead(context.Background(), a, func(q *Request) error {
 		rs, err := cQuery(q, "SELECT parent_execution_id AS id FROM execution WHERE legacy_kind='pipeline-step' AND data->>'executionId'=$1", executionID)
 		for _, r := range rs {
-			ids = append(ids, cStr(r["id"]))
+			ids = append(ids, astr(r["id"]))
 		}
 		return err
 	})
@@ -464,7 +464,7 @@ func pipelineTick(ctx context.Context, a *App) {
 	cRead(ctx, a, func(q *Request) error {
 		rs, err := cQuery(q, "SELECT id FROM execution WHERE legacy_kind='pipeline-run' AND data->>'state'='running' AND (data->'definition'->>'version')::int=2 ORDER BY seq")
 		for _, r := range rs {
-			ids = append(ids, cStr(r["id"]))
+			ids = append(ids, astr(r["id"]))
 		}
 		return err
 	})
@@ -491,10 +491,10 @@ func pipelineCancel(ctx context.Context, a *App, runID string) (string, error) {
 			return err
 		}
 		for _, x := range cList(run["steps"]) {
-			s := cMap(x)
+			s := mapOf(x)
 			if s["state"] == "running" || s["state"] == "pending" {
 				if s["state"] == "running" {
-					own = cStr(s["executionId"])
+					own = astr(s["executionId"])
 				}
 				s["state"], s["finishedAt"] = "cancelled", now()
 				break
@@ -524,16 +524,16 @@ func finishRun(q *Request, run doc, state, problem string) error {
 	var search doc
 	var stepErr any
 	for _, x := range cList(run["steps"]) {
-		s := cMap(x)
-		if u := cMap(s["usage"]); u != nil {
+		s := mapOf(x)
+		if u := mapOf(s["usage"]); u != nil {
 			used = true
 			c, _ := cNum(u["credits"])
 			credits += c
 		}
 		if o, ok := s["output"]; ok {
-			outputs[cStr(s["id"])] = o
-			if search == nil && cList(cMap(o)["results"]) != nil {
-				search = cMap(o)
+			outputs[astr(s["id"])] = o
+			if search == nil && cList(mapOf(o)["results"]) != nil {
+				search = mapOf(o)
 			}
 		}
 		if stepErr == nil && s["error"] != nil {
@@ -549,7 +549,7 @@ func finishRun(q *Request, run doc, state, problem string) error {
 	result := doc{"outputs": outputs}
 	if search != nil {
 		for _, r := range cList(search["results"]) {
-			x := cMap(r)
+			x := mapOf(r)
 			title := x["title"]
 			if title == nil {
 				title = x["url"]
@@ -570,13 +570,13 @@ func finishRun(q *Request, run doc, state, problem string) error {
 		return err
 	}
 	if problem != "" {
-		return cExec(q, "UPDATE execution SET problem=$2 WHERE id=$1", run["id"], problem)
+		return exec(q, "UPDATE execution SET problem=$2 WHERE id=$1", run["id"], problem)
 	}
 	return nil
 }
 
 func failStep(q *Request, run doc, i int, problem, message string) error {
-	s := cMap(cList(run["steps"])[i])
+	s := mapOf(cList(run["steps"])[i])
 	s["state"] = "failed"
 	if strings.HasPrefix(problem, "unknown:") {
 		s["state"] = "unknown"
@@ -585,7 +585,7 @@ func failStep(q *Request, run doc, i int, problem, message string) error {
 	if err := putRun(q, run); err != nil {
 		return err
 	}
-	if err := cExec(q, "UPDATE execution SET problem=$2 WHERE id=$1", stepRow(run, i), problem); err != nil {
+	if err := exec(q, "UPDATE execution SET problem=$2 WHERE id=$1", stepRow(run, i), problem); err != nil {
 		return err
 	}
 	if s["state"] == "unknown" {
@@ -609,7 +609,7 @@ func saveArtifact(q *Request, run doc, executionID, name string, b []byte, media
 }
 
 func completeStep(q *Request, run doc, i int, output any, extra doc) error {
-	s := cMap(cList(run["steps"])[i])
+	s := mapOf(cList(run["steps"])[i])
 	if s["outputArtifactId"] == nil {
 		id, err := saveArtifact(q, run, stepRow(run, i), "output.json", cJSON(output), "application/json")
 		if err != nil {
@@ -647,9 +647,9 @@ func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
 	}
 	out := []fileRef{}
 	for j := 0; j < n && j < len(steps); j++ {
-		s := cMap(steps[j])
+		s := mapOf(steps[j])
 		ids := []string{stepRow(run, j)}
-		if e := cStr(s["executionId"]); e != "" {
+		if e := astr(s["executionId"]); e != "" {
 			ids = append(ids, e)
 		}
 		order, files := []string{}, map[string]string{}
@@ -659,7 +659,7 @@ func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
 				return nil, err
 			}
 			for _, a := range as {
-				rel := strings.TrimPrefix(cStr(a["path"]), "output/")
+				rel := strings.TrimPrefix(astr(a["path"]), "output/")
 				dot := false
 				for _, p := range strings.Split(rel, "/") {
 					dot = dot || strings.HasPrefix(p, ".")
@@ -667,11 +667,11 @@ func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
 				if dot {
 					continue
 				}
-				k := cStr(s["id"]) + "/" + rel
+				k := astr(s["id"]) + "/" + rel
 				if _, ok := files[k]; !ok {
 					order = append(order, k)
 				}
-				files[k] = cStr(a["id"])
+				files[k] = astr(a["id"])
 			}
 		}
 		for _, k := range order {
@@ -683,17 +683,17 @@ func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
 
 func inputsFor(q *Request, run doc, i int) ([]any, error) {
 	out := []any{}
-	ex := cMap(run["example"])
+	ex := mapOf(run["example"])
 	if inputs := cList(ex["inputs"]); len(inputs) > 0 {
 		if run["exampleInputs"] == nil {
 			list := []any{}
 			for _, x := range inputs {
-				f := cMap(x)
-				id, err := saveArtifact(q, run, cStr(run["id"]), "example/"+cStr(f["path"]), []byte(fmt.Sprint(f["text"])), "text/plain")
+				f := mapOf(x)
+				id, err := saveArtifact(q, run, astr(run["id"]), "example/"+astr(f["path"]), []byte(fmt.Sprint(f["text"])), "text/plain")
 				if err != nil {
 					return nil, err
 				}
-				list = append(list, doc{"artifactId": id, "path": "example/" + cStr(f["path"])})
+				list = append(list, doc{"artifactId": id, "path": "example/" + astr(f["path"])})
 			}
 			run["exampleInputs"] = list
 			if err := putRun(q, run); err != nil {
@@ -734,7 +734,7 @@ func startScript(q *Request, run doc, stepExecutionID, command string, timeout a
 		return "", err
 	}
 	// The script run is a step's child, in the run's project and experiment.
-	if err := cExec(q, "UPDATE execution SET parent_execution_id=$2,project_id=$3,experiment_id=$4,harness=NULL WHERE id=$1", id, stepExecutionID, run["projectId"], run["experimentId"]); err != nil {
+	if err := exec(q, "UPDATE execution SET parent_execution_id=$2,project_id=$3,experiment_id=$4,harness=NULL WHERE id=$1", id, stepExecutionID, run["projectId"], run["experimentId"]); err != nil {
 		return "", err
 	}
 	payload := doc{"command": command, "inputs": inputs}
@@ -753,7 +753,7 @@ func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, 
 	}
 	var token string
 	err := cTx(ctx, a, "", func(q *Request) error {
-		by := cMap(run["requestedBy"])["email"]
+		by := mapOf(run["requestedBy"])["email"]
 		m, err := mint(q, doc{"executionId": executionID, "directedBy": by, "projectId": run["projectId"], "experimentId": run["experimentId"], "step": true}, []string{connection})
 		if err == nil {
 			token, _ = m["token"].(string)
@@ -807,12 +807,12 @@ func advanceOnce(ctx context.Context, a *App, runID string) error {
 		if err := cRead(ctx, a, func(q *Request) (err error) { run, err = getRun(q, runID); return }); err != nil {
 			return err
 		}
-		if run == nil || run["state"] != "running" || cMap(run["definition"])["version"] != float64(2) {
+		if run == nil || run["state"] != "running" || mapOf(run["definition"])["version"] != float64(2) {
 			return nil
 		}
 		i := -1
 		for j, x := range cList(run["steps"]) {
-			if cMap(x)["state"] != "completed" {
+			if mapOf(x)["state"] != "completed" {
 				i = j
 				break
 			}
@@ -839,19 +839,19 @@ func advanceOnce(ctx context.Context, a *App, runID string) error {
 
 // runStep: true when the next step may start now.
 func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
-	s := cMap(cList(run["steps"])[i])
-	def := cMap(cList(cMap(run["definition"])["steps"])[i])
+	s := mapOf(cList(run["steps"])[i])
+	def := mapOf(cList(mapOf(run["definition"])["steps"])[i])
 	outputs := doc{}
 	for _, x := range cList(run["steps"])[:i] {
-		outputs[cStr(cMap(x)["id"])] = cMap(x)["output"]
+		outputs[astr(mapOf(x)["id"])] = mapOf(x)["output"]
 	}
 	row := stepRow(run, i)
-	kind := cStr(def["kind"])
+	kind := astr(def["kind"])
 	tx := func(fn func(q *Request) error) error { return cTx(ctx, a, "", fn) }
 	failNow := func(problem, message string) (bool, error) {
 		return false, tx(func(q *Request) error { return failStep(q, run, i, problem, message) })
 	}
-	connection := cStr(def["connection"])
+	connection := astr(def["connection"])
 
 	if s["state"] == "pending" {
 		var resolved any
@@ -861,7 +861,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			resolved, err = resolveRefs(def["arguments"], run["example"], outputs, false)
 		case "agent":
 			p := def["prompt"]
-			if o := cMap(run["overrides"]); o != nil && o["prompt"] != nil {
+			if o := mapOf(run["overrides"]); o != nil && o["prompt"] != nil {
 				p = o["prompt"]
 			}
 			resolved, err = resolveRefs(p, run["example"], outputs, false)
@@ -882,21 +882,21 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			}
 			inflight.Store(row, true)
 			defer inflight.Delete(row)
-			tool := cStr(def["tool"])
+			tool := astr(def["tool"])
 			line := connCallFor(ctx, a, run, connection, row, tool, resolved)
 			job := def["mode"] == "job"
 			// A job submit without a clear answer: a task created since the call started is adopted; otherwise unknown, never resent.
-			if job && line["outcome"] != "ok" && (line["outcome"] == "unknown" || http5xx.MatchString(cStr(line["error_code"]))) {
+			if job && line["outcome"] != "ok" && (line["outcome"] == "unknown" || http5xx.MatchString(astr(line["error_code"]))) {
 				recent := connCallFor(ctx, a, run, connection, row, "recent_tasks", doc{})
 				tasks := cList(recent["output"])
 				if tasks == nil {
-					tasks = cList(cMap(recent["output"])["result"])
+					tasks = cList(mapOf(recent["output"])["result"])
 				}
 				owned := map[string]bool{}
 				cRead(ctx, a, func(q *Request) error {
 					rs, err := cQuery(q, "SELECT data->>'jobId' AS id FROM execution WHERE data ? 'jobId'")
 					for _, r := range rs {
-						owned[cStr(r["id"])] = true
+						owned[astr(r["id"])] = true
 					}
 					return err
 				})
@@ -904,10 +904,10 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 				mine := []doc{}
 				if recent["outcome"] == "ok" {
 					for _, x := range tasks {
-						t := cMap(x)
+						t := mapOf(x)
 						id, ok := t["id"].(string)
 						c, _ := cNum(t["created_at"])
-						if ok && c >= started-5000 && !owned[id] && (t["image_url"] == nil || t["image_url"] == cMap(resolved)["image_url"]) {
+						if ok && c >= started-5000 && !owned[id] && (t["image_url"] == nil || t["image_url"] == mapOf(resolved)["image_url"]) {
 							mine = append(mine, t)
 						}
 					}
@@ -924,10 +924,10 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 				}
 			}
 			if line["outcome"] != "ok" {
-				return failNow(problemOf(cStr(line["outcome"]), line["error_code"]), fmt.Sprintf("Connection call %v: %v", line["outcome"], cStrOr(line["error_code"])))
+				return failNow(problemOf(astr(line["outcome"]), line["error_code"]), fmt.Sprintf("Connection call %v: %v", line["outcome"], cStrOr(line["error_code"])))
 			}
 			if job {
-				out := cMap(line["output"])
+				out := mapOf(line["output"])
 				if _, ok := out["jobId"].(string); !ok {
 					if r, ok := out["result"].(string); ok {
 						out = doc{"jobId": r}
@@ -942,7 +942,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 					if err := putRun(q, run); err != nil {
 						return err
 					}
-					return cExec(q, "UPDATE execution SET data=data||jsonb_build_object('jobId',$2::text) WHERE id=$1", row, jobID)
+					return exec(q, "UPDATE execution SET data=data||jsonb_build_object('jobId',$2::text) WHERE id=$1", row, jobID)
 				})
 			}
 			return true, tx(func(q *Request) error { return completeStep(q, run, i, line["output"], doc{"usage": line["usage"]}) })
@@ -957,13 +957,13 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 				if cStartAgentStep == nil {
 					return fail(409, "Agent steps are not available on this coordinator")
 				}
-				execID, err = cStartAgentStep(q, run, def, row, cStr(resolved), inputs, cMap(run["overrides"]))
+				execID, err = cStartAgentStep(q, run, def, row, astr(resolved), inputs, mapOf(run["overrides"]))
 			} else {
-				host := cStr(def["host"])
-				if h := cMap(run["overrides"])["host"]; h != nil {
+				host := astr(def["host"])
+				if h := mapOf(run["overrides"])["host"]; h != nil {
 					host = fmt.Sprint(h)
 				}
-				execID, err = startScript(q, run, row, cStr(resolved), def["timeout_ms"], host, inputs)
+				execID, err = startScript(q, run, row, astr(resolved), def["timeout_ms"], host, inputs)
 			}
 			if err != nil {
 				return err
@@ -1007,9 +1007,9 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			if line["outcome"] == "unknown" {
 				return false, nil
 			}
-			return failNow(problemOf(cStr(line["outcome"]), line["error_code"]), fmt.Sprintf("Job poll failed: %v", line["error_code"]))
+			return failNow(problemOf(astr(line["outcome"]), line["error_code"]), fmt.Sprintf("Job poll failed: %v", line["error_code"]))
 		}
-		out := cMap(line["output"])
+		out := mapOf(line["output"])
 		// Meshy's task shape: status SUCCEEDED | FAILED | CANCELED | EXPIRED | PENDING | IN_PROGRESS.
 		if st, ok := out["status"].(string); ok && out["state"] == nil {
 			state := "running"
@@ -1026,7 +1026,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			if c, ok := cNum(out["consumed_credits"]); ok {
 				usage = doc{"credits": c}
 			}
-			out = doc{"state": state, "output": doc{"model_urls": urls, "thumbnail_url": out["thumbnail_url"]}, "usage": usage, "error": cMap(out["task_error"])["message"]}
+			out = doc{"state": state, "output": doc{"model_urls": urls, "thumbnail_url": out["thumbnail_url"]}, "usage": usage, "error": mapOf(out["task_error"])["message"]}
 		}
 		switch out["state"] {
 		case "succeeded":
@@ -1038,8 +1038,8 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 				if err := completeStep(q, run, i, result, doc{"usage": out["usage"]}); err != nil {
 					return err
 				}
-				if u := cMap(out["usage"]); u != nil {
-					return recordJob(q, run, row, cStr(def["tool"]), cStr(s["jobId"]), connection, u)
+				if u := mapOf(out["usage"]); u != nil {
+					return recordJob(q, run, row, astr(def["tool"]), astr(s["jobId"]), connection, u)
 				}
 				return nil
 			})
@@ -1054,23 +1054,23 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	// Agent or script step running: wait for its execution.
 	var e doc
-	if err := cRead(ctx, a, func(q *Request) (err error) { e, err = getExecutionOrNil(q, cStr(s["executionId"])); return }); err != nil || e == nil {
+	if err := cRead(ctx, a, func(q *Request) (err error) { e, err = getExecutionOrNil(q, astr(s["executionId"])); return }); err != nil || e == nil {
 		return false, err
 	}
-	st := cStr(e["state"])
+	st := astr(e["state"])
 	if st != "completed" && st != "failed" && st != "stopped" {
 		return false, nil // unknown is not final: the host may still report the real outcome
 	}
 	if st != "completed" {
 		problem := "step:cancelled"
 		if st != "stopped" {
-			code := cMap(e["error"])["code"]
+			code := mapOf(e["error"])["code"]
 			if code == nil {
 				code = "failed"
 			}
 			problem = fmt.Sprint("step:", code)
 		}
-		msg := cStr(cMap(e["error"])["message"])
+		msg := astr(mapOf(e["error"])["message"])
 		if msg == "" {
 			msg = "Step execution " + st
 		}
@@ -1083,7 +1083,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			return err
 		}
 		var err error
-		arts, err = artifactsOf(q, cStr(s["executionId"]))
+		arts, err = artifactsOf(q, astr(s["executionId"]))
 		return err
 	}); err != nil {
 		return false, err
@@ -1096,8 +1096,8 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	var output any
 	for _, art := range arts {
-		if ownOutput.MatchString(cStr(art["path"])) && cArtifactRead != nil {
-			if b, err := cArtifactRead(ctx, a, cStr(art["id"]), 64<<20); err == nil {
+		if ownOutput.MatchString(astr(art["path"])) && cArtifactRead != nil {
+			if b, err := cArtifactRead(ctx, a, astr(art["id"]), 64<<20); err == nil {
 				if json.Unmarshal(b, &output) != nil {
 					output = nil
 				}
@@ -1108,7 +1108,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	if output == nil {
 		files := []any{}
 		for _, art := range arts {
-			p := strings.TrimPrefix(cStr(art["path"]), "output/")
+			p := strings.TrimPrefix(astr(art["path"]), "output/")
 			dot := false
 			for _, x := range strings.Split(p, "/") {
 				dot = dot || strings.HasPrefix(x, ".")
@@ -1120,7 +1120,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 		output = doc{"files": files}
 	}
 	return true, tx(func(q *Request) error {
-		u, err := creditsOf(q, cStr(s["executionId"]))
+		u, err := creditsOf(q, astr(s["executionId"]))
 		if err != nil {
 			return err
 		}
@@ -1154,7 +1154,7 @@ func init() {
 			return err
 		})
 		if err == nil && out["state"] == "running" {
-			pipelineAdvance(q.app, cStr(out["id"]))
+			pipelineAdvance(q.app, astr(out["id"]))
 		}
 		return out, err
 	})
@@ -1180,7 +1180,7 @@ func pipelineRunCreate(q *Request) (doc, error) {
 		if _, err := loadPipeline(file); err != nil {
 			return nil, err
 		}
-		signature := cSha([]byte(cCanon(b)))
+		signature := sha256hex([]byte(cCanon(b)))
 		old, err := runsWhere(q, "data->>'requestId'=$1 AND data->>'pipeline'=$2", rid, file)
 		if err != nil {
 			return nil, err
@@ -1191,7 +1191,7 @@ func pipelineRunCreate(q *Request) (doc, error) {
 			}
 			return old[0], nil
 		}
-		example := cMap(b["example"])
+		example := mapOf(b["example"])
 		if example == nil {
 			example = doc{}
 		}
@@ -1203,10 +1203,10 @@ func pipelineRunCreate(q *Request) (doc, error) {
 			if ex["state"] != "approved" {
 				return nil, fail(409, "Example not approved")
 			}
-			example = cMap(ex["example"])
+			example = mapOf(ex["example"])
 		}
 		delete(example, "references") // a run never carries the known-good answers
-		overrides := cMap(b["overrides"])
+		overrides := mapOf(b["overrides"])
 		if overrides == nil {
 			overrides = doc{}
 		}

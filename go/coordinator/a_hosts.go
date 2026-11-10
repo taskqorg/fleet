@@ -130,7 +130,7 @@ func notifyHolder(q *Request, holder, text string) error {
 	if err != nil {
 		return err
 	}
-	return aExec(q, "UPDATE question SET addressed_to=$2 WHERE id=$1", id, holder)
+	return exec(q, "UPDATE question SET addressed_to=$2 WHERE id=$1", id, holder)
 }
 
 func validHarnesses(v any) bool {
@@ -245,7 +245,7 @@ func hostsRegister(q *Request) (any, error) {
 	if s, ok := b["platform"].(string); ok {
 		platform = s
 	}
-	h := doc{"id": id, "name": name, "holder": holder, "platform": platform, "roles": roles, "secretHash": hash, "intake": "all", "harnesses": harnesses, "createdAt": nowMs()}
+	h := doc{"id": id, "name": name, "holder": holder, "platform": platform, "roles": roles, "secretHash": hash, "intake": "all", "harnesses": harnesses, "createdAt": now()}
 	if err := saveHost(q, h); err != nil {
 		return nil, err
 	}
@@ -297,7 +297,7 @@ func hostsUpdate(q *Request) (any, error) {
 			continue
 		}
 		changed = append(changed, f)
-		if err := put(q, "setting-change", doc{"id": uuid(), "target": "host:" + astr(h["id"]), "holder": h["holder"], "field": f, "previous": h[f], "value": v, "actor": q.person.Email, "at": nowMs()}); err != nil {
+		if err := put(q, "setting-change", doc{"id": uuid(), "target": "host:" + astr(h["id"]), "holder": h["holder"], "field": f, "previous": h[f], "value": v, "actor": q.person.Email, "at": now()}); err != nil {
 			return nil, err
 		}
 	}
@@ -357,15 +357,15 @@ func hostsList(q *Request) (any, error) {
 			ids = append(ids, astr(o["id"]))
 		}
 	}
-	running, err := aMaps(q, "SELECT host_id,harness,count(*)::int AS n FROM execution WHERE state IN ('preparing','running') AND host_id IS NOT NULL GROUP BY 1,2")
+	running, err := cQuery(q, "SELECT host_id,harness,count(*)::int AS n FROM execution WHERE state IN ('preparing','running') AND host_id IS NOT NULL GROUP BY 1,2")
 	if err != nil {
 		return nil, err
 	}
-	queued, err := aMaps(q, "SELECT data->>'hostId' AS host_id,count(*)::int AS n FROM document WHERE kind='command' AND data->>'status'='pending' GROUP BY 1")
+	queued, err := cQuery(q, "SELECT data->>'hostId' AS host_id,count(*)::int AS n FROM document WHERE kind='command' AND data->>'status'='pending' GROUP BY 1")
 	if err != nil {
 		return nil, err
 	}
-	now := nowMs()
+	now := now()
 	out := []doc{}
 	for _, id := range ids {
 		var o doc
@@ -414,7 +414,7 @@ func routeDecisions(q *Request) (any, error) {
 	if !ok || id == "" || len(id) > 200 {
 		return nil, fail(400, "Expected executionId")
 	}
-	rs, err := aMaps(q, "SELECT execution_id,at,host_id,candidates,winner FROM route_decision WHERE execution_id=$1 ORDER BY at", id)
+	rs, err := cQuery(q, "SELECT execution_id,at,host_id,candidates,winner FROM route_decision WHERE execution_id=$1 ORDER BY at", id)
 	out := []doc{}
 	for _, r := range rs {
 		out = append(out, doc{"executionId": r["execution_id"], "at": r["at"], "hostId": r["host_id"], "candidates": r["candidates"], "winner": r["winner"]})

@@ -93,7 +93,7 @@ func executionStop(q *Request, id any) (any, error) {
 
 // blockedConnections: connections whose stop budget is reached; the gateway refuses their calls.
 func blockedConnections(q *Request) (map[string]bool, error) {
-	rs, err := aMaps(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action FROM budget WHERE scope='connection' AND action='stop'`)
+	rs, err := cQuery(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action FROM budget WHERE scope='connection' AND action='stop'`)
 	if err != nil {
 		return nil, err
 	}
@@ -130,13 +130,15 @@ func artifactGate(q *Request, e doc, declared []any) (doc, error) {
 		return doc{"state": "failed", "error": doc{"code": "artifact-required", "message": "Required artifacts missing or failed", "missing": r.Missing, "failed": r.Failed}}, nil
 	}
 	if len(r.Pending) > 0 {
-		return doc{"state": "waiting", "waitReason": "artifacts", "waitingSince": nowMs(), "pendingArtifacts": r.Pending, "declaredArtifacts": declared}, nil
+		return doc{"state": "waiting", "waitReason": "artifacts", "waitingSince": now(), "pendingArtifacts": r.Pending, "declaredArtifacts": declared}, nil
 	}
 	return doc{}, nil
 }
 
 // settleWaiting (app.ts settle): a waiting execution finishes once its artifacts are settled.
-func settleWaiting(ctx context.Context, a *App, id string) error { return settleWaitingAs(ctx, a, id, "") }
+func settleWaiting(ctx context.Context, a *App, id string) error {
+	return settleWaitingAs(ctx, a, id, "")
+}
 
 // settleWaitingAs: expired (placement's retry window passed) fails the execution even while artifacts are pending.
 func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
@@ -158,7 +160,7 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 		for _, k := range []string{"waitReason", "waitingSince", "pendingArtifacts", "declaredArtifacts"} {
 			delete(e, k)
 		}
-		e["state"], e["updatedAt"] = "completed", nowMs()
+		e["state"], e["updatedAt"] = "completed", now()
 		if failed {
 			e["state"] = "failed"
 			msg := "Required artifacts missing or failed"

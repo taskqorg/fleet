@@ -89,12 +89,12 @@ func budgetSet(q *Request) (any, error) {
 	if !ok {
 		id = uuid()
 	}
-	if err := aExec(q, `INSERT INTO budget(id,scope,scope_id,unit,"limit",period,action,set_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+	if err := exec(q, `INSERT INTO budget(id,scope,scope_id,unit,"limit",period,action,set_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
     ON CONFLICT(id) DO UPDATE SET scope=excluded.scope,scope_id=excluded.scope_id,unit=excluded.unit,"limit"=excluded."limit",period=excluded.period,action=excluded.action,set_by=excluded.set_by,set_at=now()`,
 		id, b["scope"], b["scopeId"], b["unit"], limit, period, action, q.person.Email); err != nil {
 		return nil, err
 	}
-	rs, err := aMaps(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action,set_by,set_at FROM budget WHERE id=$1`, id)
+	rs, err := cQuery(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action,set_by,set_at FROM budget WHERE id=$1`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +103,7 @@ func budgetSet(q *Request) (any, error) {
 
 func budgetAsk(q *Request) (any, error) {
 	b := q.obj()
-	rs, err := aMaps(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit FROM budget WHERE id=$1`, b["budgetId"])
+	rs, err := cQuery(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit FROM budget WHERE id=$1`, b["budgetId"])
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func budgetDelete(q *Request) (any, error) {
 }
 
 func budgetsList(q *Request) (any, error) {
-	rs, err := aMaps(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action,set_by,set_at FROM budget ORDER BY set_at`)
+	rs, err := cQuery(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action,set_by,set_at FROM budget ORDER BY set_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +184,7 @@ type reachedBudget struct{ id, action, reason string }
 func budgetsReached(q *Request, e doc) ([]reachedBudget, error) {
 	d, _ := e["dispatch"].(map[string]any)
 	project := astr(d["projectId"])
-	rs, err := aMaps(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action FROM budget WHERE (scope='project' AND scope_id=$1) OR (scope='person' AND scope_id=$2)`, project, astr(e["directedBy"]))
+	rs, err := cQuery(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action FROM budget WHERE (scope='project' AND scope_id=$1) OR (scope='person' AND scope_id=$2)`, project, astr(e["directedBy"]))
 	if err != nil {
 		return nil, err
 	}
@@ -223,8 +223,8 @@ func budgetAnswerAfter(q *Request, qn doc) error {
 		return nil
 	}
 	by := nonNil(qn["answered_by"], "owner")
-	if err := aExec(q, `UPDATE budget SET "limit"=$2,set_by=$3,set_at=now() WHERE id=$1`, a["budgetId"], a["limit"], by); err != nil {
+	if err := exec(q, `UPDATE budget SET "limit"=$2,set_by=$3,set_at=now() WHERE id=$1`, a["budgetId"], a["limit"], by); err != nil {
 		return err
 	}
-	return put(q, "setting-change", doc{"id": uuid(), "target": fmt.Sprint("budget:", a["budgetId"]), "field": "limit", "value": a["limit"], "askedBy": a["askedBy"], "actor": qn["answered_by"], "at": nowMs()})
+	return put(q, "setting-change", doc{"id": uuid(), "target": fmt.Sprint("budget:", a["budgetId"]), "field": "limit", "value": a["limit"], "askedBy": a["askedBy"], "actor": qn["answered_by"], "at": now()})
 }
