@@ -425,7 +425,7 @@ Shared conventions for every item:
 
 *   **Type / Scope**: coordinator module.
 *   **Proposed Changes**:
-    *   `thread_entries`, `thread_search`, `thread_export` with the signatures in the Technical Plan, plus `thread_blocks({ key, rows: { kind, id }[] }) -> { entries: Block[] }`, which the client uses to fetch the blocks of rows named by fed changes (change kind and id; a chunk returns its whole stream entry).
+    *   `thread_entries`, `thread_search`, `thread_export` with the signatures in the Technical Plan, plus `thread_blocks({ key, rows: { kind, id }[] }) -> { entries: Block[], removed: BlockKey[] }`, which the client uses to fetch the blocks of rows named by fed changes (change kind and id; a chunk returns its whole stream entry; a closing event lists the stream entries it replaces in `removed`).
     *   Session set and membership, one query:
 
         ```text
@@ -458,7 +458,7 @@ Shared conventions for every item:
 #### 7. `packages/coordinator/executions.ts` (Modify)
 
 *   **Type / Scope**: execution state transitions.
-*   **Proposed Changes**: In `transition()` (line 116), when the new state is terminal and the row was not terminal before, write one `event` document with id `event:<executionId>:ended` (agent runs only), type `execution.ended`, empty `blocks`, in the same transaction. A repeated terminal transition returns early (`row.state === state`) and the fixed id prevents a second row.
+*   **Proposed Changes**: In `transition()` (line 116), when the new state is terminal and the row was not terminal before, write one `event` document with id `ended:<executionId>` (agent runs only; host event ids are `event:…` and ingest refuses type `execution.ended`, so a host cannot forge it), type `execution.ended`, empty `blocks`, in the same transaction. A repeated terminal transition returns early (`row.state === state`) and the fixed id prevents a second row.
 
 #### 8. `packages/coordinator/delegation.ts`, `packages/coordinator/agent-tools.ts`, `packages/coordinator/delivery.ts` (Modify)
 

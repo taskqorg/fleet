@@ -57,6 +57,7 @@ test('streams: an open or cut-off stream is one entry at its first chunk; a clos
   await f.s.query("UPDATE execution SET state='failed' WHERE id='g'");
   r=await f.op.entries({key:{session:'s1'},limit:10});assert.equal(r.entries[1].stream,'cut-off');
   await f.ev('end','g','s1',[f.say('Hello')],{type:'turn.completed',fn:{closes:['text:1']}});
+  const fed=await f.op.blocks({key:{session:'s1'},rows:[{kind:'event',id:'end'}]});assert.deepEqual(fed.removed,[(await f.op.entries({key:{session:'s1'},limit:10})).entries[0].key.replace(/^\d+/,String(await f.s.query("SELECT seq FROM document WHERE id='c1'").then(x=>x[0].seq)))]);assert.deepEqual(fed.entries.map((b:any)=>b.markdown),['Hello']);
   r=await f.op.entries({key:{session:'s1'},limit:10});assert.deepEqual(texts(r),['boundary','Hello']);assert.equal(r.entries[1].stream,undefined);assert.equal(r.entries[1].key.split(':')[0],String(await f.s.query("SELECT seq FROM document WHERE id='end'").then(x=>x[0].seq)));
  }finally{await f.s.close()}});
 
@@ -74,7 +75,8 @@ test('search finds blocks newest first and a hit opens with around; thread_block
   const s=await f.op.search({key:{session:'s1'},q:'migration 6',limit:10});assert.deepEqual(s.hits.map((h:any)=>h.snippet),['Migration 6 is done','run migration 6 please']);
   assert.equal((await f.op.search({key:{session:'s1'},q:'migration 6',limit:1})).hasMore,true);
   assert.deepEqual((await f.op.search({key:{session:'s1'},q:'migration 6',limit:10,before:s.hits[0].key})).hits.length,1);
-  assert.equal((await f.op.search({key:{session:'s1'},q:'100%',limit:10})).hits.length,1);assert.equal((await f.op.search({key:{session:'s1'},q:'_',limit:10})).hits.length,0);
+  assert.equal((await f.op.search({key:{session:'s1'},q:'100%',limit:10})).hits.length,1);
+  await f.ev('e3','x','s1',[f.say('run "make test"\nnext line')]);assert.equal((await f.op.search({key:{session:'s1'},q:'run "make',limit:10})).hits.length,1);assert.equal((await f.op.search({key:{session:'s1'},q:'_',limit:10})).hits.length,0);
   const around=await f.op.entries({key:{session:'s1'},limit:2,around:s.hits[1].key});assert.equal(around.entries[1].key,s.hits[1].key);
   assert.deepEqual((await f.op.blocks({key:{session:'s1'},rows:[{kind:'event',id:'e1'},{kind:'execution',id:'x'},{kind:'event',id:'elsewhere'}]})).entries.map((b:any)=>b.kind),['boundary','text','tool']);
   const whole=(await f.op.export({key:{session:'s1'}})).markdown;

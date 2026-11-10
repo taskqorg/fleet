@@ -32,7 +32,7 @@ export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promis
  // Row sources other than execution rows, one index range scan per member execution and kind. Events without blocks
  // (lifecycle, executor bookkeeping) and stream chunks other than a stream's first are skipped in SQL.
  // ponytail: the skip filters rows after the index scan; a partial index on (executionId, seq) of block-bearing events if measured slow.
- const ROW=`jsonb_build_object('id',id,'executionId',data->>'executionId','type',data->>'type','text',data->'text','blocks',data->'data'->'fleetNormalized'->'blocks','deltaOf',data->'data'->'fleetNormalized'->'deltaOf')`;
+ const ROW=`jsonb_build_object('id',id,'executionId',data->>'executionId','type',data->>'type','text',data->'text','blocks',data->'data'->'fleetNormalized'->'blocks','deltaOf',data->'data'->'fleetNormalized'->'deltaOf','closes',data->'data'->'fleetNormalized'->'closes')`;
  const rows=async(ids:string[],dir:'<'|'>',from:string,limit:number,extra='',params:any[]=[])=>{const desc=dir==='<';
   return (await query(`SELECT seq,src,v FROM (
     SELECT d.seq,d.src,d.v FROM unnest($1::text[]) m(id),unnest(ARRAY['message','event','event-delta']) k(kind),
@@ -75,7 +75,7 @@ export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promis
    +(SELECT coalesce(sum(jsonb_array_length(coalesce(data->'data'->'fleetNormalized'->'blocks','[]'::jsonb))),0) FROM document WHERE kind='event' AND data->>'executionId'=ANY($1))
    +(SELECT count(*) FROM question WHERE execution_id=ANY($1)) AS n`,[ids]);
   let n=Number(r.n)+m.size;
-  for(const e of m.values())if(TERMINAL.has(e.state)&&(await deps.artifacts(e.id)).length)n++;
+  for(const r of await query("SELECT data->>'executionId' AS e FROM document WHERE kind='event' AND data->>'type'='execution.ended' AND data->>'executionId'=ANY($1)",[ids]))if((await deps.artifacts(r.e)).some((a:any)=>a.state===undefined||a.state==='stored'))n++;
   for(const s of await query("SELECT data->>'executionId' AS e,data->'data'->'fleetNormalized'->>'deltaOf' AS id FROM document WHERE kind='event-delta' AND data->>'executionId'=ANY($1) AND data->'data'->'fleetNormalized'->>'opens'='true'",[ids]))if(await stream(s.e,s.id)!==null)n++;
   return n}
  const pageLimit=(v:any)=>Number.isSafeInteger(v)&&v>0?v:fail(400,'Expected positive integer limit');
@@ -92,7 +92,7 @@ export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promis
  // thread_blocks: the blocks of rows named by fed changes (change kind and id), when they belong to the thread.
  async function blocks(b:any){const key=threadKey(b),m=await members(key),ids=[...m.keys()];
   const named=Array.isArray(b?.rows)?b.rows.filter((r:any)=>typeof r?.id==='string'&&typeof r?.kind==='string'):fail(400,'Expected rows [{kind,id}]');
-  const out:any[]=[];
+  const out:any[]=[],removed:string[]=[];
   for(const c of named){
    if(c.kind==='execution'){const e=m.get(c.id);if(e)out.push(boundary(e));continue}
    if(c.kind==='question'){for(const q of await query('SELECT * FROM question WHERE id=$1 AND execution_id=ANY($2)',[c.id,ids]))out.push(question(q));continue}
@@ -101,17 +101,19 @@ export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promis
     // A chunk names its stream; the stream's first chunk holds its key.
     if(d.src==='event-delta'){const first=(await query(`SELECT seq,kind AS src,${ROW} AS v FROM document WHERE kind='event-delta' AND data->>'executionId'=$1 AND data->'data'->'fleetNormalized'->>'deltaOf'=$2 AND data->'data'->'fleetNormalized'->>'opens'='true'`,[d.v.executionId,d.v.deltaOf]))[0];
      if(first)out.push(...await expand({seq:Number(first.seq),src:first.src,v:first.v},m));continue}
+    // A closing event replaces the entries of the streams it closes.
+    for(const id of Array.isArray(d.v.closes)?d.v.closes:[])for(const o of await query("SELECT seq FROM document WHERE kind='event-delta' AND data->>'executionId'=$1 AND data->'data'->'fleetNormalized'->>'deltaOf'=$2 AND data->'data'->'fleetNormalized'->>'opens'='true'",[d.v.executionId,id]))removed.push(keyText({seq:Number(o.seq),index:0}));
     out.push(...await expand({seq:Number(d.seq),src:d.src,v:d.v},m))}}
-  const seen=new Map(out.map(x=>[x.key,x]));return {entries:[...seen.values()].sort((x,y)=>cmp(parseKey(x.key),parseKey(y.key)))}}
+  const seen=new Map(out.map(x=>[x.key,x]));return {removed,entries:[...seen.values()].sort((x,y)=>cmp(parseKey(x.key),parseKey(y.key)))}}
  // Plain text a search matches, per block kind.
  const searchable=(b:any)=>b.kind==='text'||b.kind==='reasoning'?b.plain??b.markdown??'':b.kind==='tool'?[b.name,JSON.stringify(b.input??''),JSON.stringify(b.output??'')].join(' '):b.kind==='question'?[b.text,b.answer??''].join(' '):'';
  // thread_search (design "Search"): newest first, ILIKE over stored block text; a hit opens with thread_entries around.
  async function search(b:any){const key=threadKey(b),limit=pageLimit(b?.limit),q=typeof b?.q==='string'&&b.q.trim()?b.q.trim():fail(400,'Expected q');
   const before=b?.before!==undefined?parseKey(b.before):null,m=await members(key),ids=[...m.keys()],needle=q.toLowerCase();
   const like='%'+q.replace(/[\\%_]/g,(c:string)=>'\\'+c)+'%',hits:any[]=[];let cursor=before?String(before.seq):MAX;
-  // The SQL test is coarse (JSON text of the blocks); each block is checked again on its plain text.
-  const extra=` AND (CASE WHEN document.kind='message' THEN data->>'text' ELSE (data->'data'->'fleetNormalized'->'blocks')::text END) ILIKE $4`;
-  for(;;){const batch=(await rows(ids,'<',cursor,limit+1,extra,[like])).filter(r=>r.src!=='event-delta');
+  // The SQL test is coarse (unescaped block text and the JSON of tool input and output); each block is checked again in JS.
+  const extra=` AND document.kind<>'event-delta' AND (CASE WHEN document.kind='message' THEN data->>'text' ELSE (SELECT string_agg(concat_ws(' ',b->>'markdown',b->>'name',(b->'input')::text,(b->'output')::text),' ') FROM jsonb_array_elements(coalesce(data->'data'->'fleetNormalized'->'blocks','[]'::jsonb)) b) END) ILIKE $4`;
+  for(;;){const batch=(await rows(ids,'<',cursor,limit+1,extra,[like]));
    const qs=await query("SELECT * FROM question WHERE execution_id=ANY($1) AND seq<=$2::bigint AND (text ILIKE $3 OR coalesce(answer,'') ILIKE $3) ORDER BY seq DESC LIMIT $4",[ids,cursor,like,limit+1]);
    const lo=batch.length>limit?batch.at(-1)!.seq:-1,all=[...batch.filter(r=>r.src!=='execution'),...qs.filter(x=>Number(x.seq)>=lo).map(x=>({seq:Number(x.seq),src:'question',v:x}))].sort((a,b)=>b.seq-a.seq);
    for(const r of all)for(const x of (await expand(r,m)).reverse()){if(before&&cmp(parseKey(x.key),before)>=0)continue;const t=searchable(x),i=t.toLowerCase().indexOf(needle);if(i<0)continue;

@@ -122,7 +122,7 @@ export function executionModel(raw:Raw){
  // The end of an agent run in its thread (docs/designs/fleet-conversations.md): one event with no blocks whose seq places the
  // result block. The fixed id keeps it to one row however often the run is settled.
  async function writeEnded(id:string){const r=await one("SELECT session_id,project_id,ended_at FROM execution WHERE id=$1 AND kind='agent_run'",[id]);if(!r)return;
-  await raw.query("INSERT INTO document(kind,id,data,project_id) VALUES('event',$1,$2,$3) ON CONFLICT(id) DO NOTHING",['event:'+id+':ended',clean({id:'event:'+id+':ended',executionId:id,sessionId:r.session_id,type:'execution.ended',timestamp:r.ended_at?new Date(r.ended_at).getTime():Date.now(),data:{fleetNormalized:{blocks:[]}}}),r.project_id])}
+  await raw.query("INSERT INTO document(kind,id,data,project_id) VALUES('event',$1,$2,$3) ON CONFLICT(id) DO NOTHING",['ended:'+id,clean({id:'ended:'+id,executionId:id,sessionId:r.session_id,type:'execution.ended',timestamp:r.ended_at?new Date(r.ended_at).getTime():Date.now(),data:{fleetNormalized:{blocks:[]}}}),r.project_id])}
  // Observation confidence: confirmed whenever the host reports for the execution, unconfirmed when contact is lost.
  async function markObservation(id:string,observation:'confirmed'|'unconfirmed'){await raw.query('UPDATE execution SET observation=$2::observation,last_seen_at=CASE WHEN $2::text=\'confirmed\' THEN now() ELSE last_seen_at END WHERE id=$1',[id,observation])}
  const setHarnessVersion=(id:string,version:string)=>raw.query('UPDATE execution SET harness_version=$2 WHERE id=$1 AND harness_version IS DISTINCT FROM $2',[id,version]);

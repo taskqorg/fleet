@@ -567,8 +567,10 @@ impl Blocks {
         }
         let closed: Vec<_> = self.streams.drain(..).collect();
         if !closed.is_empty() { p["closes"] = json!(closed.iter().map(|s| &s.1).collect::<Vec<_>>()); }
+        let streamed_text = closed.iter().any(|s| s.0 == "text");
         blocks.extend(closed.into_iter().filter_map(|(kind, _, text)| text_block(&kind, text)));
-        blocks.extend(self.own(h, v, at));
+        // The step format repeats the streamed reply in result.response: the closed stream already holds it.
+        blocks.extend(self.own(h, v, at).into_iter().filter(|b| !(streamed_text && v["result"]["response"].is_string() && b["kind"] == "text")));
         p["blocks"] = json!(blocks);
         p
     }
@@ -585,6 +587,12 @@ impl Blocks {
             return vec![tool_block(&json!(t), &Value::Null, v, &json!("failed"), json!(at), json!(at))];
         }
         let mut out = Vec::new();
+        // A turn end settles tools that never reported an end, so a cut-off tool still shows.
+        if matches!(t, "turn.completed" | "turn.failed" | "result") || v["event"] == "result" {
+            let mut open: Vec<_> = self.tools.drain().collect();
+            open.sort_by_key(|(_, x)| x.2);
+            out.extend(open.into_iter().map(|(_, (name, input, started))| tool_block(&name, &input, &Value::Null, &json!("unfinished"), json!(started), json!(at))));
+        }
         match h {
             "codex" if t == "item.completed" => {
                 let i = &v["item"];
@@ -600,8 +608,8 @@ impl Blocks {
                     other => out.push(tool_block(
                         i.get("tool").or(i.get("name")).filter(|x| !x.is_null()).unwrap_or(&json!(other)),
                         i.get("arguments").or(i.get("command")).or(i.get("changes")).unwrap_or(&Value::Null),
-                        i.get("result").or(i.get("aggregatedOutput")).or(i.get("aggregated_output")).or(i.get("output")).or(i.get("error")).unwrap_or(&Value::Null),
-                        &i["status"], started, ended)),
+                        i.get("result").or(i.get("aggregatedOutput")).or(i.get("aggregated_output")).or(i.get("output")).or(i.get("error")).or(i.get("message")).unwrap_or(&Value::Null),
+                        &if other == "error" { json!("failed") } else { i["status"].clone() }, started, ended)),
                 }
             }
             "claude" => {
@@ -859,6 +867,13 @@ print(json.dumps({'harness':h,'home':os.environ['HOME'],'args':sys.argv[1:]}))
         a.project("antigravity", &json!({"type":"acp.update","update":{"sessionUpdate":"tool_call","toolCallId":"x","title":"Edit","rawInput":{"a":1},"status":"pending"}}), 4);
         let p = a.project("antigravity", &json!({"type":"acp.update","update":{"sessionUpdate":"tool_call_update","toolCallId":"x","status":"completed","rawOutput":"done"}}), 9);
         assert_eq!(p["blocks"], json!([{"kind":"tool","name":"Edit","input":{"a":1},"output":"done","state":"completed","startedAt":4,"endedAt":9}]));
+        let mut s = Blocks::default();
+        s.project("antigravity", &json!({"step_update":{"text_delta":"Hi"}}), 1);
+        assert_eq!(s.project("antigravity", &json!({"event":"result","result":{"status":"SUCCESS","response":"Hi"}}), 2)["blocks"], json!([{"kind":"text","role":"agent","markdown":"Hi"}]));
+        c.project("claude", &json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"u","name":"Bash","input":{}}]}}), 40);
+        assert_eq!(c.project("claude", &json!({"type":"result","is_error":false}), 50)["blocks"][0]["state"], "unfinished");
+        let e = b.project("codex", &json!({"type":"item.completed","item":{"type":"error","message":"stream disconnected"}}), 5);
+        assert_eq!((e["blocks"][0]["state"].clone(), e["blocks"][0]["output"].clone()), (json!("failed"), json!("stream disconnected")));
         let p = a.project("codex", &json!({"type":"unparsed","raw":"x"}), 7);
         assert_eq!((p["blocks"][0]["kind"].clone(), p["blocks"][0]["name"].clone(), p["blocks"][0]["output"]["raw"].clone()), (json!("tool"), json!("unparsed"), json!("x")));
     }
