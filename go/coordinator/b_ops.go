@@ -29,6 +29,11 @@ func init() {
 
 // runOp runs a named operation in its own transaction in the person's scope (q.tx is nil: called from a longRoute).
 func (a *App) runOp(q *Request, name string, b json.RawMessage) (any, error) {
+	if h, ok := longOperations[name]; ok { // area C: opens its own transactions
+		sub := *q
+		sub.body, sub.tx = b, nil
+		return h(&sub)
+	}
 	op, ok := operations[name]
 	if !ok {
 		return nil, fail(404, "Unknown operation")
