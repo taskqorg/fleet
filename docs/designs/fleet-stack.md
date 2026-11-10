@@ -454,8 +454,8 @@ starts the coordinator under test on a free port
 the tests with the base URL and secret in the environment, stops the server
 and drops the database. Tests are TypeScript on Node's test runner with the
 standard library only; they reach the server only over HTTP and SSE.
-Measured on 2026-11-10 (Apple M2, 8 CPUs, load 3): 11 tests; 1.2 s for the
-whole command including setup and teardown, 0.7 s of it the tests.
+11 tests; on an Apple M2 the whole command takes about 1.4 s including
+setup and teardown, 0.8 s of it the tests.
 
 **Shared-server finding.** Change visibility uses
 `pg_snapshot_xmin(pg_current_snapshot())`, and the snapshot xmin spans every
@@ -544,7 +544,10 @@ Not measured by the script: build-fix cycles (counted by the porting worker,
 below), the darwin-arm64 path and a downloaded-file run (L2 rows), the
 generated transcript-event type (read from each arm's generator output).
 
-**Baseline** (`typescript`, current stack, 5 runs, N = 4): BASELINE_TABLE
+**Baseline.** The `typescript` arm runs again next to the ports, on the same
+machine and commit, so each comparison uses numbers from the same
+conditions. The preparation run is in the pull request that added this
+protocol.
 
 ### Porting task
 
