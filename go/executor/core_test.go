@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -39,9 +40,6 @@ func serve(t *testing.T, answer func(path string, body M) int) (string, *seen) {
 func journal(t *testing.T) *sql.DB {
 	db, err := openJournal(filepath.Join(t.TempDir(), "journal.sqlite"))
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := outboxSchema(db); err != nil {
 		t.Fatal(err)
 	}
 	return db
@@ -80,7 +78,7 @@ func TestUnauthorizedRowStaysQueued(t *testing.T) {
 	url, _ := serve(t, func(string, M) int { return 401 })
 	db := journal(t)
 	db.Exec("INSERT INTO outbox_failed(route,body,status,reason,failed_at) VALUES('/api/hosts/receipts','{}',401,'x',0),('/api/hosts/events','{}',400,'x',0)")
-	outboxSchema(db)
+	requeueUnauthorized(db)
 	if count(db, "outbox") != 1 || count(db, "outbox_failed") != 1 {
 		t.Fatal("only the 401 row is requeued")
 	}
@@ -182,5 +180,51 @@ func TestProfileValidate(t *testing.T) {
 		if profileValidate(bad) == nil {
 			t.Fatal(bad)
 		}
+	}
+}
+
+// Requirement: the journal schema has one source (journal.sql) applied by user_version, once per section, also when
+// several processes open one journal (C20). Risk: a new column is a silent no-op on an existing journal, or a section
+// runs twice and fails startup.
+func TestJournalVersioned(t *testing.T) {
+	// An existing pre-version journal (user_version 0, tables present): the first section applies over it.
+	path := filepath.Join(t.TempDir(), "journal.sqlite")
+	old, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec("CREATE TABLE outbox(route TEXT NOT NULL,body TEXT NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+	var wg sync.WaitGroup
+	errs := make(chan error, 4)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			db, err := openJournal(path)
+			if err == nil {
+				db.Close()
+			}
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	db, err := openJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var v int
+	db.QueryRow("PRAGMA user_version").Scan(&v)
+	if want := strings.Count(journalSQL, "\n-- version "); v != want || count(db, "transfers") != 0 {
+		t.Fatalf("user_version %d, want %d", v, want)
 	}
 }

@@ -146,9 +146,6 @@ func artifactSave(ctx, q any, db dbExec) (any, error) {
 			return err
 		}
 		if body["required"] == true {
-			if _, err := x.Exec("CREATE TABLE IF NOT EXISTS outbox(route TEXT NOT NULL,body TEXT NOT NULL)"); err != nil {
-				return err
-			}
 			decl := M{"hostId": jAt(ctx, "hostId"), "executionId": jAt(ctx, "executionId"), "name": body["name"]}
 			_, err := x.Exec("INSERT INTO outbox(route,body) VALUES('/api/hosts/artifacts/declare',?)", enc(decl))
 			return err

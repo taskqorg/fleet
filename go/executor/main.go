@@ -5,9 +5,12 @@ package main
 
 import (
 	"database/sql"
+	_ "embed"
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -59,21 +62,57 @@ var (
 	runMCP    = func([]string) error { return fmt.Errorf("mcp: not built") }
 )
 
-// openJournal opens the journal with the Rust executor's file format and pragmas.
+//go:embed journal.sql
+var journalSQL string
+
+// openJournal opens the journal with the Rust executor's file format and pragmas and applies the journal.sql sections
+// above its user_version. BEGIN IMMEDIATE takes the write lock before the version is read, so two processes opening one
+// journal never run a section twice.
 func openJournal(path string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,body TEXT NOT NULL,terminal INTEGER DEFAULT 0);
-CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,native TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS delegation_requests(id TEXT PRIMARY KEY,body TEXT NOT NULL,response TEXT);`)
-	if err != nil {
+	if err := migrateJournal(db); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return db, nil
+}
+
+func migrateJournal(db *sql.DB) (err error) {
+	if _, err := db.Exec("BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			db.Exec("ROLLBACK")
+		}
+	}()
+	var have int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&have); err != nil {
+		return err
+	}
+	sections := strings.Split(journalSQL, "\n-- version ")
+	for _, sec := range sections[1:] {
+		n, body, _ := strings.Cut(sec, "\n")
+		v, err := strconv.Atoi(strings.TrimSpace(n))
+		if err != nil {
+			return fmt.Errorf("journal.sql: bad version %q", n)
+		}
+		if v <= have {
+			continue
+		}
+		if _, err := db.Exec(body); err != nil {
+			return fmt.Errorf("journal version %d: %w", v, err)
+		}
+		if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version=%d", v)); err != nil {
+			return err
+		}
+	}
+	_, err = db.Exec("COMMIT")
+	return err
 }
 
 // subcommands: argv[1] -> handler. No argument runs the executor loop.
