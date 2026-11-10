@@ -18,7 +18,8 @@ with tempfile.TemporaryDirectory() as root:
             process.stdin.write(json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params})+'\n');process.stdin.flush()
             return json.loads(process.stdout.readline())
         tools = call('tools/list')['result']['tools']
-        assert 'hostId' not in json.dumps(tools)
+        # The child request never names a host (the coordinator places it); session_start may pin one on purpose.
+        assert tools[0]['name']=='request_child' and 'hostId' not in json.dumps(tools[0])
         assert tools[0]['annotations']['readOnlyHint'] is False
         assert tools[0]['annotations']['openWorldHint'] is True
         def deliver():

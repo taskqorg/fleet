@@ -18,7 +18,7 @@ for raw in sys.stdin.buffer:
  wire.write(raw);wire.flush();q=json.loads(raw);m=q.get('method');i=q.get('id');params=q.get('params',{})
  if m=='initialize':send({'id':i,'result':{'protocolVersion':1,'agentInfo':{'version':'1.5.3'},'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{}}}}})
  elif m in ['session/new','session/load','session/resume']:
-  assert not params.get('_meta');servers=params['mcpServers'];assert [s['name'] for s in servers]==['design-rules'];assert servers[0]['env']==[]
+  assert not params.get('_meta');assert sorted(s['name'] for s in params['mcpServers'])==['design-rules','fleet'];servers=[s for s in params['mcpServers'] if s['name']=='design-rules'];assert servers[0]['env']==[]
   if m!='session/new':assert params['sessionId']=='fake-native'
   send({'id':i,'result':{'sessionId':'fake-native','models':{'availableModels':[{'modelId':'gemini-3.8-flash-low'}]},'modes':{'availableModes':[{'id':'accept-edits'}]}}})
  elif m=='session/set_model':assert params['modelId']=='gemini-3.8-flash-low';model=True;send({'id':i,'result':{}})
@@ -57,7 +57,7 @@ class Handler(BaseHTTPRequestHandler):
 srv=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=srv.serve_forever,daemon=True).start()
 env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}','FLEET_HOST_ID':'fake','FLEET_HOST_SECRET_FILE':secret_file('fake-host-secret-0123456789abcdef'),'FLEET_DATA_DIR':str(root/'data'),'FLEET_NATIVE_ACCOUNTS':str(registry)}
 p=subprocess.Popen([executor_binary()],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-def issue(cid,text,session='session',kind='start',execution=None):commands.append({'id':cid,'executionId':execution or cid,'sessionId':session,'kind':kind,'payload':{} if kind=='stop' else {'harness':'antigravity','account':'current','model':profile['model'],'effort':None,'text':text,'agentConfig':profile}})
+def issue(cid,text,session='session',kind='start',execution=None):commands.append({'id':cid,'executionId':execution or cid,'sessionId':session,'kind':kind,'payload':{} if kind=='stop' else {'harness':'antigravity','account':'current','model':profile['model'],'effort':None,'text':text,'agentConfig':profile,**({'nativeSessionId':'fake-native'} if cid=='resume' else {})}})
 def wait(fn):
  end=time.monotonic()+20
  while time.monotonic()<end:
