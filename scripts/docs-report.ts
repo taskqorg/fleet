@@ -124,7 +124,8 @@ function report(baseArg?: string) {
   }
 
   // docs.cite, collecting cited paths per file for docs.touched.
-  const citeFiles = files.filter(p => !p.startsWith('docs/') && !p.startsWith('evidence/') && !p.includes('node_modules/') && !LOCK.test(p) && !BINARY.test(p));
+  // This script is skipped: its self-check cites example paths on purpose.
+  const citeFiles = files.filter(p => p !== 'scripts/docs-report.ts' && !p.startsWith('docs/') && !p.startsWith('evidence/') && !p.includes('node_modules/') && !LOCK.test(p) && !BINARY.test(p));
   const citesOf = new Map<string, Set<string>>();
   for (const p of citeFiles) {
     let s: string; try { s = read(p); } catch { continue; }
