@@ -113,7 +113,7 @@ Home: `engineering/principles.md`, new section `## Project documents` after `## 
 >
 > Each project file has one kind, decided by its path. The project contract names or links the path rules.
 >
-> - Contract: the one root file of decisions ([contracts](contracts.md)).
+> - Contract: the one root file of decisions ([contracts](https://github.com/taskqorg/specq/blob/13772b779be68103d0581d61a5f8fe7af2b92dd1/engineering/contracts.md)).
 > - Index: one row per specification: topic, file, one-line summary. The attempt index lists the same files.
 > - Specification: the current target of one topic. One file per topic, rewritten in place; no history and no dated sections. A part not yet built says so in one line.
 > - Evidence record: a measurement that a specification or code cites for its exact numbers. Unchanged after merge except link fixes; deleted when nothing cites it.
@@ -131,7 +131,22 @@ Fleet-only: the kind rules and paths above, the EGM line, the report and its IDs
 
 Run before the rework (step 0), after it (step 6), and with each later report review.
 
-1. **Findability.** A fresh agent gets the injected index and the tree, and names one file per question. Score: answers naming the one current specification. Questions and the expected owner topic: (1) which host runs a task: allocation; (2) how a view URL is built: view URLs; (3) how the executor is released: executor delivery; (4) how a task's transcript is shown: conversations; (5) where per-host secrets live: people and access; (6) how a Lab experiment is promoted: Lab; (7) how an agent reaches an external API key: connections; (8) which tables hold tasks and executions: data foundation; (9) how a project's settings are layered: configuration; (10) what a design-system button may look like: `controls/button.md`. Step 1 records the expected file per question against the new index.
+1. **Findability.** A fresh agent gets the injected index and the tree, and names one file per question. Score: answers naming the one current specification. Questions and the expected owner topic: (1) which host runs a task: allocation; (2) how a view URL is built: view URLs; (3) how the executor is released: executor delivery; (4) how a task's transcript is shown: conversations; (5) where per-host secrets live: people and access; (6) how a Lab experiment is promoted: Lab; (7) how an agent reaches an external API key: connections; (8) which tables hold tasks and executions: data foundation; (9) how a project's settings are layered: configuration; (10) what a design-system button may look like: `controls/button.md`. Expected file per question, against the [index](../README.md):
+
+   | Question | Expected file |
+   |---|---|
+   | 1 | `docs/work-allocation.md` |
+   | 2 | `docs/designs/fleet-view-urls-and-list-path.md` |
+   | 3 | `docs/designs/fleet-executor-delivery.md` |
+   | 4 | `docs/designs/fleet-conversations.md` |
+   | 5 | `docs/designs/fleet-people-access.md` |
+   | 6 | `docs/designs/fleet-lab.md` |
+   | 7 | `docs/designs/fleet-connections.md` |
+   | 8 | `docs/designs/fleet-data-foundation.md` (its `fleet-data-store.md` part after the split) |
+   | 9 | `docs/configuration.md` |
+   | 10 | `docs/design-system/controls/button.md` |
+
+   Agent prompt: "You get the Fleet docs index and the file tree. For the question, name the one file that holds the current rule. Answer with one repository path." The agent gets `docs/README.md` and `git ls-files docs`, no other file.
 2. **Size.** Markdown files and bytes under `docs/`; other files under `docs/`. Baseline 131, 1.28 MB, 70.
 3. **Growth.** `docs.delta` per merged pull request. Baseline 54 of 81 add zero, six add 11 to 57. Expected: EGM pull requests add no file except a specification for a new topic.
 4. **Decay.** Count per report ID on `main`. Baseline from the first run; expected zero after the rework.

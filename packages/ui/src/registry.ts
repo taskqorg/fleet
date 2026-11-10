@@ -1,6 +1,6 @@
 // One catalogue of icons, state names and navigation anchors (OR-1, OR-3, OR-8).
 // Icons are the TaskQ set: Lucide static 1.17.0 (ISC) from taskq/src/ui-icons.json, plus the harness and
-// provider marks from taskq/src/project-blocks.js (attribution: taskq docs/design/visual-style.md).
+// provider marks from taskq/src/project-blocks.js (attribution: taskq/docs/design/visual-style.md in the taskq repository).
 import icons from '../icons.json';
 
 export type IconName = keyof typeof icons;

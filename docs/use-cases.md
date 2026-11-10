@@ -185,7 +185,7 @@ The operator sees progress, questions and results without keeping a session open
 
 Status: accepted. Source: this section; Lab registry entry `fleet:UC9` in [`config/lab/use-cases/fleet.json`](../config/lab/use-cases/fleet.json).
 
-An architect assigns an optimization objective, requirements and budget using ordinary instructions. An agent iterates through changes, trials and measurements, optionally delegating work to other sessions. Follow [iterative improvement](lab.md#iterative-improvement) for shared budget accounting, comparison and stopping.
+An architect assigns an optimization objective, requirements and budget using ordinary instructions. An agent iterates through changes, trials and measurements, optionally delegating work to other sessions. Follow [iterative improvement](designs/fleet-lab.md) for shared budget accounting, comparison and stopping.
 
 For a compiler, compare compilation time and resource use while retaining correctness checks. Return qualifying candidates, measurements and costs; the newest candidate need not be the best. Human comments remain available alongside numeric results.
 

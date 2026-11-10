@@ -48,7 +48,7 @@ The [agent definition](../fleet.md#agent-execution) selects a harness/model; [al
 
 ### F5. Some pipeline policy is more rigid than the central principle
 
-The [root pipeline rules](../fleet.md#tools-and-pipelines) require other independent steps to finish before a failed run ends and phrase review iteration limits as definition requirements. [Experiments](lab.md#iterative-improvement) allow budget/target-controlled iteration without a fixed attempt count. These can describe different scopes, but that distinction is not explicit enough for implementation.
+The [root pipeline rules](../fleet.md#tools-and-pipelines) require other independent steps to finish before a failed run ends and phrase review iteration limits as definition requirements. [Experiments](designs/fleet-lab.md) allow budget/target-controlled iteration without a fixed attempt count. These can describe different scopes, but that distinction is not explicit enough for implementation.
 
 **Next:** clarify pipeline defaults versus configurable failure/stopping behavior. Preserve dependency correctness and recorded outcomes; do not prescribe a universal lifecycle or a fixed iteration count for all agent work. This review has not changed these policies.
 
