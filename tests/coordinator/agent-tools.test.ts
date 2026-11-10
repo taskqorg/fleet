@@ -102,3 +102,15 @@ test('session_start binds a project session; finished child wakes its creator; s
  assert.ok((await op('session_get',{sessionId:pm.sessionId})).executions.length===2);
  await app.close();
 });
+
+test('session_start with hostId runs its turns only on that host; an unknown host is refused',async()=>{
+ const dir=mkdtempSync(tmpdir()+'/fleet-start-host-');mkdirSync(dir+'/projects/p1',{recursive:true});mkdirSync(dir+'/agents');
+ writeFileSync(dir+'/agents/w.json',JSON.stringify({id:'w',model:'gpt-6.1-sol',effort:'low',instructions:'x',mcpServers:[]}));
+ writeFileSync(dir+'/projects/p1/project.json',JSON.stringify({id:'p1',name:'P1',contextFiles:[],roles:{worker:'w'},repos:[],environments:[{hostId:'mac',checkoutPath:'/x'},{hostId:'win',checkoutPath:'/y'}]}));
+ const app=createApp({database:dir+'/db',browserSecret:'b',machineSecret:'m',hostId:'mac',nativeHostIds:['win'],projectConfigDirectory:dir,profilesDirectory:dir+'/agents'});
+ const op=async(name:string,body:any)=>(await app.inject({method:'POST',url:'/api/ops/'+name,headers:{authorization:'Bearer b'},payload:body}));
+ try{
+  assert.equal((await op('session_start',{projectId:'p1',role:'worker',requestId:'h1',hostId:'win',text:'Hi'})).json().hostId,'win');
+  assert.equal((await op('session_start',{projectId:'p1',role:'worker',requestId:'h2',hostId:'nope',text:'Hi'})).statusCode,400);
+ }finally{await app.close()}
+});

@@ -126,7 +126,8 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  const enqueue=async (s:any,input:string,requestId:string,extra:{payload?:any,execution?:any,host?:string}={})=>{
   // Execution host follows the account binding: the session's last host first, then the default host, then extra native hosts.
   const harness=s.agentConfig?.harness??'codex',last=(await all('execution',{sessionId:s.id})).filter(x=>x.sessionId===s.id&&x.hostId).at(-1)?.hostId;
-  // A pipeline agent step with overrides.host runs only there: no fallback, the resolve error becomes the step problem.
+  // A pipeline agent step with overrides.host, or a session started with hostId, runs only there: no fallback, the resolve error is the refusal.
+  if(extra.host===undefined&&s.hostId)extra={...extra,host:s.hostId};
   if(extra.host!==undefined&&![config.hostId,...(config.nativeHostIds??[])].includes(extra.host))fail(400,'Unknown host '+extra.host);
   const candidates=extra.host!==undefined?[extra.host]:[...new Set([last,config.hostId,...(config.nativeHostIds??[])].filter((h:any)=>h===config.hostId||(config.nativeHostIds??[]).includes(h)))];
   let hostId=config.hostId,binding:any;const errors:any[]=[];
