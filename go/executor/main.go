@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
@@ -81,24 +80,6 @@ CREATE TABLE IF NOT EXISTS delegation_requests(id TEXT PRIMARY KEY,body TEXT NOT
 var subcommands = map[string]func(args []string) error{
 	"mcp":       func(args []string) error { return runMCP(args) }, // part E2
 	"reproject": func([]string) error { return reproject() },
-}
-
-func reproject() error { return fmt.Errorf("reproject: not yet ported") }
-
-func runExecutor() error {
-	root := os.Getenv("FLEET_DATA_DIR")
-	if root == "" {
-		return fmt.Errorf("FLEET_DATA_DIR required")
-	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return err
-	}
-	db, err := openJournal(filepath.Join(root, "journal.sqlite"))
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	return fmt.Errorf("executor loop: not yet ported")
 }
 
 func main() {
