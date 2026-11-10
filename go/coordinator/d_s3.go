@@ -120,7 +120,8 @@ func newS3(endpoint, keyID, secret string, extra func() map[string]string) (*S3,
 	s := &S3{base: u, host: u.Host, prefix: strings.TrimSuffix(u.Path, "/"), keyID: keyID, secret: secret, region: "garage", extra: extra, idle: idle}
 	d := &net.Dialer{Timeout: 30 * time.Second}
 	tr := &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: (&idleDialer{d, idle}).dial, DisableCompression: true, ResponseHeaderTimeout: 0}
-	s.client = &http.Client{Transport: tr}
+	// No redirects: a store reply must not send signed requests and Access headers elsewhere; a 3xx is an error.
+	s.client = &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return s, nil
 }
 

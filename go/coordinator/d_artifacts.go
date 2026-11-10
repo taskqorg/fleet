@@ -562,6 +562,15 @@ func artifactReserve(q *Request) (any, error) {
 	var b map[string]any
 	decode(q.body, &b)
 	sv := func(k string) string { s, _ := b[k].(string); return s }
+	// The execution is required before anything is read: hostOwned checks its host only when it is named.
+	// The execution hostOwned verified: decoded the same way (struct, same matching rules), never read from the map.
+	var eb struct {
+		ExecutionID string `json:"executionId"`
+	}
+	decode(q.body, &eb)
+	if eb.ExecutionID == "" {
+		return nil, fail(400, "Expected executionId")
+	}
 	id := sv("artifactId")
 	if !artifactIDPattern.MatchString(id) {
 		id = uuid()
@@ -570,7 +579,7 @@ func artifactReserve(q *Request) (any, error) {
 		return nil, err
 	} else if old != nil {
 		// A retry of the same reservation only: another execution's artifact id is refused, not described.
-		if str(old, "execution_id") != sv("executionId") {
+		if str(old, "execution_id") != eb.ExecutionID {
 			return nil, fail(409, "Artifact id in use")
 		}
 		c, _ := dOne(ctx, a, "SELECT store_id FROM artifact_copy WHERE artifact_id=$1 AND state IN ('pending','copying','verified') ORDER BY state LIMIT 1", id)
@@ -593,7 +602,7 @@ func artifactReserve(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	e, err := execGet(ctx, a, sv("executionId"))
+	e, err := execGet(ctx, a, eb.ExecutionID)
 	if err != nil {
 		return nil, err
 	}
