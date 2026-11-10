@@ -27,3 +27,6 @@ go/bin/
 go/coordinator/protocol_gen.go
 go/.cache/
 go/coordinator/schema.sql
+
+# Shared rules checked out by CI (ci.yml); untracked there, it marked CI builds dirty in /api/health.
+.specq/
