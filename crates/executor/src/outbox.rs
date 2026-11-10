@@ -7,7 +7,12 @@ use std::time::Duration;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 pub fn schema(db: &Connection) -> rusqlite::Result<()> {
-    db.execute_batch("CREATE TABLE IF NOT EXISTS outbox(route TEXT NOT NULL,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS outbox_failed(route TEXT NOT NULL,body TEXT NOT NULL,status INTEGER NOT NULL,reason TEXT NOT NULL,failed_at INTEGER NOT NULL);")
+    db.execute_batch("CREATE TABLE IF NOT EXISTS outbox(route TEXT NOT NULL,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS outbox_failed(route TEXT NOT NULL,body TEXT NOT NULL,status INTEGER NOT NULL,reason TEXT NOT NULL,failed_at INTEGER NOT NULL);")?;
+    // A 401 used to set rows aside; it is a credential condition of the host, not of the row, so those rows go back to the
+    // queue (their receipts finish executions that otherwise stay running).
+    let tx = db.unchecked_transaction()?;
+    tx.execute_batch("INSERT INTO outbox(route,body) SELECT route,body FROM outbox_failed WHERE status=401 ORDER BY rowid; DELETE FROM outbox_failed WHERE status=401;")?;
+    tx.commit()
 }
 
 /// One classification of a coordinator answer, shared by the outbox and the transfer client so the two cannot drift.
@@ -30,6 +35,8 @@ pub fn classify(r: std::result::Result<ureq::Response, ureq::Error>) -> Answer {
         }
         Err(ureq::Error::Status(code, r)) => {
             let text = r.into_string().unwrap_or_default();
+            // 401: the coordinator or the edge does not accept the host token right now (a rotation, a restart); never the row.
+            if code == 401 { return Answer::Edge(401, "the host token is not accepted".into()) }
             if code >= 500 || code == 429 { Answer::Retry(format!("{code} {text}")) } else { Answer::Reject(code, text) }
         }
         Err(e) => Answer::Retry(e.to_string()),
@@ -263,6 +270,19 @@ pub mod tests {
         assert_eq!(seen[1].1["commandId"], "good");
         assert_eq!(seen[2].1["events"][0]["type"], "outbox.failed");
         assert_eq!((count(&db, "outbox"), count(&db, "outbox_failed")), (0, 1));
+    }
+    #[test]
+    fn unauthorized_row_stays_queued_and_old_set_aside_rows_return() {
+        let (url, server) = serve(1, |_, _| ("401 Unauthorized", ""));
+        let db = journal();
+        db.execute("INSERT INTO outbox_failed(route,body,status,reason,failed_at) VALUES('/api/hosts/receipts','{}',401,'x',0),('/api/hosts/events','{}',400,'x',0)", []).unwrap();
+        schema(&db).unwrap();
+        assert_eq!((count(&db, "outbox"), count(&db, "outbox_failed")), (1, 1), "only the 401 row is requeued");
+        db.execute("DELETE FROM outbox", []).unwrap();
+        queue(&db, "/api/hosts/tokens-test", json!({"commandId":"c1","executionId":"e1"})).unwrap();
+        flush(&db, &url, "t", "mac").unwrap();
+        assert_eq!((count(&db, "outbox"), count(&db, "outbox_failed")), (1, 1), "kept, not set aside");
+        assert_eq!(server.join().unwrap().len(), 1);
     }
     #[test]
     fn redirected_row_stays_queued_and_is_delivered_after_the_edge_recovers() {

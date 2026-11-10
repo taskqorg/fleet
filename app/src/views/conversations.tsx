@@ -4,12 +4,13 @@ import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
   ListDetail, ListFrame, FilterBar, StateCounters, RowCheck, VirtualList, StateBadge, HarnessMark, Button, Transcript, Composer, DecisionBlock,
-  Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Entry, type Harness, type StateOf,
+  Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
 import { op, online } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
+import { entries } from '../transcript.ts';
 
 const ROW = parseInt(tokens.size.row);
 type SessionRow = { id: string; title: string | null; state: StateOf<'session'>; harness: string | null; openQuestions: number; sortKey: (string | number)[] };
@@ -53,24 +54,6 @@ export function Conversations({ id }: { id?: string }) {
     </section>
   </>;
   return <ListDetail list={pane} detail={id ? <Conversation id={id} onClose={() => set({ focus: undefined })} /> : undefined} detailKey={id} />;
-}
-
-// Transcript entries in execution order: the operator's message, then that execution's agent messages and tool calls.
-function entries(s: any): Entry[] {
-  const out: Entry[] = [];
-  const execs = new Map<string, any>((s.executions ?? []).map((e: any) => [e.id, e]));
-  // Turns in message order; each message's execution events follow it. Events of executions without a message come last.
-  const turns = [...(s.messages ?? []).map((m: any) => m.executionId), ...(s.events ?? []).map((e: any) => e.executionId)].filter((v, i, a) => v && a.indexOf(v) === i);
-  for (const id of turns) {
-    const e = execs.get(id) ?? {}, t = e.createdAt ?? e.startedAt ?? Date.now();
-    for (const m of (s.messages ?? []).filter((m: any) => m.executionId === id)) out.push({ id: 'm' + m.id, t, who: 'You', text: m.text });
-    for (const ev of (s.events ?? []).filter((x: any) => x.executionId === id)) {
-      const item = ev.item;
-      if (ev.type === 'item.completed' && item?.type === 'agent_message') out.push({ id: 'e' + ev.id, t: ev.at ?? t, who: 'Agent', text: item.text });
-      else if (item && item.type !== 'agent_message' && ev.type === 'item.completed') out.push({ id: 'e' + ev.id, t: ev.at ?? t, call: { name: String(item.command ?? item.name ?? item.type).slice(0, 120), state: item.status ?? 'completed', secs: 0 } });
-    }
-  }
-  return out;
 }
 
 function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
