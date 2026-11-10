@@ -45,6 +45,11 @@ test('Alina sees only desiign and her own host; architect operations 403; the ow
   assert.ok(!(await feed(ALINA)).includes(other));assert.ok((await feed(ALINA)).length>0);assert.ok((await feed(OWNER)).includes(other));
   // Architect views: 403 for an operator.
   assert.deepEqual((await json('account_list',{},ALINA)).accounts,[]);
+  // Her own subscription under row-level security: create, change, and read its setting-change history.
+  const mine=await json('account_create',{name:'alina-codex',harness:'codex'},ALINA);assert.equal(mine.holder,ALINA);
+  await json('account_update',{accountId:mine.id,intake:'paused'},ALINA);
+  assert.deepEqual((await json('account_list',{},ALINA)).accounts.map((a:any)=>[a.name,a.history.map((h:any)=>h.field)]),[['alina-codex',['intake']]]);
+  assert.equal((await json('account_list')).accounts.length,1);
   for(const name of ['account_hosts','lab_experiments_list'])assert.equal((await op(name,{},ALINA)).statusCode,403,name);
   assert.equal((await app.inject({method:'GET',url:'/api/accounts',headers:{authorization:'Bearer browser','x-fleet-person':ALINA}})).statusCode,403);
  }finally{await app.close();await s.close()}

@@ -31,7 +31,7 @@ pub fn acp(h: &str) -> bool {
 }
 pub fn command(dir: &Path, native: Option<&str>, p: &Value) -> Result<(Command, Option<Vec<u8>>)> {
     let h = name(p);
-    if (!acp(h) && p.get("settings").is_some())
+    if (h != "antigravity" && p.get("settings").is_some())
         || p.get("environment").is_some()
         || (h == "codex" && p.get("tools").is_some())
     {
@@ -178,7 +178,7 @@ fn command_registry(
             None,
         ));
     }
-    if (!acp(h) && p.get("settings").is_some()) || p.get("environment").is_some() {
+    if (h != "antigravity" && p.get("settings").is_some()) || p.get("environment").is_some() {
         return Err(fail("unmapped native settings/environment"));
     }
     let required_role = if h == "claude" { "system" } else { "user" };
@@ -311,7 +311,7 @@ fn command_registry(
             }
         }
         c.args(args);
-        if let Some(sandbox) = p["settings"]["sandbox"].as_bool() {
+        if let Some(sandbox) = p["settings"]["sandbox"].as_bool().filter(|_| h == "antigravity") {
             c.arg(format!("--sandbox={sandbox}"));
         }
         Ok((c, None))

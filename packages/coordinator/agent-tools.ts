@@ -1,3 +1,4 @@
+import {requestPerson} from './people.ts';
 import {map} from './store.ts';
 import {replyText} from './threads.ts';
 // Agent session tools: cross-agent handoff, fork, resume info, ask/reply, checked worker_done,
@@ -192,9 +193,10 @@ export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise
   const profileId=b.profileId??(b.role?project.roles?.[b.role]:undefined),profile=typeof profileId==='string'&&roleProfile(profileId)||fail(400,'Expected profileId or a role mapped to a profile');
   if(b.setup!==undefined&&!['run','skip'].includes(b.setup))fail(400,'Expected setup run|skip');
   // The new session's director is its creator's (people-access §5); the account choice follows it.
-  const directedBy=typeof b.callerExecutionId==='string'?(await get(b.callerExecutionId,'execution').catch(()=>null))?.directedBy:undefined;
+  // callerExecutionId is trusted only from a host agent (bound(), no request person); a person directs their own sessions.
+  const person=requestPerson.getStore(),directedBy=person?person.email:typeof b.callerExecutionId==='string'?(await get(b.callerExecutionId,'execution').catch(()=>null))?.directedBy:undefined;
   const account=b.account??(await deps.pickAccount?.(profile.harness??'codex',projectId,b.hostId,directedBy));
-  const s:any={id:randomUUID(),createdAt:Date.now(),projectId,agentConfig:profile,startRequest:key,...(b.role?{role:b.role}:{}),...(account?{account}:{}),...(b.setup?{setup:b.setup}:{}),...(typeof b.hostId==='string'&&b.hostId?{hostId:b.hostId}:{}),...(typeof b.callerSessionId==='string'?{createdBySessionId:b.callerSessionId}:{}),...(typeof b.callerExecutionId==='string'?{createdByExecutionId:b.callerExecutionId}:{})};
+  const s:any={id:randomUUID(),createdAt:Date.now(),projectId,agentConfig:profile,startRequest:key,...(directedBy?{directedBy}:{}),...(b.role?{role:b.role}:{}),...(account?{account}:{}),...(b.setup?{setup:b.setup}:{}),...(typeof b.hostId==='string'&&b.hostId?{hostId:b.hostId}:{}),...(typeof b.callerSessionId==='string'?{createdBySessionId:b.callerSessionId}:{}),...(typeof b.callerExecutionId==='string'?{createdByExecutionId:b.callerExecutionId}:{})};
   await put('session',s);const first=typeof b.text==='string'&&b.text?(await submit({sessionId:s.id,requestId:'start:'+requestId,text:b.text})):null;
   return {sessionId:s.id,projectId,role:b.role??null,profileId:profile.id,account:account??null,executionId:first&&!first.queued?first.id:null,hostId:first?.hostId??null}}
  // Operator-app links (docs/designs/fleet-view-urls-and-list-path.md §1): the same codec the app uses; no database access.

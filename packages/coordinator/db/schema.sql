@@ -532,3 +532,6 @@ ALTER TABLE task ADD COLUMN taken_from text NULL;
 -- enabled, an empty take rule. Needed to start; nothing else of the old records is kept.
 UPDATE document SET data = (data - 'enabled') || jsonb_build_object('holder', (SELECT email FROM person WHERE owner), 'intake', CASE WHEN data->>'enabled' = 'false' THEN 'paused' ELSE 'all' END, 'kind', 'personal', 'take', '{"projects":[]}'::jsonb) WHERE kind = 'managed-account' AND EXISTS (SELECT 1 FROM person WHERE owner);
 DELETE FROM document WHERE kind IN ('project-account', 'account-action');
+-- A holder reads and writes the setting changes of their own host and subscriptions (rows carry the holder).
+DROP POLICY project_scope ON document;
+CREATE POLICY project_scope ON document USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')) OR (kind IN ('host', 'managed-account', 'api-connection', 'host-observation', 'setting-change') AND data->>'holder' = current_setting('fleet.person', true)));

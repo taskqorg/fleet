@@ -382,7 +382,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   // Take (§5): the person directs the task from now on; they need a grant on its project.
   task_take:async(b:any)=>{const t=await store.tasks.get(str(b?.taskId,'taskId',200));const p=requestPerson.getStore();
    if(!p||!mayAccessProject(p,t.projectId))fail(403,'Take needs a grant on the task project');
-   await store.tasks.take(t.id,p!.email);await put('setting-change',{id:randomUUID(),target:'task:'+t.id,field:'directedBy',previous:t.directedBy,value:p!.email,actor:p!.email,at:Date.now()});return store.tasks.get(t.id)},
+   if(t.directedBy!==p!.email){await store.tasks.take(t.id,p!.email);await put('setting-change',{id:randomUUID(),target:'task:'+t.id,projectId:t.projectId,field:'directedBy',previous:t.directedBy,value:p!.email,actor:p!.email,at:Date.now()})}return store.tasks.get(t.id)},
   questions_list:async(b:any)=>({questions:await store.tasks.questions({taskId:b?.taskId,state:b?.state,kind:b?.kind})}),
   questions_answer:async(b:any)=>{const q=await store.tasks.answer(str(b?.questionId,'questionId',200),{answer:str(b.answer,'answer'),by:actor('operator'),artifactIds:Array.isArray(b.artifactIds)?b.artifactIds:undefined});return (await store.tasks.questions({})).find(x=>x.id===q.id)},
   executions_list:async(b:any)=>({executions:await store.executions.list({taskId:b?.taskId,projectId:b?.projectId,parentExecutionId:b?.parentExecutionId,problem:b?.problem===true})}),

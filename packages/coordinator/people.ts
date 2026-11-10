@@ -35,6 +35,7 @@ export const requestPerson=new AsyncLocalStorage<Person|null>();
 // The one project-grant rule: the owner sees every project, others those of their project grants.
 export const mayAccessProject=(p:Person|null|undefined,projectId:string|null|undefined)=>!!p&&(p.owner||!!projectId&&p.grants.some(g=>g.kind==='project'&&g.id===projectId));
 // The director of new work (people-access §5): the request person, else the owner (timers, Lab, program workers).
+// ponytail: one owner per process (the last people file loaded); two apps with different owners in one process would share it.
 let ownerEmail:string|null=null;
 export const director=()=>requestPerson.getStore()?.email??ownerEmail;
 export const actor=(fallback='system')=>requestPerson.getStore()?.email??fallback;
