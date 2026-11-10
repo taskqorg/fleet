@@ -7,7 +7,7 @@ import {readFileSync} from 'node:fs';
 import {dirname,extname,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-const requirement=/\b(?:R[1-6]|UC(?:10|[1-9]))\b|\brequirement\s*:/i,risk=/\brisk\s*:/i;
+const requirement=/\b(?:R[1-6]|UC(?:10|[1-9]))\b|\b[Rr]equirement\s*:/,risk=/\brisk\s*:/i;
 const declaration=/^\s*(?:test|it)(?:\.(?:only|skip|todo))?\s*\(|^func Test\w*\(/;
 const missing=(text:string)=>[...(!requirement.test(text)?['requirement ID']:[]),...(!risk.test(text)?['risk:']:[])];
 type Case={line:number,title:string,context:string};
