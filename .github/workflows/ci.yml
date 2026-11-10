@@ -60,8 +60,9 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run check:filter
-  # Every migration and the task-derived tests on real PostgreSQL 18 with the PDS18 roles (tests/coordinator/pg-test.ts):
-  # migrations as the owner fleet (no superuser, no BYPASSRLS), the store as fleet_app. PGlite runs as a superuser and
+  # The whole coordinator suite with every migration on real PostgreSQL 18 and the PDS18 roles created by
+  # deploy/infrastructure/fleet-postgres.sql (tests/coordinator/pg-test.ts): migrations as the owner fleet (no superuser, no
+  # BYPASSRLS), the store as fleet_app; the concurrency and load tests use the owner URL. PGlite runs as a superuser and
   # cannot catch privilege errors (the 426d1e2 deploy failed on one).
   postgres-roles:
     runs-on: ubuntu-24.04
@@ -84,7 +85,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx tsx --test tests/coordinator/task-derived.test.ts
+      - run: npm run build
+      # The executor binary the end-to-end artifact tests run.
+      - run: cargo build -p fleet-executor
+      # One file at a time: the Postgres-backed tests share the database "fleet" (tests/coordinator/pg-test.ts).
+      - run: npx tsx --test --test-concurrency=1 tests/coordinator/*.test.ts
         env:
           FLEET_TEST_PG: postgresql://postgres:postgres@localhost:5432
   comment:

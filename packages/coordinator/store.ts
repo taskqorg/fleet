@@ -19,10 +19,12 @@ const backend=(url:string,scope:string):Backend=>{
   // The scope is a startup option, set before the connection runs any query.
   const pool=new pg.Pool({connectionString:url,options:`-c fleet.project_ids=${scope.replace(/[^a-zA-Z0-9_*,-]/g,'')}`});
   // LISTEN holds one dedicated connection for the process; it reconnects and listens again after an error.
+  // close() stops every listener first: a LISTEN client still checked out would make pool.end() wait forever.
+  const listeners=new Set<()=>Promise<void>>();
   const listen=async(channel:string,fn:()=>void)=>{let client:any=null,stopped=false;
    const open=async():Promise<void>=>{if(stopped)return;try{client=await pool.connect();client.on('notification',()=>fn());client.on('error',()=>{client?.release(true);client=null;setTimeout(()=>{open();fn()},1000)});await client.query('LISTEN '+channel.replace(/\W/g,''))}catch{client?.release(true);client=null;setTimeout(open,1000)}};
-   await open();return async()=>{stopped=true;if(client){await client.query('UNLISTEN *').catch(()=>{});client.release()}}};
-  return {listen,query:(s,p)=>pool.query(s,p),exec:s=>pool.query(s),close:()=>pool.end(),tx:async(fn,mode)=>{const c=await pool.connect();
+   await open();const stop=async()=>{if(stopped)return;stopped=true;listeners.delete(stop);if(client){await client.query('UNLISTEN *').catch(()=>{});client.release();client=null}};listeners.add(stop);return stop};
+  return {listen,query:(s,p)=>pool.query(s,p),exec:s=>pool.query(s),close:async()=>{for(const stop of [...listeners])await stop();await pool.end()},tx:async(fn,mode)=>{const c=await pool.connect();
    try{await c.query(BEGIN[mode]);const r=await fn((s,p)=>c.query(s,p));await c.query('COMMIT');return r}catch(e){await c.query('ROLLBACK').catch(()=>{});throw e}finally{c.release()}}};
  }
  let db:any;const ready=import('@electric-sql/pglite').then(async m=>{db=new m.PGlite(url);await db.query("SELECT set_config('fleet.project_ids',$1,false)",[scope])});
