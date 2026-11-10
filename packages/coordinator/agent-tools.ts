@@ -239,6 +239,8 @@ export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise
   else if(name==='reply')(await mine((await get(str(a.questionId,'questionId'),'question')).sessionId));
   else if(name==='view_link'){} // no session or ownership: pure link building
   else if(name==='reconcile')fail(403,'Not available to host agents');
+  // Readiness only of the caller's own project (a session without a project has none).
+  else if(name==='project_readiness'){const p=(await get(own,'session')).projectId;if(!p||a.projectId!==undefined&&a.projectId!==p)fail(403,'Project belongs to another agent');a.projectId=p}
   else if(name==='session_start'){
    // Host agents start sessions only in their own project, with a profile from its roles map and a registered account.
    const p=(await get(own,'session')).projectId;if(!p||a.projectId!==undefined&&a.projectId!==p)fail(403,'Project belongs to another agent');a.projectId=p;a.callerSessionId=own;a.callerExecutionId=executionId;
