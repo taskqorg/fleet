@@ -10,10 +10,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -90,4 +93,29 @@ func TestGuardAdmitsOnlyVerifiedAccessIdentity(t *testing.T) {
 	up = false
 	g.keys = nil
 	expect(t, status(good), 503, "key outage")
+}
+
+// Requirement: an unknown key id inside a fresh key set is answered from the cache (fleet-people-access).
+// Risk: tokens with arbitrary kid values force one key-set fetch each, serialized behind the guard's lock.
+func TestUnknownKeyIdInFreshSetFetchesOnce(t *testing.T) {
+	var hits atomic.Int32
+	certs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		io.WriteString(w, `{"keys":[]}`)
+	}))
+	defer certs.Close()
+	g := newGuard("invented-browser-secret", certs.URL)
+	head := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","kid":"invented-unknown"}`))
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := g.verify(head + ".e30.AA"); err == nil {
+				t.Error("unknown key admitted")
+			}
+		}()
+	}
+	wg.Wait()
+	expect(t, hits.Load(), int32(1), "key-set fetches")
 }
