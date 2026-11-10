@@ -158,6 +158,7 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 *   The token's connections are the profile's granted connections filtered by each connection's `access` list and intake. `projects: ['*']` means all work, with or without a project (Lab runs have none).
 *   The coordinator's connection tick (every 3 s) ingests the spool, then marks the tokens of ended executions revoked and republishes the snapshot, so recovery and every other ending path are covered; no separate expiry number. An `api` step's token is revoked right after its call. An execution that ends while the coordinator is down keeps its token until recovery settles it; the first snapshot after that removes it. A grant revocation removes tokens too (people-access §3). Child executions get their own tokens.
 *   Coordinator-side `api` steps get a token for their step execution the same way.
+*   **Owner connection tokens.** The owner's own interactive sessions (Claude Code, Codex, Hermes on any host) use a long-lived token from `connections_token_create {name, connections}` (owner only; the value is answered once, with the MCP spec). It lives in a 0600 file named by `FLEET_TOKEN_FILE`, never in a session config. The tick keeps it; `connections_token_revoke` ends it. Its calls are `tool_run` rows with no parent run and `data.tokenName`, directed by the owner.
 *   This replaces Pipe project tokens, the grant snapshot, `pipeConfigPath` and the shared host token file.
 
 ### 5. Call methods

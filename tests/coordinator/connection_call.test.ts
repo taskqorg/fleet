@@ -27,4 +27,6 @@ test('CLI and MCP send the run token and give the same call line; refusals and p
  const quota=JSON.parse(await run(['call','tavily','web_search'],JSON.stringify({query:'quota'}),env));assert.deepEqual([quota.outcome,quota.error_code],['error','http-429']);
  const refused=JSON.parse(await run(['call','tavily','web_search'],'{}',{...env,FLEET_RUN_TOKEN:'other'}));assert.deepEqual([refused.outcome,refused.error_code],['error','unauthenticated']);
  const none=JSON.parse(await run(['call','tavily','web_search'],'{}',{FLEET_GATEWAY_URL:gw.url}));assert.equal(none.error_code,'connection-unavailable');
+ const file=mkdtempSync('/tmp/fleet-cc-tok-')+'/token';writeFileSync(file,'run-token\n',{mode:0o600});
+ const fromFile=JSON.parse(await run(['call','tavily','web_search'],JSON.stringify({query:'x'}),{FLEET_GATEWAY_URL:gw.url,FLEET_TOKEN_FILE:file}));assert.equal(fromFile.outcome,'ok');
 }finally{await gw.close()}});

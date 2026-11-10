@@ -36,6 +36,7 @@ export function budgets(store:Store){
    if(!(typeof b.limit==='number'&&b.limit>Number(r.limit)))fail(400,'Expected a limit above the current one');
    const id=await ask({kind:'operator_decision',projectId:r.scope==='project'?r.scope_id:null,text:`${p?.email??'fleet'} asks to raise the ${r.scope} ${r.scope_id} budget from ${Number(r.limit)} to ${b.limit} ${r.unit}${typeof b.reason==='string'&&b.reason?': '+b.reason.slice(0,500):''}.`,options:['approve','decline'],askedBy:p?.email??'fleet',data:{budgetAsk:{budgetId:r.id,limit:b.limit,askedBy:p?.email??null},cause:`budget:${r.id}:ask`}});
    return {questionId:id}},
+  budget_delete:async(b:any,p:Person|null)=>{if(!p?.owner)fail(403,'Only the owner deletes budgets');const r=await store.query('DELETE FROM budget WHERE id=$1 RETURNING id',[b?.id]);if(!r.length)fail(404,'Unknown budget');return {id:b.id,deleted:true}},
   budgets_list:async()=>({budgets:await Promise.all((await store.query('SELECT * FROM budget ORDER BY set_at')).map(async(r:any)=>({...view(r),spend:await spend(r)})))}),
  };
  // The budgets that cover an execution (its project and its director) and are reached by measured spend.

@@ -42,6 +42,12 @@ def tls_context():
 def call(connection, tool, arguments):
     """One gateway call: {tool, callId, outcome: ok|error|unknown, error_code, usage, output}."""
     url, token = os.environ.get('FLEET_GATEWAY_URL', '').rstrip('/'), os.environ.get('FLEET_RUN_TOKEN', '')
+    # An owner connection token lives in a 0600 file (FLEET_TOKEN_FILE), never in the session config.
+    if not token and os.environ.get('FLEET_TOKEN_FILE'):
+        try:
+            token = Path(os.environ['FLEET_TOKEN_FILE']).read_text().strip()
+        except OSError:
+            token = ''
     line = {'tool': tool, 'callId': None, 'outcome': 'error', 'error_code': None, 'usage': None, 'output': None}
     if not url or not token:
         return {**line, 'error_code': 'connection-unavailable'}

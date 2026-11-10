@@ -110,3 +110,22 @@ test('connection budget: warn and pause only show; a reached stop blocks it in t
  assert.equal((await f.op('budgets_list')).budgets.find((x:any)=>x.id===b.id).limit,10);
  await store.atomic(()=>c.tick());await settle();assert.deepEqual(f.snapshot().connections.tavily.blocked,[]);
 }finally{await settle();await f.app.close()}});
+
+test('owner connection tokens: answered once, kept by the tick, recorded without a parent run, revoked on request; budgets delete',async()=>{
+ const people=peopleFile([{email:OWNER,name:'Owner',roles:['operator','architect'],owner:true},{email:'arch@fleet.test',roles:['architect']}]);
+ const f=setup({peopleFile:people,connectionTickMs:0});try{await f.app.ready();const c=(f.app as any).connections,store=(f.app as any).store;
+  await f.op('connections_create',{name:'tavily',provider:'tavily'});await f.op('connections_set_access',{connection:'tavily',access:{projects:['*']}});
+  await f.op('connections_token_create',{name:'mac-claude',connections:['tavily']},403,'arch@fleet.test');
+  const t=await f.op('connections_token_create',{name:'mac-claude',connections:['tavily']});assert.ok(t.token);assert.equal(t.connections[0].name,'tavily');
+  await f.op('connections_token_create',{name:'mac-claude',connections:['tavily']},409);
+  const list=await f.op('connections_token_list');assert.deepEqual(list.tokens.map((x:any)=>[x.name,x.revokedAt]),[['mac-claude',null]]);assert.ok(!JSON.stringify(list).includes(t.token));
+  mkdirSync(join(f.gatewayDir,'state','spool'),{recursive:true});
+  writeFileSync(join(f.gatewayDir,'state','spool',new Date().toISOString().slice(0,10)+'.jsonl'),JSON.stringify({callId:'own1',executionId:'token:mac-claude',tokenSha256:sha256(t.token),connection:'tavily',tool:'web_search',status:200,outcome:'ok',usage:{unit:'credits',amount:1},startedAt:Date.now()})+'\n');
+  await store.atomic(()=>c.tick());await settle();
+  assert.equal(f.snapshot().tokens.length,1,'the tick keeps an owner token');
+  const [row]=await store.query("SELECT parent_execution_id AS parent,data->>'tokenName' AS name FROM execution WHERE id='call:own1'");assert.deepEqual([row.parent,row.name],[null,'mac-claude']);
+  await f.op('connections_token_revoke',{name:'mac-claude'});await settle();assert.deepEqual(f.snapshot().tokens,[]);
+  const b=await f.op('budget_set',{scope:'connection',scopeId:'tavily',unit:'calls',limit:5});
+  await f.op('budget_delete',{id:b.id},403,'arch@fleet.test');await f.op('budget_delete',{id:b.id});await f.op('budget_delete',{id:b.id},404);
+  assert.equal((await f.op('budgets_list')).budgets.length,0);
+ }finally{await settle();await f.app.close()}});
