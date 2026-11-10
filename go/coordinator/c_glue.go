@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -177,21 +176,7 @@ func init() {
 		}
 		return hash, s.ID, nil
 	}
-	cArtifactRead = func(ctx context.Context, a *App, id string, max int64) ([]byte, error) {
-		x, open, err := artifactRead(ctx, a, id, nil)
-		if err != nil {
-			return nil, err
-		}
-		if x.Size > max {
-			return nil, fail(413, fmt.Sprintf("Artifact larger than %d bytes", max))
-		}
-		r, err := open()
-		if err != nil {
-			return nil, err
-		}
-		defer r.Close()
-		return io.ReadAll(io.LimitReader(r, max+1))
-	}
+	cArtifactRead = artifactBytes
 }
 
 func init() {

@@ -65,7 +65,7 @@ jobs:
       - name: Pack the release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          mkdir -p release && cp go/bin/fleet-coordinator release/ && cp -r dist release/
+          mkdir -p release/dist && cp go/bin/fleet-coordinator release/ && cp -r dist/app release/dist/ && cp -r config release/
           tar -czf fleet-release.tgz -C release .
           sha256sum fleet-release.tgz | tee fleet-release.tgz.sha256
           echo "fleet-release-${GITHUB_SHA}: $(cut -d' ' -f1 fleet-release.tgz.sha256)" >> "$GITHUB_STEP_SUMMARY"

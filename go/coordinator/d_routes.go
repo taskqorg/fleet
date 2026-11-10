@@ -74,7 +74,6 @@ func init() {
 		decode(q.body, &b)
 		return artifactPurge(withTx(q), q.app, b.ContentHash, b.ProjectID, b.Scope, b.Reason)
 	})
-	// Placement problems (placement.ts) are not part of this list until placement is ported.
 	operation("stores_list", true, func(q *Request) (any, error) {
 		all, err := storeList(withTx(q), q.app)
 		if err != nil {
@@ -85,6 +84,11 @@ func init() {
 			if s.State == "full" {
 				problems = append(problems, doc{"kind": "store-full", "storeId": s.ID, "hostId": s.HostID, "capacityBytes": s.CapacityBytes, "freeSpaceWarningBytes": s.FreeSpaceWarningBytes,
 					"actions": []string{"store_set_free_space_warning", "project artifact_locations", "artifact_rule_confirm"}})
+			}
+		}
+		for _, p := range lastPlacementProblems() {
+			if pid, _ := p["projectId"].(*string); q.person == nil || q.person.Owner || pid != nil && mayAccessProject(q.person, pid) {
+				problems = append(problems, p)
 			}
 		}
 		if all == nil {
@@ -125,7 +129,7 @@ func init() {
 	appRoutes()
 
 	// Stores a host has not reported for 2 minutes are unreachable; expired upload leases fail. Single flight per tick.
-	// Lease expiry was not on the TypeScript timer (only reachable from tests); it runs here so a dead upload settles.
+	// Then one placement pass (copies, purges, rules, lease expiry, the artifact retry window).
 	onStart(func(ctx context.Context, a *App) {
 		go func() {
 			t := time.NewTicker(placementTick)
@@ -138,8 +142,8 @@ func init() {
 					if err := dExec(ctx, a, "UPDATE store SET state='unreachable' WHERE state<>'unreachable' AND (observed_at IS NULL OR observed_at < now() - ($1::text||' milliseconds')::interval)", strconv.Itoa(storeUnseenMS)); err != nil {
 						log.Printf("store sweep: %v", err)
 					}
-					if err := expireLeases(ctx, a); err != nil {
-						log.Printf("lease expiry: %v", err)
+					if _, _, err := runPlacement(ctx, a); err != nil {
+						log.Printf("placement: %v", err)
 					}
 				}
 			}

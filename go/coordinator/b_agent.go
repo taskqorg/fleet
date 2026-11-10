@@ -1488,7 +1488,12 @@ func bound(q *Request, name string, a doc, executionID string) (doc, error) {
 	case name == "reconcile":
 		return nil, fail(403, "Not available to host agents")
 	case name == "project_readiness":
-		a["callerSessionId"] = own
+		// Bound to the caller's own project: another project's readiness is not the agent's to read.
+		p, err := ownProject()
+		if err != nil {
+			return nil, err
+		}
+		a["projectId"], a["callerSessionId"] = p, own
 	case name == "session_start":
 		p, err := ownProject()
 		if err != nil {

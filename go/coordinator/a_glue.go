@@ -136,7 +136,10 @@ func artifactGate(q *Request, e doc, declared []any) (doc, error) {
 }
 
 // settleWaiting (app.ts settle): a waiting execution finishes once its artifacts are settled.
-func settleWaiting(ctx context.Context, a *App, id string) error {
+func settleWaiting(ctx context.Context, a *App, id string) error { return settleWaitingAs(ctx, a, id, "") }
+
+// settleWaitingAs: expired (placement's retry window passed) fails the execution even while artifacts are pending.
+func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 	ended := ""
 	err := a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
 		q := &Request{app: a, tx: tx, r: (&http.Request{}).WithContext(ctx)}
@@ -148,17 +151,21 @@ func settleWaiting(ctx context.Context, a *App, id string) error {
 		if err != nil {
 			return err
 		}
-		if len(r.Pending) > 0 && len(r.Failed) == 0 && len(r.Missing) == 0 {
+		if expired == "" && len(r.Pending) > 0 && len(r.Failed) == 0 && len(r.Missing) == 0 {
 			return nil
 		}
-		failed := len(r.Failed) > 0 || len(r.Missing) > 0 || len(r.Pending) > 0
+		failed := expired != "" || len(r.Failed) > 0 || len(r.Missing) > 0 || len(r.Pending) > 0
 		for _, k := range []string{"waitReason", "waitingSince", "pendingArtifacts", "declaredArtifacts"} {
 			delete(e, k)
 		}
 		e["state"], e["updatedAt"] = "completed", nowMs()
 		if failed {
 			e["state"] = "failed"
-			e["error"] = doc{"code": "artifact-required", "message": "Required artifacts missing or failed", "missing": r.Missing, "failed": r.Failed, "pending": r.Pending}
+			msg := "Required artifacts missing or failed"
+			if expired != "" {
+				msg = expired
+			}
+			e["error"] = doc{"code": "artifact-required", "message": msg, "missing": r.Missing, "failed": r.Failed, "pending": r.Pending}
 		}
 		if err := put(q, "execution", e); err != nil {
 			return err
