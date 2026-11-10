@@ -170,7 +170,11 @@ func edgeOK(route string) {
 	defer edgeMu.Unlock()
 	if _, ok := edges[route]; ok {
 		delete(edges, route)
-		fmt.Fprintf(os.Stderr, "executor: the edge delivers %s again\n", route)
+		if h, ok := strings.CutPrefix(route, "store "); ok {
+			fmt.Fprintf(os.Stderr, "executor: store %s reachable again\n", h)
+		} else {
+			fmt.Fprintf(os.Stderr, "executor: the edge delivers %s again\n", route)
+		}
 	}
 }
 
