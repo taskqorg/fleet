@@ -24,18 +24,19 @@ test('proxy mode requires configured Origin for account mutations',async()=>{con
  assert.equal((await f.call('/api/project-operations/account_create',{name:'x-test',harness:'codex'},{authorization:'Bearer browser',origin:'https://fleet.example'})).statusCode,200);
 }finally{await f.app.close()}});
 
-test('host selection: Claude never PDS, unknown/offline rejected, Windows unprovisioned',async()=>{const f=setup();try{
+test('host selection: harness placement is a host setting, unknown/offline rejected',async()=>{const f=setup();try{
  const c=await f.op('account_create',{name:'claude-test',harness:'claude'});
- await f.op('account_discover',{accountId:c.id,hostId:'mac'},403);// no heartbeat: platform unknown, Claude ineligible
+ await f.op('account_discover',{accountId:c.id,hostId:'mac'},409);// no inspector heartbeat yet
  await f.op('account_discover',{accountId:c.id,hostId:'pds-program'},409);
  await f.op('account_discover',{accountId:c.id,hostId:'nowhere'},409);
+ // Where Claude may run is the host's setting (decision 10): PDS sets it to not allowed; nothing is hard-coded.
+ assert.equal((await f.call('/api/ops/hosts_update',{id:'pds-program',harnesses:{claude:{allowed:false}}})).statusCode,200);
  await f.host('poll',{hostId:'pds-program',platform:'linux'});
- const hs=await f.op('account_hosts',{accountId:c.id});const pds=hs.hosts.find((h:any)=>h.id==='pds-program');assert.equal(pds.eligible,false);assert.match(pds.reason,/never PDS/);assert.match(hs.windows,/no Windows executor/);
- await f.host('accounts',{hostId:'pds-program',accountId:c.id,binding:'fleet-claude',platform:'linux',readiness:'ready'},403);
- await f.host('accounts',{hostId:'pds-program',accountId:c.id,binding:'fleet-claude',platform:'darwin',readiness:'ready'},403);
- await f.op('account_login_handoff',{accountId:c.id,hostId:'pds-program',binding:'fleet-claude'},403);
- await f.host('poll',{hostId:'mac-program',platform:'linux'});
- await f.op('account_discover',{accountId:c.id,hostId:'mac'},403);// Mac inspector reporting non-Mac platform
+ const hs=await f.op('account_hosts',{accountId:c.id});const pds=hs.hosts.find((h:any)=>h.id==='pds-program');assert.equal(pds.eligible,false);assert.match(pds.reason,/not allowed on this host/);
+ assert.equal(hs.hosts.find((h:any)=>h.id==='mac').eligible,true);
+ await f.host('accounts',{hostId:'pds-program',accountId:c.id,binding:'fleet-claude',platform:'linux',readiness:'ready'},409);
+ await f.op('account_login_handoff',{accountId:c.id,hostId:'pds-program',binding:'fleet-claude'},409);
+ assert.ok((await f.op('account_list')).accounts.find((x:any)=>x.id===c.id).holder);
  await f.host('poll',{hostId:'mac-program',platform:'darwin'});
  assert.ok((await f.op('account_discover',{accountId:c.id,hostId:'mac'})).executionId);
  const x=await f.op('account_create',{name:'codex-test',harness:'codex'});
@@ -58,21 +59,22 @@ test('readiness transitions keep prior ready binding, IDs and history across rel
  s=await step('ready','ready','stopped');assert.equal(s.bindings[0].readiness,'ready');
  assert.equal((await f.op('account_login_handoff',{accountId:a.id,hostId:'mac',binding:'fleet-codex'})).command,null);
  s=await step('unknown','catalogue-only');assert.equal(s.bindings[0].readiness,'ready');assert.equal(s.bindings[0].lastCheck.readiness,'unknown');
- await f.op('account_enabled',{accountId:a.id,enabled:false});await f.op('account_enabled',{accountId:a.id,enabled:true});
+ await f.op('account_update',{accountId:a.id,intake:'paused'});await f.op('account_update',{accountId:a.id,intake:'all'});
  const before=(await f.op('account_list')).accounts[0];
  await f.reload();const after=(await f.op('account_list')).accounts[0];
  assert.equal(after.id,a.id);assert.deepEqual(after.inspections.map((i:any)=>i.id),before.inspections.map((i:any)=>i.id));assert.equal(after.checks.length,3);assert.equal(after.history.length,2);assert.equal(after.bindings[0].readiness,'ready');
  assert.equal((await f.op('account_list')).catalogues[0].bindings[0].name,'fleet-codex');
 }finally{await f.app.close()}});
 
-test('extra native host: accepted, account binding selects host, Claude rejected on linux',async()=>{const f=setup({nativeHostIds:['pds-native']});try{
+test('extra native host: accepted, account binding selects host, Claude refused where the host does not allow it',async()=>{const f=setup({nativeHostIds:['pds-native']});try{
  await f.host('poll',{hostId:'pds-native',platform:'linux'});
+ assert.equal((await f.call('/api/ops/hosts_update',{id:'pds-native',harnesses:{claude:{allowed:false}}})).statusCode,200);
  const hs=await f.op('account_hosts',{harness:'codex'});assert.equal(hs.hosts.find((h:any)=>h.id==='pds-native').eligible,true);
  assert.equal((await f.op('account_hosts',{harness:'claude'})).hosts.find((h:any)=>h.id==='pds-native').eligible,false);
  const a=await f.op('account_create',{name:'fleet-codex-pds',harness:'codex'});
  await f.host('accounts',{hostId:'pds-native',accountId:a.id,binding:'fleet-codex-pds',platform:'linux',readiness:'ready',reason:'ready'});
  const c=await f.op('account_create',{name:'claude-pds',harness:'claude'});
- await f.host('accounts',{hostId:'pds-native',accountId:c.id,binding:'fleet-claude-pds',platform:'linux',readiness:'ready'},403);
+ await f.host('accounts',{hostId:'pds-native',accountId:c.id,binding:'fleet-claude-pds',platform:'linux',readiness:'ready'},409);
  const s=(await f.call('/api/sessions',{})).json();
  assert.equal((await f.call(`/api/sessions/${s.sessionId}/profile`,{profileId:'baseline',account:'fleet-codex-pds'})).statusCode,200);
  const m=await f.call(`/api/sessions/${s.sessionId}/messages`,{requestId:'r1',text:'hi'});assert.equal(m.statusCode,200,m.body);
