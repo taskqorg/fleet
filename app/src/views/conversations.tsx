@@ -5,11 +5,11 @@ import { useLocation } from 'wouter-preact';
 import {
   ListDetail, ListFrame, FilterBar, StateCounters, RowCheck, VirtualList, StateBadge, HarnessMark, Button, Transcript, Composer, DecisionBlock,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Entry, type Harness, type StateOf,
-} from '../../../packages/ui/src/index';
+} from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
-import { op, online } from '../api';
-import { useList, useDoc } from '../store';
-import { useUrlView, useSearchBox, nextUrl } from '../url';
+import { op, online } from '../api.ts';
+import { useList, useDoc } from '../store.ts';
+import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
 
 const ROW = parseInt(tokens.size.row);
 type SessionRow = { id: string; title: string | null; state: StateOf<'session'>; harness: string | null; openQuestions: number; sortKey: (string | number)[] };

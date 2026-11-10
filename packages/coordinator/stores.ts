@@ -2,7 +2,7 @@
 // the S3 key of its role in a 0600 file under secretsDir, never in rows. Each poll reports reachability and capacity.
 import {mkdirSync,readFileSync,writeFileSync,chmodSync,existsSync} from 'node:fs';
 import {join} from 'node:path';
-import type {Store} from './store.js';
+import type {Store} from './store.ts';
 const fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};
 const id=(v:any,name:string)=>typeof v==='string'&&/^[a-z0-9][a-z0-9-]{0,62}$/.test(v)?v:fail(400,'Invalid '+name);
 const url=(v:any,name:string)=>{try{const u=new URL(v);if(!['http:','https:'].includes(u.protocol))throw 0;return u.toString().replace(/\/$/,'')}catch{return fail(400,'Invalid '+name)}};

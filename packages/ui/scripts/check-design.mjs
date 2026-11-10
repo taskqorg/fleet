@@ -56,14 +56,14 @@ const ui = await build({ entryPoints: [join(root, 'packages/ui/src/index.ts')], 
 const kb = ui.outputFiles[0].contents.length / 1024;
 
 let tests = 'passed';
-try { execFileSync('npx', ['tsx', '--test', 'tests/ui/format.test.ts'], { cwd: root, stdio: 'pipe' }); } catch { tests = 'FAILED (run npx tsx --test tests/ui/format.test.ts)'; }
+try { execFileSync('node', ['--test', 'tests/ui/format.test.ts'], { cwd: root, stdio: 'pipe' }); } catch { tests = 'FAILED (run node --test tests/ui/format.test.ts)'; }
 
 let scroll;
 try { scroll = execFileSync('node', ['tests/ui/scroll.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim(); } catch (e) { scroll = `not run (${String(e.message).split('\n')[0]})`; }
 let ux;
 try { ux = execFileSync('node', ['tests/ui/ux.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim(); } catch (e) { ux = `- UX checks not run (${String(e.message).split('\n')[0]})`; }
 let appCheck;
-try { appCheck = existsSync(join(root, 'dist/app/index.html')) ? execFileSync('npx', ['tsx', 'tests/ui/app.check.ts'], { cwd: root, stdio: 'pipe', timeout: 300000 }).toString().trimEnd() : '    not run (run npm run build first)'; } catch (e) { appCheck = `    not run (${String(e.message).split('\n')[0]})`; }
+try { appCheck = existsSync(join(root, 'dist/app/index.html')) ? execFileSync('node', ['tests/ui/app.check.ts'], { cwd: root, stdio: 'pipe', timeout: 300000 }).toString().trimEnd() : '    not run (run npm run build first)'; } catch (e) { appCheck = `    not run (${String(e.message).split('\n')[0]})`; }
 let trace;
 try { trace = execFileSync('node', ['tests/ui/trace.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim().replace(/\n/g, '\n    '); } catch (e) { trace = `not run (${String(e.message).split('\n')[0]})`; }
 console.log(`Design report for ${targets.join(', ')}: ${files.length} files`);

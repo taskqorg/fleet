@@ -1,6 +1,6 @@
 // Change feed (docs/designs/fleet-operator-app.md §4): triggers, kind map, (xid, seq) watermark, resync, the SSE route and lists.
 import {test} from 'node:test';import assert from 'node:assert/strict';import http from 'node:http';
-import {createStore} from '../../packages/coordinator/store.js';import {createApp} from '../../packages/coordinator/app.js';
+import {createStore} from '../../packages/coordinator/store.ts';import {createApp} from '../../packages/coordinator/app.ts';
 const fresh=async(scope?:string)=>{const s=createStore('memory://',scope?{scope}:{});await s.migrate();return s};
 const read=(s:any,c:number|null)=>s.read(()=>s.changes.since(c));
 

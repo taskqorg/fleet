@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,mkdirSync,writeFileSync} from 'node:fs';import {tmpdir} from 'node:os';
-import {createApp} from '../../packages/coordinator/app.js';import {createStore} from '../../packages/coordinator/store.js';
+import {createApp} from '../../packages/coordinator/app.ts';import {createStore} from '../../packages/coordinator/store.ts';
 // Defects found on the first live Phase 2 run (PR #20): acceptance answer 404, missing parent links, problem on a succeeded step.
 test('question_answer answers an acceptance question and completes the task',async()=>{const app=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac'});await app.ready();const s=(app as any).store;
  await s.tx(async()=>{await s.put('execution',{id:'g',executionId:'g',sessionId:'sx',hostId:'mac',state:'completed',startedAt:1,finishedAt:2,deliveryId:'d'});

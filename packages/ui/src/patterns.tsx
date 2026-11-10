@@ -1,9 +1,9 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Button, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, NavRail, TooltipLayer, HarnessMark, StageChip, type Chip, type FilterField, type NavItem } from './controls';
-import { VirtualList } from './virtual-list';
-import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry';
+import { Button, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, NavRail, TooltipLayer, HarnessMark, StageChip, type Chip, type FilterField, type NavItem } from './controls.tsx';
+import { VirtualList } from './virtual-list.tsx';
+import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
 import tokens from '../tokens.json';
 
 const ROW = parseInt(tokens.size.row);

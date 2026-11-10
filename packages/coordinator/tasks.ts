@@ -3,9 +3,9 @@
 // A legacy delivery is a task row (field and state mapping in §2); the legacy 'delivery', 'question' and 'project-question'
 // records are served from the typed tables through the adapters below.
 import {randomUUID} from 'node:crypto';
-import type {Adapter,Raw,Executions} from './executions.js';
+import type {Adapter,Raw,Executions} from './executions.ts';
 // The task state list is defined once, in the view URL codec, which the browser and the coordinator share.
-import {TASK_STATES,type TaskState} from '../view-url/view-url.js';
+import {TASK_STATES,type TaskState} from '../view-url/view-url.ts';
 export {TASK_STATES,type TaskState};
 const OPEN=new Set<TaskState>(['queued','in_progress','waiting','paused']);
 const fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};

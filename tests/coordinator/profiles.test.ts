@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,mkdtempSync,writeFileSync} from 'node:fs';
-import {canonical,profileDigest,validNativeProfile,readTrustedProfile,listProfiles} from '../../packages/coordinator/profiles.js';
+import {canonical,profileDigest,validNativeProfile,readTrustedProfile,listProfiles} from '../../packages/coordinator/profiles.ts';
 
 test('canonical JSON and profile digest',()=>{
  assert.equal(canonical({z:2,a:{y:1,b:0}}),'{"a":{"b":0,"y":1},"z":2}');

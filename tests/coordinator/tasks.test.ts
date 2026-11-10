@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {createStore} from '../../packages/coordinator/store.js';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {createStore} from '../../packages/coordinator/store.ts';
 const fresh=async()=>{const s=createStore('memory://');await s.migrate();return s};
 const state=async(s:any,id:string)=>(await s.tasks.get(id)).state;
 test('task transitions follow the design table only',async()=>{const s=await fresh();await s.tx(async()=>{
@@ -93,7 +93,7 @@ test('task_page on task_derived matches the old per-task subquery query for ever
  await s.close()});
 
 test('task_page takes the view codec page params: project lists with "no project"',async()=>{const s=await fresh();
- const {parseView,toPageParams}=await import('../../packages/view-url/view-url.js');
+ const {parseView,toPageParams}=await import('../../packages/view-url/view-url.ts');
  await s.tx(async()=>{await s.tasks.create({id:'a',title:'a',projectId:'p'});await s.tasks.create({id:'b',title:'b',projectId:'q'});await s.tasks.create({id:'c',title:'c'})});
  const ids=async(url:string)=>(await s.read(()=>s.tasks.page({...toPageParams(parseView(url)!),limit:50}))).tasks.map((t:any)=>t.id).sort();
  assert.deepEqual(await ids('/tasks?project=p'),['a']);assert.deepEqual(await ids('/tasks?project=-,p'),['a','c']);

@@ -9,7 +9,7 @@
 //   runs; when it is unset and FLEET_TEST_PG is set, those tests use the owner URL of a fresh "fleet" database.
 import { execFileSync } from 'node:child_process';
 import pg from 'pg';
-import { createStore, type Store } from '../../packages/coordinator/store.js';
+import { createStore, type Store } from '../../packages/coordinator/store.ts';
 
 export const PG = process.env.FLEET_TEST_PG;
 const SQL = new URL('../../deploy/infrastructure/fleet-postgres.sql', import.meta.url).pathname;

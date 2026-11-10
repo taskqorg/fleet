@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {createStore} from '../../packages/coordinator/store.js';import {mapLegacyState} from '../../packages/coordinator/executions.js';import {createApp} from '../../packages/coordinator/app.js';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {createStore} from '../../packages/coordinator/store.ts';import {mapLegacyState} from '../../packages/coordinator/executions.ts';import {createApp} from '../../packages/coordinator/app.ts';
 const fresh=async()=>{const s=createStore('memory://');await s.migrate();return s};
 const typed=async(s:any,id:string)=>s.executions.get(id);
 test('legacy state mapping (design §1, §7)',()=>{

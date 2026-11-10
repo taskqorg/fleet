@@ -1,6 +1,6 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {createApp} from '../../packages/coordinator/app.js';import {createStore} from '../../packages/coordinator/store.js';import {volume} from './volume-fixture.js';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {createApp} from '../../packages/coordinator/app.ts';import {createStore} from '../../packages/coordinator/store.ts';import {volume} from './volume-fixture.ts';
 // Runs on PGlite; set FLEET_TEST_DATABASE_URL to a disposable Postgres database to exercise real SERIALIZABLE conflicts.
-import {PG,recreateFleetDatabase} from './pg-test.js';
+import {PG,recreateFleetDatabase} from './pg-test.ts';
 // FLEET_TEST_DATABASE_URL: one disposable database; else, with FLEET_TEST_PG, the owner URL of a fresh "fleet" database (pg-test.ts).
 const url=process.env.FLEET_TEST_DATABASE_URL??(PG?await recreateFleetDatabase():undefined);
 const fresh=async()=>{if(url){const s=createStore(url);await s.query('DROP SCHEMA public CASCADE');await s.query('CREATE SCHEMA public');await s.close()}

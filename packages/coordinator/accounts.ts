@@ -1,5 +1,5 @@
-import {find,map} from './store.js';
-import type {Docs} from "./store.js";
+import {find,map} from './store.ts';
+import type {Docs} from "./store.ts";
 import {randomUUID} from 'node:crypto';
 export function accounts(app:any,store:Docs,config:any){
  const {all,get,put}=store,fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};

@@ -6,9 +6,9 @@ import {
   SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Transcript, TaskListView, workspaces, states, actions,
   Composer, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type Entry, type Family, type Stage,
-} from '../src/index';
-import { NAV } from './nav';
-import { NOW, min, hr, tasks, mkTask, TREE, transcript, hosts, type Task } from './fixtures';
+} from '../src/index.ts';
+import { NAV } from './nav.ts';
+import { NOW, min, hr, tasks, mkTask, TREE, transcript, hosts, type Task } from './fixtures.ts';
 
 
 function Frames({ children }: { children: () => ComponentChildren }) {

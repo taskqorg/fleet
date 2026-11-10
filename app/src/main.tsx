@@ -2,15 +2,15 @@
 import { render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation } from 'wouter-preact';
-import { AppShell, Empty, Button, workspaces, type NavItem, type AppScreen } from '../../packages/ui/src/index';
-import { op, signedOut } from './api';
-import { startFeed } from './feed';
-import { startStore } from './store';
-import { checkGrants, clearAll } from './offline';
-import { Overview } from './views/overview';
-import { Tasks } from './views/tasks';
-import { Conversations } from './views/conversations';
-import { Hosts } from './views/hosts';
+import { AppShell, Empty, Button, workspaces, type NavItem, type AppScreen } from '../../packages/ui/src/index.ts';
+import { op, signedOut } from './api.ts';
+import { startFeed } from './feed.ts';
+import { startStore } from './store.ts';
+import { checkGrants, clearAll } from './offline.ts';
+import { Overview } from './views/overview.tsx';
+import { Tasks } from './views/tasks.tsx';
+import { Conversations } from './views/conversations.tsx';
+import { Hosts } from './views/hosts.tsx';
 
 // The view of each screen the registry marks `app: true` (the type requires every one). Nav and routes follow registry
 // order. A list screen takes an optional focus segment, so focusing a row never unmounts the list.

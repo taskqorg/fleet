@@ -2,11 +2,11 @@
 // that many tasks, operation latency in process and over HTTP, then in Chromium every list change (state counter, grouping,
 // "All", preset, focus, row check, search, Back) watched each animation frame. Prints a report. With --assert it exits 1
 // when a rule fails at a size up to 20,000 tasks; larger sizes are report-only (growth factor).
-// Run: pnpm run build && npx tsx tests/ui/filter.check.ts [--assert] [--sizes 3000,20000,100000]
+// Run: pnpm run build && node tests/ui/filter.check.ts [--assert] [--sizes 3000,20000,100000]
 import http from 'node:http';
 import { chromium, type Page } from 'playwright';
-import { createStore } from '../../packages/coordinator/store.js';
-import { createApp } from '../../packages/coordinator/app.js';
+import { createStore } from '../../packages/coordinator/store.ts';
+import { createApp } from '../../packages/coordinator/app.ts';
 
 const argv = process.argv.slice(2);
 const ASSERT = argv.includes('--assert');

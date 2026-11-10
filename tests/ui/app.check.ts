@@ -1,12 +1,12 @@
 // Operator app check (docs/designs/fleet-operator-app.md §9): starts the coordinator on PGlite with fixtures behind a local proxy
 // that injects the Bearer the way the access guard does, then opens the built app (pnpm run build) in Chromium. Prints a report:
 // routes render their book parts, no console errors, click-to-detail latency, change-to-screen latency. Never fails the build.
-// Run: npx tsx tests/ui/app.check.ts [--shots dir]
+// Run: node tests/ui/app.check.ts [--shots dir]
 import http from 'node:http';
 import { mkdirSync } from 'node:fs';
 import { chromium } from 'playwright';
-import { createStore } from '../../packages/coordinator/store.js';
-import { createApp } from '../../packages/coordinator/app.js';
+import { createStore } from '../../packages/coordinator/store.ts';
+import { createApp } from '../../packages/coordinator/app.ts';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : 'design-report/app';
 mkdirSync(shots, { recursive: true });

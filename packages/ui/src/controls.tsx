@@ -1,9 +1,9 @@
 // Fleet controls. Specs: docs/design-system/controls/*.md. Styling: styles.css with tokens only.
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages } from './registry';
-import { type Measured, type Kind, measured, age, bytes, exact, percent } from './format';
-import { VirtualList } from './virtual-list';
+import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages } from './registry.ts';
+import { type Measured, type Kind, measured, age, bytes, exact, percent } from './format.ts';
+import { VirtualList } from './virtual-list.tsx';
 import tokens from '../tokens.json';
 
 const ROW = parseInt(tokens.size.row);

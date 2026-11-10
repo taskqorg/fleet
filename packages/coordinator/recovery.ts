@@ -1,8 +1,8 @@
-import {type Docs,executionScope} from "./store.js";
-import type {Executions} from "./executions.js";
+import {type Docs,executionScope} from "./store.ts";
+import type {Executions} from "./executions.ts";
 import {createHash,randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
-import {canonical} from './profiles.js';
+import {canonical} from './profiles.ts';
 const fail=(statusCode:number,message:string):never=>{throw Object.assign(Error(message),{statusCode})};
 const hash=(v:any)=>createHash('sha256').update(canonical(v)).digest('hex');
 export function recovery(app:any,store:Docs&{transaction:<T>(fn:()=>Promise<T>|T)=>Promise<T>,executions:Executions},owned:(b:any)=>Promise<void>){

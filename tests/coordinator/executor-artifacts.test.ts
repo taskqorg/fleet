@@ -3,8 +3,8 @@
 // collects them into its spool, uploads the parts, re-hashes over loopback, and the run completes once both are stored.
 import {test} from 'node:test';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';import {execFileSync,spawn} from 'node:child_process';
 import {existsSync,mkdtempSync,writeFileSync,chmodSync,mkdirSync} from 'node:fs';import {tmpdir} from 'node:os';import {resolve} from 'node:path';
-import {createApp} from '../../packages/coordinator/app.js';import {fakeStore} from './s3-fake.js';
-import {executorBinary} from './executor-binary.js';
+import {createApp} from '../../packages/coordinator/app.ts';import {fakeStore} from './s3-fake.ts';
+import {executorBinary} from './executor-binary.ts';
 let binary='';
 const FAKE_CODEX=`#!/usr/bin/env python3
 import json,os,pathlib,sys

@@ -1,7 +1,7 @@
 // Test helpers for the artifact store: register a fake S3 store for hosts through the real route, and upload a file the way an
 // executor does (reserve, part URLs, PUT, commit, loopback re-hash, verified).
 import {createHash} from 'node:crypto';
-import {fakeStore,type FakeStore} from './s3-fake.js';
+import {fakeStore,type FakeStore} from './s3-fake.ts';
 const send=async(app:any,secret:string,url:string,payload:any)=>{const r=await app.inject({method:'POST',url,headers:{authorization:'Bearer '+secret},payload});if(r.statusCode>=300)throw Object.assign(Error(url+' '+r.statusCode+' '+r.body),{statusCode:r.statusCode,body:r.body});return r.json()};
 export async function attachStores(app:any,secret:string,hostIds:string[],fake?:FakeStore):Promise<FakeStore>{const f=fake??await fakeStore();
  for(const h of hostIds)await send(app,secret,'/api/hosts/stores',{hostId:h,store:{id:h+'-store',bucket:'fleet',zone:h,endpoint:f.url,localEndpoint:f.url,accessKeyId:'test-key',secretAccessKey:'test-secret',capacityBytes:1e12,usedBytes:0}});

@@ -1,8 +1,8 @@
 // Overview (docs/design-system/pages/overview.md): what needs the operator, operational counts, workers per host, projects.
 import { useLocation } from 'wouter-preact';
-import { OpsSummary, NeedsYou, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton } from '../../../packages/ui/src/index';
-import { op, online } from '../api';
-import { useDoc } from '../store';
+import { OpsSummary, NeedsYou, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton } from '../../../packages/ui/src/index.ts';
+import { op, online } from '../api.ts';
+import { useDoc } from '../store.ts';
 
 type Overview = { questions: any[]; problems: any[]; counts: Record<string, number>; hosts: null; projects: { id: string; counts: Record<string, number> }[] };
 async function fetchOverview(): Promise<Overview> {

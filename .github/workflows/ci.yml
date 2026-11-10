@@ -21,6 +21,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
       - run: pnpm run build
       # The executor: its unit tests, and the binary the coordinator's end-to-end artifact test runs.
       - run: cargo build -p fleet-executor && cargo test -p fleet-executor
@@ -92,7 +93,7 @@ jobs:
       # The executor binary the end-to-end artifact tests run.
       - run: cargo build -p fleet-executor
       # One file at a time: the Postgres-backed tests share the database "fleet" (tests/coordinator/pg-test.ts).
-      - run: pnpm exec tsx --test --test-concurrency=1 tests/coordinator/*.test.ts
+      - run: node --test --test-concurrency=1 tests/coordinator/*.test.ts
         env:
           FLEET_TEST_PG: postgresql://postgres:postgres@localhost:5432
   comment:

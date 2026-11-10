@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync} from 'node:fs';import {createApp} from '../../packages/coordinator/app.js';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync} from 'node:fs';import {createApp} from '../../packages/coordinator/app.ts';
 const setup=(extra:any={})=>{const config={database:mkdtempSync('/tmp/fleet-accounts-')+'/db',browserSecret:'browser',machineSecret:'machine',hostId:'mac',integrationHostId:'mac-program',publicationHostId:'pds-program',...extra};let app=createApp(config);
  const call=(url:string,payload?:any,headers:any={authorization:'Bearer browser'})=>app.inject({method:payload?'POST':'GET',url,headers,payload});
  const op=async(name:string,b:any={},code=200)=>{const r=await call('/api/project-operations/'+name,b);assert.equal(r.statusCode,code,r.body);return r.json()};
