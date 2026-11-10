@@ -122,3 +122,27 @@ test('session_start with hostId runs its turns only on that host; an unknown hos
   assert.equal((await op('session_start',{projectId:'p1',role:'worker',requestId:'h2',hostId:'nope',text:'Hi'})).statusCode,400);
  }finally{await app.close()}
 });
+
+test('a session starts for a task or a taskless session attaches to one; its thread is the task thread, nothing copied',async()=>{
+ const dir=mkdtempSync(tmpdir()+'/fleet-task-session-');mkdirSync(dir+'/projects/p1',{recursive:true});mkdirSync(dir+'/projects/p2',{recursive:true});mkdirSync(dir+'/agents');
+ writeFileSync(dir+'/agents/w.json',JSON.stringify({id:'w',model:'gpt-6.1-sol',effort:'low',instructions:'x',mcpServers:[]}));
+ for(const p of ['p1','p2'])writeFileSync(dir+`/projects/${p}/project.json`,JSON.stringify({id:p,name:p,contextFiles:[],roles:{pm:'w'},repos:[],environments:[{hostId:'mac',checkoutPath:'/x'}]}));
+ const app=createApp({database:dir+'/db',browserSecret:'b',machineSecret:'m',hostId:'mac',projectConfigDirectory:dir,profilesDirectory:dir+'/agents'});
+ const op=async(name:string,body:any)=>{const r=await app.inject({method:'POST',url:'/api/ops/'+name,headers:{authorization:'Bearer b'},payload:body});return {status:r.statusCode,body:r.json()}};
+ try{const task=(await op('task_create',{title:'T',projectId:'p1'})).body.id,other=(await op('task_create',{title:'U',projectId:'p1'})).body.id,elsewhere=(await op('task_create',{title:'V',projectId:'p2'})).body.id;
+  // Started for the task: its execution carries the task.
+  const a=(await op('session_start',{projectId:'p1',role:'pm',requestId:'a',taskId:task,text:'hi'})).body;assert.equal(a.taskId,task);
+  assert.equal((await (app as any).store.query('SELECT task_id FROM execution WHERE id=$1',[a.executionId]))[0].task_id,task);
+  assert.equal((await op('session_start',{projectId:'p1',role:'pm',requestId:'x',taskId:elsewhere})).status,409);
+  // A taskless session with history attaches: its earlier execution joins the task thread unchanged (task_id stays null).
+  const b=(await op('session_start',{projectId:'p1',role:'pm',requestId:'b',text:'early'})).body;
+  assert.equal((await op('session_task_attach',{sessionId:b.sessionId,taskId:elsewhere})).status,409);
+  assert.deepEqual((await op('session_task_attach',{sessionId:b.sessionId,taskId:task})).body,{sessionId:b.sessionId,taskId:task});
+  assert.equal((await op('session_task_attach',{sessionId:b.sessionId,taskId:task})).body.existing,true);
+  assert.equal((await op('session_task_attach',{sessionId:b.sessionId,taskId:other})).status,409);
+  assert.equal((await (app as any).store.query('SELECT task_id FROM execution WHERE id=$1',[b.executionId]))[0].task_id,null);
+  const thread=(await op('thread_entries',{key:{session:b.sessionId},resolve:true,limit:50})).body;
+  assert.deepEqual(thread.key,{task});assert.deepEqual(thread.sessionIds.sort(),[a.sessionId,b.sessionId].sort());
+  assert.deepEqual(thread.entries.filter((x:any)=>x.kind==='text').map((x:any)=>x.markdown),['hi','early']);
+ }finally{await app.close()}
+});
