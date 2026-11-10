@@ -235,6 +235,20 @@ fn a_refused_key_is_disabled_persisted_and_the_next_one_serves() {
 }
 
 #[test]
+fn a_403_is_recorded_on_the_key_and_never_disables_it() {
+    let upstream = provider(|_| (403, 0));
+    let gw = Fixture::new(&upstream.url, &["invented-key-a"]);
+    assert_eq!(gw.call("web_search", TOKEN).0, 403);
+    assert_eq!(gw.call("web_search", TOKEN).0, 403);
+    assert_eq!(upstream.seen.lock().unwrap().len(), 2, "the key stays in use");
+    let lines = gw.spool();
+    assert!(lines[0]["disabled"].is_null());
+    assert_eq!(lines[0]["keyProblem"]["key"], fp("invented-key-a"));
+    assert!(lines[0]["keyProblem"]["message"].as_str().unwrap().contains("invented"));
+    assert_eq!(gw.health()["keys"]["usable"], 1);
+}
+
+#[test]
 fn quota_replies_pass_through_and_draining_keys_take_no_calls() {
     let upstream = provider(|key| if key == "invented-key-b" { (429, 0) } else { (200, 0) });
     let gw = Fixture::new(&upstream.url, &["invented-key-a", "invented-key-b"]);

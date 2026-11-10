@@ -50,7 +50,7 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 
 *   **G1.** A list of API key connections with holder, provider, tools, keys (fingerprint and state only), access list, intake, budgets and spend.
 *   **G2.** Key values live only in the coordinator's secret directory and in the gateway's memory; they are backed up with SOPS/age, and a restore needs only that backup and the age identity.
-*   **G3.** Rotation without downtime: add, drain, retire. A key refused with 401, 402 or 403 is disabled with its reason and raises one needs-you question (cause `key:<id>:disabled`); only the owner re-enables it.
+*   **G3.** Rotation without downtime: add, drain, retire. A key refused with 401 or 402 is disabled with its reason and raises one needs-you question (cause `key:<id>:disabled`); only the owner re-enables it.
 *   **G4.** `fleet-gateway` serves calls while the coordinator is down, from the last valid snapshot, and records every call in its spool.
 *   **G5.** Three call methods on one gateway: HTTP, MCP and CLI.
 *   **G6.** Every call is a `tool_run` with `connection_cost`, attributed through its per-run token to execution, project, director and experiment, with no caller label.
@@ -126,7 +126,7 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 *   **Gateway load.** `fleet-gateway` runs as a user unit of the coordinator user, which already owns the secret directory, so a separate service user would protect nothing. It reads a key's value file when a snapshot first names the key and checks it against the fingerprint; a key change takes effect at the next snapshot adoption, with no restart. Restarts drain in-flight calls while the socket stays open (socket activation).
 *   **Backup.** The secret directory is encrypted with SOPS/age into the nightly backup (`fleet-backup.sh`, `secrets.sops.json`; recipient `FLEET_BACKUP_AGE_RECIPIENT` in `backup-age.env`, the age identity kept off the host). Restore is the read-lane restore copied: decrypt with the age identity, start the gateway, it serves from its retained snapshot without Postgres.
 *   **Rotation:** add → mark old `draining` (no new calls) → `retired` after the owner confirms. No quiet-period timer (no invented number).
-*   **Failover:** to the next active key only when a key got no HTTP answer **and** the tool is `idempotent`. A non-idempotent tool (Meshy submit) returns `outcome: unknown` instead, never replayed. 429 and quota replies pass through unchanged with `Retry-After`. 401, 402, 403 disable that key (persisted in the gateway's `disabled-keys` file and reported in the spool); if none is left, `503 no-usable-key`.
+*   **Failover:** to the next active key only when a key got no HTTP answer **and** the tool is `idempotent`. A non-idempotent tool (Meshy submit) returns `outcome: unknown` instead, never replayed. 429 and quota replies pass through unchanged with `Retry-After`. 401 and 402 disable that key (persisted in the gateway's `disabled-keys` file and reported in the spool); a 403 passes through and is recorded on the key as a visible problem with the provider's message, never disabling it, so one bad request body cannot take out the keys one by one (owner decision); if none is left, `503 no-usable-key`.
 *   **Reconcile** (Tavily first): a timer compares the provider's per-key usage with the spool's sum; a positive difference ("another client uses this key") shows on the connection.
 
 ### 3. Gateway
@@ -253,7 +253,7 @@ Stages run alongside the people slices.
 | --- | --- | --- | --- |
 | C0 Registry and keys | `api-connection`, `connection-key`, secret directory, SOPS/age backup, snapshot writer, API keys screen | the API keys list shows Tavily with holder and key states; restore from the backup alone works on a clean container | people slice 1 |
 | C1 Gateway and tokens | `crates/gateway`, units, per-run tokens minted in `enqueue`, `connection_call.py` on the gateway (HTTP, CLI, MCP), spool ingest, `pipe-read` renamed `tavily` in config; every Fleet call leaves Pipe | coordinator stop does not stop web reads; spool ingested with loss 0; every call is a `tool_run` | people slice 4 |
-| C2 Key lifecycle | rotation, disable on 401/402/403, owner re-enable, Tavily reconcile | rotation with no failed calls; a 403 key shows disabled with its reason | C1 |
+| C2 Key lifecycle | rotation, disable on 401/402, 403 recorded on the key, owner re-enable, Tavily reconcile | rotation with no failed calls; a 401 key shows disabled with its reason | C1 |
 | C3 Meshy and budgets | Meshy provider, `job` mode (submit then poll), connection budgets and requests | a Meshy charge lands as `connection_cost`; a `warn` budget shows and a request raises it | C1, people slice 6 |
 | C4 Delete Pipe | §7 | the Pipe search in the Verification Plan is empty; old route fails; a Lab web trial completes | C1 |
 
@@ -273,7 +273,7 @@ Stages run alongside the people slices.
 
 *   Copy `lane/src` and its tests; remove its own `[workspace]`; add `crates/gateway` to the root `members`.
 *   Changes listed in Technical Plan §3: generic route, catalogue from the snapshot, token auth with coalesced reread, idempotent-only failover, budget flags, spool writer replacing the coreq telemetry store, no `queue-full`, coreq dependency removed.
-*   Tests copied and adapted: snapshot fallback, unknown-token reread, disable on 401/402/403, 429 pass-through, no failover for a non-idempotent tool, spool loss counter.
+*   Tests copied and adapted: snapshot fallback, unknown-token reread, disable on 401/402, 403 recorded without disabling, 429 pass-through, no failover for a non-idempotent tool, spool loss counter.
 
 #### 4. `deploy/infrastructure/fleet-gateway.service`, `fleet-gateway.socket` (Create); `fleet.caddy.candidate`, `fleet-backup.sh` (Modify) — C0, C1
 

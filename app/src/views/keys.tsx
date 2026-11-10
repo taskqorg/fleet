@@ -41,7 +41,7 @@ export function Keys({ id }: { id?: string }) {
       <KvRow icon="activity" label="Spend" meta={sel.spend.basis} />
     </DetailSection>
     <DetailSection title="Keys">
-      {sel.keys.map((k: any) => <KvRow key={k.id} icon="shield" label={k.fingerprint} meta={k.disabledReason}
+      {sel.keys.map((k: any) => <KvRow key={k.id} icon="shield" label={k.fingerprint} meta={k.disabledReason ?? (k.problem ? `HTTP ${k.problem.status}: ${k.problem.message}` : undefined)}
         value={<><StateBadge family="key" state={k.state} compact /><AgeChip t={k.addedAt} now={now} />
           {k.state === 'active' && <Button label="Drain" icon="pause" iconOnly onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'draining' })} />}
           {(k.state === 'draining' || k.state === 'disabled') && <Button label="Activate" icon="play" iconOnly onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'active' })} />}

@@ -68,11 +68,11 @@ test('run tokens: access filters connections, the snapshot holds only the hash, 
  // Spool: one ok call and one that disabled the key; read twice, recorded once.
  mkdirSync(join(f.gatewayDir,'state','spool'),{recursive:true});const sp=join(f.gatewayDir,'state','spool',new Date().toISOString().slice(0,10)+'.jsonl');
  const line=(callId:string,extra:any)=>JSON.stringify({callId,executionId:'exec-1',tokenSha256:sha256(run.token),connection:'tavily',tool:'web_search',status:200,outcome:'ok',usage:{unit:'credits',amount:2},...extra});
- writeFileSync(sp,line('a',{})+'\n'+line('b',{status:502,outcome:'error',errorCode:'key-disabled-401',usage:null,disabled:{key:FP,status:401}})+'\n');
+ writeFileSync(sp,line('a',{keyProblem:{key:FP,status:403,message:'forbidden domain'}})+'\n'+line('b',{status:502,outcome:'error',errorCode:'key-disabled-401',usage:null,disabled:{key:FP,status:401}})+'\n');
  await store.atomic(()=>c.tick());await store.atomic(()=>c.tick());
  const rows=await store.query("SELECT e.id,e.parent_execution_id AS parent,e.project_id,t.connection_cost,t.connection_cost_basis AS basis FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE e.kind='tool_run' ORDER BY e.id");
  assert.deepEqual(rows.map((r:any)=>[r.id,r.parent,r.project_id,r.basis]),[['call:a','exec-1','p1','measured'],['call:b','exec-1','p1','unavailable']]);assert.equal(rows[0].connection_cost.credits,2);
- const k=(await f.op('connections_list')).connections.find((x:any)=>x.name==='tavily').keys[0];assert.equal(k.state,'disabled');assert.match(k.disabledReason,/401/);
+ const k=(await f.op('connections_list')).connections.find((x:any)=>x.name==='tavily').keys[0];assert.equal(k.state,'disabled');assert.match(k.disabledReason,/401/);assert.equal(k.problem.message,'forbidden domain');
  const qs=(await f.op('questions_list',{})).questions.filter((q:any)=>q.cause==='key:'+FP+':disabled');assert.equal(qs.length,1);
  // The run ends: the next tick revokes its token.
  await store.tx(async()=>store.put('execution',{...(await store.get('exec-1','execution')),state:'completed'}));await store.atomic(()=>c.tick());await settle();

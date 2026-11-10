@@ -117,6 +117,7 @@ export function connectionRegistry(store:Store,config:{secretDir?:string,gateway
    ON CONFLICT(execution_id) DO UPDATE SET connection_cost=excluded.connection_cost,connection_cost_basis=excluded.connection_cost_basis,computed_at=now()`,
    [id,t.projectId,amount===null?null:JSON.stringify({unit:l.usage.unit,[l.usage.unit]:amount,amount,connection:l.connection}),amount===null?'unavailable':'measured']);
   if(l.disabled?.key)await disable(l.disabled.key,l.disabled.status);
+  if(l.keyProblem?.key){const k=await get('key:'+l.keyProblem.key,'connection-key').catch(()=>null);if(k){k.problem={status:l.keyProblem.status,message:String(l.keyProblem.message??'').slice(0,500),at:l.startedAt??Date.now()};await put('connection-key',k)}}
   return true}
  async function disable(fp:string,status:number){const k=await get('key:'+fp,'connection-key').catch(()=>null);if(!k||k.state==='retired'||k.state==='disabled')return;
   Object.assign(k,{state:'disabled',disabledReason:`provider answered HTTP ${status}`,disabledAt:Date.now()});await put('connection-key',k);publish();

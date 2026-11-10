@@ -256,6 +256,8 @@ struct Answer {
     key: Option<String>,
     usage: Option<u64>,
     disabled: Option<(String, u16)>,
+    /// A provider 403 on this key: (key id, provider message). Recorded, never disabling (one bad body must not take out keys).
+    problem: Option<(String, String)>,
 }
 
 fn refusal(status: StatusCode, outcome: &'static str, error: &str, reason: &str) -> Answer {
@@ -268,6 +270,7 @@ fn refusal(status: StatusCode, outcome: &'static str, error: &str, reason: &str)
         key: None,
         usage: None,
         disabled: None,
+        problem: None,
     }
 }
 
@@ -423,7 +426,7 @@ impl Gateway {
                 return answer;
             };
             let bytes = collected.to_bytes();
-            if matches!(status.as_u16(), 401 | 402 | 403) {
+            if matches!(status.as_u16(), 401 | 402) {
                 let reason = format!("the provider refused key {id} with HTTP {}; the key is disabled", status.as_u16());
                 let mut answer = refusal(StatusCode::BAD_GATEWAY, "error", &format!("key-disabled-{}", status.as_u16()), &reason);
                 answer.key = Some(id.clone());
@@ -434,7 +437,8 @@ impl Gateway {
             let usage = serde_json::from_slice::<Value>(&bytes).ok().and_then(|v| v["usage"][&tool.unit].as_u64());
             let (outcome, error) =
                 if status.is_success() { ("ok", None) } else { ("error", Some(format!("provider-{}", status.as_u16()))) };
-            return Answer { status, body: bytes, retry_after, outcome, error, key: Some(id.clone()), usage, disabled: None };
+            let problem = (status.as_u16() == 403).then(|| (id.clone(), String::from_utf8_lossy(&bytes[..bytes.len().min(500)]).into_owned()));
+            return Answer { status, body: bytes, retry_after, outcome, error, key: Some(id.clone()), usage, disabled: None, problem };
         }
         refusal(StatusCode::BAD_GATEWAY, "error", "provider-unreachable", &format!("no key reached the provider; last failure: {last_failure}"))
     }
@@ -526,6 +530,7 @@ impl Gateway {
             "tool": tool_name, "keyFingerprint": answer.key, "status": answer.status.as_u16(), "errorCode": answer.error,
             "outcome": answer.outcome, "usage": answer.usage.map(|amount| json!({"unit": unit, "amount": amount})),
             "disabled": answer.disabled.as_ref().map(|(k, s)| json!({"key": k, "status": s})),
+            "keyProblem": answer.problem.as_ref().map(|(k, m)| json!({"key": k, "status": 403, "message": m})),
             "startedAt": started_ms, "ms": begun.elapsed().as_millis() as u64,
         }));
         let mut response = reply(answer.status, answer.body);
