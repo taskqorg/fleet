@@ -438,7 +438,8 @@ impl Executor {
                     return self.finish(&c, "failed", native.as_deref());
                 }
             };
-            let args = json!(["-c", profile::CONNECTION_CLIENT, "mcp", record, label, output_dir]);
+            // -I: isolated, so nothing in the agent's working directory or environment is imported by the client.
+            let args = json!(["-I", "-c", profile::CONNECTION_CLIENT, "mcp", record, label, output_dir]);
             if harness::name(p) == "codex" {
                 cmd.args(["-c",&format!("mcp_servers.{conn}.command=\"python3\""),"-c",&format!("mcp_servers.{conn}.args={args}"),"-c",&format!("mcp_servers.{conn}.required=true"),"-c",&format!("mcp_servers.{conn}.enabled_tools={}",json!(tools))]);
                 for t in &tools { cmd.args(["-c",&format!("mcp_servers.{conn}.tools.{t}.approval_mode=\"approve\"")]); }
@@ -447,8 +448,9 @@ impl Executor {
             }
             connection_tools.extend(tools.iter().map(|t| format!("mcp__{conn}__{t}")));
         }
-        // Built-in web (R3.4): off unless the run sets webRoute builtin.
-        if harness::name(p) == "codex" {
+        // Built-in web (R3.4) for pipeline agent steps: off unless the step's run sets webRoute builtin. Other sessions keep
+        // the harness default.
+        if harness::name(p) == "codex" && p["webRoute"].is_string() {
             cmd.args(["-c", if p["webRoute"] == "builtin" { "web_search=\"live\"" } else { "web_search=\"disabled\"" }]);
         }
         if harness::name(p) == "claude" {
@@ -765,7 +767,8 @@ impl Executor {
             let target = input.join(rel);
             fs::create_dir_all(target.parent().unwrap()).map_err(|e| e.to_string())?;
             if !target.parent().unwrap().canonicalize().map_err(|e| e.to_string())?.starts_with(input.canonicalize().map_err(|e| e.to_string())?) { return Err(format!("input {rel} escapes the input folder")) }
-            let mut out = fs::OpenOptions::new().write(true).create_new(true).open(&target).map_err(|e| format!("input {rel}: {e}"))?;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut out = fs::OpenOptions::new().write(true).create_new(true).custom_flags(libc::O_NOFOLLOW).open(&target).map_err(|e| format!("input {rel}: {e}"))?;
             std::io::copy(&mut client.get(url).map_err(|e| format!("input {rel}: {e:?}"))?, &mut out).map_err(|e| e.to_string())?;
         }
         Ok(())

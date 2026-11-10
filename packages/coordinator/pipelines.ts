@@ -33,14 +33,16 @@ export function validatePipeline(d:any){
 
 // References: ${example.<path>} and ${steps.<id>.output.<path>}. A string that is one whole reference takes the value as it
 // is (an array stays an array); inside a longer string the value is inlined as text. A missing value fails with ref:<path>.
-export function resolveRefs(v:any,ctx:{example:any,outputs:Record<string,any>}):any{
+// quote: applied to every substituted value (script commands quote for sh, so example or provider text never runs as shell).
+export const shellQuote=(x:any)=>"'"+(typeof x==='string'?x:JSON.stringify(x)).replace(/'/g,"'\\''")+"'";
+export function resolveRefs(v:any,ctx:{example:any,outputs:Record<string,any>},quote?:(x:any)=>string):any{
  const look=(path:string)=>{const parts=path.split('.');let cur:any;
   if(parts[0]==='example'){cur=ctx.example;parts.shift()}else if(parts[0]==='steps'&&parts[2]==='output'){cur=ctx.outputs[parts[1]];parts.splice(0,3)}else throw Object.assign(Error('ref:'+path),{ref:path});
   for(const p of parts){if(cur==null||typeof cur!=='object'||!(p in cur))throw Object.assign(Error('ref:'+path),{ref:path});cur=cur[p]}
   if(cur===undefined)throw Object.assign(Error('ref:'+path),{ref:path});return cur};
- if(typeof v==='string'){const whole=/^\$\{([^}]+)\}$/.exec(v);if(whole)return look(whole[1]);return v.replace(/\$\{([^}]+)\}/g,(_,p)=>{const x=look(p);return typeof x==='string'?x:JSON.stringify(x)})}
- if(Array.isArray(v))return v.map(x=>resolveRefs(x,ctx));
- if(v&&typeof v==='object')return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,resolveRefs(x,ctx)]));
+ if(typeof v==='string'){const whole=/^\$\{([^}]+)\}$/.exec(v);if(whole&&!quote)return look(whole[1]);return v.replace(/\$\{([^}]+)\}/g,(_,p)=>{const x=look(p);return quote?quote(x):typeof x==='string'?x:JSON.stringify(x)})}
+ if(Array.isArray(v))return v.map(x=>resolveRefs(x,ctx,quote));
+ if(v&&typeof v==='object')return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,resolveRefs(x,ctx,quote)]));
  return v}
 
 type Deps={
@@ -71,9 +73,9 @@ export function pipelineRunner(d:Deps){
    child.on('close',()=>{try{res(JSON.parse(out))}catch{res({tool,outcome:'unknown',error_code:'invalid-response',usage:null,output:null})}});child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify(args))})}
 
  // Calls file lines become tool_run children of the step with connection_cost (basis measured when Pipe reported usage).
- async function recordCalls(run:any,stepId:string,text:string,connection:string|null){
+ async function recordCalls(run:any,stepId:string,text:string,connection:string|null,prefix='call'){
   const lines=text.split('\n').filter(Boolean).flatMap(l=>{try{return [JSON.parse(l)]}catch{return []}});
-  for(const [i,l] of lines.entries()){const id=`${stepId}:call:${i}`,credits=Number.isFinite(l.usage?.credits)?l.usage.credits:null;
+  for(const [i,l] of lines.entries()){const id=`${stepId}:${prefix}:${i}`,credits=Number.isFinite(l.usage?.credits)?l.usage.credits:null;
    await d.store.executions.createExecution({id,kind:'tool_run',state:l.outcome==='ok'?'succeeded':'failed',projectId:run.projectId??null,parentExecutionId:stepId,experimentId:run.experimentId??null,variant:run.variant??null,data:{tool:l.tool,requestId:l.request_id,outcome:l.outcome,errorCode:l.error_code,usage:l.usage??null,connection}});
    if(l.outcome!=='ok')await store.query('UPDATE execution SET problem=$2 WHERE id=$1 AND problem IS NULL',[id,problemOf(l.outcome,l.error_code)]);
    await store.query(`INSERT INTO execution_totals(execution_id,project_id,connection_cost,connection_cost_basis) VALUES($1,$2,$3,$4)
@@ -104,15 +106,17 @@ export function pipelineRunner(d:Deps){
  // Inputs of an agent or script step: example inputs, then every earlier step's artifacts under <step id>/.
  async function inputsFor(run:any,i:number){const out:{artifactId:string,path:string}[]=[];
   if(Array.isArray(run.example?.inputs)&&run.example.inputs.length){if(!run.exampleInputs){run.exampleInputs=[];for(const f of run.example.inputs){const a=await d.save({projectId:run.projectId,scope:run.experimentId?'lab':'prod',executionId:run.id,name:'example/'+f.path,bytes:Buffer.from(String(f.text)),mediaType:'text/plain'});run.exampleInputs.push({artifactId:a.id,path:'example/'+f.path})}await store.put('pipeline-run',run)}out.push(...run.exampleInputs)}
-  for(let j=0;j<i;j++){const s=run.steps[j];const ids=[stepRow(run,j),...(s.executionId?[s.executionId]:[])];
-   for(const id of ids)for(const a of await d.artifactsOf(id)){const rel=a.path.replace(/^output\//,'');if(rel.split('/').some(p=>p.startsWith('.')))continue;out.push({artifactId:a.id,path:s.id+'/'+rel})}}
+  // A step's own files win over the coordinator's output.json for it (one file per path).
+  for(let j=0;j<i;j++){const s=run.steps[j],ids=[stepRow(run,j),...(s.executionId?[s.executionId]:[])],files=new Map<string,string>();
+   for(const id of ids)for(const a of await d.artifactsOf(id)){const rel=a.path.replace(/^output\//,'');if(rel.split('/').some(p=>p.startsWith('.')))continue;files.set(s.id+'/'+rel,a.id)}
+   for(const [path,artifactId] of files)out.push({artifactId,path})}
   return out}
 
  async function step(run:any,i:number):Promise<'again'|'wait'>{
   const s=run.steps[i],def=run.definition.steps[i],ctx={example:run.example,outputs:Object.fromEntries(run.steps.slice(0,i).map((x:any)=>[x.id,x.output]))},row=stepRow(run,i);
   if(s.state==='pending'){
    let resolved:any;
-   try{resolved=def.kind==='api'?resolveRefs(def.arguments,ctx):def.kind==='agent'?resolveRefs(run.overrides?.prompt??def.prompt,ctx):resolveRefs(def.command,ctx)}
+   try{resolved=def.kind==='api'?resolveRefs(def.arguments,ctx):def.kind==='agent'?resolveRefs(run.overrides?.prompt??def.prompt,ctx):resolveRefs(def.command,ctx,shellQuote)}
    catch(e:any){if(!e.ref)throw e;s.startedAt=Date.now();await failStep(run,i,'ref:'+e.ref,'Missing reference '+e.ref);return 'wait'}
    s.state='running';s.startedAt=Date.now();
    if(def.kind==='api'){s.arguments=resolved;await store.put('pipeline-run',run);inflight.add(row);
@@ -122,9 +126,11 @@ export function pipelineRunner(d:Deps){
      if(line.outcome!=='ok'){await failStep(run,i,problemOf(line.outcome,line.error_code),'Connection call '+line.outcome+': '+(line.error_code??''));return 'wait'}
      if(def.mode==='job'){if(typeof line.output?.jobId!=='string'){await failStep(run,i,'step:no-job-id','Job submit returned no jobId');return 'wait'}s.jobId=line.output.jobId;s.polls=0;await store.put('pipeline-run',run);await store.query("UPDATE execution SET data=data||jsonb_build_object('jobId',$2::text) WHERE id=$1",[row,s.jobId]);return 'wait'}
      await completeStep(run,i,line.output,{usage:line.usage??null});return 'again'}finally{inflight.delete(row)}}
-   const inputs=await inputsFor(run,i);
-   s.executionId=def.kind==='agent'?await d.startAgent({run,step:def,stepExecutionId:row,prompt:resolved,inputs,overrides:run.overrides??{}}):await d.startScript({run,step:def,stepExecutionId:row,command:resolved,timeoutMs:def.timeout_ms,hostId:run.overrides?.host??def.host,inputs});
+   try{const inputs=await inputsFor(run,i);
+    s.executionId=def.kind==='agent'?await d.startAgent({run,step:def,stepExecutionId:row,prompt:resolved,inputs,overrides:run.overrides??{}}):await d.startScript({run,step:def,stepExecutionId:row,command:resolved,timeoutMs:def.timeout_ms,hostId:run.overrides?.host??def.host,inputs})}
+   catch(e:any){await failStep(run,i,e?.statusCode===409||/reachable store/i.test(e?.message??'')?'infra:start':'step:start',String(e?.message??e).slice(0,500));return 'wait'}
    await store.put('pipeline-run',run);return 'wait'}
+  if(def.kind!=='api'&&!s.executionId){await failStep(run,i,'unknown:start','Coordinator stopped while starting the step; not replayed');return 'wait'}
   // Running.
   if(def.kind==='api'&&def.mode!=='job'){if(inflight.has(row))return 'wait';await failStep(run,i,'unknown:interrupted','Coordinator restarted during the call; outcome unknown, not replayed');return 'wait'}
   if(def.kind==='api'){if(inflight.has(row))return 'wait';inflight.add(row);
@@ -132,12 +138,13 @@ export function pipelineRunner(d:Deps){
     await rm(dir,{recursive:true,force:true});s.polls=(s.polls??0)+1;
     if(line.outcome!=='ok'){if(line.outcome==='unknown')return 'wait';await failStep(run,i,problemOf(line.outcome,line.error_code),'Job poll failed: '+line.error_code);return 'wait'}
     const st=line.output?.state;if(st==='succeeded'){await completeStep(run,i,line.output.output??{},{usage:line.output.usage??null});
-     if(line.output.usage)await recordCalls(run,row,JSON.stringify({tool:def.tool,request_id:s.jobId,outcome:'ok',error_code:null,usage:line.output.usage})+'\n',def.connection);return 'again'}
+     if(line.output.usage)await recordCalls(run,row,JSON.stringify({tool:def.tool,request_id:s.jobId,outcome:'ok',error_code:null,usage:line.output.usage})+'\n',def.connection,'job');return 'again'}
     if(st==='failed'){await failStep(run,i,problemOf('error',line.output.error??'job-failed'),'Job failed');return 'wait'}
     await store.put('pipeline-run',run);return 'wait'}finally{inflight.delete(row)}}
   const e=await store.get(s.executionId,'execution').catch(()=>null);if(!e)return 'wait';
-  if(!['completed','failed','stopped','unknown'].includes(e.state))return 'wait';
-  if(e.state!=='completed'){await failStep(run,i,e.state==='unknown'?'unknown:execution':e.state==='stopped'?'step:cancelled':'step:'+(e.error?.code??'failed'),e.error?.message??('Step execution '+e.state));return 'wait'}
+  // unknown is not final: the host may still report the real outcome.
+  if(!['completed','failed','stopped'].includes(e.state))return 'wait';
+  if(e.state!=='completed'){await failStep(run,i,e.state==='stopped'?'step:cancelled':'step:'+(e.error?.code??'failed'),e.error?.message??('Step execution '+e.state));return 'wait'}
   const arts=await d.artifactsOf(s.executionId),calls=arts.find(a=>/(^|\/)\.connection-calls\.jsonl$/.test(a.path)),own=arts.find(a=>/^(output\/)?output\.json$/.test(a.path));
   if(calls)await recordCalls(run,row,(await d.read(calls.id)).toString('utf8'),null);
   let output:any;if(own){try{output=JSON.parse((await d.read(own.id)).toString('utf8'))}catch{output=undefined}}
@@ -156,6 +163,7 @@ export function pipelineRunner(d:Deps){
  // Run whose step is this execution (receipt hook).
  const onExecution=async(executionId:string)=>{for(const r of await running())if(r.steps.some((s:any)=>s.executionId===executionId))await advance(r.id)};
  // Job steps poll on each tick; agent and script steps also advance here in case a receipt hook was missed.
- const tick=async()=>{for(const r of await running())await advance(r.id).catch(()=>{})};
+ // A run already being advanced is skipped, so one slow call never holds up the others.
+ const tick=async()=>{for(const r of await running())if(!chains.has(r.id))advance(r.id).catch(()=>{})};
  const wait=async(runId:string)=>{for(;;){const r=await store.get(runId,'pipeline-run');if(r.state!=='running')return r;await new Promise(x=>setTimeout(x,200))}};
  return {load,start,advance,onExecution,tick,wait,recordCalls}}

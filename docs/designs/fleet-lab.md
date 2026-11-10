@@ -201,7 +201,8 @@ Both entry points send label = the current step's execution ID (`<run>:step:<i>`
 *   The client checks the SHA-256 of Pipe's client library against `clientSha256` in the connection record and loads the module from the bytes it hashed.
 *   Errors come from Pipe's JSON `{error, reason}` body (`http-<status>` when the body is the provider's, as for 429, 432, 433). `queue-full`, `http-429`/`432`/`433`, `no-usable-key`, `key-disabled-*`, `provider-unreachable`, `unauthenticated`, an unreachable Pipe, a missing record or a hash mismatch → `execution.problem = infra:<code>`; trial excluded from comparison. `provider-body`, `provider-timeout`, a client timeout or an unreadable reply → outcome `unknown`, problem `unknown:<code>`, never retried. Other failures are `step:<code>`.
 *   Claude built-in web is off unless the variant sets `web_route: builtin` (R3.4): Fleet's Claude already runs with a `--tools` allowlist from the profile, which never includes `WebSearch` or `WebFetch`; `builtin` adds both. Codex gets `web_search="disabled"`, or `"live"` with `builtin`. Each trial records its web route (`webRoute` in the start command, `overrides` on the run).
-*   The Pipe token is read from a host-only file at run time. An agent on the same host could read it and send calls with any label; acceptable for the prototype, closed by per-run tokens (R3.3, `connections` design).
+*   The Pipe token is read from a host-only file at run time. An agent on the same host could read it and send calls with any label, and it could also edit its own `.connection-calls.jsonl` (the file lives in its output folder); acceptable for the prototype, closed by per-run tokens (R3.3, `connections` design), after which Pipe's own record per token is the check.
+*   Script step commands get every substituted value shell-quoted, so example or provider text never runs as shell.
 
 ### Use-case registry and examples
 

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,chmodSync,readFileSync,cpSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {createApp} from '../../packages/coordinator/app.ts';
-import {resolveRefs,problemOf,validatePipeline} from '../../packages/coordinator/pipelines.ts';
+import {resolveRefs,problemOf,validatePipeline,shellQuote} from '../../packages/coordinator/pipelines.ts';
 import {attachStores,upload} from './artifact-helpers.ts';
 
 const fake=fileURLToPath(new URL('./fixtures/fake_connection.py',import.meta.url));
@@ -27,6 +27,7 @@ test('references resolve whole values and inline text; a missing one names its p
  assert.deepEqual(resolveRefs({u:'${steps.search.output.results}',t:'see ${steps.search.output.results.0.url} for ${example.query}'},ctx),{u:[{url:'https://a'}],t:'see https://a for q'});
  assert.throws(()=>resolveRefs('${example.missing}',ctx),/ref:example.missing/);
  assert.throws(()=>resolveRefs('${steps.later.output.x}',ctx),/ref:steps.later.output.x/);
+ assert.equal(resolveRefs('echo ${example.query}',{example:{query:"x'; rm -rf /"},outputs:{}},shellQuote),"echo 'x'\\''; rm -rf /'");
  assert.throws(()=>validatePipeline({version:1,id:'x',steps:[]}),/version must be 2/);
  assert.throws(()=>validatePipeline({version:2,id:'x',steps:[api(),api()]}),/step id/);
 });
@@ -39,7 +40,7 @@ test('infra codes are classified; unknown stays unknown',()=>{
 
 test('api steps record tool_run rows with credits; a failed step stops later steps; a missing reference fails with ref:',async()=>{
  const s=setup({two:{version:2,id:'two',steps:[api(),{id:'read',kind:'api',connection:'pipe-read',tool:'web_extract',arguments:{urls:'${steps.search.output.results.0.url}'}}]},
-  bad:{version:2,id:'bad',steps:[api('full'),{id:'after',kind:'script',command:'true'}]},ref:{version:2,id:'ref',steps:[api(),{id:'after',kind:'script',command:'echo ${steps.search.output.nothing}'}]}},{'pipe-read':'ok',full:'queue-full'});
+  bad:{version:2,id:'bad',steps:[api('full'),{id:'after',kind:'script',command:'true'}]},ref:{version:2,id:'ref',steps:[api(),{id:'after',kind:'script',command:'echo ${steps.search.output.nothing}'}]},agent:{version:2,id:'agent',steps:[{id:'a',kind:'agent',profile:'codex-researcher',prompt:'x'}]}},{'pipe-read':'ok',full:'queue-full'});
  const {app,f}=await boot(s.config);
  try{
   const run=await until(app,(await start(app,'two',{requestId:'r1',example:{query:'hello'}})).id,r=>r.state!=='running');
@@ -51,6 +52,9 @@ test('api steps record tool_run rows with credits; a failed step stops later ste
   const out=await app.store.query("SELECT name FROM artifact WHERE execution_id=$1",[run.id+':step:1']);assert.deepEqual(out.map((x:any)=>x.name),['output.json']);
   // Same requestId: the same run, no new call.
   assert.equal((await start(app,'two',{requestId:'r1',example:{query:'hello'}})).id,run.id);assert.equal(s.calls().length,2);
+  assert.equal((await app.inject({method:'POST',url:'/api/pipelines/two/runs',headers:{authorization:'Bearer b'},payload:{requestId:'r1',example:{query:'other'}}})).statusCode,409);
+  const nostart=await until(app,(await start(app,'agent',{requestId:'r4',example:{query:'x'},overrides:{skills:['absent-skill']}})).id,r=>r.state!=='running');
+  assert.equal(nostart.steps[0].problem,'step:start');
 
   const bad=await until(app,(await start(app,'bad',{requestId:'r2',example:{query:'x'}})).id,r=>r.state!=='running');
   assert.equal(bad.state,'failed');assert.equal(bad.steps[0].problem,'infra:queue-full');assert.equal(bad.steps[1].state,'pending');

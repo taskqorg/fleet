@@ -42,7 +42,7 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  // which no other handler writes: it runs in the execution's scope, in parallel with other executions and with GLOBAL writers.
  const ingestScope=(req:any)=>typeof req.body?.executionId==='string'?executionScope(req.body.executionId):fail(400,'Expected executionId');
  const ingestRoutes=new Set(['/api/hosts/events']);
- const longRoutes=new Set(['/api/stream','/assets/*','/assets/','/api/hosts/artifacts/list','/api/hosts/artifacts/reserve','/api/hosts/artifacts/parts','/api/hosts/artifacts/commit','/api/hosts/artifacts/verified','/api/hosts/artifacts/renew','/api/hosts/artifacts/declare','/api/hosts/artifacts/get','/api/hosts/artifacts/read','/api/results/:id','/api/pipeline-runs','/api/project-operations/:name','/api/project-tools','/api/ops/:name','/api/tools','/api/hosts/receipts','/api/agent-tools','/api/hosts/agent-tools']);
+ const longRoutes=new Set(['/api/stream','/assets/*','/assets/','/api/hosts/artifacts/list','/api/hosts/artifacts/reserve','/api/hosts/artifacts/parts','/api/hosts/artifacts/commit','/api/hosts/artifacts/verified','/api/hosts/artifacts/renew','/api/hosts/artifacts/declare','/api/hosts/artifacts/get','/api/hosts/artifacts/read','/api/results/:id','/api/pipeline-runs','/api/pipelines/:id/runs','/api/project-operations/:name','/api/project-tools','/api/ops/:name','/api/tools','/api/hosts/receipts','/api/agent-tools','/api/hosts/agent-tools']);
  // Reads (GET, HEAD) run in a read-only snapshot; every other route is one GLOBAL write (store.atomic) unless it is host ingest.
  app.addHook('onRoute',(o:any)=>{if(longRoutes.has(o.url))return;const h=o.handler,method=[o.method].flat()[0];
   o.handler=['GET','HEAD'].includes(method)?function(this:any,req:any,reply:any){return store.read(()=>h.call(this,req,reply))}
@@ -217,12 +217,13 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  // Generic v2 run: an example (an approved example artifact, references withheld, or an inline example) and variant overrides.
  app.post('/api/pipelines/:id/runs',async(req:any)=>{const b=req.body??{};if(typeof b.requestId!=='string'||!b.requestId||b.requestId.length>200||Object.keys(b).some(k=>!['requestId','projectId','exampleArtifactId','example','overrides'].includes(k)))fail(400,'Expected requestId and optional projectId, exampleArtifactId or example, overrides');
   const file=String(req.params.id)+'.json';runner.load(file);
-  const old=(await all('pipeline-run',{requestId:b.requestId,pipeline:file})).find((r:any)=>r.requestId===b.requestId&&r.pipeline===file);if(old)return old;
+  const signature=createHash('sha256').update(JSON.stringify(b)).digest('hex');
+  const created=await store.atomic(async()=>{const old=(await all('pipeline-run',{requestId:b.requestId,pipeline:file})).find((r:any)=>r.requestId===b.requestId&&r.pipeline===file);if(old){if(old.signature!==signature)fail(409,'Request identity conflict');return {old}}
   let example=b.example??{};if(b.exampleArtifactId){const ex=(await examples.get(text(b.exampleArtifactId,200)));if(ex.state!=='approved')fail(409,'Example not approved');example=ex.example}
   // References are known-good answers: a run never carries them (Stage 1 rule, agents never see references).
   const {references:_,...withoutReferences}=example;example=withoutReferences;
-  const run=await runner.start({file,projectId:b.projectId??null,requestId:b.requestId,example,overrides:b.overrides??{},extra:{signature:createHash('sha256').update(JSON.stringify(b)).digest('hex')}});
-  runner.advance(run.id).catch(()=>{});return run});
+  return {run:await runner.start({file,projectId:b.projectId??null,requestId:b.requestId,example,overrides:b.overrides??{},extra:{signature}})}});
+  if('old' in created)return created.old;runner.advance(created.run.id).catch(()=>{});return created.run});
  app.addHook('onReady',async()=>{pipelineTimer=setInterval(()=>{if(ticking)return;ticking=true;runner.tick().finally(()=>{ticking=false})},config.pipelineTickMs??5000);pipelineTimer.unref?.()});
  app.addHook('onClose',async()=>{clearInterval(pipelineTimer)});
  Object.assign(projects,managed.operations);
