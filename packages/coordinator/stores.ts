@@ -20,15 +20,15 @@ export function storeRegistry(store:Store,config:{secretsDir:string,unseenMs?:nu
  const unseen=config.unseenMs??120000;
  const keyFile=(storeId:string)=>join(config.secretsDir,storeId+'.key');
  // Registration: only the executor of the store's host may create or replace it.
- async function register(hostId:string,b:any){const storeId=id(b?.id,'store id'),bucket=id(b?.bucket,'bucket');
+ async function register(hostId:string,b:any,holder:string|null=null){const storeId=id(b?.id,'store id'),bucket=id(b?.bucket,'bucket');
   if(typeof b.accessKeyId!=='string'||!b.accessKeyId||typeof b.secretAccessKey!=='string'||!b.secretAccessKey)fail(400,'Expected store credentials');
   const endpoint=url(b.endpoint,'endpoint'),local=b.localEndpoint?url(b.localEndpoint,'localEndpoint'):null,hosts=config.endpointHosts??[];
   if(!allowedTunnel(endpoint,hosts))fail(403,'Store endpoint host is not allowed');if(local&&!isLoopback(local))fail(400,'localEndpoint must be a loopback URL');
   const row=(await store.query('SELECT host_id FROM store WHERE id=$1',[storeId]))[0];if(row&&row.host_id!==hostId)fail(403,'Store belongs to another host');
   mkdirSync(config.secretsDir,{recursive:true,mode:0o700});writeFileSync(keyFile(storeId),JSON.stringify({accessKeyId:b.accessKeyId,secretAccessKey:b.secretAccessKey}),{mode:0o600});chmodSync(keyFile(storeId),0o600);
-  await store.query(`INSERT INTO store(id,host_id,zone,bucket,endpoint,local_endpoint,capacity_bytes,used_bytes,requires_logon,state,observed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'reachable',now())
-   ON CONFLICT(id) DO UPDATE SET zone=excluded.zone,bucket=excluded.bucket,endpoint=excluded.endpoint,local_endpoint=excluded.local_endpoint,capacity_bytes=excluded.capacity_bytes,used_bytes=excluded.used_bytes,requires_logon=excluded.requires_logon,state='reachable',observed_at=now(),registered_at=now()`,
-   [storeId,hostId,typeof b.zone==='string'?b.zone:null,bucket,endpoint,local,Number.isSafeInteger(b.capacityBytes)?b.capacityBytes:null,Number.isSafeInteger(b.usedBytes)?b.usedBytes:null,b.requiresLogon===true]);
+  await store.query(`INSERT INTO store(id,host_id,zone,bucket,endpoint,local_endpoint,capacity_bytes,used_bytes,requires_logon,state,observed_at,holder) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'reachable',now(),$10)
+   ON CONFLICT(id) DO UPDATE SET zone=excluded.zone,bucket=excluded.bucket,endpoint=excluded.endpoint,local_endpoint=excluded.local_endpoint,capacity_bytes=excluded.capacity_bytes,used_bytes=excluded.used_bytes,requires_logon=excluded.requires_logon,state='reachable',observed_at=now(),registered_at=now(),holder=excluded.holder`,
+   [storeId,hostId,typeof b.zone==='string'?b.zone:null,bucket,endpoint,local,Number.isSafeInteger(b.capacityBytes)?b.capacityBytes:null,Number.isSafeInteger(b.usedBytes)?b.usedBytes:null,b.requiresLogon===true,holder]);
   return {ok:true,storeId}}
  // Poll report: reachable stores get fresh capacity (capacityBytes is the capacity left, §3) and used bytes; a store is full
  // when the capacity left falls below its store.free_space_warning (operator setting; unset: never full, no built-in cap).

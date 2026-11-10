@@ -25,8 +25,6 @@ test('person header: verified e-mail maps to a person; none is 401, unknown 403,
   // Audit actors are the person's e-mail.
   const op=(person:string,name:string,payload:any)=>app.inject({method:'POST',url:'/api/ops/'+name,headers:{authorization:'Bearer browser','x-fleet-person':person},payload});
   const t=(await op(OWNER,'task_create',{title:'x'})).json();assert.equal(t.createdBy,OWNER);
-  // Until visibility (slice 3), a person other than the owner reads only me.
-  assert.equal((await op('alina@example.test','task_create',{title:'x'})).statusCode,403);
   // A malformed file keeps the last valid load and asks once.
   writeFileSync(file,'{not json');await new Promise(r=>setTimeout(r,20));
   assert.equal((await me('alina@example.test')).statusCode,200);assert.equal((await me('alina@example.test')).statusCode,200);

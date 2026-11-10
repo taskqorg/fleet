@@ -3,17 +3,19 @@
 // holds a transaction or a pool connection between wakes. The client resumes with ?cursor=; changes_since is the same read.
 import type {FastifyInstance} from 'fastify';
 import type {Store} from './store.ts';
+import {requestPerson,type Person} from './people.ts';
 
 const PING_MS=25_000, DEBOUNCE_MS=50, PRUNE_MS=3_600_000;
 
 export function registerStream(app:FastifyInstance,store:Store,config:{retentionDays:number}){
- type Open={write:(s:string)=>void,end:()=>void,cursor:number,busy:boolean,again:boolean};
+ // person: the stream's viewer; each drain reads in that person's scope (a wake runs outside any request).
+ type Open={write:(s:string)=>void,end:()=>void,cursor:number,busy:boolean,again:boolean,person:Person|null};
  const open=new Set<Open>();
  let closed=false,unlisten:(()=>Promise<void>)|null=null,timer:NodeJS.Timeout|null=null,ping:NodeJS.Timeout|null=null,prune:NodeJS.Timeout|null=null;
  const send=(o:Open,event:string|null,data:any,id?:number)=>o.write(`${id!==undefined?`id: ${id}\n`:''}${event?`event: ${event}\n`:''}data: ${JSON.stringify(data)}\n\n`);
  // Reads everything visible after the stream's cursor; a wake during a read is remembered and read again afterwards.
  const drain=async(o:Open)=>{if(o.busy){o.again=true;return}o.busy=true;
-  try{do{o.again=false;for(;;){const r=await store.read(()=>store.changes.since(o.cursor,1000));
+  try{do{o.again=false;for(;;){const r=await requestPerson.run(o.person,()=>store.read(()=>store.changes.since(o.cursor,1000)));
     if(r.resync){o.cursor=r.cursor;send(o,'resync',{cursor:r.cursor});break}
     for(const c of r.changes)send(o,null,c,c.seq);o.cursor=r.cursor;if(r.changes.length<1000)break}}while(o.again)}
   catch(e:any){send(o,'error',{message:String(e?.message??e)})}finally{o.busy=false}};
@@ -37,7 +39,7 @@ export function registerStream(app:FastifyInstance,store:Store,config:{retention
   // Register the close handler before any await, so a client that leaves early is never added or drained afterwards.
   let gone=closed;req.raw.on('close',()=>{gone=true;open.delete(o)});
   res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','X-Accel-Buffering':'no','Connection':'keep-alive','X-Content-Type-Options':'nosniff'});
-  const o:Open={write:s=>{if(!gone)res.write(s)},end:()=>res.end(),cursor:0,busy:false,again:false};
+  const o:Open={write:s=>{if(!gone)res.write(s)},end:()=>res.end(),cursor:0,busy:false,again:false,person:requestPerson.getStore()??null};
   try{
    if(cursor===null){const head=await store.read(()=>store.changes.since(null));o.cursor=head.cursor;send(o,'ready',{cursor:o.cursor})}
    else{o.cursor=cursor;send(o,'ready',{cursor});await drain(o)}
