@@ -307,7 +307,8 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   const inline=new Map<string,string>();
   for(const m of html.matchAll(/\b(?:src|href)\s*=\s*["']([^"'#?]+)(?:[?#][^"']*)?["']/gi)){const ref=m[1];if(/^[a-z][a-z0-9+.-]*:|^\/\//i.test(ref)||ref.startsWith('/')||inline.has(ref))continue;
    const parts=[...dir];for(const seg of ref.split('/')){if(seg==='..')parts.pop();else if(seg&&seg!=='.')parts.push(seg)}
-   const f=siblings.get(parts.join('/'));if(!f)continue;
+   // Only page resources (images, fonts, styles, scripts, media), not documents or data files the page merely links to.
+   const f=siblings.get(parts.join('/'));if(!f||!/^(image|font|audio|video)\/|^text\/css\b|javascript\b/.test(String(f.mediaType)))continue;
    const bytes=await artifacts.readBuffer(f.artifactId??f.id,Number(f.size)||0);inline.set(ref,`data:${f.mediaType||'application/octet-stream'};base64,${bytes.toString('base64')}`)}
   const out=html.replace(/(\b(?:src|href)\s*=\s*["'])([^"'#?]+)((?:[?#][^"']*)?["'])/gi,(all,pre,ref,post)=>inline.has(ref)?pre+inline.get(ref)+post.replace(/^[?#][^"']*/,''):all);
   return r.type(type).send(out)});
