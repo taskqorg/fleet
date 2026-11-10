@@ -130,6 +130,50 @@ const providersJSON = `
    }
   }
  },
+ "typesafe": {
+  "baseUrl": "https://api.typesafe.ai",
+  "instructions": "system_one asks Jev (TypeSafe) typed questions (noul, choice, score, box) about a state and returns one structured answer per question; list_models lists model names such as jev-latest. Docs: https://docs.typesafe.ai/llms.txt",
+  "tools": {
+   "system_one": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "unit": "input_tokens",
+    "idempotent": true,
+    "description": "Answer questions about state. Body {model, state, questions: {<id>: {type, instructions, criteria?}}, assets?}. Returns answers, model and usage.",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "model",
+      "state",
+      "questions"
+     ],
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "state": {},
+      "questions": {
+       "type": "object"
+      },
+      "assets": {
+       "type": "object"
+      }
+     }
+    }
+   },
+   "list_models": {
+    "method": "GET",
+    "path": "/v1/models",
+    "unit": "input_tokens",
+    "idempotent": true,
+    "description": "List models and aliases available to the key.",
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    }
+   }
+  }
+ },
  "meshy": {
   "baseUrl": "https://api.meshy.ai",
   "instructions": "image_to_3d starts a Meshy Image to 3D task and returns its id; job_status reads the task. A submit is never repeated by Fleet.",
