@@ -28,7 +28,25 @@ test('upload: staging, re-hash by the store host, promotion to the content key; 
  // Results stream with the old sandbox headers; the legacy record shape serves session reads.
  const small=await upload(app,'m',{hostId:'mac',executionId:'e1',path:'index.html',content:'<h1>x</h1>',mediaType:'text/html'});
  const r=await app.inject({url:'/api/results/'+small,headers:{authorization:'Bearer b'}});assert.equal(r.statusCode,200);assert.equal(r.body,'<h1>x</h1>');assert.match(String(r.headers['content-security-policy']),/sandbox/);
- assert.deepEqual((await (app as any).store.all('artifact',{sessionId:'s1'})).map((x:any)=>x.path),['model.glb','script.stderr','copy.glb','index.html']);
+ // No scripts in result pages; one Range part for paged text; types without a view download.
+ assert.doesNotMatch(String(r.headers['content-security-policy']),/allow-scripts|script-src/);assert.equal(r.headers['content-disposition'],undefined);
+ const part=await app.inject({url:'/api/results/'+small,headers:{authorization:'Bearer b',range:'bytes=1-2'}});assert.equal(part.statusCode,206);assert.equal(part.body,'h1');assert.equal(part.headers['content-range'],'bytes 1-2/10');
+ assert.equal((await app.inject({url:'/api/results/'+small,headers:{authorization:'Bearer b',range:'bytes=-3'}})).body,'h1>');
+ assert.equal((await app.inject({url:'/api/results/'+small,headers:{authorization:'Bearer b',range:'bytes=50-'}})).statusCode,416);
+ const bin=await upload(app,'m',{hostId:'mac',executionId:'e1',path:'tool.bin',content:'xx',mediaType:'application/octet-stream'});
+ assert.match(String((await app.inject({url:'/api/results/'+bin,headers:{authorization:'Bearer b'}})).headers['content-disposition']),/^attachment; filename="tool.bin"/);
+ // The interactive preview of HTML runs scripts on an opaque origin with no network; other types have none.
+ const pv=await app.inject({url:'/api/results/'+small+'/preview',headers:{authorization:'Bearer b'}});assert.equal(pv.statusCode,200);
+ const csp=String(pv.headers['content-security-policy']);assert.match(csp,/sandbox allow-scripts/);assert.doesNotMatch(csp,/allow-same-origin/);assert.match(csp,/connect-src 'none'/);
+ assert.equal((await app.inject({url:'/api/results/'+bin+'/preview',headers:{authorization:'Bearer b'}})).statusCode,415);
+ // Results page reads: newest first in pages, filtered by state, media family, name and project.
+ const list=async(b:any)=>(await app.inject({method:'POST',url:'/api/ops/artifact_list',headers:{authorization:'Bearer b'},payload:b})).json();
+ const p1=await list({limit:2});assert.equal(p1.artifacts.length,2);assert.ok(p1.artifacts[0].seq>p1.artifacts[1].seq);assert.equal(typeof p1.nextBefore,'number');
+ const p2=await list({limit:2,before:p1.nextBefore});assert.ok(p2.artifacts.every((x:any)=>x.seq<p1.nextBefore));
+ assert.ok((await list({limit:50,mediaType:'text/'})).artifacts.every((x:any)=>x.mediaType.startsWith('text/')));
+ assert.deepEqual((await list({limit:50,q:'tool'})).artifacts.map((x:any)=>x.name),['tool.bin']);
+ assert.equal((await list({limit:50,states:['failed']})).artifacts.length,0);assert.equal((await list({limit:50,projectIds:['nope']})).artifacts.length,0);
+ assert.deepEqual((await (app as any).store.all('artifact',{sessionId:'s1'})).map((x:any)=>x.path),['model.glb','script.stderr','copy.glb','index.html','tool.bin']);
  await app.close()});
 
 test('a wrong hash fails and never overwrites a verified object; sizes, leases and stores are checked',async()=>{const {app,s,A,fake,call}=await setup();await register(call,fake);

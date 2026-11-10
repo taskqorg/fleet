@@ -402,3 +402,12 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .conversation .tr-body .vl{flex:1;height:auto;min-height:0}
 .vl-row.picked{background:var(--hover)}
 .vl-row.picked.marked{background:var(--selected)}
+/* Artifact view (result viewer body): media in a fixed-ratio frame, text paged by scrolling */
+.av{display:flex;flex-direction:column;gap:var(--space-2);min-height:0}
+.av-frame{aspect-ratio:4/3;background:var(--surface-sunken);border:1px solid var(--line);border-radius:var(--radius-md);display:flex;align-items:center;justify-content:center;overflow:hidden}
+.av-frame.video{aspect-ratio:16/9}
+.av-frame img,.av-frame video{max-width:100%;max-height:100%;object-fit:contain}
+.av-frame.page{aspect-ratio:auto;height:var(--size-page-list)}
+.av-frame iframe{width:100%;height:100%;border:0;background:var(--surface)}
+.av-text{height:var(--size-page-list);overflow:auto;background:var(--surface-sunken);border:1px solid var(--line);border-radius:var(--radius-md);padding:var(--space-3)}
+.av-text pre{margin:0;font-family:var(--font-mono);font-size:var(--font-size-sm);white-space:pre-wrap;overflow-wrap:anywhere}

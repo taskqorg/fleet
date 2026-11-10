@@ -1,6 +1,6 @@
 // View URL codec (docs/designs/fleet-view-urls-and-list-path.md §1): one canonical URL per operator-app view state.
 // No imports: the root build compiles it for the coordinator (view_link, state lists) and esbuild bundles it into the app.
-export type ViewName = 'tasks' | 'conversations' | 'hosts' | 'overview';
+export type ViewName = 'tasks' | 'conversations' | 'hosts' | 'overview' | 'results';
 export type View = {
   view: ViewName; focus?: string; group?: string; preset?: string; project?: (string | null)[];
   q?: string; sel?: string[]; state?: string[]; archived?: boolean; extra?: Record<string, string>;
@@ -13,7 +13,8 @@ export type TaskState = typeof TASK_STATES[number];
 export const SESSION_STATES = ['idle', 'preparing', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'] as const;
 export type SessionState = typeof SESSION_STATES[number];
 export const TASK_GROUPS = ['priority', 'state', 'project', 'agent', 'host', 'none'] as const;
-export const VIEWS: ViewName[] = ['tasks', 'conversations', 'hosts', 'overview'];
+export const ARTIFACT_STATES = ['stored', 'pending', 'failed', 'deleted'] as const;
+export const VIEWS: ViewName[] = ['tasks', 'conversations', 'hosts', 'overview', 'results'];
 const NO_PROJECT = '-';
 
 // Values: encodeURIComponent, so ',', '%', '&', '/', '+' and '#' inside a value are always percent-encoded; then ':' and '@'
@@ -64,6 +65,8 @@ const TABLE: Record<ViewName, Record<string, Key>> = {
     archived: { parse: (v, raw) => { if (raw === '1') v.archived = true; }, format: v => v.archived ? '1' : undefined, list: true },
     preset: text('preset', false), q: text('q', true), sel: listKey_('sel'), state: listKey_('state', SESSION_STATES),
   },
+  // Results (docs/designs/fleet-conversations.md Stage 4): task, execution, media and since ride in extra.
+  results: { project, q: text('q', true), state: listKey_('state', ARTIFACT_STATES) },
   hosts: {}, overview: {},
 };
 const DEFAULT_GROUP: Partial<Record<ViewName, string>> = { tasks: 'priority' };

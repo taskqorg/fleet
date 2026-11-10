@@ -100,7 +100,8 @@ export function s3Client(o:{endpoint:string,credentials:Credentials,region?:stri
   put:async(bucket:string,key:string,body:Buffer,contentType?:string)=>{(await send('PUT',pathOf(bucket,key),{},contentType?{'content-type':contentType}:{},body)).resume()},
   // null when the object does not exist.
   head:async(bucket:string,key:string)=>{try{const r=await send('HEAD',pathOf(bucket,key));r.resume();return {contentLength:Number(r.headers['content-length']),etag:r.headers.etag}}catch(e){if(e instanceof S3Error&&e.status===404)return null;throw e}},
-  get:async(bucket:string,key:string):Promise<Readable>=>send('GET',pathOf(bucket,key)),
+  // range: inclusive byte offsets [start, end] (an HTTP Range of one part), for paged reads of large objects.
+  get:async(bucket:string,key:string,range?:[number,number]):Promise<Readable>=>send('GET',pathOf(bucket,key),{},range?{range:`bytes=${range[0]}-${range[1]}`}:{}),
   delete:async(bucket:string,key:string)=>{(await send('DELETE',pathOf(bucket,key))).resume()},
   copy:async(bucket:string,key:string,source:string)=>{checked(await text(send('PUT',pathOf(bucket,key),{},{'x-amz-copy-source':enc(source,true)})))},
   createMultipartUpload:async(bucket:string,key:string,contentType?:string)=>{const id=tag(checked(await text(send('POST',pathOf(bucket,key),{uploads:''},contentType?{'content-type':contentType}:{}))),'UploadId');if(!id)throw new S3Error(200,'InvalidResponse','CreateMultipartUpload returned no UploadId');return id},

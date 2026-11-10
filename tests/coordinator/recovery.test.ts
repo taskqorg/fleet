@@ -33,6 +33,7 @@ test('stream chunks are stored as event-delta; a resent chunk is found, a change
  const app=createApp({database:mkdtempSync('/tmp/fleet-delta-')+'/db',browserSecret:'browser',machineSecret:'machine',hostId:'mac'});
  const post=(url:string,b:any,machine=false)=>app.inject({method:'POST',url,headers:{authorization:'Bearer '+(machine?'machine':'browser')},payload:b});
  try{const sid=(await post('/api/sessions',{})).json().sessionId,e=(await post('/api/sessions/'+sid+'/messages',{requestId:'one',text:'x'})).json();
+  await post('/api/hosts/poll',{hostId:'mac'},true);
   const chunk={id:'c1',seq:1,type:'acp.update',data:{fleetNormalized:{deltaOf:'text:1',opens:true,blocks:[{kind:'text',role:'agent',markdown:'Hel'}]}}};
   const send=(ev:any)=>post('/api/hosts/events',{hostId:'mac',executionId:e.id,events:[ev]},true);
   assert.equal((await send(chunk)).statusCode,200);assert.equal((await send(chunk)).statusCode,200);

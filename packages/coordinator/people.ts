@@ -42,6 +42,10 @@ export const actor=(fallback='system')=>requestPerson.getStore()?.email??fallbac
 // requestedBy of a run: the request person, else the operator role (timers, Lab reconcile).
 export const requester=()=>{const p=requestPerson.getStore();return p?{kind:'person',email:p.email}:{kind:'operator'}};
 
+// The owner changed a setting of a row someone else holds (people-access G4): tell the holder with a question addressed to them.
+export async function notifyHolder(store:Store,holder:string,text:string){const p=requestPerson.getStore();if(!p?.owner||p.email===holder)return;
+ const id=await store.tasks.ask({kind:'operator_decision',text,options:['ok'],askedBy:p.email,data:{notice:'owner-override'}});
+ await store.query('UPDATE question SET addressed_to=$2 WHERE id=$1',[id,holder])}
 export function peopleRegistry(file:string|undefined,store:Store){
  let loaded=new Map<string,Person>(),seen='';
  const write=async(p:Map<string,Person>)=>store.atomic(async()=>{

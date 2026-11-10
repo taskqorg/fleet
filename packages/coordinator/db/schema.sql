@@ -535,3 +535,41 @@ DELETE FROM document WHERE kind IN ('project-account', 'account-action');
 -- A holder reads and writes the setting changes of their own host and subscriptions (rows carry the holder).
 DROP POLICY project_scope ON document;
 CREATE POLICY project_scope ON document USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')) OR (kind IN ('host', 'managed-account', 'api-connection', 'host-observation', 'setting-change') AND data->>'holder' = current_setting('fleet.person', true)));
+
+-- migration 18: dispatch (docs/designs/fleet-people-access.md §6-7 and §9, slice 6). A queued agent execution has no host until
+-- dispatch claims it on a host poll; wait_reason says why it has not started; route_decision records each claim or new wait
+-- reason; a stall question has a cause key, one open question per cause; addressed_to lets the person a question is for read it.
+ALTER TABLE execution ADD COLUMN wait_reason text NULL;
+CREATE INDEX execution_undispatched ON execution(seq) WHERE host_id IS NULL AND state = 'preparing';
+ALTER TABLE question ADD COLUMN cause text NULL;
+ALTER TABLE question ADD COLUMN addressed_to text NULL;
+CREATE UNIQUE INDEX question_open_cause ON question(cause) WHERE state = 'open' AND cause IS NOT NULL;
+DROP POLICY project_scope ON question;
+CREATE POLICY project_scope ON question USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')) OR addressed_to = current_setting('fleet.person', true));
+CREATE TABLE route_decision(
+ id bigserial PRIMARY KEY,
+ execution_id text NOT NULL,
+ project_id text NULL,
+ at timestamptz NOT NULL DEFAULT now(),
+ host_id text NULL,
+ candidates jsonb NOT NULL,
+ winner jsonb NULL
+);
+CREATE INDEX route_decision_execution ON route_decision(execution_id, at);
+ALTER TABLE route_decision ENABLE ROW LEVEL SECURITY;
+ALTER TABLE route_decision FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON route_decision USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')));
+CREATE TABLE budget(
+ id text PRIMARY KEY,
+ scope text NOT NULL CHECK (scope IN ('person', 'project', 'experiment', 'connection')),
+ scope_id text NOT NULL,
+ unit text NOT NULL,
+ "limit" numeric NOT NULL,
+ period text NULL CHECK (period IN ('day', 'week', 'month')),
+ action text NOT NULL CHECK (action IN ('warn', 'pause', 'stop')),
+ set_by text NOT NULL,
+ set_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE budget ENABLE ROW LEVEL SECURITY;
+ALTER TABLE budget FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON budget USING (current_setting('fleet.project_ids', true) = '*' OR (scope = 'project' AND scope_id = ANY (string_to_array(current_setting('fleet.project_ids', true), ','))) OR (scope = 'person' AND scope_id = current_setting('fleet.person', true)));

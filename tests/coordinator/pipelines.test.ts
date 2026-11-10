@@ -131,7 +131,7 @@ test('an agent step with overrides.host runs only on that host; an unknown host 
  try{
   const run=await start(app,'agent',{requestId:'h1',example:{query:'x'},overrides:{host:'w'}});
   const r=await until(app,run.id,x=>!!x.steps[0].executionId);
-  assert.equal((await app.store.get(r.steps[0].executionId,'execution')).hostId,'w');
+  assert.equal((await app.store.get(r.steps[0].executionId,'execution')).dispatch.host,'w');// a host constraint; dispatch claims it on w's poll
   const bad=await until(app,(await start(app,'agent',{requestId:'h2',example:{query:'x'},overrides:{host:'nope'}})).id,x=>x.state!=='running');
   assert.equal(bad.steps[0].problem,'step:start');assert.match(JSON.stringify(bad.steps[0]),/Unknown host nope/);
  }finally{await app.close()}

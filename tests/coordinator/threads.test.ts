@@ -2,11 +2,12 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
 import {createStore} from '../../packages/coordinator/store.ts';
 import {threads} from '../../packages/coordinator/threads.ts';
+import {deliveryStage} from '../../packages/coordinator/delivery.ts';
 import {execFileSync} from 'node:child_process';
 import {executorBinary} from './executor-binary.ts';
 
 const fresh=async(url='memory://')=>{const s=createStore(url);await s.migrate();
- const t=threads({query:s.query,artifacts:async(id)=>id==='with-result'?[{id:'a1',state:'stored'}]:[],cursor:async()=>(await s.changes.since(null)).cursor});
+ const t=threads({stage:async(sid)=>sid==='s3'?'pr_open':null,query:s.query,artifacts:async(id)=>id==='with-result'?[{id:'a1',artifactId:'a1',path:'shot.png',mediaType:'image/png',size:4}]:[],cursor:async()=>(await s.changes.since(null)).cursor});
  const read=<T>(fn:()=>Promise<T>)=>s.read(fn);
  const op={entries:(b:any)=>read(()=>t.entries(b)),blocks:(b:any)=>read(()=>t.blocks(b)),search:(b:any)=>read(()=>t.search(b)),export:(b:any)=>read(()=>t.exportText(b,read))};
  const exec=async(id:string,o:{session:string,task?:string,harness?:string,model?:string,effort?:string,state?:string})=>(await s.query("INSERT INTO execution(id,kind,state,session_id,task_id,harness,model,config_ref,legacy_kind,legacy_id) VALUES($1,'agent_run',$2,$3,$4,$5,$6,$7,'execution',$1) RETURNING seq",[id,o.state??'running',o.session,o.task??null,o.harness??'codex',o.model??'gpt-6.1-sol',JSON.stringify({effort:o.effort??'low'})]))[0].seq;
@@ -69,7 +70,7 @@ test('execution.ended places the result block; it is written once',async()=>{con
   await f.s.put('execution',{...e,state:'completed',finishedAt:Date.now()});await f.s.put('execution',{...e,state:'completed',finishedAt:Date.now()});
   await f.s.executions.transition('with-result','succeeded').catch(()=>{});
   assert.equal((await f.s.query("SELECT count(*)::int AS n FROM document WHERE data->>'type'='execution.ended'"))[0].n,1);
-  const r=await f.op.entries({key:{session:'s3'},limit:10});assert.deepEqual(texts(r),['boundary','result']);assert.deepEqual(r.entries[1].artifactIds,['a1']);
+  const r=await f.op.entries({key:{session:'s3'},limit:10});assert.deepEqual(texts(r),['boundary','result']);assert.deepEqual(r.entries[1].artifactIds,['a1']);assert.deepEqual(r.entries[1].artifacts,[{id:'a1',name:'shot.png',mediaType:'image/png',size:4}]);assert.equal(r.entries[1].stage,'pr_open');assert.deepEqual(['pr-open','integrating','merged','published','failed',undefined].map(deliveryStage),['pr_open','merging','merged','merged',null,null]);
   await f.s.query("INSERT INTO document(kind,id,data) VALUES('artifact','legacy-a',$1)",[JSON.stringify({id:'legacy-a',executionId:'with-result'})]);
   assert.deepEqual((await f.op.blocks({key:{session:'s3'},rows:[{kind:'artifact',id:'legacy-a'}]})).entries.map((b:any)=>b.kind),['result']);
  }finally{await f.s.close()}});
