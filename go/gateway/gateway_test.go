@@ -175,7 +175,10 @@ func (f *fixture) spool() (lines []map[string]any, text string) {
 	for _, file := range files {
 		data, _ := os.ReadFile(file)
 		text += string(data)
-		for _, l := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		// Only complete lines: the gateway creates the day file before it writes the first line, so a read can see an
+		// empty file or a line without its newline yet.
+		complete := strings.Split(string(data), "\n")
+		for _, l := range complete[:len(complete)-1] {
 			var v map[string]any
 			json.Unmarshal([]byte(l), &v)
 			lines = append(lines, v)
