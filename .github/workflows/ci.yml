@@ -15,24 +15,25 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
       # The executor: its unit tests, and the binary the coordinator's end-to-end artifact test runs.
       - run: cargo build -p fleet-executor && cargo test -p fleet-executor
-      - run: npm test
+      - run: pnpm test
       - name: Install Chromium for the design checks
         if: always()
-        run: npx playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium
       - name: Design report (warnings only)
         if: always()
         continue-on-error: true
         run: |
-          npm run book
-          npm run check:design
+          pnpm run book
+          pnpm run check:design
           { echo '### Design report (warnings only)'; echo '```'; cat design-report/report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload design report and screenshots
         if: always()
@@ -53,13 +54,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npx playwright install --with-deps chromium
-      - run: npm run check:filter
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm run check:filter
   # The whole coordinator suite with every migration on real PostgreSQL 18 and the PDS18 roles created by
   # deploy/infrastructure/fleet-postgres.sql (tests/coordinator/pg-test.ts): migrations as the owner fleet (no superuser, no
   # BYPASSRLS), the store as fleet_app; the concurrency and load tests use the owner URL. PGlite runs as a superuser and
@@ -80,16 +82,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
       # The executor binary the end-to-end artifact tests run.
       - run: cargo build -p fleet-executor
       # One file at a time: the Postgres-backed tests share the database "fleet" (tests/coordinator/pg-test.ts).
-      - run: npx tsx --test --test-concurrency=1 tests/coordinator/*.test.ts
+      - run: pnpm exec tsx --test --test-concurrency=1 tests/coordinator/*.test.ts
         env:
           FLEET_TEST_PG: postgresql://postgres:postgres@localhost:5432
   comment:

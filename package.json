@@ -10,7 +10,7 @@
     "check:design": "node packages/ui/scripts/check-design.mjs",
     "app:build": "node app/build.mjs",
     "app:dev": "node --watch-path=app/src --watch-path=packages/ui --watch-path=packages/view-url app/build.mjs",
-    "check:filter": "npm run build && tsx tests/ui/filter.check.ts --assert"
+    "check:filter": "pnpm run build && tsx tests/ui/filter.check.ts --assert"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1164.0",
@@ -31,8 +31,9 @@
     "@types/node": "22.18.0",
     "@types/pg": "8.23.1",
     "esbuild": "0.28.2",
-    "playwright": "^1.56.1",
+    "playwright": "1.56.1",
     "tsx": "4.20.6",
     "typescript": "5.9.3"
-  }
+  },
+  "packageManager": "pnpm@10.34.9"
 }

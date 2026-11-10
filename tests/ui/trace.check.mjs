@@ -1,6 +1,6 @@
 // Traceability check (D10): every control and pattern a page spec links must render in that page's mockup,
 // and every page must render app-shell and nav-rail, and every list row must start with its state (OR-22, D12). Reads data-ui markers from the live DOM, so minified
-// names do not matter. Prints a report; never fails the build. Run after npm run book.
+// names do not matter. Prints a report; never fails the build. Run after pnpm run book.
 import { chromium } from 'playwright';
 import { readFileSync, readdirSync } from 'node:fs';
 

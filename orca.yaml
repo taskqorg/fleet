@@ -1,0 +1,4 @@
+# Orca runs this when it creates a worktree. CARGO_TARGET_DIR is set per machine in the
+# environment (docs/designs/fleet-toolchain.md D2), never committed here.
+scripts:
+  setup: pnpm install --frozen-lockfile

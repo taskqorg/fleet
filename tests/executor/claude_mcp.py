@@ -1,5 +1,6 @@
 """Actual Fleet executor with a fake Claude running the existing real MCP transports; no model calls."""
 import os,json,pathlib,tempfile,subprocess,threading,time
+import sys as _sys;_sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)));from executor_binary import executor_binary
 from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
 root=pathlib.Path(tempfile.mkdtemp(prefix='fleet-claude-mcp-'));root.chmod(0o700)
 for name in ['home','native']:(root/name).mkdir(mode=0o700)
@@ -47,7 +48,7 @@ class Handler(BaseHTTPRequestHandler):
   self.send_response(200);self.end_headers();self.wfile.write(json.dumps(reply).encode())
 srv=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=srv.serve_forever,daemon=True).start()
 env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}','FLEET_HOST_ID':'fake','FLEET_HOST_TOKEN':'fixture','FLEET_DATA_DIR':str(root/'data'),'FLEET_NATIVE_ACCOUNTS':str(registry)}
-p=subprocess.Popen([str(pathlib.Path('target/debug/fleet-executor').resolve())],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+p=subprocess.Popen([executor_binary()],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 try:
  end=time.monotonic()+20;terminal=[]
  while time.monotonic()<end:

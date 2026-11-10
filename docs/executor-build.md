@@ -12,7 +12,7 @@ FLEET_HOST_ID=mac \
 FLEET_DATA_DIR=/absolute/owned/fleet-data \
 FLEET_CODEX_BIN=/absolute/path/to/codex \
 FLEET_HOST_TOKEN="$OPERATOR_SUPPLIED_TOKEN" \
-./target/debug/fleet-executor
+"$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)/debug/fleet-executor"
 ```
 
 Production requires HTTPS and a dedicated private data directory. The token must be provided outside Git and never printed. Candidate launchd recipe: ProgramArguments contains the absolute binary; WorkingDirectory is the owned data directory; EnvironmentVariables contains these five settings supplied in a private plist; RunAtLoad=true and KeepAlive=true. Parent owns activation. No plist installed or service activated.

@@ -1,5 +1,6 @@
 """Actual Fleet executor + fake installed ACP executable; real Fleet read-only MCP. Zero model calls."""
 import json,os,pathlib,subprocess,tempfile,threading,time
+import sys as _sys;_sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)));from executor_binary import executor_binary
 from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
 root=pathlib.Path(tempfile.mkdtemp(prefix='fleet-acp-fake-'));root.chmod(0o700)
 for d in ['home','native','host']:(root/d).mkdir(mode=0o700)
@@ -55,7 +56,7 @@ class Handler(BaseHTTPRequestHandler):
   self.send_response(200);self.end_headers();self.wfile.write(json.dumps(reply).encode())
 srv=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=srv.serve_forever,daemon=True).start()
 env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}','FLEET_HOST_ID':'fake','FLEET_HOST_TOKEN':'fake','FLEET_DATA_DIR':str(root/'data'),'FLEET_NATIVE_ACCOUNTS':str(registry)}
-p=subprocess.Popen([str(pathlib.Path('target/debug/fleet-executor').resolve())],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+p=subprocess.Popen([executor_binary()],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 def issue(cid,text,session='session',kind='start',execution=None):commands.append({'id':cid,'executionId':execution or cid,'sessionId':session,'kind':kind,'payload':{} if kind=='stop' else {'harness':'antigravity','account':'current','model':profile['model'],'effort':None,'text':text,'agentConfig':profile}})
 def wait(fn):
  end=time.monotonic()+20

@@ -1,6 +1,6 @@
 // Design report (D6): prints warnings, never fails. Reviewers and the owner read it.
-// Run npm run book first so the scroll check uses the current book.
-// Usage: npm run check:design [files or folders...]   (default: packages/ui)
+// Run pnpm run book first so the scroll check uses the current book.
+// Usage: pnpm run check:design [files or folders...]   (default: packages/ui)
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { execFileSync } from 'node:child_process';

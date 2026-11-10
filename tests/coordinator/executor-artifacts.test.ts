@@ -4,7 +4,8 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';import {execFileSync,spawn} from 'node:child_process';
 import {existsSync,mkdtempSync,writeFileSync,chmodSync,mkdirSync} from 'node:fs';import {tmpdir} from 'node:os';import {resolve} from 'node:path';
 import {createApp} from '../../packages/coordinator/app.js';import {fakeStore} from './s3-fake.js';
-const binary=resolve('target/debug/fleet-executor');
+import {executorBinary} from './executor-binary.js';
+let binary='';
 const FAKE_CODEX=`#!/usr/bin/env python3
 import json,os,pathlib,sys
 for line in sys.stdin:
@@ -23,7 +24,7 @@ for line in sys.stdin:
 `;
 const until=async<T>(what:string,f:()=>Promise<T|undefined|false>,ms=120000)=>{const end=Date.now()+ms;for(;;){const v=await f();if(v)return v;if(Date.now()>end)throw Error('timeout: '+what);await new Promise(r=>setTimeout(r,250))}};
 test('the executor collects output, uploads it to its own store and the run completes with stored artifacts',{timeout:900000},async()=>{
- if(!existsSync(binary))execFileSync('cargo',['build','-p','fleet-executor'],{stdio:'inherit',timeout:900000});
+ binary=executorBinary();
  const root=mkdtempSync(tmpdir()+'/fleet-e2e-'),fake=await fakeStore();mkdirSync(root+'/home',{mode:0o700});mkdirSync(root+'/account',{mode:0o700});
  writeFileSync(root+'/codex',FAKE_CODEX);chmodSync(root+'/codex',0o755);
  writeFileSync(root+'/store.key',JSON.stringify({accessKeyId:'k',secretAccessKey:'s'}),{mode:0o600});

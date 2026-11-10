@@ -14,8 +14,8 @@ Fleet's shared interface parts. Every app screen and the design book are built o
 | `src/patterns.tsx` | Compositions: `TaskListView`, `AppShell`, `ListDetail` and others. |
 | `src/virtual-list.tsx` | `VirtualList` with anchor-keeping inserts and `onEnd` (OR-9, OR-11). |
 | `src/styles.css` | Shared styles, tokens only. |
-| `book/` | The live design book; `npm run book` builds it into `docs/design-system/book`. |
-| `scripts/check-design.mjs` | `npm run check:design`: the warning-only design report. |
+| `book/` | The live design book; `pnpm run book` builds it into `docs/design-system/book`. |
+| `scripts/check-design.mjs` | `pnpm run check:design`: the warning-only design report. |
 
 ## Connections
 

@@ -1,5 +1,5 @@
 // Behaviour check for OR-6 / principles §3: inserting rows above the viewport must not move the row being read.
-// Run: node tests/ui/scroll.check.mjs   (needs a built book: npm run book). Prints "ok" or the shift in px.
+// Run: node tests/ui/scroll.check.mjs   (needs a built book: pnpm run book). Prints "ok" or the shift in px.
 import { chromium } from 'playwright';
 const book = new URL('../../docs/design-system/book/index.html', import.meta.url).href;
 const b = await chromium.launch();

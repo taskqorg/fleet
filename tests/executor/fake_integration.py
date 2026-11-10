@@ -1,5 +1,6 @@
 """No model calls. HTTP exchange, live child, stop, retries and recovery."""
 import base64,hashlib,json,os,pathlib,signal,sqlite3,subprocess,tempfile,threading,time
+import sys as _sys;_sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)));from executor_binary import executor_binary
 from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
 root=pathlib.Path(tempfile.mkdtemp(prefix='fleet-fake-'))
 fake=root/'codex';fake.write_text('''#!/usr/bin/env python3
@@ -63,7 +64,7 @@ env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}',
 for name in ['home','account']:
  (root/name).mkdir(mode=0o700)
 env['FLEET_NATIVE_HOME']=str(root/'home');env['FLEET_CODEX_HOME']=str(root/'account')
-binary=str(pathlib.Path('target/debug/fleet-executor').resolve())
+binary=executor_binary()
 procs=[]
 def launch():
  p=subprocess.Popen([binary],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);procs.append(p);return p

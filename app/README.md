@@ -6,7 +6,7 @@ The Fleet operator app: a Preact single-page app served by the coordinator at `/
 
 | File | Purpose |
 |---|---|
-| `build.mjs` | esbuild build into `dist/app`: hashed chunks per view, `index.html`, `sw.js`, per-view manifests and icons, size report. Run by `npm run build` and `npm run app:build`. |
+| `build.mjs` | esbuild build into `dist/app`: hashed chunks per view, `index.html`, `sw.js`, per-view manifests and icons, size report. Run by `pnpm run build` and `pnpm run app:build`. |
 | `tsconfig.json` | Type-checks `app/` and `packages/ui` with Preact JSX. |
 | `src/main.tsx` | Entry: `AppShell`, Wouter routes, identity check (`me`), feed start, service worker and the "Update available" and "Session expired" notices. |
 | `src/api.ts` | `op(name, args)` against `/api/ops/:name`; signed-out detection. |
@@ -18,4 +18,4 @@ The Fleet operator app: a Preact single-page app served by the coordinator at `/
 
 ## Connections
 
-Builds only from `packages/ui` (OR-13). Reads and writes only through coordinator ops; the coordinator (`packages/coordinator/app.ts`, `stream.ts`) serves the built files. Checked by `tests/ui/app.check.ts` through `npm run check:design`.
+Builds only from `packages/ui` (OR-13). Reads and writes only through coordinator ops; the coordinator (`packages/coordinator/app.ts`, `stream.ts`) serves the built files. Checked by `tests/ui/app.check.ts` through `pnpm run check:design`.

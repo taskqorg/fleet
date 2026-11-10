@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 
-test('service worker app-route pattern', { skip: !existsSync('dist/app/sw.js') && 'run npm run build first' }, () => {
+test('service worker app-route pattern', { skip: !existsSync('dist/app/sw.js') && 'run pnpm run build first' }, () => {
   const sw = readFileSync('dist/app/sw.js', 'utf8');
   const m = sw.match(/const app=(\/.*\/)\.test/)!;
   const re = new RegExp(m[1].slice(1, -1));
