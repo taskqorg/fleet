@@ -16,9 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -59,7 +57,7 @@ func main() {
 	if migration == "" {
 		migration = database
 	}
-	if err := migrate(ctx, migration, schemaFile()); err != nil {
+	if err := migrate(ctx, migration); err != nil {
 		log.Fatal(err)
 	}
 	store, err := openStore(ctx, database)
@@ -93,24 +91,6 @@ func main() {
 		log.Fatal(err)
 	}
 }
-
-// schemaFile: packages/coordinator/db/schema.sql of this checkout, found from the working directory or the binary.
-func schemaFile() string {
-	rel := "packages/coordinator/db/schema.sql"
-	if exe, err := os.Executable(); err == nil {
-		if p := filepath.Join(filepath.Dir(exe), "../..", rel); exists(p) {
-			return p
-		}
-	}
-	if _, f, _, ok := runtime.Caller(0); ok {
-		if p := filepath.Join(filepath.Dir(f), "../..", rel); exists(p) {
-			return p
-		}
-	}
-	return rel
-}
-
-func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 
 // loadPeople reads people.json once at start and mirrors it into person and person_grant (packages/coordinator/people.ts).
 // ponytail: no mtime re-read and no needs-you question for a broken file; out of the slice.

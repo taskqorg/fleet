@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"math/rand/v2"
-	"os"
 	"regexp"
 	"strconv"
 	"sync"
@@ -109,7 +108,7 @@ var migrationSplit = regexp.MustCompile(`(?m)^-- migration (\d+)`)
 
 // migrate applies schema.sql as the owner role: each "-- migration N" section once, in order, in one transaction, recorded
 // in schema_migration. Migration 6's JavaScript document move is a no-op on an empty database and is not ported.
-func migrate(ctx context.Context, url, file string) error {
+func migrate(ctx context.Context, url string) error {
 	conn, err := pgx.Connect(ctx, url)
 	if err != nil {
 		return err
@@ -127,10 +126,7 @@ func migrate(ctx context.Context, url, file string) error {
 	for _, v := range vs {
 		done[int(v)] = true
 	}
-	text, err := os.ReadFile(file)
-	if err != nil {
-		return err
-	}
+	text := []byte(schemaSQL)
 	idx := migrationSplit.FindAllSubmatchIndex(text, -1)
 	for i, m := range idx {
 		version, _ := strconv.Atoi(string(text[m[2]:m[3]]))
