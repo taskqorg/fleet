@@ -17,6 +17,8 @@ test('upload: staging, re-hash by the store host, promotion to the content key; 
  const big=Buffer.alloc(70*1024*1024,7);big.write('fleet',0);
  const id=await upload(app,'m',{hostId:'mac',executionId:'e1',path:'model.glb',content:big,mediaType:'model/gltf-binary'});
  const row=await A.get(id);assert.deepEqual([row.state,row.size,row.sha256,row.availability,row.scope],['stored',big.length,sha(big),'available','prod']);
+ // An empty file is stored at once by the coordinator (stores refuse an empty multipart part).
+ await s.put('execution',{id:'e2',executionId:'e2',sessionId:'s1',hostId:'mac',state:'started',createdAt:1});const empty=await upload(app,'m',{hostId:'mac',executionId:'e2',path:'script.stderr',content:''});assert.equal((await A.get(empty)).state,'stored');assert.ok(fake.objects.get(`p1/prod/${sha(Buffer.alloc(0))}`)?.length===0);
  const key=`p1/prod/${sha(big)}`;assert.ok(fake.objects.get(key)?.equals(big));assert.ok(![...fake.objects.keys()].some(k=>k.includes('.pending/')),'staging removed');
  assert.ok(fake.requests.filter(r=>r.method==='PUT'&&r.url.includes('partNumber=')).length>=3,'three 32 MiB parts');
  assert.ok((await A.readBuffer(id)).equals(big));
@@ -26,7 +28,7 @@ test('upload: staging, re-hash by the store host, promotion to the content key; 
  // Results stream with the old sandbox headers; the legacy record shape serves session reads.
  const small=await upload(app,'m',{hostId:'mac',executionId:'e1',path:'index.html',content:'<h1>x</h1>',mediaType:'text/html'});
  const r=await app.inject({url:'/api/results/'+small,headers:{authorization:'Bearer b'}});assert.equal(r.statusCode,200);assert.equal(r.body,'<h1>x</h1>');assert.match(String(r.headers['content-security-policy']),/sandbox/);
- const session=(await app.inject({url:'/api/sessions/s1',headers:{authorization:'Bearer b'}})).json();assert.deepEqual(session.results.map((x:any)=>x.path),['model.glb','copy.glb','index.html']);
+ const session=(await app.inject({url:'/api/sessions/s1',headers:{authorization:'Bearer b'}})).json();assert.deepEqual(session.results.map((x:any)=>x.path),['model.glb','script.stderr','copy.glb','index.html']);
  await app.close()});
 
 test('a wrong hash fails and never overwrites a verified object; sizes, leases and stores are checked',async()=>{const {app,s,A,fake,call}=await setup();await register(call,fake);

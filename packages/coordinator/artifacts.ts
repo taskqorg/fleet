@@ -6,6 +6,7 @@ import type {Readable} from 'node:stream';
 import {s3Client,type S3,type Part} from './s3.ts';
 import type {Store} from './store.ts';
 import {type Stores,type StoreRow,allowedTunnel} from './stores.ts';
+const EMPTY_SHA256='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 const fail=(code:number,message:string,extra:any={}):never=>{throw Object.assign(Error(message),{statusCode:code,...extra})};
 export const PART_SIZE=32*1024*1024;
 const COPY_LIMIT=5*1024*1024*1024,COPY_PART=1024*1024*1024,LEASE_MS=3600000;
@@ -52,8 +53,10 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
    [artifactId,projectId,scope,hash,size,media,file,b.executionId,e.taskId??null,required,role,b.derivedFrom??null,b.previousArtifactId??null,state]);
   // The same content of this project and scope, already verified on the chosen store: nothing to upload.
   const same=(await store.query("SELECT 1 FROM artifact a JOIN artifact_copy c ON c.artifact_id=a.id WHERE a.project_id IS NOT DISTINCT FROM $1 AND a.scope=$2 AND a.content_hash=$3 AND c.store_id=$4 AND c.state='verified' LIMIT 1",[projectId,scope,hash,target.id])).length;
-  if(same){await store.tx(async()=>{await insert('stored');await store.query("INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES($1,$2,$3,'verified',now())",[artifactId,target.id,projectId])});
-   if(deps.onSettled)await deps.onSettled(b.executionId);return {artifactId,state:'stored',storeId:target.id}}
+  // An empty file has nothing to upload (stores refuse an empty multipart part): the coordinator writes the empty object itself.
+  let at=target;if(!same&&size===0){if(hash!==EMPTY_SHA256)fail(400,'Empty file with a non-empty hash');at=(await writeObject(projectId,scope,Buffer.alloc(0),media))?.target??fail(409,'No reachable store in the project locations',{code:'no_store'})}
+  if(same||size===0){await store.tx(async()=>{await insert('stored');await store.query("INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES($1,$2,$3,'verified',now())",[artifactId,at.id,projectId])});
+   if(deps.onSettled)await deps.onSettled(b.executionId);return {artifactId,state:'stored',storeId:at.id}}
   const a={id:artifactId,project_id:projectId,scope,content_hash:hash} as ArtifactRow,staging=stagingOf(a,target.id);
   const uploadId=await s3(target).createMultipartUpload(target.bucket,staging,media);
   await store.tx(async()=>{await insert('pending');await store.query("INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,upload_id,staging_key,lease_expires_at) VALUES($1,$2,$3,'pending',$4,$5,now()+($6::text||' milliseconds')::interval)",[artifactId,target.id,projectId,uploadId,staging,String(LEASE_MS)])});
