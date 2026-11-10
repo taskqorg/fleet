@@ -1,6 +1,10 @@
 package main
 
-import "errors"
+import (
+	"errors"
+
+	"fleet/contract"
+)
 
 // Area A: POST /api/hosts/poll (SL5). The poll records the host observation and its stores, reconciles delegations,
 // marks problems, promotes queued messages, runs dispatch, and replies with the polling host's pending commands that may go
@@ -77,7 +81,7 @@ func (a *App) poll(q *Request) (any, error) {
 		obs["version"] = v
 		// N-1 is served without a flag; N-2 and older show version-behind (work still runs).
 		if prev := ownRelease().Previous; olderVersion(v, prev) {
-			ps = append(ps, doc{"kind": string(ProblemKindVersionBehind), "route": "", "status": 0, "location": nil,
+			ps = append(ps, doc{"kind": string(contract.ProblemKindVersionBehind), "route": "", "status": 0, "location": nil,
 				"detail": "executor " + v + ", coordinator serves " + prev + " and newer"})
 		}
 	}
@@ -167,7 +171,7 @@ func (a *App) poll(q *Request) (any, error) {
 		}
 		out = append(out, fresh)
 	}
-	reply := PollReply{Target: healthyTarget(), AutoUpdate: ptr(autoUpdateOf(q.host))}
+	reply := contract.PollReply{Target: healthyTarget(), AutoUpdate: ptr(autoUpdateOf(q.host))}
 	return doc{"commands": out, "target": reply.Target, "autoUpdate": reply.AutoUpdate}, nil
 }
 

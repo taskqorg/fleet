@@ -14,7 +14,7 @@
     "check:conversations": "pnpm run build && node tests/ui/conversations.check.ts",
     "contracts": "node contracts/gen-ts.mjs",
     "typecheck": "node contracts/gen-ts.mjs && tsc && tsc -p app && tsc -p packages/ui",
-    "go:build": "cd go && go generate ./... && for c in coordinator executor gateway update; do CGO_ENABLED=0 go build -trimpath -o bin/fleet-$c ./$c || exit 1; done"
+    "go:build": "cd go && for c in coordinator executor gateway update; do CGO_ENABLED=0 go build -trimpath -o bin/fleet-$c ./$c || exit 1; done"
   },
   "dependencies": {
     "@preact/signals": "2.11.4",

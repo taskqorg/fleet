@@ -17,7 +17,7 @@ The PM is not a subsystem. This design adds three general capabilities that any 
 2.  **Scope and focus.** Scope is the director's grants, checked on every call. Focus is a stored filter inside scope that sets what the PM looks at and the default project of new tasks.
 3.  **Watch.** A `watch` document on the existing change log plus a stored next-wake time. Wakes are ordinary queued messages to the PM session.
 
-All code references are to the Go coordinator (`go/coordinator/`); the schema stays in `packages/coordinator/db/schema.sql`, embedded by `go generate` (`d_schema.go`).
+All code references are to the Go coordinator (`go/coordinator/`); the schema is `go/coordinator/schema.sql`, embedded by `d_schema.go`.
 
 ## The Problem
 
@@ -297,7 +297,7 @@ One pull request per stage. Each ends with its check.
 *   `go/coordinator/routes.go`: `putDoc` sets `actor` and `onBehalfOf` on agent `setting-change` rows.
 *   `go/coordinator/b_tasks.go`: Held create, `hold` trigger, `pause_reason`, `task_hold`, `task_release`, `task_cancel`, `held` filter and count.
 *   `go/coordinator/stream.go`: `since()` returns `actor` and `projectId`.
-*   `packages/coordinator/db/schema.sql`: migration 20 (`task.pause_reason`), migration 21 (`change.actor`, `fleet_change()` with the actor, copied from migration 15's latest body).
+*   `go/coordinator/schema.sql`: migration 20 (`task.pause_reason`), migration 21 (`change.actor`, `fleet_change()` with the actor, copied from migration 15's latest body).
 *   `packages/view-url/view-url.ts`: `TASK_STATES` gains `held`.
 *   `app/src/views/tasks.tsx`, `app/src/views/conversations.tsx`: Held chip; `createdBy` link; focus and watch status on the session.
 *   `config/agents/pm.json`: instructions (§9).
@@ -306,7 +306,7 @@ One pull request per stage. Each ends with its check.
 
 ### Verification Plan
 
-*   **Build:** `cd go && go generate ./... && go vet ./... && go build -o bin/fleet-coordinator ./coordinator`.
+*   **Build:** `cd go && go vet ./... && go build -o bin/fleet-coordinator ./coordinator`.
 *   **Tests:** `FLEET_TRIAL_TESTS=tests/go/pm.test.ts node tests/trial/run.ts` locally; the full gate in CI (`fleet.md`).
 *   **Design check:** `pnpm run check:design` for app changes.
 *   **Live:** CUJ 1 on `desiign`; CUJ 2 and CUJ 3 on the owner's coordinator; record wakes.

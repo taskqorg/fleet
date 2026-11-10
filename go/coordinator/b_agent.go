@@ -1194,7 +1194,9 @@ func pickAccount(q *Request, harness, projectID, hostID, directedBy string) (str
 	if p := projectSettingsOf(projectID); p != nil {
 		order = strList(p["subscriptions"])
 	}
-	ms, err := unscoped(q, func() ([]doc, error) { return rows(q, "SELECT data FROM document WHERE kind='managed-account' ORDER BY seq") })
+	ms, err := unscoped(q, func() ([]doc, error) {
+		return rows(q, "SELECT data FROM document WHERE kind='managed-account' ORDER BY seq")
+	})
 	if err != nil {
 		return "", err
 	}

@@ -178,7 +178,7 @@ The allowed keys, defaults and values per view are one constant table in the mod
 
 ### 3. `task_page` query: side table `task_derived`
 
-Migration 10 in `packages/coordinator/db/schema.sql` (migration 9 is the artifact store):
+Migration 10 in `go/coordinator/schema.sql` (migration 9 is the artifact store):
 
 * **Table** `task_derived(task_id text PRIMARY KEY REFERENCES task(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED, project_id, agent, host, started_at, open_questions integer NOT NULL DEFAULT 0)`, with the `project_scope` policy on `project_id` (copied from the task).
   * `agent`: harness of the latest (highest `seq`) execution in `preparing` or `running`; null when none runs.
@@ -292,7 +292,7 @@ It also prints the fixture load time, the migration 10 backfill time and the gro
 
 ## Implementation
 
-Built: the codec `packages/view-url/view-url.ts` (`tests/ui/view-url.test.ts`); `task_derived` and its triggers in `packages/coordinator/db/schema.sql`; the query in `taskPage` (`go/coordinator/b_tasks.go`); the entity store `app/src/store.ts` with `app/src/offline.ts` (`tests/ui/store.test.ts`, `tests/ui/lists.test.ts`); the filter check `tests/ui/filter.check.ts`.
+Built: the codec `packages/view-url/view-url.ts` (`tests/ui/view-url.test.ts`); `task_derived` and its triggers in `go/coordinator/schema.sql`; the query in `taskPage` (`go/coordinator/b_tasks.go`); the entity store `app/src/store.ts` with `app/src/offline.ts` (`tests/ui/store.test.ts`, `tests/ui/lists.test.ts`); the filter check `tests/ui/filter.check.ts`.
 
 Not built: the `view_link` operation (§1, CUJ 3); the Go coordinator has no route for it.
 

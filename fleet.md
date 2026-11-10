@@ -220,7 +220,7 @@ Go rules:
 
 ## Verification
 
-The merge-gate command is `pnpm install --frozen-lockfile && pnpm run build && (cd go && go generate ./... && go vet ./... && go test ./...) && pnpm test`.
+The merge-gate command is `pnpm install --frozen-lockfile && pnpm run build && (cd go && go generate ./... && test -z "$(git status --porcelain)" && go vet ./... && go test ./...) && pnpm test`.
 
 `pnpm run build` runs `app:build` (typecheck and bundle) and `go:build` (the four Go binaries in `go/bin/`). `pnpm test` runs the app unit tests and `tests/go/run.sh`: the binary on a fresh database of a local PostgreSQL server (server programs on `PATH`, `tests/harness.ts`), with `tests/trial` and `tests/go` over HTTP.
 

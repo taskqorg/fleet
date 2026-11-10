@@ -485,7 +485,7 @@ The SSE `Change` type (lane F) gains kind `definition` with `{kind, id, revision
 
 ### Data model
 
-Migration 22 (the next after 21) in the coordinator's `schema.sql` (`packages/coordinator/db/schema.sql` today; after wave 1 its committed path next to the coordinator):
+Migration 22 (the next after 21) in the coordinator's `schema.sql` (`go/coordinator/schema.sql`):
 
 ```sql
 CREATE TABLE definition (
@@ -571,7 +571,7 @@ Paths are the quality plan's target state after wave 1 (coordinator files named 
 
 ### Coordinator
 
-* `go/coordinator/schema.sql` (Modify; today `packages/coordinator/db/schema.sql`): the migration above.
+* `go/coordinator/schema.sql` (Modify): the migration above.
 * `go/coordinator/definitions.go` (Create): kinds and paths, canonical JSON and `contentSha`, git blob sha, reconcile at start, state, revision append, drafts, save with conflict checks, create, history, export, and the field walk. Handlers for `definition_list`, `definition_get`, `definition_draft_put|get|discard`, `definition_diff`, `definition_save`, `definition_create`, `definition_history`, `definition_export`. Why: one domain file, one writer of the three tables.
 Stage 2 only (the mirror):
 

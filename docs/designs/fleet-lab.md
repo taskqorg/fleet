@@ -54,7 +54,7 @@ Not adopted: Lab-only execution kinds or pipeline formats; examples as `task` ro
 | Infrastructure failure | `execution.problem` with prefix `infra:` |
 | Outputs, transcripts, examples | `artifact`, scope `lab` |
 | Owner rating | `question` kind `rating` |
-| Experiment, score | tables `experiment`, `score` (`packages/coordinator/db/schema.sql`, migration 11) |
+| Experiment, score | tables `experiment`, `score` (`go/coordinator/schema.sql`, migration 11) |
 | Pipeline | `config/pipelines/*.json`, version 2 |
 | Use case | `config/lab/use-cases/<project>.json` |
 
