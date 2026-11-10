@@ -1,7 +1,9 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {createApp} from '../../packages/coordinator/app.js';import {createStore} from '../../packages/coordinator/store.js';import {volume} from './volume-fixture.js';
 // Live traffic shape (PDS18, Nov 2026): four hosts polling while two executor outboxes replay 100 events and 10 receipts.
 // Runs on PGlite; set FLEET_TEST_DATABASE_URL to a disposable Postgres database for real lock and isolation behaviour.
-const url=process.env.FLEET_TEST_DATABASE_URL;
+import {PG,recreateFleetDatabase} from './pg-test.js';
+// FLEET_TEST_DATABASE_URL: one disposable database; else, with FLEET_TEST_PG, the owner URL of a fresh "fleet" database (pg-test.ts).
+const url=process.env.FLEET_TEST_DATABASE_URL??(PG?await recreateFleetDatabase():undefined);
 const EXECUTOR_HTTP_TIMEOUT_MS=5000; // crates/executor/src/outbox.rs: ureq AgentBuilder timeout(5 s)
 const hosts=['owner-mac','owner-mac-program','pds18-native','pds18-program'];
 test('four pollers and two outbox replays: p95 under the executor timeout, no lost or regressed write',async()=>{
