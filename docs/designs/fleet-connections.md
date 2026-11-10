@@ -104,8 +104,8 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 
 ```text
   agent (any host) ──MCP stdio──▶ fleet call mcp ─┐
-  coordinator api step ──CLI──▶ fleet call ───────┼─HTTP + per-run token─▶ fleet-gateway (PDS18, loopback :8741)
-  script ──HTTP──────────────────────────────────┘    (remote hosts: Cloudflare-guarded entry      │ keys from LoadCredential
+  coordinator api step ──CLI──▶ fleet call ───────┼─HTTP + per-run token─▶ fleet-gateway (PDS18, loopback :8742)
+  script ──HTTP──────────────────────────────────┘    (remote hosts: Cloudflare-guarded entry      │ keys from the secret dir
                                                         + fleet-machines service token)             │ snapshot.json (read each second)
                                                                                                     │ spool.jsonl (append)
   coordinator ── publishes snapshot.json ──────────────────────────────────────────────────────────▶│
@@ -123,7 +123,7 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 
 *   **Values.** `<FLEET_SECRET_DIR>/connections/<connection>/<fingerprint>` on PDS18, one value per file, mode 0600, coordinator user. Added through `connections_key_add` (owner only), which writes the file and the metadata row in one step and returns only the fingerprint. Screens, agents, executors and profiles never receive a value.
 *   **Import and restore.** At start the coordinator registers every value file that has no row, if the file name matches the value's fingerprint; a directory named after a catalogue provider with no connection becomes that connection (holder owner, access `{projects: ['*']}`). `scripts/connections-import.sh` splits a one-key-per-line file (Pipe's `tavily-keys`) into such files, so import and restore need no database step.
-*   **Gateway load.** `fleet-gateway.service` reads the key directory through systemd `LoadCredential`, as `pipe-read.service` does. A key change reloads the gateway, which drains in-flight calls while the socket stays open (socket activation); callers see a delay, not a refusal.
+*   **Gateway load.** `fleet-gateway` runs as a user unit of the coordinator user, which already owns the secret directory, so a separate service user would protect nothing. It reads a key's value file when a snapshot first names the key and checks it against the fingerprint; a key change takes effect at the next snapshot adoption, with no restart. Restarts drain in-flight calls while the socket stays open (socket activation).
 *   **Backup.** The secret directory is encrypted with SOPS/age into the nightly backup (`fleet-backup.sh`, `secrets.sops.json`; recipient `FLEET_BACKUP_AGE_RECIPIENT` in `backup-age.env`, the age identity kept off the host). Restore is the read-lane restore copied: decrypt with the age identity, start the gateway, it serves from its retained snapshot without Postgres.
 *   **Rotation:** add → mark old `draining` (no new calls) → `retired` after the owner confirms. No quiet-period timer (no invented number).
 *   **Failover:** to the next active key only when a key got no HTTP answer **and** the tool is `idempotent`. A non-idempotent tool (Meshy submit) returns `outcome: unknown` instead, never replayed. 429 and quota replies pass through unchanged with `Retry-After`. 401, 402, 403 disable that key (persisted in the gateway's `disabled-keys` file and reported in the spool); if none is left, `503 no-usable-key`.
@@ -134,6 +134,9 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 *   **Code.** Copy Pipe's read lane (assetq `lane/`, Rust) into `crates/gateway`. It is the proven design: loopback socket, snapshot adoption every second with last-valid fallback, `LoadCredential`, disabled-key persistence, provider error mapping, spool and loss counter. Changes from the lane:
     *   route `POST /v1/call/<connection>/<tool>` instead of `/v1/read/<tool>`, generic over the provider catalogue;
     *   auth by per-run token hash from the snapshot instead of project tokens; no `X-Pipe-Task`;
+    *   keys read from the secret directory by fingerprint instead of `LoadCredential`, so no restart on a key change;
+    *   a re-enabled key comes back when the snapshot's `enabledAt` is later than the local disable;
+    *   every reply carries `x-fleet-call-id`; a gateway refusal also carries `x-fleet-error` (a passed-through provider reply is `http-<status>` to the client);
     *   no fixed queue bound (the lane's `queue-full` is removed; a bound is added only when the owner asks for one);
     *   the lane's coreq telemetry store (`telemetry.db`, `coreq::enroll`, DashQ shipping) and the `coreq` dependency are removed; a new spool writer (below) replaces them;
     *   the alert path (`hermes`) is replaced by a needs-you question per cause (people-access §7), for example `key:<id>:disabled`;
@@ -142,26 +145,26 @@ The owner decided Fleet gets its own connections system and Pipe is deleted, wit
 
     ```text
     {schema: 2, generated_ms, providers: {<id>: {baseUrl, tools}},
-     connections: {<name>: {provider, tools, intake, keys: [{id, state}], blocked: [<scope>]}},
+     connections: {<name>: {provider, tools, intake, keys: [{id, state, enabledAt?}], blocked: [<scope>]}},
      tokens: [{sha256, executionId, directedBy, projectId, experimentId, connections: [<name>]}]}
     ```
-*   **Spool.** `/var/lib/fleet-gateway/spool/<day>.jsonl`, append-only, one file per day; a file is deleted after the coordinator has ingested all of it. One JSON line per call: `{callId, tokenId, executionId, connection, tool, keyFingerprint, status, errorCode?, outcome: ok | error | unknown, usage, startedAt, ms}`. The coordinator ingests it every few seconds (and at step completion) into `tool_run` rows with `connection_cost`. Ingest is idempotent by `callId`; a persistent `lost` counter shows lines that could not be written.
-*   **Reach.** Loopback on PDS18. Other hosts reach it through the existing Cloudflare-guarded entry with the `fleet-machines` service token plus the per-run token.
+*   **Spool.** `<FLEET_GATEWAY_DIR>/state/spool/<day>.jsonl` (UTC day), append-only; a past day's file is deleted after the coordinator has ingested it. One JSON line per call: `{callId, tokenSha256, executionId, connection, tool, keyFingerprint, status, errorCode?, outcome: ok | error | unknown, usage: {unit, amount}?, disabled?: {key, status}, startedAt, ms}`. The coordinator ingests it every few seconds (and at step completion) into `tool_run` rows with `connection_cost`. Ingest is idempotent by `callId`; a persistent `lost` counter shows lines that could not be written.
+*   **Reach.** Loopback `127.0.0.1:8742` on PDS18 (Pipe keeps `:8741` until C4). Other hosts call `https://fleet.ufobe.com/v1/call/...`: the Access app "Fleet gateway" (path `/v1/call`) admits only the `fleet-machines` service token, and Caddy sends the path to the gateway, which checks the run token.
 
 ### 4. Per-run tokens
 
-*   When the start command is written (in `enqueue` from C1, in `dispatch` once people slice 6 lands), the coordinator mints a random token for the execution, stores its SHA-256 with `{executionId, directedBy, projectId, experimentId, connections}` and republishes the snapshot. The executor receives it in the start command and gives it only to that run's MCP server and environment (`FLEET_RUN_TOKEN`); it is never written to a file.
+*   When the start command is written (in `enqueue` from C1, in `dispatch` once people slice 6 lands), the coordinator mints a random token for the execution, stores its SHA-256 with `{executionId, directedBy, projectId, experimentId, connections}` and republishes the snapshot. The executor receives it in the start command (stored with the command row until the run ends) and puts it in the harness environment as `FLEET_RUN_TOKEN`, which the connection MCP servers inherit (Codex: `env_vars`); it is never written to a file or an argument.
 *   **Threat model.** A token attributes calls per run. It does not isolate runs of one OS user from each other: under FD5 all runs of one harness account share an OS user, so one run can read another live run's environment (`/proc/<pid>/environ`) and call with its token until that run ends. On a held host, the holder can do the same. Both stay within that token's connections, and the holder already sees everything on their host. One OS user per run would close it (data foundation A15 rejected that for now).
-*   The token's connections are the profile's granted connections filtered by each connection's `access` list and intake.
-*   When the execution ends, or loses its lease in recovery (`recovery.ts`), the token is removed from the snapshot; no separate expiry number. An execution that ends while the coordinator is down keeps its token until recovery settles it; the first snapshot after that removes it. A grant revocation removes tokens too (people-access §3). Child executions get their own tokens.
+*   The token's connections are the profile's granted connections filtered by each connection's `access` list and intake. `projects: ['*']` means all work, with or without a project (Lab runs have none).
+*   The coordinator's connection tick (every 3 s) ingests the spool, then marks the tokens of ended executions revoked and republishes the snapshot, so recovery and every other ending path are covered; no separate expiry number. An `api` step's token is revoked right after its call. An execution that ends while the coordinator is down keeps its token until recovery settles it; the first snapshot after that removes it. A grant revocation removes tokens too (people-access §3). Child executions get their own tokens.
 *   Coordinator-side `api` steps get a token for their step execution the same way.
 *   This replaces Pipe project tokens, the grant snapshot, `pipeConfigPath` and the shared host token file.
 
 ### 5. Call methods
 
 *   **HTTP:** `POST /v1/call/<connection>/<tool>`, body the tool's JSON, `Authorization: Bearer <run token>`. Replies copy the lane's table (`unauthenticated`, `bad-request`, `no-usable-key`, `key-disabled-<status>`, `provider-unreachable`, `provider-body`, `provider-timeout`; provider status passes through).
-*   **CLI:** `python3 connection_call.py call <connection> <tool>`, body on stdin, result on stdout. The file keeps its name and its install path (embedded in the executor by `profile.rs:172`, shipped by `package-assets.mjs`); Pipe is removed from it: no client library load, no hash pin, no label, token from `FLEET_RUN_TOKEN`. Error classification (`UNKNOWN` set, `infra:`/`unknown:`/`step:` problems in fleet-lab.md) stays.
-*   **MCP:** `python3 connection_call.py mcp`, a stdio MCP server exposing the run token's connections as `<connection>__<tool>`. The executor adds it to each run's MCP config and allowlists `mcp__<connection>__<tool>`, as it does for `connection_call.py mcp` today.
+*   **CLI:** `python3 connection_call.py call <connection> <tool>`, body on stdin, one line `{tool, callId, outcome, error_code, usage, output}` on stdout. The file keeps its name and its install path (embedded in the executor by `profile.rs:172`, shipped by `package-assets.mjs`); Pipe is removed from it: no client library load, no hash pin, no label, token from `FLEET_RUN_TOKEN`. Error classification (`UNKNOWN` set, `infra:`/`unknown:`/`step:` problems in fleet-lab.md) stays.
+*   **MCP:** `python3 connection_call.py mcp <connection> <spec>`, one stdio MCP server per connection; the start command's `connections: [{name, instructions, tools: [{name, description, inputSchema}]}]` gives the spec, so hosts need no connection files. The executor adds it to each run's MCP config and allowlists `mcp__<connection>__<tool>`, as it does for `connection_call.py mcp` today.
 *   The local `.connection-calls.jsonl` file is deleted: the spool is the record, so an agent cannot edit its own costs.
 *   **Built-in web** stays off unless the profile says `web_route: builtin` (fleet-lab.md R3.4).
 
@@ -274,7 +277,7 @@ Stages run alongside the people slices.
 
 #### 4. `deploy/infrastructure/fleet-gateway.service`, `fleet-gateway.socket` (Create); `fleet.caddy.candidate`, `fleet-backup.sh` (Modify) — C0, C1
 
-*   Units copied from `pipe-read.service` and `pipe-read.socket` (`LoadCredential`, `127.0.0.1:8741`).
+*   Units copied from `pipe-read.service` and `pipe-read.socket` (`LoadCredential`, `127.0.0.1:8742`).
 *   Caddy route `/v1/call/*` for remote hosts behind the guard and the `fleet-machines` service token.
 *   Backup: SOPS/age copy of the secret directory and the gateway's retained snapshot and `disabled-keys`.
 

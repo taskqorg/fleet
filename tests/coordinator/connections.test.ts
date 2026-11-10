@@ -54,3 +54,27 @@ test('key values are owner only; API keys are architect views',async()=>{
   await f.op('connections_key_state',{keyId:FP,state:'active'});
   await settle();
  }finally{await f.app.close()}});
+
+test('run tokens: access filters connections, the snapshot holds only the hash, ended runs are revoked; spool ingest is idempotent and disables refused keys',async()=>{const f=setup({connectionTickMs:0});try{await f.app.ready();
+ const c=(f.app as any).connections,store=(f.app as any).store;
+ await f.op('connections_create',{name:'tavily',provider:'tavily'});await f.op('connections_key_add',{connection:'tavily',value:VALUE});
+ await f.op('connections_create',{name:'other',provider:'tavily'});await f.op('connections_set_access',{connection:'other',access:{projects:['p2']}});
+ await f.op('connections_set_access',{connection:'tavily',access:{projects:['*']}});
+ await store.tx(()=>store.put('execution',{id:'exec-1',executionId:'exec-1',sessionId:'s',hostId:'mac',state:'running',createdAt:Date.now()}));
+ const run=await store.tx(()=>c.mint({executionId:'exec-1',directedBy:OWNER,projectId:'p1',experimentId:null},['tavily','other','absent']));
+ assert.deepEqual(run.connections.map((x:any)=>x.name),['tavily']);assert.deepEqual(run.connections[0].tools.map((t:any)=>t.name),['web_search','web_extract']);
+ await c.writeSnapshot();const tok=f.snapshot().tokens;assert.equal(tok.length,1);assert.equal(tok[0].sha256,sha256(run.token));assert.ok(!JSON.stringify(f.snapshot()).includes(run.token));
+ assert.equal(await store.tx(()=>c.mint({executionId:'exec-1',directedBy:'x@y.z',projectId:null},['other'])),null);
+ // Spool: one ok call and one that disabled the key; read twice, recorded once.
+ mkdirSync(join(f.gatewayDir,'state','spool'),{recursive:true});const sp=join(f.gatewayDir,'state','spool',new Date().toISOString().slice(0,10)+'.jsonl');
+ const line=(callId:string,extra:any)=>JSON.stringify({callId,executionId:'exec-1',tokenSha256:sha256(run.token),connection:'tavily',tool:'web_search',status:200,outcome:'ok',usage:{unit:'credits',amount:2},...extra});
+ writeFileSync(sp,line('a',{})+'\n'+line('b',{status:502,outcome:'error',errorCode:'key-disabled-401',usage:null,disabled:{key:FP,status:401}})+'\n');
+ await store.atomic(()=>c.tick());await store.atomic(()=>c.tick());
+ const rows=await store.query("SELECT e.id,e.parent_execution_id AS parent,e.project_id,t.connection_cost,t.connection_cost_basis AS basis FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE e.kind='tool_run' ORDER BY e.id");
+ assert.deepEqual(rows.map((r:any)=>[r.id,r.parent,r.project_id,r.basis]),[['call:a','exec-1','p1','measured'],['call:b','exec-1','p1','unavailable']]);assert.equal(rows[0].connection_cost.credits,2);
+ const k=(await f.op('connections_list')).connections.find((x:any)=>x.name==='tavily').keys[0];assert.equal(k.state,'disabled');assert.match(k.disabledReason,/401/);
+ const qs=(await f.op('questions_list',{})).questions.filter((q:any)=>q.cause==='key:'+FP+':disabled');assert.equal(qs.length,1);
+ // The run ends: the next tick revokes its token.
+ await store.tx(async()=>store.put('execution',{...(await store.get('exec-1','execution')),state:'completed'}));await store.atomic(()=>c.tick());await settle();
+ assert.deepEqual(f.snapshot().tokens,[]);
+}finally{await settle();await f.app.close()}});

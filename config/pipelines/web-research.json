@@ -1,5 +1,5 @@
 {"version":2,"id":"web-research","steps":[
- {"id":"search","kind":"api","connection":"pipe-read","tool":"web_search","arguments":{"query":"${example.prompt}","max_results":5,"search_depth":"basic"}},
- {"id":"read","kind":"api","connection":"pipe-read","tool":"web_extract","arguments":{"urls":"${steps.search.output.results.0.url}","extract_depth":"basic"}},
+ {"id":"search","kind":"api","connection":"tavily","tool":"web_search","arguments":{"query":"${example.prompt}","max_results":5,"search_depth":"basic"}},
+ {"id":"read","kind":"api","connection":"tavily","tool":"web_extract","arguments":{"urls":"${steps.search.output.results.0.url}","extract_depth":"basic"}},
  {"id":"summary","kind":"agent","profile":"codex-researcher","prompt":"Research task: ${example.prompt}\nThe search results are in $FLEET_INPUT_DIR/search/output.json and the extracted page in $FLEET_INPUT_DIR/read/output.json. If you need more sources, use the web_search and web_extract tools of the pipe-read connection. Write the answer to output/summary.md with a Sources section listing every URL you used."},
  {"id":"check","kind":"script","command":"test -s \"$FLEET_INPUT_DIR/summary/summary.md\" && grep -qi 'sources' \"$FLEET_INPUT_DIR/summary/summary.md\" && grep -q 'http' \"$FLEET_INPUT_DIR/summary/summary.md\""}]}

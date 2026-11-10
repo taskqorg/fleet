@@ -29,7 +29,7 @@ import {budgets} from './budgets.ts';
 import {hostRegistry,type Host} from './hosts.ts';
 import type {HostEvents,PollReply,PollRequest,Receipt,AccountReceipt,ProjectReceipt,ChildReceipt} from '../../contracts/generated/host-protocol.ts';
 declare module 'fastify' {interface FastifyRequest {fleetHost:Host}}
-export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRetentionDays?:number,database:string,store?:Store,browserSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,storeSecrets?:string,storeEndpointHosts?:string[],cfAccessFile?:string,defaultArtifactLocations?:string[],artifactRetryWindowMs?:number,placementIntervalMs?:number,projectConfigDirectory?:string,connectionsDir?:string,secretDir?:string,gatewayDir?:string,connectionClient?:string[],pipelineTickMs?:number,testSiteRoot?:string,defaultAccountBinding?:string,labDirectory?:string}) {
+export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRetentionDays?:number,database:string,store?:Store,browserSecret:string,hostId:string,browserOrigin?:string,browserProxyAuth?:boolean,profilesDirectory?:string,storeSecrets?:string,storeEndpointHosts?:string[],cfAccessFile?:string,defaultArtifactLocations?:string[],artifactRetryWindowMs?:number,placementIntervalMs?:number,projectConfigDirectory?:string,connectionsDir?:string,secretDir?:string,gatewayDir?:string,connectionTickMs?:number,gatewayUrl?:string,connectionClient?:string[],pipelineTickMs?:number,testSiteRoot?:string,defaultAccountBinding?:string,labDirectory?:string}) {
  if(!config.browserSecret) throw Error('Browser credential required');
  if(config.browserProxyAuth&&!config.browserOrigin)throw Error('Proxy browser auth requires configured browser origin');
  const ownStore=!config.store,store=config.store??createStore(config.database),{all,get,put}=store;
@@ -201,6 +201,12 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  const startCommand=async(e:any,hostId:string,binding:any)=>{const s=await get(e.sessionId,'session'),d=e.dispatch,input=d.input;
   Object.assign(e,{hostId,...(s.account||binding?{requestedAccount:s.account??null,effectiveAccount:binding??{binding:s.account,legacy:true}}:{}),...(binding?.taken?{directedBy:binding.holder,takenFrom:e.directedBy}:{})});
   const command:any={id:randomUUID(),executionId:e.id,sessionId:s.id,hostId,kind:'start',payload:{harness:s.agentConfig?.harness??'codex',...(s.account||binding&&!s.nativeSessionId?{account:binding?.binding??s.account,...(binding?{managedAccount:binding}:{})}:{}),text:input,...(s.projectId?{projectId:s.projectId,project:projects.project_context({projectId:s.projectId}).settings}:{}),...(gitNetwork(s)?{gitNetwork:true}:{}),setup:s.setup??'run',...(s.workingDirectory?{workingDirectory:s.workingDirectory}:{}),model:e.model,effort:e.effort,...(s.agentConfig?{agentConfig:s.agentConfig}:{}),instructions:s.agentConfig?'':'Follow the user request and its scope. Discuss, answer questions, or review existing results when requested; do not create or modify a website unless requested. When creating a static website, deliver output/index.html and retain all source assets. Do not spawn subagents.',...(s.nativeSessionId?{nativeSessionId:s.nativeSessionId}:{}),...(d.payload??{})},status:'pending'};(await agent.decorate(s,e,command));
+  // Per-run token (fleet-connections.md §4) for the profile's granted connections, minted with the start command.
+  const granted=Array.isArray(s.agentConfig?.connections)?s.agentConfig.connections.filter((x:any)=>typeof x==='string'):[];
+  if(granted.length){const run=await connections.mint({executionId:e.id,directedBy:e.directedBy??null,projectId:s.projectId??null,experimentId:e.experimentId??null,pipelineRunId:s.pipelineRunId??null},granted);
+   if(run.token){command.payload.runToken=run.token;command.payload.connections=run.connections}
+   // Visible, not blocking: the run starts without a connection its access list or intake does not allow.
+   if(run.refused.length)e.connectionsRefused=run.refused}
   await put('execution',e);await put('command',command);
   // An automatic take (the subscription's take rule listed the project): the holder directs the task from now on (§5).
   if(binding?.taken&&s.deliveryId)await store.tasks.take(s.deliveryId,binding.holder);
@@ -307,7 +313,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  // ordinary agent executions with the step's profile (variant overrides applied); script steps are executor script commands.
  const configDir=config.projectConfigDirectory||'config',profilesDir=config.profilesDirectory||'config/agents';
  let lab:ReturnType<typeof labExperiments>|undefined;
- const runner=pipelineRunner({store:store as any,directory:configDir,connectionsDir:config.connectionsDir,client:config.connectionClient,
+ const runner=pipelineRunner({store:store as any,directory:configDir,connections:{mint:(r,c)=>connections.mint(r,c),published:()=>connections.writeSnapshot(),revoke:id=>connections.revoke(id),ingest:()=>connections.ingest()},gatewayUrl:config.gatewayUrl,client:config.connectionClient,
   // A Lab run's end moves its experiment; a completed draft-examples run proposes its drafted examples.
   onFinish:run=>{if(!lab)return;if(run.experimentId)lab.reconcile(run.experimentId).catch(e=>app.log.error(e));if(run.pipelineId==='draft-examples'&&run.state==='completed')lab.importDrafts(run,b=>examples.add(b)).catch(e=>app.log.error(e))},
   save:o=>artifacts.saveObject(o),read:id=>artifacts.read(id).then(async (b:any)=>Buffer.isBuffer(b)?b:Buffer.from(await new Response(b).arrayBuffer())),
@@ -318,7 +324,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
    if(overrides.web_route!==undefined&&!['connections','builtin'].includes(overrides.web_route))fail(400,'web_route must be connections or builtin');
    const skills=(profile.skills??[]).map((id:string)=>{if(!/^[a-z0-9-]{1,80}$/.test(id))fail(400,'Invalid skill');return {id,text:readFileSync(resolve(configDir,'skills',id,'SKILL.md'),'utf8')}});
    const s={id:randomUUID(),createdAt:Date.now(),agentConfig:profile,...(overrides.account?{account:overrides.account}:{}),...(run.projectId?{projectId:run.projectId}:{}),pipelineRunId:run.id};await put('session',s);
-   const e=await store.atomic(()=>enqueue(s,prompt,'pipeline:'+stepExecutionId,{...(overrides.host!==undefined?{host:String(overrides.host)}:{}),payload:{inputs,skills,webRoute:overrides.web_route??'connections',connectionLabel:stepExecutionId},execution:{pipelineStepId:stepExecutionId,pipelineRunId:run.id,...(run.experimentId?{experimentId:run.experimentId}:{})}}));return e.id},
+   const e=await store.atomic(()=>enqueue(s,prompt,'pipeline:'+stepExecutionId,{...(overrides.host!==undefined?{host:String(overrides.host)}:{}),payload:{inputs,skills,webRoute:overrides.web_route??'connections'},execution:{pipelineStepId:stepExecutionId,pipelineRunId:run.id,...(run.experimentId?{experimentId:run.experimentId}:{})}}));return e.id},
   startScript:async({run,stepExecutionId,command,timeoutMs,hostId,inputs})=>store.atomic(async()=>{const s={id:randomUUID(),createdAt:Date.now(),...(run.projectId?{projectId:run.projectId}:{}),pipelineRunId:run.id};await put('session',s);
    const e:any={id:randomUUID(),executionId:'',sessionId:s.id,hostId:hostId??config.hostId,state:'queued',createdAt:Date.now(),pipelineStepId:stepExecutionId,pipelineRunId:run.id,...(run.experimentId?{experimentId:run.experimentId}:{})};e.executionId=e.id;
    await put('execution',e);await put('command',{id:randomUUID(),executionId:e.id,sessionId:s.id,hostId:e.hostId,kind:'script',payload:{command,inputs,...(timeoutMs?{timeout_ms:timeoutMs}:{})},status:'pending'});return e.id})});
@@ -340,6 +346,10 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  const connections=connectionRegistry(store,{secretDir:config.secretDir,gatewayDir:config.gatewayDir});
  Object.assign(projects,connections.operations);
  app.addHook('onReady',async()=>{await store.atomic(()=>connections.sync());await connections.writeSnapshot()});
+ // Spool ingest and token revocation every few seconds (connection_tick_seconds: test seam, 0 turns the timer off).
+ let connectionTimer:any;const connectionMs=config.connectionTickMs??3000;
+ app.addHook('onReady',async()=>{if(connectionMs>0){let running=false;connectionTimer=setInterval(()=>{if(running)return;running=true;store.atomic(()=>connections.tick()).catch(e=>app.log.error(e)).finally(()=>{running=false})},connectionMs);connectionTimer.unref?.()}});
+ app.addHook('onClose',async()=>{clearInterval(connectionTimer)});
  app.decorate('connections',connections);
  // Success rule (design §3, P3-D2): a start command reported completed waits for the execution's required artifacts; a
  // missing or failed one fails it. settle() finishes a waiting execution once its artifacts are settled or the window passed.

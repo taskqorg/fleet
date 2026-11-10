@@ -1,132 +1,78 @@
-"""Fleet connection client (docs/designs/fleet-lab.md, Connections). One client, two entry points:
+"""Fleet connection client (docs/designs/fleet-connections.md §5). One client, two entry points:
 
-  connection_call.py call <connection.json> <label> <calls dir> <tool>   arguments as JSON on stdin, result JSON on stdout
-  connection_call.py mcp  <connection.json> <label> <calls dir>          MCP stdio server with the connection's tools
+  connection_call.py call <connection> <tool>        arguments as JSON on stdin, one call line as JSON on stdout
+  connection_call.py mcp  <connection> <tools.json>  MCP stdio server with the connection's tools
 
-The connection record is a private host file {clientPath, clientSha256, pipeConfigPath, tools}. The client library (Pipe's
-pipe_mcp.py) is loaded only when its SHA-256 matches clientSha256, from the bytes that were hashed. The label (the Fleet
-step execution ID) goes to Pipe as X-Pipe-Task. Every call appends one line to <calls dir>/.connection-calls.jsonl:
-{tool, request_id, outcome: ok|error|unknown, error_code, usage}; the coordinator turns each line into a tool_run.
+Calls go to fleet-gateway: POST <FLEET_GATEWAY_URL>/v1/call/<connection>/<tool> with the run's token (FLEET_RUN_TOKEN) as
+the bearer. The gateway holds the keys and records every call in its spool, so this client writes no record of its own. A
+remote host adds the Cloudflare Access service token from FLEET_CF_ACCESS_FILE (default ~/.config/fleet/cf-access-machine.env).
 """
-import hashlib
 import json
 import os
 import re
-import stat
+import ssl
 import sys
-import types
-import uuid
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 sys.dont_write_bytecode = True
-# Pipe's error reasons that leave no doubt about the outcome; provider-body and provider-timeout leave the charge unknown.
+# Gateway reasons that leave the provider charge unknown; every other reason is a plain error.
 UNKNOWN = {'provider-body', 'provider-timeout', 'client-timeout', 'invalid-response'}
+TIMEOUT = 60
 
 
-def private(path):
-    p = Path(path)
-    m = p.lstat()
-    if not p.is_absolute() or p.is_symlink() or not stat.S_ISREG(m.st_mode) or m.st_uid != os.getuid() or m.st_mode & 0o077:
-        raise ValueError('private connection configuration required')
-    return p
-
-
-def load(record_path):
-    record = json.loads(private(record_path).read_text())
-    source = Path(record['clientPath']).read_bytes()
-    if hashlib.sha256(source).hexdigest() != record.get('clientSha256'):
-        raise PermissionError('client-hash-mismatch')
-    module = types.ModuleType('fleet_connection_client')
-    module.__file__ = record['clientPath']
-    exec(compile(source, record['clientPath'], 'exec'), module.__dict__)
-    config = json.loads(private(record['pipeConfigPath']).read_text())
-    config['url'] = config['url'].rstrip('/')
-    secrets = [config.get('token', '')]
-    if config.get('access_file'):
-        secrets.extend(module.access_headers(config['access_file']).values())
-    return record, module, config, [s for s in secrets if s]
-
-
-def redact(value, secrets):
-    if isinstance(value, str):
-        for secret in secrets:
-            value = value.replace(secret, '[redacted]')
-        return value
-    if isinstance(value, list):
-        return [redact(v, secrets) for v in value]
-    if isinstance(value, dict):
-        return {k: redact(v, secrets) for k, v in value.items()}
-    return value
-
-
-def classify(result):
-    """(outcome, error_code, output, usage) from the client's MCP tool result."""
-    text = '\n'.join(c.get('text', '') for c in result.get('content') or [] if c.get('type') == 'text')
-    if not result.get('isError'):
-        try:
-            output = json.loads(text)
-        except ValueError:
-            return 'unknown', 'invalid-response', {'text': text}, None
-        return 'ok', None, output, output.get('usage') if isinstance(output, dict) else None
-    m = re.search(r'HTTP (\d+): ?(.*)', text, re.S)
-    if m:
-        status, body = int(m.group(1)), m.group(2)
-        try:
-            code = json.loads(body).get('error') or f'http-{status}'
-        except (ValueError, AttributeError):
-            code = f'http-{status}'
-    elif 'timed out' in text:
-        code = 'client-timeout'
-    elif 'unreachable' in text:
-        code = 'unreachable'
-    else:
-        code = 'client-error'
-    return ('unknown' if code in UNKNOWN else 'error'), code, {'error': code, 'text': text}, None
-
-
-def call(loaded, label, calls_dir, tool, arguments):
-    record, module, config, secrets = loaded
-    if tool not in record.get('tools', []):
-        result = {'isError': True, 'content': [{'type': 'text', 'text': f'tool {tool} not granted by this connection'}]}
-        outcome, code, output, usage = 'error', 'tool-not-granted', {'error': 'tool-not-granted'}, None
-    else:
-        os.environ['PIPE_TASK'] = label
-        try:
-            result = module.answer({'method': 'tools/call', 'params': {'name': tool, 'arguments': arguments}}, config, 'fleet')
-        except Exception as error:  # The client failed before or after sending: the outcome is unknown.
-            result = {'isError': True, 'content': [{'type': 'text', 'text': 'client failed: ' + type(error).__name__}]}
-            outcome, code, output, usage = 'unknown', 'client-exception', {'error': 'client-exception'}, None
-        else:
-            outcome, code, output, usage = classify(result)
-    line = {'tool': tool, 'request_id': str(uuid.uuid4()), 'label': label, 'outcome': outcome, 'error_code': code, 'usage': usage}
-    Path(calls_dir).mkdir(parents=True, exist_ok=True)
-    with open(Path(calls_dir) / '.connection-calls.jsonl', 'a') as f:
-        f.write(json.dumps(line) + '\n')
-    return redact(result, secrets), redact({**line, 'output': output}, secrets)
-
-
-def refused(error):
-    code = str(error) if isinstance(error, PermissionError) else 'connection-unavailable'
-    return code, {'isError': True, 'content': [{'type': 'text', 'text': 'Connection unavailable: ' + code}]}
-
-
-def main(argv):
-    mode, record_path, label, calls_dir = argv[1:5]
+def access_headers():
+    path = Path(os.environ.get('FLEET_CF_ACCESS_FILE') or Path.home() / '.config/fleet/cf-access-machine.env')
     try:
-        loaded = load(record_path)
-    except Exception as error:
-        loaded, failure = None, refused(error)
-    if mode == 'call':
-        tool = argv[5]
-        if loaded is None:
-            print(json.dumps({'tool': tool, 'outcome': 'error', 'error_code': failure[0], 'usage': None, 'output': None}))
-            return
-        print(json.dumps(call(loaded, label, calls_dir, tool, json.load(sys.stdin))[1]))
-        return
-    tools = []
-    if loaded:
-        granted = loaded[0].get('tools', [])
-        tools = [{k: v for k, v in t.items() if k != 'field'} for t in getattr(loaded[1], 'TOOLS', []) if t.get('name') in granted]
+        values = dict(l.removeprefix('export ').strip().split('=', 1) for l in path.read_text().splitlines() if '=' in l)
+    except OSError:
+        return {}
+    names = {'CF_ACCESS_CLIENT_ID': 'CF-Access-Client-Id', 'CF_ACCESS_CLIENT_SECRET': 'CF-Access-Client-Secret'}
+    return {h: values[n].strip('\'"') for n, h in names.items() if n in values}
+
+
+def tls_context():
+    """python.org builds on macOS ship no CA bundle; the OS one lives here. Elsewhere the default store is right."""
+    return ssl.create_default_context(cafile='/etc/ssl/cert.pem' if os.path.exists('/etc/ssl/cert.pem') else None)
+
+
+def call(connection, tool, arguments):
+    """One gateway call: {tool, callId, outcome: ok|error|unknown, error_code, usage, output}."""
+    url, token = os.environ.get('FLEET_GATEWAY_URL', '').rstrip('/'), os.environ.get('FLEET_RUN_TOKEN', '')
+    line = {'tool': tool, 'callId': None, 'outcome': 'error', 'error_code': None, 'usage': None, 'output': None}
+    if not url or not token:
+        return {**line, 'error_code': 'connection-unavailable'}
+    headers = {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'User-Agent': 'fleet-connection/1'}
+    if url.startswith('https://'):
+        headers.update(access_headers())
+    request = urllib.request.Request(f'{url}/v1/call/{connection}/{tool}', json.dumps(arguments).encode(), headers, method='POST')
+    try:
+        with urllib.request.urlopen(request, timeout=TIMEOUT, context=tls_context() if url.startswith('https://') else None) as r:
+            status, call_id, error, body = r.status, r.headers.get('x-fleet-call-id'), r.headers.get('x-fleet-error'), r.read()
+    except urllib.error.HTTPError as e:
+        status, call_id, error, body = e.code, e.headers.get('x-fleet-call-id'), e.headers.get('x-fleet-error'), e.read()
+    except TimeoutError:
+        return {**line, 'outcome': 'unknown', 'error_code': 'client-timeout'}
+    except (urllib.error.URLError, OSError):
+        return {**line, 'error_code': 'unreachable'}
+    line['callId'] = call_id
+    try:
+        output = json.loads(body)
+    except ValueError:
+        output = {'text': body[:2000].decode('utf8', 'replace')}
+        if 200 <= status < 300:
+            return {**line, 'outcome': 'unknown', 'error_code': 'invalid-response', 'output': output}
+    if 200 <= status < 300:
+        return {**line, 'outcome': 'ok', 'output': output, 'usage': output.get('usage') if isinstance(output, dict) else None}
+    # The gateway names its own refusals in x-fleet-error; a provider reply passed through is http-<status>.
+    code = f'http-{status}' if not error or re.fullmatch(r'provider-\d+', error) else error
+    return {**line, 'outcome': 'unknown' if code in UNKNOWN else 'error', 'error_code': code, 'output': output}
+
+
+def mcp(connection, spec):
+    tools = spec.get('tools', [])
+    names = {t['name'] for t in tools}
     for raw in sys.stdin:
         try:
             message = json.loads(raw)
@@ -137,17 +83,29 @@ def main(argv):
         method, params = message.get('method'), message.get('params') or {}
         reply = {'jsonrpc': '2.0', 'id': message['id']}
         if method == 'initialize':
-            reply['result'] = {'protocolVersion': params.get('protocolVersion', '2025-06-18'), 'capabilities': {'tools': {}}, 'serverInfo': {'name': 'fleet-connection', 'version': '1'},
-                               'instructions': getattr(loaded[1], 'INSTRUCTIONS', '') if loaded else ''}
+            reply['result'] = {'protocolVersion': params.get('protocolVersion', '2025-06-18'), 'capabilities': {'tools': {}},
+                               'serverInfo': {'name': connection, 'version': '1'}, 'instructions': spec.get('instructions', '')}
         elif method == 'ping':
             reply['result'] = {}
         elif method == 'tools/list':
             reply['result'] = {'tools': tools}
         elif method == 'tools/call':
-            reply['result'] = call(loaded, label, calls_dir, params.get('name'), params.get('arguments') or {})[0] if loaded else failure[1]
+            name = params.get('name')
+            line = call(connection, name, params.get('arguments') or {}) if name in names else {'outcome': 'error', 'error_code': 'tool-not-granted', 'output': None}
+            ok = line['outcome'] == 'ok'
+            text = json.dumps(line['output']) if ok else f"Call {line['outcome']}: {line['error_code']}" + (f" {json.dumps(line['output'])}" if line.get('output') else '')
+            reply['result'] = {'content': [{'type': 'text', 'text': text}], 'isError': not ok}
         else:
             reply['error'] = {'code': -32601, 'message': 'method not found'}
         print(json.dumps(reply), flush=True)
+
+
+def main(argv):
+    mode, connection, rest = argv[1], argv[2], argv[3]
+    if mode == 'call':
+        print(json.dumps(call(connection, rest, json.load(sys.stdin))))
+    else:
+        mcp(connection, json.loads(rest))
 
 
 if __name__ == '__main__':

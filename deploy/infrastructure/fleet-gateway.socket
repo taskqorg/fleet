@@ -1,0 +1,11 @@
+# fleet-gateway socket (docs/designs/fleet-connections.md §3), a user unit of fleet; held open across gateway restarts.
+[Unit]
+Description=Fleet gateway socket, held open across restarts
+
+[Socket]
+ListenStream=127.0.0.1:8742
+NoDelay=true
+Backlog=4096
+
+[Install]
+WantedBy=sockets.target

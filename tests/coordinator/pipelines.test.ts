@@ -5,6 +5,10 @@ import {mkdtempSync,mkdirSync,writeFileSync,chmodSync,readFileSync,cpSync} from 
 import {fileURLToPath} from 'node:url';
 import {createApp} from './test-app.ts';
 import {resolveRefs,problemOf,validatePipeline,shellQuote} from '../../packages/coordinator/pipelines.ts';
+import {gatewayConfig,seedConnections} from './fake-gateway.ts';
+import {createHash} from 'node:crypto';
+import {appendFileSync} from 'node:fs';
+const spool=(dir:string,line:any)=>{mkdirSync(dir+'/gateway/state/spool',{recursive:true});appendFileSync(dir+'/gateway/state/spool/'+new Date().toISOString().slice(0,10)+'.jsonl',JSON.stringify(line)+'\n')};
 import {attachStores,upload} from './artifact-helpers.ts';
 
 const fake=fileURLToPath(new URL('./fixtures/fake_connection.py',import.meta.url));
@@ -14,13 +18,13 @@ function setup(pipelines:Record<string,any>,answers:Record<string,string>){
  for(const [id,p] of Object.entries(pipelines))writeFileSync(`${dir}/pipelines/${id}.json`,JSON.stringify(p));
  for(const [conn,answer] of Object.entries(answers)){mkdirSync(`${dir}/connections/${conn}`,{recursive:true});writeFileSync(`${dir}/connections/${conn}/connection.json`,JSON.stringify({answer,log:dir+'/calls.log',jobState:dir+'/job.state'}));chmodSync(`${dir}/connections/${conn}/connection.json`,0o600)}
  writeFileSync(dir+'/calls.log','');writeFileSync(dir+'/job.state','running');
- const config={database:dir+'/db',browserSecret:'b',machineSecret:'m',hostId:'host',projectConfigDirectory:dir,profilesDirectory:dir+'/agents',connectionsDir:dir+'/connections',connectionClient:['python3',fake],storeEndpointHosts:['127.0.0.1'],pipelineTickMs:100};
+ const config={database:dir+'/db',browserSecret:'b',machineSecret:'m',hostId:'host',projectConfigDirectory:dir,profilesDirectory:dir+'/agents',...gatewayConfig(dir),storeEndpointHosts:['127.0.0.1'],pipelineTickMs:100};
  const calls=()=>readFileSync(dir+'/calls.log','utf8').split('\n').filter(Boolean).map(l=>JSON.parse(l));
  return {dir,config,calls}}
-const boot=async(config:any,fakeStore?:any)=>{const app:any=createApp(config);await app.ready();const f=await attachStores(app,'m',['host'],fakeStore);return {app,f}};
+const boot=async(config:any,fakeStore?:any)=>{const app:any=createApp(config);await app.ready();await seedConnections(app,config.projectConfigDirectory);const f=await attachStores(app,'m',['host'],fakeStore);return {app,f}};
 const start=async(app:any,id:string,body:any)=>{const r=await app.inject({method:'POST',url:`/api/pipelines/${id}/runs`,headers:{authorization:'Bearer b'},payload:body});assert.equal(r.statusCode,200,r.body);return r.json()};
 const until=async(app:any,id:string,ok:(r:any)=>boolean)=>{for(let i=0;i<200;i++){const r=await app.store.get(id,'pipeline-run');if(ok(r))return r;await new Promise(x=>setTimeout(x,50))}throw Error('timeout waiting for run '+id)};
-const api=(conn='pipe-read',extra={})=>({id:'search',kind:'api',connection:conn,tool:'web_search',arguments:{query:'${example.query}'},...extra});
+const api=(conn='tavily',extra={})=>({id:'search',kind:'api',connection:conn,tool:'web_search',arguments:{query:'${example.query}'},...extra});
 
 test('references resolve whole values and inline text; a missing one names its path',()=>{
  const ctx={example:{query:'q',inputs:[]},outputs:{search:{results:[{url:'https://a'}]}}};
@@ -39,14 +43,14 @@ test('infra codes are classified; unknown stays unknown',()=>{
 });
 
 test('api steps record tool_run rows with credits; a failed step stops later steps; a missing reference fails with ref:',async()=>{
- const s=setup({two:{version:2,id:'two',steps:[api(),{id:'read',kind:'api',connection:'pipe-read',tool:'web_extract',arguments:{urls:'${steps.search.output.results.0.url}'}}]},
-  bad:{version:2,id:'bad',steps:[api('full'),{id:'after',kind:'script',command:'true'}]},ref:{version:2,id:'ref',steps:[api(),{id:'after',kind:'script',command:'echo ${steps.search.output.nothing}'}]},agent:{version:2,id:'agent',steps:[{id:'a',kind:'agent',profile:'codex-researcher',prompt:'x'}]}},{'pipe-read':'ok',full:'queue-full'});
+ const s=setup({two:{version:2,id:'two',steps:[api(),{id:'read',kind:'api',connection:'tavily',tool:'web_extract',arguments:{urls:'${steps.search.output.results.0.url}'}}]},
+  bad:{version:2,id:'bad',steps:[api('full'),{id:'after',kind:'script',command:'true'}]},ref:{version:2,id:'ref',steps:[api(),{id:'after',kind:'script',command:'echo ${steps.search.output.nothing}'}]},agent:{version:2,id:'agent',steps:[{id:'a',kind:'agent',profile:'codex-researcher',prompt:'x'}]}},{'tavily':'ok',full:'queue-full'});
  const {app,f}=await boot(s.config);
  try{
   const run=await until(app,(await start(app,'two',{requestId:'r1',example:{query:'hello'}})).id,r=>r.state!=='running');
   assert.equal(run.state,'completed');assert.deepEqual(run.usage,{credits:4});
-  assert.equal(s.calls()[1].arguments.urls,'https://example.com/a');assert.equal(s.calls()[0].label,run.id+':step:0');
-  const tools=await app.store.query("SELECT e.parent_execution_id AS parent,t.connection_cost,t.connection_cost_basis AS basis FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE e.kind='tool_run' ORDER BY e.id");
+  assert.equal(s.calls()[1].arguments.urls,'https://example.com/a');assert.equal(s.calls()[0].executionId,run.id+':step:0');
+  const tools=await app.store.query("SELECT e.parent_execution_id AS parent,t.connection_cost,t.connection_cost_basis AS basis FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE e.kind='tool_run' ORDER BY e.parent_execution_id");
   assert.deepEqual(tools.map((t:any)=>[t.parent,t.connection_cost.credits,t.basis]),[[run.id+':step:0',2,'measured'],[run.id+':step:1',2,'measured']]);
   assert.ok(run.steps.every((x:any)=>x.outputArtifactId));
   const out=await app.store.query("SELECT name FROM artifact WHERE execution_id=$1",[run.id+':step:1']);assert.deepEqual(out.map((x:any)=>x.name),['output.json']);
@@ -96,7 +100,7 @@ test('a job step keeps its jobId and resumes polling after a restart',async()=>{
 });
 
 test('agent and script steps get earlier outputs as inputs; the agent call file becomes tool_run rows',async()=>{
- const s=setup({chain:{version:2,id:'chain',steps:[api(),{id:'summary',kind:'agent',profile:'codex-researcher',prompt:'Summarize ${example.query}'},{id:'check',kind:'script',command:'test -s "$FLEET_INPUT_DIR/summary/summary.md"'}]}},{'pipe-read':'ok'});
+ const s=setup({chain:{version:2,id:'chain',steps:[api(),{id:'summary',kind:'agent',profile:'codex-researcher',prompt:'Summarize ${example.query}'},{id:'check',kind:'script',command:'test -s "$FLEET_INPUT_DIR/summary/summary.md"'}]}},{'tavily':'ok'});
  const {app,f}=await boot(s.config);
  const host=async(route:string,b:any)=>{const r=await app.inject({method:'POST',url:'/api/hosts/'+route,headers:{authorization:'Bearer m'},payload:b});assert.equal(r.statusCode,200,r.body);return r.json()};
  const finish=async(c:any,files:Record<string,string>)=>{const body={hostId:'host',commandId:c.id,executionId:c.executionId};await host('receipts',{...body,status:'started'});
@@ -105,21 +109,23 @@ test('agent and script steps get earlier outputs as inputs; the agent call file 
  try{const run0=await start(app,'chain',{requestId:'c1',example:{query:'fleet',inputs:[{path:'notes.txt',text:'n'}],references:[{path:'x',text:'secret'}]}});
   await until(app,run0.id,r=>r.steps[1].executionId);
   const [agent]=(await host('poll',{hostId:'host'})).commands;assert.equal(agent.kind,'start');
-  assert.equal(agent.payload.text,'Summarize fleet');assert.equal(agent.payload.connectionLabel,run0.id+':step:1');assert.equal(agent.payload.webRoute,'connections');
+  assert.equal(agent.payload.text,'Summarize fleet');assert.ok(agent.payload.runToken);assert.deepEqual(agent.payload.connections.map((c:any)=>c.name),['tavily']);assert.equal(agent.payload.webRoute,'connections');
   assert.deepEqual(agent.payload.inputs.map((i:any)=>i.path).sort(),['example/notes.txt','search/output.json']);
   // The host may read exactly the named inputs.
   const got=await host('artifacts/get',{hostId:'host',executionId:agent.executionId,artifactId:agent.payload.inputs[0].artifactId});assert.ok(got.url);
   // An upload still pending after the completion receipt holds the step until it settles.
   await app.store.query("INSERT INTO artifact(id,scope,content_hash,size,media_type,name,execution_id,state) VALUES('late','prod',$1,1,'text/plain','late.txt',$2,'pending')",['0'.repeat(64),agent.executionId]);
-  await finish(agent,{'summary.md':'# Sources\nhttps://example.com/a','.connection-calls.jsonl':JSON.stringify({tool:'web_search',request_id:'q',label:run0.id+':step:1',outcome:'ok',error_code:null,usage:{credits:3}})+'\n'});
+  // The agent's own call reaches the gateway with its run token; the spool line is what the coordinator records.
+  spool(s.dir,{callId:'agent-call',executionId:agent.executionId,tokenSha256:createHash('sha256').update(agent.payload.runToken).digest('hex'),connection:'tavily',tool:'web_search',outcome:'ok',errorCode:null,status:200,usage:{unit:'credits',amount:3}});
+  await finish(agent,{'summary.md':'# Sources\nhttps://example.com/a'});
   await new Promise(x=>setTimeout(x,500));assert.equal((await app.store.get(run0.id,'pipeline-run')).steps[1].state,'running');
   await app.store.query("UPDATE artifact SET state='failed' WHERE id='late'");
   await until(app,run0.id,r=>r.steps[2].executionId);
   const [script]=(await host('poll',{hostId:'host'})).commands;assert.equal(script.kind,'script');
-  assert.ok(script.payload.inputs.some((i:any)=>i.path==='summary/summary.md'));assert.ok(!script.payload.inputs.some((i:any)=>i.path.includes('.connection-calls')));
+  assert.ok(script.payload.inputs.some((i:any)=>i.path==='summary/summary.md'));
   await finish(script,{'script.stdout':''});
   const run=await until(app,run0.id,r=>r.state!=='running');assert.equal(run.state,'completed');assert.deepEqual(run.usage,{credits:5});
-  const agentCalls=await app.store.query("SELECT t.connection_cost FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE e.kind='tool_run' AND e.parent_execution_id=$1",[run.id+':step:1']);
+  const agentCalls=await app.store.query("SELECT t.connection_cost FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE e.kind='tool_run' AND e.parent_execution_id=$1",[agent.executionId]);
   assert.deepEqual(agentCalls.map((c:any)=>c.connection_cost.credits),[3]);
   assert.ok(!JSON.stringify(agent.payload).includes('secret'));
  }finally{await app.close();await f.close()}

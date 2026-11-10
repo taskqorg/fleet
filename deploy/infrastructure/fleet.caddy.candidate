@@ -11,6 +11,15 @@ fleet.ufobe.com {
         handle @machine {
             reverse_proxy 127.0.0.1:9470
         }
+        # API calls from remote hosts (fleet-connections.md §3): Access app "Fleet gateway" (fleet.ufobe.com/v1/call) admits only
+        # the fleet-machines service token; the gateway checks the run token.
+        @gateway {
+            method POST
+            path /v1/call/*
+        }
+        handle @gateway {
+            reverse_proxy 127.0.0.1:8742
+        }
         request_header -Authorization
         forward_auth 127.0.0.1:9471 {
             uri /verify
