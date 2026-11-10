@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -161,29 +162,23 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 			return err
 		}
 	}
-	fl, _ := w.(http.Flusher)
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream; charset=utf-8")
 	h.Set("Cache-Control", "no-cache, no-transform")
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(200)
-	send := func(event string, data any, id int64) {
-		b, _ := json.Marshal(data)
-		if id >= 0 {
-			fmt.Fprintf(w, "id: %d\n", id)
-		}
-		if event != "" {
-			fmt.Fprintf(w, "event: %s\n", event)
-		}
-		fmt.Fprintf(w, "data: %s\n\n", b)
-	}
+	sw := newSSE(w)
+	send := sw.send
 	send("ready", map[string]int64{"cursor": cursor}, -1)
-	fl.Flush()
+	if err := sw.flush(); err != nil {
+		return nil
+	}
 	// A comment line every 25 s (FLEET_STREAM_PING_MS: test seam) keeps proxies and Access from dropping an idle stream.
 	ping := time.NewTicker(max(cEnvMs("FLEET_STREAM_PING_MS", 25000), time.Millisecond))
 	defer ping.Stop()
 	for {
 		held := false
+		sw.begin()
 		for {
 			var cs []change
 			var resync bool
@@ -209,7 +204,9 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 				break
 			}
 		}
-		fl.Flush()
+		if err := sw.flush(); err != nil {
+			return nil // the client is gone or stopped reading: end the handler and its subscription
+		}
 		var timer <-chan time.Time
 		if held {
 			timer = time.After(heldWait)
@@ -223,7 +220,65 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 			}
 		case <-timer:
 		case <-ping.C:
-			fmt.Fprint(w, ": ping\n\n")
+			sw.begin()
+			sw.write([]byte(": ping\n\n"))
+			if err := sw.flush(); err != nil {
+				return nil
+			}
 		}
 	}
+}
+
+// streamWriteWait bounds one burst of writes and its flush to a client; between bursts the stream has no deadline, so an
+// idle stream stays open as long as the client keeps it (pings keep proxies from dropping it).
+var streamWriteWait = 30 * time.Second
+
+// sse: event writes of one stream. A burst starts with begin (the write deadline), ends with flush (which clears it);
+// the first write or flush error sticks, and every later write is skipped.
+type sse struct {
+	w   http.ResponseWriter
+	rc  *http.ResponseController
+	err error
+}
+
+func newSSE(w http.ResponseWriter) *sse {
+	s := &sse{w: w, rc: http.NewResponseController(w)}
+	s.begin()
+	return s
+}
+
+func (s *sse) begin() {
+	if err := s.rc.SetWriteDeadline(time.Now().Add(streamWriteWait)); err != nil && !errors.Is(err, http.ErrNotSupported) && s.err == nil {
+		s.err = err
+	}
+}
+
+func (s *sse) write(b []byte) {
+	if s.err == nil {
+		_, s.err = s.w.Write(b)
+	}
+}
+
+func (s *sse) send(event string, data any, id int64) {
+	b, _ := json.Marshal(data)
+	var out []byte
+	if id >= 0 {
+		out = fmt.Appendf(out, "id: %d\n", id)
+	}
+	if event != "" {
+		out = fmt.Appendf(out, "event: %s\n", event)
+	}
+	s.write(fmt.Appendf(out, "data: %s\n\n", b))
+}
+
+func (s *sse) flush() error {
+	if s.err == nil {
+		s.err = s.rc.Flush()
+	}
+	if s.err == nil {
+		if err := s.rc.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			s.err = err
+		}
+	}
+	return s.err
 }

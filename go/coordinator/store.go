@@ -93,7 +93,9 @@ func (s *Store) once(ctx context.Context, sc *Scope, write bool, lock string, fn
 	if !write {
 		opts = pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}
 	}
-	return pgx.BeginTxFunc(ctx, s.pool, opts, func(tx pgx.Tx) error {
+	var t pgx.Tx
+	err := pgx.BeginTxFunc(ctx, s.pool, opts, func(tx pgx.Tx) error {
+		t = tx
 		if a, _ := ctx.Value(actorKey{}).(string); a != "" {
 			if _, err := tx.Exec(ctx, "SELECT set_config('fleet.actor',$1,true)", a); err != nil {
 				return err
@@ -111,12 +113,30 @@ func (s *Store) once(ctx context.Context, sc *Scope, write bool, lock string, fn
 		}
 		return fn(tx)
 	})
+	if hooks, _ := endHooks.LoadAndDelete(t); hooks != nil {
+		for _, h := range *hooks.(*[]func(bool)) {
+			h(err == nil)
+		}
+	}
+	return err
+}
+
+// endHooks: effects outside the database (files) registered by onEnd, keyed by their transaction.
+var endHooks sync.Map
+
+// onEnd runs fn when tx has ended, in the caller's goroutine: committed true only after a confirmed commit. A retried
+// attempt ends with committed false before the next attempt runs.
+func onEnd(tx pgx.Tx, fn func(committed bool)) {
+	v, _ := endHooks.LoadOrStore(tx, &[]func(bool){})
+	hooks := v.(*[]func(bool))
+	*hooks = append(*hooks, fn)
 }
 
 var migrationSplit = regexp.MustCompile(`(?m)^-- migration (\d+)`)
 
-// migrate applies schema.sql as the owner role: each "-- migration N" section once, in order, in one transaction, recorded
-// in schema_migration. Migration 6's JavaScript document move is a no-op on an empty database and is not ported.
+// migrate applies schema.sql as the owner role: each "-- migration N" section once, in order, in one transaction that takes
+// the migration lock before it checks schema_migration, so concurrent starts never run a section twice.
+// Migration 6's JavaScript document move is a no-op on an empty database and is not ported.
 func migrate(ctx context.Context, url string) error {
 	conn, err := pgx.Connect(ctx, url)
 	if err != nil {
@@ -126,22 +146,10 @@ func migrate(ctx context.Context, url string) error {
 	if _, err := conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS schema_migration(version int PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT now())"); err != nil {
 		return err
 	}
-	done := map[int]bool{}
-	rows, _ := conn.Query(ctx, "SELECT version FROM schema_migration")
-	vs, err := pgx.CollectRows(rows, pgx.RowTo[int32])
-	if err != nil {
-		return err
-	}
-	for _, v := range vs {
-		done[int(v)] = true
-	}
 	text := []byte(schemaSQL)
 	idx := migrationSplit.FindAllSubmatchIndex(text, -1)
 	for i, m := range idx {
 		version, _ := strconv.Atoi(string(text[m[2]:m[3]]))
-		if done[version] {
-			continue
-		}
 		end := len(text)
 		if i+1 < len(idx) {
 			end = idx[i+1][0]
@@ -149,6 +157,11 @@ func migrate(ctx context.Context, url string) error {
 		body := string(text[m[0]:end])
 		err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
 			if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext($1))", GLOBAL); err != nil {
+				return err
+			}
+			// Decided under the lock: another coordinator may have applied this version while this one waited for it.
+			var applied bool
+			if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version=$1)", version).Scan(&applied); err != nil || applied {
 				return err
 			}
 			// Simple protocol: the whole section runs as one multi-statement query inside the transaction.
