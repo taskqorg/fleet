@@ -1,7 +1,8 @@
 # Fleet definition editors: coordinator operations for Agents, Pipelines and Catalogue
 
 *   **Author:** Alex Kirs
-*   **Status:** Proposed
+*   **Status:** Proposed; storage decided by the owner
+*   **Owner decision (2026-11-11):** the coordinator store is the single source of truth, with append-only revisions. A git mirror is only a later, optional stage. The six rules in "Failure modes and their rules" are binding.
 *   **Date:** 2026-11-11 (main `23cc517`, redesign #153 merged)
 *   **Depends on:** [fleet-stack.md](fleet-stack.md) contracts and the quality round's wave 1 (one router, files by domain, `go/contract`, committed `schema.sql`) and wave 2 lane F (the `ops` contract and typed `op<'name'>` in the app). [fleet-people-access.md](fleet-people-access.md) roles, director and `people.json`. [fleet-lab.md](fleet-lab.md) experiments and Promote.
 *   **Screens:** [D20](../design-system/decisions.md), the [definition editor](../design-system/patterns/definition-editor.md) pattern, page specs [agents](../design-system/pages/agents.md), [pipelines](../design-system/pages/pipelines.md), [catalogue](../design-system/pages/catalogue.md), mockup routes `#/agents`, `#/pipelines`, `#/pipelines/render-props`, `#/catalogue` in `docs/design-system/pages/mockups.html`, and "what each screen answers" in [formats.md](../design-system/formats.md). UI choices are decided there and are not reopened here.
@@ -12,7 +13,7 @@
 
 The Agents, Pipelines and Catalogue screens edit **definitions**: an agent profile (`config/agents/<id>.json`), a pipeline (`config/pipelines/<id>.json`) and a capability's catalogue entry (`config/catalogue.json`). Today the coordinator only reads these files, from the `config/` directory that ships inside each release tarball (`deploy/build-release.sh` copies `config/`). Nothing reads or writes a definition through an operation, holds a draft, or keeps revisions.
 
-This design adds those operations. Saved definitions live in the coordinator's database as append-only **revisions**, and take effect at once. The store is the one source of truth. Every saved revision is also **mirrored**, asynchronously and in one direction, to a private git repository (`taskqorg/fleet-config`): one commit per save, with the person as author and the save message. `config/` in the code repository becomes the seed for a fresh install and the place where developers ship new definitions; a release's changed file reaches the store through reconcile. An export to a patch for the code repository stays as a small extra. The design also covers the operations the screens need around definitions: draft test runs, reruns, effective layers, compatibility, models, usage, per-method assessments, comparing methods in Lab, the Lab baseline delta and person names.
+This design adds those operations. Saved definitions live in the coordinator's database as append-only **revisions**, and take effect at once. The store is the one source of truth; git never is. `config/` in the release is a **seed**: a definition is imported from it only when the store has nothing for it, and after that the store wins (a changed shipped file only shows a "repository changed" note). Executions pin the revision they started with. Definitions live in Postgres, so the database backups cover them. An export to a patch for the code repository is the git path in stage 1. A one-way **mirror** to a private git repository (`taskqorg/fleet-config`) is a later, optional stage 2, designed here so stage 1 does not block it. The design also covers the operations the screens need around definitions: draft test runs, reruns, effective layers, compatibility, models, usage, per-method assessments, comparing methods in Lab, the Lab baseline delta and person names.
 
 ## The Problem
 
@@ -28,15 +29,18 @@ This design adds those operations. Saved definitions live in the coordinator's d
 3. Every save is a revision with a person, a time and a message; any two revisions and a draft can be compared.
 4. Two people saving from the same base cannot silently overwrite each other: the second save gets 409 and a diff.
 5. A release that changes a shipped file is never lost under a newer store revision: the definition shows "repository changed" and the next save must resolve it.
-6. Every save appears as one commit in the private config repository within a minute when GitHub is up; a failed push retries and shows as a problem, and never blocks or undoes a save. Each definition also shows whether the store is ahead of the code repository's `config/`, and one click exports those as a patch.
+6. Each definition shows whether the store is ahead of the code repository's `config/`; one click exports those as a patch. (Stage 2: every save also appears as one commit in the private config repository.)
+9. A running execution never changes because someone saved: it keeps the revision it started with.
+10. History says who or what made each revision: a person, an agent (with its execution), Lab (with its experiment) or the release seed.
 7. Every execution records the kind, id, revision and content hash of each definition it resolved (for a pipeline run: the pipeline and the profile of every agent step).
 8. A draft can run (pipeline) or open a test session (agent) without being saved; the run records the draft content and its diff from the base.
 
 ## Non-Goals
 
 * Files in `config/agents/` that are not profiles (today `design-rules-data.json`, profile data read by `design-rules`). They stay shipped files.
-* The skills editor (D20: not designed). The `kind` enum leaves room; no operation handles skills now.
+* The skills editor (D20: not designed). The `kind` enum leaves room; no operation handles skills now. A skill is a directory, not one JSON file, so when it becomes a definition its revision holds rows of `(revision, path, content)` (one per file, text stored as text, not as a JSON blob), and the diff is per file in its own format. The `definition_revision` row then carries no `content` for skills; a `definition_file` table carries the files.
 * Opening a pull request on the code repository. The mirror repository carries history and review; export to the code repository stays a patch.
+* The mirror in stage 1. It is stage 2, optional.
 * Reading anything back from the mirror repository. A commit made there by hand is never applied (one direction only; see "Mirror to the config repository").
 * Three-way merge of JSON. A conflict shows both sides; the person chooses or edits.
 * Branches or named variants of a definition. Lab variants (`overrides`) already cover "try another version".
@@ -62,7 +66,7 @@ This design adds those operations. Saved definitions live in the coordinator's d
 
 *   **Given**: `hello-search` has store revision 3 (editor), based on repository file A; a release ships file B.
 *   **When**: the coordinator starts and reconciles definitions.
-*   **Then**: the definition state is `repository-changed`; executions keep using revision 3; the Draft bar offers the diff 3 against B; saving requires `repoSha: B` in the request, either with B's content ("take repository") or another content ("keep mine"); export leaves the definition out until that save. No save is lost and no release is lost.
+*   **Then**: the definition state is `repository-changed` (the same when nobody had edited it: the store wins after first boot); executions keep using revision 3; the Draft bar offers the diff 3 against B; saving requires `repoSha: B` in the request, either with B's content ("take repository") or another content ("keep mine"); export leaves the definition out until that save. No save is lost and no release is lost.
 
 ### CUJ 4: Fix a failed pipeline step and rerun
 
@@ -107,6 +111,8 @@ git: definition_export  ──▶  unified diff of every ahead definition agains
 
 ### Mirror to the config repository
 
+**Stage 2, optional; not built in stage 1.** A second opinion recommended keeping git out of stage 1, and the owner put the mirror after it. Stage 1 keeps only what the mirror needs later: `mirror_commit` is not added until stage 2, and export works without it.
+
 **Decision (owner, refines the storage choice).** The store stays the source of truth: immediate effect, rights and per-project visibility under row-level security, one transaction per save, and saves keep working when GitHub is down. Every revision is copied to a private repository, `taskqorg/fleet-config`, so off-site history, diff, blame and review come from git without Fleet building them.
 
 **Layout.** The repository mirrors `config/`: `agents/<id>.json`, `pipelines/<id>.json`, `catalogue.json`, and `skills/` when skills become definitions. Files are the canonical text of each head, so a file in the mirror equals `definition_get.text`.
@@ -134,6 +140,15 @@ git: definition_export  ──▶  unified diff of every ahead definition agains
 * Git on PDS18 becomes a coordinator dependency for the mirror only. Saves and executions do not depend on it.
 * Compared with exporting by hand, this costs one loop and one table column, and removes the step people forget.
 
+### Failure modes and their rules
+
+1. **Upgrades never clobber edits.** `config/` in the release is a seed. A definition is imported only when the store has no row for it. After first boot the store wins: a release that changes a shipped file only updates the row's repository fields, and the definition shows `repository-changed` (or `synced` if the content is equal). Taking the shipped version is an explicit save ("take repository"). This holds even when nobody edited the definition, so a release never changes behaviour without a save.
+2. **Pinned revisions.** An execution resolves each definition once, when it is created, records `{kind, id, revision, contentSha}`, and every later use reads that revision by id, never the head: the start command built at claim, each turn of the session's execution, every agent step of a pipeline run and every delegation child that names a profile. A save during a run affects only executions created after it. A new turn in an existing session is a new execution and resolves the head at its creation; the session shows when its profile revision changed between turns.
+3. **Skills as files.** See Non-Goals: `(revision, path, content)` rows when skills become definitions.
+4. **Readable history.** `source` (`repo`, `editor`, `lab`, `agent`) is shown on each History row with its link: Lab revisions name the experiment and variant, agent revisions the execution and its director. A filter hides Lab and agent revisions.
+5. **Backups.** Definitions, revisions and drafts are Postgres tables, so the coordinator database backups and restore (the recovery operations) cover them with no extra step. A restore to an older backup rolls definitions back with everything else; the seed then fills only definitions the restored store lacks.
+6. **Lost database.** A fresh database imports the seed, which is the code repository's `config/` (or, with stage 2, the owner can seed from the mirror by pointing `FLEET_PROJECT_CONFIG_DIRECTORY` at a checkout of it).
+
 ### Reconcile at start
 
 Reconcile runs once at start, in an `onStart` hook registered before the hooks that resume work (`pipelineTick`, `labReconcileRunning`), inside one `cWrite` under the `GLOBAL` lock. Terms: `repoSha` is the git blob SHA-1 of the file bytes (matches `git hash-object`); `repoContentSha` is the SHA-256 of the file's canonical content; the `definition` row keeps the last seen `repo_sha`, `repo_content` and `repo_content_sha`. A revision's `repo_base` is the `repo_sha` that was current when it was written.
@@ -144,10 +159,9 @@ For each definition file:
 2. `repoSha` equals the row's `repo_sha`: nothing.
 3. Otherwise, let *ahead* = head `content_sha` differs from the row's old `repo_content_sha` (the store held something the repository did not; the source of the head does not matter). Update the row's `repo_sha`, `repo_content`, `repo_content_sha` first, then:
    * new content equals head content: nothing more (an export came back); state `synced`.
-   * not *ahead*: append a `source: repo` revision with the new content (`repo_base` = new `repoSha`); head moves. Executions use it.
-   * *ahead*: head stays; state becomes `repository-changed`.
+   * otherwise: head stays; state becomes `repository-changed` (failure mode 1: the store wins after first boot, whether or not it is *ahead*). *ahead* is shown in the note so the person knows whether the store held edits.
 
-A shipped file that no longer exists sets the row's repository fields to null. If the head equals the last repository content, the definition is retired (`retired_at`; `definition_list` hides it unless asked; new executions get 404 for it). Otherwise state `repository-deleted`. A retired definition whose file returns is un-retired by rule 3 (a new `source: repo` revision unless the content equals head). A definition created in the store has no file: state `store-only`.
+A shipped file that no longer exists sets the row's repository fields to null. If the head equals the last repository content, the definition is retired (`retired_at`; `definition_list` hides it unless asked; new executions get 404 for it). Otherwise state `repository-deleted`. A retired definition whose file returns is un-retired and shows `repository-changed` unless the content equals head. A definition created in the store has no file: state `store-only`.
 
 **State**, computed on read, never stored. The first matching line wins:
 
@@ -274,8 +288,8 @@ Shared types:
   "Revision": {"type": "object", "required": ["revision", "contentSha", "source", "actor", "message", "at"], "properties": {
     "revision": {"type": "integer", "minimum": 1}, "parent": {"type": ["integer", "null"]}, "contentSha": {"type": "string"},
     "repoBase": {"type": ["string", "null"]}, "source": {"$ref": "#/$defs/RevisionSource"}, "actor": {"$ref": "#/$defs/Actor"},
-    "message": {"type": "string"}, "at": {"type": "string"}, "mirrorCommit": {"type": ["string", "null"]}}},
-  "MirrorState": {"type": "string", "enum": ["mirrored", "pending", "failed", "off"]},
+    "message": {"type": "string"}, "at": {"type": "string"}, "mirrorCommit": {"type": ["string", "null"]}}, "$comment": "mirrorCommit: stage 2 only."},
+  "MirrorState": {"type": "string", "enum": ["mirrored", "pending", "failed", "off"], "$comment": "Stage 2 only; the mirror and definition_mirror_reset fields and operation are added with it."},
   "DraftInfo": {"type": "object", "required": ["baseRevision", "changes", "stale", "updatedAt"], "properties": {
     "baseRevision": {"type": "integer"}, "changes": {"type": "integer", "minimum": 0}, "stale": {"type": "boolean"}, "updatedAt": {"type": "string"}}},
   "RunSummary": {"type": "object", "required": ["state", "at"], "properties": {"executionId": {"type": "string"}, "state": {"type": "string"}, "at": {"type": "string"}}},
@@ -488,7 +502,7 @@ CREATE TABLE definition_revision (
   source text NOT NULL, actor_kind text NOT NULL,          -- person | agent | system
   by_email text, by_execution text, directed_by text,      -- null for system
   message text NOT NULL, at timestamptz NOT NULL DEFAULT now(),
-  mirror_commit text,                                       -- sha in taskqorg/fleet-config, null until pushed
+  mirror_commit text,                                       -- stage 2 only: sha in taskqorg/fleet-config
   PRIMARY KEY (kind, id, revision),
   FOREIGN KEY (kind, id) REFERENCES definition);
 CREATE TABLE definition_draft (
@@ -559,9 +573,13 @@ Paths are the quality plan's target state after wave 1 (coordinator files named 
 
 * `go/coordinator/schema.sql` (Modify; today `packages/coordinator/db/schema.sql`): the migration above.
 * `go/coordinator/definitions.go` (Create): kinds and paths, canonical JSON and `contentSha`, git blob sha, reconcile at start, state, revision append, drafts, save with conflict checks, create, history, export, and the field walk. Handlers for `definition_list`, `definition_get`, `definition_draft_put|get|discard`, `definition_diff`, `definition_save`, `definition_create`, `definition_history`, `definition_export`. Why: one domain file, one writer of the three tables.
+Stage 2 only (the mirror):
+
 * `go/coordinator/mirror.go` (Create): the mirror loop, git runner with cleared env, backoff, the needs-you question, `definition_mirror_reset`. Why: the only code that runs git for definitions.
 * `deploy/` coordinator unit and env defaults (Modify): `FLEET_CONFIG_MIRROR_DIRECTORY`, `FLEET_CONFIG_MIRROR_KEY_FILE`, `FLEET_CONFIG_MIRROR_REMOTE` (default `git@github.com:taskqorg/fleet-config.git`); `git` present on PDS18.
 * `scripts/config-mirror-key.sh` (Create): generates the ed25519 deploy key on PDS18 straight into the 0600 file and prints only the public key, like `scripts/host-secret.sh`.
+Stage 1:
+
 * `go/coordinator/textdiff.go` (Create): line diff (Myers) and unified output. Why: no stdlib diff; about 80 lines, no new dependency.
 * `go/coordinator/profiles.go` (Modify; today `listProfiles`, `readTrustedProfile` and `profilesDir` in `b_projects.go`, `cProfilesDir` in `c_util.go`): `readTrustedProfile`'s checks take content; profiles are read from definition heads and return a `DefinitionRef`. The directory readers remain only in reconcile.
 * `go/coordinator/pipelines.go` (Modify; today `c_pipelines.go`): `loadPipeline` reads the head or a draft; `pipelineRunCreate` becomes the operation `pipeline_run_create` (the route stays) with `draft` and the signature change; `pipelineStart` resolves agent step profiles and records refs per step; `pipeline_rerun` with the reuse walk; record `definitions`, `draft_content`, `rerun_of`, `reused_steps`.
@@ -603,7 +621,8 @@ Outside tests against a real coordinator and Postgres (the existing `tests/go` r
   * save from the head creates revision n+1 and the next `pipeline_run_create` records it (goal 2, 7);
   * two saves from the same base: second is 409 `base-moved` with the head (goal 4);
   * restart with a changed shipped file under an editor revision: state `repository-changed`, executions keep the head, save without `repoSha` is 409, with it succeeds (goal 5);
-  * restart with a changed file and no editor revision: head moves to the file; after an export ships, a later file change also moves the head (the store is not ahead);
+  * restart with a changed file and no editor revision: head stays, state `repository-changed`; a new shipped file is imported; a restart on a fresh database imports every seed file;
+  * a save while a pipeline run and an agent session are running: both keep their revision (the session's next turn resolves the new head);
   * two concurrent saves from one base: one revision, one 409, no 500;
   * export leaves out a `repository-changed` definition, and a named key in that state is 409;
   * export after two saves: `git apply --check` on a checkout of the release commit succeeds; after shipping the exported files, state `synced` with no new revision (goal 6);
@@ -614,7 +633,7 @@ Outside tests against a real coordinator and Postgres (the existing `tests/go` r
 * `tests/go/lab.test.ts` (Modify): Promote saves a catalogue revision and sets the recommendation for a new method; `vsBaseline` over a fixture experiment; `lab_compare_methods` over two methods with different pipelines runs each trial on its own pipeline.
 * Non-owner scope file (quality plan S7): add every new operation to the role matrix.
 
-Mirror (outside test with a local bare repository as the remote):
+Mirror, stage 2 (outside test with a local bare repository as the remote):
 
 * `tests/go/definitions.test.ts`: a save produces one commit with the person as author, the message and the `Fleet-Revision` trailer, and the file equals `definition_get.text`; with the remote unreachable the save succeeds, `mirror` is `pending`, and after the remote returns the commit arrives in order; a commit pushed to the remote from outside stops the loop with the divergence question and no force-push; `definition_mirror_reset` by a non-owner is 403.
 
@@ -625,4 +644,4 @@ All operations above are in the `ops` contract with generated Go and TypeScript 
 ## Open Questions
 
 * **Catalogue file shape with more than one capability.** The catalogue is one definition for one file. When a second capability is added, the file shape changes (an array, or one file per capability), and so does `CatalogueDefinition`. Decide then.
-* **Seed flow after the first install.** Developers still ship new or changed definitions through `config/` in the code repository, and reconcile brings them in. If that path is unused once the mirror runs, `config/` could shrink to the fresh-install seed only and reconcile to rule 1. Decide after a month of use.
+* **When to build the mirror (stage 2).** After stage 1 has run for a while; the owner decides.
