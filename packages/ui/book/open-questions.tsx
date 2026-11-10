@@ -49,9 +49,9 @@ function A3() {
 }
 
 /* (b) outcome and inputs */
-const OUTCOME = 'Release notes for 0.4 in docs/releases/0.4.md, reviewed, linked from the changelog.';
+const OUTCOME = 'Release notes for 0.4 in releases/0.4.md, reviewed, linked from the changelog.';
 const REQS = [['Covers every merged PR since 0.3', true], ['Reviewed by the reviewer role', false], ['Linked from CHANGELOG.md', false]] as const;
-const INPUTS: [IconName, string][] = [['file-text', 'docs/releases/template.md'], ['git-pull-request', '14 merged PRs'], ['messages-square', 'PM session 12 Nov']];
+const INPUTS: [IconName, string][] = [['file-text', 'releases/template.md'], ['git-pull-request', '14 merged PRs'], ['messages-square', 'PM session 12 Nov']];
 const Inputs = () => <span class="chips">{INPUTS.map(([i, l]) => <span key={l} class="chip"><Icon name={i} />{l}</span>)}</span>;
 function Detail({ children, tabs, tab, setTab }: { children: ComponentChildren; tabs: string[]; tab: string; setTab: (t: string) => void }) {
   return <article class="detail mini">

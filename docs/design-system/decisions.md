@@ -9,7 +9,7 @@ Append only. Each entry: date, question, options, choice, reason.
 
 ## 2026-11-09 D2: Visual direction (open)
 
-* **Options:** [A Quiet ledger](explorations/a-quiet-ledger.html), [B Console](explorations/b-console.html), [C Soft paper](explorations/c-soft-paper.html).
+* **Options:** [A Quiet ledger](explorations/archive/a-quiet-ledger.html), [B Console](explorations/archive/b-console.html), [C Soft paper](explorations/archive/c-soft-paper.html).
 * **Choice:** resolved in D3.
 
 ## 2026-11-09 D3: Visual direction chosen

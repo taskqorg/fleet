@@ -106,7 +106,7 @@ function TaskDetail({ t, onClose }: { t: TaskRow; onClose: () => void }) {
     </header>
     <h2 class="detail-title">{t.title}</h2>
     <div class="state-line"><StateBadge family="task" state={t.state} reason={t.reason} /><AgeChip t={t.started} now={NOW} /></div>
-    <OutcomeBlock outcome="Release notes for 0.4 in docs/releases/0.4.md, reviewed, linked from the changelog."
+    <OutcomeBlock outcome="Release notes for 0.4 in releases/0.4.md, reviewed, linked from the changelog."
       requirements={[{ text: 'Covers every merged PR since 0.3', met: true }, { text: 'Reviewed by the reviewer role', met: false }, { text: 'Linked from CHANGELOG.md', met: false }]}
       inputs={[{ icon: 'file-text', label: 'template.md' }, { icon: 'git-pull-request', label: '14 merged PRs' }, { icon: 'messages-square', label: 'PM session' }]}
       depends="Depends on T-9976 (completed)" />

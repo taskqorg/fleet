@@ -8,4 +8,4 @@ Three visual directions with the same synthetic content: a task list with filter
 * [B Console](b-console.html): instrument-panel feel, monospace numbers and IDs, 28 px rows, sharp corners.
 * [C Soft paper](c-soft-paper.html): warm tones, rounded floating panes, two-line 48 px rows.
 
-All three follow [principles.md](../principles.md), including the measured (`$3.10`), estimated (`≈ $0.42`) and unavailable (`—`) number styles. These are not approved design; the choice is recorded in [decisions.md](../decisions.md).
+All three follow [principles.md](../../principles.md), including the measured (`$3.10`), estimated (`≈ $0.42`) and unavailable (`—`) number styles. These are not approved design; the choice is recorded in [decisions.md](../../decisions.md).

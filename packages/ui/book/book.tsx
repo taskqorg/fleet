@@ -174,7 +174,7 @@ function LifecycleDemo() {
     <div class="row"><span class="muted type-sm">Running on:</span><HarnessMark h="codex" /><HarnessMark h="claude" /><HarnessMark h="antigravity" />
       <span class="muted type-sm">Per host:</span><HarnessCounts counts={{ codex: 4, claude: 2, antigravity: 0 }} label="pds18 workers by harness" /></div>
     <div class="row"><span class="muted type-sm">Delivery stage:</span>{(Object.keys(stages) as Stage[]).map(s => <StageChip key={s} stage={s} />)}</div>
-    <OutcomeBlock outcome="Release notes for 0.4 in docs/releases/0.4.md, reviewed, linked from the changelog."
+    <OutcomeBlock outcome="Release notes for 0.4 in releases/0.4.md, reviewed, linked from the changelog."
       requirements={[{ text: 'Covers every merged PR since 0.3', met: true }, { text: 'Reviewed by the reviewer role', met: false }, { text: 'Linked from CHANGELOG.md', met: false }]}
       inputs={[{ icon: 'file-text', label: 'template.md' }, { icon: 'git-pull-request', label: '14 merged PRs' }]} depends="Depends on T-9976 (completed)" />
     <DetailSection title="Harnesses"><KvRow icon="openai" label="codex" meta={<span class="mono">0.48.1</span>} value={<span class="muted">ready</span>} /><KvRow icon="antigravity" label="agy" meta={<span class="mono">0.9.2</span>} value={<span class="muted">unchecked</span>} /></DetailSection>
