@@ -38,9 +38,11 @@ if [ -f /home/fleet/.config/fleet/backup-age.env ]; then
     . /home/fleet/.config/fleet/backup-age.env
     set +a
     # tar to a file first: a pipe would hide a tar failure (sh has no pipefail) and keep a partial copy.
-    tar -C "$FLEET_SECRET_DIR" -cf "$dest/secrets.tar" .
-    sops encrypt --age "$FLEET_BACKUP_AGE_RECIPIENT" --input-type binary --output-type json "$dest/secrets.tar" > "$dest/secrets.sops.json"
-    rm -f "$dest/secrets.tar"
+    # The plaintext tar lives outside the backup tree and is removed on any exit.
+    plain=$(mktemp)
+    trap 'rm -f "$plain"' EXIT
+    tar -C "$FLEET_SECRET_DIR" -cf "$plain" .
+    sops encrypt --age "$FLEET_BACKUP_AGE_RECIPIENT" --input-type binary --output-type json "$plain" > "$dest/secrets.sops.json"
 fi
 
 # Keep the 5 newest day directories.
