@@ -89,6 +89,10 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      # The release layout without node_modules: the bundled coordinator must start and serve (docs/designs/fleet-toolchain.md D4).
+      - run: node tests/coordinator/release-smoke.ts
+        env:
+          FLEET_SMOKE_PG: postgresql://postgres:postgres@localhost:5432/postgres
       # The executor binary the end-to-end artifact tests run.
       - run: cargo build -p fleet-executor
       # One file at a time: the Postgres-backed tests share the database "fleet" (tests/coordinator/pg-test.ts).

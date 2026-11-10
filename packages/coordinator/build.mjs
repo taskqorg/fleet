@@ -6,5 +6,8 @@ import {build} from 'esbuild';
 rmSync('dist',{recursive:true,force:true});
 const out='dist/packages/coordinator';
 await build({entryPoints:{'server-main':'packages/coordinator/server.ts','migrate-sqlite':'packages/coordinator/migrate-sqlite.ts'},outdir:out,
- bundle:true,platform:'node',format:'esm',target:'node22',packages:'external',sourcemap:true,logLevel:'warning'});
+ bundle:true,platform:'node',format:'esm',target:'node22',sourcemap:true,logLevel:'warning',
+ // Every runtime dependency is in the bundle, so a release needs no node_modules (D4). PGlite is the dev/test store, loaded
+ // only for a non-Postgres URL; pg-native is pg's optional native backend.
+ external:['@electric-sql/pglite','pg-native'],inject:['packages/coordinator/cjs-shim.ts']});
 writeFileSync(out+'/server.js',"process.setSourceMapsEnabled(true);\nawait import('./server-main.js');\n");

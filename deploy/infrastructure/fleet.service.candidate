@@ -4,7 +4,7 @@ After=network.target
 [Service]
 WorkingDirectory=/home/fleet/releases/current
 EnvironmentFile=/home/fleet/.config/fleet/coordinator.env
-ExecStart=/home/fleet/runtime/node-v22.18.0-linux-x64/bin/node /home/fleet/releases/current/dist/packages/coordinator/server.js
+ExecStart=/home/fleet/runtime/node-v22.18.0-linux-x64/bin/node --enable-source-maps /home/fleet/releases/current/dist/packages/coordinator/server.js
 Restart=on-failure
 RestartSec=3
 UMask=0077
