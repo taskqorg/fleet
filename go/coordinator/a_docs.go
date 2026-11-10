@@ -1,6 +1,6 @@
 package main
 
-// Area A: the legacy-record layer of packages/coordinator/store.ts and the execution model of executions.ts. get/put/all
+// Area A: the legacy-record layer and the execution model (docs/designs/fleet-data-foundation.md §1, §7). get/put/all
 // read and write a legacy kind inside the request's transaction (q.tx): 'execution' and 'delegation' live on the execution
 // table, every other kind is a document. Other areas may call these; worker D merges duplicates at cutover.
 

@@ -1,5 +1,5 @@
-// Tasks and questions (packages/coordinator/tasks.ts): state only through transition(), one typed question table with one
-// answer path, the operator-app task list (page, counts, groups, membership) and the task operations of app.ts.
+// Tasks and questions (docs/designs/fleet-data-foundation.md §2): state only through transition(), one typed question table with one
+// answer path, the operator-app task list (page, counts, groups, membership) and the task operations.
 package main
 
 import (

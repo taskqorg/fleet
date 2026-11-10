@@ -3,7 +3,7 @@ package main
 import "testing"
 
 // Requirement: a confirmed retention rule keeps its confirmation (artifact_rule_confirmation.rule_hash) across the rewrite.
-// Risk: a different hash silently un-confirms every rule, so moves and deletes stop. Hashes from placement.ts ruleHash.
+// Risk: a different hash silently un-confirms every rule, so moves and deletes stop. Hashes pinned from the TypeScript coordinator's rule hash.
 func TestRuleHashMatchesTypeScript(t *testing.T) {
 	for want, r := range map[string]artifactRule{
 		"a50da7d3ec279517bfbfdce28045fb4b5b8272889b6a266b24516edfce409e29": {Scope: "lab", OlderThanDays: 30, Action: "move", To: []string{"pds18"}},

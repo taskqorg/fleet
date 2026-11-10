@@ -1,6 +1,6 @@
 package main
 
-// Codex local app-server protocol (codex.rs); Fleet owns command durability and process cleanup. Also the Harness
+// Codex local app-server protocol; Fleet owns command durability and process cleanup. Also the Harness
 // methods WireMCP, Protocol and Normalize for every harness.
 
 import (

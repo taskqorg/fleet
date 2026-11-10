@@ -1,4 +1,4 @@
-// Record access of area B (packages/coordinator/store.ts all/get/put with the typed adapters of executions.ts and tasks.ts):
+// Record access of area B (all/get/put with the typed execution and task adapters, docs/designs/fleet-data-foundation.md §7):
 // documents by kind, and the legacy kinds execution, question and delegation served from their typed tables.
 package main
 
@@ -146,7 +146,7 @@ func legacyState(legacy, previous string) (string, string) {
 
 var terminalTyped = map[string]bool{"succeeded": true, "failed": true, "cancelled": true}
 
-// putExecutionRecord: executions.ts putExecution, then the task settle of store.ts.
+// putExecutionRecord: writes the execution record, then settles its task.
 func putExecutionRecord(q *Request, e doc) error {
 	id := gs(e, "id")
 	var prev string
@@ -261,7 +261,7 @@ func writeEnded(q *Request, id string) error {
 	 FROM execution WHERE id=$1 AND kind='agent_run' ON CONFLICT(id) DO NOTHING`, id)
 }
 
-// putLegacyQuestion: an agent question record ('question') kept in the question table (tasks.ts putQuestion).
+// putLegacyQuestion: an agent question record ('question') kept in the question table.
 func putLegacyQuestion(q *Request, v doc) error {
 	id := gs(v, "id")
 	found, err := has(q, "SELECT 1 FROM question WHERE id=$1", id)

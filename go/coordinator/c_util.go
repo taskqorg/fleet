@@ -144,7 +144,7 @@ func cReq(ctx context.Context, a *App, tx pgx.Tx) *Request {
 	return &Request{r: hr, tx: tx, app: a}
 }
 
-// cAsk inserts one question (tasks.ts ask); returns its id.
+// cAsk inserts one question; returns its id.
 func cAsk(q *Request, kind, text string, projectID any, options any, askedBy string, data doc) (string, error) {
 	id := uuid()
 	var opts any
@@ -158,7 +158,7 @@ func cAsk(q *Request, kind, text string, projectID any, options any, askedBy str
 	return id, err
 }
 
-// cCreateExecution inserts a typed execution row unless its id or request_id exists (executions.ts createExecution).
+// cCreateExecution inserts a typed execution row unless its id or request_id exists.
 func cCreateExecution(q *Request, v doc) (bool, error) {
 	state := astr(v["state"])
 	if state == "" {

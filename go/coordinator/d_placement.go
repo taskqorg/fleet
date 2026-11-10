@@ -1,6 +1,6 @@
 package main
 
-// Placement (packages/coordinator/placement.ts): every stored artifact gets a verified copy on each reachable store of its
+// Placement (docs/designs/fleet-data-foundation.md §3): every stored artifact gets a verified copy on each reachable store of its
 // project's artifact_locations, through copy commands to the target store's own executor. Copies outside the list are
 // deleted only behind a surviving verified copy, never the last one. Pending purges are reconciled first. Confirmed
 // retention rules run through the same copy-then-delete path. One pass per store tick (d_routes.go), single flight.
@@ -27,7 +27,7 @@ type artifactRule struct {
 	To            []string `json:"to,omitempty"`
 }
 
-// ruleHash: sha256 of {scope, older_than_days, action, to|null} in that key order (placement.ts ruleHash).
+// ruleHash: sha256 of {scope, older_than_days, action, to|null} in that key order.
 func ruleHash(r artifactRule) string {
 	to := "null"
 	if r.To != nil {

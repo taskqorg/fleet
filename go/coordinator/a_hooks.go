@@ -1,7 +1,7 @@
 package main
 
 // Area A seams into the other areas. Each is a function variable with a default that keeps the host side working alone;
-// the owning area assigns it from its own init(). Owners: agent tools (agent-tools.ts), tasks (tasks.ts), artifacts,
+// the owning area assigns it from its own init(). Owners: agent tools, tasks, artifacts,
 // pipelines, projects and profiles, threads, connections.
 
 // Agent tools.
@@ -31,15 +31,15 @@ var (
 
 // Artifacts and pipelines.
 var (
-	// hookArtifactGate: fields merged into an execution whose start command completed (artifacts.ts requirement).
+	// hookArtifactGate: fields merged into an execution whose start command completed (the artifact requirement).
 	hookArtifactGate = func(q *Request, e doc, declared []any) (doc, error) { return doc{}, nil }
 	// hookPipelineOnExecution: runner.onExecution after an execution ended or became unknown; runs after commit.
 	hookPipelineOnExecution = func(a *App, executionID string) {}
 	// hookReadArtifact: the bytes of a stored artifact (delegation website sources); 503 while no store is reachable.
 	hookReadArtifact = func(a *App, id string) ([]byte, error) { return nil, fail(503, "No reachable store") }
-	// hookPlacement: one placement pass (placement.ts runPlacement); artifacts area provides the S3 side.
+	// hookPlacement: one placement pass; artifacts area provides the S3 side.
 	hookPlacement = func(a *App) error { return nil }
-	// hookArtifactsOf: all('artifact', {executionId}) without contentBase64 (artifacts.ts adapter).
+	// hookArtifactsOf: all('artifact', {executionId}) without contentBase64.
 	hookArtifactsOf = func(q *Request, executionID string) ([]doc, error) { return []doc{}, nil }
 )
 
@@ -57,7 +57,7 @@ var (
 	hookProfile = readTrustedProfile
 	// hookProfileDigest: frameHash(agentConfig).
 	hookProfileDigest = func(cfg doc) string { return frameHash(cfg) }
-	// hookReplyText: the assistant reply texts of an execution (threads.ts replyText).
+	// hookReplyText: the assistant reply texts of an execution (replyText).
 	hookReplyText = replyText
 	// hookConnectionsMint: a per-run token for granted connections; nil when none.
 	hookConnectionsMint = func(q *Request, run doc, granted []string) (doc, error) { return nil, nil }

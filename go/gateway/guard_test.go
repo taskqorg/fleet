@@ -1,4 +1,4 @@
-// The Access origin guard, ported from deploy/infrastructure/test_origin_guard.py with disposable signing keys.
+// The Access origin guard with disposable signing keys.
 // Requirement: only a verified Access identity gets the browser credential (fleet-people-access). Risk: a forged,
 // expired, foreign or unsigned token, or a client-supplied X-Fleet-Person, reaches the coordinator as a person.
 package main

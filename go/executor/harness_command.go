@@ -1,6 +1,6 @@
 package main
 
-// Native commands for every harness (harness.rs command, command_registry; native.rs command_at for codex exec).
+// Native commands for every harness, and codex exec for a run without an account.
 // Native protocol shapes borrowed from AgentQ registry at d0f6bfa; no source copied.
 
 import (
@@ -125,7 +125,7 @@ func (h harness) Command(dir, native string, p map[string]any) (*exec.Cmd, []byt
 	return commandRegistry(dir, native, p, registry)
 }
 
-// codexExec is native.rs command_at: `codex exec --json` with Fleet's fixed policy flags.
+// codexExec: `codex exec --json` with Fleet's fixed policy flags.
 func codexExec(dir, native, text, home, account, exe string) (*exec.Cmd, error) {
 	for _, p := range []string{home, account} {
 		st, err := os.Lstat(p)

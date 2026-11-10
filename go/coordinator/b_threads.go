@@ -1,4 +1,4 @@
-// Conversation threads (packages/coordinator/threads.ts): one thread per task, or per session without a task, read in pages
+// Conversation threads (docs/designs/fleet-conversations.md): one thread per task, or per session without a task, read in pages
 // of typed blocks by block key (seq:index) in both directions, searched and exported on the server.
 package main
 

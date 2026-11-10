@@ -1,6 +1,6 @@
 package main
 
-// Event projection (harness.rs project) and typed transcript blocks (docs/designs/fleet-conversations.md, "Block
+// Event projection and typed transcript blocks (docs/designs/fleet-conversations.md, "Block
 // model"): text, reasoning and tool, the only producer of reply text. State per execution: tools started and not yet
 // ended (claude tool_use, ACP tool_call) with their start time, and the open streams (ACP chunks). A chunk record carries
 // `deltaOf` and its chunk as a block; the next record that is not a chunk closes every open stream, carries the joined
