@@ -97,7 +97,12 @@ test('B6c project readiness: a member with the project grant starts it and reads
   const r = ok(await op('project_readiness', {projectId: 'fleet-hello-world'}, member));
   const h = r.hosts.find((x: any) => x.hostId === 'owner-mac');
   assert.ok(h?.executionId, JSON.stringify(r));
-  ok(await op('execution_status', {executionId: h.executionId}, member));
+  const hp = (path: string, body: object) => fetch(BASE + path, {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + secret}, body: JSON.stringify(body)});
+  assert.equal((await hp('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []})).status, 200);
+  const sent = await hp('/api/hosts/events', {executionId: h.executionId, events: [{id: 'r1', seq: 0, type: 'readiness', timestamp: 1, data: {hostId: 'owner-mac', ok: true, checks: []}}]});
+  assert.equal(sent.status, 200, await sent.text());
+  // Host events carry no project: the member still reads the readiness result of their project's execution.
+  assert.equal(ok(await op('execution_status', {executionId: h.executionId}, member)).readiness?.[0]?.hostId, 'owner-mac');
 });
 
 test('B6b the web answer to an agent question (questions_answer) is delivered to the asking session like reply', async () => {
