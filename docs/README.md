@@ -15,6 +15,7 @@
 | Connections | [designs/fleet-connections.md](designs/fleet-connections.md) | API key connections, the Fleet gateway, per-run tokens, call methods. | [connections.md](connections.md) |
 | Stack | [designs/fleet-stack.md](designs/fleet-stack.md) | Go for every service and the migration order, delivery order, rule delivery, toolchain (D1-D4), JSON Schema contracts, MCP subcommands, Go modules, the trial slice and protocol. | none |
 | Executor delivery | [designs/fleet-executor-delivery.md](designs/fleet-executor-delivery.md) | Executor release files built in CI, trust, and how a host fetches them. | none |
+| Self-update | [designs/fleet-self-update.md](designs/fleet-self-update.md) | Release by tag with provenance, the `fleet-update` timer on every host, PDS18 order, rollback, `autoUpdate`, versions in `hosts_list`. | none |
 | PM agent | [designs/fleet-pm-agent.md](designs/fleet-pm-agent.md) | Director-scoped agent tools, task tools, Held tasks, focus, watch mode. | [system-operations.md](system-operations.md), [execution-contract.md](execution-contract.md) |
 | Orchestration | [orchestration.md](orchestration.md) | Coordination semantics over executions. | none |
 | Allocation | [work-allocation.md](work-allocation.md) | Which host, environment and agent configuration runs a task; balancing and operator steering. | none |
