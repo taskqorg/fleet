@@ -204,7 +204,9 @@ Routine work advances automatically. People resolve substantive decisions and ex
 
 The merge-gate command is `pnpm install --frozen-lockfile && pnpm run build && cargo build -p fleet-executor && cargo test -p fleet-executor && pnpm test`.
 
-The full gate has a diagnostic elapsed-time budget of 180 s on the owner’s Mac (arm64), including setup, build and tests. Exceeding it calls for diagnosis; it is never a timeout or a skip rule.
+The full gate runs in CI on the pull request, never on the owner’s Mac: several agents work there at once, and each full run takes about 1.5 cores and 1 GB per test file. Locally run only the build of what you changed and the test files that cover it (`node <test file>`); push and read the CI result for everything else.
+
+The full gate has a diagnostic elapsed-time budget of 180 s on an idle Mac (arm64), including setup, build and tests. Exceeding it calls for diagnosis; it is never a timeout or a skip rule.
 
 Each persistent test names the requirement and the risk it protects; follow [specq Testing](https://github.com/taskqorg/specq/blob/13772b779be68103d0581d61a5f8fe7af2b92dd1/engineering/testing.md). CI reports missing names as warnings.
 
