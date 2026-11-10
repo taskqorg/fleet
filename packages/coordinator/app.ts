@@ -50,7 +50,7 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
  // which no other handler writes: it runs in the execution's scope, in parallel with other executions and with GLOBAL writers.
  const ingestScope=(req:any)=>typeof req.body?.executionId==='string'?executionScope(req.body.executionId):fail(400,'Expected executionId');
  const ingestRoutes=new Set(['/api/hosts/events']);
- const longRoutes=new Set(['/api/stream','/api/threads/:scope/:id/export','/assets/*','/assets/','/api/hosts/artifacts/list','/api/hosts/artifacts/reserve','/api/hosts/artifacts/parts','/api/hosts/artifacts/commit','/api/hosts/artifacts/verified','/api/hosts/artifacts/renew','/api/hosts/artifacts/failed','/api/hosts/artifacts/declare','/api/hosts/artifacts/get','/api/hosts/artifacts/read','/api/results/:id','/api/pipeline-runs','/api/pipelines/:id/runs','/api/project-operations/:name','/api/project-tools','/api/ops/:name','/api/tools','/api/hosts/receipts','/api/hosts/agent-tools']);
+ const longRoutes=new Set(['/api/stream','/api/threads/:scope/:id/export','/assets/*','/assets/','/api/hosts/artifacts/list','/api/hosts/artifacts/reserve','/api/hosts/artifacts/parts','/api/hosts/artifacts/commit','/api/hosts/artifacts/verified','/api/hosts/artifacts/renew','/api/hosts/artifacts/failed','/api/hosts/artifacts/declare','/api/hosts/artifacts/get','/api/hosts/artifacts/read','/api/results/:id','/api/results/:id/preview','/api/pipeline-runs','/api/pipelines/:id/runs','/api/project-operations/:name','/api/project-tools','/api/ops/:name','/api/tools','/api/hosts/receipts','/api/hosts/agent-tools']);
  // Reads (GET, HEAD) run in a read-only snapshot; every other route is one GLOBAL write (store.atomic) unless it is host ingest.
  // Lab experiment routes call operations (runOp opens their transactions); reconcile needs committed state.
  app.addHook('onRoute',(o:any)=>{if(longRoutes.has(o.url)||/^\/api\/lab\/(experiments|ratings|scores|registry)/.test(o.url))return;const h=o.handler,method=[o.method].flat()[0];
@@ -288,6 +288,14 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   if(m&&size>0&&(m[1]||m[2])){const start=m[1]?Number(m[1]):Math.max(0,size-Number(m[2])),end=m[1]&&m[2]?Math.min(Number(m[2]),size-1):size-1;
    if(start>=size||start>end)return r.code(416).header('Content-Range',`bytes */${size}`).send();
    return r.code(206).header('Content-Range',`bytes ${start}-${end}/${size}`).header('Content-Length',String(end-start+1)).type(type).send(await artifacts.read(a.id,[start,end]))}
+  return r.type(type).send(await artifacts.read(a.id))});
+ // Interactive preview of an HTML or SVG result (design pages, prototypes, games are results that run). Its scripts run in a
+ // sandbox WITHOUT allow-same-origin: an opaque origin, so they cannot read Fleet cookies or storage, and connect-src 'none'
+ // keeps them from calling Fleet or anything else. The viewer frames it with the same sandbox; opened alone it is the same.
+ // ponytail: same host as the app; a separate results origin when one is configured would add a second wall.
+ app.get('/api/results/:id/preview',async(req:any,r)=>{const a=await artifacts.get(req.params.id);if(a.state!=='stored')fail(404,'Not found');
+  const type=a.mediaType||'';if(!/^(text\/html|image\/svg\+xml)\b/.test(type))fail(415,'No interactive preview for '+type);
+  r.header('Content-Security-Policy',"sandbox allow-scripts allow-forms allow-modals allow-popups; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' data: blob:; style-src 'unsafe-inline' data:; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'");
   return r.type(type).send(await artifacts.read(a.id))});
  // Pipeline v2 runner (docs/designs/fleet-lab.md "Pipeline format version 2"): api steps call connections from this host; agent steps are
  // ordinary agent executions with the step's profile (variant overrides applied); script steps are executor script commands.

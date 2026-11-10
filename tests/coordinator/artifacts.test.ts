@@ -35,6 +35,10 @@ test('upload: staging, re-hash by the store host, promotion to the content key; 
  assert.equal((await app.inject({url:'/api/results/'+small,headers:{authorization:'Bearer b',range:'bytes=50-'}})).statusCode,416);
  const bin=await upload(app,'m',{hostId:'mac',executionId:'e1',path:'tool.bin',content:'xx',mediaType:'application/octet-stream'});
  assert.match(String((await app.inject({url:'/api/results/'+bin,headers:{authorization:'Bearer b'}})).headers['content-disposition']),/^attachment; filename="tool.bin"/);
+ // The interactive preview of HTML runs scripts on an opaque origin with no network; other types have none.
+ const pv=await app.inject({url:'/api/results/'+small+'/preview',headers:{authorization:'Bearer b'}});assert.equal(pv.statusCode,200);
+ const csp=String(pv.headers['content-security-policy']);assert.match(csp,/sandbox allow-scripts/);assert.doesNotMatch(csp,/allow-same-origin/);assert.match(csp,/connect-src 'none'/);
+ assert.equal((await app.inject({url:'/api/results/'+bin+'/preview',headers:{authorization:'Bearer b'}})).statusCode,415);
  // Results page reads: newest first in pages, filtered by state, media family, name and project.
  const list=async(b:any)=>(await app.inject({method:'POST',url:'/api/ops/artifact_list',headers:{authorization:'Bearer b'},payload:b})).json();
  const p1=await list({limit:2});assert.equal(p1.artifacts.length,2);assert.ok(p1.artifacts[0].seq>p1.artifacts[1].seq);assert.equal(typeof p1.nextBefore,'number');

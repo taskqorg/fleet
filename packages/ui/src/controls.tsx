@@ -295,8 +295,8 @@ export const viewOf = (mediaType: string): 'image' | 'video' | 'text' | 'downloa
 const PAGE_BYTES = 65536;
 /**
  * One stored artifact by media type: image and video in a fixed-ratio frame (no jump when they load, OR-23), text read in
- * Range pages as the reader scrolls (no cap), HTML and SVG as text or, on request, in a sandboxed frame without scripts or
- * same-origin access; anything else is a download. Bytes come from `src` (GET /api/results/:id).
+ * Range pages as the reader scrolls (no cap), HTML and SVG as source or, on request, running in a sandboxed frame without
+ * same-origin access (scripts run, but on an opaque origin with no network); anything else is a download. Bytes come from `src` (GET /api/results/:id).
  */
 export function ArtifactView({ a, src }: { a: ArtifactMeta; src: string }) {
   const kind = viewOf(a.mediaType), [text, setText] = useState(''), [next, setNext] = useState(0), [busy, setBusy] = useState(false), [err, setErr] = useState<string | null>(null);
@@ -315,8 +315,8 @@ export function ArtifactView({ a, src }: { a: ArtifactMeta; src: string }) {
     {kind === 'image' && <div class="av-frame"><img src={src} alt={a.name} loading="lazy" /></div>}
     {kind === 'video' && <div class="av-frame video"><video src={src} controls preload="metadata" /></div>}
     {kind === 'text' && <>
-      {page && <div class="bar"><Button label={preview ? 'Show source' : 'Preview (no scripts)'} icon={preview ? 'type' : 'panels-top-left'} pressed={preview} onClick={() => setPreview(!preview)} /></div>}
-      {preview ? <div class="av-frame page"><iframe src={src} sandbox="" title={a.name} referrerpolicy="no-referrer" /></div>
+      {page && <div class="bar"><Button label={preview ? 'Show source' : 'Run preview'} icon={preview ? 'type' : 'panels-top-left'} pressed={preview} onClick={() => setPreview(!preview)} /></div>}
+      {preview ? <div class="av-frame page"><iframe src={`${src}/preview`} sandbox="allow-scripts allow-forms allow-modals allow-popups" title={a.name} referrerpolicy="no-referrer" /></div>
         : <div class="av-text" onScroll={e => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) more(); }}><pre><code>{text}</code></pre>
           {next < a.size && <div class="muted type-sm">{bytes(next).text} of {bytes(a.size).text}{busy ? ' · loading' : ''}</div>}</div>}
     </>}

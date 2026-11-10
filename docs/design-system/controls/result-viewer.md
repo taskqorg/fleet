@@ -9,7 +9,7 @@
 * Body: the viewer for the type, on `surface-sunken`.
 * Side strip (optional): checks for this result, comments and annotations.
 
-**As built (Conversations Stage 4).** `ArtifactView` is the body: image (fit, fixed 4:3 frame so nothing jumps), video (16:9 frame, native controls), text read in 64 KB `Range` pages as the reader scrolls (no cap), HTML and SVG as source with a "Preview (no scripts)" toggle that shows them in a `sandbox=""` frame, and download only for other types. Zoom, diff, versions and 3D are not built yet.
+**As built (Conversations Stage 4).** `ArtifactView` is the body: image (fit, fixed 4:3 frame so nothing jumps), video (16:9 frame, native controls), text read in 64 KB `Range` pages as the reader scrolls (no cap), HTML and SVG as source with a "Run preview" toggle that runs them in a sandboxed frame (scripts on an opaque origin, no network), and download only for other types. Zoom, diff, versions and 3D are not built yet.
 
 **Viewers.** Text and markdown (rendered, with raw toggle); diff (unified and split, file list on the left); image (fit, 100 %, zoom with wheel and `+`/`-`, pan by drag); video (poster frame, native controls); preview link (URL, last check, "Open preview"); 3D (placeholder until defined); unknown type (metadata and download only).
 
