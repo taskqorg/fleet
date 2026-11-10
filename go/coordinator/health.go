@@ -17,7 +17,7 @@ var healthApp *App
 func init() {
 	onStart(func(_ context.Context, a *App) { healthApp = a })
 	publicRoute("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		out := map[string]any{"commit": nil, "commitTime": nil, "dirty": nil, "built": nil, "database": "unknown"}
+		out := map[string]any{"version": version, "autoUpdate": "on", "commit": nil, "commitTime": nil, "dirty": nil, "built": nil, "database": "unknown"}
 		if bi, ok := debug.ReadBuildInfo(); ok {
 			for _, s := range bi.Settings {
 				switch s.Key {
@@ -41,7 +41,7 @@ func init() {
 			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 			defer cancel()
 			if a.store.pool.Ping(ctx) == nil {
-				out["database"] = "ok"
+				out["database"], out["autoUpdate"] = "ok", a.ownAutoUpdate(ctx)
 			} else {
 				out["database"], code = "unreachable", 503
 			}

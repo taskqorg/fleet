@@ -7,7 +7,7 @@ on:
   # edited: a ## Drift heading added to the description re-evaluates docs.drift (docs/designs/fleet-docs-governance.md#report).
   pull_request:
     types: [opened, synchronize, reopened, edited]
-  # A push to main runs the same gates and is the only run that publishes a release (docs/infrastructure-build.md).
+  # A push to main runs the same gates; releases come from a v* tag (.github/workflows/release.yml).
   push:
     branches: [main]
 permissions: {}
@@ -61,25 +61,6 @@ jobs:
       - run: (cd go && CGO_ENABLED=0 go build -o bin/fleet-executor ./executor) && FLEET_EXECUTOR_BIN="$PWD/go/bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts
       # pnpm test runs tests/go/run.sh: the Go binary on the runner's own PostgreSQL (tests/harness.ts starts it).
       - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pnpm test
-      # Deploys use exactly this release, and only from a push to main in this repository, never a pull request run
-      # (docs/infrastructure-build.md): the Go binary built above and the built app. Its SHA-256 goes into the job summary.
-      - name: Pack the release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          (cd go && for cmd in gateway executor; do CGO_ENABLED=0 go build -trimpath -o bin/fleet-$cmd ./$cmd; done)
-          mkdir -p release/dist && cp go/bin/fleet-coordinator go/bin/fleet-gateway go/bin/fleet-executor release/ && cp -r dist/app release/dist/ && cp -r config release/
-          tar -czf fleet-release.tgz -C release .
-          sha256sum fleet-release.tgz | tee fleet-release.tgz.sha256
-          echo "fleet-release-${GITHUB_SHA}: $(cut -d' ' -f1 fleet-release.tgz.sha256)" >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload the release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
-        with:
-          name: fleet-release-${{ github.sha }}
-          path: |
-            fleet-release.tgz
-            fleet-release.tgz.sha256
-          if-no-files-found: error
       # Use-case registry drift (docs/designs/fleet-lab.md "Use-case registry and examples"): warns, never blocks. Only Fleet's own sources are
       # checked here; the other org repos are not checked out, so their entries report nothing.
       - name: Use-case drift (warning only)
@@ -178,9 +159,9 @@ jobs:
             go version -m "$file" | grep -q 'CGO_ENABLED=0' || { echo "$file: cgo enabled"; exit 1; }
             (cd dist && sha256sum "${file#dist/}" | tee "${file#dist/}.sha256")
           done
-          # The gateway (with its `guard` command) and the executor: linux/amd64 and darwin/arm64 only
+          # The gateway (with its `guard` command), the executor and fleet-update: linux/amd64 and darwin/arm64 only
           # (Windows not built: executor process control needs its own port).
-          for t in linux/amd64 darwin/arm64; do for cmd in gateway executor; do
+          for t in linux/amd64 darwin/arm64; do for cmd in gateway executor update; do
             os=${t%/*} arch=${t#*/} file="dist/fleet-$cmd-${t%/*}-${t#*/}"
             GOOS=$os GOARCH=$arch go build -trimpath -o "$file" "./$cmd"
             go version -m "$file" | grep -q 'CGO_ENABLED=0' || { echo "$file: cgo enabled"; exit 1; }

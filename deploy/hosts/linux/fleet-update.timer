@@ -1,0 +1,10 @@
+# Starts fleet-update.service every 5 minutes (docs/designs/fleet-self-update.md §3.5).
+[Unit]
+Description=Fleet self-update timer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

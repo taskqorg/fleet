@@ -23,26 +23,42 @@
         "capabilities": {"type": "array", "items": {"type": "string"}},
         "stores": {"$comment": "store::report output; described when stores are next changed", "type": "array", "items": {}},
         "problems": {"type": "array", "items": {"$ref": "#/$defs/EdgeProblem"}},
-        "projectRoots": {"$comment": "FLEET_PROJECT_ROOTS as the executor resolved them; a project checkout outside them is a host problem", "type": "array", "items": {"type": "string"}}
+        "projectRoots": {"$comment": "FLEET_PROJECT_ROOTS as the executor resolved them; a project checkout outside them is a host problem", "type": "array", "items": {"type": "string"}},
+        "version": {"$comment": "the executor's release version (docs/designs/fleet-self-update.md section 4)", "type": "string"},
+        "update": {"$ref": "#/$defs/UpdateResult"}
       }
     },
+    "UpdateResult": {
+      "$comment": "last of the host's update-state.json, written by fleet-update",
+      "type": "object",
+      "required": ["version", "state", "at"],
+      "properties": {
+        "version": {"type": "string"},
+        "state": {"$ref": "#/$defs/UpdateState"},
+        "error": {"type": "string"},
+        "at": {"type": "string"}
+      }
+    },
+    "UpdateState": {"type": "string", "enum": ["ok", "pending", "held", "error", "refused", "failed"]},
     "EdgeProblem": {
       "type": "object",
       "required": ["kind", "route", "status", "location", "detail"],
       "properties": {
-        "kind": {"$ref": "#/$defs/EdgeProblemKind"},
+        "kind": {"$ref": "#/$defs/ProblemKind"},
         "route": {"type": "string"},
         "status": {"type": "integer", "minimum": 0},
         "location": {"type": ["string", "null"]},
         "detail": {"type": "string"}
       }
     },
-    "EdgeProblemKind": {"type": "string", "enum": ["edge-redirect"]},
+    "ProblemKind": {"type": "string", "enum": ["edge-redirect", "version-behind"]},
     "PollReply": {
       "type": "object",
       "required": ["commands"],
       "properties": {
-        "commands": {"type": "array", "items": {"$ref": "#/$defs/Command"}}
+        "commands": {"type": "array", "items": {"$ref": "#/$defs/Command"}},
+        "target": {"$comment": "the coordinator's newest release version with a healthy marker; null offers no update", "type": ["string", "null"]},
+        "autoUpdate": {"$comment": "the polling host's autoUpdate: on, off, or an RFC 3339 UTC hold-until time", "type": "string"}
       }
     },
     "Command": {

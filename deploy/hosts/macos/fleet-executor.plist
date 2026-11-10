@@ -4,8 +4,8 @@
   Fleet executor on the Mac, a LaunchAgent of the executor service user, from the current release
   (deploy/install-release.sh). Install: replace FLEET_HOME with that user's home, copy to
   FLEET_HOME/Library/LaunchAgents/com.ufobe.fleet-executor.plist, then: launchctl bootstrap gui/$(id -u) <plist>.
-  FLEET_HOME/.config/fleet/executor.env (mode 0600, never in Git) holds the five settings of docs/executor-build.md
-  as KEY=value lines; launchd has no environment file, so sh reads it before exec.
+  FLEET_HOME/.config/fleet/executor.env (mode 0600, never in Git) holds FLEET_HOST_ID=<id>; every other value has a
+  release default (docs/designs/fleet-self-update.md §5). launchd has no environment file, so sh reads it before exec.
 -->
 <plist version="1.0">
 <dict>
@@ -14,8 +14,10 @@
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>set -a; . FLEET_HOME/.config/fleet/executor.env; set +a; exec FLEET_HOME/releases/current/fleet-executor</string>
+    <string>[ -f FLEET_HOME/.config/fleet/executor.env ] &amp;&amp; { set -a; . FLEET_HOME/.config/fleet/executor.env; set +a; }; exec FLEET_HOME/releases/current/fleet-executor</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>ProcessType</key><string>Background</string>

@@ -94,7 +94,7 @@ func accessAllowed(raw string) bool {
 		return false
 	}
 	h := u.Hostname()
-	hosts := strings.Split(os.Getenv("FLEET_STORE_ENDPOINT_HOSTS"), ",")
+	hosts := storeEndpointHosts()
 	if own, err := neturl.Parse(jStr(storeConfig(), "endpoint")); err == nil && own.Hostname() != "" {
 		hosts = append(hosts, own.Hostname())
 	}

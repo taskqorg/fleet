@@ -3,6 +3,8 @@
 // Behaviour reference: crates/executor (Rust) at origin/main.
 package main
 
+//go:generate go run ../gen ../../contracts/host-protocol.schema.json main protocol_gen.go
+
 import (
 	"database/sql"
 	"fmt"
@@ -80,6 +82,7 @@ CREATE TABLE IF NOT EXISTS delegation_requests(id TEXT PRIMARY KEY,body TEXT NOT
 var subcommands = map[string]func(args []string) error{
 	"mcp":       func(args []string) error { return runMCP(args) }, // part E2
 	"reproject": func([]string) error { return reproject() },
+	"selftest":  selftest,
 }
 
 func main() {

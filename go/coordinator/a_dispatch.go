@@ -501,15 +501,20 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		if c.ask != nil && c.ask != c.director {
 			tail = fmt.Sprintf(" Ask %v, or change the setting.", c.ask)
 		}
-		qid, err := hookTaskAsk(q, doc{"kind": "operator_decision", "text": fmt.Sprintf("Work is waiting: %v.%s", c.reason, tail), "options": []any{"ok"}, "askedBy": "fleet", "projectId": c.projectID, "data": doc{"cause": cause}})
-		if err != nil {
-			return err
-		}
-		if err := exec(q, "UPDATE question SET cause=$2,addressed_to=$3 WHERE id=$1", qid, cause, c.director); err != nil {
+		if err := openCauseQuestion(q, cause, c.director, c.projectID, fmt.Sprintf("Work is waiting: %v.%s", c.reason, tail)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// openCauseQuestion opens a needs-you operator_decision question keyed by cause, addressed to one person.
+func openCauseQuestion(q *Request, cause string, addressedTo, projectID any, text string) error {
+	qid, err := hookTaskAsk(q, doc{"kind": "operator_decision", "text": text, "options": []any{"ok"}, "askedBy": "fleet", "projectId": projectID, "data": doc{"cause": cause}})
+	if err != nil {
+		return err
+	}
+	return exec(q, "UPDATE question SET cause=$2,addressed_to=$3 WHERE id=$1", qid, cause, addressedTo)
 }
 
 // startCommand: the start command of a claimed execution, from the session as it is now and the chosen binding.

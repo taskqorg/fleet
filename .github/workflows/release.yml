@@ -1,0 +1,174 @@
+# Release (docs/designs/fleet-self-update.md, section 1): a tag v<N>.<yymmdd>.<M> on a green main commit publishes one
+# tarball per target, SHA256SUMS signed with the release key (Ed25519, checked by fleet-update), latest.json and GitHub
+# build provenance. Every host's fleet-update installs it by itself. Least privilege: each job gets only what it writes.
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions: {}
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      previous: ${{ steps.check.outputs.previous }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: check
+        name: Tag name, date, ancestry, order
+        run: |
+          echo "$TAG" | grep -Eq '^v[1-9][0-9]*\.[0-9]{6}\.(0|[1-9][0-9]*)$' || { echo "::error::tag $TAG is not v<N>.<yymmdd>.<M>"; exit 1; }
+          version=${TAG#v} day=$(echo "$version" | cut -d. -f2)
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG" main
+          # Annotated tag: its tagger date; lightweight: the commit date. Both in UTC.
+          when=$(git for-each-ref --format='%(taggerdate:unix)' "refs/tags/$TAG"); [ -n "$when" ] || when=$(git log -1 --format=%ct "$TAG^{commit}")
+          [ "$(date -u -d "@$when" +%y%m%d)" = "$day" ] || { echo "::error::$TAG: $day is not the UTC date of the tag"; exit 1; }
+          git merge-base --is-ancestor "$TAG^{commit}" origin/main || { echo "::error::$TAG is not on main"; exit 1; }
+          latest=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
+          if [ -n "$latest" ]; then
+            newest=$(printf '%s\n%s\n' "${latest#v}" "$version" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+            [ "$newest" = "$version" ] && [ "${latest#v}" != "$version" ] || { echo "::error::$version is not newer than $latest"; exit 1; }
+          fi
+          previous=${latest#v}  # the latest published release: migrate-check downloads it
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse "$TAG^{commit}")" >> "$GITHUB_OUTPUT"
+      - name: Wait for build-test-design on the commit
+        env:
+          SHA: ${{ steps.check.outputs.sha }}
+        run: |
+          until id=$(gh run list --workflow ci --commit "$SHA" --event push --branch main --json databaseId -q '.[0].databaseId') && [ -n "$id" ]; do
+            echo "no ci run for $SHA yet"; sleep 30
+          done
+          gh run watch "$id" --interval 30 >/dev/null || true
+          result=$(gh run view "$id" --json jobs -q '.jobs[] | select(.name == "build-test-design") | .conclusion')
+          [ "$result" = success ] || { echo "::error::build-test-design of ci run $id: ${result:-missing}"; exit 1; }
+  build:
+    needs: gate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: Build
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+          PREVIOUS: ${{ needs.gate.outputs.previous }}
+        run: mkdir out && deploy/build-release.sh "$GITHUB_SHA" out "$VERSION" "$PREVIOUS" linux/amd64 darwin/arm64
+      - name: Selftest linux binaries
+        run: |
+          mkdir t && tar -xzf out/fleet-*-linux-amd64.tgz -C t
+          for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/t/$b" selftest); done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: out/
+          if-no-files-found: error
+  selftest-macos:
+    needs: build
+    runs-on: macos-14
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+      - run: |
+          mkdir t && tar -xzf fleet-*-darwin-arm64.tgz -C t
+          for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/t/$b" selftest); done
+  # Expand in N, contract in N+1: the previous coordinator must still serve on the database the new one migrated.
+  migrate-check:
+    needs: [gate, build]
+    if: needs.gate.outputs.previous != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.gate.outputs.version }}
+      PREVIOUS: ${{ needs.gate.outputs.previous }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: out
+      - name: New coordinator migrates, previous one still serves
+        run: |
+          export PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pg=$RUNNER_TEMP/pg
+          initdb -D "$pg" -U postgres -A trust -E UTF8 --no-instructions >/dev/null
+          pg_ctl -D "$pg" -l "$pg/log" -w -o "-k $pg -p 54329 -c listen_addresses=" start
+          psql -h "$pg" -p 54329 -U postgres -v ON_ERROR_STOP=1 -q -d postgres -f deploy/infrastructure/fleet-postgres.sql
+          gh release download "v$PREVIOUS" -p "fleet-$PREVIOUS-linux-amd64.tgz" -D prev
+          mkdir new old && tar -xzf "out/fleet-$VERSION-linux-amd64.tgz" -C new && tar -xzf prev/*.tgz -C old
+          url() { echo "postgresql://$1@/fleet?host=$pg&port=54329"; }
+          export PORT=9470 FLEET_DATABASE_URL=$(url fleet_app) FLEET_MIGRATION_DATABASE_URL=$(url fleet) \
+            FLEET_PEOPLE_FILE=$PWD/tests/trial/people.json FLEET_BROWSER_SECRET=migrate-check FLEET_HOST_ID=pds18
+          for dir in new old; do
+            (cd $dir && ./fleet-coordinator) & pid=$!
+            i=0; until curl -fsS -m 3 http://127.0.0.1:9470/api/health; do
+              i=$((i+1)); [ $i -lt 60 ] || { echo "::error::$dir coordinator not healthy"; exit 1; }; sleep 1; done
+            echo; kill $pid; wait $pid || true
+          done
+  publish:
+    needs: [gate, selftest-macos, migrate-check]
+    if: always() && needs.selftest-macos.result == 'success' && (needs.migrate-check.result == 'success' || needs.migrate-check.result == 'skipped')
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.gate.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+      - name: Sign SHA256SUMS, write latest.json
+        env:
+          FLEET_RELEASE_KEY: ${{ secrets.FLEET_RELEASE_KEY }}
+        run: |
+          umask 077
+          key=$RUNNER_TEMP/release-key.pem
+          printf '%s\n' "$FLEET_RELEASE_KEY" > "$key"
+          openssl pkeyutl -sign -inkey "$key" -rawin -in SHA256SUMS -out SHA256SUMS.sig
+          rm -f "$key"
+          printf '{"version":"%s","files":{"linux-amd64":"fleet-%s-linux-amd64.tgz","darwin-arm64":"fleet-%s-darwin-arm64.tgz"}}\n' \
+            "$VERSION" "$VERSION" "$VERSION" > latest.json
+      - id: attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: fleet-*.tgz
+      - run: |
+          cp "${{ steps.attest.outputs.bundle-path }}" provenance.sigstore.jsonl
+          gh release create "v$VERSION" --latest --title "v$VERSION" --notes "Fleet $VERSION" \
+            fleet-*.tgz SHA256SUMS SHA256SUMS.sig latest.json provenance.sigstore.jsonl
