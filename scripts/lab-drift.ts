@@ -46,7 +46,7 @@ export function current(s:Source,root:string,repos?:string):{status:'unavailable
 export function check(s:Source,root:string,repos?:string):Status{const c=current(s,root,repos);return 'status' in c?c.status:c.sha256===s.sha256?'current':'changed'}
 
 export const registryDir=(root:string)=>join(root,'config/lab/use-cases');
-export function loadRegistry(root:string){return readdirSync(registryDir(root)).filter(f=>f.endsWith('.json')).sort().map(f=>({file:join(registryDir(root),f),entries:JSON.parse(readFileSync(join(registryDir(root),f),'utf8')) as any[]}))}
+export function loadRegistry(root:string){return readdirSync(registryDir(root)).filter(f=>f.endsWith('.json')&&!f.startsWith('.')).sort().map(f=>({file:join(registryDir(root),f),entries:JSON.parse(readFileSync(join(registryDir(root),f),'utf8')) as any[]}))}
 const save=(file:string,entries:any[])=>writeFileSync(file,JSON.stringify(entries,null,1)+'\n');
 
 export function run(argv:string[],root:string,log=console.log,repos?:string){
