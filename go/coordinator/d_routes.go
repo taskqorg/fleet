@@ -164,7 +164,10 @@ func hostOwned(execution bool, h handler) handler {
 				ExecutionID string `json:"executionId"`
 			}
 			decode(q.body, &b)
-			if b.ExecutionID != "" {
+			if b.ExecutionID == "" {
+				return nil, fail(400, "Expected executionId")
+			}
+			{
 				e, err := execGet(q.ctx(), q.app, b.ExecutionID)
 				if err != nil {
 					return nil, err
