@@ -4,7 +4,7 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';import {execFileSync,spawn} from 'node:child_process';
 import {existsSync,mkdtempSync,writeFileSync,chmodSync,mkdirSync} from 'node:fs';import {tmpdir} from 'node:os';import {resolve} from 'node:path';
 import {createApp} from '../../packages/coordinator/app.js';import {fakeStore} from './s3-fake.js';
-const binary=resolve('target/debug/fleet-executor');
+const binary=resolve(process.env.CARGO_TARGET_DIR??'target','debug','fleet-executor');
 const FAKE_CODEX=`#!/usr/bin/env python3
 import json,os,pathlib,sys
 for line in sys.stdin:

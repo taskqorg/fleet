@@ -38,7 +38,7 @@ class Handler(BaseHTTPRequestHandler):
   self.send_response(200);self.end_headers();self.wfile.write(json.dumps(reply).encode())
 srv=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=srv.serve_forever,daemon=True).start()
 env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}','FLEET_HOST_ID':'fake','FLEET_HOST_TOKEN':'fake-only','FLEET_DATA_DIR':str(root/'data'),'FLEET_CODEX_BIN':str(fake),'FLEET_NATIVE_HOME':str(root/'home'),'FLEET_CODEX_HOME':str(root/'native')}
-p=subprocess.Popen([str(pathlib.Path('target/debug/fleet-executor').resolve())],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+p=subprocess.Popen([str(pathlib.Path(os.environ.get('CARGO_TARGET_DIR','target'),'debug','fleet-executor').resolve())],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 try:
  work=root/'data/sessions/wire-session'
  previous_wire=b''

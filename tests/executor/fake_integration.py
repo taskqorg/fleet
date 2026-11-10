@@ -63,7 +63,7 @@ env={**os.environ,'FLEET_COORDINATOR_URL':f'http://127.0.0.1:{srv.server_port}',
 for name in ['home','account']:
  (root/name).mkdir(mode=0o700)
 env['FLEET_NATIVE_HOME']=str(root/'home');env['FLEET_CODEX_HOME']=str(root/'account')
-binary=str(pathlib.Path('target/debug/fleet-executor').resolve())
+binary=str(pathlib.Path(os.environ.get('CARGO_TARGET_DIR','target'),'debug','fleet-executor').resolve())
 procs=[]
 def launch():
  p=subprocess.Popen([binary],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);procs.append(p);return p

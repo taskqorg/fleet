@@ -1,3 +1,7 @@
 [workspace]
 members = ["crates/executor"]
 resolver = "2"
+
+# Smaller debug target (304 MB to 264 MB measured) with file:line backtraces kept.
+[profile.dev]
+debug = "line-tables-only"

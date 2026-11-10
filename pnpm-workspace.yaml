@@ -1,0 +1,7 @@
+# Supply-chain settings (docs/designs/fleet-toolchain.md D1).
+# A version must be public for 1 day (pnpm docs default advice) before pnpm installs it.
+minimumReleaseAge: 1440
+# Only these packages may run install scripts; pnpm 10 blocks all others.
+onlyBuiltDependencies:
+  - esbuild
+  - better-sqlite3

@@ -2,7 +2,7 @@
 
 ## Local operation
 
-Use Node 22.18.0. Run `npm ci`, `npm run build`, `npm test`, then `npm start` with distinct random FLEET_BROWSER_SECRET and FLEET_MACHINE_SECRET supplied outside Git. FLEET_DATABASE_URL selects the Postgres database (role fleet_app; a non-postgres:// value is an embedded PGlite directory, used by tests), and FLEET_MIGRATION_DATABASE_URL the owner role that applies packages/coordinator/db/schema.sql on start (defaults to FLEET_DATABASE_URL). FLEET_DATABASE (the old SQLite file) is read only by `node dist/packages/coordinator/migrate-sqlite.js forward|verify|reverse`; FLEET_HOST_ID selects the exact authorized executor (default owner-mac). Open http://127.0.0.1:8787 and enter the browser secret. The browser retains its session ID in localStorage; its credential remains in memory. The machine credential never reaches the browser.
+Use Node 22.18.0. Run `pnpm install`, `pnpm run build`, `pnpm test`, then `pnpm start` with distinct random FLEET_BROWSER_SECRET and FLEET_MACHINE_SECRET supplied outside Git. FLEET_DATABASE_URL selects the Postgres database (role fleet_app; a non-postgres:// value is an embedded PGlite directory, used by tests), and FLEET_MIGRATION_DATABASE_URL the owner role that applies packages/coordinator/db/schema.sql on start (defaults to FLEET_DATABASE_URL). FLEET_DATABASE (the old SQLite file) is read only by `node dist/packages/coordinator/migrate-sqlite.js forward|verify|reverse`; FLEET_HOST_ID selects the exact authorized executor (default owner-mac). Open http://127.0.0.1:8787 and enter the browser secret. The browser retains its session ID in localStorage; its credential remains in memory. The machine credential never reaches the browser.
 
 ## HTTP and persistence
 
