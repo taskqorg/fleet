@@ -93,15 +93,10 @@ func main() {
 	}
 }
 
-// loadPeople reads people.json once at start and mirrors it into person and person_grant (packages/coordinator/people.ts).
-// ponytail: no mtime re-read and no needs-you question for a broken file; out of the slice.
+// loadPeople loads people.json at start; refreshPeople (b_request.go) re-reads it when it changes.
 func (a *App) loadPeople(ctx context.Context, file string) error {
-	raw, err := os.ReadFile(file)
-	if err != nil {
-		return err
-	}
 	a.peopleFile = file
-	return a.setPeople(ctx, raw)
+	return a.refreshPeople(ctx)
 }
 
 // setPeople parses and checks a people list, mirrors it into person and person_grant, then makes it current.
@@ -245,6 +240,9 @@ func (a *App) routes() http.Handler {
 				if err := a.readBody(q); err != nil {
 					return err
 				}
+				if err := a.guard(q); err != nil {
+					return err
+				}
 				var out any
 				lock := ""
 				if rt.kind == txIngest {
@@ -331,6 +329,9 @@ func (a *App) authorize(q *Request) error {
 	h := q.r.Header
 	supplied := strings.TrimPrefix(h.Get("Authorization"), "Bearer ")
 	_, named := h["X-Fleet-Person"]
+	if err := a.refreshPeople(q.ctx()); err != nil {
+		return err
+	}
 	if strings.HasPrefix(q.r.URL.Path, "/api/hosts/") {
 		host, err := a.hostFromSecret(q.ctx(), supplied)
 		if err != nil {
@@ -357,7 +358,7 @@ func (a *App) authorize(q *Request) error {
 		return fail(403, "Unknown person")
 	}
 	q.person = p
-	return nil
+	return checkOrigin(q)
 }
 
 // hostFromSecret: the host document whose secretHash matches, if its holder is still a person.
