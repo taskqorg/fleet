@@ -378,7 +378,7 @@ func labExampleGet(q *Request, id string) (doc, error) {
 	if cArtifactRead == nil {
 		return nil, fail(503, "Artifact store unavailable")
 	}
-	b, err := cArtifactRead(q.ctx(), q.app, id, 8<<20)
+	b, err := cArtifactRead(cCtx(q), q.app, id, 8<<20)
 	if err != nil {
 		return nil, err
 	}
@@ -780,6 +780,9 @@ func expCreate(q *Request, b doc) (doc, error) {
 		if o == nil || !cKeysOnly(o, labOverrides...) {
 			return nil, fail(400, "Variant overrides are "+strings.Join(labOverrides, ", "))
 		}
+		if q.person != nil && !q.person.Owner && (o["host"] != nil || o["account"] != nil || o["profile"] != nil) {
+			return nil, fail(403, "Only the owner overrides host, account or profile")
+		}
 		if w, has := o["web_route"]; has && w != "connections" && w != "builtin" {
 			return nil, fail(400, "web_route must be connections or builtin")
 		}
@@ -1020,7 +1023,7 @@ func trialFiles(q *Request, trial, example doc) ([]labFile, error) {
 		if cArtifactRead == nil {
 			return nil, fail(503, "Artifact store unavailable")
 		}
-		b, err := cArtifactRead(q.ctx(), q.app, o.ArtifactID, 64<<20)
+		b, err := cArtifactRead(cCtx(q), q.app, o.ArtifactID, 64<<20)
 		if err != nil {
 			return nil, err
 		}
@@ -1681,11 +1684,17 @@ func labRatings(q *Request, experimentID, state any) (doc, error) {
 // check before recording the answer, after once it is recorded). question: the question row (snake_case columns).
 func labAnswerCheck(q *Request, question doc, answer string) error {
 	o := cMap(question["options"])
+	d := cMap(question["data"])
+	// Lab ratings are the owner's (scored as human:owner; a pass on a drafted example lets the coordinator run its checks)
+	// and budget asks move the owner's spend: owner only.
+	lab := question["kind"] == "rating" && (o["example_artifact_id"] != nil || o["experiment_id"] != nil) || d["experimentId"] != nil && d["budget"] != nil
+	if lab && q.person != nil && !q.person.Owner {
+		return fail(403, "Only the owner answers Lab ratings and budget questions")
+	}
 	if question["kind"] == "rating" {
 		_, _, err := parseRating(cStr(o["form"]), answer, cList(o["trial_ids"]))
 		return err
 	}
-	d := cMap(question["data"])
 	if d["experimentId"] != nil && d["budget"] != nil && answer != "resume" && answer != "stop" {
 		return fail(400, "Answer resume or stop")
 	}

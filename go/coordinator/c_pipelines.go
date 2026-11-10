@@ -24,7 +24,7 @@ var (
 	stepIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	pipelineFile  = regexp.MustCompile(`^[a-z0-9-]+\.json$`)
 	infraCode     = regexp.MustCompile(`^(queue-full|no-usable-key|http-429|http-432|http-433|key-disabled-\d+|provider-unreachable|unreachable|unauthenticated|connection-unavailable|client-hash-mismatch)$`)
-	refPattern    = regexp.MustCompile(`\$\{([^}]+)\}`)
+	pipeRefPattern    = regexp.MustCompile(`\$\{([^}]+)\}`)
 	wholeRef      = regexp.MustCompile(`^\$\{([^}]+)\}$`)
 	http5xx       = regexp.MustCompile(`^http-5\d\d$`)
 	ownOutput     = regexp.MustCompile(`^(output/)?output\.json$`)
@@ -189,7 +189,7 @@ func resolveRefs(v any, example any, outputs doc, quote bool) (any, error) {
 			return look(m[1])
 		}
 		var ferr error
-		out := refPattern.ReplaceAllStringFunc(x, func(s string) string {
+		out := pipeRefPattern.ReplaceAllStringFunc(x, func(s string) string {
 			val, err := look(s[2 : len(s)-1])
 			if err != nil {
 				ferr = err

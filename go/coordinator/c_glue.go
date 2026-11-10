@@ -3,7 +3,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -155,6 +157,43 @@ func runPipeline(q *Request, invocation string) (any, error) {
 
 var skillID = regexp.MustCompile(`^[a-z0-9-]{1,80}$`)
 
+// Artifact hooks over area D (d_artifacts.go). The caller's transaction rides in the context, so D writes the rows in it.
+func cPID(v any) *string {
+	if s, ok := v.(string); ok {
+		return &s
+	}
+	return nil
+}
+
+func init() {
+	cArtifactSave = func(q *Request, projectID any, scope, executionID, name string, b []byte, media string) (string, error) {
+		id, _, err := saveObject(cCtx(q), q.app, cPID(projectID), scope, executionID, name, b, media)
+		return id, err
+	}
+	cArtifactWriteObject = func(q *Request, projectID any, scope string, b []byte, media string) (string, string, error) {
+		s, hash, err := writeObject(cCtx(q), q.app, cPID(projectID), scope, b, media)
+		if err != nil {
+			return "", "", err
+		}
+		return hash, s.ID, nil
+	}
+	cArtifactRead = func(ctx context.Context, a *App, id string, max int64) ([]byte, error) {
+		x, open, err := artifactRead(ctx, a, id, nil)
+		if err != nil {
+			return nil, err
+		}
+		if x.Size > max {
+			return nil, fail(413, fmt.Sprintf("Artifact larger than %d bytes", max))
+		}
+		r, err := open()
+		if err != nil {
+			return nil, err
+		}
+		defer r.Close()
+		return io.ReadAll(io.LimitReader(r, max+1))
+	}
+}
+
 func init() {
 	for _, inv := range []string{"pipeline", "direct"} {
 		inv := inv
@@ -232,4 +271,12 @@ func init() {
 		}
 		return cStr(e["id"]), nil
 	}
+}
+
+// cCtx: the request context carrying its transaction, so area D's helpers (dTx) run in it instead of taking the lock again.
+func cCtx(q *Request) context.Context {
+	if q.tx == nil {
+		return q.ctx()
+	}
+	return context.WithValue(q.ctx(), txKey{}, q.tx)
 }
