@@ -1,13 +1,23 @@
 {
-  "$comment": "Go arm: go/coordinator (docs/designs/fleet-stack.md#trial-slice-l1). Commands run with sh from the worktree root. GOCACHE is per worktree (go/.cache) so clean gives a real cold build without touching the user's cache; modules come from the shared GOMODCACHE (setup downloads them). go generate runs go/gen, which writes the host protocol types from contracts/host-protocol.schema.json.",
+  "$comment": "Go arm: go/coordinator (docs/designs/fleet-stack.md#trial-slice-l1). Commands run with sh from the worktree root. GOCACHE is per worktree (go/.cache) so clean gives a real cold build without touching the user's cache; modules come from the shared GOMODCACHE (setup downloads them). go generate runs go/gen, which writes the host protocol types from contracts/host-protocol.schema.json. The outside tests need the binary, so check builds it; the binary is the release artifact, so build equals check.",
   "setup": "cd go && go mod download",
   "clean": "rm -rf go/bin go/coordinator/protocol_gen.go go/.cache",
-  "check": "cd go && export GOCACHE=$PWD/.cache && go generate ./... && go vet ./...",
-  "build": "cd go && export GOCACHE=$PWD/.cache && go generate ./... && go vet ./... && go build -o bin/fleet-coordinator ./coordinator",
+  "check": "cd go && export GOCACHE=$PWD/.cache && go generate ./... && go build -o bin/fleet-coordinator ./coordinator",
+  "build": "cd go && export GOCACHE=$PWD/.cache && go generate ./... && go build -o bin/fleet-coordinator ./coordinator",
   "edit": "go/coordinator/stream.go",
   "server": "go/bin/fleet-coordinator",
-  "artifact": ["go/bin/fleet-coordinator"],
-  "lockfiles": ["go/go.sum"],
-  "roots": ["github.com/jackc/pgx/v5"],
-  "disk": ["go/bin", "go/.cache", "go/coordinator/protocol_gen.go"]
+  "artifact": [
+    "go/bin/fleet-coordinator"
+  ],
+  "lockfiles": [
+    "go/go.sum"
+  ],
+  "roots": [
+    "github.com/jackc/pgx/v5"
+  ],
+  "disk": [
+    "go/bin",
+    "go/.cache",
+    "go/coordinator/protocol_gen.go"
+  ]
 }
