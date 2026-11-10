@@ -74,6 +74,7 @@ func main() {
 		log.Fatal(err)
 	}
 	a.stream = listen(ctx, database)
+	startAll(ctx, a)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8787"
@@ -179,6 +180,7 @@ func secretHash(s string) string { h := sha256.Sum256([]byte(s)); return hex.Enc
 
 // Request: the credential check's outcome and the route's transaction.
 type Request struct {
+	app    *App
 	r      *http.Request
 	person *Person
 	host   map[string]any
@@ -200,7 +202,7 @@ const (
 	txNone
 )
 
-type route struct {
+type trialRoute struct {
 	method string
 	re     *regexp.Regexp
 	kind   int
@@ -209,11 +211,11 @@ type route struct {
 }
 
 func (a *App) routes() http.Handler {
-	r := func(method, pattern string, kind int, h handler) route {
-		return route{method, regexp.MustCompile("^" + pattern + "$"), kind, h, nil}
+	r := func(method, pattern string, kind int, h handler) trialRoute {
+		return trialRoute{method, regexp.MustCompile("^" + pattern + "$"), kind, h, nil}
 	}
 	seg := "([^/]+)"
-	table := []route{
+	table := []trialRoute{
 		r("POST", "/api/ops/"+seg, txWrite, a.op),
 		r("POST", "/api/sessions", txWrite, a.sessionCreate),
 		r("GET", "/api/sessions/"+seg, txRead, a.sessionGet),
@@ -224,10 +226,15 @@ func (a *App) routes() http.Handler {
 		r("GET", "/api/executions/"+seg+"/events", txRead, a.eventsGet),
 		{method: "GET", re: regexp.MustCompile(`^/api/stream$`), kind: txNone, raw: a.serveStream},
 	}
+	mux := a.registered()
 	return http.HandlerFunc(func(w http.ResponseWriter, hr *http.Request) {
+		if _, p := mux.Handler(hr); p != "" { // registry.go routes win over the trial table
+			mux.ServeHTTP(w, hr)
+			return
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		q := &Request{r: hr}
+		q := &Request{r: hr, app: a}
 		err := func() error {
 			if err := a.authorize(q); err != nil {
 				return err
