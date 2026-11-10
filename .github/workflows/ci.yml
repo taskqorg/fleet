@@ -64,7 +64,7 @@ jobs:
       - name: Pack the release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          (cd go && CGO_ENABLED=0 go build -trimpath -o bin/fleet-gateway ./gateway && CGO_ENABLED=0 go build -trimpath -o bin/fleet-executor ./executor)
+          (cd go && for cmd in gateway executor; do CGO_ENABLED=0 go build -trimpath -o bin/fleet-$cmd ./$cmd; done)
           mkdir -p release/dist && cp go/bin/fleet-coordinator go/bin/fleet-gateway go/bin/fleet-executor release/ && cp -r dist/app release/dist/ && cp -r config release/
           tar -czf fleet-release.tgz -C release .
           sha256sum fleet-release.tgz | tee fleet-release.tgz.sha256
@@ -176,10 +176,11 @@ jobs:
             go version -m "$file" | grep -q 'CGO_ENABLED=0' || { echo "$file: cgo enabled"; exit 1; }
             (cd dist && sha256sum "${file#dist/}" | tee "${file#dist/}.sha256")
           done
-          # The executor and the gateway (with its `guard` command): linux/amd64 and darwin/arm64 only (Windows not built).
-          for bin in executor gateway; do for t in linux/amd64 darwin/arm64; do
-            os=${t%/*} arch=${t#*/} file="dist/fleet-$bin-$os-$arch"
-            GOOS=$os GOARCH=$arch go build -trimpath -o "$file" ./$bin
+          # The gateway (with its `guard` command) and the executor: linux/amd64 and darwin/arm64 only
+          # (Windows not built: executor process control needs its own port).
+          for t in linux/amd64 darwin/arm64; do for cmd in gateway executor; do
+            os=${t%/*} arch=${t#*/} file="dist/fleet-$cmd-${t%/*}-${t#*/}"
+            GOOS=$os GOARCH=$arch go build -trimpath -o "$file" "./$cmd"
             go version -m "$file" | grep -q 'CGO_ENABLED=0' || { echo "$file: cgo enabled"; exit 1; }
             (cd dist && sha256sum "${file#dist/}" | tee "${file#dist/}.sha256")
           done; done
