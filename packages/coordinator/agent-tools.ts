@@ -179,7 +179,7 @@ export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise
    // A host that is neither configured nor ever polled cannot take the command: report it, create no run (example: 6b00f0fb on 'pds18').
    if(deps.knownHost&&!(await deps.knownHost(hostId)))return {hostId,executionId:null,problem:'unregistered host '+hostId};
    const sessionId=randomUUID(),id=randomUUID();
-   await put('session',{id:sessionId,createdAt:Date.now(),actor:'program-worker'});await put('execution',{id,executionId:id,sessionId,hostId,state:'queued',createdAt:Date.now(),actor:'program-worker'});
+   await put('session',{id:sessionId,createdAt:Date.now(),actor:'program-worker',...(b.callerSessionId?{readinessOfSessionId:b.callerSessionId}:{})});await put('execution',{id,executionId:id,sessionId,hostId,state:'queued',createdAt:Date.now(),actor:'program-worker'});
    await put('command',{id:randomUUID(),executionId:id,sessionId,hostId,kind:'readiness',status:'pending',payload:{projectId,project:{...project,roles:Object.fromEntries(Object.entries(project.roles??{}).map(([r,v]:any)=>[r,roleHarness(v)]))}}});return {hostId,executionId:id}}))}}
  // Role value names a profile (or, legacy, a harness). The executor's readiness checks accounts by harness.
  const roleProfile=(v:string)=>{try{return readTrustedProfile(deps.directory,v)}catch{return null}};
@@ -232,16 +232,20 @@ export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise
  // than the caller's own session (or a session it forked) are rejected; lists never default to all sessions.
  async function bound(name:string,args:any,executionId:string){
   const e=(await get(executionId,'execution')),own=e.sessionId,a={...(args??{})};
+  const ownProject=async(a:any)=>{const p=(await get(own,'session')).projectId;if(!p||a.projectId!==undefined&&a.projectId!==p)fail(403,'Project belongs to another agent');return p as string};
   const mine=async (id:any)=>typeof id==='string'&&(id===own||(await get(id,'session')).createdBySessionId===own)||fail(403,'Session belongs to another agent');
   // execution_status with sessionId: latest execution of a session this agent owns (PM watching its worker).
-  if(name==='execution_status'&&a.sessionId!==undefined){(await mine(a.sessionId));a.executionId=(await executions(a.sessionId)).at(-1)?.id??fail(404,'No execution');delete a.sessionId}
+  if(name==='execution_status'&&a.sessionId!==undefined){if(typeof a.sessionId!=='string'||(await get(a.sessionId,'session')).readinessOfSessionId!==own)(await mine(a.sessionId));a.executionId=(await executions(a.sessionId)).at(-1)?.id??fail(404,'No execution');delete a.sessionId}
   else if(['ask','worker_done','execution_status'].includes(name))a.executionId=executionId;
   else if(name==='reply')(await mine((await get(str(a.questionId,'questionId'),'question')).sessionId));
   else if(name==='view_link'){} // no session or ownership: pure link building
   else if(name==='reconcile')fail(403,'Not available to host agents');
+  // Readiness of any project (read-only checks, as before). readinessOfSessionId lets only execution_status read the runs;
+  // they are program-worker sessions, so no ownership (message_send, fork, transition) is granted.
+  else if(name==='project_readiness')a.callerSessionId=own;
   else if(name==='session_start'){
    // Host agents start sessions only in their own project, with a profile from its roles map and a registered account.
-   const p=(await get(own,'session')).projectId;if(!p||a.projectId!==undefined&&a.projectId!==p)fail(403,'Project belongs to another agent');a.projectId=p;a.callerSessionId=own;a.callerExecutionId=executionId;
+   const p=await ownProject(a);a.projectId=p;a.callerSessionId=own;a.callerExecutionId=executionId;
    const roles=Object.values((await deps.project?.(p))?.roles??{});if(a.profileId!==undefined&&!roles.includes(a.profileId))fail(403,'Profile not in project roles');
    if(a.account!==undefined&&!(await all('managed-account')).some(m=>m.enabled&&(m.id===a.account||m.name===a.account)))fail(403,'Account not available')}
   else{a.sessionId=a.sessionId??own;(await mine(a.sessionId));if(name==='session_fork')a.callerSessionId=own}
@@ -254,5 +258,5 @@ export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise
 
   return operations[name](a);
  }
- return {operations,bound,decorate,captureNative,knownNative,onReceipt,promote,ready,reconcile,stopOutcome,sessionView,transition,submit,mcp};
+ return {operations,descriptions,bound,decorate,captureNative,knownNative,onReceipt,promote,ready,reconcile,stopOutcome,sessionView,transition,submit,mcp};
 }

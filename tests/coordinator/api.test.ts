@@ -16,8 +16,10 @@ test('view_link builds and parses operator-app links; task_derived_check; list_m
  assert.deepEqual((await op('view_link',{url:built.url})).json(),{view:{view:'tasks',project:['fleet'],state:['failed']}});
  assert.deepEqual((await op('view_link',{url:'/tasks/a?sel=c,b'})).json(),{view:{view:'tasks',focus:'a',sel:['b','c']}});
  for(const bad of [{url:'https://evil.example/tasks'},{url:'/legacy/x'},{},{view:{view:'tasks'},url:'/tasks'},{view:{view:'nope'}}])assert.equal((await op('view_link',bad)).statusCode,400,JSON.stringify(bad));
- const agentTools=(await app.inject({method:'POST',url:'/api/agent-tools',headers:{authorization:'Bearer b',origin},payload:{jsonrpc:'2.0',id:1,method:'tools/list'}})).json().result.tools;
- assert.ok(agentTools.some((t:any)=>t.name==='view_link'&&t.description));
+ const listed=(await app.inject({method:'POST',url:'/api/tools',headers:{authorization:'Bearer b',origin},payload:{jsonrpc:'2.0',id:1,method:'tools/list'}})).json().result.tools;
+ assert.ok(listed.some((t:any)=>t.name==='view_link'&&t.description),'operator MCP lists agent tool descriptions');
+ // Agent tools exist only bound to an execution (/api/hosts/agent-tools); the unbound operator copies are gone.
+ for(const url of ['/api/agent-tools','/api/agent-operations/worker_done'])assert.equal((await app.inject({method:'POST',url,headers:{authorization:'Bearer b',origin},payload:{}})).statusCode,404,url);
  const s=(app as any).store;let id='';await s.tx(async()=>{id=await s.tasks.create({title:'T',projectId:'p',priority:'urgent'})});
  assert.deepEqual((await op('task_derived_check',{})).json(),{checked:1,drifted:[]});
  const m=(await op('list_membership',{ids:[id],lists:[{name:'tasks',filter:{},group:'priority'}]})).json();

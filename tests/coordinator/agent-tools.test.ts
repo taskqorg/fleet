@@ -5,7 +5,7 @@ import {resumeArgv,forkArgv} from '../../packages/coordinator/resume-argv.ts';
 test('agent tools: queue, handoff, fork, resume, ask/reply, worker_done, stop outcome, reconcile (fake native)',async()=>{
  const config={database:mkdtempSync(tmpdir()+'/fleet-agent-')+'/db',browserSecret:'b',machineSecret:'m',hostId:'mac'};let app=createApp(config);
  const call=async(url:string,payload?:any,machine=false)=>(await app.inject({method:payload?'POST':'GET',url,headers:{authorization:'Bearer '+(machine?'m':'b')},payload}));
- const op=async(name:string,body:any)=>(await call('/api/agent-operations/'+name,body)).json();
+ const op=async(name:string,body:any)=>(await call('/api/ops/'+name,body)).json();
  const poll=async(capabilities?:string[])=>(await call('/api/hosts/poll',{hostId:'mac',...(capabilities?{capabilities}:{})},true)).json().commands;
  const receipt=(c:any,status:string,nativeSessionId?:string)=>call('/api/hosts/receipts',{hostId:'mac',commandId:c.id,executionId:c.executionId,status,...(nativeSessionId?{nativeSessionId}:{})},true);
  // 3) resume table
@@ -49,7 +49,7 @@ test('agent tools: queue, handoff, fork, resume, ask/reply, worker_done, stop ou
  const t=await op('session_transition',{sessionId:f.sessionId,profileId:'claude-worker'});assert.equal(t.transition,'create_with_handoff');assert.equal(t.nativeSessionId,null);
  const back=await op('session_transition',{sessionId:f.sessionId,profileId:'baseline'});assert.equal(back.transition,'create_with_handoff');assert.equal(back.nativeSessionId,'native-fork');
  assert.equal((await op('session_resume',{sessionId:f.sessionId})).nativeSessions['codex:'].nativeSessionId,'native-fork');
- const tools=(await call('/api/agent-tools',{jsonrpc:'2.0',id:1,method:'tools/list'})).json();assert.ok(tools.result.tools.some((x:any)=>x.name==='session_fork'));
+ const tools=(await call('/api/tools',{jsonrpc:'2.0',id:1,method:'tools/list'})).json();assert.ok(tools.result.tools.some((x:any)=>x.name==='session_fork'));
  await app.close();
 });
 
@@ -57,7 +57,7 @@ test('worker_done never sets an unconfirmed native session id',async()=>{
  const config={database:mkdtempSync(tmpdir()+'/fleet-agent-')+'/db',browserSecret:'b',machineSecret:'m',hostId:'mac'};const app=createApp(config);try{
  const call=async(url:string,payload?:any,machine=false)=>(await app.inject({method:payload?'POST':'GET',url,headers:{authorization:'Bearer '+(machine?'m':'b')},payload}));
  const s=(await call('/api/sessions',{})).json().sessionId,e=(await call('/api/sessions/'+s+'/messages',{requestId:'one',text:'x'})).json();
- const r=(await call('/api/agent-operations/worker_done',{executionId:e.id,outcome:'succeeded',nativeSessionId:'--evil'})).json();assert.equal(r.action,'accepted');
+ const r=(await call('/api/ops/worker_done',{executionId:e.id,outcome:'succeeded',nativeSessionId:'--evil'})).json();assert.equal(r.action,'accepted');
  assert.equal((await call('/api/sessions/'+s)).json().nativeSessionId,undefined);
  }finally{await app.close()}});
 test('readiness per environment host; start carries setup; archive sends teardown',async()=>{
@@ -97,6 +97,12 @@ test('session_start binds a project session; finished child wakes its creator; s
  const [pc]=await poll();assert.equal(pc.payload.projectId,'p1');assert.equal(pc.payload.gitNetwork,true);
  const child=await tool(pc,'session_start',{role:'worker',requestId:'w1',text:'Do it'});
  assert.equal((await call('/api/hosts/agent-tools',{hostId:'mac',commandId:pc.id,executionId:pc.executionId,request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'session_start',arguments:{projectId:'other',role:'worker',requestId:'w2'}}}},true)).statusCode,403);
+ // Readiness from a host agent: the caller reads its own readiness runs.
+ const rd=(args:any)=>call('/api/hosts/agent-tools',{hostId:'mac',commandId:pc.id,executionId:pc.executionId,request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'project_readiness',arguments:args}}},true);
+ const ready=JSON.parse((await rd({projectId:'p1'})).json().result.content[0].text);assert.equal(ready.projectId,'p1');
+ const rs=(await op('execution_status',{executionId:ready.hosts[0].executionId})).sessionId;
+ assert.equal(JSON.parse((await call('/api/hosts/agent-tools',{hostId:'mac',commandId:pc.id,executionId:pc.executionId,request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'execution_status',arguments:{sessionId:rs}}}},true)).json().result.content[0].text).executionId,ready.hosts[0].executionId,'the caller reads its readiness run');
+ assert.equal((await call('/api/hosts/agent-tools',{hostId:'mac',commandId:pc.id,executionId:pc.executionId,request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'message_send',arguments:{sessionId:rs,requestId:'x',text:'hi'}}}},true)).statusCode,403,'reading grants no ownership');
  await done(pc);const cc=(await poll()).find((x:any)=>x.sessionId===child.sessionId);await done(cc);
  const wake=(await poll()).find((x:any)=>x.sessionId===pm.sessionId);assert.match(wake.payload.text,new RegExp('your session '+child.sessionId));
  const d=await tool(wake,'session_deliver',{sessionId:child.sessionId});assert.equal(d.branch,'fleet/'+child.sessionId);
