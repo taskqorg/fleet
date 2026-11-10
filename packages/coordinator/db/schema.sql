@@ -520,3 +520,18 @@ CREATE POLICY project_scope ON document USING (current_setting('fleet.project_id
 ALTER TABLE store ADD COLUMN holder text NULL;
 DROP POLICY operator_scope ON store;
 CREATE POLICY operator_scope ON store USING (current_setting('fleet.project_ids', true) = '*' OR holder = current_setting('fleet.person', true));
+
+-- migration 17: director and take (docs/designs/fleet-people-access.md §5, slice 4). directed_by is the person whose work a task
+-- or execution is (the coordinator sets it; children inherit it); requested_by is the original director and never changes;
+-- taken_from is the director before a take. Nullable: rows from before people-access have none (no backfill, owner guidance).
+ALTER TABLE execution ADD COLUMN directed_by text NULL;
+ALTER TABLE task ADD COLUMN directed_by text NULL;
+ALTER TABLE task ADD COLUMN requested_by text NULL;
+ALTER TABLE task ADD COLUMN taken_from text NULL;
+-- Subscriptions get the slice 4 fields the new code reads: holder (the owner, the only person before people-access), intake from
+-- enabled, an empty take rule. Needed to start; nothing else of the old records is kept.
+UPDATE document SET data = (data - 'enabled') || jsonb_build_object('holder', (SELECT email FROM person WHERE owner), 'intake', CASE WHEN data->>'enabled' = 'false' THEN 'paused' ELSE 'all' END, 'kind', 'personal', 'take', '{"projects":[]}'::jsonb) WHERE kind = 'managed-account' AND EXISTS (SELECT 1 FROM person WHERE owner);
+DELETE FROM document WHERE kind IN ('project-account', 'account-action');
+-- A holder reads and writes the setting changes of their own host and subscriptions (rows carry the holder).
+DROP POLICY project_scope ON document;
+CREATE POLICY project_scope ON document USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')) OR (kind IN ('host', 'managed-account', 'api-connection', 'host-observation', 'setting-change') AND data->>'holder' = current_setting('fleet.person', true)));

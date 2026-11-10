@@ -34,6 +34,10 @@ export const requestPerson=new AsyncLocalStorage<Person|null>();
 // Who acted, for audit rows: the request person's e-mail, else the given fallback (an execution, 'program-worker').
 // The one project-grant rule: the owner sees every project, others those of their project grants.
 export const mayAccessProject=(p:Person|null|undefined,projectId:string|null|undefined)=>!!p&&(p.owner||!!projectId&&p.grants.some(g=>g.kind==='project'&&g.id===projectId));
+// The director of new work (people-access §5): the request person, else the owner (timers, Lab, program workers).
+// ponytail: one owner per process (the last people file loaded); two apps with different owners in one process would share it.
+let ownerEmail:string|null=null;
+export const director=()=>requestPerson.getStore()?.email??ownerEmail;
 export const actor=(fallback='system')=>requestPerson.getStore()?.email??fallback;
 // requestedBy of a run: the request person, else the operator role (timers, Lab reconcile).
 export const requester=()=>{const p=requestPerson.getStore();return p?{kind:'person',email:p.email}:{kind:'operator'}};
@@ -60,6 +64,7 @@ export function peopleRegistry(file:string|undefined,store:Store){
   if(key===seen)return;
   if(!error)try{next=parsePeople(readFileSync(file,'utf8'))}catch(e:any){error=e.message}
   if(next){await write(next);loaded=next}else{if(!loaded.size)loaded=await fromRows();await problem(error)}
+  ownerEmail=[...loaded.values()].find(p=>p.owner)?.email??null;
   seen=key;
  };
  return {refresh,

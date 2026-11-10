@@ -1,3 +1,4 @@
+import {requestPerson} from './people.ts';
 import {map} from './store.ts';
 import {replyText} from './threads.ts';
 // Agent session tools: cross-agent handoff, fork, resume info, ask/reply, checked worker_done,
@@ -30,7 +31,7 @@ export function decideTransition(current:Side|null,target:Side):Transition{
 }
 const side=(key:string,cfg:any):Side=>{const {model,effort,id,...rest}=cfg??{};return {key,model:model??'gpt-6.1-sol',effort:cfg?effort:'low',config:canonical(rest)}};
 
-export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise<boolean>,browserOrigin?:string,directory:string,hostId:string,enqueue:(s:any,text:string,requestId:string)=>Promise<any>,resolveAccount?:(account:string,harness:string)=>Promise<any>,project?:(projectId:string)=>Promise<any>,pickAccount?:(harness:string,projectId:string,hostId?:string)=>Promise<string|undefined>,deliver?:(b:any)=>Promise<any>}){
+export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise<boolean>,browserOrigin?:string,directory:string,hostId:string,enqueue:(s:any,text:string,requestId:string)=>Promise<any>,resolveAccount?:(account:string,harness:string)=>Promise<any>,project?:(projectId:string)=>Promise<any>,pickAccount?:(harness:string,projectId:string,hostId?:string,directedBy?:string|null)=>Promise<string|undefined>,deliver?:(b:any)=>Promise<any>}){
  const {all,get,put}=store;
  const capable=async (name:string)=>{const h=(await all('host-observation',{id:deps.hostId})).find(x=>x.id===deps.hostId);return Array.isArray(h?.capabilities)&&h.capabilities.includes(name)};
  const executions=async (sessionId:string)=>(await all('execution',{sessionId:sessionId})).filter(e=>e.sessionId===sessionId);
@@ -191,8 +192,11 @@ export function agentTools(store:Store,deps:{knownHost?:(hostId:string)=>Promise
   const key=projectId+':'+requestId,old=(await all('session',{startRequest:key})).find(s=>s.startRequest===key);if(old)return {sessionId:old.id,projectId,role:old.role??null,profileId:old.agentConfig?.id,account:old.account??null,existing:true};
   const profileId=b.profileId??(b.role?project.roles?.[b.role]:undefined),profile=typeof profileId==='string'&&roleProfile(profileId)||fail(400,'Expected profileId or a role mapped to a profile');
   if(b.setup!==undefined&&!['run','skip'].includes(b.setup))fail(400,'Expected setup run|skip');
-  const account=b.account??(await deps.pickAccount?.(profile.harness??'codex',projectId,b.hostId));
-  const s:any={id:randomUUID(),createdAt:Date.now(),projectId,agentConfig:profile,startRequest:key,...(b.role?{role:b.role}:{}),...(account?{account}:{}),...(b.setup?{setup:b.setup}:{}),...(typeof b.hostId==='string'&&b.hostId?{hostId:b.hostId}:{}),...(typeof b.callerSessionId==='string'?{createdBySessionId:b.callerSessionId}:{}),...(typeof b.callerExecutionId==='string'?{createdByExecutionId:b.callerExecutionId}:{})};
+  // The new session's director is its creator's (people-access §5); the account choice follows it.
+  // callerExecutionId is trusted only from a host agent (bound(), no request person); a person directs their own sessions.
+  const person=requestPerson.getStore(),directedBy=person?person.email:typeof b.callerExecutionId==='string'?(await get(b.callerExecutionId,'execution').catch(()=>null))?.directedBy:undefined;
+  const account=b.account??(await deps.pickAccount?.(profile.harness??'codex',projectId,b.hostId,directedBy));
+  const s:any={id:randomUUID(),createdAt:Date.now(),projectId,agentConfig:profile,startRequest:key,...(directedBy?{directedBy}:{}),...(b.role?{role:b.role}:{}),...(account?{account}:{}),...(b.setup?{setup:b.setup}:{}),...(typeof b.hostId==='string'&&b.hostId?{hostId:b.hostId}:{}),...(typeof b.callerSessionId==='string'?{createdBySessionId:b.callerSessionId}:{}),...(typeof b.callerExecutionId==='string'?{createdByExecutionId:b.callerExecutionId}:{})};
   await put('session',s);const first=typeof b.text==='string'&&b.text?(await submit({sessionId:s.id,requestId:'start:'+requestId,text:b.text})):null;
   return {sessionId:s.id,projectId,role:b.role??null,profileId:profile.id,account:account??null,executionId:first&&!first.queued?first.id:null,hostId:first?.hostId??null}}
  // Operator-app links (docs/designs/fleet-view-urls-and-list-path.md §1): the same codec the app uses; no database access.

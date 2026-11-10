@@ -15,10 +15,10 @@ pub fn validate(v: &Value) -> Result<(), &'static str> {
         if v["id"]
             .as_str()
             .is_none_or(|id| id.is_empty() || id.len() > 80)
-            || !matches!(h, "claude" | "antigravity")
+            || !(h == "claude" || crate::harness::acp(h))
             || v["instructionRole"] != role
             || (h == "claude" && !v["effort"].is_null())
-            || (h == "antigravity" && !v["effort"].is_null())
+            || (crate::harness::acp(h) && !v["effort"].is_null())
             || v["model"]
                 .as_str()
                 .is_none_or(|s| s.is_empty() || s.starts_with('-'))
@@ -60,7 +60,7 @@ pub fn validate(v: &Value) -> Result<(), &'static str> {
         {
             return Err("unsupported Claude tool grant");
         }
-        if h == "antigravity" && v.get("tools").is_some() {
+        if crate::harness::acp(h) && v.get("tools").is_some() {
             return Err("Antigravity tool allowlist unsupported");
         }
         {
@@ -77,7 +77,7 @@ pub fn validate(v: &Value) -> Result<(), &'static str> {
                 return Err("unmapped Claude settings");
             }
         }
-        if h == "antigravity" {
+        if crate::harness::acp(h) {
             validate_antigravity_settings(v.get("settings"))?;
         }
         return Ok(());
