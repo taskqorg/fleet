@@ -26,7 +26,7 @@ test('a jump replaces the window', () => {
 });
 
 test('fed blocks: replaced in place, inserted inside the window by key, appended at the live end, counted past last', () => {
-  let w = fromPage(page(['10:0', '12:0'], { total: 2 }));
+  let w = fromPage(page(['10:0', '12:0'], { total: 2, hasBefore: true }));
   w = fed(w, [b('11:0'), b('12:0', 'edited'), b('13:0')]);
   assert.deepEqual(keys(w), ['10:0', '11:0', '12:0', '13:0']); assert.equal(w.blocks[2].markdown, 'edited'); assert.equal(w.total, 4); assert.equal(w.last, '13:0');
   // A late commit with a lower key lands where its key says; one before the window is left to a later page read.
@@ -34,6 +34,11 @@ test('fed blocks: replaced in place, inserted inside the window by key, appended
   // After a jump (newer history not loaded) a fed block past last only counts in the pill.
   let j = fromPage(page(['20:0'], { hasAfter: true }));
   j = fed(j, [b('30:0'), b('31:0')]); assert.deepEqual(keys(j), ['20:0']); assert.equal(j.fresh, 2);
+  // A stream resends its entry key on every chunk: counted once.
+  j = fed(j, [b('30:0', 'more')]); assert.equal(j.fresh, 2);
+  // Nothing older to load: a block before first is placed, not lost.
+  let h = fromPage(page(['10:0', '11:0']));
+  h = fed(h, [b('9:0')]); assert.deepEqual(keys(h), ['9:0', '10:0', '11:0']); assert.equal(h.first, '9:0');
   // A closing event replaces its stream entry.
   w = fed(w, [b('14:0', 'Hello')], ['11:0']); assert.deepEqual(keys(w), ['10:0', '10:1', '12:0', '13:0', '14:0']);
 });
@@ -41,5 +46,5 @@ test('fed blocks: replaced in place, inserted inside the window by key, appended
 test('feed rows that can touch a session thread', () => {
   const s = new Set(['s1']), c = (kind: string, sessionId: string | null) => ({ seq: 1, kind, id: 'x', taskId: null, sessionId, hostId: null, op: 'I' });
   assert.equal(touches(c('event', 's1'), s), true); assert.equal(touches(c('event', 's2'), s), false);
-  assert.equal(touches(c('question', null), s), true); assert.equal(touches(c('host', 's1'), s), false);
+  assert.equal(touches(c('question', null), s), true); assert.equal(touches(c('artifact', 's1'), s), true); assert.equal(touches(c('host', 's1'), s), false);
 });

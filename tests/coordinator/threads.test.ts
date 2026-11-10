@@ -67,6 +67,8 @@ test('execution.ended places the result block; it is written once',async()=>{con
   await f.s.executions.transition('with-result','succeeded').catch(()=>{});
   assert.equal((await f.s.query("SELECT count(*)::int AS n FROM document WHERE data->>'type'='execution.ended'"))[0].n,1);
   const r=await f.op.entries({key:{session:'s3'},limit:10});assert.deepEqual(texts(r),['boundary','result']);assert.deepEqual(r.entries[1].artifactIds,['a1']);
+  await f.s.query("INSERT INTO document(kind,id,data) VALUES('artifact','legacy-a',$1)",[JSON.stringify({id:'legacy-a',executionId:'with-result'})]);
+  assert.deepEqual((await f.op.blocks({key:{session:'s3'},rows:[{kind:'artifact',id:'legacy-a'}]})).entries.map((b:any)=>b.kind),['result']);
  }finally{await f.s.close()}});
 
 test('search finds blocks newest first and a hit opens with around; thread_blocks by fed rows; export with and without a range',async()=>{const f=await fresh();

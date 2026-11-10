@@ -9,7 +9,7 @@ export type Block = { kind: 'text' | 'tool' | 'reasoning' | 'question' | 'result
 export type ThreadKey = { task: string } | { session: string };
 export type Page = { entries: Block[]; first: string | null; last: string | null; hasBefore: boolean; hasAfter: boolean; total?: number; feedCursor: number };
 /** fresh: entries fed past `last` while newer history is not loaded (after a jump); the pill counts them. */
-export type Win = { blocks: Block[]; first: string | null; last: string | null; hasBefore: boolean; hasAfter: boolean; total: number; fresh: number };
+export type Win = { blocks: Block[]; first: string | null; last: string | null; hasBefore: boolean; hasAfter: boolean; total: number; fresh: number; freshKeys?: string[] };
 
 const parts = (k: string) => k.split(':').map(Number);
 export const cmpKey = (a: string, b: string) => { const [x, i] = parts(a), [y, j] = parts(b); return x - y || i - j; };
@@ -23,7 +23,7 @@ export function prepend(w: Win, p: Page): Win {
 /** Newer page below the window. */
 export function append(w: Win, p: Page): Win {
   const add = w.last ? p.entries.filter(b => cmpKey(b.key, w.last!) > 0) : p.entries;
-  return { ...w, blocks: [...w.blocks, ...add], last: add.at(-1)?.key ?? w.last, hasAfter: p.hasAfter, fresh: p.hasAfter ? w.fresh : 0 };
+  return { ...w, blocks: [...w.blocks, ...add], last: add.at(-1)?.key ?? w.last, hasAfter: p.hasAfter, fresh: p.hasAfter ? w.fresh : 0, freshKeys: p.hasAfter ? w.freshKeys : [] };
 }
 /**
  * Fed blocks (design "Read path"): a block with a known key replaces it in place; a new block inside [first, last], or after
@@ -32,24 +32,26 @@ export function append(w: Win, p: Page): Win {
  */
 export function fed(w: Win, entries: Block[], removed: string[] = []): Win {
   let blocks = removed.length ? w.blocks.filter(b => !removed.includes(b.key)) : [...w.blocks];
-  let { first, last, total, fresh } = w;
+  let { first, last, total, fresh } = w; const freshKeys = [...(w.freshKeys ?? [])];
   total -= w.blocks.length - blocks.length;
   for (const e of entries) {
     const at = blocks.findIndex(b => b.key === e.key);
     if (at >= 0) { blocks[at] = e; continue; }
     const inside = first !== null && cmpKey(e.key, first) >= 0 && (last === null || cmpKey(e.key, last) <= 0);
     const tail = !w.hasAfter && (last === null || cmpKey(e.key, last) > 0);
-    if (!inside && !tail) { if (last !== null && cmpKey(e.key, last) > 0) fresh++; continue; }
+    // Before first with nothing older to load: no later page read would bring it, so it is placed now.
+    const head = !w.hasBefore && first !== null && cmpKey(e.key, first) < 0;
+    if (!inside && !tail && !head) { if (last !== null && cmpKey(e.key, last) > 0 && !freshKeys.includes(e.key)) { freshKeys.push(e.key); fresh++; } continue; }
     // ponytail: linear insert by key; a binary search if windows reach tens of thousands of rows.
     let i = blocks.length; while (i > 0 && cmpKey(blocks[i - 1].key, e.key) > 0) i--;
     blocks.splice(i, 0, e); total++;
-    if (first === null) first = e.key;
+    if (first === null || cmpKey(e.key, first) < 0) first = e.key;
     if (last === null || cmpKey(e.key, last) > 0) last = e.key;
   }
-  return { ...w, blocks, first, last, total, fresh };
+  return { ...w, blocks, first, last, total, fresh, freshKeys };
 }
 /** Change-feed rows that can touch a session thread; thread_blocks checks membership on the server. */
-export const touches = (c: Change, sessionIds: Set<string>) => ['event', 'execution', 'question'].includes(c.kind) && (c.kind === 'question' || (!!c.sessionId && sessionIds.has(c.sessionId)));
+export const touches = (c: Change, sessionIds: Set<string>) => ['event', 'execution', 'question', 'artifact'].includes(c.kind) && (c.kind === 'question' || (!!c.sessionId && sessionIds.has(c.sessionId)));
 
 const PAGE = 100;
 /** One thread's window: newest on open, older and newer pages, jump around a key, and live blocks from the feed. */

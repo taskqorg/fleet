@@ -26,6 +26,8 @@ export type VirtualListProps<T> = {
   onEnd?: () => void;
   /** Upward loading (threads): called once per list length when the first rows come into view. */
   onStart?: () => void;
+  /** New rows the owner knows of but has not loaded (a thread after a jump): shown in the same pill; a click calls onJump. */
+  pending?: { count: number; onJump: () => void };
   /** Filled with the list's methods: scrollToKey for jumps (search hits). */
   handle?: { current: VirtualListHandle | null };
 };
@@ -82,6 +84,9 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     let added = 0, lastOld = -1;
     p.items.forEach((it, i) => { if (prev.current.keys.has(p.getKey(it))) lastOld = i; });
     p.items.forEach((it, i) => { if (i > lastOld && !prev.current.keys.has(p.getKey(it))) added++; });
+    // A window replaced as a whole (a jump, a reload) has no row in common with the last one: nothing in it is "new".
+    const replaced = lastOld < 0 && prev.current.keys.size > 0;
+    if (replaced) { added = 0; setUnseen(0); }
     const wasAtEdge = prev.current.atEdge;
     prev.current.keys = new Set(p.items.map(p.getKey));
     if (wasAtEdge) {
@@ -92,6 +97,8 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     if (a) {
       const i = p.items.findIndex(it => p.getKey(it) === a.key);
       if (i >= 0) el.scrollTop = v.getOffsetForIndex(i, 'start')![0] - a.delta;
+      // The anchor left with the old window (reload to newest): show the followed edge.
+      else if (replaced && p.follow === 'bottom' && p.items.length) { v.scrollToIndex(p.items.length - 1, { align: 'end' }); prev.current.atEdge = true; }
     }
     if (added) setUnseen(n => n + added);
   }, [p.items]);
@@ -102,13 +109,15 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     else if (p.items.length) v.scrollToIndex(p.items.length - 1, { align: 'end' });
   };
 
-  const endFor = useRef(-1);
+  // Asked once per window edge (length and edge row), so a replaced window of the same length asks again.
+  const edgeKey = (side: 'start' | 'end') => `${p.items.length}:${p.items.length ? p.getKey(p.items[side === 'start' ? 0 : p.items.length - 1]) : ''}`;
+  const endFor = useRef('');
   const lastVisible = v.getVirtualItems().at(-1)?.index ?? -1;
-  useLayoutEffect(() => { if (p.onEnd && p.items.length && lastVisible >= p.items.length - 5 && endFor.current !== p.items.length) { endFor.current = p.items.length; p.onEnd(); } });
+  useLayoutEffect(() => { if (p.onEnd && p.items.length && lastVisible >= p.items.length - 5 && endFor.current !== edgeKey('end')) { endFor.current = edgeKey('end'); p.onEnd(); } });
 
   // Read from the scroll position after anchor keeping ran, not from the render: rows just loaded above are not "in view".
-  const startFor = useRef(-1);
-  const checkStart = () => { const el = scroller.current; if (p.onStart && el && p.items.length && el.scrollTop < p.rowHeight * 5 && startFor.current !== p.items.length) { startFor.current = p.items.length; p.onStart(); } };
+  const startFor = useRef('');
+  const checkStart = () => { const el = scroller.current; if (p.onStart && el && p.items.length && el.scrollTop < p.rowHeight * 5 && startFor.current !== edgeKey('start')) { startFor.current = edgeKey('start'); p.onStart(); } };
   useLayoutEffect(checkStart);
   if (p.handle) p.handle.current = {
     scrollToKey: (key, align) => { const i = p.items.findIndex(it => p.getKey(it) === key); if (i >= 0) { prev.current.atEdge = false; v.scrollToIndex(i, { align }); const el = scroller.current, start = v.getOffsetForIndex(i, 'start')?.[0]; if (el && start !== undefined) anchor.current = { key, delta: start - el.scrollTop }; } },
@@ -128,7 +137,8 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
           ))}
         </div>
       </div>
-      <span aria-live="polite">{unseen > 0 && <button type="button" class={`pill pill-${p.follow}`} onClick={jump}>{unseen} new</button>}</span>
+      <span aria-live="polite">{p.pending && p.pending.count > 0 ? <button type="button" class={`pill pill-${p.follow}`} onClick={() => { setUnseen(0); p.pending!.onJump(); }}>{p.pending.count} new</button>
+        : unseen > 0 && <button type="button" class={`pill pill-${p.follow}`} onClick={jump}>{unseen} new</button>}</span>
     </div>
   );
 }

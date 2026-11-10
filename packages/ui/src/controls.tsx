@@ -369,7 +369,12 @@ export function TextRow({ who, markdown, mark, onCopyFail }: { who: 'operator' |
   </div>;
 }
 
-const fenced = (v: unknown) => '```\n' + (typeof v === 'string' ? v : JSON.stringify(v, null, 1)) + '\n```';
+const raw = (v: unknown) => typeof v === 'string' ? v : JSON.stringify(v, null, 1) ?? '';
+const fenced = (v: unknown) => { const t = raw(v), ticks = '`'.repeat(Math.max(3, ...[...t.matchAll(/`+/g)].map(m => m[0].length + 1))); return ticks + '\n' + t + '\n' + ticks; };
+/** Raw tool input or output: preformatted as is (never parsed as markdown), with its own copy. */
+function CodeBlock({ text, onCopyFail }: { text: string; onCopyFail?: (e: unknown) => void }) {
+  return <div class="md"><div class="code"><pre><code>{text}</code></pre><span class="code-copy"><Button label="Copy code" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(text).catch(e => onCopyFail?.(e))} /></span></div></div>;
+}
 /** A collapsed one-line row that opens downward on click; the clicked header stays where it is (OR-23). */
 function Fold({ icon, head, body, open, onToggle, copy, onCopyFail }: { icon: IconName; head: ComponentChildren; body: ComponentChildren; open: boolean; onToggle: () => void; copy: string; onCopyFail?: (e: unknown) => void }) {
   return <div class={`th-row th-fold${open ? ' open' : ''}`} data-ui="thread-row">
@@ -383,17 +388,17 @@ export function ToolRow({ name, input, output, state, startedAt, endedAt, open, 
   const copy = [`Tool ${name} (${state})`, input != null ? fenced(input) : '', output != null ? fenced(output) : ''].filter(Boolean).join('\n\n');
   return <Fold icon="terminal" open={open} onToggle={onToggle} copy={copy} onCopyFail={onCopyFail}
     head={<span class="th-line"><span class="mono">{String(name)}</span><span class={`svc${['failed', 'unfinished'].includes(state) ? ' t-danger' : ''}`}>{state}</span>{secs && <span class="svc">{secs}</span>}</span>}
-    body={<>{input != null && <Markdown text={fenced(input)} onCopyFail={onCopyFail} />}{output != null && <Markdown text={fenced(output)} onCopyFail={onCopyFail} />}</>} />;
+    body={<>{input != null && <CodeBlock text={raw(input)} onCopyFail={onCopyFail} />}{output != null && <CodeBlock text={raw(output)} onCopyFail={onCopyFail} />}</>} />;
 }
 export function ReasoningRow({ markdown, open, onToggle, onCopyFail }: { markdown: string; open: boolean; onToggle: () => void; onCopyFail?: (e: unknown) => void }) {
   return <Fold icon="bot" open={open} onToggle={onToggle} copy={markdown} onCopyFail={onCopyFail}
     head={<span class="th-line"><span>Reasoning</span><span class="svc ell">{markdown.split('\n')[0]}</span></span>} body={<Markdown text={markdown} onCopyFail={onCopyFail} />} />;
 }
 /** A question in the thread (DecisionBlock); answered, it collapses to one line with the answer and who gave it. */
-export function QuestionRow({ text, options, state, answer, answeredBy, now, onAnswer }: { text: string; options: string[]; state: string; answer?: string; answeredBy?: string; now: number; onAnswer?: (a: string) => void }) {
-  return <div class="th-row th-q" data-ui="thread-row"><DecisionBlock question={text} askedBy="agent" addressedTo="you" since={now} now={now}
+export function QuestionRow({ text, options, state, answer, answeredBy, askedAt, answeredAt, now, onAnswer }: { text: string; options: string[]; state: string; answer?: string; answeredBy?: string; askedAt?: number | null; answeredAt?: number | null; now: number; onAnswer?: (a: string) => void }) {
+  return <div class="th-row th-q" data-ui="thread-row"><DecisionBlock question={text} askedBy="agent" addressedTo="you" since={askedAt ?? now} now={now}
     options={options.map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
-    answered={state === 'answered' && answer !== undefined ? { by: answeredBy ?? 'operator', answer, at: now, delivered: true } : undefined} onAnswer={onAnswer} /></div>;
+    answered={state === 'answered' && answer !== undefined ? { by: answeredBy ?? 'operator', answer, at: answeredAt ?? now, delivered: true } : undefined} onAnswer={onAnswer} /></div>;
 }
 /** Results of an execution end: artifact links (Stage 4 adds names, the delivery stage and the viewer). */
 export function ResultRow({ artifactIds, stage }: { artifactIds: string[]; stage?: Stage }) {
@@ -406,13 +411,18 @@ export function BoundaryRow({ executionId, state, mark, startedAt, endedAt, now,
     <span class="th-svc"><AgentMark {...mark} />{secs !== null && <span class="chip-age">{duration(secs).text}</span>}{onStop && <Button label="Stop" icon="pause" iconOnly disabledReason={stopReason} onClick={onStop} />}</span></div>;
 }
 
+/** A search field for one scope (a thread): Enter searches. */
+export function SearchField({ label, value, onInput, onSearch }: { label: string; value: string; onInput: (v: string) => void; onSearch: () => void }) {
+  return <label class="search"><Icon name={actions.search} /><input type="search" placeholder={label} aria-label={label} value={value}
+    onInput={e => onInput((e.target as HTMLInputElement).value)} onKeyDown={e => { if (e.key === 'Enter') onSearch(); }} /></label>;
+}
 export type ThreadBlock = { kind: string; key: string; executionId?: string; [k: string]: any };
 /**
  * A thread: one row per block in a measured VirtualList that follows the bottom, loads older rows upward (onStart) and
  * newer ones downward (onEnd), and jumps through `handle`. Open tool and reasoning rows are kept by key across the window.
  */
-export function Thread({ blocks, label, now, marked, handle, onStart, onEnd, onStop, stopReason, onAnswer, onCopyFail }: {
-  blocks: ThreadBlock[]; label: string; now: number; marked?: string | null; handle?: { current: VirtualListHandle | null };
+export function Thread({ blocks, label, now, marked, handle, pending, onStart, onEnd, onStop, stopReason, onAnswer, onCopyFail }: {
+  blocks: ThreadBlock[]; label: string; now: number; marked?: string | null; handle?: { current: VirtualListHandle | null }; pending?: { count: number; onJump: () => void };
   onStart?: () => void; onEnd?: () => void; onStop?: (executionId: string) => void; stopReason?: string;
   onAnswer?: (questionId: string, answer: string) => void; onCopyFail?: (e: unknown) => void;
 }) {
@@ -424,7 +434,7 @@ export function Thread({ blocks, label, now, marked, handle, onStart, onEnd, onS
       case 'text': return <TextRow who={b.role === 'operator' ? 'operator' : 'agent'} markdown={b.markdown ?? ''} mark={markOf(b)} onCopyFail={onCopyFail} />;
       case 'tool': return <ToolRow name={b.name} input={b.input} output={b.output} state={b.state} startedAt={b.startedAt} endedAt={b.endedAt} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
-      case 'question': return <QuestionRow text={b.text} options={b.options ?? []} state={b.state} answer={b.answer} answeredBy={b.answeredBy} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} />;
+      case 'question': return <QuestionRow text={b.text} options={b.options ?? []} state={b.state} answer={b.answer} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} />;
       case 'result': return <ResultRow artifactIds={b.artifactIds ?? []} stage={b.stage} />;
       case 'boundary': return <BoundaryRow executionId={b.executionId!} state={b.state} mark={markOf(b)} startedAt={b.startedAt} endedAt={b.endedAt} now={now} stopReason={stopReason}
         onStop={onStop && ['preparing', 'running', 'waiting'].includes(b.state) ? () => onStop(b.executionId!) : undefined} />;
@@ -432,7 +442,7 @@ export function Thread({ blocks, label, now, marked, handle, onStart, onEnd, onS
     }
   };
   return <div class="transcript" data-ui="transcript-viewer">
-    <VirtualList class="tr-body" items={blocks} getKey={b => b.key} rowHeight={ROW} dynamic follow="bottom" label={label} handle={handle} onStart={onStart} onEnd={onEnd}
+    <VirtualList class="tr-body" items={blocks} getKey={b => b.key} rowHeight={ROW} dynamic follow="bottom" label={label} handle={handle} pending={pending} onStart={onStart} onEnd={onEnd}
       rowClass={b => b.key === marked ? 'marked' : ''} render={row} />
   </div>;
 }

@@ -28,7 +28,7 @@ export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promis
   return new Map(rows.map(r=>[r.id,{...r,seq:Number(r.seq)}]))}
  const mark=(e:any)=>({harness:e?.harness??null,model:e?.model??null,effort:e?.effort??null});
  const boundary=(e:any)=>({kind:'boundary',key:keyText({seq:e.seq,index:0}),sessionId:e.session_id,executionId:e.id,...mark(e),state:e.state,startedAt:ms(e.started_at),endedAt:ms(e.ended_at)});
- const question=(q:any)=>({kind:'question',key:keyText({seq:Number(q.seq),index:0}),executionId:q.execution_id,questionId:q.id,text:q.text,options:q.options??[],state:q.state,answer:q.answer??undefined,answeredBy:q.answered_by??undefined});
+ const question=(q:any)=>({kind:'question',key:keyText({seq:Number(q.seq),index:0}),executionId:q.execution_id,questionId:q.id,text:q.text,options:q.options??[],state:q.state,answer:q.answer??undefined,answeredBy:q.answered_by??undefined,askedAt:ms(q.asked_at),answeredAt:ms(q.answered_at)});
  // Row sources other than execution rows, one index range scan per member execution and kind. Events without blocks
  // (lifecycle, executor bookkeeping) and stream chunks other than a stream's first are skipped in SQL.
  // ponytail: the skip filters rows after the index scan; a partial index on (executionId, seq) of block-bearing events if measured slow.
@@ -96,6 +96,9 @@ export function threads(deps:{query:Query,artifacts:(executionId:string)=>Promis
   for(const c of named){
    if(c.kind==='execution'){const e=m.get(c.id);if(e)out.push(boundary(e));continue}
    if(c.kind==='question'){for(const q of await query('SELECT * FROM question WHERE id=$1 AND execution_id=ANY($2)',[c.id,ids]))out.push(question(q));continue}
+   // A stored artifact updates the result block of its execution's end.
+   if(c.kind==='artifact'){const e=(await query("SELECT execution_id AS e FROM artifact WHERE id=$1 UNION ALL SELECT data->>'executionId' FROM document WHERE kind='artifact' AND id=$1",[c.id]))[0]?.e;
+    if(e&&m.has(e))for(const d of await query(`SELECT seq,kind AS src,${ROW} AS v FROM document WHERE id=$1 AND kind='event'`,['ended:'+e]))out.push(...await expand({seq:Number(d.seq),src:d.src,v:d.v},m));continue}
    if(c.kind!=='event')continue;
    for(const d of await query(`SELECT seq,kind AS src,${ROW} AS v FROM document WHERE id=$1 AND kind IN ('event','message','event-delta') AND data->>'executionId'=ANY($2)`,[c.id,ids])){
     // A chunk names its stream; the stream's first chunk holds its key.
