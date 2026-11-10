@@ -144,7 +144,7 @@ export function taskModel(raw:Raw,executions:Executions){
  const listRow=(x:any)=>({id:x.id,projectId:x.project_id,title:x.title,state:x.state,waitReason:x.wait_reason,priority:x.priority,agent:x.agent,host:x.host,startedAt:x.started_at,createdAt:x.created_at,updatedAt:x.updated_at,openQuestions:Number(x.open_questions),sortKey:[x.g,-Number(x.seq),x.id]});
  const groupOf=(g:any)=>{if(g!==undefined&&!(typeof g==='string'&&Object.hasOwn(GROUPS,g)))fail(400,'Invalid group');return GROUPS[g??'none']};
  const W=(c:string[])=>c.length?' WHERE '+c.join(' AND '):'';
- async function page(b:{filter?:PageFilter,group?:string,limit?:number,after?:[string,number,string]}={}){
+ async function page(b:{filter?:PageFilter,group?:string,groupCounts?:boolean,limit?:number,after?:[string,number,string]}={}){
   const f=b.filter??{},G=groupOf(b.group),g=G.sql,limit=Math.max(1,Math.min(500,Math.floor(b.limit??100)));
   const p:any[]=[],c=where(f,p);
   if(b.after){if(!Array.isArray(b.after)||b.after.length!==3)fail(400,'Invalid after');p.push(String(b.after[0]),Number(b.after[1]),String(b.after[2]));c.push(`(${g},-t.seq,t.id) > ($${p.length-2},$${p.length-1},$${p.length})`)}
@@ -152,21 +152,21 @@ export function taskModel(raw:Raw,executions:Executions){
   // only its rows are joined (the planner would otherwise join every matching task before the LIMIT). Counts never join.
   const rows=await raw.query(G.derived?`SELECT ${cols},${g} AS g ${base}${W(c)} ORDER BY ${g},t.seq DESC,t.id LIMIT ${limit+1}`
    :`SELECT ${cols},t.g FROM (SELECT t.*,${g} AS g FROM task t${W(c)} ORDER BY ${g},t.seq DESC,t.id LIMIT ${limit+1}) t LEFT JOIN task_derived d ON d.task_id=t.id ORDER BY t.g,t.seq DESC,t.id`,p);
-  const {counts:byState,groups}=await summary(f,b.group);
+  const {counts:byState,groups}=await summary(f,b.group,b.groupCounts===true);
   const page=rows.slice(0,limit).map(listRow);
   return {tasks:page,nextAfter:rows.length>limit?page.at(-1)!.sortKey:null,counts:byState,total:Object.values(byState).reduce((a:number,n:any)=>a+n,0),groups}}
  // Counts and group summaries only (list_membership after a change): no page rows.
  // Per-state counts leave the state filter out, so every counter keeps its number while one state is selected.
- async function summary(f:PageFilter,group?:string){const G=groupOf(group);
+ async function summary(f:PageFilter,group?:string,groupCounts=false){const G=groupOf(group);
   const cp:any[]=[],cc=where(f,cp,false),byState=Object.fromEntries(STATES.map(s=>[s,0]));
   for(const r of await raw.query(`SELECT t.state::text AS state,count(*) AS n FROM task t${W(cc)} GROUP BY 1`,cp))byState[r.state]=Number(r.n);
   const gp:any[]=[],gc=where(f,gp);
-  // Each group also carries its per-state counts (Overview reads per-project counts from one grouped call).
-  const groups=new Map<string,{key:string,label:string|null,count:number,counts:Record<string,number>}>();
-  if(group&&group!=='none')for(const r of await raw.query(`SELECT ${G.sql} AS g,min(${LABELS[group]}) AS label,t.state::text AS state,count(*) AS n ${G.derived?base:'FROM task t'}${W(gc)} GROUP BY 1,3 ORDER BY 1`,gp)){
-   let x=groups.get(r.g);if(!x)groups.set(r.g,x={key:r.g,label:r.label,count:0,counts:Object.fromEntries(STATES.map(s=>[s,0]))});
-   x.label??=r.label;x.count+=Number(r.n);x.counts[r.state]=Number(r.n)}
-  return {counts:byState,groups:[...groups.values()]}}
+  const groups=group&&group!=='none'?(await raw.query(`SELECT ${G.sql} AS g,min(${LABELS[group]}) AS label,count(*) AS n ${G.derived?base:'FROM task t'}${W(gc)} GROUP BY 1 ORDER BY 1`,gp)).map(r=>({key:r.g,label:r.label,count:Number(r.n)})):[];
+  if(!groupCounts||!groups.length)return {counts:byState,groups};
+  // groupCounts (Overview): each group's per-state counts, like the top-level counts without the state filter, in one query.
+  const byGroup=new Map(groups.map(g=>[g.key,Object.fromEntries(STATES.map(s=>[s,0]))]));
+  for(const r of await raw.query(`SELECT ${G.sql} AS g,t.state::text AS state,count(*) AS n ${G.derived?base:'FROM task t'}${W(cc)} GROUP BY 1,2`,cp)){const c=byGroup.get(r.g);if(c)c[r.state]=Number(r.n)}
+  return {counts:byState,groups:groups.map(g=>({...g,counts:byGroup.get(g.key)!}))}}
  // The ids among `ids` that match the filter, with the same row shape and sort key as page().
  async function membership(f:PageFilter,group:string|undefined,ids:string[]){const g=groupOf(group).sql,p:any[]=[],c=where(f,p);p.push(ids.filter(x=>typeof x==='string').slice(0,1000));c.push(`t.id=ANY($${p.length})`);
   return (await raw.query(`SELECT ${cols},${g} AS g ${base}${W(c)}`,p)).map(listRow)}

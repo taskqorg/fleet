@@ -22,7 +22,7 @@ await app.ready();
 const CASES: [string, string, any][] = [
   ['task_page all, group priority', 'task_page', { filter: { state: [] }, group: 'priority', limit: 100 }],
   ['task_page group agent', 'task_page', { filter: { state: [] }, group: 'agent', limit: 100 }],
-  ['task_page group project (Overview: per-project counts in one call)', 'task_page', { group: 'project', limit: 1 }],
+  ['task_page group project (Overview: per-project counts in one call)', 'task_page', { group: 'project', groupCounts: true, limit: 1 }],
   ['task_page search "hero"', 'task_page', { filter: { state: [], search: 'hero' }, group: 'priority', limit: 100 }],
   ['sessions_list first page', 'sessions_list', { limit: 100 }],
   ['sessions_list search', 'sessions_list', { filter: { search: 'message 1 of s49' }, limit: 100 }],

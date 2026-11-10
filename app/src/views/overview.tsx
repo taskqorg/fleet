@@ -6,8 +6,8 @@ import { useDoc } from '../store.ts';
 
 type Overview = { questions: any[]; problems: any[]; counts: Record<string, number>; hosts: null; projects: { id: string; counts: Record<string, number> }[] };
 async function fetchOverview(): Promise<Overview> {
-  const [q, p, page] = await Promise.all([op('questions_list', { state: 'open' }), op('executions_list', { problem: true }), op('task_page', { group: 'project', limit: 1 })]);
-  // Tasks without a project are their own group: filter projectId null, never the global counts.
+  const [q, p, page] = await Promise.all([op('questions_list', { state: 'open' }), op('executions_list', { problem: true }), op('task_page', { group: 'project', groupCounts: true, limit: 1 })]);
+  // One grouped call: each project's per-state counts (groupCounts); tasks without a project are their own group.
   const projects = (page.groups as any[]).map(g => ({ id: g.label ?? 'no project', counts: g.counts }));
   return { questions: q.questions, problems: p.executions, counts: page.counts, hosts: null, projects };
 }

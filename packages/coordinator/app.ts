@@ -314,7 +314,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
   executions_list:async(b:any)=>({executions:await store.executions.list({taskId:b?.taskId,projectId:b?.projectId,parentExecutionId:b?.parentExecutionId,problem:b?.problem===true})}),
   // Operator app reads (docs/designs/fleet-operator-app.md §6); agents can call them too.
   changes_since:(b:any)=>{const c=b?.cursor;if(c!==null&&c!==undefined&&(!Number.isSafeInteger(c)||c<0))fail(400,'Invalid cursor');return store.changes.since(c??null,b?.limit??500)},
-  task_page:(b:any)=>store.tasks.page({filter:b?.filter,group:b?.group,limit:b?.limit,after:b?.after}),
+  task_page:(b:any)=>store.tasks.page({filter:b?.filter,group:b?.group,groupCounts:b?.groupCounts,limit:b?.limit,after:b?.after}),
   sessions_list:(b:any)=>sessionList.page({filter:b?.filter,limit:b?.limit,after:b?.after}),
   list_membership:async(b:any)=>{const ids=Array.isArray(b?.ids)&&b.ids.length<=1000?b.ids:fail(400,'Expected at most 1000 ids');if(!Array.isArray(b?.lists)||b.lists.length<1||b.lists.length>2)fail(400,'Expected one or two lists');
    return {lists:await map(b.lists,async(l:any)=>l?.name==='tasks'?{name:'tasks',rows:await store.tasks.membership(l.filter??{},l.group,ids),...(await store.tasks.summary(l.filter??{},l.group))}
@@ -333,7 +333,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  registerStream(app,store,{retentionDays});
  const runOp=async (n:string,b:any)=>{const op=ops[n];if(!op)fail(404,'Unknown operation');return READ_OPERATIONS.has(n)?store.read(()=>op(b??{})):LONG_OPERATIONS.has(n)?op(b??{}):op===projects[n]||op===transportRecovery.operations[n]?store.atomic(()=>op(b??{})):(await store.tx(()=>op(b??{})))};
  // Per-op timing: the Server-Timing header (browser devtools, curl -i) carries the operation's own time, not the transfer.
- app.post('/api/ops/:name',async(req:any,reply:any)=>{const t=performance.now(),r=await runOp(req.params.name,req.body);reply.header('server-timing',`op;desc="${req.params.name}";dur=${(performance.now()-t).toFixed(1)}`);return r});
+ app.post('/api/ops/:name',async(req:any,reply:any)=>{const t=performance.now();try{return await runOp(req.params.name,req.body)}finally{if(Object.hasOwn(ops,req.params.name))reply.header('server-timing',`op;desc="${req.params.name}";dur=${(performance.now()-t).toFixed(1)}`)}});
  registerLab(app,labOps,runOp);
  app.post('/api/tools',async(req:any)=>{const q=req.body;if(q?.method==='initialize')return {jsonrpc:'2.0',id:q.id,result:{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fleet',version:'1'}}};if(q?.method==='tools/list')return {jsonrpc:'2.0',id:q.id,result:{tools:Object.keys(ops).map(name=>({name,inputSchema:{type:'object'}}))}};if(q?.method!=='tools/call'||!ops[q.params?.name])fail(400,'Unknown tool');return {jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text:JSON.stringify(await runOp(q.params.name,q.params.arguments))}]}}});
  app.addHook('onClose',async()=>{if(ownStore)await store.close()});return app;

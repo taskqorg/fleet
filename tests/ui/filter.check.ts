@@ -19,7 +19,8 @@ const rule = (size: number, ok: boolean, what: string) => { if (!ok && size <= A
 const timings: string[] = [];
 const budget = (size: number, ms: number, what: string) => {
   if (!process.env.CI) return rule(size, size < ASSERTED_UP_TO || ms < BUDGET_MS, `${what} ${ms} ms (budget ${BUDGET_MS} ms)`);
-  timings.push(`| ${size} | ${what} | ${ms} | ${size >= ASSERTED_UP_TO && ms >= BUDGET_MS ? 'over' : 'ok'} |`);
+  const over = size === ASSERTED_UP_TO && ms >= BUDGET_MS; if (over) console.log(`  OVER BUDGET (reported only on CI) ${what} ${ms} ms`);
+  timings.push(`| ${size} | ${what} | ${ms} | ${size === ASSERTED_UP_TO ? (over ? 'over' : 'ok') : 'report only'} |`);
 };
 const med = (a: number[]) => [...a].sort((x, y) => x - y)[a.length >> 1];
 const time = async (f: () => Promise<unknown>, n = 7) => { const a: number[] = []; for (let i = 0; i < n; i++) { const s = performance.now(); await f(); a.push(performance.now() - s); } return med(a); };
