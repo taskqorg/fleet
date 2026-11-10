@@ -76,14 +76,27 @@ export function createApp(config:{appDir?:string,peopleFile?:string,changeLogRet
   const named=req.headers['x-fleet-person'];
   if(machine){if(named!==undefined)fail(403,'Host requests carry no person');}
   else{if(typeof named!=='string'||!named)fail(401,'Person required');await people.refresh();const p=people.personFor(named as string);if(!p)fail(403,'Unknown person');
-   // Until per-person visibility ships (people-access slice 3), only the owner works in Fleet; others may only read me.
-   if(!p!.owner&&!(route==='/api/ops/:name'&&(req.params as any)?.name==='me'))fail(403,'Only the owner until visibility ships');(req as any).person=p}
+   (req as any).person=p}
   if(!machine&&config.browserProxyAuth&&!['GET','HEAD','OPTIONS'].includes(req.method)&&req.headers.origin!==config.browserOrigin)fail(403,'Origin required');
   if(!machine&&req.headers.origin&&req.headers.origin!==(config.browserOrigin??`${req.protocol}://${req.headers.host}`)) fail(403,'Origin rejected');
  });
  // The body hostId of a host request is the derived host: a different one is 403, a missing one is filled in.
  app.addHook('preHandler',async(req:any)=>{const h=req.fleetHost;if(!h||!req.body||typeof req.body!=='object')return;
   if(req.body.hostId!==undefined&&req.body.hostId!==h.id)fail(403,'Host rejected');req.body.hostId=h.id});
+ // Visibility (§2): a person other than the owner works in the scope of their grants (row-level security per transaction) plus
+ // the rows they hold; architect views need the architect role, except on a row the person holds.
+ store.setScope(()=>{const p=requestPerson.getStore();if(!p||p.owner)return null;const ids=p.grants.filter(g=>g.kind==='project').map(g=>g.id);
+  return {projectIds:(p.roles.includes('architect')?',':'')+ids.join(','),person:p.email}});
+ const ARCHITECT_OPS=/^(account_|lab_|connection|recovery|reconcil|transport_|artifact_rule|profiles_list)/,ARCHITECT_ROUTES=/^\/api\/(lab|accounts|recovery|reconciliation|recovery-tools|profiles)(\/|$)/;
+ const opName=(req:any)=>['/api/ops/:name','/api/project-operations/:name'].includes(req.routeOptions?.url)?req.params?.name:req.routeOptions?.url==='/api/tools'&&req.body?.method==='tools/call'?req.body?.params?.name:null;
+ const holds=async(p:any,b:any)=>{if(typeof b?.hostId==='string'&&(await hosts.byId(b.hostId))?.holder===p.email)return true;
+  if(typeof b?.accountId==='string'){const a=await get(b.accountId,'managed-account').catch(()=>null);if(a?.holder===p.email)return true}return false};
+ app.addHook('preHandler',async(req:any)=>{const p=req.person;if(!p||p.owner)return;const name=opName(req),route=req.routeOptions?.url??'';
+  const args=req.body?.method==='tools/call'?req.body?.params?.arguments:req.body;
+  if((name&&ARCHITECT_OPS.test(name)||ARCHITECT_ROUTES.test(route))&&!p.roles.includes('architect')&&!(await requestPerson.run(null,()=>holds(p,args))))fail(403,'Architect role required');
+  // Project settings and context come from config files, outside row-level security: a named project must be granted.
+  const projectId=args?.projectId??(route.startsWith('/api/projects/:')?req.params?.id??req.params?.project:undefined)??req.query?.projectId;
+  if(typeof projectId==='string'&&!p.grants.some((g:any)=>g.kind==='project'&&g.id===projectId))fail(404,'Unknown project')});
  let artifacts:Artifacts;
  let deliveryRuntime:ReturnType<typeof delivery>,agent:ReturnType<typeof agentTools>,pipelineTimer:any,ticking=false;
  const related=async (d:any)=>({...d,parentState:(await get(d.parentExecutionId,'execution')).state,childState:(await get(d.childExecutionId,'execution')).state,continuationState:d.continuationExecutionId?(await get(d.continuationExecutionId,'execution')).state:null});
@@ -242,7 +255,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  // artifact_list for an agent: artifacts of its own project (or its own execution when it has no project).
  app.post('/api/hosts/artifacts/list',async(req:any)=>{const b=req.body??{};(await owned(b));const e=await store.executions.get(text(b.executionId,200));const f=b.filter??{};
   return {artifacts:await artifacts.list({executionId:!e.projectId?e.id:typeof f.executionId==='string'?f.executionId:undefined,taskId:typeof f.taskId==='string'?f.taskId:undefined,mediaType:typeof f.mediaType==='string'?f.mediaType:undefined,projectId:e.projectId??undefined,noExamples:true})}});
- app.post('/api/hosts/stores',async(req:any)=>{const b=req.body??{};(await owned({hostId:b.hostId}));return store.tx(()=>stores.register(b.hostId,b.store))});
+ app.post('/api/hosts/stores',async(req:any)=>{const b=req.body??{};(await owned({hostId:b.hostId}));return store.tx(()=>stores.register(b.hostId,b.store,req.fleetHost.holder))});
  // Results stream from a verified copy with the same sandbox as before (no size limit; bytes never sit in the coordinator).
  app.get('/api/results/:id',async(req:any,r)=>{const a=await artifacts.get(req.params.id);if(a.state!=='stored')fail(404,'Not found');r.header('Content-Security-Policy',"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:");return r.type(a.mediaType||'application/octet-stream').send(await artifacts.read(a.id))});
  // Pipeline v2 runner (docs/designs/fleet-lab.md Stage 2): api steps call connections from this host; agent steps are
