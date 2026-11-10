@@ -103,6 +103,15 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
    await store.query("UPDATE artifact SET state='failed',last_error=$2 WHERE id=$1 AND state='pending' AND NOT EXISTS (SELECT 1 FROM artifact_copy WHERE artifact_id=$1 AND state='verified')",[a.id,why])});
   if(a.execution_id&&deps.onSettled)await deps.onSettled(a.execution_id)}
 
+ // A host reports that an upload can never succeed (the store refused it permanently): the artifact fails now, with the
+ // store's reason, instead of waiting for its lease to expire; the execution then settles (failed if the file was required).
+ async function refused(b:{hostId:string,artifactId:string,error?:string}){const a=await row(b.artifactId);
+  if(a.state!=='pending')return {state:a.state};
+  if(!a.execution_id||(await store.executions.get(a.execution_id)).hostId!==b.hostId)fail(403,'Artifact not uploaded by this host');
+  const why='upload refused: '+(typeof b.error==='string'?b.error.slice(0,500):'unknown reason'),stores=await deps.stores.list();
+  for(const c of await store.query("SELECT * FROM artifact_copy WHERE artifact_id=$1 AND state IN ('pending','copying')",[a.id])){const s=stores.find(x=>x.id===c.store_id);
+   if(s&&c.upload_id)await s3(s).abortMultipartUpload(s.bucket,c.staging_key,c.upload_id).catch(()=>{});await reject(a,s??({id:c.store_id} as StoreRow),c.staging_key??'',why)}
+  return {state:(await row(a.id)).state}}
  // Promotion: the staging object becomes the content-hash key only when that key is absent; the staging key is then removed.
  async function verified(b:{artifactId:string,storeId:string,hostId:string,sha256:string}){const a=await row(b.artifactId),s=await deps.stores.get(b.storeId);
   if(b.hostId!==s.host_id)fail(403,'Only the store host verifies its copies');const c=await copy(a.id,s.id);if(!c||!['pending','copying'].includes(c.state))return {state:c?.state??'unknown'};
@@ -215,6 +224,6 @@ export function artifactModel(store:Store,deps:{stores:Stores,locations:(project
     await store.query("INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) SELECT id,$2,$3,'verified',now() FROM artifact WHERE legacy_id=$1 ON CONFLICT DO NOTHING",[d.id,target.id,projectId]);
     await store.query("DELETE FROM document WHERE kind='artifact' AND id=$1",[d.id])});moved++}
   return moved}
- return {backfill,writeObject,saveObject,reserve,parts,commit,renew,declare,verified,read,readBuffer,get,list,purge,expireLeases,requirement,adapter,s3,presign,keyOf,stagingOf,row,select,PART_SIZE};
+ return {backfill,writeObject,saveObject,reserve,refused,parts,commit,renew,declare,verified,read,readBuffer,get,list,purge,expireLeases,requirement,adapter,s3,presign,keyOf,stagingOf,row,select,PART_SIZE};
 }
 export type Artifacts=ReturnType<typeof artifactModel>;

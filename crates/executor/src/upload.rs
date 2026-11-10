@@ -310,6 +310,8 @@ fn work(journal: PathBuf, client: Client, lane: &str, after: &(dyn Fn(&Client, &
                 Err(Failure::Permanent(e)) => {
                     let _ = db.execute("UPDATE transfers SET state='failed',response=?2 WHERE id=?1", params![id, json!({"state":"failed","error":e}).to_string()]);
                     if let Some(cmd) = body.get("command") { let _ = outbox::queue(&db, "/api/hosts/receipts", json!({"hostId":client.host,"commandId":cmd["id"],"executionId":cmd["executionId"],"status":"failed","error":e})); }
+                    // An upload that can never succeed fails its artifact at once, with the store's reason (not after the lease).
+                    if kind == "upload" { let _ = outbox::queue(&db, "/api/hosts/artifacts/failed", json!({"hostId":client.host,"artifactId":id,"error":e})); }
                 }
             }
         }

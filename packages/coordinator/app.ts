@@ -42,7 +42,7 @@ export function createApp(config:{appDir?:string,ownerEmail?:string,changeLogRet
  // which no other handler writes: it runs in the execution's scope, in parallel with other executions and with GLOBAL writers.
  const ingestScope=(req:any)=>typeof req.body?.executionId==='string'?executionScope(req.body.executionId):fail(400,'Expected executionId');
  const ingestRoutes=new Set(['/api/hosts/events']);
- const longRoutes=new Set(['/api/stream','/assets/*','/assets/','/api/hosts/artifacts/list','/api/hosts/artifacts/reserve','/api/hosts/artifacts/parts','/api/hosts/artifacts/commit','/api/hosts/artifacts/verified','/api/hosts/artifacts/renew','/api/hosts/artifacts/declare','/api/hosts/artifacts/get','/api/hosts/artifacts/read','/api/results/:id','/api/pipeline-runs','/api/pipelines/:id/runs','/api/project-operations/:name','/api/project-tools','/api/ops/:name','/api/tools','/api/hosts/receipts','/api/agent-tools','/api/hosts/agent-tools']);
+ const longRoutes=new Set(['/api/stream','/assets/*','/assets/','/api/hosts/artifacts/list','/api/hosts/artifacts/reserve','/api/hosts/artifacts/parts','/api/hosts/artifacts/commit','/api/hosts/artifacts/verified','/api/hosts/artifacts/renew','/api/hosts/artifacts/failed','/api/hosts/artifacts/declare','/api/hosts/artifacts/get','/api/hosts/artifacts/read','/api/results/:id','/api/pipeline-runs','/api/pipelines/:id/runs','/api/project-operations/:name','/api/project-tools','/api/ops/:name','/api/tools','/api/hosts/receipts','/api/agent-tools','/api/hosts/agent-tools']);
  // Reads (GET, HEAD) run in a read-only snapshot; every other route is one GLOBAL write (store.atomic) unless it is host ingest.
  app.addHook('onRoute',(o:any)=>{if(longRoutes.has(o.url))return;const h=o.handler,method=[o.method].flat()[0];
   o.handler=['GET','HEAD'].includes(method)?function(this:any,req:any,reply:any){return store.read(()=>h.call(this,req,reply))}
@@ -176,6 +176,7 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  app.post('/api/hosts/artifacts/commit',hostArtifact(b=>artifacts.commit(b)));
  app.post('/api/hosts/artifacts/verified',hostArtifact(b=>artifacts.verified(b)));
  app.post('/api/hosts/artifacts/renew',hostArtifact(b=>artifacts.renew(b)));
+ app.post('/api/hosts/artifacts/failed',hostArtifact(b=>artifacts.refused(b)));
  // artifact_save required=true: recorded through the outbox before the completion receipt, independent of the upload (P3-D3).
  app.post('/api/hosts/artifacts/declare',hostArtifact(async b=>{(await owned(b));return artifacts.declare(b)}));
  // A host reads an artifact only for its own command that names it (delivery files, copies), or for its own execution in

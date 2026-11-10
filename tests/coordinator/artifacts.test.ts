@@ -135,3 +135,12 @@ test('store endpoints are allowlisted; hosts read only artifacts of their own co
  await s.put('command',{id:'c9',executionId:'e9',sessionId:'s9',hostId:'pc',kind:'delivery-step',status:'completed',payload:{files:[{artifactId:id}]}});
  assert.equal((await call('/api/hosts/artifacts/read',{hostId:'pc',commandId:'c9',artifactId:id})).statusCode,403);
  await assert.rejects(A.readBuffer(id,4),(e:any)=>e.statusCode===413);await app.close()});
+
+test('a permanent store refusal reported by the host fails the artifact at once with the reason',async()=>{const {app,s,A,fake,call}=await setup();await register(call,fake);
+ const data=Buffer.from('refused bytes');
+ const r=(await call('/api/hosts/artifacts/reserve',{hostId:'mac',executionId:'e1',name:'out.txt',mediaType:'text/plain',size:data.length,sha256:sha(data),required:true})).json();assert.equal(r.state,'pending');
+ const other=await app.inject({method:'POST',url:'/api/hosts/artifacts/failed',headers:{authorization:'Bearer m'},payload:{hostId:'pds18',artifactId:r.artifactId,error:'x'}});assert.notEqual(other.statusCode,200);
+ const done=(await call('/api/hosts/artifacts/failed',{hostId:'mac',artifactId:r.artifactId,error:'store 400 InvalidRequest'})).json();assert.equal(done.state,'failed');
+ const row=await A.get(r.artifactId);assert.equal(row.state,'failed');assert.match(row.error,/upload refused: store 400 InvalidRequest/);
+ assert.equal((await call('/api/hosts/artifacts/failed',{hostId:'mac',artifactId:r.artifactId,error:'again'})).json().state,'failed');
+ await app.close();await fake.close()});
