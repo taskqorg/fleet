@@ -57,7 +57,7 @@ The laboratory workflow is:
 3. Add comments, tags, comparisons, limitations and suitability conclusions.
 4. Recommend a method for specific tasks within a project or across the system.
 
-Follow the [experiment contract](experiments.md) when applying improvements. Assessments alone do not change recommendations or product results.
+Follow the [experiment contract](lab.md) when applying improvements. Assessments alone do not change recommendations or product results.
 
 ### Architect objects
 

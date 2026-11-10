@@ -9,11 +9,13 @@ test('durable scoped delegation, sequential dispatch, actual results and stop su
  const call=(url:string,payload?:any,machine=false)=>app.inject({method:payload?'POST':'GET',url,headers:{authorization:'Bearer '+(machine?'machine':'browser')},payload});
  const poll=async()=> (await call('/api/hosts/poll',{hostId:'mac'},true)).json().commands;
  const receipt=(c:any,status:string)=>call('/api/hosts/receipts',{hostId:'mac',commandId:c.id,executionId:c.executionId,status,nativeSessionId:'native-'+c.sessionId},true);
- const pair=(await call('/api/experiments',{requestId:'pair',text:'work',profileIds:['design-rules','baseline']})).json();const parent=(await poll())[0];await receipt(parent,'started');
+ // Two sessions: the parent's profile grants delegation to baseline; the other session's execution must be refused.
+ const start=async(profileId:string,requestId:string)=>{const s=(await call('/api/sessions',{})).json();await call('/api/sessions/'+s.id+'/profile',{profileId});const m=(await call('/api/sessions/'+s.id+'/messages',{requestId,text:'work'})).json();assert.ok(m.executionId,JSON.stringify(m));return m};
+ const first=await start('design-rules','parent'),other=await start('baseline','other');const parent=(await poll()).find((c:any)=>c.executionId===first.executionId);await receipt(parent,'started');
  const request={hostId:'mac',commandId:parent.id,executionId:parent.executionId,delegation:{requestId:'child',profileId:'baseline',input:'review'}};
  assert.equal((await call('/api/hosts/receipts',request)).statusCode,401);
  assert.equal((await call('/api/hosts/receipts',{...request,hostId:'other'},true)).statusCode,403);
- assert.equal((await call('/api/hosts/receipts',{...request,executionId:pair.trials[1].executionId},true)).statusCode,403);
+ assert.equal((await call('/api/hosts/receipts',{...request,executionId:other.executionId},true)).statusCode,403);
  const d=(await call('/api/hosts/receipts',request,true)).json();assert.ok(d.childExecutionId);
  assert.equal((await call('/api/hosts/receipts',request,true)).json().id,d.id);
  assert.equal((await call('/api/hosts/receipts',{...request,delegation:{...request.delegation,input:'changed'}},true)).statusCode,409);

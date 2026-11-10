@@ -1,6 +1,6 @@
 # packages/coordinator
 
-The Fleet coordinator: a Fastify server over Postgres that owns tasks, sessions, executions, questions and artifacts, hands commands to host executors, and serves the operator app and the legacy pages.
+The Fleet coordinator: a Fastify server over Postgres that owns tasks, sessions, executions, questions and artifacts, hands commands to host executors, and serves the operator app.
 
 ## Key files
 
@@ -14,8 +14,8 @@ The Fleet coordinator: a Fastify server over Postgres that owns tasks, sessions,
 | `stream.ts` | `/api/stream` SSE change feed for the app. |
 | `artifacts.ts`, `stores.ts`, `placement.ts` | Artifact metadata, per-host S3 stores, presigned transfers and placement rules. |
 | `agent-tools.ts`, `delegation.ts`, `delivery.ts` | MCP tools for agents, delegation between executions, delivery pipeline runtime. |
-| `projects.ts`, `accounts.ts`, `lab.ts`, `recovery.ts` | Connected projects and pipelines, harness accounts, the laboratory, recovery tools. |
-| `ui.ts`, `project-ui.ts`, `lab-ui.ts`, `account-ui.ts` | Legacy HTML pages served under `/legacy/*`. |
+| `projects.ts`, `accounts.ts`, `recovery.ts` | Connected projects and pipelines, harness accounts, recovery tools. |
+| `profiles.ts` | Trusted agent profiles from `config/agents`: validation, canonical JSON, digests. The Lab is being rebuilt ([design](../../docs/designs/fleet-lab.md)). |
 | `migrate-sqlite.ts` | One-time move from the old SQLite records to Postgres, and its reverse export. |
 | `*.py` | Helpers the coordinator starts: the scoped static-site program worker (`delivery_worker.py`) and the Pipe search adapter (`pipe_search.py`). |
 

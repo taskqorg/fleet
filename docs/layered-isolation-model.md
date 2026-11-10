@@ -2,7 +2,7 @@
 
 2026-11-09. Goal: hundreds of concurrent sessions (lab: many worker variants under owner-configured balancing) without mixing subscriptions, context, tools or instructions. No new limits or gates are proposed; where a hard resource exists it is named and measured.
 
-Sources: `crates/executor/src/{native,harness,codex,lab,main}.rs`, `packages/coordinator/{accounts,lab}.ts`, [resources and auth model](resources-and-auth-model.md), [multi-account same env](multi-account-same-env.md), [lab runtime](lab-runtime-build.md), T3 Code `d0f1f7200d` (`ClaudeHome.ts`, `ClaudeSkills.ts`, `antigravityAuthSupport.ts`), Orca `0b93cef4450` (managed per-account homes, computer use on the visible desktop). Evidence: [`evidence/layered-isolation-20261109/results.json`](../evidence/layered-isolation-20261109/results.json).
+Sources: `crates/executor/src/{native,harness,codex,profile,main}.rs`, `packages/coordinator/{accounts,profiles}.ts`, [resources and auth model](resources-and-auth-model.md), [multi-account same env](multi-account-same-env.md), [lab runtime](lab-runtime-build.md), T3 Code `d0f1f7200d` (`ClaudeHome.ts`, `ClaudeSkills.ts`, `antigravityAuthSupport.ts`), Orca `0b93cef4450` (managed per-account homes, computer use on the visible desktop). Evidence: [`evidence/layered-isolation-20261109/results.json`](../evidence/layered-isolation-20261109/results.json).
 
 ## Layers
 

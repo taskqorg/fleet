@@ -131,7 +131,7 @@ The operator reports damaged hands. The agent reworks the relevant material and 
 
 An architect supplies a specification and configures a developer with SDD instructions. The agent implements the project through ordinary execution. The architect reviews the product, records shortcomings and discusses changes in a session.
 
-Run another variant with changed instructions, skills or orchestration; compare result quality, human intervention, repeated work and recorded costs under the [experiment contract](experiments.md). The same process can evaluate PM behavior. SDD is a candidate method, not a Fleet requirement.
+Run another variant with changed instructions, skills or orchestration; compare result quality, human intervention, repeated work and recorded costs under the [experiment contract](lab.md). The same process can evaluate PM behavior. SDD is a candidate method, not a Fleet requirement.
 
 Once a method is useful, recommend it for relevant assignments within the selected scope. Project work uses that recommendation under the normal selection rules; previous results remain unchanged unless explicitly reworked.
 
@@ -147,7 +147,7 @@ The operator sees progress, questions and results without keeping a session open
 
 ## UC9. Improve measurable work within a budget
 
-An architect assigns an optimization objective, requirements and budget using ordinary instructions. An agent iterates through changes, trials and measurements, optionally delegating work to other sessions. Follow [iterative improvement](experiments.md#iterative-improvement) for shared budget accounting, comparison and stopping.
+An architect assigns an optimization objective, requirements and budget using ordinary instructions. An agent iterates through changes, trials and measurements, optionally delegating work to other sessions. Follow [iterative improvement](lab.md#iterative-improvement) for shared budget accounting, comparison and stopping.
 
 For a compiler, compare compilation time and resource use while retaining correctness checks. Return qualifying candidates, measurements and costs; the newest candidate need not be the best. Human comments remain available alongside numeric results.
 

@@ -180,7 +180,7 @@ PMs apply the project's effective rules when preparing tasks. Executing agents a
 - History and evidence: retain every execution in full, without default expiry: session history, agent output, actions, tool calls, questions, results and verification materials. This is the source for analysis and pipeline improvement.
 - Changes: operators and architects can inspect diffs between skill and agent configuration revisions using existing version-control and diff tools.
 - Compatibility: checked combinations of harnesses, models, skills, tools and environments, stored as versioned facts. Confirmed incompatibility blocks launch; incomplete or unchecked results are visible, not treated as incompatibility.
-- Quality: compare agents, methods and methodologies through [experiments](docs/experiments.md), including numeric evaluations and budgeted iterative improvement at step, task or project scope.
+- Quality: compare agents, methods and methodologies through [experiments](docs/lab.md), including numeric evaluations and budgeted iterative improvement at step, task or project scope.
 - Operation: retain invocation counts, duration, cost, CPU, memory, disk usage, failures and recovery across agents, tools, Fleet components and infrastructure, including preparation and cleanup. Link records to components, tools, working areas and runs where applicable; expose missing observations.
 
 Three records: a run with its conditions and results; an assessment of runs with criteria, comparison, limitations and suitability, appended and never rewritten; a recommendation for a catalogue kind of work within a project or system scope, linked to its assessment. Comments and tags are fields of runs and assessments. Keep failed runs visible.
@@ -205,7 +205,7 @@ Routine work advances automatically. People resolve substantive decisions and ex
 - [Use cases](docs/use-cases.md): end-to-end scenarios connecting the system blocks.
 - [Execution continuity](docs/execution-continuity.md): working area lifecycle, resource visibility and handoff.
 - [System operations](docs/system-operations.md): operation groups, contracts and agent communication semantics.
-- [Experiments](docs/experiments.md): reproduce recorded work, compare changes and apply improvements to products.
+- [Experiments](docs/lab.md): reproduce recorded work, compare changes and apply improvements to products.
 - [Interface workflows](docs/interfaces.md): operator and architect activities and contextual actions.
 - [Capabilities and pipelines](docs/capabilities-and-pipelines.md): callable outcomes, alternative methods and system-executed workflows.
 

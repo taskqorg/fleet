@@ -63,13 +63,38 @@ pub fn run(project: &Value, host: &str, registry: Option<&Path>) -> Value {
             },
         }
     }
+    if harnesses.iter().any(|h| *h == "claude") {
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        checks.extend(claude_checks(host, crate::harness::claude_placement_here(), home.as_deref()));
+    }
     let ok = checks.iter().all(|c| c["status"] == "ok");
     json!({"hostId":host,"ok":ok,"checks":checks})
+}
+
+/// Claude placement, and on WSL the subscription login: the file Claude writes under CLAUDE_CONFIG_DIR when that is
+/// `<fleet config dir>/claude` (`~/.config/fleet/claude/.credentials.json`, docs/configuration.md). Only presence is checked.
+fn claude_checks(host: &str, placement: Result<&str, &str>, home: Option<&Path>) -> Vec<Value> {
+    let mut out = vec![check("claude-placement", host, placement.err().map(String::from))];
+    if placement == Ok("windows-wsl") {
+        let login = home.map(|h| h.join(".config/fleet/claude/.credentials.json"));
+        out.push(check("claude-login", host, (!login.is_some_and(|p| p.is_file())).then(|| "claude-login-absent".into())));
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn claude_placement_and_login() {
+        let home = std::env::temp_dir().join(format!("fleet-claude-login-{}", std::process::id()));
+        std::fs::create_dir_all(home.join(".config/fleet/claude")).unwrap();
+        assert_eq!(claude_checks("h", Ok("mac"), Some(&home)).len(), 1);
+        assert_eq!(claude_checks("h", Err("claude-placement-unset"), Some(&home))[0]["reason"], "claude-placement-unset");
+        assert_eq!(claude_checks("h", Ok("windows-wsl"), Some(&home))[1]["reason"], "claude-login-absent");
+        std::fs::write(home.join(".config/fleet/claude/.credentials.json"), "{}").unwrap();
+        assert!(claude_checks("h", Ok("windows-wsl"), Some(&home)).iter().all(|c| c["status"] == "ok"));
+    }
     #[test]
     fn ls_remote_reasons() {
         assert_eq!(ls_remote_reason(128, "ssh: Could not resolve hostname github.com"), "ls-remote-network-unreachable-exit-128");

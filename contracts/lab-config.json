@@ -105,6 +105,26 @@
             "const": false
           }
         }
+      },
+      "skills": {
+        "type": "array",
+        "maxItems": 32,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,79}$"
+        },
+        "description": "Unused until Lab Stage 2 (docs/designs/fleet-lab.md)."
+      },
+      "connections": {
+        "type": "array",
+        "maxItems": 32,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,79}$"
+        },
+        "description": "Unused until Lab Stage 2 (docs/designs/fleet-lab.md)."
       }
     },
     "allOf": [

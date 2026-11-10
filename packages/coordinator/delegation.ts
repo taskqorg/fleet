@@ -1,6 +1,6 @@
 
 import {randomUUID} from 'node:crypto';
-import {canonical,readTrustedProfile} from './lab.js';
+import {canonical,readTrustedProfile} from './profiles.js';
 export function delegation(store:{all:(k:string,filter?:object,omit?:string[])=>Promise<any[]>,get:(id:string,k:string)=>Promise<any>,put:(k:string,v:any)=>Promise<unknown>,many:(ids:string[],k:string)=>Promise<Map<string,any>>,query:(sql:string,params?:any[])=>Promise<any[]>,tx:<T>(fn:()=>Promise<T>)=>Promise<T>,outside:<T>(fn:()=>T)=>T,executions:{openDelegations:()=>Promise<any[]>}},directory:string,enqueue:(session:any,text:string,requestId:string)=>Promise<any>,readArtifact:(id:string)=>Promise<Buffer>){
  const {all,get,put}=store;
  const fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};

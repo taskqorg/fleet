@@ -5,7 +5,6 @@ import {fileURLToPath} from 'node:url';
 import {createHash,randomUUID} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import type {FastifyInstance} from 'fastify';
-import {projectUi} from './project-ui.js';
 type Store={all:(kind:string,filter?:object,omit?:string[])=>Promise<any[]>,get:(id:string,kind:string)=>Promise<any>,put:(kind:string,value:any)=>Promise<unknown>,atomic:<T>(fn:()=>Promise<T>|T)=>Promise<T>,read:<T>(fn:()=>Promise<T>|T)=>Promise<T>,query:(sql:string,params?:any[])=>Promise<any[]>,tasks?:any};
 const digest=(v:any)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const fail=(statusCode:number,message:string):never=>{throw Object.assign(Error(message),{statusCode})};
@@ -39,7 +38,7 @@ export function projectSettings(p:any){
  const rules=p.artifact_rules;if(rules!==undefined&&(!Array.isArray(rules)||rules.some((r:any)=>!r||typeof r!=='object')))bad('artifact_rules');out.artifact_rules=rules??[];
  return {settings:out,unknownKeys};
 }
-export function registerProjects(app:FastifyInstance,store:Store,config:{directory:string,pipeConnectionFile?:string,proxy?:boolean,searchHostId?:string,readArtifact?:(id:string)=>Promise<Buffer>}){
+export function registerProjects(app:FastifyInstance,store:Store,config:{directory:string,pipeConnectionFile?:string,searchHostId?:string,readArtifact?:(id:string)=>Promise<Buffer>}){
  const {all,get,put,atomic}=store,snapshot=store.read;
  const read=(path:string)=>JSON.parse(readFileSync(path,'utf8'));
  const ids=()=>readdirSync(resolve(config.directory,'projects')).filter(n=>existsSync(resolve(config.directory,'projects',n,'project.json'))).sort();
@@ -73,7 +72,6 @@ export function registerProjects(app:FastifyInstance,store:Store,config:{directo
   question_answer:async (b:any)=>{if(typeof b?.questionId==='string'&&store.tasks&&!(await store.query("SELECT 1 FROM question WHERE id=$1 AND legacy_kind='project-question'",[b.questionId])).length){if(typeof b.answer!=='string'||!b.answer||b.answer.length>4000)fail(400,'Expected answer');const answered=await store.tasks.answer(b.questionId,{answer:b.answer,by:'operator',artifactIds:Array.isArray(b.artifactIds)?b.artifactIds:undefined});return (await store.tasks.questions({taskId:answered.task_id??undefined})).find((x:any)=>x.id===answered.id)??{id:answered.id,state:answered.state,answer:answered.answer}}
    const q=(await get(b.questionId,'project-question'));if(typeof b.answer!=='string'||!b.answer||b.answer.length>4000)fail(400,'Expected answer');if(q.state==='answered'){if(q.answer!==b.answer)fail(409,'Answer already recorded');return q}Object.assign(q,{state:'answered',answer:b.answer,answeredAt:Date.now(),answeredBy:'operator'});await put('project-question',q);return q},
   question_history:async (b:any)=>{project(b.projectId);return {questions:(await all('project-question',{projectId:b.projectId})).filter(q=>q.projectId===b.projectId)}},project_context:(b:any)=>project(b.projectId),catalogue:async (b:any)=>(await catalogue(b.projectId)),pipeline_run:runPipeline,pipeline_get:async (b:any)=>{if(typeof b.runId!=='string'||!b.runId||b.runId.length>200)fail(400,'Expected runId');const r=(await get(b.runId,'pipeline-run'));if(b.projectId&&r.projectId!==b.projectId)fail(403,'Pipeline belongs to another project');return r},pipeline_history:async (b:any)=>{project(b.projectId);return {runs:(await all('pipeline-run',{projectId:b.projectId})).filter(r=>r.projectId===b.projectId)}}};
- app.get('/legacy/projects',async(_,r)=>r.type('text/html').send(projectUi(config.proxy)));
  operations.project_list=()=>({projects:ids().map(project)});
  app.get('/api/projects',async()=>operations.project_list());
  app.get('/api/projects/:id',async(req:any)=>operations.project_context({projectId:req.params.id}));

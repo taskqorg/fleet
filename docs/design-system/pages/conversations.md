@@ -2,7 +2,7 @@
 
 **App routes:** `/conversations` and `/conversations/:id` in the operator app (`app/src/views/conversations.tsx`). The app check (`tests/ui/app.check.ts`) verifies them. There is no static mockup.
 
-**Purpose.** Talk to agents and steer running work. This page replaces the legacy session page (`/legacy`).
+**Purpose.** Talk to agents and steer running work. This page replaces the removed legacy session page.
 
 **Layout.** [App shell](../patterns/app-shell.md), then [list and detail](../patterns/list-detail.md):
 * **Left:** a list of conversations, using the [list view](../patterns/list-view.md) and [state counters](../controls/state-counters.md) with the `session` state family.

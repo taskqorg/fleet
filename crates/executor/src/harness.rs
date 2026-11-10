@@ -56,7 +56,7 @@ fn command_registry(
 ) -> Result<(Command, Option<Vec<u8>>)> {
     let mut resolved = p.clone();
     if let Some(profile) = p.get("agentConfig") {
-        crate::lab::validate(profile).map_err(fail)?;
+        crate::profile::validate(profile).map_err(fail)?;
         for key in ["harness", "model", "effort"] {
             if let (Some(requested), Some(configured)) = (p.get(key), profile.get(key)) {
                 if requested != configured {
@@ -137,7 +137,9 @@ fn command_registry(
         return Err(fail("host executable must be absolute"));
     }
     let mut binding = json!({"harness":h,"account":account,"home":home.canonicalize()?,"nativeHome":nh.canonicalize()?});
-    if h == "claude" && !cfg!(target_os = "macos") { return Err(fail("Claude account is restricted to Mac/Windows; this executor target is ineligible")); }
+    if h == "claude" {
+        claude_placement_here().map_err(|e| fail(&format!("Claude is ineligible on this host: {e}")))?;
+    }
     if matches!(h, "antigravity" | "claude") {
         binding["transport"] = json!(if h == "claude" { "stream-json" } else { "acp-1.5.3" });
         binding["credentialAuthority"] = a["credentialAuthority"].clone();
@@ -261,7 +263,7 @@ fn command_registry(
         // Variadic native tool flags must never consume the user prompt.
         Ok((c, Some(format!("{text}\n").into_bytes())))
     } else {
-        crate::lab::validate_antigravity_settings(p.get("settings")).map_err(fail)?;
+        crate::profile::validate_antigravity_settings(p.get("settings")).map_err(fail)?;
         if p.get("effort").is_some_and(|v| !v.is_null()) {
             return Err(fail(
                 "ACP effort must be selected explicitly through an advertised model ID",
@@ -287,6 +289,23 @@ fn command_registry(
 /// Native ids reach argv; allow only ASCII alphanumerics and '-', at most 64, never a leading '-'.
 pub fn safe_native_id(n: &str) -> bool {
     !n.is_empty() && n.len() <= 64 && !n.starts_with('-') && n.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+}
+/// Claude placement (docs/configuration.md): the host setting FLEET_CLAUDE_PLACEMENT is `mac` or `windows-wsl`; unset means
+/// Claude never runs here (PDS18). The setting must match the platform: `mac` needs macOS, `windows-wsl` needs Linux under
+/// WSL, detected from the kernel release string.
+pub fn claude_placement(setting: Option<&str>, os: &str, kernel_release: &str) -> std::result::Result<&'static str, &'static str> {
+    let wsl = os == "linux" && kernel_release.to_ascii_lowercase().contains("microsoft");
+    match setting {
+        None | Some("") => Err("claude-placement-unset"),
+        Some("mac") if os == "macos" => Ok("mac"),
+        Some("windows-wsl") if wsl => Ok("windows-wsl"),
+        Some("mac" | "windows-wsl") => Err("claude-placement-platform-mismatch"),
+        Some(_) => Err("claude-placement-invalid"),
+    }
+}
+pub fn claude_placement_here() -> std::result::Result<&'static str, &'static str> {
+    let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
+    claude_placement(std::env::var("FLEET_CLAUDE_PLACEMENT").ok().as_deref(), std::env::consts::OS, &release)
 }
 pub fn claude_mcp(c: &mut Command, profile: &Value, servers: &Value) {
     let mut allowed: Vec<String> = profile["tools"]
@@ -471,9 +490,24 @@ mod tests {
         for bad in ["", "-x", "--help", "a b", "a;b", "a/b", &"a".repeat(65)] { assert!(!safe_native_id(bad), "{bad}"); }
     }
     #[test]
+    fn claude_placement_values() {
+        assert_eq!(claude_placement(Some("mac"), "macos", ""), Ok("mac"));
+        assert_eq!(claude_placement(Some("windows-wsl"), "linux", "5.15.167.4-microsoft-standard-WSL2"), Ok("windows-wsl"));
+        assert_eq!(claude_placement(Some("mac"), "linux", "6.8.0-generic"), Err("claude-placement-platform-mismatch"));
+        assert_eq!(claude_placement(Some("windows-wsl"), "linux", "6.8.0-generic"), Err("claude-placement-platform-mismatch"));
+        assert_eq!(claude_placement(Some("windows-wsl"), "macos", ""), Err("claude-placement-platform-mismatch"));
+        assert_eq!(claude_placement(None, "macos", ""), Err("claude-placement-unset"));
+        assert_eq!(claude_placement(Some("linux"), "linux", ""), Err("claude-placement-invalid"));
+    }
+    #[test]
     fn fake_launch_routing_resume_and_credentials() {
         use std::io::Write;
         use std::process::Stdio;
+        // The placement this platform allows, so the Claude launch path runs on Mac and WSL; elsewhere Claude is refused.
+        // Only this test reads the variable.
+        let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
+        let here = if cfg!(target_os = "macos") { "mac" } else if release.to_ascii_lowercase().contains("microsoft") { "windows-wsl" } else { "" };
+        unsafe { std::env::set_var("FLEET_CLAUDE_PLACEMENT", here) };
         let root = std::env::temp_dir().join(format!("fleet-multiharness-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let fake = root.join("native");
@@ -510,7 +544,7 @@ print(json.dumps({'harness':h,'home':os.environ['HOME'],'args':sys.argv[1:]}))
         for (id, h) in [("claude", "claude"), ("antigravity", "antigravity")] {
             let p = json!({"harness":h,"account":id,"model":"native-model","text":"hello","instructions":"explicit"});
             let work = root.join(format!("{id}-work"));
-            if h == "claude" && !cfg!(target_os = "macos") {
+            if h == "claude" && claude_placement_here().is_err() {
                 assert!(command_registry(&work, None, &p, &registry).is_err());
                 continue;
             }

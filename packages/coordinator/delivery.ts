@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import {randomUUID} from 'node:crypto';
-import {readTrustedProfile} from './lab.js';
+import {readTrustedProfile} from './profiles.js';
 // shortcut: static-site delivery only; add other worker kinds after a real consumer exists.
 // readArtifact: the bytes of a stored artifact (artifacts.readBuffer); no artifact content sits in records (design §3).
 export function delivery(store:Docs,config:any,enqueue:(s:any,input:string,requestId:string)=>Promise<any>,projects:Record<string,(b:any,actor?:any)=>Promise<any>>,resolveAccount:(selection:string|undefined,harness:string,hostId:string)=>Promise<any>,preferredAccount:(projectId:string)=>Promise<string|undefined>,readArtifact:(id:string)=>Promise<Buffer>){

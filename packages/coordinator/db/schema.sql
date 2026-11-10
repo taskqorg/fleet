@@ -410,3 +410,55 @@ CREATE OR REPLACE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$
 SELECT set_config('fleet.project_ids', '*', true);
 INSERT INTO task_derived(task_id, project_id, agent, host, started_at, open_questions) SELECT t.id, v.* FROM task t CROSS JOIN LATERAL task_derived_values(t.id) v ON CONFLICT (task_id) DO NOTHING;
 CREATE TRIGGER task_derived_change AFTER INSERT OR UPDATE OR DELETE ON task_derived FOR EACH ROW EXECUTE FUNCTION fleet_change();
+-- migration 11: Lab groundwork (docs/designs/fleet-lab.md Stage 0, item 12). The new value 'rating' is not used in this migration
+-- (Postgres refuses a new enum value in the transaction that added it). Old lab experiments are deleted (owner decision; not
+-- restorable by design); the executions they ran stay as plain executions without the experiment link.
+ALTER TYPE question_kind ADD VALUE 'rating';
+ALTER TABLE execution ADD COLUMN request_id text;
+CREATE UNIQUE INDEX execution_request ON execution(request_id) WHERE request_id IS NOT NULL;
+CREATE TABLE experiment(
+ id text PRIMARY KEY,
+ project_id text NOT NULL,
+ kind text NOT NULL CHECK (kind IN ('single', 'ab', 'loop')),
+ pipeline_id text NOT NULL,
+ examples jsonb NOT NULL DEFAULT '[]',
+ variants jsonb NOT NULL DEFAULT '[]',
+ repeats int NOT NULL DEFAULT 1,
+ evaluators jsonb NOT NULL DEFAULT '[]',
+ primary_evaluator text NULL,
+ strategy jsonb NULL,
+ budgets jsonb NOT NULL DEFAULT '[]',
+ state text NOT NULL DEFAULT 'draft' CHECK (state IN ('draft', 'running', 'paused', 'stopped', 'done')),
+ stop_reason text NULL,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ seq bigint NOT NULL DEFAULT nextval(pg_get_serial_sequence('document', 'seq'))
+);
+CREATE TABLE score(
+ id text PRIMARY KEY,
+ experiment_id text NOT NULL REFERENCES experiment(id) ON DELETE CASCADE,
+ project_id text NOT NULL,
+ trial_ids text[] NOT NULL,
+ evaluator text NOT NULL,
+ evaluator_version text NOT NULL,
+ form text NOT NULL CHECK (form IN ('metric', 'pass_fail', 'pick_best', 'scale')),
+ value jsonb NULL,
+ source_execution_id text NULL REFERENCES execution(id),
+ question_id text NULL REFERENCES question(id),
+ rationale text NULL,
+ replaces_score_id text NULL REFERENCES score(id),
+ created_at timestamptz NOT NULL DEFAULT now(),
+ seq bigint NOT NULL DEFAULT nextval(pg_get_serial_sequence('document', 'seq'))
+);
+CREATE INDEX score_experiment ON score(experiment_id);
+CREATE INDEX score_trials ON score USING gin(trial_ids);
+ALTER TABLE experiment ENABLE ROW LEVEL SECURITY;
+ALTER TABLE experiment FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON experiment USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')));
+ALTER TABLE score ENABLE ROW LEVEL SECURITY;
+ALTER TABLE score FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON score USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')));
+CREATE OR REPLACE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'document' THEN IF r.kind = 'host-observation' AND TG_OP = 'UPDATE' AND (OLD.data - 'lastSeenAt') = (NEW.data - 'lastSeenAt') THEN RETURN NULL; END IF; IF r.kind = 'session' THEN k := 'session'; s := r.id; ELSIF r.kind IN ('event', 'message') THEN k := 'event'; s := r.data->>'sessionId'; ELSIF r.kind = 'host-observation' THEN k := 'host'; h := r.id; ELSIF r.kind = 'command' THEN k := 'command'; h := r.data->>'hostId'; s := r.data->>'sessionId'; ELSIF r.kind = 'artifact' THEN k := 'artifact'; s := r.data->>'sessionId'; SELECT e.task_id INTO t FROM execution e WHERE e.id = r.data->>'executionId'; ELSE RETURN NULL; END IF; i := r.id; ELSIF TG_TABLE_NAME = 'task' THEN k := 'task'; i := r.id; t := r.id; ELSIF TG_TABLE_NAME = 'task_derived' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'task_dependency' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'execution' THEN k := 'execution'; i := r.id; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME = 'execution_totals' THEN k := 'execution'; i := r.execution_id; SELECT e.task_id, e.session_id, e.host_id INTO t, s, h FROM execution e WHERE e.id = r.execution_id; ELSIF TG_TABLE_NAME = 'question' THEN k := 'question'; i := r.id; t := r.task_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'experiment' THEN k := 'experiment'; i := r.id; ELSIF TG_TABLE_NAME = 'score' THEN k := 'score'; i := r.id; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op) VALUES (k, i, t, s, h, r.project_id, left(TG_OP, 1)); PERFORM pg_notify('fleet_change', ''); RETURN NULL; END $$;
+CREATE TRIGGER experiment_change AFTER INSERT OR UPDATE OR DELETE ON experiment FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER score_change AFTER INSERT OR UPDATE OR DELETE ON score FOR EACH ROW EXECUTE FUNCTION fleet_change();
+DELETE FROM document WHERE kind = 'experiment';
+UPDATE execution SET experiment_id = NULL, variant = NULL WHERE experiment_id IS NOT NULL;

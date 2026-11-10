@@ -57,6 +57,20 @@ Show the applied scope and source diff where applicable. Definition changes affe
 
 Architects manage shared definitions and grants. Operators manage project work and granted controls; authorized agents use the same operations. A conversation's role label does not grant additional authority.
 
+## Host settings: Claude placement
+
+Claude runs only where the host's setting allows it ([fleet-lab.md](designs/fleet-lab.md), Claude on WSL). The setting is the environment variable `FLEET_CLAUDE_PLACEMENT` of the executor and of the program worker (`delivery_worker.py`) on that host:
+
+| Value | Allowed on | Host |
+|---|---|---|
+| `mac` | macOS | owner-mac |
+| `windows-wsl` | Linux under WSL; detected from the kernel release string (`/proc/sys/kernel/osrelease` names Microsoft) | windows (WSL user `alexk`) |
+| unset | nowhere: Claude is refused | PDS18 |
+
+A value that does not match the platform is refused too (`claude-placement-platform-mismatch`). Readiness reports a `claude-placement` check for projects with a Claude role.
+
+On WSL the Claude subscription login lives under Fleet's config directory: the Claude account's `nativeHome` (Claude's `CLAUDE_CONFIG_DIR`) is `~/.config/fleet/claude`, so the login file is `~/.config/fleet/claude/.credentials.json` (the name Claude writes). Readiness checks only that the file is present (`claude-login`); it never reads it. The owner logs in once with `CLAUDE_CONFIG_DIR=~/.config/fleet/claude claude` as `alexk`.
+
 ## Illustrative CSGO configuration
 
 This is a design example, not the current project's measured configuration.

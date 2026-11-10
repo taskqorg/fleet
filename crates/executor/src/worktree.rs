@@ -93,6 +93,31 @@ pub fn worktree(dir: &Path, session: &str, repo: Option<&str>, roots: &[PathBuf]
     }
     Ok(Some((w, top, true)))
 }
+/// A trial's own worktree (docs/designs/fleet-lab.md Stage 0, item 11): detached at the pinned commit, under the trial's
+/// session dir, with no linkPaths or sharedDirectories, so trials share nothing. The repository passes the same root checks
+/// as a session worktree. Returns (trial worktree, checkout toplevel); a retried command gets the existing one.
+pub fn trial(dir: &Path, repo: &str, commit: &str, roots: &[PathBuf], forbidden: &[&Path]) -> Result<(PathBuf, PathBuf)> {
+    if !(commit.len() == 40 || commit.len() == 64) || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("trial commit must be a full hash".into());
+    }
+    let repo = fs::canonicalize(repo).map_err(|_| "working directory unavailable")?;
+    let inside = |p: &Path| !forbidden.iter().any(|f| fs::canonicalize(f).is_ok_and(|f| p.starts_with(&f) || f.starts_with(p))) && roots.iter().any(|r| p.starts_with(r));
+    if !inside(&repo) { return Err("working directory outside configured project roots".into()); }
+    let o = git().arg("-C").arg(&repo).args(["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"]).output()?;
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    let paths: Vec<PathBuf> = out.lines().filter_map(|l| fs::canonicalize(l.trim()).ok()).collect();
+    if !o.status.success() || paths.len() != 2 || !paths.iter().all(|p| inside(p)) { return Err("repository outside configured project roots".into()); }
+    let w = dir.join("trial");
+    if w.join(".git").exists() { return Ok((w, paths[0].clone())); }
+    if !git().arg("-C").arg(&paths[0]).args(["worktree", "add", "--detach"]).arg(&w).arg(commit).output()?.status.success() {
+        return Err("git worktree add failed (commit missing?)".into());
+    }
+    Ok((w, paths[0].clone()))
+}
+/// Removes a trial worktree; its output was copied to the spool before.
+pub fn remove_trial(top: &Path, w: &Path) -> bool {
+    git().arg("-C").arg(top).args(["worktree", "remove", "--force"]).arg(w).output().is_ok_and(|o| o.status.success())
+}
 /// Runs a project script in the worktree and waits; returns event data with exit code and truncated output.
 pub fn script(name: &str, cmd: &str, top: &Path, w: &Path, session: &str) -> Value {
     let o = clean(Command::new("sh")).args(["-c", cmd]).current_dir(w).stdin(Stdio::null())
@@ -132,6 +157,33 @@ pub fn teardown(dir: &Path, session: &str, top: &Path, project: &Value) -> Value
 mod tests {
     use super::*;
     fn sh(repo: &Path, a: &[&str]) { assert!(Command::new("git").arg("-C").arg(repo).args(a).status().unwrap().success()); }
+    #[test]
+    fn trial_worktree_at_pinned_commit() {
+        let root = env::temp_dir().join(format!("fleet-trial-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let repo = root.join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        sh(&repo, &["init", "-q"]);
+        fs::write(repo.join("f"), "one").unwrap();
+        fs::write(repo.join(".env.local"), "X=1").unwrap();
+        sh(&repo, &["add", "f"]);
+        sh(&repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one"]);
+        let pinned = String::from_utf8(Command::new("git").arg("-C").arg(&repo).args(["rev-parse", "HEAD"]).output().unwrap().stdout).unwrap().trim().to_string();
+        fs::write(repo.join("f"), "two").unwrap();
+        sh(&repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "two"]);
+        let roots = vec![fs::canonicalize(&repo).unwrap()];
+        let (s1, s2) = (root.join("s1"), root.join("s2"));
+        let r = repo.to_str().unwrap();
+        let (w1, top) = trial(&s1, r, &pinned, &roots, &[]).unwrap();
+        let (w2, _) = trial(&s2, r, &pinned, &roots, &[]).unwrap();
+        assert_ne!(w1, w2);
+        assert_eq!(fs::read_to_string(w1.join("f")).unwrap(), "one");
+        assert!(!w1.join(".env.local").exists());
+        assert_eq!(trial(&s1, r, &pinned, &roots, &[]).unwrap().0, w1);
+        assert!(trial(&s1, r, "HEAD", &roots, &[]).is_err());
+        assert!(trial(&root.join("s3"), r, &pinned, &[], &[]).is_err());
+        assert!(remove_trial(&top, &w1) && !w1.exists());
+    }
     #[test]
     fn worktree_per_session_in_repo() {
         let root = env::temp_dir().join(format!("fleet-wt-{}", std::process::id()));

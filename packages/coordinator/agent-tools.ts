@@ -7,7 +7,7 @@ import {map} from './store.js';
 // ask-methods, reply-method, lifecycle-reconciliation, worker-stop). No caps or admission rules are added.
 import {parseView,formatView,viewProblem} from '../view-url/view-url.js';
 import {randomUUID} from 'node:crypto';
-import {canonical,readTrustedProfile} from './lab.js';
+import {canonical,readTrustedProfile} from './profiles.js';
 import {forkArgv,keyFor,resumeArgv} from './resume-argv.js';
 
 type Store={all:(k:string,filter?:object,omit?:string[])=>Promise<any[]>,get:(id:string,k:string)=>Promise<any>,put:(k:string,v:any)=>Promise<unknown>};

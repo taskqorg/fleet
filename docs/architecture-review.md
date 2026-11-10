@@ -12,7 +12,7 @@ The core coordinates work, execution, communication, material access, authority,
 |---|---|
 | Object navigation displaced actual conversation and autonomous work. | [Interfaces](interfaces.md#interaction-model) support both; object details are optional navigation. The character storyboard is an unapproved historical study. |
 | Every assignment implied another task, including ordinary in-session actions. | [Communication](system-operations.md#agent-communication) tracks independent delegation while retaining ordinary actions in existing execution history. |
-| Laboratory definitions required a prior step. | [Experiments](experiments.md) accept new assignments and whole tasks or project implementations through ordinary execution. |
+| Laboratory definitions required a prior step. | [Experiments](lab.md) accept new assignments and whole tasks or project implementations through ordinary execution. |
 | Testing changes required committed revisions and a branch. | [Source rules](../fleet.md#knowledge-and-rules) allow explicitly selected drafts with actual content retained. Git remains the canonical definition store. |
 | An agent always needed a human to set a recommendation. | [Evaluation](../fleet.md#observation-and-evaluation) permits explicit delegated architect authority; assessment alone still changes nothing. |
 | Questions implied human recipients and an active PM conversation. | [Communication](system-operations.md#agent-communication) supports authorized agents and durable routing independent of open windows. |

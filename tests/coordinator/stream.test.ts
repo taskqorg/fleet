@@ -71,12 +71,11 @@ test('task_page, sessions_list and list_membership agree; counts come from the s
  assert.equal((await op('changes_since',{cursor:null})).changes.length,0);
  await app.close()});
 
-test('routes: / opens the app, old pages redirect to /legacy, app files need no Bearer, /api still does',async()=>{
+test('routes: / opens the app, old pages are gone (404), app files need no Bearer, /api still does',async()=>{
  const app=createApp({database:'memory://',browserSecret:'b',machineSecret:'m',hostId:'mac',browserProxyAuth:true,browserOrigin:'https://fleet.example'});
  assert.equal((await app.inject({url:'/'})).headers.location,'/overview');
- assert.equal((await app.inject({url:'/lab'})).headers.location,'/legacy/lab');
- assert.equal((await app.inject({url:'/legacy/projects'})).statusCode,401);
- assert.equal((await app.inject({url:'/legacy',headers:{authorization:'Bearer b'}})).statusCode,200);
+ assert.notEqual((await app.inject({url:'/lab'})).statusCode,401);
+ for(const url of ['/legacy','/legacy/lab','/legacy/projects','/legacy/recovery','/legacy/accounts','/projects','/recovery','/accounts','/api/experiments','/api/lab/executions'])assert.equal((await app.inject({url,headers:{authorization:'Bearer b'}})).statusCode,404,url);
  assert.notEqual((await app.inject({url:'/tasks'})).statusCode,401);
  assert.equal((await app.inject({method:'POST',url:'/api/ops/me',payload:{}})).statusCode,401);
  // Fail closed: unknown and disguised paths need the Bearer; list_membership bounds its input.

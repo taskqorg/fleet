@@ -21,7 +21,7 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
   hosts: { focus: true, view: p => <Hosts id={p.id} /> },
 };
 const BUILT = workspaces.filter(w => w.app).map(w => ({ ...w, ...SCREENS[w.id as AppScreen] }));
-const NAV: NavItem[] = [...BUILT, { id: 'legacy', label: 'Legacy views', icon: 'history', group: 'Other' }];
+const NAV: NavItem[] = BUILT;
 
 function App() {
   const [loc, go] = useLocation();
@@ -38,12 +38,13 @@ function App() {
     return () => removeEventListener('focus', me);
   }, []);
   useEffect(() => { if (signedOut.value) clearAll(true); }, [signedOut.value]);
-  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => id === 'legacy' ? (location.href = '/legacy') : go('/' + id)}>
+  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)}>
     {update && <div class="problem warning" role="status"><b>Update available</b><span class="facts">A new version of the app is ready.</span><span class="acts"><Button label="Reload" onClick={() => location.reload()} /></span></div>}
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
     <Switch>
       <Route path="/"><Redirect to="/overview" /></Route>
       {BUILT.map(s => <Route key={s.id} path={s.focus ? `/${s.id}/:id?` : `/${s.id}`}>{(p: { id?: string }) => s.view(p)}</Route>)}
+      <Route path="/lab"><Empty text="Lab is being rebuilt." /></Route>
       <Route><Empty text="This page does not exist." action={<Button label="Overview" icon="house" onClick={() => go('/overview')} />} /></Route>
     </Switch>
   </AppShell>;

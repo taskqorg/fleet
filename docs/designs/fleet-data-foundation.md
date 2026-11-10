@@ -30,7 +30,7 @@ The laboratory ladder, spending control, account routing and result viewers will
 *   **Profile.** A named agent setup in `config/agents/*.json`: harness, model, instructions, skills and sandbox settings.
 *   **Environment.** A registered place where an execution runs on a host: a working area plus the settings it needs.
 *   **Project grant.** The record that says which projects a person or agent may read or change. Every query is filtered by it.
-*   **Experiment and variant.** An experiment is a lab study, stored as the existing `experiment` document. A variant is one way of working that the experiment compares. Each lab execution records `experiment_id` and `variant`.
+*   **Experiment and variant.** An experiment is a lab study, stored in the `experiment` table (migration 11; [fleet-lab.md](fleet-lab.md)). A variant is one way of working that the experiment compares. Each lab execution records `experiment_id` and `variant`.
 *   **Hosts.** PDS18 is the central Linux server. The other hosts are the owner's Mac and Windows machines. A host ID is the ID its executor registers with.
 *   **tight.** The owner's infrastructure rules for PDS18, in `~/Projects/tight/tight.md`. Its decisions are written `tight-D4`, `tight-D6` and so on. This design's own decisions are `FD1` to `FD6`.
 *   **AssetQ and Pipe.** Earlier prototypes on PDS18: AssetQ stores files with Postgres metadata; Pipe holds provider keys and records each API call.
@@ -386,6 +386,7 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
     *   Ops `entity.resolve(code)` returns `{id, type, current_code, superseded}`; `entity.resolve_many(text)` finds every code in free text. Unknown and forbidden codes both return `not_found`.
     *   Backfill: existing rows get codes in `created_at` order, filling only empty values.
 
+*   **Migration 11** (Lab Stage 0, [fleet-lab.md](fleet-lab.md)): `experiment` and `score` tables with row-level security and change-feed triggers, `execution.request_id` (unique when set), question kind `rating`; the old lab's `experiment` documents are deleted and their executions unlinked. Lab trials set `experiment_id` and `variant` through `executions.createExecution`.
 *   **Table `task_derived`** (migration 10): `task_id` (primary key, references `task`), `project_id` (copied from the task, for row-level security), `agent` (harness of the latest `preparing` or `running` execution), `host` (host of the latest execution), `started_at` (earliest execution start) and `open_questions`. Triggers on `execution`, `question` and `task` keep it current; the operator list (`task_page`) reads it instead of computing these per task. `task_derived_check` reports drift.
 
 ### 3. Artifact store
@@ -505,7 +506,6 @@ Agent replies return summaries and IDs by default. Raw transcript text is return
     | `delegation` | `execution`, kind `agent_run` | `parent_execution_id` = the delegating execution |
     | `pipeline-run` | `execution`, kind `pipeline_run`, plus one `pipeline_step` per step | steps link by `parent_execution_id` |
     | `delivery` | `task`, plus executions for its steps | field and state mapping in §2 |
-    | lab trials inside `experiment` | `execution` with `experiment_id` and `variant` | the `experiment` document stays in `document` |
     | `session-fork`, `handoff` | `execution`, kind `agent_run` | `parent_execution_id` = the source execution |
     | `project-question`, `question` | `question` | kind `operator_decision` or `agent_question`; `task_id` filled from the delivery or from `execution.task_id` |
     | `artifact` | `artifact` and `artifact_copy` | base64 decoded, see below |
@@ -1005,7 +1005,7 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
     *   Behaviour and routes stay the same.
 *   **Why**: Phase 1.
 
-##### 13. `packages/coordinator/accounts.ts`, `delegation.ts`, `delivery.ts`, `lab.ts`, `projects.ts`, `recovery.ts`, `agent-tools.ts`, `account-ui.ts`, `project-ui.ts`, `lab-ui.ts`, `ui.ts` (Modify)
+##### 13. `packages/coordinator/accounts.ts`, `delegation.ts`, `delivery.ts`, `projects.ts`, `recovery.ts`, `agent-tools.ts` (Modify)
 
 *   **Type / Scope**: Coordinator modules.
 *   **Proposed Changes**: Convert every store call to async through `store.ts`. No change in behaviour.
@@ -1072,15 +1072,14 @@ Unit tests use `@electric-sql/pglite`, an embedded Postgres that needs no server
     *   `questions.ask` and `questions.answer` on the `question` table. Answering an `acceptance` question records who accepted and the artifact IDs, and moves the task.
 *   **Why**: G2.
 
-##### 19. `packages/coordinator/delegation.ts`, `delivery.ts`, `lab.ts`, `projects.ts`, `agent-tools.ts`, `recovery.ts`, `ui.ts`, `lab-ui.ts`, `account-ui.ts`, `app.ts` (Modify)
+##### 19. `packages/coordinator/delegation.ts`, `delivery.ts`, `projects.ts`, `agent-tools.ts`, `recovery.ts`, `app.ts` (Modify)
 
 *   **Type / Scope**: Writers and readers of run records and questions.
 *   **Proposed Changes**:
     *   Writers: write `execution` rows through `executions.ts` instead of the `execution`, `delegation` and `pipeline-run` documents, with kinds `agent_run`, `pipeline_run`, `pipeline_step` and `child_agent` (from the child-agent recording added in commit `d3802cc`).
     *   `delivery.ts`: `delivery_create` creates a `task` through `tasks.ts`, and each step creates an execution with that `task_id`. `reconcile`, `delivery_get` and `delivery_history` read the task, its executions and `task_view` instead of `all('delivery')`.
     *   Questions: `projects.ts` (`project-question`, lines 65-67), `delivery.ts` (lines 21 and 25) and `agent-tools.ts` (`question`, lines 128-136, read at 169, 172 and 197) use `questions.ask` and `questions.answer`.
-    *   Readers: `agent-tools.ts` (lines 169 and 172), `recovery.ts`, `ui.ts`, `lab-ui.ts`, `account-ui.ts` and the routes in `app.ts` read executions through `executions.ts` instead of `all('execution')`.
-    *   Lab trials set `experiment_id` and `variant`.
+    *   Readers: `agent-tools.ts` (lines 169 and 172), `recovery.ts` and the routes in `app.ts` read executions through `executions.ts` instead of `all('execution')`.
     *   Handoff and fork set `parent_execution_id`.
 *   **Why**: G1, with one record shape.
 

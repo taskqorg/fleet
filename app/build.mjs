@@ -54,7 +54,7 @@ self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addA
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(e.request.method!=='GET'||u.origin!==location.origin||u.pathname.startsWith('/api/'))return;
  if(u.pathname.startsWith('/assets/'))return e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)));
- // Only the app's own routes are cached, each under its own path; /legacy/*, /test-sites/* and others are never cached.
+ // Only the app's own routes are cached, each under its own path; /test-sites/* and others are never cached.
  const app=/^\\/(${Object.keys(VIEWS).join('|')})(\\/[^/]*)?$/.test(u.pathname);
  if(e.request.mode==='navigate'&&app)return e.respondWith(fetch(e.request).then(r=>{if(r.ok&&r.headers.get('content-type')?.startsWith('text/html')){const c=r.clone();caches.open(CACHE).then(x=>x.put(u.pathname,c))}return r}).catch(()=>caches.match(u.pathname).then(r=>r||caches.match('/overview'))));});
 `);
