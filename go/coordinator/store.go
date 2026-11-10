@@ -31,8 +31,6 @@ type actorKey struct{}
 // Scope keys. Lock order: GLOBAL before any execution scope; an execution-scope writer never takes GLOBAL.
 const GLOBAL = "fleet:write"
 
-func executionScope(id string) string { return "execution:" + id }
-
 type HTTPError struct {
 	Code int
 	Msg  string

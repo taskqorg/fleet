@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -109,78 +108,6 @@ func decode(raw json.RawMessage, v any) error {
 		return fail(400, "Invalid body")
 	}
 	return nil
-}
-
-func (a *App) sessionCreate(q *Request) (any, error) {
-	s := doc{"id": uuid(), "createdAt": now(), "directedBy": q.person.Email}
-	if err := putDoc(q, "session", s); err != nil {
-		return nil, err
-	}
-	s["sessionId"] = s["id"]
-	return s, nil
-}
-
-func (a *App) sessionGet(q *Request) (any, error) {
-	s, err := getDoc(q, q.params[0], "session")
-	if err != nil {
-		return nil, err
-	}
-	s["sessionId"] = s["id"]
-	if s["messages"], err = rows(q, "SELECT data FROM document WHERE kind='message' AND data->>'sessionId'=$1 ORDER BY seq", s["id"]); err != nil {
-		return nil, err
-	}
-	s["executions"], err = rows(q, "SELECT data FROM execution WHERE session_id=$1 AND legacy_kind='execution' ORDER BY seq", s["id"])
-	return s, err
-}
-
-// POST /api/sessions/:id/messages (SL4): exactly requestId and text (optional delivery); one execution per requestId.
-func (a *App) message(q *Request) (any, error) {
-	s, err := getDoc(q, q.params[0], "session")
-	if err != nil {
-		return nil, err
-	}
-	var b map[string]json.RawMessage
-	if json.Unmarshal(q.body, &b) != nil || b == nil {
-		return nil, fail(400, "Expected requestId, text and optional delivery")
-	}
-	for k := range b {
-		if k != "requestId" && k != "text" && k != "delivery" {
-			return nil, fail(400, "Expected requestId, text and optional delivery")
-		}
-	}
-	text := func(k string, max int) (string, error) {
-		var v string
-		if json.Unmarshal(b[k], &v) != nil || v == "" || len([]rune(v)) > max {
-			return "", fail(400, "Invalid text")
-		}
-		return v, nil
-	}
-	requestID, err := text("requestId", 200)
-	if err != nil {
-		return nil, err
-	}
-	input, err := text("text", 32000)
-	if err != nil {
-		return nil, err
-	}
-	sid := s["id"].(string)
-	if m, err := one(q, "SELECT data FROM document WHERE kind='message' AND data->>'sessionId'=$1 AND data->>'requestId'=$2", sid, requestID); err == nil {
-		return getExecution(q, m["executionId"].(string))
-	} else if !errors.Is(err, errNotFound) {
-		return nil, err
-	}
-	// Late choice: queue time records only constraints; dispatch picks the host on a host poll.
-	id := uuid()
-	e := doc{"id": id, "executionId": id, "sessionId": sid, "hostId": nil, "state": "queued", "createdAt": now(), "directedBy": s["directedBy"],
-		"model": "gpt-6.1-sol", "effort": "low",
-		"dispatch": doc{"harness": "codex", "projectId": nil, "account": nil, "host": nil, "last": nil, "input": input, "payload": nil}}
-	if err := putExecution(q, e); err != nil {
-		return nil, err
-	}
-	if err := putDoc(q, "message", doc{"id": uuid(), "sessionId": sid, "executionId": id, "requestId": requestID, "text": input, "sentBy": director(q)}); err != nil {
-		return nil, err
-	}
-	return e, nil
 }
 
 func hostOf(q *Request) string { return q.host["hostId"].(string) }
