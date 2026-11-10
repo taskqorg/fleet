@@ -34,9 +34,9 @@ export function executionModel(raw:Raw){
  // Links that the legacy record keeps elsewhere: the session's project and delivery, the handoff or fork source.
  const links=async(e:any)=>{const s=await optionalDoc(e.sessionId,'session');
   const handoff=e.handoffId?await optionalDoc(e.handoffId,'handoff'):undefined;
-  // Parent: the delegating, continued or pipeline execution, the handoff source, the agent execution that started the session
+  // Parent: the delegating, continued or pipeline execution (the pipeline step for a step's agent or script run), the handoff source, the agent execution that started the session
   // (session_start from a host agent), or the source of a fork for the fork's first execution.
-  const parent=e.parentExecutionId??e.continuationOf??(e.pipelineRunId?e.pipelineRunId:undefined)??handoff?.turns?.at?.(-1)??s?.createdByExecutionId??(s?.forkOf?.executionId&&!(await one('SELECT 1 AS x FROM execution WHERE session_id=$1 AND id<>$2 AND legacy_kind=$3 LIMIT 1',[s.id,e.id,'execution']))?s.forkOf.executionId:undefined);
+  const parent=e.parentExecutionId??e.continuationOf??(e.pipelineStepId??e.pipelineRunId)??handoff?.turns?.at?.(-1)??s?.createdByExecutionId??(s?.forkOf?.executionId&&!(await one('SELECT 1 AS x FROM execution WHERE session_id=$1 AND id<>$2 AND legacy_kind=$3 LIMIT 1',[s.id,e.id,'execution']))?s.forkOf.executionId:undefined);
   return {projectId:e.projectId??s?.projectId??null,taskId:e.deliveryId??s?.deliveryId??null,parent:parent??null}};
 
  // Upsert of a legacy execution record. Typed-only columns (task_id once set, harness_version, problem, last_seen_at)

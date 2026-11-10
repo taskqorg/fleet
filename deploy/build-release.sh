@@ -17,6 +17,6 @@ cd "$work"
 corepack pnpm install --frozen-lockfile
 corepack pnpm run build
 printf '{"commit":"%s","built":"%s"}\n' "$commit" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > release.json
-COPYFILE_DISABLE=1 tar -czf "$out/fleet-$commit.tgz" dist package.json pnpm-lock.yaml pnpm-workspace.yaml release.json
+COPYFILE_DISABLE=1 tar --no-xattrs -czf "$out/fleet-$commit.tgz" dist package.json pnpm-lock.yaml pnpm-workspace.yaml release.json
 if tar -tzf "$out/fleet-$commit.tgz" | grep -q '\(^\|/\)\._'; then echo "AppleDouble files in the tarball" >&2; exit 1; fi
 shasum -a 256 "$out/fleet-$commit.tgz" 2>/dev/null || sha256sum "$out/fleet-$commit.tgz"

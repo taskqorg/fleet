@@ -1,4 +1,4 @@
-"""Test stand-in for Pipe's read-lane client (the module pipe_search.py loads from connection.clientPath).
+"""Test stand-in for Pipe's read-lane client (the module connection_call.py loads from the connection record clientPath).
 
 Same contract as the real client: answer(message, config, runtime) for tools/call posts the arguments to
 {url}/v1/read/{tool} with the bearer token and X-Pipe-Runtime (and X-Pipe-Task from PIPE_TASK), and returns an MCP
@@ -28,3 +28,7 @@ def answer(message, config, runtime):
         return {"isError": True, "content": [{"type": "text", "text": f"Pipe {tool} failed: HTTP {error.code}: {error.read(4096).decode(errors='replace')}"}]}
     except (OSError, ValueError) as error:
         return {"isError": True, "content": [{"type": "text", "text": f"Pipe {tool} failed: Pipe is unreachable: {error}"}]}
+
+
+TOOLS = [{"name": "web_search", "description": "search", "inputSchema": {"type": "object"}},
+         {"name": "web_extract", "description": "extract", "inputSchema": {"type": "object"}}]

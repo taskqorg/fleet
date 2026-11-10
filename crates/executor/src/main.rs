@@ -340,7 +340,7 @@ impl Executor {
         if let Some(mut evidence) = lab_evidence {
             evidence["selection"] = json!({"harness":harness::name(p),"account":p.get("account"),"authority":"trusted host account reference; native observation follows"});
             if harness::name(p) == "codex" {
-                profile::apply(&mut cmd, &p["agentConfig"]);
+                profile::apply(&mut cmd, &profile::with_skills(&p["agentConfig"], &p["skills"]));
             }
             self.event(&c, 0, "preparation", evidence)?;
         }
@@ -380,6 +380,10 @@ impl Executor {
         let _ = fs::create_dir_all(&output_dir);
         let _ = fs::create_dir_all(&input_dir);
         cmd.env("FLEET_OUTPUT_DIR", &output_dir).env("FLEET_INPUT_DIR", &input_dir);
+        if let Err(e) = self.stage_inputs(p, &input_dir, &c["executionId"]) {
+            self.event(&c, 1, "preparation.failed", json!({"reason":e}))?;
+            return self.finish(&c, "failed", native.as_deref());
+        }
         if p["project"].is_object() {
             // Repo of this host's environment (env.repo), else the project's single/first repo.
             let env_repo = p["project"]["environments"].as_array().into_iter().flatten().find(|e| e["hostId"] == self.host.as_str()).map_or(Value::Null, |e| e["repo"].clone());
@@ -421,8 +425,38 @@ impl Executor {
             o["platform"] = json!(platform());
             harness_observation = Some(o);
         }
+        // Granted connections (Lab Stage 2): one connection_call.py MCP server each, labelled with the pipeline step (or this
+        // execution); calls are recorded in FLEET_OUTPUT_DIR/.connection-calls.jsonl, uploaded with the other outputs.
+        let mut connection_tools: Vec<String> = vec![];
+        let label = p["connectionLabel"].as_str().or(c["executionId"].as_str()).unwrap_or("").to_string();
+        for conn in p["agentConfig"]["connections"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+            let dir = env::var_os("FLEET_CONNECTIONS_DIR").map(PathBuf::from).unwrap_or_default();
+            let (record, tools) = match profile::connection_record(&dir, conn) {
+                Ok(r) => r,
+                Err(e) => {
+                    self.event(&c, 1, "preparation.failed", json!({"reason":e}))?;
+                    return self.finish(&c, "failed", native.as_deref());
+                }
+            };
+            // -I: isolated, so nothing in the agent's working directory or environment is imported by the client.
+            let args = json!(["-I", "-c", profile::CONNECTION_CLIENT, "mcp", record, label, output_dir]);
+            if harness::name(p) == "codex" {
+                cmd.args(["-c",&format!("mcp_servers.{conn}.command=\"python3\""),"-c",&format!("mcp_servers.{conn}.args={args}"),"-c",&format!("mcp_servers.{conn}.required=true"),"-c",&format!("mcp_servers.{conn}.enabled_tools={}",json!(tools))]);
+                for t in &tools { cmd.args(["-c",&format!("mcp_servers.{conn}.tools.{t}.approval_mode=\"approve\"")]); }
+            } else {
+                claude_servers[conn] = json!({"command":"python3","args":args});
+            }
+            connection_tools.extend(tools.iter().map(|t| format!("mcp__{conn}__{t}")));
+        }
+        // Built-in web (R3.4) for pipeline agent steps: off unless the step's run sets webRoute builtin. Other sessions keep
+        // the harness default.
+        if harness::name(p) == "codex" && p["webRoute"].is_string() {
+            cmd.args(["-c", if p["webRoute"] == "builtin" { "web_search=\"live\"" } else { "web_search=\"disabled\"" }]);
+        }
         if harness::name(p) == "claude" {
-            harness::claude_mcp(&mut cmd, p.get("agentConfig").unwrap_or(p), &claude_servers);
+            let mut extra = connection_tools.clone();
+            extra.extend(harness::claude_extra_tools(p).into_iter().map(String::from));
+            harness::claude_mcp(&mut cmd, p.get("agentConfig").unwrap_or(p), &claude_servers, &extra);
         }
         let codex_protocol = harness::name(p) == "codex";
         let acp_protocol = harness::name(p) == "antigravity";
@@ -653,6 +687,7 @@ impl Executor {
         let (output, input) = (dir.join("output"), dir.join("input"));
         fs::create_dir_all(&output)?;
         fs::create_dir_all(&input)?;
+        if let Err(e) = self.stage_inputs(p, &input, &c["executionId"]) { return refuse(&e) }
         let (stdout, stderr) = (fs::File::create(output.join("script.stdout"))?, fs::File::create(output.join("script.stderr"))?);
         let (work, trial) = match (worktree::repo_path(p, &self.host), p["commit"].as_str()) {
             (Some(repo), Some(commit)) => match worktree::trial(&dir, &repo, commit, &worktree::project_roots(), &[&self.root, &self.sessions]) {
@@ -716,6 +751,27 @@ impl Executor {
         );
         self.event(c, 1, "script.started", json!({"commit":p["commit"],"timeoutMs":p["timeout_ms"],"trialWorktree":work}))?;
         self.receipt(c, "started", None)
+    }
+    /// Pipeline step inputs (Lab Stage 2): payload `inputs` [{artifactId, path}] are downloaded to FLEET_INPUT_DIR/<path>
+    /// before the step starts. Paths are relative and never leave the input folder.
+    fn stage_inputs(&self, p: &Value, input: &std::path::Path, execution: &Value) -> std::result::Result<(), String> {
+        let list = p["inputs"].as_array().cloned().unwrap_or_default();
+        if list.is_empty() { return Ok(()) }
+        let access = env::var_os("FLEET_CF_ACCESS_FILE").map(PathBuf::from).or_else(|| env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/fleet/cf-access-machine.env"))).and_then(|f| upload::access_token(&f));
+        let client = upload::Client::new(self.url.clone(), self.token.clone(), self.host.clone(), access);
+        for i in list {
+            let (Some(id), Some(rel)) = (i["artifactId"].as_str(), i["path"].as_str()) else { return Err("invalid input".into()) };
+            if rel.starts_with('/') || rel.split('/').any(|x| x.is_empty() || x == "." || x == "..") { return Err(format!("invalid input path {rel}")) }
+            let r = client.post("/api/hosts/artifacts/get", json!({"hostId":self.host,"executionId":execution,"artifactId":id})).map_err(|e| format!("input {rel}: {e:?}"))?;
+            let url = r["url"].as_str().ok_or(format!("input {rel} unavailable"))?;
+            let target = input.join(rel);
+            fs::create_dir_all(target.parent().unwrap()).map_err(|e| e.to_string())?;
+            if !target.parent().unwrap().canonicalize().map_err(|e| e.to_string())?.starts_with(input.canonicalize().map_err(|e| e.to_string())?) { return Err(format!("input {rel} escapes the input folder")) }
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut out = fs::OpenOptions::new().write(true).create_new(true).custom_flags(libc::O_NOFOLLOW).open(&target).map_err(|e| format!("input {rel}: {e}"))?;
+            std::io::copy(&mut client.get(url).map_err(|e| format!("input {rel}: {e:?}"))?, &mut out).map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
     fn finish(&self, c: &Value, status: &str, native: Option<&str>) -> Result<()> {
         let tx = self.db.unchecked_transaction()?;

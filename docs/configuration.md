@@ -71,6 +71,10 @@ A value that does not match the platform is refused too (`claude-placement-platf
 
 On WSL the Claude subscription login lives under Fleet's config directory: the Claude account's `nativeHome` (Claude's `CLAUDE_CONFIG_DIR`) is `~/.config/fleet/claude`, so the login file is `~/.config/fleet/claude/.credentials.json` (the name Claude writes). Readiness checks, for each Claude account in the host's native registry, only that `<nativeHome>/.credentials.json` is present (`claude-login`); it never reads it. The owner logs in once with `CLAUDE_CONFIG_DIR=~/.config/fleet/claude claude` as `alexk`.
 
+## Host settings: connections
+
+A connection (example: `pipe-read`) is reached from a host through its record `<FLEET_CONNECTIONS_DIR>/<connection>/connection.json`, mode 0600, owned by the service user: `{clientPath, clientSha256, pipeConfigPath, tools}` ([fleet-lab.md](designs/fleet-lab.md), Connections). The coordinator reads its own host's records for pipeline api steps (`FLEET_CONNECTIONS_DIR` in the coordinator environment); the executor reads them for the connections a profile grants. The record holds paths and the client hash only; the Pipe token stays in the file `pipeConfigPath` names. After Pipe's client changes, update `clientSha256`; until then the client refuses to load it (`infra:client-hash-mismatch`).
+
 ## Illustrative CSGO configuration
 
 This is a design example, not the current project's measured configuration.

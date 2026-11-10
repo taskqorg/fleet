@@ -17,7 +17,7 @@ The Fleet coordinator: a Fastify server over Postgres that owns tasks, sessions,
 | `projects.ts`, `accounts.ts`, `recovery.ts` | Connected projects and pipelines, harness accounts, recovery tools. |
 | `profiles.ts` | Trusted agent profiles from `config/agents`: validation, canonical JSON, digests. The Lab is being rebuilt ([design](../../docs/designs/fleet-lab.md)). |
 | `migrate-sqlite.ts` | One-time move from the old SQLite records to Postgres, and its reverse export. |
-| `*.py` | Helpers the coordinator starts: the scoped static-site program worker (`delivery_worker.py`) and the Pipe search adapter (`pipe_search.py`). |
+| `*.py` | Helpers the coordinator starts: the scoped static-site program worker (`delivery_worker.py`) and the connection client (`connection_call.py`: CLI for pipeline api steps, MCP for agent steps). |
 
 ## Connections
 
