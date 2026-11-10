@@ -75,7 +75,7 @@ export function pipelineRunner(d:Deps){
  // One provider call through the connection client with a token for this step row, revoked after the call; the gateway's
  // spool line becomes the step's tool_run (ingested here, so the row exists when the step moves on).
  async function call(run:any,connection:string,executionId:string,tool:string,args:any):Promise<any>{
-  const minted=d.connections&&d.gatewayUrl&&/^[a-z0-9-]+$/.test(connection)?await store.atomic(()=>d.connections!.mint({executionId,directedBy:run.requestedBy?.email??null,projectId:run.projectId??null,experimentId:run.experimentId??null},[connection])):null;
+  const minted=d.connections&&d.gatewayUrl&&/^[a-z0-9-]+$/.test(connection)?await store.atomic(()=>d.connections!.mint({executionId,directedBy:run.requestedBy?.email??null,projectId:run.projectId??null,experimentId:run.experimentId??null,step:true},[connection])):null;
   if(!minted?.token)return {tool,outcome:'error',error_code:'connection-unavailable',usage:null,output:null};
   await d.connections!.published();// the gateway must see the token before the call
   try{return await new Promise<any>(res=>{const child=spawn(client[0],[...client.slice(1),'call',connection,tool],{env:{PATH:process.env.PATH,FLEET_RUN_TOKEN:minted.token!,FLEET_GATEWAY_URL:d.gatewayUrl!},stdio:['pipe','pipe','ignore']});

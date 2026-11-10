@@ -86,12 +86,12 @@ export function connectionRegistry(store:Store,config:{secretDir?:string,gateway
  const allowed=(c:any,run:{directedBy?:string|null,projectId?:string|null,experimentId?:string|null})=>{const a=c.access??{};
   const none=!a.people?.length&&!a.projects?.length&&!a.experiments?.length;
   return none?run.directedBy===c.holder:(!!run.directedBy&&a.people?.includes(run.directedBy))||a.projects?.includes('*')||(!!run.projectId&&a.projects?.includes(run.projectId))||(!!run.experimentId&&a.experiments?.includes(run.experimentId))};
- async function mint(run:{executionId:string,directedBy?:string|null,projectId?:string|null,experimentId?:string|null,pipelineRunId?:string|null},requested:string[]){
+ async function mint(run:{executionId:string,directedBy?:string|null,projectId?:string|null,experimentId?:string|null,pipelineRunId?:string|null,step?:boolean},requested:string[]){
   const granted:any[]=[];
   for(const name of [...new Set(requested)]){const c=await get('connection:'+name,'api-connection').catch(()=>null);if(c&&c.intake==='all'&&allowed(c,run))granted.push(c)}
   if(!granted.length)return {token:null,connections:[],refused:[...new Set(requested)]};
   const token=randomBytes(32).toString('base64url'),sha256=createHash('sha256').update(token).digest('hex');
-  await put('run-token',{id:'run-token:'+sha256,sha256,executionId:run.executionId,directedBy:run.directedBy??null,projectId:run.projectId??null,experimentId:run.experimentId??null,pipelineRunId:run.pipelineRunId??null,connections:granted.map(c=>c.name),createdAt:Date.now()});publish();
+  await put('run-token',{id:'run-token:'+sha256,sha256,executionId:run.executionId,directedBy:run.directedBy??null,projectId:run.projectId??null,experimentId:run.experimentId??null,pipelineRunId:run.pipelineRunId??null,...(run.step?{step:true}:{}),connections:granted.map(c=>c.name),createdAt:Date.now()});publish();
   return {token,refused:[...new Set(requested)].filter(n=>!granted.some(c=>c.name===n)),connections:granted.map(c=>({name:c.name,instructions:providers[c.provider].instructions,tools:c.tools.filter((t:string)=>providers[c.provider].tools[t]).map((t:string)=>({name:t,description:providers[c.provider].tools[t].description,inputSchema:providers[c.provider].tools[t].inputSchema}))}))}}
  async function revoke(executionId:string){let changed=false;for(const t of await all('run-token',{executionId}))if(t.executionId===executionId&&!t.revokedAt){t.revokedAt=Date.now();await put('run-token',t);changed=true}if(changed)publish()}
  const ENDED=['completed','failed','stopped'];
@@ -126,7 +126,11 @@ export function connectionRegistry(store:Store,config:{secretDir?:string,gateway
  async function tick(){await ingest();
   const open=(await all('run-token')).filter((t:any)=>!t.revokedAt);if(!open.length)return;
   const runs=await store.many(open.map((t:any)=>t.executionId),'execution');
-  // A token whose execution is not an agent execution (an api step row) is revoked by its caller, never here.
-  for(const t of open){const e=runs.get(t.executionId);if(e&&ENDED.includes(e.state))await revoke(t.executionId)}}
- return {operations,sync,snapshot,writeSnapshot,publish,mint,revoke,ingest,tick};
+  // An api step's token is revoked by its caller (and all of them at start, below); any other token goes when its execution
+  // ended or is unknown.
+  for(const t of open){if(t.step)continue;const e=runs.get(t.executionId);if(!e||ENDED.includes(e.state))await revoke(t.executionId)}}
+ // At start no api step call of an earlier process is in flight: their tokens are revoked.
+ const started=Date.now();
+ async function revokeSteps(){for(const t of await all('run-token'))if(t.step&&!t.revokedAt&&t.createdAt<started){t.revokedAt=Date.now();await put('run-token',t)}}
+ return {operations,sync:async()=>{await revokeSteps();await sync()},snapshot,writeSnapshot,publish,mint,revoke,ingest,tick};
 }
