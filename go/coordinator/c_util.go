@@ -41,17 +41,21 @@ func cBody(q *Request) (doc, error) {
 	return b, nil
 }
 
+// cNum: a JSON number or a SQL integer column (pgx scans integer as int32, smallint as int16).
 func cNum(v any) (float64, bool) {
-	f, ok := v.(float64)
-	if !ok {
-		if i, ok2 := v.(int64); ok2 {
-			return float64(i), true
-		}
-		if i, ok2 := v.(int); ok2 {
-			return float64(i), true
-		}
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case int64:
+		return float64(x), true
+	case int32:
+		return float64(x), true
+	case int16:
+		return float64(x), true
+	case int:
+		return float64(x), true
 	}
-	return f, ok
+	return 0, false
 }
 
 func cInt(v any) (int64, bool) {
