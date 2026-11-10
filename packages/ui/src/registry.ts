@@ -57,18 +57,21 @@ export const states = {
 export type Family = keyof typeof states;
 export type StateOf<F extends Family> = keyof (typeof states)[F];
 
-/** Workspaces and their navigation anchors (OR-3). */
+/** Workspaces and their navigation anchors (OR-3), in nav order: the one list of screens. `app: true` marks a screen the
+ * operator app has built; the app nav and routes, the build (manifests, service worker) and the coordinator's app routes
+ * all follow it, so setting it (with the view in app/src/main.tsx) is all a new screen needs. */
 export const workspaces = [
-  { id: 'overview', label: 'Overview', icon: 'house' },
-  { id: 'sessions', label: 'Sessions', icon: 'messages-square' },
-  { id: 'tasks', label: 'Tasks', icon: 'list' },
-  { id: 'results', label: 'Results', icon: 'file-text' },
-  { id: 'projects', label: 'Projects', icon: 'folder-open' },
-  { id: 'agents', label: 'Agents', icon: 'bot' },
-  { id: 'hosts', label: 'Hosts', icon: 'panels-top-left' },
-  { id: 'laboratory', label: 'Laboratory', icon: 'chart-no-axes-column' },
-  { id: 'access', label: 'Access', icon: 'shield' },
-] as const satisfies readonly { id: string; label: string; icon: IconName }[];
+  { id: 'overview', label: 'Overview', icon: 'house', group: 'Operator', app: true },
+  { id: 'tasks', label: 'Tasks', icon: 'list', group: 'Operator', app: true },
+  { id: 'conversations', label: 'Conversations', icon: 'messages-square', group: 'Operator', app: true },
+  { id: 'results', label: 'Results', icon: 'file-text', group: 'Operator', app: false },
+  { id: 'projects', label: 'Projects', icon: 'folder-open', group: 'Operator', app: false },
+  { id: 'agents', label: 'Agents', icon: 'bot', group: 'Architect', app: false },
+  { id: 'hosts', label: 'Hosts', icon: 'panels-top-left', group: 'Architect', app: true },
+  { id: 'laboratory', label: 'Laboratory', icon: 'chart-no-axes-column', group: 'Architect', app: false },
+  { id: 'access', label: 'Access', icon: 'shield', group: 'Architect', app: false },
+] as const satisfies readonly { id: string; label: string; icon: IconName; group: string; app: boolean }[];
+export type AppScreen = Extract<(typeof workspaces)[number], { app: true }>['id'];
 
 /** Action icons used by controls. One meaning per icon. */
 export const actions = {

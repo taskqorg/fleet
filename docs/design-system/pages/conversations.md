@@ -8,7 +8,7 @@
 * **Left:** a list of conversations, using the [list view](../patterns/list-view.md) and [state counters](../controls/state-counters.md) with the `session` state family.
 * **Right:** the conversation, showing any open [decision blocks](../controls/decision-block.md), the [live transcript](../controls/transcript-viewer.md) and the [composer](../controls/composer.md).
 
-| Inventory item (Sessions) | Shown by |
+| Inventory item (Conversations) | Shown by |
 |---|---|
 | Messages, tool activity, results and questions with answer options | The transcript, plus decision blocks for open questions. |
 | Attach materials; assign work; create tasks | Not in this slice. |

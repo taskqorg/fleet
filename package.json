@@ -9,6 +9,7 @@
     "book": "node packages/ui/scripts/build-book.mjs",
     "check:design": "node packages/ui/scripts/check-design.mjs",
     "app:build": "node app/build.mjs",
+    "app:dev": "node --watch-path=app/src --watch-path=packages/ui --watch-path=packages/view-url app/build.mjs",
     "check:filter": "npm run build && tsx tests/ui/filter.check.ts --assert"
   },
   "dependencies": {

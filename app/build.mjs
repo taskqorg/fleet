@@ -23,7 +23,12 @@ const cssName = `assets/app-${createHash('sha256').update(css).digest('hex').sli
 writeFileSync(new URL(cssName, out), css);
 
 const icons = JSON.parse(readFileSync(new URL('packages/ui/icons.json', root), 'utf8'));
-const VIEWS = { overview: ['Fleet Overview', 'house'], tasks: ['Fleet Tasks', 'list'], conversations: ['Fleet Conversations', 'messages-square'], hosts: ['Fleet Hosts', 'panels-top-left'] };
+// The installable views are the registry workspaces marked app: true (packages/ui/src/registry.ts), read through esbuild.
+const reg = await build({ entryPoints: [new URL('packages/ui/src/registry.ts', root).pathname], bundle: true, format: 'esm', write: false, loader: { '.json': 'json' } });
+const { workspaces } = await import('data:text/javascript;base64,' + Buffer.from(reg.outputFiles[0].text).toString('base64'));
+const VIEWS = Object.fromEntries(workspaces.filter(w => w.app).map(w => [w.id, ['Fleet ' + w.label, w.icon]]));
+// The coordinator serves index.html for these screens only (packages/coordinator/app.ts).
+writeFileSync(new URL('screens.json', out), JSON.stringify(Object.keys(VIEWS)));
 const accent = tokens.color.light.accent;
 for (const [view, [name, icon]] of Object.entries(VIEWS)) {
   const inner = icons[icon].replace(/<!--.*?-->/s, '').replace(/<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '');
@@ -50,7 +55,7 @@ self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.a
 self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(e.request.method!=='GET'||u.origin!==location.origin||u.pathname.startsWith('/api/'))return;
  if(u.pathname.startsWith('/assets/'))return e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)));
  // Only the app's own routes are cached, each under its own path; /legacy/*, /test-sites/* and others are never cached.
- const app=/^\\/(overview|tasks|conversations|hosts)(\\/[^/]*)?$/.test(u.pathname);
+ const app=/^\\/(${Object.keys(VIEWS).join('|')})(\\/[^/]*)?$/.test(u.pathname);
  if(e.request.mode==='navigate'&&app)return e.respondWith(fetch(e.request).then(r=>{if(r.ok&&r.headers.get('content-type')?.startsWith('text/html')){const c=r.clone();caches.open(CACHE).then(x=>x.put(u.pathname,c))}return r}).catch(()=>caches.match(u.pathname).then(r=>r||caches.match('/overview'))));});
 `);
 

@@ -56,7 +56,7 @@ These apply to every workspace and are the main input for the controls:
 | Acceptance rules: which results need a person | Setting | project rules |
 | Readiness checks and their results | View, Signal | `project_readiness` |
 
-### Sessions (conversation, including with the PM)
+### Conversations (sessions, including with the PM)
 
 | Item | Kind | Source |
 |---|---|---|

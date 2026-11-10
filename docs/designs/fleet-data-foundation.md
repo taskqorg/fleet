@@ -856,6 +856,19 @@ Throughput is not the constraint. A write transaction takes a few milliseconds (
 
 Phases ship in order. Each phase leaves the system working and is verified live before the next phase starts.
 
+**Status (2026-11-10).** Release ids are the PDS18 coordinator releases where each phase was verified live.
+
+| Phase | Status | Live evidence |
+|---|---|---|
+| 0. Infrastructure | Live | Installed on PDS18 2026-11-09, no coordinator release ([infrastructure-build.md](../infrastructure-build.md#phase-0-installed-on-pds18-2026-11-09)); Mac and Windows stores the same day. |
+| 1. Async data access, `document` on Postgres | Live | `candidate-6c66808cf97a` (T1 and T14 pass, [test results](../test-results-T1-T16.md#rerun-on-candidate-6c66808cf97a-main-6c66808-pr-16)). |
+| 2. Typed executions, tasks, questions | Live | `candidate-0031308b2fef` ([test results](../test-results-T1-T16.md#phase-2-stand-candidate-0031308b2fef-2026-11-09)). |
+| 3. Artifact store, placement, previews | Live | Release id not recorded in the repository yet; see [Phase 3 live findings](fleet-data-foundation-review/phase3/live-findings.md). |
+| 4. Ingest, adapters, redaction | Not started | — |
+| 5. Isolation boundary | Not started | — |
+| 6. Agent tools and query operations | Not started | — |
+| 7. Documentation and retiring SQLite | Not started | — |
+
 *   **Phase 0. Infrastructure on PDS18:** the Postgres role, ClickHouse and Garage.
 *   **Phase 1. Async data access and a `document` table on Postgres.** Behaviour stays the same, and the old data is migrated.
 *   **Phase 2. Typed `execution`, `task` and `task_dependency` tables.**
@@ -1156,7 +1169,7 @@ Order: 21, 22, 24 (with its legacy adapter), 26c (backfill), 26b and the other r
     *   `delegation.ts` (website sources), `projects.ts` (pipe response), `app.ts` (differences, results).
 *   **Why**: Phase 3 must not break delivery.
 
-##### 26c. Backfill of base64 artifacts (part of migration 8 and `migrate-sqlite.ts`)
+##### 26c. Backfill of base64 artifacts (`artifacts.backfill` in `artifacts.ts`, after migration 9)
 
 *   **Type / Scope**: One-time move.
 *   **Proposed Changes**: The placement loop decodes up to 50 `artifact` documents per pass once a store of the project's locations is reachable (until then they keep serving their readers), uploads it to the PDS18 store under its project, scope and hash (skipping existing verified copies), writes the `artifact` row with `legacy_id` and a verified copy, then deletes the document; it is idempotent (rows already moved are skipped). Placement then copies to the project's locations. `migrate-sqlite forward` does the same for SQLite records; `reverse` writes `artifact` rows back as base64 documents, reading the bytes through `artifacts.read`.

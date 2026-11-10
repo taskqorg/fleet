@@ -122,7 +122,7 @@ These are settled elsewhere:
 * **When:** the coordinator restarts.
 * **Then:**
   * Each stream reconnects with backoff and resumes from its cursor.
-  * Cursors stay valid because the log is in Postgres, unless they are older than the retention floor, in which case the app resyncs.
+  * Cursors stay valid because the log is in Postgres, unless their change row has been pruned, in which case the app resyncs.
   * No window reloads or loses its scroll position.
 
 ### CUJ 5: A host goes quiet
@@ -160,7 +160,7 @@ Browser windows (one origin)                          Coordinator (Fastify)
   * View routes: `/overview`, `/tasks`, `/tasks/:id`, `/conversations`, `/conversations/:id`, `/hosts`, `/hosts/:id` (host detail as stacked sections, design-system D11 C3).
   * The coordinator returns `index.html` for these paths only. Any other unknown non-API path gets a 404 page.
 * **List state** (filters, grouping, search, presets, the focused row and checked rows) lives in the URL in one canonical form, defined in [fleet-view-urls-and-list-path.md §1](fleet-view-urls-and-list-path.md) and implemented by `packages/view-url`; agents build and read such links with `view_link`. Per-person defaults and nav pins live in IndexedDB until Phase 6 adds people.
-* **Shell.** `AppShell` from `packages/ui`, with nav items built from the registry's `workspaces`.
+* **Shell.** `AppShell` from `packages/ui`, with nav items built from the registry's `workspaces`, the one list of screens in nav order. A workspace marked `app: true` is a built screen: the app nav and routes (`app/src/main.tsx`, whose view map the type checker requires for every such screen), the manifests and service-worker routes (`app/build.mjs`, which writes `dist/app/screens.json`) and the coordinator's `index.html` routes (`app.ts`, from that file) all follow the flag, so a new screen appears everywhere once it is set and its view is added. The stored entity is a session; the workspace, nav item and view are named Conversations everywhere.
 
 * **Codes.** Rows and details show the human code after the title through the `packages/ui` formatter (design-system D15). The UUID is only in a tooltip and "copy UUID". Search accepts a code, an alias or a UUID; a code goes through `entity.resolve`, and an alias opens the entity under its current code. Detail URLs keep the UUID (`/tasks/:id`) until codes exist; the view URL codec passes a code through unchanged, and the redirect direction for codes is decided by the D17 slice ([fleet-view-urls-and-list-path.md](fleet-view-urls-and-list-path.md), Non-Goals).
 
@@ -172,8 +172,8 @@ Browser windows (one origin)                          Coordinator (Fastify)
 * **Lists.** A list is `{ ids, keys, counts, total, groups, nextAfter, at }` under its canonical list key, plus the change cursor it reflects ([fleet-view-urls-and-list-path.md §2](fleet-view-urls-and-list-path.md)). `counts` holds per-state counts from the server.
 * **Reads.**
   * Existing ops: `task_get`, `questions_list`, `executions_list` and `session_get`.
-  * Extended op: `task_list`.
-  * New ops (§6): `sessions_list`, `hosts_list`, `list_membership`, `changes_since` and `me`.
+  * New paged op: `task_page` (`task_list` keeps its existing shape for agents; design-system D15).
+  * New ops (§6): `task_page`, `sessions_list`, `hosts_list`, `list_membership`, `changes_since` and `me`.
 * **Applying changes.** Changes are applied in batches, one batch per animation frame:
   1. Map each change to the affected client rows and lists through the kind map (§4).
   2. Make one `list_membership` call for all open lists with the affected ids. It returns, for each list, the matching rows themselves, each with its sort key, plus fresh `counts`.
@@ -200,21 +200,27 @@ Browser windows (one origin)                          Coordinator (Fastify)
 
 | Source | `kind` | `id` | Parent ids filled | Client effect |
 |---|---|---|---|---|
-| `task` | `task` (`legacy_kind` if set) | `id` | — | Row `task`; lists of tasks; counts |
+| `task` | `task` | `id` | — | Row `task`; lists of tasks; counts |
 | `task_dependency` | `task` | `task_id` | `task_id` | Row `task` |
-| `execution` | `execution` (`legacy_kind` if set) | `id` | `task_id`, `session_id`, `host_id` | Rows `execution`; the parent `task` (harness mark), `session` and `host` (counts) |
-| `execution_totals` | `execution` | `execution_id` | — | Row `execution` (totals) |
-| `question` | `question` | `id` | `task_id`, `session_id` from `data` | Rows `question`; the parent task (state, needs-you) and session |
+| `execution` | `execution` | `id` | `task_id`, `session_id`, `host_id` | Rows `execution`; the parent `task` (harness mark), `session` and `host` (counts) |
+| `execution_totals` | `execution` | `execution_id` | `task_id`, `session_id`, `host_id` from the execution | Row `execution` (totals) |
+| `question` | `question` | `id` | `task_id`, `session_id` | Rows `question`; the parent task (state, needs-you) and session |
 | `document` kind `session` | `session` | `id` | `session_id` = `id` | Row `session`; lists of sessions |
 | `document` kind `event`, `message` | `event` | `id` | `session_id` from `data->>'sessionId'` | The open conversation fetches `/api/sessions/:id/events?after=` |
 | `document` kind `host-observation` (written by the `/api/hosts/poll` handler on every poll) | `host` | `id` | `host_id` = `id` | Row `host`. Updates where only `lastSeenAt` changed are skipped (`OLD.data - 'lastSeenAt' = NEW.data - 'lastSeenAt'`), so polls do not flood the feed; `/hosts` and the Overview refresh `lastSeenAt` by re-reading `hosts_list` on their 5 s staleness timer. |
+| `document` kind `command` | `command` | `id` | `host_id`, `session_id` from `data` | The open conversation and host re-read their commands |
+| `document` kind `artifact` (legacy artifacts) | `artifact` | `id` | `session_id` from `data`, `task_id` from the execution | Results and task detail |
+| `artifact`, `artifact_copy` (migration 9, `fleet_artifact_change`) | `artifact` | artifact `id` | `task_id` (artifact or execution), `session_id`, `project_id` | Results and task detail. Copy updates that only move `lease_expires_at` or `updated_at` are skipped. |
+| `store` (migration 9) | `host` | `host_id` | `host_id` | Row `host` (stores). Updates that only move `observed_at` or `updated_at` are skipped. |
 | Other `document` kinds | — | — | — | No change row. A kind is added to this map when a view needs it, which keeps the log small. |
 
 **Visibility watermark.** This replaces any fixed overlap window. Execution-scope ingest commits in parallel with GLOBAL writers, so `seq` order is not commit order. Every read of the log therefore returns only rows whose transaction is older than the oldest transaction still running:
 
 ```
-SELECT ... FROM change WHERE seq > $cursor AND xid < pg_snapshot_xmin(pg_current_snapshot()) ORDER BY seq
+SELECT ... FROM change WHERE seq > $cursor AND xid < pg_snapshot_xmin(pg_current_snapshot()) ORDER BY xid, seq
 ```
+
+Kinds are always the client kinds above, never legacy kinds (design-system D15). Rows are read in `(xid, seq)` order, so a transaction's rows stay together.
 
 * The new cursor is the highest `seq` returned from that contiguous visible prefix. No row is skipped, because a row from a transaction that is still open blocks the cursor until it commits or rolls back. A rolled-back transaction leaves no rows.
 * The cost: one long write transaction delays the feed by its own duration. Feed delay is shown in the check report.
@@ -236,8 +242,8 @@ SELECT ... FROM change WHERE seq > $cursor AND xid < pg_snapshot_xmin(pg_current
 
 **Retention and resync.**
 * Retention comes from the coordinator config `changeLogRetentionDays`, set by `FLEET_CHANGE_LOG_RETENTION_DAYS`. The proposed default is 7. There is no cap; the operator chooses the value. The `me` op reports it.
-* A batch prune runs every hour in its own lock scope, `change:prune`, not GLOBAL. It deletes up to 10,000 rows per transaction in `seq` order and raises the floor `change_log_floor(seq)`.
-* The server sends `resync` when the cursor is below the floor or above the current maximum, for example after a database restore. The client then marks its lists stale and re-reads them, keeping each anchor by id.
+* A batch prune runs every hour in its own lock scope, `change:prune`, not GLOBAL. It deletes up to 10,000 rows per transaction in `(xid, seq)` order. There is no floor table.
+* The server sends `resync` when the cursor's own change row is missing: it was pruned, or the cursor is unknown, for example after a database restore (design-system D15). The client then marks its lists stale and re-reads them, keeping each anchor by id.
 
 ### 5. Offline, sign-in state and the PWA shell (D2, D3)
 
@@ -271,10 +277,10 @@ SELECT ... FROM change WHERE seq > $cursor AND xid < pg_snapshot_xmin(pg_current
   * `me {}` returns `{email: config.ownerEmail, roles:['operator','architect'], grantsVersion:'1', changeLogRetentionDays}`.
   * `sessions_list {filter, limit, after}` returns `{sessions, nextAfter, counts}`. Each session row has id, title, state, agent, last activity and open questions.
   * `hosts_list {}` returns `{hosts, staleAfterMs: 30000}`. The host ids are the configured ids (`config.hostId`, `integrationHostId`, `publicationHostId`, `nativeHostIds`) plus every `host-observation`. Each host row has `{id, platform, lastSeenAt, runningByHarness, slots, queued, stores: 'unavailable'}`. This is the first part of data foundation §11 `hosts.list`, with the same shape, extended in Phase 3.
-  * `task_list` is extended with:
-    * `{filter:{projectId?, state?: state[], search?}, group?: 'priority'|'state'|'project'|'agent'|'host'|'none', sort?: 'priority'|'created'|'updated', limit?: 1..500 (default 100), after?: string}`;
+  * `task_page` (new; `task_list` is unchanged for agents):
+    * `{filter:{projectId?, state?: state[], search?}, group?: 'priority'|'state'|'project'|'agent'|'host'|'none', limit?: 1..500 (default 100), after?: [groupKey, seq, id]}`; there is no separate sort option;
     * a response of `{tasks, nextAfter, counts:{<state>:n}}`;
-    * `after`, an opaque keyset cursor `<sortValue>|<id>`, with ties broken by id.
+    * order is group key, then newest first, then id; `after` is that triple.
 * **Routes.**
   * `GET /api/stream`.
   * `/assets/*` (immutable), `/sw.js`, `/manifests/*` and the app routes, which serve `index.html` (`no-cache`).
@@ -287,7 +293,7 @@ SELECT ... FROM change WHERE seq > $cursor AND xid < pg_snapshot_xmin(pg_current
 * `app/build.mjs` runs esbuild in ESM mode with code splitting per view, minified, with hashed names, and writes to `dist/app`. It also writes `index.html`, `sw.js` (with the precache list) and the manifests, and prints chunk sizes (raw and gzip).
 * `app/tsconfig.json` type-checks `app/` and `packages/ui` with Preact JSX.
 * Fastify serves `config.appDir`, which defaults to `dist/app`, with `@fastify/static` (pinned to an exact 8.x version, for Fastify 5).
-* For development, `npm run app:dev` runs esbuild watch into `dist/app`.
+* For development, `npm run app:dev` reruns `app/build.mjs` into `dist/app` whenever `app/src`, `packages/ui` or `packages/view-url` changes (`node --watch-path`).
 
 ### 8. Coexistence and retirement
 
@@ -299,7 +305,7 @@ SELECT ... FROM change WHERE seq > $cursor AND xid < pg_snapshot_xmin(pg_current
 | `/recovery` | Overview problems | Its actions exist as problem rows. |
 | `/accounts` | Overview accounts, then Access | The Access slice exists. |
 
-* Each legacy page gets a first line: "Legacy view. New: <link>". Its inline links are rewritten to `/legacy/...`.
+* Legacy pages carry no banner (owner, 2026-11-10); what each one offers and which new screen covers it is in [legacy-inventory.md](legacy-inventory.md). Their inline links are rewritten to `/legacy/...`.
 * Deleting a legacy page is a normal pull request that removes the file, the route and its tests.
 
 ### 9. Measurement
@@ -319,12 +325,12 @@ SELECT ... FROM change WHERE seq > $cursor AND xid < pg_snapshot_xmin(pg_current
 | The feed skips a change committed out of `seq` order. | The xid watermark (§4) lets the cursor advance only past finished transactions. A test commits two overlapping transactions in reverse order. |
 | Event ingest floods the stream. | A constant notify payload (one wake per commit), a 50 ms debounce, one short read per stream per wake, and a test with a burst of 1,000 events. |
 | The stream holds a snapshot or a pool connection. | It is excluded from the GET wrapper, and every read is its own short `store.read`. A test commits after the stream opens. |
-| The prune blocks writers. | Batched deletes in their own lock scope `change:prune`, plus a floor marker. |
+| The prune blocks writers. | Batched deletes in their own lock scope `change:prune`, plus resync when a cursor's row is gone. |
 | An expired Access session looks like offline. | A separate "signed out" state, triggered by a redirect, 401 or 403. |
 | A proxy buffers SSE. | No-transform and no-buffering headers, no compression, a smoke check, and the `changes_since` polling fallback. |
 | A stale app shell after a deploy. | Network-first `index.html`, hashed assets, and an "Update available" notice. |
 | Data left on a shared or lost laptop. | IndexedDB is deleted on sign-out, on session expiry and on a `grantsVersion` change. It is not encrypted at rest; device encryption is assumed. |
-| Client and server disagree about a list. | The client never decides membership (D4). A property test compares `list_membership` with `task_list`. |
+| Client and server disagree about a list. | The client never decides membership (D4). A property test compares `list_membership` with `task_page`. |
 
 ## Alternatives Considered
 
@@ -410,7 +416,6 @@ Order: spec items (13) first, then server items (1-7), then the app (8-12), then
 * **Type / Scope:** migration 8 (change log). `schema.sql` already has migration 7.
 * **Proposed Changes:**
   * Table `change`, with the columns listed in §4, an index on `seq`, and an index on `(session_id, seq)`.
-  * Table `change_log_floor(seq bigint)`, with one row set to `0`.
   * RLS with `FORCE` and the `project_scope` policy on `change`.
   * Function `fleet_change()`, written on one line (the splitter rule). It implements the kind map in §4 with `CASE TG_TABLE_NAME` and returns `NULL`.
   * Six row triggers, `AFTER INSERT OR UPDATE OR DELETE`, on `task`, `task_dependency`, `execution`, `execution_totals`, `question` and `document`.
@@ -418,8 +423,8 @@ Order: spec items (13) first, then server items (1-7), then the app (8-12), then
 
 #### 2. `packages/coordinator/store.ts` (Modify)
 * **Proposed Changes:**
-  * `changes.since(cursor, limit)`, which applies the watermark query, the floor and the maximum check, and returns `{changes, cursor, resync}`.
-  * `changes.prune(retentionDays)`, which deletes in batches of 10,000, each batch a `store.atomic` in lock scope `change:prune` (not GLOBAL, so writers never wait for it), and updates the floor.
+  * `changes.since(cursor, limit)`, which applies the watermark query and the cursor-row check, and returns `{changes, cursor, resync}`.
+  * `changes.prune(retentionDays)`, which deletes in batches of 10,000, each batch a `store.atomic` in lock scope `change:prune` (not GLOBAL, so writers never wait for it), in `(xid, seq)` order.
   * `listen(channel, fn)`:
     * on Postgres, a dedicated `pool.connect()` client, which reconnects and re-runs `LISTEN` after an error;
     * on PGlite, `db.listen`, exposed through `backend()`.
@@ -443,7 +448,7 @@ Order: spec items (13) first, then server items (1-7), then the app (8-12), then
 * **Proposed Changes:**
   * Add `/api/stream` to `longRoutes`.
   * Add the new guard rule (§6).
-  * Add `typedOps` for `changes_since`, `list_membership`, `sessions_list`, `hosts_list`, `me`, and the extended `task_list`.
+  * Add `typedOps` for `changes_since`, `list_membership`, `sessions_list`, `hosts_list`, `me`, and `task_page`.
   * Call `registerStream`.
   * Serve the app with `@fastify/static` from `config.appDir`, plus the app routes.
   * Redirect `/` to `/overview` and the old paths to `/legacy/*`.
@@ -452,7 +457,7 @@ Order: spec items (13) first, then server items (1-7), then the app (8-12), then
 
 #### 5. `packages/coordinator/tasks.ts`, `executions.ts` (Modify); `sessions.ts` (Create)
 * **Proposed Changes:**
-  * `tasks.list` gets keyset paging, the sort options, the group key and `counts`.
+  * `tasks.page` (op `task_page`) gives keyset paging, the group key and `counts`; order is group key, newest first, id.
   * `tasks.membership(filter, ids)` uses the same `WHERE` builder as `list`.
   * `executions.runningByHostHarness()` returns counts of `running` and `preparing` executions per `(host_id, harness)`.
   * `sessions.list` and `sessions.membership` go in a small `sessions.ts` (Create), over `document` kind `session`.
@@ -462,7 +467,6 @@ Order: spec items (13) first, then server items (1-7), then the app (8-12), then
 * **Proposed Changes:**
   * Move the page routes to `/legacy/*` (`app.ts:53`, `lab.ts:17`, `projects.ts:71`, `accounts.ts:23`, `recovery.ts:17`).
   * Rewrite the inline links: the header nav in `ui.ts:1`, `/?session=` in `ui.ts:6`, `lab-ui.ts:1-2`, `project-ui.ts:1,8,14` and `account-ui.ts:1`.
-  * Add the "Legacy view. New: <link>" line.
   * The API calls do not change.
 * **Why:** D2, G7.
 
@@ -497,7 +501,7 @@ Order: spec items (13) first, then server items (1-7), then the app (8-12), then
 
 #### 11. `app/src/views/overview.tsx`, `tasks.tsx`, `task-detail.tsx`, `conversations.tsx`, `conversation-detail.tsx`, `hosts.tsx`, `host-detail.tsx` (Create)
 * **Proposed Changes:**
-  * **Overview** reads `questions_list {state:'open'}` (needs-you), `hosts_list` (workers per host), and `task_list` counts per project. Problems come from `executions_list {problem:true}`.
+  * **Overview** reads `questions_list {state:'open'}` (needs-you), `hosts_list` (workers per host), and `task_page` counts per project. Problems come from `executions_list {problem:true}`.
   * **Tasks** composes `TaskListView`, `ListDetail`, `OutcomeBlock` and `DecisionBlock` (→ `questions_answer`). It wires pause, continue and cancel to `task_update`.
   * **Conversations** composes `Transcript` and `Composer`, and wires the session actions from today's `/` through their existing ops: `session_create`, `/api/sessions/:id/messages`, `execution_stop`, `session_fork`, `session_transition` and `session_profile`.
   * **Hosts and host detail** follow `pages/hosts.md`, with stores marked "unavailable".
@@ -512,7 +516,7 @@ Order: spec items (13) first, then server items (1-7), then the app (8-12), then
 
 #### 13. `docs/design-system/pages/conversations.md`, `controls/composer.md`, `controls/offline-marker.md`, `decisions.md` (Create/Modify)
 * **Proposed Changes:**
-  * The Conversations page spec, mapped to the inventory's Sessions items.
+  * The Conversations page spec, mapped to the inventory's Conversations items.
   * Specs for the composer and the offline marker.
   * Design-system D15, which links this doc.
   * Book sections for the new controls.
@@ -524,11 +528,11 @@ Order: spec items (13) first, then server items (1-7), then the app (8-12), then
     * the trigger and kind map for each source;
     * no change row after a rollback;
     * the watermark with two overlapping transactions;
-    * the floor and `resync`, including an empty log and a cursor ahead of the maximum;
+    * `resync` for a pruned or unknown cursor, including an empty log;
     * the stream delivers a commit made after it opened;
     * a 1,000-event burst produces one wake per commit;
     * RLS on change rows, tested with a second store at `{scope:'p1'}`.
-  * **Lists:** `list_membership` matches `task_list` and `sessions_list` for each fixture.
+  * **Lists:** `list_membership` matches `task_page` and `sessions_list` for each fixture.
   * **Host polls:** a poll that only changes `lastSeenAt` writes no change row.
   * **`hosts_list`:** counts per harness.
   * **Legacy routes:** `/legacy/*` pages load; app routes need no Bearer; `/api/*` still does.
