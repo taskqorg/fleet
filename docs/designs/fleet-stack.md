@@ -4,7 +4,7 @@ Fleet's languages, toolchain, contract source, rule delivery and the order in wh
 
 ## Decision
 
-Every Fleet service is written in Go. The browser app stays TypeScript (Preact, esbuild).
+Every Fleet service is written in Go. The browser app stays TypeScript (Preact, esbuild). Reasons and compared options: [why this stack](#why-this-stack).
 
 Order:
 
