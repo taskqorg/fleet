@@ -10,7 +10,7 @@ Physical responsibility boundaries for the [shared core](../fleet.md#shared-core
 | Coordination | Accepted work, dependencies, questions, execution links, budget allocation and progression. | Local background process or server. |
 | Execution host | Local runtime processes, working areas, tools, native history capture and resource observations. | Operator machine, dedicated computer or server. |
 
-Deliver the web interfaces first under the [delivery strategy](delivery-strategy.md); native execution hosts are required independently of later desktop UI packaging.
+Deliver the web interfaces first under the [delivery order](designs/fleet-stack.md#delivery-order-and-change-cycles); native execution hosts are required independently of later desktop UI packaging.
 
 These roles may share a machine and package. A persistent server coordinates local and remote execution hosts; operator computers may disconnect while server work continues. An environment is an execution context, not necessarily a separate host. Register hosts and their environments under the [allocation contract](work-allocation.md).
 

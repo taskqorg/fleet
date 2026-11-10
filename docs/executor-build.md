@@ -64,34 +64,4 @@ Final rerun evidence: `/var/folders/sw/55r1dvwn2g30l77zs5nwp3_80000gn/T/fleet-fa
 
 ## Fetch a CI release manually (L2)
 
-CI builds `x86_64-unknown-linux-gnu` (Ubuntu 24.04, glibc >= 2.39) and
-`aarch64-apple-darwin` (native macOS 15). Architecture evidence:
-`docs/pds-codex-environment.md` (PDS18 x86_64) and
-`docs/designs/fleet-data-foundation.md` (Mac arm64). WSL uses the Linux file;
-its distribution must meet the glibc requirement. No host deployment changes.
-
-With authenticated GitHub CLI, choose a successful main CI run for the exact
-full commit SHA, then download and verify in an empty directory:
-
-```sh
-revision=<full-commit-sha>
-run=<successful-main-ci-run-id>
-target=aarch64-apple-darwin # Linux/WSL: x86_64-unknown-linux-gnu
-gh run view "$run" --repo taskqorg/fleet --json headSha,event,headBranch,conclusion
-# Require headSha == revision, event == push, headBranch == main, conclusion == success.
-gh run download "$run" --repo taskqorg/fleet \
-  --name "fleet-executor-$target-$revision" --dir executor-download
-(cd executor-download && shasum -a 256 -c "fleet-executor-$target.sha256") && \
-  chmod +x "executor-download/fleet-executor-$target"
-```
-
-Stop on any mismatch or failed command. Only use the file after verification;
-activation and replacement of an installed executor are separate operator work.
-SHA-256 verifies integrity, not an independent publisher signature. These files
-use Actions retention, just like the coordinator archive; after expiry this run
-cannot supply that revision. Keep a verified local copy if needed.
-
-macOS files are not Developer ID signed or notarized. CLI downloads normally
-have no quarantine attribute; inspect with `xattr -l <file>` if macOS refuses
-execution. Record the refusal before any operator-approved signing or quarantine
-change. This fetch command makes no such changes.
+CI release files and the fetch and verify steps: [executor delivery](designs/fleet-executor-delivery.md#fetch-a-ci-release-manually).

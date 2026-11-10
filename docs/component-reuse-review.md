@@ -34,7 +34,7 @@ Validate three connected parts before broad UI work: registered execution host a
 
 ## Follow-up decision
 
-[State ownership](state-ownership.md) now makes Fleet authoritative for work and external boards optional. The [delivery strategy](delivery-strategy.md) prioritizes web interfaces with independent native execution updates. Estimate concrete reuse changes against these contracts before assigning repository ownership; this does not authorize changing existing TaskQ work.
+[State ownership](state-ownership.md) now makes Fleet authoritative for work and external boards optional. The [delivery order](designs/fleet-stack.md#delivery-order-and-change-cycles) prioritizes web interfaces with independent native execution updates. Estimate concrete reuse changes against these contracts before assigning repository ownership; this does not authorize changing existing TaskQ work.
 
 ## First-version inventory refresh
 

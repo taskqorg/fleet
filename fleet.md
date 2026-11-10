@@ -13,7 +13,7 @@ A system for performing work through agents across projects. This specification 
 
 ## Operator interface
 
-Deliver the operator and architect interfaces on the web first, across all projects. Later desktop applications for Windows, macOS and Linux reuse the web UI and shared operations. Follow the [delivery strategy](docs/delivery-strategy.md).
+Deliver the operator and architect interfaces on the web first, across all projects. Later desktop applications for Windows, macOS and Linux reuse the web UI and shared operations. Follow the [delivery order](docs/designs/fleet-stack.md#delivery-order-and-change-cycles).
 
 Conversation with a product manager (PM) is the primary way to discuss and assign work. A PM is an ordinary session in a chosen agent with role-specific instructions, tools and project access. Sessions may span related projects; they are not permanent project channels. Conversation has no separate request object.
 
@@ -202,11 +202,11 @@ Routine work advances automatically. People resolve substantive decisions and ex
 
 ## Stack
 
-Fleet's services move to Go, one language for all of them: the coordinator first, then the executor and the gateway after a probe confirms the executor builds without a C compiler. The browser app stays TypeScript. Reason: one build from any machine for every platform, at equal speed for Fleet's workload; evidence, module table and migration order are in the [language decision](docs/designs/fleet-language.md).
+Fleet's services move to Go, one language for all of them: the coordinator first, then the executor and the gateway after a probe confirms the executor builds without a C compiler. The browser app stays TypeScript. Reason: one build from any machine for every platform, at equal speed for Fleet's workload; evidence, module table and migration order are in the [stack specification](docs/designs/fleet-stack.md).
 
 Go rules:
 
-- Standard library first: `net/http` (routing, SSE), `encoding/json`, `log/slog`. Each third-party module has one row in the [module table](docs/designs/fleet-language.md#third-party-go-modules): module, what it replaces, why the standard library does not cover it.
+- Standard library first: `net/http` (routing, SSE), `encoding/json`, `log/slog`. Each third-party module has one row in the [module table](docs/designs/fleet-stack.md#third-party-go-modules): module, what it replaces, why the standard library does not cover it.
 - Allowed now: `github.com/jackc/pgx/v5`, used directly, not through `database/sql`, because LISTEN and connection options need its own API. ClickHouse through its HTTP interface with `net/http`. S3 (Garage) through a hand-written SigV4 signer; `minio-go` would add 19 compiled-in modules.
 - `CGO_ENABLED=0` for every binary, checked in CI. Any need for C is a stop-and-ask.
 - One Go module (`go/`), one `go.sum`; builds use `-mod=readonly`; the default checksum database stays on; `govulncheck` runs in CI as a warning.
