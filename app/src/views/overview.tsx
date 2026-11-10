@@ -8,7 +8,7 @@ type Overview = { questions: any[]; problems: any[]; counts: Record<string, numb
 async function fetchOverview(): Promise<Overview> {
   const [q, p, page] = await Promise.all([op('questions_list', { state: 'open' }), op('executions_list', { problem: true }), op('task_page', { group: 'project', limit: 1 })]);
   // Tasks without a project are their own group: filter projectId null, never the global counts.
-  const projects = await Promise.all((page.groups as any[]).map(async g => ({ id: g.label ?? 'no project', counts: (await op('task_page', { filter: { projectId: g.label ?? null }, limit: 1 })).counts })));
+  const projects = (page.groups as any[]).map(g => ({ id: g.label ?? 'no project', counts: g.counts }));
   return { questions: q.questions, problems: p.executions, counts: page.counts, hosts: null, projects };
 }
 

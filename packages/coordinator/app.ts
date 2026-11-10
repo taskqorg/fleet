@@ -332,7 +332,8 @@ if(ranks[c.status]===3&&b.status===c.status)return {ok:true}; if(b.nativeSession
  const ops:Record<string,(b:any)=>any>={...typedOps,...projects,...transportRecovery.operations,...agent.operations,session_create,session_profile,session_archive,execution_stop,session_get,execution_differences,execution_events,profiles_list,...labOps};
  registerStream(app,store,{retentionDays});
  const runOp=async (n:string,b:any)=>{const op=ops[n];if(!op)fail(404,'Unknown operation');return READ_OPERATIONS.has(n)?store.read(()=>op(b??{})):LONG_OPERATIONS.has(n)?op(b??{}):op===projects[n]||op===transportRecovery.operations[n]?store.atomic(()=>op(b??{})):(await store.tx(()=>op(b??{})))};
- app.post('/api/ops/:name',async(req:any)=>(await runOp(req.params.name,req.body)));
+ // Per-op timing: the Server-Timing header (browser devtools, curl -i) carries the operation's own time, not the transfer.
+ app.post('/api/ops/:name',async(req:any,reply:any)=>{const t=performance.now(),r=await runOp(req.params.name,req.body);reply.header('server-timing',`op;desc="${req.params.name}";dur=${(performance.now()-t).toFixed(1)}`);return r});
  registerLab(app,labOps,runOp);
  app.post('/api/tools',async(req:any)=>{const q=req.body;if(q?.method==='initialize')return {jsonrpc:'2.0',id:q.id,result:{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fleet',version:'1'}}};if(q?.method==='tools/list')return {jsonrpc:'2.0',id:q.id,result:{tools:Object.keys(ops).map(name=>({name,inputSchema:{type:'object'}}))}};if(q?.method!=='tools/call'||!ops[q.params?.name])fail(400,'Unknown tool');return {jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text:JSON.stringify(await runOp(q.params.name,q.params.arguments))}]}}});
  app.addHook('onClose',async()=>{if(ownStore)await store.close()});return app;

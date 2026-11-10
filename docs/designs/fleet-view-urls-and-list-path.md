@@ -205,7 +205,7 @@ Migration 10 in `packages/coordinator/db/schema.sql` (migration 9 is the artifac
 
 ### 4. Asserting filter check
 
-`tests/ui/filter.check.ts [--assert] [--sizes 3000,20000,100000]`. Each size gets a fresh in-memory store and coordinator. Without `--assert` it only prints. With `--assert` it exits 1 when a rule fails at 3,000 or 20,000 tasks; the 100,000-task run is always report-only. Rules:
+`tests/ui/filter.check.ts [--assert] [--sizes 3000,20000,100000]`. Each size gets a fresh in-memory store and coordinator. Without `--assert` it only prints. With `--assert` it exits 1 when a rule fails at 3,000 or 20,000 tasks; the 100,000-task run is always report-only. On CI (env `CI` set) the two 300 ms budgets are written to the job summary and do not fail the job, because a shared runner's timing is noise; locally they are asserted. Rules:
 
 * the `[data-ui=data-list]` element is the same node before and after a filter, grouping, "All", preset, focus and check change;
 * no `.skeleton` appears after the first load;

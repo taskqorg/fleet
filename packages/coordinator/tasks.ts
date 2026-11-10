@@ -161,8 +161,12 @@ export function taskModel(raw:Raw,executions:Executions){
   const cp:any[]=[],cc=where(f,cp,false),byState=Object.fromEntries(STATES.map(s=>[s,0]));
   for(const r of await raw.query(`SELECT t.state::text AS state,count(*) AS n FROM task t${W(cc)} GROUP BY 1`,cp))byState[r.state]=Number(r.n);
   const gp:any[]=[],gc=where(f,gp);
-  const groups=group&&group!=='none'?(await raw.query(`SELECT ${G.sql} AS g,min(${LABELS[group]}) AS label,count(*) AS n ${G.derived?base:'FROM task t'}${W(gc)} GROUP BY 1 ORDER BY 1`,gp)).map(r=>({key:r.g,label:r.label,count:Number(r.n)})):[];
-  return {counts:byState,groups}}
+  // Each group also carries its per-state counts (Overview reads per-project counts from one grouped call).
+  const groups=new Map<string,{key:string,label:string|null,count:number,counts:Record<string,number>}>();
+  if(group&&group!=='none')for(const r of await raw.query(`SELECT ${G.sql} AS g,min(${LABELS[group]}) AS label,t.state::text AS state,count(*) AS n ${G.derived?base:'FROM task t'}${W(gc)} GROUP BY 1,3 ORDER BY 1`,gp)){
+   let x=groups.get(r.g);if(!x)groups.set(r.g,x={key:r.g,label:r.label,count:0,counts:Object.fromEntries(STATES.map(s=>[s,0]))});
+   x.label??=r.label;x.count+=Number(r.n);x.counts[r.state]=Number(r.n)}
+  return {counts:byState,groups:[...groups.values()]}}
  // The ids among `ids` that match the filter, with the same row shape and sort key as page().
  async function membership(f:PageFilter,group:string|undefined,ids:string[]){const g=groupOf(group).sql,p:any[]=[],c=where(f,p);p.push(ids.filter(x=>typeof x==='string').slice(0,1000));c.push(`t.id=ANY($${p.length})`);
   return (await raw.query(`SELECT ${cols},${g} AS g ${base}${W(c)}`,p)).map(listRow)}
