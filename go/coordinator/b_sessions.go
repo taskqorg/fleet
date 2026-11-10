@@ -1,0 +1,397 @@
+// Sessions (app.ts session routes, sessions.ts list): create, profile, read with its queue, questions, handoffs and
+// delegations, archive, message submit, the Conversations list and list membership.
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"slices"
+	"strings"
+)
+
+var sessionStates = []string{"idle", "preparing", "running", "waiting", "succeeded", "failed", "cancelled"}
+
+const sessionBase = `WITH x AS (SELECT d.id, d.data, d.project_id,
+ coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle') AS state,
+ (SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) AS harness,
+ (SELECT m.data->>'text' FROM document m WHERE m.kind='message' AND m.data->>'sessionId'=d.id ORDER BY m.seq LIMIT 1) AS first_message,
+ greatest(d.seq,coalesce((SELECT max(e.seq) FROM execution e WHERE e.session_id=d.id),0),coalesce((SELECT max(m.seq) FROM document m WHERE m.kind IN ('message','event') AND m.data->>'sessionId'=d.id),0)) AS last_seq,
+ (SELECT count(*) FROM question q WHERE q.session_id=d.id AND q.state='open') AS open_questions
+ FROM document d WHERE d.kind='session')`
+
+func sessionWhere(f doc, p *[]any, withState bool) ([]string, error) {
+	c := []string{"NOT (x.data ? 'archivedAt')"}
+	if f["archived"] == true {
+		c[0] = "x.data ? 'archivedAt'"
+	}
+	if st, ok := f["state"].([]any); withState && ok && len(st) > 0 {
+		ss := []string{}
+		for _, x := range st {
+			v, _ := x.(string)
+			if !slices.Contains(sessionStates, v) {
+				return nil, fail(400, "Invalid state")
+			}
+			ss = append(ss, v)
+		}
+		*p = append(*p, ss)
+		c = append(c, fmt.Sprintf("x.state=ANY($%d)", len(*p)))
+	}
+	if s, ok := f["search"].(string); ok && strings.TrimSpace(s) != "" {
+		*p = append(*p, likePattern(s))
+		c = append(c, fmt.Sprintf("(lower(coalesce(x.first_message,'')) LIKE $%d OR lower(x.id) LIKE $%d)", len(*p), len(*p)))
+	}
+	return c, nil
+}
+
+func sessionRow(x doc) doc {
+	d := gm(x, "data")
+	ac := gm(d, "agentConfig")
+	title := any(nil)
+	if t := []rune(gs(x, "first_message")); len(t) > 0 {
+		title = string(t[:min(200, len(t))])
+	}
+	harness := x["harness"]
+	if harness == nil {
+		harness = ac["harness"]
+	}
+	return doc{"id": x["id"], "title": title, "state": x["state"], "harness": harness, "profileId": ac["id"], "projectId": x["project_id"], "createdAt": d["createdAt"],
+		"openQuestions": x["open_questions"], "archivedAt": d["archivedAt"], "sortKey": []any{-num(x["last_seq"]), x["id"]}}
+}
+
+func sessionsPage(q *Request, b doc) (doc, error) {
+	f := gm(b, "filter")
+	if f == nil {
+		f = doc{}
+	}
+	limit := pageLimit(b["limit"], 100)
+	p := []any{}
+	c, err := sessionWhere(f, &p, true)
+	if err != nil {
+		return nil, err
+	}
+	if b["after"] != nil {
+		a, ok := b["after"].([]any)
+		if !ok || len(a) != 2 {
+			return nil, fail(400, "Invalid after")
+		}
+		p = append(p, num(a[0]), fmt.Sprint(a[1]))
+		c = append(c, fmt.Sprintf("(-x.last_seq,x.id) > ($%d::bigint,$%d)", len(p)-1, len(p)))
+	}
+	rs, err := rowsOf(q, fmt.Sprintf("%s SELECT * FROM x WHERE %s ORDER BY -x.last_seq,x.id LIMIT %d", sessionBase, strings.Join(c, " AND "), limit+1), p...)
+	if err != nil {
+		return nil, err
+	}
+	cp := []any{}
+	cc, _ := sessionWhere(f, &cp, false)
+	counts := zeroCounts(sessionStates)
+	cr, err := rowsOf(q, sessionBase+" SELECT x.state,count(*) AS n FROM x WHERE "+strings.Join(cc, " AND ")+" GROUP BY 1", cp...)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range cr {
+		counts[gs(r, "state")] = r["n"]
+	}
+	page := []doc{}
+	for i, r := range rs {
+		if i < limit {
+			page = append(page, sessionRow(r))
+		}
+	}
+	var next any
+	if len(rs) > limit {
+		next = page[len(page)-1]["sortKey"]
+	}
+	return doc{"sessions": page, "nextAfter": next, "counts": counts, "total": total(counts)}, nil
+}
+
+func related(q *Request, d doc) (doc, error) {
+	out := doc{}
+	for k, v := range d {
+		out[k] = v
+	}
+	for k, id := range map[string]any{"parentState": d["parentExecutionId"], "childState": d["childExecutionId"], "continuationState": d["continuationExecutionId"]} {
+		e, err := maybe(q, id, "execution")
+		if err != nil {
+			return nil, err
+		}
+		out[k] = nil
+		if e != nil {
+			out[k] = e["state"]
+		} else if k != "continuationState" && id != nil {
+			return nil, errNotFound
+		}
+	}
+	return out, nil
+}
+
+func delegationsWhere(q *Request, sql string, id string) ([]doc, error) {
+	ds, err := rows(q, "SELECT delegation FROM execution WHERE delegation IS NOT NULL AND ("+sql+") ORDER BY seq", id)
+	if err != nil {
+		return nil, err
+	}
+	out := []doc{}
+	for _, d := range ds {
+		r, err := related(q, d)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func sessionGet(q *Request, sid string) (doc, error) {
+	s, err := get(q, sid, "session")
+	if err != nil {
+		return nil, err
+	}
+	v, err := sessionView(q, sid)
+	if err != nil {
+		return nil, err
+	}
+	for k, x := range v {
+		s[k] = x
+	}
+	s["sessionId"] = sid
+	if s["delegations"], err = delegationsWhere(q, "delegation->>'parentSessionId'=$1 OR delegation->>'childSessionId'=$1", sid); err != nil {
+		return nil, err
+	}
+	if s["messages"], err = all(q, "message", doc{"sessionId": sid}); err != nil {
+		return nil, err
+	}
+	s["executions"], err = sessionExecutions(q, sid)
+	return s, err
+}
+
+func sessionProfile(q *Request, sid string, b doc) (doc, error) {
+	s, err := get(q, sid, "session")
+	if err != nil {
+		return nil, err
+	}
+	for k := range b {
+		if k != "profileId" && k != "account" && k != "workingDirectory" {
+			return nil, fail(400, "Expected profileId only")
+		}
+	}
+	pid, ok := b["profileId"].(string)
+	if !ok {
+		return nil, fail(400, "Expected profileId only")
+	}
+	if a, err := activeOf(q, sid); err != nil || a != nil {
+		if err == nil {
+			err = fail(409, "Execution active")
+		}
+		return nil, err
+	}
+	if a, ok := b["account"]; ok {
+		if as, isStr := a.(string); !isStr || !accountPattern.MatchString(as) {
+			return nil, fail(400, "Invalid named host account")
+		}
+	}
+	if w, ok := b["workingDirectory"]; ok {
+		ws, isStr := w.(string)
+		if !isStr || !strings.HasPrefix(ws, "/") || strings.Contains(ws, "..") {
+			return nil, fail(400, "Invalid working directory")
+		}
+		s["workingDirectory"] = ws
+		if err := putDoc(q, "session", s); err != nil {
+			return nil, err
+		}
+	}
+	if gs(s, "nativeSessionId") != "" {
+		return sessionTransition(q, doc{"sessionId": sid, "profileId": pid, "account": b["account"]})
+	}
+	p, err := readTrustedProfile(pid)
+	if err != nil {
+		return nil, err
+	}
+	if a, ok := b["account"]; ok {
+		s["account"] = a
+	} else {
+		delete(s, "account")
+	}
+	s["agentConfig"] = p
+	return doc{"sessionId": sid, "profileId": p["id"], "account": s["account"]}, putDoc(q, "session", s)
+}
+
+// sessionArchive: one teardown command on the last execution's host.
+func sessionArchive(q *Request, sid string) (doc, error) {
+	s, err := get(q, sid, "session")
+	if err != nil {
+		return nil, err
+	}
+	es, err := sessionExecutions(q, sid)
+	if err != nil {
+		return nil, err
+	}
+	var last doc
+	for _, e := range es {
+		if !terminalLegacy(e) && gs(e, "state") != "unknown" {
+			return nil, fail(409, "Execution active")
+		}
+		if gs(e, "hostId") != "" {
+			last = e
+		}
+	}
+	if old, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown"}); err != nil || len(old) > 0 {
+		if err != nil {
+			return nil, err
+		}
+		return old[0], nil
+	}
+	s["archivedAt"] = now()
+	if err := putDoc(q, "session", s); err != nil {
+		return nil, err
+	}
+	if last == nil {
+		return doc{"sessionId": sid, "archivedAt": s["archivedAt"], "teardown": nil}, nil
+	}
+	payload := doc{}
+	if p := gs(s, "projectId"); p != "" {
+		payload["projectId"], payload["project"] = p, projectSettingsOf(p)
+	}
+	if w := gs(s, "workingDirectory"); w != "" {
+		payload["workingDirectory"] = w
+	}
+	c := doc{"id": uuid(), "executionId": last["id"], "sessionId": sid, "hostId": last["hostId"], "kind": "teardown", "payload": payload, "status": "pending"}
+	return c, putDoc(q, "command", c)
+}
+
+func sessionCreate(q *Request) (doc, error) {
+	s := doc{"id": uuid(), "createdAt": now(), "directedBy": director(q)}
+	if err := putDoc(q, "session", s); err != nil {
+		return nil, err
+	}
+	out := doc{"sessionId": s["id"]}
+	for k, v := range s {
+		out[k] = v
+	}
+	return out, nil
+}
+
+func sessionArg(b doc) (string, error) { return strArg(b, "sessionId", "sessionId", 0) }
+
+func init() {
+	broute("POST /api/sessions", func(q *Request) (any, error) { return sessionCreate(q) })
+	broute("GET /api/sessions/{id}", func(q *Request) (any, error) { return sessionGet(q, q.r.PathValue("id")) })
+	broute("POST /api/sessions/{id}/profile", func(q *Request) (any, error) { return sessionProfile(q, q.r.PathValue("id"), body(q)) })
+	// POST /api/sessions/{id}/messages: exactly requestId and text (optional delivery); one execution per requestId.
+	broute("POST /api/sessions/{id}/messages", func(q *Request) (any, error) {
+		s, err := get(q, q.r.PathValue("id"), "session")
+		if err != nil {
+			return nil, err
+		}
+		var b map[string]json.RawMessage
+		if json.Unmarshal(q.body, &b) != nil || b == nil {
+			return nil, fail(400, "Expected requestId, text and optional delivery")
+		}
+		_, r := b["requestId"]
+		_, t := b["text"]
+		for k := range b {
+			if k != "requestId" && k != "text" && k != "delivery" {
+				r = false
+			}
+		}
+		if !r || !t {
+			return nil, fail(400, "Expected requestId, text and optional delivery")
+		}
+		v := body(q)
+		for k, max := range map[string]int{"requestId": 200, "text": 32000} {
+			if x, ok := v[k].(string); !ok || x == "" || len([]rune(x)) > max {
+				return nil, fail(400, "Invalid text")
+			}
+		}
+		return submit(q, doc{"sessionId": s["id"], "requestId": v["requestId"], "text": v["text"], "delivery": v["delivery"]})
+	})
+	broute("GET /api/executions/{id}/delegations", func(q *Request) (any, error) {
+		id := q.r.PathValue("id")
+		if _, err := get(q, id, "execution"); err != nil {
+			return nil, err
+		}
+		ds, err := delegationsWhere(q, "delegation->>'parentExecutionId'=$1 OR delegation->>'childExecutionId'=$1 OR delegation->>'continuationExecutionId'=$1", id)
+		return doc{"delegations": ds}, err
+	})
+	bop("session_create", false, func(q *Request) (any, error) { return sessionCreate(q) })
+	bop("session_get", true, func(q *Request) (any, error) {
+		sid, err := sessionArg(body(q))
+		if err != nil {
+			return nil, err
+		}
+		return sessionGet(q, sid)
+	})
+	bop("session_profile", false, func(q *Request) (any, error) {
+		b := body(q)
+		sid, err := sessionArg(b)
+		if err != nil {
+			return nil, err
+		}
+		delete(b, "sessionId")
+		return sessionProfile(q, sid, b)
+	})
+	bop("session_archive", false, func(q *Request) (any, error) {
+		sid, err := sessionArg(body(q))
+		if err != nil {
+			return nil, err
+		}
+		return sessionArchive(q, sid)
+	})
+	bop("sessions_list", true, func(q *Request) (any, error) { return sessionsPage(q, body(q)) })
+	bop("list_membership", true, func(q *Request) (any, error) {
+		b := body(q)
+		idsAny, ok := b["ids"].([]any)
+		if !ok || len(idsAny) > 1000 {
+			return nil, fail(400, "Expected at most 1000 ids")
+		}
+		lists, ok := b["lists"].([]any)
+		if !ok || len(lists) < 1 || len(lists) > 2 {
+			return nil, fail(400, "Expected one or two lists")
+		}
+		ids := strList(idsAny)
+		out := []doc{}
+		for _, x := range lists {
+			l, _ := x.(map[string]any)
+			f := gm(l, "filter")
+			if f == nil {
+				f = doc{}
+			}
+			switch gs(l, "name") {
+			case "tasks":
+				rs, err := taskMembership(q, f, l["group"], ids)
+				if err != nil {
+					return nil, err
+				}
+				counts, groups, err := taskSummary(q, f, l["group"], false)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, doc{"name": "tasks", "rows": rs, "counts": counts, "groups": groups})
+			case "sessions":
+				p := []any{}
+				c, err := sessionWhere(f, &p, true)
+				if err != nil {
+					return nil, err
+				}
+				p = append(p, ids)
+				c = append(c, fmt.Sprintf("x.id=ANY($%d)", len(p)))
+				rs, err := rowsOf(q, sessionBase+" SELECT * FROM x WHERE "+strings.Join(c, " AND "), p...)
+				if err != nil {
+					return nil, err
+				}
+				rows := []doc{}
+				for _, r := range rs {
+					rows = append(rows, sessionRow(r))
+				}
+				pg, err := sessionsPage(q, doc{"filter": f, "limit": 1.0})
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, doc{"name": "sessions", "rows": rows, "counts": pg["counts"]})
+			default:
+				return nil, fail(400, "Unknown list")
+			}
+		}
+		return doc{"lists": out}, nil
+	})
+	// /api/tools: the operation table as MCP tools (app.ts), each call in its own transaction.
+	blongRoute("POST /api/tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet", operations, agentDescriptions) })
+}
