@@ -362,6 +362,13 @@ func mcpRun(args []string) error {
 		if err != nil {
 			return err
 		}
+		// The executor passes the run token, gateway URL and Access file path in a private run file (argument 3), never in
+		// the harness environment; they become this server's own environment.
+		if f, err := arg(3, "run file"); err == nil {
+			if err := loadRunFile(f); err != nil {
+				return err
+			}
+		}
 		return connectionMCP(conn, spec, os.Stdin, os.Stdout)
 	default:
 		return errors.New("unknown MCP server")

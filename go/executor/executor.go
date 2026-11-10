@@ -713,16 +713,26 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	// Granted connections: one `<executor> mcp connection` server each, calling fleet-gateway with this run's token. The
 	// token and gateway URL reach the servers through the harness environment, never a file or argv.
 	var connectionTools []string
+	runFile := ""
 	granted := jArr(p, "connections")
 	if len(granted) > 0 {
 		gateway := os.Getenv("FLEET_GATEWAY_URL")
 		if gateway == "" || !jIsStr(p, "runToken") {
 			return fail(1, "connections granted but FLEET_GATEWAY_URL or the run token is missing")
 		}
-		setEnvKV(cmd, "FLEET_RUN_TOKEN="+jStr(p, "runToken"), "FLEET_GATEWAY_URL="+gateway)
-		// The harness runs with its own HOME, so the client cannot find the executor's Access file by default: name it.
+		// The run token, gateway URL and Access file path reach only the connection servers, through a private run file
+		// in the executor's data directory; the harness environment never carries them.
+		lines := "FLEET_RUN_TOKEN=" + jStr(p, "runToken") + "\nFLEET_GATEWAY_URL=" + gateway + "\n"
 		if f := accessFile(); f != "" && isFile(f) {
-			setEnvKV(cmd, "FLEET_CF_ACCESS_FILE="+f)
+			lines += "FLEET_CF_ACCESS_FILE=" + f + "\n"
+		}
+		dir := filepath.Join(e.root, "runs")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		runFile = filepath.Join(dir, execution+".env")
+		if err := os.WriteFile(runFile, []byte(lines), 0o600); err != nil {
+			return err
 		}
 	}
 	for _, spec := range granted {
@@ -737,8 +747,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 				connectionTools = append(connectionTools, "mcp__"+conn+"__"+n)
 			}
 		}
-		servers[conn] = M{"command": exe(), "args": []any{"mcp", "connection", conn, enc(spec)}, "tools": tools,
-			"env": []any{"FLEET_RUN_TOKEN", "FLEET_GATEWAY_URL", "FLEET_CF_ACCESS_FILE", "HOME"}}
+		servers[conn] = M{"command": exe(), "args": []any{"mcp", "connection", conn, enc(spec), runFile}, "tools": tools, "env": []any{"HOME"}}
 	}
 	// Built-in web for pipeline agent steps: off unless the step's run sets webRoute builtin.
 	if name == "codex" && jIsStr(p, "webRoute") {
@@ -1224,6 +1233,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 		}
 		l.wire.mu.Unlock()
 	}
+	os.Remove(filepath.Join(e.root, "runs", execution+".env")) // the run token is not needed after the run
 	var code any
 	if l.state != nil && l.state.Exited() {
 		code = l.state.ExitCode()

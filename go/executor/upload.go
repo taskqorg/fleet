@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,6 +83,28 @@ func isLoopback(url string) bool {
 		host = strings.SplitN(host, ":", 2)[0]
 	}
 	return host == "127.0.0.1" || host == "localhost" || host == "::1"
+}
+
+// accessAllowed: the Access service token goes only to a store tunnel: the host of this host's own store endpoint
+// (FLEET_STORE_CONFIG) or a host in FLEET_STORE_ENDPOINT_HOSTS (comma-separated; ".example.com" matches subdomains), the
+// list the coordinator accepts store endpoints from. Never to loopback or any other presigned URL.
+func accessAllowed(raw string) bool {
+	u, err := neturl.Parse(raw)
+	if err != nil || u.Scheme != "https" || isLoopback(raw) {
+		return false
+	}
+	h := u.Hostname()
+	hosts := strings.Split(os.Getenv("FLEET_STORE_ENDPOINT_HOSTS"), ",")
+	if own, err := neturl.Parse(jStr(storeConfig(), "endpoint")); err == nil && own.Hostname() != "" {
+		hosts = append(hosts, own.Hostname())
+	}
+	for _, x := range hosts {
+		x = strings.TrimSpace(x)
+		if x != "" && (h == x || strings.HasPrefix(x, ".") && strings.HasSuffix(h, x)) {
+			return true
+		}
+	}
+	return false
 }
 
 type transferClient struct {
@@ -155,7 +178,7 @@ func (c *transferClient) storeDo(method, url string, body []byte) (*http.Respons
 	if err != nil {
 		return nil, permanentf("%s", err)
 	}
-	if !isLoopback(url) && c.access != nil {
+	if c.access != nil && accessAllowed(url) {
 		req.Header.Set("CF-Access-Client-Id", c.access[0])
 		req.Header.Set("CF-Access-Client-Secret", c.access[1])
 	}

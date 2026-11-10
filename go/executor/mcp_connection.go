@@ -192,3 +192,18 @@ func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error
 	}
 	return sc.Err()
 }
+
+// loadRunFile reads KEY=value lines (FLEET_RUN_TOKEN, FLEET_GATEWAY_URL, FLEET_CF_ACCESS_FILE) from the executor's private
+// run file into this process's environment. Only those keys are taken.
+func loadRunFile(path string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if k, v, ok := strings.Cut(l, "="); ok && (k == "FLEET_RUN_TOKEN" || k == "FLEET_GATEWAY_URL" || k == "FLEET_CF_ACCESS_FILE") {
+			os.Setenv(k, v)
+		}
+	}
+	return nil
+}
