@@ -177,6 +177,9 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 	}
 	send("ready", map[string]int64{"cursor": cursor}, -1)
 	fl.Flush()
+	// A comment line every 25 s (FLEET_STREAM_PING_MS: test seam) keeps proxies and Access from dropping an idle stream.
+	ping := time.NewTicker(max(cEnvMs("FLEET_STREAM_PING_MS", 25000), time.Millisecond))
+	defer ping.Stop()
 	for {
 		held := false
 		for {
@@ -217,6 +220,8 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 				return nil
 			}
 		case <-timer:
+		case <-ping.C:
+			fmt.Fprint(w, ": ping\n\n")
 		}
 	}
 }
