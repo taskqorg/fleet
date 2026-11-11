@@ -22,4 +22,12 @@ func TestNumReadsEveryNumericType(t *testing.T) {
 			t.Fatalf("num(%T) = %v", v, num(v))
 		}
 	}
+	for _, v := range []any{"NaN", "Inf", "x", true, nil} {
+		if num(v) != 0 {
+			t.Fatalf("num(%v) = %v, want 0", v, num(v))
+		}
+	}
+	if msTime(int64(1000)) == nil || msTime(1000.0) == nil || msTime("1000") != nil {
+		t.Fatal("msTime reads JSON and SQL millisecond numbers only")
+	}
 }

@@ -243,14 +243,22 @@ func numOK(v any) (float64, bool) {
 	return 0, false
 }
 
-// num: a number of any JSON or SQL numeric type, or a numeric text (a ->> read); 0 otherwise. numOK refuses text.
+// num: a finite number of any JSON or SQL integer or float type, or a numeric text (a ->> read); 0 otherwise. numOK
+// refuses text. A SQL numeric column needs ::float8 (pgx scans it as pgtype.Numeric).
 func num(v any) float64 {
-	if s, ok := v.(string); ok {
-		f, _ := strconv.ParseFloat(s, 64)
-		return f
+	f, ok := numOK(v)
+	if s, isText := v.(string); isText {
+		f, ok = parseNum(s)
 	}
-	f, _ := numOK(v)
+	if !ok || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0
+	}
 	return f
+}
+
+func parseNum(s string) (float64, bool) {
+	f, err := strconv.ParseFloat(s, 64)
+	return f, err == nil
 }
 
 // msTime: a millisecond time (JSON or SQL number) as a timestamp, or nil.
