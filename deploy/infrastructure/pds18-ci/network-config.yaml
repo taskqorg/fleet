@@ -1,0 +1,14 @@
+version: 2
+ethernets:
+  eth0:
+    match:
+      driver: virtio_net
+    dhcp4: false
+    dhcp6: false
+    accept-ra: false
+    addresses: [10.0.2.15/24]
+    routes:
+      - to: default
+        via: 10.0.2.2
+    nameservers:
+      addresses: [1.1.1.1, 1.0.0.1]

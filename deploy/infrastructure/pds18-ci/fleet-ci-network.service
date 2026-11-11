@@ -1,0 +1,9 @@
+[Unit]
+Description=Host-owned egress boundary for Fleet CI guest
+Before=fleet-ci-vm.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /etc/fleet-ci-network.nft
+RemainAfterExit=yes
+# Keep the boundary installed when the VM stops; remove only during explicit rollback.

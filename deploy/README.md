@@ -7,6 +7,7 @@ Service files and scripts for running Fleet. Nothing here is applied automatical
 * `status.sh`: sourced by both scripts. When stdout is a terminal they print [OSC 7501 program status](https://www.superlogical.com/rex/docs/build/program-status): `state=working` with `progress`, then `done` or `error`, app `fleet-deploy`, base64 `msg`.
 * `infrastructure/`: PDS18 units following tight: the coordinator (`fleet.service.candidate`), the gateway and its socket, the Access origin guard (`fleet-access-guard.service`, which runs `fleet-gateway guard`), ClickHouse and Garage Quadlets, Postgres role setup (`fleet-postgres.sql`), backups, the root-owned `fleet-launch@.service` helper, and the Caddy and Cloudflare tunnel candidates. Files ending in `.candidate` are proposed, not installed.
   `fleet-update.service` and `.timer` run `fleet-update pds18` as root every 5 minutes; `fleet-executor-pds18.conf` points the PDS18 executor at its root-owned releases.
+* [`infrastructure/pds18-ci/`](infrastructure/pds18-ci/README.md): isolated trusted-main CI guest provisioning, admission and rollback; separate from production Fleet services.
 * `hosts/linux/`: the executor and `fleet-update` (service and timer) as systemd user units (PDS18 executor, WSL).
 * `hosts/macos/`: launchd agents for the Mac (executor, `fleet-update`, Garage, cloudflared).
 

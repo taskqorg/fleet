@@ -134,7 +134,8 @@ jobs:
   go-tests:
     needs: selection
     if: contains(fromJSON(needs.selection.outputs.executed), 'go')
-    runs-on: ubuntu-24.04
+    # Routing only; the organization runner group admits exact trusted-main workflows.
+    runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON('["self-hosted","linux","x64","fleet-pds18"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
     env:
@@ -188,7 +189,8 @@ jobs:
   app-tests:
     needs: selection
     if: contains(fromJSON(needs.selection.outputs.executed), 'app')
-    runs-on: ubuntu-24.04
+    # Routing only; the organization runner group admits exact trusted-main workflows.
+    runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON('["self-hosted","linux","x64","fleet-pds18"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
     steps:
@@ -224,7 +226,8 @@ jobs:
   browser-tests:
     needs: selection
     if: contains(fromJSON(needs.selection.outputs.executed), 'browser')
-    runs-on: ubuntu-24.04
+    # Routing only; the organization runner group admits exact trusted-main workflows.
+    runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON('["self-hosted","linux","x64","fleet-pds18"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
     steps:
@@ -287,7 +290,8 @@ jobs:
       - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/conversations.check.ts
       - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/lab-create.check.ts
   reports:
-    runs-on: ubuntu-24.04
+    # Routing only; the organization runner group admits exact trusted-main workflows.
+    runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON('["self-hosted","linux","x64","fleet-pds18"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
     steps:

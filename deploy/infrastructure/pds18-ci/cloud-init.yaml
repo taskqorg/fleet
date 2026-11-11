@@ -1,0 +1,29 @@
+#cloud-config
+# Provisioning substitutes only the dedicated guest-management public key.
+users:
+  - name: ci
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+      - GUEST_MANAGEMENT_PUBLIC_KEY
+ssh_pwauth: false
+disable_root: true
+package_update: true
+package_upgrade: true
+packages:
+  - build-essential
+  - ca-certificates
+  - curl
+  - docker.io
+  - git
+  - jq
+  - libicu74
+  - postgresql
+  - python3
+  - unzip
+  - zstd
+runcmd:
+  - [systemctl, enable, --now, docker]
+  - [usermod, -aG, docker, ci]

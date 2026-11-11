@@ -92,7 +92,8 @@ jobs:
   build:
     needs: gate
     if: needs.gate.outputs.release == 'true'
-    runs-on: ubuntu-24.04
+    # Signing/publishing and native qualification remain on GitHub-hosted runners.
+    runs-on: ${{ github.ref == 'refs/heads/main' && fromJSON('["self-hosted","linux","x64","fleet-pds18"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
     steps:
@@ -143,7 +144,8 @@ jobs:
   migrate-check:
     needs: [gate, build]
     if: needs.gate.outputs.recent != ''
-    runs-on: ubuntu-24.04
+    # Signing/publishing and native qualification remain on GitHub-hosted runners.
+    runs-on: ${{ github.ref == 'refs/heads/main' && fromJSON('["self-hosted","linux","x64","fleet-pds18"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
     env:
