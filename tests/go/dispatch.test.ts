@@ -103,7 +103,7 @@ test('A6 hosts: a duplicate id is 409, a host secret never shows, the list carri
   assert.ok(!JSON.stringify(l).includes('secretHash'));
 });
 
-test('A9 an execution record has one state vocabulary and its real kind and harness: a claude run stores harness claude, a receipt "unknown" keeps the state and marks it unconfirmed (C9, C10; risk: every run reported as codex, two state vocabularies disagree)', {timeout: 30_000}, async () => {
+test('A9 an execution record has one state vocabulary and its real kind and harness: a claude run stores harness claude, a receipt "unknown" keeps the state and marks it unconfirmed (requirement: docs/designs/fleet-data-foundation.md §7 one execution record, C9, C10; risk: every run reported as codex, two state vocabularies disagree)', {timeout: 30_000}, async () => {
   const claude = ok(await call('POST', '/api/sessions', {}, owner)).sessionId;
   ok(await call('POST', `/api/sessions/${claude}/profile`, {profileId: 'claude-worker'}, owner));
   ok(await call('POST', `/api/sessions/${claude}/messages`, {requestId: randomUUID(), text: 'hello'}, owner));
