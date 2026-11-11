@@ -2,15 +2,15 @@
 
 * **Author:** Alex Kirs
 * **Date:** 2026-11-11
-* **Status:** design, not built. Amends [fleet-self-update.md](fleet-self-update.md): Goals, the version decision, CUJ 1, section 1 (release trigger and gate), 3.4 (health) and 3.5 (units).
+* **Status:** the merge queue (section 1) and the automatic release (section 4) run on `main`; section 8 is being built. Amends [fleet-self-update.md](fleet-self-update.md): Goals, the version decision, CUJ 1, section 1 (release trigger and gate), 3.4 (health) and 3.5 (units). Section 8 (2026-11-11, owner decision) moves enabling auto-merge from the orchestrator to the worker that owns the pull request.
 
-**Terms.** *Orchestrator*: the one agent session that reviews and merges for the project ([one orchestrator](../../fleet.md)); it is not the coordinator service. *Coordinator*: the Fleet service on PDS18 ([fleet-self-update.md](fleet-self-update.md#terms)). *Batch*: the commits that land on `main` while one release run is busy.
+**Terms.** *Orchestrator*: the one agent session that coordinates the lanes and holds the dequeue veto for the project ([one orchestrator](../../fleet.md)); it is not the coordinator service. *Coordinator*: the Fleet service on PDS18 ([fleet-self-update.md](fleet-self-update.md#terms)). *Batch*: the commits that land on `main` while one release run is busy.
 
 ## Overview
 
 A pull request travels: review, merge to `main`, release, install on every host. Today each step waits on a person or a timer. This design hands merging to GitHub's merge queue and releases every green `main` batch without a tag. PDS18 learns of a release within a minute instead of five; executors start their update as soon as their poll brings a new target. The `fleet-update` health probe stays the only deploy gate and keeps its rollback.
 
-Targets, measured from "the orchestrator enables auto-merge on a reviewed, green pull request":
+Targets, measured from "the worker enables auto-merge on its reviewed, green pull request":
 
 * On `main` after one queue CI run (about 4 minutes when the queue is empty).
 * Running healthy on every host with auto-update on within 15 minutes, with nobody watching, when PDS18 is up and at most one release behind.
@@ -30,7 +30,7 @@ Facts from 2026-11-11:
 ## Goals
 
 * Every pull request is tested as part of its queue group: `main` plus everything ahead of it plus itself. No pull request waits for a second run of its own.
-* Only the orchestrator merges. It does that by enabling auto-merge; workers never merge or enable auto-merge.
+* A worker enables auto-merge on its own pull request after `/code-review`, and only then; GitHub merges. The orchestrator can take any pull request out of the queue ([section 8](#8-workers-merge-and-watch-their-own-pull-requests)).
 * A flaky failure is recorded and never turns a red run green. A merge always needs a clean pass.
 * Every green `main` batch releases without a person. The pipeline computes the version, so there is no tag date to get wrong.
 * Releases come only from the pipeline. One switch held by the orchestrator pauses releasing.
@@ -60,10 +60,10 @@ Checked against GitHub's docs on 2026-11-11:
 ## Technical Plan
 
 ```
-orchestrator: /code-review reported ──► gh pr merge --auto <n>
+worker: /code-review, code-review status ──► gh pr merge --auto <n>   (orchestrator: dequeue veto)
                                              │
 GitHub merge queue ── merge_group run of ci (go, app, browser) on main+ahead+PR
-        │ green: main moves to the tested commit   red: PR removed, orchestrator decides
+        │ green: main moves to the tested commit   red: PR removed, its worker fixes
         ▼
 push to main ──► release.yml (on: push main; concurrency: release, no cancel)
         gate: FLEET_RELEASE_PAUSE unset; sha = head of main; ci green for sha
@@ -81,27 +81,27 @@ executor poll reply carries target ─► executor rewrites update.json
 
 * **Ruleset** on `main` (repository ruleset, created with `gh api repos/taskqorg/fleet/rulesets`), enforcement active:
     * Require a pull request (no required approvals: review is the coordinator's `/code-review`, not a GitHub approval).
-    * Require status checks `go`, `app` and `browser`: the `ci` jobs on `main` after [#191](https://github.com/taskqorg/fleet/pull/191), which run on every pull request and, with this change, every merge group. `comment` and `docs-order` are never required: they run only on `pull_request` or `push`. If #191 lands with other job names, the ruleset uses those.
-    * Require merge queue, set explicitly (ruleset rule `merge_queue`): `merge_method: SQUASH`, `max_entries_to_build: 5`, `min_entries_to_merge: 1`, `max_entries_to_merge: 5`, `min_entries_to_merge_wait_minutes: 0`, `check_response_timeout_minutes: 30`, `grouping_strategy: ALLGREEN` ("only merge non-failing pull requests"). 5 matches the 4 to 5 lanes; a wait of 0 merges a lone pull request at once. These are settings, not limits on lanes.
+    * Require status checks `go`, `app`, `browser` and `code-review` ([section 8](#8-workers-merge-and-watch-their-own-pull-requests)). `go`, `app` and `browser` are the `ci` jobs on `main` after [#191](https://github.com/taskqorg/fleet/pull/191), which run on every pull request and, with this change, every merge group. `comment` and `docs-order` are never required: they run only on `pull_request` or `push`. If #191 lands with other job names, the ruleset uses those.
+    * Require merge queue, set explicitly (ruleset rule `merge_queue`): `merge_method: MERGE` (as set on the live ruleset; a pull request's commits land as they are, so its branch must hold no merge commits, section 8), `max_entries_to_build: 5`, `min_entries_to_merge: 1`, `max_entries_to_merge: 5`, `min_entries_to_merge_wait_minutes: 0`, `check_response_timeout_minutes: 30`, `grouping_strategy: ALLGREEN` ("only merge non-failing pull requests"). 5 matches the 4 to 5 lanes; a wait of 0 merges a lone pull request at once. These are settings, not limits on lanes.
     * Block force pushes and deletion of `main`.
     * Bypass: repository admins only, for the rollback drill in [deploy/README.md](../../deploy/README.md#rollback-drill).
 * **Repository setting** "Automatically delete head branches" on. GitHub then retargets stacked children after the parent merges.
 * **`ci.yml`** adds `merge_group:` to `on:`. Every required job runs on all three events with no path filter. The docs report (`scripts/docs-report.ts`) picks its base itself (merge base on a pull request, `HEAD^` on a push); on a merge group `ci.yml` passes `github.event.merge_group.base_sha` as its base. The `push` run on `main` stays: it feeds `docs-order` and covers an admin bypass.
-* **Orchestrator**, after the review is reported: `gh pr merge <n> --auto` (the ruleset sets the method). That is its whole merge action. The serial merge script is deleted. Workers never run `gh pr merge`.
-* **A removed pull request** (red queue run, conflict, timeout) shows the reason on its timeline. The orchestrator reads it and either sends the pull request back to its lane or applies the flaky rule below.
+* **Worker**, after its `/code-review` and the `code-review` status: `gh pr merge <n> --auto` (the ruleset sets the method). The serial merge script is deleted. Nobody merges without the queue.
+* **A removed pull request** (red queue run, conflict, timeout) shows the reason on its timeline. The worker that owns it reads the reason (`scripts/watch-landing.sh` prints it) and fixes the conflict or applies the flaky rule below.
 
 ### 2. Stacked pull requests
 
 * Workers do not stack. A lane that needs one change on top of another waits for the first to merge, then branches from `main`.
-* When a stack is unavoidable, the orchestrator enables auto-merge on a child only after its parent merged and the child's base is `main`. With auto-delete on, GitHub retargets the child itself. If the child shows conflicts after a squash merge of the parent, its lane rebases it on `main`.
+* A stack that already exists: the worker enables auto-merge on the child only after its parent merged and the child's base is `main`. With auto-delete on, GitHub retargets the child itself. If the child shows conflicts, its lane rebases it on `main`. No new stacks ([section 8](#8-workers-merge-and-watch-their-own-pull-requests)).
 * Nobody deletes a branch by hand while a pull request is based on it.
 
 ### 3. Flaky tests
 
 * Nothing reruns a failed job to make it green. GitHub's "re-run failed jobs" is not used on queue runs.
 * `go test` runs with `-json`. On failure, a step appends the failed test names to the job summary.
-* When the queue removes a pull request for a failed check the first time, the orchestrator enqueues it again once (`gh pr merge --auto` again), with no judgement about which test failed. The new queue run is a fresh full pass.
-* If that pass is green on the same pull request head, the failed test is flaky: the orchestrator adds the test name, both run links and the date to the open issue labelled `flaky` (one issue, created if missing). The red run stays red in history.
+* When the queue removes a pull request for a failed check the first time, its worker enqueues it again once (`gh pr merge --auto` again), with no judgement about which test failed. The new queue run is a fresh full pass.
+* If that pass is green on the same pull request head, the failed test is flaky: the worker adds the test name, both run links and the date to the open issue labelled `flaky` (one issue, created if missing). The red run stays red in history.
 * A test recorded twice in that issue within 7 days is fixed next, by the lane that last changed the test's file. A fix that cannot land the same day may skip the test with `t.Skip("flaky: <issue link>")`; the fix removes the skip.
 * A second red run of the same pull request is a real failure; the pull request goes back to its lane.
 
@@ -124,7 +124,7 @@ Today `migrate-check` proves only "release N's migrations, then release N-1's co
 * **`migrate-check` covers the last 5 published releases.** The newest published release builds the database first, as PDS18's was built; N then applies only its new migrations on top (2026-11-11: a fresh database alone hid a new migration that relied on an edited, already released one), and each of the 5 newest published releases' coordinators then starts on it in turn; each must answer `/api/health` 200. A released migration is never edited. `release.json` records them as `checkedWith`. Each start takes seconds, so the job stays near its current minute. Why 5: PDS18 checks every minute and a release takes at least 3 minutes from merge, so in normal running PDS18 is at most one release behind; 5 covers an outage of about 15 minutes at the peak rate. It is a setting, not a limit on releases.
 * **PDS18 beyond the checked window.** When PDS18 runs a version not in the candidate's `checkedWith`, `fleet-update pds18` still installs (fix forward; the pre-install dump is taken as always) and opens one needs-you question: "pds18: <running> to <candidate> rollback pair unchecked". Rollback, if needed, is then a manual decision with the dump.
 * **A refused release** is skipped as today (`cycle` skips refused candidates). PDS18 installs the next release once one is published; its `checkedWith` includes the version PDS18 still runs, as long as that is within the last 5.
-* **Executors** do not touch the database. The existing rule stands: the coordinator serves N-1 and N, older executors show `version-behind` and keep working, and every host protocol change is expand-then-contract. New here: the contract step (removing a field) merges only when `hosts_list` shows no host older than the release that added the replacement. The orchestrator checks that before enabling auto-merge on such a pull request.
+* **Executors** do not touch the database. The existing rule stands: the coordinator serves N-1 and N, older executors show `version-behind` and keep working, and every host protocol change is expand-then-contract. New here: the contract step (removing a field) merges only when `hosts_list` shows no host older than the release that added the replacement. The worker checks that before enabling auto-merge on such a pull request.
 * **Dumps**: `fleet-update` keeps pre-install dumps of `current`, `previous` and the 5 highest refused versions (ordered by `newer()`), not of every refused version (today `update.go` keeps all refused ones).
 
 ### 6. Faster pickup on hosts
@@ -147,6 +147,46 @@ Worst case from enable-auto-merge to the last executor, PDS18 up: queue CI 4 min
 * The Access-path check `deploy/infrastructure/agent-access-smoke.sh` stays a manual check for agents. It is no longer a deploy step and nobody waits on a host version to run it.
 * The deploy rule stands in this form: hosts install only releases published by `release.yml`; nobody installs a branch build or CI artifact on a host.
 
+### 8. Workers merge and watch their own pull requests
+
+Amendment of 2026-11-11, decided by the owner. Data from pull requests #171 to #270: the orchestrator enqueued all 77 queue entries by hand; 93 of 290 commits were merges of `main` or of a sibling branch (#207 merged `main` 8 times); the queue removed pull requests 15 times for a conflict and once for a failed check; CI failed 8 of 146 pull request runs. The time went into hand-offs and conflicts, not into CI. The orchestrator also relayed "X landed, merge main" and "released, run the live test" to each lane, and workers sat idle until it did.
+
+**Review gate.**
+
+* A worker runs `/code-review` on its final head. When the review has no open finding, the worker posts the commit status `code-review` = `success` on that head: `gh api repos/taskqorg/fleet/statuses/<sha> -f state=success -f context=code-review -f description="<review level, findings fixed>"`.
+* The ruleset requires `code-review` next to `go`, `app` and `browser`, so the queue refuses a pull request without it. A status belongs to one commit: any new push drops it, and the worker posts it again after reviewing the new head. A worker rebases only to resolve a conflict (below), so a rebased head always holds new hand-made lines and is reviewed again.
+* In the queue, `.github/workflows/review-gate.yml` (only `on: merge_group`) reports a job named `code-review` on the group commit. It does not review anything: the pull request could only enter the queue with the status on its head. It runs on no other event, so no skipped `code-review` check ever satisfies the rule on a pull request.
+* The status is a statement by the worker, not a security control: every lane uses the owner's GitHub login and could post it, and an admin can bypass the ruleset (`gh pr merge --admin`). Workers never use `--admin`. The status is still worth one command: the queue now refuses a pull request whose head was pushed after the review, which a rule in prose cannot do.
+
+**Merge.**
+
+* Then the worker runs `gh pr merge <n> --auto`. It does this only for its own pull request.
+* The orchestrator keeps the veto: `gh pr merge <n> --disable-auto` takes a pull request out of the queue, and the worker does not enable it again until the orchestrator says so.
+
+**Branches.**
+
+* A worker brings its branch up to date by `git rebase origin/main` and `git push --force-with-lease`, never by merging `main` or a sibling branch into it. It rebases only when GitHub reports a conflict or the queue removed the pull request for one; an out-of-date branch without a conflict needs nothing, because the queue tests it on top of `main`.
+* On `pull_request` only, the `go` job fails when the pull request's commits include a merge commit (`gh api repos/{repo}/pulls/<n>/commits`, any commit with two parents) and prints the rebase command. A merge group has no pull request number and its own commit is a merge, so the step does not run there.
+* No stacks. A change that needs another one waits for it to merge, then branches from `main`. Section 2 still covers a stack that already exists.
+* Migration numbers in `go/coordinator/schema.sql` increase; `go/coordinator/migrations_test.go` fails otherwise. A repeated number is otherwise silent: a database that already applied the first section skips the second.
+* Generated files (`go/contract/*_gen.go`) are never merged by hand. On a conflict in one, take either side, run `cd go && go generate ./contract`, add the result and continue the rebase. Their schemas in `contracts/` are merged by hand, as source.
+
+**Watch to the hosts.**
+
+* After enabling auto-merge the worker runs `scripts/watch-landing.sh <n>` and reports from its output. The script waits for the merge, then for the first release tag that contains the merge commit (`git tag --contains`; a release can carry several merges, so a run ID is never used), then for every observed host with auto-update on to run that version or a newer one (`hosts_list` through the deployed app as `site-agents`).
+* It stops after 45 minutes (three times the 15-minute target of this design; a setting of the script) and prints the stage it reached. A timeout is a finding the worker reports to the orchestrator, not a reason to wait longer.
+* "Done" for a worker is the line `on hosts v<version>`, then the live check its task names. If the pull request leaves the queue, the script prints the reason and the worker fixes it.
+* Fleet sending these events to waiting sessions itself is later work.
+
+**Rollout.** `review-gate.yml` lands on `main` first; then the ruleset's `required_status_checks` gains `{"context": "code-review"}` with no `integration_id` (so both the commit status and the Actions job count), by `gh api -X PUT repos/taskqorg/fleet/rulesets/26997222` with the full current rules plus that entry. Until then the status is posted but not required.
+
+**Shared files.**
+
+* `docs/designs/fleet-stack.md` is split by part into separate design files, so lanes that change different parts touch different files.
+* `contracts/ops.schema.json` is split by domain into `contracts/ops/<domain>.schema.json`, each generating `go/contract/ops_<domain>_gen.go` and `contracts/generated/ops-<domain>.ts`. The generators merge the domain files into the one `Operations` map and `Ops` type, so callers do not change.
+
+**Measure.** Before (pull requests #171 to #270): merge commits per pull request 0.96 (93 of 97), queue entries by the orchestrator 77 of 77, conflict removals 15, relayed "landed" and "released" messages about two per pull request. After, over the next 100 pull requests, by the same GraphQL query (kept in the description of the pull request that adds this section): merge commits per pull request at most half of before; queue entries by the orchestrator only after a veto; time from "auto-merge enabled" to "on hosts" from `watch-landing.sh` output, median and worst case, against the 15-minute target.
+
 ## Alternatives Considered
 
 * **Keep the serial merge script.** Rejected by author: every pull request waits for CI twice, and the queue gives the same "tested on top of `main`" guarantee with one run.
@@ -160,11 +200,18 @@ Worst case from enable-auto-merge to the last executor, PDS18 up: queue CI 4 min
 * **`migrate-check` against the version running on PDS18 and the oldest host** (requested by the orchestrator). Rejected by author: CI would need a credential to read host state. Checking the last 5 releases covers PDS18 in normal running, and a needs-you question covers the rest.
 * **PDS18 installs every intermediate release in sequence.** Rejected by author: needs a release list beyond `latest.json`, stalls on a refused release, and slows catch-up.
 * **Smoke and rollback from a GitHub runner.** Rejected: runners cannot reach the Mac or WSL, and rollback already lives in `fleet-update`.
-* **Ban stacked pull requests outright.** Rejected by author: rare stacks are cheaper than the wait; the rules in section 2 make them safe.
+* **`.gitattributes` `merge=union` for shared indexes** (section 8). Rejected by author: GitHub's merge queue ignores merge drivers, and a union of JSON or Go lines produces invalid files.
+* **Migration numbers by timestamp.** Rejected by author: `schema_migration.version` is an `int`, and numbers out of order break the 5-release rollback check; a collision is caught by `go/coordinator/migrations_test.go` (`TestMigrationNumbersIncrease`) and, for two pull requests in flight, by the queue run that holds both.
+* **Files owned by lanes.** Rejected by author: it limits which lane can take which task, a hidden concurrency limit.
+* **Fewer, larger pull requests.** Rejected by author: a larger change conflicts more and waits longer in review.
+* **Generated Go files not committed.** Rejected by author for now: every build path (`go:build`, `deploy/build-release.sh`, `go vet` in CI, editors) would need `go generate` first; regenerating on a conflict removes the hand-merge for one rule.
+* **Allow stacked pull requests under the rules of section 2.** Superseded by section 8: 10 of the last 100 pull requests merged a sibling branch and then `main` again; waiting for the first change to merge costs one queue run.
 
 ## Risks
 
 * **One flaky test drops a whole group.** Groups behind a failing pull request are rebuilt and rerun. With "only merge non-failing pull requests" on, a flake costs one extra queue run per group behind it. The flaky rule keeps flakes visible so they get fixed.
+* **A worker enqueues an unreviewed head.** The status is per commit, so a push after the review blocks the queue; a false status is caught only by the orchestrator reading the description. The veto removes such a pull request.
+* **Watching costs tokens.** A worker that waits on `watch-landing.sh` in the background spends nothing while it sleeps; the 45-minute stop bounds a stuck wait.
 * **The queue changes the docs report base.** If `merge_group.base_sha` is wrong, the docs report is warning only and blocks nothing.
 * **A bad release reaches executors quickly.** Executors move only after PDS18 marked the coordinator side healthy; an executor that fails its own health rolls back alone, as today.
 * **PDS18 down longer than 5 releases.** The install goes ahead with a needs-you question; a rollback in that window is manual.
@@ -193,3 +240,9 @@ One pull request per item, in this order. Items 1 and 2 wait for #191: the rules
     * `go/update/trigger.go`: the `.path` unit and the watch LaunchAgent, written by each executor-mode run.
     * `deploy/README.md` first-install steps: no trigger to copy; `fleet-update` writes it.
     * Check: a release reaches all hosts within 15 minutes; a release whose coordinator refuses the executor poll rolls back on PDS18 and opens the needs-you question.
+4. **Workers merge** (section 8), one pull request per step, each from `main`:
+    * This section, `fleet.md` Stack and Verification, `AGENTS.md` lifecycle, `scripts/watch-landing.sh`.
+    * Same pull request: `.github/workflows/review-gate.yml`, the merge-commit step in the `go` job of `.github/workflows/ci.yml`. After it lands, the ruleset change of Rollout.
+    * `docs/designs/fleet-stack.md` split; inbound links updated.
+    * `contracts/ops.schema.json` split by domain; `go/gen/main.go`, `contracts/gen-ts.mjs`, `go/contract/contract.go`, `contracts/README.md`, imports of `contracts/generated/ops.ts`.
+    * Check: the next pull request after step 2 is enqueued by its worker, and the queue refuses one without the status.

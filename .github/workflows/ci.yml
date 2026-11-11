@@ -22,9 +22,19 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      pull-requests: read
     env:
       GOFLAGS: -mod=readonly
     steps:
+      # Branches are rebased on main, never merged with it (docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests).
+      # Pull requests only: a merge group has no number and its own commit is a merge.
+      - name: No merge commits in the branch
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          merges=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits" -q '.[] | select(.parents | length > 1) | .sha[0:12]')
+          [ -z "$merges" ] || { echo "Merge commits in this branch: $merges"; echo "Run: git fetch origin && git rebase origin/main && git push --force-with-lease"; exit 1; }
       - uses: actions/checkout@v4
         with:
           persist-credentials: false

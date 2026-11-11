@@ -8,6 +8,24 @@ EGM artifact directory: .egm
 
 Docs work: before editing `docs/`, read the open `docs-order` issue (label `docs`) and fix its findings in the files you touch. Working papers (briefs, review reports, handoffs, screenshots) are never committed; their substance goes into the pull request description ([docs governance](docs/designs/fleet-docs-governance.md)).
 
+## Pull request lifecycle
+
+Rules: [delivery pipeline, section 8](docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests). One task, one branch from `origin/main`, one pull request; no stacks.
+
+1. Push and open the pull request. Wait for CI (`gh pr checks <n> --watch`).
+2. Run `/code-review` on the final head and fix its findings. Then post the status: `gh api repos/taskqorg/fleet/statuses/$(gh pr view <n> --json headRefOid -q .headRefOid) -f state=success -f context=code-review -f description="<level>, <n> findings fixed"`. Any new push drops it; post it again after reviewing the new head. Never `gh pr merge --admin`.
+3. Enable auto-merge on your own pull request only: `gh pr merge <n> --auto`. If the orchestrator disabled it, do not enable it again until it says so.
+4. Run `scripts/watch-landing.sh <n>` (in the background) and act on its last line:
+    * `not merged: ..., merge_conflict`: `git fetch origin && git rebase origin/main`, `git push --force-with-lease`, step 2 again, then step 3. Never `git merge main`; CI fails a branch with a merge commit.
+    * a conflict in `go/contract/*_gen.go`: take either side, `cd go && go generate ./contract`, `git add`, continue the rebase.
+    * `not merged: ..., failed_checks`: read the failed test. The first time, enqueue once more; if that run is green, add the test and both run links to the open `flaky` issue (section 3). A second failure is yours to fix.
+    * `not merged: ..., auto-merge off` or `CLOSED`: the orchestrator used its veto or closed it; ask it before doing anything.
+    * `no site access` (exit 3): check `hosts_list` in the app yourself.
+    * `on hosts v<version>`: run the live check your task names, then report done.
+    * `timeout at: <stage>`: report the stage to the orchestrator. At `release`, include `gh run list -R taskqorg/fleet --workflow release -L 3`.
+5. A change that removes a host-protocol field merges only when `hosts_list` shows no host older than the release that added its replacement (section 5).
+6. A new migration in `go/coordinator/schema.sql` takes the next free number after rebasing on `main`.
+
 ## Opening the deployed web app
 
 Agents open `https://fleet.ufobe.com` as person `site-agents` (owner-equivalent rights, own actor) with the Access service token in `~/.config/ufobe-agents/site-access.env` ([design](docs/designs/fleet-people-access.md#agent-access-to-the-web-app)). Source the file inside the process that sends the request; never print, copy or log its values.
