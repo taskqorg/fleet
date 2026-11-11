@@ -7,3 +7,7 @@
 CI (`.github/workflows/ci.yml`): job `go` runs `go vet`, `go test -race ./...`, the executor MCP tests and `tests/go/run.sh` against a `-race` coordinator; job `app` the UI unit tests; job `browser` the `*.check.ts` browser checks and the design report.
 
 * `../scripts/test-rule-report.ts`: static requirement/risk inventory for test declarations (TypeScript and Go); warnings, except that with `--strict` (CI) a case in `go/` without both fails; `--self-check` checks the inventory logic.
+
+* `ui/test-selection.test.ts`: deterministic shadow-selector fixtures (event identities, full group union, renames/deletions, unknown impact and exact-candidate evidence refusal), run with `node --test tests/ui/test-selection.test.ts`. No database/browser setup.
+
+CI retains `test-selection` and `test-qualification` artifacts. Shadow selection never skips an existing suite; the latter binds the proposed plan to actual full-family results. See [selected-gate qualification](../docs/designs/fleet-delivery-pipeline.md#selected-gate-qualification) before enabling any omissions. Warning reports run separately from required behavioral completion; release checks qualification rather than waiting for warning jobs.
