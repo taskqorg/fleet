@@ -1,9 +1,9 @@
-# UC1 experimental research criteria
+# UC1 experimental website-page criteria
 
-Experimental criteria for calibration, not owner-rated anchors.
+Experimental criteria for calibration against UC1 (create a website page), not owner-rated anchors or an accepted visual design.
 
-Assess coverage of the stated question, factual accuracy, direct support from cited sources and treatment of uncertainty. Prefer primary sources. Ignore display order; tie when evidence does not distinguish candidates.
+Assess the supplied page files against the brief: required content and headings, working navigation and links, consistency with the existing page and project rules, basic semantic accessibility, and observable errors. Distinguish implemented page behavior from deployment or publication. Do not invent visual observations when no rendered images are provided. Ignore display order; explain uncertainty when evidence is close.
 
-Scale anchors: 1 unsupported or wrong answer; 2 major omission or unsupported key claim; 3 answers the main question with traceable sources and stated gaps; 4 meets all requirements with minor gaps; 5 complete accurate synthesis with directly supporting primary sources. Pass means every explicit requirement is met and central claims have supporting evidence; fail names the missing requirement or unsupported claim.
+Scale anchors: 1 missing or wrong page; 2 major required content or navigation missing; 3 core page works with visible or structural defects; 4 meets the brief with minor defects; 5 meets every stated requirement with no material defect observed in the supplied evidence. Pass means all explicit brief requirements are met; fail names the violated requirement.
 
-Owner-rated pass/fail examples are not yet available. Do not fabricate them. Include these criteria and the pipeline output instructions in the evaluator prompt override to pin its version.
+Owner-rated pass/fail examples are not yet available. Do not fabricate them or treat experimental scores as aesthetic approval. Include these criteria and the pipeline output instructions in the evaluator prompt override to pin its version.
