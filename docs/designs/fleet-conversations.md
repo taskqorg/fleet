@@ -189,6 +189,8 @@ Rules, one invariant ("the anchor row moves 0 px"):
 
 ### Copy
 
+Not built: character-offset endpoints and pointer dragging across messages. The current UI selects whole rows with click/Shift-click; server export supports partial offsets. The target below remains unchanged ([tracked gaps](https://github.com/taskqorg/fleet/issues/327)).
+
 *   **Reply and code block**: a copy icon in the row's service zone and on each code block. Reply copy gives the block's `markdown`.
 *   **Cross-message selection**: selection is app state, `{ start: { key, offset }, end: { key, offset } }`, set from pointer and Shift+click on rendered rows and from Cmd+A. The app draws the highlight. Cmd+C calls `navigator.clipboard.write([new ClipboardItem({ 'text/plain': promise })])` synchronously in the key handler, where the promise is `thread_export({ key, from: start, to: end })`. If the write fails, the status line says so and offers a retry button.
 *   **Whole thread**: the same `thread_export({ key })` without bounds. There is one markdown builder, on the server. The HTTP route streams the markdown as `text/markdown`, so a long thread is not held in memory as one string.
@@ -209,8 +211,10 @@ The thread renders `question` blocks with the existing `DecisionBlock` pattern. 
 
 Artifact storage provides stored artifact rows, stores and placement; `artifact_list` and `artifact_get` expose them (`go/coordinator/artifact_routes.go`).
 
-*   **Result block**: one per execution end that has artifacts or a delivery, at the key of the `execution.ended` event. A delivery or artifact that arrives later updates this block in place; it does not move (OR-23). It shows artifact names, the delivery-stage chip and links each artifact to its Results page entry.
-*   **Delivery stage**: the existing `stages` in `packages/ui/src/registry.ts`, rendered by `StageChip`. The coordinator maps the `delivery` record state to a stage key:
+Not built: delivery-only result blocks, delivery-stage mapping and late delivery updates. Current result blocks contain stored artifacts; the delivery target below remains required ([tracked gaps](https://github.com/taskqorg/fleet/issues/327)).
+
+*   **Result block target**: one per execution end that has artifacts or a delivery, at the key of the `execution.ended` event. A delivery or artifact that arrives later updates this block in place; it does not move (OR-23). It shows artifact names, the delivery-stage chip and links each artifact to its Results page entry.
+*   **Delivery stage target**: the existing `stages` in `packages/ui/src/registry.ts`, rendered by `StageChip`. The coordinator maps the `delivery` record state to a stage key:
 
     | Delivery state | Stage key |
     |---|---|
@@ -219,7 +223,7 @@ Artifact storage provides stored artifact rows, stores and placement; `artifact_
     | `merged`, `published` | `merged` |
     | any other state | no chip; the task state shows failures |
 
-    The delivery record has no check status today, so `checks` and `checks_failed` are not shown until delivery records one. No check state is guessed.
+    The target must not show `checks` or `checks_failed` until a delivery record actually supplies that state. Current thread results have no delivery record or stage; no check state is guessed.
 
 *   **Viewer**: `ResultViewer` and `ArtifactView` (`packages/ui/src/controls.tsx`) open in the work area (OR-27). The [result-viewer control](../design-system/controls/result-viewer.md) owns the format table and Source/Preview choice. Renderable formats open rendered; copy/download take the source. Images and video use fixed-ratio frames; text loads through `Range` pages as the operator scrolls, without a cap. Unrecognised types are download-only. Raw bytes use `GET /api/results/:id`; interactive HTML uses the separate `GET /api/results/:id/preview` route. HTML scripts run on an opaque sandboxed origin, without same-origin app access; `connect-src 'none'` blocks fetch/XHR connections and the preview CSP explicitly lists permitted static-resource sources. SVG renders as an image, so its scripts do not run. Markdown has no raw HTML. These are the existing rendered-first viewer rules, not a new permission change.
 
@@ -228,6 +232,8 @@ Artifact storage provides stored artifact rows, stores and placement; `artifact_
 Artifacts live in the `artifact` table. The thread, the viewer and the Results page read them only through `artifact_list` (`artifactList`, `go/coordinator/artifacts.go`) and `artifact_get`.
 
 ### Controls
+
+Not built: selecting the newest running execution across all sessions in a task. The current composer chooses from the selected session's executions; the task-wide target below remains required ([tracked gaps](https://github.com/taskqorg/fleet/issues/327)). Individual boundary Stop remains execution-specific.
 
 Stop, steer and answer are always visible. The rest are in one left-aligned menu with icons (OR-13), in reserved space (OR-23).
 
@@ -264,9 +270,9 @@ question / artifact / execution rows (same seq) ------+
 
 ### Browser check
 
-`tests/ui/conversations.check.ts` runs the built app against a coordinator loaded with fixtures captured from real events: codex `6a55ab8b`, claude `127d6fd7` and the lost-receipt case `d89cc199`, with secrets removed. A coordinator test asserts that each fixture's shape matches what the executor writes, so a wrong fixture fails.
+`tests/ui/conversations.check.ts` runs the built app against a coordinator loaded with fixtures captured from real events: codex `6a55ab8b`, claude `127d6fd7` and the lost-receipt case `d89cc199`, with secrets removed. The intended fixture check compares each captured projection with what the executor writes. Not built: automatic fixture/reproject equality verification; stored provenance alone does not execute that check ([tracked gaps](https://github.com/taskqorg/fleet/issues/327)).
 
-It asserts: newest entry visible on open; scroll up loads older pages with 0 px anchor drift; jump to a search hit; expand keeps the header in place; streaming append with the pill; one question answer; reply copy (cross-message copy is asserted with selection); stop on one of two executions. The fixtures store the executor projection of each native record; the coordinator test checks it equals `fleet-executor reproject` output. It prints, without thresholds: time to first paint of the newest reply, page round-trip time, search time, and anchor drift.
+It asserts: newest entry visible on open; scroll up loads older pages with 0 px anchor drift; jump to a search hit; expand keeps the header in place; streaming append with the pill; one question answer; reply copy (cross-message copy is asserted with selection); stop on one of two executions. The fixtures store captured projections; equality with `fleet-executor reproject` output remains a test requirement, not current executed proof. The existing anchor check tolerates up to 1 px, so it does not establish pixel-exact 0 px despite the unchanged owner target. It prints, without thresholds: time to first paint of the newest reply, page round-trip time, search time, and anchor drift.
 
 ## Non-Functional Requirements
 
