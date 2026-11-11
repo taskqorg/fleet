@@ -935,3 +935,18 @@ func TestMCPPreparedBindingSnapshot(t *testing.T) {
 		t.Fatal("future launch did not see new config", fresh, err)
 	}
 }
+
+// R1; risk: native clients are told resources/prompts/list-changed work although the selected bridge serves only tools.
+func TestMCPAdvertisesOnlySupportedToolProtocol(t *testing.T) {
+	var output, upstream strings.Builder
+	request := strings.NewReader(`{"id":1,"method":"initialize"}`)
+	reply := strings.NewReader(`{"id":1,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"fixture","version":"1"},"capabilities":{"resources":{},"prompts":{},"tools":{"listChanged":true}}}}`)
+	if err := filterMCP(request, &output, &upstream, reply, t.TempDir(), []any{"read"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	var actual M
+	json.Unmarshal([]byte(output.String()), &actual)
+	if enc(jAt(actual, "result", "capabilities")) != `{"tools":{}}` || jStr(actual, "result", "serverInfo", "name") != "fixture" {
+		t.Fatal(actual)
+	}
+}

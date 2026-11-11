@@ -76,6 +76,11 @@ func filterMCP(input io.Reader, output io.Writer, upstream io.Writer, replies io
 			if enc(reply["id"]) != enc(id) {
 				return errors.New("MCP response identity mismatch")
 			}
+			if jStr(request, "method") == "initialize" {
+				if result := jObj(reply, "result"); result != nil {
+					result["capabilities"] = M{"tools": M{}}
+				}
+			}
 			if jStr(request, "method") == "tools/list" {
 				advertised := []any{}
 				for _, tool := range jArr(reply, "result", "tools") {
