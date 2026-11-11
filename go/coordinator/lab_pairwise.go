@@ -9,16 +9,7 @@ import (
 
 // Pairwise judges retain both orders; a position-dependent answer never becomes a score.
 func pairwiseEvaluate(q *Request, exp, evaluator doc, trials, runs, current []doc, launched *[]string) (bool, error) {
-	groups := map[string][]doc{}
-	for _, t := range trials {
-		if !comparable(t) {
-			continue
-		}
-		c := mapOf(t["cell"])
-		key := canonical([]any{c["iteration"], c["example"], c["repeat"]})
-		groups[key] = append(groups[key], t)
-	}
-	complete := true
+	groups, complete := pairwiseGroups(exp, trials)
 	keys := []string{}
 	for k := range groups {
 		keys = append(keys, k)
@@ -37,7 +28,7 @@ func pairwiseEvaluate(q *Request, exp, evaluator doc, trials, runs, current []do
 			ids = append(ids, t["id"])
 		}
 		name := evaluatorName(evaluator)
-		gid := sha256hex([]byte(key))
+		gid := sha256hex(jsonBytes([]any{key, ids, evaluator["overrides"]}))
 		found := false
 		for _, s := range current {
 			if s["evaluator"] == name && canonical(s["trialIds"]) == canonical(ids) {
@@ -221,4 +212,43 @@ func pairwiseView(runs []doc) []any {
 		out = append(out, doc{"group": k, "reason": reason, "runIds": ids})
 	}
 	return out
+}
+
+// A comparison is bound to the latest attempt of every variant in the completed group.
+func pairwiseGroups(exp doc, trials []doc) (map[string][]doc, bool) {
+	latest := map[string]doc{}
+	for _, t := range trials {
+		c := mapOf(t["cell"])
+		k := canonical([]any{c["iteration"], c["example"], c["variant"], c["repeat"]})
+		old := latest[k]
+		a, _ := numOK(c["attempt"])
+		b, _ := numOK(mapOf(old["cell"])["attempt"])
+		if old == nil || a > b {
+			latest[k] = t
+		}
+	}
+	groups := map[string][]doc{}
+	for _, t := range latest {
+		c := mapOf(t["cell"])
+		k := canonical([]any{c["iteration"], c["example"], c["repeat"]})
+		groups[k] = append(groups[k], t)
+	}
+	ready := map[string][]doc{}
+	complete := true
+	for k, g := range groups {
+		done := len(g) == len(anys(exp["variants"]))
+		for _, t := range g {
+			done = done && terminal(t)
+		}
+		if !done {
+			complete = false
+			continue
+		}
+		for _, t := range g {
+			if comparable(t) {
+				ready[k] = append(ready[k], t)
+			}
+		}
+	}
+	return ready, complete
 }

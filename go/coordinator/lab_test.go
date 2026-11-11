@@ -94,3 +94,35 @@ func TestPairwiseOrderDependenceAndVersions(t *testing.T) {
 		t.Fatalf("%v", a)
 	}
 }
+
+func TestPairwiseWaitsForAllLatestCandidates(t *testing.T) {
+	// Requirement: compare complete groups of latest attempts; risk: scoring a candidate never shown to the judges.
+	exp := doc{"variants": []any{doc{}, doc{}, doc{}}}
+	trial := func(id, variant, state string, attempt int) doc {
+		return doc{"id": id, "state": state, "cell": doc{"iteration": 0, "example": "e", "repeat": 0, "variant": variant, "attempt": attempt}}
+	}
+	trials := []doc{trial("a", "a", "succeeded", 0), trial("b", "b", "succeeded", 0), trial("c", "c", "running", 0)}
+	if groups, complete := pairwiseGroups(exp, trials); complete || len(groups) != 0 {
+		t.Fatalf("premature group: %v", groups)
+	}
+	trials[2]["state"] = "succeeded"
+	trials = append(trials, trial("a-retry", "a", "running", 1))
+	if groups, complete := pairwiseGroups(exp, trials); complete || len(groups) != 0 {
+		t.Fatalf("stale retry group: %v", groups)
+	}
+	trials[3]["state"] = "succeeded"
+	groups, complete := pairwiseGroups(exp, trials)
+	if !complete || len(groups) != 1 {
+		t.Fatalf("missing complete group: %v", groups)
+	}
+	for _, g := range groups {
+		if len(g) != 3 {
+			t.Fatal(g)
+		}
+		for _, tr := range g {
+			if tr["id"] == "a" {
+				t.Fatal("old attempt included")
+			}
+		}
+	}
+}
