@@ -23,5 +23,5 @@
 * Saving creates a revision (the button keeps "Save as commit"); the person sees the diff first. Nothing is saved silently.
 * A draft can be tested without saving. The run records the draft's content and its difference from the base.
 * Links open the same object, not a copy: the agent named in a pipeline step opens that agent's editor.
-* Tools grant capability; credentials are never shown or entered here. They stay in [connections](../../connections.md).
+* Tools grant capability; credentials are never shown or entered here. They stay in [connections](../../designs/fleet-connections.md).
 * State comes first in the catalogue row (OR-22): draft, ready, not checked, incompatible for agents; the last run's state for pipelines.

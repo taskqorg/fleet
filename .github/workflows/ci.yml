@@ -161,6 +161,34 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ steps.playwright.outputs.version }}-chromium
+      # The hosted Azure resolver returned SERVFAIL for Ubuntu while public DNS answered.
+      # Change only this ephemeral job's runtime DNS, and only after checking the alternate.
+      - name: Recover Ubuntu DNS when the runner resolver fails
+        run: |
+          recover=false
+          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com; do
+            if ! getent ahostsv4 "$host" > /dev/null; then
+              recover=true
+              break
+            fi
+          done
+          if "$recover"; then
+            for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com github.com; do
+              answer=$(dig @1.1.1.1 "$host" A +time=3 +tries=1 +noall +comments +answer)
+              grep -q 'status: NOERROR' <<< "$answer"
+              grep -Eq '[[:space:]]IN[[:space:]]+A[[:space:]]+[0-9]' <<< "$answer"
+            done
+            link=$(ip -4 route show default | awk '{print $5; exit}')
+            test -n "$link"
+            sudo resolvectl dns "$link" 1.1.1.1
+            sudo resolvectl flush-caches
+            resolvectl dns "$link"
+            curl --fail --head https://archive.ubuntu.com/ubuntu/dists/noble/InRelease
+            curl --fail --head https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease
+          fi
+          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com github.com; do
+            getent ahostsv4 "$host"
+          done
       - if: steps.chromium.outputs.cache-hit != 'true'
         run: pnpm exec playwright install --with-deps chromium
       - if: steps.chromium.outputs.cache-hit == 'true'
