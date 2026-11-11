@@ -98,7 +98,7 @@ func labCompareMethods(q *Request, b doc) (doc, error) {
 		case "script":
 			valid = ref == "example.checks" && (form == "pass_fail" || form == "metric")
 		case "judge":
-			valid = ref != "" && (form == "pass_fail" || form == "scale")
+			valid = ref != "" && (form == "pass_fail" || form == "scale" || form == "pick_best")
 		case "typed":
 			valid = ref == "labels" && form == "typed"
 		case "human":

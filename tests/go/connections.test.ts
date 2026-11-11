@@ -535,6 +535,19 @@ test('L8 transitive Lab suffix retains immediate source and original artifact (r
   assert.equal(done.spend.calls.value,1);assert.equal(seen.length,before);
 });
 
+test('Lab suffix recovery uses variant pipeline when outer pipeline differs (requirement: Compare lifecycle and local-suffix provenance; risk: resolver bypasses pinned source definition or repeats provider work)', async () => {
+  const f = await suffixFixture('fleet-hello-world', true);
+  await f.prove(); await f.receipt(f.command, 'unknown');
+  const before = seen.length;
+  const recovered = ok(await op('lab_cell_action', f.request)).recovery.runId;
+  const done = await f.complete(recovered);
+  assert.equal(seen.length, before);
+  assert.ok(done.trials.find((t: any) => t.id === recovered).comparable);
+  const run = ok(await call('GET', `/api/pipeline-runs/${recovered}`));
+  assert.equal(run.pipelineId, f.pipelineId);
+  assert.equal(run.steps[0].outputArtifactId, f.run.steps[0].outputArtifactId);
+});
+
 test('L6 preflight never holds the write lock and revalidates lifecycle changes (requirement: fleet-lab preflight/commit boundary; risk: a slow store blocks writes or deleted content passes a stale snapshot)', async () => {
   const f=await suffixFixture();await f.prove();await f.receipt(f.command,'unknown');
   const hash=sha(JSON.stringify(f.run.steps[0].output));
@@ -692,15 +705,3 @@ test('Catalogue reports a compatible observed partial mean and keeps banded sour
 });
 
 
-test('Lab suffix recovery uses variant pipeline when outer pipeline differs (requirement: Compare lifecycle and local-suffix provenance; risk: resolver bypasses pinned source definition or repeats provider work)', async () => {
-  const f = await suffixFixture('fleet-hello-world', true);
-  await f.prove(); await f.receipt(f.command, 'unknown');
-  const before = seen.length;
-  const recovered = ok(await op('lab_cell_action', f.request)).recovery.runId;
-  const done = await f.complete(recovered);
-  assert.equal(seen.length, before);
-  assert.ok(done.trials.find((t: any) => t.id === recovered).comparable);
-  const run = ok(await call('GET', `/api/pipeline-runs/${recovered}`));
-  assert.equal(run.pipelineId, f.pipelineId);
-  assert.equal(run.steps[0].outputArtifactId, f.run.steps[0].outputArtifactId);
-});
