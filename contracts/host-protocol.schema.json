@@ -150,7 +150,7 @@
           "type": "string"
         },
         "platform": {
-          "type": "string"
+          "$ref": "#/$defs/Platform"
         },
         "roots": {
           "$ref": "#/$defs/AccountRoots"
@@ -276,7 +276,7 @@
           "type": "string"
         },
         "platform": {
-          "type": "string"
+          "$ref": "#/$defs/Platform"
         },
         "capabilities": {
           "type": "array",
@@ -984,6 +984,14 @@
       "required": [
         "accountId",
         "harness"
+      ]
+    },
+    "Platform": {
+      "type": "string",
+      "enum": [
+        "darwin",
+        "win32",
+        "linux"
       ]
     }
   }

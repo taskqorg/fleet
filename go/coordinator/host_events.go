@@ -8,6 +8,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fleet/contract"
 	"math"
 	"reflect"
 	"sort"
@@ -118,8 +119,9 @@ func ingestIn(q *Request, b doc) (any, error) {
 	if err := ownedBody(q, b); err != nil {
 		return nil, err
 	}
-	evs, ok := b["events"].([]any)
-	if !ok || len(evs) > 1000 {
+	var batch contract.HostEvents // the typed identity; each event's data stays the host's raw record
+	evs, _ := b["events"].([]any)
+	if decode(q.body, &batch) != nil || len(batch.Events) > 1000 || len(evs) != len(batch.Events) {
 		return nil, fail(400, "Invalid events")
 	}
 	xid := astr(b["executionId"])
@@ -128,11 +130,10 @@ func ingestIn(q *Request, b doc) (any, error) {
 		return nil, err
 	}
 	prepared := []preparedEvent{}
-	for _, raw := range evs {
-		ev := mapOf(raw)
-		eid, isStr := ev["id"].(string)
-		seq, okSeq := safeSeq(ev["seq"])
-		if !isStr || eid == "" || len([]rune(eid)) > 300 || ev["type"] == "execution.ended" || !okSeq {
+	for i, raw := range evs {
+		ev, he := mapOf(raw), batch.Events[i]
+		eid, seq := he.Id, he.Seq
+		if eid == "" || len([]rune(eid)) > 300 || he.Type == "execution.ended" || seq < 0 || seq > 1<<53-1 {
 			return nil, fail(400, "Invalid event identity")
 		}
 		key := "event:" + xid + ":" + eid
@@ -177,7 +178,7 @@ func ingestIn(q *Request, b doc) (any, error) {
 		}
 		if c == nil {
 			c = doc{"id": cid, "executionId": xid, "hostId": b["hostId"], "originalEventId": eid, "originalSequence": seq, "frameSha256": digest, "original": ev,
-				"collisionEventId": collision["id"], "supported": previous == nil && ev["type"] == "process.closed" && collision["type"] == "resource.observation",
+				"collisionEventId": collision["id"], "supported": previous == nil && he.Type == string(contract.FleetEventTypeProcessClosed) && collision["type"] == string(contract.FleetEventTypeResourceObservation),
 				"state": "blocked", "observedAt": nowMs()}
 			if err := put(q, "transport-conflict", c); err != nil {
 				return nil, err

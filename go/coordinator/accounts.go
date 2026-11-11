@@ -4,6 +4,7 @@ package main
 // on the holder's host, Fleet keeps only what hosts observe.
 
 import (
+	"fleet/contract"
 	"fmt"
 	"os"
 	"regexp"
@@ -530,7 +531,7 @@ func accountReport(q *Request, b doc, host string) (any, error) {
 		return nil, err
 	}
 	known := append([]string{defaultHostID(q), integ, pub}, exec...)
-	if host == "" || !inList(known, host) || !accountName.MatchString(astr(b["binding"])) || !inList([]string{"darwin", "win32", "linux"}, astr(b["platform"])) || !inList([]string{"ready", "unavailable", "unknown"}, astr(b["readiness"])) {
+	if host == "" || !inList(known, host) || !accountName.MatchString(astr(b["binding"])) || !inList([]string{string(contract.PlatformDarwin), string(contract.PlatformWin32), string(contract.PlatformLinux)}, astr(b["platform"])) || !inList([]string{"ready", "unavailable", "unknown"}, astr(b["readiness"])) {
 		return nil, fail(400, "Invalid host account observation")
 	}
 	if ok, err := harnessAllowed(q, host, astr(a["harness"])); err != nil || !ok {
