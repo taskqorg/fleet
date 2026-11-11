@@ -18,7 +18,7 @@ async function queued() {
   return {sessionId, executionId: e.body.id as string};
 }
 
-test('R1 execution differences: route and operation compare two executions of one session and refuse another session (requirement: docs/designs/legacy-inventory.md execution_diff; risk: the Go rewrite drops a route the TypeScript coordinator served)', async () => {
+test('R1 execution differences: route and operation compare two executions of one session and refuse another session (requirement: docs/designs/fleet-operator-app.md §8 execution_differences; risk: the Go rewrite drops a route the TypeScript coordinator served)', async () => {
   // A second message queues behind the first and is not an execution yet: compare the execution with itself.
   const a = await queued(), b = a, other = await queued();
   const r = await call('GET', `/api/executions/${b.executionId}/differences?previous=${a.executionId}`);

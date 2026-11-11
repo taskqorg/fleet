@@ -34,5 +34,5 @@ This folder is the single knowledge base for Fleet's interface design. It plays 
 
 ## Inputs
 
-* Architecture: [fleet.md](../../fleet.md), [interfaces](../interfaces.md), [use cases](../use-cases.md), [data foundation design](../designs/fleet-data-foundation.md).
-* Removed prototype screens, which are evidence of what was tried, not approved design: the legacy pages listed in [legacy-inventory.md](../designs/legacy-inventory.md) (in git history before Lab Stage 0), and screenshots in `evidence/*-desktop.png` and `*-mobile.png`. The [CSGO storyboard](../prototypes/csgo-workflow.html) is an unapproved navigation study.
+* Architecture: [fleet.md](../../fleet.md), [interface workflows](../designs/fleet-operator-app.md#interface-workflows), [use cases](../use-cases.md), [data foundation design](../designs/fleet-data-foundation.md).
+* Removed prototype screens, which are evidence of what was tried, not approved design: the legacy pages listed in [retirement coverage](../designs/fleet-operator-app.md#8-coexistence-and-retirement) (in git history before Lab Stage 0), and screenshots in `evidence/*-desktop.png` and `*-mobile.png`. The [CSGO storyboard](../prototypes/csgo-workflow.html) is an unapproved navigation study.

@@ -33,7 +33,7 @@ A web interface for a separate architect role. Configure and qualify the agents 
 - Evaluation: test compatibility, benchmark configurations, rerun checks after changes and analyze retained history to improve projects, pipelines, skills, tools and infrastructure.
 - Access: grant projects shared capabilities and connections, with quotas.
 
-The [architect workflow](docs/interfaces.md#architect-workflow) connects configuration, experiments, assessment and scoped recommendations.
+The [architect workflow](docs/designs/fleet-operator-app.md#architect-workflow) connects configuration, experiments, assessment and scoped recommendations.
 
 Retain assessments as knowledge. Changing a recommendation is a separate architect action; comments and conclusions do not change it automatically.
 
@@ -240,7 +240,7 @@ Each persistent test names the requirement and the risk it protects; follow [spe
 - [Execution continuity](docs/execution-continuity.md): working area lifecycle, resource visibility and handoff.
 - [System operations](docs/system-operations.md): operation groups, contracts and agent communication semantics.
 - [Experiments](docs/designs/fleet-lab.md): reproduce recorded work, compare changes and apply improvements to products.
-- [Interface workflows](docs/interfaces.md): operator and architect activities and contextual actions.
+- [Interface workflows](docs/designs/fleet-operator-app.md#interface-workflows): operator and architect activities and contextual actions.
 - [Capabilities and pipelines](docs/configuration.md#capabilities-methods-and-tools): callable outcomes, alternative methods and system-executed workflows.
 
 The connected delivery prototype uses repository project context, shared catalogue/search operations, durable operator decisions, managed account metadata and tracked native/program workers; [the slice contract](docs/project-pipeline-prototype.md) defines its supported subset. Source integration, task completion and publication remain separate observations.
