@@ -11,15 +11,17 @@ deadline=$(( $(date +%s) + ${2:-45} * 60 ))
 repo=taskqorg/fleet
 wait_step() { [ "$(date +%s)" -lt "$deadline" ] || { echo "timeout at: $1"; exit 2; }; sleep 30; }
 
-q='query($n:Int!){repository(owner:"taskqorg",name:"fleet"){pullRequest(number:$n){state mergeCommit{oid} autoMergeRequest{enabledAt} mergeQueueEntry{state}
+q='query($n:Int!){repository(owner:"taskqorg",name:"fleet"){pullRequest(number:$n){state mergeStateStatus mergeCommit{oid} autoMergeRequest{enabledAt} mergeQueueEntry{state}
   timelineItems(last:1,itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT,AUTO_MERGE_DISABLED_EVENT]){nodes{__typename ... on RemovedFromMergeQueueEvent{reason}}}}}}'
 while :; do
   # A failed gh call (network, rate limit) is retried, never read as "not merged".
-  line=$(gh api graphql -f query="$q" -F n="$pr" -q '.data.repository.pullRequest | [.state, (.mergeCommit.oid // "-"),
+  line=$(gh api graphql -f query="$q" -F n="$pr" -q '.data.repository.pullRequest | [.state, .mergeStateStatus, (.mergeCommit.oid // "-"),
     (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (if .timelineItems.nodes[0].__typename == "RemovedFromMergeQueueEvent" then .timelineItems.nodes[0].reason else "auto-merge off" end)] | join(" ")') \
     || { wait_step "queue (gh failed)"; continue; }
-  read -r state sha waiting reason <<<"$line"
+  read -r state merge_state sha waiting reason <<<"$line"
   [ "$state" = MERGED ] && break
+  # A conflict with main before the queue takes the entry: auto-merge stays on and nothing is removed, so name it here.
+  [ "$state" = OPEN ] && [ "$merge_state" = DIRTY ] && { echo "not merged: $state, merge_conflict"; exit 1; }
   # Out of the queue: the newest of "removed from the queue" (its reason) and "auto-merge disabled" (a veto) names why.
   [ "$state" = OPEN ] && [ "$waiting" = waiting ] || { echo "not merged: $state, $reason"; exit 1; }
   wait_step "queue"
