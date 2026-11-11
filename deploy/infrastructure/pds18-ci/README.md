@@ -1,10 +1,10 @@
 # PDS18 trusted-main runner
 
-One persistent Ubuntu 24.04 KVM guest, 4 vCPU / 8 GiB, one sequential GitHub runner. This is trusted-main capacity, **not** an ephemeral or fork-safe runner. PR/merge jobs, protected signing/publishing and native macOS qualification remain GitHub-hosted. No Fleet production mounts, credentials, sockets or host root access enter the guest.
+One persistent Ubuntu 24.04 KVM guest, 4 vCPU / 8 GiB, one sequential GitHub runner. This is trusted-main capacity, **not** an ephemeral or fork-safe runner. Only trusted-main release build/migration use this runner. All CI jobs (including main, PR/merge and reports), protected signing/publishing and native macOS qualification remain GitHub-hosted. No Fleet production mounts, credentials, sockets or host root access enter the guest.
 
 ## Admission
 
-Organization runner group `fleet-pds18-trusted-main` (id 6) admits only repository `taskqorg/fleet` and jobs defined in `taskqorg/fleet/.github/workflows/ci.yml@refs/heads/main` or `taskqorg/fleet/.github/workflows/release.yml@refs/heads/main`. `restricted_to_workflows=true`, `visibility=selected`, `allows_public_repositories=true`. Read back those fields and selected repository before registration. Labels and workflow `if` conditions are routing, not the security boundary. Never enable public access on Default or reuse another provider's group.
+Organization runner group `fleet-pds18-trusted-main` (id 6) admits only repository `taskqorg/fleet` and jobs defined in `taskqorg/fleet/.github/workflows/ci.yml@refs/heads/main` or `taskqorg/fleet/.github/workflows/release.yml@refs/heads/main`. `restricted_to_workflows=true`, `visibility=selected`, `allows_public_repositories=true`. The CI entry remains an unused backend allowance; current CI routing is hosted. Read back those fields and selected repository before registration. Labels and workflow `if` conditions are routing, not the security boundary. Never enable public access on Default or reuse another provider's group.
 
 ## Provision
 
@@ -24,6 +24,6 @@ As guest user `ci`, configure URL `https://github.com/taskqorg`, group `fleet-pd
 
 ## Qualification and rollback
 
-First validate trusted-main actual runner name/ID/job allocation, then compare queue time plus serialized execution against hosted runs. Retain test-policy qualification artifacts, count=1 and real database/race/network tests. Check site health and all active hosts after ordinary release delivery. A single pair is indicative; no invoice or speed claim from API zeros or unavailable fields.
+First validate release build/migration actual runner name/ID/job allocation, then compare queue time plus execution against earlier runs. Unrelated full main CI/reports must not occupy this sequential release runner; exact merge-candidate qualification and the existing main fallback still authorize release through the unchanged manifest consumer. Retain test-policy qualification artifacts, count=1 and real database/race/network tests. Check site health and all active hosts after ordinary release delivery. A single pair is indicative; no invoice or speed claim from API zeros or unavailable fields.
 
 To roll back allocation, restore hosted `runs-on` through the normal reviewed PR. Drain the one runner before stopping its service/VM; do not interrupt uncertain work. Remove only its verified registration with the supported GitHub API, stop/disable `fleet-ci-vm.service`, and remove only `table inet fleet_ci` after the VM is stopped. Leave existing firewall tables and production services alone. Keep guest disk/evidence for review; deletion is a separate explicit action. The empty dedicated group can remain closed to registrations or be removed after verifying it has no runners. No general VM platform or additional runners are implied.
