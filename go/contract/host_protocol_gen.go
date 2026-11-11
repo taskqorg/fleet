@@ -181,6 +181,9 @@ const (
 	CommandKindAccountInspect CommandKind = "account-inspect"
 )
 
+// CommandKindValues lists every CommandKind in schema order.
+var CommandKindValues = []CommandKind{CommandKindStart, CommandKindInput, CommandKindSteer, CommandKindStop, CommandKindScript, CommandKindReadiness, CommandKindBaseUpdated, CommandKindTeardown, CommandKindArtifactCopy, CommandKindArtifactVerify, CommandKindAccountInspect}
+
 type EdgeProblem struct {
 	Detail   string      `json:"detail"`
 	Kind     ProblemKind `json:"kind"`
@@ -223,6 +226,9 @@ const (
 	FleetEventTypeOutboxFailed        FleetEventType = "outbox.failed"
 	FleetEventTypeUnparsed            FleetEventType = "unparsed"
 )
+
+// FleetEventTypeValues lists every FleetEventType in schema order.
+var FleetEventTypeValues = []FleetEventType{FleetEventTypePreparation, FleetEventTypePreparationFailed, FleetEventTypeHarness, FleetEventTypeSetup, FleetEventTypeReadiness, FleetEventTypeReadinessFailed, FleetEventTypeCheckoutSynced, FleetEventTypeSyncFailed, FleetEventTypeTeardown, FleetEventTypeScriptStarted, FleetEventTypeScriptTimeout, FleetEventTypeTrialRemoved, FleetEventTypeProcessClosed, FleetEventTypeProcessReconciled, FleetEventTypeResourceObservation, FleetEventTypeProtocolWrite, FleetEventTypeProtocolFailed, FleetEventTypeSteerResult, FleetEventTypeLimitReading, FleetEventTypeOutboxFailed, FleetEventTypeUnparsed}
 
 // HostArtifactGetRequest: POST /api/hosts/artifacts/get and /read: one artifact the execution may read.
 type HostArtifactGetRequest struct {
@@ -311,6 +317,9 @@ const (
 	PlatformLinux  Platform = "linux"
 )
 
+// PlatformValues lists every Platform in schema order.
+var PlatformValues = []Platform{PlatformDarwin, PlatformWin32, PlatformLinux}
+
 type PollReply struct {
 	AutoUpdate *string   `json:"autoUpdate,omitempty"`
 	Commands   []Command `json:"commands"`
@@ -338,6 +347,9 @@ const (
 	ProblemKindEdgeRedirect  ProblemKind = "edge-redirect"
 	ProblemKindVersionBehind ProblemKind = "version-behind"
 )
+
+// ProblemKindValues lists every ProblemKind in schema order.
+var ProblemKindValues = []ProblemKind{ProblemKindEdgeRedirect, ProblemKindVersionBehind}
 
 type ProcessClosed struct {
 	CleanupUnknown                  bool   `json:"cleanupUnknown"`
@@ -369,6 +381,9 @@ const (
 	ProjectOperationQuestionHistory ProjectOperation = "question_history"
 	ProjectOperationAccountList     ProjectOperation = "account_list"
 )
+
+// ProjectOperationValues lists every ProjectOperation in schema order.
+var ProjectOperationValues = []ProjectOperation{ProjectOperationProjectContext, ProjectOperationCatalogue, ProjectOperationPipelineRun, ProjectOperationDirectSearch, ProjectOperationPipelineHistory, ProjectOperationPipelineGet, ProjectOperationQuestionAsk, ProjectOperationQuestionHistory, ProjectOperationAccountList}
 
 // ProjectPayload: readiness, base-updated and teardown: the project context plus kind-specific fields
 type ProjectPayload struct {
@@ -416,6 +431,9 @@ const (
 	ReceiptStatusStopped   ReceiptStatus = "stopped"
 	ReceiptStatusUnknown   ReceiptStatus = "unknown"
 )
+
+// ReceiptStatusValues lists every ReceiptStatus in schema order.
+var ReceiptStatusValues = []ReceiptStatus{ReceiptStatusAccepted, ReceiptStatusStarted, ReceiptStatusCompleted, ReceiptStatusFailed, ReceiptStatusStopped, ReceiptStatusUnknown}
 
 type ScriptPayload struct {
 	Command   string                     `json:"command"`
@@ -493,3 +511,6 @@ const (
 	UpdateStateRefused UpdateState = "refused"
 	UpdateStateFailed  UpdateState = "failed"
 )
+
+// UpdateStateValues lists every UpdateState in schema order.
+var UpdateStateValues = []UpdateState{UpdateStateOk, UpdateStatePending, UpdateStateHeld, UpdateStateError, UpdateStateRefused, UpdateStateFailed}

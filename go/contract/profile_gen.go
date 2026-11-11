@@ -13,6 +13,9 @@ const (
 	AntigravityModeAcceptEdits AntigravityMode = "accept-edits"
 )
 
+// AntigravityModeValues lists every AntigravityMode in schema order.
+var AntigravityModeValues = []AntigravityMode{AntigravityModePlan, AntigravityModeAcceptEdits}
+
 type AntigravitySettings struct {
 	IncludeDefaultCustomizations *bool            `json:"includeDefaultCustomizations,omitempty"`
 	Mode                         *AntigravityMode `json:"mode,omitempty"`
@@ -29,6 +32,9 @@ const (
 	ClaudeToolGlob  ClaudeTool = "Glob"
 	ClaudeToolGrep  ClaudeTool = "Grep"
 )
+
+// ClaudeToolValues lists every ClaudeTool in schema order.
+var ClaudeToolValues = []ClaudeTool{ClaudeToolRead, ClaudeToolEdit, ClaudeToolWrite, ClaudeToolBash, ClaudeToolGlob, ClaudeToolGrep}
 
 type Profile struct {
 	CollaborationTools *bool                `json:"collaborationTools,omitempty"`
@@ -57,6 +63,9 @@ const (
 	ProfileHarnessAntigravity ProfileHarness = "antigravity"
 	ProfileHarnessAcp         ProfileHarness = "acp"
 )
+
+// ProfileHarnessValues lists every ProfileHarness in schema order.
+var ProfileHarnessValues = []ProfileHarness{ProfileHarnessCodex, ProfileHarnessClaude, ProfileHarnessAntigravity, ProfileHarnessAcp}
 
 type ProfileMcpGrant struct {
 	Data map[string]json.RawMessage `json:"data"`

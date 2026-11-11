@@ -316,6 +316,19 @@ func (e *executor) ownGroup(execution string, grp int, l *live) error {
 	return e.own(execution, l)
 }
 
+// releaseLaunchWindow: a stop for an execution whose launch never recorded a process is the explicit decision to
+// accept that uncertainty; the session is admitted again. The stop's result stays unknown.
+func (e *executor) releaseLaunchWindow(execution, session string) error {
+	res, err := e.db.Exec("DELETE FROM launches WHERE execution=? AND session=? AND NOT EXISTS (SELECT 1 FROM owned WHERE execution=?)", execution, session, execution)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		os.Remove(filepath.Join(e.root, "runs", execution+".env")) // the run token goes with the launch
+	}
+	return nil
+}
+
 func (e *executor) release(execution string) error {
 	return e.inTx(func() error {
 		if _, err := e.ex.Exec("DELETE FROM owned WHERE execution=?", execution); err != nil {
@@ -329,9 +342,9 @@ func (e *executor) release(execution string) error {
 // reconcileProcesses runs at start, before any poll (K2-3). The stdout and stdin pipes of a run died with the executor
 // that started it, so nothing is reattached: every recorded process that survives, and every descendant still linked to
 // one, is frozen and killed, each signal bound to the recorded incarnation, then its run file is removed (K2-6). A launch
-// with no owned row crashed between spawn and the identity read, so its process cannot be named; the event says so. A
-// launch whose processes cannot be confirmed gone stays recorded, which keeps its session refused, and is tried again
-// at the next start.
+// with no owned row crashed between spawn and the identity read, so its process cannot be named; the event says so,
+// and only a stop for that execution releases it (releaseLaunchWindow). A launch whose processes cannot be confirmed
+// gone stays recorded, which keeps its session refused, and is tried again at the next start.
 func (e *executor) reconcileProcesses() error {
 	type launch struct {
 		execution, command string
@@ -398,7 +411,9 @@ func (e *executor) reconcileProcesses() error {
 	unresolved := map[string]bool{}
 	for _, x := range launches {
 		alive, err := x.l.aliveOwned()
-		resolved := x.err == nil && err == nil && !alive
+		// No owned row: the executor died between spawn and the identity write, so the process cannot be named and
+		// its absence is not proven. The launch stays and keeps its session refused until a stop for it (W3-1).
+		resolved := len(x.l.owned) > 0 && x.err == nil && err == nil && !alive
 		// Reported once, while the command is open; the reconcile below then finishes it unknown.
 		if b, ok := e.commandBody(x.command, true); ok {
 			if err := e.event(decM(b), uint64(nowMs()), contract.FleetEventTypeProcessReconciled, contract.ProcessReconciled{OwnedProcesses: int64(len(x.l.owned)), Survived: x.survived,
@@ -596,6 +611,8 @@ func (e *executor) run(c M) error {
 			} else {
 				l.cleanupUnknown = true
 			}
+		} else if err := e.releaseLaunchWindow(execution, session); err != nil {
+			return err
 		}
 		if err := e.receipt(c, result, ""); err != nil {
 			return err
@@ -723,12 +740,17 @@ func okStatus(ok bool) string {
 
 func (e *executor) start(c M, cid, execution, session string, p M) error {
 	// A session with a recorded launch is running, or its process from before a restart is not confirmed gone.
-	var busy int
-	if err := e.db.QueryRow("SELECT count(*) FROM launches WHERE session=?", session).Scan(&busy); err != nil {
+	var busy string
+	err := e.db.QueryRow("SELECT execution FROM launches WHERE session=? LIMIT 1", session).Scan(&busy)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if busy > 0 {
-		if err := e.event(c, 1, "preparation.failed", M{"reason": "session busy: a run is live, or a process from before an executor restart is not confirmed gone"}); err != nil {
+	if busy != "" {
+		reason := "session busy: execution " + busy + " is live, or its process from before an executor restart is not confirmed gone"
+		if _, live := e.live[busy]; !live {
+			reason += "; a stop for execution " + busy + " accepts the uncertainty and releases the session"
+		}
+		if err := e.event(c, 1, "preparation.failed", M{"reason": reason}); err != nil {
 			return err
 		}
 		return e.finish(c, "failed", "")
@@ -889,7 +911,9 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 				tools = append(tools, "request_child")
 			}
 			if sp.ProjectId != nil {
-				tools = append(tools, "project_context", "catalogue", "pipeline_run", "direct_search", "pipeline_history", "pipeline_get", "question_ask", "question_history", "account_list")
+				for _, t := range projectTools {
+					tools = append(tools, t)
+				}
 			}
 			for _, o := range jArr(p, "fleetOperations") {
 				if n := jStr(o, "name"); n != "" && !slices.Contains(tools, any(n)) {

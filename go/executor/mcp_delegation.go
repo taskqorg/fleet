@@ -18,18 +18,61 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"fleet/contract"
 )
 
 //go:embed mcp-tools.json
 var mcpToolsJSON []byte
 
 var (
-	projectTools  = []string{"project_context", "catalogue", "pipeline_run", "direct_search", "pipeline_history", "pipeline_get", "question_ask", "question_history", "account_list"}
+	projectTools = func() (out []string) { // the contract's ProjectOperation
+		for _, o := range contract.ProjectOperationValues {
+			out = append(out, string(o))
+		}
+		return out
+	}()
 	agentTools    = []string{"session_start", "session_deliver", "session_transition", "session_fork", "session_resume", "session_handoffs", "message_send", "queue_list", "ask", "reply", "questions", "worker_done", "execution_status"}
 	artifactTools = []string{"artifact_save", "artifact_list", "artifact_get"}
 )
 
 func init() { runMCP = mcpRun }
+
+// toolSchemas: the inputSchema of every tool in mcp-tools.json, by name.
+var toolSchemas = func() map[string]any {
+	all, _ := dec(string(mcpToolsJSON))
+	out := map[string]any{}
+	for _, t := range jArr(all) {
+		out[jStr(t, "name")] = jAt(t, "inputSchema")
+	}
+	return out
+}()
+
+// argumentsFit checks a project tool call against the tool's own inputSchema: only its properties, each a string within
+// minLength and maxLength (characters), the required ones present and not blank.
+func argumentsFit(name string, args M) error {
+	schema := toolSchemas[name]
+	for k, v := range args {
+		p, ok := jAt(schema, "properties", k).(M)
+		if !ok {
+			return fmt.Errorf("Invalid project request: %s takes no %s", name, k)
+		}
+		s, isStr := v.(string)
+		n := float64(utf8.RuneCountInString(s))
+		if min, ok := p["minLength"].(float64); !isStr || ok && n < min {
+			return fmt.Errorf("Invalid project request: %s must be a non-empty string", k)
+		}
+		if max, ok := p["maxLength"].(float64); ok && n > max {
+			return fmt.Errorf("Invalid project request: %s is longer than %d characters", k, int(max))
+		}
+	}
+	for _, k := range jArr(schema, "required") {
+		if s, _ := str(args[jStr(k)]); strings.TrimSpace(s) == "" {
+			return fmt.Errorf("Invalid project request: %s needs %s", name, jStr(k))
+		}
+	}
+	return nil
+}
 
 // newID is a random UUID v4.
 func newID() string {
@@ -181,17 +224,12 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 			if !isObj {
 				return nil, errors.New("Invalid project request")
 			}
-			for k := range qo {
-				if !slices.Contains([]string{"requestId", "query", "methodId", "text", "runId"}, k) {
-					return nil, errors.New("Invalid project request")
-				}
+			if err := argumentsFit(name, qo); err != nil {
+				return nil, err
 			}
-			effect := slices.Contains([]string{"pipeline_run", "direct_search", "question_ask"}, name)
+			// An effect (its schema requires requestId) keeps the caller's requestId, so a retry is the same request.
 			rid := any(name + "-" + newID())
-			if effect {
-				if _, ok := str(qo["requestId"]); !ok {
-					return nil, errors.New("A stable requestId is required for effects")
-				}
+			if slices.Contains(jArr(toolSchemas[name], "required"), any("requestId")) {
 				rid = qo["requestId"]
 			}
 			d = M{"operation": name, "arguments": q, "requestId": rid, "projectId": jAt(ctx, "projectId")}
