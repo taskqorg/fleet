@@ -2330,11 +2330,12 @@ type WatchRecord struct {
 	Cursor     int64           `json:"cursor"`
 	Id         string          `json:"id"`
 	Kinds      []string        `json:"kinds"`
+	LastError  *string         `json:"lastError,omitempty"`
 	LastWakeAt json.RawMessage `json:"lastWakeAt,omitempty"`
 	NextWakeAt *int64          `json:"nextWakeAt,omitempty"`
 	SessionId  string          `json:"sessionId"`
 	TimerMs    *float64        `json:"timerMs,omitempty"`
-	Wakes      float64         `json:"wakes"`
+	Wakes      int64           `json:"wakes"`
 }
 
 type WatchSetReply = WatchRecord
@@ -2376,12 +2377,12 @@ type WorkerDoneReply struct {
 	Report      *WorkerReport `json:"report,omitempty"`
 }
 
-// WorkerDoneRequest: outcome succeeded or failed; anything else is recorded as rejected (invalid_outcome).
+// WorkerDoneRequest: outcome succeeded or failed; anything else is recorded as rejected (invalid_outcome). summary: a string; any other value is stored as null.
 type WorkerDoneRequest struct {
-	ExecutionId     string  `json:"executionId"`
-	NativeSessionId *string `json:"nativeSessionId,omitempty"`
-	Outcome         *string `json:"outcome,omitempty"`
-	Summary         *string `json:"summary,omitempty"`
+	ExecutionId     string          `json:"executionId"`
+	NativeSessionId *string         `json:"nativeSessionId,omitempty"`
+	Outcome         json.RawMessage `json:"outcome,omitempty"`
+	Summary         json.RawMessage `json:"summary,omitempty"`
 }
 
 type WorkerReport struct {

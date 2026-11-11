@@ -860,7 +860,10 @@ func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneR
 		id, at := newID(), nowMs()
 		return record(contract.WorkerDoneReply{Id: &id, ExecutionId: eid, Action: "rejected", Code: &code, Reason: &reason, At: &at})
 	}
-	outcome := deref(b.Outcome)
+	var outcome string
+	json.Unmarshal(b.Outcome, &outcome) // a non-string outcome is rejected below, as before
+	var summary *string
+	json.Unmarshal(b.Summary, &summary) // a non-string summary is stored as null
 	if outcome != "succeeded" && outcome != "failed" {
 		return reject("invalid_outcome", "worker_done requires outcome=succeeded or outcome=failed.")
 	}
@@ -872,7 +875,7 @@ func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneR
 		return reject("stale_dispatch", fmt.Sprintf("Execution %s is superseded by %s.", eid, astr(latest["id"])))
 	}
 	if r := mapOf(e["report"]); r != nil {
-		if r["outcome"] == outcome && r["summary"] == optAny(b.Summary) {
+		if r["outcome"] == outcome && r["summary"] == optAny(summary) {
 			report, err := asT[contract.WorkerReport](r)
 			yes := true
 			return contract.WorkerDoneReply{Action: "accepted", ExecutionId: eid, Report: &report, Duplicate: &yes}, err
@@ -888,7 +891,7 @@ func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneR
 			return reject("native_identity_conflict", "Reported native session differs from the captured one.")
 		}
 	}
-	report := contract.WorkerReport{Outcome: outcome, Summary: b.Summary, At: nowMs()}
+	report := contract.WorkerReport{Outcome: outcome, Summary: summary, At: nowMs()}
 	e["report"] = docOf(report)
 	if err := put(q, "execution", e); err != nil {
 		return none, err
