@@ -9,7 +9,7 @@
 
 ## Overview
 
-Every Fleet host installs a new release by itself. The owner pushes a tag `v<version>` on a green `main` commit. A release workflow publishes one tarball per target on GitHub Releases with checksums signed by the release key and build provenance. On each host a one-shot `fleet-update` command, started every 5 minutes by a systemd timer or a launchd agent, decides whether a newer release should run there, verifies it, installs it into `releases/<version>/`, switches `current`, restarts that host's Fleet services and rolls back by itself when the new version does not come up healthy.
+Every Fleet host installs a new release by itself. A release workflow, started by a tag `v<version>` on a green `main` commit (target: by every green `main` batch, [delivery pipeline](fleet-delivery-pipeline.md)), publishes one tarball per target on GitHub Releases with checksums signed by the release key and build provenance. On each host a one-shot `fleet-update` command, started every 5 minutes by a systemd timer or a launchd agent, decides whether a newer release should run there, verifies it, installs it into `releases/<version>/`, switches `current`, restarts that host's Fleet services and rolls back by itself when the new version does not come up healthy.
 
 The design copies the CoreQ update model ([coreq.md](https://github.com/taskqorg/coreq/blob/main/coreq.md), sections Release artifacts, Update, Launcher) into Go; Fleet does not link the Rust crate ([stack](fleet-stack.md)). `COREQ-R<n>` names the CoreQ rule a step copies; [deviations](#deviations-from-coreq) are listed. `R2` and `R5` are principles of the [Fleet contract](../../fleet.md#principles).
 
@@ -34,7 +34,7 @@ Also wrong today:
 
 ## Goals
 
-*   A tag `v*` on a green `main` commit is the only release action; no host needs a human after its first install.
+*   A green `main` batch releases by itself ([delivery pipeline](fleet-delivery-pipeline.md#4-automatic-release), superseding the tag of this design); no host needs a human after its first install.
 *   An executor never runs a version newer than its coordinator's healthy version.
 *   A release that fails verification, selftest or health is never left running.
 *   A transient failure (network, GitHub, Sigstore, coordinator restart) never blocks a release; the next run retries.
@@ -54,7 +54,7 @@ Also wrong today:
 The brief left four points to the draft.
 
 *   **Executor lag.** The coordinator serves executors of its previous release (N-1) and its own (N). An older executor keeps working and shows host problem `version-behind`; nothing is refused ("help, never block"). Any host protocol change stays readable by an N-1 executor; a removal waits one release (expand, then contract).
-*   **Version scheme.** CoreQ's as is: `N.yymmdd.M`, major, UTC date of the tag, sequence on that day from 0. First release `1.261111.0`, tag `v1.261111.0`. Comparison by numeric dot parts.
+*   **Version scheme.** CoreQ's as is: `N.yymmdd.M`, major, UTC date of the release run (computed by the pipeline since the [delivery pipeline](fleet-delivery-pipeline.md#4-automatic-release); before, the tag date), sequence on that day from 0. First release `1.261111.0`, tag `v1.261111.0`. Comparison by numeric dot parts.
 *   **`autoUpdate`.** Host field: `"on"` (default when absent), `"off"`, or an RFC 3339 time ending in `Z` meaning "hold until then". `hosts_update` refuses other forms with 400; a time in the past is accepted and means on. The host compares against its own UTC clock.
 *   **Minimal env.** One line, `FLEET_HOST_ID=<id>`, the host's identity. The coordinator URL `https://fleet.ufobe.com` and every other value ship as release defaults ([section 5](#5-config-defaults-and-env)). Other env lines remain optional overrides.
 *   **`version-behind` edge.** Flagged at N-2 or older; N-1 is served without a flag.
@@ -67,9 +67,11 @@ Owner rule (2026-11-11): standard library first; sigstore only for a guarantee E
 
 ### CUJ 1: Owner releases
 
+Target: replaced by a merge that releases by itself ([delivery pipeline](fleet-delivery-pipeline.md#4-automatic-release)); the steps below hold until it is built.
+
 *   **Given**: commit C on `main`; its `ci` run may still be running. Every host has `autoUpdate: "on"`.
 *   **When**: the owner runs `git tag v1.261111.0 C && git push origin v1.261111.0`.
-*   **Then**: the release workflow waits for C's `build-test-design` job, builds, publishes. Within 5 minutes PDS18's run installs the coordinator, gateway, guard and the PDS18 executor. Each other executor installs on its next run after the coordinator is healthy. `hosts_list` shows `version: 1.261111.0`, `update.state: ok` for every host.
+*   **Then**: the release workflow waits for C's `go`, `app` and `browser` jobs, builds, publishes. Within 5 minutes PDS18's run installs the coordinator, gateway, guard and the PDS18 executor. Each other executor installs on its next run after the coordinator is healthy. `hosts_list` shows `version: 1.261111.0`, `update.state: ok` for every host.
 
 ### CUJ 2: Bad release on PDS18
 
@@ -118,18 +120,18 @@ Owner rule (2026-11-11): standard library first; sigstore only for a guarantee E
 
 ### 1. Release workflow
 
-`.github/workflows/release.yml`, `on: push: tags: ['v*']`. Permissions per job, only what each writes (COREQ-R7).
+Trigger, gate and version are replaced by the [delivery pipeline](fleet-delivery-pipeline.md#4-automatic-release) (push to `main`, computed version, no tag); build, selftest, `migrate-check` and publish stay as below. Originally: `.github/workflows/release.yml`, `on: push: tags: ['v*']`. Permissions per job, only what each writes (COREQ-R7).
 
 *   **Job `gate`** (`contents: read`, `actions: read`, checkout with `fetch-depth: 0`):
     *   Refuse a tag whose name is not `v<N>.<yymmdd>.<M>` (strict regex `^v[1-9][0-9]*\.[0-9]{6}\.(0|[1-9][0-9]*)$`) with `yymmdd` the UTC date of the annotated tag's tagger date (lightweight tag: the commit date), or whose commit is not an ancestor of `origin/main`, or whose version is not newer than the current latest release.
-    *   Find the `ci` run with `gh run list --workflow ci --commit <sha> --event push --branch main --json databaseId,status`. No run yet: poll every 30 s. Then `gh run watch <id>` until it completes. Both waits end at the gate job's `timeout-minutes` (GitHub's default 360). Proceed only when job `build-test-design` concluded `success`; other jobs do not gate, as on `main` today. A timeout fails the release; the owner re-runs the workflow, no new tag needed.
+    *   Find the `ci` run with `gh run list --workflow ci --commit <sha> --event push --branch main --json databaseId,status`. No run yet: poll every 30 s. Then `gh run watch <id>` until it completes. Both waits end at the gate job's `timeout-minutes` (GitHub's default 360). Proceed only when jobs `go`, `app` and `browser` concluded `success`; the report jobs do not gate. A timeout fails the release; the owner re-runs the workflow, no new tag needed.
     *   Output `previous`: the version of the latest published release (empty for the first release); a tag whose release never published is skipped.
 *   **Job `build`** (`needs: gate`, `contents: read`): `deploy/build-release.sh <commit> out <version> <previous> linux/amd64 darwin/arm64`, the one build script for releases and local trials. Each tarball `fleet-<ver>-<os>-<arch>.tgz` holds `fleet-coordinator`, `fleet-gateway`, `fleet-executor`, `fleet-update`, `dist/app/`, `config/`, `deploy/` (unit files, `install-release.sh`, `status.sh`) and `release.json` `{version, previous, commit, target, builtAt}`. Runs every linux binary's `selftest`. Uploads the tarballs with `actions/upload-artifact`.
 *   **Job `selftest-macos`** (`needs: build`, `runs-on: macos-latest`, `contents: read`): downloads the darwin tarball, runs each binary's `selftest` (COREQ-R25).
 *   **Job `migrate-check`** (`needs: build`, `contents: read`): on the runner's PostgreSQL, start the new coordinator (migrates), stop it, start the `previous` release's coordinator on that database and require `/api/health` 200. Skipped when `previous` is empty. This enforces "expand in N, contract in N+1".
 *   **Job `publish`** (`needs: [selftest-macos, migrate-check]`, environment `release`, `contents: write`, `id-token: write`, `attestations: write`): signs `SHA256SUMS` (written by the build) into `SHA256SUMS.sig` with `openssl pkeyutl -sign -rawin` and the secret `FLEET_RELEASE_KEY`, writes `latest.json` `{"version", "files": {"linux-amd64": "<file>", "darwin-arm64": "<file>"}}`; `actions/attest-build-provenance` over both tarballs, its bundle saved as `provenance.sigstore.jsonl`; `gh release create v<ver> --latest` with the six files.
 
-`ci.yml` drops "Pack the release" and "Upload the release" and the comment that a push to `main` publishes a release; `fleet-update` joins its cross-build loop so pull request trials carry it.
+`ci.yml` job `app` packs the same tarballs with the same script (version `0.0.0-<sha>`, unsigned) as the artifact `fleet-release-<sha>`, so pull request trials carry every binary.
 
 ### 2. Versions in binaries
 

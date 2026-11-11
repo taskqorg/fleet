@@ -878,7 +878,7 @@ func queueCommand(ctx context.Context, a *App, hostID, kind string, payload doc)
 		if err := put(q, "session", doc{"id": sid, "createdAt": nowMs(), "actor": "program-worker"}); err != nil {
 			return err
 		}
-		if err := putExecution(q, doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hostID, "state": "queued", "createdAt": nowMs(), "actor": "program-worker", "artifactId": payload["artifactId"]}); err != nil {
+		if err := putExecution(q, doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hostID, "state": "preparing", "createdAt": nowMs(), "actor": "program-worker", "artifactId": payload["artifactId"]}); err != nil {
 			return err
 		}
 		return put(q, "command", doc{"id": newID(), "executionId": id, "sessionId": sid, "hostId": hostID, "kind": kind, "status": "pending", "payload": payload})
