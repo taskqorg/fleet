@@ -60,7 +60,7 @@ export function Hosts({ id }: { id?: string }) {
 function HostDetail({ host: sel, live, reading: r, processes, now, onGone }: { host: any; live: boolean; reading: any; processes: any[]; now: number; onGone: () => void }) {
   const [preview, setPreview] = useState<any>(null);
   const [err, setErr] = useState('');
-  const remove = (confirm: boolean) => op('hosts_remove', { id: sel.id, preview: !confirm }).then(x => { if (confirm) onGone(); else setPreview(x); }, e => setErr(String(e.message ?? e)));
+  const remove = (confirm: boolean) => (setErr(''), op('hosts_remove', { id: sel.id, preview: !confirm }).then(x => { if (confirm) onGone(); else setPreview(x); }, e => setErr(String(e.message ?? e))));
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={sel.id}>
     <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onGone} /><h2 class="detail-title">{sel.id}</h2></header>
     <DetailSection title="State"><KvRow icon="activity" label="Last seen" meta={sel.lastSeenAt ? undefined : 'never'} value={sel.lastSeenAt ? <AgeChip t={sel.lastSeenAt} now={now} /> : undefined} />
@@ -91,6 +91,8 @@ function HostDetail({ host: sel, live, reading: r, processes, now, onGone }: { h
 
 function SystemPanels({ tele, found, now }: { tele: any; found: any; now: number }) {
   const [purge, setPurge] = useState<any>(null);
+  const [purgeErr, setPurgeErr] = useState('');
+  const runPurge = (preview: boolean) => { setPurgeErr(''); op('system_purge', { preview }).then(setPurge, e => setPurgeErr(String(e.message ?? e))); };
   if (!tele) return <Empty text="Loading…" />;
   if (!tele.enabled) return <Empty text="Telemetry is off: no span store is configured." />;
   const ops = [...tele.operations].sort((a: any, b: any) => b.errors - a.errors || b.count - a.count);
@@ -118,10 +120,11 @@ function SystemPanels({ tele, found, now }: { tele: any; found: any; now: number
         meta={r.hostId} value={<><Num m={m(r.cpuSeconds)} kind="duration" /> <span class="muted">CPU</span> <Num m={m(r.peakRssBytes)} kind="bytes" /> <span class="muted">peak</span> <AgeChip t={ms(r.at)} now={now} /></>} />) : <span class="muted">none in the last hour</span>}
     </DetailSection>
     <DetailSection title="Purge">
-      {!purge ? <Button label="Find removed hosts to purge" icon="trash-2" onClick={() => op('system_purge', { preview: true }).then(setPurge)} /> : <>
+      {purgeErr && <ProblemRow title="Not purged" facts={purgeErr} severity="failure" actions={[]} />}
+      {!purge ? <Button label="Find removed hosts to purge" icon="trash-2" onClick={() => runPurge(true)} /> : <>
         <KvRow icon="trash-2" label="Removed hosts nothing references" value={<Num m={{ value: purge.removed[0]?.count ?? 0, basis: 'measured' }} kind="count" />} />
         <KvRow icon="save" label="Removed hosts kept by history" value={<Num m={{ value: purge.kept[0]?.count ?? 0, basis: 'measured' }} kind="count" />} />
-        {(purge.removed[0]?.count ?? 0) > 0 && !purge.purged && <Button label="Purge" icon="trash-2" kind="danger" onClick={() => op('system_purge', { preview: false }).then(setPurge)} />}
+        {(purge.removed[0]?.count ?? 0) > 0 && !purge.purged && <Button label="Purge" icon="trash-2" kind="danger" onClick={() => runPurge(false)} />}
       </>}
     </DetailSection>
   </article>;
