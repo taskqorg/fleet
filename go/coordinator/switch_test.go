@@ -5,8 +5,9 @@ import (
 	"testing"
 )
 
-// A subscription at 100 % with no switchPct is skipped (people-access §6): it cannot run anyway, so dispatch must not
-// pick it and fail on the host. Below 100 % with no switchPct it stays a candidate.
+// Requirement: fleet-people-access.md §6, a subscription at 100 % with no switchPct is skipped: it cannot run anyway.
+// Risk: dispatch picks a full subscription and the run fails on the host
+// (below 100 % with no switchPct it stays a candidate).
 func TestFullSubscriptionWithoutSwitchPointIsSkipped(t *testing.T) {
 	at := float64(nowMs() + 3600_000)
 	reading := func(pct float64) []Reading { return []Reading{{Period: "5h", Pct: &pct, ResetsAt: &at, At: nowMs(), State: "known"}} }
