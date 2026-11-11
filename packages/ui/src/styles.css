@@ -266,7 +266,10 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .nav-count{padding:0 var(--space-2);border-radius:var(--radius-pill);background:var(--tone-bg);color:var(--tone-fg);font-family:var(--font-mono);font-size:var(--font-size-xs)}
 .nav-pin{display:inline-flex;align-items:center;justify-content:center;width:var(--size-control);height:var(--size-control);border:0;background:none;color:var(--fg-muted);cursor:pointer;opacity:0}
 .nav-pin .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
-.nav-i:hover .nav-pin,.nav-pin:focus-visible{opacity:1}
+.nav-i:hover .nav-pin,.nav-pin:focus-visible,.nav-i:focus-within .nav-pin,.nav-pin.on{opacity:1}
+.nav-pin.on{color:var(--fg)}
+.rail-g.pinned .nav-i{cursor:grab}.rail-g.pinned .nav-i.dragging{opacity:.5}
+.nav-i{position:relative}.rail-menu{left:var(--space-3);right:auto;z-index:20}
 .rail-search{flex:none;margin:0 var(--space-1)}
 @media (pointer:coarse){.nav-pin{opacity:1}}
 

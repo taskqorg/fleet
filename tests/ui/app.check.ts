@@ -83,5 +83,20 @@ try {
   const t0 = Date.now(); await fetch(origin + '/api/ops/task_update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: firstId, action: 'pause' }) });
   let ms = -1; for (let i = 0; i < 100; i++) { if (await page.$(`.vl-row [aria-label^="Paused"]`)) { ms = Date.now() - t0; break; } await page.waitForTimeout(20); }
   out.push(`change-to-screen: ${ms < 0 ? 'NOT SEEN within 2 s' : ms + ' ms'} (target <= 1000 ms)${ms > 1000 ? '  OVER TARGET' : ''}`);
+  // Pins (nav-rail.md): pin from the item, it stays in its group too; Alt+ArrowUp reorders; the order survives a reload (person settings).
+  await page.goto(origin + '/overview'); await page.waitForSelector('[data-ui=nav-rail]');
+  for (const n of ['Tasks', 'Hosts']) { await page.locator('.rail-g:not(.pinned)').getByRole('button', { name: 'Pin ' + n, exact: true }).click(); await page.waitForTimeout(150); }
+  const pinsOf = () => page.$$eval('.rail-g.pinned .nav-i', els => els.map(e => e.getAttribute('data-id')));
+  const twice = await page.locator('.rail-g:not(.pinned) .nav-i.pinned[data-id=tasks]').count();
+  await page.locator('.rail-g.pinned [data-id=hosts] a').focus(); await page.keyboard.press('Alt+ArrowUp'); await page.waitForTimeout(300);
+  const moved = (await pinsOf()).join(',');
+  await page.reload(); await page.waitForTimeout(700);
+  const kept = (await pinsOf()).join(',');
+  out.push(`pins: in group ${twice ? 'kept' : 'MISSING'}, reorder ${moved === 'hosts,tasks' ? 'ok' : 'WRONG ' + moved}, after reload ${kept === 'hosts,tasks' ? 'kept' : 'LOST ' + kept}`);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.locator('.rail-g.pinned [data-id=tasks]').click({ button: 'right' }); await page.waitForTimeout(200);
+  out.push(`pin menu: ${(await page.locator('.rail-menu [role=menuitem]').allInnerTexts()).join(', ') || 'MISSING'}`);
+  await page.screenshot({ path: `${shots}/pins-dark.png`, clip: { x: 0, y: 0, width: 520, height: 520 } });
+  await page.keyboard.press('Escape'); await page.emulateMedia({ colorScheme: 'light' });
   out.push(errors.length ? `console errors: ${[...new Set(errors)].slice(0, 5).join(' | ')}` : 'console errors: none');
 } finally { await b.close(); await close(); }

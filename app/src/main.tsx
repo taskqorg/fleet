@@ -33,6 +33,10 @@ function App() {
   const [loc, go] = useLocation();
   const [update, setUpdate] = useState(false);
   const current = loc.split('/')[1] || 'overview';
+  // Pinned sections are a person setting (person_settings_*), so they follow the person to every device.
+  const [pins, setPins] = useState<string[]>([]);
+  useEffect(() => { op('person_settings_get', {}).then(s => setPins(s.pins)).catch(() => {}); }, []);
+  const savePins = (ids: string[]) => { const prev = pins; setPins(ids); op('person_settings_set', { pins: ids }).then(s => setPins(s.pins)).catch(() => setPins(prev)); };
   useEffect(() => {
     // Identity and grants (D3): a changed grants version clears stored data. Re-read on focus too.
     const me = () => op('me', {}).then(m => checkGrants(m.grantsVersion ?? '')) // no person: '' still clears another person's data.catch(() => {});
@@ -44,7 +48,7 @@ function App() {
     return () => removeEventListener('focus', me);
   }, []);
   useEffect(() => { if (signedOut.value) clearAll(true); }, [signedOut.value]);
-  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)}>
+  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={pins} onPins={savePins}>
     {update && <div class="problem warning" role="status"><b>Update available</b><span class="facts">A new version of the app is ready.</span><span class="acts"><Button label="Reload" onClick={() => location.reload()} /></span></div>}
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
     <Switch>
