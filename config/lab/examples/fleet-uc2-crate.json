@@ -1,70 +1,70 @@
 {
- "id": "fleet-uc2-crate",
- "use_case_id": "fleet:UC2",
- "version": 1,
- "origin": "export:assetq-2c887345",
- "fixture": null,
- "prompt": "Make a game-ready 3D prop from the crate image: about 3000 triangles, UV-mapped, PBR textures, GLB.",
- "inputs": [
-  {
-   "path": "crate.png",
-   "sha256": "fe2077d15b0c50617b84c6267277d46339c6a8cedbd6334e923cfa5475529baa",
-   "media_type": "image/png"
-  }
- ],
- "references": [
-  {
-   "path": "model.glb",
-   "sha256": "5e24db4bfe192b4cb294849fa0683a76d3cd2a7b46eaa5fbdec526da8f353c40",
-   "media_type": "model/gltf-binary"
-  },
-  {
-   "path": "stats.json",
-   "sha256": "ec5a52c2a14477f3c790d0a6d3f6a38978afe03b24fe06784cf47692cdbd59c9",
-   "media_type": "application/json"
-  },
-  {
-   "path": "renders/front.png",
-   "sha256": "9bc010f6d542374f7edc81a0151fdb830462c2ef4f5cd14fdb7171ebbdf7bbb9",
-   "media_type": "image/png"
-  },
-  {
-   "path": "renders/side.png",
-   "sha256": "5e34c76351c108b0c29cca4069fe6206dbe647aa0a4f8f2e6f1b43ca4f4ee0da",
-   "media_type": "image/png"
-  },
-  {
-   "path": "renders/top.png",
-   "sha256": "2ab30d68837adc2f1c4b4213bc7f8cc92150b34a9bf100ed42c6c8406a0f0004",
-   "media_type": "image/png"
-  },
-  {
-   "path": "renders/three-quarter.png",
-   "sha256": "e36f588166ff4b085ba42bf868436c2391454470c64bd35e3f3df73717ab3b4c",
-   "media_type": "image/png"
-  }
- ],
- "checks": [
-  {
-   "id": "triangles",
-   "run": "node -e \"const s=JSON.parse(require('fs').readFileSync('stats.json','utf8')),r=JSON.parse(require('fs').readFileSync('references/stats.json','utf8'));const t=3000,tol=0.25;if(!(Math.abs(s.triangles-t)<=t*tol))throw Error('triangles '+s.triangles+' outside 3000 +-25%')\""
-  },
-  {
-   "id": "components",
-   "run": "node -e \"const s=JSON.parse(require('fs').readFileSync('stats.json','utf8')),r=JSON.parse(require('fs').readFileSync('references/stats.json','utf8'));if(!(s.components>=1&&s.components<=r.components*2))throw Error('components '+s.components+' over twice the reference '+r.components)\""
-  },
-  {
-   "id": "proportions",
-   "run": "node -e \"const s=JSON.parse(require('fs').readFileSync('stats.json','utf8')),r=JSON.parse(require('fs').readFileSync('references/stats.json','utf8'));const q=d=>[d[0]/d[1],d[2]/d[1]];const a=q(s.dimensions_m),b=q(r.dimensions_m);if(a.some((x,i)=>!(Math.abs(x-b[i])<=b[i]*0.15)))throw Error('proportions '+a+' vs reference '+b)\""
-  },
-  {
-   "id": "uv-base-color",
-   "run": "node -e \"const s=JSON.parse(require('fs').readFileSync('stats.json','utf8')),r=JSON.parse(require('fs').readFileSync('references/stats.json','utf8'));if(!s.uv||!s.pbr.base_color)throw Error('uv or base colour missing')\""
-  },
-  {
-   "id": "renders",
-   "run": "for v in front side top three-quarter; do test -s renders/$v.png || { echo \"renders/$v.png missing\"; exit 1; }; done"
-  }
- ],
- "split": "tune"
+  "id": "fleet-uc2-crate",
+  "use_case_id": "fleet:UC2",
+  "version": 2,
+  "origin": "export:assetq-2c887345",
+  "fixture": null,
+  "prompt": "Make a game-ready 3D prop from the crate image: about 3000 triangles, UV-mapped, PBR textures, GLB.",
+  "inputs": [
+    {
+      "path": "crate.png",
+      "sha256": "fe2077d15b0c50617b84c6267277d46339c6a8cedbd6334e923cfa5475529baa",
+      "media_type": "image/png"
+    }
+  ],
+  "references": [
+    {
+      "path": "model.glb",
+      "sha256": "5e24db4bfe192b4cb294849fa0683a76d3cd2a7b46eaa5fbdec526da8f353c40",
+      "media_type": "model/gltf-binary"
+    },
+    {
+      "path": "stats.json",
+      "sha256": "ec5a52c2a14477f3c790d0a6d3f6a38978afe03b24fe06784cf47692cdbd59c9",
+      "media_type": "application/json"
+    },
+    {
+      "path": "renders/front.png",
+      "sha256": "9bc010f6d542374f7edc81a0151fdb830462c2ef4f5cd14fdb7171ebbdf7bbb9",
+      "media_type": "image/png"
+    },
+    {
+      "path": "renders/side.png",
+      "sha256": "5e34c76351c108b0c29cca4069fe6206dbe647aa0a4f8f2e6f1b43ca4f4ee0da",
+      "media_type": "image/png"
+    },
+    {
+      "path": "renders/top.png",
+      "sha256": "2ab30d68837adc2f1c4b4213bc7f8cc92150b34a9bf100ed42c6c8406a0f0004",
+      "media_type": "image/png"
+    },
+    {
+      "path": "renders/three-quarter.png",
+      "sha256": "e36f588166ff4b085ba42bf868436c2391454470c64bd35e3f3df73717ab3b4c",
+      "media_type": "image/png"
+    }
+  ],
+  "checks": [
+    {
+      "id": "triangles",
+      "run": "python3 -I -c 'import json; s=json.load(open('\"'\"'stats.json'\"'\"')); r=json.load(open('\"'\"'references/stats.json'\"'\"')); assert abs(s['\"'\"'triangles'\"'\"']-3000)<=3000*0.25, '\"'\"'triangles outside 3000 +-25%'\"'\"''"
+    },
+    {
+      "id": "components",
+      "run": "python3 -I -c 'import json; s=json.load(open('\"'\"'stats.json'\"'\"')); r=json.load(open('\"'\"'references/stats.json'\"'\"')); assert 1<=s['\"'\"'components'\"'\"']<=r['\"'\"'components'\"'\"']*2, '\"'\"'components over twice reference'\"'\"''"
+    },
+    {
+      "id": "proportions",
+      "run": "python3 -I -c 'import json; s=json.load(open('\"'\"'stats.json'\"'\"')); r=json.load(open('\"'\"'references/stats.json'\"'\"')); a=[s['\"'\"'dimensions_m'\"'\"'][0]/s['\"'\"'dimensions_m'\"'\"'][1],s['\"'\"'dimensions_m'\"'\"'][2]/s['\"'\"'dimensions_m'\"'\"'][1]]; b=[r['\"'\"'dimensions_m'\"'\"'][0]/r['\"'\"'dimensions_m'\"'\"'][1],r['\"'\"'dimensions_m'\"'\"'][2]/r['\"'\"'dimensions_m'\"'\"'][1]]; assert all(abs(v-b[i])<=b[i]*0.15 for i,v in enumerate(a)), '\"'\"'proportions outside reference +-15%'\"'\"''"
+    },
+    {
+      "id": "uv-base-color",
+      "run": "python3 -I -c 'import json; s=json.load(open('\"'\"'stats.json'\"'\"')); r=json.load(open('\"'\"'references/stats.json'\"'\"')); assert s['\"'\"'uv'\"'\"'] and s['\"'\"'pbr'\"'\"']['\"'\"'base_color'\"'\"'], '\"'\"'uv or base colour missing'\"'\"''"
+    },
+    {
+      "id": "renders",
+      "run": "for v in front side top three-quarter; do test -s renders/$v.png || { echo \"renders/$v.png missing\"; exit 1; }; done"
+    }
+  ],
+  "split": "tune"
 }
