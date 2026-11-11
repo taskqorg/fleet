@@ -464,19 +464,19 @@ func init() {
 		if rid == "" || text == "" || len([]rune(text)) > 2000 {
 			return nil, fail(400, "Expected question text and requestId")
 		}
-		old, err := first(q, "SELECT data FROM question WHERE legacy_kind='project-question' AND data->>'projectId'=$1 AND data->>'requestId'=$2", b["projectId"], rid)
+		d, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE "+projectQuestion+" AND project_id=$1 AND request_id=$2", b["projectId"], rid)
 		if err != nil {
 			return nil, err
 		}
-		if old != nil {
-			d := mapOf(old["data"])
+		if d != nil {
+			d = mapOf(d["v"])
 			if astr(d["text"]) != text {
 				return nil, fail(409, "Question identity conflict")
 			}
 			return d, nil
 		}
 		v := doc{"id": newID(), "projectId": b["projectId"], "requestId": rid, "text": text, "state": "waiting", "createdAt": nowMs(), "actor": actor(q, "operator")}
-		_, err = askQuestion(q, doc{"id": v["id"], "kind": "operator_decision", "text": text, "projectId": b["projectId"], "askedBy": v["actor"], "legacyKind": "project-question", "data": v, "askedAt": v["createdAt"]})
+		_, err = askQuestion(q, doc{"id": v["id"], "kind": "operator_decision", "text": text, "projectId": b["projectId"], "askedBy": v["actor"], "requestId": rid, "askedAt": v["createdAt"]})
 		return v, err
 	}))
 	projectOp("question_answer", false, shaped[contract.QuestionAnswerRequest, contract.QuestionAnswerReply](func(q *Request) (any, error) {
@@ -486,11 +486,11 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		legacy, err := first(q, "SELECT data FROM question WHERE id=$1 AND legacy_kind='project-question'", id)
+		pq, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE id=$1 AND "+projectQuestion, id)
 		if err != nil {
 			return nil, err
 		}
-		if legacy == nil {
+		if pq == nil {
 			ids, _ := b["artifactIds"].([]any)
 			a, err := answerQuestion(q, id, answer, actor(q, "operator"), ids)
 			if err != nil {
@@ -501,25 +501,28 @@ func init() {
 			}
 			return doc{"id": a["id"], "state": a["state"], "answer": a["answer"]}, nil
 		}
-		v := mapOf(legacy["data"])
+		v := mapOf(pq["v"])
 		if astr(v["state"]) == "answered" {
 			if astr(v["answer"]) != answer {
 				return nil, fail(409, "Answer already recorded")
 			}
 			return v, nil
 		}
-		v["state"], v["answer"], v["answeredAt"], v["answeredBy"] = "answered", answer, nowMs(), actor(q, "operator")
-		if _, err := answerQuestion(q, id, answer, astr(v["answeredBy"]), nil); err != nil {
+		if _, err := answerQuestion(q, id, answer, actor(q, "operator"), nil); err != nil {
 			return nil, err
 		}
-		return v, exec(q, "UPDATE question SET data=$2 WHERE id=$1", id, js(v))
+		pq, err = first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE id=$1", id)
+		if err != nil {
+			return nil, err
+		}
+		return mapOf(pq["v"]), nil
 	}))
 	projectOp("question_history", true, shaped[contract.QuestionHistoryRequest, contract.QuestionHistoryReply](func(q *Request) (any, error) {
 		b := body(q)
 		if _, err := projectContext(astr(b["projectId"])); err != nil {
 			return nil, err
 		}
-		qs, err := rows(q, "SELECT data FROM question WHERE legacy_kind='project-question' AND data->>'projectId'=$1 ORDER BY seq", b["projectId"])
+		qs, err := rows(q, "SELECT "+projectQuestionJSON+" FROM question WHERE "+projectQuestion+" AND project_id=$1 ORDER BY seq", b["projectId"])
 		return doc{"questions": qs}, err
 	}))
 	projectOp("pipeline_get", true, shaped[contract.PipelineGetRequest, contract.PipelineGetReply](func(q *Request) (any, error) {
@@ -710,3 +713,10 @@ func catalogueHead(q *Request) (doc, error) {
 	}
 	return c, nil
 }
+
+// projectQuestion: a project question (question_ask) is an operator decision with the asker's request id.
+const projectQuestion = "kind='operator_decision' AND request_id IS NOT NULL"
+
+// projectQuestionJSON: a project question (contract.ProjectQuestion) from its columns.
+const projectQuestionJSON = `jsonb_build_object('id',id,'projectId',project_id,'requestId',request_id,'text',text,'state',CASE WHEN state='answered' THEN 'answered' ELSE 'waiting' END,
+ 'createdAt',(extract(epoch FROM asked_at)*1000)::bigint,'actor',asked_by) || CASE WHEN state='answered' THEN jsonb_build_object('answer',answer,'answeredAt',(extract(epoch FROM answered_at)*1000)::bigint,'answeredBy',answered_by) ELSE '{}' END`

@@ -16,9 +16,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// the legacy-record layer and the execution model (docs/designs/fleet-data-foundation.md §1, §7). get/put/all
-// read and write a legacy kind inside the request's transaction (q.tx): 'execution' and 'delegation' live on the execution
-// table, every other kind is a document.
+// Records and the execution model (docs/designs/fleet-data-foundation.md §1, §7). get/put/all read and write a record
+// kind inside the request's transaction (q.tx): 'execution' and 'delegation' live on the execution table, 'question' on the
+// question table, every other kind is a document.
 
 func isNotFound(err error) bool { var he *HTTPError; return errors.As(err, &he) && he.Code == 404 }
 

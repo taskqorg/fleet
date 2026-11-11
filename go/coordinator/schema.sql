@@ -721,3 +721,15 @@ ALTER TABLE execution ADD COLUMN definitions jsonb NOT NULL DEFAULT '[]';
 -- found by content hash.
 ALTER TABLE artifact DROP CONSTRAINT artifact_role_check;
 ALTER TABLE artifact ADD CONSTRAINT artifact_role_check CHECK (role IN ('original', 'thumbnail', 'poster', 'example', 'example-file'));
+-- migration 32: questions are read from their columns (W5): the asker's request id is a column; the agent question record
+-- and the project question are built from the columns, data keeps only fields without one. legacy_kind goes from question
+-- and task, legacy_id from task.
+ALTER TABLE question ADD COLUMN request_id text NULL;
+UPDATE question SET request_id = data->>'requestId' WHERE legacy_kind IN ('question', 'project-question');
+UPDATE question SET data = '{}' WHERE legacy_kind = 'project-question';
+UPDATE question SET data = data - 'id' - 'executionId' - 'sessionId' - 'projectId' - 'requestId' - 'question' - 'state' - 'answer' - 'answeredBy' - 'answeredAt' - 'createdAt' WHERE legacy_kind = 'question';
+DROP INDEX question_legacy;
+DROP INDEX task_legacy;
+ALTER TABLE question DROP COLUMN legacy_kind;
+ALTER TABLE task DROP COLUMN legacy_kind, DROP COLUMN legacy_id;
+CREATE INDEX question_request ON question(execution_id, request_id) WHERE request_id IS NOT NULL;

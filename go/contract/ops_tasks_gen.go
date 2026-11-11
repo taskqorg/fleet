@@ -337,8 +337,6 @@ type TaskDetail struct {
 	ExpectedOutcome        *string          `json:"expectedOutcome"`
 	Id                     string           `json:"id"`
 	LatestResult           json.RawMessage  `json:"latestResult"`
-	LegacyId               *string          `json:"legacyId"`
-	LegacyKind             *string          `json:"legacyKind"`
 	OpenQuestions          json.RawMessage  `json:"openQuestions"`
 	PauseReason            *string          `json:"pauseReason"`
 	Priority               string           `json:"priority"`
@@ -437,8 +435,6 @@ type TaskListItem struct {
 	DirectedBy             *string         `json:"directedBy"`
 	ExpectedOutcome        *string         `json:"expectedOutcome"`
 	Id                     string          `json:"id"`
-	LegacyId               *string         `json:"legacyId"`
-	LegacyKind             *string         `json:"legacyKind"`
 	OpenQuestions          json.RawMessage `json:"openQuestions"`
 	PauseReason            *string         `json:"pauseReason"`
 	Priority               string          `json:"priority"`
