@@ -212,10 +212,11 @@ type ArtifactRuleConfirmReply struct {
 	RuleHash  string `json:"ruleHash"`
 }
 
-// ArtifactRuleConfirmRequest: Operator only.
+// ArtifactRuleConfirmRequest: Operator only. ruleHash: the preview's hash; a changed rule is 409.
 type ArtifactRuleConfirmRequest struct {
 	ProjectId *string         `json:"projectId,omitempty"`
 	Rule      json.RawMessage `json:"rule"`
+	RuleHash  *string         `json:"ruleHash,omitempty"`
 }
 
 // ArtifactRulePreviewReply: sample: up to 10 matching artifacts (id, name, size).
@@ -1845,10 +1846,10 @@ type StoreSetFreeSpaceWarningReply struct {
 	State string `json:"state"`
 }
 
-// StoreSetFreeSpaceWarningRequest: Operator only. bytes null clears the warning.
+// StoreSetFreeSpaceWarningRequest: Operator only. bytes: a whole number; null clears the warning.
 type StoreSetFreeSpaceWarningRequest struct {
-	Bytes   *int64 `json:"bytes,omitempty"`
-	StoreId string `json:"storeId"`
+	Bytes   *float64 `json:"bytes,omitempty"`
+	StoreId string   `json:"storeId"`
 }
 
 // StoreView: One store row (StoreRow in go/coordinator/artifacts.go).

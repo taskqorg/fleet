@@ -66,12 +66,12 @@ func init() {
 		}
 		return asT[contract.ArtifactView](v)
 	}))
-	operation("artifact_purge", false, typedOp(func(q *Request, r *contract.ArtifactPurgeRequest) (contract.ArtifactPurgeReply, error) {
+	operation("artifact_purge", false, operatorFirst(typedOp(func(q *Request, r *contract.ArtifactPurgeRequest) (contract.ArtifactPurgeReply, error) {
 		if err := operatorOnly(q); err != nil {
 			return contract.ArtifactPurgeReply{}, err
 		}
 		return artifactPurge(withTx(q), q.app, r.ContentHash, r.ProjectId, r.Scope, r.Reason)
-	}))
+	})))
 	operation("stores_list", true, typedOp(func(q *Request, _ *contract.StoresListRequest) (contract.StoresListReply, error) {
 		all, err := storeList(withTx(q), q.app)
 		if err != nil {
@@ -95,7 +95,7 @@ func init() {
 		}
 		return contract.StoresListReply{Stores: stores, Problems: recsOf(problems)}, err
 	}))
-	operation("store_set_free_space_warning", false, typedOp(func(q *Request, b *contract.StoreSetFreeSpaceWarningRequest) (contract.StoreSetFreeSpaceWarningReply, error) {
+	operation("store_set_free_space_warning", false, operatorFirst(typedOp(func(q *Request, b *contract.StoreSetFreeSpaceWarningRequest) (contract.StoreSetFreeSpaceWarningReply, error) {
 		var none contract.StoreSetFreeSpaceWarningReply
 		if err := operatorOnly(q); err != nil {
 			return none, err
@@ -105,10 +105,10 @@ func init() {
 		}
 		var v any
 		if b.Bytes != nil {
-			if *b.Bytes < 0 {
+			if *b.Bytes < 0 || *b.Bytes != float64(int64(*b.Bytes)) {
 				return none, fail(400, "Expected bytes or null")
 			}
-			v = *b.Bytes
+			v = int64(*b.Bytes)
 		}
 		r, err := oneCtx(withTx(q), q.app, "UPDATE store SET free_space_warning_bytes=$2,state=CASE WHEN state='unreachable' THEN state WHEN $2::bigint IS NOT NULL AND capacity_bytes < $2::bigint THEN 'full' ELSE 'reachable' END WHERE id=$1 RETURNING id,state", b.StoreId, v)
 		if err != nil {
@@ -118,7 +118,7 @@ func init() {
 			return none, fail(404, "Unknown store "+b.StoreId)
 		}
 		return contract.StoreSetFreeSpaceWarningReply{Id: astr(r["id"]), State: astr(r["state"])}, nil
-	}))
+	})))
 	operation("subscription_limits", true, typedOp(subscriptionLimits))
 	// changes_since: the stream's read for the app's catch-up and polling fallback; no cursor is the head.
 	operation("changes_since", true, func(q *Request) (any, error) {
