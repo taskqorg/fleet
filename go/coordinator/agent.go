@@ -119,9 +119,9 @@ func enqueue(q *Request, s doc, input, requestID string, payload, execution doc,
 	return e, put(q, "message", doc{"id": newID(), "sessionId": s["id"], "executionId": id, "requestId": requestID, "text": input, "projectId": s["projectId"], "sentBy": director(q)})
 }
 
-func refreshProfile(s doc) error {
+func refreshProfile(q *Request, s doc) error {
 	if ac := mapOf(s["agentConfig"]); ac != nil {
-		p, err := readTrustedProfile(astr(ac["id"]))
+		p, err := readTrustedProfile(q, astr(ac["id"]))
 		if err != nil {
 			return err
 		}
@@ -199,7 +199,7 @@ func submit(q *Request, b doc) (doc, error) {
 		return nil, err
 	}
 	if active == nil && len(waiting) == 0 {
-		if err := refreshProfile(s); err != nil {
+		if err := refreshProfile(q, s); err != nil {
 			return nil, err
 		}
 		return enqueue(q, s, text, requestID, nil, nil, "")
@@ -257,7 +257,7 @@ func agentPromote(q *Request) error {
 			if err != nil {
 				return nil, err
 			}
-			if err := refreshProfile(s); err != nil {
+			if err := refreshProfile(q, s); err != nil {
 				return nil, err
 			}
 			return enqueue(q, s, astr(m["text"]), astr(m["requestId"]), nil, nil, "")
@@ -603,7 +603,7 @@ func sessionTransition(q *Request, b doc) (doc, error) {
 		}
 		return nil, err
 	}
-	profile, err := readTrustedProfile(pid)
+	profile, err := readTrustedProfile(q, pid)
 	if err != nil {
 		return nil, err
 	}
@@ -1092,7 +1092,7 @@ func sessionView(q *Request, sid string) (doc, error) {
 	return out, err
 }
 
-func roleProfile(v string) doc { p, _ := readTrustedProfile(v); return p }
+func roleProfile(q *Request, v string) doc { p, _ := readTrustedProfile(q, v); return p }
 
 func projectReadiness(q *Request, b doc) (doc, error) {
 	pid, err := strArg(b, "projectId", "projectId", 0)
@@ -1131,7 +1131,7 @@ func projectReadiness(q *Request, b doc) (doc, error) {
 		roles := doc{}
 		for r, v := range mapOf(project["roles"]) {
 			vs, _ := v.(string)
-			if p := roleProfile(vs); p != nil {
+			if p := roleProfile(q, vs); p != nil {
 				roles[r] = firstString(p["harness"], "codex")
 			} else {
 				roles[r] = vs
@@ -1275,7 +1275,7 @@ func sessionStart(q *Request, b doc) (doc, error) {
 	if _, given := b["profileId"]; !given && astr(b["role"]) != "" {
 		profileID = astr(mapOf(project["roles"])[astr(b["role"])])
 	}
-	profile := roleProfile(profileID)
+	profile := roleProfile(q, profileID)
 	if profileID == "" || profile == nil {
 		return nil, fail(400, "Expected profileId or a role mapped to a profile")
 	}
@@ -1779,7 +1779,7 @@ func bound(q *Request, name string, a doc, executionID string) (doc, error) {
 	}
 	if name == "session_transition" {
 		pid, _ := a["profileId"].(string)
-		if _, err := readTrustedProfile(pid); err != nil || pid == "" {
+		if _, err := readTrustedProfile(q, pid); err != nil || pid == "" {
 			return nil, fail(403, "Unknown profile")
 		}
 		// ponytail: the account must be a registered managed account; its binding readiness on this host is the accounts area's resolve.

@@ -85,3 +85,12 @@ test('D5 a draft is the caller\'s and is dropped by the save; create makes a sto
   const {execFileSync} = await import('node:child_process');
   execFileSync('git', ['apply', '--check', '-'], {input: e.patch}); // applies to this checkout's config/
 });
+
+test('D6 runs read definitions from the store: a pipeline that exists only as a store revision runs (requirement: Resolve, readers read the head; risk: a saved definition has no effect until a release)', async () => {
+  const g = ok(await op('definition_get', {kind: 'pipeline', id: 'hello-search'}));
+  const n = content(g); n.pipeline.id = 'd6-store';
+  ok(await op('definition_create', {kind: 'pipeline', id: 'd6-store', content: n, message: 'D6'}));
+  const r = await fetch(BASE + '/api/pipelines/d6-store/runs', {method: 'POST', headers: {authorization: 'Bearer ' + SECRET, 'x-fleet-person': OWNER, 'content-type': 'application/json'}, body: JSON.stringify({requestId: 'd6', example: {}})});
+  assert.equal(r.status, 200, await r.text());
+  assert.equal((await fetch(BASE + '/api/pipelines/no-such/runs', {method: 'POST', headers: {authorization: 'Bearer ' + SECRET, 'x-fleet-person': OWNER, 'content-type': 'application/json'}, body: JSON.stringify({requestId: 'd6x', example: {}})})).status, 404);
+});

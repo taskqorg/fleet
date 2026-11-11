@@ -401,6 +401,49 @@ func definitionGet(q *Request, r *contract.DefinitionGetRequest) (contract.Defin
 		Text: string(x.Content), Content: content, Meta: x.revisionView(q)}, nil
 }
 
+// headText: the head content of a live definition; an execution reads definitions only from the store (the repository
+// file is a seed). Outside a transaction (long operations) it reads in its own snapshot.
+func headText(q *Request, kind, id string) ([]byte, bool, error) {
+	var text []byte
+	read := func(tx pgx.Tx) error {
+		return tx.QueryRow(q.ctx(), `SELECT r.content FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
+		  WHERE d.kind=$1 AND d.id=$2 AND d.retired_at IS NULL`, kind, id).Scan(&text)
+	}
+	var err error
+	if q.tx != nil {
+		err = read(q.tx)
+	} else {
+		err = q.app.store.Tx(q.ctx(), nil, false, "", read)
+	}
+	if err == pgx.ErrNoRows {
+		return nil, false, nil
+	}
+	return text, err == nil, err
+}
+
+type headRow struct {
+	id   string
+	text []byte
+}
+
+// headTexts: every live definition of a kind with its head content, in one read.
+func headTexts(q *Request, kind string) ([]headRow, error) {
+	var out []headRow
+	read := func(tx pgx.Tx) error {
+		rs, err := tx.Query(q.ctx(), `SELECT d.id,r.content FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
+		  WHERE d.kind=$1 AND d.retired_at IS NULL ORDER BY d.id`, kind)
+		if err != nil {
+			return err
+		}
+		out, err = pgx.CollectRows(rs, func(r pgx.CollectableRow) (headRow, error) { var h headRow; return h, r.Scan(&h.id, &h.text) })
+		return err
+	}
+	if q.tx != nil {
+		return out, read(q.tx)
+	}
+	return out, q.app.store.Tx(q.ctx(), nil, false, "", read)
+}
+
 func init() {
 	gatedObjOp("definition_list", true, typedOp(definitionList))
 	gatedObjOp("definition_get", true, typedOp(definitionGet))

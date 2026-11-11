@@ -61,7 +61,7 @@ func (a *App) delegationRequest(q *Request, b doc, c doc) (any, error) {
 	if len(existing) > 0 {
 		return nil, fail(409, "One child per invocation")
 	}
-	profile, err := readTrustedProfile(astr(r["profileId"]))
+	profile, err := readTrustedProfile(q, astr(r["profileId"]))
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +343,7 @@ func (a *App) delegationReconcile(q *Request) error {
 		}
 		deliver := func() error {
 			if cfg := mapOf(s["agentConfig"]); cfg != nil {
-				p, err := readTrustedProfile(astr(cfg["id"]))
+				p, err := readTrustedProfile(q, astr(cfg["id"]))
 				if err != nil {
 					return err
 				}
