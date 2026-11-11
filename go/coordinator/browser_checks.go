@@ -82,7 +82,7 @@ func (a *App) refreshPeople(ctx context.Context) error {
 				return err
 			}
 		}
-		if err := writeTx(ctx, a, "", func(q *Request) error {
+		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 			var n int
 			if err := q.tx.QueryRow(ctx, "SELECT count(*) FROM question WHERE state='open' AND data->>'peopleFile'='true'").Scan(&n); err != nil || n > 0 {
 				return err

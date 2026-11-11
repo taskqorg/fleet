@@ -220,6 +220,9 @@ func (a *App) readBody(q *Request) error {
 		}
 		return fail(400, "Invalid JSON body")
 	}
+	if t := strings.TrimSpace(string(raw)); t != "null" && !strings.HasPrefix(t, "{") { // every route takes an object
+		return fail(400, "Invalid body")
+	}
 	q.body = raw
 	if q.host == nil {
 		return nil

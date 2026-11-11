@@ -2,6 +2,10 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
 
 	"fleet/contract"
 )
@@ -110,17 +114,7 @@ func (a *App) poll(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	envs := map[string][]string{}
-	for _, p := range projectIDs() {
-		if st, err := projectSettingsByID(p); err == nil {
-			hs := []string{}
-			for _, x := range anys(st["environments"]) {
-				hs = append(hs, astr(mapOf(x)["hostId"]))
-			}
-			envs[p] = hs
-		}
-	}
-	if err := detectProblems(q, ids, envs); err != nil {
+	if err := detectProblems(q, ids, projectEnvironments()); err != nil {
 		return nil, err
 	}
 	if err := agentPromote(q); err != nil {
@@ -170,6 +164,40 @@ func (a *App) poll(q *Request) (any, error) {
 	}
 	reply := contract.PollReply{Target: healthyTarget(), AutoUpdate: ptr(autoUpdateOf(q.host))}
 	return doc{"commands": out, "target": reply.Target, "autoUpdate": reply.AutoUpdate}, nil
+}
+
+// envCache: the environment hosts of every project, read again only when a project.json changes (a poll runs every few
+// seconds per host; projectContext reads every context file).
+var envCache struct {
+	sync.Mutex
+	key  string
+	envs map[string][]string
+}
+
+func projectEnvironments() map[string][]string {
+	key := ""
+	for _, p := range projectIDs() {
+		if fi, err := os.Stat(filepath.Join(configDir(), "projects", p, "project.json")); err == nil {
+			key += fmt.Sprint(p, fi.Size(), fi.ModTime().UnixNano(), ";")
+		}
+	}
+	envCache.Lock()
+	defer envCache.Unlock()
+	if envCache.envs != nil && envCache.key == key {
+		return envCache.envs
+	}
+	envs := map[string][]string{}
+	for _, p := range projectIDs() {
+		if st, err := projectSettingsByID(p); err == nil {
+			hs := []string{}
+			for _, x := range anys(st["environments"]) {
+				hs = append(hs, astr(mapOf(x)["hostId"]))
+			}
+			envs[p] = hs
+		}
+	}
+	envCache.key, envCache.envs = key, envs
+	return envs
 }
 
 func safeInt(v any) any {

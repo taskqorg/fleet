@@ -146,7 +146,7 @@ func writeSnapshot(ctx context.Context, a *App) error {
 	snapshotMu.Lock()
 	defer snapshotMu.Unlock()
 	var s doc
-	if err := readTx(ctx, a, func(q *Request) (err error) { s, err = connSnapshot(q); return }); err != nil {
+	if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) { s, err = connSnapshot(q); return }); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(gatewayDir(), 0o750); err != nil {
@@ -338,10 +338,7 @@ func init() {
 		return doc{"providers": providers, "connections": out}, nil
 	})
 	gatedOp("connections_create", false, func(q *Request) (any, error) {
-		b, err := bodyObject(q)
-		if err != nil {
-			return nil, err
-		}
+		b := body(q)
 		name, provider := astr(b["name"]), astr(b["provider"])
 		if !connName.MatchString(name) || providers[provider] == nil || !keysOnly(b, "name", "provider", "holder", "comment") {
 			return nil, fail(400, "Expected name and a known provider")
@@ -375,10 +372,7 @@ func init() {
 		if err := connOwner(q); err != nil {
 			return nil, err
 		}
-		b, err := bodyObject(q)
-		if err != nil {
-			return nil, err
-		}
+		b := body(q)
 		c, err := connByName(q, b["connection"])
 		if err != nil {
 			return nil, err
@@ -423,10 +417,7 @@ func init() {
 	})
 	// Rotation (§2): active <-> draining, any -> retired (the value file is deleted; the row stays); disabled -> active is the owner's.
 	gatedOp("connections_key_state", false, func(q *Request) (any, error) {
-		b, err := bodyObject(q)
-		if err != nil {
-			return nil, err
-		}
+		b := body(q)
 		id := astr(b["keyId"])
 		if id != "" && !strings.HasPrefix(id, "key:") {
 			id = "key:" + id
@@ -488,10 +479,7 @@ func init() {
 		return k, nil
 	})
 	gatedOp("connections_set_access", false, func(q *Request) (any, error) {
-		b, err := bodyObject(q)
-		if err != nil {
-			return nil, err
-		}
+		b := body(q)
 		c, err := connByName(q, b["connection"])
 		if err != nil {
 			return nil, err
@@ -522,7 +510,7 @@ func init() {
 			return nil, err
 		}
 		next := doc{"people": people, "projects": projects, "experiments": exps}
-		if canonicalJSON(next) != canonicalJSON(c["access"]) {
+		if canonical(next) != canonical(c["access"]) {
 			if err := connChange(q, c, "access", c["access"], next); err != nil {
 				return nil, err
 			}
@@ -535,10 +523,7 @@ func init() {
 		return c, nil
 	})
 	gatedOp("connections_set_intake", false, func(q *Request) (any, error) {
-		b, err := bodyObject(q)
-		if err != nil {
-			return nil, err
-		}
+		b := body(q)
 		c, err := connByName(q, b["connection"])
 		if err != nil {
 			return nil, err
@@ -567,10 +552,7 @@ func init() {
 		if err := connOwner(q); err != nil {
 			return nil, err
 		}
-		b, err := bodyObject(q)
-		if err != nil {
-			return nil, err
-		}
+		b := body(q)
 		name, ok := b["name"].(string)
 		if !ok || !connName.MatchString(name) {
 			return nil, fail(400, "Expected token name")
@@ -621,10 +603,7 @@ func init() {
 		if err := connOwner(q); err != nil {
 			return nil, err
 		}
-		b, err := bodyObject(q)
-		if err != nil {
-			return nil, err
-		}
+		b := body(q)
 		toks, err := all(q, "run-token", nil)
 		if err != nil {
 			return nil, err
@@ -648,7 +627,7 @@ func init() {
 
 	onStart(func(ctx context.Context, a *App) {
 		runningApp = a
-		if err := writeTx(ctx, a, "", func(q *Request) error {
+		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 			if err := revokeSteps(q); err != nil {
 				return err
 			}
@@ -661,7 +640,7 @@ func init() {
 		}
 		// Spool ingest and token revocation (FLEET_CONNECTION_TICK_MS: test seam, 0 turns it off); usage reconcile every 10 min.
 		every(ctx, envMs("FLEET_CONNECTION_TICK_MS", 3000), func() {
-			if err := writeTx(ctx, a, "", connTick); err != nil {
+			if err := runTx(ctx, a, nil, true, "", connTick); err != nil {
 				log.Printf("connections tick: %v", err)
 			}
 		})
@@ -1033,7 +1012,7 @@ func connReconcile(ctx context.Context, a *App) {
 	if res.StatusCode/100 != 2 || json.NewDecoder(res.Body).Decode(&report) != nil {
 		return
 	}
-	err = writeTx(ctx, a, "", func(q *Request) error {
+	err = runTx(ctx, a, nil, true, "", func(q *Request) error {
 		for _, r := range anys(report["keys"]) {
 			row := mapOf(r)
 			k, err := maybe(q, "key:"+astr(row["key"]), "connection-key")
