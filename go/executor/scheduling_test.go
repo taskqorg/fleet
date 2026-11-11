@@ -104,6 +104,10 @@ func TestTypedPollRetainsTerminalCommandIdentity(t *testing.T) {
 	e, _ := scriptExecutor(t)
 	original := decM(`{"id":"retained","executionId":"retained-x","sessionId":"retained-s","kind":"script","status":"pending","payload":{"command":"exit 99"},"sourceGuard":{"revision":9007199254740993,"ratio":1.0,"scale":1e3}}`)
 	body := enc(original)
+	reply, err := decodePoll(json.RawMessage(enc(M{"commands": []any{original}})))
+	if err != nil || len(reply.bodies) != 1 || enc(reply.bodies[0]) != body {
+		t.Fatalf("decoded command identity changed: %v", err)
+	}
 	if _, err := e.db.Exec("INSERT INTO commands(id,body,terminal) VALUES(?,?,1)", "retained", body); err != nil {
 		t.Fatal(err)
 	}
