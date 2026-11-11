@@ -231,6 +231,16 @@ test('A1 analytics stage 1: an api step on the typed-decision connection gives t
   assert.deepEqual(r.steps[0].calls.map((c: any) => [c.tool, c.basis, c.cost?.unit, c.cost?.amount]), [['system_one', 'measured', 'input_tokens', 286]]);
 });
 
+test('S4 binary example files: import stores each file from the seed directory by its sha256 and refuses a mismatch (requirement: docs/designs/fleet-asset-pipelines.md §4, Binary example files; risk: an example whose image or GLB differs from the seed, or a run staging bytes nobody checked)', async () => {
+  const example = JSON.parse(readFileSync('config/lab/examples/fleet-uc2-crate.json', 'utf8'));
+  example.version = 3000000 + Math.floor(Math.random() * 1e6);
+  const {examples: [imported]} = ok(await call('POST', '/api/lab/examples', {examples: [example], approved: true}));
+  assert.ok(imported.artifactId);
+  const tampered = {...example, version: example.version + 1, inputs: [{...example.inputs[0], sha256: '0'.repeat(64)}]};
+  const refused = await call('POST', '/api/lab/examples', {examples: [tampered], approved: true});
+  assert.equal(refused.status, 400); assert.match(refused.body.message ?? refused.body.error, /does not match its sha256/);
+});
+
 test('A2 analytics stage 2: the experiment record is required at launch, amended visibly, and an automatic or owner stop leaves the decision pending (requirement: docs/designs/fleet-lab.md, Experiment record; risk: an experiment runs without a stated goal and hypothesis, a changed hypothesis hides, or a stop reads as decided)', async () => {
   const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
   example.version = 1000 + Math.floor(Math.random() * 1e6);

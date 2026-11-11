@@ -64,6 +64,66 @@ func expID(v any, what string) (string, error) {
 	return s, nil
 }
 
+var (
+	labSha   = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	labMedia = regexp.MustCompile(`^[a-z]+/[A-Za-z0-9.+-]+$`)
+)
+
+// exampleFileBytes: a text file's text, or a binary file's stored bytes, found by its content hash among example files.
+func exampleFileBytes(q *Request, f doc) ([]byte, error) {
+	if f["sha256"] == nil {
+		return []byte(astr(f["text"])), nil
+	}
+	var id string
+	if err := q.tx.QueryRow(q.ctx(), "SELECT id FROM artifact WHERE role='example-file' AND scope='lab' AND state<>'deleted' AND content_hash=$1 ORDER BY created_at LIMIT 1", f["sha256"]).Scan(&id); err != nil {
+		return nil, fail(409, "Example file "+astr(f["path"])+" is not stored; import the example again")
+	}
+	return artifactBytes(withTx(q), q.app, id, 64<<20)
+}
+
+// storeExampleFiles saves each binary file of an example from the seed directory, after checking its hash.
+func storeExampleFiles(q *Request, projectID any, id string, ex orderedDoc) error {
+	for _, kv := range ex {
+		if kv[0] != "inputs" && kv[0] != "references" {
+			continue
+		}
+		for _, x := range kv[1].([]any) {
+			o := x.(orderedDoc)
+			if o[1][0] != "sha256" {
+				continue
+			}
+			path, sha, media := o[0][1].(string), o[1][1].(string), o[2][1].(string)
+			b, err := os.ReadFile(filepath.Join(labDir(), "examples", id, path))
+			if err != nil {
+				return fail(400, "Example file "+path+" is missing next to the seed")
+			}
+			if sha256hex(b) != sha {
+				return fail(400, "Example file "+path+" does not match its sha256")
+			}
+			var n int
+			if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM artifact WHERE role='example-file' AND scope='lab' AND state<>'deleted' AND content_hash=$1", sha).Scan(&n); err != nil || n > 0 {
+				if err != nil {
+					return err
+				}
+				continue
+			}
+			h, storeID, err := artifactWriteObject(q, projectID, "lab", b, media)
+			if err != nil {
+				return err
+			}
+			aid := newID()
+			if err := exec(q, `INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,role,state) VALUES($1,$2,'lab',$3,$4,$5,$6,'example-file','stored')`,
+				aid, projectID, h, len(b), media, "examples/"+id+"/"+path); err != nil {
+				return err
+			}
+			if err := exec(q, "INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES($1,$2,$3,'verified',now())", aid, storeID, projectID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func labFiles(v any, what string) ([]any, error) {
 	if v == nil {
 		return []any{}, nil
@@ -87,6 +147,11 @@ func labFiles(v any, what string) ([]any, error) {
 			return nil, fail(400, "Duplicate "+what+" path "+p)
 		}
 		seen[p] = true
+		if sha, media := astr(f["sha256"]), astr(f["media_type"]); f["text"] == nil && labSha.MatchString(sha) && labMedia.MatchString(media) {
+			// Binary form: the bytes sit next to the seed (config/lab/examples/<example id>/<path>) and import stores them.
+			out = append(out, orderedDoc{{"path", p}, {"sha256", sha}, {"media_type", media}})
+			continue
+		}
 		t, ok := f["text"].(string)
 		if !ok {
 			return nil, fail(400, "Invalid "+what+" text")
@@ -288,6 +353,9 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 		}
 		if old != nil && old["content_hash"] != hash {
 			return nil, fail(409, name+" exists with other content; raise version")
+		}
+		if err := storeExampleFiles(q, projectID, astr(meta["id"]), ex); err != nil {
+			return nil, err
 		}
 		planned = append(planned, plan{meta, bytes, name, hash, old})
 	}
@@ -1162,7 +1230,11 @@ func trialFiles(q *Request, trial, example doc) ([]labFile, error) {
 	}
 	for _, x := range anys(example["inputs"]) {
 		f := mapOf(x)
-		set(astr(f["path"]), []byte(astr(f["text"])))
+		b, err := exampleFileBytes(q, f)
+		if err != nil {
+			return nil, err
+		}
+		set(astr(f["path"]), b)
 	}
 	outs, err := pipelineOutputs(q, trial, -1)
 	if err != nil {
@@ -1391,7 +1463,11 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			// Script checks only (never a judge or an agent): the known-good result under references/, for comparison.
 			for _, x := range anys(full["references"]) {
 				f := mapOf(x)
-				files = append(files, labFile{"references/" + astr(f["path"]), []byte(astr(f["text"]))})
+				b, err := exampleFileBytes(q, f)
+				if err != nil {
+					return err
+				}
+				files = append(files, labFile{"references/" + astr(f["path"]), b})
 			}
 			todo[astr(t["id"])] = pending{anys(full["checks"]), files}
 		}

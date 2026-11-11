@@ -14,6 +14,7 @@
 // $FLEET_BROWSER_ORIGIN, the coordinator's own setting) as Origin when set (a coordinator with FLEET_BROWSER_PROXY_AUTH refuses a POST without its FLEET_BROWSER_ORIGIN);
 // --project ID sets the project.
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {delimiter,dirname,join,resolve} from 'node:path';
@@ -24,8 +25,11 @@ import {examplesFromExport} from './lab-export.ts';
 export function readExamples(files:string[]):any[]{return files.flatMap(f=>{const v=JSON.parse(f==='-'?readFileSync(0,'utf8'):readFileSync(f,'utf8'));return Array.isArray(v)?v:[v]})}
 
 // Runs every check in a directory holding the given files; returns the IDs of failed checks with their last output line.
-export function runChecks(e:Example,files:ExampleFile[]){const dir=mkdtempSync(join(tmpdir(),'lab-example-'));
- try{for(const f of files){mkdirSync(dirname(join(dir,f.path)),{recursive:true});writeFileSync(join(dir,f.path),f.text)}
+// A binary file's bytes come from the seed directory and must match its sha256.
+export const fileBytes=(e:Example,f:ExampleFile,seedDir:string):string|Buffer=>{if('text' in f)return f.text;
+ const b=readFileSync(join(seedDir,e.id,f.path.replace(/^references\//,'')));if(createHash('sha256').update(b).digest('hex')!==f.sha256)throw Error(`${f.path} does not match its sha256`);return b};
+export function runChecks(e:Example,files:ExampleFile[],seedDir=join(dirname(fileURLToPath(import.meta.url)),'../config/lab/examples')){const dir=mkdtempSync(join(tmpdir(),'lab-example-'));
+ try{for(const f of files){mkdirSync(dirname(join(dir,f.path)),{recursive:true});writeFileSync(join(dir,f.path),fileBytes(e,f,seedDir))}
   const failed:{id:string,output:string}[]=[];
   for(const c of e.checks){try{execFileSync('sh',['-c',c.run],{cwd:dir,env:{...process.env,FLEET_TOKEN:undefined,FLEET_OUTPUT_DIR:dir,PATH:[process.env.PATH,dirname(process.execPath)].filter(Boolean).join(delimiter)},stdio:['ignore','pipe','pipe'],encoding:'utf8'})}
    catch(x:any){failed.push({id:c.id,output:String(x.stderr||x.stdout||x.message).trim().split('\n').filter(Boolean).pop()??''})}}

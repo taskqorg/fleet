@@ -6,14 +6,16 @@ import {readdirSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
 const fail=(code:number,message:string):never=>{throw Object.assign(Error(message),{statusCode:code})};
 
-export type ExampleFile={path:string,text:string};
+// A text file, or a binary file stored next to the seed at config/lab/examples/<example id>/<path> (fleet-asset-pipelines §4).
+export type ExampleFile={path:string,text:string}|{path:string,sha256:string,media_type:string};
 export type Example={id:string,use_case_id:string,version:number,origin:string,fixture:{repo:string,commit:string}|null,prompt:string,inputs:ExampleFile[],references:ExampleFile[],checks:{id:string,run:string}[],split:'tune'|'held_out'};
 
 const str=(v:any,what:string,max=100000)=>typeof v==='string'&&v.length>0&&v.length<=max?v:fail(400,`Invalid ${what}`);
 const ident=(v:any,what:string)=>typeof v==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(v)?v:fail(400,`Invalid ${what}`);
 const relPath=(v:any)=>typeof v==='string'&&v.length<=300&&!v.startsWith('/')&&!v.split('/').some(p=>p===''||p==='.'||p==='..')?v:fail(400,'Invalid file path');
 const files=(v:any,what:string):ExampleFile[]=>{if(v===undefined)return [];if(!Array.isArray(v))fail(400,`Invalid ${what}`);const seen=new Set<string>();
- return v.map((f:any)=>{const path=relPath(f?.path);if(seen.has(path))fail(400,`Duplicate ${what} path ${path}`);seen.add(path);if(typeof f.text!=='string')fail(400,`Invalid ${what} text`);return {path,text:f.text}})};
+ return v.map((f:any)=>{const path=relPath(f?.path);if(seen.has(path))fail(400,`Duplicate ${what} path ${path}`);seen.add(path);if(f.text===undefined&&/^[0-9a-f]{64}$/.test(f.sha256)&&/^[a-z]+\/[A-Za-z0-9.+-]+$/.test(f.media_type))return {path,sha256:f.sha256,media_type:f.media_type};
+ if(typeof f.text!=='string')fail(400,`Invalid ${what} text`);return {path,text:f.text}})};
 
 // The registry's use-case IDs: an example must point at an indexed use case.
 export function useCaseIds(labDirectory:string){const dir=join(labDirectory,'use-cases'),ids=new Set<string>();

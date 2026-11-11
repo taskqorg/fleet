@@ -1,0 +1,16 @@
+{
+ "triangles": 2815,
+ "components": 77,
+ "dimensions_m": [
+  1.0,
+  1.0,
+  0.9282
+ ],
+ "uv": true,
+ "pbr": {
+  "base_color": true,
+  "normal": true,
+  "roughness": true,
+  "metallic": true
+ }
+}

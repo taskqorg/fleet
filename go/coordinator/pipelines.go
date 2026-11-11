@@ -704,7 +704,15 @@ func inputsFor(q *Request, run doc, i int) ([]any, error) {
 			list := []any{}
 			for _, x := range inputs {
 				f := mapOf(x)
-				id, err := saveArtifact(q, run, astr(run["id"]), "example/"+astr(f["path"]), []byte(fmt.Sprint(f["text"])), "text/plain")
+				b, err := exampleFileBytes(q, f)
+				if err != nil {
+					return nil, err
+				}
+				media := "text/plain"
+				if f["media_type"] != nil {
+					media = astr(f["media_type"])
+				}
+				id, err := saveArtifact(q, run, astr(run["id"]), "example/"+astr(f["path"]), b, media)
 				if err != nil {
 					return nil, err
 				}
