@@ -24,8 +24,8 @@
     "lab_experiment_promote": {"read": false, "errors": [400, 403, 404, 409]}
   },
   "$defs": {
-    "LabCellActionReply": {"type": "object", "additionalProperties": true, "$comment": "An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability."},
-    "LabCellActionRequest": {"type": "object", "required": ["experimentId", "cell", "action"], "properties": {"experimentId": {"type": "string"}, "cell": {"type": "string"}, "action": {"type": "string"}}, "additionalProperties": true, "$comment": "action cancel or retry."},
+    "LabCellActionReply": {"type": "object", "additionalProperties": true, "$comment": "An experiment view. Successful retry_suffix adds recovery:{sourceRunId:string,runId:string}, stable on replay. Recovered trials add recovery:{sourceRunId:string,reusedStepIds:string[]}; ordinary trials/actions omit it. See fleet-lab.md Local-suffix retry for identity/audit and provenance."},
+    "LabCellActionRequest": {"type": "object", "required": ["experimentId", "cell", "action"], "properties": {"experimentId": {"type": "string"}, "cell": {"type": "string"}, "action": {"type": "string"}, "sourceRunId": {"type": "string"}, "requestId": {"type": "string"}}, "additionalProperties": true, "$comment": "action cancel, retry or retry_suffix. retry_suffix requires non-whitespace experimentId/cell/sourceRunId/requestId; accepted strings retain exact bytes. Other actions and unknown-field policy unchanged."},
     "LabCompareMethodsReply": {"type": "object", "required": ["experimentId"], "properties": {"experimentId": {"type": "string"}}},
     "LabCompareMethodsRequest": {"type": "object", "required": ["projectId", "capability", "methods"], "properties": {"projectId": {"type": "string"}, "capability": {"type": "string"}, "methods": {"type": "array", "items": {"type": "string"}}, "useCase": {"type": "string"}, "baseline": {"type": "string"}}},
     "LabExampleGetReply": {"type": "object", "required": ["artifactId", "example", "state"], "properties": {"artifactId": {"type": "string"}, "example": {}, "state": {}}},

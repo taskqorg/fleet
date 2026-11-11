@@ -6,14 +6,16 @@ import "encoding/json"
 
 var _ json.RawMessage
 
-// LabCellActionReply: An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability.
+// LabCellActionReply: An experiment view. Successful retry_suffix adds recovery:{sourceRunId:string,runId:string}, stable on replay. Recovered trials add recovery:{sourceRunId:string,reusedStepIds:string[]}; ordinary trials/actions omit it. See fleet-lab.md Local-suffix retry for identity/audit and provenance.
 type LabCellActionReply = map[string]json.RawMessage
 
-// LabCellActionRequest: action cancel or retry.
+// LabCellActionRequest: action cancel, retry or retry_suffix. retry_suffix requires non-whitespace experimentId/cell/sourceRunId/requestId; accepted strings retain exact bytes. Other actions and unknown-field policy unchanged.
 type LabCellActionRequest struct {
-	Action       string `json:"action"`
-	Cell         string `json:"cell"`
-	ExperimentId string `json:"experimentId"`
+	Action       string  `json:"action"`
+	Cell         string  `json:"cell"`
+	ExperimentId string  `json:"experimentId"`
+	RequestId    *string `json:"requestId,omitempty"`
+	SourceRunId  *string `json:"sourceRunId,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

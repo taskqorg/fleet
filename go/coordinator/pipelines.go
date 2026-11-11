@@ -534,27 +534,34 @@ func pipelineCancel(ctx context.Context, a *App, runID string) (string, error) {
 	own := ""
 	var done doc
 	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-		run, err := getRun(q, runID)
-		if err != nil || run == nil || run["state"] != "running" {
-			return err
-		}
-		for _, x := range anys(run["steps"]) {
-			s := mapOf(x)
-			if s["state"] == "running" || s["state"] == "preparing" {
-				if s["state"] == "running" {
-					own = astr(s["executionId"])
-				}
-				s["state"], s["finishedAt"] = "cancelled", nowMs()
-				break
-			}
-		}
-		done = run
-		return finishRun(q, run, "cancelled", "cancelled")
+		var err error
+		own, done, err = pipelineCancelIn(q, runID)
+		return err
 	})
 	if err == nil && done != nil {
 		notifyFinished(a, done)
 	}
 	return own, err
+}
+
+// pipelineCancelIn is called under runLock and a write transaction. Caller handles post-commit notification/stop.
+func pipelineCancelIn(q *Request, runID string) (string, doc, error) {
+	run, err := getRun(q, runID)
+	if err != nil || run == nil || run["state"] != "running" {
+		return "", nil, err
+	}
+	own := ""
+	for _, x := range anys(run["steps"]) {
+		step := mapOf(x)
+		if step["state"] == "running" || step["state"] == "preparing" {
+			if step["state"] == "running" {
+				own = astr(step["executionId"])
+			}
+			step["state"], step["finishedAt"] = "cancelled", nowMs()
+			break
+		}
+	}
+	return own, run, finishRun(q, run, "cancelled", "cancelled")
 }
 
 func notifyFinished(a *App, run doc) {
@@ -679,6 +686,47 @@ func artifactsOf(q *Request, executionID string) ([]doc, error) {
 	return queryRows(q, "SELECT id,name AS path,content_hash AS sha256 FROM artifact WHERE execution_id=$1 AND state='stored' ORDER BY seq", executionID)
 }
 
+// pipelineOutputIdentity rejects even a readable artifact owned by another step/project.
+func pipelineOutputIdentity(x *Artifact, project any, owner string) bool {
+	return x.State == "stored" && same(x.ProjectID, project) && x.ExecutionID != nil && *x.ExecutionID == owner && x.Name == "output.json" && labSha.MatchString(x.ContentHash)
+}
+
+// pipelineOutputOwner follows immediate reuse lineage to the original step; readable foreign artifacts are not outputs.
+func pipelineOutputOwner(q *Request, run doc, index int, aid string) error {
+	seen := map[string]bool{}
+	current := run
+	for {
+		id := astr(current["id"])
+		if id == "" || seen[id] || index >= len(anys(current["steps"])) {
+			return fail(409, "Invalid reused output lineage")
+		}
+		seen[id] = true
+		step := mapOf(anys(current["steps"])[index])
+		if step["id"] != mapOf(anys(run["steps"])[index])["id"] || step["outputArtifactId"] != aid {
+			return fail(409, "Changed reused output identity")
+		}
+		previous := astr(step["reusedFrom"])
+		if previous == "" {
+			x, err := artifactRow(withTx(q), q.app, aid)
+			if err != nil {
+				return err
+			}
+			if !pipelineOutputIdentity(x, run["projectId"], stepRow(current, index)) {
+				return fail(409, "Invalid output artifact ownership")
+			}
+			return nil
+		}
+		var err error
+		current, err = getRun(q, previous)
+		if err != nil {
+			return err
+		}
+		if current == nil || current["projectId"] != run["projectId"] {
+			return fail(409, "Missing reused output source")
+		}
+	}
+}
+
 // pipelineOutputs: files of the first n steps under <step id>/ (n<0: every step). A step's own files win over the
 // coordinator's output.json for it; dotfiles are left out.
 func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
@@ -694,6 +742,13 @@ func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
 			ids = append(ids, e)
 		}
 		order, files := []string{}, map[string]string{}
+		if aid := astr(s["outputArtifactId"]); aid != "" {
+			if err := pipelineOutputOwner(q, run, j, aid); err != nil {
+				return nil, err
+			}
+			k := astr(s["id"]) + "/output.json"
+			order, files[k] = append(order, k), aid
+		}
 		for _, id := range ids {
 			as, err := artifactsOf(q, id)
 			if err != nil {
@@ -1722,30 +1777,10 @@ func pipelineRerun(q *Request, r *contract.PipelineRerunRequest) (doc, error) {
 	}
 	reuse := []any{}
 	if r.Mode == contract.RerunModeFailed {
-		oldSteps, newSteps := anys(old["steps"]), anys(def["steps"])
-		oldDef := anys(mapOf(old["definition"])["steps"])
-		for i := 0; i < len(oldSteps) && i < len(newSteps) && i < len(oldDef); i++ {
-			e := mapOf(oldSteps[i])
-			if e["state"] != "succeeded" || canonical(oldDef[i]) != canonical(newSteps[i]) {
-				break
-			}
-			if astr(mapOf(newSteps[i])["kind"]) == "agent" {
-				same, err := sameAgentStep(q, astr(e["executionId"]), mapOf(newSteps[i]), mapOf(old["overrides"]))
-				if err != nil {
-					return nil, err
-				}
-				if !same {
-					break
-				}
-			}
-			// The step's work came from R: its output and execution stay, its spend is R's (not counted again here).
-			c := doc{}
-			for k, v := range e {
-				if k != "calls" && k != "usage" {
-					c[k] = v
-				}
-			}
-			reuse = append(reuse, c)
+		var err error
+		reuse, err = succeededPrefix(q, old, def)
+		if err != nil {
+			return nil, err
 		}
 	}
 	o := doc{"file": pid + ".json", "projectId": old["projectId"], "requestId": rid, "example": old["example"], "overrides": old["overrides"], "rerunOf": r.RunId, "reuse": reuse,
@@ -1754,6 +1789,37 @@ func pipelineRerun(q *Request, r *contract.PipelineRerunRequest) (doc, error) {
 		o["draftDefinition"], o["draftBase"] = def, base
 	}
 	return pipelineStart(q, o)
+}
+
+// succeededPrefix preserves immutable outputs/execution provenance, without charging copied work again.
+func succeededPrefix(q *Request, old, def doc) ([]any, error) {
+	reuse := []any{}
+	oldSteps, newSteps := anys(old["steps"]), anys(def["steps"])
+	oldDef := anys(mapOf(old["definition"])["steps"])
+	for i := 0; i < len(oldSteps) && i < len(newSteps) && i < len(oldDef); i++ {
+		e := mapOf(oldSteps[i])
+		if e["state"] != "succeeded" || canonical(oldDef[i]) != canonical(newSteps[i]) {
+			break
+		}
+		if astr(mapOf(newSteps[i])["kind"]) == "agent" {
+			same, err := sameAgentStep(q, astr(e["executionId"]), mapOf(newSteps[i]), mapOf(old["overrides"]))
+			if err != nil {
+				return nil, err
+			}
+			if !same {
+				break
+			}
+		}
+		// The step's work came from R: its output and execution stay, its spend is R's (not counted again here).
+		c := doc{}
+		for k, v := range e {
+			if k != "calls" && k != "usage" {
+				c[k] = v
+			}
+		}
+		reuse = append(reuse, c)
+	}
+	return reuse, nil
 }
 
 // sameAgentStep: the profile an agent step would run now has the content the earlier step's execution pinned.

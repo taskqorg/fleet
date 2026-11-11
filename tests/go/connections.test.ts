@@ -37,6 +37,7 @@ async function until<T>(fn: () => Promise<T | undefined> | T | undefined, what: 
 // The fake gateway: every call answers 502 provider-timeout (the charge is unknown), and records the bearer it saw.
 const seen: string[] = [];
 let gateway: Server;
+let trialHostSecret = '';
 before(async () => {
   gateway = createServer((req, res) => {
     seen.push(String(req.headers.authorization));
@@ -58,7 +59,21 @@ after(() => gateway.close());
 
 const name = (p: string) => p + '-' + randomUUID().slice(0, 8);
 // One fake S3 for the file: artifacts written in one test are read in later ones.
-const s3 = fakeS3();
+let artifactReadBarrier: {hash: string, reached: () => void, release: Promise<void>} | undefined;
+const s3 = (async () => {
+  const backend = await fakeS3();
+  const proxy = createServer(async (req,res) => {
+    const chunks: Buffer[]=[]; for await (const c of req) chunks.push(c as Buffer);
+    const body=Buffer.concat(chunks);
+    const response=await fetch(`http://127.0.0.1:${backend.port}${req.url}`, {method:req.method,headers:req.headers as Record<string,string>,body:['GET','HEAD'].includes(req.method!)?undefined:body});
+    const bytes=Buffer.from(await response.arrayBuffer());
+    const barrier=artifactReadBarrier;
+    if (barrier && req.method==='GET' && req.url!.includes(barrier.hash)) { artifactReadBarrier=undefined; barrier.reached(); await barrier.release; }
+    res.writeHead(response.status,Object.fromEntries(response.headers));res.end(bytes);
+  });
+  const port=await new Promise<number>(resolve=>proxy.listen(0,'127.0.0.1',()=>resolve((proxy.address() as any).port)));
+  return {...backend,port,close:()=>{proxy.close();backend.close();}};
+})();
 after(async () => (await s3).close());
 
 test('C1 key value stays in the secret file (requirement: docs/designs/fleet-connections.md; risk: a key value in a row, a reply or the gateway snapshot)', async () => {
@@ -233,6 +248,7 @@ test('A1 analytics stage 1: an api step on the typed-decision connection gives t
   // The step's output.json is an artifact: a store on the default location host.
   const {port} = await s3;
   const {secret} = ok(await op('hosts_register', {id: 'trial-host'}));
+  trialHostSecret = secret;
   const stores = await fetch(BASE + '/api/hosts/stores', {method: 'POST', headers: {authorization: 'Bearer ' + secret, 'content-type': 'application/json'},
     body: JSON.stringify({store: {id: 'trial-store', bucket: 'fleet', endpoint: `http://127.0.0.1:${port}`, accessKeyId: 'k', secretAccessKey: 's'}})});
   assert.equal(stores.status, 200);
@@ -327,4 +343,211 @@ test('A4 analytics stage 4: a typed evaluator scores each trial through its vari
     'strict/tune': {en: [1, 0, null], all: [1, 0, null]}, 'strict/held_out': {el: [1, 0, null], ru: [1, 0, null], all: [2, 0, null]}});
   const [c] = got.comparison;
   assert.deepEqual([c.variant, c.baseline, c.split, c.result.n, c.result.mean], ['strict', 'wide', 'held_out', 2, -1]);
+});
+
+// One domain fixture extends the counted gateway/S3 above. It speaks the real host protocol; no DB repairs or provider calls.
+async function suffixFixture(projectId = 'fleet-hello-world') {
+  const secret = trialHostSecret;
+  assert.ok(secret, 'shared store host registered');
+  const host = async (path: string, body: object, auth = secret) => {
+    const r = await fetch(BASE + path, {method: 'POST', headers: {authorization: 'Bearer ' + auth, 'content-type': 'application/json'}, body: JSON.stringify(body)});
+    return {status: r.status, body: await r.json()};
+  };
+  const pipelineId = name('suffix');
+  const g = ok(await op('definition_get', {kind: 'pipeline', id: 'typed-decision'}));
+  const content = structuredClone(g.content); content.pipeline.id = pipelineId;
+  content.pipeline.steps.push({id: 'combine', kind: 'script', command: 'cat "$FLEET_INPUT_DIR/decide/output.json" > "$FLEET_OUTPUT_DIR/output.json"'});
+  ok(await op('definition_create', {kind: 'pipeline', id: pipelineId, content, message: 'local suffix fixture'}));
+  const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
+  example.version = 4000000 + Math.floor(Math.random() * 1e8);
+  example.inputs = [{path: 'seed.txt', text: 'frozen local input\n'}];
+  const {examples: [pin]} = ok(await op('lab_examples_add', {projectId, examples: [example], approved: true}));
+  const exp = ok(await op('lab_experiment_create', {kind: 'single', projectId, pipelineId, examples: [pin.artifactId], variants: [{label: 'v'}],
+    evaluators: [{kind: 'script', ref: 'example.checks', form: 'pass_fail'}], goal: 'Recover only local suffix', hypothesis: 'The confirmed result is reused without another call'}));
+  ok(await op('lab_experiment_action', {experimentId: exp.id, action: 'launch'}));
+  const view = () => op('lab_experiment_get', {experimentId: exp.id}).then(ok);
+  const trial = await until(async () => { const v = await view(); return v.trials[0]?.state === 'running' ? v.trials[0] : undefined; }, 'source trial');
+  const run = await until(async () => { const r = ok(await call('GET', `/api/pipeline-runs/${trial.id}`)); return r.steps[1]?.executionId ? r : undefined; }, 'suffix command');
+  const poll = () => host('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}).then(ok);
+  const command = (await poll()).commands.find((c: any) => c.executionId === run.steps[1].executionId);
+  assert.ok(command);
+  const receipt = (cmd: any, status: string, extra = {}) => host('/api/hosts/receipts', {commandId: cmd.id, executionId: cmd.executionId, status, ...extra}).then(ok);
+  await receipt(command, 'started');
+  const proof = {id: command.id + '-1', seq: 1, type: 'process.reconciled', timestamp: Date.now(), data: {ownedProcesses: 1, resolved: true, launchWindowUnresolved: false, survived: false}};
+  const prove = () => host('/api/hosts/events', {executionId: command.executionId, events: [proof]}).then(ok);
+  const request = {experimentId: exp.id, cell: `${trial.cell.example}|${trial.cell.variant}|${trial.cell.repeat}`, action: 'retry_suffix', sourceRunId: trial.id, requestId: randomUUID()};
+  // The view's cell key is authoritative; it is not the trial execution ID.
+  const upload = async (cmd: any, text: string, outputName = 'output.json') => {
+    const r = ok(await host('/api/hosts/artifacts/reserve', {executionId: cmd.executionId, name: outputName, mediaType: 'application/json', size: Buffer.byteLength(text), sha256: sha(text)}));
+    if (r.state === 'stored') return r.artifactId;
+    const {parts} = ok(await host('/api/hosts/artifacts/parts', {artifactId: r.artifactId, partNumbers: [1]}));
+    const put = await fetch(parts[0].url, {method: 'PUT', body: text}); assert.equal(put.status, 200);
+    const c = ok(await host('/api/hosts/artifacts/commit', {artifactId: r.artifactId, parts: [{partNumber: 1, etag: put.headers.get('etag')}]}));
+    const bytes = Buffer.from(await (await fetch(c.verify.url)).arrayBuffer());
+    ok(await host('/api/hosts/artifacts/verified', {artifactId: r.artifactId, storeId: c.verify.storeId, sha256: createHash('sha256').update(bytes).digest('hex')}));
+    return r.artifactId;
+  };
+  const complete = async (runId: string, scoring = true) => {
+    const r = await until(async()=>{const v=ok(await call('GET', `/api/pipeline-runs/${runId}`));return v.steps[1]?.executionId?v:undefined;},'script launch');
+    const cmd = await until(async()=> (await poll()).commands.find((c: any) => c.executionId === r.steps[1].executionId),'script intake');
+    await receipt(cmd, 'started');
+    const {mkdtempSync} = await import('node:fs'); const {tmpdir} = await import('node:os'); const {execFileSync} = await import('node:child_process');
+    const dir = mkdtempSync(join(tmpdir(), 'fleet-suffix-'));
+    try {
+      mkdirSync(join(dir, 'in/decide'), {recursive: true}); mkdirSync(join(dir, 'out'));
+      for (const input of cmd.payload.inputs) {
+        const response = await fetch(BASE + '/api/results/' + input.artifactId, {headers: {authorization: 'Bearer ' + SECRET, 'x-fleet-person': OWNER}});
+        assert.equal(response.status, 200); const path = join(dir, 'in', input.path); mkdirSync(join(path, '..'), {recursive: true}); writeFileSync(path, Buffer.from(await response.arrayBuffer()));
+      }
+      execFileSync('/bin/sh', ['-c', cmd.payload.command], {env: {...process.env, FLEET_INPUT_DIR: join(dir, 'in'), FLEET_OUTPUT_DIR: join(dir, 'out')}});
+      const output = readFileSync(join(dir, 'out/output.json'), 'utf8'); assert.equal(JSON.parse(output).p, 0.93);
+      await upload(cmd, output); await receipt(cmd, 'completed', {artifacts: ['output.json']});
+    } finally { rmSync(dir, {recursive: true, force: true}); }
+    if (!scoring) return until(async () => { const r = ok(await call('GET', `/api/pipeline-runs/${runId}`)); return r.state === 'succeeded' ? r : undefined; }, 'ordinary rerun completes');
+    return until(async () => { const v = await view(); return v.scores.some((s: any) => s.trialIds.includes(runId)) ? v : undefined; }, 'normal recovered score');
+  };
+  return {exp,trial,run,command,request,host,view,prove,receipt,poll,complete,upload,content,pipelineId};
+}
+
+test('L2 local-suffix retry: real stored bytes, normal scoring and atomic replay without another provider call (requirement: fleet-lab local-suffix retry; risk: double charge, lost cell lineage or replay dispatch)', async () => {
+  const people = ok(await op('people_list')).people;
+  ok(await op('people_set', {people: [...people, {email: 'architect@trial.test', name: 'Scoped architect', roles: ['operator', 'architect'], grants: [{kind: 'project', id: 'fleet-hello-world'}]}]}));
+  const f = await suffixFixture();
+  assert.equal((await op('lab_cell_action', f.request)).status, 409, 'no command-bound proof');
+  await f.prove();
+  assert.equal((await op('lab_cell_action', f.request)).status, 409, 'no closing unknown receipt');
+  await f.receipt(f.command, 'unknown');
+  const before = seen.length;
+  const replies = await Promise.all([op('lab_cell_action', f.request, 'architect@trial.test'), op('lab_cell_action', f.request)]);
+  const [a,b] = replies.map(ok); assert.deepEqual(a.recovery,b.recovery); assert.equal(a.recovery.sourceRunId,f.trial.id);
+  const rid = a.recovery.runId; assert.notEqual(rid,f.trial.id);
+  const recovered = a.trials.find((t: any) => t.id === rid);
+  assert.deepEqual(recovered.recovery,{sourceRunId:f.trial.id,reusedStepIds:['decide']});
+  assert.equal(recovered.cell.attempt,f.trial.cell.attempt+1);
+  const r = ok(await call('GET',`/api/pipeline-runs/${rid}`));
+  assert.equal(r.steps[0].outputArtifactId,f.run.steps[0].outputArtifactId); assert.equal((r.steps[0].calls ?? []).length,0);
+  const done = await f.complete(rid); assert.ok(done.trials.find((t: any) => t.id===rid).comparable);
+  assert.equal(done.spend.calls.value,1); assert.equal(seen.length,before);
+  const source = ok(await call('GET',`/api/pipeline-runs/${f.trial.id}`));
+  assert.deepEqual(source.steps[0].calls,f.run.steps[0].calls);
+  assert.deepEqual(source.steps[0].usage,f.run.steps[0].usage);
+  assert.deepEqual(done.trials.find((t:any)=>t.id===f.trial.id).cost,a.trials.find((t:any)=>t.id===f.trial.id).cost);
+  assert.deepEqual(ok(await op('lab_cell_action',f.request)).recovery,a.recovery,'stable replay after scoring');
+  const bad = await op('lab_cell_action',{...f.request,sourceRunId:rid}); assert.equal(bad.status,409);
+  const outsider = await op('lab_cell_action',f.request,OUTSIDER); assert.equal(outsider.status,403); assert.ok(!JSON.stringify(outsider.body).includes(rid));
+  const newer = await op('lab_cell_action',{experimentId:f.exp.id,cell:f.request.cell,action:'retry'}); ok(newer);
+  assert.deepEqual(ok(await op('lab_cell_action',f.request)).recovery,a.recovery,'stable replay after latest changed');
+});
+
+test('L3 guarded races and privacy (requirement: fleet-lab local-suffix retry; risk: competing requests allocate two attempts or a foreign request leaks cached lineage)', async () => {
+  const f = await suffixFixture(); await f.prove(); await f.receipt(f.command,'unknown');
+  const before = seen.length;
+  const rs = await Promise.all([op('lab_cell_action',f.request),op('lab_cell_action',{...f.request,requestId:randomUUID()})]);
+  assert.deepEqual(rs.map(r=>r.status).sort(),[200,409]);
+  const v = await f.view(); assert.equal(v.trials.length,2); assert.equal(seen.length,before);
+  const winner = ok(rs.find(r=>r.status===200)!); const rid=winner.recovery.runId;
+  const foreign = await suffixFixture('hello-world'); await foreign.prove(); await foreign.receipt(foreign.command,'unknown');
+  const privateReply = await op('lab_cell_action',{...foreign.request,requestId:f.request.requestId},'architect@trial.test');
+  assert.equal(privateReply.status,404); assert.ok(!JSON.stringify(privateReply.body).includes(foreign.trial.id));
+  const different = await op('lab_cell_action',{...f.request,sourceRunId:foreign.trial.id});
+  assert.equal(different.status,409); assert.ok(!JSON.stringify(different.body).includes(rid));
+  // A source without runtime proof never passes because an arbitrary caller supplies proof/output-looking fields.
+  assert.equal((await op('lab_cell_action',{...foreign.request,sourceRunId:'missing',proof:'approved',outputArtifactId:f.run.steps[0].outputArtifactId})).status,409);
+  assert.equal((await f.view()).trials.length,2);
+});
+
+test('L4 content checks fail before mutation (requirement: fleet-lab frozen inputs and actual bytes; risk: metadata-only availability or definition drift cancels the source)', async () => {
+  const f=await suffixFixture(); await f.prove(); await f.receipt(f.command,'unknown'); const before=seen.length;
+  const store=await s3;
+  const original=JSON.stringify(f.run.steps[0].output);
+  const entry=[...store.objects.entries()].find(([key,bytes])=>key.includes('/fleet-hello-world/lab/') && bytes.toString()===original); assert.ok(entry);
+  const [key,bytes]=entry;
+  try {
+    store.objects.set(key,Buffer.alloc(bytes.length,120));
+    assert.equal((await op('lab_cell_action',f.request)).status,409,'corrupt actual bytes with unchanged metadata');
+    store.objects.delete(key);
+    assert.equal((await op('lab_cell_action',f.request)).status,409,'unavailable actual bytes with unchanged metadata');
+  } finally {store.objects.set(key,bytes);}
+  assert.equal((await f.view()).trials.length,1); assert.equal(seen.length,before);
+  const g=ok(await op('definition_get',{kind:'pipeline',id:f.pipelineId})); const changed=structuredClone(g.content); changed.pipeline.steps[1].command+='; true';
+  ok(await op('definition_save',{kind:'pipeline',id:f.pipelineId,baseRevision:g.head,content:changed,message:'drift fixture'}));
+  assert.equal((await op('lab_cell_action',f.request)).status,409);
+  assert.equal((await f.view()).trials.length,1); assert.equal(seen.length,before);
+  const {secret:wrongSecret}=ok(await op('hosts_register',{id:name('other-host')}));
+  assert.equal((await f.host('/api/hosts/events',{executionId:f.command.executionId,events:[{id:'wrong',seq:7,type:'process.reconciled',timestamp:Date.now(),data:{}}]},wrongSecret)).status,403);
+});
+
+test('L5 ordinary failed rerun preserves immutable API output through transitive reuse (requirement: fleet-lab shared pipelineOutputs; risk: reused API bytes disappear or another provider call is made)', async () => {
+  const f=await suffixFixture(); await f.prove(); await f.receipt(f.command,'unknown');
+  ok(await op('lab_cell_action',{experimentId:f.exp.id,cell:f.request.cell,action:'cancel'}));
+  const before=seen.length;
+  const firstReply=ok(await op('pipeline_rerun',{runId:f.trial.id,mode:'failed',requestId:randomUUID(),outputArtifactId:'caller-cannot-override'}));
+  const first=ok(await call('GET',`/api/pipeline-runs/${firstReply.runId}`));
+  assert.equal(first.steps[0].outputArtifactId,f.run.steps[0].outputArtifactId);
+  const started=await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${first.id}`)); return r.steps[1]?.executionId?r:undefined;},'ordinary rerun starts');
+  const cmd=(await f.poll()).commands.find((c:any)=>c.executionId===started.steps[1].executionId); assert.ok(cmd);
+  await f.receipt(cmd,'started'); await f.receipt(cmd,'failed',{error:'local fixture exit'});
+  await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${first.id}`));return r.state==='failed'?r:undefined;},'local suffix fails');
+  const secondReply=ok(await op('pipeline_rerun',{runId:first.id,mode:'failed',requestId:randomUUID()}));
+  const second=ok(await call('GET',`/api/pipeline-runs/${secondReply.runId}`));
+  assert.equal(second.steps[0].outputArtifactId,f.run.steps[0].outputArtifactId); assert.equal(second.steps[0].reusedFrom,first.id);
+  const finished = await f.complete(second.id,false); assert.equal(seen.length,before);
+  // Two child paths normalize to the same name; last stored child output wins over the coordinator fallback.
+  const late = await f.upload({executionId:finished.steps[1].executionId},JSON.stringify({p:0.42,marker:'last child path wins'}),'output/output.json');
+  const head = ok(await op('definition_get',{kind:'pipeline',id:f.pipelineId})); const expanded=structuredClone(head.content);
+  expanded.pipeline.steps.push({id:'tail',kind:'script',command:'cat "$FLEET_INPUT_DIR/combine/output.json" > "$FLEET_OUTPUT_DIR/output.json"'});
+  ok(await op('definition_save',{kind:'pipeline',id:f.pipelineId,baseRevision:head.head,content:expanded,message:'append local namespace fixture'}));
+  const tail = ok(await op('pipeline_rerun',{runId:second.id,mode:'failed',requestId:randomUUID()}));
+  const tailRun = await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${tail.runId}`));return r.steps[2]?.executionId?r:undefined;},'tail command');
+  const intake = (await f.poll()).commands.find((c:any)=>c.executionId===tailRun.steps[2].executionId);assert.ok(intake);
+  const combined = intake.payload.inputs.filter((x:any)=>x.path==='combine/output.json');assert.equal(combined.length,1);assert.equal(combined[0].artifactId,late);
+  assert.equal(intake.payload.inputs.find((x:any)=>x.path==='decide/output.json').artifactId,f.run.steps[0].outputArtifactId);
+  // The command was accepted by this poll; finish that exact command without requesting a second delivery.
+  await f.receipt(intake,'started');
+  const data = await fetch(BASE+'/api/results/'+late,{headers:{authorization:'Bearer '+SECRET,'x-fleet-person':OWNER}});assert.equal(data.status,200);
+  const actual = await data.text();assert.equal(JSON.parse(actual).p,0.42);
+  await f.upload(intake,actual);await f.receipt(intake,'completed',{artifacts:['output.json']});
+  await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${tail.runId}`));return r.state==='succeeded'?r:undefined;},'tail completes');
+  assert.equal(seen.length,before);
+});
+
+test('L7 legacy retry race (requirement: fleet-lab atomic identity and latest recheck; risk: full retry races a suffix into two attempts)', async () => {
+  const f=await suffixFixture();await f.prove();await f.receipt(f.command,'unknown');
+  ok(await op('lab_cell_action',{experimentId:f.exp.id,cell:f.request.cell,action:'cancel'}));
+  const rs=await Promise.all([op('lab_cell_action',{...f.request,requestId:randomUUID()}),op('lab_cell_action',{experimentId:f.exp.id,cell:f.request.cell,action:'retry'})]);
+  assert.deepEqual(rs.map(r=>r.status).sort(),[200,409]);
+  assert.equal((await f.view()).trials.length,2);
+});
+
+test('L8 transitive Lab suffix retains immediate source and original artifact (requirement: fleet-lab exact provenance; risk: an intermediate attempt masquerades as the provider origin)', async () => {
+  const f=await suffixFixture();await f.prove();await f.receipt(f.command,'unknown');
+  const before=seen.length;
+  const first=ok(await op('lab_cell_action',f.request)).recovery.runId;
+  const run=await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${first}`));return r.steps[1]?.executionId?r:undefined;},'first recovery script');
+  const cmd=await until(async()=>(await f.poll()).commands.find((c:any)=>c.executionId===run.steps[1].executionId),'first recovery intake');
+  await f.receipt(cmd,'started');
+  ok(await f.host('/api/hosts/events',{executionId:cmd.executionId,events:[{id:cmd.id+'-2',seq:2,type:'process.reconciled',timestamp:Date.now(),data:{ownedProcesses:1,resolved:true,survived:false,launchWindowUnresolved:false}}]}));
+  await f.receipt(cmd,'unknown');
+  const second=ok(await op('lab_cell_action',{...f.request,sourceRunId:first,requestId:randomUUID()})).recovery.runId;
+  const derived=ok(await call('GET',`/api/pipeline-runs/${second}`));
+  assert.equal(derived.steps[0].reusedFrom,first);assert.equal(derived.steps[0].outputArtifactId,f.run.steps[0].outputArtifactId);
+  const done=await f.complete(second);assert.equal(done.trials.find((t:any)=>t.id===second).recovery.sourceRunId,first);
+  assert.equal(done.spend.calls.value,1);assert.equal(seen.length,before);
+});
+
+test('L6 preflight never holds the write lock and revalidates lifecycle changes (requirement: fleet-lab preflight/commit boundary; risk: a slow store blocks writes or deleted content passes a stale snapshot)', async () => {
+  const f=await suffixFixture();await f.prove();await f.receipt(f.command,'unknown');
+  const hash=sha(JSON.stringify(f.run.steps[0].output));
+  let reached!:()=>void, release!:()=>void;
+  const hit=new Promise<void>(r=>reached=r), gate=new Promise<void>(r=>release=r);
+  artifactReadBarrier={hash,reached,release:gate};
+  const pending=op('lab_cell_action',f.request);
+  try {
+    await Promise.race([hit,new Promise((_,reject)=>setTimeout(()=>reject(Error('store read was not reached')),5000))]);
+    const write=op('lab_experiment_note',{experimentId:f.exp.id,kind:'note',text:'unrelated write while store read is blocked'});
+    ok(await Promise.race([write,new Promise<never>((_,reject)=>setTimeout(()=>reject(Error('write lock held during byte read')),5000))]));
+    ok(await op('artifact_purge',{contentHash:hash,projectId:'fleet-hello-world',scope:'lab',reason:'isolated preflight lifecycle race'}));
+  } finally {artifactReadBarrier=undefined;release();}
+  assert.equal((await pending).status,409);
+  const v=await f.view();assert.equal(v.trials.length,1);assert.notEqual(v.trials[0].state,'cancelled');
 });
