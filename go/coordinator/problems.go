@@ -4,14 +4,6 @@
 // cause is present; when the cause goes, the cause is cleared and an open question withdrawn.
 package main
 
-import (
-	"fmt"
-	"strconv"
-)
-
-// problemCleanRuns: a sync source's cause closes after this many runs without it (setting problems.cleanRuns).
-var problemCleanRuns = 2
-
 var problemOptions = []any{"investigate", "dismiss"}
 
 // Problem is one current cause of a source.
@@ -62,48 +54,4 @@ func problemOpen(q *Request, cause string, projectID any, text string) error {
 // problemClose: the cause is gone: an open question is withdrawn, an answered one lets go of the cause.
 func problemClose(q *Request, cause string) error {
 	return exec(q, "UPDATE question SET state=CASE WHEN state='open' THEN 'withdrawn'::question_state ELSE state END, cause=NULL WHERE cause=$1 AND state IN ('open','answered')", cause)
-}
-
-// problemsSync: the full current set of one source (rules): new causes are asked, held causes absent for
-// problemCleanRuns runs in a row are closed, present ones reset their miss count.
-func problemsSync(q *Request, source string, current []Problem) error {
-	now := map[string]Problem{}
-	for _, p := range current {
-		now[p.Cause] = p
-	}
-	held, err := queryRows(q, "SELECT id,cause,coalesce(data->>'misses','0') AS misses FROM question WHERE cause LIKE 'problem:%' AND state IN ('open','answered') AND data->>'source'=$1", source)
-	if err != nil {
-		return err
-	}
-	have := map[string]bool{}
-	for _, h := range held {
-		c := astr(h["cause"])
-		have[c] = true
-		if _, ok := now[c]; ok {
-			if err := exec(q, "UPDATE question SET data=data-'misses' WHERE id=$1 AND data ? 'misses'", h["id"]); err != nil {
-				return err
-			}
-			continue
-		}
-		n, _ := strconv.Atoi(astr(h["misses"]))
-		misses := n + 1
-		if misses >= problemCleanRuns {
-			if err := problemClose(q, c); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := exec(q, "UPDATE question SET data=jsonb_set(data,'{misses}',to_jsonb($2::int)) WHERE id=$1", h["id"], misses); err != nil {
-			return err
-		}
-	}
-	for _, p := range current {
-		if have[p.Cause] {
-			continue
-		}
-		if err := problemAsk(q, source, p); err != nil {
-			return fmt.Errorf("problem %s: %w", p.Cause, err)
-		}
-	}
-	return nil
 }

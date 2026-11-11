@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fleet/contract"
 	"io"
 	"log"
@@ -160,16 +161,16 @@ func init() {
 	// Stores a host has not reported for 2 minutes are unreachable; expired upload leases fail. Single flight per tick.
 	// Then one placement pass (copies, purges, rules, lease expiry, the artifact retry window).
 	onStart(func(ctx context.Context, a *App) {
-		every(ctx, "placement", placementTick, func() error {
-			if err := execCtx(ctx, a, "UPDATE store SET state='unreachable' WHERE state<>'unreachable' AND (observed_at IS NULL OR observed_at < now() - ($1::text||' milliseconds')::interval)", strconv.Itoa(storeUnseenMS)); err != nil {
-				log.Printf("store sweep: %v", err)
-				return err
+		every(ctx, "placement", placementTick, func(ctx context.Context) error {
+			sweep := execCtx(ctx, a, "UPDATE store SET state='unreachable' WHERE state<>'unreachable' AND (observed_at IS NULL OR observed_at < now() - ($1::text||' milliseconds')::interval)", strconv.Itoa(storeUnseenMS))
+			if sweep != nil {
+				log.Printf("store sweep: %v", sweep)
 			}
 			_, _, err := runPlacement(ctx, a)
 			if err != nil {
 				log.Printf("placement: %v", err)
 			}
-			return err
+			return errors.Join(sweep, err)
 		})
 	})
 }

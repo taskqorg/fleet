@@ -6,26 +6,24 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"fleet/contract"
 	"fleet/obs"
 )
 
 var (
-	spanStore   *obs.ClickHouse // nil: no span store
-	spanWriter  *obs.Writer
-	rulesLastMu sync.Mutex
-	rulesLast   time.Time
-	// passIntervals: pass name to its period, filled by every.
-	passIntervals sync.Map
+	spanStore  *obs.ClickHouse // nil: no span store
+	spanWriter *obs.Writer
 )
 
 // clickhouseFromEnv: FLEET_CLICKHOUSE_URL (default http://127.0.0.1:9480 when the env file exists), credentials from
@@ -73,7 +71,7 @@ func init() {
 			OnDown: func() { telemetryProblem(ctx, a, true) },
 			OnUp:   func(int64) { telemetryProblem(ctx, a, false) }}
 		if spanStore == nil {
-			obs.SetSink(func(*obs.Span) {}) // counted as dropped by nothing: no store, telemetry off
+			obs.SetSink(func(*obs.Span) { spanWriter.Discard(1) }) // telemetry off: dropped and counted
 			return
 		}
 		spanWriter.Run(ctx)
@@ -112,6 +110,11 @@ func telemetryProblem(ctx context.Context, a *App, open bool) {
 	}
 }
 
+// hostService: the services a host may write spans as.
+func hostService(s string) bool {
+	return s == "executor" || s == "gateway" || s == "fleet-update" || strings.HasPrefix(s, "harness:")
+}
+
 // spanName: the server span name of a request, after the mux served it: the operation name for /api/ops/{name} when it
 // exists, else the matched route pattern; "" for an unmatched path.
 func spanName(r *http.Request) string {
@@ -137,38 +140,48 @@ func hostSpans(q *Request) (any, error) {
 		return nil, fail(400, "Expected batchId and at most 5000 spans")
 	}
 	host := hostOf(q)
-	execs := map[string]bool{}
+	type run struct {
+		ok                                 bool
+		project, task, experiment, account *string
+	}
+	execs := map[string]*run{}
 	var buf bytes.Buffer
 	skipped := 0
 	for _, raw := range b.Spans {
 		var s obs.Span
-		if json.Unmarshal(raw, &s) != nil || s.HostID != host || s.TraceID == "" || s.SpanID == "" || s.Name == "" {
+		if json.Unmarshal(raw, &s) != nil || s.HostID != host || !obs.Valid(&s) || !hostService(s.Service) {
 			skipped++
 			continue
 		}
+		// The work identity comes from the execution row, never from the host: a host cannot write into a project's view.
+		s.ProjectID, s.TaskID, s.ExperimentID, s.AccountID = nil, nil, nil, nil
 		if s.ExecutionID != nil {
 			id := *s.ExecutionID
-			ok, seen := execs[id]
-			if !seen {
-				var on string
-				err := q.app.store.pool.QueryRow(q.ctx(), "SELECT coalesce(host_id,'') FROM execution WHERE id=$1", id).Scan(&on)
-				ok = err == nil && on == host
-				execs[id] = ok
+			r := execs[id]
+			if r == nil {
+				r = &run{}
+				var on *string
+				err := q.app.store.pool.QueryRow(q.ctx(), "SELECT host_id,project_id,task_id,experiment_id,account_id FROM execution WHERE id=$1", id).Scan(&on, &r.project, &r.task, &r.experiment, &r.account)
+				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					return nil, err // the host retries the batch
+				}
+				r.ok = err == nil && on != nil && *on == host
+				execs[id] = r
 			}
-			if !ok {
+			if !r.ok {
 				skipped++
 				continue
 			}
+			s.ProjectID, s.TaskID, s.ExperimentID, s.AccountID = r.project, r.task, r.experiment, r.account
 		}
 		js, _ := json.Marshal(&s)
 		buf.Write(js)
 		buf.WriteByte('\n')
 	}
 	accepted := len(b.Spans) - skipped
-	if accepted > 0 {
-		if spanStore == nil {
-			return nil, fail(503, "No span store")
-		}
+	if accepted > 0 && spanStore == nil {
+		spanWriter.Discard(accepted) // telemetry off: dropped and counted, the host does not retry
+	} else if accepted > 0 {
 		if err := spanStore.Insert(q.ctx(), "span", buf.Bytes(), host+":"+b.BatchId); err != nil {
 			log.Printf("telemetry: host spans: %v", err)
 			return nil, fail(503, "Span store unavailable")
@@ -209,11 +222,6 @@ func telemetrySummary(q *Request, r *contract.TelemetrySummaryRequest) (contract
 	if spanWriter != nil {
 		out.DroppedSpans = spanWriter.Dropped()
 	}
-	rulesLastMu.Lock()
-	if !rulesLast.IsZero() {
-		out.RulesLastRun = ptr(rulesLast.UTC().Format(time.RFC3339))
-	}
-	rulesLastMu.Unlock()
 	if spanStore == nil {
 		return out, nil
 	}

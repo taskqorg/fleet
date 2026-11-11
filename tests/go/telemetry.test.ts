@@ -77,12 +77,16 @@ test('T2 a host span batch keeps only rows of its own host and executions, with 
     const secret = (await call(c, '/api/ops/hosts_register', {id})).body.secret;
     const span = (host: string, extra = {}) => ({trace_id: 'a'.repeat(32), span_id: 'b'.repeat(16), parent_span_id: '', service: 'executor', host_id: host, name: 'host.heartbeat', kind: 'check',
       start: '2026-11-11 10:00:00.000000', duration_ns: 1, outcome: 'ok', error_class: '', actor: 'fleet', attrs: {}, ...extra});
-    const r = await call(c, '/api/hosts/spans', {batchId: 'b1', spans: [span(id), span('other-host'), span(id, {execution_id: 'not-mine'})]}, {bearer: secret, person: null});
+    const r = await call(c, '/api/hosts/spans', {batchId: 'b1', spans: [span(id, {project_id: 'fleet-hello-world', attrs: {prompt: 'x', 'fleet.process': 'executor'}}), span('other-host'), span(id, {execution_id: 'not-mine'}),
+      span(id, {kind: 'producer'}), span(id, {trace_id: 'short'}), span(id, {service: 'coordinator'})]}, {bearer: secret, person: null});
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.deepEqual(r.body, {accepted: 1, skipped: 2});
+    assert.deepEqual(r.body, {accepted: 1, skipped: 5});
     const ins = ch.seen.filter((x) => x.query.startsWith('INSERT INTO span') && x.params.get('insert_deduplication_token') === id + ':b1');
     assert.equal(ins.length, 1);
     assert.equal(ins[0].body.trim().split('\n').length, 1);
+    const row = JSON.parse(ins[0].body);
+    assert.equal(row.project_id, null, 'a host cannot place a span in a project');
+    assert.deepEqual(row.attrs, {'fleet.process': 'executor', 'missing.attrs': '1'}, 'attributes pass the allow list');
     assert.equal((await call(c, '/api/hosts/spans', {batchId: 'b2', spans: []})).status, 401, 'a person bearer is not a host');
   } finally { await c.stop(); ch.close(); }
 });

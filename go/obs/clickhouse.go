@@ -129,7 +129,6 @@ type Writer struct {
 	Rows, Fails int
 	OnDown      func()
 	OnUp        func(dropped int64)
-	Enabled     func() bool
 	ch          chan *Span
 	dropped     atomic.Int64
 	downDrop    int64
@@ -140,12 +139,11 @@ type Writer struct {
 // Dropped is the count of spans dropped since start.
 func (w *Writer) Dropped() int64 { return w.dropped.Load() }
 
+// Discard counts n spans dropped without a store (telemetry off).
+func (w *Writer) Discard(n int) { w.dropped.Add(int64(n)) }
+
 // Add queues a span; never blocks.
 func (w *Writer) Add(s *Span) {
-	if w.Enabled != nil && !w.Enabled() {
-		w.dropped.Add(1)
-		return
-	}
 	select {
 	case w.ch <- s:
 	default:
@@ -172,6 +170,13 @@ func (w *Writer) Run(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
+				// Shutdown: the batch and whatever is queued get one last flush.
+				for len(w.ch) > 0 && len(batch) < 10*w.Rows {
+					batch = append(batch, <-w.ch)
+				}
+				if len(batch) > 0 {
+					w.flush(context.WithoutCancel(ctx), batch)
+				}
 				return
 			case s := <-w.ch:
 				if batch = append(batch, s); len(batch) >= w.Rows {
@@ -205,7 +210,7 @@ func (w *Writer) flush(ctx context.Context, batch []*Span) {
 		if w.failed++; w.failed >= w.Fails && !w.down {
 			w.down = true
 			if w.OnDown != nil {
-				w.OnDown()
+				go w.OnDown() // a Postgres write: never on the writer goroutine
 			}
 		}
 		return
@@ -219,7 +224,7 @@ func (w *Writer) flush(ctx context.Context, batch []*Span) {
 		s.Items = &u
 		s.End(nil)
 		if w.OnUp != nil {
-			w.OnUp(lost)
+			go w.OnUp(lost)
 		}
 	}
 }

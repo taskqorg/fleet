@@ -236,6 +236,35 @@ func (s *Span) End(err error) {
 	}
 }
 
+var hex32, hex16 = regexp.MustCompile(`^[0-9a-f]{32}$`), regexp.MustCompile(`^([0-9a-f]{16})?$`)
+
+// Valid: a span row from outside (a host's batch) fits the span table: hex ids, known kind and outcome, a start in
+// TimeFormat, a stable name; its attributes pass the same allow list and cap as Set.
+func Valid(s *Span) bool {
+	if !hex32.MatchString(s.TraceID) || !hex16.MatchString(s.SpanID) || s.SpanID == "" || !hex16.MatchString(s.ParentSpanID) || s.Name == "" || len(s.Name) > 200 {
+		return false
+	}
+	if _, err := time.Parse(TimeFormat, s.Start); err != nil {
+		return false
+	}
+	switch s.Kind {
+	case KindServer, KindClient, KindInternal, KindPass, KindCheck:
+	default:
+		return false
+	}
+	switch s.Outcome {
+	case OK, Error, Refused, Cancelled:
+	default:
+		return false
+	}
+	in := s.Attrs
+	s.Attrs = nil
+	for k, v := range in {
+		s.Set(k, v)
+	}
+	return true
+}
+
 // Classify maps an error to its error_class.
 func Classify(err error) string {
 	var ne net.Error
@@ -315,7 +344,7 @@ func MarkRefused(w http.ResponseWriter) {
 }
 
 // Handler records one server span per request; name gives the span name from the request after next served it
-// (the matched route pattern), "" to skip the span (an unmatched path).
+// (the matched route pattern); "" names it "unmatched", so scans of unknown paths stay one low-cardinality series.
 func Handler(next http.Handler, name func(*http.Request) string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, s := Start(WithRemote(r.Context(), r.Header.Get("traceparent")), "", KindServer)
