@@ -6,7 +6,7 @@ Current target for the operator app, interface workflows and live change feed. T
 
 The operator app is the web interface operators use every day. The coordinator serves the app; the prototype pages and `/legacy/*` routes are retired. It is built only from `packages/ui`: the approved design book, its controls and patterns, and the [owner rules](../design-system/owner-rules.md) OR-1 to OR-22.
 
-The app is a single-page Preact application (design-system D4: Preact, Signals, Wouter, esbuild). The coordinator serves it at `fleet.ufobe.com`, behind Cloudflare Access and the access guard. It reads and writes only through coordinator operations (`/api/ops/:name`).
+The app is a single-page Preact application (design-system D4: Preact, Signals, Wouter, esbuild). The coordinator serves it at `fleet.ufobe.com`, behind Cloudflare Access and the access guard. It uses the shared core operations (`/api/ops/:name`); the stream and result bytes/previews use their coordinator transport routes rather than UI-only business operations.
 
 * Live updates come from a server-sent change feed (§4).
 * The last-read data is kept for offline reading (§5).
@@ -38,7 +38,7 @@ Each goal is measured as described in §9. The numbers are targets that are repo
   * It never presents that data as current.
   * It never queues writes.
 * **G4. Each main view is its own installable window.** `/tasks`, `/conversations`, `/overview` and `/hosts` each install as a separate PWA in Chromium-based browsers (Chrome, Edge). Safari installs one app per origin, which is a documented limit.
-* **G5. No app-only operations.** Every read and action the app uses is an existing or new coordinator op that agents can call too (R2). The only non-op route is `/api/stream`, a transport for the same change log that `changes_since` reads.
+* **G5. No app-only operations.** Every read and action the app uses is an existing or new coordinator op that agents can call too (R2). `/api/stream` transports the same change log that `changes_since` reads; result bytes/previews use the shared artifact reader routes. Neither transport adds app-only business operations.
 * **G6. Performance is measured and reported.**
   * First-load JavaScript is reported against 200 KB raw.
   * Click-to-detail is reported against 100 ms.
@@ -62,7 +62,7 @@ Each goal is measured as described in §9. The numbers are targets that are repo
 
 | # | Question | Choice |
 |---|---|---|
-| D1 | Live updates | SSE change feed with a resume cursor, plus cursor polling (`changes_since`) as the catch-up and fallback path. Both share one versioned cursor. A full refetch happens only when the cursor is older than the retained log. The heartbeat stays under Cloudflare's 100 s idle timeout. |
+| D1 | Live updates | SSE change feed with a resume cursor, plus cursor polling (`changes_since`) as the catch-up and fallback path. Both share one versioned cursor. A missing cursor requests resync; mounts load fresh data and lists with restored rows or failed loads revalidate on reconnect (§3–§4). The heartbeat stays under Cloudflare's 100 s idle timeout. |
 | D2 | Where the app lives | The app owns all of `fleet.ufobe.com`; the prototype pages are deleted (G7). Hosts never get a UI. Each main view has its own manifest. The built-screen registry determines the available routes. |
 | D3 | Offline | The service worker caches the shell. IndexedDB keeps the last-read data, read-only, with its age shown. No queued writes. The store is cleared on sign-out and on a grant change, and holds only what the grants allow. |
 | D4 | Client data layer | One normalized entity store on Preact Signals, in our own code. The client never decides list membership: `list_membership` decides, in one batched read. Membership, ordering and the anchor are covered by tests. Implemented by `app/src/store.ts` ([fleet-view-urls-and-list-path.md §2](fleet-view-urls-and-list-path.md)); the first version kept lists per component, which reset them on every filter change. |
@@ -146,7 +146,7 @@ Browser windows (one origin)                          Coordinator (Go)
   * `/` redirects to `/overview`.
   * View routes: `/overview`, `/tasks`, `/tasks/:id`, `/conversations`, `/conversations/:id`, `/hosts`, `/hosts/:id` (host detail as stacked sections, design-system D11 C3).
   * The coordinator returns `index.html` for these paths only. Any other unknown non-API path gets a 404 page.
-* **List state** (filters, grouping, search, presets, the focused row and checked rows) lives in the URL in one canonical form, defined in [fleet-view-urls-and-list-path.md §1](fleet-view-urls-and-list-path.md) and implemented by `packages/view-url`; agents build and read such links with `view_link`. Per-person defaults and nav pins use `person_settings_get` / `person_settings_set` (`app/src/prefs.ts`, `main.tsx`); IndexedDB holds the read-only last-view mirror.
+* **List state** (filters, grouping, search, presets, the focused row and checked rows) lives in the URL in one canonical form, defined in [fleet-view-urls-and-list-path.md §1](fleet-view-urls-and-list-path.md) and implemented by `packages/view-url`; agents build and read such links with `view_link`. Section pins use `person_settings_get` / `person_settings_set` (`app/src/main.tsx`). Row pins and saved view presets currently stay browser-local in `localStorage` (`app/src/prefs.ts`), without a person key; they do not use those operations. IndexedDB holds the read-only last-view mirror.
 * **Shell.** `AppShell` from `packages/ui`, with nav items built from the registry's `workspaces`, the one list of screens in nav order. A workspace marked `app: true` is a built screen: the app nav and routes (`app/src/main.tsx`, whose view map the type checker requires for every such screen), the manifests and service-worker routes (`app/build.mjs`, which writes `dist/app/screens.json`) and the coordinator's `index.html` routes (`appRoutes` in `go/coordinator/artifact_routes.go`, from that file) all follow the flag, so a new screen appears everywhere once it is set and its view is added. The stored entity is a session; the workspace, nav item and view are named Conversations everywhere.
 
 * **Codes.** Rows and details show the human code after the title through the `packages/ui` formatter (design-system D17). The UUID is only in a tooltip and "copy UUID". Search accepts a code, an alias or a UUID; a code goes through `entity.resolve`, and an alias opens the entity under its current code. Not built: human entity code allocation and resolution; detail URLs currently keep the UUID (`/tasks/:id`); the view URL codec passes a code through unchanged, and the redirect direction for codes is decided by the D17 slice ([fleet-view-urls-and-list-path.md](fleet-view-urls-and-list-path.md), Non-Goals).
@@ -252,7 +252,7 @@ Kinds are always the client kinds above, never legacy kinds (design-system D15).
 * **Signed out.**
   * An API call that returns a redirect (opaque or 3xx), 401 or 403 is the "signed out" state, not offline.
   * The app shows "Session expired. Sign in again" with a link to reload through Access. It disables actions and deletes IndexedDB.
-  * An explicit sign-out link (`/cdn-cgi/access/logout`) deletes IndexedDB before it navigates.
+  * Not built: an explicit sign-out link (`/cdn-cgi/access/logout`) that deletes IndexedDB before it navigates. Detected session expiry already clears the mirror.
 * **Manifests.**
   * There is one manifest per view: `/manifests/<view>.webmanifest`, each with its own `id`, `name`, `start_url`, `scope` and icon.
   * `index.html` picks the manifest by path.
@@ -292,6 +292,7 @@ The prototype pages and `/legacy/*` routes are removed. Their historical impleme
 | Surviving activity | Current app and remaining work |
 |---|---|
 | Read, create, send, steer, stop and fork sessions | Conversations; profile/model switch and handoff use `session_transition`. Questions use `questions_answer`. Detailed transcript and remaining gaps follow [Conversations](fleet-conversations.md). |
+| Related work: delegations with parent, child and continuation state | `session_get` returns `delegations` (`go/coordinator/sessions.go`); Not built: their display in Conversations. Parent/child relationship and continuation state must remain visible when this UI is built. |
 | Inspect result materials and checks, compare changed files | Results and task/execution context use the [result viewers](#result-viewing). The `execution_differences` read remains a core operation (`go/coordinator/executions.go`, `tests/go/inspection.test.ts`); it is not a reason to retain a legacy page. Not built: an app action for execution-to-execution file comparison. |
 | Profiles, experiments, comparison, notes, recommendations and result previews | Laboratory and the definition editors; current actions and gaps follow [Lab](fleet-lab.md) and [definition editors](fleet-definition-editors.md). Retired Lab REST names are not today's canonical API. |
 | Projects, readiness, context, granted catalogue, project sessions, pipeline and delivery history/actions, questions and result links | Tasks and core operations cover parts; [project configuration](../configuration.md) remains the authority. Not built: the Projects screen that brings these project activities together. A list operation does not establish project creation/onboarding. |
