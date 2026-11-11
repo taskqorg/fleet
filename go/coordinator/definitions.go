@@ -348,10 +348,17 @@ func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.Def
 			}
 		}
 	}
+	windows, _, err := usageWindows(q, string(r.Kind), "", 30) // one grouped read for the whole list
+	if err != nil {
+		return out, err
+	}
 	for _, x := range xs {
-		// ponytail: last30 is zero until executions record definition references (the run step of this build).
+		last30 := windows[x.ID]
+		if last30.CostBasis == nil {
+			last30.CostBasis = ptr("tokens")
+		}
 		item := contract.DefinitionListItem{Kind: r.Kind, Id: x.ID, Name: definitionName(x), Scope: "shared", Path: x.Path, Revision: x.Head, State: x.state(),
-			Last30: contract.Window{}}
+			Last30: last30}
 		if x.Kind == "agent" {
 			var p contract.Profile
 			json.Unmarshal(x.Content, &p)

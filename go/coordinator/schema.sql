@@ -738,3 +738,6 @@ ALTER TABLE task DROP COLUMN legacy_kind, DROP COLUMN legacy_id;
 CREATE INDEX question_request ON question(execution_id, request_id) WHERE request_id IS NOT NULL;
 CREATE INDEX question_project_request ON question(project_id, request_id) WHERE request_id IS NOT NULL;
 CREATE INDEX question_kind_state ON question(kind, state, seq);
+
+-- migration 33: definition_usage reads executions by the definitions they pinned (containment).
+CREATE INDEX execution_definitions ON execution USING gin (definitions jsonb_path_ops);
