@@ -21,8 +21,15 @@ test('W1 accepting a task sends one teardown with deleteBranch for its finished 
     c.sql(`UPDATE document SET data=data||'{"projectId":"hello-world"}' WHERE kind='session' AND id='${sessionId}'`);
     const e = await call(`/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'hello'});
     c.sql(`UPDATE execution SET task_id='${taskId}' WHERE id='${e.id}'`);
+    // R3; Save after enqueue cannot rewrite launch context or cleanup of the original workspace.
+    const before = await call('/api/ops/project_context', {projectId:'hello-world'});
+    const changed = structuredClone(before.content);changed.settings.cleanup={keepWhen:[]};
+    changed.contextFiles[0].text='LATER PROJECT CANARY';
+    await call('/api/ops/project_update',{projectId:'hello-world',requestId:randomUUID(),baseRevision:before.revision,content:changed});
     const poll = () => call('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
     const command = (await poll()).commands.find((x: any) => x.executionId === e.id);
+    assert.deepEqual(command.payload.project.cleanup.keepWhen, ['uncommitted','unpushed','teardown-failed']);
+    assert.ok(!command.payload.instructions.includes('LATER PROJECT CANARY'));
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'started'}, secret, null);
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'completed'}, secret, null);
     c.sql(`UPDATE task SET state='in_progress' WHERE id='${taskId}'`);

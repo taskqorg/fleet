@@ -263,7 +263,11 @@ func teardownCommand(q *Request, s, last doc, deleteBranch bool) (doc, error) {
 		payload["deleteBranch"] = true
 	}
 	if p := astr(s["projectId"]); p != "" {
-		payload["projectId"], payload["project"] = p, projectSettingsOf(p)
+		workspace := mapOf(mapOf(s["workspaceSnapshots"])[astr(last["hostId"])])
+		if workspace == nil {
+			return doc{"sessionId": sid, "cleanup": "unknown", "reason": "cleanup_context_unknown: original workspace settings unavailable"}, nil
+		}
+		payload["projectId"], payload["project"] = p, workspace["project"]
 	}
 	if w := astr(s["workingDirectory"]); w != "" {
 		payload["workingDirectory"] = w
@@ -316,6 +320,9 @@ func deliveredTeardown(q *Request, taskID string) error {
 }
 
 func sessionCreate(q *Request) (doc, error) {
+	if !keysOnly(body(q)) {
+		return nil, fail(400, "session_create takes no identity or linkage fields")
+	}
 	s := doc{"id": newID(), "createdAt": nowMs(), "directedBy": director(q)}
 	if err := put(q, "session", s); err != nil {
 		return nil, err

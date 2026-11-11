@@ -119,7 +119,7 @@ export const workspaces = [
   { id: 'tasks', label: 'Tasks', icon: 'list', group: 'Operator', app: true },
   { id: 'conversations', label: 'Conversations', icon: 'messages-square', group: 'Operator', app: true },
   { id: 'results', label: 'Results', icon: 'file-text', group: 'Operator', app: true },
-  { id: 'projects', label: 'Projects', icon: 'folder-open', group: 'Operator', app: false },
+  { id: 'projects', label: 'Projects', icon: 'folder-open', group: 'Operator', app: true },
   { id: 'agents', label: 'Agents', icon: 'bot', group: 'Architect', app: true },
   { id: 'pipelines', label: 'Pipelines', icon: 'network', group: 'Architect', app: true },
   { id: 'catalogue', label: 'Catalogue', icon: 'rows-3', group: 'Architect', app: true },

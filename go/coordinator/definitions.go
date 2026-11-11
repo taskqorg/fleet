@@ -67,6 +67,8 @@ func validDefinition(kind, id string, raw []byte) (any, error) {
 		return nil, fmt.Errorf("JSON: %v", err)
 	}
 	switch kind {
+	case "project":
+		return projectBundle(id, v)
 	case "agent":
 		if _, err := contract.ParseProfile(raw); err != nil {
 			return nil, err
@@ -129,6 +131,11 @@ func shippedDefinitions() (files []definitionFile, broken map[string]error) {
 			files = append(files, definitionFile{"catalogue", "catalogue", "config/catalogue.json", raw})
 		}
 	}
+	projects, errors := seedProjectDefinitions()
+	files = append(files, projects...)
+	for k, v := range errors {
+		broken[k] = v
+	}
 	return files, broken
 }
 
@@ -156,6 +163,11 @@ func reconcileDefinitions(q *Request, files []definitionFile, broken map[string]
 				f.kind, f.id, text, csha, blob, "Repository "+release); err != nil {
 				return err
 			}
+			if f.kind == "project" {
+				if err := exec(q, "UPDATE definition SET project_id=id WHERE kind='project' AND id=$1", f.id); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if err != nil {
@@ -177,6 +189,9 @@ func reconcileDefinitions(q *Request, files []definitionFile, broken map[string]
 	}
 	for _, r := range rs {
 		key := astr(r["kind"]) + "/" + astr(r["id"])
+		if r["kind"] == "project" {
+			continue
+		}
 		if _, present := broken[key]; seen[key] || present {
 			continue
 		}
@@ -286,6 +301,10 @@ func definitionContent(kind string, raw []byte) (contract.DefinitionContent, err
 	var c contract.DefinitionContent
 	var err error
 	switch kind {
+	case "project":
+		var p contract.ProjectBundle
+		err = json.Unmarshal(raw, &p)
+		c.Project = &p
 	case "agent":
 		var p contract.AgentDefinition
 		err = json.Unmarshal(raw, &p)
@@ -317,7 +336,7 @@ func definitionName(x definitionRow) string {
 
 func definitionKind(k contract.DefinitionKind) error {
 	switch k {
-	case contract.DefinitionKindAgent, contract.DefinitionKindPipeline, contract.DefinitionKindCatalogue:
+	case contract.DefinitionKindAgent, contract.DefinitionKindPipeline, contract.DefinitionKindCatalogue, contract.DefinitionKindProject:
 		return nil
 	}
 	return fail(400, "kind: agent, pipeline or catalogue")
@@ -338,8 +357,12 @@ func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.Def
 	}
 	roles := map[string][]string{} // profile -> project:role, read once per list
 	if r.Kind == contract.DefinitionKindAgent {
-		for _, id := range projectIDs() {
-			for role, v := range mapOf(projectSettingsOf(id)["roles"]) {
+		ids, err := projectIDs(q)
+		if err != nil {
+			return out, err
+		}
+		for _, id := range ids {
+			for role, v := range mapOf(projectSettingsOf(q, id)["roles"]) {
 				p := astr(v)
 				if p == "" {
 					p = astr(mapOf(v)["profile"])
@@ -353,6 +376,9 @@ func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.Def
 		return out, err
 	}
 	for _, x := range xs {
+		if x.Kind == "project" && q.person != nil && !mayAccessProjectID(q.person, x.ID) {
+			continue
+		}
 		last30 := windows[x.ID]
 		if last30.CostBasis == nil {
 			last30.CostBasis = ptr("tokens")

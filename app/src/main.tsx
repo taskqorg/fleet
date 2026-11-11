@@ -1,4 +1,5 @@
 // Fleet operator app entry (docs/designs/fleet-operator-app.md): shell, routes, identity check, feed start, service worker.
+import { Projects } from './views/projects.tsx';
 import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation } from 'wouter-preact';
@@ -19,6 +20,7 @@ import { Definitions } from './views/definitions.tsx';
 // The view of each screen the registry marks `app: true` (the type requires every one). Nav and routes follow registry
 // order. A list screen takes an optional focus segment, so focusing a row never unmounts the list.
 const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) => any }> = {
+  projects: { focus: true, view: p => <Projects id={p.id} /> },
   overview: { focus: false, view: () => <Overview /> },
   tasks: { focus: true, view: p => <Tasks id={p.id} /> },
   conversations: { focus: true, view: p => <Conversations id={p.id} /> },

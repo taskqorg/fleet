@@ -745,3 +745,45 @@ CREATE INDEX execution_definitions ON execution USING gin (definitions jsonb_pat
 
 -- migration 34: Catalogue recommendations notify scoped live readers.
 CREATE OR REPLACE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; w text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'document' THEN IF r.kind = 'host-observation' AND TG_OP = 'UPDATE' AND (OLD.data - 'lastSeenAt') = (NEW.data - 'lastSeenAt') THEN RETURN NULL; END IF; IF r.kind = 'session' THEN k := 'session'; s := r.id; ELSIF r.kind IN ('event', 'event-delta', 'message') THEN k := 'event'; s := r.data->>'sessionId'; ELSIF r.kind = 'host-observation' THEN k := 'host'; h := r.id; ELSIF r.kind = 'command' THEN k := 'command'; h := r.data->>'hostId'; s := r.data->>'sessionId'; ELSIF r.kind = 'artifact' THEN k := 'artifact'; s := r.data->>'sessionId'; SELECT e.task_id INTO t FROM execution e WHERE e.id = r.data->>'executionId'; ELSIF r.kind IN ('managed-account', 'api-connection', 'connection-key', 'setting-change', 'project-recommendation') THEN k := r.kind; w := r.data->>'holder'; ELSE RETURN NULL; END IF; i := r.id; ELSIF TG_TABLE_NAME = 'task' THEN k := 'task'; i := r.id; t := r.id; ELSIF TG_TABLE_NAME = 'task_derived' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'task_dependency' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'execution' THEN k := 'execution'; i := r.id; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME = 'execution_totals' THEN k := 'execution'; i := r.execution_id; SELECT e.task_id, e.session_id, e.host_id INTO t, s, h FROM execution e WHERE e.id = r.execution_id; ELSIF TG_TABLE_NAME = 'question' THEN k := 'question'; i := r.id; t := r.task_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'experiment' THEN k := 'experiment'; i := r.id; ELSIF TG_TABLE_NAME = 'score' THEN k := 'score'; i := r.id; ELSIF TG_TABLE_NAME = 'definition' THEN k := 'definition'; i := r.kind || '/' || r.id; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op, actor, holder) VALUES (k, i, t, s, h, r.project_id, left(TG_OP, 1), nullif(current_setting('fleet.actor', true), ''), w); PERFORM pg_notify('fleet_change', ''); RETURN NULL; END $$;
+
+-- migration 35: projects share the versioned definition owner; initial access is revocable and survives people reload.
+ALTER TABLE definition DROP CONSTRAINT definition_kind_check;
+ALTER TABLE definition ADD CONSTRAINT definition_kind_check CHECK (kind IN ('agent','pipeline','catalogue','project'));
+ALTER TABLE definition ADD COLUMN created_by text, ADD COLUMN initial_member text,
+ ADD COLUMN initial_member_revoked_at timestamptz, ADD COLUMN access_version bigint NOT NULL DEFAULT 1;
+CREATE TABLE project_write_request(
+ directing_email text NOT NULL, operation text NOT NULL, request_id text NOT NULL,
+ payload_sha text NOT NULL, project_id text NOT NULL, result jsonb NOT NULL,
+ PRIMARY KEY(directing_email,operation,request_id)
+);
+
+-- Own projectless conversations are directed work, not access to all rows without a project.
+CREATE FUNCTION fleet_own_projectless_session(sid text) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE prev text := current_setting('fleet.project_ids',true); who text := current_setting('fleet.person',true); allowed boolean;
+BEGIN
+ IF coalesce(who,'')='' OR sid IS NULL THEN RETURN false; END IF;
+ PERFORM set_config('fleet.project_ids','*',true);
+ SELECT EXISTS(SELECT 1 FROM document WHERE kind='session' AND id=sid AND project_id IS NULL AND data->>'directedBy'=who AND NOT(data ? 'directorAccessRevokedAt')) INTO allowed;
+ PERFORM set_config('fleet.project_ids',coalesce(prev,''),true); RETURN allowed;
+END $$;
+CREATE FUNCTION fleet_own_projectless_execution(eid text) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE prev text := current_setting('fleet.project_ids',true); who text := current_setting('fleet.person',true); sid text; director text;
+BEGIN
+ IF coalesce(who,'')='' OR eid IS NULL THEN RETURN false; END IF;
+ PERFORM set_config('fleet.project_ids','*',true);
+ SELECT session_id,directed_by INTO sid,director FROM execution WHERE id=eid AND project_id IS NULL;
+ PERFORM set_config('fleet.project_ids',coalesce(prev,''),true);
+ RETURN coalesce(director=who AND fleet_own_projectless_session(sid),false);
+END $$;
+CREATE POLICY directed_session ON document USING (project_id IS NULL AND (
+ (kind='session' AND data->>'directedBy'=current_setting('fleet.person',true) AND NOT(data ? 'directorAccessRevokedAt')) OR
+ (kind IN ('message','event','event-delta','session-transition','queued-message','handoff') AND fleet_own_projectless_session(data->>'sessionId')) OR
+ (kind='session-fork' AND fleet_own_projectless_session(data->>'sessionId') AND fleet_own_projectless_session(data->>'sourceSessionId'))));
+CREATE POLICY directed_execution ON execution USING (project_id IS NULL AND directed_by=current_setting('fleet.person',true) AND fleet_own_projectless_session(session_id));
+CREATE POLICY directed_totals ON execution_totals USING (project_id IS NULL AND fleet_own_projectless_execution(execution_id));
+CREATE POLICY directed_change ON change USING (project_id IS NULL AND fleet_own_projectless_session(session_id));
+CREATE FUNCTION fleet_session_director_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+ IF OLD.kind='session' AND OLD.data ? 'directedBy' AND OLD.data->>'directedBy' IS DISTINCT FROM NEW.data->>'directedBy' THEN RAISE EXCEPTION 'session director is immutable'; END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER session_director_immutable BEFORE UPDATE ON document FOR EACH ROW EXECUTE FUNCTION fleet_session_director_immutable();

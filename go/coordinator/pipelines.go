@@ -442,6 +442,14 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 		ref.Revision, ref.Draft = base, &yes
 	}
 	run["definitions"] = []contract.DefinitionRef{ref}
+	if pid := astr(run["projectId"]); pid != "" {
+		snapshot, err := projectContext(q, pid)
+		if err != nil {
+			return nil, err
+		}
+		run["projectSnapshot"] = snapshot
+		run["definitions"] = append(run["definitions"].([]contract.DefinitionRef), contract.DefinitionRef{Kind: contract.DefinitionKindProject, Id: pid, Revision: int64(num(snapshot["revision"])), ContentSha: astr(snapshot["contentSha"])})
+	}
 	return run, putRun(q, run)
 }
 
@@ -830,7 +838,7 @@ func startScript(q *Request, run doc, stepExecutionID, command string, timeout a
 		hostID = q.app.hostID
 	}
 	id := newID()
-	e := doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hostID, "state": "preparing", "createdAt": nowMs(), "actor": "program-worker", "pipelineStepId": stepExecutionID, "pipelineRunId": run["id"]}
+	e := doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hostID, "state": "preparing", "createdAt": nowMs(), "actor": "program-worker", "pipelineStepId": stepExecutionID, "pipelineRunId": run["id"], "projectSnapshot": run["projectSnapshot"]}
 	if run["experimentId"] != nil {
 		e["experimentId"] = run["experimentId"]
 	}
@@ -1533,7 +1541,7 @@ func runPipeline(q *Request, invocation string) (any, error) {
 		if inv != "direct" && inv != "pipeline" {
 			return fail(400, "Invalid invocation")
 		}
-		p, err := projectContext(astr(b["projectId"]))
+		p, err := projectContext(q, astr(b["projectId"]))
 		if err != nil {
 			return err
 		}

@@ -10,6 +10,9 @@ import (
 // gatedObjOp registers an operation behind the architect gate and the project grant check.
 func gatedObjOp(name string, read bool, h handler) {
 	operation(name, read, func(q *Request) (any, error) {
+		if err := refreshRequestAccess(q); err != nil {
+			return nil, err
+		}
 		if err := q.app.guardOp(q, name, q.body); err != nil {
 			return nil, err
 		}
@@ -46,6 +49,9 @@ func (a *App) runOp(q *Request, name string, b json.RawMessage) (any, error) {
 // gatedRoute, gatedLongRoute: route and longRoute behind the person gate of routes (architect routes, named project grants).
 func gatedRoute(pattern string, h handler) {
 	route(pattern, func(q *Request) (any, error) {
+		if err := refreshRequestAccess(q); err != nil {
+			return nil, err
+		}
 		if err := q.app.guardRoute(q); err != nil {
 			return nil, err
 		}
@@ -55,6 +61,9 @@ func gatedRoute(pattern string, h handler) {
 
 func gatedLongRoute(pattern string, h handler) {
 	longRoute(pattern, func(q *Request) (any, error) {
+		if err := refreshRequestAccess(q); err != nil {
+			return nil, err
+		}
 		if err := q.app.guardRoute(q); err != nil {
 			return nil, err
 		}

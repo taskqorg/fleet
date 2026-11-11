@@ -87,7 +87,7 @@ func grantsVersion(p *Person) string {
 		gs = append(gs, g.Kind+":"+g.ID)
 	}
 	sort.Strings(gs)
-	b, _ := json.Marshal([]any{roles, p.Owner, gs})
+	b, _ := json.Marshal([]any{roles, p.Owner, gs, p.AccessVersion})
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])[:16]
 }
@@ -102,11 +102,41 @@ func hasRole(p *Person, r string) bool { return slices.Contains(p.Roles, r) }
 // guardOp: the architect gate on operation names (a holder's own subscription passes) and the project grant of a named project.
 func (a *App) guardOp(q *Request, name string, body json.RawMessage) error {
 	p := q.person
+	var request doc
+	_ = json.Unmarshal(body, &request)
+	if request["kind"] == "project" && strings.HasPrefix(name, "definition_") {
+		switch name {
+		case "definition_list", "definition_get", "definition_history", "definition_diff", "definition_usage":
+		default:
+			return fail(403, "Use project_create or project_update")
+		}
+	}
 	if p == nil || fullAccess(p) {
 		return nil
 	}
 	var b map[string]any
 	json.Unmarshal(body, &b)
+	if strings.HasPrefix(name, "definition_") {
+		if b["kind"] == "project" {
+			if name != "definition_list" && !mayAccessProjectID(p, astr(b["id"])) {
+				return fail(404, "Unknown project")
+			}
+			switch name {
+			case "definition_list", "definition_get", "definition_history", "definition_diff", "definition_usage":
+				return nil
+			default:
+				return fail(403, "Use project_create or project_update")
+			}
+		}
+		if name == "definition_export" {
+			for _, k := range anys(b["keys"]) {
+				m := mapOf(k)
+				if m["kind"] == "project" && !mayAccessProjectID(p, astr(m["id"])) {
+					return fail(404, "Unknown project")
+				}
+			}
+		}
+	}
 	if architectOps.MatchString(name) && !hasRole(p, "architect") && !a.ownSubscription(q, name, b) {
 		return fail(403, "Architect role required")
 	}

@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -299,7 +300,7 @@ func projectSettings(p doc) (doc, []string, error) {
 
 func itoa(i int) string { b, _ := json.Marshal(i); return string(b) }
 
-func projectIDs() []string {
+func shippedProjectIDs() []string {
 	root := filepath.Join(configDir(), "projects")
 	es, _ := os.ReadDir(root)
 	ids := []string{}
@@ -322,8 +323,8 @@ func readJSON(path string) (doc, error) {
 }
 
 // projectContext: the definition with its settings, unknown keys and context files.
-func projectContext(id string) (doc, error) {
-	if !slices.Contains(projectIDs(), id) {
+func shippedProjectContext(id string) (doc, error) {
+	if !slices.Contains(shippedProjectIDs(), id) {
 		return nil, fail(404, "Unknown project")
 	}
 	root := filepath.Join(configDir(), "projects", id)
@@ -368,8 +369,8 @@ func projectContext(id string) (doc, error) {
 	return out, nil
 }
 
-func projectSettingsOf(id string) doc {
-	p, err := projectContext(id)
+func projectSettingsOf(q *Request, id string) doc {
+	p, err := projectContext(q, id)
 	if err != nil {
 		return nil
 	}
@@ -388,7 +389,7 @@ func catalogue(q *Request, id string) (doc, error) {
 }
 
 func catalogueBase(q *Request, id string) (doc, error) {
-	p, err := projectContext(id)
+	p, err := projectContext(q, id)
 	if err != nil {
 		return nil, err
 	}
@@ -436,11 +437,15 @@ func init() {
 	}))
 	projectOp("project_list", true, shaped[contract.ProjectListRequest, contract.ProjectListReply](func(q *Request) (any, error) {
 		out := []doc{}
-		for _, id := range projectIDs() {
+		ids, err := projectIDs(q)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range ids {
 			if q.person != nil && !mayAccessProjectID(q.person, id) {
 				continue
 			}
-			p, err := projectContext(id)
+			p, err := projectContext(q, id)
 			if err != nil {
 				return nil, err
 			}
@@ -448,7 +453,7 @@ func init() {
 		}
 		return doc{"projects": out}, nil
 	}))
-	projectOp("project_context", true, shaped[contract.ProjectContextRequest, contract.ProjectContextReply](func(q *Request) (any, error) { return projectContext(astr(body(q)["projectId"])) }))
+	projectOp("project_context", true, shaped[contract.ProjectContextRequest, contract.ProjectContextReply](func(q *Request) (any, error) { return projectContext(q, astr(body(q)["projectId"])) }))
 	projectOp("catalogue", true, shaped[contract.CatalogueRequest, contract.CatalogueReply](func(q *Request) (any, error) { return catalogue(q, astr(body(q)["projectId"])) }))
 	projectOp("recommendation_set", false, shaped[contract.RecommendationSetRequest, contract.RecommendationSetReply](func(q *Request) (any, error) {
 		b := body(q)
@@ -468,7 +473,7 @@ func init() {
 	}))
 	projectOp("question_ask", false, shaped[contract.QuestionAskRequest, contract.QuestionAskReply](func(q *Request) (any, error) {
 		b := body(q)
-		if _, err := projectContext(astr(b["projectId"])); err != nil {
+		if _, err := projectContext(q, astr(b["projectId"])); err != nil {
 			return nil, err
 		}
 		rid, text := astr(b["requestId"]), astr(b["text"])
@@ -530,7 +535,7 @@ func init() {
 	}))
 	projectOp("question_history", true, shaped[contract.QuestionHistoryRequest, contract.QuestionHistoryReply](func(q *Request) (any, error) {
 		b := body(q)
-		if _, err := projectContext(astr(b["projectId"])); err != nil {
+		if _, err := projectContext(q, astr(b["projectId"])); err != nil {
 			return nil, err
 		}
 		qs, err := rows(q, "SELECT "+projectQuestionJSON+" FROM question WHERE "+projectQuestion+" AND project_id=$1 ORDER BY seq", b["projectId"])
@@ -554,7 +559,7 @@ func init() {
 	}))
 	projectOp("pipeline_history", true, shaped[contract.PipelineHistoryRequest, contract.PipelineHistoryReply](func(q *Request) (any, error) {
 		b := body(q)
-		if _, err := projectContext(astr(b["projectId"])); err != nil {
+		if _, err := projectContext(q, astr(b["projectId"])); err != nil {
 			return nil, err
 		}
 		ids, err := rowsOf(q, "SELECT id FROM execution WHERE "+runRows+" AND data->>'projectId'=$1 ORDER BY seq", b["projectId"])
@@ -649,8 +654,9 @@ func (a *App) mcp(q *Request, server string, ops map[string]registeredOp, descri
 
 // artifactLocations: a project's artifact_locations; the default list when it names none.
 func artifactLocations(a *App, projectID *string) []string {
+	q := backgroundRequest(context.Background(), a, nil)
 	if projectID != nil {
-		if l := strList(projectSettingsOf(*projectID)["artifact_locations"]); len(l) > 0 {
+		if l := strList(projectSettingsOf(q, *projectID)["artifact_locations"]); len(l) > 0 {
 			return l
 		}
 	}
@@ -659,12 +665,12 @@ func artifactLocations(a *App, projectID *string) []string {
 
 // Small project and agent lookups shared across domains.
 
-func projectSetting(projectID any, key string) any {
+func projectSetting(q *Request, projectID any, key string) any {
 	p, ok := projectID.(string)
 	if !ok || p == "" {
 		return nil
 	}
-	st, err := projectSettingsByID(p)
+	st, err := projectSettingsByID(q, p)
 	if err != nil {
 		return nil
 	}
@@ -685,8 +691,8 @@ func takeTaskFrom(q *Request, taskID, taker string, from any) error {
 }
 
 // projectSettingsByID: project_context(projectId).settings; error when unknown.
-func projectSettingsByID(id string) (doc, error) {
-	p, err := projectContext(id)
+func projectSettingsByID(q *Request, id string) (doc, error) {
+	p, err := projectContext(q, id)
 	if err != nil {
 		return nil, err
 	}
@@ -694,7 +700,7 @@ func projectSettingsByID(id string) (doc, error) {
 }
 
 // gitNetworkOf: whether the session's agent may use the network for git (its profile, else a project role with repos).
-func gitNetworkOf(s doc) bool {
+func gitNetworkOf(q *Request, s doc) bool {
 	if cfg, ok := s["agentConfig"].(map[string]any); ok {
 		if v, ok := cfg["gitNetwork"].(bool); ok {
 			return v
@@ -705,7 +711,10 @@ func gitNetworkOf(s doc) bool {
 	if p == "" || (role != "pm" && role != "reviewer" && role != "worker") {
 		return false
 	}
-	st, err := projectSettingsByID(p)
+	if st := mapOf(s["projectSettings"]); st != nil {
+		return len(anys(st["repos"])) > 0
+	}
+	st, err := projectSettingsByID(q, p)
 	return err == nil && len(anys(st["repos"])) > 0
 }
 

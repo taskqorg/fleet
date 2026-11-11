@@ -26,7 +26,7 @@ Ordinary sessions run one-off work and experiments without a pipeline. Formalise
 
 ## Project settings
 
-Every setting is per project; absent key means the default below. The coordinator reads every `config/projects/<id>/project.json` (no fixed list) and `projectSettings` in `go/coordinator/projects.go` validates it: a wrong type or enum value fails the project (500 `Invalid project setting <key>`); an unknown key is kept out and listed in `unknownKeys`, never dropped silently.
+Every setting is per project; absent key means the default below. The coordinator seeds every `config/projects/<id>/project.json` into the definition owner (no fixed list); `projectSettings` in `go/coordinator/projects.go` validates it: a wrong type or enum value fails the project (500 `Invalid project setting <key>`); an unknown key is kept out and listed in `unknownKeys`, never dropped silently.
 
 | Key | Default | Values and effect |
 |---|---|---|
@@ -51,7 +51,7 @@ Every setting is per project; absent key means the default below. The coordinato
 | `identity` | `null` | `{name, email}` for `GIT_AUTHOR_*`/`GIT_COMMITTER_*` of agent and delivery commits. |
 | `artifact_locations`, `artifact_rules` | `null`, `[]` | Hosts that must hold the project's artifacts and retention rules ([data foundation](designs/fleet-data-foundation.md)). |
 
-Not built: `integration.mode: direct` for agent sessions (`session_deliver` always opens a pull request; `direct` applies to artifact delivery only); `integration.mode: pr` on GitLab (the program worker uses `gh`); a merge method read from the repository default; `project_create` and a project editing UI (projects are files in Git).
+Not built: `integration.mode: direct` for agent sessions (`session_deliver` always opens a pull request; `direct` applies to artifact delivery only); `integration.mode: pr` on GitLab (the program worker uses `gh`); a merge method read from the repository default.
 
 Example (`config/projects/fleet-hello-world/project.json`, shortened):
 
@@ -221,3 +221,9 @@ Each host has its own secret. Make it on the host with `scripts/host-secret.sh <
 ## Example: csgo
 
 A shared developer profile provides development instructions and tools; the csgo project references it and adds game requirements and checks. A character method references shared generation tools and a csgo rig adaptation; its steps declare capabilities, not machine names. An assignment supplies references and any explicit method choice; a Mac-only check needs a Mac environment. Reserving Claude for required work is allocation policy, not a change to every profile; a Codex alternative must still meet the role, skills, tools and requirements. The person sees one explanation of planned or actual work without browsing every source.
+
+## Editable projects
+
+Projects use the same versioned definition owner as agents and pipelines. `project_create` creates the initial revision and revocable initial membership atomically; `project_update` checks `baseRevision` and saves a complete settings/context bundle. `project_context` reads the current revision and owned text; shipped project files seed definitions rather than overwriting saved heads. No repository or environment is required to save a project. A saved configuration is distinct from readiness.
+
+New executions record the resolved project revision, content and source references. Running work keeps its snapshot; workspace cleanup uses the settings that prepared that workspace. An old workspace without reconstructible cleanup context is preserved with `cleanup_context_unknown`, never cleaned with new settings. Git mirror/export remains deferred; a successful Save establishes DB revision durability, not off-site backup delivery.

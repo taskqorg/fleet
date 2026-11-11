@@ -25,10 +25,11 @@ import (
 )
 
 type Person struct {
-	Email string   `json:"email"`
-	Name  string   `json:"name"`
-	Roles []string `json:"roles"`
-	Owner bool     `json:"owner"`
+	AccessVersion string   `json:"-"`
+	Email         string   `json:"email"`
+	Name          string   `json:"name"`
+	Roles         []string `json:"roles"`
+	Owner         bool     `json:"owner"`
 	// A Cloudflare Access service token's common_name (the guard's X-Fleet-Person for it); empty for people.
 	AccessCommonName string `json:"accessCommonName,omitempty"`
 	Grants           []struct {
@@ -194,6 +195,16 @@ func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped [
 		return nil, errors.New("exactly one person must have owner: true" + strings.Join(append([]string{""}, skipped...), "; left out: "))
 	}
 	err = a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
+		emails := []string{}
+		for _, p := range list {
+			emails = append(emails, p.Email)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE definition SET initial_member_revoked_at=now(),access_version=access_version+1 WHERE kind='project' AND initial_member IS NOT NULL AND initial_member_revoked_at IS NULL AND NOT(initial_member=ANY($1))`, emails); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE document SET data=data||jsonb_build_object('directorAccessRevokedAt',extract(epoch from now())*1000) WHERE kind='session' AND project_id IS NULL AND data ? 'directedBy' AND NOT(data ? 'directorAccessRevokedAt') AND NOT(data->>'directedBy'=ANY($1))`, emails); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, "DELETE FROM person"); err != nil {
 			return err
 		}
@@ -207,7 +218,8 @@ func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped [
 				}
 			}
 		}
-		return nil
+		_, err := tx.Exec(ctx, "SELECT pg_notify('fleet_change','')")
+		return err
 	})
 	if err == nil {
 		a.people = people
@@ -359,7 +371,11 @@ func (a *App) authorize(q *Request) error {
 	if p == nil {
 		return fail(403, "Unknown person")
 	}
-	q.person = p
+	var err error
+	q.person, err = a.resolveAccess(q.ctx(), p.Email)
+	if err != nil {
+		return err
+	}
 	return checkOrigin(q)
 }
 
