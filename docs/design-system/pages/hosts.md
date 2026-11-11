@@ -7,7 +7,8 @@
 **Layout (D19).** [App shell](../patterns/app-shell.md), then [list and detail](../patterns/list-detail.md).
 * **Control column:** the page head with "updated 40s"; the low-space [problem row](../controls/problem-row.md) with its three actions; the hosts catalogue; in the app, the subscription limits below it.
 * **Catalogue row:** state, name and platform; on the next lines workers running of slots, workers by harness, queued commands when there are any, and the store fill; last seen on the right.
-* **Work area:** the opened host as stacked [detail sections](../controls/detail-section.md) with its [setting fields](../controls/setting-field.md).
+* **Work area:** the opened host as stacked [detail sections](../controls/detail-section.md) with its [setting fields](../controls/setting-field.md): state, workers, readings (heartbeat age, load of cores, memory and disk free), Fleet processes (CPU per beat, memory), problems, capabilities, store, and Remove (preview counts first, then the danger button).
+* **Work area with no host open:** the system ([telemetry §8](../../designs/fleet-telemetry.md#8-system-screen-read-half), [system management](../../designs/fleet-system-management.md#system-screen)): findings of the rules pass (stale marker), services with calls, errors and p95 for the last hour, spans dropped, recent runs with CPU and peak memory, and purge of removed hosts (preview first).
 
 There is no stat strip: it repeated the rows (OR-17).
 
@@ -21,5 +22,9 @@ Not built in the app, shown in the mockup: slots and the store fill in the row, 
 | Store capacity, memory and CPU bounds, free-space warning | Setting fields with applied, pending or apply error |
 | Low space: raise capacity, change locations, add retention rule | Problem row actions |
 | Workers running per host (owner, D9, D11) | Catalogue row: running/slots plus [harness counts](../controls/harness-counts.md) |
+| Host and process readings: load, memory, disk, CPU and memory per Fleet process | Catalogue row: load and memory free; host detail: Readings and Processes sections (`telemetry_summary`) |
+| Run resources: CPU seconds and peak memory per execution | Work area with no host open: Recent runs (`telemetry_summary.runs`) |
+| Services: calls, errors, latency; findings of the rules pass | Work area with no host open: Services and Findings (`telemetry_summary`, `telemetry_findings`) |
+| Remove a host, purge removed hosts | Host detail: Remove; work area: Purge (`hosts_remove`, `system_purge`, preview first) |
 
 **Open.** None from stage 3.
