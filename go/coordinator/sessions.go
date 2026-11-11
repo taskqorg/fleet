@@ -203,7 +203,7 @@ func sessionProfile(q *Request, sid string, b doc) (doc, error) {
 	if astr(s["nativeSessionId"]) != "" {
 		return sessionTransition(q, doc{"sessionId": sid, "profileId": pid, "account": b["account"]})
 	}
-	p, err := readTrustedProfile(pid)
+	p, err := readTrustedProfile(q, pid)
 	if err != nil {
 		return nil, err
 	}

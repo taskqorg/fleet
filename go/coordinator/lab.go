@@ -850,7 +850,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := loadPipeline(pipelineID + ".json"); err != nil {
+	if _, err := loadPipeline(q, pipelineID + ".json"); err != nil {
 		return nil, err
 	}
 	if !projectKnown(q, projectID) {
@@ -947,7 +947,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 			if err != nil {
 				return nil, err
 			}
-			if _, err := loadPipeline(r + ".json"); err != nil {
+			if _, err := loadPipeline(q, r + ".json"); err != nil {
 				return nil, err
 			}
 			if f != "pass_fail" && f != "scale" {

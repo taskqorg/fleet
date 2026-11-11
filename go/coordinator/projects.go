@@ -71,37 +71,34 @@ func canonical(v any) string {
 
 var idPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,79}$`)
 
-func readTrustedProfile(id string) (doc, error) {
+// readTrustedProfile: an agent profile, the head of its definition in the store (fleet-definition-editors.md, Resolve).
+func readTrustedProfile(q *Request, id string) (doc, error) {
 	if !idPattern.MatchString(id) {
 		return nil, fail(400, "Unknown trusted profile")
 	}
-	raw, err := os.ReadFile(filepath.Join(profilesDir(), id+".json"))
+	raw, ok, err := headText(q, "agent", id)
 	if err != nil {
+		return nil, err
+	}
+	if !ok {
 		return nil, fail(400, "Unknown trusted profile")
 	}
 	var p doc
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return nil, fail(400, "Invalid repository profile")
+		return nil, fail(400, "Invalid profile")
 	}
 	// One validator with the executor (contracts/profile.schema.json), so a profile listed here is never refused on a host.
 	if _, err := contract.ParseProfile(raw); err != nil {
-		return nil, fail(400, "Invalid repository profile: "+err.Error())
-	}
-	if p["id"] != id {
-		return nil, fail(400, "Invalid repository profile: id differs from the file name")
+		return nil, fail(400, "Invalid profile: "+err.Error())
 	}
 	return p, nil
 }
 
-func listProfiles() []doc {
+func listProfiles(q *Request) []doc {
 	out := []doc{}
-	es, _ := os.ReadDir(profilesDir())
-	for _, e := range es {
-		n := e.Name()
-		if !strings.HasSuffix(n, ".json") || !idPattern.MatchString(strings.TrimSuffix(n, ".json")) {
-			continue
-		}
-		if p, err := readTrustedProfile(strings.TrimSuffix(n, ".json")); err == nil {
+	ids, _ := headIDs(q, "agent")
+	for _, id := range ids {
+		if p, err := readTrustedProfile(q, id); err == nil {
 			out = append(out, p)
 		}
 	}
@@ -377,7 +374,7 @@ func catalogue(q *Request, id string) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	c, err := readJSON(filepath.Join(configDir(), "catalogue.json"))
+	c, err := catalogueHead(q)
 	if err != nil {
 		return nil, err
 	}
@@ -411,9 +408,9 @@ func projectOp(name string, read bool, h handler) {
 }
 
 func init() {
-	gatedRoute("GET /api/profiles", func(q *Request) (any, error) { return doc{"profiles": listProfiles()}, nil })
+	gatedRoute("GET /api/profiles", func(q *Request) (any, error) { return doc{"profiles": listProfiles(q)}, nil })
 	gatedObjOp("profiles_list", true, typedOp(func(q *Request, _ *contract.ProfilesListRequest) (contract.ProfilesListReply, error) {
-		return contract.ProfilesListReply{Profiles: recsOf(listProfiles())}, nil
+		return contract.ProfilesListReply{Profiles: recsOf(listProfiles(q))}, nil
 	}))
 	projectOp("project_list", true, shaped[contract.ProjectListRequest, contract.ProjectListReply](func(q *Request) (any, error) {
 		out := []doc{}
@@ -685,4 +682,17 @@ func gitNetworkOf(s doc) bool {
 	}
 	st, err := projectSettingsByID(p)
 	return err == nil && len(anys(st["repos"])) > 0
+}
+
+// catalogueHead: the catalogue definition's head (one definition, config/catalogue.json as its seed).
+func catalogueHead(q *Request) (doc, error) {
+	raw, ok, err := headText(q, "catalogue", "catalogue")
+	if err != nil || !ok {
+		if err == nil {
+			err = fail(404, "No catalogue")
+		}
+		return nil, err
+	}
+	var c doc
+	return c, json.Unmarshal(raw, &c)
 }

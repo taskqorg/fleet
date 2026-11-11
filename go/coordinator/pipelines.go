@@ -111,16 +111,20 @@ func validatePipeline(d doc) (doc, error) {
 	return d, nil
 }
 
-func loadPipeline(file string) (doc, error) {
+// loadPipeline: a pipeline definition's head; file is the catalogue's and runs' reference (<id>.json).
+func loadPipeline(q *Request, file string) (doc, error) {
 	if !pipelineFile.MatchString(file) {
 		return nil, fail(500, "Invalid pipeline reference")
 	}
-	b, err := os.ReadFile(filepath.Join(configDir(), "pipelines", file))
+	raw, ok, err := headText(q, "pipeline", strings.TrimSuffix(file, ".json"))
 	if err != nil {
+		return nil, err
+	}
+	if !ok {
 		return nil, fail(404, "Unknown pipeline "+strings.TrimSuffix(file, ".json"))
 	}
 	var d doc
-	if json.Unmarshal(b, &d) != nil {
+	if json.Unmarshal(raw, &d) != nil {
 		return nil, fail(500, "Invalid pipeline: JSON")
 	}
 	return validatePipeline(d)
@@ -367,7 +371,7 @@ func requester(q *Request) doc {
 // pipelineStart writes a new run record (runner.start). o: id?, file, projectId, requestId, example, overrides, requestedBy,
 // experimentId, variant, extra.
 func pipelineStart(q *Request, o doc) (doc, error) {
-	def, err := loadPipeline(astr(o["file"]))
+	def, err := loadPipeline(q, astr(o["file"]))
 	if err != nil {
 		return nil, err
 	}
@@ -1193,7 +1197,7 @@ func pipelineRunCreate(q *Request) (doc, error) {
 			return nil, fail(400, "Expected requestId and optional projectId, exampleArtifactId or example, overrides")
 		}
 		file := q.r.PathValue("id") + ".json"
-		if _, err := loadPipeline(file); err != nil {
+		if _, err := loadPipeline(q, file); err != nil {
 			return nil, err
 		}
 		signature := sha256hex([]byte(canonical(b)))
@@ -1434,7 +1438,7 @@ func startAgentStep(q *Request, run, step doc, stepExecutionID, prompt string, i
 	if overrides["profile"] != nil {
 		pid = astr(overrides["profile"])
 	}
-	profile, err := readTrustedProfile(pid)
+	profile, err := readTrustedProfile(q, pid)
 	if err != nil {
 		return "", err
 	}
