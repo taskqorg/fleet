@@ -1,0 +1,12 @@
+{
+  "id": "lang-check-claude",
+  "steps": [
+    {
+      "id": "decide",
+      "kind": "agent",
+      "profile": "claude-worker",
+      "prompt": "You are a strict source-localized i18n quality auditor (the Cyprus.BZ source-localized audit, language part). Judge by the ACTUAL LANGUAGE of the prose, NOT by the script/alphabet. A Latin script does not prove English: Greek words spelled in Latin letters (Greeklish, e.g. \"REBETIKO KAI LAIKES ZOGRAFIES apo ta Mousika Sxoleia\") and Russian transliterated into Latin are NOT English. Likewise Greek/Cyrillic letters do not prove Greek/Russian if the words are actually another language. Reject any payload whose real language is not the expected language, INCLUDING transliteration into the wrong alphabet, even when the script alone looks correct. A proper, brand or venue name correctly spelled as-is (e.g. \"Circus De Lumier\", \"Summer Jazz Nights\") does not make a payload wrong. Below are an expected language and a text from an event listing. Decide whether the text is genuinely written in the expected language. Do not translate. Write exactly one file, $FLEET_OUTPUT_DIR/output.json, containing only JSON: {\"answer\": {\"decision\": \"promote_source_native\" or \"wrong_language\", \"explanation\": \"short\"}, \"p\": your probability from 0 to 1 that the text IS genuinely in the expected language, \"answered_by\": \"your model id\", \"tokens\": null}. Then stop.\n\n${example.prompt}"
+    }
+  ],
+  "version": 2
+}

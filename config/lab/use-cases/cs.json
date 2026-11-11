@@ -26,5 +26,34 @@
    "language"
   ],
   "maturity": "indexed"
+ },
+ {
+  "id": "cs:source-audit-language",
+  "source": {
+   "repo": "cs",
+   "path": "docs/plans/wrong-language-source-relocalization-2026-06-19.md",
+   "anchor": "problem",
+   "commit": "839e5c2983177839a1d958eb6eec36b23d6e104a",
+   "sha256": "35805dd1ee8e7e0eb45ebec081a27cb67d09c8d52cce4ff4535a1f94de2d1129"
+  },
+  "source_status": "current",
+  "actor": "owner",
+  "goal": "Decide whether a provider's localized text is genuinely in its expected language (English, Greek, Russian), so Greeklish or transliterated text is never published as that language",
+  "expected_outcome": "Each payload gets the right verdict (genuine expected language or not), with Greek or Russian in Latin letters rejected and proper names accepted; reported per language",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "cs",
+   "typed-decision",
+   "language",
+   "greeklish"
+  ],
+  "maturity": "indexed"
  }
 ]

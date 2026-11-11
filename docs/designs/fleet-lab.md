@@ -147,7 +147,7 @@ The runner is `go/coordinator/pipelines.go`; no version-1 reader exists.
 *   Profile skills (`config/skills/<id>/SKILL.md`, sent in the start command): Claude gets them as a local plugin (`--plugin-dir` with the `Skill` tool; `--disable-slash-commands` stays only when no skill is granted); Codex gets them in the developer instructions.
 *   Direct start: `POST /api/pipelines/:id/runs` `{requestId, projectId?, exampleArtifactId? | example?, overrides?}`; the same `requestId` returns the same run; an example artifact must be approved. `GET /api/pipeline-runs/:id` reads a run. The `direct_search` and `pipeline_run` project operations use the same runner.
 
-Pipelines in `config/pipelines/`: `web-research`, `hello-search`, `search-basic`, `draft-examples`, `judge-pass-fail`, `judge-scale`, `typed-decision` (one `api` step on the `typesafe` connection's `system_one`, output `{answer, p, answered_by, tokens}`; analytics stage 1).
+Pipelines in `config/pipelines/`: `web-research`, `hello-search`, `search-basic`, `draft-examples`, `judge-pass-fail`, `judge-scale`, `typed-decision` (one `api` step on the `typesafe` connection's `system_one`, output `{answer, p, answered_by, tokens}`; analytics stage 1), and for the Cyprus.BZ language pilot (use case `cs:source-audit-language`) `lang-check-jev` (Jev with the project audit's language rules) and `lang-check-claude` (the same rules as the project's Claude audit prompt, an agent step writing `output.json` with `p`).
 
 ## Connections: one accounting path (R3.2)
 
