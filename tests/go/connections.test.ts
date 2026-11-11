@@ -66,6 +66,15 @@ test('C1 key value stays in the secret file (requirement: docs/designs/fleet-con
   await until(() => snapshot().connections[c].keys.length === 0 || undefined, 'retired key leaves the snapshot');
 });
 
+test('C5 connection writes reach the change feed (requirement: C14, the Keys screen follows api-connection and connection-key changes; risk: the screen never updates after an action)', async () => {
+  const {cursor} = ok(await op('changes_since', {}));
+  const c = name('tavily');
+  ok(await op('connections_create', {name: c, provider: 'tavily'}));
+  ok(await op('connections_key_add', {connection: c, value: 'tvly-' + randomUUID()}));
+  const kinds = await until(async () => { const r = ok(await op('changes_since', {cursor})); const k = new Set(r.changes.map((x: any) => x.kind)); return k.has('api-connection') && k.has('connection-key') ? k : undefined; }, 'connection changes');
+  assert.ok(kinds.has('api-connection') && kinds.has('connection-key'));
+});
+
 test('C2 only the owner handles key values (requirement: docs/designs/fleet-connections.md; risk: a non-owner reading or adding a key)', async () => {
   const c = name('tavily');
   ok(await op('connections_create', {name: c, provider: 'tavily', holder: OUTSIDER}));

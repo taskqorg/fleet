@@ -241,14 +241,34 @@ type CatalogueRequest struct {
 
 // Change: One committed change (the change table), as GET /api/stream and changes_since deliver it.
 type Change struct {
-	HostId    *string `json:"hostId"`
-	Id        string  `json:"id"`
-	Kind      string  `json:"kind"`
-	Op        string  `json:"op"`
-	Seq       int64   `json:"seq"`
-	SessionId *string `json:"sessionId"`
-	TaskId    *string `json:"taskId"`
+	HostId    *string    `json:"hostId"`
+	Id        string     `json:"id"`
+	Kind      ChangeKind `json:"kind"`
+	Op        string     `json:"op"`
+	Seq       int64      `json:"seq"`
+	SessionId *string    `json:"sessionId"`
+	TaskId    *string    `json:"taskId"`
 }
+
+// ChangeKind: The kinds the change triggers write (fleet_change and fleet_artifact_change in go/coordinator/schema.sql); a go test checks the triggers against this list.
+type ChangeKind string
+
+const (
+	ChangeKindApiConnection  ChangeKind = "api-connection"
+	ChangeKindArtifact       ChangeKind = "artifact"
+	ChangeKindCommand        ChangeKind = "command"
+	ChangeKindConnectionKey  ChangeKind = "connection-key"
+	ChangeKindEvent          ChangeKind = "event"
+	ChangeKindExecution      ChangeKind = "execution"
+	ChangeKindExperiment     ChangeKind = "experiment"
+	ChangeKindHost           ChangeKind = "host"
+	ChangeKindManagedAccount ChangeKind = "managed-account"
+	ChangeKindQuestion       ChangeKind = "question"
+	ChangeKindScore          ChangeKind = "score"
+	ChangeKindSession        ChangeKind = "session"
+	ChangeKindSettingChange  ChangeKind = "setting-change"
+	ChangeKindTask           ChangeKind = "task"
+)
 
 type ChangeRef struct {
 	Id   string `json:"id"`
@@ -1027,6 +1047,11 @@ type StoresListReply struct {
 }
 
 type StoresListRequest = map[string]json.RawMessage
+
+// StreamCursor: Body of the GET /api/stream events ready (the cursor the stream starts after) and resync (reload everything, then continue after cursor).
+type StreamCursor struct {
+	Cursor int64 `json:"cursor"`
+}
 
 type SubscriptionLimitsReply struct {
 	ServerNow     json.RawMessage `json:"serverNow,omitempty"`
