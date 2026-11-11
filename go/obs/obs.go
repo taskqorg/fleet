@@ -163,7 +163,12 @@ func opt(s string) *string {
 
 // Start begins a span named name under the span (or remote parent) in ctx; with neither it starts a new trace.
 func Start(ctx context.Context, name, kind string) (context.Context, *Span) {
-	s := &Span{SpanID: id(8), Service: Service, HostID: HostID, Version: Version, Name: name, Kind: kind, Outcome: OK, begin: time.Now()}
+	return StartAt(ctx, name, kind, time.Now())
+}
+
+// StartAt is Start for work that began at t (a run measured from its process start).
+func StartAt(ctx context.Context, name, kind string, t time.Time) (context.Context, *Span) {
+	s := &Span{SpanID: id(8), Service: Service, HostID: HostID, Version: Version, Name: name, Kind: kind, Outcome: OK, begin: t}
 	if p := From(ctx); p != nil {
 		s.TraceID, s.ParentSpanID = p.TraceID, p.SpanID
 	} else if r, ok := ctx.Value(remoteKey).(remote); ok {
