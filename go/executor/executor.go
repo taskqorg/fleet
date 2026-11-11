@@ -1627,10 +1627,7 @@ func runExecutor() error {
 		sessions = filepath.Join(root, "sessions")
 	}
 	e := &executor{db: db, ex: db, root: root, url: url, token: token, host: host, live: map[string]*live{}, sessions: sessions, harnessCache: map[string]M{}, storeCfg: storeConfig()}
-	if err := outboxSchema(db); err != nil {
-		return err
-	}
-	if err := uploadSchema(db); err != nil {
+	if err := requeueUnauthorized(db); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Join(root, "spool"), 0o755); err != nil {

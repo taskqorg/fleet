@@ -13,7 +13,6 @@ import (
 func scriptExecutor(t *testing.T) (*executor, string) {
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	db := journal(t)
-	uploadSchema(db)
 	os.MkdirAll(filepath.Join(root, "spool"), 0o755)
 	return &executor{db: db, ex: db, root: root, host: "fake", live: map[string]*live{}, sessions: filepath.Join(root, "sessions"), harnessCache: map[string]M{}}, root
 }

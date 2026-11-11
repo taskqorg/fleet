@@ -152,7 +152,7 @@ Not built: delivery (`delivery_create`, `delivery_generate`, `delivery_step`, `d
 
 Both were ported to Go in one pass after the coordinator (owner direction 2026-11-11), with no compatibility layer and no fallback to the Rust binaries, behind the unchanged `/api/hosts/*` and `contracts/*.schema.json`. The executor is `go/executor` (binary `fleet-executor`), the gateway `go/gateway` (`fleet-gateway`, with its `guard` command).
 
-- Journal: `modernc.org/sqlite`, the same `journal.sqlite` tables, WAL, `synchronous=FULL`. The probe showed 0 lost acknowledged commits in the crash test at about 14k commits/s ([evidence](../../evidence/fleet-stack.md#executor-probe)). A standard-library journal was rejected ([why](#why-this-stack)).
+- Journal: `modernc.org/sqlite`, WAL, `synchronous=FULL`; one schema source, `go/executor/journal.sql`, applied in sections by `PRAGMA user_version`. The probe showed 0 lost acknowledged commits in the crash test at about 14k commits/s ([evidence](../../evidence/fleet-stack.md#executor-probe)). A standard-library journal was rejected ([why](#why-this-stack)).
 - macOS kernel calls: `github.com/ebitengine/purego` for `proc_pidinfo` and `proc_signal_with_audittoken`; the signal is refused when the private symbol is missing. Linux identity-bound signals use `os.Process` with pidfd. `golang.org/x/sys/unix` for `Openat`, `Statfs`, `Flock` and the terminal check.
 - Preview memory cap: `prlimit --as=<bytes>` in the ffmpeg command line on Linux (Go has no `pre_exec`); on macOS `RLIMIT_AS` is not enforced, as before.
 - The executor writes OSC 7501 program status to stderr when stderr is a terminal (working, blocked with kind `auth` on an edge answer to the poll, done, error).
