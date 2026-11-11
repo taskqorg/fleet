@@ -406,8 +406,10 @@ func definitionSave(q *Request, r *contract.DefinitionSaveRequest) (contract.Def
 		return out, fail(400, "Expected message")
 	}
 	// A person with the architect role saves shared definitions (the role is global). An agent acts with its director's
-	// grants: it may not change a definition another project of theirs does not cover uses (owner decision).
-	if q.agent != "" && q.person != nil && !fullAccess(q.person) {
+	// grants: it may not change a definition that a project outside those grants uses (owner decision).
+	// ponytail: use is read from roles and catalogue methods, as decided; direct pipeline runs and explicit profileIds are
+	// not counted. Read their executions too if agents start editing those.
+	if q.agent != "" && !fullAccess(q.person) {
 		var outside []string
 		used, err := usedByProjects(q, string(r.Kind), r.Id)
 		if err != nil {
@@ -561,11 +563,11 @@ func usedByProjects(q *Request, kind, id string) ([]string, error) {
 			if m == nil || !match(m) {
 				continue
 			}
-			if sc := astr(m["scope"]); sc == "shared" || sc == "" {
+			if sc := astr(m["scope"]); sc == "shared" { // as catalogue(): shared is every project, no scope is none
 				for _, p := range all {
 					set[p] = true
 				}
-			} else {
+			} else if sc != "" {
 				set[sc] = true
 			}
 		}

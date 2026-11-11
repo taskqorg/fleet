@@ -215,7 +215,7 @@ test('PM10 an agent save of a definition used by a project outside its director\
   const g = ok(await pm.tool('definition_get', {kind: 'pipeline', id: 'hello-search'})); // catalogue methods of hello-world run it
   const c = JSON.parse(JSON.stringify(g.content)); c.pipeline.steps[0].arguments = {...c.pipeline.steps[0].arguments, pm10: true};
   const r = await pm.tool('definition_save', {kind: 'pipeline', id: 'hello-search', baseRevision: g.head, content: c, message: 'PM10'});
-  assert.equal(r.status === 200 ? r.body.reason : (r as any).body?.reason ?? JSON.stringify(r), 'used-outside-grants', JSON.stringify(r));
+  assert.deepEqual([r.status, (r as any).body.reason, (r as any).body.projects], [409, 'used-outside-grants', ['hello-world']], JSON.stringify(r));
   // The same person saves it by hand: the architect role is global.
   ok(await op('definition_save', {kind: 'pipeline', id: 'hello-search', baseRevision: g.head, content: c, message: 'PM10 by hand'}, ARCHITECT));
 });
