@@ -28,16 +28,18 @@ var (
 	ruleSaturationBeats = 5
 	ruleMemFreeShare    = 0.05
 	telemetryStale      = 3 * time.Minute
+	ruleDroppedFor      = 10 * time.Minute
 	problemCleanRuns    = 2 // problems.cleanRuns
 )
 
 var (
-	rulesMu       sync.Mutex
-	rulesLast     time.Time
-	rulesFindings []contract.Finding
-	rulesSince    = map[string]string{} // cause to when it first fired, while it keeps firing
-	rulesDropped  int64                 // the writer's drop count at the previous pass
-	passIntervals sync.Map              // pass name to its period, filled by every
+	rulesMu        sync.Mutex
+	rulesLast      time.Time
+	rulesFindings  []contract.Finding
+	rulesSince     = map[string]string{} // cause to when it first fired, while it keeps firing
+	rulesDropped   int64                 // the writer's drop count when it last rose
+	rulesDroppedAt time.Time             // when it last rose
+	passIntervals  sync.Map              // pass name to its period, filled by every
 )
 
 func init() {
@@ -50,19 +52,17 @@ func init() {
 // rulesPass runs every rule, groups the findings and syncs them as questions. With no span store the span rules are
 // skipped; with the store refusing, every rule is skipped (problem:telemetry:clickhouse covers it).
 func rulesPass(ctx context.Context, a *App) error {
-	var fs []contract.Finding
-	var err error
-	if spanStore != nil {
-		if fs, err = spanRules(ctx); err != nil {
-			return err
-		}
-	}
-	more, err := stateRules(ctx, a)
+	// The Postgres rules run even when the span store fails; its own question (problem:telemetry:clickhouse) covers that.
+	more, active, err := stateRules(ctx, a)
 	if err != nil {
 		return err
 	}
-	fs = append(fs, more...)
-	fs = groupFindings(fs)
+	var fs []contract.Finding
+	var spanErr error
+	if spanStore != nil {
+		fs, spanErr = spanRules(ctx)
+	}
+	fs = groupFindings(append(fs, more...), active)
 	rulesMu.Lock()
 	now := time.Now().UTC().Format(time.RFC3339)
 	since := map[string]string{}
@@ -80,7 +80,11 @@ func rulesPass(ctx context.Context, a *App) error {
 		if f.GroupCause != nil {
 			continue
 		}
-		p := Problem{Cause: f.Cause, Text: astr(nonNil(f.Text, f.Cause)), Rule: f.Rule, Data: doc{"exemplars": f.Exemplars, "value": f.Value}}
+		txt := f.Cause
+		if f.Text != nil {
+			txt = *f.Text
+		}
+		p := Problem{Cause: f.Cause, Text: txt, Rule: f.Rule, Data: doc{"exemplars": f.Exemplars, "value": f.Value}}
 		if f.HostId != nil {
 			p.Data["hostId"] = *f.HostId
 		}
@@ -94,6 +98,9 @@ func rulesPass(ctx context.Context, a *App) error {
 			p.Data["executionId"] = *f.ExecutionId
 		}
 		ps = append(ps, p)
+	}
+	if spanErr != nil {
+		return spanErr // without the span findings a sync would close their questions
 	}
 	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 		for i := range ps {
@@ -123,14 +130,14 @@ func text(f *contract.Finding, s string) { f.Text = &s }
 // spanRules: absence-host, absence-pass, error-spike, host-saturation over the span table.
 func spanRules(ctx context.Context) ([]contract.Finding, error) {
 	var out []contract.Finding
-	// absence-host: a host that sent heartbeats in the last 7 days and none for ruleHostSilent. Removed and paused hosts
+	// absence-host: a host that ever sent a heartbeat and none for ruleHostSilent. Removed and paused hosts
 	// are dropped in stateRules' host filter (hostsActive).
 	var hosts []struct {
 		HostID string
 		Age    float64
 	}
 	if err := spanStore.Query(ctx, `SELECT host_id AS HostID, dateDiff('second', max(start), now64()) AS Age FROM span
-	WHERE name = 'host.heartbeat' AND start >= now64() - toIntervalDay(7) GROUP BY host_id`, nil, &hosts); err != nil {
+	WHERE service = 'executor' AND name = 'host.heartbeat' GROUP BY host_id`, nil, &hosts); err != nil {
 		return nil, err
 	}
 	for _, h := range hosts {
@@ -146,7 +153,7 @@ func spanRules(ctx context.Context) ([]contract.Finding, error) {
 		Age  float64
 	}
 	if err := spanStore.Query(ctx, `SELECT name AS Name, dateDiff('second', max(start), now64()) AS Age FROM span
-	WHERE service = 'coordinator' AND kind = 'pass' AND host_id = {h:String} AND start >= now64() - toIntervalDay(1) GROUP BY name`, map[string]string{"h": obs.HostID}, &passes); err != nil {
+	WHERE service = 'coordinator' AND name LIKE 'pass.%' AND kind = 'pass' AND host_id = {h:String} GROUP BY name`, map[string]string{"h": obs.HostID}, &passes); err != nil {
 		return nil, err
 	}
 	for _, p := range passes {
@@ -217,8 +224,9 @@ func spanRules(ctx context.Context) ([]contract.Finding, error) {
 }
 
 // stateRules: rules over Postgres state (store-fill, absence-store, stuck, unknown) and the host filter of the span rules.
-func stateRules(ctx context.Context, a *App) ([]contract.Finding, error) {
+func stateRules(ctx context.Context, a *App) ([]contract.Finding, map[string]bool, error) {
 	var out []contract.Finding
+	active := map[string]bool{}
 	err := runTx(ctx, a, nil, false, "", func(q *Request) error {
 		stores, err := queryRows(q, "SELECT id,host_id,state,capacity_bytes::float8,free_space_warning_bytes::float8 FROM store WHERE observed_at IS NOT NULL AND state IN ('full','unreachable')")
 		if err != nil {
@@ -239,7 +247,7 @@ func stateRules(ctx context.Context, a *App) ([]contract.Finding, error) {
 			out = append(out, f)
 		}
 		stuck, err := queryRows(q, `SELECT e.id,e.project_id,e.host_id,extract(epoch FROM now()-coalesce((SELECT max(d.updated_at) FROM document d WHERE d.kind='event'
-			AND d.data @> jsonb_build_object('executionId', e.id) AND d.data->>'type' <> 'resource.observation'), e.started_at))::float8 AS idle
+			AND d.data->>'executionId'=e.id AND d.data->>'type' <> 'resource.observation'), e.started_at))::float8 AS idle
 			FROM execution e WHERE e.state='running' AND e.started_at < now() - make_interval(secs => $1)`, ruleStuck.Seconds())
 		if err != nil {
 			return err
@@ -264,63 +272,58 @@ func stateRules(ctx context.Context, a *App) ([]contract.Finding, error) {
 		if err != nil {
 			return err
 		}
-		active := map[string]bool{}
 		for _, h := range hosts {
 			active[astr(h["id"])] = true
 		}
-		hostsActive = active
 		return nil
 	})
+	// unknown: spans were dropped within ruleDroppedFor; the question stays while drops go on.
 	if spanWriter != nil {
 		if d := spanWriter.Dropped(); d > rulesDropped {
-			f := contract.Finding{Rule: "unknown", Subject: "dropped-spans", Value: float64(d - rulesDropped), Cause: "problem:unknown:dropped-spans", Exemplars: []string{}}
-			text(&f, fmt.Sprintf("Telemetry dropped %d spans since the last rules pass.", d-rulesDropped))
+			rulesDropped, rulesDroppedAt = d, time.Now()
+		}
+		if !rulesDroppedAt.IsZero() && time.Since(rulesDroppedAt) < ruleDroppedFor {
+			f := contract.Finding{Rule: "unknown", Subject: "dropped-spans", Value: float64(rulesDropped), Cause: "problem:unknown:dropped-spans", Exemplars: []string{}}
+			text(&f, fmt.Sprintf("Telemetry dropped spans (%d since start); the last drop was at %s.", rulesDropped, rulesDroppedAt.UTC().Format(time.RFC3339)))
 			out = append(out, f)
-			rulesDropped = d
 		}
 	}
-	return out, err
+	return out, active, err
 }
 
-var hostsActive map[string]bool
-
-// cleanName: an operation name (and a client span's server.address) as it goes into a question: printable, at most 120 bytes.
+// cleanName: an operation name (and a client span's server.address) as it goes into a cause and a question: the span
+// name character set (ASCII letters, digits and " _.:/{}@+-"), others replaced by "_", at most 120 bytes.
 func cleanName(s string) string {
-	s = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
+	b := []byte(s)
+	for i, c := range b {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.IndexByte(" _.:/{}@+-", c) >= 0) {
+			b[i] = '_'
 		}
-		return r
-	}, s)
-	if len(s) > 120 {
-		s = s[:120]
 	}
-	return s
+	if len(b) > 120 {
+		b = b[:120]
+	}
+	return string(b)
 }
 
-// groupFindings (Alertmanager-style inhibition): findings on a removed or paused host are dropped; a silent host
-// absorbs every other finding on that host; an offline store absorbs that store's other findings.
-func groupFindings(fs []contract.Finding) []contract.Finding {
-	silent, offline := map[string]string{}, map[string]string{}
+// groupFindings (Alertmanager-style inhibition): findings on a removed or paused host are dropped (active: the hosts
+// that may be named), a silent host absorbs every other finding on that host, and causes are unique.
+func groupFindings(fs []contract.Finding, active map[string]bool) []contract.Finding {
+	silent, seen := map[string]string{}, map[string]bool{}
 	var kept []contract.Finding
 	for _, f := range fs {
-		if f.HostId != nil && f.Rule != "stuck" && hostsActive != nil && !hostsActive[*f.HostId] && f.StoreId == nil {
+		if seen[f.Cause] || (f.HostId != nil && f.Rule != "stuck" && f.StoreId == nil && !active[*f.HostId]) {
 			continue
 		}
+		seen[f.Cause] = true
 		kept = append(kept, f)
 		if f.Rule == "absence-host" {
 			silent[*f.HostId] = f.Cause
 		}
-		if f.Rule == "absence-store" {
-			offline[*f.StoreId] = f.Cause
-		}
 	}
 	for i := range kept {
-		f := &kept[i]
-		if f.HostId != nil && f.Rule != "absence-host" && silent[*f.HostId] != "" {
+		if f := &kept[i]; f.HostId != nil && f.Rule != "absence-host" && silent[*f.HostId] != "" {
 			f.GroupCause = ptr(silent[*f.HostId])
-		} else if f.StoreId != nil && f.Rule != "absence-store" && offline[*f.StoreId] != "" {
-			f.GroupCause = ptr(offline[*f.StoreId])
 		}
 	}
 	sort.Slice(kept, func(i, j int) bool { return kept[i].Cause < kept[j].Cause })

@@ -183,5 +183,6 @@ test('T5 with a real ClickHouse a silent host and an error spike each open one q
     await until(async () => (await questions('problem:error-spike:executor:' + op + '@' + id)).length === 1, 'the spike asks once the host is back');
     const q = (await questions('problem:error-spike:executor:' + op + '@' + id))[0];
     assert.deepEqual(q.options, ['investigate', 'dismiss']);
+    assert.match(q.text, new RegExp(op + '.*on ' + id + ': 12 of 12 calls failed'));
   } finally { await c.stop(); }
 });
