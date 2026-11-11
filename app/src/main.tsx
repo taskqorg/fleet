@@ -35,7 +35,7 @@ function App() {
   const current = loc.split('/')[1] || 'overview';
   useEffect(() => {
     // Identity and grants (D3): a changed grants version clears stored data. Re-read on focus too.
-    const me = () => op('me').then(m => checkGrants(m.grantsVersion)).catch(() => {});
+    const me = () => op('me', {}).then(m => checkGrants(m.grantsVersion ?? '')) // no person: '' still clears another person's data.catch(() => {});
     me(); addEventListener('focus', me);
     // The feed starts at the server head: every mounted list loads a fresh page (restored rows only fill the first frame),
     // and lists shown from storage or after a failed load reload when the feed comes back (store.ts).

@@ -2,8 +2,9 @@
 // three failed connects, resync. Changes are batched per animation frame and handed to every subscriber at once.
 import { signal } from '@preact/signals';
 import { op, online } from './api.ts';
+import type { Change } from '../../contracts/generated/ops.ts';
 
-export type Change = { seq: number; kind: string; id: string; taskId: string | null; sessionId: string | null; hostId: string | null; op: string };
+export type { Change };
 type Sub = { changes: (c: Change[]) => void; resync: () => void };
 
 export const feedState = signal<'connecting' | 'live' | 'polling'>('connecting');
@@ -25,7 +26,7 @@ function resync() { for (const s of subs) s.resync(); }
 
 async function catchUp() {
   for (;;) {
-    const r = await op<{ changes: Change[]; cursor: number; resync?: boolean }>('changes_since', { cursor, limit: 1000 });
+    const r = await op('changes_since', { cursor: cursor ?? undefined, limit: 1000 });
     if (r.resync) { cursor = r.cursor; resync(); return; }
     r.changes.forEach(deliver); cursor = r.cursor;
     if (r.changes.length < 1000) return;

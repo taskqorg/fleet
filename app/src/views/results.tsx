@@ -30,10 +30,10 @@ export function Results({ id }: { id?: string }) {
   const gen = useRef(0), pages = useRef(0); // live refresh only while one page is shown, so paging is never thrown away
   const load = async (before?: number) => {
     const g = before ? gen.current : ++gen.current; setBusy(true);
-    try { const r = await op<{ artifacts: Row[]; nextBefore: number | null }>('artifact_list', { ...filter, limit: PAGE, ...(before ? { before } : {}) });
+    try { const r = await op('artifact_list', { ...filter, limit: PAGE, ...(before ? { before } : {}) });
       if (g !== gen.current) return;
       pages.current = before ? pages.current + 1 : 1;
-      setRows(x => before && x ? [...x, ...r.artifacts.filter(a => !x.some(y => y.id === a.id))] : r.artifacts); setNext(r.nextBefore); setError(null); }
+      setRows(x => before && x ? [...x, ...(r.artifacts as Row[]).filter(a => !x.some(y => y.id === a.id))] : r.artifacts as Row[]); setNext(r.nextBefore ?? null); setError(null); }
     catch (e: any) { setError(e.message); } finally { setBusy(false); }
   };
   useEffect(() => { load(); return subscribe({ resync: () => load(), changes: cs => { if (cs.some(c => c.kind === 'artifact') && pages.current <= 1) load(); } }); }, [fkey]);
