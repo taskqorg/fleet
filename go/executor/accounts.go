@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -25,6 +26,8 @@ type registryEntry struct {
 	NativeHome string `json:"nativeHome"`
 	Executable string `json:"executable"`
 	Readiness  string `json:"readiness"`
+	// CredentialAuthority native-current (a shared login) is run only by the start path, never probed.
+	CredentialAuthority string `json:"credentialAuthority"`
 }
 
 func readRegistry() (map[string]registryEntry, error) {
@@ -35,6 +38,9 @@ func readRegistry() (map[string]registryEntry, error) {
 	if err := private(path); err != nil {
 		return nil, err
 	}
+	if st, err := os.Stat(path); err != nil || owner(st) != os.Geteuid() {
+		return nil, errors.New("registry must be owned by executor user")
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -44,6 +50,33 @@ func readRegistry() (map[string]registryEntry, error) {
 		return nil, errors.New("account registry unreadable")
 	}
 	return r, nil
+}
+
+// runnable: the same gate as the start path (commandRegistry) before anything is launched under an entry: reviewed
+// ready, absolute executable, private home directories, no shared native-current login, Claude placement.
+func runnable(x registryEntry) error {
+	switch {
+	case x.Readiness != "ready":
+		return errors.New("named host account is unprovisioned; operator login and readiness review required")
+	case !filepath.IsAbs(x.Executable):
+		return errors.New("host executable must be absolute")
+	case x.CredentialAuthority != "":
+		return errors.New("unsupported: a native-current login is not probed")
+	}
+	for _, d := range []string{x.Home, x.NativeHome} {
+		if err := private(d); err != nil {
+			return err
+		}
+		if st, err := os.Stat(d); err != nil || !st.IsDir() {
+			return errors.New("homes must be directories")
+		}
+	}
+	if x.Harness == "claude" {
+		if _, err := claudePlacementHere(); err != nil {
+			return errors.New("Claude is ineligible on this host: " + err.Error())
+		}
+	}
+	return nil
 }
 
 // nativeEnv: the environment variables a harness reads its home from.
@@ -85,6 +118,12 @@ func (e *executor) accountInspect(c M) error {
 	}
 	r := contract.AccountReceipt{HostId: e.host, CommandId: cid, ExecutionId: execution}
 	if mode == "catalogue" {
+		if rerr != nil {
+			if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: rerr.Error()}); err != nil {
+				return err
+			}
+			return e.finish(c, "failed", "")
+		}
 		cat := contract.AccountCatalogue{AccountId: p.AccountId, Binding: p.Binding, Bindings: []contract.AccountBinding{}}
 		for _, name := range sortedKeysOf(reg) {
 			if x := reg[name]; x.Harness == p.Harness && filepath.IsAbs(x.Executable) {
@@ -99,7 +138,7 @@ func (e *executor) accountInspect(c M) error {
 		switch {
 		case rerr != nil:
 			o.Reason = rerr.Error()
-		case !known || x.Harness != p.Harness:
+		case !known || x.Harness != p.Harness || !filepath.IsAbs(x.Executable):
 			o.Readiness, o.Reason = "unavailable", "binding not in this host's account registry for "+p.Harness
 		default:
 			o.NativeLoginObserved = loginObserved(x)
@@ -147,8 +186,11 @@ func (e *executor) readLimits(c M, p contract.AccountInspectPayload, reg map[str
 		return fail(rerr.Error())
 	}
 	x, ok := reg[str0(p.Binding)]
-	if !ok || x.Harness != p.Harness || !filepath.IsAbs(x.Executable) {
+	if !ok || x.Harness != p.Harness {
 		return fail("binding not in this host's account registry for " + p.Harness)
+	}
+	if err := runnable(x); err != nil {
+		return fail(err.Error())
 	}
 	var reading M
 	var err error
@@ -163,7 +205,7 @@ func (e *executor) readLimits(c M, p contract.AccountInspectPayload, reg map[str
 	if err != nil {
 		return fail("limits read failed: " + err.Error())
 	}
-	reading["source"], reading["subscriptionId"], reading["hostId"] = "probe", p.AccountId, e.host
+	reading["source"], reading["subscriptionId"], reading["hostId"] = string(contract.LimitSourceProbe), p.AccountId, e.host
 	if err := e.event(c, 1, contract.FleetEventTypeLimitReading, reading); err != nil {
 		return err
 	}
@@ -189,7 +231,7 @@ func rpcExchange(cmd *exec.Cmd, frames []M, accept func(M) bool) (M, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	defer func() { cmd.Process.Kill(); cmd.Wait() }()
+	defer func() { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); cmd.Wait() }() // the CLI runs in its own group (newCmd)
 	for _, f := range frames {
 		if _, err := in.Write([]byte(enc(f) + "\n")); err != nil {
 			return nil, err
@@ -237,7 +279,8 @@ func probeCmd(x registryEntry, args ...string) *exec.Cmd {
 
 // codexReadLimits: codex app-server, initialize, then account/rateLimits/read.
 func codexReadLimits(x registryEntry) (M, error) {
-	r, err := rpcExchange(probeCmd(x, "app-server"), []M{
+	// Fleet's fixed isolation: no user MCP servers, hooks, plugins or apps start for a limits read.
+	r, err := rpcExchange(probeCmd(x, "app-server", "-c", "mcp_servers={}", "--disable", "hooks", "--disable", "plugins", "--disable", "apps", "--disable", "memories"), []M{
 		{"id": 1, "method": "initialize", "params": M{"clientInfo": M{"name": "fleet", "version": "0.1.0"}}},
 		{"method": "initialized"},
 		{"id": 2, "method": "account/rateLimits/read"},
@@ -257,7 +300,9 @@ func codexReadLimits(x registryEntry) (M, error) {
 
 // claudeReadLimits: Claude Code stream-json control request get_usage; its windows carry utilization 0-100 already.
 func claudeReadLimits(x registryEntry) (M, error) {
-	r, err := rpcExchange(probeCmd(x, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"), []M{
+	r, err := rpcExchange(probeCmd(x, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+		"--strict-mcp-config", "--setting-sources", ""), []M{
+		{"type": "control_request", "request_id": "fleet-init", "request": M{"subtype": "initialize"}},
 		{"type": "control_request", "request_id": "fleet-usage", "request": M{"subtype": "get_usage"}},
 	}, func(v M) bool {
 		return jStr(v, "type") == "control_response" && jStr(v, "response", "request_id") == "fleet-usage"
@@ -276,6 +321,9 @@ func claudeReadLimits(x registryEntry) (M, error) {
 func claudeUsageReading(usage M, native any) M {
 	windows := []contract.LimitWindow{}
 	for _, k := range sortedKeys(usage) {
+		if k != "five_hour" && k != "seven_day" && !strings.HasPrefix(k, "seven_day_") {
+			continue // other usage (extra usage, credits) is not a subscription limit window
+		}
 		w, ok := usage[k].(M)
 		if !ok {
 			continue
