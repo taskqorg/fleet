@@ -246,6 +246,11 @@ func telemetrySummary(q *Request, r *contract.TelemetrySummaryRequest) (contract
 	if spanWriter != nil {
 		out.DroppedSpans = spanWriter.Dropped()
 	}
+	rulesMu.Lock()
+	if !rulesLast.IsZero() {
+		out.RulesLastRun = ptr(rulesLast.UTC().Format(time.RFC3339))
+	}
+	rulesMu.Unlock()
 	if spanStore == nil {
 		return out, nil
 	}

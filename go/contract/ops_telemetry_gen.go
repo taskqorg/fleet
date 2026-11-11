@@ -6,6 +6,31 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+// Finding: One rule result of the last rules pass (fleet-telemetry.md section 6). since: when the rule first fired for this cause (RFC 3339). exemplars: trace ids. groupCause: the absence cause it folds into (no question of its own).
+type Finding struct {
+	Baseline    *float64 `json:"baseline,omitempty"`
+	Cause       string   `json:"cause"`
+	ExecutionId *string  `json:"executionId,omitempty"`
+	Exemplars   []string `json:"exemplars"`
+	GroupCause  *string  `json:"groupCause,omitempty"`
+	HostId      *string  `json:"hostId,omitempty"`
+	ProjectId   *string  `json:"projectId,omitempty"`
+	Rule        string   `json:"rule"`
+	Since       string   `json:"since"`
+	StoreId     *string  `json:"storeId,omitempty"`
+	Subject     string   `json:"subject"`
+	Text        *string  `json:"text,omitempty"`
+	Value       float64  `json:"value"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *Finding) Validate() error {
+	if v.Exemplars == nil {
+		return Missing("exemplars")
+	}
+	return nil
+}
+
 // HostReading: The latest host.heartbeat check span of a host; at is its RFC 3339 start. memFree, memTotal and diskFree are bytes.
 type HostReading struct {
 	At       string   `json:"at"`
@@ -155,6 +180,35 @@ func (v SpanOutcome) Valid() bool {
 	return false
 }
 
+// TelemetryFindingsReply: stale: the last rules pass is older than telemetry.staleMinutes (3).
+type TelemetryFindingsReply struct {
+	Findings     []Finding `json:"findings"`
+	RulesLastRun *string   `json:"rulesLastRun"`
+	Stale        *bool     `json:"stale,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelemetryFindingsReply) Validate() error {
+	if v.Findings == nil {
+		return Missing("findings")
+	}
+	for i := range v.Findings {
+		if err := Check(&v.Findings[i], "findings"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type TelemetryFindingsRequest struct {
+	ProjectId *string `json:"projectId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelemetryFindingsRequest) Validate() error {
+	return nil
+}
+
 // TelemetrySummaryReply: enabled false: no span store configured (FLEET_CLICKHOUSE_URL) or telemetry switched off; error: the store did not answer. hosts and processes need full access; runs are the latest 50 execution ends in the caller's projects.
 type TelemetrySummaryReply struct {
 	BytesPerDay  *int64           `json:"bytesPerDay,omitempty"`
@@ -278,8 +332,9 @@ func (v TelemetryWindow) Valid() bool {
 
 func init() {
 	for n, o := range map[string]Operation{
-		"telemetry_summary": {Read: false, Long: true, Errors: []int{400}},
-		"telemetry_trace":   {Read: false, Long: true, Errors: []int{400}},
+		"telemetry_findings": {Read: false, Long: true, Errors: []int{}},
+		"telemetry_summary":  {Read: false, Long: true, Errors: []int{400}},
+		"telemetry_trace":    {Read: false, Long: true, Errors: []int{400}},
 	} {
 		addOperation(n, o)
 	}

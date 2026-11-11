@@ -144,3 +144,44 @@ test('T4 with a real ClickHouse (FLEET_TEST_CLICKHOUSE_URL, user t, password t) 
     assert.deepEqual([m.body.spans.length, m.body.hidden], [0, 2], 'system spans hidden from a project member');
   } finally { await c.stop(); }
 });
+
+test('T5 with a real ClickHouse a silent host and an error spike each open one question; a fresh heartbeat closes the host question after two clean runs (requirement: fleet-telemetry.md §6, fleet-system-management.md Problems; risk: a quiet host or failing provider goes unseen, or a question never closes)', {skip: !process.env.FLEET_TEST_CLICKHOUSE_URL}, async () => {
+  const {mkdtempSync, writeFileSync} = await import('node:fs');
+  const {join} = await import('node:path');
+  const {tmpdir} = await import('node:os');
+  const env = join(mkdtempSync(join(tmpdir(), 'fleet-ch-')), 'clickhouse.env');
+  writeFileSync(env, 'CLICKHOUSE_DB=fleet\nCLICKHOUSE_USER=t\nCLICKHOUSE_PASSWORD=t\n');
+  const c = await startCoordinator({name: 'tele5', env: {FLEET_CLICKHOUSE_URL: process.env.FLEET_TEST_CLICKHOUSE_URL!, FLEET_CLICKHOUSE_ENV: env, FLEET_RULES_TICK_MS: '500'}});
+  try {
+    const id = 'h-' + randomUUID().slice(0, 8);
+    const secret = (await call(c, '/api/ops/hosts_register', {id})).body.secret;
+    const at = (ms: number) => new Date(Date.now() - ms).toISOString().replace('T', ' ').replace('Z', '000');
+    const op = 'probe.' + randomUUID().slice(0, 6);
+    const span = (name: string, start: string, extra = {}) => ({trace_id: randomUUID().replace(/-/g, ''), span_id: randomUUID().replace(/-/g, '').slice(0, 16), parent_span_id: '', service: 'executor', host_id: id, name, kind: 'check',
+      start, duration_ns: 1000, outcome: 'ok', error_class: '', actor: 'fleet', ...extra});
+    const post = async (spans: unknown[]) => {
+      for (let i = 0; i < 50; i++) {
+        const r = await call(c, '/api/hosts/spans', {batchId: randomUUID(), spans}, {bearer: secret, person: null});
+        if (r.status === 200) return r.body;
+        await new Promise((res) => setTimeout(res, 200));
+      }
+      assert.fail('span store never accepted');
+    };
+    await post([span('host.heartbeat', at(4 * 60_000), {load1: 0.1, mem_free: 1e9, attrs: {'fleet.cpus': '8', 'fleet.mem_total': '2000000000'}}),
+      ...Array.from({length: 12}, () => span(op, at(1000), {kind: 'internal', outcome: 'error', error_class: 'internal'}))]);
+    const questions = async (cause: string) => (await call(c, '/api/ops/questions_list', {state: 'open'})).body.questions.filter((x: any) => x.cause === cause);
+    await until(async () => (await questions('problem:host:' + id + ':silent')).length === 1, 'silent host question');
+    // The spike is on the silent host, so it folds into the host question: a finding, no question of its own.
+    const f = (await call(c, '/api/ops/telemetry_findings', {})).body;
+    const spike = f.findings.find((x: any) => x.rule === 'error-spike' && x.subject.includes(op));
+    assert.ok(spike, JSON.stringify(f));
+    assert.equal(spike.groupCause, 'problem:host:' + id + ':silent');
+    assert.equal((await questions('problem:error-spike:executor:' + op + '@' + id)).length, 0);
+    assert.equal((await call(c, '/api/ops/telemetry_findings', {}, {person: MEMBER})).body.findings.length, 0, 'system findings need full access');
+    await post([span('host.heartbeat', at(0), {load1: 0.1, mem_free: 1e9, attrs: {'fleet.cpus': '8', 'fleet.mem_total': '2000000000'}})]);
+    await until(async () => (await questions('problem:host:' + id + ':silent')).length === 0, 'host question closes');
+    await until(async () => (await questions('problem:error-spike:executor:' + op + '@' + id)).length === 1, 'the spike asks once the host is back');
+    const q = (await questions('problem:error-spike:executor:' + op + '@' + id))[0];
+    assert.deepEqual(q.options, ['investigate', 'dismiss']);
+  } finally { await c.stop(); }
+});

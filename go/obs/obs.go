@@ -238,10 +238,13 @@ func (s *Span) End(err error) {
 
 var hex32, hex16 = regexp.MustCompile(`^[0-9a-f]{32}$`), regexp.MustCompile(`^([0-9a-f]{16})?$`)
 
+// spanName: names are stable identifiers (route patterns, pass and call names), never free text.
+var spanName = regexp.MustCompile(`^[A-Za-z0-9 _.:/{}@+-]{1,200}$`)
+
 // Valid: a span row from outside (a host's batch) fits the span table: hex ids, known kind and outcome, a start in
 // TimeFormat, a stable name; its attributes pass the same allow list and cap as Set.
 func Valid(s *Span) bool {
-	if !hex32.MatchString(s.TraceID) || !hex16.MatchString(s.SpanID) || s.SpanID == "" || !hex16.MatchString(s.ParentSpanID) || s.Name == "" || len(s.Name) > 200 {
+	if !hex32.MatchString(s.TraceID) || !hex16.MatchString(s.SpanID) || s.SpanID == "" || !hex16.MatchString(s.ParentSpanID) || !spanName.MatchString(s.Name) {
 		return false
 	}
 	if _, err := time.Parse(TimeFormat, s.Start); err != nil {
