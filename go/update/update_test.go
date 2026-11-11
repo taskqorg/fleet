@@ -373,3 +373,29 @@ func TestLoadTrigger(t *testing.T) {
 		t.Fatalf("load then unchanged: %d runs, want 2", ran)
 	}
 }
+
+// latest prefers the API's tag_name and falls back to latest.json when the API is rate limited.
+func TestLatestAPI(t *testing.T) {
+	code := 200
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/releases/latest":
+			w.WriteHeader(code)
+			w.Write([]byte(`{"tag_name":"v1.261111.5"}`))
+		case "/rel/latest/download/latest.json":
+			w.Write([]byte(`{"version":"1.261111.4"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	u := &updater{base: srv.URL + "/rel", api: srv.URL + "/api", client: srv.Client()}
+	if v := u.latest(); v != "1.261111.5" {
+		t.Fatalf("API: %q", v)
+	}
+	for _, code = range []int{403, 429, 500} {
+		if v := u.latest(); v != "1.261111.4" {
+			t.Fatalf("HTTP %d: %q, want the redirect's version", code, v)
+		}
+	}
+}

@@ -27,6 +27,8 @@ const releaseKey = "eT+0MVUmjUvvItJGhR3rUqW5PBzvE8QbD9Uq/wjAHlQ="
 
 const releasesURL = "https://github.com/taskqorg/fleet/releases"
 
+const releasesAPI = "https://api.github.com/repos/taskqorg/fleet"
+
 func main() {
 	log.SetFlags(0)
 	if err := run(os.Args[1:]); err != nil {

@@ -95,6 +95,7 @@ type part struct {
 
 type updater struct {
 	base         string // releases URL: <base>/download/v<ver>/<file>, <base>/latest/download/latest.json
+	api          string // repository REST API URL: <api>/releases/latest; "" uses only the redirect
 	key          ed25519.PublicKey
 	target       string // <os>-<arch>
 	client       *http.Client
@@ -107,7 +108,7 @@ type updater struct {
 }
 
 func newUpdater(key ed25519.PublicKey) *updater {
-	return &updater{base: releasesURL, key: key, target: runtime.GOOS + "-" + runtime.GOARCH,
+	return &updater{base: releasesURL, api: releasesAPI, key: key, target: runtime.GOOS + "-" + runtime.GOARCH,
 		client: &http.Client{Timeout: 10 * time.Minute}, now: time.Now, window: 30 * time.Second, tick: time.Second,
 		coordURL: "http://127.0.0.1:9470/api/health", gatewayURL: "http://127.0.0.1:8742/healthz",
 		guardURL: "http://127.0.0.1:9471/verify",
@@ -504,7 +505,14 @@ func (u *updater) executorHealth(signal string) func(string) probe {
 	}
 }
 
+// latest is the newest published release (pds18 mode). The REST API is read first: the latest/download redirect served
+// a stale latest.json for about three minutes after a publish. Unauthenticated, every API call counts against the
+// 60-an-hour limit per IP, 304s included (https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests-if-appropriate
+// names the exemption for authorized requests only), so a 403 or 429 falls back to the redirect until the limit resets.
 func (u *updater) latest() string {
+	if v := u.latestAPI(); v != "" {
+		return v
+	}
 	b, err := u.get(u.base + "/latest/download/latest.json")
 	if err != nil {
 		log.Print("latest.json: ", err)
@@ -513,6 +521,32 @@ func (u *updater) latest() string {
 	var l struct{ Version string }
 	json.Unmarshal(b, &l)
 	return l.Version
+}
+
+// latestAPI reads tag_name of GET <api>/releases/latest; "" on any failure, logged except for the rate limit.
+func (u *updater) latestAPI() string {
+	if u.api == "" {
+		return ""
+	}
+	req, _ := http.NewRequest("GET", u.api+"/releases/latest", nil)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := u.client.Do(req)
+	if err != nil {
+		log.Print("releases/latest: ", err)
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 403 || resp.StatusCode == 429 {
+		return ""
+	}
+	var r struct {
+		TagName string `json:"tag_name"`
+	}
+	if resp.StatusCode != 200 || json.NewDecoder(resp.Body).Decode(&r) != nil || !strings.HasPrefix(r.TagName, "v") {
+		log.Print("releases/latest: ", resp.Status)
+		return ""
+	}
+	return strings.TrimPrefix(r.TagName, "v")
 }
 
 // pgDump runs pg_dump as postgres; root writes the file (postgres cannot write /backup/fleet/pre-deploy).
