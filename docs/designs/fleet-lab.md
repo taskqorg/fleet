@@ -262,7 +262,7 @@ Production signals (acceptance, rework) find examples worth mining and calibrate
 | 1 | Smoke test: one `single` experiment with one `api` step on a typed-decision connection; trial output `{answer, p, answered_by, tokens}`; a check that reads `references`. | A `tool_run` row with cost and basis |
 | 2 | Experiment record, frozen at launch, decision at close. | Launch fails without goal and hypothesis; amendments visible |
 | 3 | Price entries and estimated cost per trial. | Matrix shows cost with basis |
-| 4 | First project step: baseline variant vs typed decision with bands, tuned on `tune`, reported on `held_out` per tag, with the statistics function. | A decided experiment |
+| 4 | (Use case: `cs:translate_taxonomy-language` in `config/lab/use-cases/cs.json`, the language detection of Cyprus.BZ's `translate_taxonomy` task.) First project step: baseline variant vs typed decision with bands, tuned on `tune`, reported on `held_out` per tag, with the statistics function. | A decided experiment |
 | 5 | The `model-selection` skill with its playbook section. | A PM agent answers "which model for step X" citing the experiment |
 | 6 | The analytics view on `/lab`, reading trials through the Lab routes; it switches to `analytics_query` in stage 7 with no second statistics path. | Operator sees record history and comparison |
 | 7 | Grouping columns, `analytics_query`, the reuse key, the cross-experiment comparison. | A PM agent answers production questions from the query |
