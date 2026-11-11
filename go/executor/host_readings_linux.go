@@ -35,10 +35,10 @@ func memory() (free, total float64, ok bool) {
 		v, _ := strconv.ParseFloat(f[1], 64)
 		switch f[0] {
 		case "MemAvailable:":
-			free = v * 1024
+			free, ok = v*1024, true
 		case "MemTotal:":
 			total = v * 1024
 		}
 	}
-	return free, total, total > 0
+	return free, total, ok && total > 0 // no MemAvailable (old kernels): unknown, never 0
 }
