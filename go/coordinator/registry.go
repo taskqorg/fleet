@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -71,12 +73,41 @@ func typedOp[Req, Rep any](h func(q *Request, r *Req) (Rep, error)) handler {
 	return func(q *Request) (any, error) {
 		var r Req
 		if len(q.body) > 0 && string(q.body) != "null" {
-			if err := decode(q.body, &r); err != nil {
+			if err := exactKeys(q.body, reflect.TypeOf(r)); err != nil {
 				return nil, err
+			}
+			if err := json.Unmarshal(q.body, &r); err != nil {
+				var te *json.UnmarshalTypeError
+				if errors.As(err, &te) && te.Field != "" {
+					return nil, fail(400, "Invalid "+te.Field+": expected "+te.Type.String())
+				}
+				return nil, fail(400, "Invalid body")
 			}
 		}
 		return h(q, &r)
 	}
+}
+
+// exactKeys refuses a body key that names a request field only case-insensitively. encoding/json matches field names
+// case-insensitively and the last key wins, so {"executionid": x} would override an executionId the agent tool path
+// bound (bound in agent.go) and act on another execution.
+func exactKeys(body json.RawMessage, t reflect.Type) error {
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(body, &m) != nil {
+		return nil // not an object: decode reports it
+	}
+	for i := 0; i < t.NumField(); i++ {
+		tag, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		for k := range m {
+			if k != tag && strings.EqualFold(k, tag) {
+				return fail(400, "Unknown field "+k+": use "+tag)
+			}
+		}
+	}
+	return nil
 }
 
 // asT: rows and records read as maps, as their contract type. For values whose map keys are fixed by the query or the
