@@ -369,7 +369,7 @@ func (a *App) removedHostSecret(ctx context.Context, secret string) (bool, error
 		return false, nil
 	}
 	var n int
-	err := a.store.pool.QueryRow(ctx, "SELECT count(*) FROM document WHERE kind='host' AND data->>'removedSecretHash'=$1", secretHash(secret)).Scan(&n)
+	err := a.store.pool.QueryRow(ctx, "SELECT count(*) FROM document WHERE kind='host' AND data @> jsonb_build_object('removedSecretHash', $1::text)", secretHash(secret)).Scan(&n)
 	return n > 0, err
 }
 

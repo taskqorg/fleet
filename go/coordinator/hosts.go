@@ -41,7 +41,6 @@ func init() {
 	operation("route_decisions", true, typedOp(routeDecisions))
 }
 
-// hostList: every host with its bare id.
 // hostList: every host with its bare id; removed hosts (tombstones, host_remove.go) are left out.
 func hostList(q *Request) ([]doc, error) {
 	rows, err := all(q, "host", nil)

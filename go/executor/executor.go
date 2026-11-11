@@ -2008,7 +2008,11 @@ func runExecutor() error {
 		if err := e.exchange(); errors.Is(err, errHostRemoved) {
 			// The owner removed this host (fleet-system-management.md, Hosts): stop polling and exit 0, so the unit's
 			// Restart=on-failure does not start it again.
-			fmt.Fprintln(os.Stderr, "executor: this host was removed from Fleet; stopping")
+			fmt.Fprintln(os.Stderr, "executor: this host was removed from Fleet; stopping its runs")
+			for _, l := range e.live {
+				l.cleanup()
+				<-l.exited
+			}
 			status("done", "")
 			return nil
 		} else if err != nil {
@@ -2040,7 +2044,7 @@ func (e *executor) exchange() error {
 	body := contract.PollRequest{HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
 		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, Update: lastUpdate(e.root)}
 	a := send(e.url, e.token, pollRoute, body)
-	if a.status == 410 {
+	if a.status == 410 && strings.Contains(a.text, "host-removed") {
 		return errHostRemoved
 	}
 	sig := updateSignal{HostID: e.host, Running: version, AutoUpdate: "on"}
