@@ -257,10 +257,12 @@ func blockedConnections(q *Request) (map[string]bool, error) {
 	return out, nil
 }
 
+// declaredNames: the declared artifact names, each once, in declaration order; non-strings are not names.
 func declaredNames(declared []any) []string {
-	out := []string{}
+	out, seen := []string{}, map[string]bool{}
 	for _, d := range declared {
-		if s, ok := d.(string); ok {
+		if s, ok := d.(string); ok && !seen[s] {
+			seen[s] = true
 			out = append(out, s)
 		}
 	}
@@ -269,7 +271,8 @@ func declaredNames(declared []any) []string {
 
 // artifactGate: a completed start waits for its required artifacts; a missing or failed one fails it.
 func artifactGate(q *Request, e doc, declared []any) (doc, error) {
-	r, err := artifactRequirement(q.ctx(), q.app, astr(e["id"]), declaredNames(declared))
+	names := declaredNames(declared)
+	r, err := artifactRequirement(q.ctx(), q.app, astr(e["id"]), names)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +280,7 @@ func artifactGate(q *Request, e doc, declared []any) (doc, error) {
 		return doc{"state": "failed", "error": doc{"code": "artifact-required", "message": "Required artifacts missing or failed", "missing": r.Missing, "failed": r.Failed}}, nil
 	}
 	if len(r.Pending) > 0 {
-		return doc{"state": "waiting", "waitReason": "artifacts", "waitingSince": nowMs(), "pendingArtifacts": r.Pending, "declaredArtifacts": declared}, nil
+		return doc{"state": "waiting", "waitReason": "artifacts", "waitingSince": nowMs(), "pendingArtifacts": r.Pending, "declaredArtifacts": names}, nil
 	}
 	return doc{}, nil
 }
