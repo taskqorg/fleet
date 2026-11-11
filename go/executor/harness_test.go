@@ -58,14 +58,14 @@ func TestBlocksPerHarness(t *testing.T) {
 	s.Project("antigravity", j(`{"step_update":{"text_delta":"Hi"}}`), 1)
 	eq(t, s.Project("antigravity", j(`{"event":"result","result":{"status":"SUCCESS","response":"Hi"}}`), 2)["blocks"], `[{"kind":"text","role":"agent","markdown":"Hi"}]`)
 	c.Project("claude", j(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"u","name":"Bash","input":{}}]}}`), 40)
-	if st := jAt(c.Project("claude", j(`{"type":"result","is_error":false}`), 50)["blocks"].([]any)[0], "state"); st != "unfinished" {
+	if st := jAt(jClone(c.Project("claude", j(`{"type":"result","is_error":false}`), 50)["blocks"].([]any)[0]), "state"); st != "unfinished" {
 		t.Fatal(st)
 	}
-	e := b.Project("codex", j(`{"type":"item.completed","item":{"type":"error","message":"stream disconnected"}}`), 5)["blocks"].([]any)[0]
+	e := jClone(b.Project("codex", j(`{"type":"item.completed","item":{"type":"error","message":"stream disconnected"}}`), 5)["blocks"].([]any)[0])
 	if jAt(e, "state") != "failed" || jAt(e, "output") != "stream disconnected" {
 		t.Fatal(e)
 	}
-	u := a.Project("codex", j(`{"type":"unparsed","raw":"x"}`), 7)["blocks"].([]any)[0]
+	u := jClone(a.Project("codex", j(`{"type":"unparsed","raw":"x"}`), 7)["blocks"].([]any)[0])
 	if jAt(u, "name") != "unparsed" || jAt(u, "output", "raw") != "x" {
 		t.Fatal(u)
 	}

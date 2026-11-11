@@ -8,6 +8,9 @@ package main
 // `opens: true`.
 
 import (
+	"encoding/json"
+	"fleet/contract"
+	"math"
 	"sort"
 	"strings"
 )
@@ -198,19 +201,43 @@ func textBlock(kind, markdown string) []any {
 		return nil
 	}
 	if kind == "text" {
-		return []any{M{"kind": "text", "role": "agent", "markdown": markdown}}
+		return []any{contract.TranscriptText{Kind: "text", Role: "agent", Markdown: markdown}}
 	}
-	return []any{M{"kind": "reasoning", "markdown": markdown}}
+	return []any{contract.TranscriptReasoning{Kind: "reasoning", Markdown: markdown}}
 }
 
-func toolBlock(name, input, output, state, started, ended any) M {
-	if name == nil {
-		name = "tool"
+// label: a native name or state as text; nil is def, a non-string value its JSON.
+func label(v any, def string) string {
+	switch x := v.(type) {
+	case nil:
+		return def
+	case string:
+		return x
 	}
-	if state == nil {
-		state = "completed"
+	return enc(v)
+}
+
+// msOf: a native or recorded time in ms, exact for integers and rounded for fractions; nil when not a number.
+func msOf(v any) *int64 {
+	if n, ok := v.(json.Number); ok {
+		if t, err := n.Int64(); err == nil {
+			return &t
+		}
 	}
-	return M{"kind": "tool", "name": name, "input": input, "output": output, "state": state, "startedAt": started, "endedAt": ended}
+	if u, ok := v.(uint64); ok && u <= math.MaxInt64 {
+		t := int64(u)
+		return &t
+	}
+	if f, ok := num(v); ok && math.Abs(f) < math.MaxInt64 {
+		t := int64(math.Round(f))
+		return &t
+	}
+	return nil
+}
+
+func toolBlock(name, input, output, state, started, ended any) contract.TranscriptTool {
+	return contract.TranscriptTool{Kind: "tool", Name: label(name, "tool"), Input: json.RawMessage(enc(input)), Output: json.RawMessage(enc(output)),
+		State: label(state, "completed"), StartedAt: msOf(started), EndedAt: msOf(ended)}
 }
 
 // Project is project() plus `blocks` (and `deltaOf` / `closes` for streams); at is the record's time in ms.
@@ -250,7 +277,7 @@ func (b *blocks) Project(h string, v map[string]any, at uint64) map[string]any {
 	_, response := jAt(v, "result", "response").(string)
 	for _, x := range b.own(h, v, at) {
 		// The step format repeats the streamed reply in result.response: the closed stream already holds it.
-		if !(streamed && response && jAt(x, "kind") == "text") {
+		if _, text := x.(contract.TranscriptText); !(streamed && response && text) {
 			out = append(out, x)
 		}
 	}

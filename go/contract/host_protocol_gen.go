@@ -541,6 +541,30 @@ type Teardown struct {
 	Teardown      *ProjectScriptResult `json:"teardown,omitempty"`
 }
 
+// TranscriptReasoning: a reasoning block of fleetNormalized.blocks (kind reasoning)
+type TranscriptReasoning struct {
+	Kind     string `json:"kind"`
+	Markdown string `json:"markdown"`
+}
+
+// TranscriptText: a text block of fleetNormalized.blocks (kind text); the app's Block (ops) adds key and the thread fields
+type TranscriptText struct {
+	Kind     string `json:"kind"`
+	Markdown string `json:"markdown"`
+	Role     string `json:"role"`
+}
+
+// TranscriptTool: a tool block of fleetNormalized.blocks (kind tool); input and output are the native values
+type TranscriptTool struct {
+	EndedAt   *int64          `json:"endedAt"`
+	Input     json.RawMessage `json:"input"`
+	Kind      string          `json:"kind"`
+	Name      string          `json:"name"`
+	Output    json.RawMessage `json:"output"`
+	StartedAt *int64          `json:"startedAt"`
+	State     string          `json:"state"`
+}
+
 type TrialRemoved struct {
 	Removed bool `json:"removed"`
 }
