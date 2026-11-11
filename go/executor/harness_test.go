@@ -224,5 +224,5 @@ func TestClaudeUsageReading(t *testing.T) {
 		"seven_day_opus":null,"seven_day_breakdown":{"rows":[]},"extra_usage":{"utilization":null},
 		"model_scoped":[{"display_name":"Fable","utilization":14,"resets_at":"2026-11-16T05:00:00.015240+00:00"}]}}`)
 	eq(t, claudeUsageReading(answer, nil)["readings"],
-		`[{"period":"weekly","pct":74,"resetsAt":1794805200015},{"period":"weekly-fable","pct":14,"resetsAt":1794805200015,"model":"Fable"}]`)
+		`[{"period":"weekly","pct":74,"resetsAt":1794805200015},{"period":"weekly-fable","pct":14,"resetsAt":1794805200015,"model":"fable"}]`)
 }
