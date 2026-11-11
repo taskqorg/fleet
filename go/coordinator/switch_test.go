@@ -10,7 +10,9 @@ import (
 // (below 100 % with no switchPct it stays a candidate).
 func TestFullSubscriptionWithoutSwitchPointIsSkipped(t *testing.T) {
 	at := float64(nowMs() + 3600_000)
-	reading := func(pct float64) []Reading { return []Reading{{Period: "5h", Pct: &pct, ResetsAt: &at, At: nowMs(), State: "known"}} }
+	reading := func(pct float64) []Reading {
+		return []Reading{{Period: "5h", Pct: &pct, ResetsAt: &at, At: nowMs(), State: "known"}}
+	}
 	if got := readingOverSwitch(map[string]any{"switchPct": nil}, reading(100)); !strings.HasPrefix(got, "subscription full") {
 		t.Fatalf("100 %% without switchPct: %q", got)
 	}
