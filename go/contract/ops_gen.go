@@ -271,8 +271,8 @@ const (
 )
 
 type ChangeRef struct {
-	Id   string `json:"id"`
-	Kind string `json:"kind"`
+	Id   string     `json:"id"`
+	Kind ChangeKind `json:"kind"`
 }
 
 // ChangesSinceReply: resync: the cursor fell out of retention, reload everything. held: a writer still holds older changes; read again.

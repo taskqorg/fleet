@@ -26,8 +26,14 @@ func TestChangeKindsMatchTriggers(t *testing.T) {
 	}
 	var kinds []string
 	for _, fn := range []string{"fleet_change", "fleet_artifact_change"} {
-		def := schemaSQL[strings.LastIndex(schemaSQL, "FUNCTION "+fn+"()"):]
+		at := strings.LastIndex(schemaSQL, "FUNCTION "+fn+"()")
+		if at < 0 {
+			t.Fatalf("schema.sql has no %s", fn)
+		}
+		def := schemaSQL[at:]
 		def = def[:strings.Index(def, "$$;")]
+		before := len(kinds)
+		assigned := strings.Count(def, "k := ")
 		for _, m := range regexp.MustCompile(`k := '([a-z-]+)'`).FindAllStringSubmatch(def, -1) {
 			kinds = append(kinds, m[1])
 		}
@@ -36,6 +42,10 @@ func TestChangeKindsMatchTriggers(t *testing.T) {
 			for _, k := range strings.Split(m[1], ",") {
 				kinds = append(kinds, strings.Trim(strings.TrimSpace(k), "'"))
 			}
+			before += strings.Count(m[1], ",") // the IN list is one assignment
+		}
+		if got := len(kinds) - before; got != assigned {
+			t.Fatalf("%s assigns k %d times, the test reads %d: teach it the new form", fn, assigned, got)
 		}
 	}
 	slices.Sort(kinds)

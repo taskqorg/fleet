@@ -212,7 +212,7 @@ Browser windows (one origin)                          Coordinator (Go)
 | `document` kind `artifact` (legacy artifacts) | `artifact` | `id` | `session_id` from `data`, `task_id` from the execution | Results and task detail |
 | `artifact`, `artifact_copy` (migration 9, `fleet_artifact_change`) | `artifact` | artifact `id` | `task_id` (artifact or execution), `session_id`, `project_id` | Results and task detail. Copy updates that only move `lease_expires_at` or `updated_at` are skipped. |
 | `store` (migration 9) | `host` | `host_id` | `host_id` | Row `host` (stores). Updates that only move `observed_at` or `updated_at` are skipped. |
-| `document` kind `managed-account`, `api-connection`, `connection-key`, `setting-change` (migration 25) | the document kind | `id` | — | Subscription limits on `/hosts`; the Keys screen |
+| `document` kind `managed-account`, `api-connection`, `connection-key`, `setting-change` (migration 25) | the document kind | `id` | `project_id` and `holder` from the document; the holder sees the change, as they see the document | Subscription limits on `/hosts`; the Keys screen |
 | Other `document` kinds | — | — | — | No change row. A kind is added to this map when a view needs it, which keeps the log small. |
 
 **Visibility watermark.** This replaces any fixed overlap window. Execution-scope ingest commits in parallel with GLOBAL writers, so `seq` order is not commit order. Every read of the log therefore returns only rows whose transaction is older than the oldest transaction still running:
