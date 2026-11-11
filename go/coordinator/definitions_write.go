@@ -552,6 +552,7 @@ func init() {
 func usedByProjects(q *Request, kind, id string) ([]string, error) {
 	all := projectIDs()
 	set := map[string]bool{}
+	usesProfileOf := map[string]bool{}
 	cat, err := catalogueHead(q)
 	if err != nil {
 		return nil, err
@@ -588,10 +589,12 @@ func usedByProjects(q *Request, kind, id string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		usesProfile := map[string]bool{}
+		usesProfile := usesProfileOf
 		for _, h := range pipes {
 			var d doc
-			json.Unmarshal(h.text, &d)
+			if json.Unmarshal(h.text, &d) != nil {
+				usesProfile[h.id+".json"] = true // cannot tell: count it (closed side)
+			}
 			for _, st := range anys(d["steps"]) {
 				if astr(mapOf(st)["profile"]) == id {
 					usesProfile[h.id+".json"] = true
@@ -609,6 +612,19 @@ func usedByProjects(q *Request, kind, id string) ([]string, error) {
 	rs, err := unscoped(q, func() ([]doc, error) { return queryRows(q, sql, id) })
 	if err != nil {
 		return nil, err
+	}
+	if kind == "agent" { // runs of the pipelines whose agent steps use the profile
+		var pipes []string
+		for f := range usesProfileOf {
+			pipes = append(pipes, strings.TrimSuffix(f, ".json"))
+		}
+		more, err := unscoped(q, func() ([]doc, error) {
+			return queryRows(q, "SELECT DISTINCT project_id AS p FROM execution WHERE kind='pipeline_run' AND data->>'pipelineId'=ANY($1) AND project_id IS NOT NULL", pipes)
+		})
+		if err != nil {
+			return nil, err
+		}
+		rs = append(rs, more...)
 	}
 	for _, r := range rs {
 		set[astr(r["p"])] = true
