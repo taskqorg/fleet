@@ -15,7 +15,8 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   each name `<name>` has `$defs` `<Name>Request` and `<Name>Reply`, and a failed call answers `OpError`. `planned` lists operations specified contract first and not built yet
   (their `$defs` exist; building one moves its name to `operations`). TypeScript gets
   `Ops` (name to request and reply, used by `op()` in `app/src/api.ts`); Go gets `contract.Operations`, which
-  `go/coordinator/ops_contract_test.go` compares with the registry.
+  `go/coordinator/ops_contract_test.go` compares with the registry. A handler registered through `typedOp` (`go/coordinator/registry.go`)
+  decodes the body into `<Name>Request` and returns `<Name>Reply`; operations move to it domain by domain.
 * `profile.schema.json`: the agent profile (`config/agents/*.json`, the start command's `agentConfig`). Its validator
   `contract.ParseProfile` (`go/contract/profile.go`) is the one the coordinator and the executor run; a Go test checks every shipped profile.
 

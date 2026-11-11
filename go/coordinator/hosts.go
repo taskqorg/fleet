@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"fleet/contract"
 )
 
 const hostStaleMs = 30000
@@ -24,7 +26,7 @@ func init() {
 	operation("hosts_update", false, hostsUpdate)
 	operation("hosts_rotate_secret", false, hostsRotateSecret)
 	operation("hosts_list", true, hostsList)
-	operation("route_decisions", true, routeDecisions)
+	operation("route_decisions", true, typedOp(routeDecisions))
 }
 
 // hostList: every host with its bare id.
@@ -435,15 +437,16 @@ func hostsList(q *Request) (any, error) {
 	return doc{"staleAfterMs": hostStaleMs, "serverNow": now, "hosts": out}, nil
 }
 
-func routeDecisions(q *Request) (any, error) {
-	id, ok := q.obj()["executionId"].(string)
-	if !ok || id == "" || len(id) > 200 {
-		return nil, fail(400, "Expected executionId")
+func routeDecisions(q *Request, r *contract.RouteDecisionsRequest) (contract.RouteDecisionsReply, error) {
+	out := contract.RouteDecisionsReply{Decisions: []contract.RouteDecision{}}
+	id := r.ExecutionId
+	if id == "" || len(id) > 200 {
+		return out, fail(400, "Expected executionId")
 	}
 	rs, err := queryRows(q, "SELECT execution_id,at,host_id,candidates,winner FROM route_decision WHERE execution_id=$1 ORDER BY at", id)
-	out := []doc{}
-	for _, r := range rs {
-		out = append(out, doc{"executionId": r["execution_id"], "at": r["at"], "hostId": r["host_id"], "candidates": r["candidates"], "winner": r["winner"]})
+	for _, x := range rs {
+		out.Decisions = append(out.Decisions, contract.RouteDecision{ExecutionId: astr(x["execution_id"]), At: timeText(x["at"]), HostId: strPtr(x["host_id"]),
+			Candidates: jsonBytes(x["candidates"]), Winner: jsonBytes(x["winner"])})
 	}
-	return doc{"decisions": out}, err
+	return out, err
 }
