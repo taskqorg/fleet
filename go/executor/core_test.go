@@ -241,3 +241,19 @@ func TestJournalVersioned(t *testing.T) {
 		t.Fatalf("%d of 6 journal tables", tables)
 	}
 }
+
+// Requirement: readiness data is the host-protocol Readiness, a missing checkout a failed check with its reason (W4).
+// Risk: a renamed check field reaches the coordinator as a missing key and a broken host looks ready.
+func TestReadinessTyped(t *testing.T) {
+	r := readiness(M{"environments": []any{M{"hostId": "h1", "checkoutPath": filepath.Join(t.TempDir(), "absent")}}}, "h1", "")
+	if r.Ok || r.HostId != "h1" || len(r.Checks) == 0 || r.Checks[0].Check != "checkout" || enc(r.Checks[0].Reason) != `"checkout-missing"` {
+		t.Fatal(enc(r))
+	}
+	// The wire names the coordinator reads.
+	if b := enc(r.Checks[0]); b != `{"check":"checkout","reason":"checkout-missing","status":"failed","target":"`+r.Checks[0].Target+`"}` {
+		t.Fatal(b)
+	}
+	if b := enc(contract.CheckoutResult{CheckoutPath: "/c", Status: contract.CheckoutStatusSynced}); b != `{"checkoutPath":"/c","status":"synced"}` {
+		t.Fatal(b)
+	}
+}

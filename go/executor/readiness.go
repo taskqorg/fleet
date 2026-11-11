@@ -5,6 +5,7 @@ package main
 
 import (
 	"errors"
+	"fleet/contract"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,11 +13,11 @@ import (
 	"strings"
 )
 
-func check(name, target string, failed string) M {
+func check(name, target string, failed string) contract.ReadinessCheck {
 	if failed == "" {
-		return M{"check": name, "target": target, "status": "ok"}
+		return contract.ReadinessCheck{Check: name, Target: target, Status: contract.CheckStatusOk}
 	}
-	return M{"check": name, "target": target, "status": "failed", "reason": failed}
+	return contract.ReadinessCheck{Check: name, Target: target, Status: contract.CheckStatusFailed, Reason: &failed}
 }
 
 func validRemote(r string) bool {
@@ -78,8 +79,8 @@ func claudePlacementHere() (string, error) {
 	return claudePlacement(os.Getenv("FLEET_CLAUDE_PLACEMENT"), runtime.GOOS, string(r))
 }
 
-func readiness(project any, host, registry string) M {
-	checks := []any{}
+func readiness(project any, host, registry string) contract.Readiness {
+	checks := []contract.ReadinessCheck{}
 	repos := jArr(project, "repos")
 	for _, env := range jArr(project, "environments") {
 		if jStr(env, "hostId") != host {
@@ -185,20 +186,20 @@ func readiness(project any, host, registry string) M {
 	}
 	ok := true
 	for _, c := range checks {
-		if jStr(c, "status") != "ok" {
+		if c.Status != contract.CheckStatusOk {
 			ok = false
 		}
 	}
-	return M{"hostId": host, "ok": ok, "checks": checks}
+	return contract.Readiness{HostId: host, Ok: ok, Checks: checks}
 }
 
 // claudeChecks: the placement, and on WSL the login (.credentials.json) of each Claude account home; presence only.
-func claudeChecks(host, placement string, perr error, homes []string) []any {
+func claudeChecks(host, placement string, perr error, homes []string) []contract.ReadinessCheck {
 	f := ""
 	if perr != nil {
 		f = perr.Error()
 	}
-	out := []any{check("claude-placement", host, f)}
+	out := []contract.ReadinessCheck{check("claude-placement", host, f)}
 	if perr == nil && placement == "windows-wsl" {
 		if len(homes) == 0 {
 			out = append(out, check("claude-login", host, "claude-account-absent"))

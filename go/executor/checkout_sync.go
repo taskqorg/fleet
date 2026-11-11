@@ -5,6 +5,7 @@ package main
 
 import (
 	"errors"
+	"fleet/contract"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,10 +83,10 @@ func syncOne(dir, sha string, access []string) error {
 	return nil
 }
 
-func checkoutSync(p any, host string, roots, forbidden []string) (M, bool) {
+func checkoutSync(p any, host string, roots, forbidden []string) (contract.CheckoutSync, bool) {
 	sha := jStr(p, "sha")
 	valid := len(sha) >= 7 && isHex(sha)
-	results := []any{}
+	results := []contract.CheckoutResult{}
 	ok := true
 	for _, e := range jArr(p, "project", "environments") {
 		if jStr(e, "hostId") != host || !(jAt(e, "repo") == nil || jAt(p, "repo") == nil || jEq(jAt(e, "repo"), jAt(p, "repo"))) || !jIsStr(e, "checkoutPath") {
@@ -104,11 +105,12 @@ func checkoutSync(p any, host string, roots, forbidden []string) (M, bool) {
 			}
 		}
 		if err == nil {
-			results = append(results, M{"checkoutPath": dir, "status": "synced", "sha": sha})
+			results = append(results, contract.CheckoutResult{CheckoutPath: dir, Status: contract.CheckoutStatusSynced, Sha: &sha})
 		} else {
 			ok = false
-			results = append(results, M{"checkoutPath": dir, "status": "failed", "reason": err.Error()})
+			reason := err.Error()
+			results = append(results, contract.CheckoutResult{CheckoutPath: dir, Status: contract.CheckoutStatusFailed, Reason: &reason})
 		}
 	}
-	return M{"hostId": host, "sha": sha, "checkouts": results}, ok
+	return contract.CheckoutSync{HostId: host, Sha: sha, Checkouts: results}, ok
 }

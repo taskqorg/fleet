@@ -1754,6 +1754,126 @@
         }
       },
       "$comment": "a status receipt; the account and project routes answer their operation's record"
+    },
+    "CheckStatus": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "failed"
+      ]
+    },
+    "ReadinessCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "check",
+        "target",
+        "status"
+      ],
+      "properties": {
+        "check": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/CheckStatus"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "Readiness": {
+      "$comment": "data of a readiness event",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hostId",
+        "ok",
+        "checks"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReadinessCheck"
+          }
+        }
+      }
+    },
+    "CheckoutResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "checkoutPath",
+        "status"
+      ],
+      "properties": {
+        "checkoutPath": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/CheckoutStatus"
+        },
+        "sha": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "CheckoutSync": {
+      "$comment": "data of a checkout.synced or sync-failed event",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hostId",
+        "sha",
+        "checkouts"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "sha": {
+          "type": "string"
+        },
+        "checkouts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CheckoutResult"
+          }
+        }
+      }
+    },
+    "CheckoutStatus": {
+      "type": "string",
+      "enum": [
+        "synced",
+        "failed"
+      ]
+    },
+    "ReadinessFailed": {
+      "$comment": "data of a readiness.failed event",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string"
+        }
+      }
     }
   }
 }
