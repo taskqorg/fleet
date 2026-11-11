@@ -44,7 +44,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "previous=$previous" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse "$TAG^{commit}")" >> "$GITHUB_OUTPUT"
-      - name: Wait for build-test-design on the commit
+      - name: Wait for the go, app and browser jobs on the commit
         env:
           SHA: ${{ steps.check.outputs.sha }}
         run: |
@@ -52,8 +52,10 @@ jobs:
             echo "no ci run for $SHA yet"; sleep 30
           done
           gh run watch "$id" --interval 30 >/dev/null || true
-          result=$(gh run view "$id" --json jobs -q '.jobs[] | select(.name == "build-test-design") | .conclusion')
-          [ "$result" = success ] || { echo "::error::build-test-design of ci run $id: ${result:-missing}"; exit 1; }
+          for job in go app browser; do
+            result=$(gh run view "$id" --json jobs -q ".jobs[] | select(.name == \"$job\") | .conclusion")
+            [ "$result" = success ] || { echo "::error::$job of ci run $id: ${result:-missing}"; exit 1; }
+          done
   build:
     needs: gate
     runs-on: ubuntu-24.04
