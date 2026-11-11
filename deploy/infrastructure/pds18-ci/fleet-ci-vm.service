@@ -1,0 +1,36 @@
+[Unit]
+Description=Fleet trusted-main CI guest (one runner)
+Requires=fleet-ci-network.service
+After=fleet-ci-network.service
+
+[Service]
+User=fleet-ci-vm
+Group=fleet-ci-vm
+SupplementaryGroups=kvm
+WorkingDirectory=/var/lib/fleet-ci-vm
+ExecStart=/usr/bin/qemu-system-x86_64 -enable-kvm -machine q35 -cpu host -smp 4 -m 8192 -display none -serial file:/var/lib/fleet-ci-vm/console.log -monitor none -drive file=guest.qcow2,format=qcow2,if=virtio -drive file=seed.img,format=raw,media=cdrom,readonly=on -netdev user,id=net0,ipv6=off,hostfwd=tcp:127.0.0.1:22222-:22 -device virtio-net-pci,netdev=net0
+Restart=no
+TimeoutStopSec=90
+KillSignal=SIGTERM
+CPUQuota=400%
+CPUWeight=10
+MemoryHigh=9G
+MemoryMax=10G
+MemorySwapMax=0
+IOWeight=10
+IOReadBandwidthMax=/var/lib/fleet-ci-vm 20M
+IOWriteBandwidthMax=/var/lib/fleet-ci-vm 20M
+TasksMax=512
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/fleet-ci-vm
+PrivateTmp=yes
+DevicePolicy=closed
+DeviceAllow=/dev/kvm rw
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
