@@ -227,7 +227,7 @@ try {
   check(!!direct && !/allow-scripts/.test(direct), '/api/results itself stays script-free');
   check(!errors.length, `no page errors${errors.length ? ': ' + errors.join('; ') : ''}`);
   if (rtt.length) time('thread_entries page round trip (median)', [...rtt].sort((x, y) => x - y)[rtt.length >> 1]);
-  await checkProjects(b, origin);
+  await checkProjects(b, origin, host);
 } finally { await b.close(); await close(); }
 
 console.log('\nTimings (reported, not asserted):'); for (const l of timings) console.log('  ' + l);

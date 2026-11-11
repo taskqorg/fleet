@@ -40,8 +40,14 @@ function ProjectEditor({id,onSaved}:{id?:string,onSaved:(id:string)=>void}){
  <KvRow icon="folder-open" label="Saved version" value={revision?String(revision):'Not saved'}/></DetailSection>
  {bindings('repos','Repository',['id','remote','defaultBranch','connection'])}{bindings('environments','Environment',['hostId','checkoutPath','repo'])}
  <DetailSection title="Agent roles">{Object.entries(bundle.settings.roles??{}).map(([role,profile])=>field(role,String(profile),v=>setting('roles',{...bundle.settings.roles,[role]:v})))}</DetailSection>
- {id&&<DetailSection title="Readiness"><Button label="Check readiness" icon="circle-check" onClick={()=>op('project_readiness',{projectId:id}).then(setReady,e=>setError(e.message))}/>{ready&&<>{(ready.hosts??[]).length===0?<Empty text="No environment is configured."/>:(ready.hosts??[]).map((h:any)=><KvRow icon="panels-top-left" label={h.hostId??h.id??'Environment'} value={h.state??h.status??'Check requested'} meta={h.reason??h.problem??'Open host observations for details.'}/>)}</>}
+ {id&&<DetailSection title="Readiness"><Button label="Check readiness" icon="circle-check" onClick={()=>op('project_readiness',{projectId:id}).then(setReady,e=>setError(e.message))}/>{ready&&<>{(ready.hosts??[]).length===0?<Empty text="No environment is configured."/>:(ready.hosts??[]).map((h:any)=>h.executionId?<ReadinessResult key={h.executionId} hostId={h.hostId} executionId={h.executionId}/>:<KvRow icon="panels-top-left" label={h.hostId??'Environment'} value="Unavailable" meta={h.problem??'Readiness check unavailable'}/>)}</>}
  <Button label="Open PM conversation" icon="messages-square" onClick={()=>location.assign('/conversations?project='+encodeURIComponent(id))}/></DetailSection>}
  {access&&<DetailSection title="Initial access"><KvRow icon="folder-open" label="Initial member" value={access.member??'None'}/><KvRow icon="folder-open" label="State" value={!access.member?'None':access.revoked?'Revoked':'Active'}/>{access.member&&!access.revoked&&id&&<Button label="Revoke initial access" icon="shield" onClick={()=>op('project_initial_access_revoke',{projectId:id,baseAccessVersion:access.version}).then(()=>load(),e=>setError(e.message))}/>}<p>Separate explicit grants and full administrator access remain effective.</p></DetailSection>}
  </article>;
+}
+
+function ReadinessResult({hostId,executionId}:{hostId:string,executionId:string}){
+ const result=useDoc<any>('project-readiness:'+executionId,()=>op('execution_status',{executionId}),c=>c.kind==='event'||(c.kind==='execution'&&c.id===executionId));
+ const latest=result.data?.readiness?.at(-1);
+ return <><KvRow icon="panels-top-left" label={hostId} value={result.error?'Observation unavailable':latest?(latest.ok?'Ready':'Not ready'):result.data?.state??'Check requested'} meta={result.error??(latest?undefined:'Awaiting readiness result')}/>{(latest?.checks??[]).map((check:any)=><KvRow icon="circle-check" label={check.check} value={check.status} meta={[check.target,check.reason].filter(Boolean).join(' · ')}/>)}</>;
 }

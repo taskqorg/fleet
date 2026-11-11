@@ -2,7 +2,7 @@
 // Called by the existing Conversations CI browser entry; do not launch locally on the owner's Mac.
 import assert from 'node:assert/strict';
 import type {Browser} from 'playwright';
-export async function checkProjects(browser:Browser,origin:string){
+export async function checkProjects(browser:Browser,origin:string,host:(id:string)=>Promise<(path:string,body:unknown)=>Promise<Response>>){
  const context=await browser.newContext();const p=await context.newPage();
  const errors:string[]=[];p.on('pageerror',e=>errors.push(e.message));
  const id='ui-project-'+Date.now();
@@ -17,6 +17,15 @@ export async function checkProjects(browser:Browser,origin:string){
   await p.getByText('2',{exact:true}).waitFor();const second=await call('project_context',{projectId:id});assert.equal(second.revision,2);assert.equal(second.name,'UI edited project');
   await p.reload();await p.getByRole('heading',{name:'UI edited project',exact:true}).waitFor();
   await p.getByRole('button',{name:'Check readiness',exact:true}).click();await p.getByText('No environment is configured.',{exact:true}).waitFor();
+  const sendHost=await host('project-readiness-ui');
+  const content=structuredClone(second.content);content.settings.environments=[{hostId:'project-readiness-ui',checkoutPath:'/tmp/ui-readiness'}];
+  await call('project_update',{projectId:id,requestId:crypto.randomUUID(),baseRevision:second.revision,content});
+  await p.getByRole('button',{name:'Reload project',exact:true}).click();
+  const queued=p.waitForResponse(r=>r.url().endsWith('/api/ops/project_readiness'));
+  await p.getByRole('button',{name:'Check readiness',exact:true}).click();
+  const check=(await (await queued).json()).hosts[0];assert.ok(check.executionId);
+  const posted=await sendHost('/api/hosts/events',{executionId:check.executionId,events:[{id:'late-ready',seq:0,type:'readiness',timestamp:Date.now(),data:{hostId:'project-readiness-ui',ok:false,checks:[{check:'checkout',target:'/tmp/ui-readiness',status:'failed',reason:'checkout-missing'}]}}]});assert.equal(posted.status,200);
+  await p.getByText('Not ready',{exact:true}).waitFor();await p.getByText('/tmp/ui-readiness · checkout-missing',{exact:true}).waitFor();
   await p.getByRole('button',{name:'Open PM conversation',exact:true}).click();await p.getByRole('group',{name:'Role / configuration'}).getByRole('button',{name:'pm · pm',exact:true}).waitFor();
   assert.equal(await p.getByRole('group',{name:'Project',exact:true}).getByRole('button',{name:'UI edited project',exact:true}).getAttribute('aria-pressed'),'true');
   assert.equal(await p.getByRole('group',{name:'Role / configuration'}).getByRole('button',{name:'pm · pm',exact:true}).getAttribute('aria-pressed'),'true');
