@@ -1637,6 +1637,41 @@ type PipelineStep struct {
 	Tool       *string                    `json:"tool,omitempty"`
 }
 
+type PriceAddReply = PriceEntry
+
+type PriceAddRequest struct {
+	Currency      string  `json:"currency"`
+	EffectiveFrom *int64  `json:"effectiveFrom,omitempty"`
+	ObservedAt    *int64  `json:"observedAt,omitempty"`
+	Price         float64 `json:"price"`
+	Source        string  `json:"source"`
+	SourceRef     *string `json:"sourceRef,omitempty"`
+	Subject       string  `json:"subject"`
+	Unit          string  `json:"unit"`
+}
+
+// PriceEntry: docs/designs/fleet-analytics.md, Price table. Append-only.
+type PriceEntry struct {
+	CreatedBy     *string `json:"createdBy,omitempty"`
+	Currency      string  `json:"currency"`
+	EffectiveFrom int64   `json:"effectiveFrom"`
+	Id            string  `json:"id"`
+	ObservedAt    int64   `json:"observedAt"`
+	Price         float64 `json:"price"`
+	Source        string  `json:"source"`
+	SourceRef     *string `json:"sourceRef,omitempty"`
+	Subject       string  `json:"subject"`
+	Unit          string  `json:"unit"`
+}
+
+type PricesListReply struct {
+	Prices []PriceEntry `json:"prices"`
+}
+
+type PricesListRequest struct {
+	Subject *string `json:"subject,omitempty"`
+}
+
 // Problem: Validation finding; path is a JSON pointer into the content. A draft is stored even when invalid; save refuses it.
 type Problem struct {
 	Message string `json:"message"`
@@ -2669,6 +2704,8 @@ var Operations = map[string]Operation{
 	"pipeline_get":                 {Read: true, Long: false, Errors: []int{400, 403}},
 	"pipeline_history":             {Read: true, Long: false, Errors: []int{404}},
 	"pipeline_run":                 {Read: false, Long: true, Errors: []int{}},
+	"price_add":                    {Read: false, Long: false, Errors: []int{400}},
+	"prices_list":                  {Read: true, Long: false, Errors: []int{}},
 	"profiles_list":                {Read: true, Long: false, Errors: []int{400}},
 	"project_context":              {Read: true, Long: false, Errors: []int{404}},
 	"project_list":                 {Read: true, Long: false, Errors: []int{404}},

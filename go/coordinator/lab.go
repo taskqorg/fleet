@@ -1939,6 +1939,32 @@ func expGet(q *Request, id string) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Each trial's provider usage, priced per call (fleet-analytics.md: usage x the latest entry in force at the call).
+	usageRows, err := queryRows(q, `SELECT coalesce(e.data->>'pipelineRunId',split_part(e.parent_execution_id,':step:',1)) AS run,
+	 coalesce(e.data->>'connection','')||'/'||coalesce(e.data->>'tool','') AS subject,t.connection_cost->>'unit' AS unit,
+	 coalesce(t.connection_cost->>'amount',t.connection_cost->>(t.connection_cost->>'unit'))::float8 AS amount,
+	 coalesce(to_timestamp((e.data->>'startedAt')::bigint/1000.0),e.started_at,now()) AS at
+	 FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.experiment_id=$1 AND e.kind='tool_run'`, id)
+	if err != nil {
+		return nil, err
+	}
+	costs := map[any][]usage{}
+	for _, u := range usageRows {
+		var amount *float64
+		if a, ok := numOK(u["amount"]); ok {
+			amount = &a
+		}
+		at, _ := u["at"].(time.Time)
+		costs[u["run"]] = append(costs[u["run"]], usage{astr(u["subject"]), astr(u["unit"]), amount, at})
+	}
+	prices, err := priceEntries(q)
+	if err != nil {
+		return nil, err
+	}
+	trialCost := map[any][]any{}
+	for run, us := range costs {
+		trialCost[run] = estimateCost(prices, us)
+	}
 	uniq := func(l []any) []any {
 		seen, out := map[string]bool{}, []any{}
 		for _, x := range l {
@@ -1982,7 +2008,7 @@ func expGet(q *Request, id string) (doc, error) {
 			}
 		}
 		return doc{"id": t["id"], "cell": t["cell"], "state": t["state"], "observation": t["observation"], "problem": t["problem"], "comparable": comparable(t), "startedAt": t["startedAt"], "finishedAt": t["finishedAt"],
-			"durationMs": t["durationMs"], "spend": spend, "confounders": doc{"hosts": uniq(hosts), "harnesses": uniq(harnesses), "models": uniq(models), "webRoute": web}, "scores": mine}
+			"durationMs": t["durationMs"], "spend": spend, "cost": append([]any{}, trialCost[t["id"]]...), "confounders": doc{"hosts": uniq(hosts), "harnesses": uniq(harnesses), "models": uniq(models), "webRoute": web}, "scores": mine}
 	}
 	order, last := expLatest(trials)
 	idsOf := func(match func(c doc) bool, onlyComparable bool) []string {

@@ -29,6 +29,8 @@ test('duration, bytes, count, money', () => {
   assert.equal(count(12400).text, '12.4k');
   assert.equal(count(950).text, '950');
   assert.equal(money(0.42).text, '$0.42');
+  assert.equal(money(0.000572).text, '$0.00057', 'one provider call never reads as $0.00');
+  assert.equal(money(1e-7, 'EUR').text, '0.0000001 EUR');
 });
 
 test('measurement basis: unknown is never 0', () => {

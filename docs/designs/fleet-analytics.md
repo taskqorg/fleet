@@ -60,4 +60,4 @@ The table belongs to connections and data, beside the provider catalogue in [con
 
 The first experiment may use one `owner` entry with basis `estimated`; nothing else is needed before it.
 
-Not built: the table, the snapshot pipeline, the grouping columns, the operation.
+Built (stage 3): the table `price_entry` (migration 27, append-only), `price_add {subject, unit, price, currency, source, sourceRef?, observedAt?, effectiveFrom?}` (a tool subject must use its catalogue unit; a model subject a token unit, never an alias) and `prices_list {subject?}`; each Lab trial in `lab_experiment_get` carries `cost: [{value, currency, basis, prices: [{id, observedAt}]}]`, one figure per currency plus `{value: null, basis: unavailable}` for usage no entry prices, shown in the `/lab` matrix. Not built: the snapshot pipeline, the grouping columns, the operation.
