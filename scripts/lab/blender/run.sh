@@ -3,4 +3,4 @@
 # Blender is FLEET_BLENDER, else blender on PATH.
 set -eu
 script=$1; shift
-exec "${FLEET_BLENDER:-blender}" --background --factory-startup --python "$(dirname "$0")/$script.py" -- "$@"
+exec "${FLEET_BLENDER:-blender}" --background --factory-startup --python-exit-code 1 --python "$(dirname "$0")/$script.py" -- "$@"

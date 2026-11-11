@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	osexec "os/exec"
 	"testing"
 )
 
@@ -69,5 +70,13 @@ func TestAssetJobTools(t *testing.T) {
 	step["status_tool"] = ""
 	if _, err := validatePipeline(definition); err == nil {
 		t.Fatal("empty status tool accepted")
+	}
+}
+
+func TestAssetViewEncoderBoundary(t *testing.T) {
+	// Requirement: S7 verifies view bytes and mapping before a paid POST; risk: the portable encoder checks are never run in CI.
+	command := osexec.Command("python3", "../../tests/assets/character-views.test.py")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("view encoder: %v\n%s", err, output)
 	}
 }

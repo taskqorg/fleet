@@ -359,6 +359,15 @@ const providersJSON = `
       "texture_resolution": {
        "type": "string",
        "description": "for example 2k"
+      },
+      "should_remesh": {
+       "type": "boolean"
+      },
+      "pose_mode": {
+       "type": "string"
+      },
+      "texture_prompt": {
+       "type": "string"
       }
      }
     },
@@ -370,7 +379,10 @@ const providersJSON = `
      "should_texture",
      "enable_pbr",
      "texture_resolution",
-     "target_formats"
+     "target_formats",
+     "should_remesh",
+     "pose_mode",
+     "texture_prompt"
     ]
    },
    "multi_job_status": {
