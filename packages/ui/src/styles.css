@@ -530,3 +530,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .flow-cap .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
 /* A wide table in the work area scrolls sideways inside its own panel (OR-25) */
 .detail .panel:has(.lab-row){overflow-x:auto}
+.code-editor{display:flex;flex-direction:column;gap:var(--space-2)}
+.code-editor textarea{width:100%;font-family:var(--font-mono);font-size:var(--font-size-sm);line-height:1.6;padding:var(--space-3);background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:var(--radius-md);resize:vertical;tab-size:2}
+.code-editor textarea:focus{outline:var(--size-focus-ring) solid var(--accent);outline-offset:-1px}
+.code-editor .problem-line{display:flex;gap:var(--space-2);align-items:center;font-size:var(--font-size-sm)}
