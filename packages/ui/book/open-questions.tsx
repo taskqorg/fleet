@@ -120,7 +120,7 @@ function PhoneFrame({ children, bottom }: { children: ComponentChildren; bottom?
 const PhoneList = () => <div class="phone-list">{T.slice(0, 7).map(t => <div key={t.id} class="phone-row"><span class="title">{t.title}</span><span class="row"><span class="id">T-{t.id}</span><StateBadge family="task" state={t.state} compact /><AgeChip t={t.started} now={NOW} /></span></div>)}</div>;
 function D1() {
   const [pinned, setPinned] = useState(['tasks', 'hosts']);
-  return <PhoneFrame><div class="phone-body force-narrow"><NavRail items={NAV} pinned={pinned} current="tasks" onGo={() => {}} onPin={(id, p) => setPinned(p ? [...pinned, id] : pinned.filter(x => x !== id))} /><PhoneList /></div></PhoneFrame>;
+  return <PhoneFrame><div class="phone-body force-narrow"><NavRail items={NAV} pinned={pinned} current="tasks" onGo={() => {}} onPins={setPinned} /><PhoneList /></div></PhoneFrame>;
 }
 function D2() {
   const pins = NAV.filter(n => ['overview', 'tasks', 'hosts', 'results'].includes(n.id));
@@ -131,7 +131,7 @@ function D3() {
   const [open, setOpen] = useState(true);
   const [pinned, setPinned] = useState(['tasks', 'hosts']);
   return <PhoneFrame><button type="button" class="switcher" aria-expanded={open} onClick={() => setOpen(!open)}><Icon name="list" /><b>Tasks</b><span class="nav-count t-danger">2</span><span class="grow" /><span class={open ? 'chev open' : 'chev'}><Icon name="chevron-down" /></span></button>
-    {open && <div class="inline-rail"><NavRail items={NAV} pinned={pinned} current="tasks" onGo={() => setOpen(false)} onPin={(id, p) => setPinned(p ? [...pinned, id] : pinned.filter(x => x !== id))} /></div>}
+    {open && <div class="inline-rail"><NavRail items={NAV} pinned={pinned} current="tasks" onGo={() => setOpen(false)} onPins={setPinned} /></div>}
     <PhoneList /></PhoneFrame>;
 }
 

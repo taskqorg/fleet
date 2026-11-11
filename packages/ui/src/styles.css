@@ -251,7 +251,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .rail-head{display:flex;align-items:center;gap:var(--space-2);padding-left:var(--space-3)}
 .rail-head .btn{border-color:transparent;background:none}
 .rail.mini{width:auto;padding:var(--space-2) var(--space-1)}
-.rail.mini .nm,.rail.mini .rail-h,.rail.mini .rail-search,.rail.mini .nav-pin,.rail.mini .brand,.rail.mini .waiting{display:none}
+.rail.mini .nm,.rail.mini .rail-h,.rail.mini .rail-search,.rail.mini .nav-pin,.rail.mini .rail-menu,.rail.mini .rail-g:not(.pinned) .nav-i.pinned,.rail.mini .brand,.rail.mini .waiting{display:none}
 .rail.mini .rail-head{padding:0;justify-content:center;flex-direction:column}
 .rail.mini .nav-i a{padding:0 var(--space-2);position:relative}
 .rail.mini .nav-count{position:absolute;top:calc(-1 * var(--space-1));right:calc(-1 * var(--space-1));padding:0 var(--space-1)}
@@ -266,7 +266,10 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .nav-count{padding:0 var(--space-2);border-radius:var(--radius-pill);background:var(--tone-bg);color:var(--tone-fg);font-family:var(--font-mono);font-size:var(--font-size-xs)}
 .nav-pin{display:inline-flex;align-items:center;justify-content:center;width:var(--size-control);height:var(--size-control);border:0;background:none;color:var(--fg-muted);cursor:pointer;opacity:0}
 .nav-pin .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
-.nav-i:hover .nav-pin,.nav-pin:focus-visible{opacity:1}
+.nav-i:hover .nav-pin,.nav-pin:focus-visible,.nav-i:focus-within .nav-pin,.nav-pin.on{opacity:1}
+.nav-pin.on{color:var(--fg)}
+.rail-g.pinned .nav-i{cursor:grab}.rail-g.pinned .nav-i.dragging{opacity:.5}
+.nav-i{position:relative}.rail-menu{left:var(--space-3);right:auto;z-index:20}
 .rail-search{flex:none;margin:0 var(--space-1)}
 @media (pointer:coarse){.nav-pin{opacity:1}}
 
@@ -337,7 +340,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 }
 @media (max-width:760px){
   .rail{width:auto;padding:var(--space-2) var(--space-1)}
-  .rail .nm,.rail .rail-h,.rail-search,.rail .nav-pin,.rail .brand,.rail .waiting,.rail-head{display:none}
+  .rail .nm,.rail .rail-h,.rail-search,.rail .nav-pin,.rail .rail-menu,.rail .rail-g:not(.pinned) .nav-i.pinned,.rail .brand,.rail .waiting,.rail-head{display:none}
   .rail .nav-i a{padding:0 var(--space-2);position:relative}
   .rail .nav-count{position:absolute;top:0;right:0;padding:0 var(--space-1)}
   .shell-main{padding:var(--space-3)}

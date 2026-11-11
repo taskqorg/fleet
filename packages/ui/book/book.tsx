@@ -157,7 +157,7 @@ function TranscriptDemo() {
 function RailDemo() {
   const [cur, setCur] = useState('tasks');
   const [pinned, setPinned] = useState<string[]>(['tasks', 'hosts']);
-  return <div class="pane rail-demo"><NavRail items={NAV} pinned={pinned} current={cur} onGo={setCur} onPin={(id, p) => setPinned(p ? [...pinned, id] : pinned.filter(x => x !== id))} /></div>;
+  return <div class="pane rail-demo"><NavRail items={NAV} pinned={pinned} current={cur} onGo={setCur} onPins={setPinned} /></div>;
 }
 
 function SplitDemo() {

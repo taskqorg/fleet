@@ -89,6 +89,7 @@ type PeopleSetRequest struct {
 type PersonSettings struct {
 	Email string        `json:"email"`
 	Order DispatchOrder `json:"order"`
+	Pins  []string      `json:"pins"`
 }
 
 type PersonSettingsGetReply = PersonSettings
@@ -100,8 +101,9 @@ type PersonSettingsGetRequest struct {
 type PersonSettingsSetReply = PersonSettings
 
 type PersonSettingsSetRequest struct {
-	Email *string       `json:"email,omitempty"`
-	Order DispatchOrder `json:"order"`
+	Email *string        `json:"email,omitempty"`
+	Order *DispatchOrder `json:"order,omitempty"`
+	Pins  []string       `json:"pins,omitempty"`
 }
 
 // ViewLinkReply: For view: url and path; for url: the parsed view.

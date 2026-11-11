@@ -37,16 +37,24 @@ func settingsEmail(q *Request, email *string) (string, error) {
 	return e, nil
 }
 
-// dispatchOrder: the director's order setting; list when unset.
-func dispatchOrder(q *Request, email string) (contract.DispatchOrder, error) {
+// personSettings: the stored document read as settings; order list and no pins when unset.
+func personSettings(q *Request, email string) (contract.PersonSettings, error) {
+	ps := contract.PersonSettings{Email: email, Order: contract.DispatchOrderList, Pins: []string{}}
 	d, err := unscoped(q, func() (doc, error) { return maybe(q, "person-setting:"+email, "person-setting") })
 	if err != nil || d == nil {
-		return contract.DispatchOrderList, err
+		return ps, err
 	}
 	if o := contract.DispatchOrder(astr(d["order"])); slices.Contains(contract.DispatchOrderValues, o) {
-		return o, nil
+		ps.Order = o
 	}
-	return contract.DispatchOrderList, nil
+	ps.Pins = strs(d["pins"])
+	return ps, nil
+}
+
+// dispatchOrder: the director's order setting; list when unset.
+func dispatchOrder(q *Request, email string) (contract.DispatchOrder, error) {
+	ps, err := personSettings(q, email)
+	return ps.Order, err
 }
 
 func personSettingsGet(q *Request, r *contract.PersonSettingsGetRequest) (contract.PersonSettings, error) {
@@ -54,30 +62,57 @@ func personSettingsGet(q *Request, r *contract.PersonSettingsGetRequest) (contra
 	if err != nil {
 		return contract.PersonSettings{}, err
 	}
-	o, err := dispatchOrder(q, email)
-	return contract.PersonSettings{Email: email, Order: o}, err
+	return personSettings(q, email)
 }
 
+// personSettingsSet changes the fields the request names; each changed field writes one setting-change.
 func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contract.PersonSettings, error) {
 	email, err := settingsEmail(q, r.Email)
 	if err != nil {
 		return contract.PersonSettings{}, err
 	}
-	if !slices.Contains(contract.DispatchOrderValues, r.Order) {
+	if r.Order != nil && !slices.Contains(contract.DispatchOrderValues, *r.Order) {
 		return contract.PersonSettings{}, fail(400, "order: list or soonest_reset")
 	}
-	prev, err := dispatchOrder(q, email)
+	// One writer per person: a set reads the document and writes it whole, so concurrent sets of different fields keep both.
+	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "person-setting:"+email); err != nil {
+		return contract.PersonSettings{}, err
+	}
+	prev, err := personSettings(q, email)
 	if err != nil {
 		return contract.PersonSettings{}, err
 	}
+	next := prev
+	if r.Order != nil {
+		next.Order = *r.Order
+	}
+	if r.Pins != nil {
+		next.Pins = []string{}
+		for _, id := range r.Pins {
+			if !slices.Contains(next.Pins, id) {
+				next.Pins = append(next.Pins, id)
+			}
+		}
+	}
 	by := actor(q, "operator")
 	_, err = unscoped(q, func() (struct{}, error) {
-		if err := put(q, "person-setting", doc{"id": "person-setting:" + email, "email": email, "order": string(r.Order)}); err != nil {
+		if err := put(q, "person-setting", doc{"id": "person-setting:" + email, "email": email, "order": string(next.Order), "pins": next.Pins}); err != nil {
 			return struct{}{}, err
 		}
-		return struct{}{}, put(q, "setting-change", doc{"id": newID(), "target": "person:" + email, "holder": email, "field": "order", "previous": string(prev), "value": string(r.Order), "actor": by, "at": nowMs()})
+		change := func(field string, previous, value any) error {
+			return put(q, "setting-change", doc{"id": newID(), "target": "person:" + email, "holder": email, "field": field, "previous": previous, "value": value, "actor": by, "at": nowMs()})
+		}
+		if next.Order != prev.Order {
+			if err := change("order", string(prev.Order), string(next.Order)); err != nil {
+				return struct{}{}, err
+			}
+		}
+		if !slices.Equal(next.Pins, prev.Pins) {
+			return struct{}{}, change("pins", prev.Pins, next.Pins)
+		}
+		return struct{}{}, nil
 	})
-	return contract.PersonSettings{Email: email, Order: r.Order}, err
+	return next, err
 }
 
 // soonestReset (section 8): ready candidates sorted by the earliest weekly resetsAt among those with weekly left above 0,

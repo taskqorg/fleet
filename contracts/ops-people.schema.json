@@ -26,11 +26,11 @@
     "PeopleListRequest": {"type": "object", "additionalProperties": true},
     "PeopleSetReply": {"type": "object", "required": ["people"], "properties": {"people": {"type": "integer"}}, "$comment": "people: how many people the list now has."},
     "PeopleSetRequest": {"type": "object", "required": ["people"], "properties": {"people": {}}, "additionalProperties": true, "$comment": "Owner only: the whole people.json list, written atomically and reloaded."},
-    "PersonSettings": {"type": "object", "additionalProperties": false, "required": ["email", "order"], "properties": {"email": {"type": "string"}, "order": {"$ref": "#/$defs/DispatchOrder"}}},
+    "PersonSettings": {"type": "object", "additionalProperties": false, "required": ["email", "order", "pins"], "properties": {"email": {"type": "string"}, "order": {"$ref": "#/$defs/DispatchOrder"}, "pins": {"$comment": "the person's pinned sidebar sections in their order (app shell); empty when unset", "type": "array", "items": {"type": "string"}}}},
     "PersonSettingsGetReply": {"$ref": "#/$defs/PersonSettings"},
     "PersonSettingsGetRequest": {"type": "object", "additionalProperties": false, "properties": {"email": {"$comment": "default: the caller; another person: the owner only", "type": "string"}}},
     "PersonSettingsSetReply": {"$ref": "#/$defs/PersonSettings"},
-    "PersonSettingsSetRequest": {"type": "object", "additionalProperties": false, "required": ["order"], "properties": {"email": {"$comment": "default: the caller; another person: the owner only", "type": "string"}, "order": {"$ref": "#/$defs/DispatchOrder"}}},
+    "PersonSettingsSetRequest": {"type": "object", "additionalProperties": false, "properties": {"email": {"$comment": "default: the caller; another person: the owner only", "type": "string"}, "order": {"$comment": "omitted: unchanged", "$ref": "#/$defs/DispatchOrder"}, "pins": {"$comment": "omitted: unchanged; the full ordered list replaces the previous one", "type": "array", "items": {"type": "string"}}}},
     "ViewLinkReply": {"type": "object", "properties": {"view": {}, "url": {"type": "string"}, "path": {"type": "string"}}, "$comment": "For view: url and path; for url: the parsed view."},
     "ViewLinkRequest": {"type": "object", "properties": {"view": {}, "url": {}}, "additionalProperties": true, "$comment": "Exactly one of view (a view state to link) or url (a Fleet URL to read back)."}
   }

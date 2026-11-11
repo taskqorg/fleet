@@ -631,30 +631,75 @@ export function Presets({ presets, active, onPick, onSave, onUnpin }: {
 /* ---------- Navigation rail with pinned sections (nav-rail.md) ---------- */
 
 export type NavItem = { id: string; label: string; icon: IconName; group: string; count?: { n: number; tone: Tone; label: string } };
-export function NavRail({ items, pinned, current, onPin, onGo, mini, head }: {
-  items: NavItem[]; pinned: string[]; current: string; onPin: (id: string, pin: boolean) => void; onGo: (id: string) => void;
+export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, head }: {
+  items: NavItem[]; current: string; onGo: (id: string) => void;
+  /** The person's pinned ids in their order; onPins gets the whole new list (pin, unpin, reorder). */ pinned: string[]; onPins: (ids: string[]) => void;
   /** Collapsed to icons. */ mini?: boolean; /** Product name, need-you chip and the collapse button (app shell). */ head?: ComponentChildren;
 }) {
   const [q, setQ] = useState('');
-  const item = (it: NavItem) => {
-    const isPinned = pinned.includes(it.id);
-    return <li key={it.id} class={`nav-i${it.id === current ? ' cur' : ''}`}>
-      <a href={`#/${it.id}`} aria-current={it.id === current ? 'page' : undefined} onClick={e => { e.preventDefault(); onGo(it.id); }}>
+  // Ids of sections that no longer exist are dropped here, so they never take a position and leave on the next save.
+  const pinned = stored.filter(id => items.some(i => i.id === id));
+  const [menu, setMenu] = useState<string | null>(null);
+  const [drag, setDrag] = useState<string | null>(null);
+  const navRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent) { if (e.key !== 'Escape') return; e.stopPropagation(); focusItem(menu.slice(2), menu[0] === 'p'); }
+      else if ((e.target as Element).closest?.('.rail-menu')) return;
+      setMenu(null);
+    };
+    document.addEventListener('pointerdown', close); document.addEventListener('keydown', close, true);
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close, true); };
+  }, [menu]);
+  const focusItem = (id: string, inPinned: boolean) => requestAnimationFrame(() =>
+    navRef.current?.querySelector<HTMLElement>(`.rail-g${inPinned ? '.pinned' : ':not(.pinned)'} [data-id="${id}"] a`)?.focus());
+  // An item unpinned from the pinned group leaves it: focus follows to the same item in its group.
+  const toggle = (id: string, inPinned = false) => { onPins(pinned.includes(id) ? pinned.filter(x => x !== id) : [...pinned, id]); if (inPinned) focusItem(id, false); };
+  // move: the pinned item to position `to` (clamped); keeps focus on the moved item for keyboard reorder.
+  const move = (id: string, to: number, refocus = false) => {
+    const rest = pinned.filter(x => x !== id), at = Math.max(0, Math.min(rest.length, to));
+    if (pinned.indexOf(id) === at) return;
+    onPins([...rest.slice(0, at), id, ...rest.slice(at)]);
+    if (refocus) focusItem(id, true);
+  };
+  const item = (it: NavItem, inPinned: boolean) => {
+    const isPinned = pinned.includes(it.id), i = pinned.indexOf(it.id);
+    return <li key={it.id} data-id={it.id} class={`nav-i${it.id === current ? ' cur' : ''}${isPinned ? ' pinned' : ''}${drag === it.id && inPinned ? ' dragging' : ''}`}
+      draggable={inPinned} onDragStart={inPinned ? e => { setDrag(it.id); e.dataTransfer?.setData('text/plain', it.id); } : undefined}
+      onDragOver={inPinned && drag ? e => e.preventDefault() : undefined}
+      onDrop={inPinned && drag ? e => { e.preventDefault(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
+        if (drag !== it.id) move(drag, pinned.filter(x => x !== drag).indexOf(it.id) + (after ? 1 : 0)); setDrag(null); } : undefined}
+      onDragEnd={() => setDrag(null)}
+      onContextMenu={e => { e.preventDefault(); setMenu(`${inPinned ? 'p' : 'g'}:${it.id}`); }}>
+      <a href={`#/${it.id}`} aria-current={it.id === current ? 'page' : undefined} aria-keyshortcuts={inPinned ? 'Alt+ArrowUp Alt+ArrowDown' : undefined} onClick={e => { e.preventDefault(); onGo(it.id); }}
+        onKeyDown={e => {
+          if (e.key === 'p' && !e.altKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); toggle(it.id, inPinned); }
+          else if (inPinned && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); move(it.id, i + (e.key === 'ArrowUp' ? -1 : 1), true); }
+          else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); setMenu(`${inPinned ? 'p' : 'g'}:${it.id}`); }
+        }}>
         <span data-tip={it.label} data-tip-narrow class="nav-ic"><Icon name={it.icon} /></span><span class="nm">{it.label}</span>
         {it.count && it.count.n > 0 && <span class={`nav-count t-${it.count.tone}`} aria-label={`${it.count.n} ${it.count.label}`}>{it.count.n}</span>}
       </a>
-      <button type="button" class={`nav-pin${isPinned ? ' on' : ''}`} aria-pressed={isPinned} aria-label={`${isPinned ? 'Unpin' : 'Pin'} ${it.label}`} data-tip={isPinned ? 'Unpin' : 'Pin'} onClick={() => onPin(it.id, !isPinned)}>
-        <Icon name={isPinned ? 'pin-off' : 'pin'} /></button>
+      <button type="button" class={`nav-pin${isPinned ? ' on' : ''}`} aria-pressed={isPinned} aria-label={`${isPinned ? 'Unpin' : 'Pin'} ${it.label}`} data-tip={isPinned ? 'Unpin' : 'Pin'} onClick={() => toggle(it.id, inPinned)}>
+        <Icon name="pin" /></button>
+      {menu === `${inPinned ? 'p' : 'g'}:${it.id}` && <span class="menu rail-menu" role="menu" aria-label={it.label}>
+        <button type="button" role="menuitem" autoFocus onClick={act(() => toggle(it.id, inPinned))}><Icon name={i < 0 ? 'pin' : 'pin-off'} />{i < 0 ? 'Pin' : 'Unpin'}</button>
+        {i > 0 && <button type="button" role="menuitem" onClick={act(() => move(it.id, i - 1, true))}><Icon name="arrow-up" />Move up</button>}
+        {i >= 0 && i < pinned.length - 1 && <button type="button" role="menuitem" onClick={act(() => move(it.id, i + 1, true))}><Icon name="arrow-down" />Move down</button>}
+      </span>}
     </li>;
   };
   const found = items.filter(i => i.label.toLowerCase().includes(q.toLowerCase()));
-  const groups = [...new Set(found.filter(i => !pinned.includes(i.id)).map(i => i.group))];
+  const groups = [...new Set(found.map(i => i.group))];
+  const pins = pinned.map(id => items.find(i => i.id === id)).filter(Boolean) as NavItem[];
+  const act = (f: () => void) => () => { setMenu(null); f(); };
   return (
-    <nav class={`rail${mini ? ' mini' : ''}`} data-ui="nav-rail" aria-label="Sections">
+    <nav class={`rail${mini ? ' mini' : ''}`} data-ui="nav-rail" aria-label="Sections" ref={navRef}>
       {head && <div class="rail-head">{head}</div>}
-      {pinned.length > 0 && <ul class="rail-g pinned" aria-label="Pinned">{pinned.map(id => items.find(i => i.id === id)).filter(Boolean).map(i => item(i!))}</ul>}
+      {pins.length > 0 && <ul class="rail-g pinned" aria-label="Pinned">{pins.map(i => item(i, true))}</ul>}
       <label class="search rail-search"><Icon name="search" /><input type="search" placeholder="Sections" aria-label="Find section" value={q} onInput={e => setQ((e.target as HTMLInputElement).value)} /></label>
-      {groups.map(g => <ul key={g} class="rail-g" aria-label={g}><li class="rail-h">{g}</li>{found.filter(i => i.group === g && !pinned.includes(i.id)).map(item)}</ul>)}
+      {groups.map(g => <ul key={g} class="rail-g" aria-label={g}><li class="rail-h">{g}</li>{found.filter(i => i.group === g).map(i => item(i, false))}</ul>)}
     </nav>
   );
 }

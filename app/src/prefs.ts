@@ -1,4 +1,4 @@
-// Per-person conveniences kept in the browser until people exist (Phase 6): pinned rows, saved views, pinned sections.
+// Per-person conveniences kept in the browser until people exist (Phase 6): pinned rows and saved views (pinned sections are a person setting).
 import { useState } from 'preact/hooks';
 import type { View } from '../../packages/view-url/view-url.ts';
 
