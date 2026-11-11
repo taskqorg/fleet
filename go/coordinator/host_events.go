@@ -119,7 +119,7 @@ func (a *App) ingest(q *Request) (any, error) {
 }
 
 func ingestIn(q *Request, b doc) (any, error) {
-	if err := ownedBody(q, b); err != nil {
+	if err := ownedBody(q, astr(b["hostId"]), astr(b["executionId"])); err != nil {
 		return nil, err
 	}
 	var batch contract.HostEvents // a type check of the batch; each event's data stays the host's raw record

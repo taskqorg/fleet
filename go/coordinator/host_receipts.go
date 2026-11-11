@@ -6,9 +6,6 @@ package main
 // struct first; unknown fields are refused.
 
 import (
-	"bytes"
-	"encoding/json"
-
 	"fleet/contract"
 
 	"github.com/jackc/pgx/v5"
@@ -16,39 +13,48 @@ import (
 
 func init() {
 	longRoute("POST /api/hosts/receipts", func(q *Request) (any, error) {
-		return typedStatus(q)
+		return typedReceipt(q, q.app.statusReceiptIn)
 	})
 	longRoute("POST /api/hosts/accounts/report", func(q *Request) (any, error) {
-		return typedReceipt(q, func(t *contract.AccountReceipt) bool { return t.AccountObservation != nil || t.AccountCatalogue != nil }, accountReceiptIn)
+		return typedReceipt(q, noEnd(accountReceiptIn))
 	})
 	longRoute("POST /api/hosts/project-operations", func(q *Request) (any, error) {
-		return typedReceipt(q, func(t *contract.ProjectReceipt) bool { return t.Delegation.Operation != "" }, projectReceiptIn)
+		return typedReceipt(q, noEnd(projectReceiptIn))
 	})
 	longRoute("POST /api/hosts/delegations", func(q *Request) (any, error) {
-		return typedReceipt(q, func(t *contract.ChildReceipt) bool { return t.Delegation.ProfileId != "" }, q.app.childReceiptIn)
+		return typedReceipt(q, noEnd(q.app.childReceiptIn))
 	})
 }
 
-// typedStatus: /api/hosts/receipts, a command status (contract.Receipt).
-func typedStatus(q *Request) (any, error) {
-	var t contract.Receipt
-	dec := json.NewDecoder(bytes.NewReader(q.body))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&t); err != nil || t.Status == "" {
-		return nil, fail(400, "Invalid body for this receipt route")
+// typedReceipt: a receipt route. The body decodes into its closed contract struct (unknown fields refused) and passes
+// its generated Validate, then fn runs in one transaction; an execution fn names as ended starts its pipeline step.
+func typedReceipt[T any, P interface {
+	*T
+	Validate() error
+}](q *Request, fn func(q *Request, t *T) (any, string, error)) (any, error) {
+	t, err := decodeValid[T, P](q.body, true)
+	if err != nil {
+		return nil, err
 	}
-	return q.app.receipt(q, q.app.statusReceiptIn)
+	var out any
+	var ended string
+	err = q.app.store.Tx(q.ctx(), nil, true, "", func(tx pgx.Tx) error {
+		q.tx = tx
+		var err error
+		out, ended, err = fn(q, t)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	if ended != "" {
+		go pipelineOnExecution(q.app, ended)
+	}
+	return out, nil
 }
 
-// typedReceipt: a split receipt route. The body decodes into its closed contract struct (unknown fields refused) and must carry its envelope (present), then fn runs as a receipt.
-func typedReceipt[T any](q *Request, present func(*T) bool, fn func(q *Request, b doc) (any, error)) (any, error) {
-	var t T
-	dec := json.NewDecoder(bytes.NewReader(q.body))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&t); err != nil || !present(&t) {
-		return nil, fail(400, "Invalid body for this receipt route")
-	}
-	return q.app.receipt(q, func(q *Request, b doc) (any, string, error) { r, err := fn(q, b); return r, "", err })
+func noEnd[T any](fn func(q *Request, t *T) (any, error)) func(q *Request, t *T) (any, string, error) {
+	return func(q *Request, t *T) (any, string, error) { r, err := fn(q, t); return r, "", err }
 }
 
 // receiptState: the execution state a command receipt status reports ('unknown' reports none).
@@ -83,51 +89,32 @@ func projectReceipt(q *Request, operation string, args doc, agent doc) (any, err
 	return op.h(sub)
 }
 
-func (a *App) receipt(q *Request, fn func(q *Request, b doc) (any, string, error)) (any, error) {
-	b := q.obj()
-	var out any
-	var ended string
-	err := a.store.Tx(q.ctx(), nil, true, "", func(tx pgx.Tx) error {
-		q.tx = tx
-		var err error
-		out, ended, err = fn(q, b)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	if ended != "" {
-		go pipelineOnExecution(a, ended)
-	}
-	return out, nil
-}
-
 // commandOf: the receipt's command, which must belong to the receipt's execution and host.
-func commandOf(q *Request, b doc, msg string) (doc, error) {
-	if err := ownedBody(q, b); err != nil {
+func commandOf(q *Request, hostID, executionID, commandID, msg string) (doc, error) {
+	if err := ownedBody(q, hostID, executionID); err != nil {
 		return nil, err
 	}
-	c, err := get(q, b["commandId"], "command")
+	c, err := get(q, commandID, "command")
 	if err != nil {
 		return nil, err
 	}
-	if c["executionId"] != b["executionId"] || c["hostId"] != b["hostId"] {
+	if c["executionId"] != executionID || c["hostId"] != hostID {
 		return nil, fail(403, msg)
 	}
 	return c, nil
 }
 
 // ownedBody: the execution named in a host request runs on the requesting host.
-func ownedBody(q *Request, b doc) error {
-	if _, ok := b["hostId"].(string); !ok {
+func ownedBody(q *Request, hostID, executionID string) error {
+	if hostID == "" {
 		return fail(403, "Host rejected")
 	}
-	if id := b["executionId"]; id != nil && id != "" {
-		e, err := get(q, id, "execution")
+	if executionID != "" {
+		e, err := get(q, executionID, "execution")
 		if err != nil {
 			return err
 		}
-		if e["hostId"] != b["hostId"] {
+		if e["hostId"] != hostID {
 			return fail(403, "Execution rejected")
 		}
 	}
@@ -135,32 +122,37 @@ func ownedBody(q *Request, b doc) error {
 }
 
 // accountReceiptIn: POST /api/hosts/accounts/report (contract.AccountReceipt), an account-inspect command's result.
-func accountReceiptIn(q *Request, b doc) (any, error) {
-	if err := ownedBody(q, b); err != nil {
-		return nil, err
+func accountReceiptIn(q *Request, b *contract.AccountReceipt) (any, error) {
+	if (b.AccountObservation == nil) == (b.AccountCatalogue == nil) {
+		return nil, fail(400, "Expected accountObservation or accountCatalogue")
 	}
-	c, err := get(q, b["commandId"], "command")
+	c, err := commandOf(q, b.HostId, b.ExecutionId, b.CommandId, "Account inspection ownership rejected")
 	if err != nil {
 		return nil, err
 	}
-	v := nonNil(b["accountObservation"], b["accountCatalogue"])
-	o, p := mapOf(v), mapOf(c["payload"])
-	if v == nil || c["hostId"] != b["hostId"] || c["executionId"] != b["executionId"] || c["kind"] != string(contract.CommandKindAccountInspect) || p["accountId"] != o["accountId"] || p["binding"] != nonNil(o["binding"]) {
+	p := mapOf(c["payload"])
+	var accountID string
+	var binding any
+	if o := b.AccountObservation; o != nil {
+		accountID, binding = o.AccountId, o.Binding
+	} else if b.AccountCatalogue.Binding != nil {
+		accountID, binding = b.AccountCatalogue.AccountId, *b.AccountCatalogue.Binding
+	} else {
+		accountID = b.AccountCatalogue.AccountId
+	}
+	if c["kind"] != string(contract.CommandKindAccountInspect) || p["accountId"] != accountID || p["binding"] != binding {
 		return nil, fail(403, "Account inspection ownership rejected")
 	}
-	if b["accountCatalogue"] != nil {
-		return accountCatalogue(q, o, astr(p["nativeHostId"]))
+	if b.AccountCatalogue != nil {
+		return accountCatalogue(q, b.AccountCatalogue, astr(p["nativeHostId"]))
 	}
-	return accountReport(q, o, astr(p["nativeHostId"]))
+	return accountReport(q, b.AccountObservation, astr(p["nativeHostId"]))
 }
 
 // projectReceiptIn: POST /api/hosts/project-operations (contract.ProjectReceipt), a project operation of a native agent.
-func projectReceiptIn(q *Request, b doc) (any, error) {
-	d := mapOf(b["delegation"])
-	if err := ownedBody(q, b); err != nil {
-		return nil, err
-	}
-	c, err := get(q, b["commandId"], "command")
+func projectReceiptIn(q *Request, b *contract.ProjectReceipt) (any, error) {
+	d := &b.Delegation
+	c, err := commandOf(q, b.HostId, b.ExecutionId, b.CommandId, "Project grant rejected")
 	if err != nil {
 		return nil, err
 	}
@@ -168,49 +160,44 @@ func projectReceiptIn(q *Request, b doc) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c["executionId"] != b["executionId"] || c["hostId"] != b["hostId"] || s["projectId"] == nil || d["projectId"] != s["projectId"] || !inList(projectReceiptOps, astr(d["operation"])) {
+	if s["projectId"] == nil || d.ProjectId != s["projectId"] || !inList(projectReceiptOps, string(d.Operation)) {
 		return nil, fail(403, "Project grant rejected")
 	}
 	args := doc{}
-	for k, v := range mapOf(d["arguments"]) {
+	for k, v := range docOf(d.Arguments) {
 		args[k] = v
 	}
 	args["projectId"] = s["projectId"]
-	return projectReceipt(q, astr(d["operation"]), args, doc{"kind": "native-agent", "executionId": b["executionId"], "sessionId": s["id"]})
+	return projectReceipt(q, string(d.Operation), args, doc{"kind": "native-agent", "executionId": b.ExecutionId, "sessionId": s["id"]})
 }
 
 // childReceiptIn: POST /api/hosts/delegations (contract.ChildReceipt), a child agent request.
-func (a *App) childReceiptIn(q *Request, b doc) (any, error) {
-	c, err := commandOf(q, b, "Command rejected")
+func (a *App) childReceiptIn(q *Request, b *contract.ChildReceipt) (any, error) {
+	c, err := commandOf(q, b.HostId, b.ExecutionId, b.CommandId, "Command rejected")
 	if err != nil {
 		return nil, err
 	}
-	return a.delegationRequest(q, b, c)
+	return a.delegationRequest(q, &b.Delegation, c)
 }
 
 // statusReceiptIn: POST /api/hosts/receipts (contract.Receipt), a command's status.
-func (a *App) statusReceiptIn(q *Request, b doc) (any, string, error) {
-	c, err := commandOf(q, b, "Command rejected")
+func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, error) {
+	c, err := commandOf(q, b.HostId, b.ExecutionId, b.CommandId, "Command rejected")
 	if err != nil {
 		return nil, "", err
 	}
-	status := astr(b["status"])
-	switch contract.ReceiptStatus(status) {
-	case contract.ReceiptStatusAccepted, contract.ReceiptStatusStarted, contract.ReceiptStatusCompleted, contract.ReceiptStatusFailed, contract.ReceiptStatusStopped, contract.ReceiptStatusUnknown:
-	default:
-		return nil, "", fail(400, "Invalid status")
-	}
+	status := string(b.Status) // an enum value: Validate refused any other
 	cur := receiptRank[astr(c["status"])]
 	if receiptRank[status] < cur || (cur == 3 && status != c["status"]) {
 		return nil, "", fail(409, "Receipt regression")
 	}
 	if cur == 3 { // a repeated terminal receipt (an outbox retry) changes nothing: the gate and onReceipt ran once
-		return doc{"ok": true}, "", nil
+		return contract.ReceiptReply{Ok: true}, "", nil
 	}
-	native, hasNative := b["nativeSessionId"].(string)
-	hasNative = hasNative && native != ""
+	native := deref(b.NativeSessionId)
+	hasNative := native != ""
 	if hasNative {
-		e, err := get(q, b["executionId"], "execution")
+		e, err := get(q, b.ExecutionId, "execution")
 		if err != nil {
 			return nil, "", err
 		}
@@ -226,7 +213,7 @@ func (a *App) statusReceiptIn(q *Request, b doc) (any, string, error) {
 	if err := put(q, "command", c); err != nil {
 		return nil, "", err
 	}
-	e, err := get(q, b["executionId"], "execution")
+	e, err := get(q, b.ExecutionId, "execution")
 	if err != nil {
 		return nil, "", err
 	}
@@ -247,12 +234,12 @@ func (a *App) statusReceiptIn(q *Request, b doc) (any, string, error) {
 	if kind != "steer" && (status == "completed" || status == "failed" || status == "stopped") && e["finishedAt"] == nil {
 		e["finishedAt"] = e["updatedAt"]
 	}
-	if b["error"] != nil && b["error"] != "" && b["error"] != false {
-		e["error"] = b["error"]
+	if deref(b.Error) != "" {
+		e["error"] = *b.Error
 	}
 	if (kind == "start" || kind == "script") && status == "completed" && !wasFinal {
 		// Every declaration reaches the gate: a dropped one would let a required output go unwaited.
-		gate, err := artifactGate(q, e, anys(b["artifacts"]))
+		gate, err := artifactGate(q, e, b.Artifacts)
 		if err != nil {
 			return nil, "", err
 		}
@@ -295,7 +282,7 @@ func (a *App) statusReceiptIn(q *Request, b doc) (any, string, error) {
 	if terminal(e) || lost {
 		ended = astr(e["id"])
 	}
-	return doc{"ok": true}, ended, nil
+	return contract.ReceiptReply{Ok: true}, ended, nil
 }
 
 // agentAccountList: the subscriptions a native agent's work may use (its director's, or taken for its project), without

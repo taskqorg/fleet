@@ -84,6 +84,12 @@ func typedOp[Req, Rep any](h func(q *Request, r *Req) (Rep, error)) handler {
 				return nil, fail(400, "Invalid body")
 			}
 		}
+		// The generated required-field and enum check (contract.Check), on the body as decoded.
+		if v, ok := any(&r).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return nil, fail(400, err.Error())
+			}
+		}
 		return h(q, &r)
 	}
 }

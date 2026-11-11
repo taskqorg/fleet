@@ -15,6 +15,17 @@ type AccountConnectRequest struct {
 	HostId    *string `json:"hostId,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountConnectRequest) Validate() error {
+	if v.AccountId == "" {
+		return Missing("accountId")
+	}
+	if v.Binding == "" {
+		return Missing("binding")
+	}
+	return nil
+}
+
 // AccountCreateReply: A managed-account record: id, name, harness, holder, kind, plan, intake, take, switchPct, comment, bindings and times.
 type AccountCreateReply = map[string]json.RawMessage
 
@@ -27,6 +38,17 @@ type AccountCreateRequest struct {
 	Plan    *string `json:"plan,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountCreateRequest) Validate() error {
+	if v.Harness == "" {
+		return Missing("harness")
+	}
+	if v.Name == "" {
+		return Missing("name")
+	}
+	return nil
+}
+
 type AccountDiscoverReply = AccountInspection
 
 // AccountDiscoverRequest: Reads the host's native account catalogue. hostId: default the caller's host.
@@ -35,14 +57,35 @@ type AccountDiscoverRequest struct {
 	HostId    *string `json:"hostId,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountDiscoverRequest) Validate() error {
+	if v.AccountId == "" {
+		return Missing("accountId")
+	}
+	return nil
+}
+
 type AccountHostsReply struct {
 	Hosts []map[string]json.RawMessage `json:"hosts"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountHostsReply) Validate() error {
+	if v.Hosts == nil {
+		return Missing("hosts")
+	}
+	return nil
 }
 
 // AccountHostsRequest: harness default codex; accountId takes the account's harness.
 type AccountHostsRequest struct {
 	AccountId *string `json:"accountId,omitempty"`
 	Harness   *string `json:"harness,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountHostsRequest) Validate() error {
+	return nil
 }
 
 // AccountInspection: A read-only native inspection queued on a host; an identical one still pending is answered instead of a new one.
@@ -56,9 +99,37 @@ type AccountInspection struct {
 	LoginAction *string `json:"loginAction,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountInspection) Validate() error {
+	if v.AccountId == "" {
+		return Missing("accountId")
+	}
+	if v.ExecutionId == "" {
+		return Missing("executionId")
+	}
+	if v.HostId == "" {
+		return Missing("hostId")
+	}
+	if v.Id == "" {
+		return Missing("id")
+	}
+	return nil
+}
+
 type AccountListReply struct {
 	Accounts   []map[string]json.RawMessage `json:"accounts"`
 	Catalogues []map[string]json.RawMessage `json:"catalogues"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountListReply) Validate() error {
+	if v.Accounts == nil {
+		return Missing("accounts")
+	}
+	if v.Catalogues == nil {
+		return Missing("catalogues")
+	}
+	return nil
 }
 
 type AccountListRequest = map[string]json.RawMessage
@@ -78,10 +149,53 @@ type AccountLoginHandoffReply struct {
 	Warning                 json.RawMessage `json:"warning"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountLoginHandoffReply) Validate() error {
+	if v.BasedOnCheckAt == nil {
+		return Missing("basedOnCheckAt")
+	}
+	if v.Binding == nil {
+		return Missing("binding")
+	}
+	if v.Command == nil {
+		return Missing("command")
+	}
+	if v.Environment == nil {
+		return Missing("environment")
+	}
+	if v.Executable == nil {
+		return Missing("executable")
+	}
+	if v.HostId == "" {
+		return Missing("hostId")
+	}
+	if v.Quota == "" {
+		return Missing("quota")
+	}
+	if v.RequiredUserInteraction == nil {
+		return Missing("requiredUserInteraction")
+	}
+	if v.Warning == nil {
+		return Missing("warning")
+	}
+	return nil
+}
+
 type AccountLoginHandoffRequest struct {
 	AccountId string  `json:"accountId"`
 	Binding   *string `json:"binding,omitempty"`
 	HostId    string  `json:"hostId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountLoginHandoffRequest) Validate() error {
+	if v.AccountId == "" {
+		return Missing("accountId")
+	}
+	if v.HostId == "" {
+		return Missing("hostId")
+	}
+	return nil
 }
 
 // AccountUpdateReply: A managed-account record: id, name, harness, holder, kind, plan, intake, take, switchPct, comment, bindings and times.
@@ -100,6 +214,14 @@ type AccountUpdateRequest struct {
 	Take       json.RawMessage `json:"take,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountUpdateRequest) Validate() error {
+	if v.AccountId == "" {
+		return Missing("accountId")
+	}
+	return nil
+}
+
 // Budget: scope person, project, experiment or connection; action warn, pause or stop; period day, week, month or null (all time). spend only in budgets_list.
 type Budget struct {
 	Action  string       `json:"action"`
@@ -114,8 +236,47 @@ type Budget struct {
 	Unit    string       `json:"unit"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *Budget) Validate() error {
+	if v.Action == "" {
+		return Missing("action")
+	}
+	if v.Id == "" {
+		return Missing("id")
+	}
+	if v.Scope == "" {
+		return Missing("scope")
+	}
+	if v.ScopeId == "" {
+		return Missing("scopeId")
+	}
+	if v.SetAt == "" {
+		return Missing("setAt")
+	}
+	if v.SetBy == "" {
+		return Missing("setBy")
+	}
+	if v.Spend != nil {
+		if err := Check(v.Spend, "spend"); err != nil {
+			return err
+		}
+	}
+	if v.Unit == "" {
+		return Missing("unit")
+	}
+	return nil
+}
+
 type BudgetAskReply struct {
 	QuestionId string `json:"questionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BudgetAskReply) Validate() error {
+	if v.QuestionId == "" {
+		return Missing("questionId")
+	}
+	return nil
 }
 
 // BudgetAskRequest: Asks the owner to raise a budget above its current limit.
@@ -125,14 +286,38 @@ type BudgetAskRequest struct {
 	Reason   *string `json:"reason,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *BudgetAskRequest) Validate() error {
+	if v.BudgetId == "" {
+		return Missing("budgetId")
+	}
+	return nil
+}
+
 type BudgetDeleteReply struct {
 	Deleted bool   `json:"deleted"`
 	Id      string `json:"id"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *BudgetDeleteReply) Validate() error {
+	if v.Id == "" {
+		return Missing("id")
+	}
+	return nil
+}
+
 // BudgetDeleteRequest: Owner only.
 type BudgetDeleteRequest struct {
 	Id string `json:"id"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BudgetDeleteRequest) Validate() error {
+	if v.Id == "" {
+		return Missing("id")
+	}
+	return nil
 }
 
 type BudgetSetReply = Budget
@@ -148,14 +333,49 @@ type BudgetSetRequest struct {
 	Unit    string  `json:"unit"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *BudgetSetRequest) Validate() error {
+	if v.Scope == "" {
+		return Missing("scope")
+	}
+	if v.ScopeId == "" {
+		return Missing("scopeId")
+	}
+	if v.Unit == "" {
+		return Missing("unit")
+	}
+	return nil
+}
+
 // BudgetSpend: basis measured (value is the spend in the budget's unit and period) or unverifiable (value null).
 type BudgetSpend struct {
 	Basis string   `json:"basis"`
 	Value *float64 `json:"value"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *BudgetSpend) Validate() error {
+	if v.Basis == "" {
+		return Missing("basis")
+	}
+	return nil
+}
+
 type BudgetsListReply struct {
 	Budgets []Budget `json:"budgets"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BudgetsListReply) Validate() error {
+	if v.Budgets == nil {
+		return Missing("budgets")
+	}
+	for i := range v.Budgets {
+		if err := Check(&v.Budgets[i], "budgets"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type BudgetsListRequest = map[string]json.RawMessage
@@ -166,11 +386,30 @@ type CommandRef struct {
 	Status string `json:"status"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *CommandRef) Validate() error {
+	if v.Id == "" {
+		return Missing("id")
+	}
+	if v.Kind == "" {
+		return Missing("kind")
+	}
+	if v.Status == "" {
+		return Missing("status")
+	}
+	return nil
+}
+
 // ConnectionAccess: Who besides the holder may use the API key: people (emails), projects and experiments.
 type ConnectionAccess struct {
 	Experiments []string `json:"experiments,omitempty"`
 	People      []string `json:"people,omitempty"`
 	Projects    []string `json:"projects,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionAccess) Validate() error {
+	return nil
 }
 
 // ConnectionView: An API connection; keys, spend and history only in connections_list.
@@ -190,6 +429,32 @@ type ConnectionView struct {
 	UpdatedAt *float64                     `json:"updatedAt,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionView) Validate() error {
+	if err := Check(&v.Access, "access"); err != nil {
+		return err
+	}
+	if v.Comment == "" {
+		return Missing("comment")
+	}
+	if v.Holder == "" {
+		return Missing("holder")
+	}
+	if v.Id == "" {
+		return Missing("id")
+	}
+	if v.Intake == "" {
+		return Missing("intake")
+	}
+	if v.Name == "" {
+		return Missing("name")
+	}
+	if v.Provider == "" {
+		return Missing("provider")
+	}
+	return nil
+}
+
 type ConnectionsCreateReply = ConnectionView
 
 // ConnectionsCreateRequest: holder: the owner may create a key for another person.
@@ -198,6 +463,17 @@ type ConnectionsCreateRequest struct {
 	Holder   *string `json:"holder,omitempty"`
 	Name     string  `json:"name"`
 	Provider string  `json:"provider"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsCreateRequest) Validate() error {
+	if v.Name == "" {
+		return Missing("name")
+	}
+	if v.Provider == "" {
+		return Missing("provider")
+	}
+	return nil
 }
 
 // ConnectionsKeyAddReply: The new key row (fingerprint, state, addedAt, addedBy); never the value.
@@ -209,6 +485,17 @@ type ConnectionsKeyAddRequest struct {
 	Value      string `json:"value"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsKeyAddRequest) Validate() error {
+	if v.Connection == "" {
+		return Missing("connection")
+	}
+	if v.Value == "" {
+		return Missing("value")
+	}
+	return nil
+}
+
 // ConnectionsKeyStateReply: The key row after the change.
 type ConnectionsKeyStateReply = map[string]json.RawMessage
 
@@ -218,9 +505,36 @@ type ConnectionsKeyStateRequest struct {
 	State string `json:"state"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsKeyStateRequest) Validate() error {
+	if v.KeyId == "" {
+		return Missing("keyId")
+	}
+	if v.State == "" {
+		return Missing("state")
+	}
+	return nil
+}
+
 type ConnectionsListReply struct {
 	Connections []ConnectionView           `json:"connections"`
 	Providers   map[string]json.RawMessage `json:"providers"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsListReply) Validate() error {
+	if v.Connections == nil {
+		return Missing("connections")
+	}
+	for i := range v.Connections {
+		if err := Check(&v.Connections[i], "connections"); err != nil {
+			return err
+		}
+	}
+	if v.Providers == nil {
+		return Missing("providers")
+	}
+	return nil
 }
 
 type ConnectionsListRequest = map[string]json.RawMessage
@@ -233,12 +547,34 @@ type ConnectionsSetAccessRequest struct {
 	Connection string          `json:"connection"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsSetAccessRequest) Validate() error {
+	if v.Access == nil {
+		return Missing("access")
+	}
+	if v.Connection == "" {
+		return Missing("connection")
+	}
+	return nil
+}
+
 type ConnectionsSetIntakeReply = ConnectionView
 
 // ConnectionsSetIntakeRequest: intake all or paused.
 type ConnectionsSetIntakeRequest struct {
 	Connection string `json:"connection"`
 	Intake     string `json:"intake"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsSetIntakeRequest) Validate() error {
+	if v.Connection == "" {
+		return Missing("connection")
+	}
+	if v.Intake == "" {
+		return Missing("intake")
+	}
+	return nil
 }
 
 // ConnectionsTokenCreateReply: token: the bearer value, shown once; refused: requested connections the owner cannot use.
@@ -249,14 +585,43 @@ type ConnectionsTokenCreateReply struct {
 	Token       *string                      `json:"token"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsTokenCreateReply) Validate() error {
+	if v.Name == "" {
+		return Missing("name")
+	}
+	return nil
+}
+
 // ConnectionsTokenCreateRequest: The owner only (not an agent). The token value is answered once.
 type ConnectionsTokenCreateRequest struct {
 	Connections []string `json:"connections,omitempty"`
 	Name        string   `json:"name"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsTokenCreateRequest) Validate() error {
+	if v.Name == "" {
+		return Missing("name")
+	}
+	return nil
+}
+
 type ConnectionsTokenListReply struct {
 	Tokens []TokenInfo `json:"tokens"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsTokenListReply) Validate() error {
+	if v.Tokens == nil {
+		return Missing("tokens")
+	}
+	for i := range v.Tokens {
+		if err := Check(&v.Tokens[i], "tokens"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type ConnectionsTokenListRequest = map[string]json.RawMessage
@@ -266,15 +631,39 @@ type ConnectionsTokenRevokeReply struct {
 	Revoked bool   `json:"revoked"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsTokenRevokeReply) Validate() error {
+	if v.Name == "" {
+		return Missing("name")
+	}
+	return nil
+}
+
 // ConnectionsTokenRevokeRequest: Owner only.
 type ConnectionsTokenRevokeRequest struct {
 	Name string `json:"name"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsTokenRevokeRequest) Validate() error {
+	if v.Name == "" {
+		return Missing("name")
+	}
+	return nil
 }
 
 // LimitEmpty: when a line reaches 0: at a time, not before the line ends, or unknown
 type LimitEmpty struct {
 	At    *int64          `json:"at"`
 	State LimitEmptyState `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LimitEmpty) Validate() error {
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
 }
 
 type LimitEmptyState string
@@ -288,6 +677,16 @@ const (
 // LimitEmptyStateValues lists every LimitEmptyState in schema order.
 var LimitEmptyStateValues = []LimitEmptyState{LimitEmptyStateAt, LimitEmptyStateNotBeforeEnd, LimitEmptyStateUnknown}
 
+// Valid: v is one of the schema's values.
+func (v LimitEmptyState) Valid() bool {
+	for _, x := range LimitEmptyStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type LimitPace string
 
 const (
@@ -299,6 +698,16 @@ const (
 
 // LimitPaceValues lists every LimitPace in schema order.
 var LimitPaceValues = []LimitPace{LimitPaceAhead, LimitPaceOn, LimitPaceUnder, LimitPaceUnknown}
+
+// Valid: v is one of the schema's values.
+func (v LimitPace) Valid() bool {
+	for _, x := range LimitPaceValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
 
 // LimitPeriod: one (subscription, period): the latest reading, its history and its projection (fleet-people-access.md section 8)
 type LimitPeriod struct {
@@ -317,10 +726,48 @@ type LimitPeriod struct {
 	Status     *string      `json:"status"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LimitPeriod) Validate() error {
+	if err := Check(&v.FirstEmpty, "firstEmpty"); err != nil {
+		return err
+	}
+	if v.History == nil {
+		return Missing("history")
+	}
+	for i := range v.History {
+		if err := Check(&v.History[i], "history"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Pace, "pace"); err != nil {
+		return err
+	}
+	if v.Period == "" {
+		return Missing("period")
+	}
+	if v.Projection == nil {
+		return Missing("projection")
+	}
+	for i := range v.Projection {
+		if err := Check(&v.Projection[i], "projection"); err != nil {
+			return err
+		}
+	}
+	if v.Source == "" {
+		return Missing("source")
+	}
+	return nil
+}
+
 // LimitPoint: left in percent of the member (or weighted points for a pool) at a time
 type LimitPoint struct {
 	At   int64   `json:"at"`
 	Left float64 `json:"left"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LimitPoint) Validate() error {
+	return nil
 }
 
 // LimitPool: per harness and period over members with a known percent, weighted by planWeight
@@ -339,6 +786,40 @@ type LimitPool struct {
 	Unknown    []string     `json:"unknown"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LimitPool) Validate() error {
+	if err := Check(&v.FirstEmpty, "firstEmpty"); err != nil {
+		return err
+	}
+	if v.Harness == "" {
+		return Missing("harness")
+	}
+	if v.Members == nil {
+		return Missing("members")
+	}
+	if err := Check(&v.NextReset, "nextReset"); err != nil {
+		return err
+	}
+	if v.Period == "" {
+		return Missing("period")
+	}
+	if err := Check(&v.PoolEmpty, "poolEmpty"); err != nil {
+		return err
+	}
+	if v.Projection == nil {
+		return Missing("projection")
+	}
+	for i := range v.Projection {
+		if err := Check(&v.Projection[i], "projection"); err != nil {
+			return err
+		}
+	}
+	if v.Unknown == nil {
+		return Missing("unknown")
+	}
+	return nil
+}
+
 type LimitRefreshSent struct {
 	Binding        string `json:"binding"`
 	ExecutionId    string `json:"executionId"`
@@ -346,15 +827,48 @@ type LimitRefreshSent struct {
 	SubscriptionId string `json:"subscriptionId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LimitRefreshSent) Validate() error {
+	if v.Binding == "" {
+		return Missing("binding")
+	}
+	if v.ExecutionId == "" {
+		return Missing("executionId")
+	}
+	if v.HostId == "" {
+		return Missing("hostId")
+	}
+	if v.SubscriptionId == "" {
+		return Missing("subscriptionId")
+	}
+	return nil
+}
+
 type LimitRefreshSkipped struct {
 	Reason         string `json:"reason"`
 	SubscriptionId string `json:"subscriptionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LimitRefreshSkipped) Validate() error {
+	if v.Reason == "" {
+		return Missing("reason")
+	}
+	if v.SubscriptionId == "" {
+		return Missing("subscriptionId")
+	}
+	return nil
 }
 
 // LimitReset: earliest member reset and the weighted points it adds back
 type LimitReset struct {
 	At      *int64   `json:"at"`
 	Restore *float64 `json:"restore"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LimitReset) Validate() error {
+	return nil
 }
 
 type LimitSubscription struct {
@@ -370,6 +884,42 @@ type LimitSubscription struct {
 	SwitchPct  *float64              `json:"switchPct"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LimitSubscription) Validate() error {
+	if v.Harness == "" {
+		return Missing("harness")
+	}
+	if v.Holder == nil {
+		return Missing("holder")
+	}
+	if v.Id == "" {
+		return Missing("id")
+	}
+	if v.Intake == nil {
+		return Missing("intake")
+	}
+	if v.Name == nil {
+		return Missing("name")
+	}
+	if v.Periods == nil {
+		return Missing("periods")
+	}
+	for i := range v.Periods {
+		if err := Check(&v.Periods[i], "periods"); err != nil {
+			return err
+		}
+	}
+	if v.Readings == nil {
+		return Missing("readings")
+	}
+	for i := range v.Readings {
+		if err := Check(&v.Readings[i], "readings"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type PriceAddReply = PriceEntry
 
 type PriceAddRequest struct {
@@ -381,6 +931,23 @@ type PriceAddRequest struct {
 	SourceRef     *string `json:"sourceRef,omitempty"`
 	Subject       string  `json:"subject"`
 	Unit          string  `json:"unit"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PriceAddRequest) Validate() error {
+	if v.Currency == "" {
+		return Missing("currency")
+	}
+	if v.Source == "" {
+		return Missing("source")
+	}
+	if v.Subject == "" {
+		return Missing("subject")
+	}
+	if v.Unit == "" {
+		return Missing("unit")
+	}
+	return nil
 }
 
 // PriceEntry: docs/designs/fleet-analytics.md, Price table. Append-only.
@@ -397,12 +964,50 @@ type PriceEntry struct {
 	Unit          string  `json:"unit"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *PriceEntry) Validate() error {
+	if v.Currency == "" {
+		return Missing("currency")
+	}
+	if v.Id == "" {
+		return Missing("id")
+	}
+	if v.Source == "" {
+		return Missing("source")
+	}
+	if v.Subject == "" {
+		return Missing("subject")
+	}
+	if v.Unit == "" {
+		return Missing("unit")
+	}
+	return nil
+}
+
 type PricesListReply struct {
 	Prices []PriceEntry `json:"prices"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *PricesListReply) Validate() error {
+	if v.Prices == nil {
+		return Missing("prices")
+	}
+	for i := range v.Prices {
+		if err := Check(&v.Prices[i], "prices"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type PricesListRequest struct {
 	Subject *string `json:"subject,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PricesListRequest) Validate() error {
+	return nil
 }
 
 type SubscriptionLimitsRefreshReply struct {
@@ -410,9 +1015,35 @@ type SubscriptionLimitsRefreshReply struct {
 	Skipped []LimitRefreshSkipped `json:"skipped"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *SubscriptionLimitsRefreshReply) Validate() error {
+	if v.Sent == nil {
+		return Missing("sent")
+	}
+	for i := range v.Sent {
+		if err := Check(&v.Sent[i], "sent"); err != nil {
+			return err
+		}
+	}
+	if v.Skipped == nil {
+		return Missing("skipped")
+	}
+	for i := range v.Skipped {
+		if err := Check(&v.Skipped[i], "skipped"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // SubscriptionLimitsRefreshRequest: fleet-people-access.md section 8 "Read without a run": one subscription, or every one the caller holds (the owner: all)
 type SubscriptionLimitsRefreshRequest struct {
 	SubscriptionId *string `json:"subscriptionId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SubscriptionLimitsRefreshRequest) Validate() error {
+	return nil
 }
 
 type SubscriptionLimitsReply struct {
@@ -424,11 +1055,37 @@ type SubscriptionLimitsReply struct {
 	WindowHours   float64             `json:"windowHours"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *SubscriptionLimitsReply) Validate() error {
+	if v.Pools == nil {
+		return Missing("pools")
+	}
+	for i := range v.Pools {
+		if err := Check(&v.Pools[i], "pools"); err != nil {
+			return err
+		}
+	}
+	if v.Subscriptions == nil {
+		return Missing("subscriptions")
+	}
+	for i := range v.Subscriptions {
+		if err := Check(&v.Subscriptions[i], "subscriptions"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type SubscriptionLimitsRequest struct {
 	From        *int64   `json:"from,omitempty"`
 	PaceMargin  *float64 `json:"paceMargin,omitempty"`
 	To          *int64   `json:"to,omitempty"`
 	WindowHours *float64 `json:"windowHours,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SubscriptionLimitsRequest) Validate() error {
+	return nil
 }
 
 type SubscriptionReading struct {
@@ -441,12 +1098,43 @@ type SubscriptionReading struct {
 	Status   *string  `json:"status"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *SubscriptionReading) Validate() error {
+	if v.Period == "" {
+		return Missing("period")
+	}
+	if v.State == "" {
+		return Missing("state")
+	}
+	return nil
+}
+
 type TokenInfo struct {
 	Connections json.RawMessage `json:"connections"`
 	CreatedAt   json.RawMessage `json:"createdAt"`
 	DirectedBy  json.RawMessage `json:"directedBy"`
 	Name        string          `json:"name"`
 	RevokedAt   json.RawMessage `json:"revokedAt"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TokenInfo) Validate() error {
+	if v.Connections == nil {
+		return Missing("connections")
+	}
+	if v.CreatedAt == nil {
+		return Missing("createdAt")
+	}
+	if v.DirectedBy == nil {
+		return Missing("directedBy")
+	}
+	if v.Name == "" {
+		return Missing("name")
+	}
+	if v.RevokedAt == nil {
+		return Missing("revokedAt")
+	}
+	return nil
 }
 
 // TransportAuthorizeReply: The transport after the authorization.
@@ -458,6 +1146,23 @@ type TransportAuthorizeRequest struct {
 	ExecutionId string `json:"executionId"`
 	FrameSha256 string `json:"frameSha256"`
 	RequestId   string `json:"requestId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TransportAuthorizeRequest) Validate() error {
+	if v.ConflictId == "" {
+		return Missing("conflictId")
+	}
+	if v.ExecutionId == "" {
+		return Missing("executionId")
+	}
+	if v.FrameSha256 == "" {
+		return Missing("frameSha256")
+	}
+	if v.RequestId == "" {
+		return Missing("requestId")
+	}
+	return nil
 }
 
 // TransportInspectReply: Retained transport of one execution; never reruns native work.
@@ -476,8 +1181,53 @@ type TransportInspectReply struct {
 	State         string                       `json:"state"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *TransportInspectReply) Validate() error {
+	if v.Audit == nil {
+		return Missing("audit")
+	}
+	if v.Commands == nil {
+		return Missing("commands")
+	}
+	for i := range v.Commands {
+		if err := Check(&v.Commands[i], "commands"); err != nil {
+			return err
+		}
+	}
+	if v.Conflicts == nil {
+		return Missing("conflicts")
+	}
+	if v.Error == nil {
+		return Missing("error")
+	}
+	if v.ExecutionId == "" {
+		return Missing("executionId")
+	}
+	if v.HostJournal == "" {
+		return Missing("hostJournal")
+	}
+	if v.NativeOutcome == "" {
+		return Missing("nativeOutcome")
+	}
+	if v.Resend == "" {
+		return Missing("resend")
+	}
+	if v.Results == nil {
+		return Missing("results")
+	}
+	if v.State == "" {
+		return Missing("state")
+	}
+	return nil
+}
+
 type TransportInspectRequest struct {
 	ExecutionId *string `json:"executionId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TransportInspectRequest) Validate() error {
+	return nil
 }
 
 func init() {

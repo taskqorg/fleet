@@ -16,8 +16,30 @@ type LabCellActionRequest struct {
 	ExperimentId string `json:"experimentId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabCellActionRequest) Validate() error {
+	if v.Action == "" {
+		return Missing("action")
+	}
+	if v.Cell == "" {
+		return Missing("cell")
+	}
+	if v.ExperimentId == "" {
+		return Missing("experimentId")
+	}
+	return nil
+}
+
 type LabCompareMethodsReply struct {
 	ExperimentId string `json:"experimentId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabCompareMethodsReply) Validate() error {
+	if v.ExperimentId == "" {
+		return Missing("experimentId")
+	}
+	return nil
 }
 
 type LabCompareMethodsRequest struct {
@@ -28,18 +50,62 @@ type LabCompareMethodsRequest struct {
 	UseCase    *string  `json:"useCase,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabCompareMethodsRequest) Validate() error {
+	if v.Capability == "" {
+		return Missing("capability")
+	}
+	if v.Methods == nil {
+		return Missing("methods")
+	}
+	if v.ProjectId == "" {
+		return Missing("projectId")
+	}
+	return nil
+}
+
 type LabExampleGetReply struct {
 	ArtifactId string          `json:"artifactId"`
 	Example    json.RawMessage `json:"example"`
 	State      json.RawMessage `json:"state"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExampleGetReply) Validate() error {
+	if v.ArtifactId == "" {
+		return Missing("artifactId")
+	}
+	if v.Example == nil {
+		return Missing("example")
+	}
+	if v.State == nil {
+		return Missing("state")
+	}
+	return nil
+}
+
 type LabExampleGetRequest struct {
 	ArtifactId string `json:"artifactId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExampleGetRequest) Validate() error {
+	if v.ArtifactId == "" {
+		return Missing("artifactId")
+	}
+	return nil
+}
+
 type LabExamplesAddReply struct {
 	Examples []map[string]json.RawMessage `json:"examples"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExamplesAddReply) Validate() error {
+	if v.Examples == nil {
+		return Missing("examples")
+	}
+	return nil
 }
 
 type LabExamplesAddRequest struct {
@@ -48,12 +114,33 @@ type LabExamplesAddRequest struct {
 	ProjectId *string         `json:"projectId,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExamplesAddRequest) Validate() error {
+	if v.Examples == nil {
+		return Missing("examples")
+	}
+	return nil
+}
+
 type LabExamplesListReply struct {
 	Examples []map[string]json.RawMessage `json:"examples"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExamplesListReply) Validate() error {
+	if v.Examples == nil {
+		return Missing("examples")
+	}
+	return nil
+}
+
 type LabExamplesListRequest struct {
 	State *string `json:"state,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExamplesListRequest) Validate() error {
+	return nil
 }
 
 // LabExperimentActionReply: An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability.
@@ -63,6 +150,17 @@ type LabExperimentActionReply = map[string]json.RawMessage
 type LabExperimentActionRequest struct {
 	Action       string `json:"action"`
 	ExperimentId string `json:"experimentId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExperimentActionRequest) Validate() error {
+	if v.Action == "" {
+		return Missing("action")
+	}
+	if v.ExperimentId == "" {
+		return Missing("experimentId")
+	}
+	return nil
 }
 
 // LabExperimentCreateReply: An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability.
@@ -86,6 +184,11 @@ type LabExperimentCreateRequest struct {
 	Variants         json.RawMessage `json:"variants,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExperimentCreateRequest) Validate() error {
+	return nil
+}
+
 // LabExperimentDecideReply: An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability.
 type LabExperimentDecideReply = map[string]json.RawMessage
 
@@ -95,6 +198,17 @@ type LabExperimentDecideRequest struct {
 	Reason       *string `json:"reason,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExperimentDecideRequest) Validate() error {
+	if v.Decision == "" {
+		return Missing("decision")
+	}
+	if v.ExperimentId == "" {
+		return Missing("experimentId")
+	}
+	return nil
+}
+
 // LabExperimentGetReply: An experiment view (expView). Planned with the definition editors: baseline and vsBaseline. comparison: each non-baseline variant vs the first on the primary evaluator, {variant, baseline, evaluator, split, result: {n, mean, low, high, tooFew, examples}} (fleet-lab.md, Statistics). typed: per variant {variant, split, stats: [{tag, n, confident, correct, coverage, selectiveAccuracy, escalation}]}, the aggregate last with tag all.
 type LabExperimentGetReply = map[string]json.RawMessage
 
@@ -102,10 +216,23 @@ type LabExperimentGetRequest struct {
 	ExperimentId string `json:"experimentId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExperimentGetRequest) Validate() error {
+	if v.ExperimentId == "" {
+		return Missing("experimentId")
+	}
+	return nil
+}
+
 type LabExperimentNoteReply struct {
 	Id   *string `json:"id,omitempty"`
 	Kind *string `json:"kind,omitempty"`
 	Text *string `json:"text,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExperimentNoteReply) Validate() error {
+	return nil
 }
 
 type LabExperimentNoteRequest struct {
@@ -116,10 +243,35 @@ type LabExperimentNoteRequest struct {
 	Value        *string `json:"value,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExperimentNoteRequest) Validate() error {
+	if v.ExperimentId == "" {
+		return Missing("experimentId")
+	}
+	if v.Kind == "" {
+		return Missing("kind")
+	}
+	if v.Text == "" {
+		return Missing("text")
+	}
+	return nil
+}
+
 type LabExperimentPromoteReply struct {
 	Catalogue      DefinitionRef   `json:"catalogue"`
 	Method         CatalogueMethod `json:"method"`
 	Recommendation *string         `json:"recommendation"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExperimentPromoteReply) Validate() error {
+	if err := Check(&v.Catalogue, "catalogue"); err != nil {
+		return err
+	}
+	if err := Check(&v.Method, "method"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // LabExperimentPromoteRequest: Replaces lab_promote's request when lab_experiment_promote is built.
@@ -128,8 +280,27 @@ type LabExperimentPromoteRequest struct {
 	Variant      string `json:"variant"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExperimentPromoteRequest) Validate() error {
+	if v.ExperimentId == "" {
+		return Missing("experimentId")
+	}
+	if v.Variant == "" {
+		return Missing("variant")
+	}
+	return nil
+}
+
 type LabExperimentsListReply struct {
 	Experiments []map[string]json.RawMessage `json:"experiments"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExperimentsListReply) Validate() error {
+	if v.Experiments == nil {
+		return Missing("experiments")
+	}
+	return nil
 }
 
 type LabExperimentsListRequest = map[string]json.RawMessage
@@ -140,9 +311,34 @@ type LabPromoteReply struct {
 	Recommendation json.RawMessage `json:"recommendation"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabPromoteReply) Validate() error {
+	if v.CataloguePatch == nil {
+		return Missing("cataloguePatch")
+	}
+	if v.Method == nil {
+		return Missing("method")
+	}
+	if v.Recommendation == nil {
+		return Missing("recommendation")
+	}
+	return nil
+}
+
 type LabPromoteRequest struct {
 	ExperimentId string `json:"experimentId"`
 	Variant      string `json:"variant"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabPromoteRequest) Validate() error {
+	if v.ExperimentId == "" {
+		return Missing("experimentId")
+	}
+	if v.Variant == "" {
+		return Missing("variant")
+	}
+	return nil
 }
 
 // LabRatingCreateReply: A rating question for a person.
@@ -154,6 +350,20 @@ type LabRatingCreateRequest struct {
 	TrialIds     []string `json:"trialIds"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabRatingCreateRequest) Validate() error {
+	if v.ExperimentId == "" {
+		return Missing("experimentId")
+	}
+	if v.Form == "" {
+		return Missing("form")
+	}
+	if v.TrialIds == nil {
+		return Missing("trialIds")
+	}
+	return nil
+}
+
 // LabRatingGetReply: A rating question for a person.
 type LabRatingGetReply = map[string]json.RawMessage
 
@@ -161,8 +371,24 @@ type LabRatingGetRequest struct {
 	QuestionId string `json:"questionId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabRatingGetRequest) Validate() error {
+	if v.QuestionId == "" {
+		return Missing("questionId")
+	}
+	return nil
+}
+
 type LabRatingsListReply struct {
 	Ratings []map[string]json.RawMessage `json:"ratings"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabRatingsListReply) Validate() error {
+	if v.Ratings == nil {
+		return Missing("ratings")
+	}
+	return nil
 }
 
 type LabRatingsListRequest struct {
@@ -170,8 +396,21 @@ type LabRatingsListRequest struct {
 	State        *string `json:"state,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabRatingsListRequest) Validate() error {
+	return nil
+}
+
 type LabRegistryReply struct {
 	UseCases []map[string]json.RawMessage `json:"useCases"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabRegistryReply) Validate() error {
+	if v.UseCases == nil {
+		return Missing("useCases")
+	}
+	return nil
 }
 
 type LabRegistryRequest = map[string]json.RawMessage
@@ -183,6 +422,17 @@ type LabScoreCorrectRequest struct {
 	Rationale *string         `json:"rationale,omitempty"`
 	ScoreId   string          `json:"scoreId"`
 	Value     json.RawMessage `json:"value"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabScoreCorrectRequest) Validate() error {
+	if v.ScoreId == "" {
+		return Missing("scoreId")
+	}
+	if v.Value == nil {
+		return Missing("value")
+	}
+	return nil
 }
 
 func init() {

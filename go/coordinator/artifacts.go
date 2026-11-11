@@ -171,8 +171,7 @@ func storeGet(ctx context.Context, a *App, id string) (*StoreRow, error) {
 
 var storeIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
-func checkURL(v any, name string) (string, error) {
-	s, _ := v.(string)
+func checkURL(s string, name string) (string, error) {
 	u, err := url.Parse(s)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", fail(400, "Invalid "+name)
@@ -212,28 +211,26 @@ type storeKey struct {
 }
 
 // storeRegister: only the executor of the store's host may create or replace it; the S3 key goes to a 0600 file.
-func storeRegister(q *Request, hostID string, b map[string]any, holder string) (any, error) {
+func storeRegister(q *Request, hostID string, b *contract.StoreRegistration, holder string) (any, error) {
 	a := q.app
-	id, _ := b["id"].(string)
-	bucket, _ := b["bucket"].(string)
+	id, bucket := b.Id, deref(b.Bucket)
 	if !storeIDPattern.MatchString(id) {
 		return nil, fail(400, "Invalid store id")
 	}
 	if !storeIDPattern.MatchString(bucket) {
 		return nil, fail(400, "Invalid bucket")
 	}
-	key, _ := b["accessKeyId"].(string)
-	secret, _ := b["secretAccessKey"].(string)
+	key, secret := deref(b.AccessKeyId), deref(b.SecretAccessKey)
 	if key == "" || secret == "" {
 		return nil, fail(400, "Expected store credentials")
 	}
-	endpoint, err := checkURL(b["endpoint"], "endpoint")
+	endpoint, err := checkURL(deref(b.Endpoint), "endpoint")
 	if err != nil {
 		return nil, err
 	}
 	var local *string
-	if b["localEndpoint"] != nil && b["localEndpoint"] != "" {
-		l, err := checkURL(b["localEndpoint"], "localEndpoint")
+	if deref(b.LocalEndpoint) != "" {
+		l, err := checkURL(*b.LocalEndpoint, "localEndpoint")
 		if err != nil {
 			return nil, err
 		}
@@ -251,20 +248,9 @@ func storeRegister(q *Request, hostID string, b map[string]any, holder string) (
 	} else if r != nil && astr(r["host_id"]) != hostID {
 		return nil, fail(403, "Store belongs to another host")
 	}
-	intOrNil := func(v any) any {
-		if f, ok := v.(float64); ok && f == float64(int64(f)) {
-			return int64(f)
-		}
-		return nil
-	}
-	zone, _ := b["zone"].(string)
-	var zonep any
-	if zone != "" {
-		zonep = zone
-	}
 	err = execCtx(ctx, a, `INSERT INTO store(id,host_id,zone,bucket,endpoint,local_endpoint,capacity_bytes,used_bytes,requires_logon,state,observed_at,holder) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'reachable',now(),$10)
    ON CONFLICT(id) DO UPDATE SET zone=excluded.zone,bucket=excluded.bucket,endpoint=excluded.endpoint,local_endpoint=excluded.local_endpoint,capacity_bytes=excluded.capacity_bytes,used_bytes=excluded.used_bytes,requires_logon=excluded.requires_logon,state='reachable',observed_at=now(),registered_at=now(),holder=excluded.holder WHERE store.host_id=excluded.host_id`,
-		id, hostID, zonep, bucket, endpoint, local, intOrNil(b["capacityBytes"]), intOrNil(b["usedBytes"]), b["requiresLogon"] == true, holder)
+		id, hostID, nilIf(deref(b.Zone)), bucket, endpoint, local, b.CapacityBytes, b.UsedBytes, b.RequiresLogon != nil && *b.RequiresLogon, holder)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +269,7 @@ func storeRegister(q *Request, hostID string, b map[string]any, holder string) (
 	}
 	os.Chmod(storeKeyFile(id), 0o600)
 	s3cache.Delete(id) // new credentials
-	return doc{"ok": true, "storeId": id}, nil
+	return contract.StoresReply{Ok: true, StoreId: id}, nil
 }
 
 // storesObserve: the poll report (the poll route calls it in its own transaction): fresh capacity left and used bytes; a
@@ -443,8 +429,7 @@ func (x *Artifact) view() doc {
 
 var shaPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
-func checkName(v any) (string, error) {
-	s, _ := v.(string)
+func checkName(s string) (string, error) {
 	if s == "" || len(s) > 1000 {
 		return "", fail(400, "Invalid artifact name")
 	}
@@ -538,27 +523,9 @@ func (e *codedError) Unwrap() error { return &e.HTTPError }
 
 var artifactIDPattern = regexp.MustCompile(`^[a-zA-Z0-9-]{8,80}$`)
 
-type reserveBody struct {
-	ExecutionID, HostID, Name, MediaType, Sha256, ArtifactID, DerivedFrom, Role, PreviousArtifactID string
-	Size                                                                                            *float64
-	Required                                                                                        bool
-}
-
-func artifactReserve(q *Request) (any, error) {
+func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error) {
 	a, ctx := q.app, q.ctx()
-	var b map[string]any
-	decode(q.body, &b)
-	sv := func(k string) string { s, _ := b[k].(string); return s }
-	// The execution is required before anything is read: hostOwned checks its host only when it is named.
-	// The execution hostOwned verified: decoded the same way (struct, same matching rules), never read from the map.
-	var eb struct {
-		ExecutionID string `json:"executionId"`
-	}
-	decode(q.body, &eb)
-	if eb.ExecutionID == "" {
-		return nil, fail(400, "Expected executionId")
-	}
-	id := sv("artifactId")
+	id := deref(b.ArtifactId)
 	if !artifactIDPattern.MatchString(id) {
 		id = newID()
 	}
@@ -566,30 +533,31 @@ func artifactReserve(q *Request) (any, error) {
 		return nil, err
 	} else if old != nil {
 		// A retry of the same reservation only: another execution's artifact id is refused, not described.
-		if astr(old["execution_id"]) != eb.ExecutionID {
+		if astr(old["execution_id"]) != b.ExecutionId {
 			return nil, fail(409, "Artifact id in use")
 		}
 		c, _ := oneCtx(ctx, a, "SELECT store_id FROM artifact_copy WHERE artifact_id=$1 AND state IN ('pending','copying','verified') ORDER BY state LIMIT 1", id)
-		out := doc{"artifactId": id, "state": old["state"], "partSize": partSize}
+		ps := int64(partSize)
+		out := contract.ArtifactReserveReply{ArtifactId: id, State: astr(old["state"]), PartSize: &ps}
 		if c != nil {
-			out["storeId"] = c["store_id"]
+			sid := astr(c["store_id"])
+			out.StoreId = &sid
 		}
 		return out, nil
 	}
-	sz, ok := b["size"].(float64)
-	if !ok || sz < 0 || sz != float64(int64(sz)) {
+	size := b.Size
+	if size < 0 {
 		return nil, fail(400, "Expected size")
 	}
-	size := int64(sz)
-	hash := sv("sha256")
+	hash := b.Sha256
 	if !shaPattern.MatchString(hash) {
 		return nil, fail(400, "Expected sha256")
 	}
-	file, err := checkName(b["name"])
+	file, err := checkName(b.Name)
 	if err != nil {
 		return nil, err
 	}
-	e, err := execGet(ctx, a, eb.ExecutionID)
+	e, err := execGet(ctx, a, b.ExecutionId)
 	if err != nil {
 		return nil, err
 	}
@@ -609,24 +577,18 @@ func artifactReserve(q *Request) (any, error) {
 	if target == nil {
 		return nil, failCode(409, "No reachable store in the project locations", "no_store")
 	}
-	media := sv("mediaType")
+	media := b.MediaType
 	if media == "" || len(media) >= 200 {
 		media = "application/octet-stream"
 	}
-	required := b["required"] == true || contains(declaredRequired(e), file)
-	role := sv("role")
+	required := b.Required != nil && *b.Required || contains(declaredRequired(e), file)
+	role := deref(b.Role)
 	if role != "thumbnail" && role != "poster" {
 		role = "original"
 	}
-	nilIf := func(s string) any {
-		if s == "" {
-			return nil
-		}
-		return s
-	}
 	insert := func(tx pgx.Tx, state string) error {
 		_, err := tx.Exec(ctx, "INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,task_id,required,role,derived_from_artifact_id,previous_artifact_id,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
-			id, e.ProjectID, scope, hash, size, media, file, e.ID, e.TaskID, required, role, nilIf(sv("derivedFrom")), nilIf(sv("previousArtifactId")), state)
+			id, e.ProjectID, scope, hash, size, media, file, e.ID, e.TaskID, required, role, nilIf(deref(b.DerivedFrom)), nilIf(deref(b.PreviousArtifactId)), state)
 		return err
 	}
 	same, err := oneCtx(ctx, a, "SELECT 1 AS x FROM artifact a JOIN artifact_copy c ON c.artifact_id=a.id WHERE a.project_id IS NOT DISTINCT FROM $1 AND a.scope=$2 AND a.content_hash=$3 AND c.store_id=$4 AND c.state='verified' LIMIT 1", e.ProjectID, scope, hash, target.ID)
@@ -659,7 +621,7 @@ func artifactReserve(q *Request) (any, error) {
 		if err := settleWaiting(ctx, a, e.ID); err != nil {
 			return nil, err
 		}
-		return doc{"artifactId": id, "state": "stored", "storeId": at.ID}, nil
+		return contract.ArtifactReserveReply{ArtifactId: id, State: "stored", StoreId: &at.ID}, nil
 	}
 	staging := stagingOf(&Artifact{ID: id, ProjectID: e.ProjectID, Scope: scope, ContentHash: hash}, target.ID)
 	c, err := tunnel(target)
@@ -680,7 +642,8 @@ func artifactReserve(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return doc{"artifactId": id, "state": "pending", "storeId": target.ID, "partSize": partSize}, nil
+	ps := int64(partSize)
+	return contract.ArtifactReserveReply{ArtifactId: id, State: "pending", StoreId: &target.ID, PartSize: &ps}, nil
 }
 
 func (q *Request) hostID() string { return q.host["hostId"].(string) }
@@ -731,38 +694,17 @@ func allowedHost(ctx context.Context, a *App, x *Artifact, s *StoreRow, hostID s
 	return fail(403, "Upload belongs to another host")
 }
 
-type uploadBody struct {
-	ArtifactID  string    `json:"artifactId"`
-	StoreID     string    `json:"storeId"`
-	HostID      string    `json:"hostId"`
-	PartNumbers []float64 `json:"partNumbers"`
-	Parts       []S3Part  `json:"parts"`
-	Sha256      string    `json:"sha256"`
-	Error       *string   `json:"error"`
-	ExecutionID string    `json:"executionId"`
-	Name        any       `json:"name"`
-}
-
-func uploadArgs(q *Request) (*App, context.Context, uploadBody, *Artifact, error) {
-	a, ctx := q.app, q.ctx()
-	var b uploadBody
-	if err := decode(q.body, &b); err != nil {
-		return a, ctx, b, nil, err
-	}
-	x, err := artifactRow(ctx, a, b.ArtifactID)
-	return a, ctx, b, x, err
-}
-
 func lease(ctx context.Context, a *App, artifactID, storeID, set string) error {
 	return execCtx(ctx, a, "UPDATE artifact_copy SET "+set+" WHERE artifact_id=$1 AND store_id=$2", artifactID, storeID, strconv.Itoa(leaseMS))
 }
 
-func artifactParts(q *Request) (any, error) {
-	a, ctx, b, x, err := uploadArgs(q)
+func artifactParts(q *Request, b *contract.ArtifactPartsRequest) (any, error) {
+	a, ctx := q.app, q.ctx()
+	x, err := artifactRow(ctx, a, b.ArtifactId)
 	if err != nil {
 		return nil, err
 	}
-	c, err := working(ctx, a, x.ID, b.StoreID, false)
+	c, err := working(ctx, a, x.ID, deref(b.StoreId), false)
 	if err != nil {
 		return nil, err
 	}
@@ -770,40 +712,37 @@ func artifactParts(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := allowedHost(ctx, a, x, s, b.HostID); err != nil {
+	if err := allowedHost(ctx, a, x, s, b.HostId); err != nil {
 		return nil, err
-	}
-	if b.PartNumbers == nil {
-		return nil, fail(400, "Expected partNumbers")
 	}
 	if err := lease(ctx, a, x.ID, s.ID, "lease_expires_at=now()+($3::text||' milliseconds')::interval"); err != nil {
 		return nil, err
 	}
-	parts := []doc{}
-	for _, f := range b.PartNumbers {
-		n := int(f)
-		if float64(n) != f || n < 1 || n > 10000 || len(parts) == 64 {
+	parts := []contract.ArtifactPartUrl{}
+	for _, n := range b.PartNumbers {
+		if n < 1 || n > 10000 || len(parts) == 64 {
 			continue
 		}
-		u, err := presignFor(s, b.HostID, "PUT", *c.StagingKey, map[string]string{"partNumber": strconv.Itoa(n), "uploadId": *c.UploadID})
+		u, err := presignFor(s, b.HostId, "PUT", *c.StagingKey, map[string]string{"partNumber": strconv.FormatInt(n, 10), "uploadId": *c.UploadID})
 		if err != nil {
 			return nil, err
 		}
-		parts = append(parts, doc{"partNumber": n, "url": u})
+		parts = append(parts, contract.ArtifactPartUrl{PartNumber: n, Url: u})
 	}
-	return doc{"storeId": s.ID, "parts": parts}, nil
+	return contract.ArtifactPartsReply{StoreId: s.ID, Parts: parts}, nil
 }
 
-func artifactCommit(q *Request) (any, error) {
-	a, ctx, b, x, err := uploadArgs(q)
+func artifactCommit(q *Request, b *contract.ArtifactCommitRequest) (any, error) {
+	a, ctx := q.app, q.ctx()
+	x, err := artifactRow(ctx, a, b.ArtifactId)
 	if err != nil {
 		return nil, err
 	}
-	if x.State == "stored" && b.StoreID == "" {
-		return doc{"state": "stored"}, nil
+	if x.State == "stored" && b.StoreId == nil {
+		return contract.ArtifactStateReply{State: "stored"}, nil
 	}
 	// Idempotent: a repeated commit of a completed upload skips the completion and hands out the verification again.
-	c, err := working(ctx, a, x.ID, b.StoreID, true)
+	c, err := working(ctx, a, x.ID, deref(b.StoreId), true)
 	if err != nil {
 		return nil, err
 	}
@@ -811,19 +750,20 @@ func artifactCommit(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := allowedHost(ctx, a, x, s, b.HostID); err != nil {
+	if err := allowedHost(ctx, a, x, s, b.HostId); err != nil {
 		return nil, err
 	}
-	if b.Parts == nil {
-		return nil, fail(400, "Expected parts")
+	parts := make([]S3Part, len(b.Parts))
+	for i, p := range b.Parts {
+		parts[i] = S3Part{int(p.PartNumber), deref(p.Etag)}
 	}
-	sort.Slice(b.Parts, func(i, j int) bool { return b.Parts[i].PartNumber < b.Parts[j].PartNumber })
+	sort.Slice(parts, func(i, j int) bool { return parts[i].PartNumber < parts[j].PartNumber })
 	t, err := tunnel(s)
 	if err != nil {
 		return nil, err
 	}
 	if c.UploadID != nil {
-		if err := t.CompleteMultipartUpload(s.Bucket, *c.StagingKey, *c.UploadID, b.Parts); err != nil {
+		if err := t.CompleteMultipartUpload(s.Bucket, *c.StagingKey, *c.UploadID, parts); err != nil {
 			return nil, err
 		}
 	}
@@ -836,7 +776,7 @@ func artifactCommit(q *Request) (any, error) {
 		if size < 0 {
 			got = "missing"
 		}
-		return doc{"state": "failed"}, reject(ctx, a, x, s, *c.StagingKey, fmt.Sprintf("size %s differs from reserved %d", got, x.Size))
+		return contract.ArtifactStateReply{State: "failed"}, reject(ctx, a, x, s, *c.StagingKey, fmt.Sprintf("size %s differs from reserved %d", got, x.Size))
 	}
 	if err := lease(ctx, a, x.ID, s.ID, "upload_id=NULL,lease_expires_at=now()+($3::text||' milliseconds')::interval"); err != nil {
 		return nil, err
@@ -845,20 +785,20 @@ func artifactCommit(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	verify := doc{"artifactId": x.ID, "storeId": s.ID, "url": v.Presign("GET", s.Bucket, *c.StagingKey, urlSeconds, nil)}
-	if b.HostID == s.HostID {
-		return doc{"state": "verifying", "verify": verify}, nil
+	verify := contract.ArtifactVerify{ArtifactId: x.ID, StoreId: s.ID, Url: v.Presign("GET", s.Bucket, *c.StagingKey, urlSeconds, nil)}
+	if b.HostId == s.HostID {
+		return contract.ArtifactStateReply{State: "verifying", Verify: &verify}, nil
 	}
 	open, err := oneCtx(ctx, a, "SELECT 1 AS x FROM document WHERE kind='command' AND data->>'kind'='artifact-verify' AND data->>'hostId'=$1 AND data->>'status' IN ('pending','accepted','started') AND data->'payload'->>'artifactId'=$2 AND data->'payload'->>'storeId'=$3 LIMIT 1", s.HostID, x.ID, s.ID)
 	if err != nil {
 		return nil, err
 	}
 	if open == nil {
-		if err := queueCommand(ctx, a, s.HostID, "artifact-verify", verify); err != nil {
+		if err := queueCommand(ctx, a, s.HostID, "artifact-verify", docOf(verify)); err != nil {
 			return nil, err
 		}
 	}
-	return doc{"state": "verifying"}, nil
+	return contract.ArtifactStateReply{State: "verifying"}, nil
 }
 
 // queueCommand: a tool command for a host's executor (copy, verify), in a program-worker execution of its own.
@@ -877,23 +817,24 @@ func queueCommand(ctx context.Context, a *App, hostID, kind string, payload doc)
 }
 
 // Lease renewal by the executors holding an upload, copy or verification.
-func artifactRenew(q *Request) (any, error) {
-	a, ctx, b, x, err := uploadArgs(q)
+func artifactRenew(q *Request, b *contract.ArtifactLeaseRequest) (any, error) {
+	a, ctx := q.app, q.ctx()
+	x, err := artifactRow(ctx, a, b.ArtifactId)
 	if err != nil {
 		return nil, err
 	}
-	c, err := working(ctx, a, x.ID, b.StoreID, true)
+	c, err := working(ctx, a, x.ID, deref(b.StoreId), true)
 	if err != nil {
-		return doc{"state": x.State}, nil
+		return contract.ArtifactStateReply{State: x.State}, nil
 	}
 	s, err := storeGet(ctx, a, c.StoreID)
 	if err != nil {
 		return nil, err
 	}
-	if err := allowedHost(ctx, a, x, s, b.HostID); err != nil {
+	if err := allowedHost(ctx, a, x, s, b.HostId); err != nil {
 		return nil, err
 	}
-	return doc{"state": c.State}, lease(ctx, a, x.ID, s.ID, "lease_expires_at=greatest(lease_expires_at,now()+($3::text||' milliseconds')::interval)")
+	return contract.ArtifactStateReply{State: c.State}, lease(ctx, a, x.ID, s.ID, "lease_expires_at=greatest(lease_expires_at,now()+($3::text||' milliseconds')::interval)")
 }
 
 // reject: the staging object goes, the copy fails with a retry backoff (1 minute doubling, up to the retry window), the
@@ -918,24 +859,22 @@ func reject(ctx context.Context, a *App, x *Artifact, s *StoreRow, key, why stri
 }
 
 // artifactRefused: the host reports the store refused an upload permanently; the artifact fails now with its reason.
-func artifactRefused(q *Request) (any, error) {
-	a, ctx, b, x, err := uploadArgs(q)
+func artifactRefused(q *Request, b *contract.ArtifactFailedRequest) (any, error) {
+	a, ctx := q.app, q.ctx()
+	x, err := artifactRow(ctx, a, b.ArtifactId)
 	if err != nil {
 		return nil, err
 	}
 	if x.State != "pending" {
-		return doc{"state": x.State}, nil
+		return contract.ArtifactStateReply{State: x.State}, nil
 	}
 	if x.ExecutionID == nil {
 		return nil, fail(403, "Artifact not uploaded by this host")
 	}
-	if e, err := execGet(ctx, a, *x.ExecutionID); err != nil || e.HostID != b.HostID {
+	if e, err := execGet(ctx, a, *x.ExecutionID); err != nil || e.HostID != b.HostId {
 		return nil, fail(403, "Artifact not uploaded by this host")
 	}
-	why := "upload refused: unknown reason"
-	if b.Error != nil {
-		why = "upload refused: " + truncate(*b.Error, 500)
-	}
+	why := "upload refused: " + truncate(b.Error, 500)
 	all, _ := storeList(ctx, a)
 	cs, err := rowsCtx(ctx, conn(ctx, a), "SELECT store_id,upload_id,staging_key FROM artifact_copy WHERE artifact_id=$1 AND state IN ('pending','copying')", x.ID)
 	if err != nil {
@@ -961,7 +900,7 @@ func artifactRefused(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return doc{"state": x.State}, nil
+	return contract.ArtifactStateReply{State: x.State}, nil
 }
 
 func truncate(s string, n int) string {
@@ -972,16 +911,17 @@ func truncate(s string, n int) string {
 }
 
 // artifactVerified: promotion; the staging object becomes the content-hash key only when that key is absent.
-func artifactVerified(q *Request) (any, error) {
-	a, ctx, b, x, err := uploadArgs(q)
+func artifactVerified(q *Request, b *contract.ArtifactVerifiedRequest) (any, error) {
+	a, ctx := q.app, q.ctx()
+	x, err := artifactRow(ctx, a, b.ArtifactId)
 	if err != nil {
 		return nil, err
 	}
-	s, err := storeGet(ctx, a, b.StoreID)
+	s, err := storeGet(ctx, a, b.StoreId)
 	if err != nil {
 		return nil, err
 	}
-	if b.HostID != s.HostID {
+	if b.HostId != s.HostID {
 		return nil, fail(403, "Only the store host verifies its copies")
 	}
 	c, err := copyOf(ctx, a, "artifact_id=$1 AND store_id=$2", x.ID, s.ID)
@@ -989,17 +929,17 @@ func artifactVerified(q *Request) (any, error) {
 		return nil, err
 	}
 	if c == nil {
-		return doc{"state": "unknown"}, nil
+		return contract.ArtifactStateReply{State: "unknown"}, nil
 	}
 	if c.State != "pending" && c.State != "copying" {
-		return doc{"state": c.State}, nil
+		return contract.ArtifactStateReply{State: c.State}, nil
 	}
 	staging := ""
 	if c.StagingKey != nil {
 		staging = *c.StagingKey
 	}
 	if b.Sha256 != x.ContentHash {
-		return doc{"state": "failed"}, reject(ctx, a, x, s, staging, "content hash differs from the reserved hash")
+		return contract.ArtifactStateReply{State: "failed"}, reject(ctx, a, x, s, staging, "content hash differs from the reserved hash")
 	}
 	t, err := tunnel(s)
 	if err != nil {
@@ -1051,31 +991,27 @@ func artifactVerified(q *Request) (any, error) {
 			return nil, err
 		}
 	}
-	return doc{"state": "stored"}, nil
+	return contract.ArtifactStateReply{State: "stored"}, nil
 }
 
 // artifactDeclare: an agent's required declaration (artifact_save required=true), recorded on the execution.
-func artifactDeclare(q *Request) (any, error) {
+func artifactDeclare(q *Request, b *contract.ArtifactDeclareRequest) (any, error) {
 	a, ctx := q.app, q.ctx()
-	var b uploadBody
-	if err := decode(q.body, &b); err != nil {
-		return nil, err
-	}
 	file, err := checkName(b.Name)
 	if err != nil {
 		return nil, err
 	}
 	err = txCtx(ctx, a, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `UPDATE execution SET data=jsonb_set(data,'{requiredArtifacts}',(SELECT coalesce(jsonb_agg(DISTINCT v),'[]') FROM jsonb_array_elements_text(coalesce(data->'requiredArtifacts','[]')||to_jsonb($2::text)) v)) WHERE id=$1`, b.ExecutionID, file); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE execution SET data=jsonb_set(data,'{requiredArtifacts}',(SELECT coalesce(jsonb_agg(DISTINCT v),'[]') FROM jsonb_array_elements_text(coalesce(data->'requiredArtifacts','[]')||to_jsonb($2::text)) v)) WHERE id=$1`, b.ExecutionId, file); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, "UPDATE artifact SET required=true WHERE execution_id=$1 AND name=$2", b.ExecutionID, file)
+		_, err := tx.Exec(ctx, "UPDATE artifact SET required=true WHERE execution_id=$1 AND name=$2", b.ExecutionId, file)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return doc{"ok": true}, nil
+	return contract.OkReply{Ok: true}, nil
 }
 
 // source: a verified copy to read from, the reader host's own store first; a store with a purge pending serves nothing.

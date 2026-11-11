@@ -33,6 +33,8 @@ func check(s schema, where string) {
 	}
 }
 
+var builtin = map[string]bool{"string": true, "int64": true, "float64": true, "bool": true, "json.RawMessage": true}
+
 func fail(f string, a ...any) { fmt.Fprintf(os.Stderr, "gen: "+f+"\n", a...); os.Exit(1) }
 
 func exported(name string) string {
@@ -171,6 +173,7 @@ func main() {
 				fmt.Fprintf(&b, "%s%s, ", name, exported(v.(string)))
 			}
 			b.WriteString("}\n\n")
+			fmt.Fprintf(&b, "// Valid: v is one of the schema's values.\nfunc (v %s) Valid() bool {\n\tfor _, x := range %sValues {\n\t\tif v == x {\n\t\t\treturn true\n\t\t}\n\t}\n\treturn false\n}\n\n", name, name)
 		case t == "object" && len(props) > 0:
 			req := map[string]bool{}
 			rs, _ := s["required"].([]any)
@@ -183,18 +186,38 @@ func main() {
 			}
 			sort.Strings(keys)
 			fmt.Fprintf(&b, "type %s struct {\n", name)
+			// Validate: a required string is non-empty, a required list or object is present, and every enum and
+			// nested struct present is valid (Check). Integers and booleans have no missing value to tell from zero.
+			var v bytes.Buffer
 			for _, k := range keys {
 				ft, null := goType(props[k].(map[string]any), n+"."+k)
 				tag := k
 				if !req[k] {
 					tag += ",omitempty"
 				}
-				if (null || !req[k]) && !strings.HasPrefix(ft, "[]") && !strings.HasPrefix(ft, "map[") && ft != "json.RawMessage" {
+				plain := !strings.HasPrefix(ft, "[]") && !strings.HasPrefix(ft, "map[") && ft != "json.RawMessage"
+				if (null || !req[k]) && plain {
 					ft = "*" + ft
 				}
-				fmt.Fprintf(&b, "\t%s %s `json:%q`\n", exported(k), ft, tag)
+				f, named := exported(k), plain && !builtin[strings.TrimPrefix(ft, "*")]
+				fmt.Fprintf(&b, "\t%s %s `json:%q`\n", f, ft, tag)
+				switch {
+				case req[k] && ft == "string":
+					fmt.Fprintf(&v, "\tif v.%s == \"\" {\n\t\treturn Missing(%q)\n\t}\n", f, k)
+				case req[k] && !null && !plain:
+					fmt.Fprintf(&v, "\tif v.%s == nil {\n\t\treturn Missing(%q)\n\t}\n", f, k)
+				}
+				switch {
+				case named && strings.HasPrefix(ft, "*"):
+					fmt.Fprintf(&v, "\tif v.%s != nil {\n\t\tif err := Check(v.%s, %q); err != nil {\n\t\t\treturn err\n\t\t}\n\t}\n", f, f, k)
+				case named:
+					fmt.Fprintf(&v, "\tif err := Check(&v.%s, %q); err != nil {\n\t\treturn err\n\t}\n", f, k)
+				case strings.HasPrefix(ft, "[]") && !builtin[ft[2:]] && !strings.HasPrefix(ft[2:], "[]") && !strings.HasPrefix(ft[2:], "map["):
+					fmt.Fprintf(&v, "\tfor i := range v.%s {\n\t\tif err := Check(&v.%s[i], %q); err != nil {\n\t\t\treturn err\n\t\t}\n\t}\n", f, f, k)
+				}
 			}
 			b.WriteString("}\n\n")
+			fmt.Fprintf(&b, "// Validate: the schema's required fields and enums (see Check).\nfunc (v *%s) Validate() error {\n%s\treturn nil\n}\n\n", name, v.String())
 		case s["oneOf"] != nil:
 			// A union of $refs: each member is its own struct; the union itself stays JSON (Go has no sum type).
 			for i, x := range s["oneOf"].([]any) {

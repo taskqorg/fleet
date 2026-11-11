@@ -10,15 +10,42 @@ type ArtifactCopyRetryReply struct {
 	Retrying bool `json:"retrying"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactCopyRetryReply) Validate() error {
+	return nil
+}
+
 // ArtifactCopyRetryRequest: Operator only.
 type ArtifactCopyRetryRequest struct {
 	ArtifactId string `json:"artifactId"`
 	StoreId    string `json:"storeId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactCopyRetryRequest) Validate() error {
+	if v.ArtifactId == "" {
+		return Missing("artifactId")
+	}
+	if v.StoreId == "" {
+		return Missing("storeId")
+	}
+	return nil
+}
+
 type ArtifactCopyState struct {
 	State   string `json:"state"`
 	StoreId string `json:"storeId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactCopyState) Validate() error {
+	if v.State == "" {
+		return Missing("state")
+	}
+	if v.StoreId == "" {
+		return Missing("storeId")
+	}
+	return nil
 }
 
 type ArtifactGetReply = ArtifactView
@@ -27,10 +54,31 @@ type ArtifactGetRequest struct {
 	ArtifactId string `json:"artifactId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactGetRequest) Validate() error {
+	if v.ArtifactId == "" {
+		return Missing("artifactId")
+	}
+	return nil
+}
+
 // ArtifactListReply: nextBefore: only with limit; null on the last page.
 type ArtifactListReply struct {
 	Artifacts  []ArtifactRow `json:"artifacts"`
 	NextBefore *int64        `json:"nextBefore,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactListReply) Validate() error {
+	if v.Artifacts == nil {
+		return Missing("artifacts")
+	}
+	for i := range v.Artifacts {
+		if err := Check(&v.Artifacts[i], "artifacts"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type ArtifactListRequest struct {
@@ -46,10 +94,20 @@ type ArtifactListRequest struct {
 	TaskId      *string  `json:"taskId,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactListRequest) Validate() error {
+	return nil
+}
+
 type ArtifactPurgeReply struct {
 	Artifacts int64 `json:"artifacts"`
 	Deleted   int64 `json:"deleted"`
 	Pending   int64 `json:"pending"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactPurgeReply) Validate() error {
+	return nil
 }
 
 // ArtifactPurgeRequest: Operator only.
@@ -58,6 +116,17 @@ type ArtifactPurgeRequest struct {
 	ProjectId   *string `json:"projectId,omitempty"`
 	Reason      string  `json:"reason"`
 	Scope       *string `json:"scope,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactPurgeRequest) Validate() error {
+	if v.ContentHash == "" {
+		return Missing("contentHash")
+	}
+	if v.Reason == "" {
+		return Missing("reason")
+	}
+	return nil
 }
 
 type ArtifactRow struct {
@@ -73,9 +142,34 @@ type ArtifactRow struct {
 	TaskId      *string `json:"taskId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactRow) Validate() error {
+	if v.Id == "" {
+		return Missing("id")
+	}
+	if v.MediaType == "" {
+		return Missing("mediaType")
+	}
+	if v.Name == "" {
+		return Missing("name")
+	}
+	if v.State == "" {
+		return Missing("state")
+	}
+	return nil
+}
+
 type ArtifactRuleConfirmReply struct {
 	Confirmed bool   `json:"confirmed"`
 	RuleHash  string `json:"ruleHash"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactRuleConfirmReply) Validate() error {
+	if v.RuleHash == "" {
+		return Missing("ruleHash")
+	}
+	return nil
 }
 
 // ArtifactRuleConfirmRequest: Operator only. ruleHash: the preview's hash; a changed rule is 409.
@@ -83,6 +177,14 @@ type ArtifactRuleConfirmRequest struct {
 	ProjectId *string         `json:"projectId,omitempty"`
 	Rule      json.RawMessage `json:"rule"`
 	RuleHash  *string         `json:"ruleHash,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactRuleConfirmRequest) Validate() error {
+	if v.Rule == nil {
+		return Missing("rule")
+	}
+	return nil
 }
 
 // ArtifactRulePreviewReply: sample: up to 10 matching artifacts (id, name, size).
@@ -93,10 +195,29 @@ type ArtifactRulePreviewReply struct {
 	Sample   []map[string]json.RawMessage `json:"sample"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactRulePreviewReply) Validate() error {
+	if v.RuleHash == "" {
+		return Missing("ruleHash")
+	}
+	if v.Sample == nil {
+		return Missing("sample")
+	}
+	return nil
+}
+
 // ArtifactRulePreviewRequest: Operator only. rule: a retention rule of the project settings.
 type ArtifactRulePreviewRequest struct {
 	ProjectId *string         `json:"projectId,omitempty"`
 	Rule      json.RawMessage `json:"rule"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactRulePreviewRequest) Validate() error {
+	if v.Rule == nil {
+		return Missing("rule")
+	}
+	return nil
 }
 
 // ArtifactView: One artifact with its copies; availability available (with a presigned url), unavailable, or the artifact state.
@@ -122,15 +243,71 @@ type ArtifactView struct {
 	Url                   *string             `json:"url,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactView) Validate() error {
+	if v.Availability == "" {
+		return Missing("availability")
+	}
+	if v.Copies == nil {
+		return Missing("copies")
+	}
+	for i := range v.Copies {
+		if err := Check(&v.Copies[i], "copies"); err != nil {
+			return err
+		}
+	}
+	if v.Id == "" {
+		return Missing("id")
+	}
+	if v.MediaType == "" {
+		return Missing("mediaType")
+	}
+	if v.Name == "" {
+		return Missing("name")
+	}
+	if v.Role == "" {
+		return Missing("role")
+	}
+	if v.Scope == "" {
+		return Missing("scope")
+	}
+	if v.Sha256 == "" {
+		return Missing("sha256")
+	}
+	if v.State == "" {
+		return Missing("state")
+	}
+	return nil
+}
+
 type StoreSetFreeSpaceWarningReply struct {
 	Id    string `json:"id"`
 	State string `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *StoreSetFreeSpaceWarningReply) Validate() error {
+	if v.Id == "" {
+		return Missing("id")
+	}
+	if v.State == "" {
+		return Missing("state")
+	}
+	return nil
 }
 
 // StoreSetFreeSpaceWarningRequest: Operator only. bytes: a whole number; null clears the warning.
 type StoreSetFreeSpaceWarningRequest struct {
 	Bytes   *float64 `json:"bytes,omitempty"`
 	StoreId string   `json:"storeId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *StoreSetFreeSpaceWarningRequest) Validate() error {
+	if v.StoreId == "" {
+		return Missing("storeId")
+	}
+	return nil
 }
 
 // StoreView: One store row (StoreRow in go/coordinator/artifacts.go).
@@ -149,10 +326,46 @@ type StoreView struct {
 	Zone                  *string `json:"zone"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *StoreView) Validate() error {
+	if v.Bucket == "" {
+		return Missing("bucket")
+	}
+	if v.Endpoint == "" {
+		return Missing("endpoint")
+	}
+	if v.HostId == "" {
+		return Missing("host_id")
+	}
+	if v.Id == "" {
+		return Missing("id")
+	}
+	if v.State == "" {
+		return Missing("state")
+	}
+	return nil
+}
+
 // StoresListReply: problems: full stores and placement problems the caller may see, each with its actions.
 type StoresListReply struct {
 	Problems []map[string]json.RawMessage `json:"problems"`
 	Stores   []StoreView                  `json:"stores"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *StoresListReply) Validate() error {
+	if v.Problems == nil {
+		return Missing("problems")
+	}
+	if v.Stores == nil {
+		return Missing("stores")
+	}
+	for i := range v.Stores {
+		if err := Check(&v.Stores[i], "stores"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type StoresListRequest = map[string]json.RawMessage

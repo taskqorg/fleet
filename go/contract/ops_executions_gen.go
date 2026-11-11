@@ -15,11 +15,53 @@ type DiffFile struct {
 	TextChange *TextChange `json:"textChange,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DiffFile) Validate() error {
+	if v.Current != nil {
+		if err := Check(v.Current, "current"); err != nil {
+			return err
+		}
+	}
+	if v.Path == "" {
+		return Missing("path")
+	}
+	if v.Previous != nil {
+		if err := Check(v.Previous, "previous"); err != nil {
+			return err
+		}
+	}
+	if v.State == "" {
+		return Missing("state")
+	}
+	if v.TextChange != nil {
+		if err := Check(v.TextChange, "textChange"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type ExecutionDifferencesReply struct {
 	ExecutionId         string     `json:"executionId"`
 	Files               []DiffFile `json:"files"`
 	PreviousExecutionId *string    `json:"previousExecutionId"`
 	SessionId           *string    `json:"sessionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionDifferencesReply) Validate() error {
+	if v.ExecutionId == "" {
+		return Missing("executionId")
+	}
+	if v.Files == nil {
+		return Missing("files")
+	}
+	for i := range v.Files {
+		if err := Check(&v.Files[i], "files"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ExecutionDifferencesRequest: previous: the earlier execution of the same session.
@@ -28,12 +70,39 @@ type ExecutionDifferencesRequest struct {
 	Previous    string `json:"previous"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionDifferencesRequest) Validate() error {
+	if v.ExecutionId == "" {
+		return Missing("executionId")
+	}
+	if v.Previous == "" {
+		return Missing("previous")
+	}
+	return nil
+}
+
 type ExecutionEventsReply struct {
 	Events []map[string]json.RawMessage `json:"events"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionEventsReply) Validate() error {
+	if v.Events == nil {
+		return Missing("events")
+	}
+	return nil
+}
+
 type ExecutionEventsRequest struct {
 	ExecutionId string `json:"executionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionEventsRequest) Validate() error {
+	if v.ExecutionId == "" {
+		return Missing("executionId")
+	}
+	return nil
 }
 
 // ExecutionStatusReply: next: the suggested operation (message, session_fork, execution_status or wait_or_steer). stop only after a stop request.
@@ -48,8 +117,41 @@ type ExecutionStatusReply struct {
 	Stop        *StopOutcome               `json:"stop,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionStatusReply) Validate() error {
+	if v.ExecutionId == "" {
+		return Missing("executionId")
+	}
+	if v.Next == "" {
+		return Missing("next")
+	}
+	if v.Report == nil {
+		return Missing("report")
+	}
+	if v.Resume == nil {
+		return Missing("resume")
+	}
+	if v.State == "" {
+		return Missing("state")
+	}
+	if v.Stop != nil {
+		if err := Check(v.Stop, "stop"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type ExecutionStatusRequest struct {
 	ExecutionId string `json:"executionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionStatusRequest) Validate() error {
+	if v.ExecutionId == "" {
+		return Missing("executionId")
+	}
+	return nil
 }
 
 // ExecutionStopReply: The stop command and the stop outcome.
@@ -64,12 +166,56 @@ type ExecutionStopReply struct {
 	Stop        StopOutcome                `json:"stop"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionStopReply) Validate() error {
+	if v.ExecutionId == "" {
+		return Missing("executionId")
+	}
+	if v.Id == "" {
+		return Missing("id")
+	}
+	if v.Kind == "" {
+		return Missing("kind")
+	}
+	if v.Payload == nil {
+		return Missing("payload")
+	}
+	if v.Status == "" {
+		return Missing("status")
+	}
+	if err := Check(&v.Stop, "stop"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type ExecutionStopRequest struct {
 	ExecutionId string `json:"executionId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionStopRequest) Validate() error {
+	if v.ExecutionId == "" {
+		return Missing("executionId")
+	}
+	return nil
+}
+
 type ExecutionsListReply struct {
 	Executions []ExecutionRow `json:"executions"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionsListReply) Validate() error {
+	if v.Executions == nil {
+		return Missing("executions")
+	}
+	for i := range v.Executions {
+		if err := Check(&v.Executions[i], "executions"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ExecutionsListRequest: Filters; problem true keeps executions with a problem.
@@ -81,9 +227,22 @@ type ExecutionsListRequest struct {
 	TaskId            *string `json:"taskId,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionsListRequest) Validate() error {
+	return nil
+}
+
 type FileRef struct {
 	Id     string  `json:"id"`
 	Sha256 *string `json:"sha256"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *FileRef) Validate() error {
+	if v.Id == "" {
+		return Missing("id")
+	}
+	return nil
 }
 
 // HostRecord: A registered host (without its secret hash). harnesses: per harness name whether it is allowed; autoUpdate on, off or an RFC 3339 time.
@@ -98,6 +257,20 @@ type HostRecord struct {
 	Name       *string         `json:"name,omitempty"`
 	Platform   *string         `json:"platform,omitempty"`
 	Roles      []string        `json:"roles,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostRecord) Validate() error {
+	if v.Harnesses == nil {
+		return Missing("harnesses")
+	}
+	if v.Id == "" {
+		return Missing("id")
+	}
+	if v.Intake == "" {
+		return Missing("intake")
+	}
+	return nil
 }
 
 // HostRow: One host as the Hosts screen shows it: configured, observed, or both; problems only while it polls.
@@ -118,16 +291,66 @@ type HostRow struct {
 	Version          *string          `json:"version"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostRow) Validate() error {
+	if v.AutoUpdate == nil {
+		return Missing("autoUpdate")
+	}
+	if v.Capabilities == nil {
+		return Missing("capabilities")
+	}
+	if v.Id == "" {
+		return Missing("id")
+	}
+	if v.Problems == nil {
+		return Missing("problems")
+	}
+	if v.RunningByHarness == nil {
+		return Missing("runningByHarness")
+	}
+	if v.Slots == nil {
+		return Missing("slots")
+	}
+	if v.Stores == "" {
+		return Missing("stores")
+	}
+	if v.Update == nil {
+		return Missing("update")
+	}
+	return nil
+}
+
 // HostWriteReply: secret: only when Fleet minted it (no secretSha256 given); shown once.
 type HostWriteReply struct {
 	Host   HostRecord `json:"host"`
 	Secret *string    `json:"secret,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostWriteReply) Validate() error {
+	if err := Check(&v.Host, "host"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type HostsListReply struct {
 	Hosts        []HostRow `json:"hosts"`
 	ServerNow    int64     `json:"serverNow"`
 	StaleAfterMs int64     `json:"staleAfterMs"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostsListReply) Validate() error {
+	if v.Hosts == nil {
+		return Missing("hosts")
+	}
+	for i := range v.Hosts {
+		if err := Check(&v.Hosts[i], "hosts"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type HostsListRequest = map[string]json.RawMessage
@@ -145,6 +368,14 @@ type HostsRegisterRequest struct {
 	SecretSha256 *string         `json:"secretSha256,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostsRegisterRequest) Validate() error {
+	if v.Id == "" {
+		return Missing("id")
+	}
+	return nil
+}
+
 type HostsRotateSecretReply = HostWriteReply
 
 // HostsRotateSecretRequest: Owner only.
@@ -153,8 +384,24 @@ type HostsRotateSecretRequest struct {
 	SecretSha256 *string `json:"secretSha256,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostsRotateSecretRequest) Validate() error {
+	if v.Id == "" {
+		return Missing("id")
+	}
+	return nil
+}
+
 type HostsUpdateReply struct {
 	Host HostRecord `json:"host"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostsUpdateReply) Validate() error {
+	if err := Check(&v.Host, "host"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // HostsUpdateRequest: Owner, or the holder for their own host.
@@ -165,6 +412,14 @@ type HostsUpdateRequest struct {
 	Intake     *string         `json:"intake,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostsUpdateRequest) Validate() error {
+	if v.Id == "" {
+		return Missing("id")
+	}
+	return nil
+}
+
 // PipelineGetReply: A pipeline run with its steps, state and results (pipelineRun).
 type PipelineGetReply = map[string]json.RawMessage
 
@@ -173,18 +428,61 @@ type PipelineGetRequest struct {
 	RunId     string  `json:"runId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineGetRequest) Validate() error {
+	if v.RunId == "" {
+		return Missing("runId")
+	}
+	return nil
+}
+
 type PipelineHistoryReply struct {
 	Runs []map[string]json.RawMessage `json:"runs"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineHistoryReply) Validate() error {
+	if v.Runs == nil {
+		return Missing("runs")
+	}
+	return nil
 }
 
 type PipelineHistoryRequest struct {
 	ProjectId string `json:"projectId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineHistoryRequest) Validate() error {
+	if v.ProjectId == "" {
+		return Missing("projectId")
+	}
+	return nil
+}
+
 type PipelineRerunReply struct {
 	Definitions []DefinitionRef `json:"definitions"`
 	Reused      []string        `json:"reused"`
 	RunId       string          `json:"runId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineRerunReply) Validate() error {
+	if v.Definitions == nil {
+		return Missing("definitions")
+	}
+	for i := range v.Definitions {
+		if err := Check(&v.Definitions[i], "definitions"); err != nil {
+			return err
+		}
+	}
+	if v.Reused == nil {
+		return Missing("reused")
+	}
+	if v.RunId == "" {
+		return Missing("runId")
+	}
+	return nil
 }
 
 type PipelineRerunRequest struct {
@@ -194,9 +492,36 @@ type PipelineRerunRequest struct {
 	RunId     string    `json:"runId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineRerunRequest) Validate() error {
+	if err := Check(&v.Mode, "mode"); err != nil {
+		return err
+	}
+	if v.RunId == "" {
+		return Missing("runId")
+	}
+	return nil
+}
+
 type PipelineRunCreateReply struct {
 	Definitions []DefinitionRef `json:"definitions"`
 	RunId       string          `json:"runId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineRunCreateReply) Validate() error {
+	if v.Definitions == nil {
+		return Missing("definitions")
+	}
+	for i := range v.Definitions {
+		if err := Check(&v.Definitions[i], "definitions"); err != nil {
+			return err
+		}
+	}
+	if v.RunId == "" {
+		return Missing("runId")
+	}
+	return nil
 }
 
 // PipelineRunCreateRequest: Body of POST /api/pipelines/{id}/runs (pipelineRunCreate) as an operation pipeline_run_create; pipelineId was the URL segment. draft true runs the caller's draft. The request signature includes draft and the content sha.
@@ -210,6 +535,17 @@ type PipelineRunCreateRequest struct {
 	RequestId         string                     `json:"requestId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineRunCreateRequest) Validate() error {
+	if v.PipelineId == "" {
+		return Missing("pipelineId")
+	}
+	if v.RequestId == "" {
+		return Missing("requestId")
+	}
+	return nil
+}
+
 // PipelineRunReply: A pipeline run with its steps, state and results (pipelineRun).
 type PipelineRunReply = map[string]json.RawMessage
 
@@ -221,12 +557,39 @@ type PipelineRunRequest struct {
 	RequestId string  `json:"requestId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineRunRequest) Validate() error {
+	if v.ProjectId == "" {
+		return Missing("projectId")
+	}
+	if v.Query == "" {
+		return Missing("query")
+	}
+	if v.RequestId == "" {
+		return Missing("requestId")
+	}
+	return nil
+}
+
 type QueueListReply struct {
 	Queued []map[string]json.RawMessage `json:"queued"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *QueueListReply) Validate() error {
+	if v.Queued == nil {
+		return Missing("queued")
+	}
+	return nil
+}
+
 type QueueListRequest struct {
 	SessionId *string `json:"sessionId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *QueueListRequest) Validate() error {
+	return nil
 }
 
 type RerunMode string
@@ -239,6 +602,16 @@ const (
 // RerunModeValues lists every RerunMode in schema order.
 var RerunModeValues = []RerunMode{RerunModeFailed, RerunModeAll}
 
+// Valid: v is one of the schema's values.
+func (v RerunMode) Valid() bool {
+	for _, x := range RerunModeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type RouteDecision struct {
 	At          string          `json:"at"`
 	Candidates  json.RawMessage `json:"candidates"`
@@ -247,17 +620,66 @@ type RouteDecision struct {
 	Winner      json.RawMessage `json:"winner"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *RouteDecision) Validate() error {
+	if v.At == "" {
+		return Missing("at")
+	}
+	if v.Candidates == nil {
+		return Missing("candidates")
+	}
+	if v.ExecutionId == "" {
+		return Missing("executionId")
+	}
+	if v.Winner == nil {
+		return Missing("winner")
+	}
+	return nil
+}
+
 type RouteDecisionsReply struct {
 	Decisions []RouteDecision `json:"decisions"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *RouteDecisionsReply) Validate() error {
+	if v.Decisions == nil {
+		return Missing("decisions")
+	}
+	for i := range v.Decisions {
+		if err := Check(&v.Decisions[i], "decisions"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type RouteDecisionsRequest struct {
 	ExecutionId string `json:"executionId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *RouteDecisionsRequest) Validate() error {
+	if v.ExecutionId == "" {
+		return Missing("executionId")
+	}
+	return nil
+}
+
 type StopCommandRef struct {
 	Id     string `json:"id"`
 	Status string `json:"status"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *StopCommandRef) Validate() error {
+	if v.Id == "" {
+		return Missing("id")
+	}
+	if v.Status == "" {
+		return Missing("status")
+	}
+	return nil
 }
 
 // StopOutcome: outcome proven (detail stopped or already_finished) or unknown (detail unconfirmed, with the stop command when one exists).
@@ -268,10 +690,40 @@ type StopOutcome struct {
 	StopCommand *StopCommandRef `json:"stopCommand,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *StopOutcome) Validate() error {
+	if v.Detail == "" {
+		return Missing("detail")
+	}
+	if v.Outcome == "" {
+		return Missing("outcome")
+	}
+	if v.State == "" {
+		return Missing("state")
+	}
+	if v.StopCommand != nil {
+		if err := Check(v.StopCommand, "stopCommand"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type TextChange struct {
 	Added     []string `json:"added"`
 	FirstLine int64    `json:"firstLine"`
 	Removed   []string `json:"removed"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TextChange) Validate() error {
+	if v.Added == nil {
+		return Missing("added")
+	}
+	if v.Removed == nil {
+		return Missing("removed")
+	}
+	return nil
 }
 
 func init() {

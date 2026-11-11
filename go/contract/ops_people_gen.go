@@ -17,13 +17,42 @@ const (
 // DispatchOrderValues lists every DispatchOrder in schema order.
 var DispatchOrderValues = []DispatchOrder{DispatchOrderList, DispatchOrderSoonestReset}
 
+// Valid: v is one of the schema's values.
+func (v DispatchOrder) Valid() bool {
+	for _, x := range DispatchOrderValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type Focus struct {
 	ProjectIds json.RawMessage `json:"projectIds"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *Focus) Validate() error {
+	if v.ProjectIds == nil {
+		return Missing("projectIds")
+	}
+	return nil
 }
 
 type FocusSetReply struct {
 	Focus     Focus  `json:"focus"`
 	SessionId string `json:"sessionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *FocusSetReply) Validate() error {
+	if err := Check(&v.Focus, "focus"); err != nil {
+		return err
+	}
+	if v.SessionId == "" {
+		return Missing("sessionId")
+	}
+	return nil
 }
 
 // FocusSetRequest: projectIds: a list of project ids in the caller's grants, or "*".
@@ -32,14 +61,54 @@ type FocusSetRequest struct {
 	SessionId  string          `json:"sessionId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *FocusSetRequest) Validate() error {
+	if v.ProjectIds == nil {
+		return Missing("projectIds")
+	}
+	if v.SessionId == "" {
+		return Missing("sessionId")
+	}
+	return nil
+}
+
 type ListMembershipReply struct {
 	Lists []MembershipAnswer `json:"lists"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ListMembershipReply) Validate() error {
+	if v.Lists == nil {
+		return Missing("lists")
+	}
+	for i := range v.Lists {
+		if err := Check(&v.Lists[i], "lists"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ListMembershipRequest: At most 1000 ids and one or two lists.
 type ListMembershipRequest struct {
 	Ids   []string         `json:"ids"`
 	Lists []MembershipList `json:"lists"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ListMembershipRequest) Validate() error {
+	if v.Ids == nil {
+		return Missing("ids")
+	}
+	if v.Lists == nil {
+		return Missing("lists")
+	}
+	for i := range v.Lists {
+		if err := Check(&v.Lists[i], "lists"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // MeReply: email, name and grantsVersion are null without a person (agent-only stand).
@@ -52,6 +121,14 @@ type MeReply struct {
 	Roles                  []string `json:"roles"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *MeReply) Validate() error {
+	if v.Roles == nil {
+		return Missing("roles")
+	}
+	return nil
+}
+
 type MeRequest = map[string]json.RawMessage
 
 // MembershipAnswer: rows: the ids that are members of the list now.
@@ -62,6 +139,30 @@ type MembershipAnswer struct {
 	Rows   []ListRow        `json:"rows"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *MembershipAnswer) Validate() error {
+	if v.Counts == nil {
+		return Missing("counts")
+	}
+	for i := range v.Groups {
+		if err := Check(&v.Groups[i], "groups"); err != nil {
+			return err
+		}
+	}
+	if v.Name == "" {
+		return Missing("name")
+	}
+	if v.Rows == nil {
+		return Missing("rows")
+	}
+	for i := range v.Rows {
+		if err := Check(&v.Rows[i], "rows"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // MembershipList: name: tasks or sessions.
 type MembershipList struct {
 	Filter *ListFilter `json:"filter,omitempty"`
@@ -69,9 +170,30 @@ type MembershipList struct {
 	Name   string      `json:"name"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *MembershipList) Validate() error {
+	if v.Filter != nil {
+		if err := Check(v.Filter, "filter"); err != nil {
+			return err
+		}
+	}
+	if v.Name == "" {
+		return Missing("name")
+	}
+	return nil
+}
+
 // PeopleListReply: A non-owner sees only themself.
 type PeopleListReply struct {
 	People []map[string]json.RawMessage `json:"people"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PeopleListReply) Validate() error {
+	if v.People == nil {
+		return Missing("people")
+	}
+	return nil
 }
 
 type PeopleListRequest = map[string]json.RawMessage
@@ -81,9 +203,22 @@ type PeopleSetReply struct {
 	People int64 `json:"people"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *PeopleSetReply) Validate() error {
+	return nil
+}
+
 // PeopleSetRequest: Owner only: the whole people.json list, written atomically and reloaded.
 type PeopleSetRequest struct {
 	People json.RawMessage `json:"people"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PeopleSetRequest) Validate() error {
+	if v.People == nil {
+		return Missing("people")
+	}
+	return nil
 }
 
 type PersonSettings struct {
@@ -92,10 +227,29 @@ type PersonSettings struct {
 	Pins  []string      `json:"pins"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *PersonSettings) Validate() error {
+	if v.Email == "" {
+		return Missing("email")
+	}
+	if err := Check(&v.Order, "order"); err != nil {
+		return err
+	}
+	if v.Pins == nil {
+		return Missing("pins")
+	}
+	return nil
+}
+
 type PersonSettingsGetReply = PersonSettings
 
 type PersonSettingsGetRequest struct {
 	Email *string `json:"email,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PersonSettingsGetRequest) Validate() error {
+	return nil
 }
 
 type PersonSettingsSetReply = PersonSettings
@@ -106,6 +260,16 @@ type PersonSettingsSetRequest struct {
 	Pins  []string       `json:"pins,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *PersonSettingsSetRequest) Validate() error {
+	if v.Order != nil {
+		if err := Check(v.Order, "order"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ViewLinkReply: For view: url and path; for url: the parsed view.
 type ViewLinkReply struct {
 	Path *string         `json:"path,omitempty"`
@@ -113,10 +277,20 @@ type ViewLinkReply struct {
 	View json.RawMessage `json:"view,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ViewLinkReply) Validate() error {
+	return nil
+}
+
 // ViewLinkRequest: Exactly one of view (a view state to link) or url (a Fleet URL to read back).
 type ViewLinkRequest struct {
 	Url  json.RawMessage `json:"url,omitempty"`
 	View json.RawMessage `json:"view,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ViewLinkRequest) Validate() error {
+	return nil
 }
 
 func init() {
