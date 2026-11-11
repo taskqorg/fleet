@@ -2057,19 +2057,14 @@ func runExecutor() error {
 
 var errHostRemoved = errors.New("host removed")
 
-// exchange: one poll; each returned command runs once. A command that failed before it went live is finished as failed
-// when its accepted journal row is still this exact command.
-func (e *executor) exchange() error {
-	// A poll the edge answered is asked again every 2 s, not every 100 ms.
-	if edgeWait(pollRoute) {
-		return nil
-	}
+// poll owns the store-report cache and update signal; command execution never runs in this goroutine.
+func (e *executor) poll() (any, error) {
 	v, roots := version, reportedRoots()
 	body := contract.PollRequest{HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
 		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, Update: lastUpdate(e.root), GitConnections: gitConnections(connectionsDir())}
 	a := send(e.url, e.token, pollRoute, body)
 	if a.status == 410 && strings.Contains(a.text, "host-removed") {
-		return errHostRemoved
+		return nil, errHostRemoved
 	}
 	sig := updateSignal{HostID: e.host, Running: version, AutoUpdate: "on"}
 	if lastSignal != nil {
@@ -2088,11 +2083,56 @@ func (e *executor) exchange() error {
 	if err := writeUpdateSignal(e.root, sig); err != nil {
 		fmt.Fprintln(os.Stderr, "executor: update.json:", err)
 	}
-	reply, err := answerValue(a)
+	return answerValue(a)
+}
+
+// exchange keeps command order and the single owner of live/process/journal state. Slow preparation must not
+// stop host liveness; extra polls leave returned commands pending for the next exchange, never execute them twice.
+func (e *executor) exchange() (err error) {
+	// Retain the edge backoff for both ordinary polls and liveness polls.
+	if edgeWait(pollRoute) {
+		return nil
+	}
+	reply, err := e.poll()
 	if err != nil {
 		return err
 	}
+	stop, done := make(chan struct{}), make(chan struct{})
+	var removed atomic.Bool
+	go func() {
+		defer close(done)
+		beat := time.NewTicker(time.Second)
+		defer beat.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-beat.C:
+				if edgeWait(pollRoute) {
+					continue
+				}
+				if _, err := e.poll(); errors.Is(err, errHostRemoved) {
+					removed.Store(true)
+					return
+				}
+			}
+		}
+	}()
+	defer func() {
+		close(stop)
+		<-done
+		if err == nil && removed.Load() {
+			err = errHostRemoved
+		}
+	}()
+
 	for _, cv := range jArr(reply, "commands") {
+		if removed.Load() {
+			return errHostRemoved
+		}
+		if err := e.tick(); err != nil {
+			return err
+		}
 		c, ok := cv.(M)
 		if !ok {
 			continue
