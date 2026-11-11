@@ -1017,11 +1017,6 @@ func trialFiles(q *Request, trial, example doc) ([]labFile, error) {
 		}
 		set(rel, b)
 	}
-	// The example's references, the known-good result, under references/: a check may compare the output with them.
-	for _, x := range anys(example["references"]) {
-		f := mapOf(x)
-		set("references/"+astr(f["path"]), []byte(astr(f["text"])))
-	}
 	out := []labFile{}
 	for _, p := range order {
 		out = append(out, labFile{p, m[p]})
@@ -1224,6 +1219,11 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			files, err := trialFiles(q, t, full)
 			if err != nil {
 				return err
+			}
+			// Script checks only (never a judge or an agent): the known-good result under references/, for comparison.
+			for _, x := range anys(full["references"]) {
+				f := mapOf(x)
+				files = append(files, labFile{"references/" + astr(f["path"]), []byte(astr(f["text"]))})
 			}
 			todo[astr(t["id"])] = pending{anys(full["checks"]), files}
 		}

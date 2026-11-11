@@ -87,6 +87,9 @@ func validatePipeline(d doc) (doc, error) {
 			_, toolStr := s["tool"].(string)
 			mode, hasMode := s["mode"]
 			_, hasOutput := s["output"]
+			if hasOutput && !onlyReplyRefs(s["output"]) {
+				return bad("api step " + id + " output: only ${reply.<path>} references")
+			}
 			if !isStr || !toolStr || mapOf(s["arguments"]) == nil && anys(s["arguments"]) == nil || hasMode && mode != "sync" && mode != "job" || hasOutput && (mapOf(s["output"]) == nil || mode == "job") {
 				return bad("api step " + id)
 			}
@@ -137,6 +140,18 @@ func shellQuote(x any) string {
 
 // resolveRefs: ${example.<path>} and ${steps.<id>.output.<path>}. A whole-reference string takes the value as it is; inside
 // a longer string the value is inlined as text. quote (scripts) applies to every substituted value.
+// onlyReplyRefs: every reference in an output mapping names the reply.
+func onlyReplyRefs(v any) bool {
+	for _, m := range pipeRefPattern.FindAllStringSubmatch(string(jsonBytes(v)), -1) {
+		if m[1] != "reply" && !strings.HasPrefix(m[1], "reply.") {
+			return false
+		}
+	}
+	return true
+}
+
+func hasReply(outputs doc) bool { _, ok := outputs[""]; return ok }
+
 func resolveRefs(v any, example any, outputs doc, quote bool) (any, error) {
 	look := func(path string) (any, error) {
 		parts := strings.Split(path, ".")
@@ -144,8 +159,8 @@ func resolveRefs(v any, example any, outputs doc, quote bool) (any, error) {
 		switch {
 		case parts[0] == "example":
 			cur, parts = example, parts[1:]
-		case parts[0] == "reply":
-			// An api step's own provider reply, for its output mapping; kept under "", which is no step id.
+		case parts[0] == "reply" && hasReply(outputs):
+			// An api step's own provider reply, only inside its output mapping; kept under "", which is no step id.
 			cur, parts = outputs[""], parts[1:]
 		case parts[0] == "steps" && len(parts) > 2 && parts[2] == "output":
 			cur, parts = outputs[parts[1]], parts[3:]
@@ -286,19 +301,17 @@ func withSteps(q *Request, runs []doc) ([]doc, error) {
 	if err != nil {
 		return nil, err
 	}
+	byStep := map[any][]any{}
+	for _, c := range calls {
+		byStep[c["step"]] = append(byStep[c["step"]], doc{"id": c["id"], "tool": c["tool"], "connection": c["connection"], "cost": c["cost"], "basis": c["basis"]})
+	}
 	for _, r := range runs {
 		list := []any{}
 		for _, s := range steps {
 			if s["run"] == r["id"] {
 				d := mapOf(s["data"])
 				delete(d, "index")
-				own := []any{}
-				for _, c := range calls {
-					if c["step"] == s["step"] {
-						own = append(own, doc{"id": c["id"], "tool": c["tool"], "connection": c["connection"], "cost": c["cost"], "basis": c["basis"]})
-					}
-				}
-				d["calls"] = own
+				d["calls"] = append([]any{}, byStep[s["step"]]...)
 				list = append(list, d)
 			}
 		}
@@ -937,6 +950,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 				usage := mapOf(out)["usage"]
 				mapped, err := resolveRefs(m, nil, doc{"": out}, false)
 				if err != nil {
+					s["reply"] = out // the paid answer stays inspectable on the failed step
 					return failNow(err.Error(), "Output mapping: a reference to the reply is missing")
 				}
 				return true, tx(func(q *Request) error { return completeStep(q, run, i, mapped, doc{"usage": usage}) })
