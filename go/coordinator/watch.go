@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"fleet/contract"
-
 	"github.com/jackc/pgx/v5"
 )
 
