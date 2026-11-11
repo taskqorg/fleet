@@ -171,12 +171,12 @@ func watchOne(q *Request, wid string) error {
 			if c.ProjectID != nil {
 				p = *c.ProjectID
 			}
-			if !slices.Contains(kinds, c.Kind) || seen[c.Kind+c.ID] ||
-				(c.Actor != nil && own[*c.Actor]) || (c.SessionID != nil && (children[*c.SessionID] || *c.SessionID == id)) ||
+			if !slices.Contains(kinds, string(c.Kind)) || seen[string(c.Kind)+c.Id] ||
+				(c.Actor != nil && own[*c.Actor]) || (c.SessionId != nil && (children[*c.SessionId] || *c.SessionId == id)) ||
 				(focus != nil && c.Kind != "host" && !slices.Contains(focus, p)) || (!fullAccess(dir) && !mayAccessProjectID(dir, p)) {
 				continue
 			}
-			seen[c.Kind+c.ID] = true
+			seen[string(c.Kind)+c.Id] = true
 			if t, err := classify(q, c); err != nil {
 				return err
 			} else if t != "" {
@@ -222,7 +222,7 @@ func watchOne(q *Request, wid string) error {
 func classify(q *Request, c change) (string, error) {
 	switch c.Kind {
 	case "task":
-		t, err := first(q, "SELECT state::text AS state,pause_reason FROM task WHERE id=$1", c.ID)
+		t, err := first(q, "SELECT state::text AS state,pause_reason FROM task WHERE id=$1", c.Id)
 		if err != nil || t == nil {
 			return "", err
 		}
@@ -230,28 +230,28 @@ func classify(q *Request, c change) (string, error) {
 		if astr(t["pause_reason"]) == "held" {
 			st = "held"
 		}
-		return "task " + c.ID + " now " + st, nil
+		return "task " + c.Id + " now " + st, nil
 	case "question":
 		if c.Op != "I" {
 			return "", nil
 		}
-		r, err := first(q, "SELECT task_id FROM question WHERE id=$1 AND state='open'", c.ID)
+		r, err := first(q, "SELECT task_id FROM question WHERE id=$1 AND state='open'", c.Id)
 		if err != nil || r == nil {
 			return "", err
 		}
-		return "question " + c.ID + " on task " + firstString(r["task_id"], "none"), nil
+		return "question " + c.Id + " on task " + firstString(r["task_id"], "none"), nil
 	case "execution":
-		r, err := first(q, "SELECT CASE WHEN state='failed' THEN 'failed' ELSE 'unknown' END AS s FROM execution WHERE id=$1 AND (state='failed' OR observation='unconfirmed')", c.ID)
+		r, err := first(q, "SELECT CASE WHEN state='failed' THEN 'failed' ELSE 'unknown' END AS s FROM execution WHERE id=$1 AND (state='failed' OR observation='unconfirmed')", c.Id)
 		if err != nil || r == nil {
 			return "", err
 		}
-		return "execution " + c.ID + " " + astr(r["s"]), nil
+		return "execution " + c.Id + " " + astr(r["s"]), nil
 	case "host": // only reported problems (§5 table)
-		r, err := first(q, "SELECT 1 AS x FROM document WHERE kind='host-observation' AND id=$1 AND jsonb_array_length(coalesce(data->'problems','[]'))>0", c.ID)
+		r, err := first(q, "SELECT 1 AS x FROM document WHERE kind='host-observation' AND id=$1 AND jsonb_array_length(coalesce(data->'problems','[]'))>0", c.Id)
 		if err != nil || r == nil {
 			return "", err
 		}
-		return "host " + c.ID + " reports problems", nil
+		return "host " + c.Id + " reports problems", nil
 	}
 	return "", nil
 }

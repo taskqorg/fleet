@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"fleet/contract"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -85,14 +87,9 @@ func (b *Broadcast) close() {
 	b.cancel()
 }
 
+// change: one change row; the JSON is contract.Change (contracts/ops.schema.json), the other fields stay in the coordinator.
 type change struct {
-	Seq       int64   `json:"seq"`
-	Kind      string  `json:"kind"`
-	ID        string  `json:"id"`
-	TaskID    *string `json:"taskId"`
-	SessionID *string `json:"sessionId"`
-	HostID    *string `json:"hostId"`
-	Op        string  `json:"op"`
+	contract.Change
 	ProjectID *string `json:"-"` // watch only (fleet-pm-agent.md §5); not in the stream contract
 	Actor     *string `json:"-"`
 }
@@ -124,7 +121,7 @@ func since(ctx context.Context, tx pgx.Tx, cursor int64, limit int) (out []chang
 	}
 	out, err = pgx.CollectRows(rs, func(r pgx.CollectableRow) (change, error) {
 		var c change
-		return c, r.Scan(&c.Seq, &c.Kind, &c.ID, &c.TaskID, &c.SessionID, &c.HostID, &c.Op, &c.ProjectID, &c.Actor)
+		return c, r.Scan(&c.Seq, &c.Kind, &c.Id, &c.TaskId, &c.SessionId, &c.HostId, &c.Op, &c.ProjectID, &c.Actor)
 	})
 	if err != nil {
 		return
@@ -169,7 +166,7 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 	w.WriteHeader(200)
 	sw := newSSE(w)
 	send := sw.send
-	send("ready", map[string]int64{"cursor": cursor}, -1)
+	send("ready", contract.StreamCursor{Cursor: cursor}, -1)
 	if err := sw.flush(); err != nil {
 		return nil
 	}
@@ -194,7 +191,7 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 				break
 			}
 			if resync {
-				send("resync", map[string]int64{"cursor": cursor}, -1)
+				send("resync", contract.StreamCursor{Cursor: cursor}, -1)
 				break
 			}
 			for _, c := range cs {
