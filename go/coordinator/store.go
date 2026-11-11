@@ -387,8 +387,6 @@ func sortedKeysOf(m map[string]any) []string {
 	return k
 }
 
-// canonicalJSON: canonical JSON with sorted keys (equal values give equal hashes).
-
 func msOf(t any) any {
 	if tt, ok := t.(time.Time); ok {
 		return tt.UnixMilli()

@@ -1480,7 +1480,7 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 			return nil, err
 		}
 		if own != "" {
-			if err := stopExecution(q.ctx(), q.app, own); err != nil {
+			if err := stopExecution(q.ctx(), q.app, own); err != nil && !isNotFound(err) { // the run is cancelled already
 				return nil, err
 			}
 		}

@@ -40,19 +40,14 @@ func configDir() string   { return envDir("FLEET_PROJECT_CONFIG_DIRECTORY", "con
 func canonical(v any) string {
 	switch x := v.(type) {
 	case map[string]any:
-		keys := make([]string, 0, len(x))
-		for k := range x {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
+		keys := sortedKeysOf(x)
 		var b bytes.Buffer
 		b.WriteByte('{')
 		for i, k := range keys {
 			if i > 0 {
 				b.WriteByte(',')
 			}
-			kb, _ := json.Marshal(k)
-			b.Write(kb)
+			b.WriteString(canonical(k))
 			b.WriteByte(':')
 			b.WriteString(canonical(x[k]))
 		}
