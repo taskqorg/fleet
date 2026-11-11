@@ -167,6 +167,7 @@ type live struct {
 	completed      bool
 	stopped        bool
 	owned          map[int]string
+	journaled      map[int]bool // owned pids already in the journal's owned table
 	cleanupUnknown bool
 	lines          chan string // closed at stdout EOF
 	eof            bool
@@ -279,7 +280,153 @@ func (e *executor) finish(c M, status, native string) error {
 	})
 }
 
+// launch records the intent to spawn before the process exists; own records owned processes as they are observed;
+// release forgets both once the run is reaped.
+func (e *executor) launch(execution, command, session string) error {
+	_, err := e.db.Exec("INSERT OR REPLACE INTO launches(execution,command,session) VALUES(?,?,?)", execution, command, session)
+	return err
+}
+
+func (e *executor) own(execution string, l *live) error {
+	if l.journaled == nil {
+		l.journaled = map[int]bool{}
+	}
+	for pid, ident := range l.owned {
+		if l.journaled[pid] {
+			continue
+		}
+		if _, err := e.db.Exec("INSERT OR IGNORE INTO owned(execution,pid,identity) VALUES(?,?,?)", execution, pid, ident); err != nil {
+			return err
+		}
+		l.journaled[pid] = true
+	}
+	return nil
+}
+
+func (e *executor) ownGroup(execution string, grp int, l *live) error {
+	if _, err := e.db.Exec("UPDATE launches SET grp=? WHERE execution=?", grp, execution); err != nil {
+		return err
+	}
+	return e.own(execution, l)
+}
+
+func (e *executor) release(execution string) error {
+	return e.inTx(func() error {
+		if _, err := e.ex.Exec("DELETE FROM owned WHERE execution=?", execution); err != nil {
+			return err
+		}
+		_, err := e.ex.Exec("DELETE FROM launches WHERE execution=?", execution)
+		return err
+	})
+}
+
+// reconcileProcesses runs at start, before any poll (K2-3). The stdout and stdin pipes of a run died with the executor
+// that started it, so nothing is reattached: every recorded process that survives, and every descendant still linked to
+// one, is frozen and killed, each signal bound to the recorded incarnation, then its run file is removed (K2-6). A launch
+// with no owned row crashed between spawn and the identity read, so its process cannot be named; the event says so. A
+// launch whose processes cannot be confirmed gone stays recorded, which keeps its session refused, and is tried again
+// at the next start.
+func (e *executor) reconcileProcesses() error {
+	type launch struct {
+		execution, command string
+		l                  *live
+		survived           bool
+		err                error
+	}
+	var launches []*launch
+	rs, err := e.db.Query("SELECT execution,command,grp FROM launches")
+	if err != nil {
+		return err
+	}
+	groups := map[*launch]int{}
+	for rs.Next() {
+		x := &launch{l: &live{owned: map[int]string{}}}
+		var grp int
+		if err := rs.Scan(&x.execution, &x.command, &grp); err != nil {
+			rs.Close()
+			return err
+		}
+		launches, groups[x] = append(launches, x), grp
+	}
+	rs.Close()
+	for _, x := range launches {
+		rows, err := e.db.Query("SELECT pid,identity FROM owned WHERE execution=?", x.execution)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var pid int
+			var ident string
+			if err := rows.Scan(&pid, &ident); err != nil {
+				rows.Close()
+				return err
+			}
+			x.l.owned[pid] = ident
+		}
+		rows.Close()
+		// The group id is ours only while its leader is the recorded incarnation.
+		if g := groups[x]; g != 0 {
+			if id, err := identity(g); err == nil && id == x.l.owned[g] {
+				x.l.group = g
+			}
+		}
+		if x.survived, x.err = x.l.aliveOwned(); x.err == nil && x.survived {
+			x.err = x.l.cleanup()
+		}
+	}
+	// ponytail: one 2 s window for every killed process to leave; one still there (uninterruptible sleep) stays
+	// unresolved until the next start.
+	for i := 0; i < 20; i++ {
+		waiting := false
+		for _, x := range launches {
+			if x.err == nil {
+				alive, err := x.l.aliveOwned()
+				x.err, waiting = err, waiting || alive
+			}
+		}
+		if !waiting {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	unresolved := map[string]bool{}
+	for _, x := range launches {
+		alive, err := x.l.aliveOwned()
+		resolved := x.err == nil && err == nil && !alive
+		// Reported once, while the command is open; the reconcile below then finishes it unknown.
+		if b, ok := e.commandBody(x.command, true); ok {
+			if err := e.event(decM(b), uint64(nowMs()), "process.reconciled", M{"ownedProcesses": len(x.l.owned), "survived": x.survived,
+				"launchWindowUnresolved": len(x.l.owned) == 0, "resolved": resolved}); err != nil {
+				return err
+			}
+		}
+		if !resolved {
+			unresolved[x.execution] = true
+			continue
+		}
+		if err := e.release(x.execution); err != nil {
+			return err
+		}
+	}
+	// Run files of every execution without an unresolved launch: no process of this executor can need them.
+	files, err := filepath.Glob(filepath.Join(e.root, "runs", "*.env"))
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if !unresolved[strings.TrimSuffix(filepath.Base(f), ".env")] {
+			if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (e *executor) reconcile() error {
+	if err := e.reconcileProcesses(); err != nil {
+		return err
+	}
 	rs, err := e.db.Query("SELECT body FROM commands WHERE terminal=0")
 	if err != nil {
 		return err
@@ -545,10 +692,16 @@ func okStatus(ok bool) string {
 }
 
 func (e *executor) start(c M, cid, execution, session string, p M) error {
-	for _, l := range e.live {
-		if jStr(l.command, "sessionId") == session {
-			return e.finish(c, "failed", "")
+	// A session with a recorded launch is running, or its process from before a restart is not confirmed gone.
+	var busy int
+	if err := e.db.QueryRow("SELECT count(*) FROM launches WHERE session=?", session).Scan(&busy); err != nil {
+		return err
+	}
+	if busy > 0 {
+		if err := e.event(c, 1, "preparation.failed", M{"reason": "session busy: a run is live, or a process from before an executor restart is not confirmed gone"}); err != nil {
+			return err
 		}
+		return e.finish(c, "failed", "")
 	}
 	cfg, hasCfg := p["agentConfig"]
 	if hasCfg && profileValidate(cfg) != nil {
@@ -721,7 +874,12 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	// Granted connections: one `<executor> mcp connection` server each, calling fleet-gateway with this run's token. The
 	// token and gateway URL reach the servers through the harness environment, never a file or argv.
 	var connectionTools []string
-	runFile := ""
+	runFile, launched := "", false
+	defer func() {
+		if runFile != "" && !launched {
+			os.Remove(runFile) // K2-6: a launch that failed never needs its run token
+		}
+	}()
 	granted := jArr(p, "connections")
 	if len(granted) > 0 {
 		gateway := os.Getenv("FLEET_GATEWAY_URL")
@@ -827,16 +985,22 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			outLog.Close()
 		}
 	}
+	if err := e.launch(execution, cid, session); err != nil {
+		pw.Close()
+		closeAll()
+		return err
+	}
 	if err := cmd.Start(); err != nil {
 		pw.Close()
 		closeAll()
+		e.release(execution)
 		return e.finish(c, "failed", native)
 	}
 	pw.Close()
 	exited := make(chan struct{})
 	l := &live{cmd: cmd, exited: exited, command: c, native: native, seq: 2, owned: map[int]string{}, lastSample: time.Now()}
 	go func() { cmd.Wait(); l.state = cmd.ProcessState; close(exited) }()
-	kill := func() { cmd.Process.Kill(); <-exited; closeAll() }
+	kill := func() { cmd.Process.Kill(); <-exited; closeAll(); e.release(execution) }
 	if nativeInput != nil && !protocol {
 		_, err := stdin.Write(nativeInput)
 		stdin.Close()
@@ -851,6 +1015,11 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		return e.finish(c, "unknown", native)
 	}
 	l.owned[cmd.Process.Pid] = ident
+	// Harness commands run in their own process group (newCmd): a restart can also kill descendants not yet observed.
+	if err := e.ownGroup(execution, cmd.Process.Pid, l); err != nil {
+		kill()
+		return e.finish(c, "unknown", native)
+	}
 	lines := make(chan string, 1024)
 	l.lines = lines
 	if protocol {
@@ -864,7 +1033,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	acpProtocol := acp(name)
 	go readStdout(pr, rawLog, l.wire, acpProtocol, lines)
-	e.live[execution] = l
+	e.live[execution], launched = l, true
 	l.seq++
 	if err := e.event(c, l.seq, "harness", observed); err != nil {
 		return err
@@ -1024,8 +1193,13 @@ func (e *executor) script(c M, execution, session string) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.Env = append(cmd.Env, "FLEET_INPUT_DIR="+input, "FLEET_OUTPUT_DIR="+output, "FLEET_SESSION_ID="+session)
+	if err := e.launch(execution, jStr(c, "id"), session); err != nil {
+		dropTrial()
+		return err
+	}
 	if err := cmd.Start(); err != nil {
 		dropTrial()
+		e.release(execution)
 		return refuse("script spawn failed: " + err.Error())
 	}
 	pid := cmd.Process.Pid
@@ -1037,9 +1211,17 @@ func (e *executor) script(c M, execution, session string) error {
 		syscall.Kill(-pid, syscall.SIGKILL)
 		<-exited
 		dropTrial()
+		e.release(execution)
 		return e.finish(c, "unknown", "")
 	}
 	l.owned[pid] = ident
+	if err := e.ownGroup(execution, pid, l); err != nil {
+		syscall.Kill(-pid, syscall.SIGKILL)
+		<-exited
+		dropTrial()
+		e.release(execution)
+		return e.finish(c, "unknown", "")
+	}
 	// No stdout stream to read: the closed channel marks EOF at once.
 	lines := make(chan string)
 	close(lines)
@@ -1128,6 +1310,9 @@ func (e *executor) tick() error {
 		}
 		if done {
 			delete(e.live, execution)
+			if err := e.release(execution); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -1136,6 +1321,9 @@ func (e *executor) tick() error {
 func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	if l.observe() != nil {
 		l.cleanupUnknown = true
+	}
+	if err := e.own(execution, l); err != nil {
+		return false, err
 	}
 	exited := l.exitedNow()
 	if !exited && !l.stopped && !l.deadline.IsZero() && !time.Now().Before(l.deadline) {
@@ -1473,12 +1661,10 @@ func (l *live) aliveOwned() (bool, error) {
 		if strings.HasPrefix(p.stat, "Z") {
 			continue
 		}
+		// An identity that cannot be read is not the recorded incarnation: the process left between the snapshot
+		// and the read, or the pid now belongs to a process this user cannot inspect.
 		if expected, ok := l.owned[p.pid]; ok {
-			cur, err := identity(p.pid)
-			if err != nil {
-				return false, errors.New("owned process identity unreadable")
-			}
-			if cur == expected {
+			if cur, err := identity(p.pid); err == nil && cur == expected {
 				return true, nil
 			}
 		}
