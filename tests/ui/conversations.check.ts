@@ -60,7 +60,7 @@ seed.bulk(() => {
 seed.question({ kind: 'agent_question', text: 'Use Postgres 17?', options: ['yes', 'no'], executionId: 'x1', sessionId: S, askedBy: 'agent' });
 
 const pds18 = await host('pds18');
-const ingest = (id: string, seq: number, markdown: string) => pds18('/api/hosts/events', { executionId: 'x1', events: [{ id, seq, type: 'item.completed', data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown }] } } }] });
+const ingest = (id: string, seq: number, markdown: string) => pds18('/api/hosts/events', { executionId: 'x1', events: [{ id, seq, type: 'item.completed', timestamp: Date.now(), data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown }] } } }] });
 
 // The first row whose top is inside the list viewport, and its top; rows are found again by their text.
 const anchor = (p: Page) => p.locator('.tr-body .vl').evaluate(e => { const top = e.getBoundingClientRect().top; const r = [...e.querySelectorAll('.vl-row')].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top).find(x => x.getBoundingClientRect().top >= top); return r ? { text: r.textContent!, top: r.getBoundingClientRect().top } : null; });
@@ -161,7 +161,7 @@ try {
   await p.goto(`${origin}/conversations/task-a`);
   check(await until(async () => await visible(p, 'Alpha reply') && await visible(p, 'Bravo reply')), 'a task session shows both sessions of the task');
   check(await p.locator('.th-boundary .id', { hasText: 'task-b' }).count() === 1, 'boundary rows name their session');
-  await pds18('/api/hosts/events', { executionId: 'tb1', events: [{ id: 'tb-live', seq: 1, type: 'item.completed', data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: 'Bravo live' }] } } }] });
+  await pds18('/api/hosts/events', { executionId: 'tb1', events: [{ id: 'tb-live', seq: 1, type: 'item.completed', timestamp: Date.now(), data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: 'Bravo live' }] } } }] });
   check(await until(() => visible(p, 'Bravo live')), 'a task thread follows another session of the task live');
   await p.locator('.th-text', { hasText: 'Alpha question' }).click();
   await p.locator('.th-text', { hasText: 'Bravo reply' }).click({ modifiers: ['Shift'] });
