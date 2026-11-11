@@ -18,7 +18,7 @@ for (const name of ['codex-6a55ab8b', 'claude-127d6fd7', 'lost-receipt-d89cc199'
   const fx = JSON.parse(readFileSync(new URL(`fixtures/conversations/${name}.json`, import.meta.url), 'utf8')), e = fx.execution;
   seed.bulk(() => {
     seed.sql(`INSERT INTO document(kind,id,data) VALUES('session',${lit(e.session_id)},${lit({ id: e.session_id, createdAt: Date.now() })}) ON CONFLICT DO NOTHING`);
-    seed.sql(`INSERT INTO execution(id,kind,state,session_id,harness,model,config_ref,legacy_kind,legacy_id,seq) VALUES(${lit(e.id)},'agent_run',${lit(e.state)},${lit(e.session_id)},${lit(e.harness)},${lit(e.model)},${lit({ effort: e.effort })},'execution',${lit(e.id)},${e.seq})`);
+    seed.sql(`INSERT INTO execution(id,kind,state,session_id,harness,model,config_ref,seq) VALUES(${lit(e.id)},'agent_run',${lit(e.state)},${lit(e.session_id)},${lit(e.harness)},${lit(e.model)},${lit({ effort: e.effort })},${e.seq})`);
     for (const d of fx.documents) seed.sql(`INSERT INTO document(kind,id,data,seq) VALUES(${lit(d.kind)},${lit(d.data.id)},${lit(d.data)},${d.seq})`);
   });
 }

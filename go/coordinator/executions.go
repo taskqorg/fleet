@@ -156,12 +156,6 @@ func openDelegations(q *Request) ([]doc, error) {
 	return rows(q, "SELECT delegation FROM execution WHERE delegation IS NOT NULL AND coalesce(delegation->>'continuationExecutionId','')='' AND coalesce(delegation->>'state','')<>'suppressed' ORDER BY seq")
 }
 
-// legacyTerminal: a finished legacy execution state.
-func legacyTerminal(e doc) bool {
-	s := astr(e["state"])
-	return s == "completed" || s == "failed" || s == "stopped"
-}
-
 func strs(v any) []string {
 	xs, _ := v.([]any)
 	out := []string{}
@@ -225,7 +219,7 @@ func executionStop(q *Request, id any) (any, error) {
 			return nil, err
 		}
 	}
-	if !known && !legacyTerminal(e) {
+	if !known && !terminal(e) {
 		pending, err := all(q, "command", doc{"executionId": e["id"], "status": "pending"})
 		if err != nil {
 			return nil, err
@@ -236,7 +230,7 @@ func executionStop(q *Request, id any) (any, error) {
 				return nil, err
 			}
 		}
-		e["state"], e["stopDetail"] = "stopped", "stopped before dispatch"
+		e["state"], e["stopDetail"] = "cancelled", "stopped before dispatch"
 		if e["hostId"] != nil {
 			e["stopDetail"] = "host never registered"
 		}
@@ -328,9 +322,10 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 		for _, k := range []string{"waitReason", "waitingSince", "pendingArtifacts", "declaredArtifacts"} {
 			delete(e, k)
 		}
-		e["state"], e["updatedAt"] = "completed", nowMs()
+		e["state"], e["updatedAt"] = "succeeded", nowMs()
+		status := "completed" // the receipt the start command settles with
 		if failed {
-			e["state"] = "failed"
+			e["state"], status = "failed", "failed"
 			msg := "Required artifacts missing or failed"
 			if expired != "" {
 				msg = expired
@@ -345,7 +340,7 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 			return err
 		}
 		if len(cs) > 0 {
-			if err := agentOnReceipt(q, cs[0], e, astr(e["state"])); err != nil {
+			if err := agentOnReceipt(q, cs[0], e, status); err != nil {
 				return err
 			}
 			if err := agentPromote(q); err != nil {

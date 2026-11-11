@@ -226,7 +226,7 @@ func sessionArchive(q *Request, sid string) (doc, error) {
 	}
 	var last doc
 	for _, e := range es {
-		if !terminalLegacy(e) && astr(e["state"]) != "unknown" {
+		if !terminal(e) && !unconfirmed(e) {
 			return nil, fail(409, "Execution active")
 		}
 		if astr(e["hostId"]) != "" {

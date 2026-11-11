@@ -102,7 +102,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const search = () => run(async () => { if (!q.trim()) { setHits(null); setMarked(null); return; } const r = await op('thread_search', { key, q, limit: 100 }); setHits(r.hits); await open(r.hits, 0); });
   if (error && !s) return <article class="detail" data-ui="detail" tabIndex={-1}><ErrorBanner text={`Conversation did not load: ${error}`} /></article>;
   if (!s) return <article class="detail" data-ui="detail" tabIndex={-1}><Skeleton rows={6} /></article>;
-  const running = (e: any) => !['completed', 'failed', 'stopped', 'unknown', 'succeeded', 'cancelled'].includes(e.state);
+  const running = (e: any) => !['succeeded', 'failed', 'cancelled'].includes(e.state) && e.observation !== 'unconfirmed';
   // Composer target: the newest running execution; with none, a new message starts one (design "Controls").
   const active = (s.executions ?? []).filter(running).at(-1);
   const openQs = (s.questions ?? []).filter((q: any) => q.state === 'open');
