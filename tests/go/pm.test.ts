@@ -54,7 +54,7 @@ async function agent(person: string, start: object) {
   return {sessionId: s.sessionId as string, executionId: s.executionId as string, tool, list};
 }
 
-test('PM1 rights: an agent call reads and writes with its director\'s grants, never the coordinator\'s * (risk: a member\'s PM sees or changes other projects)', {timeout: 30_000}, async () => {
+test('PM1 rights: an agent call reads and writes with its director\'s grants, never the coordinator\'s * (requirement: docs/designs/fleet-pm-agent.md; risk: a member\'s PM sees or changes other projects)', {timeout: 30_000}, async () => {
   const mine = ok(await op('task_create', {projectId: PROJECT, title: 'PM1 mine ' + randomUUID()}));
   const other = ok(await op('task_create', {projectId: OTHER, title: 'PM1 other ' + randomUUID()}));
   const pm = await agent(MEMBER, {projectId: PROJECT, role: 'pm'});
@@ -67,7 +67,7 @@ test('PM1 rights: an agent call reads and writes with its director\'s grants, ne
   assert.ok(names.includes('task_page') && names.includes('focus_set') && !names.includes('profiles_list') && !names.includes('task_take'));
 });
 
-test('PM2 deny list: take and host secrets stay with people, even for the owner\'s PM (risk: an injected owner PM mints a host secret)', {timeout: 30_000}, async () => {
+test('PM2 deny list: take and host secrets stay with people, even for the owner\'s PM (requirement: docs/designs/fleet-pm-agent.md; risk: an injected owner PM mints a host secret)', {timeout: 30_000}, async () => {
   const pm = await agent(OWNER, {projectId: PROJECT, role: 'pm'});
   const t = ok(await op('task_create', {projectId: PROJECT, title: 'PM2 ' + randomUUID()}));
   for (const [name, args] of [['task_take', {taskId: t.id}], ['hosts_register', {id: 'pm2-host'}], ['hosts_rotate_secret', {id: 'trial-host'}], ['connections_token_create', {name: 'pm2'}]] as const)
@@ -75,7 +75,7 @@ test('PM2 deny list: take and host secrets stay with people, even for the owner\
   assert.equal(ok(await pm.tool('profiles_list')).profiles !== undefined, true, 'the owner\'s PM reaches owner operations');
 });
 
-test('PM3 focus: a focused PM starts workers in its focus projects only, and focus never exceeds the grants (risk: the one-project lock blocks a PM, or focus widens rights)', {timeout: 30_000}, async () => {
+test('PM3 focus: a focused PM starts workers in its focus projects only, and focus never exceeds the grants (requirement: docs/designs/fleet-pm-agent.md; risk: the one-project lock blocks a PM, or focus widens rights)', {timeout: 30_000}, async () => {
   const pm = await agent(MEMBER, {projectId: PROJECT, role: 'pm'});
   assert.equal((await pm.tool('focus_set', {projectIds: [OTHER]})).status, 404, 'outside the grants');
   ok(await pm.tool('focus_set', {projectIds: [PROJECT]}));
@@ -88,7 +88,7 @@ test('PM3 focus: a focused PM starts workers in its focus projects only, and foc
   assert.equal((await pm.tool('session_start', {requestId: randomUUID(), role: 'worker', projectId: OTHER})).status, 404, '"*" is the grants, not every project');
 });
 
-test('PM4 no project: the owner\'s PM without a project focuses on every project and starts workers where asked (risk: a projectless PM gets 403 from the worker lock)', {timeout: 30_000}, async () => {
+test('PM4 no project: the owner\'s PM without a project focuses on every project and starts workers where asked (requirement: docs/designs/fleet-pm-agent.md; risk: a projectless PM gets 403 from the worker lock)', {timeout: 30_000}, async () => {
   const pm = await agent(OWNER, {});
   assert.equal((await pm.tool('session_start', {requestId: randomUUID(), role: 'worker', projectId: PROJECT})).status, 403, 'no focus: the worker lock answers');
   ok(await pm.tool('focus_set', {projectIds: '*'}));
@@ -97,7 +97,7 @@ test('PM4 no project: the owner\'s PM without a project focuses on every project
   assert.ok(all.includes(PROJECT) && all.includes(OTHER), 'focus "*" of the owner lists every project');
 });
 
-test('PM5 Held: an agent task starts Held with the execution as creator, and leaves Held only by release (risk: an agent task runs before the person agrees, or a person\'s pause is undone by an agent)', {timeout: 30_000}, async () => {
+test('PM5 Held: an agent task starts Held with the execution as creator, and leaves Held only by release (requirement: docs/designs/fleet-pm-agent.md; risk: an agent task runs before the person agrees, or a person\'s pause is undone by an agent)', {timeout: 30_000}, async () => {
   const pm = await agent(MEMBER, {projectId: PROJECT, role: 'pm'});
   ok(await pm.tool('focus_set', {projectIds: [PROJECT]}));
   const t = ok(await pm.tool('task_create', {title: 'PM5 ' + randomUUID(), held: false, createdBy: 'operator'}));
@@ -120,7 +120,7 @@ test('PM5 Held: an agent task starts Held with the execution as creator, and lea
   assert.deepEqual([person.state, person.createdBy], ['queued', OWNER], 'the owner path is unchanged');
 });
 
-test('PM6 audit: an agent setting change records the execution as actor and its director, and people stay owner-only (risk: an agent change looks like the person did it, or a member edits people)', {timeout: 30_000}, async () => {
+test('PM6 audit: an agent setting change records the execution as actor and its director, and people stay owner-only (requirement: docs/designs/fleet-pm-agent.md; risk: an agent change looks like the person did it, or a member edits people)', {timeout: 30_000}, async () => {
   const pm = await agent(OWNER, {projectId: PROJECT, role: 'pm'});
   const hostId = await hostOf(MEMBER);
   ok(await pm.tool('hosts_update', {id: hostId, intake: 'paused'}));
@@ -141,7 +141,7 @@ test('PM6 audit: an agent setting change records the execution as actor and its 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const queuedTexts = async (sessionId: string) => ok(await call('GET', '/api/sessions/' + sessionId, undefined, as(OWNER))).queued.map((m: any) => m.text as string);
 
-test('PM7 watch: foreign changes in focus wake the PM with one message, its own changes never do, and the timer wakes it (risk: a PM misses a question, or loops on its own edits)', {timeout: 30_000}, async () => {
+test('PM7 watch: foreign changes in focus wake the PM with one message, its own changes never do, and the timer wakes it (requirement: docs/designs/fleet-pm-agent.md; risk: a PM misses a question, or loops on its own edits)', {timeout: 30_000}, async () => {
   const pm = await agent(OWNER, {});
   ok(await pm.tool('focus_set', {projectIds: [PROJECT]}));
   ok(await pm.tool('watch_set', {kinds: ['task', 'question']}));
@@ -178,7 +178,7 @@ test('PM7 watch: foreign changes in focus wake the PM with one message, its own 
   assert.deepEqual((await queuedTexts(worker.sessionId)).filter(t => /watch timer/.test(t)).length, 1, 'the stored timer wakes an idle watch once per queued wake');
 });
 
-test('PM8 profile: a PM session carries its skills and sees the task tools (risk: the PM profile loses its instructions outside pipelines)', {timeout: 30_000}, async () => {
+test('PM8 profile: a PM session carries its skills and sees the task tools (requirement: docs/designs/fleet-pm-agent.md; risk: the PM profile loses its instructions outside pipelines)', {timeout: 30_000}, async () => {
   await hostOf(OWNER);
   const s = ok(await op('session_start', {requestId: randomUUID(), text: 'pm turn', projectId: PROJECT, role: 'pm'}));
   const {commands} = ok(await hostCall(OWNER, '/api/hosts/poll', poll));

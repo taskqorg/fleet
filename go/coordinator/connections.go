@@ -55,14 +55,23 @@ func connDir(name string) (string, error) {
 }
 
 func connOwner(q *Request) error {
-	if q.person != nil && !q.person.Owner {
+	if q.person != nil && !fullAccess(q.person) {
 		return fail(403, "Only the owner handles key values")
 	}
 	return nil
 }
 
+// connRealOwner: secret exposure stays the real owner's, even for grant "*" (site-agents): a personal run token is a
+// bearer that outlives the Access service token.
+func connRealOwner(q *Request) error {
+	if q.person != nil && !q.person.Owner {
+		return fail(403, "Only the owner creates personal tokens")
+	}
+	return nil
+}
+
 func connHolderOrOwner(q *Request, c doc) error {
-	if q.person != nil && !q.person.Owner && q.person.Email != c["holder"] {
+	if q.person != nil && !fullAccess(q.person) && q.person.Email != c["holder"] {
 		return fail(403, "Only the holder or the owner changes this API key")
 	}
 	return nil
@@ -357,7 +366,7 @@ func init() {
 		if h, ok := b["holder"].(string); ok {
 			holder = strings.ToLower(h)
 		}
-		if q.person != nil && !q.person.Owner && holder != q.person.Email {
+		if q.person != nil && !fullAccess(q.person) && holder != q.person.Email {
 			return nil, fail(403, "Only the owner creates an API key for another person")
 		}
 		comment := astr(b["comment"])
@@ -566,7 +575,7 @@ func init() {
 	})
 	// Owner connection tokens (§4): a long-lived bearer for the owner's interactive sessions; the value is answered once.
 	gatedOp("connections_token_create", false, func(q *Request) (any, error) {
-		if err := connOwner(q); err != nil {
+		if err := connRealOwner(q); err != nil {
 			return nil, err
 		}
 		b, err := bodyObject(q)

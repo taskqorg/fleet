@@ -1546,7 +1546,7 @@ func focusProject(q *Request, s doc, given any) (string, error) {
 // directs: a person changes only sessions they direct (the owner any); an agent call is already bound to its own
 // session tree by bound().
 func directs(q *Request, s doc) error {
-	if q.agent != "" || q.person == nil || q.person.Owner || astr(s["directedBy"]) == q.person.Email {
+	if q.agent != "" || q.person == nil || fullAccess(q.person) || astr(s["directedBy"]) == q.person.Email {
 		return nil
 	}
 	return fail(403, "Session is directed by someone else")
@@ -1598,7 +1598,7 @@ func agentMay(p *Person, name string) bool {
 	_, op := operations[name]
 	_, long := longOperations[name]
 	// account_*: guardOp lets a holder manage their own subscription, so the tools stay offered and guardOp decides.
-	return (op || long) && (p.Owner || hasRole(p, "architect") || !architectOps.MatchString(name) || strings.HasPrefix(name, "account_"))
+	return (op || long) && (fullAccess(p) || hasRole(p, "architect") || !architectOps.MatchString(name) || strings.HasPrefix(name, "account_"))
 }
 
 // agentTools: the agent table plus every operation the director may call, as published by tools/list.

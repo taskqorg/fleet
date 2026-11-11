@@ -79,6 +79,7 @@ type config struct {
 	DrainTimeoutMs   uint64 `json:"drain_timeout_ms"`
 	requestTimeout   time.Duration
 	drainTimeout     time.Duration
+	refreshEvery     time.Duration // snapshot poll; tests shorten it
 }
 
 func loadConfig(path string) (*config, error) {
@@ -97,6 +98,7 @@ func loadConfig(path string) (*config, error) {
 	}
 	c.requestTimeout = time.Duration(c.RequestTimeoutMs) * time.Millisecond
 	c.drainTimeout = time.Duration(c.DrainTimeoutMs) * time.Millisecond
+	c.refreshEvery = time.Second
 	return c, nil
 }
 
@@ -847,7 +849,7 @@ func serve(c *config, listener net.Listener, stop <-chan struct{}) error {
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
-		tick := time.NewTicker(time.Second)
+		tick := time.NewTicker(c.refreshEvery)
 		defer tick.Stop()
 		for {
 			select {

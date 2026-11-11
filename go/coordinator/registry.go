@@ -163,7 +163,7 @@ func (a *App) serve(w http.ResponseWriter, hr *http.Request, kind int, h handler
 // routes need the architect role (or the held subscription), a named project must be granted. gatedObjOp, gatedRoute and gatedOp apply the
 // same gate again; it is idempotent.
 func (a *App) guard(q *Request) error {
-	if q.person == nil || q.person.Owner {
+	if q.person == nil || fullAccess(q.person) {
 		return nil
 	}
 	if name, ok := strings.CutPrefix(q.r.URL.Path, "/api/ops/"); ok {

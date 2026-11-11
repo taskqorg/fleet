@@ -106,7 +106,8 @@ func (g *guard) fetch() map[string]*rsa.PublicKey {
 	return keys
 }
 
-// verify checks an RS256 JWT for the Access issuer and audience and returns its e-mail claim.
+// verify checks an RS256 JWT for the Access issuer and audience and returns its identity: the e-mail claim of a person,
+// or the common_name of a service token (no e-mail; people.json maps it to a person through accessCommonName).
 func (g *guard) verify(jwt string) (string, error) {
 	parts := strings.Split(jwt, ".")
 	if len(parts) != 3 {
@@ -130,11 +131,18 @@ func (g *guard) verify(jwt string) (string, error) {
 	}
 	var claims struct {
 		Iss, Sub, Email *string
+		CommonName      *string `json:"common_name"`
 		Exp, Iat, Nbf   *float64
 		Aud             json.RawMessage
 	}
-	if decode(parts[1], &claims) != nil || claims.Exp == nil || claims.Iat == nil || claims.Sub == nil || claims.Email == nil {
+	if decode(parts[1], &claims) != nil || claims.Exp == nil || claims.Iat == nil || claims.Sub == nil {
 		return "", errors.New("required claim missing")
+	}
+	if claims.Email == nil {
+		if claims.CommonName == nil || *claims.CommonName == "" || strings.Contains(*claims.CommonName, "@") {
+			return "", errors.New("required claim missing")
+		}
+		claims.Email = claims.CommonName
 	}
 	now := float64(time.Now().Unix())
 	var audiences []string
