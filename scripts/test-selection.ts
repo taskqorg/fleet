@@ -101,7 +101,8 @@ function previousGreen(event: string, payload: Event, candidate: string): boolea
     const branch = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME;
     if (!branch) return false;
     const result = previousResult(list(['--branch', branch, '--limit', '2']), Number(process.env.GITHUB_RUN_ID));
-    if (result !== null) return result;
+    if (result === false) return false;
+    // A green branch must not authorize omissions on an unqualified newer main base.
     return previousResult(list(['--commit', comparison(event, payload, candidate), '--event', 'push', '--limit', '1']),
       Number(process.env.GITHUB_RUN_ID)) === true;
   } catch { return false; }

@@ -85,6 +85,15 @@ test('actual Git comparison accepts a qualified plan and rejects a corrupted omi
     const verify = () => execFileSync(process.execPath, [fileURLToPath(new URL('../../scripts/test-selection.ts', import.meta.url)), '--verify', path, results],
       {cwd: root, env: {...process.env, GITHUB_SHA: after}, stdio: 'pipe'});
     writeFileSync(path, JSON.stringify(plan)); assert.match(verify().toString(), /PASS/);
+    const tools = join(root, 'tools'); mkdirSync(tools);
+    writeFileSync(join(tools, 'gh'), `#!${process.execPath}\nconsole.log(JSON.stringify([{databaseId:1,status:process.argv.includes('--commit')?'in_progress':'completed',conclusion:process.argv.includes('--commit')?'':'success'}]));\n`, {mode: 0o755});
+    const eventPath = join(root, 'event.json'); writeFileSync(eventPath, JSON.stringify({before, after}));
+    const observed = JSON.parse(execFileSync(process.execPath, [fileURLToPath(new URL('../../scripts/test-selection.ts', import.meta.url))],
+      {cwd: root, encoding: 'utf8', env: {...process.env, PATH: tools + ':' + process.env.PATH, GITHUB_SHA: after,
+        GITHUB_EVENT_NAME: 'push', GITHUB_EVENT_PATH: eventPath, GITHUB_REF_NAME: 'fixture', GITHUB_HEAD_REF: '', GITHUB_RUN_ID: '2', FLEET_TEST_FULL: ''}}));
+    assert.equal(observed.previousGreen, false, 'green branch cannot bypass unfinished exact-base CI');
+    assert.deepEqual(observed.executed, [...families]);
+
     writeFileSync(path, JSON.stringify({...plan, paths: ['docs/unrelated.md']})); assert.throws(verify);
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
