@@ -1848,7 +1848,7 @@ func sameAgentStep(q *Request, executionID string, step, overrides doc) (bool, e
 func withArguments(def, overrides doc) any {
 	extra := mapOf(mapOf(overrides["arguments"])[astr(def["id"])])
 	base := mapOf(def["arguments"])
-	if extra == nil || base == nil {
+	if extra == nil {
 		return def["arguments"]
 	}
 	out := doc{}
