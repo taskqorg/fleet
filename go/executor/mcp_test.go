@@ -93,8 +93,8 @@ func TestProjectToolSchemas(t *testing.T) {
 	}
 	for _, bad := range []M{
 		{"name": "pipeline_get", "arguments": M{"text": "x", "runId": "r"}}, // not an argument of pipeline_get
-		{"name": "pipeline_get", "arguments": M{}},                         // runId missing
-		{"name": "question_ask", "arguments": M{"requestId": "r"}},         // text missing
+		{"name": "pipeline_get", "arguments": M{}},                          // runId missing
+		{"name": "question_ask", "arguments": M{"requestId": "r"}},          // text missing
 	} {
 		if _, err := delegation(M{"method": "tools/call", "params": bad}, ctx, nil); err == nil || !strings.Contains(err.Error(), "Invalid project request") {
 			t.Errorf("%v: %v", bad, err)
