@@ -279,7 +279,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 		}
 	}
 	if isACP(h) || h == "claude" {
-		binding["transport"] = map[bool]string{true: "stream-json", false: "acp-1.5.3"}[h == "claude"]
+		binding["transport"] = map[bool]string{true: "stream-json", false: "acp-1"}[h == "claude"]
 		binding["credentialAuthority"] = jAt(a, "credentialAuthority")
 		binding["credentialHome"] = nil
 		if credentialHome != "" {

@@ -151,7 +151,7 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 		return true, nil
 	}
 	parent, err := get(q, e["parentExecutionId"], "execution")
-	if err != nil || parent["state"] != "completed" {
+	if err != nil || parent["state"] != "succeeded" {
 		return false, err
 	}
 	if e["inputsBound"] == true {
@@ -297,7 +297,7 @@ func (a *App) delegationReconcile(q *Request) error {
 		if err != nil {
 			return err
 		}
-		if !legacyTerminal(child) {
+		if !terminal(child) {
 			continue
 		}
 		if d["result"] == nil {
@@ -314,7 +314,7 @@ func (a *App) delegationReconcile(q *Request) error {
 				return err
 			}
 		}
-		if parent["stopRequested"] == true || parent["state"] == "stopped" || parent["state"] == "failed" {
+		if parent["stopRequested"] == true || parent["state"] == "cancelled" || parent["state"] == "failed" {
 			d["state"] = "suppressed"
 			if err := put(q, "delegation", d); err != nil {
 				return err
@@ -325,7 +325,7 @@ func (a *App) delegationReconcile(q *Request) error {
 		if err != nil {
 			return err
 		}
-		if parent["state"] != "completed" || s["nativeSessionId"] == nil {
+		if parent["state"] != "succeeded" || s["nativeSessionId"] == nil {
 			continue
 		}
 		runs, err := all(q, "execution", doc{"sessionId": s["id"]})
@@ -334,7 +334,7 @@ func (a *App) delegationReconcile(q *Request) error {
 		}
 		open := false
 		for _, r := range runs {
-			if !legacyTerminal(r) {
+			if !terminal(r) {
 				open = true
 			}
 		}

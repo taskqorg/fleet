@@ -1,5 +1,5 @@
 // Pipeline format version 2 runner (docs/designs/fleet-lab.md "Pipeline format version 2").
-// A run is an ordered chain of api, agent and script steps: the pipeline_run execution (legacy record kind 'pipeline-run')
+// A run is an ordered chain of api, agent and script steps: the pipeline_run execution
 // with one pipeline_step row `<run>:step:<i>` per step; each provider call is a tool_run child of its step. Every step
 // leaves an output.json artifact. pipelineAdvance(runId) moves a run forward and is safe to call any time; a sync api call
 // interrupted by a restart is unknown and never replayed.
@@ -19,6 +19,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
+
+	"fleet/contract"
 )
 
 var (
@@ -31,8 +33,8 @@ var (
 	ownOutput      = regexp.MustCompile(`^(output/)?output\.json$`)
 )
 
-func problemOf(outcome string, code any) string {
-	c, _ := code.(string)
+// problemOf: the execution problem for a failed call; code is the call's error code, "" when none.
+func problemOf(outcome, c string) string {
 	if outcome == "unknown" {
 		if c == "" {
 			c = "outcome"
@@ -214,25 +216,6 @@ func resolveRefs(v any, example any, outputs doc, quote bool) (any, error) {
 	return v, nil
 }
 
-// Legacy state of a run or step record -> typed execution state.
-func runState(legacy string) (string, string) {
-	switch legacy {
-	case "queued", "accepted", "pending":
-		return "preparing", "confirmed"
-	case "started", "running":
-		return "running", "confirmed"
-	case "waiting":
-		return "waiting", "confirmed"
-	case "completed":
-		return "succeeded", "confirmed"
-	case "failed", "quota", "unavailable":
-		return "failed", "confirmed"
-	case "stopped", "cancelled":
-		return "cancelled", "confirmed"
-	}
-	return "", "unconfirmed"
-}
-
 func msTime(v any) any {
 	if f, ok := numOK(v); ok {
 		return time.UnixMilli(int64(f))
@@ -244,43 +227,39 @@ func msTime(v any) any {
 func putRun(q *Request, run doc) error {
 	rest := doc{}
 	for k, v := range run {
-		if k != "steps" {
+		if k != "steps" && k != "state" && k != "observation" {
 			rest[k] = v
 		}
 	}
-	state, obs := runState(astr(run["state"]))
-	if state == "" {
-		if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT state::text FROM execution WHERE id=$1),'preparing')", run["id"]).Scan(&state); err != nil {
-			return err
-		}
+	state, obs, err := runState(run)
+	if err != nil {
+		return err
 	}
 	cfg := doc{"method": run["selectedMethod"], "definitionSha256": run["definitionSha256"]}
-	if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,started_at,ended_at,legacy_kind,legacy_id,data,config_ref,experiment_id,variant)
-	 VALUES($1,'pipeline_run',$2,$3,$4,$5,$6,'pipeline-run',$1,$7,$8,$9,$10)
+	if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,started_at,ended_at,data,config_ref,experiment_id,variant)
+	 VALUES($1,'pipeline_run',$2,$3,$4,$5,$6,$7,$8,$9,$10)
 	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
-	  config_ref=CASE WHEN execution.variant IS NULL THEN excluded.config_ref ELSE execution.config_ref END,legacy_kind='pipeline-run',legacy_id=excluded.legacy_id,
+	  config_ref=CASE WHEN execution.variant IS NULL THEN excluded.config_ref ELSE execution.config_ref END,
 	  experiment_id=coalesce(execution.experiment_id,excluded.experiment_id),variant=coalesce(execution.variant,excluded.variant)`,
 		run["id"], state, obs, run["projectId"], msTime(run["startedAt"]), msTime(run["finishedAt"]), jsonBytes(rest), jsonBytes(cfg), run["experimentId"], run["variant"]); err != nil {
 		return err
 	}
 	for i, x := range anys(run["steps"]) {
 		s := mapOf(x)
-		st, sobs := runState(astr(s["state"]))
-		if st == "" {
-			st = "preparing"
+		st, sobs, err := runState(s)
+		if err != nil {
+			return err
 		}
 		data := doc{"index": i}
 		for k, v := range s {
-			data[k] = v
+			if k != "state" && k != "observation" {
+				data[k] = v
+			}
 		}
-		id := s["id"]
-		if id == nil {
-			id = fmt.Sprint(i)
-		}
-		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,legacy_kind,legacy_id,data) VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,'pipeline-step',$7,$8)
+		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,data) VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,$7)
 		 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,data=excluded.data,
 		  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-			stepRow(run, i), st, sobs, run["projectId"], run["id"], msTime(s["startedAt"]), id, jsonBytes(data)); err != nil {
+			stepRow(run, i), st, sobs, run["projectId"], run["id"], msTime(s["startedAt"]), jsonBytes(data)); err != nil {
 			return err
 		}
 	}
@@ -295,7 +274,7 @@ func withSteps(q *Request, runs []doc) ([]doc, error) {
 	for _, r := range runs {
 		ids = append(ids, astr(r["id"]))
 	}
-	steps, err := queryRows(q, "SELECT parent_execution_id AS run,data FROM execution WHERE legacy_kind='pipeline-step' AND parent_execution_id=ANY($1) ORDER BY (data->>'index')::int", ids)
+	steps, err := queryRows(q, "SELECT parent_execution_id AS run,"+execJSON+" AS data FROM execution WHERE kind='pipeline_step' AND parent_execution_id=ANY($1) ORDER BY (data->>'index')::int", ids)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +293,7 @@ func withSteps(q *Request, runs []doc) ([]doc, error) {
 }
 
 func getRun(q *Request, id string) (doc, error) {
-	rs, err := rows(q, "SELECT data FROM execution WHERE id=$1 AND legacy_kind='pipeline-run'", id)
+	rs, err := rows(q, "SELECT "+execJSON+" FROM execution WHERE id=$1 AND "+runRows, id)
 	if err != nil {
 		return nil, err
 	}
@@ -326,11 +305,26 @@ func getRun(q *Request, id string) (doc, error) {
 }
 
 func runsWhere(q *Request, clause string, args ...any) ([]doc, error) {
-	rs, err := rows(q, "SELECT data FROM execution WHERE legacy_kind='pipeline-run' AND "+clause+" ORDER BY seq", args...)
+	rs, err := rows(q, "SELECT "+execJSON+" FROM execution WHERE "+runRows+" AND "+clause+" ORDER BY seq", args...)
 	if err != nil {
 		return nil, err
 	}
 	return withSteps(q, rs)
+}
+
+// runRows: the pipeline runs a run record was written for (a Lab trial row exists before its run starts).
+const runRows = "kind='pipeline_run' AND data ? 'pipelineId'"
+
+// runState: the typed state and observation of a run or step record; unconfirmed only when the record says so.
+func runState(r doc) (string, string, error) {
+	state, obs := firstString(r["state"], "preparing"), "confirmed"
+	if _, ok := stateOrder[state]; !ok {
+		return "", "", fmt.Errorf("pipeline record %v: unknown state %q", r["id"], state)
+	}
+	if unconfirmed(r) {
+		obs = "unconfirmed"
+	}
+	return state, obs, nil
 }
 
 func stepRow(run doc, i int) string { return fmt.Sprintf("%v:step:%d", run["id"], i) }
@@ -356,7 +350,7 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 	steps := []any{}
 	for _, x := range anys(def["steps"]) {
 		s := mapOf(x)
-		e := doc{"id": s["id"], "kind": s["kind"], "state": "pending"}
+		e := doc{"id": s["id"], "kind": s["kind"], "state": "preparing"}
 		if s["kind"] == "api" {
 			e["tool"], e["connection"] = s["tool"], s["connection"]
 		}
@@ -434,7 +428,7 @@ func pipelineWait(ctx context.Context, a *App, runID string) (doc, error) {
 func pipelineOnExecution(a *App, executionID string) {
 	var ids []string
 	readTx(context.Background(), a, func(q *Request) error {
-		rs, err := queryRows(q, "SELECT parent_execution_id AS id FROM execution WHERE legacy_kind='pipeline-step' AND data->>'executionId'=$1", executionID)
+		rs, err := queryRows(q, "SELECT parent_execution_id AS id FROM execution WHERE kind='pipeline_step' AND data->>'executionId'=$1", executionID)
 		for _, r := range rs {
 			ids = append(ids, astr(r["id"]))
 		}
@@ -448,7 +442,7 @@ func pipelineOnExecution(a *App, executionID string) {
 func pipelineTick(ctx context.Context, a *App) {
 	var ids []string
 	readTx(ctx, a, func(q *Request) error {
-		rs, err := queryRows(q, "SELECT id FROM execution WHERE legacy_kind='pipeline-run' AND data->>'state'='running' AND (data->'definition'->>'version')::int=2 ORDER BY seq")
+		rs, err := queryRows(q, "SELECT id FROM execution WHERE "+runRows+" AND state='running' AND (data->'definition'->>'version')::int=2 ORDER BY seq")
 		for _, r := range rs {
 			ids = append(ids, astr(r["id"]))
 		}
@@ -478,7 +472,7 @@ func pipelineCancel(ctx context.Context, a *App, runID string) (string, error) {
 		}
 		for _, x := range anys(run["steps"]) {
 			s := mapOf(x)
-			if s["state"] == "running" || s["state"] == "pending" {
+			if s["state"] == "running" || s["state"] == "preparing" {
 				if s["state"] == "running" {
 					own = astr(s["executionId"])
 				}
@@ -562,8 +556,9 @@ func finishRun(q *Request, run doc, state, problem string) error {
 func failStep(q *Request, run doc, i int, problem, message string) error {
 	s := mapOf(anys(run["steps"])[i])
 	s["state"] = "failed"
-	if strings.HasPrefix(problem, "unknown:") {
-		s["state"] = "unknown"
+	lost := strings.HasPrefix(problem, "unknown:") // the outcome is unknown: failed for Fleet, unconfirmed
+	if lost {
+		s["observation"], run["observation"] = "unconfirmed", "unconfirmed"
 	}
 	s["problem"], s["error"], s["finishedAt"] = problem, doc{"code": problem, "message": message}, nowMs()
 	if err := putRun(q, run); err != nil {
@@ -571,9 +566,6 @@ func failStep(q *Request, run doc, i int, problem, message string) error {
 	}
 	if err := exec(q, "UPDATE execution SET problem=$2 WHERE id=$1", stepRow(run, i), problem); err != nil {
 		return err
-	}
-	if s["state"] == "unknown" {
-		return finishRun(q, run, "unknown", problem)
 	}
 	return finishRun(q, run, "failed", problem)
 }
@@ -601,7 +593,7 @@ func completeStep(q *Request, run doc, i int, output any, extra doc) error {
 	for k, v := range extra {
 		s[k] = v
 	}
-	s["output"], s["state"], s["finishedAt"] = output, "completed", nowMs()
+	s["output"], s["state"], s["finishedAt"] = output, "succeeded", nowMs()
 	st, ok := numOK(s["startedAt"])
 	if !ok {
 		st = float64(nowMs())
@@ -707,15 +699,11 @@ func startScript(q *Request, run doc, stepExecutionID, command string, timeout a
 		hostID = q.app.hostID
 	}
 	id := newID()
-	e := doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hostID, "state": "queued", "createdAt": nowMs(), "pipelineStepId": stepExecutionID, "pipelineRunId": run["id"]}
+	e := doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hostID, "state": "preparing", "createdAt": nowMs(), "actor": "program-worker", "pipelineStepId": stepExecutionID, "pipelineRunId": run["id"]}
 	if run["experimentId"] != nil {
 		e["experimentId"] = run["experimentId"]
 	}
-	if err := putExecution(q, e); err != nil {
-		return "", err
-	}
-	// The script run is a step's child, in the run's project and experiment.
-	if err := exec(q, "UPDATE execution SET parent_execution_id=$2,project_id=$3,experiment_id=$4,harness=NULL WHERE id=$1", id, stepExecutionID, run["projectId"], run["experimentId"]); err != nil {
+	if err := putExecution(q, e); err != nil { // a host job, the step's child in the run's project (session) and experiment
 		return "", err
 	}
 	payload := doc{"command": command, "inputs": inputs}
@@ -727,8 +715,8 @@ func startScript(q *Request, run doc, stepExecutionID, command string, timeout a
 
 // connCallFor: one provider call with a token minted for the step row, revoked after the call; the gateway's spool line
 // becomes the step's tool_run (ingested here, so the row exists when the step moves on).
-func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, tool string, args any) doc {
-	unavailable := doc{"tool": tool, "outcome": "error", "error_code": "connection-unavailable", "usage": nil, "output": nil}
+func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, tool string, args any) contract.CallLine {
+	unavailable := contract.CallLine{Tool: tool, Connection: connection, Outcome: contract.CallOutcomeError, ErrorCode: ptr("connection-unavailable")}
 	if gatewayURL() == "" || !regexp.MustCompile(`^[a-z0-9-]+$`).MatchString(connection) {
 		return unavailable
 	}
@@ -793,13 +781,13 @@ func advanceOnce(ctx context.Context, a *App, runID string) error {
 		}
 		i := -1
 		for j, x := range anys(run["steps"]) {
-			if mapOf(x)["state"] != "completed" {
+			if mapOf(x)["state"] != "succeeded" {
 				i = j
 				break
 			}
 		}
 		if i < 0 {
-			if err := writeTx(ctx, a, "", func(q *Request) error { return finishRun(q, run, "completed", "") }); err != nil {
+			if err := writeTx(ctx, a, "", func(q *Request) error { return finishRun(q, run, "succeeded", "") }); err != nil {
 				return err
 			}
 			notifyFinished(a, run)
@@ -834,7 +822,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	connection := astr(def["connection"])
 
-	if s["state"] == "pending" {
+	if s["state"] == "preparing" {
 		var resolved any
 		var err error
 		switch kind {
@@ -867,11 +855,13 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			line := connCallFor(ctx, a, run, connection, row, tool, resolved)
 			job := def["mode"] == "job"
 			// A job submit without a clear answer: a task created since the call started is adopted; otherwise unknown, never resent.
-			if job && line["outcome"] != "ok" && (line["outcome"] == "unknown" || http5xx.MatchString(astr(line["error_code"]))) {
+			code := deref(line.ErrorCode)
+			if job && line.Outcome != contract.CallOutcomeOk && (line.Outcome == contract.CallOutcomeUnknown || http5xx.MatchString(code)) {
 				recent := connCallFor(ctx, a, run, connection, row, "recent_tasks", doc{})
-				tasks := anys(recent["output"])
+				listed := callOutput(recent)
+				tasks := anys(listed)
 				if tasks == nil {
-					tasks = anys(mapOf(recent["output"])["result"])
+					tasks = anys(mapOf(listed)["result"])
 				}
 				owned := map[string]bool{}
 				readTx(ctx, a, func(q *Request) error {
@@ -883,7 +873,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 				})
 				started, _ := numOK(s["startedAt"])
 				mine := []doc{}
-				if recent["outcome"] == "ok" {
+				if recent.Outcome == contract.CallOutcomeOk {
 					for _, x := range tasks {
 						t := mapOf(x)
 						id, ok := t["id"].(string)
@@ -894,21 +884,21 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 					}
 				}
 				if len(mine) == 1 {
-					line["outcome"], line["output"] = "ok", doc{"jobId": mine[0]["id"]}
-					s["adoptedAfter"] = line["error_code"]
+					line.Outcome, line.Output = contract.CallOutcomeOk, jsonBytes(doc{"jobId": mine[0]["id"]})
+					s["adoptedAfter"] = code
 				} else {
 					why := fmt.Sprintf("%d matching tasks", len(mine))
-					if recent["outcome"] != "ok" {
+					if recent.Outcome != contract.CallOutcomeOk {
 						why = "recent tasks unreadable"
 					}
-					return failNow("unknown:submit-unconfirmed", fmt.Sprintf("Job submit %v; %s; not sent again", line["error_code"], why))
+					return failNow("unknown:submit-unconfirmed", fmt.Sprintf("Job submit %s; %s; not sent again", code, why))
 				}
 			}
-			if line["outcome"] != "ok" {
-				return failNow(problemOf(astr(line["outcome"]), line["error_code"]), fmt.Sprintf("Connection call %v: %v", line["outcome"], strOr(line["error_code"])))
+			if line.Outcome != contract.CallOutcomeOk {
+				return failNow(problemOf(string(line.Outcome), code), fmt.Sprintf("Connection call %s: %s", line.Outcome, code))
 			}
 			if job {
-				out := mapOf(line["output"])
+				out := mapOf(callOutput(line))
 				if _, ok := out["jobId"].(string); !ok {
 					if r, ok := out["result"].(string); ok {
 						out = doc{"jobId": r}
@@ -926,7 +916,10 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 					return exec(q, "UPDATE execution SET data=data||jsonb_build_object('jobId',$2::text) WHERE id=$1", row, jobID)
 				})
 			}
-			return true, tx(func(q *Request) error { return completeStep(q, run, i, line["output"], doc{"usage": line["usage"]}) })
+			out := callOutput(line)
+			return true, tx(func(q *Request) error {
+				return completeStep(q, run, i, out, doc{"usage": mapOf(out)["usage"]})
+			})
 		}
 		var execID string
 		err = tx(func(q *Request) error {
@@ -958,7 +951,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			if len(msg) > 500 {
 				msg = msg[:500]
 			}
-			// Re-read: the failed transaction left nothing; the step fails from its pending state.
+			// Re-read: the failed transaction left nothing; the step fails from its preparing state.
 			delete(s, "executionId")
 			return failNow(problem, msg)
 		}
@@ -981,13 +974,14 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 		line := connCallFor(ctx, a, run, connection, row, "job_status", doc{"jobId": s["jobId"]})
 		p, _ := numOK(s["polls"])
 		s["polls"] = p + 1
-		if line["outcome"] != "ok" {
-			if line["outcome"] == "unknown" {
+		if line.Outcome != contract.CallOutcomeOk {
+			if line.Outcome == contract.CallOutcomeUnknown {
 				return false, nil
 			}
-			return failNow(problemOf(astr(line["outcome"]), line["error_code"]), fmt.Sprintf("Job poll failed: %v", line["error_code"]))
+			code := deref(line.ErrorCode)
+			return failNow(problemOf(string(line.Outcome), code), "Job poll failed: "+code)
 		}
-		out := mapOf(line["output"])
+		out := mapOf(callOutput(line))
 		// Meshy's task shape: status SUCCEEDED | FAILED | CANCELED | EXPIRED | PENDING | IN_PROGRESS.
 		if st, ok := out["status"].(string); ok && out["state"] == nil {
 			state := "running"
@@ -1032,21 +1026,24 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	// Agent or script step running: wait for its execution.
 	var e doc
-	if err := readTx(ctx, a, func(q *Request) (err error) { e, err = getExecutionOrNil(q, astr(s["executionId"])); return }); err != nil || e == nil {
+	if err := readTx(ctx, a, func(q *Request) (err error) { e, err = maybe(q, s["executionId"], "execution"); return }); err != nil || e == nil {
 		return false, err
 	}
 	st := astr(e["state"])
-	if st != "completed" && st != "failed" && st != "stopped" {
-		return false, nil // unknown is not final: the host may still report the real outcome
+	if !terminal(e) {
+		return false, nil // an unconfirmed running state is not final: the host may still report the real outcome
 	}
-	if st != "completed" {
+	if st != "succeeded" {
 		problem := "step:cancelled"
-		if st != "stopped" {
+		if st != "cancelled" {
 			code := mapOf(e["error"])["code"]
 			if code == nil {
 				code = "failed"
 			}
 			problem = fmt.Sprint("step:", code)
+			if unconfirmed(e) { // the host lost the step: its outcome is unknown
+				problem = fmt.Sprint("unknown:", code)
+			}
 		}
 		msg := astr(mapOf(e["error"])["message"])
 		if msg == "" {
@@ -1106,19 +1103,25 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	})
 }
 
+// callOutput: the provider's reply body of an in-process call, decoded; nil when there is none.
+func callOutput(l contract.CallLine) any {
+	var v any
+	json.Unmarshal(l.Output, &v)
+	return v
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 func strOr(v any) string {
 	if v == nil {
 		return ""
 	}
 	return fmt.Sprint(v)
-}
-
-func getExecutionOrNil(q *Request, id string) (doc, error) {
-	e, err := getExecution(q, id)
-	if err == errNotFound {
-		return nil, nil
-	}
-	return e, err
 }
 
 func init() {
