@@ -5,7 +5,7 @@ import { useState } from 'preact/hooks';
 import { Router, Route, Switch, useLocation } from 'wouter-preact';
 import { useHashLocation } from 'wouter-preact/use-hash-location';
 import {
-  AppShell, TaskListView, ROW2, StatStrip, DecisionBlock, ProblemRow, FillBar, StateBadge, Num, Totals, AgeChip, ExecTree, Thread,
+  AppShell, TaskListView, ROW2, StatStrip, AreaChart, DecisionBlock, ProblemRow, FillBar, StateBadge, Num, Totals, AgeChip, ExecTree, Thread,
   ResultViewer, SettingField, SplitButton, Button, Empty, VirtualList, Icon, Stale, StateCounters, FilterBar,
   ListDetail, DefinitionEditor, Choice, DraftBar, StepList, FlowStrip, HarnessMark, type StepItem, type FlowNode, type Harness, type StateOf, NeedsYou, OpsSummary, ListFrame, OutcomeBlock, DetailSection, KvRow, HarnessCounts, type TaskRow,
 } from '../src/index.ts';
@@ -175,8 +175,37 @@ function Results() {
 
 /* ---------- Hosts ---------- */
 
-function Hosts() {
-  const [sel, setSel] = useState<string | null>(hosts[1].id);
+/** Limits (pages/hosts.md "Limits", D24): the work area while no host is open. */
+function LimitsMock() {
+  const d = 24 * hr, from = NOW - 7 * d, to = NOW + 7 * d;
+  return <section class="limits" aria-label="Limits">
+    <PageHead title="Limits"><Choice label="Burn window" options={[{ id: '1', label: '1h' }, { id: '3', label: '3h' }, { id: '6', label: '6h' }]} value="3" />
+      <Choice label="Chart" options={[{ id: 'left', label: 'Left' }, { id: 'burn', label: 'Burn' }]} value="left" />
+      <Button label="Earlier" icon="arrow-left" iconOnly /><Button label="Today" pressed /><Button label="Later" icon="arrow-right" iconOnly /><Button label="Refresh all" icon="rotate-cw" iconOnly /></PageHead>
+    <div class="limit-cards">
+      <article class="panel limit-card" aria-label="codex weekly"><header class="panel-h"><h2>codex <span class="id">weekly</span></h2><span class="grow" /><span class="num">45%</span></header>
+        <dl class="limit-facts"><dt>Next reset</dt><dd><time>2d</time> <span class="num">+120</span></dd><dt>First empty</dt><dd><time>1d</time></dd><dt>Pool empty</dt><dd><span class="muted">not before the line ends</span></dd><dt>Burn</dt><dd><span class="num">2.0/h</span></dd></dl>
+        <AreaChart label="codex weekly left" from={from} to={to} now={NOW} max={200} value={v => `${Math.round(v / 2)}%`}
+          series={[{ label: 'recorded', points: [{ at: from, v: 180 }, { at: NOW - 4 * d, v: 200 }, { at: NOW, v: 90 }], tone: 'd1' },
+            { label: 'projected', points: [{ at: NOW, v: 90 }, { at: NOW + 2 * d, v: 20 }, { at: NOW + 2 * d, v: 120 }, { at: NOW + 6 * d, v: 40 }], tone: 'd1', projected: true }]} /></article>
+    </div>
+    <Panel title="Subscriptions"><div class="table-frame"><table class="limit-table">
+      <thead><tr><th scope="col">Subscription</th><th scope="col">5h</th><th scope="col">weekly</th><th scope="col">weekly-opus</th><th scope="col"><span class="sr-only">Refresh</span></th></tr></thead>
+      <tbody><tr><th scope="row"><span class="title">alex-pro</span> <span class="id">codex</span></th>
+        <td><span class="limit-cell"><FillBar total={100} segments={[{ label: 'used', bytes: 62 }]} warnAt={20} unit="percent" /><time>3h</time><span class="chip t-attention">ahead</span><AgeChip t={NOW - 4 * min} now={NOW} /><span class="muted">execution</span></span></td>
+        <td><span class="limit-cell"><FillBar total={100} segments={[{ label: 'used', bytes: 55 }]} warnAt={20} unit="percent" /><time>2d</time><span class="chip">on</span><AgeChip t={NOW - 40 * min} now={NOW} /><span class="muted">probe</span></span></td>
+        <td class="muted">—</td><td><Button label="Refresh alex-pro" icon="rotate-cw" iconOnly /></td></tr>
+      <tr><th scope="row"><span class="title">team-max</span> <span class="id">claude</span><span class="num muted"> ×2.5</span></th>
+        <td><span class="limit-cell"><FillBar total={100} segments={[{ label: 'used', bytes: 91 }]} warnAt={20} unit="percent" /><time>1h</time><span class="chip t-danger"><Icon name="triangle-alert" />Low</span><AgeChip t={NOW - 2 * min} now={NOW} /><span class="muted">execution</span></span></td>
+        <td><span class="limit-cell"><FillBar total={100} segments={[{ label: 'used', bytes: 30 }]} warnAt={20} unit="percent" /><time>5d</time><span class="chip">under</span><AgeChip t={NOW - 2 * min} now={NOW} /><span class="muted">execution</span></span></td>
+        <td><span class="limit-cell"><FillBar total={100} segments={[{ label: 'used', bytes: 70 }]} warnAt={20} unit="percent" /><time>5d</time><span class="chip t-attention">ahead</span><AgeChip t={NOW - 2 * min} now={NOW} /><span class="muted">execution</span></span></td>
+        <td><Button label="Refresh team-max" icon="rotate-cw" iconOnly /></td></tr></tbody>
+    </table></div></Panel>
+  </section>;
+}
+
+function Hosts({ limits }: { limits?: boolean }) {
+  const [sel, setSel] = useState<string | null>(limits ? null : hosts[1].id);
   const h = hosts.find(x => x.id === sel);
   // Control column: the section's problem, then the hosts catalogue (patterns/list-detail.md). Rows are two-line; the store fill wraps under them.
   const list = <>
@@ -198,7 +227,7 @@ function Hosts() {
       </div>
     </Panel>
   </>;
-  return <ListDetail list={list} detailKey={sel ?? undefined} detail={h && <article class="detail" data-ui="detail" tabIndex={-1} aria-label={h.id}>
+  return <ListDetail list={list} detailKey={sel ?? undefined} idle={<LimitsMock />} detail={h && <article class="detail" data-ui="detail" tabIndex={-1} aria-label={h.id}>
     <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={() => setSel(null)} />{!h.id.includes(h.platform.slice(0, 3)) && <span class="muted mono">{h.platform}</span>}</header>
     <h2 class="detail-title">{h.id}</h2>
 
@@ -507,6 +536,7 @@ function App() {
       <Route path="/tasks"><Tasks /></Route>
       <Route path="/results"><Results /></Route>
       <Route path="/hosts"><Hosts /></Route>
+      <Route path="/hosts/limits"><Hosts limits /></Route>
       <Route path="/lab"><Laboratory /></Route>
       <Route path="/agents"><Agents /></Route>
       <Route path="/pipelines/:id">{(p: { id: string }) => <Pipelines key={p.id} id={p.id} />}</Route>

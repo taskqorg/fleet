@@ -3,7 +3,7 @@ import { render, type ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import {
   Choice, DraftBar, StepList, FlowStrip,
-  Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, StatStrip,
+  Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, StatStrip,
   SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions,
   Composer, CodeEditor, DiffText, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type ThreadBlock, type Family, type Stage,
@@ -93,6 +93,20 @@ function NumbersDemo() {
       <AgeChip t={NOW - 3 * 24 * hr} now={NOW} /><AgeChip t={NOW - 40 * 24 * hr} now={NOW} />
     </div>
   </>;
+}
+
+/** A pool's left over two weeks: recorded to now, projected after it with a step at a member's reset. */
+function AreaDemo() {
+  const d = 24 * hr, from = NOW - 7 * d, to = NOW + 7 * d;
+  const rec = [{ at: from, v: 180 }, { at: NOW - 5 * d, v: 120 }, { at: NOW - 4 * d, v: 200 }, { at: NOW - d, v: 110 }, { at: NOW, v: 90 }];
+  const proj = [{ at: NOW, v: 90 }, { at: NOW + 2 * d, v: 20 }, { at: NOW + 2 * d, v: 120 }, { at: NOW + 6 * d, v: 40 }];
+  return <div class="col">
+    <AreaChart label="codex weekly left" from={from} to={to} now={NOW} max={200} value={v => `${Math.round(v / 2)}%`}
+      series={[{ label: 'recorded', points: rec, tone: 'd1' }, { label: 'projected', points: proj, tone: 'd1', projected: true }]} />
+    <AreaChart label="codex weekly burn" from={from} to={to} now={NOW} max={4} value={v => `${v.toFixed(1)}/h`}
+      series={[{ label: 'burn', points: [{ at: from, v: 1.2 }, { at: NOW - 3 * d, v: 3.1 }, { at: NOW, v: 2.0 }], tone: 'd2', step: true },
+        { label: 'burn', points: [{ at: NOW, v: 2.0 }, { at: to, v: 2.0 }], tone: 'd2', projected: true, step: true }]} />
+  </div>;
 }
 
 function FillDemo() {
@@ -297,6 +311,7 @@ const SECTIONS: [string, string, string | undefined, () => ComponentChildren, Co
   ['state-badge', 'State badge', 'state-badge', () => <BadgesDemo />, <>Left: icon and word, for detail views. Right: icon only, the form lists use (B1); hover or focus for the name and reason.</>],
   ['number', 'Numbers, totals, age chips', 'number', () => <NumbersDemo />, <>Measured, estimated (≈), unavailable (—), partial (≥). "Change values" shows the brief tint (OR-6): cost rising tints red, tokens neutral. The 2h chip is red (OR-18).</>],
   ['fill-bar', 'Fill bar', 'fill-bar', () => <FillDemo />],
+  ['area-chart', 'Area chart', 'area-chart', () => <AreaDemo />, <>Limits (people access §8): recorded area to now, projected area after it (lighter), a step at each member reset; day ticks and the now line. Left in percent of capacity, or burn per hour.</>],
   ['lifecycle', 'Harness marks, delivery stages, outcome block, detail sections', 'harness-counts', () => <LifecycleDemo />, <>D11: agent mark only while a task runs; delivery stage chip; harness counts per host omit zero; outcome block above task tabs (B2); stacked detail sections (C3).</>],
   ['stat-strip', 'Stat strip', 'stat-strip', () => <StatsDemo />, <>Operational counts: what needs you, failures, running against slots, workers per host. An offline host shows its last known count as a lower bound.</>],
   ['list-pending', 'Updating list: pending counters and rows, row checks', 'row-check', () => <PendingDemo />, <>A filter change keeps the last rows and counts on screen, dimmed under a thin bar, until the new answer replaces them in place. Checked rows are the view URL's sel.</>],

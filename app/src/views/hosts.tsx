@@ -1,5 +1,5 @@
 // Hosts (docs/design-system/pages/hosts.md): health and workers; host detail as stacked sections (D11 C3). With no host
-// open, the work area shows the system: services (RED from spans), findings of the rules pass, recent runs with their CPU
+// open, the work area shows the system (Limits has its own route, /hosts/limits): services (RED from spans), findings of the rules pass, recent runs with their CPU
 // and memory, and purge (docs/designs/fleet-telemetry.md §8, fleet-system-management.md System screen).
 // Staleness is decided on the client from lastSeenAt (no write happens when a host stops polling), re-evaluated every 5 s.
 import { useEffect, useState } from 'preact/hooks';
@@ -7,6 +7,7 @@ import { useLocation } from 'wouter-preact';
 import { ListDetail, Icon, StateBadge, HarnessCounts, AgeChip, Num, FillBar, DetailSection, KvRow, Empty, OfflineMarker, Button, ProblemRow } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useDoc } from '../store.ts';
+import { Limits } from './limits.tsx';
 
 const useTick = (msTick: number) => { const [, set] = useState(0); useEffect(() => { const t = setInterval(() => set(n => n + 1), msTick); return () => clearInterval(t); }, [msTick]); };
 const ms = (s: string) => Date.parse(s);
@@ -20,7 +21,6 @@ export function Hosts({ id }: { id?: string }) {
   const { data, state } = useDoc<any>('hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
   const now = data ? data.serverNow + (Date.now() - data.fetchedAt) : Date.now();
   // Limits (people-access §8): the latest reading per subscription and limit period, with its age; none is unknown, never zero.
-  const limits = useDoc<any>('subscription-limits', async () => await op('subscription_limits', {}), c => c.kind === 'managed-account', 30000);
   // Spans change without change rows: summary and findings are re-read every 30 s.
   const tele = useDoc<any>('telemetry-summary', async () => await op('telemetry_summary', { window: '1h' }), () => false, 30000);
   const found = useDoc<any>('telemetry-findings', async () => await op('telemetry_findings', {}), () => false, 30000);
@@ -29,7 +29,8 @@ export function Hosts({ id }: { id?: string }) {
   const reading = (hid: string) => (tele.data?.hosts ?? []).find((r: any) => r.hostId === hid);
   const sel = data.hosts.find((h: any) => h.id === id);
   const list = <>
-    <header class="page-h"><h1>Hosts</h1><span class="grow" /><OfflineMarker state={state} now={now} /></header>
+    <header class="page-h"><h1>Hosts</h1><span class="grow" /><OfflineMarker state={state} now={now} />
+      <a class="btn quiet" href="/hosts/limits" onClick={e => { e.preventDefault(); go('/hosts/limits'); }}><Icon name="gauge" />Limits</a></header>
     <section class="panel">
       <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
         {data.hosts.map((h: any) => { const r = reading(h.id); return <div key={h.id} role="row" class={`vl-row static${h.id === id ? ' sel' : ''}`}>
@@ -43,18 +44,11 @@ export function Hosts({ id }: { id?: string }) {
         </div>; })}
       </div>
     </section>
-    <section class="panel"><header class="panel-h"><h2>Subscription limits</h2></header>
-      <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr)' }}>
-        {(limits.data?.subscriptions ?? []).map((a: any) => <div key={a.id} role="row" class="vl-row static">
-          <span class="lead"><StateBadge family="subscription" state={a.intake === 'paused' ? 'paused' : 'all'} compact /></span>
-          <span class="tt"><span class="title">{a.name}</span><span class="id">{a.harness}</span>
-            {a.readings.length ? a.readings.map((r: any) => <span key={r.period} class={r.state === 'unknown' ? 'muted' : undefined}>{r.period} {r.state === 'unknown' ? 'unknown' : r.pct !== null ? <><Num m={{ value: r.pct, basis: 'measured' }} kind="count" />%</> : r.status} <AgeChip t={r.at} now={now} /> </span>) : <span class="muted">unknown</span>}</span>
-        </div>)}
-      </div>
-    </section>
   </>;
   const detail = sel && <HostDetail key={sel.id} host={sel} live={fresh(sel)} reading={reading(sel.id)} processes={(tele.data?.processes ?? []).filter((p: any) => p.hostId === sel.id)} now={now} onGone={() => go('/hosts')} />;
-  return <ListDetail list={list} detail={detail || undefined} detailKey={id} idle={<SystemPanels tele={tele.data} found={found.data} now={now} />} />;
+  // Limits (people access §8 and §12, D24): its own route; the idle work area shows the system.
+  const limits = id === 'limits' && <article class="detail" data-ui="detail" tabIndex={-1} aria-label="Limits"><Limits /></article>;
+  return <ListDetail list={list} detail={limits || detail || undefined} detailKey={id} idle={<SystemPanels tele={tele.data} found={found.data} now={now} />} />;
 }
 
 function HostDetail({ host: sel, live, reading: r, processes, now, onGone }: { host: any; live: boolean; reading: any; processes: any[]; now: number; onGone: () => void }) {
