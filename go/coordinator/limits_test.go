@@ -39,23 +39,22 @@ func TestLimitBurnProjectionPool(t *testing.T) {
 	}
 }
 
-// Requirement: section 8 "PM agents": the watch tells a director's PM once per (harness, period, next reset) when a
-// pool holding their subscription has a member empty before that reset; other people's pools stay silent. Risk: the
-// PM is never told before limits run out, or is told every tick.
-func TestPoolSignalsOncePerReset(t *testing.T) {
+// Requirement: section 8 "PM agents": the watch tells a director's PM once per (subscription, period, reset) when a
+// subscription they hold runs empty before its own reset; other people's subscriptions stay silent. Risk: the PM is
+// never told before limits run out, or is told every tick.
+func TestLimitSignalsOncePerReset(t *testing.T) {
 	at, reset := int64(1_000), int64(2_000)
-	r := contract.SubscriptionLimitsReply{
-		Subscriptions: []contract.LimitSubscription{{Id: "a", Holder: []byte(`"d@x"`)}, {Id: "b", Holder: []byte(`"o@x"`)}},
-		Pools: []contract.LimitPool{
-			{Harness: "codex", Period: "weekly", Members: []string{"a"}, FirstEmpty: contract.LimitEmpty{State: contract.LimitEmptyStateAt, At: &at}, NextReset: contract.LimitReset{At: &reset}},
-			{Harness: "claude", Period: "weekly", Members: []string{"b"}, FirstEmpty: contract.LimitEmpty{State: contract.LimitEmptyStateAt, At: &at}, NextReset: contract.LimitReset{At: &reset}},
-		}}
-	dir := &Person{Email: "d@x"}
-	parts, keys := poolSignals(r, dir, nil)
-	if len(parts) != 1 || !strings.Contains(parts[0], "codex weekly") || !strings.Contains(parts[0], "never set it") {
+	empty := []contract.LimitPeriod{{Period: "weekly", ResetsAt: &reset, FirstEmpty: contract.LimitEmpty{State: contract.LimitEmptyStateAt, At: &at}}}
+	r := contract.SubscriptionLimitsReply{Subscriptions: []contract.LimitSubscription{
+		{Id: "a", Harness: "codex", Holder: []byte(`"d@x"`), Periods: empty},
+		{Id: "b", Harness: "claude", Holder: []byte(`"o@x"`), Periods: empty},
+	}}
+	dir := &Person{Email: "d@x", Owner: true}
+	parts, keys := limitSignalsOf(r, dir, nil)
+	if len(parts) != 1 || !strings.Contains(parts[0], "subscription a codex weekly") || !strings.Contains(parts[0], "never set it") {
 		t.Fatal(parts)
 	}
-	if again, _ := poolSignals(r, dir, keys); len(again) != 0 {
+	if again, _ := limitSignalsOf(r, dir, keys); len(again) != 0 {
 		t.Fatal("sent twice", again)
 	}
 }

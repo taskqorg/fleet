@@ -190,19 +190,19 @@ func watchOne(q *Request, wid string) error {
 			break
 		}
 	}
+	var limits []string
 	if slices.Contains(kinds, "limits") {
 		signals, keys, err := limitSignals(q, dir, strList(w["limitsSignaled"]))
 		if err != nil {
-			return err
-		}
-		parts = append(parts, signals...)
-		if len(signals) > 0 {
+			log.Printf("watch %s: limits: %v", wid, err) // a limits read problem never blocks the other wakes
+		} else if len(signals) > 0 {
+			limits = signals
 			w["limitsSignaled"] = keys
 		}
 	}
 	nowMs := time.Now().UnixMilli()
 	timer := w["timerMs"] != nil && int64(num(w["nextWakeAt"])) <= nowMs
-	if len(parts) == 0 && !timer && cursor == start {
+	if len(parts) == 0 && len(limits) == 0 && !timer && cursor == start {
 		return nil // nothing to send or move: no write
 	}
 	w["cursor"] = cursor
@@ -215,6 +215,12 @@ func watchOne(q *Request, wid string) error {
 	}
 	if len(parts) > 0 {
 		if err := send(fmt.Sprintf("watch:%s:%d", id, start), fmt.Sprintf("Fleet: %d changes in your focus: %s", len(parts), strings.Join(parts, "; "))); err != nil {
+			return err
+		}
+	}
+	if len(limits) > 0 { // its own message: a limits signal is not a change in the focus
+		ks := strList(w["limitsSignaled"])
+		if err := send(fmt.Sprintf("limits:%s:%s", id, ks[len(ks)-1]), "Fleet: limits: "+strings.Join(limits, "; ")); err != nil {
 			return err
 		}
 	}
@@ -268,48 +274,55 @@ func classify(q *Request, c change) (string, error) {
 	return "", nil
 }
 
-// limitSignals (fleet-people-access.md section 8 "PM agents"): a pool holding a subscription of the director that is
-// projected to have a member empty before the pool's next reset. Each (harness, period, next reset) is sent once; the
-// agent may propose a refresh or order soonest_reset to the director, never set it.
+// limitsCache: one limits reply per watch pass for every watch (the reply reads all readings).
+// ponytail: a 10 s reuse window shared by all watches; key it by pass if passes get more frequent.
+var limitsCache struct {
+	at    int64
+	reply contract.SubscriptionLimitsReply
+}
+
+// limitSignals (fleet-people-access.md section 8 "PM agents"): a subscription held by the director with a period
+// projected empty before its own next reset. Each (subscription, period, reset) is sent once; the agent may propose a
+// refresh or order soonest_reset to the director, never set it.
 func limitSignals(q *Request, dir *Person, sent []string) ([]string, []string, error) {
-	r, err := limitsReply(q, limitsDefaults(time.Now().UnixMilli()))
-	if err != nil {
-		return nil, nil, err
+	now := time.Now().UnixMilli()
+	if now-limitsCache.at > 10_000 {
+		r, err := limitsReply(q, limitsDefaults(now))
+		if err != nil {
+			return nil, nil, err
+		}
+		limitsCache.at, limitsCache.reply = now, r
 	}
-	parts, keys := poolSignals(r, dir, sent)
+	parts, keys := limitSignalsOf(limitsCache.reply, dir, sent)
 	return parts, keys, nil
 }
 
-func poolSignals(r contract.SubscriptionLimitsReply, dir *Person, sent []string) ([]string, []string) {
-	held := map[string]bool{}
+func limitSignalsOf(r contract.SubscriptionLimitsReply, dir *Person, sent []string) ([]string, []string) {
+	var parts []string
+	keys := slices.Clone(sent)
 	for _, s := range r.Subscriptions {
 		var holder string
 		json.Unmarshal(s.Holder, &holder)
-		if fullAccess(dir) || holder == dir.Email {
-			held[s.Id] = true
-		}
-	}
-	var parts []string
-	keys := slices.Clone(sent)
-	for _, p := range r.Pools {
-		mine := false
-		for _, m := range append(slices.Clone(p.Members), p.Unknown...) {
-			mine = mine || held[m]
-		}
-		if !mine || p.FirstEmpty.State != contract.LimitEmptyStateAt || (p.NextReset.At != nil && *p.FirstEmpty.At >= *p.NextReset.At) {
+		if holder != dir.Email {
 			continue
 		}
-		reset := "unknown"
-		if p.NextReset.At != nil {
-			reset = time.UnixMilli(*p.NextReset.At).UTC().Format(time.RFC3339)
+		for _, p := range s.Periods {
+			if p.FirstEmpty.State != contract.LimitEmptyStateAt {
+				continue
+			}
+			empty := time.UnixMilli(*p.FirstEmpty.At).UTC().Format(time.RFC3339)
+			reset := "unknown"
+			if p.ResetsAt != nil {
+				reset = time.UnixMilli(*p.ResetsAt).UTC().Format(time.RFC3339)
+			}
+			key := s.Id + ":" + p.Period + ":" + reset
+			if slices.Contains(keys, key) {
+				continue
+			}
+			keys = append(keys, key)
+			parts = append(parts, fmt.Sprintf("subscription %s %s %s runs empty at %s, before its next reset (%s); you may propose subscription_limits_refresh or order soonest_reset to the director, never set it",
+				s.Id, s.Harness, p.Period, empty, reset))
 		}
-		key := p.Harness + ":" + p.Period + ":" + reset
-		if slices.Contains(keys, key) {
-			continue
-		}
-		keys = append(keys, key)
-		parts = append(parts, fmt.Sprintf("limits: %s %s has a member empty at %s, before the next reset (%s); you may propose subscription_limits_refresh or order soonest_reset to the director, never set it",
-			p.Harness, p.Period, time.UnixMilli(*p.FirstEmpty.At).UTC().Format(time.RFC3339), reset))
 	}
 	// ponytail: the sent list keeps the last 100 keys; older resets are long past.
 	if len(keys) > 100 {
