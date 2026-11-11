@@ -84,6 +84,22 @@ func accountHarness(a doc) string {
 	return "codex"
 }
 
+// Wait reasons, one list for tasks and executions (waitReason; the free text is waitDetail). The first three are the
+// "waits for a person" kinds of OSC 7501 blocked (go/executor/status.go): a grant or decision (permission), an answer
+// (question), a login or subscription (auth). The others wait on Fleet itself.
+var waitReasons = []string{"permission", "question", "auth", "dependency", "artifacts", "placement"}
+
+// waitKindOf: the wait reason of a dispatch stall cause (dispatch causes, causeOf).
+func waitKindOf(cause string) string {
+	switch {
+	case strings.HasSuffix(cause, ":trust"), strings.HasSuffix(cause, ":holder"), strings.HasSuffix(cause, ":not-taken"), strings.HasPrefix(cause, "budget:"):
+		return "permission" // a holder's grant, a take rule or a raised budget
+	case strings.HasPrefix(cause, "director:"), strings.HasSuffix(cause, ":not-ready"):
+		return "auth" // no subscription of the director, or a login to complete
+	}
+	return "placement" // offline, paused, roots, placement, limits: Fleet retries
+}
+
 // causeOf: a skip reason's stall cause key. ponytail: keyed on resolve's messages; structured codes if they start to change.
 func causeOf(a doc, host, message string) string {
 	id := astr(a["id"])
@@ -420,6 +436,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				continue
 			}
 			delete(e, "waitReason")
+			delete(e, "waitDetail")
 			if _, err := a.startCommand(q, e, best.Host, best.binding); err != nil {
 				return err
 			}
@@ -443,7 +460,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			}
 		}
 		if first != nil && first.Stop {
-			e["state"], e["stopDetail"], e["waitReason"] = "stopped", reason, reason
+			e["state"], e["stopDetail"], e["waitReason"], e["waitDetail"] = "stopped", reason, waitKindOf(cause), reason
 			if err := put(q, "execution", e); err != nil {
 				return err
 			}
@@ -452,12 +469,12 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			}
 			continue
 		}
-		if e["waitReason"] != reason {
-			e["waitReason"] = reason
+		if e["waitDetail"] != reason {
+			e["waitReason"], e["waitDetail"] = waitKindOf(cause), reason
 			if err := put(q, "execution", e); err != nil {
 				return err
 			}
-			if err := exec(q, "UPDATE execution SET wait_reason=$2 WHERE id=$1", e["id"], reason); err != nil {
+			if err := exec(q, "UPDATE execution SET wait_reason=$2 WHERE id=$1", e["id"], e["waitReason"]); err != nil {
 				return err
 			}
 			if err := recordDecision(q, e, polling, cs, nil); err != nil {

@@ -36,7 +36,7 @@ test('A1 a paused host takes no work: the execution waits with the skip reason a
   ok(await op('hosts_update', {id: 'trial-host', intake: 'paused'}));
   const {sessionId, executionId} = await queued();
   assert.ok(!ok(await h('/api/hosts/poll', poll)).commands.some((c: any) => c.executionId === executionId), 'no start command while paused');
-  assert.equal((await execution(sessionId, executionId)).waitReason, 'trial-host is Paused');
+  assert.deepEqual([(await execution(sessionId, executionId)).waitReason, (await execution(sessionId, executionId)).waitDetail], ['placement', 'trial-host is Paused']);
   const waiting = () => op('questions_list', {state: 'open'}).then(r => ok(r).questions.filter((q: any) => /Work is waiting: trial-host is Paused/.test(q.text)));
   assert.equal((await waiting()).length, 1, 'one open stall question');
   ok(await h('/api/hosts/poll', poll));
