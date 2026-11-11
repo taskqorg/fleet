@@ -823,8 +823,12 @@ func connIngest(q *Request) (int, error) {
 		if err != nil {
 			continue
 		}
-		// Only complete lines: the gateway may be writing the last one; the next pass reads it.
-		b = b[:bytes.LastIndexByte(b, '\n')+1]
+		// Only complete lines while the gateway may still write the day (today, yesterday); a past day is read whole, so
+		// a last line without its newline is imported or keeps the file.
+		past := f[:10] < yesterday
+		if !past {
+			b = b[:bytes.LastIndexByte(b, '\n')+1]
+		}
 		// Whole lines of any length (no Scanner token cap, W3-2); a line not imported keeps the file.
 		unimported := 0
 		for _, line := range bytes.Split(b, []byte{'\n'}) {
@@ -849,9 +853,9 @@ func connIngest(q *Request) (int, error) {
 		if added > 0 {
 			publish(q)
 		}
-		if unimported > 0 {
-			log.Printf("spool %s: kept, %d line(s) not imported", f, unimported)
-		} else if f[:10] < yesterday {
+		if past && unimported > 0 {
+			log.Printf("spool %s: past day kept, %d line(s) not imported", f, unimported)
+		} else if past {
 			// Retired only once the imported lines are committed; a re-read after a lost commit is deduplicated by callId.
 			path := filepath.Join(dir, f)
 			onEnd(q.tx, func(committed bool) {
