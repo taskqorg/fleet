@@ -250,3 +250,21 @@ test('A2 analytics stage 2: the experiment record is required at launch, amended
   const decided = ok(await op('lab_experiment_decide', {experimentId: e.id, decision: 'adopt jev', reason: 'check passed on rerun'}));
   assert.deepEqual([decided.decision, decided.decidedBy, decided.notes.at(-1).field], ['adopt jev', OWNER, 'decision']);
 });
+
+test('A3 analytics stage 3: a trial cost is usage times the price entry in force, with basis and price id, and unavailable without one (requirement: docs/designs/fleet-analytics.md, Price table; risk: a cost shown as exact or as 0 when it is estimated or unknown)', async () => {
+  const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
+  example.version = 2000000 + Math.floor(Math.random() * 1e6);
+  const {examples: [imported]} = ok(await call('POST', '/api/lab/examples', {examples: [example], approved: true}));
+  const e = ok(await call('POST', '/api/lab/experiments', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: [imported.artifactId], variants: [{label: 'jev'}],
+    goal: 'Price the smoke', hypothesis: 'One call costs well under a cent'}));
+  ok(await call('POST', `/api/lab/experiments/${e.id}/launch`, {}));
+  const trial = async () => (await until(async () => { const x = ok(await call('GET', `/api/lab/experiments/${e.id}`)); return x.trials?.find((t: any) => t.state === 'succeeded' && t.cost.length) ?? undefined; }, 'a priced trial'));
+  // A subject no entry prices yet: the cost is unavailable, never 0.
+  const subject = 'typesafe/system_one';
+  if (!ok(await op('prices_list', {subject})).prices.length) assert.deepEqual((await trial()).cost.map((c: any) => [c.value, c.basis]), [[null, 'unavailable']]);
+  assert.equal((await op('price_add', {subject, unit: 'output_tokens', price: 1, currency: 'USD', source: 'owner'})).status, 400, 'the tool is metered in input_tokens');
+  const price = ok(await op('price_add', {subject, unit: 'input_tokens', price: 0.000002, currency: 'USD', source: 'owner', effectiveFrom: 0}));
+  const [cost] = (await trial()).cost;
+  assert.deepEqual([cost.basis, cost.currency, cost.prices.map((p: any) => p.id).includes(price.id)], ['estimated', 'USD', true]);
+  assert.ok(Math.abs(cost.value - 286 * 0.000002) < 1e-12, String(cost.value));
+});

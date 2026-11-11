@@ -639,5 +639,23 @@ CREATE POLICY project_scope ON experiment_note USING (current_setting('fleet.pro
 -- The one place for the record's state rules: a stop or completion leaves the decision pending; launch stamps launched_at.
 CREATE OR REPLACE FUNCTION fleet_experiment_record() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.state IN ('stopped', 'done') AND NEW.decision IS NULL THEN NEW.decision := 'pending'; END IF; IF OLD.state = 'draft' AND NEW.state <> 'draft' AND NEW.launched_at IS NULL THEN NEW.launched_at := now(); END IF; RETURN NEW; END $$;
 CREATE TRIGGER experiment_record BEFORE UPDATE ON experiment FOR EACH ROW EXECUTE FUNCTION fleet_experiment_record();
-CREATE OR REPLACE FUNCTION fleet_note_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'experiment notes are append-only'; END $$;
-CREATE TRIGGER experiment_note_append_only BEFORE UPDATE OR DELETE ON experiment_note FOR EACH ROW EXECUTE FUNCTION fleet_note_append_only();
+CREATE OR REPLACE FUNCTION fleet_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION '% rows are append-only', TG_TABLE_NAME; END $$;
+CREATE TRIGGER experiment_note_append_only BEFORE UPDATE OR DELETE ON experiment_note FOR EACH ROW EXECUTE FUNCTION fleet_append_only();
+
+-- migration 27: the price table (docs/designs/fleet-analytics.md, Price table). Append-only: a price change is a new entry.
+-- A figure uses the latest entry of its subject and unit with effective_from <= the work's start; none gives unavailable.
+CREATE TABLE price_entry(
+ id text PRIMARY KEY,
+ subject text NOT NULL,
+ unit text NOT NULL,
+ price numeric NOT NULL CHECK (price >= 0),
+ currency text NOT NULL,
+ source text NOT NULL CHECK (source IN ('vendor', 'snapshot', 'owner')),
+ source_ref text NULL,
+ observed_at timestamptz NOT NULL,
+ effective_from timestamptz NOT NULL,
+ created_by text NULL,
+ seq bigint NOT NULL DEFAULT nextval(pg_get_serial_sequence('document', 'seq'))
+);
+CREATE INDEX price_entry_subject ON price_entry(subject, unit, effective_from);
+CREATE TRIGGER price_entry_append_only BEFORE UPDATE OR DELETE ON price_entry FOR EACH ROW EXECUTE FUNCTION fleet_append_only();

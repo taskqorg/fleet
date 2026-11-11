@@ -129,6 +129,9 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
                   <span class="muted" data-tip={conf}>r{t.cell.repeat + 1}{t.cell.attempt ? `.${t.cell.attempt}` : ''}</span>
                   <Num m={{ value: t.durationMs === null || t.durationMs === undefined ? null : t.durationMs / 1000, basis: t.durationMs == null ? 'unavailable' : 'measured', reason: 'running' }} kind="duration" />
                   <Num m={{ value: t.spend.credits, basis: 'measured', partial: t.spend.basis === 'partial' ? 'some calls without usage' : undefined }} kind="count" />
+                  {(t.cost ?? []).map((c: any, i: number) => c.currency === 'USD' || c.value === null
+                    ? <Num key={i} m={{ value: c.value, basis: c.basis, reason: c.value === null ? c.reason : `price ${c.prices.map((p: any) => p.id.slice(0, 8)).join(', ')}` }} kind="money" />
+                    : <span key={i} class="num b-estimated" data-tip={`estimated, price ${c.prices.map((p: any) => p.id.slice(0, 8)).join(', ')}`}>≈ {c.value.toPrecision(2)} {c.currency}</span>)}
                   {t.scores.filter((s: any) => s.trialIds.length === 1).map((s: any) => <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator)}${s.rationale ? ': ' + s.rationale : ''}`}><Icon name={s.form === 'pass_fail' ? (s.value ? 'circle-check' : 'circle-x') : 'sliders-horizontal'} label={`${evaluatorLabel(s.evaluator)} ${String(s.value)}`} />{s.form === 'pass_fail' ? '' : String(s.form === 'metric' ? Number(s.value).toFixed(2) : s.value)}</span>)}
                   <a class="btn quiet icon-only" href={`/api/pipeline-runs/${t.id}`} target="_blank" rel="noopener" aria-label="Open the run" data-tip="Open the run"><Icon name="external-link" /></a>
                   {t.state === 'running' ? <Button label="Cancel cell" icon="x" iconOnly kind="quiet" onClick={() => act('lab_cell_action', { experimentId: id, cell: key, action: 'cancel' })} />

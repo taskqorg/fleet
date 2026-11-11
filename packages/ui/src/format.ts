@@ -71,6 +71,8 @@ export function count(n: number): Formatted {
 
 /** Money in dollars: $0.42, $12.80, $1.2k. */
 export function money(n: number): Formatted {
+  // Below a cent (one provider call): two significant digits, so an estimate never reads as $0.00.
+  if (n > 0 && n < 0.01) return { text: `$${n.toPrecision(2)}`, long: `${n.toPrecision(2)} dollars` };
   const text = n >= 1000 ? `$${count(n).text}` : `$${n.toFixed(2)}`;
   return { text, long: `${n.toFixed(2)} dollars` };
 }

@@ -1939,6 +1939,28 @@ func expGet(q *Request, id string) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Each trial's provider usage, priced per call (fleet-analytics.md: usage x the latest entry in force at the call).
+	usageRows, err := queryRows(q, `SELECT coalesce(e.data->>'pipelineRunId',split_part(e.parent_execution_id,':step:',1)) AS run,
+	 coalesce(e.data->>'connection','')||'/'||coalesce(e.data->>'tool','') AS subject,t.connection_cost->>'unit' AS unit,(t.connection_cost->>'amount')::float8 AS amount,
+	 coalesce(to_timestamp((e.data->>'startedAt')::bigint/1000.0),e.started_at,now()) AS at
+	 FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE e.experiment_id=$1 AND e.kind='tool_run' AND t.connection_cost ? 'amount'`, id)
+	if err != nil {
+		return nil, err
+	}
+	costs := map[any][]usage{}
+	for _, u := range usageRows {
+		amount, _ := numOK(u["amount"])
+		at, _ := u["at"].(time.Time)
+		costs[u["run"]] = append(costs[u["run"]], usage{astr(u["subject"]), astr(u["unit"]), amount, at})
+	}
+	trialCost := map[any][]any{}
+	for run, us := range costs {
+		c, err := estimateCost(q, us)
+		if err != nil {
+			return nil, err
+		}
+		trialCost[run] = c
+	}
 	uniq := func(l []any) []any {
 		seen, out := map[string]bool{}, []any{}
 		for _, x := range l {
@@ -1982,7 +2004,7 @@ func expGet(q *Request, id string) (doc, error) {
 			}
 		}
 		return doc{"id": t["id"], "cell": t["cell"], "state": t["state"], "observation": t["observation"], "problem": t["problem"], "comparable": comparable(t), "startedAt": t["startedAt"], "finishedAt": t["finishedAt"],
-			"durationMs": t["durationMs"], "spend": spend, "confounders": doc{"hosts": uniq(hosts), "harnesses": uniq(harnesses), "models": uniq(models), "webRoute": web}, "scores": mine}
+			"durationMs": t["durationMs"], "spend": spend, "cost": append([]any{}, trialCost[t["id"]]...), "confounders": doc{"hosts": uniq(hosts), "harnesses": uniq(harnesses), "models": uniq(models), "webRoute": web}, "scores": mine}
 	}
 	order, last := expLatest(trials)
 	idsOf := func(match func(c doc) bool, onlyComparable bool) []string {
