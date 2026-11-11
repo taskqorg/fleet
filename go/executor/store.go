@@ -5,6 +5,8 @@ package main
 // {id, zone, bucket, endpoint, localEndpoint, keyFile, capacityBytes, backingPath, requiresLogon}.
 
 import (
+	"fleet/contract"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -91,7 +93,16 @@ func freeBytes(path string) (uint64, bool) {
 }
 
 // effectiveCapacity: the configured capacity bounded by the free space behind the store; nil when neither is known.
-func effectiveCapacity(cfg M) any {
+func effectiveCapacity(cfg M) *int64 {
+	c, ok := capacity(cfg)
+	if !ok {
+		return nil
+	}
+	v := int64(min(c, uint64(math.MaxInt64)))
+	return &v
+}
+
+func capacity(cfg M) (uint64, bool) {
 	c, hasC := jU64(cfg, "capacityBytes")
 	var f uint64
 	hasF := false
@@ -100,13 +111,13 @@ func effectiveCapacity(cfg M) any {
 	}
 	switch {
 	case hasC && hasF:
-		return min(c, f)
+		return min(c, f), true
 	case hasC:
-		return c
+		return c, true
 	case hasF:
-		return f
+		return f, true
 	}
-	return nil
+	return 0, false
 }
 
 // storeReachable: any HTTP answer from the loopback endpoint means the store process is up.
@@ -124,16 +135,23 @@ func storeReachable(cfg M) bool {
 	return true
 }
 
-func storeRegistration(cfg M, host string) M {
+func storeRegistration(cfg M, host string) *contract.StoresRequest {
 	key, secret, ok := readKey(jStr(cfg, "keyFile"))
 	if !ok {
 		return nil
 	}
-	return M{"hostId": host, "store": M{"id": cfg["id"], "zone": cfg["zone"], "bucket": cfg["bucket"], "endpoint": cfg["endpoint"],
-		"localEndpoint": cfg["localEndpoint"], "accessKeyId": key, "secretAccessKey": secret, "capacityBytes": effectiveCapacity(cfg),
-		"requiresLogon": jBoolOr(false, cfg, "requiresLogon")}}
+	opt := func(k string) *string {
+		if s, ok := jAt(cfg, k).(string); ok {
+			return &s
+		}
+		return nil
+	}
+	logon := jBoolOr(false, cfg, "requiresLogon")
+	return &contract.StoresRequest{HostId: host, Store: contract.StoreRegistration{Id: jStr(cfg, "id"), Zone: opt("zone"), Bucket: opt("bucket"),
+		Endpoint: opt("endpoint"), LocalEndpoint: opt("localEndpoint"), AccessKeyId: &key, SecretAccessKey: &secret,
+		CapacityBytes: effectiveCapacity(cfg), RequiresLogon: &logon}}
 }
 
-func storeReport(cfg M) []any {
-	return []any{M{"id": cfg["id"], "reachable": storeReachable(cfg), "capacityBytes": effectiveCapacity(cfg)}}
+func storeReport(cfg M) []contract.StoreReport {
+	return []contract.StoreReport{{Id: jStr(cfg, "id"), Reachable: storeReachable(cfg), CapacityBytes: effectiveCapacity(cfg)}}
 }

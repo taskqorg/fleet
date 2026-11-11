@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fleet/contract"
 	"os"
 	"path/filepath"
@@ -287,5 +288,22 @@ func TestTeardownAndProjectScriptTyped(t *testing.T) {
 	}
 	if b := enc(refusedTeardown("uncommitted")); b != `{"reason":"uncommitted","removed":false}` {
 		t.Fatal(b)
+	}
+}
+
+// Requirement: an owned pid that is still running but whose identity cannot be read is unknown, never confirmed gone;
+// only a pid missing from a new snapshot is gone (W3-3). Risk: a permission or transient read failure frees a session
+// while its original process keeps running.
+func TestIdentityReadFailureIsNotTermination(t *testing.T) {
+	defer func(f func(int) (string, error)) { identity = f }(identity)
+	identity = func(int) (string, error) { return "", errors.New("permission denied") }
+	l := &live{owned: map[int]string{os.Getpid(): "x"}}
+	if alive, err := l.aliveOwned(); err == nil || alive {
+		t.Fatal("unreadable running process reported gone")
+	}
+	// A recorded pid no process holds any more is gone, with or without a readable identity.
+	l = &live{owned: map[int]string{1<<22 + 7: "x"}}
+	if alive, err := l.aliveOwned(); err != nil || alive {
+		t.Fatal("a pid nobody holds is not reported gone", err)
 	}
 }
