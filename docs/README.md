@@ -53,7 +53,7 @@ Briefs, review reports, handoffs, screenshots and prototypes still in `docs/` ar
 
 Code and configuration cite these files by path. A citation is one of two kinds:
 
-- **Loaded path:** a program reads the path. The only ones are `source.path` and `source.anchor` in `config/lab/use-cases/*.json`, read and hashed by `scripts/lab-drift.ts`: today 11 entries in `fleet.json` load [use-cases.md](use-cases.md). A loaded path moves only together with its data and a new hash. An entry whose `source.repo` is not `fleet` names a file in that repository. The `docs/` mentions in `contracts/lab-config.json` are description text, so they are comments.
+- **Loaded path:** a program reads the path. The only ones are `source.path` and `source.anchor` in `config/lab/use-cases/*.json`, read and hashed by `scripts/lab-drift.ts`: today 11 entries in `fleet.json` load [use-cases.md](use-cases.md). A loaded path moves only together with its data and a new hash. An entry whose `source.repo` is not `fleet` names a file in that repository.
 - **Comment:** every other citation (code comments, `ci.yml`, `schema.sql`, READMEs, book text). It is fixed in the same pull request that moves the file.
 
 The docs report checks both (`docs.cite`) and lists them on each pull request (`docs.touched`).

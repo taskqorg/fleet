@@ -1,0 +1,14 @@
+# Starts fleet-update.service when the executor rewrites update.json, i.e. when its poll brings a new target
+# (docs/designs/fleet-delivery-pipeline.md#6-faster-pickup-on-hosts); fleet-update.timer stays as the fallback.
+# The path is the default data dir; a host that sets FLEET_DATA_DIR edits it to <data dir>/update/update.json.
+# Not on PDS18: fleet-update pds18 updates its executor. Install next to fleet-update.service, then
+#   systemctl --user daemon-reload && systemctl --user enable --now fleet-update.path
+[Unit]
+Description=Fleet self-update on a new target
+
+[Path]
+PathChanged=%h/.local/state/fleet/executor/update/update.json
+Unit=fleet-update.service
+
+[Install]
+WantedBy=default.target
