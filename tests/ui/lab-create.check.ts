@@ -27,7 +27,8 @@ try {
     await p.getByRole('button', { name: button, exact: typeof button === 'string' }).click();
     await p.getByRole('searchbox', { name: `Search ${group}` }).fill(id);
     const row = p.getByRole('grid', { name: group, exact: true }).getByRole('row').filter({ has: p.locator('.id', { hasText: new RegExp('^' + id + '$') }) });
-    await row.getByRole('button').click();
+    if (group === 'Projects') { await row.getByRole('button').focus(); await p.keyboard.press('Enter'); } else await row.getByRole('button').click();
+    if (group === 'Projects') await p.waitForFunction(() => document.activeElement?.textContent?.startsWith('Project:'));
     if (multiple) await p.getByRole('button', { name: 'Done choosing', exact: true }).click();
   };
   const fill = async (kind: 'single' | 'ab' | 'loop') => {
@@ -49,7 +50,11 @@ try {
   // All server-supported kinds remain available, and creating any of them never launches.
   for (const kind of ['single', 'ab', 'loop'] as const) {
     if (kind === 'single') await p.setViewportSize({ width: 600, height: 900 });
-    await fill(kind); if (kind === 'single') await p.screenshot({ path: 'design-report/lab-create-form.png' }); await created();
+    await fill(kind); if (kind === 'single') {
+      assert.ok(await p.getByRole('article', { name: 'Create experiment', exact: true }).evaluate(e => e.scrollWidth <= e.clientWidth));
+      assert.ok(await p.evaluate(() => document.documentElement.scrollHeight <= innerHeight), 'the work area, not the page, scrolls');
+      await p.screenshot({ path: 'design-report/lab-create-form.png' });
+    } await created();
     const id = new URL(p.url()).pathname.split('/').pop()!;
     const [row] = seed.rows(`SELECT state,kind FROM experiment WHERE id='${id}'`);
     assert.deepEqual(row, { state: 'draft', kind });
@@ -103,6 +108,14 @@ try {
   assert.equal(await p.getByRole('grid', { name: 'Projects', exact: true }).count(), 0);
   assert.equal(await p.getByRole('searchbox', { name: 'Search Projects' }).count(), 0);
   assert.deepEqual(counts(), before);
+  await p.unroute('**/api/ops/me');
+  await p.goto(origin + '/lab/new');
+  await p.getByRole('textbox', { name: 'Goal', exact: true }).fill('Only the original actor may restore this');
+  await p.route('**/api/ops/me', async route => { const response = await route.fetch(); const m = await response.json(); await route.fulfill({ json: { ...m, email: 'agents@trial.test' } }); });
+  await p.reload();
+  await p.getByRole('button', { name: /^Project:/ }).waitFor();
+  assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), '');
+  assert.equal(await p.evaluate(() => Object.keys(sessionStorage).some(k => k.startsWith('fleet-lab-create:owner@trial.test:'))), false);
   await context.close();
 } finally { await browser.close(); await close(); }
 console.log('Lab creation: all kinds, draft-only readback, rejection, uncertain POST and grant-clear passed; zero provider work.');

@@ -67,6 +67,11 @@ export function LabCreate() {
       try {
         const me = await op('me', {}); if (!me.email) throw Error('Sign in before creating an experiment.');
         await checkGrants(me.grantsVersion ?? ''); if (!live.current) return;
+        try {
+          const previous = JSON.parse(sessionStorage.getItem(PREFIX + 'actor') ?? 'null');
+          if (previous && previous.actor !== me.email) clearDrafts();
+          sessionStorage.setItem(PREFIX + 'actor', JSON.stringify({ actor: me.email }));
+        } catch { setStorageWarning('Browser storage is unavailable. Keep this page open until creation is resolved.'); }
         const k = PREFIX + me.email + ':' + me.grantsVersion; identity.current = k;
         let saved: Receipt | null = null; try { saved = JSON.parse(sessionStorage.getItem(k) ?? 'null'); } catch { /* start an empty draft */ }
         if (saved?.draft && typeof saved.draft.projectId === 'string' && typeof saved.draft.pipelineId === 'string' && typeof saved.draft.repeats === 'string' && Array.isArray(saved.draft.examples) && Array.isArray(saved.draft.variants) && Array.isArray(saved.draft.evaluators) && Array.isArray(saved.draft.budgets) && ['editing', 'pending', 'uncertain', 'created'].includes(saved.state)) {
