@@ -21,7 +21,7 @@ while :; do
   read -r state merge_state sha waiting reason <<<"$line"
   [ "$state" = MERGED ] && break
   # A conflict with main before the queue takes the entry: auto-merge stays on and nothing is removed, so name it here.
-  [ "$merge_state" = DIRTY ] && { echo "not merged: $state, merge_conflict"; exit 1; }
+  [ "$state" = OPEN ] && [ "$merge_state" = DIRTY ] && { echo "not merged: $state, merge_conflict"; exit 1; }
   # Out of the queue: the newest of "removed from the queue" (its reason) and "auto-merge disabled" (a veto) names why.
   [ "$state" = OPEN ] && [ "$waiting" = waiting ] || { echo "not merged: $state, $reason"; exit 1; }
   wait_step "queue"
