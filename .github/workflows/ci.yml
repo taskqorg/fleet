@@ -8,7 +8,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
   # The merge queue tests each group on gh-readonly-queue/main/*; go, app and browser are its required checks
-  # (docs/designs/fleet-delivery-pipeline.md#1-merge-ruleset-and-merge-queue). The push run feeds docs-order.
+  # (docs/designs/fleet-delivery-pipeline.md#1-merge-ruleset-and-merge-queue). The push run feeds docs-order. The docs report
+  # diffs a group commit against HEAD^, so each entry reports only its own change.
   merge_group:
   push:
     branches: [main]
@@ -121,11 +122,9 @@ jobs:
       - name: Docs report (warning only)
         if: always()
         continue-on-error: true
-        env:
-          MERGE_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           node scripts/docs-report.ts --self-check
-          node scripts/docs-report.ts ${MERGE_BASE:+--base "$MERGE_BASE"}
+          node scripts/docs-report.ts
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
