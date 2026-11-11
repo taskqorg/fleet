@@ -672,6 +672,7 @@ func every(ctx context.Context, name string, d time.Duration, fn func(context.Co
 	if d <= 0 {
 		return
 	}
+	passIntervals.Store(name, d)
 	go func() {
 		t := time.NewTicker(d)
 		defer t.Stop()
