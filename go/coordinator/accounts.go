@@ -447,6 +447,19 @@ func accountUpdateBody(q *Request, b doc) (any, error) {
 		}
 		set("switchPct", v)
 	}
+	// fleet-people-access.md section 8: planWeight (default 1) weights the pool; lowPct (default off) marks Low.
+	if v, ok := b["planWeight"]; ok {
+		if f, isNum := v.(float64); v != nil && !(isNum && f > 0) {
+			return nil, fail(400, "planWeight: a positive number or null (1)")
+		}
+		set("planWeight", v)
+	}
+	if v, ok := b["lowPct"]; ok {
+		if f, isNum := v.(float64); v != nil && !(isNum && f > 0 && f <= 100) {
+			return nil, fail(400, "lowPct: 1-100 or null (off)")
+		}
+		set("lowPct", v)
+	}
 	if v, ok := b["take"]; ok && v != nil {
 		t, _ := v.(map[string]any)
 		ps, isList := t["projects"].([]any)

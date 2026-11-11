@@ -174,7 +174,7 @@ Not built (all of §8); `quota` is reported as `unknown`.
 
 #### Limit history, pool and projection
 
-Target, not built. Owner request 2026-11-11: see how much limit is left, how it burns, and when resets land, per provider.
+Owner request 2026-11-11: see how much limit is left, how it burns, and when resets land, per provider. **Built (coordinator, `go/coordinator/limits.go`):** history, burn, projection with reset steps, first empty, pool empty, next reset, pace, Low, `planWeight` and `lowPct` on `account_update`, all in the `subscription_limits` reply (`SubscriptionLimitsReply` in `contracts/ops.schema.json`). A projected line ends one period after the member's reported reset (the next reset is unknown). Not built yet: `read_limits` probes, `order: soonest_reset`, the PM signal and the Limits screen.
 
 - **Periods.** One table maps provider window names to Fleet periods for run readings and probes alike: `five_hour` → `5h`, `seven_day` → `weekly`, `seven_day_<model>` → `weekly-<model>`; Codex windows are named from `windowDurationMins` (300 → `5h`, 10080 → `weekly`). Period length comes from the same table. Everything below works per (subscription, period).
 - **Percent for Claude** (executor side built: `claudeLimitReading`). Claude's `rate_limit_event` carries `rate_limit_info.utilization` (0-1) next to `status`, `resetsAt` and `rateLimitType`; the executor keeps `pct` = utilization × 100. Claude then gets `switchPct` like Codex. A reading with no `utilization` stays status only and counts as unknown below.

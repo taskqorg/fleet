@@ -608,29 +608,6 @@ func latestReadings(ctx context.Context, a *App) (map[string][]Reading, error) {
 	return out, rs.Err()
 }
 
-func subscriptionLimits(q *Request) (any, error) {
-	ctx := withTx(q)
-	m, err := latestReadings(ctx, q.app)
-	if err != nil {
-		return nil, err
-	}
-	accounts, err := rowsCtx(ctx, conn(ctx, q.app), "SELECT data FROM document WHERE kind='managed-account' ORDER BY seq")
-	if err != nil {
-		return nil, err
-	}
-	subs := []doc{}
-	for _, r := range accounts {
-		x, _ := r["data"].(map[string]any)
-		id, _ := x["id"].(string)
-		rd := m[id]
-		if rd == nil {
-			rd = []Reading{}
-		}
-		subs = append(subs, doc{"id": id, "name": x["name"], "harness": x["harness"], "holder": x["holder"], "intake": x["intake"], "switchPct": x["switchPct"], "readings": rd})
-	}
-	return doc{"serverNow": nowMs(), "subscriptions": subs}, nil
-}
-
 // readingOverSwitch: the dispatch skip (§6) for an account: provider rejected, or a percent at or over switchPct (100
 // without one: a full subscription cannot run anyway). Only
 // readings that know when their period ends count. Empty when none applies. For the dispatch area.
