@@ -110,15 +110,17 @@ func exactKeys(body json.RawMessage, t reflect.Type) error {
 	return nil
 }
 
-// operatorFirst: the operator check before the body is read, so a caller without the role learns nothing from a 400.
-func operatorFirst(h handler) handler {
+// checkFirst: a role check before the body is read, so a caller without the role learns nothing from a 400.
+func checkFirst(check func(*Request) error, h handler) handler {
 	return func(q *Request) (any, error) {
-		if err := operatorOnly(q); err != nil {
+		if err := check(q); err != nil {
 			return nil, err
 		}
 		return h(q)
 	}
 }
+
+func operatorFirst(h handler) handler { return checkFirst(operatorOnly, h) }
 
 // asT: rows and records read as maps, as their contract type. For values whose map keys are fixed by the query or the
 // builder (a SELECT column list); a reply built field by field names its struct directly.

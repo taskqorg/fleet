@@ -5,13 +5,15 @@ package main
 import (
 	"fmt"
 	"math"
+
+	"fleet/contract"
 )
 
 func init() {
-	operation("budget_set", false, budgetSet)
-	operation("budget_ask", false, budgetAsk)
-	operation("budget_delete", false, budgetDelete)
-	operation("budgets_list", true, budgetsList)
+	operation("budget_set", false, checkFirst(func(q *Request) error { return ownerOnly(q, "Only the owner sets budgets") }, typedOp(budgetSet)))
+	operation("budget_ask", false, typedOp(budgetAsk))
+	operation("budget_delete", false, checkFirst(func(q *Request) error { return ownerOnly(q, "Only the owner deletes budgets") }, typedOp(budgetDelete)))
+	operation("budgets_list", true, typedOp(budgetsList))
 }
 
 var (
@@ -21,8 +23,9 @@ var (
 	measuredUnit  = map[string]string{"wall_ms": "coalesce(t.wall_ms,0)", "tokens": "coalesce(t.tokens_input,0)+coalesce(t.tokens_output,0)"}
 )
 
-func budgetView(r map[string]any) doc {
-	return doc{"id": r["id"], "scope": r["scope"], "scopeId": r["scope_id"], "unit": r["unit"], "limit": num(r["limit"]), "period": r["period"], "action": r["action"], "setBy": r["set_by"], "setAt": r["set_at"]}
+func budgetView(r map[string]any) contract.Budget {
+	return contract.Budget{Id: astr(r["id"]), Scope: astr(r["scope"]), ScopeId: astr(r["scope_id"]), Unit: astr(r["unit"]), Limit: num(r["limit"]), Period: strPtr(r["period"]),
+		Action: astr(r["action"]), SetBy: astr(r["set_by"]), SetAt: timeText(r["set_at"])}
 }
 
 // spend: measured spend of a budget, or nil when Fleet does not measure its unit.
@@ -58,55 +61,58 @@ func spend(q *Request, b map[string]any) (any, string, error) {
 	return v, "measured", err
 }
 
-func budgetSet(q *Request) (any, error) {
-	if err := ownerOnly(q, "Only the owner sets budgets"); err != nil {
-		return nil, err
+func budgetSet(q *Request, b *contract.BudgetSetRequest) (contract.Budget, error) {
+	var none contract.Budget
+	if !inList(budgetScopes, b.Scope) || b.ScopeId == "" || b.Unit == "" || b.Limit < 0 {
+		return none, fail(400, "Expected scope, scopeId, unit, limit")
 	}
-	b := q.obj()
-	limit, isNum := b["limit"].(float64)
-	if !inList(budgetScopes, astr(b["scope"])) || astr(b["scopeId"]) == "" || astr(b["unit"]) == "" || !isNum || limit < 0 {
-		return nil, fail(400, "Expected scope, scopeId, unit, limit")
+	action := "warn"
+	if b.Action != nil {
+		action = *b.Action
 	}
-	action, period := nonNil(b["action"], "warn"), b["period"]
-	if !inList(budgetActions, astr(action)) || (period != nil && !inList(budgetPeriods, astr(period))) {
-		return nil, fail(400, "action warn|pause|stop; period day|week|month")
+	var period any
+	if b.Period != nil {
+		period = *b.Period
 	}
-	id, ok := b["id"].(string)
-	if !ok {
+	if !inList(budgetActions, action) || (period != nil && !inList(budgetPeriods, *b.Period)) {
+		return none, fail(400, "action warn|pause|stop; period day|week|month")
+	}
+	id := deref(b.Id)
+	if id == "" {
 		id = newID()
 	}
 	if err := exec(q, `INSERT INTO budget(id,scope,scope_id,unit,"limit",period,action,set_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
     ON CONFLICT(id) DO UPDATE SET scope=excluded.scope,scope_id=excluded.scope_id,unit=excluded.unit,"limit"=excluded."limit",period=excluded.period,action=excluded.action,set_by=excluded.set_by,set_at=now()`,
-		id, b["scope"], b["scopeId"], b["unit"], limit, period, action, q.person.Email); err != nil {
-		return nil, err
+		id, b.Scope, b.ScopeId, b.Unit, b.Limit, period, action, q.person.Email); err != nil {
+		return none, err
 	}
 	rs, err := queryRows(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action,set_by,set_at FROM budget WHERE id=$1`, id)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	return budgetView(rs[0]), nil
 }
 
-func budgetAsk(q *Request) (any, error) {
-	b := q.obj()
-	rs, err := queryRows(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit FROM budget WHERE id=$1`, b["budgetId"])
+func budgetAsk(q *Request, b *contract.BudgetAskRequest) (contract.BudgetAskReply, error) {
+	var none contract.BudgetAskReply
+	rs, err := queryRows(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit FROM budget WHERE id=$1`, b.BudgetId)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	if len(rs) == 0 {
-		return nil, fail(404, "Unknown budget")
+		return none, fail(404, "Unknown budget")
 	}
 	r := rs[0]
-	limit, ok := b["limit"].(float64)
-	if !ok || limit <= num(r["limit"]) {
-		return nil, fail(400, "Expected a limit above the current one")
+	limit := b.Limit
+	if limit <= num(r["limit"]) {
+		return none, fail(400, "Expected a limit above the current one")
 	}
 	asker, askedBy := "fleet", any(nil)
 	if q.person != nil {
 		asker, askedBy = q.person.Email, q.person.Email
 	}
 	reason := ""
-	if s, ok := b["reason"].(string); ok && s != "" {
+	if s := deref(b.Reason); s != "" {
 		if len(s) > 500 {
 			s = s[:500]
 		}
@@ -120,7 +126,7 @@ func budgetAsk(q *Request) (any, error) {
 		"text":    fmt.Sprintf("%s asks to raise the %s %s budget from %v to %v %s%s.", asker, r["scope"], r["scope_id"], jsNum(num(r["limit"])), jsNum(limit), r["unit"], reason),
 		"options": []any{"approve", "decline"}, "askedBy": asker,
 		"data": doc{"budgetAsk": doc{"budgetId": r["id"], "limit": limit, "askedBy": askedBy}, "cause": fmt.Sprint("budget:", r["id"], ":ask")}})
-	return doc{"questionId": id}, err
+	return contract.BudgetAskReply{QuestionId: id}, err
 }
 
 // jsNum prints a number as JavaScript does for the integers and short decimals budgets use.
@@ -131,37 +137,37 @@ func jsNum(f float64) string {
 	return fmt.Sprint(f)
 }
 
-func budgetDelete(q *Request) (any, error) {
-	if err := ownerOnly(q, "Only the owner deletes budgets"); err != nil {
-		return nil, err
-	}
-	b := q.obj()
-	tag, err := q.tx.Exec(q.ctx(), "DELETE FROM budget WHERE id=$1", b["id"])
+func budgetDelete(q *Request, b *contract.BudgetDeleteRequest) (contract.BudgetDeleteReply, error) {
+	tag, err := q.tx.Exec(q.ctx(), "DELETE FROM budget WHERE id=$1", b.Id)
 	if err != nil {
-		return nil, err
+		return contract.BudgetDeleteReply{}, err
 	}
 	if tag.RowsAffected() == 0 {
-		return nil, fail(404, "Unknown budget")
+		return contract.BudgetDeleteReply{}, fail(404, "Unknown budget")
 	}
-	return doc{"id": b["id"], "deleted": true}, nil
+	return contract.BudgetDeleteReply{Id: b.Id, Deleted: true}, nil
 }
 
-func budgetsList(q *Request) (any, error) {
+func budgetsList(q *Request, _ *contract.BudgetsListRequest) (contract.BudgetsListReply, error) {
+	out := contract.BudgetsListReply{Budgets: []contract.Budget{}}
 	rs, err := queryRows(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action,set_by,set_at FROM budget ORDER BY set_at`)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	out := []doc{}
 	for _, r := range rs {
 		v, basis, err := spend(q, r)
 		if err != nil {
-			return nil, err
+			return out, err
 		}
 		x := budgetView(r)
-		x["spend"] = doc{"value": v, "basis": basis}
-		out = append(out, x)
+		sp := contract.BudgetSpend{Basis: basis}
+		if f, ok := v.(float64); ok {
+			sp.Value = &f
+		}
+		x.Spend = &sp
+		out.Budgets = append(out.Budgets, x)
 	}
-	return doc{"budgets": out}, nil
+	return out, nil
 }
 
 type reachedBudget struct{ id, action, reason string }

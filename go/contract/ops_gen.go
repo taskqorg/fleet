@@ -293,49 +293,62 @@ type BoundaryBlock struct {
 	State       ExecutionState `json:"state"`
 }
 
-type BudgetAskReply struct {
-	QuestionId json.RawMessage `json:"questionId,omitempty"`
+// Budget: scope person, project, experiment or connection; action warn, pause or stop; period day, week, month or null (all time). spend only in budgets_list.
+type Budget struct {
+	Action  string       `json:"action"`
+	Id      string       `json:"id"`
+	Limit   float64      `json:"limit"`
+	Period  *string      `json:"period"`
+	Scope   string       `json:"scope"`
+	ScopeId string       `json:"scopeId"`
+	SetAt   string       `json:"setAt"`
+	SetBy   string       `json:"setBy"`
+	Spend   *BudgetSpend `json:"spend,omitempty"`
+	Unit    string       `json:"unit"`
 }
 
+type BudgetAskReply struct {
+	QuestionId string `json:"questionId"`
+}
+
+// BudgetAskRequest: Asks the owner to raise a budget above its current limit.
 type BudgetAskRequest struct {
-	BudgetId *string  `json:"budgetId,omitempty"`
-	Limit    *float64 `json:"limit,omitempty"`
-	Reason   *string  `json:"reason,omitempty"`
+	BudgetId string  `json:"budgetId"`
+	Limit    float64 `json:"limit"`
+	Reason   *string `json:"reason,omitempty"`
 }
 
 type BudgetDeleteReply struct {
-	Deleted json.RawMessage `json:"deleted,omitempty"`
-	Id      json.RawMessage `json:"id,omitempty"`
+	Deleted bool   `json:"deleted"`
+	Id      string `json:"id"`
 }
 
+// BudgetDeleteRequest: Owner only.
 type BudgetDeleteRequest struct {
-	Id json.RawMessage `json:"id,omitempty"`
+	Id string `json:"id"`
 }
 
-type BudgetSetReply struct {
-	Action  json.RawMessage `json:"action,omitempty"`
-	Id      json.RawMessage `json:"id,omitempty"`
-	Limit   json.RawMessage `json:"limit,omitempty"`
-	Period  json.RawMessage `json:"period,omitempty"`
-	Scope   json.RawMessage `json:"scope,omitempty"`
-	ScopeId json.RawMessage `json:"scopeId,omitempty"`
-	SetAt   json.RawMessage `json:"setAt,omitempty"`
-	SetBy   json.RawMessage `json:"setBy,omitempty"`
-	Unit    json.RawMessage `json:"unit,omitempty"`
-}
+type BudgetSetReply = Budget
 
+// BudgetSetRequest: Owner only. No id: a new budget. action defaults to warn.
 type BudgetSetRequest struct {
-	Action  *string         `json:"action,omitempty"`
-	Id      json.RawMessage `json:"id,omitempty"`
-	Limit   *float64        `json:"limit,omitempty"`
-	Period  json.RawMessage `json:"period,omitempty"`
-	Scope   *string         `json:"scope,omitempty"`
-	ScopeId *string         `json:"scopeId,omitempty"`
-	Unit    json.RawMessage `json:"unit,omitempty"`
+	Action  *string `json:"action,omitempty"`
+	Id      *string `json:"id,omitempty"`
+	Limit   float64 `json:"limit"`
+	Period  *string `json:"period,omitempty"`
+	Scope   string  `json:"scope"`
+	ScopeId string  `json:"scopeId"`
+	Unit    string  `json:"unit"`
+}
+
+// BudgetSpend: basis measured (value is the spend in the budget's unit and period) or unverifiable (value null).
+type BudgetSpend struct {
+	Basis string   `json:"basis"`
+	Value *float64 `json:"value"`
 }
 
 type BudgetsListReply struct {
-	Budgets json.RawMessage `json:"budgets,omitempty"`
+	Budgets []Budget `json:"budgets"`
 }
 
 type BudgetsListRequest = map[string]json.RawMessage
