@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"database/sql"
+	"encoding/json"
 	"fleet/contract"
 	"fmt"
 	"io"
@@ -378,15 +379,16 @@ func flush(db *sql.DB, url, token, host string) error {
 				}
 				own := false
 				for _, e := range jArr(value, "events") {
-					if jStr(e, "type") == "outbox.failed" {
+					if jStr(e, "type") == string(contract.FleetEventTypeOutboxFailed) {
 						own = true
 					}
 				}
 				if hasExec && !own {
 					// ponytail: seq offset 1e12+rowid keeps clear of harness sequences.
-					ev := M{"id": fmt.Sprintf("outbox-failed-%d", r.n), "seq": 1_000_000_000_000 + r.n, "type": "outbox.failed", "timestamp": now,
-						"data": M{"route": r.route, "status": a.status, "reason": reason}}
-					if err := queue(tx, "/api/hosts/events", M{"hostId": host, "executionId": execution, "events": []any{ev}}); err != nil {
+					data := contract.OutboxFailed{Route: r.route, Status: int64(a.status), Reason: reason}
+					ev := contract.HostEvent{Id: fmt.Sprintf("outbox-failed-%d", r.n), Seq: 1_000_000_000_000 + r.n, Type: string(contract.FleetEventTypeOutboxFailed),
+						Timestamp: now, Data: json.RawMessage(enc(data))}
+					if err := queue(tx, "/api/hosts/events", contract.HostEvents{HostId: host, ExecutionId: execution, Events: []contract.HostEvent{ev}}); err != nil {
 						tx.Rollback()
 						return err
 					}

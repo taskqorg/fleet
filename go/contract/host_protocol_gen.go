@@ -339,6 +339,58 @@ func (v *ArtifactVerify) Validate() error {
 	return nil
 }
 
+type CheckStatus string
+
+const (
+	CheckStatusOk     CheckStatus = "ok"
+	CheckStatusFailed CheckStatus = "failed"
+)
+
+// CheckStatusValues lists every CheckStatus in schema order.
+var CheckStatusValues = []CheckStatus{CheckStatusOk, CheckStatusFailed}
+
+// Valid: v is one of the schema's values.
+func (v CheckStatus) Valid() bool {
+	for _, x := range CheckStatusValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type CheckoutResult struct {
+	CheckoutPath string  `json:"checkoutPath"`
+	Reason       *string `json:"reason,omitempty"`
+	Sha          *string `json:"sha,omitempty"`
+	Status       string  `json:"status"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CheckoutResult) Validate() error {
+	return nil
+}
+
+// CheckoutSync: data of a checkout.synced or sync-failed event
+type CheckoutSync struct {
+	Checkouts []CheckoutResult `json:"checkouts"`
+	HostId    string           `json:"hostId"`
+	Sha       string           `json:"sha"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CheckoutSync) Validate() error {
+	if v.Checkouts == nil {
+		return Missing("checkouts")
+	}
+	for i := range v.Checkouts {
+		if err := Check(&v.Checkouts[i], "checkouts"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type ChildReceipt struct {
 	CommandId   string       `json:"commandId"`
 	Delegation  ChildRequest `json:"delegation"`
@@ -940,6 +992,41 @@ type ProtocolFailed struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ProtocolFailed) Validate() error {
+	return nil
+}
+
+// Readiness: data of a readiness event
+type Readiness struct {
+	Checks []ReadinessCheck `json:"checks"`
+	HostId string           `json:"hostId"`
+	Ok     bool             `json:"ok"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *Readiness) Validate() error {
+	if v.Checks == nil {
+		return Missing("checks")
+	}
+	for i := range v.Checks {
+		if err := Check(&v.Checks[i], "checks"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ReadinessCheck struct {
+	Check  string      `json:"check"`
+	Reason *string     `json:"reason,omitempty"`
+	Status CheckStatus `json:"status"`
+	Target string      `json:"target"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ReadinessCheck) Validate() error {
+	if err := Check(&v.Status, "status"); err != nil {
+		return err
+	}
 	return nil
 }
 

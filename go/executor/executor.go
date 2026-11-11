@@ -653,7 +653,7 @@ func (e *executor) run(c M) error {
 		return e.finish(c, "failed", "")
 	case "readiness":
 		data := readiness(jAt(p, "project"), e.host, os.Getenv("FLEET_NATIVE_ACCOUNTS"))
-		ok := data["ok"] == true
+		ok := data.Ok
 		if err := e.event(c, 0, contract.FleetEventTypeReadiness, data); err != nil {
 			return err
 		}
