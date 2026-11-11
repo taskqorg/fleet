@@ -967,14 +967,19 @@ type FileRef struct {
 	Sha256 *string `json:"sha256"`
 }
 
-type FocusSetReply struct {
-	Focus     json.RawMessage `json:"focus,omitempty"`
-	SessionId json.RawMessage `json:"sessionId,omitempty"`
+type Focus struct {
+	ProjectIds json.RawMessage `json:"projectIds"`
 }
 
+type FocusSetReply struct {
+	Focus     Focus  `json:"focus"`
+	SessionId string `json:"sessionId"`
+}
+
+// FocusSetRequest: projectIds: a list of project ids in the caller's grants, or "*".
 type FocusSetRequest struct {
-	ProjectIds []string `json:"projectIds,omitempty"`
-	SessionId  *string  `json:"sessionId,omitempty"`
+	ProjectIds json.RawMessage `json:"projectIds"`
+	SessionId  string          `json:"sessionId"`
 }
 
 type HarnessModel struct {
@@ -1597,7 +1602,7 @@ type QuestionsListRequest struct {
 }
 
 type QuestionsReply struct {
-	Questions json.RawMessage `json:"questions,omitempty"`
+	Questions []map[string]json.RawMessage `json:"questions"`
 }
 
 type QuestionsRequest struct {
@@ -1606,7 +1611,7 @@ type QuestionsRequest struct {
 }
 
 type QueueListReply struct {
-	Queued json.RawMessage `json:"queued,omitempty"`
+	Queued []map[string]json.RawMessage `json:"queued"`
 }
 
 type QueueListRequest struct {
@@ -1769,11 +1774,11 @@ type SessionGetRequest struct {
 }
 
 type SessionHandoffsReply struct {
-	Handoffs json.RawMessage `json:"handoffs,omitempty"`
+	Handoffs []map[string]json.RawMessage `json:"handoffs"`
 }
 
 type SessionHandoffsRequest struct {
-	SessionId *string `json:"sessionId,omitempty"`
+	SessionId string `json:"sessionId"`
 }
 
 type SessionProfileReply struct {
@@ -2311,40 +2316,57 @@ type VariantVsBaseline struct {
 	Wins         *int64   `json:"wins,omitempty"`
 }
 
+// ViewLinkReply: For view: url and path; for url: the parsed view.
 type ViewLinkReply struct {
-	Path json.RawMessage `json:"path,omitempty"`
+	Path *string         `json:"path,omitempty"`
+	Url  *string         `json:"url,omitempty"`
+	View json.RawMessage `json:"view,omitempty"`
+}
+
+// ViewLinkRequest: Exactly one of view (a view state to link) or url (a Fleet URL to read back).
+type ViewLinkRequest struct {
 	Url  json.RawMessage `json:"url,omitempty"`
 	View json.RawMessage `json:"view,omitempty"`
 }
 
-type ViewLinkRequest struct {
-	Url  *string `json:"url,omitempty"`
-	View *string `json:"view,omitempty"`
-}
-
+// WatchGetReply: No watch: watch is absent.
 type WatchGetReply struct {
-	Watch json.RawMessage `json:"watch,omitempty"`
+	Watch *WatchRecord `json:"watch,omitempty"`
 }
 
 type WatchGetRequest struct {
-	SessionId *string `json:"sessionId,omitempty"`
+	SessionId string `json:"sessionId"`
 }
 
-type WatchSetReply = map[string]json.RawMessage
+// WatchRecord: A session's watch: kinds of foreign changes that wake it, an optional timer, and its wake count.
+type WatchRecord struct {
+	Cursor     int64           `json:"cursor"`
+	Id         string          `json:"id"`
+	Kinds      []string        `json:"kinds"`
+	LastError  *string         `json:"lastError,omitempty"`
+	LastWakeAt json.RawMessage `json:"lastWakeAt,omitempty"`
+	NextWakeAt *int64          `json:"nextWakeAt,omitempty"`
+	SessionId  string          `json:"sessionId"`
+	TimerMs    *float64        `json:"timerMs,omitempty"`
+	Wakes      int64           `json:"wakes"`
+}
 
+type WatchSetReply = WatchRecord
+
+// WatchSetRequest: kinds: task, question, execution, host.
 type WatchSetRequest struct {
-	Kinds     json.RawMessage `json:"kinds,omitempty"`
-	SessionId *string         `json:"sessionId,omitempty"`
-	TimerMs   *float64        `json:"timerMs,omitempty"`
+	Kinds     []string `json:"kinds"`
+	SessionId string   `json:"sessionId"`
+	TimerMs   *float64 `json:"timerMs,omitempty"`
 }
 
 type WatchStopReply struct {
-	SessionId json.RawMessage `json:"sessionId,omitempty"`
-	Stopped   json.RawMessage `json:"stopped,omitempty"`
+	SessionId string `json:"sessionId"`
+	Stopped   bool   `json:"stopped"`
 }
 
 type WatchStopRequest struct {
-	SessionId *string `json:"sessionId,omitempty"`
+	SessionId string `json:"sessionId"`
 }
 
 type Window struct {
@@ -2356,18 +2378,30 @@ type Window struct {
 	WallMsMedian *int64   `json:"wallMsMedian"`
 }
 
+// WorkerDoneReply: action accepted (with the report) or rejected (with code: invalid_outcome, stale_dispatch, already_reported, native_identity_conflict, and reason).
 type WorkerDoneReply struct {
-	Action      json.RawMessage `json:"action,omitempty"`
-	Duplicate   json.RawMessage `json:"duplicate,omitempty"`
-	ExecutionId json.RawMessage `json:"executionId,omitempty"`
-	Report      json.RawMessage `json:"report,omitempty"`
+	Action      string        `json:"action"`
+	At          *int64        `json:"at,omitempty"`
+	Code        *string       `json:"code,omitempty"`
+	Duplicate   *bool         `json:"duplicate,omitempty"`
+	ExecutionId string        `json:"executionId"`
+	Id          *string       `json:"id,omitempty"`
+	Reason      *string       `json:"reason,omitempty"`
+	Report      *WorkerReport `json:"report,omitempty"`
 }
 
+// WorkerDoneRequest: outcome succeeded or failed; anything else is recorded as rejected (invalid_outcome). summary: a string; any other value is stored as null.
 type WorkerDoneRequest struct {
-	ExecutionId     *string `json:"executionId,omitempty"`
-	NativeSessionId *string `json:"nativeSessionId,omitempty"`
-	Outcome         *string `json:"outcome,omitempty"`
-	Summary         *string `json:"summary,omitempty"`
+	ExecutionId     string          `json:"executionId"`
+	NativeSessionId *string         `json:"nativeSessionId,omitempty"`
+	Outcome         json.RawMessage `json:"outcome,omitempty"`
+	Summary         json.RawMessage `json:"summary,omitempty"`
+}
+
+type WorkerReport struct {
+	At      int64   `json:"at"`
+	Outcome string  `json:"outcome"`
+	Summary *string `json:"summary"`
 }
 
 // Operations: every coordinator operation; each name has <Name>Request and <Name>Reply.
