@@ -221,7 +221,7 @@
     "ConnectionsListReply": {"type": "object", "required": ["providers", "connections"], "properties": {"providers": {"type": "object", "additionalProperties": true, "$comment": "The provider catalogue by provider id."}, "connections": {"type": "array", "items": {"$ref": "#/$defs/ConnectionView"}}}},
     "ConnectionsListRequest": {"type": "object", "additionalProperties": true},
     "ConnectionsSetAccessReply": {"$ref": "#/$defs/ConnectionView"},
-    "ConnectionsSetAccessRequest": {"type": "object", "required": ["connection", "access"], "properties": {"connection": {"type": "string"}, "access": {}}, "additionalProperties": true, "$comment": "access: {people, projects, experiments}, each a list of ids."},
+    "ConnectionsSetAccessRequest": {"type": "object", "required": ["connection"], "properties": {"connection": {"type": "string"}, "access": {}}, "additionalProperties": true, "$comment": "access: {people, projects, experiments}, each a list of ids."},
     "ConnectionsSetIntakeReply": {"$ref": "#/$defs/ConnectionView"},
     "ConnectionsSetIntakeRequest": {"type": "object", "required": ["connection", "intake"], "properties": {"connection": {"type": "string"}, "intake": {"type": "string"}}, "additionalProperties": true, "$comment": "intake all or paused."},
     "ConnectionsTokenCreateReply": {"type": "object", "required": ["name", "token", "refused", "connections"], "properties": {"name": {"type": "string"}, "token": {"type": ["string", "null"]}, "refused": {"type": "array", "items": {"type": "string"}}, "connections": {"type": "array", "items": {"type": "object", "additionalProperties": true}}}, "$comment": "token: the bearer value, shown once; refused: requested connections the owner cannot use."},

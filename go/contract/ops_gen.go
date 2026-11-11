@@ -548,7 +548,7 @@ type ConnectionsSetAccessReply = ConnectionView
 
 // ConnectionsSetAccessRequest: access: {people, projects, experiments}, each a list of ids.
 type ConnectionsSetAccessRequest struct {
-	Access     json.RawMessage `json:"access"`
+	Access     json.RawMessage `json:"access,omitempty"`
 	Connection string          `json:"connection"`
 }
 
