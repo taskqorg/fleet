@@ -12,7 +12,9 @@ func TestTransferOutcomeAndReceiptCommitTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uploadSchema(db) // no outbox table yet: queuing the receipt fails
+	if _, err := db.Exec("DROP TABLE outbox"); err != nil { // queuing the receipt fails
+		t.Fatal(err)
+	}
 	body := M{"command": M{"id": "c1", "executionId": "x1"}}
 	if err := enqueue(db, "j1", "copy", body); err != nil {
 		t.Fatal(err)
@@ -25,7 +27,9 @@ func TestTransferOutcomeAndReceiptCommitTogether(t *testing.T) {
 	if state != "queued" {
 		t.Fatalf("state %s without its receipt", state)
 	}
-	outboxSchema(db)
+	if _, err := db.Exec("CREATE TABLE outbox(route TEXT NOT NULL,body TEXT NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
 	if err := (dbExec{db}).tx(func(x execer) error { return settleJob(x, "h", "j1", "copy", body, 0, M{}, nil) }); err != nil {
 		t.Fatal(err)
 	}

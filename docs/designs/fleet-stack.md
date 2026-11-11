@@ -44,7 +44,7 @@ The owner's first goal is fast agent work in parallel worktrees: the Mac must st
 
 - `AGENTS.md` sends every agent attempt to `fleet.md` and the specq shared core at a pinned commit.
 - `fleet.md` names one merge-gate command and a diagnostic time budget of 180 s on an idle Mac ([verification](../../fleet.md#verification)). The full gate runs only in CI ([why](#why-this-stack)).
-- CI runs specq `contract_lint.py` on `fleet.md` and `scripts/test-rule-report.ts`, which reports tests that name no requirement and risk as a warning. Nothing fails because a test lacks a reference.
+- CI runs specq `contract_lint.py` on `fleet.md` and `scripts/test-rule-report.ts --strict`: an outside test in `tests/go/` that names no requirement or risk fails CI; any other test is reported as a warning.
 - Not built: a `fleet` project in `config/projects/`, so that specq rule delivery also applies to agents Fleet itself dispatches to work on Fleet.
 
 ## Toolchain
