@@ -84,7 +84,7 @@ Size gets no threshold. The specq budget covers the root contract only, and exte
 
 The report copies the specq compaction mechanism: one open item carries the work, and a second never opens while the first is open.
 
-- A new job `docs-order` runs with `needs: build-test-design` and `if: always() && github.event_name == 'push'`, with `permissions: issues: write`. It downloads the `design-report` artifact and uses `actions/github-script@v7` exactly as the design-report comment job does: it finds the open issue whose body contains `<!-- fleet-docs-order -->`, updates its body with the findings, or creates it with label `docs`, creating the label if missing. When the report has no finding except `docs.size` and `docs.delta`, the job closes the issue.
+- A new job `docs-order` runs with `needs: browser` and `if: always() && github.event_name == 'push'`, with `permissions: issues: write`. It downloads the `design-report` artifact and uses `actions/github-script@v7` exactly as the design-report comment job does: it finds the open issue whose body contains `<!-- fleet-docs-order -->`, updates its body with the findings, or creates it with label `docs`, creating the label if missing. When the report has no finding except `docs.size` and `docs.delta`, the job closes the issue.
 - `AGENTS.md` gets a second line: an agent that edits `docs/` reads the open `docs-order` issue first and fixes the findings in the files it touches. The docs report block in each pull request comment links the issue. Fleet has no GitHub-issue intake today; when the coordinator gains one, the issue becomes a Fleet task with no change here.
 - Step 0 of the rework is done only when this job has opened the issue once on `main`.
 

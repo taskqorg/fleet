@@ -401,7 +401,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		if err != nil {
 			return err
 		}
-		if e["dispatch"] == nil || e["hostId"] != nil || e["state"] != "queued" || e["stopRequested"] == true {
+		if e["dispatch"] == nil || e["hostId"] != nil || e["state"] != "preparing" || e["stopRequested"] == true {
 			continue
 		}
 		cs, err := a.rankCandidates(q, e, k)
@@ -443,7 +443,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			}
 		}
 		if first != nil && first.Stop {
-			e["state"], e["stopDetail"], e["waitReason"] = "stopped", reason, reason
+			e["state"], e["stopDetail"], e["waitReason"] = "cancelled", reason, reason
 			if err := put(q, "execution", e); err != nil {
 				return err
 			}
