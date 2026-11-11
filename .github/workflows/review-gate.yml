@@ -1,0 +1,13 @@
+# The required check code-review in the merge queue (docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests).
+# On a pull request the worker posts the commit status code-review after /code-review; that status lets it enter the queue.
+# The group commit in the queue carries no status, so this job reports the check there. It runs on no other event:
+# a skipped code-review check on a pull request would satisfy the ruleset without a review.
+name: review-gate
+on:
+  merge_group:
+permissions: {}
+jobs:
+  code-review:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "Each pull request in this group entered the queue with the code-review status on its head."

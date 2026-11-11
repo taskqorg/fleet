@@ -214,13 +214,13 @@ Go rules:
 - Not built: a Linux run of the executor probe's signal and crash checks in CI; it precedes the executor port.
 - `CGO_ENABLED=0` for every binary, checked in CI. Any need for C is a stop-and-ask.
 - One Go module (`go/`), one `go.sum`; builds use `-mod=readonly`; the default checksum database stays on; `govulncheck` runs in CI as a warning.
-- Contract types are generated at build from `contracts/*.schema.json` by `go/gen`; generated files are not committed.
+- Contract types are generated from `contracts/*.schema.json` by `go/gen`; the Go files (`go/contract/*_gen.go`) are committed and CI fails when `go generate` changes them. A conflict in a generated file is resolved by running `go generate`, never by hand.
 - Release binaries are built with `-trimpath` in one Linux CI job, each with a SHA-256 file: the coordinator for linux/amd64, darwin/arm64 and windows/amd64; the executor and the gateway for linux/amd64 and darwin/arm64. No macOS runner.
 - Tests are outside tests over HTTP against a real Postgres (`tests/trial/`, `tests/go/`, the app checks in `tests/ui/`, all through `tests/harness.ts`); each names its requirement and risk.
 
 ## Verification
 
-Not built: pull requests reach `main` only through the GitHub merge queue; the orchestrator enables auto-merge, workers never merge ([delivery pipeline](docs/designs/fleet-delivery-pipeline.md#1-merge-ruleset-and-merge-queue)).
+Pull requests reach `main` only through the GitHub merge queue. A worker enables auto-merge on its own pull request after `/code-review` and the `code-review` status; the orchestrator can take any pull request out of the queue. Branches are rebased on `main`, never merged with it, and are not stacked ([delivery pipeline](docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests)).
 
 The merge-gate command is `pnpm install --frozen-lockfile && pnpm run build && (cd go && go generate ./... && test -z "$(git status --porcelain)" && go vet ./... && CGO_ENABLED=1 go test -race ./...) && pnpm test`. CI splits it into the jobs `go`, `app` and `browser` and builds the outside-test coordinator with `-race`.
 
