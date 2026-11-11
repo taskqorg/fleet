@@ -712,6 +712,8 @@ func (e *executor) run(c M) error {
 		}
 		_, err := e.db.Exec("UPDATE commands SET terminal=1 WHERE id=?", cid)
 		return err
+	case "account-inspect":
+		return e.accountInspect(c)
 	case "script":
 		return e.script(c, execution, session)
 	case "start", "input":

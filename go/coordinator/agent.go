@@ -1605,7 +1605,9 @@ func focusSet(q *Request, b doc) (doc, error) {
 
 // agentDenied: operations only a person may call (take, host secrets); docs/designs/fleet-pm-agent.md §1.
 // Secrets never enter a model's context: the host secret and gateway token operations return one.
-var agentDenied = map[string]bool{"task_take": true, "hosts_register": true, "hosts_rotate_secret": true, "connections_token_create": true}
+var agentDenied = map[string]bool{"task_take": true, "hosts_register": true, "hosts_rotate_secret": true, "connections_token_create": true,
+	// section 8: a PM agent may propose order soonest_reset, never set it.
+	"person_settings_set": true}
 
 // agentMay: an operation outside the agent table that the director's role may call (the architect gate of guardOp).
 func agentMay(p *Person, name string) bool {
