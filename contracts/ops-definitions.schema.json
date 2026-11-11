@@ -2,6 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Coordinator operations of the definitions domain; the rules are in ops.schema.json $comment and contracts/README.md.",
   "operations": {
+    "agent_compatibility": {"read": true, "errors": [400, 403, 404]},
+    "agent_effective": {"read": true, "errors": [400, 403, 404]},
     "catalogue": {"read": true, "errors": [404]},
     "definition_create": {"read": false, "errors": [400, 403, 404, 409]},
     "definition_diff": {"read": true, "errors": [400, 403, 404]},
@@ -14,15 +16,13 @@
     "definition_list": {"read": true, "errors": [400, 403, 404]},
     "definition_save": {"read": false, "errors": [400, 403, 404, 409]},
     "definition_usage": {"read": true, "errors": [400, 403, 404]},
+    "harness_models": {"read": true, "errors": [400, 403, 404]},
     "profiles_list": {"read": true, "errors": [400]},
     "reconcile": {"read": false, "errors": [400, 409]},
     "setting_changes": {"read": true, "errors": []}
   },
   "planned": {
-    "agent_effective": {"read": true, "errors": [400, 403, 404]},
-    "agent_compatibility": {"read": true, "errors": [400, 403, 404]},
-    "agent_test": {"read": false, "errors": [400, 403, 404, 409]},
-    "harness_models": {"read": true, "errors": [400, 403, 404]}
+    "agent_test": {"read": false, "errors": [400, 403, 404, 409]}
   },
   "$defs": {
     "Actor": {"type": "object", "required": ["kind"], "properties": {"kind": {"$ref": "#/$defs/ActorKind"}, "person": {"$ref": "#/$defs/Person"}, "executionId": {"type": "string"}, "directedBy": {"$ref": "#/$defs/Person"}}, "$comment": "person: the person (kind person); executionId: the agent execution (kind agent); system: reconcile. directedBy is set for person and agent."},

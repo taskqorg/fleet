@@ -155,4 +155,14 @@ test('D10 definition_usage counts the runs that pinned a definition, per revisio
   ok(await op('pipeline_run_create', {pipelineId: 'web-research', requestId: 'd10-draft', draft: true, example: {}}));
   assert.equal(ok(await op('definition_usage', {kind: 'pipeline', id: 'web-research'})).total.runs, u.total.runs);
   assert.equal((await op('definition_usage', {kind: 'pipeline', id: 'no-such'})).status, 404);
+test('D11 the Agents tabs: effective layers and result, compatibility rows, harness models; architect only (requirement: agent_effective, agent_compatibility, harness_models; risk: the Effective tab shows another profile than the start sends, or an incompatible label without a run)', async () => {
+  const e = ok(await op('agent_effective', {id: 'pm', projectId: 'fleet-hello-world'}));
+  assert.deepEqual(e.layers.map((l: any) => l.name), ['role', 'definition', 'project']);
+  assert.ok(e.layers[0].fields.includes('role:pm'));
+  assert.equal(e.result.id, 'pm');
+  const c = ok(await op('agent_compatibility', {id: 'pm'}));
+  assert.ok(c.rows.length >= 1 && c.rows.every((r: any) => ['checked', 'failed', 'unchecked'].includes(r.state)));
+  assert.ok(ok(await op('harness_models', {harness: 'codex'})).models.some((m: any) => m.id === 'gpt-6.1-sol' && m.source === 'shipped'));
+  assert.equal((await op('agent_effective', {id: 'pm', projectId: 'fleet-hello-world'}, MEMBER)).status, 403);
+  assert.equal((await op('agent_effective', {id: 'pm', projectId: 'no-such'})).status, 404);
 });

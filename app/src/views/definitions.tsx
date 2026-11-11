@@ -2,7 +2,7 @@
 // the coordinator's store. The control column lists one kind; the work area edits one as a draft and saves revisions.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { ListDetail, DefinitionEditor, DraftBar, DetailSection, KvRow, StateBadge, Empty, SettingField, CodeEditor, DiffText, StepList, AgeChip, type StepItem } from '../../../packages/ui/src/index.ts';
+import { ListDetail, DefinitionEditor, DraftBar, DetailSection, KvRow, StateBadge, Empty, SettingField, CodeEditor, DiffText, StepList, AgeChip, Choice, type StepItem } from '../../../packages/ui/src/index.ts';
 import { op, OpError, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 
@@ -94,7 +94,7 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
   const discard = () => run(async () => { clearTimeout(timer.current); pending.current = null; await op('definition_draft_discard', { kind, id }); await load(); });
   const runDraft = () => run(async () => { await flush(); await op('pipeline_run_create', { pipelineId: id, requestId: crypto.randomUUID(), draft: true }); });
   if (!def) return <article class="detail" data-ui="detail" tabIndex={-1}>{error ? <div class="error" role="alert">{error}</div> : <Empty text="Loading…" />}</article>;
-  const tabs = ['Configuration', 'Diff', 'History'];
+  const tabs = kind === 'agent' ? ['Configuration', 'Effective', 'Diff', 'Compatibility', 'History'] : ['Configuration', 'Diff', 'History'];
   return <DefinitionEditor label={id} crumb={`shared · ${def.path} · r${def.head}${def.state !== 'synced' ? ` · ${def.state}` : ''}`} title={def.id}
     tabs={tabs} tab={tab} onTab={setTab} onClose={onClose}>
     {error && <div class="error" role="alert">{error}</div>}
@@ -115,6 +115,8 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
     </>}
     {tab === 'Diff' && <DiffTab kind={kind} id={id} hasDraft={!!draft} head={def.head} />}
     {tab === 'History' && <HistoryTab kind={kind} id={id} />}
+    {tab === 'Effective' && <EffectiveTab id={id} draft={!!draft} />}
+    {tab === 'Compatibility' && <CompatibilityTab id={id} />}
   </DefinitionEditor>;
 }
 
@@ -164,5 +166,40 @@ function HistoryTab({ kind, id }: { kind: Kind; id: string }) {
     {!h ? <Empty text="Loading…" /> : h.revisions.map(r => <KvRow key={r.revision} icon={r.source === 'agent' ? 'bot' : r.source === 'repo' ? 'git-merge' : 'file-plus-2'} label={`r${r.revision} · ${r.message}`}
       meta={<span class="mono">{r.actor.person?.name ?? r.actor.executionId ?? 'Fleet'}{r.actor.kind === 'agent' && r.actor.directedBy ? ` for ${r.actor.directedBy.name}` : ''} · {r.contentSha.slice(0, 7)}</span>}
       value={<AgeChip t={Date.parse(r.at)} now={now} />} />)}
+  </DetailSection>;
+}
+
+function EffectiveTab({ id, draft }: { id: string; draft: boolean }) {
+  const [projects, setProjects] = useState<string[]>([]);
+  const [project, setProject] = useState('');
+  const [e, setE] = useState<Ops['agent_effective']['reply'] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { op('project_list', {}).then(r => { const ids = (r.projects as any[]).map(p => String(p.id)); setProjects(ids); setProject(p => p || ids[0] || ''); }, x => setError(x.message)); }, []);
+  useEffect(() => { if (project) op('agent_effective', { id, projectId: project, draft }).then(setE, x => setError(x.message)); }, [id, project, draft]);
+  return <>
+    {projects.length > 0 && <DetailSection title="Project"><Choice label="Project" value={project} onChange={setProject} options={projects.map(p => ({ id: p, label: p }))} /></DetailSection>}
+    {error && <div class="error" role="alert">{error}</div>}
+    {e && <DetailSection title="Layers, in the order the agent receives them">
+      {e.layers.map(l => <KvRow key={l.name} icon={l.name === 'role' ? 'bot' : l.name === 'project' ? 'folder-open' : 'file-plus-2'} label={l.name}
+        meta={<span class="mono">{l.source}{l.revision ? ` · ${l.revision}` : ''}{l.fields.length ? ` · ${l.fields.join(', ')}` : ''}</span>} />)}
+    </DetailSection>}
+    {e && <DetailSection title="Effective settings">
+      <KvRow icon="settings" label="Harness" meta={<span class="mono">{(e.result as any).harness ?? 'codex'}</span>} />
+      <KvRow icon="bot" label="Model" meta={<span class="mono">{e.result.model}{e.result.effort ? ` · ${e.result.effort}` : ''}</span>} />
+    </DetailSection>}
+  </>;
+}
+
+function CompatibilityTab({ id }: { id: string }) {
+  const [c, setC] = useState<Ops['agent_compatibility']['reply'] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { op('agent_compatibility', { id }).then(setC, x => setError(x.message)); }, [id]);
+  const now = Date.now();
+  return <DetailSection title="Combinations seen in 30 days">
+    {error ? <div class="error" role="alert">{error}</div> : !c ? <Empty text="Loading…" /> : c.rows.map(r =>
+      <KvRow key={`${r.harness}/${r.harnessVersion}/${r.model}/${r.effort}`} icon={r.state === 'checked' ? 'circle-check' : r.state === 'failed' ? 'circle-x' : 'circle-dashed'}
+        label={`${r.harness}${r.harnessVersion ? ' ' + r.harnessVersion : ''} · ${r.model}${r.effort ? ' · ' + r.effort : ''}`}
+        meta={<span class="mono">{r.state === 'unchecked' ? 'not checked' : r.state}{r.revision ? ` · r${r.revision}` : ''}{r.error ? ` · ${r.error}` : ''}</span>}
+        value={r.evidence ? <AgeChip t={Date.parse(r.evidence.at)} now={now} /> : undefined} />)}
   </DetailSection>;
 }
