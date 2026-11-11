@@ -252,7 +252,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .rail-head .btn{border-color:transparent;background:none}
 .rail.mini{width:auto;padding:var(--space-2) var(--space-1)}
 .rail.mini .nm,.rail.mini .rail-h,.rail.mini .rail-search,.rail.mini .nav-pin,.rail.mini .brand,.rail.mini .waiting{display:none}
-.rail.mini .rail-head{padding:0;justify-content:center}
+.rail.mini .rail-head{padding:0;justify-content:center;flex-direction:column}
 .rail.mini .nav-i a{padding:0 var(--space-2);position:relative}
 .rail.mini .nav-count{position:absolute;top:calc(-1 * var(--space-1));right:calc(-1 * var(--space-1));padding:0 var(--space-1)}
 .rail-g{list-style:none;margin:0;padding:0}
@@ -290,7 +290,9 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 /* App shell and page layout (patterns/app-shell.md) */
 /* Three columns (OR-24). The shell alone takes the viewport height; each column has at most one scroller (OR-25). */
 .shell{display:grid;grid-template-columns:auto minmax(0,1fr);height:100dvh;overflow:hidden}
-.brand{font-size:var(--font-size-lg)}
+.brand{font-size:var(--font-size-lg);font-weight:var(--font-weight-bold);text-transform:uppercase;letter-spacing:.02em}
+/* The Fleet mark (D23): six ink cells of a 3x3 grid, an F and a formation. A brand asset, not a registry icon. */
+.brand-mark{flex:none;width:var(--size-icon);height:var(--size-icon);background:var(--fg);-webkit-mask:var(--brand-mark) center/contain no-repeat;mask:var(--brand-mark) center/contain no-repeat;--brand-mark:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M0 0h4v4H0zM6 0h4v4H6zM12 0h4v4h-4zM0 6h4v4H0zM6 6h4v4H6zM0 12h4v4H0z'/%3E%3C/svg%3E")}
 .waiting{text-decoration:none;font-size:var(--font-size-sm);padding:var(--space-1) var(--space-3)}
 .shell-main{min-width:0;min-height:0;overflow-y:auto;padding:var(--space-4) var(--space-5);display:flex;flex-direction:column;gap:var(--space-4);background:var(--surface)}
 .shell-main>*{flex:none}
