@@ -88,8 +88,8 @@ func platform() string {
 	return runtime.GOOS
 }
 
-func capabilities() []any {
-	c := []any{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script"}
+func capabilities() []string {
+	c := []string{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script"}
 	if v := ffmpegVersion(); v != "" {
 		c = append(c, "ffmpeg:"+v)
 	}
@@ -204,7 +204,7 @@ type executor struct {
 	storeCfg     M
 	declared     []string
 	storeAt      time.Time
-	storeLast    []any
+	storeLast    []contract.StoreReport
 }
 
 // inTx runs fn with every journal write of the executor inside one transaction.
@@ -1643,9 +1643,9 @@ func (e *executor) collect(d *os.File, rel, execution string, declared *[]string
 	return nil
 }
 
-func (e *executor) stores() []any {
+func (e *executor) stores() []contract.StoreReport {
 	if e.storeCfg == nil {
-		return []any{}
+		return []contract.StoreReport{}
 	}
 	if e.storeAt.IsZero() || time.Since(e.storeAt) >= 15*time.Second {
 		e.storeAt, e.storeLast = time.Now(), storeReport(e.storeCfg)
@@ -1963,11 +1963,9 @@ func (e *executor) exchange() error {
 	if edgeWait(pollRoute) {
 		return nil
 	}
-	body := M{"hostId": e.host, "platform": platform(), "capabilities": capabilities(), "stores": e.stores(),
-		"problems": edgeProblems(pollRoute), "projectRoots": anyStrings(reportedRoots()), "version": version}
-	if u := lastUpdate(e.root); u != nil {
-		body["update"] = u
-	}
+	v, roots := version, reportedRoots()
+	body := contract.PollRequest{HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
+		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, Update: lastUpdate(e.root)}
 	a := send(e.url, e.token, pollRoute, body)
 	sig := updateSignal{HostID: e.host, Running: version, AutoUpdate: "on"}
 	if lastSignal != nil {
