@@ -81,7 +81,7 @@ export function viewProblem(v: unknown): string | null {
   if (!(VIEWS as string[]).includes(o.view as string)) return 'view.view must be one of ' + VIEWS.join(', ');
   const name = o.view as ViewName, table = TABLE[name];
   const strs = (x: unknown) => Array.isArray(x) && x.every(i => typeof i === 'string' && i !== '');
-  const states: readonly string[] = name === 'tasks' ? TASK_STATES : SESSION_STATES;
+  const states: readonly string[] = name === 'tasks' ? TASK_STATES : name === 'results' ? ARTIFACT_STATES : SESSION_STATES;
   for (const [k, x] of Object.entries(o)) {
     if (k === 'view' || x === undefined) continue;
     if (k === 'focus') { if (typeof x !== 'string' || !x) return 'focus must be a non-empty string'; continue; }
