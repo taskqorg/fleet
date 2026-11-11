@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fleet/contract"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -239,5 +241,25 @@ func TestPayloadOfWrongTypeRefused(t *testing.T) {
 	rs.Close()
 	if !strings.Contains(all.String(), "invalid start payload") || !strings.Contains(all.String(), "invalid script payload") {
 		t.Fatal("refusal reasons missing:", all.String())
+	}
+}
+
+// Requirement: an owned pid that is still running but whose identity cannot be read is unknown, never confirmed gone;
+// only a pid missing from a new snapshot is gone (W3-3). Risk: a permission or transient read failure frees a session
+// while its original process keeps running.
+func TestIdentityReadFailureIsNotTermination(t *testing.T) {
+	defer func(f func(int) (string, error)) { identity = f }(identity)
+	identity = func(int) (string, error) { return "", errors.New("permission denied") }
+	l := &live{owned: map[int]string{os.Getpid(): "x"}}
+	if alive, err := l.aliveOwned(); err == nil || alive {
+		t.Fatal("unreadable running process reported gone")
+	}
+	cmd := exec.Command("true")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	l = &live{owned: map[int]string{cmd.Process.Pid: "x"}}
+	if alive, err := l.aliveOwned(); err != nil || alive {
+		t.Fatal("a pid gone from the snapshot is not reported gone", err)
 	}
 }

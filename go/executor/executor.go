@@ -1462,7 +1462,9 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	if exited {
 		alive, err := l.aliveOwned()
 		if err != nil {
-			return false, err
+			// Not confirmed gone: the run stays live (and its session held) until the process can be seen to leave.
+			l.cleanupUnknown = true
+			return false, nil
 		}
 		if alive {
 			return false, nil
@@ -1712,12 +1714,25 @@ func (l *live) aliveOwned() (bool, error) {
 		if strings.HasPrefix(p.stat, "Z") {
 			continue
 		}
-		// An identity that cannot be read is not the recorded incarnation: the process left between the snapshot
-		// and the read, or the pid now belongs to a process this user cannot inspect.
-		if expected, ok := l.owned[p.pid]; ok {
-			if cur, err := identity(p.pid); err == nil && cur == expected {
+		expected, ok := l.owned[p.pid]
+		if !ok {
+			continue
+		}
+		cur, err := identity(p.pid)
+		if err == nil {
+			if cur == expected {
 				return true, nil
 			}
+			continue // another incarnation holds the pid
+		}
+		// An identity read failure proves nothing (W3-3): the pid is gone only if a new snapshot no longer lists it
+		// as a running process; otherwise the process is there but cannot be inspected, and the answer is unknown.
+		again, serr := processes()
+		if serr != nil {
+			return false, serr
+		}
+		if running(again, p.pid) {
+			return false, fmt.Errorf("process %d is running but its identity cannot be read: %w", p.pid, err)
 		}
 	}
 	return false, nil

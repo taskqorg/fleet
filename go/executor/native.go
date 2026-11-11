@@ -7,6 +7,10 @@ import (
 	"strings"
 )
 
+// identity is the start-time identity of a process (processIdentity per platform); a variable so a check can make
+// the read fail.
+var identity = processIdentity
+
 type proc struct {
 	pid, ppid int
 	stat      string
