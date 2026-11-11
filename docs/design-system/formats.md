@@ -16,7 +16,7 @@ One way to show each kind of value, everywhere ([OR-28](owner-rules.md)). The fo
 | Entity code | `T-FLT-42` mono, directly after the name (OR-22); short UUID until a code exists | UUID, with a copy action | D17 formatter |
 | Moment, in a list | Age: `now`, `40s`, `4m`, `2h`, `3d`, `12 Nov`, `12 Nov 2025`; plain, boxed only when it needs a look (OR-18) | `4 minutes ago`; exact time on hover | `age`, `AgeChip` |
 | Moment, in copied text | `11 Nov 14:03`, year added when not this year | — | `stamp` |
-| Duration | `40s`, `14m`, `1h 02m`, `3d 4h` | words | `duration` |
+| Duration | `120ms` (under a second), `40s`, `14m`, `1h 02m`, `3d 4h` | words | `duration` |
 | Count | `412`, `1,204`, `182k`; a lower bound as `≥ 182k` | exact | `count`, `Num` |
 | Ratio | `6/8` (in use of total); never a sentence | `6 of 8 workers busy` | — |
 | Money | `$0.02`, `$10.90`; estimated `≈ $0.38`; unknown `—` with its reason | basis and source | `money`, `Num` |

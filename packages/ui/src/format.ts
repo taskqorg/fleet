@@ -38,8 +38,9 @@ export function age(t: number, now: number): Formatted {
   return { text, long: exact(t) };
 }
 
-/** Duration in seconds: 40s, 14m, 1h 02m, 3d 4h. */
+/** Duration in seconds: 120ms (under a second: request latency), 40s, 14m, 1h 02m, 3d 4h. */
 export function duration(sec: number): Formatted {
+  if (sec > 0 && sec < 1) { const ms = Math.max(1, Math.round(sec * 1000)); return { text: `${ms}ms`, long: plural(ms, 'millisecond') }; }
   const s = Math.round(sec);
   if (s < 60) return { text: `${s}s`, long: plural(s, 'second') };
   const m = Math.floor(s / 60);
