@@ -190,7 +190,7 @@ Every provider call goes through fleet-gateway, from two entry points; the conne
 
 Final trial states are execution states: `succeeded`, `failed`, `cancelled`; a trial whose outcome nobody can prove is `failed` with `observation = unconfirmed` (shown as Unknown). Only a confirmed `succeeded` trial is comparable. Cancel cell ends the run `cancelled` and stops its running step. Retry cell inserts attempt + 1.
 
-Not built: kind `loop` (refused with 400), stop rules `max_iterations`, `no_gain` and strategy `stop`, and the strategy step. Target below.
+Loop experiments use the strategy and stop rules under Iterative improvement. Each strategy is an ordinary retained pipeline run; failed or unconfirmed strategy work stops autonomous continuation with its reason.
 
 ## Local-suffix retry
 
@@ -246,7 +246,9 @@ Target for kind `loop`. A strategy is a pipeline step (script or agent). Input: 
 *   `no_gain {k}`: gain = best variant's mean of the primary evaluator on tune examples minus the baseline mean; stop when gain ≤ (max − min of baseline repeats) for k consecutive iterations. The owner sets `k`; no default.
 *   A strategy never changes a budget.
 
-Not built: strategies, generators, allocators and `loop` experiments.
+Loop configuration is `strategy: {generator:{kind,params},allocator:{kind:"full",params:{}},max_iterations?:N,no_gain?:{k}}`. Both stop settings are optional; there is no coded iteration ceiling or default k. `primaryEvaluator` is required and must have a scalar form. `list` takes `params.variants`; `grid` takes `params.overrides` (override keys mapped to value arrays); `propose` takes an agent strategy and may set `keep_best`. Generator `params.step_overrides` selects the strategy run’s pipeline overrides. Ordinary owner-only override authority is preserved from experiment creation.
+
+List/grid use `lab-strategy`; propose uses `lab-strategy-propose`. The runner stages a retained `snapshot.json` with variants, tune scores, spend, budgets and generator/allocator configuration. Held-out results stay in history but do not steer strategies. Propose runs also receive the retained execution-event transcripts of losing tune trials; unavailable history is marked unknown. The last step writes matching `strategy.json` and `output.json`. The coordinator accepts only `{action,variants,reason}`, so a strategy cannot replace budgets. Successful outputs append uniquely identified variants with their proposal labels and iteration. Strategy identity includes experiment and iteration, and consumption is transactional. Missing primary-score evidence stops with `primary-score-unavailable`, never a false `no_gain`.
 
 ## Budgets
 
@@ -261,6 +263,7 @@ Not built: token and money units, per-iteration or per-trial scope, projected-ov
 *   Forms: `pass_fail` (answer `pass|fail[: tags]`, one trial), `scale` (`1..5[: note]`, one trial), `pick_best` (the chosen trial ID, two or more trials shown blind as A, B, … in an order shuffled by `seed`).
 *   The answer hook (`runAnswerChecks`, `go/coordinator/pipelines.go`) checks and applies Lab answers in the answering transaction; reconcile follows.
 *   Evaluators, named `<kind>:<ref>:<form>`: `script:example.checks:pass_fail|metric` (the coordinator runs the example's checks over the trial's files: example inputs, then each step's files at the top level, later steps winning); `judge:<pipeline id>:pass_fail|scale|pick_best` (`pick_best` runs twice per example/repeat group, in deterministic shuffled and reverse orders, and scores only agreeing valid trial IDs; other forms use one pipeline run per evaluator and trial; its example is the original prompt plus the trial's files under `trial/`; its last `output.json` is `{value, rationale}`; profile `codex-judge`); `human:owner:<form>`. A failed judge run or invalid value counts as evaluated with no score. Forms are never averaged together.
+*   `lab_rating_withdraw {questionId,reason}` withdraws an open Lab rating without an answer or score. The owner or an agent with owner-equivalent authority supplies the reason; the actor and time stay on the question. Repeating a withdrawal is idempotent; an answered rating is never overwritten. Refusal or an unsuitable comparison is not a tie or a quality label.
 *   Agreement = owner `pass_fail` vs judge `pass_fail` on the same trial, plus owner `pick_best` vs judge `pick_best` over the same trial set (falling back to the single best `scale` score). Report agreement separately per evaluator/rubric version. Judge evaluator `overrides` use pipeline override keys; a prompt containing the rubric and output instructions pins its content into the evaluator version.
 *   Correction: `POST /api/lab/scores/:id/correct {value, rationale}` writes a new score that replaces the old.
 

@@ -567,3 +567,51 @@ test('A3 Promote saves the method as a catalogue revision (source lab) and sets 
   const again = ok(await op('lab_promote', {experimentId: e.id, variant: 'promoted'}));
   assert.equal(again.catalogue ?? null, null, 'a second promote finds the method and saves nothing');
 });
+
+test('L1 loop consumes scores created by the final evaluator in the same reconcile (requirement: UC9 no_gain; risk: stale pre-evaluation scores halt a successful iteration as unavailable)', async () => {
+  const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
+  example.version = 6000000 + Math.floor(Math.random() * 1e8);
+  const {examples: [pin]} = ok(await op('lab_examples_add', {examples: [example], approved: true}));
+  const exp = ok(await op('lab_experiment_create', {kind: 'loop', projectId: 'hello-world', pipelineId: 'typed-decision', examples: [pin.artifactId], variants: [{label: 'baseline'}], repeats: 1, goal: 'Protect loop primary evidence', hypothesis: 'Only complete current scores can advance a loop',
+    evaluators: [{kind: 'typed', ref: 'labels', form: 'typed'}], primaryEvaluator: 'typed:labels:typed',
+    strategy: {generator: {kind: 'list', params: {variants: []}}, allocator: {kind: 'full'}, no_gain: {k: 1}}}));
+  ok(await op('lab_experiment_action', {experimentId: exp.id, action: 'launch'}));
+  const done: any = await until(async () => { const x = ok(await op('lab_experiment_get', {experimentId: exp.id})); return ['done', 'stopped'].includes(x.state) ? x : undefined; }, 'loop terminal state');
+  assert.equal(done.stopReason, 'no_gain', JSON.stringify(done));
+  assert.equal(done.scores.filter((s: any) => s.evaluator === 'typed:labels:typed').length, 1);
+  assert.equal(done.strategies.length, 0, 'no strategy call after no_gain');
+});
+
+test('L2 missing primary evidence stops a loop without optional no_gain (requirement: UC9 explicit unavailable evidence; risk: failed judges launch more strategy work and paid trials)', async () => {
+  const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
+  example.version = 7000000 + Math.floor(Math.random() * 1e8);
+  const {examples: [pin]} = ok(await op('lab_examples_add', {examples: [example], approved: true}));
+  // hello-search expects example.query, which a judge's input intentionally does not contain: it fails before any provider call.
+  const exp = ok(await op('lab_experiment_create', {kind: 'loop', projectId: 'hello-world', pipelineId: 'typed-decision', examples: [pin.artifactId], variants: [{label: 'baseline'}], repeats: 1, goal: 'Protect loop primary evidence', hypothesis: 'Only complete current scores can advance a loop',
+    evaluators: [{kind: 'judge', ref: 'hello-search', form: 'pass_fail'}], primaryEvaluator: 'judge:hello-search:pass_fail',
+    strategy: {generator: {kind: 'list', params: {variants: [{label: 'extra', overrides: {}}]}}, allocator: {kind: 'full'}}}));
+  ok(await op('lab_experiment_action', {experimentId: exp.id, action: 'launch'}));
+  const done: any = await until(async () => { const x = ok(await op('lab_experiment_get', {experimentId: exp.id})); return ['done', 'stopped'].includes(x.state) ? x : undefined; }, 'loop missing primary');
+  assert.equal(done.state, 'stopped');
+  assert.equal(done.stopReason, 'primary-score-unavailable');
+  assert.equal(done.trials.length, 1);
+  assert.equal(done.strategies.length, 0, 'unavailable is not permission to continue');
+});
+
+test('L3 withdrawing a weak rating records refusal without a quality label (requirement: owner can decline Lab comparison; risk: refusal recorded as a pick/tie, overwritten answer or lingering needs-you)', async () => {
+  const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
+  example.version = 8000000 + Math.floor(Math.random() * 1e8);
+  const {examples: [pin]} = ok(await op('lab_examples_add', {examples: [example], approved: true}));
+  const exp = ok(await op('lab_experiment_create', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: [pin.artifactId], variants: [{label: 'baseline'}],
+    goal: 'Withdrawal fixture', hypothesis: 'Withdrawal creates no human score'}));
+  ok(await op('lab_experiment_action', {experimentId: exp.id, action: 'launch'}));
+  const done: any = await until(async () => { const x = ok(await op('lab_experiment_get', {experimentId: exp.id})); return x.state === 'done' ? x : undefined; }, 'withdrawal trial');
+  const rating = ok(await op('lab_rating_create', {experimentId: exp.id, form: 'pass_fail', trialIds: [done.trials[0].id]}));
+  assert.equal((await op('lab_rating_withdraw', {questionId: rating.id, reason: 'not meaningful'}, OUTSIDER)).status, 403);
+  const withdrawn = ok(await op('lab_rating_withdraw', {questionId: rating.id, reason: 'not meaningful'}));
+  assert.equal(withdrawn.state, 'withdrawn'); assert.equal(withdrawn.answer, null);
+  assert.equal(withdrawn.withdrawal.reason, 'not meaningful'); assert.equal(withdrawn.withdrawal.actor, OWNER);
+  assert.equal(ok(await op('lab_rating_withdraw', {questionId: rating.id, reason: 'replay'})).withdrawal.reason, 'not meaningful');
+  assert.equal((await op('questions_answer', {questionId: rating.id, answer: 'true'})).status, 409);
+  assert.equal(ok(await op('lab_experiment_get', {experimentId: exp.id})).scores.length, 0);
+});

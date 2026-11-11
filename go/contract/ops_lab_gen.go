@@ -140,24 +140,29 @@ type LabExperimentCreateReply = map[string]json.RawMessage
 
 // LabExperimentCreateRequest: See fleet-lab.md, Experiment record.
 type LabExperimentCreateRequest struct {
-	Budgets          json.RawMessage `json:"budgets,omitempty"`
-	DecisionRule     json.RawMessage `json:"decisionRule,omitempty"`
-	Evaluators       json.RawMessage `json:"evaluators,omitempty"`
-	Examples         json.RawMessage `json:"examples,omitempty"`
-	Goal             *string         `json:"goal,omitempty"`
-	Hypothesis       *string         `json:"hypothesis,omitempty"`
-	Kind             *string         `json:"kind,omitempty"`
-	LabGroup         json.RawMessage `json:"labGroup,omitempty"`
-	PipelineId       *string         `json:"pipelineId,omitempty"`
-	PrimaryEvaluator json.RawMessage `json:"primaryEvaluator,omitempty"`
-	ProjectId        *string         `json:"projectId,omitempty"`
-	Repeats          json.RawMessage `json:"repeats,omitempty"`
-	Strategy         json.RawMessage `json:"strategy,omitempty"`
-	Variants         json.RawMessage `json:"variants,omitempty"`
+	Budgets          json.RawMessage  `json:"budgets,omitempty"`
+	DecisionRule     json.RawMessage  `json:"decisionRule,omitempty"`
+	Evaluators       json.RawMessage  `json:"evaluators,omitempty"`
+	Examples         json.RawMessage  `json:"examples,omitempty"`
+	Goal             *string          `json:"goal,omitempty"`
+	Hypothesis       *string          `json:"hypothesis,omitempty"`
+	Kind             *string          `json:"kind,omitempty"`
+	LabGroup         json.RawMessage  `json:"labGroup,omitempty"`
+	PipelineId       *string          `json:"pipelineId,omitempty"`
+	PrimaryEvaluator json.RawMessage  `json:"primaryEvaluator,omitempty"`
+	ProjectId        *string          `json:"projectId,omitempty"`
+	Repeats          json.RawMessage  `json:"repeats,omitempty"`
+	Strategy         *LabLoopStrategy `json:"strategy,omitempty"`
+	Variants         json.RawMessage  `json:"variants,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabExperimentCreateRequest) Validate() error {
+	if v.Strategy != nil {
+		if err := Check(v.Strategy, "strategy"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -253,6 +258,108 @@ func (v *LabExperimentsListReply) Validate() error {
 
 type LabExperimentsListRequest = map[string]json.RawMessage
 
+type LabLoopAllocator struct {
+	Kind   LabLoopAllocatorKind       `json:"kind"`
+	Params map[string]json.RawMessage `json:"params,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabLoopAllocator) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type LabLoopAllocatorKind string
+
+const (
+	LabLoopAllocatorKindFull LabLoopAllocatorKind = "full"
+)
+
+// LabLoopAllocatorKindValues lists every LabLoopAllocatorKind in schema order.
+var LabLoopAllocatorKindValues = []LabLoopAllocatorKind{LabLoopAllocatorKindFull}
+
+// Valid: v is one of the schema's values.
+func (v LabLoopAllocatorKind) Valid() bool {
+	for _, x := range LabLoopAllocatorKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type LabLoopGenerator struct {
+	Kind   LabLoopGeneratorKind       `json:"kind"`
+	Params map[string]json.RawMessage `json:"params"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabLoopGenerator) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if v.Params == nil {
+		return Missing("params")
+	}
+	return nil
+}
+
+type LabLoopGeneratorKind string
+
+const (
+	LabLoopGeneratorKindList    LabLoopGeneratorKind = "list"
+	LabLoopGeneratorKindGrid    LabLoopGeneratorKind = "grid"
+	LabLoopGeneratorKindPropose LabLoopGeneratorKind = "propose"
+)
+
+// LabLoopGeneratorKindValues lists every LabLoopGeneratorKind in schema order.
+var LabLoopGeneratorKindValues = []LabLoopGeneratorKind{LabLoopGeneratorKindList, LabLoopGeneratorKindGrid, LabLoopGeneratorKindPropose}
+
+// Valid: v is one of the schema's values.
+func (v LabLoopGeneratorKind) Valid() bool {
+	for _, x := range LabLoopGeneratorKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type LabLoopNoGain struct {
+	K int64 `json:"k"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabLoopNoGain) Validate() error {
+	return nil
+}
+
+// LabLoopStrategy: Explicit loop configuration; no default k or iteration ceiling. Internal owner override authority is resolved by the server, never supplied here.
+type LabLoopStrategy struct {
+	Allocator     LabLoopAllocator `json:"allocator"`
+	Generator     LabLoopGenerator `json:"generator"`
+	MaxIterations *int64           `json:"max_iterations,omitempty"`
+	NoGain        *LabLoopNoGain   `json:"no_gain,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabLoopStrategy) Validate() error {
+	if err := Check(&v.Allocator, "allocator"); err != nil {
+		return err
+	}
+	if err := Check(&v.Generator, "generator"); err != nil {
+		return err
+	}
+	if v.NoGain != nil {
+		if err := Check(v.NoGain, "no_gain"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // LabPromoteReply: method: the promoted (or matching) catalogue method; catalogue: the catalogue revision a new method was saved as (source lab); cataloguePatch: null (a promote saves a revision); recommendation: the project's recommendation set to the method.
 type LabPromoteReply struct {
 	Catalogue      *DefinitionRef  `json:"catalogue,omitempty"`
@@ -317,6 +424,19 @@ type LabRatingGetRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabRatingGetRequest) Validate() error {
+	return nil
+}
+
+// LabRatingWithdrawReply: Withdrawn Lab rating, with original trial references and no answer/score.
+type LabRatingWithdrawReply = map[string]json.RawMessage
+
+type LabRatingWithdrawRequest struct {
+	QuestionId string `json:"questionId"`
+	Reason     string `json:"reason"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabRatingWithdrawRequest) Validate() error {
 	return nil
 }
 
@@ -388,6 +508,7 @@ func init() {
 		"lab_promote":           {Read: false, Long: false, Errors: []int{400, 404}},
 		"lab_rating_create":     {Read: false, Long: false, Errors: []int{400, 404, 409}},
 		"lab_rating_get":        {Read: true, Long: false, Errors: []int{400, 404}},
+		"lab_rating_withdraw":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
 		"lab_ratings_list":      {Read: true, Long: false, Errors: []int{404}},
 		"lab_registry":          {Read: true, Long: false, Errors: []int{}},
 		"lab_score_correct":     {Read: false, Long: false, Errors: []int{400, 404, 409}},

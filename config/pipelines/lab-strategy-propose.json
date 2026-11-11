@@ -1,0 +1,12 @@
+{
+  "id": "lab-strategy-propose",
+  "steps": [
+    {
+      "id": "strategy",
+      "kind": "agent",
+      "profile": "baseline",
+      "prompt": "Read $FLEET_INPUT_DIR/example/snapshot.json. It contains the experiment, pinned configuration, variants, tune/held-out scores, spend and budgets. Read the retained losingTranscripts files under $FLEET_INPUT_DIR/example/; unavailable history remains unknown. Propose the next variants to improve the primary tune score, following generator params; never tune on held-out data or change budgets. If keep_best is true, start from the current best variant and explain the change. Write output/strategy.json and output/output.json with identical JSON: {\"action\":\"next\" or \"stop\",\"variants\":[{\"label\":\"description\",\"overrides\":{...}}],\"reason\":\"evidence and reason\"}. Use stop when no justified change remains. Retain uncertainty, do not invent scores.\n"
+    }
+  ],
+  "version": 2
+}
