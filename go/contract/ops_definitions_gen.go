@@ -1186,6 +1186,8 @@ func (v *Window) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
+		"agent_compatibility":      {Read: true, Long: false, Errors: []int{400, 403, 404}},
+		"agent_effective":          {Read: true, Long: false, Errors: []int{400, 403, 404}},
 		"catalogue":                {Read: true, Long: false, Errors: []int{404}},
 		"definition_create":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
 		"definition_diff":          {Read: true, Long: false, Errors: []int{400, 403, 404}},
@@ -1198,6 +1200,7 @@ func init() {
 		"definition_list":          {Read: true, Long: false, Errors: []int{400, 403, 404}},
 		"definition_save":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
 		"definition_usage":         {Read: true, Long: false, Errors: []int{400, 403, 404}},
+		"harness_models":           {Read: true, Long: false, Errors: []int{400, 403, 404}},
 		"profiles_list":            {Read: true, Long: false, Errors: []int{400}},
 		"reconcile":                {Read: false, Long: false, Errors: []int{400, 409}},
 		"setting_changes":          {Read: true, Long: false, Errors: []int{}},
