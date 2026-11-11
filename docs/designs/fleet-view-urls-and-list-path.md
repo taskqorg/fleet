@@ -113,7 +113,7 @@ The earlier TypeScript/PGlite measurements explained this design choice; they do
 * **Focus and `sel` are independent.** The focused row need not be in `sel`; focusing does not change `sel`; checking does not change focus.
 * **Presets:** a link carries the preset expanded into explicit keys, plus `preset=<name>` as an inert label. The codec never validates it. The app's preset bar highlights a preset only when the receiver has a preset of that name whose keys equal the URL's keys (the matching that `tasks.tsx` does today); otherwise the label is ignored.
 * **History:** a discrete change (counter, grouping, preset, focus, checking a row) pushes a new entry. Search pushes one entry when the operator starts typing and replaces it while they keep typing, so one Back leaves the search. `app/src/url.ts` implements this history behavior.
-* **Unknown keys** are kept in `extra`, written back in alphabetical order with the known keys, ignored by the app, and not part of the list key. No version key is added until an incompatible change happens.
+* **Unknown keys** are kept in `extra`, written back in alphabetical order with the known keys, not part of the list key. Truly unknown keys are ignored by views; Results explicitly consumes its `task`, `execution`, `media` and `since` filters from `extra`, even though the codec table does not define them. No version key is added until an incompatible change happens.
 * **Meaning:** a link is a live query, not a snapshot. Access is the receiver's.
 * **Length:** no fixed limit. If a real limit is hit (chat tools, Cloudflare Access, MCP transport), it is recorded and short links are designed then. URLs are never cut.
 * **Privacy:** URLs carry search text and preset names into chats and logs; the app renders them as text only.
@@ -277,7 +277,7 @@ These targets remain in the backlog; polishing them is not the critical path for
 
 * **Toolchain:** follow [fleet-stack.md](fleet-stack.md#toolchain). Its selected Node22/pnpm10 and native TypeScript paths supersede the old vendoring/Bun proposal; those rejected options are not remaining work for this topic.
 * Not built: optimizing the per-session subqueries in `go/coordinator/sessions.go` with the proposed side-table pattern. This remains performance work, not a new requirement to launch a first supervised task.
-* **Overview** calls `task_page` once per project; one aggregate read remains proposed performance work, not an additional operation required before a supervised task can start.
+* **Overview** already uses one grouped `task_page` call with `group: "project"`, `groupCounts: true` and `limit: 1` (`app/src/views/overview.tsx`); the old per-project-call follow-up is complete.
 * **Per-operation timing:** coordinator request spans are implemented in `go/coordinator/telemetry.go`; their live availability is a separate [telemetry](fleet-telemetry.md) observation. Not built: the separately proposed slow-query log. A span mechanism alone does not establish production query latency.
 * **Counts at very large sizes:** cached counters if the reported growth factor shows counts dominate.
 
@@ -292,7 +292,7 @@ Built: `view_link` is registered by `agentTypedOp` in `go/coordinator/view_link.
 ### Verification
 
 * Build and tests: `pnpm run build`; `pnpm test`.
-* Filter check: `pnpm run check:filter` (Chromium) asserts the settle times up to 20,000 tasks and reports 100,000.
+* Filter check: `pnpm run check:filter` (Chromium) uses the default 3,000/20,000 sizes. A 100,000-task run is report-only and happens only when explicitly included with `--sizes`; CI timing is report-only as described in §4. Browser checks run in CI under the current local no-launch guard, not through a local wrapper.
 * Design: `pnpm run check:design`.
 
 --------------------------------------------------------------------------------
