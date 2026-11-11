@@ -15,6 +15,55 @@ on:
     branches: [main]
 permissions: {}
 jobs:
+  selection:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test tests/ui/test-selection.test.ts tests/ui/view-url.test.ts
+      - name: Record shadow selection
+        run: node scripts/test-selection.ts > "$RUNNER_TEMP/test-selection.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-selection
+          path: ${{ runner.temp }}/test-selection.json
+          if-no-files-found: error
+  # Keep the required app status as the exact-candidate qualification boundary.
+  app:
+    needs: [selection, go, app-tests, browser]
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-selection
+          path: ${{ runner.temp }}/qualification
+      - name: Validate actual full execution
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          node -e 'const fs=require("node:fs"),r=JSON.parse(process.env.RESULTS);r.app=r["app-tests"];delete r["app-tests"];fs.writeFileSync(process.env.RUNNER_TEMP+"/qualification/test-results.json",JSON.stringify(r))'
+          node scripts/test-selection.ts --verify "$RUNNER_TEMP/qualification/test-selection.json" "$RUNNER_TEMP/qualification/test-results.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-qualification
+          path: ${{ runner.temp }}/qualification/
+          if-no-files-found: error
   # Go (docs/designs/fleet-go-code.md): generated-code drift, vet, unit tests with -race, the executor's MCP adapter tests,
   # the outside tests against a -race coordinator on the runner's PostgreSQL, a Windows compile of the coordinator.
   # Node only as the test runner: the outside tests import node: builtins, so no pnpm install here.
@@ -78,12 +127,9 @@ jobs:
       # The executor's MCP adapter from Node against the Go binary: replayed stdio exchanges and artifact path confinement.
       - run: FLEET_EXECUTOR_BIN="$PWD/go/bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts
       - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" GORACE=halt_on_error=1 tests/go/run.sh
-      - name: govulncheck (warning only)
-        continue-on-error: true
-        run: cd go && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
   # App and release: contract lint, test-rule report, typecheck and bundle, UI unit tests, then the release tarballs of
   # every target from deploy/build-release.sh, the same script and flags the release workflow uses.
-  app:
+  app-tests:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -146,12 +192,6 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - name: Docs report (warning only)
-        if: always()
-        continue-on-error: true
-        run: |
-          node scripts/docs-report.ts --self-check
-          node scripts/docs-report.ts
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
@@ -200,6 +240,75 @@ jobs:
       - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/filter.check.ts --assert
       - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/conversations.check.ts
       - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/lab-create.check.ts
+  reports:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      # Full history: the docs report diffs against the merge base or HEAD^.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - id: chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ steps.playwright.outputs.version }}-chromium
+      # The hosted Azure resolver returned SERVFAIL for Ubuntu while public DNS answered.
+      # Change only this ephemeral job's runtime DNS, and only after checking the alternate.
+      - name: Recover Ubuntu DNS when the runner resolver fails
+        run: |
+          recover=false
+          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com; do
+            if ! getent ahostsv4 "$host" > /dev/null; then
+              recover=true
+              break
+            fi
+          done
+          if "$recover"; then
+            for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com github.com; do
+              answer=$(dig @1.1.1.1 "$host" A +time=3 +tries=1 +noall +comments +answer)
+              grep -q 'status: NOERROR' <<< "$answer"
+              grep -Eq '[[:space:]]IN[[:space:]]+A[[:space:]]+[0-9]' <<< "$answer"
+            done
+            link=$(ip -4 route show default | awk '{print $5; exit}')
+            test -n "$link"
+            sudo resolvectl dns "$link" 1.1.1.1
+            sudo resolvectl flush-caches
+            resolvectl dns "$link"
+            curl --fail --head https://archive.ubuntu.com/ubuntu/dists/noble/InRelease
+            curl --fail --head https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease
+          fi
+          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com github.com; do
+            getent ahostsv4 "$host"
+          done
+      - if: steps.chromium.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+      - if: steps.chromium.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+      - name: Docs report (warning only)
+        if: always()
+        continue-on-error: true
+        run: |
+          node scripts/docs-report.ts --self-check
+          node scripts/docs-report.ts
+      - name: govulncheck (warning only)
+        continue-on-error: true
+        run: cd go && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
       # Use-case registry drift (docs/designs/fleet-lab.md "Use-case registry and examples"): warns, never blocks. Only Fleet's own sources are
       # checked here; the other org repos are not checked out, so their entries report nothing.
       - name: Use-case drift (warning only)
@@ -224,7 +333,7 @@ jobs:
             docs/design-system/pages/mockups.html
           if-no-files-found: warn
   comment:
-    needs: browser
+    needs: reports
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     permissions:
@@ -261,7 +370,7 @@ jobs:
   # One open issue carries the docs report findings from main (docs/designs/fleet-docs-governance.md#from-warning-to-work):
   # updated each push, created with label docs when missing, closed when only docs.size and docs.delta remain.
   docs-order:
-    needs: browser
+    needs: reports
     if: always() && github.event_name == 'push'
     runs-on: ubuntu-24.04
     permissions:

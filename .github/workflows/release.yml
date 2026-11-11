@@ -58,7 +58,10 @@ jobs:
           recent=$(gh release list --exclude-drafts --exclude-pre-releases --limit 5 --json tagName -q '[.[].tagName | ltrimstr("v")] | join(" ")')
           { echo release=true; echo "sha=$sha"; echo "version=$version"; echo "previous=${latest#v}"; echo "recent=$recent"; } >> "$GITHUB_OUTPUT"
           echo "release $version from $sha, checked with: ${recent:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Wait for the go, app and browser jobs on the commit
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Wait for exact-candidate qualification
         if: steps.check.outputs.release == 'true'
         env:
           SHA: ${{ steps.check.outputs.sha }}
@@ -69,11 +72,23 @@ jobs:
             id=$(gh run list --workflow ci --commit "$SHA" --event push --json databaseId -q '.[0].databaseId')
             [ -n "$id" ] || { echo "no ci run for $SHA yet"; sleep 30; }
           done
-          gh run watch "$id" --interval 30 >/dev/null || true
-          for job in go app browser; do
-            result=$(gh run view "$id" --json jobs -q ".jobs[] | select(.name == \"$job\") | .conclusion")
-            [ "$result" = success ] || { echo "::error::$job of ci run $id: ${result:-missing}"; exit 1; }
+          # Diagnostic jobs may still be running; only required behavioral conclusions authorize release.
+          while :; do
+            jobs=$(gh run view "$id" --json jobs)
+            pending=false
+            for job in go app browser; do
+              result=$(jq -r --arg name "$job" '[.jobs[] | select(.name == $name)] | if length == 1 then .[0].conclusion // "" else "missing" end' <<< "$jobs")
+              if [ -z "$result" ] || [ "$result" = missing ]; then pending=true
+              elif [ "$result" != success ]; then
+                echo "::error::$job of ci run $id: $result"; exit 1
+              fi
+            done
+            "$pending" || break
+            sleep 30
           done
+          gh run download "$id" --name test-qualification --dir "$RUNNER_TEMP/qualification"
+          git show "$SHA:scripts/test-selection.ts" > "$RUNNER_TEMP/verify-selection.ts"
+          GITHUB_SHA="$SHA" node "$RUNNER_TEMP/verify-selection.ts" --verify "$RUNNER_TEMP/qualification/test-selection.json" "$RUNNER_TEMP/qualification/test-results.json"
   build:
     needs: gate
     if: needs.gate.outputs.release == 'true'
