@@ -8,7 +8,6 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fleet/contract"
 	"math"
 	"reflect"
 	"sort"
