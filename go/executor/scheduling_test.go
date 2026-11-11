@@ -102,7 +102,7 @@ func TestExchangeServicesCompletionAndHeartbeatDuringPreparation(t *testing.T) {
 // Risk: dropping coordinator extensions changes the journal body and admits or fails a terminal replay.
 func TestTypedPollRetainsTerminalCommandIdentity(t *testing.T) {
 	e, _ := scriptExecutor(t)
-	original := decM(`{"id":"retained","executionId":"retained-x","sessionId":"retained-s","kind":"script","status":"pending","payload":{"command":"exit 99"},"sourceGuard":{"revision":7}}`)
+	original := decM(`{"id":"retained","executionId":"retained-x","sessionId":"retained-s","kind":"script","status":"pending","payload":{"command":"exit 99"},"sourceGuard":{"revision":9007199254740993,"ratio":1.0,"scale":1e3}}`)
 	body := enc(original)
 	if _, err := e.db.Exec("INSERT INTO commands(id,body,terminal) VALUES(?,?,1)", "retained", body); err != nil {
 		t.Fatal(err)

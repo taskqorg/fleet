@@ -2077,7 +2077,9 @@ func decodePoll(raw json.RawMessage) (*pollReply, error) {
 	var journal struct {
 		Commands []M `json:"commands"`
 	}
-	if err := json.Unmarshal(raw, &journal); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber() // Match the existing journal encoding, including large integers and numeric spelling.
+	if err := decoder.Decode(&journal); err != nil {
 		return nil, err
 	}
 	reply.bodies = journal.Commands
