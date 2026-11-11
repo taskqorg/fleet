@@ -308,3 +308,11 @@ Each check was proven once with `UX_INJECT=<defect>`, which produced its warning
 * **Recorded as:** the `.brand-mark` element in the navigation head ([navigation rail](controls/nav-rail.md)), drawn by a CSS mask in `packages/ui/src/styles.css` and filled with `fg`, so it follows the theme. It is a brand asset, not an icon, so OR-8 does not apply to it. The name beside it is set in capitals at the section-title weight.
 * **Not done:** the per-view install icons and favicons (`app/build.mjs`) still show each view's registry icon, so installed views stay distinguishable.
 
+## 2026-11-11 D24: Limits on the Hosts page
+
+* **Source:** the owner request of 2026-11-11 recorded in [people access §8 and §12](../designs/fleet-people-access.md#12-screens) (merged in #185): one Limits screen, dark theme first, no combined score.
+* **Placement:** the Hosts work area at `/hosts/limits`, opened from the page head (OR-24, OR-27); the idle work area shows the system (telemetry), and the control column keeps the hosts catalogue only.
+* **New control:** the [area chart](controls/area-chart.md), drawn with CSS `clip-path` polygons, because OR-8 rules out inline SVG and no chart library is used.
+* **Not shown to the owner as options:** the layout follows §12 as written; the chart drawing is the only new choice and has one reasonable answer under OR-8.
+* **Not done:** a per-member line in the chart (the pool line only), pin on the cards.
+

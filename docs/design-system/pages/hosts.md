@@ -1,16 +1,18 @@
 # Hosts, environments and stores (architect)
 
-**Mockup routes:** `#/hosts` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
+**Mockup routes:** `#/hosts`, `#/hosts/limits` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
 
 **Purpose.** See host health, worker load and store space, and change host settings.
 
 **Layout (D19).** [App shell](../patterns/app-shell.md), then [list and detail](../patterns/list-detail.md).
-* **Control column:** the page head with "updated 40s"; the low-space [problem row](../controls/problem-row.md) with its three actions; the hosts catalogue; in the app, the subscription limits below it.
+* **Control column:** the page head with "updated 40s"; the low-space [problem row](../controls/problem-row.md) with its three actions; the hosts catalogue.
 * **Catalogue row:** state, name and platform; on the next lines workers running of slots, workers by harness, queued commands when there are any, and the store fill; last seen on the right.
 * **Work area:** the opened host as stacked [detail sections](../controls/detail-section.md) with its [setting fields](../controls/setting-field.md): state, workers, readings (heartbeat age, load of cores, memory and disk free), Fleet processes (CPU per beat, memory), problems, capabilities, store, and Remove (preview counts first, then the danger button).
 * **Work area with no host open:** the system ([telemetry §8](../../designs/fleet-telemetry.md#8-system-screen-read-half), [system management](../../designs/fleet-system-management.md#system-screen)): findings of the rules pass (stale marker), services with calls, errors and p95 for the last hour, spans dropped, recent runs with CPU and peak memory, and purge of removed hosts (preview first).
 
 There is no stat strip: it repeated the rows (OR-17).
+
+**Limits (`/hosts/limits`, opened from the page head's Limits link, people access §8 and §12, D24).** The page head has the burn window choice (1h, 3h, 6h; default 3h), the Left and Burn choice, Earlier, Today and Later (one day each; the range is one week back and one week ahead of its centre) and Refresh all. Then one card per harness and period: left of capacity in percent, next reset with its restore in weighted points, first empty, pool empty, burn per hour over the window, members without a reading, and an [area chart](../controls/area-chart.md): the recorded pool line to now and the projected line after it with a step at each member's reset (Left), or burn per hour (Burn). Under the cards one table per subscription: each period (per-model weekly periods are their own columns) shows the left as a [fill bar](../controls/fill-bar.md) with the Low threshold as its mark, the reset countdown, pace (ahead, on, under), a Low mark, the reading age and its source (execution or probe); the row ends with Refresh. No combined score. It replaces the "Subscription limits" panel of the control column; the idle work area shows the system. A refresh answer (sent, or why a subscription was skipped) shows in a line under the head.
 
 Not built in the app, shown in the mockup: slots and the store fill in the row, the low-space problem row, the setting fields. The app's page head shows the offline marker, not "updated 40s".
 

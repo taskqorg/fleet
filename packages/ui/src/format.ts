@@ -22,6 +22,20 @@ export function stamp(t: number, now: number): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]}${d.getFullYear() === new Date(now).getFullYear() ? '' : ' ' + d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** Time left until a future moment (a reset countdown): 40s, 4m, 2h, 3d, then the date; "now" when it has passed. */
+export function countdown(t: number, now: number): Formatted {
+  const s = Math.floor((t - now) / 1000);
+  if (s < 5) return { text: 'now', long: 'now' };
+  if (s < 60) return { text: `${s}s`, long: `in ${plural(s, 'second')}` };
+  const m = Math.floor(s / 60);
+  if (m < 60) return { text: `${m}m`, long: `in ${plural(m, 'minute')}` };
+  const h = Math.floor(m / 60);
+  if (h < 24) return { text: `${h}h`, long: `in ${plural(h, 'hour')}` };
+  const d = Math.floor(h / 24);
+  if (d < 7) return { text: `${d}d`, long: `in ${plural(d, 'day')}` };
+  return { text: exact(t).replace(/ \d\d:\d\d$/, ''), long: exact(t) };
+}
+
 /** Age of a past moment: now, 40s, 4m, 2h, 3d, then 12 Nov, then 12 Nov 2025. */
 export function age(t: number, now: number): Formatted {
   const s = Math.max(0, Math.floor((now - t) / 1000));

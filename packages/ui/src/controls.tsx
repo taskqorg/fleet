@@ -2,7 +2,7 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages, stepKinds, type StepKind } from './registry.ts';
-import { type Measured, type Kind, measured, age, bytes, exact, percent, duration, agentLabel } from './format.ts';
+import { type Measured, type Kind, measured, age, bytes, exact, stamp, percent, duration, agentLabel } from './format.ts';
 import { VirtualList, type VirtualListHandle } from './virtual-list.tsx';
 import { parse, renderBlocks } from './markdown.tsx';
 import { author, clipMessage, writeClip } from './clip.ts';
@@ -887,4 +887,39 @@ export function FlowStrip({ nodes, label }: { nodes: FlowNode[]; label: string }
     : 'parallel' in n ? <span key={i} class="flow-par">{n.parallel.map(one)}</span>
     : <span key={n.id} class={`flow-n${n.current ? ' cur' : ''}${n.optional ? ' opt' : ''}`}>{n.state ? <StateBadge family="execution" state={n.state} compact /> : <Icon name={stepKinds[n.kind].icon} />}{n.id}</span>;
   return <div class="flow" data-ui="flow-strip" role="img" aria-label={label}>{row(nodes)}</div>;
+}
+
+/* ---------- Area chart (controls/area-chart.md): recorded and projected lines over a time range, CSS only (OR-8) ---------- */
+
+export type ChartPoint = { at: number; v: number };
+export type ChartSeries = { label: string; points: ChartPoint[]; tone: 'd1' | 'd2' | 'd3' | 'd4'; projected?: boolean; step?: boolean };
+type AreaChartProps = { label: string; series: ChartSeries[]; from: number; to: number; now: number; max: number;
+  /** Text of a value for the summary and the axis, e.g. `40%` or `12/h`. */
+  value: (v: number) => string };
+export function AreaChart(p: AreaChartProps) {
+  const span = Math.max(1, p.to - p.from);
+  const x = (t: number) => Math.min(100, Math.max(0, (t - p.from) / span * 100));
+  const y = (v: number) => 100 - Math.min(100, Math.max(0, v / (p.max || 1) * 100));
+  const shape = (s: ChartSeries) => {
+    const pts = s.points.filter(q => q.at <= p.to).map(q => ({ at: Math.max(q.at, p.from), v: q.v }));
+    if (pts.length === 0) return '';
+    const xy: string[] = [];
+    pts.forEach((q, i) => {
+      if (s.step && i > 0) xy.push(`${x(q.at)}% ${y(pts[i - 1].v)}%`);
+      xy.push(`${x(q.at)}% ${y(q.v)}%`);
+    });
+    return `polygon(${x(pts[0].at)}% 100%, ${xy.join(', ')}, ${x(pts[pts.length - 1].at)}% 100%)`;
+  };
+  const last = (s: ChartSeries) => s.points.length ? p.value(s.points[s.points.length - 1].v) : 'none';
+  const summary = p.series.map(s => `${s.label}${s.projected && !s.label.includes('projected') ? ' projected' : ''}: ${last(s)}`).join('; ');
+  const days = (from: number, to: number) => { const out: number[] = []; const d = new Date(from); d.setHours(24, 0, 0, 0); for (let t = d.getTime(); t < to && out.length < 31; t += 864e5) out.push(t); return out; };
+  return <div data-ui="area-chart" class="area-chart" role="img" aria-label={`${p.label}: ${summary}`}>
+    <div class="ac-plot">
+      {p.series.map(s => <i key={s.label + (s.projected ? '-p' : '')} class={`ac-area ${s.tone}${s.projected ? ' projected' : ''}`} style={{ clipPath: shape(s) }} />)}
+      {days(p.from, p.to).map(t => <b key={t} class="ac-day" style={{ left: `${x(t)}%` }} />)}
+      {p.now >= p.from && p.now <= p.to && <b class="ac-now" style={{ left: `${x(p.now)}%` }} data-tip={exact(p.now)} />}
+      <span class="ac-max">{p.value(p.max)}</span>
+    </div>
+    <div class="ac-axis"><time>{stamp(p.from, p.now)}</time><span class="grow" /><time>{stamp(p.to, p.now)}</time></div>
+  </div>;
 }
