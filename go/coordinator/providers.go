@@ -246,7 +246,8 @@ const providersJSON = `
        "type": "boolean"
       },
       "texture_resolution": {
-       "type": "integer"
+       "type": "string",
+       "description": "for example 2k"
       }
      }
     }
@@ -340,7 +341,8 @@ const providersJSON = `
        "type": "boolean"
       },
       "texture_resolution": {
-       "type": "integer"
+       "type": "string",
+       "description": "for example 2k"
       }
      }
     }

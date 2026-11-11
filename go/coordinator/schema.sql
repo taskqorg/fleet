@@ -717,3 +717,7 @@ ALTER TABLE score ADD CONSTRAINT score_form_check CHECK (form IN ('metric', 'pas
 -- migration 30: executions pin the definitions they resolve (fleet-definition-editors.md, Resolve): a list of
 -- DefinitionRef {kind, id, revision, contentSha, draft?}. The draft and rerun columns come with the operations that use them.
 ALTER TABLE execution ADD COLUMN definitions jsonb NOT NULL DEFAULT '[]';
+-- migration 31: binary Lab example files (docs/designs/fleet-asset-pipelines.md §4): stored with role 'example-file',
+-- found by content hash.
+ALTER TABLE artifact DROP CONSTRAINT artifact_role_check;
+ALTER TABLE artifact ADD CONSTRAINT artifact_role_check CHECK (role IN ('original', 'thumbnail', 'poster', 'example', 'example-file'));

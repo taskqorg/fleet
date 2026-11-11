@@ -184,6 +184,10 @@ A definition may branch on a review result and repeat rework up to a stated iter
 
 Not built: review branches and rework loops in pipeline definitions.
 
+## Host settings: Blender
+
+Lab Blender script steps (`scripts/lab/blender/run.sh`) run `FLEET_BLENDER`, else `blender` on `PATH`, headless. A pipeline pins such steps to a host with Blender through the step's `host` ([asset pipelines §4](designs/fleet-asset-pipelines.md#4-asset-pipelines-s4)).
+
 ## Host settings: Claude placement
 
 Claude runs only where the host allows it ([Lab](designs/fleet-lab.md)). The setting is `FLEET_CLAUDE_PLACEMENT` in the executor environment on that host:
