@@ -389,6 +389,12 @@ type ChangesSinceRequest struct {
 	Limit  *int64 `json:"limit,omitempty"`
 }
 
+type CommandRef struct {
+	Id     string `json:"id"`
+	Kind   string `json:"kind"`
+	Status string `json:"status"`
+}
+
 type CompatibilityRow struct {
 	Effort         *string            `json:"effort,omitempty"`
 	Error          *string            `json:"error,omitempty"`
@@ -692,6 +698,15 @@ type DefinitionUsageRequest struct {
 	Kind DefinitionKind `json:"kind"`
 }
 
+// DiffFile: state added, removed, unchanged or modified; textChange only for small html and css files.
+type DiffFile struct {
+	Current    *FileRef    `json:"current,omitempty"`
+	Path       string      `json:"path"`
+	Previous   *FileRef    `json:"previous,omitempty"`
+	State      string      `json:"state"`
+	TextChange *TextChange `json:"textChange,omitempty"`
+}
+
 // DiffSide: Exactly one of revision, draft (the caller's draft) or repository (the shipped file).
 type DiffSide struct {
 	Draft      *bool  `json:"draft,omitempty"`
@@ -736,25 +751,49 @@ const (
 )
 
 type ExecutionDifferencesReply struct {
-	ExecutionId         json.RawMessage `json:"executionId,omitempty"`
-	Files               json.RawMessage `json:"files,omitempty"`
-	Id                  json.RawMessage `json:"id,omitempty"`
-	PreviousExecutionId json.RawMessage `json:"previousExecutionId,omitempty"`
-	SessionId           json.RawMessage `json:"sessionId,omitempty"`
-	Sha256              json.RawMessage `json:"sha256,omitempty"`
+	ExecutionId         string     `json:"executionId"`
+	Files               []DiffFile `json:"files"`
+	PreviousExecutionId *string    `json:"previousExecutionId"`
+	SessionId           *string    `json:"sessionId"`
 }
 
+// ExecutionDifferencesRequest: previous: the earlier execution of the same session.
 type ExecutionDifferencesRequest struct {
-	ExecutionId *string         `json:"executionId,omitempty"`
-	Previous    json.RawMessage `json:"previous,omitempty"`
+	ExecutionId string `json:"executionId"`
+	Previous    string `json:"previous"`
 }
 
 type ExecutionEventsReply struct {
-	Events json.RawMessage `json:"events,omitempty"`
+	Events []map[string]json.RawMessage `json:"events"`
 }
 
 type ExecutionEventsRequest struct {
-	ExecutionId *string `json:"executionId,omitempty"`
+	ExecutionId string `json:"executionId"`
+}
+
+// ExecutionRow: One execution row (executionCols in go/coordinator/tasks.go); times are RFC 3339.
+type ExecutionRow struct {
+	AccountId         *string         `json:"accountId"`
+	ConfigRef         json.RawMessage `json:"configRef"`
+	EndedAt           *string         `json:"endedAt"`
+	EnvironmentId     *string         `json:"environmentId"`
+	ExperimentId      *string         `json:"experimentId"`
+	Harness           *string         `json:"harness"`
+	HarnessVersion    *string         `json:"harnessVersion"`
+	HostId            *string         `json:"hostId"`
+	Id                string          `json:"id"`
+	Kind              string          `json:"kind"`
+	LastSeenAt        *string         `json:"lastSeenAt"`
+	Model             *string         `json:"model"`
+	Observation       string          `json:"observation"`
+	ParentExecutionId *string         `json:"parentExecutionId"`
+	Problem           *string         `json:"problem"`
+	ProjectId         *string         `json:"projectId"`
+	SessionId         *string         `json:"sessionId"`
+	StartedAt         *string         `json:"startedAt"`
+	State             ExecutionState  `json:"state"`
+	TaskId            *string         `json:"taskId"`
+	Variant           *string         `json:"variant"`
 }
 
 // ExecutionState: execution_state in go/coordinator/schema.sql.
@@ -769,24 +808,49 @@ const (
 	ExecutionStateCancelled ExecutionState = "cancelled"
 )
 
-type ExecutionStatusReply = map[string]json.RawMessage
-
-type ExecutionStatusRequest struct {
-	ExecutionId *string `json:"executionId,omitempty"`
+// ExecutionStatusReply: next: the suggested operation (message, session_fork, execution_status or wait_or_steer). stop only after a stop request.
+type ExecutionStatusReply struct {
+	ExecutionId string                       `json:"executionId"`
+	Next        string                       `json:"next"`
+	Readiness   []map[string]json.RawMessage `json:"readiness,omitempty"`
+	Report      json.RawMessage              `json:"report"`
+	Resume      map[string]json.RawMessage   `json:"resume"`
+	SessionId   *string                      `json:"sessionId"`
+	State       string                       `json:"state"`
+	Stop        *StopOutcome                 `json:"stop,omitempty"`
 }
 
-type ExecutionStopReply = map[string]json.RawMessage
+type ExecutionStatusRequest struct {
+	ExecutionId string `json:"executionId"`
+}
+
+// ExecutionStopReply: The stop command and the stop outcome.
+type ExecutionStopReply struct {
+	ExecutionId string                     `json:"executionId"`
+	HostId      *string                    `json:"hostId"`
+	Id          string                     `json:"id"`
+	Kind        string                     `json:"kind"`
+	Payload     map[string]json.RawMessage `json:"payload"`
+	SessionId   *string                    `json:"sessionId"`
+	Status      string                     `json:"status"`
+	Stop        StopOutcome                `json:"stop"`
+}
 
 type ExecutionStopRequest struct {
-	ExecutionId *string `json:"executionId,omitempty"`
+	ExecutionId string `json:"executionId"`
 }
 
 type ExecutionsListReply struct {
-	Executions []map[string]json.RawMessage `json:"executions"`
+	Executions []ExecutionRow `json:"executions"`
 }
 
+// ExecutionsListRequest: Filters; problem true keeps executions with a problem.
 type ExecutionsListRequest struct {
-	Problem json.RawMessage `json:"problem,omitempty"`
+	ParentExecutionId *string `json:"parentExecutionId,omitempty"`
+	Problem           *bool   `json:"problem,omitempty"`
+	ProjectId         *string `json:"projectId,omitempty"`
+	SessionId         *string `json:"sessionId,omitempty"`
+	TaskId            *string `json:"taskId,omitempty"`
 }
 
 type ExportFile struct {
@@ -810,6 +874,11 @@ const (
 	FieldOpRemove  FieldOp = "remove"
 	FieldOpReplace FieldOp = "replace"
 )
+
+type FileRef struct {
+	Id     string  `json:"id"`
+	Sha256 *string `json:"sha256"`
+}
 
 type FocusSetReply struct {
 	Focus     json.RawMessage `json:"focus,omitempty"`
@@ -1468,12 +1537,20 @@ type RevisionWindow struct {
 	Window   Window `json:"window"`
 }
 
+type RouteDecision struct {
+	At          string          `json:"at"`
+	Candidates  json.RawMessage `json:"candidates"`
+	ExecutionId string          `json:"executionId"`
+	HostId      *string         `json:"hostId"`
+	Winner      json.RawMessage `json:"winner"`
+}
+
 type RouteDecisionsReply struct {
-	Decisions json.RawMessage `json:"decisions,omitempty"`
+	Decisions []RouteDecision `json:"decisions"`
 }
 
 type RouteDecisionsRequest struct {
-	ExecutionId *string `json:"executionId,omitempty"`
+	ExecutionId string `json:"executionId"`
 }
 
 type RunSummary struct {
@@ -1645,6 +1722,19 @@ type SettingChangesRequest struct {
 	Target json.RawMessage `json:"target,omitempty"`
 }
 
+type StopCommandRef struct {
+	Id     string `json:"id"`
+	Status string `json:"status"`
+}
+
+// StopOutcome: outcome proven (detail stopped or already_finished) or unknown (detail unconfirmed, with the stop command when one exists).
+type StopOutcome struct {
+	Detail      string          `json:"detail"`
+	Outcome     string          `json:"outcome"`
+	State       string          `json:"state"`
+	StopCommand *StopCommandRef `json:"stopCommand,omitempty"`
+}
+
 type StoreSetFreeSpaceWarningReply = map[string]json.RawMessage
 
 type StoreSetFreeSpaceWarningRequest struct {
@@ -1777,6 +1867,12 @@ type TextBlock struct {
 	Stream      *string `json:"stream,omitempty"`
 }
 
+type TextChange struct {
+	Added     []string `json:"added"`
+	FirstLine int64    `json:"firstLine"`
+	Removed   []string `json:"removed"`
+}
+
 // ThreadBlocksReply: removed: block keys that no longer exist.
 type ThreadBlocksReply struct {
 	Entries []Block  `json:"entries"`
@@ -1859,41 +1955,31 @@ type ToolBlock struct {
 	State       string          `json:"state"`
 }
 
-type TransportAuthorizeReply struct {
-	Audit         json.RawMessage `json:"audit,omitempty"`
-	Commands      json.RawMessage `json:"commands,omitempty"`
-	Conflicts     json.RawMessage `json:"conflicts,omitempty"`
-	Error         json.RawMessage `json:"error,omitempty"`
-	EventCount    json.RawMessage `json:"eventCount,omitempty"`
-	ExecutionId   json.RawMessage `json:"executionId,omitempty"`
-	HostId        json.RawMessage `json:"hostId,omitempty"`
-	HostJournal   json.RawMessage `json:"hostJournal,omitempty"`
-	NativeOutcome json.RawMessage `json:"nativeOutcome,omitempty"`
-	Resend        json.RawMessage `json:"resend,omitempty"`
-	Results       json.RawMessage `json:"results,omitempty"`
-	State         json.RawMessage `json:"state,omitempty"`
-}
+// TransportAuthorizeReply: The transport after the authorization.
+type TransportAuthorizeReply = TransportInspectReply
 
+// TransportAuthorizeRequest: Exactly these four keys (the request signature is their hash).
 type TransportAuthorizeRequest struct {
-	ConflictId  *string         `json:"conflictId,omitempty"`
-	ExecutionId *string         `json:"executionId,omitempty"`
-	FrameSha256 json.RawMessage `json:"frameSha256,omitempty"`
-	RequestId   *string         `json:"requestId,omitempty"`
+	ConflictId  string `json:"conflictId"`
+	ExecutionId string `json:"executionId"`
+	FrameSha256 string `json:"frameSha256"`
+	RequestId   string `json:"requestId"`
 }
 
+// TransportInspectReply: Retained transport of one execution; never reruns native work.
 type TransportInspectReply struct {
-	Audit         json.RawMessage `json:"audit,omitempty"`
-	Commands      json.RawMessage `json:"commands,omitempty"`
-	Conflicts     json.RawMessage `json:"conflicts,omitempty"`
-	Error         json.RawMessage `json:"error,omitempty"`
-	EventCount    json.RawMessage `json:"eventCount,omitempty"`
-	ExecutionId   json.RawMessage `json:"executionId,omitempty"`
-	HostId        json.RawMessage `json:"hostId,omitempty"`
-	HostJournal   json.RawMessage `json:"hostJournal,omitempty"`
-	NativeOutcome json.RawMessage `json:"nativeOutcome,omitempty"`
-	Resend        json.RawMessage `json:"resend,omitempty"`
-	Results       json.RawMessage `json:"results,omitempty"`
-	State         json.RawMessage `json:"state,omitempty"`
+	Audit         []map[string]json.RawMessage `json:"audit"`
+	Commands      []CommandRef                 `json:"commands"`
+	Conflicts     []map[string]json.RawMessage `json:"conflicts"`
+	Error         json.RawMessage              `json:"error"`
+	EventCount    int64                        `json:"eventCount"`
+	ExecutionId   string                       `json:"executionId"`
+	HostId        *string                      `json:"hostId"`
+	HostJournal   string                       `json:"hostJournal"`
+	NativeOutcome string                       `json:"nativeOutcome"`
+	Resend        string                       `json:"resend"`
+	Results       []map[string]json.RawMessage `json:"results"`
+	State         string                       `json:"state"`
 }
 
 type TransportInspectRequest struct {

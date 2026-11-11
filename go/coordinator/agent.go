@@ -903,10 +903,10 @@ func workerDone(q *Request, b doc) (doc, error) {
 }
 
 // stopOutcome: proven only when a host receipt ended the execution; otherwise unknown.
-func stopOutcome(q *Request, e doc) (doc, error) {
+func stopOutcome(q *Request, e doc) (contract.StopOutcome, error) {
 	cs, err := all(q, "command", doc{"executionId": e["id"], "kind": "stop"})
 	if err != nil {
-		return nil, err
+		return contract.StopOutcome{}, err
 	}
 	var stop doc
 	if len(cs) > 0 {
@@ -917,23 +917,24 @@ func stopOutcome(q *Request, e doc) (doc, error) {
 		if e["stopRequested"] == true && (astr(e["state"]) == "cancelled" || astr(stop["status"]) == "stopped") {
 			detail = "stopped"
 		}
-		return doc{"outcome": "proven", "detail": detail, "state": e["state"]}, nil
+		return contract.StopOutcome{Outcome: "proven", Detail: detail, State: astr(e["state"])}, nil
 	}
-	var sc any
+	o := contract.StopOutcome{Outcome: "unknown", Detail: "unconfirmed", State: astr(e["state"])}
 	if stop != nil {
-		sc = doc{"id": stop["id"], "status": stop["status"]}
+		o.StopCommand = &contract.StopCommandRef{Id: astr(stop["id"]), Status: astr(stop["status"])}
 	}
-	return doc{"outcome": "unknown", "detail": "unconfirmed", "state": e["state"], "stopCommand": sc}, nil
+	return o, nil
 }
 
-func executionStatus(q *Request, b doc) (doc, error) {
-	eid, err := strArg(b, "executionId", "executionId", 0)
-	if err != nil {
-		return nil, err
+func executionStatus(q *Request, r *contract.ExecutionStatusRequest) (contract.ExecutionStatusReply, error) {
+	var rep contract.ExecutionStatusReply
+	eid := r.ExecutionId
+	if eid == "" {
+		return rep, fail(400, "Expected executionId")
 	}
 	e, err := get(q, eid, "execution")
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
 	next := "wait_or_steer"
 	switch {
@@ -949,23 +950,25 @@ func executionStatus(q *Request, b doc) (doc, error) {
 		return rows(q, "SELECT data->'data' FROM document WHERE kind='event' AND data->>'executionId'=$1 AND data->>'type'='readiness' ORDER BY seq", eid)
 	})
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
-	var stop any
+	rep = contract.ExecutionStatusReply{ExecutionId: eid, SessionId: strPtr(e["sessionId"]), State: astr(e["state"]), Report: jsonBytes(e["report"]), Next: next}
 	if e["stopRequested"] == true {
-		if stop, err = stopOutcome(q, e); err != nil {
-			return nil, err
+		stop, err := stopOutcome(q, e)
+		if err != nil {
+			return rep, err
 		}
+		rep.Stop = &stop
 	}
 	resume, err := sessionResume(q, doc{"sessionId": e["sessionId"]})
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
-	out := doc{"executionId": eid, "sessionId": e["sessionId"], "state": e["state"], "report": e["report"], "stop": stop, "next": next, "resume": resume}
+	rep.Resume = recOf(resume)
 	if len(readiness) > 0 {
-		out["readiness"] = readiness
+		rep.Readiness = recsOf(readiness)
 	}
-	return out, nil
+	return rep, nil
 }
 
 // agentReconcile settles coordinator-owned queue and handoff state and reports unproven executions; nothing is replayed.
@@ -1343,6 +1346,13 @@ var agentDescriptions = map[string]string{
 // agentOps: the agent tool table, also served as /api/ops and /api/tools.
 var agentOps = map[string]registeredOp{}
 
+// agentTypedOp: an agent tool on its generated request and reply types.
+func agentTypedOp[Req, Rep any](name string, read bool, h func(*Request, *Req) (Rep, error)) {
+	f := typedOp(h)
+	agentOps[name] = registeredOp{read, f}
+	gatedObjOp(name, read, f)
+}
+
 func agentOp(name string, read bool, h func(*Request, doc) (doc, error)) {
 	f := func(q *Request) (any, error) { return h(q, body(q)) }
 	agentOps[name] = registeredOp{read, f}
@@ -1384,7 +1394,7 @@ func init() {
 		return doc{"questions": qs}, err
 	})
 	agentOp("worker_done", false, workerDone)
-	agentOp("execution_status", true, executionStatus)
+	agentTypedOp("execution_status", true, executionStatus)
 	agentOp("focus_set", false, focusSet)
 	agentOp("reconcile", false, func(q *Request, _ doc) (doc, error) { return agentReconcile(q) })
 

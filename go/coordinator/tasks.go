@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"fleet/contract"
 )
 
 var taskStates = []string{"queued", "in_progress", "waiting", "paused", "completed", "failed", "cancelled"}
@@ -384,18 +386,25 @@ const executionCols = `id,kind,state,observation,last_seen_at AS "lastSeenAt",pr
  session_id AS "sessionId",account_id AS "accountId",host_id AS "hostId",environment_id AS "environmentId",harness,harness_version AS "harnessVersion",model,config_ref AS "configRef",problem,
  started_at AS "startedAt",ended_at AS "endedAt"`
 
-func executionsList(q *Request, f doc) ([]doc, error) {
+func executionsList(q *Request, f contract.ExecutionsListRequest) ([]contract.ExecutionRow, error) {
 	c, p := []string{}, []any{}
-	for _, x := range [][2]string{{"taskId", "task_id"}, {"projectId", "project_id"}, {"parentExecutionId", "parent_execution_id"}, {"sessionId", "session_id"}} {
-		if v := astr(f[x[0]]); v != "" {
+	for _, x := range []struct {
+		v   *string
+		col string
+	}{{f.TaskId, "task_id"}, {f.ProjectId, "project_id"}, {f.ParentExecutionId, "parent_execution_id"}, {f.SessionId, "session_id"}} {
+		if v := deref(x.v); v != "" {
 			p = append(p, v)
-			c = append(c, fmt.Sprintf("%s=$%d", x[1], len(p)))
+			c = append(c, fmt.Sprintf("%s=$%d", x.col, len(p)))
 		}
 	}
-	if f["problem"] == true {
+	if f.Problem != nil && *f.Problem {
 		c = append(c, "problem IS NOT NULL")
 	}
-	return rowsOf(q, "SELECT "+executionCols+" FROM execution"+where(c)+" ORDER BY seq", p...)
+	rs, err := rowsOf(q, "SELECT "+executionCols+" FROM execution"+where(c)+" ORDER BY seq", p...)
+	if err != nil {
+		return nil, err
+	}
+	return asT[[]contract.ExecutionRow](rs)
 }
 
 func taskGet(q *Request, id string) (doc, error) {
@@ -412,7 +421,7 @@ func taskGet(q *Request, id string) (doc, error) {
 	}
 	t["progress"] = doc{"executions": d["execution_count"], "byState": d["executions_by_state"]}
 	t["cost"], t["latestResult"], t["openQuestions"] = d["totals"], d["latest_result"], d["open_questions"]
-	if t["executions"], err = executionsList(q, doc{"taskId": id}); err != nil {
+	if t["executions"], err = executionsList(q, contract.ExecutionsListRequest{TaskId: &id}); err != nil {
 		return nil, err
 	}
 	if t["dependencies"], err = rowsOf(q, "SELECT depends_on_task_id AS id,kind FROM task_dependency WHERE task_id=$1", id); err != nil {
@@ -859,10 +868,10 @@ func init() {
 		}
 		return findQuestion(q, "", id)
 	})
-	gatedObjOp("executions_list", true, func(q *Request) (any, error) {
-		es, err := executionsList(q, body(q))
-		return doc{"executions": es}, err
-	})
+	gatedObjOp("executions_list", true, typedOp(func(q *Request, r *contract.ExecutionsListRequest) (contract.ExecutionsListReply, error) {
+		es, err := executionsList(q, *r)
+		return contract.ExecutionsListReply{Executions: es}, err
+	}))
 	gatedObjOp("task_page", true, func(q *Request) (any, error) { return taskPage(q, body(q)) })
 	gatedObjOp("task_derived_check", true, func(q *Request) (any, error) {
 		var n int
