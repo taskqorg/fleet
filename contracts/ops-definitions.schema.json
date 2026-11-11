@@ -13,12 +13,12 @@
     "definition_history": {"read": true, "errors": [400, 403, 404]},
     "definition_list": {"read": true, "errors": [400, 403, 404]},
     "definition_save": {"read": false, "errors": [400, 403, 404, 409]},
+    "definition_usage": {"read": true, "errors": [400, 403, 404]},
     "profiles_list": {"read": true, "errors": [400]},
     "reconcile": {"read": false, "errors": [400, 409]},
     "setting_changes": {"read": true, "errors": []}
   },
   "planned": {
-    "definition_usage": {"read": true, "errors": [400, 403, 404]},
     "agent_effective": {"read": true, "errors": [400, 403, 404]},
     "agent_compatibility": {"read": true, "errors": [400, 403, 404]},
     "agent_test": {"read": false, "errors": [400, 403, 404, 409]},

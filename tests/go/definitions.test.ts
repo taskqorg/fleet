@@ -137,3 +137,15 @@ test('D9 pipeline_rerun starts a run of a finished run on the current definition
   assert.equal((await op('pipeline_rerun', {runId: first.runId, mode: 'some'})).status, 400);
   assert.equal((await op('pipeline_rerun', {runId: 'no-such', mode: 'all'})).status, 404);
 });
+
+test('D10 definition_usage counts the runs that pinned a definition, per revision, and names the definitions that use it (requirement: definition_usage; risk: the Usage tab and the list show runs of another definition or revision)', async () => {
+  const before = ok(await op('definition_usage', {kind: 'pipeline', id: 'web-research'}));
+  ok(await op('pipeline_run_create', {pipelineId: 'web-research', requestId: 'd10', example: {}}));
+  const u = ok(await op('definition_usage', {kind: 'pipeline', id: 'web-research'}));
+  assert.equal(u.total.runs, before.total.runs + 1);
+  assert.ok(u.byRevision.some((r: any) => r.revision === 1 && r.window.runs >= 1), JSON.stringify(u.byRevision));
+  assert.ok(ok(await op('definition_list', {kind: 'pipeline'})).items.find((x: any) => x.id === 'web-research').last30.runs >= 1);
+  const agentUse = ok(await op('definition_usage', {kind: 'agent', id: ok(await op('definition_get', {kind: 'pipeline', id: 'web-research'})).content.pipeline.steps.find((s: any) => s.kind === 'agent')?.profile ?? 'pm'}));
+  assert.ok(Array.isArray(agentUse.usedBy));
+  assert.equal((await op('definition_usage', {kind: 'pipeline', id: 'no-such'})).status, 404);
+});

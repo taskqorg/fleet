@@ -1197,6 +1197,7 @@ func init() {
 		"definition_history":       {Read: true, Long: false, Errors: []int{400, 403, 404}},
 		"definition_list":          {Read: true, Long: false, Errors: []int{400, 403, 404}},
 		"definition_save":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
+		"definition_usage":         {Read: true, Long: false, Errors: []int{400, 403, 404}},
 		"profiles_list":            {Read: true, Long: false, Errors: []int{400}},
 		"reconcile":                {Read: false, Long: false, Errors: []int{400, 409}},
 		"setting_changes":          {Read: true, Long: false, Errors: []int{}},
