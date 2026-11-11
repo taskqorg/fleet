@@ -8,15 +8,26 @@ import (
 )
 
 // A host body key that names hostId only case-insensitively would bypass readBody's exact-key host check.
-func TestCaseExactRefusesHostIDVariant(t *testing.T) {
+func TestExactKeysHostBodies(t *testing.T) {
 	ty := reflect.TypeOf(contract.ChildReceipt{})
-	if caseExact([]byte(`{"hostId":"a","HostID":"b"}`), ty) == nil {
+	if exactKeys([]byte(`{"hostId":"a","HostID":"b"}`), ty) == nil {
 		t.Fatal("HostID accepted")
 	}
-	if caseExact([]byte(`{"delegation":{"ProfileID":"x"}}`), ty) == nil {
+	if exactKeys([]byte(`{"delegation":{"ProfileID":"x"}}`), ty) == nil {
 		t.Fatal("nested ProfileID accepted")
 	}
-	if err := caseExact([]byte(`{"hostId":"a","extra":1}`), ty); err != nil {
+	full := `"hostId":"a","executionId":"e","commandId":"c","delegation":{"input":"i","profileId":"p","requestId":"r"}`
+	if err := exactKeys([]byte(`{`+full+`,"extra":1}`), ty); err != nil {
 		t.Fatal(err)
+	}
+	if exactKeys([]byte(`{"hostId":"a"}`), ty) == nil {
+		t.Fatal("missing executionId accepted")
+	}
+	cat := reflect.TypeOf(contract.AccountCatalogue{})
+	if exactKeys([]byte(`{"accountId":"a","bindings":[{"name":"x","NAME":"y","executable":"/e","environment":{},"behaviorApproved":true}]}`), cat) == nil {
+		t.Fatal("case variant in a list element accepted")
+	}
+	if exactKeys([]byte(`{"accountId":"a","bindings":[{"name":"x","executable":"/e","behaviorApproved":true}]}`), cat) == nil {
+		t.Fatal("binding without environment accepted")
 	}
 }

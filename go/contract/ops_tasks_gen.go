@@ -15,9 +15,6 @@ type ProjectContextRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ProjectContextRequest) Validate() error {
-	if v.ProjectId == "" {
-		return Missing("projectId")
-	}
 	return nil
 }
 
@@ -51,24 +48,6 @@ type ProjectQuestion struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ProjectQuestion) Validate() error {
-	if v.Actor == "" {
-		return Missing("actor")
-	}
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.ProjectId == "" {
-		return Missing("projectId")
-	}
-	if v.RequestId == "" {
-		return Missing("requestId")
-	}
-	if v.State == "" {
-		return Missing("state")
-	}
-	if v.Text == "" {
-		return Missing("text")
-	}
 	return nil
 }
 
@@ -81,9 +60,6 @@ type ProjectReadinessReply struct {
 func (v *ProjectReadinessReply) Validate() error {
 	if v.Hosts == nil {
 		return Missing("hosts")
-	}
-	if v.ProjectId == "" {
-		return Missing("projectId")
 	}
 	return nil
 }
@@ -110,12 +86,6 @@ type QuestionAnswerRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *QuestionAnswerRequest) Validate() error {
-	if v.Answer == "" {
-		return Missing("answer")
-	}
-	if v.QuestionId == "" {
-		return Missing("questionId")
-	}
 	return nil
 }
 
@@ -129,15 +99,6 @@ type QuestionAskRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *QuestionAskRequest) Validate() error {
-	if v.ProjectId == "" {
-		return Missing("projectId")
-	}
-	if v.RequestId == "" {
-		return Missing("requestId")
-	}
-	if v.Text == "" {
-		return Missing("text")
-	}
 	return nil
 }
 
@@ -164,9 +125,6 @@ type QuestionHistoryRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *QuestionHistoryRequest) Validate() error {
-	if v.ProjectId == "" {
-		return Missing("projectId")
-	}
 	return nil
 }
 
@@ -213,23 +171,11 @@ type QuestionRow struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *QuestionRow) Validate() error {
-	if v.AskedAt == "" {
-		return Missing("askedAt")
-	}
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}
 	if v.Options == nil {
 		return Missing("options")
-	}
-	if v.State == "" {
-		return Missing("state")
-	}
-	if v.Text == "" {
-		return Missing("text")
 	}
 	return nil
 }
@@ -244,12 +190,6 @@ type QuestionsAnswerRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *QuestionsAnswerRequest) Validate() error {
-	if v.Answer == "" {
-		return Missing("answer")
-	}
-	if v.QuestionId == "" {
-		return Missing("questionId")
-	}
 	return nil
 }
 
@@ -311,9 +251,6 @@ type TaskCancelRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TaskCancelRequest) Validate() error {
-	if v.TaskId == "" {
-		return Missing("taskId")
-	}
 	return nil
 }
 
@@ -333,9 +270,6 @@ type TaskCreateRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TaskCreateRequest) Validate() error {
-	if v.Title == "" {
-		return Missing("title")
-	}
 	return nil
 }
 
@@ -347,12 +281,6 @@ type TaskDependency struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TaskDependency) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.Kind == "" {
-		return Missing("kind")
-	}
 	return nil
 }
 
@@ -389,9 +317,6 @@ func (v *TaskDerivedDrift) Validate() error {
 	}
 	if v.Stored == nil {
 		return Missing("stored")
-	}
-	if v.TaskId == "" {
-		return Missing("taskId")
 	}
 	return nil
 }
@@ -437,9 +362,6 @@ func (v *TaskDetail) Validate() error {
 	if v.Cost == nil {
 		return Missing("cost")
 	}
-	if v.CreatedAt == "" {
-		return Missing("createdAt")
-	}
 	if v.DeliveryMethod == nil {
 		return Missing("deliveryMethod")
 	}
@@ -459,17 +381,11 @@ func (v *TaskDetail) Validate() error {
 			return err
 		}
 	}
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if v.LatestResult == nil {
 		return Missing("latestResult")
 	}
 	if v.OpenQuestions == nil {
 		return Missing("openQuestions")
-	}
-	if v.Priority == "" {
-		return Missing("priority")
 	}
 	if err := Check(&v.Progress, "progress"); err != nil {
 		return err
@@ -485,12 +401,6 @@ func (v *TaskDetail) Validate() error {
 	if err := Check(&v.State, "state"); err != nil {
 		return err
 	}
-	if v.Title == "" {
-		return Missing("title")
-	}
-	if v.UpdatedAt == "" {
-		return Missing("updatedAt")
-	}
 	return nil
 }
 
@@ -502,9 +412,6 @@ type TaskGetRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TaskGetRequest) Validate() error {
-	if v.TaskId == "" {
-		return Missing("taskId")
-	}
 	return nil
 }
 
@@ -516,9 +423,6 @@ type TaskHoldRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TaskHoldRequest) Validate() error {
-	if v.TaskId == "" {
-		return Missing("taskId")
-	}
 	return nil
 }
 
@@ -554,32 +458,17 @@ func (v *TaskListItem) Validate() error {
 	if v.CompletionRequirements == nil {
 		return Missing("completionRequirements")
 	}
-	if v.CreatedAt == "" {
-		return Missing("createdAt")
-	}
 	if v.DeliveryMethod == nil {
 		return Missing("deliveryMethod")
 	}
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if v.OpenQuestions == nil {
 		return Missing("openQuestions")
-	}
-	if v.Priority == "" {
-		return Missing("priority")
 	}
 	if err := Check(&v.Progress, "progress"); err != nil {
 		return err
 	}
 	if err := Check(&v.State, "state"); err != nil {
 		return err
-	}
-	if v.Title == "" {
-		return Missing("title")
-	}
-	if v.UpdatedAt == "" {
-		return Missing("updatedAt")
 	}
 	return nil
 }
@@ -689,9 +578,6 @@ type TaskReleaseRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TaskReleaseRequest) Validate() error {
-	if v.TaskId == "" {
-		return Missing("taskId")
-	}
 	return nil
 }
 
@@ -706,9 +592,6 @@ type TaskRequestAcceptanceRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TaskRequestAcceptanceRequest) Validate() error {
-	if v.TaskId == "" {
-		return Missing("taskId")
-	}
 	return nil
 }
 
@@ -746,9 +629,6 @@ type TaskTakeRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TaskTakeRequest) Validate() error {
-	if v.TaskId == "" {
-		return Missing("taskId")
-	}
 	return nil
 }
 
@@ -766,9 +646,6 @@ type TaskUpdateRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TaskUpdateRequest) Validate() error {
-	if v.TaskId == "" {
-		return Missing("taskId")
-	}
 	return nil
 }
 

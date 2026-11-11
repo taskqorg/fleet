@@ -49,9 +49,6 @@ func (v *FocusSetReply) Validate() error {
 	if err := Check(&v.Focus, "focus"); err != nil {
 		return err
 	}
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
 	return nil
 }
 
@@ -65,9 +62,6 @@ type FocusSetRequest struct {
 func (v *FocusSetRequest) Validate() error {
 	if v.ProjectIds == nil {
 		return Missing("projectIds")
-	}
-	if v.SessionId == "" {
-		return Missing("sessionId")
 	}
 	return nil
 }
@@ -149,9 +143,6 @@ func (v *MembershipAnswer) Validate() error {
 			return err
 		}
 	}
-	if v.Name == "" {
-		return Missing("name")
-	}
 	if v.Rows == nil {
 		return Missing("rows")
 	}
@@ -176,9 +167,6 @@ func (v *MembershipList) Validate() error {
 		if err := Check(v.Filter, "filter"); err != nil {
 			return err
 		}
-	}
-	if v.Name == "" {
-		return Missing("name")
 	}
 	return nil
 }
@@ -229,9 +217,6 @@ type PersonSettings struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *PersonSettings) Validate() error {
-	if v.Email == "" {
-		return Missing("email")
-	}
 	if err := Check(&v.Order, "order"); err != nil {
 		return err
 	}

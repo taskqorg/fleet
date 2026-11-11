@@ -23,12 +23,6 @@ type ArtifactCopyRetryRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ArtifactCopyRetryRequest) Validate() error {
-	if v.ArtifactId == "" {
-		return Missing("artifactId")
-	}
-	if v.StoreId == "" {
-		return Missing("storeId")
-	}
 	return nil
 }
 
@@ -39,12 +33,6 @@ type ArtifactCopyState struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ArtifactCopyState) Validate() error {
-	if v.State == "" {
-		return Missing("state")
-	}
-	if v.StoreId == "" {
-		return Missing("storeId")
-	}
 	return nil
 }
 
@@ -56,9 +44,6 @@ type ArtifactGetRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ArtifactGetRequest) Validate() error {
-	if v.ArtifactId == "" {
-		return Missing("artifactId")
-	}
 	return nil
 }
 
@@ -120,12 +105,6 @@ type ArtifactPurgeRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ArtifactPurgeRequest) Validate() error {
-	if v.ContentHash == "" {
-		return Missing("contentHash")
-	}
-	if v.Reason == "" {
-		return Missing("reason")
-	}
 	return nil
 }
 
@@ -144,18 +123,6 @@ type ArtifactRow struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ArtifactRow) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.MediaType == "" {
-		return Missing("mediaType")
-	}
-	if v.Name == "" {
-		return Missing("name")
-	}
-	if v.State == "" {
-		return Missing("state")
-	}
 	return nil
 }
 
@@ -166,9 +133,6 @@ type ArtifactRuleConfirmReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ArtifactRuleConfirmReply) Validate() error {
-	if v.RuleHash == "" {
-		return Missing("ruleHash")
-	}
 	return nil
 }
 
@@ -197,9 +161,6 @@ type ArtifactRulePreviewReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ArtifactRulePreviewReply) Validate() error {
-	if v.RuleHash == "" {
-		return Missing("ruleHash")
-	}
 	if v.Sample == nil {
 		return Missing("sample")
 	}
@@ -245,9 +206,6 @@ type ArtifactView struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ArtifactView) Validate() error {
-	if v.Availability == "" {
-		return Missing("availability")
-	}
 	if v.Copies == nil {
 		return Missing("copies")
 	}
@@ -255,27 +213,6 @@ func (v *ArtifactView) Validate() error {
 		if err := Check(&v.Copies[i], "copies"); err != nil {
 			return err
 		}
-	}
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.MediaType == "" {
-		return Missing("mediaType")
-	}
-	if v.Name == "" {
-		return Missing("name")
-	}
-	if v.Role == "" {
-		return Missing("role")
-	}
-	if v.Scope == "" {
-		return Missing("scope")
-	}
-	if v.Sha256 == "" {
-		return Missing("sha256")
-	}
-	if v.State == "" {
-		return Missing("state")
 	}
 	return nil
 }
@@ -287,12 +224,6 @@ type StoreSetFreeSpaceWarningReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *StoreSetFreeSpaceWarningReply) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.State == "" {
-		return Missing("state")
-	}
 	return nil
 }
 
@@ -304,9 +235,6 @@ type StoreSetFreeSpaceWarningRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *StoreSetFreeSpaceWarningRequest) Validate() error {
-	if v.StoreId == "" {
-		return Missing("storeId")
-	}
 	return nil
 }
 
@@ -328,21 +256,6 @@ type StoreView struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *StoreView) Validate() error {
-	if v.Bucket == "" {
-		return Missing("bucket")
-	}
-	if v.Endpoint == "" {
-		return Missing("endpoint")
-	}
-	if v.HostId == "" {
-		return Missing("host_id")
-	}
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.State == "" {
-		return Missing("state")
-	}
 	return nil
 }
 

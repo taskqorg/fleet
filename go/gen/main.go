@@ -186,8 +186,8 @@ func main() {
 			}
 			sort.Strings(keys)
 			fmt.Fprintf(&b, "type %s struct {\n", name)
-			// Validate: a required string is non-empty, a required list or object is present, and every enum and
-			// nested struct present is valid (Check). Integers and booleans have no missing value to tell from zero.
+			// Validate: a required list or object is not null, and every enum and nested struct present is valid (Check).
+			// Key presence is the decoder's (the coordinator's exactKeys): a zero value cannot tell a missing field.
 			var v bytes.Buffer
 			for _, k := range keys {
 				ft, null := goType(props[k].(map[string]any), n+"."+k)
@@ -202,8 +202,6 @@ func main() {
 				f, named := exported(k), plain && !builtin[strings.TrimPrefix(ft, "*")]
 				fmt.Fprintf(&b, "\t%s %s `json:%q`\n", f, ft, tag)
 				switch {
-				case req[k] && ft == "string":
-					fmt.Fprintf(&v, "\tif v.%s == \"\" {\n\t\treturn Missing(%q)\n\t}\n", f, k)
 				case req[k] && !null && !plain:
 					fmt.Fprintf(&v, "\tif v.%s == nil {\n\t\treturn Missing(%q)\n\t}\n", f, k)
 				}

@@ -13,9 +13,6 @@ type CallKeyDisabled struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *CallKeyDisabled) Validate() error {
-	if v.Key == "" {
-		return Missing("key")
-	}
 	return nil
 }
 
@@ -27,12 +24,6 @@ type CallKeyProblem struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *CallKeyProblem) Validate() error {
-	if v.Key == "" {
-		return Missing("key")
-	}
-	if v.Message == "" {
-		return Missing("message")
-	}
 	return nil
 }
 
@@ -57,12 +48,6 @@ type CallLine struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *CallLine) Validate() error {
-	if v.CallId == "" {
-		return Missing("callId")
-	}
-	if v.Connection == "" {
-		return Missing("connection")
-	}
 	if v.Disabled != nil {
 		if err := Check(v.Disabled, "disabled"); err != nil {
 			return err
@@ -75,9 +60,6 @@ func (v *CallLine) Validate() error {
 	}
 	if err := Check(&v.Outcome, "outcome"); err != nil {
 		return err
-	}
-	if v.Tool == "" {
-		return Missing("tool")
 	}
 	if v.Usage != nil {
 		if err := Check(v.Usage, "usage"); err != nil {
@@ -115,9 +97,6 @@ type CallUsage struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *CallUsage) Validate() error {
-	if v.Unit == "" {
-		return Missing("unit")
-	}
 	return nil
 }
 
@@ -134,9 +113,6 @@ func (v *GatewayConnection) Validate() error {
 	if v.Blocked == nil {
 		return Missing("blocked")
 	}
-	if v.Intake == "" {
-		return Missing("intake")
-	}
 	if v.Keys == nil {
 		return Missing("keys")
 	}
@@ -144,9 +120,6 @@ func (v *GatewayConnection) Validate() error {
 		if err := Check(&v.Keys[i], "keys"); err != nil {
 			return err
 		}
-	}
-	if v.Provider == "" {
-		return Missing("provider")
 	}
 	if v.Tools == nil {
 		return Missing("tools")
@@ -162,12 +135,6 @@ type GatewayKey struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *GatewayKey) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.State == "" {
-		return Missing("state")
-	}
 	return nil
 }
 
@@ -181,9 +148,6 @@ type GatewayProvider struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *GatewayProvider) Validate() error {
-	if v.BaseUrl == "" {
-		return Missing("baseUrl")
-	}
 	if v.Tools == nil {
 		return Missing("tools")
 	}
@@ -208,21 +172,6 @@ type GatewayRunToken struct {
 func (v *GatewayRunToken) Validate() error {
 	if v.Connections == nil {
 		return Missing("connections")
-	}
-	if v.DirectedBy == "" {
-		return Missing("directedBy")
-	}
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
-	if v.ExperimentId == "" {
-		return Missing("experimentId")
-	}
-	if v.ProjectId == "" {
-		return Missing("projectId")
-	}
-	if v.Sha256 == "" {
-		return Missing("sha256")
 	}
 	return nil
 }
@@ -252,9 +201,6 @@ func (v *GatewaySnapshot) Validate() error {
 			return err
 		}
 	}
-	if v.UsageTokenSha256 == "" {
-		return Missing("usageTokenSha256")
-	}
 	return nil
 }
 
@@ -271,15 +217,6 @@ type GatewayTool struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *GatewayTool) Validate() error {
-	if v.Method == "" {
-		return Missing("method")
-	}
-	if v.Path == "" {
-		return Missing("path")
-	}
-	if v.Unit == "" {
-		return Missing("unit")
-	}
 	return nil
 }
 
@@ -291,11 +228,5 @@ type GatewayUsageSource struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *GatewayUsageSource) Validate() error {
-	if v.Field == "" {
-		return Missing("field")
-	}
-	if v.Path == "" {
-		return Missing("path")
-	}
 	return nil
 }

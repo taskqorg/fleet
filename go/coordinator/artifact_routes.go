@@ -173,9 +173,9 @@ func init() {
 	})
 }
 
-// typed: the host route's body decodes into its contract type (contracts/host-protocol.schema.json), passes its
-// generated Validate, and h reads the struct only: a field of the wrong type, a missing required field or an enum value
-// outside the schema is 400. Unknown fields pass while hosts update one at a time.
+// typed: the host route's body decodes into its contract type (contracts/host-protocol.schema.json), passes
+// decodeValid, and h reads the struct only: a field of the wrong type, a missing required field or an enum value outside
+// the schema is 400. Unknown fields pass while hosts update one at a time.
 func typed[T any, P interface {
 	*T
 	Validate() error
@@ -189,14 +189,15 @@ func typed[T any, P interface {
 	}
 }
 
-// decodeValid: body into T, then T's generated Validate; strict refuses unknown fields.
+// decodeValid: required keys (exactKeys), body into T, then T's generated Validate (enums, nested structs, required lists
+// not null); strict refuses unknown fields.
 func decodeValid[T any, P interface {
 	*T
 	Validate() error
 }](body []byte, strict bool) (*T, error) {
 	t := new(T)
-	// A key that names a field only case-insensitively (HostID) is refused: readBody checks the exact hostId key.
-	if err := caseExact(body, reflect.TypeOf(*t)); err != nil {
+	// Required keys present, and none named only case-insensitively (HostID): readBody checks the exact hostId key.
+	if err := exactKeys(body, reflect.TypeOf(*t)); err != nil {
 		return nil, err
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
@@ -309,8 +310,8 @@ func hostMayRead(q *Request, b *contract.HostArtifactGetRequest) (*Artifact, err
 			}
 		}
 	}
-	if b.ExecutionId != "" && x.Role != "example" {
-		e, err := execGet(ctx, a, b.ExecutionId)
+	if deref(b.ExecutionId) != "" && x.Role != "example" {
+		e, err := execGet(ctx, a, *b.ExecutionId)
 		if err != nil {
 			return nil, err
 		}

@@ -84,20 +84,34 @@ func typedOp[Req, Rep any](h func(q *Request, r *Req) (Rep, error)) handler {
 				return nil, fail(400, "Invalid body")
 			}
 		}
-		// The generated required-field and enum check (contract.Check), on the body as decoded.
-		if v, ok := any(&r).(interface{ Validate() error }); ok {
-			if err := v.Validate(); err != nil {
-				return nil, fail(400, err.Error())
-			}
-		}
 		return h(q, &r)
 	}
 }
 
-// exactKeys refuses a missing required field, and a body key that names a request field only case-insensitively. encoding/json matches field names
-// case-insensitively and the last key wins, so {"executionid": x} would override an executionId the agent tool path
-// bound (bound in agent.go) and act on another execution.
+// exactKeys refuses a missing required field, and a body key that names a request field only case-insensitively, in the
+// struct and every nested object and list element. encoding/json matches field names case-insensitively and the last key
+// wins, so {"executionid": x} would override an executionId the agent tool path bound (agent.go), and {"HostID": x} the
+// hostId readBody checked.
 func exactKeys(body json.RawMessage, t reflect.Type) error {
+	return keysAt(body, t, "")
+}
+
+func keysAt(body json.RawMessage, t reflect.Type, path string) error {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() == reflect.Slice && t.Elem().Kind() != reflect.Uint8 {
+		var xs []json.RawMessage
+		if json.Unmarshal(body, &xs) != nil {
+			return nil // not a list: decode reports it
+		}
+		for _, x := range xs {
+			if err := keysAt(x, t.Elem(), path); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if t.Kind() != reflect.Struct {
 		return nil
 	}
@@ -109,39 +123,17 @@ func exactKeys(body json.RawMessage, t reflect.Type) error {
 		tag, opts, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
 		for k := range m {
 			if k != tag && strings.EqualFold(k, tag) {
-				return fail(400, "Unknown field "+k+": use "+tag)
+				return fail(400, "Unknown field "+path+k+": use "+tag)
 			}
 		}
+		v, ok := m[tag]
 		// A field the schema requires has no omitempty: a missing one is 400, not its zero value (a limit of 0).
-		if _, ok := m[tag]; !ok && !strings.Contains(opts, "omitempty") {
-			return fail(400, "Expected "+tag)
+		if !ok && !strings.Contains(opts, "omitempty") {
+			return fail(400, "Expected "+path+tag)
 		}
-	}
-	return nil
-}
-
-// caseExact: exactKeys' case check alone, on this struct and its nested structs (host bodies keep required checks in Validate).
-func caseExact(body json.RawMessage, t reflect.Type) error {
-	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice {
-		t = t.Elem()
-	}
-	if t.Kind() != reflect.Struct {
-		return nil
-	}
-	var m map[string]json.RawMessage
-	if json.Unmarshal(body, &m) != nil {
-		return nil
-	}
-	for i := 0; i < t.NumField(); i++ {
-		tag, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
-		for k, v := range m {
-			if k != tag && strings.EqualFold(k, tag) {
-				return fail(400, "Unknown field "+k+": use "+tag)
-			}
-			if k == tag {
-				if err := caseExact(v, t.Field(i).Type); err != nil {
-					return err
-				}
+		if ok {
+			if err := keysAt(v, t.Field(i).Type, path+tag+"."); err != nil {
+				return err
 			}
 		}
 	}

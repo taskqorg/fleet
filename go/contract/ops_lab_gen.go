@@ -18,15 +18,6 @@ type LabCellActionRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabCellActionRequest) Validate() error {
-	if v.Action == "" {
-		return Missing("action")
-	}
-	if v.Cell == "" {
-		return Missing("cell")
-	}
-	if v.ExperimentId == "" {
-		return Missing("experimentId")
-	}
 	return nil
 }
 
@@ -36,9 +27,6 @@ type LabCompareMethodsReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabCompareMethodsReply) Validate() error {
-	if v.ExperimentId == "" {
-		return Missing("experimentId")
-	}
 	return nil
 }
 
@@ -52,14 +40,8 @@ type LabCompareMethodsRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabCompareMethodsRequest) Validate() error {
-	if v.Capability == "" {
-		return Missing("capability")
-	}
 	if v.Methods == nil {
 		return Missing("methods")
-	}
-	if v.ProjectId == "" {
-		return Missing("projectId")
 	}
 	return nil
 }
@@ -72,9 +54,6 @@ type LabExampleGetReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabExampleGetReply) Validate() error {
-	if v.ArtifactId == "" {
-		return Missing("artifactId")
-	}
 	if v.Example == nil {
 		return Missing("example")
 	}
@@ -90,9 +69,6 @@ type LabExampleGetRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabExampleGetRequest) Validate() error {
-	if v.ArtifactId == "" {
-		return Missing("artifactId")
-	}
 	return nil
 }
 
@@ -154,12 +130,6 @@ type LabExperimentActionRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabExperimentActionRequest) Validate() error {
-	if v.Action == "" {
-		return Missing("action")
-	}
-	if v.ExperimentId == "" {
-		return Missing("experimentId")
-	}
 	return nil
 }
 
@@ -200,12 +170,6 @@ type LabExperimentDecideRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabExperimentDecideRequest) Validate() error {
-	if v.Decision == "" {
-		return Missing("decision")
-	}
-	if v.ExperimentId == "" {
-		return Missing("experimentId")
-	}
 	return nil
 }
 
@@ -218,9 +182,6 @@ type LabExperimentGetRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabExperimentGetRequest) Validate() error {
-	if v.ExperimentId == "" {
-		return Missing("experimentId")
-	}
 	return nil
 }
 
@@ -245,15 +206,6 @@ type LabExperimentNoteRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabExperimentNoteRequest) Validate() error {
-	if v.ExperimentId == "" {
-		return Missing("experimentId")
-	}
-	if v.Kind == "" {
-		return Missing("kind")
-	}
-	if v.Text == "" {
-		return Missing("text")
-	}
 	return nil
 }
 
@@ -282,12 +234,6 @@ type LabExperimentPromoteRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabExperimentPromoteRequest) Validate() error {
-	if v.ExperimentId == "" {
-		return Missing("experimentId")
-	}
-	if v.Variant == "" {
-		return Missing("variant")
-	}
 	return nil
 }
 
@@ -332,12 +278,6 @@ type LabPromoteRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabPromoteRequest) Validate() error {
-	if v.ExperimentId == "" {
-		return Missing("experimentId")
-	}
-	if v.Variant == "" {
-		return Missing("variant")
-	}
 	return nil
 }
 
@@ -352,12 +292,6 @@ type LabRatingCreateRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabRatingCreateRequest) Validate() error {
-	if v.ExperimentId == "" {
-		return Missing("experimentId")
-	}
-	if v.Form == "" {
-		return Missing("form")
-	}
 	if v.TrialIds == nil {
 		return Missing("trialIds")
 	}
@@ -373,9 +307,6 @@ type LabRatingGetRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabRatingGetRequest) Validate() error {
-	if v.QuestionId == "" {
-		return Missing("questionId")
-	}
 	return nil
 }
 
@@ -426,9 +357,6 @@ type LabScoreCorrectRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabScoreCorrectRequest) Validate() error {
-	if v.ScoreId == "" {
-		return Missing("scoreId")
-	}
 	if v.Value == nil {
 		return Missing("value")
 	}

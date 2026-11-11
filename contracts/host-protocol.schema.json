@@ -1209,7 +1209,6 @@
       "type": "object",
       "required": [
         "hostId",
-        "executionId",
         "artifactId"
       ],
       "properties": {
@@ -1227,7 +1226,7 @@
           "type": "string"
         }
       },
-      "$comment": "POST /api/hosts/artifacts/get and /read: one artifact the execution may read."
+      "$comment": "executionId (the reader's execution) or commandId (its open tool command) names why this host may read"
     },
     "HostArtifactListRequest": {
       "type": "object",

@@ -40,15 +40,6 @@ type BoundaryBlock struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *BoundaryBlock) Validate() error {
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
-	if v.Key == "" {
-		return Missing("key")
-	}
-	if v.Kind == "" {
-		return Missing("kind")
-	}
 	if err := Check(&v.State, "state"); err != nil {
 		return err
 	}
@@ -68,14 +59,8 @@ type Change struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *Change) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
-	}
-	if v.Op == "" {
-		return Missing("op")
 	}
 	return nil
 }
@@ -87,9 +72,6 @@ type ChangeRef struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ChangeRef) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}
@@ -141,15 +123,6 @@ type DirectSearchRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *DirectSearchRequest) Validate() error {
-	if v.ProjectId == "" {
-		return Missing("projectId")
-	}
-	if v.Query == "" {
-		return Missing("query")
-	}
-	if v.RequestId == "" {
-		return Missing("requestId")
-	}
 	return nil
 }
 
@@ -187,23 +160,8 @@ type QuestionBlock struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *QuestionBlock) Validate() error {
-	if v.Key == "" {
-		return Missing("key")
-	}
-	if v.Kind == "" {
-		return Missing("kind")
-	}
 	if v.Options == nil {
 		return Missing("options")
-	}
-	if v.QuestionId == "" {
-		return Missing("questionId")
-	}
-	if v.State == "" {
-		return Missing("state")
-	}
-	if v.Text == "" {
-		return Missing("text")
 	}
 	return nil
 }
@@ -220,15 +178,6 @@ type ReasoningBlock struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ReasoningBlock) Validate() error {
-	if v.Key == "" {
-		return Missing("key")
-	}
-	if v.Kind == "" {
-		return Missing("kind")
-	}
-	if v.Markdown == "" {
-		return Missing("markdown")
-	}
 	return nil
 }
 
@@ -242,18 +191,6 @@ type RecommendationSetReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *RecommendationSetReply) Validate() error {
-	if v.Actor == "" {
-		return Missing("actor")
-	}
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.MethodId == "" {
-		return Missing("methodId")
-	}
-	if v.ProjectId == "" {
-		return Missing("projectId")
-	}
 	return nil
 }
 
@@ -264,12 +201,6 @@ type RecommendationSetRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *RecommendationSetRequest) Validate() error {
-	if v.MethodId == "" {
-		return Missing("methodId")
-	}
-	if v.ProjectId == "" {
-		return Missing("projectId")
-	}
 	return nil
 }
 
@@ -295,15 +226,6 @@ type ResultArtifact struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ResultArtifact) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.MediaType == "" {
-		return Missing("mediaType")
-	}
-	if v.Name == "" {
-		return Missing("name")
-	}
 	return nil
 }
 
@@ -329,12 +251,6 @@ func (v *ResultBlock) Validate() error {
 			return err
 		}
 	}
-	if v.Key == "" {
-		return Missing("key")
-	}
-	if v.Kind == "" {
-		return Missing("kind")
-	}
 	return nil
 }
 
@@ -345,12 +261,6 @@ type SearchHit struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SearchHit) Validate() error {
-	if v.Key == "" {
-		return Missing("key")
-	}
-	if v.Snippet == "" {
-		return Missing("snippet")
-	}
 	return nil
 }
 
@@ -363,9 +273,6 @@ type SessionArchiveRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionArchiveRequest) Validate() error {
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
 	return nil
 }
 
@@ -379,12 +286,6 @@ type SessionCreateReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionCreateReply) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
 	return nil
 }
 
@@ -403,18 +304,6 @@ type SessionForkReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionForkReply) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.RequestId == "" {
-		return Missing("requestId")
-	}
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
-	if v.SourceSessionId == "" {
-		return Missing("sourceSessionId")
-	}
 	return nil
 }
 
@@ -428,9 +317,6 @@ type SessionForkRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionForkRequest) Validate() error {
-	if v.RequestId == "" {
-		return Missing("requestId")
-	}
 	return nil
 }
 
@@ -443,9 +329,6 @@ type SessionGetRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionGetRequest) Validate() error {
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
 	return nil
 }
 
@@ -467,9 +350,6 @@ type SessionHandoffsRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionHandoffsRequest) Validate() error {
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
 	return nil
 }
 
@@ -485,12 +365,6 @@ type SessionProfileReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionProfileReply) Validate() error {
-	if v.ProfileId == "" {
-		return Missing("profileId")
-	}
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
 	return nil
 }
 
@@ -503,12 +377,6 @@ type SessionProfileRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionProfileRequest) Validate() error {
-	if v.ProfileId == "" {
-		return Missing("profileId")
-	}
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
 	return nil
 }
 
@@ -539,9 +407,6 @@ func (v *SessionResumeReply) Validate() error {
 	if v.NativeSessions == nil {
 		return Missing("nativeSessions")
 	}
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
 	return nil
 }
 
@@ -569,9 +434,6 @@ type SessionStartReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionStartReply) Validate() error {
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
 	return nil
 }
 
@@ -602,12 +464,6 @@ type SessionTaskAttachReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionTaskAttachReply) Validate() error {
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
-	if v.TaskId == "" {
-		return Missing("taskId")
-	}
 	return nil
 }
 
@@ -633,15 +489,6 @@ type SessionTransitionReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionTransitionReply) Validate() error {
-	if v.ProfileId == "" {
-		return Missing("profileId")
-	}
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
-	if v.Transition == "" {
-		return Missing("transition")
-	}
 	return nil
 }
 
@@ -719,18 +566,6 @@ type TextBlock struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TextBlock) Validate() error {
-	if v.Key == "" {
-		return Missing("key")
-	}
-	if v.Kind == "" {
-		return Missing("kind")
-	}
-	if v.Markdown == "" {
-		return Missing("markdown")
-	}
-	if v.Role == "" {
-		return Missing("role")
-	}
 	return nil
 }
 
@@ -833,9 +668,6 @@ type ThreadExportReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ThreadExportReply) Validate() error {
-	if v.Markdown == "" {
-		return Missing("markdown")
-	}
 	return nil
 }
 
@@ -882,9 +714,6 @@ type ThreadPoint struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ThreadPoint) Validate() error {
-	if v.Key == "" {
-		return Missing("key")
-	}
 	return nil
 }
 
@@ -918,9 +747,6 @@ func (v *ThreadSearchRequest) Validate() error {
 	if err := Check(&v.Key, "key"); err != nil {
 		return err
 	}
-	if v.Q == "" {
-		return Missing("q")
-	}
 	return nil
 }
 
@@ -940,18 +766,6 @@ type ToolBlock struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ToolBlock) Validate() error {
-	if v.Key == "" {
-		return Missing("key")
-	}
-	if v.Kind == "" {
-		return Missing("kind")
-	}
-	if v.Name == "" {
-		return Missing("name")
-	}
-	if v.State == "" {
-		return Missing("state")
-	}
 	return nil
 }
 
@@ -976,9 +790,6 @@ type WatchGetRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *WatchGetRequest) Validate() error {
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
 	return nil
 }
 
@@ -997,14 +808,8 @@ type WatchRecord struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *WatchRecord) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if v.Kinds == nil {
 		return Missing("kinds")
-	}
-	if v.SessionId == "" {
-		return Missing("sessionId")
 	}
 	return nil
 }
@@ -1023,9 +828,6 @@ func (v *WatchSetRequest) Validate() error {
 	if v.Kinds == nil {
 		return Missing("kinds")
 	}
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
 	return nil
 }
 
@@ -1036,9 +838,6 @@ type WatchStopReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *WatchStopReply) Validate() error {
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
 	return nil
 }
 
@@ -1048,9 +847,6 @@ type WatchStopRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *WatchStopRequest) Validate() error {
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
 	return nil
 }
 
@@ -1068,12 +864,6 @@ type WorkerDoneReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *WorkerDoneReply) Validate() error {
-	if v.Action == "" {
-		return Missing("action")
-	}
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
 	if v.Report != nil {
 		if err := Check(v.Report, "report"); err != nil {
 			return err
@@ -1092,9 +882,6 @@ type WorkerDoneRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *WorkerDoneRequest) Validate() error {
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
 	return nil
 }
 
@@ -1106,9 +893,6 @@ type WorkerReport struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *WorkerReport) Validate() error {
-	if v.Outcome == "" {
-		return Missing("outcome")
-	}
 	return nil
 }
 

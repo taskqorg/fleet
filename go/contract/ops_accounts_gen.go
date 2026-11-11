@@ -17,12 +17,6 @@ type AccountConnectRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *AccountConnectRequest) Validate() error {
-	if v.AccountId == "" {
-		return Missing("accountId")
-	}
-	if v.Binding == "" {
-		return Missing("binding")
-	}
 	return nil
 }
 
@@ -40,12 +34,6 @@ type AccountCreateRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *AccountCreateRequest) Validate() error {
-	if v.Harness == "" {
-		return Missing("harness")
-	}
-	if v.Name == "" {
-		return Missing("name")
-	}
 	return nil
 }
 
@@ -59,9 +47,6 @@ type AccountDiscoverRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *AccountDiscoverRequest) Validate() error {
-	if v.AccountId == "" {
-		return Missing("accountId")
-	}
 	return nil
 }
 
@@ -101,18 +86,6 @@ type AccountInspection struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *AccountInspection) Validate() error {
-	if v.AccountId == "" {
-		return Missing("accountId")
-	}
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
-	if v.HostId == "" {
-		return Missing("hostId")
-	}
-	if v.Id == "" {
-		return Missing("id")
-	}
 	return nil
 }
 
@@ -166,12 +139,6 @@ func (v *AccountLoginHandoffReply) Validate() error {
 	if v.Executable == nil {
 		return Missing("executable")
 	}
-	if v.HostId == "" {
-		return Missing("hostId")
-	}
-	if v.Quota == "" {
-		return Missing("quota")
-	}
 	if v.RequiredUserInteraction == nil {
 		return Missing("requiredUserInteraction")
 	}
@@ -189,12 +156,6 @@ type AccountLoginHandoffRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *AccountLoginHandoffRequest) Validate() error {
-	if v.AccountId == "" {
-		return Missing("accountId")
-	}
-	if v.HostId == "" {
-		return Missing("hostId")
-	}
 	return nil
 }
 
@@ -216,9 +177,6 @@ type AccountUpdateRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *AccountUpdateRequest) Validate() error {
-	if v.AccountId == "" {
-		return Missing("accountId")
-	}
 	return nil
 }
 
@@ -238,31 +196,10 @@ type Budget struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *Budget) Validate() error {
-	if v.Action == "" {
-		return Missing("action")
-	}
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.Scope == "" {
-		return Missing("scope")
-	}
-	if v.ScopeId == "" {
-		return Missing("scopeId")
-	}
-	if v.SetAt == "" {
-		return Missing("setAt")
-	}
-	if v.SetBy == "" {
-		return Missing("setBy")
-	}
 	if v.Spend != nil {
 		if err := Check(v.Spend, "spend"); err != nil {
 			return err
 		}
-	}
-	if v.Unit == "" {
-		return Missing("unit")
 	}
 	return nil
 }
@@ -273,9 +210,6 @@ type BudgetAskReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *BudgetAskReply) Validate() error {
-	if v.QuestionId == "" {
-		return Missing("questionId")
-	}
 	return nil
 }
 
@@ -288,9 +222,6 @@ type BudgetAskRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *BudgetAskRequest) Validate() error {
-	if v.BudgetId == "" {
-		return Missing("budgetId")
-	}
 	return nil
 }
 
@@ -301,9 +232,6 @@ type BudgetDeleteReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *BudgetDeleteReply) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	return nil
 }
 
@@ -314,9 +242,6 @@ type BudgetDeleteRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *BudgetDeleteRequest) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	return nil
 }
 
@@ -335,15 +260,6 @@ type BudgetSetRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *BudgetSetRequest) Validate() error {
-	if v.Scope == "" {
-		return Missing("scope")
-	}
-	if v.ScopeId == "" {
-		return Missing("scopeId")
-	}
-	if v.Unit == "" {
-		return Missing("unit")
-	}
 	return nil
 }
 
@@ -355,9 +271,6 @@ type BudgetSpend struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *BudgetSpend) Validate() error {
-	if v.Basis == "" {
-		return Missing("basis")
-	}
 	return nil
 }
 
@@ -388,15 +301,6 @@ type CommandRef struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *CommandRef) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.Kind == "" {
-		return Missing("kind")
-	}
-	if v.Status == "" {
-		return Missing("status")
-	}
 	return nil
 }
 
@@ -434,24 +338,6 @@ func (v *ConnectionView) Validate() error {
 	if err := Check(&v.Access, "access"); err != nil {
 		return err
 	}
-	if v.Comment == "" {
-		return Missing("comment")
-	}
-	if v.Holder == "" {
-		return Missing("holder")
-	}
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.Intake == "" {
-		return Missing("intake")
-	}
-	if v.Name == "" {
-		return Missing("name")
-	}
-	if v.Provider == "" {
-		return Missing("provider")
-	}
 	return nil
 }
 
@@ -467,12 +353,6 @@ type ConnectionsCreateRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ConnectionsCreateRequest) Validate() error {
-	if v.Name == "" {
-		return Missing("name")
-	}
-	if v.Provider == "" {
-		return Missing("provider")
-	}
 	return nil
 }
 
@@ -487,12 +367,6 @@ type ConnectionsKeyAddRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ConnectionsKeyAddRequest) Validate() error {
-	if v.Connection == "" {
-		return Missing("connection")
-	}
-	if v.Value == "" {
-		return Missing("value")
-	}
 	return nil
 }
 
@@ -507,12 +381,6 @@ type ConnectionsKeyStateRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ConnectionsKeyStateRequest) Validate() error {
-	if v.KeyId == "" {
-		return Missing("keyId")
-	}
-	if v.State == "" {
-		return Missing("state")
-	}
 	return nil
 }
 
@@ -552,9 +420,6 @@ func (v *ConnectionsSetAccessRequest) Validate() error {
 	if v.Access == nil {
 		return Missing("access")
 	}
-	if v.Connection == "" {
-		return Missing("connection")
-	}
 	return nil
 }
 
@@ -568,12 +433,6 @@ type ConnectionsSetIntakeRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ConnectionsSetIntakeRequest) Validate() error {
-	if v.Connection == "" {
-		return Missing("connection")
-	}
-	if v.Intake == "" {
-		return Missing("intake")
-	}
 	return nil
 }
 
@@ -587,9 +446,6 @@ type ConnectionsTokenCreateReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ConnectionsTokenCreateReply) Validate() error {
-	if v.Name == "" {
-		return Missing("name")
-	}
 	return nil
 }
 
@@ -601,9 +457,6 @@ type ConnectionsTokenCreateRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ConnectionsTokenCreateRequest) Validate() error {
-	if v.Name == "" {
-		return Missing("name")
-	}
 	return nil
 }
 
@@ -633,9 +486,6 @@ type ConnectionsTokenRevokeReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ConnectionsTokenRevokeReply) Validate() error {
-	if v.Name == "" {
-		return Missing("name")
-	}
 	return nil
 }
 
@@ -646,9 +496,6 @@ type ConnectionsTokenRevokeRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ConnectionsTokenRevokeRequest) Validate() error {
-	if v.Name == "" {
-		return Missing("name")
-	}
 	return nil
 }
 
@@ -742,9 +589,6 @@ func (v *LimitPeriod) Validate() error {
 	if err := Check(&v.Pace, "pace"); err != nil {
 		return err
 	}
-	if v.Period == "" {
-		return Missing("period")
-	}
 	if v.Projection == nil {
 		return Missing("projection")
 	}
@@ -752,9 +596,6 @@ func (v *LimitPeriod) Validate() error {
 		if err := Check(&v.Projection[i], "projection"); err != nil {
 			return err
 		}
-	}
-	if v.Source == "" {
-		return Missing("source")
 	}
 	return nil
 }
@@ -791,17 +632,11 @@ func (v *LimitPool) Validate() error {
 	if err := Check(&v.FirstEmpty, "firstEmpty"); err != nil {
 		return err
 	}
-	if v.Harness == "" {
-		return Missing("harness")
-	}
 	if v.Members == nil {
 		return Missing("members")
 	}
 	if err := Check(&v.NextReset, "nextReset"); err != nil {
 		return err
-	}
-	if v.Period == "" {
-		return Missing("period")
 	}
 	if err := Check(&v.PoolEmpty, "poolEmpty"); err != nil {
 		return err
@@ -829,18 +664,6 @@ type LimitRefreshSent struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LimitRefreshSent) Validate() error {
-	if v.Binding == "" {
-		return Missing("binding")
-	}
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
-	if v.HostId == "" {
-		return Missing("hostId")
-	}
-	if v.SubscriptionId == "" {
-		return Missing("subscriptionId")
-	}
 	return nil
 }
 
@@ -851,12 +674,6 @@ type LimitRefreshSkipped struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LimitRefreshSkipped) Validate() error {
-	if v.Reason == "" {
-		return Missing("reason")
-	}
-	if v.SubscriptionId == "" {
-		return Missing("subscriptionId")
-	}
 	return nil
 }
 
@@ -886,14 +703,8 @@ type LimitSubscription struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LimitSubscription) Validate() error {
-	if v.Harness == "" {
-		return Missing("harness")
-	}
 	if v.Holder == nil {
 		return Missing("holder")
-	}
-	if v.Id == "" {
-		return Missing("id")
 	}
 	if v.Intake == nil {
 		return Missing("intake")
@@ -935,18 +746,6 @@ type PriceAddRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *PriceAddRequest) Validate() error {
-	if v.Currency == "" {
-		return Missing("currency")
-	}
-	if v.Source == "" {
-		return Missing("source")
-	}
-	if v.Subject == "" {
-		return Missing("subject")
-	}
-	if v.Unit == "" {
-		return Missing("unit")
-	}
 	return nil
 }
 
@@ -966,21 +765,6 @@ type PriceEntry struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *PriceEntry) Validate() error {
-	if v.Currency == "" {
-		return Missing("currency")
-	}
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.Source == "" {
-		return Missing("source")
-	}
-	if v.Subject == "" {
-		return Missing("subject")
-	}
-	if v.Unit == "" {
-		return Missing("unit")
-	}
 	return nil
 }
 
@@ -1100,12 +884,6 @@ type SubscriptionReading struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SubscriptionReading) Validate() error {
-	if v.Period == "" {
-		return Missing("period")
-	}
-	if v.State == "" {
-		return Missing("state")
-	}
 	return nil
 }
 
@@ -1128,9 +906,6 @@ func (v *TokenInfo) Validate() error {
 	if v.DirectedBy == nil {
 		return Missing("directedBy")
 	}
-	if v.Name == "" {
-		return Missing("name")
-	}
 	if v.RevokedAt == nil {
 		return Missing("revokedAt")
 	}
@@ -1150,18 +925,6 @@ type TransportAuthorizeRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TransportAuthorizeRequest) Validate() error {
-	if v.ConflictId == "" {
-		return Missing("conflictId")
-	}
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
-	if v.FrameSha256 == "" {
-		return Missing("frameSha256")
-	}
-	if v.RequestId == "" {
-		return Missing("requestId")
-	}
 	return nil
 }
 
@@ -1200,23 +963,8 @@ func (v *TransportInspectReply) Validate() error {
 	if v.Error == nil {
 		return Missing("error")
 	}
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
-	if v.HostJournal == "" {
-		return Missing("hostJournal")
-	}
-	if v.NativeOutcome == "" {
-		return Missing("nativeOutcome")
-	}
-	if v.Resend == "" {
-		return Missing("resend")
-	}
 	if v.Results == nil {
 		return Missing("results")
-	}
-	if v.State == "" {
-		return Missing("state")
 	}
 	return nil
 }

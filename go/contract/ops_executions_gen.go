@@ -22,16 +22,10 @@ func (v *DiffFile) Validate() error {
 			return err
 		}
 	}
-	if v.Path == "" {
-		return Missing("path")
-	}
 	if v.Previous != nil {
 		if err := Check(v.Previous, "previous"); err != nil {
 			return err
 		}
-	}
-	if v.State == "" {
-		return Missing("state")
 	}
 	if v.TextChange != nil {
 		if err := Check(v.TextChange, "textChange"); err != nil {
@@ -50,9 +44,6 @@ type ExecutionDifferencesReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ExecutionDifferencesReply) Validate() error {
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
 	if v.Files == nil {
 		return Missing("files")
 	}
@@ -72,12 +63,6 @@ type ExecutionDifferencesRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ExecutionDifferencesRequest) Validate() error {
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
-	if v.Previous == "" {
-		return Missing("previous")
-	}
 	return nil
 }
 
@@ -99,9 +84,6 @@ type ExecutionEventsRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ExecutionEventsRequest) Validate() error {
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
 	return nil
 }
 
@@ -119,20 +101,11 @@ type ExecutionStatusReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ExecutionStatusReply) Validate() error {
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
-	if v.Next == "" {
-		return Missing("next")
-	}
 	if v.Report == nil {
 		return Missing("report")
 	}
 	if v.Resume == nil {
 		return Missing("resume")
-	}
-	if v.State == "" {
-		return Missing("state")
 	}
 	if v.Stop != nil {
 		if err := Check(v.Stop, "stop"); err != nil {
@@ -148,9 +121,6 @@ type ExecutionStatusRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ExecutionStatusRequest) Validate() error {
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
 	return nil
 }
 
@@ -168,20 +138,8 @@ type ExecutionStopReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ExecutionStopReply) Validate() error {
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.Kind == "" {
-		return Missing("kind")
-	}
 	if v.Payload == nil {
 		return Missing("payload")
-	}
-	if v.Status == "" {
-		return Missing("status")
 	}
 	if err := Check(&v.Stop, "stop"); err != nil {
 		return err
@@ -195,9 +153,6 @@ type ExecutionStopRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ExecutionStopRequest) Validate() error {
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
 	return nil
 }
 
@@ -239,9 +194,6 @@ type FileRef struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *FileRef) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	return nil
 }
 
@@ -263,12 +215,6 @@ type HostRecord struct {
 func (v *HostRecord) Validate() error {
 	if v.Harnesses == nil {
 		return Missing("harnesses")
-	}
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.Intake == "" {
-		return Missing("intake")
 	}
 	return nil
 }
@@ -299,9 +245,6 @@ func (v *HostRow) Validate() error {
 	if v.Capabilities == nil {
 		return Missing("capabilities")
 	}
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if v.Problems == nil {
 		return Missing("problems")
 	}
@@ -310,9 +253,6 @@ func (v *HostRow) Validate() error {
 	}
 	if v.Slots == nil {
 		return Missing("slots")
-	}
-	if v.Stores == "" {
-		return Missing("stores")
 	}
 	if v.Update == nil {
 		return Missing("update")
@@ -370,9 +310,6 @@ type HostsRegisterRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *HostsRegisterRequest) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	return nil
 }
 
@@ -386,9 +323,6 @@ type HostsRotateSecretRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *HostsRotateSecretRequest) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	return nil
 }
 
@@ -414,9 +348,6 @@ type HostsUpdateRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *HostsUpdateRequest) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	return nil
 }
 
@@ -430,9 +361,6 @@ type PipelineGetRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *PipelineGetRequest) Validate() error {
-	if v.RunId == "" {
-		return Missing("runId")
-	}
 	return nil
 }
 
@@ -454,9 +382,6 @@ type PipelineHistoryRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *PipelineHistoryRequest) Validate() error {
-	if v.ProjectId == "" {
-		return Missing("projectId")
-	}
 	return nil
 }
 
@@ -479,9 +404,6 @@ func (v *PipelineRerunReply) Validate() error {
 	if v.Reused == nil {
 		return Missing("reused")
 	}
-	if v.RunId == "" {
-		return Missing("runId")
-	}
 	return nil
 }
 
@@ -496,9 +418,6 @@ type PipelineRerunRequest struct {
 func (v *PipelineRerunRequest) Validate() error {
 	if err := Check(&v.Mode, "mode"); err != nil {
 		return err
-	}
-	if v.RunId == "" {
-		return Missing("runId")
 	}
 	return nil
 }
@@ -518,9 +437,6 @@ func (v *PipelineRunCreateReply) Validate() error {
 			return err
 		}
 	}
-	if v.RunId == "" {
-		return Missing("runId")
-	}
 	return nil
 }
 
@@ -537,12 +453,6 @@ type PipelineRunCreateRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *PipelineRunCreateRequest) Validate() error {
-	if v.PipelineId == "" {
-		return Missing("pipelineId")
-	}
-	if v.RequestId == "" {
-		return Missing("requestId")
-	}
 	return nil
 }
 
@@ -559,15 +469,6 @@ type PipelineRunRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *PipelineRunRequest) Validate() error {
-	if v.ProjectId == "" {
-		return Missing("projectId")
-	}
-	if v.Query == "" {
-		return Missing("query")
-	}
-	if v.RequestId == "" {
-		return Missing("requestId")
-	}
 	return nil
 }
 
@@ -622,14 +523,8 @@ type RouteDecision struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *RouteDecision) Validate() error {
-	if v.At == "" {
-		return Missing("at")
-	}
 	if v.Candidates == nil {
 		return Missing("candidates")
-	}
-	if v.ExecutionId == "" {
-		return Missing("executionId")
 	}
 	if v.Winner == nil {
 		return Missing("winner")
@@ -660,9 +555,6 @@ type RouteDecisionsRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *RouteDecisionsRequest) Validate() error {
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
 	return nil
 }
 
@@ -673,12 +565,6 @@ type StopCommandRef struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *StopCommandRef) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.Status == "" {
-		return Missing("status")
-	}
 	return nil
 }
 
@@ -692,15 +578,6 @@ type StopOutcome struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *StopOutcome) Validate() error {
-	if v.Detail == "" {
-		return Missing("detail")
-	}
-	if v.Outcome == "" {
-		return Missing("outcome")
-	}
-	if v.State == "" {
-		return Missing("state")
-	}
 	if v.StopCommand != nil {
 		if err := Check(v.StopCommand, "stopCommand"); err != nil {
 			return err

@@ -20,12 +20,6 @@ type HostReading struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *HostReading) Validate() error {
-	if v.At == "" {
-		return Missing("at")
-	}
-	if v.HostId == "" {
-		return Missing("hostId")
-	}
 	return nil
 }
 
@@ -44,12 +38,6 @@ type OperationStats struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *OperationStats) Validate() error {
-	if v.Name == "" {
-		return Missing("name")
-	}
-	if v.Service == "" {
-		return Missing("service")
-	}
 	return nil
 }
 
@@ -65,15 +53,6 @@ type ProcessReading struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ProcessReading) Validate() error {
-	if v.At == "" {
-		return Missing("at")
-	}
-	if v.HostId == "" {
-		return Missing("hostId")
-	}
-	if v.Process == "" {
-		return Missing("process")
-	}
 	return nil
 }
 
@@ -93,12 +72,6 @@ type RunReading struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *RunReading) Validate() error {
-	if v.At == "" {
-		return Missing("at")
-	}
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
 	if v.Outcome != nil {
 		if err := Check(v.Outcome, "outcome"); err != nil {
 			return err
@@ -131,23 +104,8 @@ func (v *Span) Validate() error {
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}
-	if v.Name == "" {
-		return Missing("name")
-	}
 	if err := Check(&v.Outcome, "outcome"); err != nil {
 		return err
-	}
-	if v.Service == "" {
-		return Missing("service")
-	}
-	if v.SpanId == "" {
-		return Missing("spanId")
-	}
-	if v.Start == "" {
-		return Missing("start")
-	}
-	if v.TraceId == "" {
-		return Missing("traceId")
 	}
 	return nil
 }
@@ -293,9 +251,6 @@ type TelemetryTraceRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TelemetryTraceRequest) Validate() error {
-	if v.TraceId == "" {
-		return Missing("traceId")
-	}
 	return nil
 }
 

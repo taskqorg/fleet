@@ -92,12 +92,6 @@ func (v *Profile) Validate() error {
 			return err
 		}
 	}
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.Instructions == "" {
-		return Missing("instructions")
-	}
 	if v.McpServers == nil {
 		return Missing("mcpServers")
 	}
@@ -105,9 +99,6 @@ func (v *Profile) Validate() error {
 		if err := Check(&v.McpServers[i], "mcpServers"); err != nil {
 			return err
 		}
-	}
-	if v.Model == "" {
-		return Missing("model")
 	}
 	if v.Settings != nil {
 		if err := Check(v.Settings, "settings"); err != nil {
@@ -153,9 +144,6 @@ type ProfileMcpGrant struct {
 func (v *ProfileMcpGrant) Validate() error {
 	if v.Data == nil {
 		return Missing("data")
-	}
-	if v.Id == "" {
-		return Missing("id")
 	}
 	return nil
 }

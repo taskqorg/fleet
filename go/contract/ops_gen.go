@@ -40,18 +40,6 @@ type CatalogueMethod struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *CatalogueMethod) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.Name == "" {
-		return Missing("name")
-	}
-	if v.Pipeline == "" {
-		return Missing("pipeline")
-	}
-	if v.Scope == "" {
-		return Missing("scope")
-	}
 	return nil
 }
 
@@ -181,9 +169,6 @@ type DefinitionMirrorResetRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *DefinitionMirrorResetRequest) Validate() error {
-	if v.Confirm == "" {
-		return Missing("confirm")
-	}
 	return nil
 }
 
@@ -198,12 +183,6 @@ type DefinitionRef struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *DefinitionRef) Validate() error {
-	if v.ContentSha == "" {
-		return Missing("contentSha")
-	}
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}
@@ -248,15 +227,6 @@ func (v *ExecutionRow) Validate() error {
 		if err := Check(&v.Definitions[i], "definitions"); err != nil {
 			return err
 		}
-	}
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.Kind == "" {
-		return Missing("kind")
-	}
-	if v.Observation == "" {
-		return Missing("observation")
 	}
 	if err := Check(&v.State, "state"); err != nil {
 		return err
@@ -306,18 +276,6 @@ func (v *ExperimentNote) Validate() error {
 	if v.At == nil {
 		return Missing("at")
 	}
-	if v.Author == "" {
-		return Missing("author")
-	}
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.Kind == "" {
-		return Missing("kind")
-	}
-	if v.Text == "" {
-		return Missing("text")
-	}
 	return nil
 }
 
@@ -342,12 +300,6 @@ type ListGroup struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ListGroup) Validate() error {
-	if v.Key == "" {
-		return Missing("key")
-	}
-	if v.Label == "" {
-		return Missing("label")
-	}
 	return nil
 }
 
@@ -359,9 +311,6 @@ type ListRow struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ListRow) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if v.SortKey == nil {
 		return Missing("sortKey")
 	}
@@ -397,12 +346,6 @@ type OpError struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *OpError) Validate() error {
-	if v.Error == "" {
-		return Missing("error")
-	}
-	if v.Message == "" {
-		return Missing("message")
-	}
 	return nil
 }
 
@@ -430,8 +373,5 @@ type VariantVsBaseline struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *VariantVsBaseline) Validate() error {
-	if v.Variant == "" {
-		return Missing("variant")
-	}
 	return nil
 }

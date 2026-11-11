@@ -63,15 +63,6 @@ var receiptState = map[string]string{"accepted": "preparing", "started": "runnin
 var receiptRank = map[string]int{"pending": 0, string(contract.ReceiptStatusAccepted): 1, string(contract.ReceiptStatusStarted): 2, string(contract.ReceiptStatusUnknown): 2,
 	string(contract.ReceiptStatusCompleted): 3, string(contract.ReceiptStatusFailed): 3, string(contract.ReceiptStatusStopped): 3} // pending: a command not yet received
 
-// projectReceiptOps: the project operations a native agent may call through a receipt.
-var projectReceiptOps = func() []string {
-	out := []string{}
-	for _, o := range contract.ProjectOperationValues {
-		out = append(out, string(o))
-	}
-	return out
-}()
-
 // projectReceipt runs one project operation for a native agent (projects area: the operation, its native-agent actor
 // and the early return of a started pipeline run). Otherwise the registered operation runs in this transaction.
 func projectReceipt(q *Request, operation string, args doc, agent doc) (any, error) {
@@ -160,7 +151,7 @@ func projectReceiptIn(q *Request, b *contract.ProjectReceipt) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if s["projectId"] == nil || d.ProjectId != s["projectId"] || !inList(projectReceiptOps, string(d.Operation)) {
+	if s["projectId"] == nil || d.ProjectId != s["projectId"] {
 		return nil, fail(403, "Project grant rejected")
 	}
 	args := doc{}

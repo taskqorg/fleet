@@ -738,7 +738,7 @@ func artifactCommit(q *Request, b *contract.ArtifactCommitRequest) (any, error) 
 	if err != nil {
 		return nil, err
 	}
-	if x.State == "stored" && b.StoreId == nil {
+	if x.State == "stored" && deref(b.StoreId) == "" {
 		return contract.ArtifactStateReply{State: "stored"}, nil
 	}
 	// Idempotent: a repeated commit of a completed upload skips the completion and hands out the verification again.
@@ -874,7 +874,10 @@ func artifactRefused(q *Request, b *contract.ArtifactFailedRequest) (any, error)
 	if e, err := execGet(ctx, a, *x.ExecutionID); err != nil || e.HostID != b.HostId {
 		return nil, fail(403, "Artifact not uploaded by this host")
 	}
-	why := "upload refused: " + truncate(b.Error, 500)
+	why := "upload refused: unknown reason"
+	if b.Error != "" {
+		why = "upload refused: " + truncate(b.Error, 500)
+	}
 	all, _ := storeList(ctx, a)
 	cs, err := rowsCtx(ctx, conn(ctx, a), "SELECT store_id,upload_id,staging_key FROM artifact_copy WHERE artifact_id=$1 AND state IN ('pending','copying')", x.ID)
 	if err != nil {

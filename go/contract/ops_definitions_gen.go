@@ -76,9 +76,6 @@ type AgentCompatibilityRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *AgentCompatibilityRequest) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	return nil
 }
 
@@ -114,12 +111,6 @@ type AgentEffectiveRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *AgentEffectiveRequest) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.ProjectId == "" {
-		return Missing("projectId")
-	}
 	return nil
 }
 
@@ -133,12 +124,6 @@ type AgentListFacts struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *AgentListFacts) Validate() error {
-	if v.Harness == "" {
-		return Missing("harness")
-	}
-	if v.Model == "" {
-		return Missing("model")
-	}
 	if v.Roles == nil {
 		return Missing("roles")
 	}
@@ -156,12 +141,6 @@ func (v *AgentTestReply) Validate() error {
 	if err := Check(&v.Definition, "definition"); err != nil {
 		return err
 	}
-	if v.ExecutionId == "" {
-		return Missing("executionId")
-	}
-	if v.SessionId == "" {
-		return Missing("sessionId")
-	}
 	return nil
 }
 
@@ -176,15 +155,6 @@ type AgentTestRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *AgentTestRequest) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.ProjectId == "" {
-		return Missing("projectId")
-	}
-	if v.Prompt == "" {
-		return Missing("prompt")
-	}
 	return nil
 }
 
@@ -197,9 +167,6 @@ type CatalogueDefinition struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *CatalogueDefinition) Validate() error {
-	if v.Capability == "" {
-		return Missing("capability")
-	}
 	if v.Methods == nil {
 		return Missing("methods")
 	}
@@ -229,9 +196,6 @@ func (v *CatalogueReply) Validate() error {
 	if v.Methods == nil {
 		return Missing("methods")
 	}
-	if v.ProjectId == "" {
-		return Missing("projectId")
-	}
 	if v.RecommendationSource == nil {
 		return Missing("recommendationSource")
 	}
@@ -250,9 +214,6 @@ type CatalogueRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *CatalogueRequest) Validate() error {
-	if v.ProjectId == "" {
-		return Missing("projectId")
-	}
 	return nil
 }
 
@@ -273,12 +234,6 @@ func (v *CompatibilityRow) Validate() error {
 		if err := Check(v.Evidence, "evidence"); err != nil {
 			return err
 		}
-	}
-	if v.Harness == "" {
-		return Missing("harness")
-	}
-	if v.Model == "" {
-		return Missing("model")
 	}
 	if err := Check(&v.State, "state"); err != nil {
 		return err
@@ -358,14 +313,8 @@ func (v *DefinitionCreateRequest) Validate() error {
 	if err := Check(&v.Content, "content"); err != nil {
 		return err
 	}
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
-	}
-	if v.Message == "" {
-		return Missing("message")
 	}
 	return nil
 }
@@ -385,9 +334,6 @@ func (v *DefinitionDiffReply) Validate() error {
 			return err
 		}
 	}
-	if v.Unified == "" {
-		return Missing("unified")
-	}
 	return nil
 }
 
@@ -402,9 +348,6 @@ type DefinitionDiffRequest struct {
 func (v *DefinitionDiffRequest) Validate() error {
 	if err := Check(&v.From, "from"); err != nil {
 		return err
-	}
-	if v.Id == "" {
-		return Missing("id")
 	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
@@ -431,9 +374,6 @@ type DefinitionDraftDiscardRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *DefinitionDraftDiscardRequest) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}
@@ -472,9 +412,6 @@ type DefinitionDraftGetRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *DefinitionDraftGetRequest) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}
@@ -514,9 +451,6 @@ func (v *DefinitionDraftPutRequest) Validate() error {
 	if err := Check(&v.Content, "content"); err != nil {
 		return err
 	}
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}
@@ -546,9 +480,6 @@ func (v *DefinitionExportReply) Validate() error {
 		if err := Check(&v.Files[i], "files"); err != nil {
 			return err
 		}
-	}
-	if v.Patch == "" {
-		return Missing("patch")
 	}
 	return nil
 }
@@ -594,9 +525,6 @@ func (v *DefinitionGetReply) Validate() error {
 			return err
 		}
 	}
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}
@@ -608,17 +536,8 @@ func (v *DefinitionGetReply) Validate() error {
 			return err
 		}
 	}
-	if v.Path == "" {
-		return Missing("path")
-	}
-	if v.Scope == "" {
-		return Missing("scope")
-	}
 	if err := Check(&v.State, "state"); err != nil {
 		return err
-	}
-	if v.Text == "" {
-		return Missing("text")
 	}
 	return nil
 }
@@ -631,9 +550,6 @@ type DefinitionGetRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *DefinitionGetRequest) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}
@@ -667,9 +583,6 @@ type DefinitionHistoryRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *DefinitionHistoryRequest) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}
@@ -683,9 +596,6 @@ type DefinitionKey struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *DefinitionKey) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}
@@ -725,9 +635,6 @@ func (v *DefinitionListItem) Validate() error {
 			return err
 		}
 	}
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}
@@ -743,15 +650,6 @@ func (v *DefinitionListItem) Validate() error {
 		if err := Check(v.Mirror, "mirror"); err != nil {
 			return err
 		}
-	}
-	if v.Name == "" {
-		return Missing("name")
-	}
-	if v.Path == "" {
-		return Missing("path")
-	}
-	if v.Scope == "" {
-		return Missing("scope")
 	}
 	if err := Check(&v.State, "state"); err != nil {
 		return err
@@ -820,14 +718,8 @@ func (v *DefinitionSaveRequest) Validate() error {
 	if err := Check(&v.Content, "content"); err != nil {
 		return err
 	}
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
-	}
-	if v.Message == "" {
-		return Missing("message")
 	}
 	return nil
 }
@@ -893,9 +785,6 @@ type DefinitionUsageRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *DefinitionUsageRequest) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
 	}
@@ -923,9 +812,6 @@ type DraftInfo struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *DraftInfo) Validate() error {
-	if v.UpdatedAt == "" {
-		return Missing("updatedAt")
-	}
 	return nil
 }
 
@@ -945,9 +831,6 @@ func (v *EffectiveLayer) Validate() error {
 	}
 	if err := Check(&v.Name, "name"); err != nil {
 		return err
-	}
-	if v.Source == "" {
-		return Missing("source")
 	}
 	return nil
 }
@@ -982,12 +865,6 @@ type ExportFile struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ExportFile) Validate() error {
-	if v.Path == "" {
-		return Missing("path")
-	}
-	if v.Text == "" {
-		return Missing("text")
-	}
 	return nil
 }
 
@@ -1003,9 +880,6 @@ type FieldChange struct {
 func (v *FieldChange) Validate() error {
 	if err := Check(&v.Op, "op"); err != nil {
 		return err
-	}
-	if v.Path == "" {
-		return Missing("path")
 	}
 	return nil
 }
@@ -1044,9 +918,6 @@ func (v *HarnessModel) Validate() error {
 	if v.Efforts == nil {
 		return Missing("efforts")
 	}
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if err := Check(&v.Source, "source"); err != nil {
 		return err
 	}
@@ -1076,9 +947,6 @@ type HarnessModelsRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *HarnessModelsRequest) Validate() error {
-	if v.Harness == "" {
-		return Missing("harness")
-	}
 	return nil
 }
 
@@ -1132,12 +1000,6 @@ type Person struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *Person) Validate() error {
-	if v.Email == "" {
-		return Missing("email")
-	}
-	if v.Name == "" {
-		return Missing("name")
-	}
 	return nil
 }
 
@@ -1150,9 +1012,6 @@ type PipelineDefinition struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *PipelineDefinition) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
 	if v.Steps == nil {
 		return Missing("steps")
 	}
@@ -1182,12 +1041,6 @@ type PipelineStep struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *PipelineStep) Validate() error {
-	if v.Id == "" {
-		return Missing("id")
-	}
-	if v.Kind == "" {
-		return Missing("kind")
-	}
 	return nil
 }
 
@@ -1199,12 +1052,6 @@ type Problem struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *Problem) Validate() error {
-	if v.Message == "" {
-		return Missing("message")
-	}
-	if v.Path == "" {
-		return Missing("path")
-	}
 	return nil
 }
 
@@ -1244,15 +1091,6 @@ type Revision struct {
 func (v *Revision) Validate() error {
 	if err := Check(&v.Actor, "actor"); err != nil {
 		return err
-	}
-	if v.At == "" {
-		return Missing("at")
-	}
-	if v.ContentSha == "" {
-		return Missing("contentSha")
-	}
-	if v.Message == "" {
-		return Missing("message")
 	}
 	if err := Check(&v.Source, "source"); err != nil {
 		return err
@@ -1303,12 +1141,6 @@ type RunSummary struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *RunSummary) Validate() error {
-	if v.At == "" {
-		return Missing("at")
-	}
-	if v.State == "" {
-		return Missing("state")
-	}
 	return nil
 }
 
