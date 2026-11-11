@@ -15,7 +15,8 @@ func TestCIntReadsSQLIntegers(t *testing.T) {
 	}
 }
 
-// One number reader (C12, S2): num reads every SQL integer width (int64 counts were 0) and numeric text from ->> reads.
+// Requirement: one number reader (C12, S2): num reads every SQL integer width and numeric text from ->> reads.
+// Risk: an int64 count read as 0 (ff194c7, 39d6e35), a NaN reaching a LIMIT or a timer.
 func TestNumReadsEveryNumericType(t *testing.T) {
 	for _, v := range []any{int16(2), int32(2), int64(2), 2, 2.0, float32(2), "2"} {
 		if num(v) != 2 {
