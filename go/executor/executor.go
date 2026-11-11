@@ -1385,11 +1385,11 @@ func (e *executor) stageInputs(p M, input string, execution any) error {
 		if strings.HasPrefix(rel, "/") || anyPart(rel, func(x string) bool { return x == "" || x == "." || x == ".." }) {
 			return fmt.Errorf("invalid input path %s", rel)
 		}
-		r, f := c.post("/api/hosts/artifacts/get", contract.HostArtifactGetRequest{HostId: e.host, ExecutionId: optStr(jStr(execution)), ArtifactId: jStr(id)})
+		r, f := transferReply[contract.ArtifactGetReply](c, "/api/hosts/artifacts/get", contract.HostArtifactGetRequest{HostId: e.host, ExecutionId: optStr(jStr(execution)), ArtifactId: jStr(id)})
 		if f != nil {
 			return fmt.Errorf("input %s: %s", rel, f.msg)
 		}
-		if !jIsStr(r, "url") {
+		if r.Url == nil {
 			return fmt.Errorf("input %s unavailable", rel)
 		}
 		// Every component is resolved inside the held input root (os.Root): a link whose target leaves the input folder,
@@ -1401,7 +1401,7 @@ func (e *executor) stageInputs(p M, input string, execution any) error {
 		if err != nil {
 			return fmt.Errorf("input %s: %w", rel, err)
 		}
-		src, f := c.get(jStr(r, "url"))
+		src, f := c.get(*r.Url)
 		if f == nil {
 			_, err = io.Copy(out, src)
 			src.Close()
@@ -2062,8 +2062,32 @@ func runExecutor() error {
 
 var errHostRemoved = errors.New("host removed")
 
+// The generated envelope owns wire fields. Raw command bodies retain all journal identity fields,
+// including extensions from older coordinators, until the internal command runner is migrated.
+type pollReply struct {
+	contract.PollReply
+	bodies []M
+}
+
+func decodePoll(raw json.RawMessage) (*pollReply, error) {
+	var reply pollReply
+	if err := json.Unmarshal(raw, &reply.PollReply); err != nil {
+		return nil, err
+	}
+	var journal struct {
+		Commands []M `json:"commands"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber() // Match the existing journal encoding, including large integers and numeric spelling.
+	if err := decoder.Decode(&journal); err != nil {
+		return nil, err
+	}
+	reply.bodies = journal.Commands
+	return &reply, nil
+}
+
 // poll owns the store-report cache and update signal; command execution never runs in this goroutine.
-func (e *executor) poll() (any, error) {
+func (e *executor) poll() (*pollReply, error) {
 	v, roots := version, reportedRoots()
 	body := contract.PollRequest{HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
 		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, Update: lastUpdate(e.root), GitConnections: gitConnections(connectionsDir())}
@@ -2076,19 +2100,25 @@ func (e *executor) poll() (any, error) {
 		sig.Target, sig.AutoUpdate = lastSignal.Target, lastSignal.AutoUpdate
 	}
 	sig.PollOk, sig.PollError = pollSignal(a)
+	var reply *pollReply
 	if a.kind == answerOK {
-		var r contract.PollReply
-		if b, err := json.Marshal(a.value); err == nil && json.Unmarshal(b, &r) == nil {
-			sig.Target = r.Target
-			if r.AutoUpdate != nil {
-				sig.AutoUpdate = *r.AutoUpdate
+		var err error
+		reply, err = decodePoll(a.value)
+		if err != nil {
+			a.kind, a.text = answerRetry, "invalid poll reply: "+err.Error()
+			sig.PollOk, sig.PollError = pollSignal(a)
+		} else {
+			sig.Target = reply.Target
+			if reply.AutoUpdate != nil {
+				sig.AutoUpdate = *reply.AutoUpdate
 			}
 		}
 	}
 	if err := writeUpdateSignal(e.root, sig); err != nil {
 		fmt.Fprintln(os.Stderr, "executor: update.json:", err)
 	}
-	return answerValue(a)
+	_, err := answerValue(a)
+	return reply, err
 }
 
 // exchange keeps command order and the single owner of live/process/journal state. Slow preparation must not
@@ -2131,17 +2161,14 @@ func (e *executor) exchange() (err error) {
 		}
 	}()
 
-	for _, cv := range jArr(reply, "commands") {
+	for index := range reply.Commands {
 		if removed.Load() {
 			return errHostRemoved
 		}
 		if err := e.tick(); err != nil {
 			return err
 		}
-		c, ok := cv.(M)
-		if !ok {
-			continue
-		}
+		c := reply.bodies[index]
 		if e.run(c) != nil {
 			if _, isLive := e.live[jStr(c, "executionId")]; isLive {
 				continue

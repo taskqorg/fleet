@@ -46,7 +46,7 @@ const (
 
 type answer struct {
 	kind   answerKind
-	value  any
+	value  json.RawMessage
 	status int
 	text   string // edge detail, reject body or retry error
 }
@@ -98,11 +98,10 @@ func classify(r *http.Response, err error) answer {
 		}
 		return answer{kind: answerEdge, status: s, text: location(r)}
 	case classOK:
-		v, err := dec(string(body))
-		if err != nil {
+		if !json.Valid(body) {
 			return answer{kind: answerEdge, status: s, text: "an answer that is not JSON"}
 		}
-		return answer{kind: answerOK, value: v, status: s}
+		return answer{kind: answerOK, value: json.RawMessage(body), status: s}
 	case classRetry:
 		return answer{kind: answerRetry, status: s, text: fmt.Sprintf("%d %s", s, body)}
 	}
@@ -262,11 +261,11 @@ func send(url, token, route string, v any) answer {
 	return a
 }
 
-func post(url, token, route string, v any) (any, error) {
+func post(url, token, route string, v any) (json.RawMessage, error) {
 	return answerValue(send(url, token, route, v))
 }
 
-func answerValue(a answer) (any, error) {
+func answerValue(a answer) (json.RawMessage, error) {
 	switch a.kind {
 	case answerOK:
 		return a.value, nil

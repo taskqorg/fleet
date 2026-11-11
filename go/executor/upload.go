@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fleet/contract"
 	"fmt"
@@ -145,7 +146,7 @@ func ioFailure(err error) *failure {
 	return &failure{false, err.Error()}
 }
 
-func (c *transferClient) post(route string, body any) (any, *failure) {
+func (c *transferClient) post(route string, body any) (json.RawMessage, *failure) {
 	a := classify(postJSON(c.coordinator, c.url+route, c.token, body))
 	observe(route, a)
 	switch a.kind {
@@ -161,6 +162,19 @@ func (c *transferClient) post(route string, body any) (any, *failure) {
 		return nil, retryf("409 %s", a.text)
 	}
 	return nil, permanentf("%d %s", a.status, a.text)
+}
+
+// Decode coordinator-owned fields once; opaque MCP results are still forwarded as raw JSON.
+func transferReply[T any](c *transferClient, route string, body any) (T, *failure) {
+	var value T
+	raw, f := c.post(route, body)
+	if f != nil {
+		return value, f
+	}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return value, retryf("coordinator %s reply: %s", route, err)
+	}
+	return value, nil
 }
 
 // storeDo: Access headers are added (never signed) unless the URL is loopback; a redirect is an edge condition of that
@@ -249,7 +263,7 @@ func hashFile(path string) (string, int64, error) {
 
 // sendParts uploads the file parts to the reservation, commits, and, when the coordinator answers with a verify URL
 // (this host owns the store), re-hashes over loopback.
-func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID string, size, partSize uint64) (any, *failure) {
+func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID string, size, partSize uint64) (contract.ArtifactStateReply, *failure) {
 	count := max((size+partSize-1)/partSize, 1)
 	var bodyText string
 	db.QueryRow("SELECT body FROM transfers WHERE id=?", jobID).Scan(&bodyText)
@@ -257,7 +271,7 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 	done := jArr(body, "done")
 	f, err := os.Open(file)
 	if err != nil {
-		return nil, ioFailure(err)
+		return contract.ArtifactStateReply{}, ioFailure(err)
 	}
 	defer f.Close()
 	var missing []uint64
@@ -279,29 +293,29 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 		for _, n := range batch {
 			req.PartNumbers = append(req.PartNumbers, int64(n))
 		}
-		urls, fl := c.post("/api/hosts/artifacts/parts", req)
+		urls, fl := transferReply[contract.ArtifactPartsReply](c, "/api/hosts/artifacts/parts", req)
 		if fl != nil {
-			return nil, fl
+			return contract.ArtifactStateReply{}, fl
 		}
-		for _, p := range jArr(urls, "parts") {
-			n, ok := jU64(p, "partNumber")
-			if !ok || n == 0 {
-				return nil, permanentf("part number")
+		for _, p := range urls.Parts {
+			n := uint64(p.PartNumber)
+			if p.PartNumber <= 0 {
+				return contract.ArtifactStateReply{}, permanentf("part number")
 			}
 			l := min(partSize, size-min(size, (n-1)*partSize))
 			chunk := make([]byte, l)
 			if _, err := f.ReadAt(chunk, int64((n-1)*partSize)); err != nil && !(errors.Is(err, io.EOF) && l == 0) {
-				return nil, ioFailure(err)
+				return contract.ArtifactStateReply{}, ioFailure(err)
 			}
 			var etag string
 			for tries := 0; ; tries++ {
-				e, fl := c.putPart(jStr(p, "url"), chunk)
+				e, fl := c.putPart(p.Url, chunk)
 				if fl == nil {
 					etag = e
 					break
 				}
 				if !fl.retry || tries >= 5 {
-					return nil, fl
+					return contract.ArtifactStateReply{}, fl
 				}
 				time.Sleep(time.Duration(min(1<<(tries+1), 60)) * time.Second)
 			}
@@ -317,31 +331,31 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 		etag := jStr(d, "etag")
 		req.Parts = append(req.Parts, contract.ArtifactPart{PartNumber: int64(n), Etag: &etag})
 	}
-	commit, fl := c.post("/api/hosts/artifacts/commit", req)
+	commit, fl := transferReply[contract.ArtifactStateReply](c, "/api/hosts/artifacts/commit", req)
 	if fl != nil {
-		return nil, fl
+		return contract.ArtifactStateReply{}, fl
 	}
-	if v, ok := jObj(commit)["verify"]; ok {
+	if v := commit.Verify; v != nil {
 		a := artifactID
-		if jIsStr(v, "artifactId") {
-			a = jStr(v, "artifactId")
+		if v.ArtifactId != "" {
+			a = v.ArtifactId
 		}
-		return verifyArtifact(c, a, jStr(v, "storeId"), jStr(v, "url"))
+		return verifyArtifact(c, a, v.StoreId, v.Url)
 	}
 	return commit, nil
 }
 
-func verifyArtifact(c *transferClient, artifactID, storeID, url string) (any, *failure) {
+func verifyArtifact(c *transferClient, artifactID, storeID, url string) (contract.ArtifactStateReply, *failure) {
 	r, f := c.get(url)
 	if f != nil {
-		return nil, f
+		return contract.ArtifactStateReply{}, f
 	}
 	digest, _, err := hashReader(r)
 	r.Close()
 	if err != nil {
-		return nil, ioFailure(err)
+		return contract.ArtifactStateReply{}, ioFailure(err)
 	}
-	return c.post("/api/hosts/artifacts/verified", contract.ArtifactVerifiedRequest{HostId: c.host, ArtifactId: artifactID, StoreId: storeID, Sha256: digest})
+	return transferReply[contract.ArtifactStateReply](c, "/api/hosts/artifacts/verified", contract.ArtifactVerifiedRequest{HostId: c.host, ArtifactId: artifactID, StoreId: storeID, Sha256: digest})
 }
 
 func u64Or(def uint64, v any, keys ...string) uint64 {
@@ -362,26 +376,30 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		required := body["required"] == true
 		req := contract.ArtifactReserveRequest{HostId: c.host, ExecutionId: jStr(body, "executionId"), ArtifactId: optStr(id), Name: jStr(body, "name"), MediaType: jStr(body, "mediaType"),
 			Size: int64(size), Sha256: digest, Required: &required, DerivedFrom: optStr(jStr(body, "derivedFrom")), Role: optStr(jStr(body, "role"))}
-		r, f := c.post("/api/hosts/artifacts/reserve", req)
+		r, f := transferReply[contract.ArtifactReserveReply](c, "/api/hosts/artifacts/reserve", req)
 		if f != nil {
 			return nil, f
 		}
-		db.Exec("UPDATE transfers SET response=? WHERE id=?", enc(M{"artifactId": jAt(r, "artifactId"), "state": jAt(r, "state")}), id)
-		switch jStr(r, "state") {
+		db.Exec("UPDATE transfers SET response=? WHERE id=?", enc(M{"artifactId": r.ArtifactId, "state": r.State}), id)
+		switch r.State {
 		case "stored":
-			return M{"artifactId": jAt(r, "artifactId"), "state": "stored"}, nil
+			return M{"artifactId": r.ArtifactId, "state": "stored"}, nil
 		case "failed":
 			return nil, permanentf("artifact failed")
 		}
 		a := id
-		if jIsStr(r, "artifactId") {
-			a = jStr(r, "artifactId")
+		if r.ArtifactId != "" {
+			a = r.ArtifactId
 		}
-		out, f := sendParts(c, db, id, path, a, "", uint64(size), u64Or(32<<20, r, "partSize"))
+		partSize := uint64(32 << 20)
+		if r.PartSize != nil && *r.PartSize >= 0 {
+			partSize = uint64(*r.PartSize)
+		}
+		out, f := sendParts(c, db, id, path, a, "", uint64(size), partSize)
 		if f != nil {
 			return nil, f
 		}
-		return M{"artifactId": jAt(r, "artifactId"), "state": jAt(out, "state")}, nil
+		return M{"artifactId": r.ArtifactId, "state": out.State}, nil
 	case "verify":
 		return verifyArtifact(c, jStr(body, "artifactId"), jStr(body, "storeId"), jStr(body, "url"))
 	case "copy":
@@ -412,20 +430,20 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		os.Remove(tmp)
 		return out, f
 	case "get":
-		r, f := c.post("/api/hosts/artifacts/get", contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: optStr(jStr(body, "executionId")), ArtifactId: jStr(body, "artifactId")})
+		r, f := transferReply[contract.ArtifactGetReply](c, "/api/hosts/artifacts/get", contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: optStr(jStr(body, "executionId")), ArtifactId: jStr(body, "artifactId")})
 		if f != nil {
 			return nil, f
 		}
-		if !jIsStr(r, "url") {
+		if r.Url == nil {
 			av := "unavailable"
-			if jIsStr(r, "availability") {
-				av = jStr(r, "availability")
+			if r.Availability != "" {
+				av = r.Availability
 			}
 			return nil, permanentf("artifact %s", av)
 		}
 		name := "artifact"
-		if jIsStr(r, "name") {
-			name = jStr(r, "name")
+		if r.Name != "" {
+			name = r.Name
 		}
 		name = name[strings.LastIndexByte(name, '/')+1:]
 		safe := []byte(name)
@@ -441,8 +459,8 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 			return nil, ioFailure(err)
 		}
 		tag := "x"
-		if jIsStr(r, "id") {
-			tag = jStr(r, "id")
+		if r.Id != "" {
+			tag = r.Id
 		}
 		if len(tag) > 8 {
 			tag = tag[:8]
@@ -468,7 +486,7 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 			return nil, permanentf("cannot create the input file")
 		}
 		defer out.Close()
-		src, f := c.get(jStr(r, "url"))
+		src, f := c.get(*r.Url)
 		if f != nil {
 			return nil, f
 		}
@@ -476,7 +494,7 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		if _, err := io.Copy(out, src); err != nil {
 			return nil, ioFailure(err)
 		}
-		return M{"artifactId": jAt(r, "id"), "path": target, "mediaType": jAt(r, "mediaType"), "size": jAt(r, "size")}, nil
+		return M{"artifactId": r.Id, "path": target, "mediaType": r.MediaType, "size": r.Size}, nil
 	case "list":
 		req := contract.HostArtifactListRequest{HostId: c.host, ExecutionId: jStr(body, "executionId")}
 		if f, ok := body["filter"].(map[string]any); ok {
