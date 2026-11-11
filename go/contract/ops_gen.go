@@ -506,10 +506,11 @@ const (
 	ConflictReasonNoChange          ConflictReason = "no-change"
 	ConflictReasonWrongState        ConflictReason = "wrong-state"
 	ConflictReasonInvalidDraft      ConflictReason = "invalid-draft"
+	ConflictReasonUsedOutsideGrants ConflictReason = "used-outside-grants"
 )
 
 // ConflictReasonValues lists every ConflictReason in schema order.
-var ConflictReasonValues = []ConflictReason{ConflictReasonBaseMoved, ConflictReasonRepositoryChanged, ConflictReasonNoChange, ConflictReasonWrongState, ConflictReasonInvalidDraft}
+var ConflictReasonValues = []ConflictReason{ConflictReasonBaseMoved, ConflictReasonRepositoryChanged, ConflictReasonNoChange, ConflictReasonWrongState, ConflictReasonInvalidDraft, ConflictReasonUsedOutsideGrants}
 
 // ConnectionAccess: Who besides the holder may use the API key: people (emails), projects and experiments.
 type ConnectionAccess struct {
@@ -616,11 +617,12 @@ type ConnectionsTokenRevokeRequest struct {
 	Name string `json:"name"`
 }
 
-// DefinitionConflict: Body of a 409 from definition_save and definition_create.
+// DefinitionConflict: Body of a 409 from definition_save and definition_create. projects: with used-outside-grants (an agent save), the projects outside the director's grants that use the definition.
 type DefinitionConflict struct {
-	Head    int64          `json:"head"`
-	Reason  ConflictReason `json:"reason"`
-	RepoSha *string        `json:"repoSha,omitempty"`
+	Head     int64          `json:"head"`
+	Projects []string       `json:"projects,omitempty"`
+	Reason   ConflictReason `json:"reason"`
+	RepoSha  *string        `json:"repoSha,omitempty"`
 }
 
 // DefinitionContent: Exactly one property, matching the kind.
