@@ -281,11 +281,24 @@ type Item struct {
 
 // LimitReading: fleet-people-access.md section 8: one reading per provider window
 type LimitReading struct {
-	Harness  string          `json:"harness"`
-	Native   json.RawMessage `json:"native,omitempty"`
-	Readings []LimitWindow   `json:"readings"`
-	Type     *string         `json:"type,omitempty"`
+	Harness        string          `json:"harness"`
+	HostId         *string         `json:"hostId,omitempty"`
+	Native         json.RawMessage `json:"native,omitempty"`
+	Readings       []LimitWindow   `json:"readings"`
+	Source         *LimitSource    `json:"source,omitempty"`
+	SubscriptionId *string         `json:"subscriptionId,omitempty"`
+	Type           *string         `json:"type,omitempty"`
 }
+
+type LimitSource string
+
+const (
+	LimitSourceExecution LimitSource = "execution"
+	LimitSourceProbe     LimitSource = "probe"
+)
+
+// LimitSourceValues lists every LimitSource in schema order.
+var LimitSourceValues = []LimitSource{LimitSourceExecution, LimitSourceProbe}
 
 type LimitWindow struct {
 	Model    *string  `json:"model,omitempty"`
