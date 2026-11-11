@@ -7,7 +7,9 @@ on:
   # edited: a ## Drift heading added to the description re-evaluates docs.drift (docs/designs/fleet-docs-governance.md#report).
   pull_request:
     types: [opened, synchronize, reopened, edited]
-  # A push to main runs the same gates; releases come from a v* tag (.github/workflows/release.yml).
+  # The merge queue tests each group on gh-readonly-queue/main/*; go, app and browser are its required checks
+  # (docs/designs/fleet-delivery-pipeline.md#1-merge-ruleset-and-merge-queue). The push run feeds docs-order.
+  merge_group:
   push:
     branches: [main]
 permissions: {}
@@ -119,9 +121,11 @@ jobs:
       - name: Docs report (warning only)
         if: always()
         continue-on-error: true
+        env:
+          MERGE_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           node scripts/docs-report.ts --self-check
-          node scripts/docs-report.ts
+          node scripts/docs-report.ts ${MERGE_BASE:+--base "$MERGE_BASE"}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
