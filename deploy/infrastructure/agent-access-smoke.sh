@@ -10,7 +10,7 @@ HDR="$(mktemp)"; chmod 600 "$HDR"; trap 'rm -f "$HDR"' EXIT
   printf 'CF-Access-Client-Id: %s\nCF-Access-Client-Secret: %s\n' "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET" ) >"$HDR"
 fail=0
 for path in / /tasks /lab /api/accounts; do
-  code=$(curl -s -o /dev/null -w '%{http_code}' -H @"$HDR" "$URL$path")
+  code=$(curl -sL -o /dev/null -w '%{http_code}' -H @"$HDR" "$URL$path") # / redirects to /overview
   [[ "$code" == 200 ]] && echo "ok: $path" || { echo "FAIL: $path returned HTTP $code" >&2; fail=1; }
 done
 op() { curl -s -H @"$HDR" -H 'content-type: application/json' -H "origin: $URL" -d '{}' "$URL/api/ops/$1"; }

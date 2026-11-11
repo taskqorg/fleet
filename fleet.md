@@ -228,7 +228,7 @@ The full gate runs in CI on the pull request, never on the owner’s Mac: severa
 
 The full gate has a diagnostic elapsed-time budget of 180 s on an idle Mac (arm64), including setup, build and tests. Exceeding it calls for diagnosis; it is never a timeout or a skip rule.
 
-Each persistent test names the requirement and the risk it protects; follow [specq Testing](https://github.com/taskqorg/specq/blob/13772b779be68103d0581d61a5f8fe7af2b92dd1/engineering/testing.md). CI reports missing names as warnings.
+Each persistent test names the requirement and the risk it protects; follow [specq Testing](https://github.com/taskqorg/specq/blob/13772b779be68103d0581d61a5f8fe7af2b92dd1/engineering/testing.md). CI fails on an outside test in `tests/go/` that misses either name and reports other tests as warnings.
 
 ## Linked detail
 

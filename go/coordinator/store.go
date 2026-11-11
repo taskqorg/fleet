@@ -186,7 +186,7 @@ func migrate(ctx context.Context, url string) error {
 // and filters in code (people-access §2).
 func unscoped[T any](q *Request, fn func() (T, error)) (T, error) {
 	var zero T
-	if q.tx == nil || q.person == nil || q.person.Owner {
+	if q.tx == nil || q.person == nil || fullAccess(q.person) {
 		return fn()
 	}
 	var ids, person string

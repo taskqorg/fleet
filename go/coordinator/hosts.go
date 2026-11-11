@@ -103,7 +103,7 @@ func (a *App) hostMaySee(h doc, projectID any) bool {
 	if p == nil {
 		return false
 	}
-	if p.Owner {
+	if fullAccess(p) {
 		return true
 	}
 	id, _ := projectID.(string)
@@ -123,7 +123,7 @@ func mintSecret() string {
 
 // notifyHolder: the owner changed a setting of a row someone else holds; tell the holder with a question addressed to them.
 func notifyHolder(q *Request, holder, text string) error {
-	if q.person == nil || !q.person.Owner || q.person.Email == holder {
+	if q.person == nil || !fullAccess(q.person) || q.person.Email == holder {
 		return nil
 	}
 	id, err := askQuestion(q, doc{"kind": "operator_decision", "text": text, "options": []any{"ok"}, "askedBy": q.person.Email, "data": doc{"notice": "owner-override"}})
@@ -159,7 +159,7 @@ func (q *Request) obj() doc {
 }
 
 func ownerOnly(q *Request, msg string) error {
-	if q.person == nil || !q.person.Owner {
+	if q.person == nil || !fullAccess(q.person) {
 		return fail(403, msg)
 	}
 	return nil
@@ -265,7 +265,7 @@ func hostsUpdate(q *Request) (any, error) {
 	if h == nil {
 		return nil, fail(404, "Unknown host")
 	}
-	if q.person == nil || (!q.person.Owner && q.person.Email != h["holder"]) {
+	if q.person == nil || (!fullAccess(q.person) && q.person.Email != h["holder"]) {
 		return nil, fail(403, "Only the holder or the owner changes this host")
 	}
 	next := doc{}

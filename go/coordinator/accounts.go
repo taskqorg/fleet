@@ -223,7 +223,7 @@ func accountCreate(q *Request) (any, error) {
 	if s, ok := b["holder"].(string); ok {
 		holder = strings.ToLower(s)
 	}
-	if holder != director && !q.person.Owner {
+	if holder != director && !fullAccess(q.person) {
 		return nil, fail(403, "Only the owner creates a subscription for another person")
 	}
 	text := func(k string) string { s, _ := b[k].(string); return s }
@@ -419,7 +419,7 @@ func accountUpdateBody(q *Request, b doc) (any, error) {
 		return nil, err
 	}
 	p := q.person
-	if p != nil && !p.Owner && p.Email != a["holder"] {
+	if p != nil && !fullAccess(p) && p.Email != a["holder"] {
 		return nil, fail(403, "Only the holder or the owner changes this subscription")
 	}
 	next := doc{}
@@ -469,7 +469,7 @@ func accountUpdateBody(q *Request, b doc) (any, error) {
 		set("take", doc{"projects": uniq})
 	}
 	if v, ok := b["holder"]; ok && v != nil {
-		if p != nil && !p.Owner {
+		if p != nil && !fullAccess(p) {
 			return nil, fail(403, "Only the owner changes the holder")
 		}
 		h := strings.ToLower(astr(v))
@@ -710,7 +710,7 @@ func resolveAccount(q *Request, selection *string, harness, host string, directo
 }
 
 func (p *Person) mayAccess(projectID string) bool {
-	if p.Owner {
+	if fullAccess(p) {
 		return true
 	}
 	for _, g := range p.Grants {
