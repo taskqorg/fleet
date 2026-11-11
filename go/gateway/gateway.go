@@ -156,6 +156,11 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 			if !strings.HasPrefix(t.Path, "/") {
 				return nil, errors.New("tool path must start with /")
 			}
+			for field, pattern := range t.PathPatterns {
+				if _, err := regexp.Compile(pattern); err != nil {
+					return nil, fmt.Errorf("tool %s path pattern %s: %w", toolName, field, err)
+				}
+			}
 			if t.Unit == "" {
 				t.Unit = "calls"
 			}
@@ -838,8 +843,8 @@ func fillPath(t tool, body map[string]json.RawMessage) (string, bool) {
 			return "", false
 		}
 		if pattern, ok := t.PathPatterns[field]; ok {
-			// Patterns come from the catalogue (code); one that does not compile refuses every call.
-			if re, err := regexp.Compile(pattern); err != nil || !re.MatchString(value) || strings.Contains(value, "..") {
+			// Patterns compiled when the snapshot loaded; a "." or ".." segment never reaches the provider.
+			if !regexp.MustCompile(pattern).MatchString(value) || dotSegment(value) {
 				return "", false
 			}
 		} else if strings.IndexFunc(value, func(r rune) bool {
@@ -870,6 +875,15 @@ func usageAt(data []byte, field string) (int64, bool) {
 		return 0, false
 	}
 	return int64(n), true
+}
+
+func dotSegment(value string) bool {
+	for _, part := range strings.Split(value, "/") {
+		if part == "." || part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func deref(s *string) string {

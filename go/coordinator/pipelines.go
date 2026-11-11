@@ -889,7 +889,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			// A job submit without a clear answer: a task created since the call started is adopted; otherwise unknown, never resent.
 			code := deref(line.ErrorCode)
 			if job && line.Outcome != contract.CallOutcomeOk && (line.Outcome == contract.CallOutcomeUnknown || http5xx.MatchString(code)) {
-				recent := connCallFor(ctx, a, run, connection, row, "recent_tasks", doc{})
+				recent := connCallFor(ctx, a, run, connection, row, jobTool(def, "recent_tasks"), doc{})
 				listed := callOutput(recent)
 				tasks := anys(listed)
 				if tasks == nil {
@@ -1013,7 +1013,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			return false, nil
 		}
 		defer inflight.Delete(row)
-		line := connCallFor(ctx, a, run, connection, row, "job_status", doc{"jobId": s["jobId"]})
+		line := connCallFor(ctx, a, run, connection, row, jobTool(def, "job_status"), doc{"jobId": s["jobId"]})
 		p, _ := numOK(s["polls"])
 		s["polls"] = p + 1
 		if line.Outcome != contract.CallOutcomeOk {
@@ -1482,4 +1482,13 @@ func startAgentStep(q *Request, run, step doc, stepExecutionID, prompt string, i
 		return "", err
 	}
 	return astr(e["id"]), nil
+}
+
+// jobTool names the status or listing tool of a job step's submit tool: Meshy multi_image_to_3d reads multi_job_status.
+// ponytail: naming rule for Meshy only; S7's status_tool and recent_tool replace it.
+func jobTool(def doc, name string) string {
+	if strings.HasPrefix(astr(def["tool"]), "multi_") {
+		return "multi_" + name
+	}
+	return name
 }

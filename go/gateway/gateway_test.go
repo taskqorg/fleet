@@ -492,12 +492,15 @@ func TestPathPatternsAndUsageField(t *testing.T) {
 	model := "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
 	field := "usageMetadata.totalTokenCount"
 	tl := tool{Path: "/models/{model}", PathPatterns: map[string]string{"model": model}, UsageField: &field}
-	for value, want := range map[string]bool{`"org/name-1.5"`: true, `"org/../x"`: false, `"name"`: false, `"a/b/c"`: false} {
+	for value, want := range map[string]bool{`"org/name-1.5"`: true, `"org/../x"`: false, `"name"`: false, `"a/b/c"`: false, `"./x"`: false} {
 		body := map[string]json.RawMessage{"model": json.RawMessage(value)}
 		path, ok := fillPath(tl, body)
 		if ok != want || ok && (path != "/models/"+value[1:len(value)-1] || body["model"] != nil) {
 			t.Fatalf("%s: path %q ok %v", value, path, ok)
 		}
+	}
+	if _, ok := fillPath(tool{Path: "/t/{jobId}"}, map[string]json.RawMessage{"jobId": json.RawMessage(`"a/b"`)}); ok {
+		t.Fatal("an unpatterned field took a slash")
 	}
 	if n, ok := usageAt([]byte(`{"usageMetadata":{"totalTokenCount":42}}`), field); !ok || n != 42 {
 		t.Fatalf("usage %d %v", n, ok)
