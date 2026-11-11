@@ -12,9 +12,6 @@ import (
 
 func init() {
 	route("POST /api/hosts/poll", func(q *Request) (any, error) { return q.app.poll(q) })
-	// whoami: the post-install smoke of fleet-update pds18 (docs/designs/fleet-delivery-pipeline.md#7-smoke-and-rollback-on-the-host):
-	// host authentication and the database answer, with no side effect.
-	route("POST /api/hosts/whoami", func(q *Request) (any, error) { return doc{"hostId": q.hostID()}, nil })
 }
 
 func hostProblems(v any) []any {

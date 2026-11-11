@@ -305,28 +305,21 @@ func TestPruneDumps(t *testing.T) {
 	}
 }
 
-// The PDS18 smoke: up only when the coordinator accepts the executor's host secret; no secret file skips it.
+// The PDS18 smoke: up only when the guard refuses a request without an Access assertion (403); down otherwise.
 func TestSmoke(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer s3cret" {
-			http.Error(w, "Unauthorized", 401)
-			return
-		}
-		w.Write([]byte(`{"hostId":"pds18-native"}`))
-	}))
-	defer srv.Close()
-	secret := filepath.Join(t.TempDir(), "host-secret")
-	u := &updater{smokeURL: srv.URL, smokeSecret: secret}
+	code := 403
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(code) }))
+	u := &updater{guardURL: srv.URL + "/verify"}
 	c := &http.Client{Timeout: time.Second}
 	if u.smoke(c) != up {
-		t.Fatal("missing secret file must skip the smoke")
+		t.Fatal("403 from the guard must be up")
 	}
-	os.WriteFile(secret, []byte("wrong\n"), 0o600)
+	code = 404
 	if u.smoke(c) != down {
-		t.Fatal("refused secret must be down")
+		t.Fatal("another status must be down")
 	}
-	os.WriteFile(secret, []byte("s3cret\n"), 0o600)
-	if u.smoke(c) != up {
-		t.Fatal("accepted secret must be up")
+	srv.Close()
+	if u.smoke(c) != down {
+		t.Fatal("guard not answering must be down")
 	}
 }
