@@ -8,6 +8,7 @@ import (
 	"fleet/contract"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -621,6 +622,11 @@ func (e *executor) run(c M) error {
 		if sent {
 			return nil
 		}
+		if perr != nil {
+			if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: "invalid steer payload: " + perr.Error()}); err != nil {
+				return err
+			}
+		}
 		return e.finish(c, "failed", "")
 	case "readiness":
 		data := readiness(jAt(p, "project"), e.host, os.Getenv("FLEET_NATIVE_ACCOUNTS"))
@@ -1188,7 +1194,7 @@ func (e *executor) script(c M, execution, session string) error {
 	}
 	var timeout time.Duration
 	if sp.TimeoutMs != nil {
-		if *sp.TimeoutMs <= 0 {
+		if *sp.TimeoutMs <= 0 || *sp.TimeoutMs > math.MaxInt64/int64(time.Millisecond) {
 			return refuse("timeout_ms must be a positive integer")
 		}
 		timeout = time.Duration(*sp.TimeoutMs) * time.Millisecond

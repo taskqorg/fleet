@@ -29,10 +29,9 @@ func num(v any) (float64, bool) {
 
 func isID(v any, n float64) bool { f, ok := num(jAt(v, "id")); return ok && f == n }
 
-// ms converts native epoch seconds to ms; nil when not a non-negative integer.
 // ms: a provider reset time in seconds as ms since epoch; nil when absent or not a whole non-negative number.
 func ms(v any) *int64 {
-	if f, ok := num(v); ok && f >= 0 && f == float64(int64(f)) {
+	if f, ok := num(v); ok && f >= 0 && f < math.MaxInt64/1000 && f == math.Trunc(f) {
 		t := int64(f) * 1000
 		return &t
 	}

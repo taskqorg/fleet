@@ -223,4 +223,15 @@ func TestPayloadOfWrongTypeRefused(t *testing.T) {
 	if lastReceipt(e, "c9") != "failed" || lastReceipt(e, "c10") != "failed" {
 		t.Fatal(lastReceipt(e, "c9"), lastReceipt(e, "c10"))
 	}
+	rs, _ := e.db.Query("SELECT body FROM outbox WHERE route='/api/hosts/events'")
+	var all strings.Builder
+	for rs.Next() {
+		var b string
+		rs.Scan(&b)
+		all.WriteString(b)
+	}
+	rs.Close()
+	if !strings.Contains(all.String(), "invalid start payload") || !strings.Contains(all.String(), "invalid script payload") {
+		t.Fatal("refusal reasons missing:", all.String())
+	}
 }
