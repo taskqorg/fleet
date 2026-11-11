@@ -285,9 +285,10 @@
           }
         },
         "stores": {
-          "$comment": "store::report output; described when stores are next changed",
           "type": "array",
-          "items": {}
+          "items": {
+            "$ref": "#/$defs/StoreReport"
+          }
         },
         "problems": {
           "type": "array",
@@ -1330,6 +1331,30 @@
         "win32",
         "linux"
       ]
+    },
+    "StoreReport": {
+      "$comment": "one store's reachability and capacity, sent with each poll",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "reachable"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "reachable": {
+          "type": "boolean"
+        },
+        "capacityBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
     }
   }
 }

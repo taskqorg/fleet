@@ -2,6 +2,8 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fleet/contract"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -114,7 +116,7 @@ func TestRedirectHoldsOnlyItsRouteAndExecution(t *testing.T) {
 		t.Fatalf("got %v, left %d", s.rows, count(db, "outbox"))
 	}
 	for _, p := range edgeProblems("") {
-		if jStr(p, "route") == "/api/hosts/artifacts/declare" && jStr(p, "location") != "https://login.example/cdn-cgi/access/login" {
+		if p.Route == "/api/hosts/artifacts/declare" && (p.Location == nil || *p.Location != "https://login.example/cdn-cgi/access/login") {
 			t.Fatalf("location keeps its query: %v", p)
 		}
 	}
@@ -160,6 +162,27 @@ func TestStoreKeyFormats(t *testing.T) {
 		if id, s, ok := readKey(filepath.Join(d, name)); !ok || id != "GK1" || s != "s1" {
 			t.Fatal(name, id, s)
 		}
+	}
+}
+
+// Requirement: the store registration and report are the host-protocol types, with the key and the configured capacity
+// (W4). Risk: a renamed store field reaches the coordinator as a missing key.
+func TestStoreSenderTyped(t *testing.T) {
+	d := t.TempDir()
+	os.WriteFile(filepath.Join(d, "key"), []byte(`{"accessKeyId":"GK1","secretAccessKey":"s1"}`), 0o600)
+	cfg := M{"id": "st1", "zone": "z", "bucket": "b", "keyFile": filepath.Join(d, "key"), "capacityBytes": json.Number("1000")}
+	r := storeRegistration(cfg, "h1")
+	if r == nil || r.HostId != "h1" || r.Store.Id != "st1" || *r.Store.AccessKeyId != "GK1" || *r.Store.CapacityBytes != 1000 || *r.Store.Zone != "z" {
+		t.Fatalf("%+v", r)
+	}
+	var back contract.StoresRequest
+	dec := json.NewDecoder(strings.NewReader(enc(r)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&back); err != nil {
+		t.Fatal(err)
+	}
+	if rep := storeReport(cfg); len(rep) != 1 || rep[0].Id != "st1" || rep[0].Reachable || *rep[0].CapacityBytes != 1000 {
+		t.Fatalf("%+v", rep)
 	}
 }
 
