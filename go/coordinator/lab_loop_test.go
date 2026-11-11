@@ -36,6 +36,10 @@ func TestLoopNoGainUsesTuneRepeatNoise(t *testing.T) {
 	if done, available := loopNoGain(exp, trials, scores[1:], 2); available || done {
 		t.Fatal("missing baseline score treated as measured")
 	}
+	if loopBestVariant(exp, trials, scores[1:]) != nil {
+		t.Fatal("keep_best accepted partial evidence")
+	}
+
 }
 
 func TestLoopExplicitStopsAndKeepBest(t *testing.T) {

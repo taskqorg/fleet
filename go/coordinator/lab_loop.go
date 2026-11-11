@@ -217,6 +217,9 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 	if n, ok := intOK(s["max_iterations"]); ok && iteration+1 >= n {
 		return stop("max_iterations")
 	}
+	if !loopPrimaryComplete(exp, trials, scores) {
+		return halt("primary-score-unavailable")
+	}
 	if ng := mapOf(s["no_gain"]); ng != nil {
 		k, _ := intOK(ng["k"])
 		done, available := loopNoGain(exp, trials, scores, k)
@@ -339,6 +342,9 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 }
 
 func loopBestVariant(exp doc, trials, scores []doc) doc {
+	if !loopPrimaryComplete(exp, trials, scores) {
+		return nil
+	}
 	values := map[string][]float64{}
 	for _, s := range scoredLatest(exp, trials, scores, func(s doc) bool { return s["evaluator"] == exp["primary_evaluator"] }) {
 		if s.split == "tune" {
@@ -392,4 +398,30 @@ func loopMergeOverrides(base, extra doc) doc {
 		out["arguments"] = steps
 	}
 	return out
+}
+
+func loopPrimaryComplete(exp doc, trials, scores []doc) bool {
+	tune := 0
+	for _, p := range anys(exp["examples"]) {
+		if mapOf(p)["split"] == "tune" {
+			tune++
+		}
+	}
+	repeats, _ := intOK(exp["repeats"])
+	if tune == 0 || repeats < 1 {
+		return false
+	}
+	counts := map[string]int{}
+	for _, s := range scoredLatest(exp, trials, scores, func(s doc) bool { return s["evaluator"] == exp["primary_evaluator"] }) {
+		if s.split != "tune" || s.score["form"] == "typed" && mapOf(s.score["value"])["answer"] == "unscored" {
+			continue
+		}
+		counts[s.variant]++
+	}
+	for _, v := range anys(exp["variants"]) {
+		if int64(counts[astr(mapOf(v)["label"])]) != int64(tune)*repeats {
+			return false
+		}
+	}
+	return len(anys(exp["variants"])) > 0
 }

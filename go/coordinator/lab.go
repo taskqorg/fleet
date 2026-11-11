@@ -1715,7 +1715,12 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		}
 		if len(launched) == 0 && len(order) == total && allFinal && evaluated {
 			if exp["kind"] == "loop" {
-				return loopAdvance(q, exp, trials, runs, cur, s, &launched)
+				// Evaluators may have just inserted the final scores in this transaction.
+				fresh, err := scoresCurrent(q, id)
+				if err != nil {
+					return err
+				}
+				return loopAdvance(q, exp, trials, runs, fresh, s, &launched)
 			}
 			return exec(q, "UPDATE experiment SET state='done',stop_reason='complete' WHERE id=$1 AND state='running'", id)
 		}
