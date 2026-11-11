@@ -23,11 +23,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func uploadSchema(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS transfers(id TEXT PRIMARY KEY,kind TEXT NOT NULL,body TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'queued',response TEXT,attempts INTEGER NOT NULL DEFAULT 0,next_at INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL);`)
-	return err
-}
-
 // enqueue queues a job; id is also the artifact id of an upload, so a repeated reserve is the same reservation.
 func enqueue(db execer, id, kind string, body any) error {
 	_, err := db.Exec("INSERT OR IGNORE INTO transfers(id,kind,body,created_at) VALUES(?,?,?,?)", id, kind, enc(body), nowMs())

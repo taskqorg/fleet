@@ -339,11 +339,10 @@ func mcpRun(args []string) error {
 		if err != nil {
 			return err
 		}
-		db, err = sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)&_pragma=synchronous(FULL)")
+		db, err = openJournal(path)
 		if err != nil {
 			return err
 		}
-		db.SetMaxOpenConns(1)
 		defer db.Close()
 		s, err := arg(2, "context")
 		if err != nil {
