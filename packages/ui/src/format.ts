@@ -3,7 +3,7 @@
 
 export type Basis = 'measured' | 'estimated' | 'unavailable';
 /** A number with its measurement basis. `partial` marks a lower bound ("≥"). Unknown is never 0. */
-export type Measured = { value: number | null; basis: Basis; reason?: string; partial?: string };
+export type Measured = { value: number | null; basis: Basis; reason?: string; partial?: string; currency?: string };
 export type Formatted = { text: string; long: string };
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -70,11 +70,10 @@ export function count(n: number): Formatted {
 }
 
 /** Money in dollars: $0.42, $12.80, $1.2k. */
-export function money(n: number): Formatted {
-  // Below a cent (one provider call): two significant digits, so an estimate never reads as $0.00.
-  if (n > 0 && n < 0.01) return { text: `$${n.toPrecision(2)}`, long: `${n.toPrecision(2)} dollars` };
-  const text = n >= 1000 ? `$${count(n).text}` : `$${n.toFixed(2)}`;
-  return { text, long: `${n.toFixed(2)} dollars` };
+export function money(n: number, currency = 'USD'): Formatted {
+  // Below a cent (one provider call): two significant digits, never exponent notation, so an estimate never reads as 0.00.
+  const v = n > 0 && n < 0.01 ? n.toLocaleString('en-US', { maximumSignificantDigits: 2, useGrouping: false }) : n >= 1000 ? count(n).text : n.toFixed(2);
+  return currency === 'USD' ? { text: `$${v}`, long: `${v} dollars` } : { text: `${v} ${currency}`, long: `${v} ${currency}` };
 }
 
 /** Scores 0..1 with two fixed decimals: 0.80, 0.68. */
@@ -88,7 +87,7 @@ export function measured(m: Measured, kind: Kind): Formatted {
   if (m.basis === 'unavailable' || m.value === null) {
     return { text: '—', long: `unavailable${m.reason ? `: ${m.reason}` : ''}` };
   }
-  const f = BY_KIND[kind](m.value);
+  const f = kind === 'money' ? money(m.value, m.currency) : BY_KIND[kind](m.value);
   if (m.basis === 'estimated') return { text: `≈ ${f.text}`, long: `about ${f.long}, estimated${m.reason ? ` from ${m.reason}` : ''}` };
   if (m.partial) return { text: `≥ ${f.text}`, long: `at least ${f.long}, ${m.partial}` };
   return f;

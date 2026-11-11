@@ -1941,25 +1941,29 @@ func expGet(q *Request, id string) (doc, error) {
 	}
 	// Each trial's provider usage, priced per call (fleet-analytics.md: usage x the latest entry in force at the call).
 	usageRows, err := queryRows(q, `SELECT coalesce(e.data->>'pipelineRunId',split_part(e.parent_execution_id,':step:',1)) AS run,
-	 coalesce(e.data->>'connection','')||'/'||coalesce(e.data->>'tool','') AS subject,t.connection_cost->>'unit' AS unit,(t.connection_cost->>'amount')::float8 AS amount,
+	 coalesce(e.data->>'connection','')||'/'||coalesce(e.data->>'tool','') AS subject,t.connection_cost->>'unit' AS unit,
+	 coalesce(t.connection_cost->>'amount',t.connection_cost->>(t.connection_cost->>'unit'))::float8 AS amount,
 	 coalesce(to_timestamp((e.data->>'startedAt')::bigint/1000.0),e.started_at,now()) AS at
-	 FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE e.experiment_id=$1 AND e.kind='tool_run' AND t.connection_cost ? 'amount'`, id)
+	 FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.experiment_id=$1 AND e.kind='tool_run'`, id)
 	if err != nil {
 		return nil, err
 	}
 	costs := map[any][]usage{}
 	for _, u := range usageRows {
-		amount, _ := numOK(u["amount"])
+		var amount *float64
+		if a, ok := numOK(u["amount"]); ok {
+			amount = &a
+		}
 		at, _ := u["at"].(time.Time)
 		costs[u["run"]] = append(costs[u["run"]], usage{astr(u["subject"]), astr(u["unit"]), amount, at})
 	}
+	prices, err := priceEntries(q)
+	if err != nil {
+		return nil, err
+	}
 	trialCost := map[any][]any{}
 	for run, us := range costs {
-		c, err := estimateCost(q, us)
-		if err != nil {
-			return nil, err
-		}
-		trialCost[run] = c
+		trialCost[run] = estimateCost(prices, us)
 	}
 	uniq := func(l []any) []any {
 		seen, out := map[string]bool{}, []any{}

@@ -5,6 +5,7 @@ package main
 
 import (
 	"math/big"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,8 +40,14 @@ func priceAdd(q *Request, b doc) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if conn, tool, isTool := strings.Cut(subject, "/"); isTool {
-		if want := astr(mapOf(providerToolOf(q, conn, tool))["unit"]); want != "" && want != unit {
+	// <connection>/<tool> when the connection exists (its tool must exist and the unit is its catalogue unit); otherwise
+	// a model ID, which may itself contain a slash, priced in a token unit.
+	if conn, tool, isTool := strings.Cut(subject, "/"); isTool && connectionExists(q, conn) {
+		want := astr(mapOf(providerToolOf(q, conn, tool))["unit"])
+		if want == "" {
+			return nil, fail(400, "Connection "+conn+" has no tool "+tool)
+		}
+		if want != unit {
 			return nil, fail(400, "The unit of "+subject+" is "+want)
 		}
 	} else if !inList(priceUnits, unit) {
@@ -50,9 +57,9 @@ func priceAdd(q *Request, b doc) (any, error) {
 	if !ok || price < 0 {
 		return nil, fail(400, "Expected price, a number >= 0")
 	}
-	currency, err := strArg(b, "currency", "currency", 8)
-	if err != nil {
-		return nil, err
+	currency := astr(b["currency"])
+	if !currencyCode.MatchString(currency) {
+		return nil, fail(400, "currency is an ISO 4217 code such as USD")
 	}
 	source := astr(b["source"])
 	if !inList([]string{"vendor", "snapshot", "owner"}, source) {
@@ -76,7 +83,7 @@ func priceAdd(q *Request, b doc) (any, error) {
 	}
 	id := newID()
 	if err := exec(q, "INSERT INTO price_entry(id,subject,unit,price,currency,source,source_ref,observed_at,effective_from,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-		id, subject, unit, b["price"], strings.ToUpper(currency), source, b["sourceRef"], observed, effective, actor(q, "operator")); err != nil {
+		id, subject, unit, b["price"], currency, source, b["sourceRef"], observed, effective, actor(q, "operator")); err != nil {
 		return nil, err
 	}
 	rs, err := queryRows(q, "SELECT "+priceCols+" FROM price_entry WHERE id=$1", id)
@@ -84,6 +91,13 @@ func priceAdd(q *Request, b doc) (any, error) {
 		return nil, err
 	}
 	return priceView(rs[0]), nil
+}
+
+var currencyCode = regexp.MustCompile(`^[A-Z]{3}$`)
+
+func connectionExists(q *Request, name string) bool {
+	c, err := maybe(q, "connection:"+name, "api-connection")
+	return err == nil && c != nil
 }
 
 // providerToolOf: the catalogue entry of a connection's tool, nil when unknown.
@@ -107,19 +121,15 @@ func pricesList(q *Request, b doc) (any, error) {
 // usage: one measured amount of a unit, for a subject, at a time (a tool_run's connection_cost).
 type usage struct {
 	subject, unit string
-	amount        float64
+	amount        *float64
 	at            time.Time
 }
 
-// estimateCost: the cost of a set of usages, one figure per currency, each with basis estimated and the price entries
+// estimateCost: the cost of a set of usages against the price entries, one figure per currency, each with basis estimated and the price entries
 // used; usages with no price give one figure {value: null, basis: unavailable} (never 0). No usage gives none.
-func estimateCost(q *Request, us []usage) ([]any, error) {
+func estimateCost(rs []doc, us []usage) []any {
 	if len(us) == 0 {
-		return []any{}, nil
-	}
-	rs, err := queryRows(q, "SELECT "+priceCols+" FROM price_entry ORDER BY effective_from DESC,seq DESC")
-	if err != nil {
-		return nil, err
+		return []any{}
 	}
 	type sum struct {
 		value  *big.Float
@@ -127,6 +137,10 @@ func estimateCost(q *Request, us []usage) ([]any, error) {
 	}
 	byCurrency, unpriced := map[string]*sum{}, 0
 	for _, u := range us {
+		if u.amount == nil {
+			unpriced++ // a call whose provider reported no amount
+			continue
+		}
 		var hit doc
 		for _, r := range rs {
 			eff, _ := r["effective_from"].(time.Time)
@@ -148,7 +162,7 @@ func estimateCost(q *Request, us []usage) ([]any, error) {
 			unpriced++
 			continue
 		}
-		byCurrency[c].value.Add(byCurrency[c].value, new(big.Float).Mul(p, big.NewFloat(u.amount)))
+		byCurrency[c].value.Add(byCurrency[c].value, new(big.Float).Mul(p, big.NewFloat(*u.amount)))
 		byCurrency[c].prices[astr(hit["id"])] = msOf(hit["observed_at"])
 	}
 	out := []any{}
@@ -166,9 +180,14 @@ func estimateCost(q *Request, us []usage) ([]any, error) {
 		out = append(out, doc{"value": v, "currency": c, "basis": "estimated", "prices": prices})
 	}
 	if unpriced > 0 {
-		out = append(out, doc{"value": nil, "currency": nil, "basis": "unavailable", "reason": "no price entry", "usages": unpriced})
+		out = append(out, doc{"value": nil, "currency": nil, "basis": "unavailable", "reason": "no usage amount or price entry", "usages": unpriced})
 	}
-	return out, nil
+	return out
+}
+
+// priceEntries: the whole table, newest in force first, read once per estimate.
+func priceEntries(q *Request) ([]doc, error) {
+	return queryRows(q, "SELECT "+priceCols+" FROM price_entry ORDER BY effective_from DESC,seq DESC")
 }
 
 func init() {

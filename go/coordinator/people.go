@@ -91,7 +91,7 @@ func grantsVersion(p *Person) string {
 }
 
 var (
-	architectOps    = regexp.MustCompile(`^(account_|lab_|connection|recovery|reconcil|transport_|artifact_rule|profiles_list)`)
+	architectOps    = regexp.MustCompile(`^(account_|lab_|connection|recovery|reconcil|transport_|artifact_rule|profiles_list|price_add)`)
 	architectRoutes = regexp.MustCompile(`^/api/(lab|accounts|recovery|reconciliation|recovery-tools|profiles)(/|$)`)
 )
 
