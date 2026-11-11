@@ -318,9 +318,26 @@ func projectScript(name, cmd, top, w, session string) contract.ProjectScriptResu
 	return contract.ProjectScriptResult{Script: name, ExitCode: code, Ok: c.ProcessState.Success(), Stdout: &stdout, Stderr: &stderr}
 }
 
-// teardown: teardown script, then remove the worktree unless dirty or the script failed; the branch is deleted only when
-// merged (-d).
-func teardown(dir, session, top string, project any) contract.Teardown {
+// keepReasons: the project's cleanup.keepWhen (default uncommitted, unpushed, teardown-failed).
+func keepReasons(project any) map[string]bool {
+	keep := map[string]bool{}
+	list := jArr(project, "cleanup", "keepWhen")
+	if list == nil {
+		list = []any{"uncommitted", "unpushed", "teardown-failed"}
+	}
+	for _, v := range list {
+		if s, ok := v.(string); ok {
+			keep[s] = true
+		}
+	}
+	return keep
+}
+
+// teardown: teardown script, then remove the worktree unless a cleanup.keepWhen reason holds (uncommitted changes,
+// commits not on the upstream or no upstream, a failed teardown script). The branch goes with -d (merged only), or -D
+// when the work was delivered (deleteBranch: the task was accepted).
+func teardown(dir, session, top string, project any, deleteBranch bool) contract.Teardown {
+	keep := keepReasons(project)
 	w := filepath.Join(dir, "worktree")
 	if !exists(filepath.Join(w, ".git")) {
 		return refusedTeardown("no-worktree")
@@ -329,7 +346,7 @@ func teardown(dir, session, top string, project any) contract.Teardown {
 	if jIsStr(project, "scripts", "teardown") {
 		t := projectScript("teardown", jStr(project, "scripts", "teardown"), top, w, session)
 		out.Teardown = &t
-		if !t.Ok {
+		if !t.Ok && keep["teardown-failed"] {
 			out.Reason = new("teardown-failed")
 			return out
 		}
@@ -350,9 +367,16 @@ func teardown(dir, session, top string, project any) contract.Teardown {
 		args = append(args, ":(exclude)"+r)
 	}
 	o, err := hardenedGit(args...).Output()
-	if err != nil || len(o) > 0 {
+	if keep["uncommitted"] && (err != nil || len(o) > 0) {
 		out.Reason = new("uncommitted")
 		return out
+	}
+	if keep["unpushed"] {
+		ahead, err := hardenedGit("-C", w, "rev-list", "@{u}..HEAD").Output()
+		if err != nil || len(strings.TrimSpace(string(ahead))) > 0 { // no upstream, or commits the upstream lacks
+			out.Reason = new("unpushed")
+			return out
+		}
 	}
 	for _, r := range links {
 		os.Remove(filepath.Join(w, r))
@@ -367,7 +391,11 @@ func teardown(dir, session, top string, project any) contract.Teardown {
 	if jIsStr(project, "worktree", "branchPrefix") {
 		prefix = jStr(project, "worktree", "branchPrefix")
 	}
-	deleted := hardenedGit("-C", top, "branch", "-d", prefix+"/"+session).Run() == nil
+	flag := "-d"
+	if deleteBranch {
+		flag = "-D"
+	}
+	deleted := hardenedGit("-C", top, "branch", flag, prefix+"/"+session).Run() == nil
 	out.BranchDeleted = &deleted
 	return out
 }

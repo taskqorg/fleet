@@ -298,6 +298,9 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 				if err := exec(q, "UPDATE task SET accepted_by=$2,accepted_at=now(),accepted_artifact_ids=$3 WHERE id=$1", t, by, ids); err != nil {
 					return nil, err
 				}
+				if err := deliveredTeardown(q, t); err != nil {
+					return nil, err
+				}
 			} else if _, err := taskTransition(q, t, "rejected", ""); err != nil {
 				return nil, err
 			}

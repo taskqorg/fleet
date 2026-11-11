@@ -117,7 +117,7 @@ var settingsDefaults = map[string]any{"repos": []any{}, "environments": []any{},
 	"worktree": doc{"envMode": "worktree", "baseRef": nil, "startFromOrigin": true, "branchPrefix": "fleet", "linkPaths": []any{}, "sharedDirectories": []any{}},
 	"scripts":  doc{"setup": nil, "teardown": nil}, "setupStart": "wait",
 	"integration": doc{"mode": "pr", "mergeMethod": "squash", "autoMerge": true, "syncCheckoutAfterMerge": true},
-	"cleanup":     doc{"keepWhen": []any{"uncommitted", "teardown-failed"}}, "identity": nil, "subscriptions": []any{}}
+	"cleanup":     doc{"keepWhen": []any{"uncommitted", "unpushed", "teardown-failed"}}, "identity": nil, "subscriptions": []any{}}
 
 var settingsOrder = []string{"repos", "environments", "roles", "worktree", "scripts", "setupStart", "integration", "cleanup", "identity", "subscriptions"}
 var itemKeys = map[string][]string{"repos": {"id", "remote", "forge", "defaultBranch", "connection", "path"}, "environments": {"hostId", "checkoutPath", "repo"}, "identity": {"name", "email"}}
