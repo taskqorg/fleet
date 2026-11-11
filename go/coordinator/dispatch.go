@@ -72,12 +72,14 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 	return k, err
 }
 
-func subscriptionsOf(projectID any) []string { return strs(projectSetting(projectID, "subscriptions")) }
+func subscriptionsOf(q *Request, projectID any) []string {
+	return strs(projectSetting(q, projectID, "subscriptions"))
+}
 
 // checkouts: the project's environments, each {hostId, checkoutPath}.
-func checkouts(projectID any) []map[string]any {
+func checkouts(q *Request, projectID any) []map[string]any {
 	out := []map[string]any{}
-	for _, x := range anys(projectSetting(projectID, "environments")) {
+	for _, x := range anys(projectSetting(q, projectID, "environments")) {
 		if m, ok := x.(map[string]any); ok {
 			out = append(out, m)
 		}
@@ -87,7 +89,7 @@ func checkouts(projectID any) []map[string]any {
 
 // repoConnection: the git connection of the repository a project runs on a host (its environment's repo, else the
 // first repo), as the executor's gitRepo chooses it; empty when that repo declares none.
-func repoConnection(projectID any, cos []map[string]any, host string) string {
+func repoConnection(repos []any, cos []map[string]any, host string) string {
 	var repo any
 	for _, co := range cos {
 		if co["hostId"] == host {
@@ -95,7 +97,6 @@ func repoConnection(projectID any, cos []map[string]any, host string) string {
 			break
 		}
 	}
-	repos := anys(projectSetting(projectID, "repos"))
 	for _, r := range repos {
 		m := mapOf(r)
 		if repo == nil || m["id"] == repo {
@@ -221,7 +222,14 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 		}
 		return nil
 	}
-	cos := checkouts(projectID)
+	settings := mapOf(mapOf(e["projectSnapshot"])["settings"])
+	if settings == nil && projectID != nil {
+		settings = projectSettingsOf(q, astr(projectID))
+	}
+	cos := []map[string]any{}
+	for _, v := range anys(settings["environments"]) {
+		cos = append(cos, mapOf(v))
+	}
 	accounts := []doc{}
 	for _, s := range k.accounts {
 		if accountHarness(s) == harness {
@@ -241,7 +249,7 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 		}
 		subs = []doc{s}
 	} else {
-		list := subscriptionsOf(projectID)
+		list := strs(settings["subscriptions"])
 		pos := func(s doc) int {
 			for i, n := range list {
 				if n == s["name"] {
@@ -310,7 +318,7 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 				skip(id+" is offline", "host:"+id+":offline")
 				continue
 			}
-			if !a.hostMaySee(h, projectID) {
+			if !a.hostMayRun(h, projectID, director) {
 				skip(fmt.Sprintf("%s is held by %s, who has no grant on %v", id, h["holder"], jsText(projectID)), "host:"+id+":trust")
 				continue
 			}
@@ -346,7 +354,7 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 			}
 			// The repository's git connection must be on the host, else the run fails after setup (2026-11-11).
 			if have, known := k.conns[id]; known {
-				if need := repoConnection(projectID, cos, id); need != "" && !slices.Contains(have, need) {
+				if need := repoConnection(anys(settings["repos"]), cos, id); need != "" && !slices.Contains(have, need) {
 					skip(fmt.Sprintf("%s has no git connection %s", id, need), fmt.Sprintf("host:%s:connection:%s", id, need))
 					continue
 				}
@@ -653,13 +661,18 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 		}
 	}
 	if pid := astr(s["projectId"]); pid != "" {
-		st, err := projectSettingsByID(pid)
-		if err != nil {
-			return nil, err
+		snapshot := mapOf(e["projectSnapshot"])
+		if snapshot == nil {
+			return nil, fail(409, "project_context_unknown: queued execution predates project snapshots")
 		}
+		st := mapOf(snapshot["settings"])
 		p.ProjectId, p.Project = &pid, rawMap(st)
 	}
-	if gitNetworkOf(s) {
+	networkSession := mapOf(clone(s))
+	if snapshot := mapOf(e["projectSnapshot"]); snapshot != nil {
+		networkSession["projectSettings"] = snapshot["settings"]
+	}
+	if gitNetworkOf(q, networkSession) {
 		p.GitNetwork = ptr(true)
 	}
 	if cfg != nil {
@@ -677,6 +690,34 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 		}
 	}
 	p.Skills, p.WebRoute = rawList(extra["skills"]), strPtr(extra["webRoute"])
+	if snapshot := mapOf(e["projectSnapshot"]); snapshot != nil {
+		instruction := ""
+		if p.Instructions != nil {
+			instruction = *p.Instructions
+		}
+		for _, f := range anys(snapshot["context"]) {
+			m := mapOf(f)
+			instruction += "\n\nProject context " + astr(m["path"]) + ":\n" + astr(m["text"])
+		}
+		// Stored JSON arrays can also be typed docs before their first database round-trip.
+		if xs, ok := snapshot["context"].([]doc); ok {
+			for _, m := range xs {
+				instruction += "\n\nProject context " + astr(m["path"]) + ":\n" + astr(m["text"])
+			}
+		}
+		p.Instructions = &instruction
+		workspaces := mapOf(s["workspaceSnapshots"])
+		if workspaces == nil {
+			workspaces = doc{}
+		}
+		if workspaces[host] == nil {
+			workspaces[host] = doc{"executionId": e["id"], "project": snapshot["settings"], "revision": snapshot["revision"], "contentSha": snapshot["contentSha"], "workingDirectory": s["workingDirectory"]}
+			s["workspaceSnapshots"] = workspaces
+			if err := put(q, "session", s); err != nil {
+				return nil, err
+			}
+		}
+	}
 	command := doc{"id": newID(), "executionId": e["id"], "sessionId": s["id"], "hostId": host, "kind": string(contract.CommandKindStart), "payload": p, "status": "pending"}
 	if err := agentDecorate(q, s, e, p); err != nil {
 		return nil, err

@@ -11,6 +11,7 @@ package contract
 //go:generate go run ../gen ../../contracts/ops-executions.schema.json contract ops_executions_gen.go
 //go:generate go run ../gen ../../contracts/ops-lab.schema.json contract ops_lab_gen.go
 //go:generate go run ../gen ../../contracts/lab-registry.schema.json contract lab_registry_gen.go
+//go:generate go run ../gen ../../contracts/ops-projects.schema.json contract ops_projects_gen.go
 //go:generate go run ../gen ../../contracts/ops-people.schema.json contract ops_people_gen.go
 //go:generate go run ../gen ../../contracts/ops-sessions.schema.json contract ops_sessions_gen.go
 //go:generate go run ../gen ../../contracts/ops-tasks.schema.json contract ops_tasks_gen.go

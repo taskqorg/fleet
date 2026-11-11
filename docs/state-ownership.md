@@ -11,3 +11,7 @@ Harnesses retain their native session semantics; Fleet retains available executi
 Instructions, skills, agent configurations and pipeline definitions remain canonical repository files. State ownership does not require copying external materials or choosing a particular database or event-storage architecture.
 
 This is the Fleet target. Existing TaskQ board-backed work remains unchanged until a separately designed migration preserves its history and operational continuity.
+
+## Project revisions
+
+The project definition owner holds current settings and owned context text in one immutable revision bundle. Release files are seeds. Website and PM use the same project operations and optimistic revision check. Initial creator membership is trusted, revocable metadata, independent of immutable creator audit and existing explicit person grants; it is not a second project configuration store.

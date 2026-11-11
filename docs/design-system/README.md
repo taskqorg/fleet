@@ -36,3 +36,6 @@ This folder is the single knowledge base for Fleet's interface design. It plays 
 
 * Architecture: [fleet.md](../../fleet.md), [interface workflows](../designs/fleet-operator-app.md#interface-workflows), [use cases](../use-cases.md), [data foundation design](../designs/fleet-data-foundation.md).
 * Removed prototype screens, which are evidence of what was tried, not approved design: the legacy pages listed in [retirement coverage](../designs/fleet-operator-app.md#8-coexistence-and-retirement) (in git history before Lab Stage 0), and screenshots in `evidence/*-desktop.png` and `*-mobile.png`. The [CSGO storyboard](../prototypes/csgo-workflow.html) is an unapproved navigation study.
+
+[Projects management](pages/projects.md) uses the shared project definition operations.
+

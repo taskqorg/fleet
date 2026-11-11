@@ -259,13 +259,19 @@ func sessionArchive(q *Request, sid string) (doc, error) {
 func teardownCommand(q *Request, s, last doc, deleteBranch bool) (doc, error) {
 	sid := astr(s["id"])
 	payload := doc{}
+	workingDirectory := s["workingDirectory"]
 	if deleteBranch {
 		payload["deleteBranch"] = true
 	}
 	if p := astr(s["projectId"]); p != "" {
-		payload["projectId"], payload["project"] = p, projectSettingsOf(p)
+		workspace := mapOf(mapOf(s["workspaceSnapshots"])[astr(last["hostId"])])
+		if workspace == nil {
+			return doc{"sessionId": sid, "cleanup": "unknown", "reason": "cleanup_context_unknown: original workspace settings unavailable"}, nil
+		}
+		payload["projectId"], payload["project"] = p, workspace["project"]
+		workingDirectory = workspace["workingDirectory"]
 	}
-	if w := astr(s["workingDirectory"]); w != "" {
+	if w := astr(workingDirectory); w != "" {
 		payload["workingDirectory"] = w
 	}
 	c := doc{"id": newID(), "executionId": last["id"], "sessionId": sid, "hostId": last["hostId"], "kind": "teardown", "payload": payload, "status": "pending"}
@@ -316,6 +322,9 @@ func deliveredTeardown(q *Request, taskID string) error {
 }
 
 func sessionCreate(q *Request) (doc, error) {
+	if !keysOnly(body(q)) {
+		return nil, fail(400, "session_create takes no identity or linkage fields")
+	}
 	s := doc{"id": newID(), "createdAt": nowMs(), "directedBy": director(q)}
 	if err := put(q, "session", s); err != nil {
 		return nil, err

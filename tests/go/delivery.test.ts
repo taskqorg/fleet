@@ -18,19 +18,28 @@ test('W1 accepting a task sends one teardown with deleteBranch for its finished 
     const task = await call('/api/ops/task_create', {projectId: 'hello-world', title: 'delivered'});
     const taskId = task.id ?? task.taskId;
     const {sessionId} = await call('/api/sessions', {});
-    c.sql(`UPDATE document SET data=data||'{"projectId":"hello-world"}' WHERE kind='session' AND id='${sessionId}'`);
+    c.sql(`UPDATE document SET data=data||'{"projectId":"hello-world","workingDirectory":"/tmp/original-workspace"}' WHERE kind='session' AND id='${sessionId}'`);
     const e = await call(`/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'hello'});
     c.sql(`UPDATE execution SET task_id='${taskId}' WHERE id='${e.id}'`);
+    // R3; Save after enqueue cannot rewrite launch context or cleanup of the original workspace.
+    const before = await call('/api/ops/project_context', {projectId:'hello-world'});
+    const changed = structuredClone(before.content);changed.settings.cleanup={keepWhen:[]};
+    changed.contextFiles[0].text='LATER PROJECT CANARY';
+    await call('/api/ops/project_update',{projectId:'hello-world',requestId:randomUUID(),baseRevision:before.revision,content:changed});
     const poll = () => call('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
     const command = (await poll()).commands.find((x: any) => x.executionId === e.id);
+    assert.deepEqual(command.payload.project.cleanup.keepWhen, ['uncommitted','unpushed','teardown-failed']);
+    assert.ok(!command.payload.instructions.includes('LATER PROJECT CANARY'));
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'started'}, secret, null);
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'completed'}, secret, null);
+    c.sql(`UPDATE document SET data=data||'{"workingDirectory":"/tmp/unrelated-checkout"}' WHERE kind='session' AND id='${sessionId}'`);
     c.sql(`UPDATE task SET state='in_progress' WHERE id='${taskId}'`);
     const question = await call('/api/ops/task_request_acceptance', {taskId});
     await call('/api/ops/question_answer', {questionId: question.id, answer: 'accepted'});
     const teardowns = (await poll()).commands.filter((x: any) => x.kind === 'teardown' && x.sessionId === sessionId);
     assert.equal(teardowns.length, 1);
     assert.equal(teardowns[0].payload.deleteBranch, true);
+    assert.equal(teardowns[0].payload.workingDirectory,'/tmp/original-workspace','cleanup path is frozen with preparation settings');
     assert.deepEqual(teardowns[0].payload.project.cleanup.keepWhen, ['uncommitted', 'unpushed', 'teardown-failed']);
   } finally { await c.stop(); }
 });

@@ -4,6 +4,7 @@ package main
 // 'host:<id>' {hostId, name, holder, platform, roles, secretHash, intake, harnesses, createdAt}; only the secret's hash is kept.
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -118,8 +119,8 @@ func hostWithRole(q *Request, role string) (string, error) {
 
 // hostMaySee: a host held by the owner sees every project; another holder's host only the projects of the holder's grants.
 func (a *App) hostMaySee(h doc, projectID any) bool {
-	p := a.people[astr(h["holder"])]
-	if p == nil {
+	p, err := a.resolveAccess(context.Background(), astr(h["holder"]))
+	if err != nil || p == nil {
 		return false
 	}
 	if fullAccess(p) {
@@ -481,4 +482,16 @@ func routeDecisions(q *Request, r *contract.RouteDecisionsRequest) (contract.Rou
 			Candidates: jsonBytes(x["candidates"]), Winner: jsonBytes(x["winner"])})
 	}
 	return out, err
+}
+
+// Projectless work may use its director's own host, never another ordinary holder's host.
+func (a *App) hostMayRun(h doc, projectID any, director any) bool {
+	if a.hostMaySee(h, projectID) {
+		return true
+	}
+	if astr(projectID) != "" || astr(director) == "" || h["holder"] != director {
+		return false
+	}
+	p, err := a.resolveAccess(context.Background(), astr(director))
+	return err == nil && p != nil
 }

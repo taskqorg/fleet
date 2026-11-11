@@ -122,6 +122,27 @@ func enqueue(q *Request, s doc, input, requestID string, payload, execution doc,
 	for k, v := range execution {
 		e[k] = v
 	}
+	if pid := astr(s["projectId"]); pid != "" {
+		snap, err := projectContext(q, pid)
+		if err != nil {
+			return nil, err
+		}
+		if parentID := astr(s["pipelineRunId"]); parentID != "" {
+			parent, err := pipelineRun(q, parentID)
+			if err != nil {
+				return nil, err
+			}
+			if frozen := mapOf(parent["projectSnapshot"]); frozen != nil {
+				snap = frozen
+			}
+		}
+		e["projectSnapshot"] = snap
+		refs := anys(e["definitions"])
+		raw, _ := json.Marshal(e["definitions"])
+		_ = json.Unmarshal(raw, &refs)
+		refs = append(refs, doc{"kind": "project", "id": pid, "revision": snap["revision"], "contentSha": snap["contentSha"]})
+		e["definitions"] = refs
+	}
 	if err := put(q, "execution", e); err != nil {
 		return nil, err
 	}
@@ -731,7 +752,7 @@ func sessionFork(q *Request, b doc) (doc, error) {
 	if last != nil {
 		fo["executionId"], fo["sourceState"] = last["id"], last["state"]
 	}
-	s := doc{"id": newID(), "createdAt": nowMs(), "forkOf": fo}
+	s := doc{"id": newID(), "createdAt": nowMs(), "forkOf": fo, "directedBy": source["directedBy"]}
 	for _, k := range []string{"agentConfig", "account", "projectId"} {
 		if source[k] != nil && source[k] != "" {
 			s[k] = source[k]
@@ -739,6 +760,9 @@ func sessionFork(q *Request, b doc) (doc, error) {
 	}
 	if c, ok := b["callerSessionId"].(string); ok {
 		s["createdBySessionId"] = c
+	}
+	if err := put(q, "session", s); err != nil {
+		return nil, err
 	}
 	if strategy == "native" {
 		s["forkNativeSessionId"] = native
@@ -1108,7 +1132,7 @@ func projectReadiness(q *Request, b doc) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	project := projectSettingsOf(pid)
+	project := projectSettingsOf(q, pid)
 	if project == nil {
 		return nil, fail(404, "Unknown project")
 	}
@@ -1213,7 +1237,7 @@ func sessionAttach(q *Request, b doc) (doc, error) {
 // pickAccount: the director's subscriptions first, then take-rule ones, ordered by the project's subscriptions list.
 func pickAccount(q *Request, harness, projectID, hostID, directedBy string) (string, error) {
 	order := []string{}
-	if p := projectSettingsOf(projectID); p != nil {
+	if p := projectSettingsOf(q, projectID); p != nil {
 		order = strList(p["subscriptions"])
 	}
 	ms, err := unscoped(q, func() ([]doc, error) {
@@ -1269,7 +1293,7 @@ func sessionStart(q *Request, b doc) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	project := projectSettingsOf(pid)
+	project := projectSettingsOf(q, pid)
 	if project == nil {
 		return nil, fail(404, "Unknown project")
 	}
@@ -1506,6 +1530,9 @@ func init() {
 			if !agentMay(q.person, name) {
 				return nil, fail(400, "Unknown agent tool")
 			}
+			if err := refreshRequestAccess(q); err != nil {
+				return nil, err
+			}
 			var a doc
 			json.Unmarshal(rpc.Params.Arguments, &a)
 			if a == nil {
@@ -1520,6 +1547,18 @@ func init() {
 			if name == "task_create" && a["projectId"] == nil && len(focus) == 1 {
 				a["projectId"] = focus[0] // one focus project is the default (§2)
 			}
+			if name == "project_update" || name == "project_context" || name == "project_readiness" {
+				var err error
+				err = q.app.store.Tx(q.ctx(), scopeOf(q.person), false, "", func(tx pgx.Tx) error {
+					q.tx = tx
+					defer func() { q.tx = nil }()
+					a, err = projectAgentArguments(q, a, executionID)
+					return err
+				})
+				if err != nil {
+					return nil, err
+				}
+			}
 			args := json.RawMessage(js(a))
 			r, err := q.app.runOp(q, name, args)
 			if err != nil {
@@ -1531,6 +1570,9 @@ func init() {
 		err := q.app.store.Tx(q.ctx(), nil, !agentTool.read, "", func(tx pgx.Tx) error {
 			q.tx = tx
 			if err := prove(); err != nil {
+				return err
+			}
+			if err := refreshRequestAccess(q); err != nil {
 				return err
 			}
 			if rpc.Method != "tools/call" {
@@ -1575,7 +1617,7 @@ func focusProject(q *Request, s doc, given any) (string, error) {
 	if !all && !slices.Contains(ids, p) {
 		return "", fail(403, "Project outside the session focus")
 	}
-	if !mayAccessProjectID(q.person, p) || projectSettingsOf(p) == nil {
+	if !mayAccessProjectID(q.person, p) || projectSettingsOf(q, p) == nil {
 		return "", fail(404, "Unknown project")
 	}
 	return p, nil
@@ -1611,7 +1653,7 @@ func focusSet(q *Request, b doc) (doc, error) {
 			return nil, fail(400, `Expected projectIds: a list of project ids or "*"`)
 		}
 		for _, id := range ids {
-			if projectSettingsOf(id) == nil || (q.person != nil && !mayAccessProjectID(q.person, id)) {
+			if projectSettingsOf(q, id) == nil || (q.person != nil && !mayAccessProjectID(q.person, id)) {
 				return nil, fail(404, "Unknown project")
 			}
 		}
@@ -1737,13 +1779,16 @@ func bound(q *Request, name string, a doc, executionID string) (doc, error) {
 		}
 	case name == "reconcile":
 		return nil, fail(403, "Not available to host agents")
-	case name == "project_readiness":
+	case name == "project_readiness" || name == "project_context" || name == "project_update":
 		// Bound to the caller's own project: another project's readiness is not the agent's to read.
 		p, err := ownProject()
 		if err != nil {
 			return nil, err
 		}
-		a["projectId"], a["callerSessionId"] = p, own
+		a["projectId"] = p
+		if name == "project_readiness" {
+			a["callerSessionId"] = own
+		}
 	case name == "session_start":
 		p, err := ownProject()
 		if err != nil {
@@ -1752,7 +1797,7 @@ func bound(q *Request, name string, a doc, executionID string) (doc, error) {
 		a["projectId"], a["callerSessionId"], a["callerExecutionId"] = p, own, executionID
 		if pid, ok := a["profileId"]; ok {
 			roles := []any{}
-			for _, v := range mapOf(projectSettingsOf(p)["roles"]) {
+			for _, v := range mapOf(projectSettingsOf(q, p)["roles"]) {
 				roles = append(roles, v)
 			}
 			if !slices.Contains(roles, pid) {

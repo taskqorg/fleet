@@ -271,6 +271,7 @@ type DefinitionContent struct {
 	Agent     *AgentDefinition     `json:"agent,omitempty"`
 	Catalogue *CatalogueDefinition `json:"catalogue,omitempty"`
 	Pipeline  *PipelineDefinition  `json:"pipeline,omitempty"`
+	Project   *ProjectBundle       `json:"project,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -287,6 +288,11 @@ func (v *DefinitionContent) Validate() error {
 	}
 	if v.Pipeline != nil {
 		if err := Check(v.Pipeline, "pipeline"); err != nil {
+			return err
+		}
+	}
+	if v.Project != nil {
+		if err := Check(v.Project, "project"); err != nil {
 			return err
 		}
 	}

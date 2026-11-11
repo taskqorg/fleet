@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
   ListDetail, ListFrame, FilterBar, StateCounters, RowCheck, VirtualList, StateBadge, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection, type VirtualListHandle,
-  Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf,
+  Choice, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf,
   writeClip, zone,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
@@ -29,11 +29,13 @@ export function Conversations({ id }: { id?: string }) {
   const rows = list.rows as SessionRow[];
   const sel = view.sel ?? [], toggleSel = (x: string) => set({ sel: sel.includes(x) ? sel.filter(i => i !== x) : [...sel, x] });
   const now = Date.now();
-  const create = async () => { try { const s = await op('session_create', {}); set({ focus: s.sessionId }); } catch (e: any) { setFailure(e.message); } };
+  const [newConversation,setNewConversation]=useState(!!new URLSearchParams(location.search).get('project'));
+  const create=()=>setNewConversation(true);
   const pane = <>
     <header class="page-h"><h1>Conversations</h1><OfflineMarker state={list.state} now={now} /><span class="grow" />
       <Button label="New conversation" icon="plus" kind="primary" disabledReason={online.value ? undefined : 'offline'} onClick={create} /></header>
     {failure && <ErrorBanner text={failure} />}
+    {newConversation&&<NewConversation onDone={sessionId=>{setNewConversation(false);set({focus:sessionId});}}/>}
     <section class="panel">
       <ListFrame pending={list.pending} bar={<FilterBar query={query} placeholder="Search conversations" onQuery={setQuery} chips={[]} fields={[]} onAdd={() => {}} onRemove={() => {}} onClear={() => { setQuery(''); set({ q: undefined, state: [] }); }}
         shown={states.length ? states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total} total={list.total}
@@ -162,4 +164,15 @@ function SwitchPanel({ sessionId, handoff, current, onDone, run }: { sessionId: 
     {handoff && <div class="answers" role="group" aria-label="Account">{named.map(a => <Button key={a.id} label={`${a.name} · ${a.harness ?? 'codex'}`} pressed={account === a.name} onClick={() => setAccount(account === a.name ? null : a.name)} />)}</div>}
     <div class="answers"><Button label={handoff ? 'Hand off' : 'Switch'} kind="primary" disabledReason={profile ? undefined : 'pick a profile'} onClick={go} /><Button label="Close" kind="quiet" onClick={() => onDone(done ?? undefined)} />{done && <span class="muted" role="status">{done}</span>}</div>
   </DetailSection>;
+}
+
+function NewConversation({onDone}:{onDone:(sessionId:string)=>void}){
+ const projects=useDoc<any>('conversation-projects',()=>op('project_list',{}),c=>c.kind==='definition');
+ const [project,setProject]=useState(new URLSearchParams(location.search).get('project')??''),[role,setRole]=useState('pm'),[error,setError]=useState('');
+ const selected=(projects.data?.projects??[]).find((p:any)=>p.id===project);
+ const roles=Object.entries(selected?.roles??{}).map(([id,profile])=>({id,label:`${id} · ${String(profile)}`}));
+ return <DetailSection title="New conversation"><Choice label="Project" value={project} onChange={p=>{setProject(p);setRole('pm');}} options={(projects.data?.projects??[]).map((p:any)=>({id:p.id,label:p.name}))}/>
+ {project&&<Choice label="Role / configuration" value={role} onChange={setRole} options={roles}/>}
+ {error&&<ErrorBanner text={error}/>}<Composer draftKey="new-project-conversation" placeholder="Describe the work for this project" disabledReason={!project||!roles.some(r=>r.id===role)?'Choose a project and a mapped role':undefined} onSend={async text=>{try{const r=await op('session_start',{projectId:project,role,requestId:crypto.randomUUID(),text});onDone(r.sessionId);}catch(e:any){setError(e.message);throw e;}}}/>
+ <Button label="Projectless conversation" icon="messages-square" onClick={()=>op('session_create',{}).then(r=>onDone(r.sessionId),e=>setError(e.message))}/></DetailSection>;
 }

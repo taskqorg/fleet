@@ -152,6 +152,10 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 		cursor = n
 	}
 	ctx, sc := q.ctx(), scopeOf(q.person)
+	initialVersion := ""
+	if q.person != nil {
+		initialVersion = grantsVersion(q.person)
+	}
 	wake := a.stream.join() // before the first read: a NOTIFY during it is not lost
 	defer a.stream.leave(wake)
 	if cursor < 0 {
@@ -177,6 +181,19 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 		held := false
 		sw.begin()
 		for {
+			if q.person != nil {
+				if err := a.refreshPeople(ctx); err != nil {
+					return nil
+				}
+				p, err := a.resolveAccess(ctx, q.person.Email)
+				if err != nil || grantsVersion(p) != initialVersion {
+					send("resync", contract.StreamCursor{Cursor: cursor}, -1)
+					_ = sw.flush()
+					return nil
+				}
+				q.person = p
+				sc = scopeOf(p)
+			}
 			var cs []change
 			var resync bool
 			err := a.store.Tx(ctx, sc, false, "", func(tx pgx.Tx) (err error) {

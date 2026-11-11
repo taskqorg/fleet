@@ -365,7 +365,11 @@ func appendRevision(q *Request, kind, id string, head int64, text, repoBase *str
 	} else if err := exec(q, "DELETE FROM definition_draft WHERE kind=$1 AND id=$2 AND person=$3", kind, id, draftOwner(q)); err != nil {
 		return contract.Revision{}, err
 	}
-	if err := put(q, "setting-change", doc{"id": newID(), "target": "definition:" + kind + "/" + id, "field": "revision", "previous": head, "value": n, "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
+	change := doc{"id": newID(), "target": "definition:" + kind + "/" + id, "field": "revision", "previous": head, "value": n, "actor": actor(q, "operator"), "at": nowMs()}
+	if kind == "project" {
+		change["projectId"] = id
+	}
+	if err := put(q, "setting-change", change); err != nil {
 		return contract.Revision{}, err
 	}
 	xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2", n, kind, id)
@@ -490,6 +494,18 @@ func definitionExport(q *Request, r *contract.DefinitionExportRequest) (contract
 	}
 	var patch bytes.Buffer
 	for _, x := range xs {
+		if x.Kind == "project" {
+			if len(r.Keys) == 0 {
+				continue
+			}
+			for _, key := range r.Keys {
+				if key.Kind == "project" && key.Id == x.ID {
+					return out, fail(400, "Project export is deferred")
+				}
+			}
+			continue
+		}
+
 		key := x.Kind + "/" + x.ID
 		st := x.state()
 		if len(want) > 0 && !want[key] {

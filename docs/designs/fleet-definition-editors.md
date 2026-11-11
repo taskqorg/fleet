@@ -640,3 +640,7 @@ All operations above are in the `ops` contract with generated Go and TypeScript 
 
 * **Catalogue file shape with more than one capability.** The catalogue is one definition for one file. When a second capability is added, the file shape changes (an array, or one file per capability), and so does `CatalogueDefinition`. Decide then.
 * **When to build the mirror (stage 2).** After stage 1 has run for a while; the owner decides.
+
+## Project management
+
+Project settings and their owned context files save as one bundle through `project_create` and `project_update`. Generic project definition views are scoped by project; generic draft/write endpoints cannot bypass these wrappers. Save takes effect immediately for new work, returns revision/hash for readback, and does not imply resource readiness. Concurrent updates require the current base revision. Shipped project changes are repository-change evidence rather than an instruction to overwrite saved content. Projects do not require the deferred stage2 Git mirror to save.

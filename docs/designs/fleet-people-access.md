@@ -275,3 +275,17 @@ Sources reviewed 2026-11-10; not legal advice. They drive the warnings above.
 - Q3: holder of API key connections: every key is the owner's today; a person's own key would use the same `holder`.
 - Q4: delivery per forge: the GitHub bot user and the private GitLab path need a check of which credentials Fleet would hold.
 - No Team or Business seats now; `kind` allows them later. No native Windows executor: Simon's PC uses WSL2.
+
+## Project creation and initial access
+
+An authenticated operator, including a Fleet PM acting for that person, may create a project and edit granted projects. Creation atomically records revocable initial membership for that directing person; existing fullAccess administrators can also see it. Architect alone is not fullAccess. Initial membership does not grant another project, host enrollment, connection administration or people administration.
+
+Only the existing owner access administrator may revoke initial membership. Colleague grants remain explicit grants managed through `people_set`. Both sources are shown separately; revoking one leaves independently held explicit/fullAccess rights. Immutable `created_by` is audit, not access. Removing a person from the valid people list revokes initial memberships in the same projection transaction; re-adding that email does not restore them. Unchanged reloads preserve membership. Alias/case normalization uses the existing canonical email identity; account reuse without an observable identity change requires explicit revocation by the administrator.
+
+Access changes invalidate the effective grants version and resynchronize open streams after commit. No project data or successful creation notification is published before its transaction commits.
+
+### Own projectless PM sessions
+
+An authenticated person may create and inspect their own projectless session and linked messages, executions and change history. `directedBy` is server-derived immutable authority; request payloads cannot supply it or foreign session/execution linkage. This is not visibility of all projectless rows, shared definitions or another person's conversations. Existing privileged visibility remains unchanged. A projectless execution may run on its directing person's own host or an already privileged trusted host; it cannot borrow a different ordinary holder's host.
+
+Removing a person from the accepted identity list revokes their projectless-session access; re-adding that email does not restore revoked session access. Reconnect and open streams resolve current identity/access and invalidate cached data. Initial project membership and projectless-session ownership remain separate from broader architect/fullAccess authority.

@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"path/filepath"
 
 	"fleet/contract"
 )
@@ -101,7 +100,11 @@ func (a *App) poll(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := detectProblems(q, ids, projectEnvironments()); err != nil {
+	envs, err := projectEnvironments(q)
+	if err != nil {
+		return nil, err
+	}
+	if err := detectProblems(q, ids, envs); err != nil {
 		return nil, err
 	}
 	if err := agentPromote(q); err != nil {
@@ -129,7 +132,7 @@ func (a *App) poll(q *Request) (any, error) {
 		}
 		// Held-host trust: work that carries project content goes only to a host whose holder may see the project.
 		if k := astr(c["kind"]); k == "start" || k == "script" || k == "delivery-step" {
-			if !a.hostMaySee(q.host, nonNil(e["projectId"], mapOf(c["payload"])["projectId"])) {
+			if !a.hostMayRun(q.host, nonNil(e["projectId"], mapOf(c["payload"])["projectId"]), e["directedBy"]) {
 				continue
 			}
 		}
@@ -153,18 +156,21 @@ func (a *App) poll(q *Request) (any, error) {
 	return doc{"commands": out, "target": reply.Target, "autoUpdate": reply.AutoUpdate}, nil
 }
 
-// projectEnvironments: the environment hosts of every project, from project.json alone (a poll runs every few seconds
-// per host; projectContext would read every context file).
-func projectEnvironments() map[string][]string {
+// projectEnvironments reads current effective bundles, never shipped seed files.
+func projectEnvironments(q *Request) (map[string][]string, error) {
 	envs := map[string][]string{}
-	for _, p := range projectIDs() {
-		d, err := readJSON(filepath.Join(configDir(), "projects", p, "project.json"))
+	ids, err := projectIDs(q)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range ids {
+		d, err := projectContext(q, p)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		st, _, err := projectSettings(d)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		hs := []string{}
 		for _, x := range anys(st["environments"]) {
@@ -172,7 +178,7 @@ func projectEnvironments() map[string][]string {
 		}
 		envs[p] = hs
 	}
-	return envs
+	return envs, nil
 }
 
 func safeInt(v any) any {

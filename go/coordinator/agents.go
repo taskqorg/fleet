@@ -49,14 +49,19 @@ func agentContent(q *Request, id string, draft bool) (doc, string, error) {
 // project rules.
 func agentEffective(q *Request, r *contract.AgentEffectiveRequest) (contract.AgentEffectiveReply, error) {
 	var out contract.AgentEffectiveReply
-	if projectSettingsOf(r.ProjectId) == nil || (q.person != nil && !mayAccessProjectID(q.person, r.ProjectId)) {
+	if projectSettingsOf(q, r.ProjectId) == nil || (q.person != nil && !mayAccessProjectID(q.person, r.ProjectId)) {
 		return out, fail(404, "Unknown project")
 	}
 	p, rev, err := agentContent(q, r.Id, r.Draft != nil && *r.Draft)
 	if err != nil {
 		return out, err
 	}
-	s := projectSettingsOf(r.ProjectId)
+	project, err := projectContext(q, r.ProjectId)
+	if err != nil {
+		return out, err
+	}
+	s := mapOf(project["settings"])
+	projectRevision := "r" + strconv.FormatInt(int64(num(project["revision"])), 10)
 	roles := []string{}
 	for role, v := range mapOf(s["roles"]) {
 		if astr(v) == r.Id || astr(mapOf(v)["profile"]) == r.Id {
@@ -70,9 +75,9 @@ func agentEffective(q *Request, r *contract.AgentEffectiveRequest) (contract.Age
 		ctx = append(ctx, astr(f))
 	}
 	out.Layers = []contract.EffectiveLayer{
-		{Name: contract.EffectiveLayerNameRole, Source: "config/projects/" + r.ProjectId + "/project.json", Fields: roles},
+		{Name: contract.EffectiveLayerNameRole, Source: definitionPath("project", r.ProjectId), Revision: &projectRevision, Fields: roles},
 		{Name: contract.EffectiveLayerNameDefinition, Source: definitionPath("agent", r.Id), Revision: &rev, Fields: fields},
-		{Name: contract.EffectiveLayerNameProject, Source: "config/projects/" + r.ProjectId, Fields: ctx},
+		{Name: contract.EffectiveLayerNameProject, Source: definitionPath("project", r.ProjectId), Revision: &projectRevision, Fields: ctx},
 	}
 	out.Result, err = asT[contract.AgentDefinition](p)
 	return out, err

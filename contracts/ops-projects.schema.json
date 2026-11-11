@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "operations": {
+    "project_create": {
+      "read": false,
+      "errors": [
+        400,
+        403,
+        404,
+        409
+      ]
+    },
+    "project_update": {
+      "read": false,
+      "errors": [
+        400,
+        403,
+        404,
+        409
+      ]
+    },
+    "project_initial_access_revoke": {
+      "read": false,
+      "errors": [
+        400,
+        403,
+        404,
+        409
+      ]
+    }
+  },
+  "$defs": {
+    "ProjectCreateRequest": {
+      "type": "object",
+      "required": [
+        "requestId",
+        "id",
+        "content"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "content": {
+          "$ref": "#/$defs/ProjectBundle"
+        }
+      }
+    },
+    "ProjectCreateReply": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "ProjectUpdateRequest": {
+      "type": "object",
+      "required": [
+        "requestId",
+        "projectId",
+        "baseRevision",
+        "content"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "integer"
+        },
+        "content": {
+          "$ref": "#/$defs/ProjectBundle"
+        },
+        "repoSha": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ProjectUpdateReply": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "ProjectInitialAccessRevokeRequest": {
+      "type": "object",
+      "required": [
+        "projectId",
+        "baseAccessVersion"
+      ],
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "baseAccessVersion": {
+          "type": "integer"
+        }
+      }
+    },
+    "ProjectInitialAccessRevokeReply": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "ProjectBundle": {
+      "type": "object",
+      "required": [
+        "settings",
+        "contextFiles"
+      ],
+      "properties": {
+        "settings": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "contextFiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProjectContextFile"
+          }
+        }
+      }
+    },
+    "ProjectContextFile": {
+      "type": "object",
+      "required": [
+        "path",
+        "text"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

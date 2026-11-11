@@ -70,11 +70,11 @@ func validRule(v any, hosts map[string]bool) (artifactRule, error) {
 	return r, nil
 }
 
-func projectRules(projectID *string) []any {
+func projectRules(q *Request, projectID *string) []any {
 	if projectID == nil {
 		return nil
 	}
-	switch v := projectSettingsOf(*projectID)["artifact_rules"].(type) {
+	switch v := projectSettingsOf(q, *projectID)["artifact_rules"].(type) {
 	case []any:
 		return v
 	case nil:
@@ -109,9 +109,10 @@ type plan struct {
 
 // effective: a confirmed matching move rule replaces the project list for the artifact; a delete rule ends it.
 func effective(ctx context.Context, a *App, x *Artifact, hosts map[string]bool) (plan, error) {
+	q := backgroundRequest(ctx, a, nil)
 	age := time.Since(x.Created).Hours() / 24
 	rules := []artifactRule{}
-	for i, raw := range projectRules(x.ProjectID) {
+	for i, raw := range projectRules(q, x.ProjectID) {
 		r, err := validRule(raw, hosts)
 		if err != nil {
 			problem(doc{"kind": "artifact-rule-invalid", "projectId": x.ProjectID, "rule": i, "error": err.Error()})
@@ -440,7 +441,7 @@ func init() {
 			return none, err
 		}
 		found := false
-		for _, x := range projectRules(p) {
+		for _, x := range projectRules(q, p) {
 			if y, err := validRule(x, nil); err == nil && ruleHash(y) == ruleHash(r) {
 				found = true
 			}

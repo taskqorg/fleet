@@ -146,10 +146,11 @@ const (
 	DefinitionKindAgent     DefinitionKind = "agent"
 	DefinitionKindPipeline  DefinitionKind = "pipeline"
 	DefinitionKindCatalogue DefinitionKind = "catalogue"
+	DefinitionKindProject   DefinitionKind = "project"
 )
 
 // DefinitionKindValues lists every DefinitionKind in schema order.
-var DefinitionKindValues = []DefinitionKind{DefinitionKindAgent, DefinitionKindPipeline, DefinitionKindCatalogue}
+var DefinitionKindValues = []DefinitionKind{DefinitionKindAgent, DefinitionKindPipeline, DefinitionKindCatalogue, DefinitionKindProject}
 
 // Valid: v is one of the schema's values.
 func (v DefinitionKind) Valid() bool {

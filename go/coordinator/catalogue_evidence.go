@@ -205,7 +205,10 @@ func methodAssessment(q *Request, project string, method doc) (doc, error) {
 
 func enrichCatalogue(q *Request, c doc) error {
 	project := astr(c["projectId"])
-	projects := projectIDs()
+	projects, err := projectIDs(q)
+	if err != nil {
+		return err
+	}
 	for _, x := range anys(c["methods"]) {
 		method := mapOf(x)
 		a, err := methodAssessment(q, project, method)
