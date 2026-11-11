@@ -11,7 +11,7 @@ Technical designs, briefs and their reviews. A design here is accepted direction
 * `fleet-definition-editors.md`: definitions (agents, pipelines, catalogue) as store revisions with drafts, conflicts, export to git, and the operations the editors need.
 * `fleet-pm-agent.md`: the PM agent: director-scoped agent tools, task tools, Held tasks, focus, watch mode.
 * `fleet-connections.md`: API key connections, the Fleet gateway copied from Pipe's read lane, per-run tokens, call methods and deleting Pipe.
-* `fleet-conversations.md`: the Conversations screen: one thread per task, paging both ways, typed transcript blocks, copy, question and result cards, the Results page. `conversations-brief.md` is its brief.
+* `fleet-conversations.md`: the Conversations screen: one thread per task, paging both ways, typed transcript blocks, copy, question and result cards, the Results page.
 * `fleet-asset-pipelines.md`: provider keys from the Keychain into connections, deleting AssetQ, registry statuses and `maps_to`, Meshy and image pipelines with Blender on the Mac, per-use-case judges, `loop`, the character pipeline.
 * `fleet-stack.md`: Go for every service and the migration order, delivery order, rule delivery, toolchain, MCP subcommands.
 * `fleet-contracts.md`: JSON Schema contract sources and generators (L3).
