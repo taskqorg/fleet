@@ -365,10 +365,11 @@ const (
 var ProblemKindValues = []ProblemKind{ProblemKindEdgeRedirect, ProblemKindVersionBehind}
 
 type ProcessClosed struct {
-	CleanupUnknown                  bool   `json:"cleanupUnknown"`
-	ExitCode                        *int64 `json:"exitCode"`
-	ObservedOwnedProcessesRemaining *bool  `json:"observedOwnedProcessesRemaining,omitempty"`
-	StdoutClosed                    bool   `json:"stdoutClosed"`
+	CleanupUnknown                  bool    `json:"cleanupUnknown"`
+	ExitCode                        *int64  `json:"exitCode"`
+	ObservedOwnedProcessesRemaining *bool   `json:"observedOwnedProcessesRemaining,omitempty"`
+	StderrTail                      *string `json:"stderrTail,omitempty"`
+	StdoutClosed                    bool    `json:"stdoutClosed"`
 }
 
 type ProcessReconciled struct {

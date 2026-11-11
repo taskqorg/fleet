@@ -8,6 +8,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"math"
 	"reflect"
 	"sort"
@@ -269,11 +270,40 @@ func ingestIn(q *Request, b doc) (any, error) {
 				return nil, err
 			}
 		}
+		if problem := eventProblem(astr(p.value["type"]), d); problem != "" {
+			// The first cause wins: a later process.closed does not hide the preparation failure that caused it.
+			if err := exec(q, "UPDATE execution SET problem=$2 WHERE id=$1 AND problem IS NULL", xid, problem); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if ended, err := executionEnded(q, xid); err != nil || !ended {
 		return doc{"ok": true}, err
 	}
 	return doc{"ok": true}, writeTotals(q, xid)
+}
+
+// eventProblem: the cause an agent failure records on its execution: a preparation that failed, a protocol failure,
+// or a harness that exited non-zero (with the last line of its stderr). Empty for every other event.
+func eventProblem(kind string, d doc) string {
+	switch contract.FleetEventType(kind) {
+	case contract.FleetEventTypePreparationFailed, contract.FleetEventTypeReadinessFailed:
+		return "preparation failed: " + firstString(d["reason"], "no reason given")
+	case contract.FleetEventTypeProtocolFailed:
+		return "harness protocol failed: " + firstString(d["reason"], firstString(d["error"], "no reason given"))
+	case contract.FleetEventTypeProcessClosed:
+		code, ok := d["exitCode"].(float64)
+		if !ok || code == 0 {
+			return ""
+		}
+		p := fmt.Sprintf("harness exited %d", int(code))
+		if t := strings.TrimSpace(astr(d["stderrTail"])); t != "" {
+			lines := strings.Split(t, "\n")
+			p += ": " + lines[len(lines)-1]
+		}
+		return p
+	}
+	return ""
 }
 
 func transportInspect(q *Request, b doc) (contract.TransportInspectReply, error) {

@@ -808,7 +808,11 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		}
 		return e.finish(c, "failed", "")
 	}
+	// failSeq: the first event seq a failure may use; the setup event takes 1, so a failure after it uses 2 (two events
+	// with one id are a conflict the coordinator refuses, and the failure reason was lost that way).
+	failSeq := uint64(1)
 	fail := func(seq uint64, reason string) error {
+		seq = max(seq, failSeq)
 		if err := e.event(c, seq, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: reason}); err != nil {
 			return err
 		}
@@ -864,6 +868,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		checkoutTop = top
 		if script := jStr(p, "project", "scripts", "setup"); created && jIsStr(p, "project", "scripts", "setup") && str0(sp.Setup) != "skip" {
 			r := projectScript("setup", script, top, w, session)
+			failSeq = 2
 			if err := e.event(c, 1, contract.FleetEventTypeSetup, r); err != nil {
 				return err
 			}
@@ -1109,6 +1114,20 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		return err
 	}
 	return e.receipt(c, "started", native)
+}
+
+// stderrTail: the end of a run's stderr file when it exited non-zero; nil otherwise. Harness stderr carries no
+// credentials (they reach the harness through its own login files, never argv or stderr echo).
+func stderrTail(dir, execution string, code *int64) *string {
+	if code == nil || *code == 0 {
+		return nil
+	}
+	b, err := os.ReadFile(filepath.Join(dir, execution+".stderr"))
+	if err != nil || len(b) == 0 {
+		return nil
+	}
+	t := tail(b[max(0, len(b)-2000):])
+	return &t
 }
 
 func anyStrings(s []string) []any {
@@ -1520,7 +1539,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 		code = &c
 	}
 	l.seq++
-	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{ExitCode: code, StdoutClosed: l.eof, ObservedOwnedProcessesRemaining: new(bool), CleanupUnknown: l.cleanupUnknown}); err != nil {
+	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{ExitCode: code, StdoutClosed: l.eof, ObservedOwnedProcessesRemaining: new(bool), CleanupUnknown: l.cleanupUnknown, StderrTail: stderrTail(e.sessionDir(jStr(l.command, "sessionId")), execution, code)}); err != nil {
 		return false, err
 	}
 	sid, err := cmdID(l.command, "sessionId")
