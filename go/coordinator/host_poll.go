@@ -15,29 +15,24 @@ func init() {
 	route("POST /api/hosts/poll", func(q *Request) (any, error) { return q.app.poll(q) })
 }
 
-func hostProblems(v any) []any {
-	out := []any{}
-	list, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	cut := func(s any, n int) any {
-		t, ok := s.(string)
-		if !ok {
-			return nil
-		}
+// hostProblems: the edge problems a host reports (at most 20, texts cut), redirects only.
+func hostProblems(list []contract.EdgeProblem) []any {
+	var out []any
+	cut := func(t string, n int) string {
 		if r := []rune(t); len(r) > n {
 			return string(r[:n])
 		}
 		return t
 	}
-	for _, x := range list {
-		p := mapOf(x)
-		route, isStr := p["route"].(string)
-		if p["kind"] != "edge-redirect" || !isStr || safeInt(p["status"]) == nil {
+	for _, p := range list {
+		if p.Kind != contract.ProblemKindEdgeRedirect || p.Status == 0 {
 			continue
 		}
-		out = append(out, doc{"kind": "edge-redirect", "route": cut(route, 200), "status": p["status"], "location": cut(p["location"], 500), "detail": cut(p["detail"], 500)})
+		var loc any
+		if p.Location != nil {
+			loc = cut(*p.Location, 500)
+		}
+		out = append(out, doc{"kind": string(p.Kind), "route": cut(p.Route, 200), "status": p.Status, "location": loc, "detail": cut(p.Detail, 500)})
 		if len(out) == 20 {
 			break
 		}
@@ -45,37 +40,38 @@ func hostProblems(v any) []any {
 	return out
 }
 
-func stringList(v any) ([]any, bool) {
-	xs, ok := v.([]any)
-	if !ok {
-		return nil, false
+// validPlatform: one of the schema's Platform values.
+func validPlatform(p string) bool {
+	switch contract.Platform(p) {
+	case contract.PlatformDarwin, contract.PlatformWin32, contract.PlatformLinux:
+		return true
 	}
-	for _, x := range xs {
-		if _, ok := x.(string); !ok {
-			return nil, false
-		}
-	}
-	return xs, true
+	return false
 }
 
 func (a *App) poll(q *Request) (any, error) {
-	b := q.obj()
+	var b contract.PollRequest
+	if err := decode(q.body, &b); err != nil {
+		return nil, err
+	}
 	host := hostOf(q)
-	if err := storesObserve(q.ctx(), q.tx, host, b["stores"]); err != nil {
+	open := q.obj() // the open parts (stores, update) as the host's plain JSON
+	if err := storesObserve(q.ctx(), q.tx, host, open["stores"]); err != nil {
 		return nil, err
 	}
 	obs := doc{"id": host, "holder": q.host["holder"], "lastSeenAt": nowMs()}
-	if inList([]string{"darwin", "win32", "linux"}, astr(b["platform"])) {
-		obs["platform"] = b["platform"]
+	if validPlatform(string(b.Platform)) {
+		obs["platform"] = string(b.Platform)
 	}
-	if xs, ok := stringList(b["capabilities"]); ok {
-		obs["capabilities"] = xs
+	if b.Capabilities != nil {
+		obs["capabilities"] = b.Capabilities
 	}
-	if xs, ok := stringList(b["projectRoots"]); ok {
-		obs["projectRoots"] = xs
+	if b.ProjectRoots != nil {
+		obs["projectRoots"] = b.ProjectRoots
 	}
-	ps := hostProblems(b["problems"])
-	if v, ok := b["version"].(string); ok {
+	ps := hostProblems(b.Problems)
+	if b.Version != nil {
+		v := *b.Version
 		obs["version"] = v
 		// N-1 is served without a flag; N-2 and older show version-behind (work still runs).
 		if prev := ownRelease().Previous; olderVersion(v, prev) {
@@ -86,7 +82,7 @@ func (a *App) poll(q *Request) (any, error) {
 	if ps != nil {
 		obs["problems"] = ps
 	}
-	upd := b["update"]
+	upd := open["update"]
 	if host != "" && host == pds18Host() {
 		upd = mergeUpdate(upd) // PDS18: the coordinator side's result from fleet-update joins the executor's
 	}

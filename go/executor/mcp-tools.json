@@ -44,27 +44,11 @@
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+    "description": "The project's settings and context. The host supplies the project; no arguments.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {
-        "requestId": {
-          "type": "string"
-        },
-        "query": {
-          "type": "string"
-        },
-        "methodId": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string"
-        },
-        "runId": {
-          "type": "string"
-        }
-      }
+      "properties": {}
     }
   },
   {
@@ -75,27 +59,11 @@
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+    "description": "The project's search methods and pipelines. No arguments.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {
-        "requestId": {
-          "type": "string"
-        },
-        "query": {
-          "type": "string"
-        },
-        "methodId": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string"
-        },
-        "runId": {
-          "type": "string"
-        }
-      }
+      "properties": {}
     }
   },
   {
@@ -106,25 +74,28 @@
       "idempotentHint": true,
       "openWorldHint": true
     },
-    "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+    "description": "Start a pipeline search for query. Reuse requestId on retry: the same requestId returns the same run. A search may return a durable running run; read it with pipeline_get by runId, never redispatch after an uncertain response.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
+      "required": [
+        "requestId",
+        "query"
+      ],
       "properties": {
         "requestId": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
         },
         "query": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
         },
         "methodId": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string"
-        },
-        "runId": {
-          "type": "string"
+          "type": "string",
+          "description": "A method id from catalogue; omitted, Fleet recommends one."
         }
       }
     }
@@ -137,25 +108,28 @@
       "idempotentHint": true,
       "openWorldHint": true
     },
-    "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+    "description": "Run a direct search for query, as pipeline_run. Reuse requestId on retry; read a running run with pipeline_get by runId.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
+      "required": [
+        "requestId",
+        "query"
+      ],
       "properties": {
         "requestId": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
         },
         "query": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
         },
         "methodId": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string"
-        },
-        "runId": {
-          "type": "string"
+          "type": "string",
+          "description": "A method id from catalogue; omitted, Fleet recommends one."
         }
       }
     }
@@ -168,27 +142,11 @@
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+    "description": "The project's pipeline runs. No arguments.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {
-        "requestId": {
-          "type": "string"
-        },
-        "query": {
-          "type": "string"
-        },
-        "methodId": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string"
-        },
-        "runId": {
-          "type": "string"
-        }
-      }
+      "properties": {}
     }
   },
   {
@@ -199,25 +157,18 @@
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+    "description": "One pipeline run of this project by runId.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
+      "required": [
+        "runId"
+      ],
       "properties": {
-        "requestId": {
-          "type": "string"
-        },
-        "query": {
-          "type": "string"
-        },
-        "methodId": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string"
-        },
         "runId": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
         }
       }
     }
@@ -230,25 +181,24 @@
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+    "description": "Ask the project's people a question. Reuse requestId on retry; the answer appears in question_history.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
+      "required": [
+        "requestId",
+        "text"
+      ],
       "properties": {
         "requestId": {
-          "type": "string"
-        },
-        "query": {
-          "type": "string"
-        },
-        "methodId": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
         },
         "text": {
-          "type": "string"
-        },
-        "runId": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
         }
       }
     }
@@ -261,27 +211,11 @@
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+    "description": "The project's questions and their answers. No arguments.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {
-        "requestId": {
-          "type": "string"
-        },
-        "query": {
-          "type": "string"
-        },
-        "methodId": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string"
-        },
-        "runId": {
-          "type": "string"
-        }
-      }
+      "properties": {}
     }
   },
   {
@@ -292,27 +226,11 @@
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+    "description": "The subscriptions this work may use (the director's, or taken for this project). No arguments.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {
-        "requestId": {
-          "type": "string"
-        },
-        "query": {
-          "type": "string"
-        },
-        "methodId": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string"
-        },
-        "runId": {
-          "type": "string"
-        }
-      }
+      "properties": {}
     }
   },
   {

@@ -3,8 +3,7 @@ package main
 // Host receipts (SL6), one route per envelope of contracts/host-protocol.schema.json: the status receipt that moves a
 // command and its execution forward only (Receipt), an account inspection result (AccountReceipt), a project tool call
 // of a native agent (ProjectReceipt) and a child agent request (ChildReceipt). Each body is type-checked against its
-// struct first. /api/hosts/receipts still takes all four (receiptIn): executors post there until every host reaches
-// the coordinator that serves the split routes and Access admits them; then the executor switches and receiptIn goes.
+// struct first; unknown fields are refused.
 
 import (
 	"bytes"
@@ -17,7 +16,7 @@ import (
 
 func init() {
 	longRoute("POST /api/hosts/receipts", func(q *Request) (any, error) {
-		return q.app.receipt(q, func(q *Request, b doc) (any, string, error) { return q.app.receiptIn(q, b) })
+		return typedStatus(q)
 	})
 	longRoute("POST /api/hosts/accounts/report", func(q *Request) (any, error) {
 		return typedReceipt(q, func(t *contract.AccountReceipt) bool { return t.AccountObservation != nil || t.AccountCatalogue != nil }, accountReceiptIn)
@@ -30,8 +29,18 @@ func init() {
 	})
 }
 
-// typedReceipt: a split receipt route. The body decodes into its closed contract struct (unknown fields refused: no host
-// of an earlier release posts here) and must carry its envelope (present), then fn runs as a receipt.
+// typedStatus: /api/hosts/receipts, a command status (contract.Receipt).
+func typedStatus(q *Request) (any, error) {
+	var t contract.Receipt
+	dec := json.NewDecoder(bytes.NewReader(q.body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&t); err != nil || t.Status == "" {
+		return nil, fail(400, "Invalid body for this receipt route")
+	}
+	return q.app.receipt(q, q.app.statusReceiptIn)
+}
+
+// typedReceipt: a split receipt route. The body decodes into its closed contract struct (unknown fields refused) and must carry its envelope (present), then fn runs as a receipt.
 func typedReceipt[T any](q *Request, present func(*T) bool, fn func(q *Request, b doc) (any, error)) (any, error) {
 	var t T
 	dec := json.NewDecoder(bytes.NewReader(q.body))
@@ -51,9 +60,7 @@ var receiptRank = map[string]int{"pending": 0, string(contract.ReceiptStatusAcce
 // projectReceiptOps: the project operations a native agent may call through a receipt.
 var projectReceiptOps = func() []string {
 	out := []string{}
-	for _, o := range []contract.ProjectOperation{contract.ProjectOperationProjectContext, contract.ProjectOperationCatalogue, contract.ProjectOperationPipelineRun,
-		contract.ProjectOperationDirectSearch, contract.ProjectOperationPipelineHistory, contract.ProjectOperationPipelineGet, contract.ProjectOperationQuestionAsk,
-		contract.ProjectOperationQuestionHistory, contract.ProjectOperationAccountList} {
+	for _, o := range contract.ProjectOperationValues {
 		out = append(out, string(o))
 	}
 	return out
@@ -125,24 +132,6 @@ func ownedBody(q *Request, b doc) error {
 		}
 	}
 	return nil
-}
-
-// receiptIn: the combined /api/hosts/receipts of the previous release, which picked the envelope by its fields.
-// ponytail: rollout only (hosts update one at a time); delete with this branch once every host reports a version that
-// posts to the split routes.
-func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
-	switch d := mapOf(b["delegation"]); {
-	case nonNil(b["accountObservation"], b["accountCatalogue"]) != nil:
-		r, err := accountReceiptIn(q, b)
-		return r, "", err
-	case d != nil && d["operation"] != nil:
-		r, err := projectReceiptIn(q, b)
-		return r, "", err
-	case d != nil:
-		r, err := a.childReceiptIn(q, b)
-		return r, "", err
-	}
-	return a.statusReceiptIn(q, b)
 }
 
 // accountReceiptIn: POST /api/hosts/accounts/report (contract.AccountReceipt), an account-inspect command's result.
@@ -262,11 +251,8 @@ func (a *App) statusReceiptIn(q *Request, b doc) (any, string, error) {
 		e["error"] = b["error"]
 	}
 	if (kind == "start" || kind == "script") && status == "completed" && !wasFinal {
-		declared := anys(b["artifacts"])
-		if len(declared) > 10000 {
-			declared = declared[:10000]
-		}
-		gate, err := artifactGate(q, e, declared)
+		// Every declaration reaches the gate: a dropped one would let a required output go unwaited.
+		gate, err := artifactGate(q, e, anys(b["artifacts"]))
 		if err != nil {
 			return nil, "", err
 		}

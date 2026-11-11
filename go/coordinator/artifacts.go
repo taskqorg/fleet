@@ -1413,9 +1413,13 @@ func artifactRequirement(ctx context.Context, a *App, executionID string, declar
 	if err != nil {
 		return nil, err
 	}
+	globs := make([]*regexp.Regexp, len(patterns))
+	for i, p := range patterns {
+		globs[i] = glob(p)
+	}
 	match := func(name string) bool {
-		for _, p := range patterns {
-			if glob(p).MatchString(name) {
+		for _, g := range globs {
+			if g.MatchString(name) {
 				return true
 			}
 		}
@@ -1444,9 +1448,10 @@ func artifactRequirement(ctx context.Context, a *App, executionID string, declar
 		}
 	}
 	out.Pending = append(out.Pending, unreserved...)
-	for _, p := range patterns {
-		g, found := glob(p), false
-		for _, n := range append(append([]string{}, unreserved...), keys(have)...) {
+	present := append(append([]string{}, unreserved...), keys(have)...)
+	for i, p := range patterns {
+		g, found := globs[i], false
+		for _, n := range present {
 			if g.MatchString(n) {
 				found = true
 			}
