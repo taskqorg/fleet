@@ -169,10 +169,12 @@ func TestStoreKeyFormats(t *testing.T) {
 // (W4). Risk: a renamed store field reaches the coordinator as a missing key.
 func TestStoreSenderTyped(t *testing.T) {
 	d := t.TempDir()
-	os.WriteFile(filepath.Join(d, "key"), []byte(`{"accessKeyId":"GK1","secretAccessKey":"s1"}`), 0o600)
+	if err := os.WriteFile(filepath.Join(d, "key"), []byte(`{"accessKeyId":"GK1","secretAccessKey":"s1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	cfg := M{"id": "st1", "zone": "z", "bucket": "b", "keyFile": filepath.Join(d, "key"), "capacityBytes": json.Number("1000")}
 	r := storeRegistration(cfg, "h1")
-	if r == nil || r.HostId != "h1" || r.Store.Id != "st1" || *r.Store.AccessKeyId != "GK1" || *r.Store.CapacityBytes != 1000 || *r.Store.Zone != "z" {
+	if r == nil || r.HostId != "h1" || r.Store.Id != "st1" || enc(r.Store.AccessKeyId) != `"GK1"` || enc(r.Store.CapacityBytes) != "1000" || enc(r.Store.Zone) != `"z"` {
 		t.Fatalf("%+v", r)
 	}
 	var back contract.StoresRequest
@@ -181,8 +183,12 @@ func TestStoreSenderTyped(t *testing.T) {
 	if err := dec.Decode(&back); err != nil {
 		t.Fatal(err)
 	}
-	if rep := storeReport(cfg); len(rep) != 1 || rep[0].Id != "st1" || rep[0].Reachable || *rep[0].CapacityBytes != 1000 {
+	if rep := storeReport(cfg); len(rep) != 1 || rep[0].Id != "st1" || rep[0].Reachable || enc(rep[0].CapacityBytes) != "1000" {
 		t.Fatalf("%+v", rep)
+	}
+	// An empty project-roots list is sent, so the coordinator clears the host's roots.
+	if b := enc(contract.PollRequest{ProjectRoots: []string{}}); !strings.Contains(b, `"projectRoots":[]`) {
+		t.Fatal(b)
 	}
 }
 

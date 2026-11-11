@@ -322,7 +322,7 @@ type PollRequest struct {
 	HostId       string        `json:"hostId"`
 	Platform     Platform      `json:"platform"`
 	Problems     []EdgeProblem `json:"problems"`
-	ProjectRoots []string      `json:"projectRoots,omitempty"`
+	ProjectRoots []string      `json:"projectRoots"`
 	Stores       []StoreReport `json:"stores"`
 	Update       *UpdateResult `json:"update,omitempty"`
 	Version      *string       `json:"version,omitempty"`
@@ -474,6 +474,7 @@ type StoreReport struct {
 	CapacityBytes *int64 `json:"capacityBytes,omitempty"`
 	Id            string `json:"id"`
 	Reachable     bool   `json:"reachable"`
+	UsedBytes     *int64 `json:"usedBytes,omitempty"`
 }
 
 // StoresRequest: POST /api/hosts/stores.

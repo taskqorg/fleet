@@ -1944,9 +1944,6 @@ func (e *executor) exchange() error {
 		return nil
 	}
 	v, roots := version, reportedRoots()
-	if roots == nil {
-		roots = []string{} // an empty list clears the host's roots; an absent one keeps them
-	}
 	body := contract.PollRequest{HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
 		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, Update: lastUpdate(e.root)}
 	a := send(e.url, e.token, pollRoute, body)

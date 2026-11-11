@@ -269,7 +269,8 @@
         "platform",
         "capabilities",
         "stores",
-        "problems"
+        "problems",
+        "projectRoots"
       ],
       "properties": {
         "hostId": {
@@ -297,7 +298,7 @@
           }
         },
         "projectRoots": {
-          "$comment": "FLEET_PROJECT_ROOTS as the executor resolved them; a project checkout outside them is a host problem",
+          "$comment": "always sent; an empty list clears the host's roots",
           "type": "array",
           "items": {
             "type": "string"
@@ -1348,6 +1349,13 @@
           "type": "boolean"
         },
         "capacityBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "usedBytes": {
           "type": [
             "integer",
             "null"
