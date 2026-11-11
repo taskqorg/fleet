@@ -298,3 +298,13 @@ Each check was proven once with `UX_INJECT=<defect>`, which produced its warning
 * **Cyrillic:** San Francisco and SF Mono (macOS), Segoe UI and Cascadia Mono or Consolas (Windows), and the fontconfig defaults behind `system-ui` and `monospace` on Linux (Noto, Cantarell, DejaVu, Liberation) all carry Cyrillic.
 * **Removed:** the `@fontsource` packages, the font copying and `@font-face` rules in `app/build.mjs`, the font files in the service worker precache, and the font check in `tests/ui/app.check.ts`.
 * **Layout:** sizes, line height and row heights are unchanged; `check:design` and the app check report no layout warnings with the new metrics.
+
+## 2026-11-11 D23: Name and mark
+
+* **Question (owner):** what the product is called, Fleet or TaskQ, and what its logo is.
+* **Name (owner):** Fleet. TaskQ was a prototype that Fleet replaces, and it named only the task queue. The `taskqorg` GitHub organisation keeps its name; people do not see it in the product.
+* **Options for the mark,** shown in direction B ink on the dark and light rail at 88, 32, 20 and 16 px: A "Grid", six cells of a 3x3 grid that form an F and a formation; B "Slab", a solid ink square with a geometric f cut out; C "Cursor", a hairline square with a block cursor and a mono wordmark.
+* **Choice (owner):** A.
+* **Recorded as:** the `.brand-mark` element in the navigation head ([navigation rail](controls/nav-rail.md)), drawn by a CSS mask in `packages/ui/src/styles.css` and filled with `fg`, so it follows the theme. It is a brand asset, not an icon, so OR-8 does not apply to it. The name beside it is set in capitals at the section-title weight.
+* **Not done:** the per-view install icons and favicons (`app/build.mjs`) still show each view's registry icon, so installed views stay distinguishable.
+

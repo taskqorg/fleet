@@ -5,7 +5,7 @@
 **Purpose.** Moves between sections. There can be many sections, so each person pins the ones they follow ([D9](../decisions.md)).
 
 **Anatomy.** A left column of width `size-rail`, from top to bottom:
-0. The head: product name, the "N need you" chip and the collapse button ([app shell](../patterns/app-shell.md), OR-24).
+0. The head: the Fleet mark and name ([D23](../decisions.md#2026-11-11-d23-name-and-mark)), the "N need you" chip and the collapse button. Collapsed, the head keeps the mark above the button ([app shell](../patterns/app-shell.md), OR-24).
 1. The pinned group, in the order the person pinned it.
 2. A "Sections" search field.
 3. All other sections, grouped (Operator, Architect) under small group headings.

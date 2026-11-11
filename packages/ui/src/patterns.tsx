@@ -137,7 +137,7 @@ export function AppShell({ nav, current, onGo, waiting, children }: {
     <div class="shell" data-ui="app-shell" onClick={openRow}>
       <a class="skip" href="#main" onClick={e => { e.preventDefault(); document.getElementById('main')?.focus(); }}>Skip to content</a>
       <NavRail items={nav} pinned={pinned} current={current} onGo={onGo} mini={mini} onPin={(id, p) => setPinned(p ? [...pinned, id] : pinned.filter(x => x !== id))}
-        head={<><b class="brand">Fleet</b><span class="grow" />
+        head={<><span class="brand-mark" role="img" aria-label="Fleet" /><b class="brand">Fleet</b><span class="grow" />
           {waiting > 0 && current !== 'overview' && <a class="nav-count t-attention waiting" href="#/overview" onClick={e => { e.preventDefault(); onGo('overview'); }}>{waiting} need you</a>}
           <Button label={mini ? 'Expand navigation' : 'Collapse navigation'} icon="panel-left-close" iconOnly pressed={mini} onClick={toggle} /></>} />
       <main class="shell-main" id="main" tabIndex={-1}>{children}</main>
