@@ -245,14 +245,29 @@ func (e *executor) receipt(c M, status string, native string) error {
 	if declared == nil {
 		declared = []string{}
 	}
-	var n any
+	r := contract.Receipt{HostId: e.host, CommandId: cid, ExecutionId: ex, Status: contract.ReceiptStatus(status), Artifacts: declared}
 	if native != "" {
-		n = native
+		r.NativeSessionId = &native
 	}
-	return e.queue("/api/hosts/receipts", M{"hostId": e.host, "commandId": cid, "executionId": ex, "status": status, "nativeSessionId": n, "artifacts": declared})
+	return e.queue("/api/hosts/receipts", r)
 }
 
-func (e *executor) event(c M, seq uint64, kind string, data any) error {
+// hostEvents is contract.HostEvents with the event data kept as the executor's own JSON (native records stay open).
+type hostEvents struct {
+	HostId      string      `json:"hostId"`
+	ExecutionId string      `json:"executionId"`
+	Events      []hostEvent `json:"events"`
+}
+
+type hostEvent struct {
+	Id        string          `json:"id"`
+	Seq       int64           `json:"seq"`
+	Type      string          `json:"type"`
+	Timestamp int64           `json:"timestamp"`
+	Data      json.RawMessage `json:"data"`
+}
+
+func (e *executor) event(c M, seq uint64, kind contract.FleetEventType, data any) error {
 	cid, err := cmdID(c, "id")
 	if err != nil {
 		return err
@@ -261,8 +276,12 @@ func (e *executor) event(c M, seq uint64, kind string, data any) error {
 	if err != nil {
 		return err
 	}
-	ev := M{"id": fmt.Sprintf("%s-%d", cid, seq), "seq": seq, "type": kind, "timestamp": nowMs(), "data": data}
-	return e.queue("/api/hosts/events", M{"hostId": e.host, "executionId": ex, "events": []any{ev}})
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	ev := hostEvents{HostId: e.host, ExecutionId: ex, Events: []hostEvent{{Id: fmt.Sprintf("%s-%d", cid, seq), Seq: int64(seq), Type: string(kind), Timestamp: nowMs(), Data: raw}}}
+	return e.queue("/api/hosts/events", ev)
 }
 
 func (e *executor) finish(c M, status, native string) error {
@@ -472,20 +491,20 @@ func (e *executor) run(c M) error {
 	case "readiness":
 		data := readiness(jAt(p, "project"), e.host, os.Getenv("FLEET_NATIVE_ACCOUNTS"))
 		ok := data["ok"] == true
-		if err := e.event(c, 0, "readiness", data); err != nil {
+		if err := e.event(c, 0, contract.FleetEventTypeReadiness, data); err != nil {
 			return err
 		}
 		if !ok {
-			if err := e.event(c, 1, "readiness.failed", M{"reason": "readiness-check-failed"}); err != nil {
+			if err := e.event(c, 1, contract.FleetEventTypeReadinessFailed, M{"reason": "readiness-check-failed"}); err != nil {
 				return err
 			}
 		}
 		return e.finish(c, okStatus(ok), "")
 	case "base-updated":
 		data, ok := checkoutSync(p, e.host, projectRoots(), e.forbidden())
-		k := "sync-failed"
+		k := contract.FleetEventTypeSyncFailed
 		if ok {
-			k = "checkout.synced"
+			k = contract.FleetEventTypeCheckoutSynced
 		}
 		if err := e.event(c, 0, k, data); err != nil {
 			return err
@@ -508,7 +527,7 @@ func (e *executor) run(c M) error {
 		}
 		ok := data["removed"] == true || data["reason"] == "uncommitted" || data["reason"] == "no-worktree"
 		// The teardown command reuses the last execution, whose seq 0.. are taken by its turn: use a fresh seq.
-		if err := e.event(c, uint64(nowMs()), "teardown", data); err != nil {
+		if err := e.event(c, uint64(nowMs()), contract.FleetEventTypeTeardown, data); err != nil {
 			return err
 		}
 		return e.finish(c, okStatus(ok), "")
@@ -573,7 +592,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		if jIsTrue(p, "gitNetwork") {
 			shell = "workspace-write, git network enabled, checkout .git writable, approvals denied"
 		}
-		if err := e.event(c, 0, "preparation", M{"model": p["model"], "effort": p["effort"], "subscription": true, "instructionsSha256": sha([]byte(jStr(p, "instructions"))),
+		if err := e.event(c, 0, contract.FleetEventTypePreparation, M{"model": p["model"], "effort": p["effort"], "subscription": true, "instructionsSha256": sha([]byte(jStr(p, "instructions"))),
 			"tools": M{"shell": shell, "mcp": []any{}, "collaborationTools": jBoolOr(true, p, "agentConfig", "collaborationTools")}, "skills": []any{}, "repairs": false,
 			"nativeConfig": "Fleet-owned HOME/CODEX_HOME required; config and execpolicy ignored; AGENTS discovery, skills, memories and hooks disabled; context observations pending"}); err != nil {
 			return err
@@ -582,13 +601,13 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	// The coordinator owns the native id per harness:account continuation; no id means a new native session.
 	native := jStr(p, "nativeSessionId")
 	if native != "" && !safeNativeID(native) || jIsStr(p, "nativeSessionId") && native == "" {
-		if err := e.event(c, 1, "preparation.failed", M{"reason": "invalid native session id"}); err != nil {
+		if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, M{"reason": "invalid native session id"}); err != nil {
 			return err
 		}
 		return e.finish(c, "failed", "")
 	}
 	fail := func(seq uint64, reason string) error {
-		if err := e.event(c, seq, "preparation.failed", M{"reason": reason}); err != nil {
+		if err := e.event(c, seq, contract.FleetEventTypePreparationFailed, M{"reason": reason}); err != nil {
 			return err
 		}
 		return e.finish(c, "failed", native)
@@ -614,7 +633,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		if name == "claude" {
 			role = "system"
 		}
-		if err := e.event(c, 0, "preparation", M{"requested": p, "effective": M{"harness": name, "account": p["account"], "model": p["model"], "instructionRole": role,
+		if err := e.event(c, 0, contract.FleetEventTypePreparation, M{"requested": p, "effective": M{"harness": name, "account": p["account"], "model": p["model"], "instructionRole": role,
 			"nativePermissions": "native; no sandbox parity claimed", "authentication": "host-provisioned; readiness unknown"}}); err != nil {
 			return err
 		}
@@ -624,7 +643,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		if name == "codex" {
 			profileApply(cmd, withSkills(cfg, p["skills"]))
 		}
-		if err := e.event(c, 0, "preparation", evidence); err != nil {
+		if err := e.event(c, 0, contract.FleetEventTypePreparation, evidence); err != nil {
 			return err
 		}
 	}
@@ -643,7 +662,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		checkoutTop = top
 		if script := jStr(p, "project", "scripts", "setup"); created && jIsStr(p, "project", "scripts", "setup") && jStr(p, "setup") != "skip" {
 			r := projectScript("setup", script, top, w, session)
-			if err := e.event(c, 1, "setup", r); err != nil {
+			if err := e.event(c, 1, contract.FleetEventTypeSetup, r); err != nil {
 				return err
 			}
 			if r["ok"] != true {
@@ -866,7 +885,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	go readStdout(pr, rawLog, l.wire, acpProtocol, lines)
 	e.live[execution] = l
 	l.seq++
-	if err := e.event(c, l.seq, "harness", observed); err != nil {
+	if err := e.event(c, l.seq, contract.FleetEventTypeHarness, observed); err != nil {
 		return err
 	}
 	return e.receipt(c, "started", native)
@@ -963,7 +982,7 @@ func (e *executor) script(c M, execution, session string) error {
 		return e.finish(c, "failed", "")
 	}
 	refuse := func(reason string) error {
-		if err := e.event(c, 1, "preparation.failed", M{"reason": reason}); err != nil {
+		if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, M{"reason": reason}); err != nil {
 			return err
 		}
 		return e.finish(c, "failed", "")
@@ -1048,7 +1067,7 @@ func (e *executor) script(c M, execution, session string) error {
 		l.deadline = time.Now().Add(timeout)
 	}
 	e.live[execution] = l
-	if err := e.event(c, 1, "script.started", M{"commit": p["commit"], "timeoutMs": p["timeout_ms"], "trialWorktree": work}); err != nil {
+	if err := e.event(c, 1, contract.FleetEventTypeScriptStarted, M{"commit": p["commit"], "timeoutMs": p["timeout_ms"], "trialWorktree": work}); err != nil {
 		return err
 	}
 	return e.receipt(c, "started", "")
@@ -1141,7 +1160,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	if !exited && !l.stopped && !l.deadline.IsZero() && !time.Now().Before(l.deadline) {
 		l.timedOut, l.stopped = true, true
 		l.seq++
-		if err := e.event(l.command, l.seq, "script.timeout", M{"timeoutMs": jAt(l.command, "payload", "timeout_ms")}); err != nil {
+		if err := e.event(l.command, l.seq, contract.FleetEventTypeScriptTimeout, M{"timeoutMs": jAt(l.command, "payload", "timeout_ms")}); err != nil {
 			return false, err
 		}
 	}
@@ -1207,7 +1226,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 			if jIsStr(event, "type") {
 				kind = jStr(event, "type")
 			}
-			if err := e.event(l.command, l.seq, kind, retained); err != nil {
+			if err := e.event(l.command, l.seq, contract.FleetEventType(kind), retained); err != nil {
 				return false, err
 			}
 		default:
@@ -1216,7 +1235,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	}
 	if time.Since(l.lastSample) >= 2*time.Second {
 		l.seq++
-		if err := e.event(l.command, l.seq, "resource.observation", resources(l.cmd.Process.Pid, e.root)); err != nil {
+		if err := e.event(l.command, l.seq, contract.FleetEventTypeResourceObservation, resources(l.cmd.Process.Pid, e.root)); err != nil {
 			return false, err
 		}
 		l.lastSample = time.Now()
@@ -1247,7 +1266,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 		code = l.state.ExitCode()
 	}
 	l.seq++
-	if err := e.event(l.command, l.seq, "process.closed", M{"exitCode": code, "stdoutClosed": l.eof, "observedOwnedProcessesRemaining": false, "cleanupUnknown": l.cleanupUnknown}); err != nil {
+	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, M{"exitCode": code, "stdoutClosed": l.eof, "observedOwnedProcessesRemaining": false, "cleanupUnknown": l.cleanupUnknown}); err != nil {
 		return false, err
 	}
 	sid, err := cmdID(l.command, "sessionId")
@@ -1271,7 +1290,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	e.declared = declared
 	if l.trial != nil {
 		l.seq++
-		if err := e.event(l.command, l.seq, "trial.removed", M{"removed": removeTrial(l.trial[0], l.trial[1])}); err != nil {
+		if err := e.event(l.command, l.seq, contract.FleetEventTypeTrialRemoved, M{"removed": removeTrial(l.trial[0], l.trial[1])}); err != nil {
 			return false, err
 		}
 	}
@@ -1735,8 +1754,9 @@ func (e *executor) exchange() error {
 	}
 	for _, cv := range jArr(reply, "commands") {
 		c, ok := cv.(M)
-		if !ok {
-			continue
+		var env contract.Command
+		if b, err := json.Marshal(cv); !ok || err != nil || json.Unmarshal(b, &env) != nil {
+			continue // not a command envelope
 		}
 		if e.run(c) != nil {
 			if _, isLive := e.live[jStr(c, "executionId")]; isLive {

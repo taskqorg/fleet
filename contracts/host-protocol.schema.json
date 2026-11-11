@@ -2,112 +2,539 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Host protocol and event payloads (fleet-stack L3 stage 1). Source for go/coordinator and app types; see contracts/README.md for the supported keyword subset.",
   "$defs": {
-    "ChildRequest": {"type": "object", "required": ["requestId", "profileId", "input"], "properties": {"requestId": {"type": "string"}, "profileId": {"type": "string"}, "input": {"type": "string"}}},
-    "ChildReceipt": {"type": "object", "required": ["hostId", "commandId", "executionId", "delegation"], "properties": {"hostId": {"type": "string"}, "commandId": {"type": "string"}, "executionId": {"type": "string"}, "delegation": {"$ref": "#/$defs/ChildRequest"}}},
-    "ProjectOperation": {"type": "string", "enum": ["project_context", "catalogue", "pipeline_run", "direct_search", "pipeline_history", "pipeline_get", "question_ask", "question_history", "account_list"]},
-    "ProjectArguments": {"$comment": "Native tool arguments are forwarded unchanged to the owning project operation validator.", "type": "object", "additionalProperties": true, "properties": {}},
-    "ProjectRequest": {"type": "object", "required": ["operation", "arguments", "requestId", "projectId"], "properties": {"operation": {"$ref": "#/$defs/ProjectOperation"}, "arguments": {"$ref": "#/$defs/ProjectArguments"}, "requestId": {"type": "string"}, "projectId": {"type": "string"}}},
-    "ProjectReceipt": {"type": "object", "required": ["hostId", "commandId", "executionId", "delegation"], "properties": {"hostId": {"type": "string"}, "commandId": {"type": "string"}, "executionId": {"type": "string"}, "delegation": {"$ref": "#/$defs/ProjectRequest"}}},
-    "AccountRoots": {"type": "object", "required": [], "properties": {"home": {"type": "string"}, "nativeHome": {"type": "string"}, "credentialHome": {"type": "string"}, "credentialAuthority": {"type": "string"}, "executable": {"type": "string"}}},
-    "AccountObservation": {"type": "object", "required": ["accountId", "binding", "platform", "readiness", "nativeLoginObserved", "quota", "reason"], "properties": {"accountId": {"type": "string"}, "binding": {"type": "string"}, "platform": {"type": "string"}, "roots": {"$ref": "#/$defs/AccountRoots"}, "readiness": {"type": "string"}, "nativeLoginObserved": {"type": ["boolean", "null"]}, "quota": {"type": "string"}, "reason": {"type": "string"}}},
-    "AccountEnvironment": {"type": "object", "required": [], "properties": {"HOME": {"type": "string"}, "CODEX_HOME": {"type": "string"}, "CLAUDE_CONFIG_DIR": {"type": "string"}, "GEMINI_HOME": {"type": "string"}}},
-    "AccountBinding": {"type": "object", "required": ["name", "executable", "environment", "behaviorApproved"], "properties": {"name": {"type": "string"}, "executable": {"type": "string"}, "environment": {"$ref": "#/$defs/AccountEnvironment"}, "behaviorApproved": {"type": "boolean"}}},
-    "AccountCatalogue": {"type": "object", "required": ["accountId", "bindings"], "properties": {"accountId": {"type": "string"}, "binding": {"type": ["string", "null"]}, "bindings": {"type": "array", "items": {"$ref": "#/$defs/AccountBinding"}}}},
-    "AccountReceipt": {"type": "object", "required": ["hostId", "commandId", "executionId"], "properties": {"hostId": {"type": "string"}, "commandId": {"type": "string"}, "executionId": {"type": "string"}, "accountObservation": {"$ref": "#/$defs/AccountObservation"}, "accountCatalogue": {"$ref": "#/$defs/AccountCatalogue"}}},
+    "ChildRequest": {
+      "type": "object",
+      "required": [
+        "requestId",
+        "profileId",
+        "input"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "profileId": {
+          "type": "string"
+        },
+        "input": {
+          "type": "string"
+        }
+      }
+    },
+    "ChildReceipt": {
+      "type": "object",
+      "required": [
+        "hostId",
+        "commandId",
+        "executionId",
+        "delegation"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "commandId": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "delegation": {
+          "$ref": "#/$defs/ChildRequest"
+        }
+      }
+    },
+    "ProjectOperation": {
+      "type": "string",
+      "enum": [
+        "project_context",
+        "catalogue",
+        "pipeline_run",
+        "direct_search",
+        "pipeline_history",
+        "pipeline_get",
+        "question_ask",
+        "question_history",
+        "account_list"
+      ]
+    },
+    "ProjectArguments": {
+      "$comment": "Native tool arguments are forwarded unchanged to the owning project operation validator.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {}
+    },
+    "ProjectRequest": {
+      "type": "object",
+      "required": [
+        "operation",
+        "arguments",
+        "requestId",
+        "projectId"
+      ],
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/ProjectOperation"
+        },
+        "arguments": {
+          "$ref": "#/$defs/ProjectArguments"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        }
+      }
+    },
+    "ProjectReceipt": {
+      "type": "object",
+      "required": [
+        "hostId",
+        "commandId",
+        "executionId",
+        "delegation"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "commandId": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "delegation": {
+          "$ref": "#/$defs/ProjectRequest"
+        }
+      }
+    },
+    "AccountRoots": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "home": {
+          "type": "string"
+        },
+        "nativeHome": {
+          "type": "string"
+        },
+        "credentialHome": {
+          "type": "string"
+        },
+        "credentialAuthority": {
+          "type": "string"
+        },
+        "executable": {
+          "type": "string"
+        }
+      }
+    },
+    "AccountObservation": {
+      "type": "object",
+      "required": [
+        "accountId",
+        "binding",
+        "platform",
+        "readiness",
+        "nativeLoginObserved",
+        "quota",
+        "reason"
+      ],
+      "properties": {
+        "accountId": {
+          "type": "string"
+        },
+        "binding": {
+          "type": "string"
+        },
+        "platform": {
+          "type": "string"
+        },
+        "roots": {
+          "$ref": "#/$defs/AccountRoots"
+        },
+        "readiness": {
+          "type": "string"
+        },
+        "nativeLoginObserved": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "quota": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "AccountEnvironment": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "HOME": {
+          "type": "string"
+        },
+        "CODEX_HOME": {
+          "type": "string"
+        },
+        "CLAUDE_CONFIG_DIR": {
+          "type": "string"
+        },
+        "GEMINI_HOME": {
+          "type": "string"
+        }
+      }
+    },
+    "AccountBinding": {
+      "type": "object",
+      "required": [
+        "name",
+        "executable",
+        "environment",
+        "behaviorApproved"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "executable": {
+          "type": "string"
+        },
+        "environment": {
+          "$ref": "#/$defs/AccountEnvironment"
+        },
+        "behaviorApproved": {
+          "type": "boolean"
+        }
+      }
+    },
+    "AccountCatalogue": {
+      "type": "object",
+      "required": [
+        "accountId",
+        "bindings"
+      ],
+      "properties": {
+        "accountId": {
+          "type": "string"
+        },
+        "binding": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AccountBinding"
+          }
+        }
+      }
+    },
+    "AccountReceipt": {
+      "type": "object",
+      "required": [
+        "hostId",
+        "commandId",
+        "executionId"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "commandId": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "accountObservation": {
+          "$ref": "#/$defs/AccountObservation"
+        },
+        "accountCatalogue": {
+          "$ref": "#/$defs/AccountCatalogue"
+        }
+      }
+    },
     "PollRequest": {
       "type": "object",
-      "required": ["hostId", "platform", "capabilities", "stores", "problems"],
+      "required": [
+        "hostId",
+        "platform",
+        "capabilities",
+        "stores",
+        "problems"
+      ],
       "properties": {
-        "hostId": {"type": "string"},
-        "platform": {"type": "string"},
-        "capabilities": {"type": "array", "items": {"type": "string"}},
-        "stores": {"$comment": "store::report output; described when stores are next changed", "type": "array", "items": {}},
-        "problems": {"type": "array", "items": {"$ref": "#/$defs/EdgeProblem"}},
-        "projectRoots": {"$comment": "FLEET_PROJECT_ROOTS as the executor resolved them; a project checkout outside them is a host problem", "type": "array", "items": {"type": "string"}},
-        "version": {"$comment": "the executor's release version (docs/designs/fleet-self-update.md section 4)", "type": "string"},
-        "update": {"$ref": "#/$defs/UpdateResult"}
+        "hostId": {
+          "type": "string"
+        },
+        "platform": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "stores": {
+          "$comment": "store::report output; described when stores are next changed",
+          "type": "array",
+          "items": {}
+        },
+        "problems": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EdgeProblem"
+          }
+        },
+        "projectRoots": {
+          "$comment": "FLEET_PROJECT_ROOTS as the executor resolved them; a project checkout outside them is a host problem",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "version": {
+          "$comment": "the executor's release version (docs/designs/fleet-self-update.md section 4)",
+          "type": "string"
+        },
+        "update": {
+          "$ref": "#/$defs/UpdateResult"
+        }
       }
     },
     "UpdateResult": {
       "$comment": "last of the host's update-state.json, written by fleet-update",
       "type": "object",
-      "required": ["version", "state", "at"],
+      "required": [
+        "version",
+        "state",
+        "at"
+      ],
       "properties": {
-        "version": {"type": "string"},
-        "state": {"$ref": "#/$defs/UpdateState"},
-        "error": {"type": "string"},
-        "at": {"type": "string"}
+        "version": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/UpdateState"
+        },
+        "error": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        }
       }
     },
-    "UpdateState": {"type": "string", "enum": ["ok", "pending", "held", "error", "refused", "failed"]},
+    "UpdateState": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "pending",
+        "held",
+        "error",
+        "refused",
+        "failed"
+      ]
+    },
     "EdgeProblem": {
       "type": "object",
-      "required": ["kind", "route", "status", "location", "detail"],
+      "required": [
+        "kind",
+        "route",
+        "status",
+        "location",
+        "detail"
+      ],
       "properties": {
-        "kind": {"$ref": "#/$defs/ProblemKind"},
-        "route": {"type": "string"},
-        "status": {"type": "integer", "minimum": 0},
-        "location": {"type": ["string", "null"]},
-        "detail": {"type": "string"}
+        "kind": {
+          "$ref": "#/$defs/ProblemKind"
+        },
+        "route": {
+          "type": "string"
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "location": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        }
       }
     },
-    "ProblemKind": {"type": "string", "enum": ["edge-redirect", "version-behind"]},
+    "ProblemKind": {
+      "type": "string",
+      "enum": [
+        "edge-redirect",
+        "version-behind"
+      ]
+    },
     "PollReply": {
       "type": "object",
-      "required": ["commands"],
+      "required": [
+        "commands"
+      ],
       "properties": {
-        "commands": {"type": "array", "items": {"$ref": "#/$defs/Command"}},
-        "target": {"$comment": "the coordinator's newest release version with a healthy marker; null offers no update", "type": ["string", "null"]},
-        "autoUpdate": {"$comment": "the polling host's autoUpdate: on, off, or an RFC 3339 UTC hold-until time", "type": "string"}
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Command"
+          }
+        },
+        "target": {
+          "$comment": "the coordinator's newest release version with a healthy marker; null offers no update",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "autoUpdate": {
+          "$comment": "the polling host's autoUpdate: on, off, or an RFC 3339 UTC hold-until time",
+          "type": "string"
+        }
       }
     },
     "Command": {
-      "$comment": "Envelope only: payloads differ by kind and are described when each kind is next changed.",
+      "$comment": "Envelope. payload is decoded by kind: start and input StartPayload, steer SteerPayload, script ScriptPayload, readiness/base-updated/teardown ProjectPayload, artifact-copy/artifact-verify ArtifactTransferPayload, account-inspect AccountInspectPayload, stop none.",
       "type": "object",
       "additionalProperties": true,
-      "required": ["id", "kind", "executionId"],
+      "required": [
+        "id",
+        "kind",
+        "executionId"
+      ],
       "properties": {
-        "id": {"type": "string"},
-        "kind": {"type": "string"},
-        "executionId": {"type": "string"},
-        "sessionId": {"type": "string"},
-        "hostId": {"type": "string"},
-        "payload": {"type": "object", "additionalProperties": true, "properties": {}}
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/CommandKind"
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "hostId": {
+          "type": "string"
+        },
+        "payload": {}
       }
     },
     "Receipt": {
       "$comment": "Execution status receipt; delegation and account envelopes have their own generated types.",
       "type": "object",
-      "required": ["hostId", "commandId", "executionId", "status"],
+      "required": [
+        "hostId",
+        "commandId",
+        "executionId",
+        "status"
+      ],
       "properties": {
-        "hostId": {"type": "string"},
-        "commandId": {"type": "string"},
-        "executionId": {"type": "string"},
-        "status": {"$ref": "#/$defs/ReceiptStatus"},
-        "nativeSessionId": {"type": ["string", "null"]},
-        "artifacts": {"type": "array", "items": {"type": "string"}},
-        "error": {"type": "string"}
+        "hostId": {
+          "type": "string"
+        },
+        "commandId": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ReceiptStatus"
+        },
+        "nativeSessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "error": {
+          "type": "string"
+        }
       }
     },
-    "ReceiptStatus": {"type": "string", "enum": ["accepted", "started", "completed", "failed", "stopped", "unknown"]},
+    "ReceiptStatus": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "started",
+        "completed",
+        "failed",
+        "stopped",
+        "unknown"
+      ]
+    },
     "HostEvents": {
       "type": "object",
-      "required": ["hostId", "executionId", "events"],
+      "required": [
+        "hostId",
+        "executionId",
+        "events"
+      ],
       "properties": {
-        "hostId": {"type": "string"},
-        "executionId": {"type": "string"},
-        "events": {"type": "array", "items": {"$ref": "#/$defs/HostEvent"}}
+        "hostId": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HostEvent"
+          }
+        }
       }
     },
     "HostEvent": {
       "type": "object",
-      "required": ["id", "seq", "type", "timestamp", "data"],
+      "required": [
+        "id",
+        "seq",
+        "type",
+        "timestamp",
+        "data"
+      ],
       "properties": {
-        "id": {"type": "string"},
-        "seq": {"type": "integer", "minimum": 0},
-        "type": {"type": "string"},
-        "timestamp": {"type": "integer", "minimum": 0},
-        "data": {"$ref": "#/$defs/EventData"}
+        "id": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "data": {
+          "$ref": "#/$defs/EventData"
+        }
       }
     },
     "EventData": {
@@ -115,10 +542,19 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "item": {"$ref": "#/$defs/Item"},
-        "fleetNormalized": {"$ref": "#/$defs/Normalized"},
-        "harnessVersion": {"type": "string"},
-        "children": {"type": "array", "items": {}}
+        "item": {
+          "$ref": "#/$defs/Item"
+        },
+        "fleetNormalized": {
+          "$ref": "#/$defs/Normalized"
+        },
+        "harnessVersion": {
+          "type": "string"
+        },
+        "children": {
+          "type": "array",
+          "items": {}
+        }
       }
     },
     "Item": {
@@ -126,11 +562,21 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "type": {"type": "string"},
-        "text": {"type": "string"},
-        "command": {"type": "string"},
-        "name": {"type": "string"},
-        "status": {"type": "string"}
+        "type": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
       }
     },
     "Normalized": {
@@ -139,19 +585,402 @@
       "additionalProperties": true,
       "properties": {
         "usage": {},
-        "usageScope": {"type": "string"},
-        "deltaOf": {"type": ["string", "null"]}
+        "usageScope": {
+          "type": "string"
+        },
+        "deltaOf": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "OutboxFailed": {
       "$comment": "data of an outbox.failed event.",
       "type": "object",
-      "required": ["route", "status", "reason"],
+      "required": [
+        "route",
+        "status",
+        "reason"
+      ],
       "properties": {
-        "route": {"type": "string"},
-        "status": {"type": "integer", "minimum": 0},
-        "reason": {"type": "string"}
+        "route": {
+          "type": "string"
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string"
+        }
       }
+    },
+    "CommandKind": {
+      "type": "string",
+      "enum": [
+        "start",
+        "input",
+        "steer",
+        "stop",
+        "script",
+        "readiness",
+        "base-updated",
+        "teardown",
+        "artifact-copy",
+        "artifact-verify",
+        "account-inspect"
+      ]
+    },
+    "StartPayload": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "harness": {
+          "type": "string"
+        },
+        "agentConfig": {
+          "$comment": "agent profile; validated by the profile contract",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "account": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "effort": {
+          "type": "string"
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "nativeSessionId": {
+          "type": "string"
+        },
+        "project": {
+          "$comment": "project context: repositories, environments, scripts",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "skills": {
+          "type": "array",
+          "items": {}
+        },
+        "connections": {
+          "type": "array",
+          "items": {}
+        },
+        "runToken": {
+          "type": "string"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InputArtifact"
+          }
+        },
+        "fleetOperations": {
+          "type": "array",
+          "items": {}
+        },
+        "webRoute": {
+          "type": "string"
+        },
+        "gitNetwork": {
+          "type": "boolean"
+        },
+        "setup": {
+          "type": "string"
+        },
+        "fork": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "turn": {}
+      },
+      "$comment": "start and input. Named fields only; the coordinator no longer merges a free payload over them."
+    },
+    "InputArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifactId",
+        "path"
+      ]
+    },
+    "SteerPayload": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ]
+    },
+    "ScriptPayload": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "commit": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "project": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InputArtifact"
+          }
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "ProjectPayload": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "project": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "$comment": "readiness, base-updated and teardown: the project context plus kind-specific fields"
+    },
+    "ArtifactTransferPayload": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "storeId": {
+          "type": "string"
+        }
+      },
+      "$comment": "artifact-copy and artifact-verify; the transfer worker reads the rest"
+    },
+    "FleetEventType": {
+      "$comment": "Event types the executor itself originates. Native harness records keep their own open type. Readers log an unknown type as a problem, never fail (hosts may run another release during self-update).",
+      "type": "string",
+      "enum": [
+        "preparation",
+        "preparation.failed",
+        "harness",
+        "setup",
+        "readiness",
+        "readiness.failed",
+        "checkout.synced",
+        "sync-failed",
+        "teardown",
+        "script.started",
+        "script.timeout",
+        "trial.removed",
+        "process.closed",
+        "process.reconciled",
+        "resource.observation",
+        "protocol.write",
+        "protocol.failed",
+        "steer.result",
+        "limit_reading",
+        "outbox.failed",
+        "unparsed"
+      ]
+    },
+    "ProcessClosed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exitCode": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stdoutClosed": {
+          "type": "boolean"
+        },
+        "observedOwnedProcessesRemaining": {
+          "type": "boolean"
+        },
+        "cleanupUnknown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "exitCode",
+        "stdoutClosed",
+        "cleanupUnknown"
+      ]
+    },
+    "ProcessReconciled": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ownedProcesses": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "survived": {
+          "type": "boolean"
+        },
+        "launchWindowUnresolved": {
+          "type": "boolean"
+        },
+        "resolved": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ownedProcesses",
+        "survived",
+        "launchWindowUnresolved",
+        "resolved"
+      ]
+    },
+    "PreparationFailed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ]
+    },
+    "ProtocolFailed": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "error"
+      ]
+    },
+    "LimitReading": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "harness": {
+          "type": "string"
+        },
+        "readings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LimitWindow"
+          }
+        },
+        "native": {}
+      },
+      "required": [
+        "harness",
+        "readings"
+      ],
+      "$comment": "fleet-people-access.md section 8: one reading per provider window"
+    },
+    "LimitWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "period": {
+          "type": "string"
+        },
+        "pct": {
+          "$comment": "0-100; Claude: utilization x 100",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "resetsAt": {
+          "$comment": "ms since epoch",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "period"
+      ]
+    },
+    "AccountInspectPayload": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "accountId": {
+          "type": "string"
+        },
+        "harness": {
+          "type": "string"
+        },
+        "binding": {
+          "type": "string"
+        },
+        "nativeHostId": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "accountId",
+        "harness"
+      ]
     }
   }
 }

@@ -34,7 +34,7 @@ func check(s schema, where string) {
 func fail(f string, a ...any) { fmt.Fprintf(os.Stderr, "gen: "+f+"\n", a...); os.Exit(1) }
 
 func exported(name string) string {
-	parts := strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' })
+	parts := strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' || r == '.' })
 	for i, p := range parts {
 		parts[i] = strings.ToUpper(p[:1]) + p[1:]
 	}

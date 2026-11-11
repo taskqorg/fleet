@@ -135,6 +135,8 @@ func TestCodexSession(t *testing.T) {
 	eq(t, ev["readings"], `[{"period":"weekly","pct":92,"resetsAt":1794400000000}]`)
 	eq(t, claudeLimitReading(j(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1794330000,"rateLimitType":"five_hour"}}`))["readings"],
 		`[{"period":"5h","status":"allowed_warning","resetsAt":1794330000000}]`)
+	eq(t, claudeLimitReading(j(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","utilization":0.25,"resetsAt":1794330000,"rateLimitType":"seven_day"}}`))["readings"],
+		`[{"period":"weekly","pct":25,"resetsAt":1794330000000,"status":"allowed"}]`)
 }
 
 // Risk: ACP prompts without the qualified runtime, the requested model or mode, or answers client permission requests.
