@@ -7,7 +7,7 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   `/api/hosts/delegations` `ChildReceipt`, `/api/hosts/accounts/report` `AccountReceipt`; `/api/hosts/events` batches; the artifact
   transfer requests `Artifact*Request` and `HostArtifact*Request` of `/api/hosts/artifacts/*`, `StoresRequest`, `AgentToolsRequest`) and
   event payloads. Replies of the artifact routes are not described yet. It is the source of the types on all three sides
-  (docs/designs/fleet-stack.md, Contracts); `go/coordinator/schema.sql` stays the source of table rows only.
+  (docs/designs/fleet-contracts.md); `go/coordinator/schema.sql` stays the source of table rows only.
 * `gateway.schema.json`: the fleet-gateway seam (docs/designs/fleet-connections.md section 3): the snapshot the
   coordinator writes and the gateway reads, and the call line the gateway spools and the coordinator ingests.
 * `ops.schema.json`: the coordinator operations (`POST /api/ops/<name>`, and the agents' MCP tools of the same names).

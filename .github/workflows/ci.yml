@@ -15,7 +15,7 @@ on:
     branches: [main]
 permissions: {}
 jobs:
-  # Go (docs/designs/fleet-stack.md): generated-code drift, vet, unit tests with -race, the executor's MCP adapter tests,
+  # Go (docs/designs/fleet-go-code.md): generated-code drift, vet, unit tests with -race, the executor's MCP adapter tests,
   # the outside tests against a -race coordinator on the runner's PostgreSQL, a Windows compile of the coordinator.
   # Node only as the test runner: the outside tests import node: builtins, so no pnpm install here.
   go:

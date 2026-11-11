@@ -1,4 +1,4 @@
-// Trial measurement protocol (docs/designs/fleet-stack.md#trial-measurement-protocol). One script for the baseline and for
+// Trial measurement protocol (docs/designs/fleet-stack-trial.md#trial-measurement-protocol). One script for the baseline and for
 // both ports: the arm file tests/trial/arms/<arm>.json names its commands, everything else is the same.
 //   node tests/trial/measure.ts typescript [--runs 5] [--worktrees 4]
 // It works in fresh git worktrees of HEAD (commit the arm first), never in this checkout. It refuses nothing: a run that

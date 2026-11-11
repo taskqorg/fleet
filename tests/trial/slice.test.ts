@@ -1,4 +1,4 @@
-// Outside tests of the trial slice (docs/designs/fleet-stack.md#trial-slice-l1). They reach the coordinator only over HTTP
+// Outside tests of the trial slice (docs/designs/fleet-stack-trial.md#trial-slice-l1). They reach the coordinator only over HTTP
 // and SSE at FLEET_TRIAL_URL and know nothing of its language, process or database, so they run unchanged against the
 // TypeScript coordinator and against the Go and Rust ports. Run them with `node tests/trial/run.ts`.
 // Each test names its requirement (SL1-SL11 in the specification) and the risk it guards.
