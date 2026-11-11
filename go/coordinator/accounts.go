@@ -156,6 +156,14 @@ func accountHostsOp(q *Request) (any, error) {
 	return doc{"hosts": hs}, err
 }
 
+// Retained inspections predate host_job and may still be tool_run; the general execution reader excludes those.
+func accountInspectionExecution(q *Request, inspection doc) (doc, error) {
+	return one(q, `SELECT e.data || jsonb_build_object('state',e.state,'observation',e.observation)
+ FROM execution e JOIN document i ON i.id=$1 AND i.kind='account-inspection' AND e.id=i.data->>'executionId'
+ WHERE e.kind IN ('host_job','tool_run') AND e.data->>'actor'='program-worker'
+ AND e.data->>'accountId'=i.data->>'accountId' AND e.project_id IS NOT DISTINCT FROM i.project_id`, inspection["id"])
+}
+
 func accountList(q *Request) (any, error) {
 	cats, err := all(q, "account-catalogue", nil)
 	if err != nil {
@@ -175,7 +183,7 @@ func accountList(q *Request) (any, error) {
 			return nil, err
 		}
 		for _, i := range ins {
-			e, err := get(q, i["executionId"], "execution")
+			e, err := accountInspectionExecution(q, i)
 			if err != nil {
 				return nil, err
 			}
@@ -304,7 +312,7 @@ func accountInspect(q *Request, b doc, catalogue bool) (any, error) {
 	}
 	for _, x := range olds {
 		if x["accountId"] == a["id"] && x["hostId"] == host && x["binding"] == binding {
-			e, err := get(q, x["executionId"], "execution")
+			e, err := accountInspectionExecution(q, x)
 			if err != nil {
 				return nil, err
 			}
