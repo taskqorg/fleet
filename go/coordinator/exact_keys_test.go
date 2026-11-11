@@ -34,3 +34,14 @@ func TestTypedOpRefusesMissingRequiredField(t *testing.T) {
 		t.Fatalf("limit 0 refused: %v", err)
 	}
 }
+
+// Requirement N5 (a handler's reply is its contract type). Risk: a reply map that leaves out a required key went out with
+// a made-up zero value ("transition": "") instead of failing where the contract and the handler disagree.
+func TestReplyAsRefusesMissingRequiredKey(t *testing.T) {
+	if _, err := replyAs[contract.SessionTransitionReply](doc{"sessionId": "s", "profileId": "p"}, nil); err == nil {
+		t.Fatal("reply without transition accepted")
+	}
+	if _, err := replyAs[contract.SessionProfileReply](doc{"sessionId": "s", "profileId": "p", "account": nil}, nil); err != nil {
+		t.Fatalf("optional transition refused: %v", err)
+	}
+}

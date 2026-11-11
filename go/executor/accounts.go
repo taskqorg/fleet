@@ -12,6 +12,7 @@ import (
 	"fleet/contract"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -26,8 +27,9 @@ type registryEntry struct {
 	NativeHome string `json:"nativeHome"`
 	Executable string `json:"executable"`
 	Readiness  string `json:"readiness"`
-	// CredentialAuthority native-current (a shared login) is run only by the start path, never probed.
+	// CredentialAuthority native-current: the login lives in CredentialHome (HOME for Claude), as the start path uses it.
 	CredentialAuthority string `json:"credentialAuthority"`
+	CredentialHome      string `json:"credentialHome"`
 }
 
 func readRegistry() (map[string]registryEntry, error) {
@@ -60,8 +62,14 @@ func runnable(x registryEntry) error {
 		return errors.New("named host account is unprovisioned; operator login and readiness review required")
 	case !filepath.IsAbs(x.Executable):
 		return errors.New("host executable must be absolute")
-	case x.CredentialAuthority != "":
-		return errors.New("unsupported: a native-current login is not probed")
+	case x.CredentialAuthority != "" && x.CredentialAuthority != "native-current":
+		return errors.New("unsupported credential authority")
+	case x.CredentialAuthority == "native-current":
+		// The same check as commandRegistry: an owner-controlled directory.
+		st, err := os.Lstat(x.CredentialHome)
+		if err != nil || !filepath.IsAbs(x.CredentialHome) || !st.IsDir() || owner(st) != os.Geteuid() || st.Mode().Perm()&0o022 != 0 {
+			return errors.New("native-current credential home must be owner-controlled")
+		}
 	}
 	for _, d := range []string{x.Home, x.NativeHome} {
 		if err := private(d); err != nil {
@@ -273,6 +281,16 @@ func probeCmd(x registryEntry, args ...string) *exec.Cmd {
 	if env.CLAUDECONFIGDIR != nil {
 		setEnv(c, "CLAUDE_CONFIG_DIR", *env.CLAUDECONFIGDIR)
 	}
+	if x.Harness == "claude" {
+		// As the start path: the user names the login keychain; a native-current login is read from its own HOME.
+		if u, err := user.Current(); err == nil && u.Username != "" {
+			setEnv(c, "USER", u.Username)
+			setEnv(c, "LOGNAME", u.Username)
+		}
+		if x.CredentialAuthority == "native-current" {
+			setEnv(c, "HOME", x.CredentialHome)
+		}
+	}
 	c.Args = append(c.Args, args...)
 	return c
 }
@@ -313,38 +331,49 @@ func claudeReadLimits(x registryEntry) (M, error) {
 	if jStr(r, "response", "subtype") != "success" {
 		return nil, errors.New("get_usage refused")
 	}
-	return claudeUsageReading(jObj(r, "response", "response"), r), nil
+	return claudeUsageReading(jObj(r, "response", "response"), jAt(r, "response", "response", "rate_limits")), nil
 }
 
-// claudeUsageReading: each window of a get_usage answer ({five_hour: {utilization, resets_at}, seven_day: ...,
-// seven_day_<model>: ...}) as a reading, its period from the same table as rate_limit_event.
-func claudeUsageReading(usage M, native any) M {
+// claudeUsageReading: a get_usage answer (Claude Code 2.1.319, seen live 2026-11-11): response.rate_limits holds
+// five_hour, seven_day and seven_day_<name> as {utilization 0-100, resets_at RFC 3339} or null, and model_scoped as
+// [{display_name, utilization, resets_at}] for per-model weekly limits. Other keys (extra usage, spend, breakdowns) are
+// not limit windows.
+func claudeUsageReading(answer M, native any) M {
+	usage := jObj(answer, "rate_limits")
+	if usage == nil {
+		usage = answer
+	}
 	windows := []contract.LimitWindow{}
-	for _, k := range sortedKeys(usage) {
-		if k != "five_hour" && k != "seven_day" && !strings.HasPrefix(k, "seven_day_") {
-			continue // other usage (extra usage, credits) is not a subscription limit window
-		}
-		w, ok := usage[k].(M)
+	add := func(period string, w any, model *string) {
+		u, ok := num(jAt(w, "utilization"))
 		if !ok {
-			continue
+			return
 		}
-		u, hasU := num(w["utilization"])
-		if !hasU {
-			continue
-		}
-		lw := contract.LimitWindow{Period: claudePeriod(k), Pct: &u}
-		if t, ok := str(w["resets_at"]); ok {
+		lw := contract.LimitWindow{Period: period, Pct: &u, Model: model}
+		if t, ok := str(jAt(w, "resets_at")); ok {
 			if at, err := time.Parse(time.RFC3339, t); err == nil {
-				t := at.UnixMilli()
-				lw.ResetsAt = &t
+				v := at.UnixMilli()
+				lw.ResetsAt = &v
 			}
 		} else {
-			lw.ResetsAt = ms(w["resets_at"])
-		}
-		if m := strings.TrimPrefix(k, "seven_day_"); m != k {
-			lw.Model = &m
+			lw.ResetsAt = ms(jAt(w, "resets_at")) // epoch seconds, as rate_limit_event sends
 		}
 		windows = append(windows, lw)
+	}
+	for _, k := range sortedKeys(usage) {
+		if k == "five_hour" || k == "seven_day" || strings.HasPrefix(k, "seven_day_") {
+			var model *string
+			if m := strings.TrimPrefix(k, "seven_day_"); m != k {
+				model = &m
+			}
+			add(claudePeriod(k), usage[k], model)
+		}
+	}
+	for _, m := range jArr(usage, "model_scoped") {
+		// One model name for both sources: the lower-case key form (seven_day_opus and a display name "Opus" agree).
+		if name := strings.ToLower(strings.ReplaceAll(jStr(m, "display_name"), " ", "-")); name != "" {
+			add("weekly-"+name, m, &name)
+		}
 	}
 	return limitReading("claude", windows, native)
 }
