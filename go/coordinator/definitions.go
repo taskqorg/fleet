@@ -15,6 +15,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -430,6 +431,21 @@ func definitionRef(q *Request, kind, id string, content any) (contract.Definitio
 	}
 	ref := contract.DefinitionRef{Kind: contract.DefinitionKind(kind), Id: id, ContentSha: sha256Text(text)}
 	err = q.tx.QueryRow(q.ctx(), "SELECT revision FROM definition_revision WHERE kind=$1 AND id=$2 AND content_sha=$3 ORDER BY revision DESC LIMIT 1", kind, id, ref.ContentSha).Scan(&ref.Revision)
+	if err == pgx.ErrNoRows {
+		// The same value written another way (a float64 round trip turns 30000.0 into 30000): compare with the head.
+		var head int64
+		var headSha string
+		var raw []byte
+		if e := q.tx.QueryRow(q.ctx(), `SELECT d.head,r.content_sha,r.content FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head WHERE d.kind=$1 AND d.id=$2`, kind, id).Scan(&head, &headSha, &raw); e == nil {
+			var a, b any
+			json.Unmarshal(raw, &a)
+			json.Unmarshal(jsonBytes(content), &b)
+			if reflect.DeepEqual(a, b) {
+				ref.Revision, ref.ContentSha = head, headSha
+				return ref, nil
+			}
+		}
+	}
 	if err == pgx.ErrNoRows {
 		yes := true
 		ref.Draft = &yes

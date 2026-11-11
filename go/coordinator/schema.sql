@@ -715,6 +715,5 @@ ALTER TABLE score DROP CONSTRAINT IF EXISTS score_form_check;
 ALTER TABLE score ADD CONSTRAINT score_form_check CHECK (form IN ('metric', 'pass_fail', 'pick_best', 'scale', 'typed'));
 
 -- migration 30: executions pin the definitions they resolve (fleet-definition-editors.md, Resolve): a list of
--- DefinitionRef {kind, id, revision, contentSha, draft?}; draft_content holds a draft run's content by <kind>/<id>.
-ALTER TABLE execution ADD COLUMN definitions jsonb NOT NULL DEFAULT '[]', ADD COLUMN draft_content jsonb NULL, ADD COLUMN rerun_of text NULL, ADD COLUMN reused_steps jsonb NULL;
-CREATE INDEX execution_definitions ON execution USING gin (definitions jsonb_path_ops);
+-- DefinitionRef {kind, id, revision, contentSha, draft?}. The draft and rerun columns come with the operations that use them.
+ALTER TABLE execution ADD COLUMN definitions jsonb NOT NULL DEFAULT '[]';
