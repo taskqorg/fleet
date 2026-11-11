@@ -1460,16 +1460,44 @@ type QuestionHistoryRequest struct {
 	ProjectId *string `json:"projectId,omitempty"`
 }
 
-type QuestionsAnswerReply = map[string]json.RawMessage
+type QuestionKind string
+
+const (
+	QuestionKindOperatorDecision QuestionKind = "operator_decision"
+	QuestionKindAgentQuestion    QuestionKind = "agent_question"
+	QuestionKindAcceptance       QuestionKind = "acceptance"
+)
+
+// QuestionRow: One question row (questionCols in go/coordinator/tasks.go); artifactIds and cause only when set.
+type QuestionRow struct {
+	Answer      *string         `json:"answer"`
+	AnsweredAt  *string         `json:"answeredAt"`
+	AnsweredBy  *string         `json:"answeredBy"`
+	ArtifactIds []string        `json:"artifactIds,omitempty"`
+	AskedAt     string          `json:"askedAt"`
+	AskedBy     *string         `json:"askedBy"`
+	Cause       json.RawMessage `json:"cause,omitempty"`
+	ExecutionId *string         `json:"executionId"`
+	Id          string          `json:"id"`
+	Kind        QuestionKind    `json:"kind"`
+	Options     json.RawMessage `json:"options"`
+	ProjectId   *string         `json:"projectId"`
+	SessionId   *string         `json:"sessionId"`
+	State       string          `json:"state"`
+	TaskId      *string         `json:"taskId"`
+	Text        string          `json:"text"`
+}
+
+type QuestionsAnswerReply = QuestionRow
 
 type QuestionsAnswerRequest struct {
-	Answer      json.RawMessage `json:"answer,omitempty"`
-	ArtifactIds []string        `json:"artifactIds,omitempty"`
-	QuestionId  *string         `json:"questionId,omitempty"`
+	Answer      string   `json:"answer"`
+	ArtifactIds []string `json:"artifactIds,omitempty"`
+	QuestionId  string   `json:"questionId"`
 }
 
 type QuestionsListReply struct {
-	Questions []map[string]json.RawMessage `json:"questions"`
+	Questions []QuestionRow `json:"questions"`
 }
 
 type QuestionsListRequest struct {
@@ -1803,46 +1831,119 @@ type SubscriptionLimitsReply struct {
 
 type SubscriptionLimitsRequest = map[string]json.RawMessage
 
-type TaskCancelReply = map[string]json.RawMessage
+type TaskCancelReply = TaskDetail
 
 type TaskCancelRequest struct {
-	TaskId *string `json:"taskId,omitempty"`
+	TaskId string `json:"taskId"`
 }
 
-type TaskCreateReply = map[string]json.RawMessage
+type TaskCreateReply = TaskDetail
 
+// TaskCreateRequest: held: the task waits for task_release (always for an agent).
 type TaskCreateRequest struct {
 	CompletionRequirements json.RawMessage `json:"completionRequirements,omitempty"`
-	DependsOn              json.RawMessage `json:"dependsOn,omitempty"`
-	ExpectedOutcome        json.RawMessage `json:"expectedOutcome,omitempty"`
+	DependsOn              []string        `json:"dependsOn,omitempty"`
+	ExpectedOutcome        *string         `json:"expectedOutcome,omitempty"`
 	Held                   *bool           `json:"held,omitempty"`
-	Priority               json.RawMessage `json:"priority,omitempty"`
+	Priority               *string         `json:"priority,omitempty"`
 	ProjectId              *string         `json:"projectId,omitempty"`
-	ResultDestination      json.RawMessage `json:"resultDestination,omitempty"`
-	Title                  json.RawMessage `json:"title,omitempty"`
+	ResultDestination      *string         `json:"resultDestination,omitempty"`
+	Title                  string          `json:"title"`
+}
+
+// TaskDependency: kind blocks or revision_of.
+type TaskDependency struct {
+	Id   string `json:"id"`
+	Kind string `json:"kind"`
 }
 
 type TaskDerivedCheckReply struct {
-	Checked json.RawMessage `json:"checked,omitempty"`
-	Drifted json.RawMessage `json:"drifted,omitempty"`
+	Checked int64              `json:"checked"`
+	Drifted []TaskDerivedDrift `json:"drifted"`
 }
 
 type TaskDerivedCheckRequest = map[string]json.RawMessage
 
-type TaskGetReply = map[string]json.RawMessage
-
-type TaskGetRequest struct {
-	TaskId *string `json:"taskId,omitempty"`
+type TaskDerivedDrift struct {
+	Expected json.RawMessage `json:"expected"`
+	Stored   json.RawMessage `json:"stored"`
+	TaskId   string          `json:"taskId"`
 }
 
-type TaskHoldReply = map[string]json.RawMessage
+// TaskDetail: A task with its progress, totals, executions, dependencies and questions (taskGet).
+type TaskDetail struct {
+	AcceptedArtifactIds    []string         `json:"acceptedArtifactIds"`
+	AcceptedAt             *string          `json:"acceptedAt"`
+	AcceptedBy             *string          `json:"acceptedBy"`
+	CompletionRequirements json.RawMessage  `json:"completionRequirements"`
+	Cost                   json.RawMessage  `json:"cost"`
+	CreatedAt              string           `json:"createdAt"`
+	CreatedBy              *string          `json:"createdBy"`
+	DeliveryMethod         json.RawMessage  `json:"deliveryMethod"`
+	Dependencies           []TaskDependency `json:"dependencies"`
+	DirectedBy             *string          `json:"directedBy"`
+	Executions             []ExecutionRow   `json:"executions"`
+	ExpectedOutcome        *string          `json:"expectedOutcome"`
+	Id                     string           `json:"id"`
+	LatestResult           json.RawMessage  `json:"latestResult"`
+	LegacyId               *string          `json:"legacyId"`
+	LegacyKind             *string          `json:"legacyKind"`
+	OpenQuestions          json.RawMessage  `json:"openQuestions"`
+	PauseReason            *string          `json:"pauseReason"`
+	Priority               string           `json:"priority"`
+	Progress               TaskProgress     `json:"progress"`
+	ProjectId              *string          `json:"projectId"`
+	Questions              []QuestionRow    `json:"questions"`
+	RequestedBy            *string          `json:"requestedBy"`
+	ResultDestination      *string          `json:"resultDestination"`
+	State                  TaskState        `json:"state"`
+	TakenFrom              *string          `json:"takenFrom"`
+	Title                  string           `json:"title"`
+	UpdatedAt              string           `json:"updatedAt"`
+	WaitReason             *string          `json:"waitReason"`
+}
+
+type TaskGetReply = TaskDetail
+
+type TaskGetRequest struct {
+	TaskId string `json:"taskId"`
+}
+
+type TaskHoldReply = TaskDetail
 
 type TaskHoldRequest struct {
-	TaskId *string `json:"taskId,omitempty"`
+	TaskId string `json:"taskId"`
+}
+
+type TaskListItem struct {
+	AcceptedArtifactIds    []string        `json:"acceptedArtifactIds"`
+	AcceptedAt             *string         `json:"acceptedAt"`
+	AcceptedBy             *string         `json:"acceptedBy"`
+	CompletionRequirements json.RawMessage `json:"completionRequirements"`
+	CreatedAt              string          `json:"createdAt"`
+	CreatedBy              *string         `json:"createdBy"`
+	DeliveryMethod         json.RawMessage `json:"deliveryMethod"`
+	DirectedBy             *string         `json:"directedBy"`
+	ExpectedOutcome        *string         `json:"expectedOutcome"`
+	Id                     string          `json:"id"`
+	LegacyId               *string         `json:"legacyId"`
+	LegacyKind             *string         `json:"legacyKind"`
+	OpenQuestions          json.RawMessage `json:"openQuestions"`
+	PauseReason            *string         `json:"pauseReason"`
+	Priority               string          `json:"priority"`
+	Progress               TaskProgress    `json:"progress"`
+	ProjectId              *string         `json:"projectId"`
+	RequestedBy            *string         `json:"requestedBy"`
+	ResultDestination      *string         `json:"resultDestination"`
+	State                  TaskState       `json:"state"`
+	TakenFrom              *string         `json:"takenFrom"`
+	Title                  string          `json:"title"`
+	UpdatedAt              string          `json:"updatedAt"`
+	WaitReason             *string         `json:"waitReason"`
 }
 
 type TaskListReply struct {
-	Tasks json.RawMessage `json:"tasks,omitempty"`
+	Tasks []TaskListItem `json:"tasks"`
 }
 
 type TaskListRequest struct {
@@ -1866,31 +1967,56 @@ type TaskPageRequest struct {
 	Limit       *int64            `json:"limit,omitempty"`
 }
 
-type TaskReleaseReply = map[string]json.RawMessage
-
-type TaskReleaseRequest struct {
-	TaskId *string `json:"taskId,omitempty"`
+// TaskProgress: executions: the count; byState: counts by execution state.
+type TaskProgress struct {
+	ByState    json.RawMessage `json:"byState"`
+	Executions json.RawMessage `json:"executions"`
 }
 
-type TaskRequestAcceptanceReply = map[string]json.RawMessage
+type TaskReleaseReply = TaskDetail
 
+type TaskReleaseRequest struct {
+	TaskId string `json:"taskId"`
+}
+
+type TaskRequestAcceptanceReply = QuestionRow
+
+// TaskRequestAcceptanceRequest: No artifactIds: the task's stored originals.
 type TaskRequestAcceptanceRequest struct {
 	ArtifactIds []string `json:"artifactIds,omitempty"`
-	TaskId      *string  `json:"taskId,omitempty"`
+	TaskId      string   `json:"taskId"`
 	Text        *string  `json:"text,omitempty"`
 }
 
-type TaskTakeReply = map[string]json.RawMessage
+// TaskState: task_state in go/coordinator/schema.sql.
+type TaskState string
+
+const (
+	TaskStateQueued     TaskState = "queued"
+	TaskStateInProgress TaskState = "in_progress"
+	TaskStateWaiting    TaskState = "waiting"
+	TaskStatePaused     TaskState = "paused"
+	TaskStateCompleted  TaskState = "completed"
+	TaskStateFailed     TaskState = "failed"
+	TaskStateCancelled  TaskState = "cancelled"
+)
+
+type TaskTakeReply = TaskDetail
 
 type TaskTakeRequest struct {
-	TaskId *string `json:"taskId,omitempty"`
+	TaskId string `json:"taskId"`
 }
 
-type TaskUpdateReply = map[string]json.RawMessage
+type TaskUpdateReply = TaskDetail
 
+// TaskUpdateRequest: action pause, resume, cancel or fail (people only); the other fields replace the stored value when present.
 type TaskUpdateRequest struct {
-	Action *string `json:"action,omitempty"`
-	TaskId *string `json:"taskId,omitempty"`
+	Action            *string `json:"action,omitempty"`
+	ExpectedOutcome   *string `json:"expectedOutcome,omitempty"`
+	Priority          *string `json:"priority,omitempty"`
+	ResultDestination *string `json:"resultDestination,omitempty"`
+	TaskId            string  `json:"taskId"`
+	Title             *string `json:"title,omitempty"`
 }
 
 // TextBlock: role agent or operator; by: the sender of an operator message; stream open or cut-off while a delta is the newest text; harness, model and effort mark agent text.

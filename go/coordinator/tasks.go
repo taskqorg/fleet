@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -671,135 +672,135 @@ func taskMembership(q *Request, f doc, group any, ids []string) ([]doc, error) {
 }
 
 func init() {
-	gatedObjOp("task_create", false, func(q *Request) (any, error) {
-		b := body(q)
-		title, err := strArg(b, "title", "title", 500)
-		if err != nil {
-			return nil, err
+	gatedObjOp("task_create", false, typedOp(func(q *Request, r *contract.TaskCreateRequest) (contract.TaskDetail, error) {
+		if r.Title == "" || len([]rune(r.Title)) > 500 {
+			return contract.TaskDetail{}, fail(400, "Expected title")
 		}
 		deps := []string{}
-		if xs, ok := b["dependsOn"].([]any); ok {
-			for _, x := range xs {
-				d, _ := x.(string)
-				if d == "" || len(d) > 200 {
-					return nil, fail(400, "Expected dependsOn")
-				}
-				deps = append(deps, d)
+		for _, d := range r.DependsOn {
+			if d == "" || len(d) > 200 {
+				return contract.TaskDetail{}, fail(400, "Expected dependsOn")
 			}
+			deps = append(deps, d)
 		}
-		id, err := createTask(q, doc{"projectId": b["projectId"], "title": title, "expectedOutcome": b["expectedOutcome"], "priority": b["priority"], "completionRequirements": b["completionRequirements"],
-			"resultDestination": b["resultDestination"], "createdBy": actor(q, "operator"), "directedBy": director(q), "dependsOn": deps, "held": q.agent != "" || b["held"] == true})
+		id, err := createTask(q, doc{"projectId": optAny(r.ProjectId), "title": r.Title, "expectedOutcome": optAny(r.ExpectedOutcome), "priority": optAny(r.Priority),
+			"completionRequirements": rawAny(r.CompletionRequirements), "resultDestination": optAny(r.ResultDestination), "createdBy": actor(q, "operator"), "directedBy": director(q),
+			"dependsOn": deps, "held": q.agent != "" || (r.Held != nil && *r.Held)})
 		if err != nil {
-			return nil, err
+			return contract.TaskDetail{}, err
 		}
-		return taskGet(q, id)
-	})
-	gatedObjOp("task_update", false, func(q *Request) (any, error) {
-		b := body(q)
-		id, err := strArg(b, "taskId", "taskId", 200)
-		if err != nil {
-			return nil, err
+		return taskDetail(q, id)
+	}))
+	gatedObjOp("task_update", false, typedOp(func(q *Request, r *contract.TaskUpdateRequest) (contract.TaskDetail, error) {
+		var none contract.TaskDetail
+		id := r.TaskId
+		if id == "" || len(id) > 200 {
+			return none, fail(400, "Expected taskId")
 		}
 		if _, err := taskRow(q, id); err != nil {
-			return nil, err
+			return none, err
 		}
-		if _, ok := b["action"]; ok && q.agent != "" {
-			return nil, fail(400, "Use task_hold, task_release or task_cancel")
+		if r.Action != nil && q.agent != "" {
+			return none, fail(400, "Use task_hold, task_release or task_cancel")
 		}
-		if a, ok := b["action"]; ok {
-			trig := map[string]string{"pause": "pause", "resume": "resume", "cancel": "cancel", "fail": "operator_fail"}[fmt.Sprint(a)]
+		if r.Action != nil {
+			trig := map[string]string{"pause": "pause", "resume": "resume", "cancel": "cancel", "fail": "operator_fail"}[*r.Action]
 			if trig == "" {
-				return nil, fail(400, "Unknown task action")
+				return none, fail(400, "Unknown task action")
 			}
 			if _, err := taskTransition(q, id, trig, ""); err != nil {
-				return nil, err
+				return none, err
 			}
 		}
-		for _, kc := range [][2]string{{"title", "title"}, {"expectedOutcome", "expected_outcome"}, {"priority", "priority"}, {"resultDestination", "result_destination"}} {
-			v, ok := b[kc[0]]
-			if !ok {
+		for _, f := range []struct {
+			name, col string
+			v         *string
+		}{{"title", "title", r.Title}, {"expectedOutcome", "expected_outcome", r.ExpectedOutcome}, {"priority", "priority", r.Priority}, {"resultDestination", "result_destination", r.ResultDestination}} {
+			if f.v == nil {
 				continue
 			}
-			if kc[0] == "priority" {
+			var v any = *f.v
+			if f.name == "priority" {
+				var err error
 				if v, err = priorityClass(v); err != nil {
-					return nil, err
+					return none, err
 				}
-			} else if s, ok := v.(string); !ok || len([]rune(s)) > 4000 {
-				return nil, fail(400, "Invalid "+kc[0])
+			} else if len([]rune(*f.v)) > 4000 {
+				return none, fail(400, "Invalid "+f.name)
 			}
-			if err := exec(q, "UPDATE task SET "+kc[1]+"=$2,updated_at=now() WHERE id=$1", id, v); err != nil {
-				return nil, err
+			if err := exec(q, "UPDATE task SET "+f.col+"=$2,updated_at=now() WHERE id=$1", id, v); err != nil {
+				return none, err
 			}
 		}
-		return taskGet(q, id)
-	})
-	for name, trig := range map[string]string{"task_hold": "hold", "task_release": "release", "task_cancel": "cancel"} {
-		gatedObjOp(name, false, func(q *Request) (any, error) {
-			id, err := strArg(body(q), "taskId", "taskId", 200)
-			if err != nil {
-				return nil, err
+		return taskDetail(q, id)
+	}))
+	for _, x := range []struct{ name, trig string }{{"task_hold", "hold"}, {"task_release", "release"}, {"task_cancel", "cancel"}} {
+		gatedObjOp(x.name, false, typedOp(func(q *Request, r *contract.TaskHoldRequest) (contract.TaskDetail, error) {
+			if r.TaskId == "" || len(r.TaskId) > 200 {
+				return contract.TaskDetail{}, fail(400, "Expected taskId")
 			}
-			if _, err := taskTransition(q, id, trig, ""); err != nil {
-				return nil, err
+			if _, err := taskTransition(q, r.TaskId, x.trig, ""); err != nil {
+				return contract.TaskDetail{}, err
 			}
-			return taskGet(q, id)
-		})
+			return taskDetail(q, r.TaskId)
+		}))
 	}
-	gatedObjOp("task_get", true, func(q *Request) (any, error) {
-		id, err := strArg(body(q), "taskId", "taskId", 200)
-		if err != nil {
-			return nil, err
+	gatedObjOp("task_get", true, typedOp(func(q *Request, r *contract.TaskGetRequest) (contract.TaskDetail, error) {
+		if r.TaskId == "" || len(r.TaskId) > 200 {
+			return contract.TaskDetail{}, fail(400, "Expected taskId")
 		}
-		return taskGet(q, id)
-	})
-	gatedObjOp("task_request_acceptance", false, func(q *Request) (any, error) {
-		b := body(q)
-		id, err := strArg(b, "taskId", "taskId", 200)
-		if err != nil {
-			return nil, err
+		return taskDetail(q, r.TaskId)
+	}))
+	gatedObjOp("task_request_acceptance", false, typedOp(func(q *Request, r *contract.TaskRequestAcceptanceRequest) (contract.QuestionRow, error) {
+		var none contract.QuestionRow
+		id := r.TaskId
+		if id == "" || len(id) > 200 {
+			return none, fail(400, "Expected taskId")
 		}
 		t, err := taskRow(q, id)
 		if err != nil {
-			return nil, err
+			return none, err
 		}
 		if astr(t["state"]) != "in_progress" {
-			return nil, fail(409, "Task is not in progress")
+			return none, fail(409, "Task is not in progress")
 		}
-		ids, ok := b["artifactIds"].([]any)
-		if !ok {
+		ids := []any{}
+		if r.ArtifactIds != nil {
+			for _, x := range r.ArtifactIds {
+				ids = append(ids, x)
+			}
+		} else {
 			rs, err := rowsOf(q, "SELECT coalesce(legacy_id,id) AS id FROM artifact WHERE task_id=$1 AND state='stored' AND role='original' ORDER BY seq", id)
 			if err != nil {
-				return nil, err
+				return none, err
 			}
-			ids = []any{}
-			for _, r := range rs {
-				ids = append(ids, r["id"])
+			for _, x := range rs {
+				ids = append(ids, x["id"])
 			}
 		}
 		text := "Accept the result of: " + astr(t["title"])
-		if s, ok := b["text"].(string); ok {
-			text = string([]rune(s)[:min(len([]rune(s)), 2000)])
+		if r.Text != nil {
+			text = string([]rune(*r.Text)[:min(len([]rune(*r.Text)), 2000)])
 		}
 		qid, err := askQuestion(q, doc{"kind": "acceptance", "taskId": id, "projectId": t["project_id"], "text": text, "options": []string{"accepted", "rejected"}, "askedBy": actor(q, "operator"), "data": doc{"artifactIds": ids}})
 		if err != nil {
-			return nil, err
+			return none, err
 		}
-		return findQuestion(q, id, qid)
-	})
-	gatedObjOp("task_list", true, func(q *Request) (any, error) {
-		b := body(q)
+		return questionRow(q, id, qid)
+	}))
+	gatedObjOp("task_list", true, typedOp(func(q *Request, r *contract.TaskListRequest) (contract.TaskListReply, error) {
 		c, p := []string{}, []any{}
-		if v := astr(b["projectId"]); v != "" {
+		if v := deref(r.ProjectId); v != "" {
 			p = append(p, v)
 			c = append(c, fmt.Sprintf("t.project_id=$%d", len(p)))
 		}
-		if v := astr(b["state"]); v != "" {
+		if v := deref(r.State); v != "" {
 			p = append(p, v)
 			c = append(c, fmt.Sprintf(stateSQL+"=$%d", len(p)))
 		}
 		rs, err := rowsOf(q, "SELECT t.*,v.execution_count,v.executions_by_state,v.open_questions FROM task t JOIN task_view v ON v.task_id=t.id"+where(c)+" ORDER BY t.seq", p...)
 		if err != nil {
-			return nil, err
+			return contract.TaskListReply{}, err
 		}
 		out := []doc{}
 		for _, t := range rs {
@@ -808,79 +809,90 @@ func init() {
 			v["openQuestions"] = t["open_questions"]
 			out = append(out, v)
 		}
-		return doc{"tasks": out}, nil
-	})
-	gatedObjOp("task_take", false, func(q *Request) (any, error) {
-		id, err := strArg(body(q), "taskId", "taskId", 200)
-		if err != nil {
-			return nil, err
+		tasks, err := asT[[]contract.TaskListItem](out)
+		return contract.TaskListReply{Tasks: tasks}, err
+	}))
+	gatedObjOp("task_take", false, typedOp(func(q *Request, r *contract.TaskTakeRequest) (contract.TaskDetail, error) {
+		var none contract.TaskDetail
+		id := r.TaskId
+		if id == "" || len(id) > 200 {
+			return none, fail(400, "Expected taskId")
 		}
 		t, err := taskRow(q, id)
 		if err != nil {
-			return nil, err
+			return none, err
 		}
 		p := q.person
 		if p == nil || !mayAccessProjectID(p, astr(t["project_id"])) {
-			return nil, fail(403, "Take needs a grant on the task project")
+			return none, fail(403, "Take needs a grant on the task project")
 		}
 		if astr(t["directed_by"]) != p.Email {
 			if err := takeTask(q, id, p.Email, ""); err != nil {
-				return nil, err
+				return none, err
 			}
 			if err := put(q, "setting-change", doc{"id": newID(), "target": "task:" + id, "projectId": t["project_id"], "field": "directedBy", "previous": t["directed_by"], "value": p.Email, "actor": p.Email, "at": nowMs()}); err != nil {
-				return nil, err
+				return none, err
 			}
 		}
-		return taskGet(q, id)
-	})
-	gatedObjOp("questions_list", true, func(q *Request) (any, error) {
-		b := body(q)
-		qs, err := questionsList(q, astr(b["taskId"]), astr(b["state"]), astr(b["kind"]))
-		return doc{"questions": qs}, err
-	})
-	gatedObjOp("questions_answer", false, func(q *Request) (any, error) {
-		b := body(q)
-		id, err := strArg(b, "questionId", "questionId", 200)
+		return taskDetail(q, id)
+	}))
+	gatedObjOp("questions_list", true, typedOp(func(q *Request, r *contract.QuestionsListRequest) (contract.QuestionsListReply, error) {
+		qs, err := questionsList(q, deref(r.TaskId), deref(r.State), deref(r.Kind))
 		if err != nil {
-			return nil, err
+			return contract.QuestionsListReply{}, err
 		}
-		answer, err := strArg(b, "answer", "answer", 4000)
-		if err != nil {
-			return nil, err
+		rows, err := asT[[]contract.QuestionRow](qs)
+		return contract.QuestionsListReply{Questions: rows}, err
+	}))
+	gatedObjOp("questions_answer", false, typedOp(func(q *Request, r *contract.QuestionsAnswerRequest) (contract.QuestionRow, error) {
+		var none contract.QuestionRow
+		id, answer := r.QuestionId, r.Answer
+		if id == "" || len(id) > 200 {
+			return none, fail(400, "Expected questionId")
+		}
+		if answer == "" || len([]rune(answer)) > 4000 {
+			return none, fail(400, "Expected answer")
 		}
 		// An agent's question is answered by delivering the reply to its session (agent tool reply); recording the
 		// answer alone left the asker without it.
 		if aq, err := first(q, "SELECT coalesce(q.project_id,s.data->>'projectId') AS project_id FROM question q LEFT JOIN document s ON s.kind='session' AND s.id=q.session_id WHERE q.id=$1 AND q.legacy_kind='question'", id); err != nil {
-			return nil, err
+			return none, err
 		} else if aq != nil {
 			// The reply reaches another session: the person must have that session's project, as for any project op.
 			if p := q.person; p != nil && !fullAccess(p) && !mayAccessProjectID(p, astr(aq["project_id"])) {
-				return nil, errNotFound
+				return none, errNotFound
 			}
 			if _, err := agentReply(q, doc{"questionId": id, "answer": answer}); err != nil {
-				return nil, err
+				return none, err
 			}
-			return findQuestion(q, "", id)
+			return questionRow(q, "", id)
 		}
-		ids, _ := b["artifactIds"].([]any)
+		var ids []any
+		for _, x := range r.ArtifactIds {
+			ids = append(ids, x)
+		}
 		if _, err := answerQuestion(q, id, answer, actor(q, "operator"), ids); err != nil {
-			return nil, err
+			return none, err
 		}
-		return findQuestion(q, "", id)
-	})
+		return questionRow(q, "", id)
+	}))
 	gatedObjOp("executions_list", true, typedOp(func(q *Request, r *contract.ExecutionsListRequest) (contract.ExecutionsListReply, error) {
 		es, err := executionsList(q, *r)
 		return contract.ExecutionsListReply{Executions: es}, err
 	}))
 	gatedObjOp("task_page", true, func(q *Request) (any, error) { return taskPage(q, body(q)) })
-	gatedObjOp("task_derived_check", true, func(q *Request) (any, error) {
-		var n int
+	gatedObjOp("task_derived_check", true, typedOp(func(q *Request, _ *contract.TaskDerivedCheckRequest) (contract.TaskDerivedCheckReply, error) {
+		var n int64
 		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*)::int FROM task").Scan(&n); err != nil {
-			return nil, err
+			return contract.TaskDerivedCheckReply{}, err
 		}
 		d, err := rowsOf(q, `SELECT task_id AS "taskId",stored,expected FROM task_derived_drift()`)
-		return doc{"checked": n, "drifted": d}, err
-	})
+		if err != nil {
+			return contract.TaskDerivedCheckReply{}, err
+		}
+		drifted, err := asT[[]contract.TaskDerivedDrift](d)
+		return contract.TaskDerivedCheckReply{Checked: n, Drifted: drifted}, err
+	}))
 }
 
 func taskRecord(t doc) doc {
@@ -891,6 +903,44 @@ func taskRecord(t doc) doc {
 		"updated_at": "updatedAt", "legacy_kind": "legacyKind", "legacy_id": "legacyId", "pause_reason": "pauseReason"} {
 		v[key] = t[col]
 	}
+	return v
+}
+
+// taskDetail: taskGet as its contract type.
+func taskDetail(q *Request, id string) (contract.TaskDetail, error) {
+	t, err := taskGet(q, id)
+	if err != nil {
+		return contract.TaskDetail{}, err
+	}
+	return asT[contract.TaskDetail](t)
+}
+
+// questionRow: findQuestion as its contract type; a question the caller cannot see is 404.
+func questionRow(q *Request, taskID, id string) (contract.QuestionRow, error) {
+	x, err := findQuestion(q, taskID, id)
+	if err != nil || x == nil {
+		if err == nil {
+			err = errNotFound
+		}
+		return contract.QuestionRow{}, err
+	}
+	return asT[contract.QuestionRow](x)
+}
+
+// optAny and rawAny: optional request fields as the map values createTask reads (nil when absent).
+func optAny(s *string) any {
+	if s == nil {
+		return nil
+	}
+	return *s
+}
+
+func rawAny(m json.RawMessage) any {
+	if len(m) == 0 {
+		return nil
+	}
+	var v any
+	json.Unmarshal(m, &v)
 	return v
 }
 
