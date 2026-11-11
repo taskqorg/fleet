@@ -4,3 +4,4 @@ package contract
 
 //go:generate go run ../gen ../../contracts/host-protocol.schema.json contract host_protocol_gen.go
 //go:generate go run ../gen ../../contracts/gateway.schema.json contract gateway_gen.go
+//go:generate go run ../gen ../../contracts/profile.schema.json contract profile_gen.go

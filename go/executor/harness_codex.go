@@ -4,8 +4,11 @@ package main
 // methods WireMCP, Protocol and Normalize for every harness.
 
 import (
+	"encoding/json"
 	"errors"
+	"fleet/contract"
 	"fmt"
+	"math"
 	"os/exec"
 	"strings"
 )
@@ -26,12 +29,19 @@ func num(v any) (float64, bool) {
 
 func isID(v any, n float64) bool { f, ok := num(jAt(v, "id")); return ok && f == n }
 
-// ms converts native epoch seconds to ms; nil when not a non-negative integer.
-func ms(v any) any {
-	if f, ok := num(v); ok && f >= 0 && f == float64(uint64(f)) {
-		return uint64(f) * 1000
+// ms: a provider reset time in seconds as ms since epoch; nil when absent or not a whole non-negative number.
+func ms(v any) *int64 {
+	if f, ok := num(v); ok && f >= 0 && f < math.MaxInt64/1000 && f == math.Trunc(f) {
+		t := int64(f) * 1000
+		return &t
 	}
 	return nil
+}
+
+// limitReading is the limit_reading event (contract.LimitReading) as the executor's event map.
+func limitReading(harness string, windows []contract.LimitWindow, native any) M {
+	t := string(contract.FleetEventTypeLimitReading)
+	return decM(enc(contract.LimitReading{Type: &t, Harness: harness, Readings: windows, Native: json.RawMessage(enc(native))}))
 }
 
 func (h harness) Normalize(event map[string]any) map[string]any {
@@ -41,7 +51,7 @@ func (h harness) Normalize(event map[string]any) map[string]any {
 	return event
 }
 
-// claudeLimitReading: Claude stream-json rate_limit_event to a limit_reading: status and reset time, never a percent.
+// claudeLimitReading: Claude stream-json rate_limit_event to a limit_reading: status, reset time and, when utilization is given, the percent.
 func claudeLimitReading(v M) M {
 	i := v["rate_limit_info"]
 	if !has(v, "rate_limit_info") {
@@ -54,12 +64,22 @@ func claudeLimitReading(v M) M {
 			period = t
 		}
 	}
-	return M{"type": "limit_reading", "harness": "claude", "readings": []any{M{"period": period, "status": jAt(i, "status"), "resetsAt": ms(jAt(i, "resetsAt"))}}, "native": v}
+	r := contract.LimitWindow{Period: period, ResetsAt: ms(jAt(i, "resetsAt"))}
+	if st, ok := str(jAt(i, "status")); ok {
+		r.Status = &st
+	}
+	// fleet-people-access.md section 8: utilization (0-1) gives the percent, to 0.01; without it the reading stays
+	// status only.
+	if u, ok := num(jAt(i, "utilization")); ok {
+		pct := math.Round(u*10000) / 100
+		r.Pct = &pct
+	}
+	return limitReading("claude", []contract.LimitWindow{r}, v)
 }
 
 // codexLimitReading: one reading per rate-limit window, its period named from its duration.
 func codexLimitReading(r, native any) M {
-	readings := []any{}
+	readings := []contract.LimitWindow{}
 	for _, k := range []string{"primary", "secondary"} {
 		w, ok := jAt(r, k).(M)
 		if !ok {
@@ -78,9 +98,13 @@ func codexLimitReading(r, native any) M {
 				period = fmt.Sprintf("%dm", uint64(m))
 			}
 		}
-		readings = append(readings, M{"period": period, "pct": pick("usedPercent", "used_percent"), "resetsAt": ms(pick("resetsAt", "resets_at"))})
+		lw := contract.LimitWindow{Period: period, ResetsAt: ms(pick("resetsAt", "resets_at"))}
+		if pct, ok := num(pick("usedPercent", "used_percent")); ok {
+			lw.Pct = &pct
+		}
+		readings = append(readings, lw)
 	}
-	return M{"type": "limit_reading", "harness": "codex", "readings": readings, "native": native}
+	return limitReading("codex", readings, native)
 }
 
 func (h harness) WireMCP(cmd *exec.Cmd, p map[string]any, servers map[string]any, extra []string) {
@@ -143,7 +167,7 @@ func claudeMCP(c *exec.Cmd, profile any, servers M, extra []string) {
 		var ctx any
 		if args, _ := jAt(servers, "fleet", "args").([]any); len(args) > 0 {
 			if s, ok := args[len(args)-1].(string); ok {
-				ctx, _ = decode([]byte(s))
+				ctx, _ = dec(s)
 			}
 		}
 		if _, ok := str(jAt(ctx, "projectId")); ok {

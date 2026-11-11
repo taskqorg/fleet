@@ -1,6 +1,6 @@
 # fleet-update on a Linux or WSL executor host (docs/designs/fleet-self-update.md §3.5), a user unit of the executor
-# service user. Install: copy this file and fleet-update.timer to ~/.config/systemd/user/, then
-#   systemctl --user daemon-reload && systemctl --user enable --now fleet-update.timer
+# service user. Install: copy this file, fleet-update.timer and fleet-update.path to ~/.config/systemd/user/, then
+#   systemctl --user daemon-reload && systemctl --user enable --now fleet-update.timer fleet-update.path
 [Unit]
 Description=Fleet self-update (executor)
 After=network-online.target

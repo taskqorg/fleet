@@ -20,7 +20,7 @@ import (
 var mcpMimeJSON []byte
 
 // Captured Python mimetypes table keeps the former adapter's defaults without host Python.
-var mimeTable, _ = decode(mcpMimeJSON)
+var mimeTable, _ = dec(string(mcpMimeJSON))
 
 const notLink = "path must be a regular file inside your working area, not a link"
 

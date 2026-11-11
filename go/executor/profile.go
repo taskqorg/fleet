@@ -4,10 +4,11 @@ package main
 
 import (
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+
+	"fleet/contract"
 )
 
 func sha(b []byte) string { return fmt.Sprintf("%x", sha256.Sum256(b)) }
@@ -16,150 +17,20 @@ func profileHash(v any) string { return sha([]byte(enc(v))) }
 
 func acp(h string) bool { return h == "antigravity" || h == "acp" }
 
-func exactKeys(v any, keys ...string) bool {
-	o, ok := v.(M)
-	if !ok || len(o) != len(keys) {
-		return false
-	}
-	for _, k := range keys {
-		if _, ok := o[k]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func badText(v any, max int) bool { s, ok := v.(string); return !ok || len(s) > max }
-func badArg(v any) bool           { s, ok := v.(string); return !ok || s == "" || s[0] == '-' }
-func badID(v any) bool            { s, ok := v.(string); return !ok || s == "" || len(s) > 80 }
-
-// profileValidate accepts only the profile shapes Fleet can apply to each harness.
+// profileValidate accepts only the profile shapes Fleet can apply to each harness (contract.ParseProfile, the validator
+// the coordinator uses too).
 func profileValidate(v any) error {
-	o := jObj(v)
-	if h, ok := o["harness"].(string); ok && h != "codex" {
-		role := "user"
-		if h == "claude" {
-			role = "system"
-		}
-		if badID(o["id"]) || !(h == "claude" || acp(h)) || o["instructionRole"] != role ||
-			((h == "claude" || acp(h)) && o["effort"] != nil) || badArg(o["model"]) || badText(o["instructions"], 16384) {
-			return errors.New("unsupported native profile role/settings/grants")
-		}
-		known := []string{"id", "harness", "model", "effort", "instructionRole", "instructions", "mcpServers", "tools", "delegationProfiles", "settings", "fleetTools", "collaborationTools", "skills", "connections", "fleetOperations"}
-		if o == nil {
-			return errors.New("unknown native profile setting")
-		}
-		for k := range o {
-			if !contains(known, k) {
-				return errors.New("unknown native profile setting")
-			}
-		}
-		if h == "claude" {
-			tools, ok := o["tools"].([]any)
-			if !ok {
-				return errors.New("unsupported Claude tool grant")
-			}
-			for _, t := range tools {
-				if !contains([]any{"Read", "Edit", "Write", "Bash", "Glob", "Grep"}, t) {
-					return errors.New("unsupported Claude tool grant")
-				}
-			}
-		}
-		if _, has := o["tools"]; acp(h) && has {
-			return errors.New("Antigravity tool allowlist unsupported")
-		}
-		grants := jObj(jClone(o))
-		for _, k := range []string{"harness", "instructionRole", "tools", "settings"} {
-			delete(grants, k)
-		}
-		grants["model"], grants["effort"] = "gpt-6.1-sol", "low"
-		if err := profileValidate(grants); err != nil {
-			return err
-		}
-		if _, has := o["settings"]; h == "claude" && has {
-			return errors.New("unmapped Claude settings")
-		}
-		if acp(h) {
-			return validateAntigravitySettings(o["settings"])
-		}
-		return nil
-	}
-	if r, has := o["instructionRole"]; has && r != "developer" {
-		return errors.New("unsupported Codex instruction role/tools")
-	}
-	if _, has := o["tools"]; has {
-		return errors.New("unsupported Codex instruction role/tools")
-	}
-	base := jObj(jClone(o))
-	delete(base, "harness")
-	delete(base, "instructionRole")
-	for _, k := range []string{"fleetTools", "collaborationTools", "fleetOperations"} {
-		if x, has := base[k]; has {
-			delete(base, k)
-			if _, ok := x.(bool); !ok {
-				return errors.New("invalid tool setting")
-			}
-		}
-	}
-	for _, l := range []struct {
-		key string
-		max int
-		err string
-	}{{"delegationProfiles", 8, "invalid delegation grant"}, {"skills", 32, "invalid profile skills"}, {"connections", 32, "invalid profile connections"}} {
-		list, has := base[l.key]
-		if !has {
-			continue
-		}
-		delete(base, l.key)
-		ids, ok := list.([]any)
-		if !ok || len(ids) > l.max {
-			return errors.New(l.err)
-		}
-		for i, id := range ids {
-			s, ok := id.(string)
-			if !ok || badID(s) || !onlyBytes(s, func(b byte) bool { return b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '-' }) || contains(ids[:i], id) {
-				return errors.New(l.err)
-			}
-		}
-	}
-	if !exactKeys(base, "id", "model", "effort", "instructions", "mcpServers") || badID(o["id"]) || badArg(o["model"]) || badArg(o["effort"]) || badText(o["instructions"], 16384) {
-		return errors.New("unsupported agent profile")
-	}
-	servers, ok := o["mcpServers"].([]any)
-	if !ok {
-		return errors.New("mcpServers must be an array")
-	}
-	if len(servers) > 1 {
-		return errors.New("at most one design-rules grant")
-	}
-	for _, s := range servers {
-		if !exactKeys(s, "id", "data") || jStr(s, "id") != "design-rules" || jObj(s, "data") == nil || len(enc(jAt(s, "data"))) > 16384 {
-			return errors.New("unsupported MCP grant")
-		}
-	}
-	return nil
+	_, err := contract.ParseProfile([]byte(enc(v)))
+	return err
 }
 
-// validateAntigravitySettings: nil means absent.
+// validateAntigravitySettings checks a start command's Antigravity settings with the profile rules.
 func validateAntigravitySettings(settings any) error {
 	if settings == nil {
 		return nil
 	}
-	o, ok := settings.(M)
-	if !ok {
-		return errors.New("invalid Antigravity settings")
-	}
-	for k, v := range o {
-		_, isBool := v.(bool)
-		switch {
-		case k == "sandbox" && isBool:
-		case k == "includeDefaultCustomizations" && v == false:
-		case k == "mode" && (v == "plan" || v == "accept-edits"):
-		default:
-			return errors.New("unmapped Antigravity setting")
-		}
-	}
-	return nil
+	_, err := contract.ParseAntigravitySettings([]byte(enc(settings)))
+	return err
 }
 
 func exe() string { p, _ := os.Executable(); return p }

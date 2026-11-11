@@ -71,7 +71,7 @@ func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error
 	sc := bufio.NewScanner(in)
 	sc.Buffer(nil, 64<<20)
 	for sc.Scan() {
-		m, err := decode(sc.Bytes())
+		m, err := dec(sc.Text())
 		if err != nil || !has(m, "id") {
 			continue
 		}

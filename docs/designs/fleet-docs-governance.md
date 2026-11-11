@@ -156,7 +156,7 @@ Run before the rework (step 0), after it (step 6), and with each later report re
 One pull request per step or area, so one revert restores it. A file is deleted only after the file that replaces it is merged.
 
 0. **Stop the inflow.** EGM and `docs-order` lines in `AGENTS.md`, `.gitignore`, report, CI step, `fetch-depth: 0`, comment block, `docs-order` job. Done when the issue has opened once.
-1. **Index and citations.** Rewrite `docs/README.md` as the topic table over current files, marking each topic's chosen target file; record the findability expected files; run the baseline. Fix the 61 dead citations. Mark each citation as a comment or a loaded path; loaded paths (`contracts/lab-config.json`, `config/lab/use-cases/*.json`) move only with their reader.
+1. **Index and citations.** Rewrite `docs/README.md` as the topic table over current files, marking each topic's chosen target file; record the findability expected files; run the baseline. Fix the 61 dead citations. Mark each citation as a comment or a loaded path; loaded paths (`config/lab/use-cases/*.json`) move only with their reader.
 2. **Areas,** in order of code citations. For each: merge into the target file, keep cited headings, rewrite to the current target with `Not built:` lines, fold surviving findings of its papers in, delete the papers and the merged files, update code citations and the row, add the `## Drift` table.
 
 | Area | Merge into (target) | Merge and delete | Papers to delete after folding |

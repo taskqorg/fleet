@@ -204,7 +204,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 	if err != nil {
 		return nil, nil, err
 	}
-	accounts, err := decode(raw)
+	accounts, err := dec(string(raw))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -296,7 +296,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 		if err != nil {
 			old, err = os.ReadFile(filepath.Join(dir, ".fleet-harness-account.json"))
 		}
-		v, derr := decode(old)
+		v, derr := dec(string(old))
 		if err != nil || derr != nil || enc(v) != enc(binding) {
 			return fail("native account/session binding mismatch")
 		}

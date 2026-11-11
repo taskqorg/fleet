@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Agent profile (agentConfig): config/agents/*.json, Lab configurations and the start command. go/contract.ParseProfile is the one validator, used by the coordinator and the executor; it refuses unknown keys and checks the per-harness rules this subset cannot say. See contracts/README.md for the supported keyword subset.",
+  "$defs": {
+    "Profile": {"type": "object", "additionalProperties": false, "required": ["id", "model", "instructions", "mcpServers"], "properties": {
+      "id": {"type": "string"},
+      "harness": {"$ref": "#/$defs/ProfileHarness"},
+      "model": {"type": "string"},
+      "effort": {"$comment": "Codex only (required there); null or absent for the other harnesses.", "type": ["string", "null"]},
+      "instructionRole": {"$comment": "codex: developer (or absent); claude: system; antigravity and acp: user.", "type": "string"},
+      "instructions": {"type": "string"},
+      "mcpServers": {"$comment": "At most one design-rules grant.", "type": "array", "items": {"$ref": "#/$defs/ProfileMcpGrant"}},
+      "tools": {"$comment": "Claude only, required there: native tool grants.", "type": "array", "items": {"$ref": "#/$defs/ClaudeTool"}},
+      "settings": {"$comment": "Antigravity and acp only.", "$ref": "#/$defs/AntigravitySettings"},
+      "delegationProfiles": {"$comment": "At most 8 profile ids this profile may delegate to.", "type": "array", "items": {"type": "string"}},
+      "skills": {"$comment": "At most 32 skill ids.", "type": "array", "items": {"type": "string"}},
+      "connections": {"$comment": "At most 32 granted connection names.", "type": "array", "items": {"type": "string"}},
+      "fleetTools": {"type": "boolean"},
+      "collaborationTools": {"type": "boolean"},
+      "fleetOperations": {"type": "boolean"},
+      "gitNetwork": {"$comment": "The agent may use the network for git.", "type": "boolean"}}},
+    "ProfileHarness": {"type": "string", "enum": ["codex", "claude", "antigravity", "acp"]},
+    "ClaudeTool": {"type": "string", "enum": ["Read", "Edit", "Write", "Bash", "Glob", "Grep"]},
+    "AntigravityMode": {"type": "string", "enum": ["plan", "accept-edits"]},
+    "AntigravitySettings": {"type": "object", "additionalProperties": false, "properties": {
+      "sandbox": {"type": "boolean"},
+      "includeDefaultCustomizations": {"$comment": "Only false is supported.", "type": "boolean"},
+      "mode": {"$ref": "#/$defs/AntigravityMode"}}},
+    "ProfileMcpGrant": {"type": "object", "additionalProperties": false, "required": ["id", "data"], "properties": {
+      "id": {"$comment": "Only design-rules.", "type": "string"},
+      "data": {"$comment": "Opaque experiment data, at most 16384 bytes as compact JSON.", "type": "object"}}}
+  }
+}

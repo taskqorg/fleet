@@ -2,7 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   fleet-update on the Mac (docs/designs/fleet-self-update.md §3.5), a LaunchAgent of the executor service user, every
-  5 minutes. Install: replace FLEET_HOME with that user's home, copy to
+  5 minutes and whenever the executor rewrites update/update.json (a new target from its poll). The file, not the
+  directory, is watched: fleet-update writes update-state.json in that directory. A host that sets FLEET_DATA_DIR edits the watched path to <data dir>/update/update.json. Install: replace FLEET_HOME with that user's home, copy to
   FLEET_HOME/Library/LaunchAgents/com.ufobe.fleet-update.plist, then: launchctl bootstrap gui/$(id -u) <plist>.
 -->
 <plist version="1.0">
@@ -16,6 +17,8 @@
   </array>
   <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>WatchPaths</key>
+  <array><string>FLEET_HOME/Library/Application Support/Fleet/executor/update/update.json</string></array>
   <key>StartInterval</key><integer>300</integer>
   <key>RunAtLoad</key><true/>
   <key>ProcessType</key><string>Background</string>

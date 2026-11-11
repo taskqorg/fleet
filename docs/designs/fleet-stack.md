@@ -72,7 +72,7 @@ The TypeScript-era label D4 (`node:sqlite` and the bundled Node server) ended wi
 Two sources, each owning one seam ([why](#why-this-stack)):
 
 - `go/coordinator/schema.sql` owns table rows.
-- `contracts/host-protocol.schema.json` (JSON Schema) owns the host protocol (`/api/hosts/poll` request and reply, status receipts, event batches) and event payloads.
+- `contracts/host-protocol.schema.json` (JSON Schema) owns the host protocol (`/api/hosts/poll` request and reply, status receipts, event batches), the command kinds with one payload def per kind (`CommandKind`, `StartPayload`, `ScriptPayload`, …), the executor-originated event types (`FleetEventType`, closed; readers log an unknown type as a problem, since hosts may run another release during self-update) with data defs for `process.closed`, `process.reconciled`, `preparation.failed`, `protocol.failed` and `limit_reading`. Native harness record types stay open. The executor builds receipts and event batches from these types.
 
 Rules:
 
@@ -87,7 +87,7 @@ The generators were checked against off-the-shelf output for the transcript even
 
 ## MCP servers as executor subcommands (L4)
 
-- The executor starts delegation, design-rules and connection servers as `fleet-executor mcp <name>` (`go/executor/mcp_*.go`); no Python process serves them. `tests/executor/mcp-replay.test.ts` replays the stdio exchanges captured from the former Python servers (`tests/executor/fixtures/mcp.json`) against the Go binary.
+- The executor starts delegation, design-rules and connection servers as `fleet-executor mcp <name>` (`go/executor/mcp_*.go`); no Python process serves them. `tests/executor/mcp-replay.test.ts` replays stdio exchanges (`tests/executor/fixtures/mcp.json`, first captured from the former Python servers) against the Go binary; a malformed line answers the JSON-RPC parse error `-32700 "Parse error"`.
 - The Access origin guard is the gateway's `guard` command (`go/gateway/guard.go`).
 
 ## Go code

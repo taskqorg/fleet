@@ -7,14 +7,15 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   (docs/designs/fleet-stack.md, Contracts); `go/coordinator/schema.sql` stays the source of table rows only.
 * `gateway.schema.json`: the fleet-gateway seam (docs/designs/fleet-connections.md section 3): the snapshot the
   coordinator writes and the gateway reads, and the call line the gateway spools and the coordinator ingests.
-* `lab-config.json`: JSON Schema for agent configurations in laboratory configurations (copied as an asset; not generated).
+* `profile.schema.json`: the agent profile (`config/agents/*.json`, the start command's `agentConfig`). Its validator
+  `contract.ParseProfile` (`go/contract/profile.go`) is the one the coordinator and the executor run; a Go test checks every shipped profile.
 
 ## Generated types
 
 * TypeScript: `contracts/gen-ts.mjs` writes `contracts/generated/<name>.ts`. `pnpm run typecheck` and `pnpm run build`
   run it first; `pnpm run contracts` runs it alone (for an editor). The output is not committed.
 * Go: `go/gen` writes the same types into the shared package `go/contract` on `go generate` (`go/contract/<name>_gen.go`).
-  The files are committed; CI fails when `go generate` changes it. The executor uses it for the poll reply; its other host messages stay JSON values (open `EventData`).
+  The files are committed; CI fails when `go generate` changes them. The executor uses them for the poll reply, status receipts, event batches and the data of its own event types (`FleetEventType`); native harness records stay raw JSON (`HostEvent.data`).
 
 Every `*.schema.json` file here is generated; each `$defs` entry becomes one type with the same name.
 

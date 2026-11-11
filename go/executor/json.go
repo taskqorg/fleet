@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"sort"
 	"strings"
 )
@@ -28,8 +30,9 @@ func dec(s string) (any, error) {
 	if err := d.Decode(&v); err != nil {
 		return nil, err
 	}
-	if d.More() {
-		return nil, &json.SyntaxError{}
+	// A second Decode, not More: More is false before a stray ']' or '}'.
+	if d.Decode(new(json.RawMessage)) != io.EOF {
+		return nil, errors.New("trailing data after JSON value")
 	}
 	return v, nil
 }
@@ -108,4 +111,30 @@ func sortedKeys(m M) []string {
 	}
 	sort.Strings(k)
 	return k
+}
+
+func has(v any, k string) bool { m, ok := v.(M); _, in := m[k]; return ok && in }
+
+func str(v any) (string, bool) { s, ok := v.(string); return s, ok }
+
+// truth is Python truthiness for JSON values.
+func truth(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return false
+	case bool:
+		return x
+	case string:
+		return x != ""
+	case json.Number:
+		f, err := x.Float64()
+		return err != nil || f != 0
+	case float64:
+		return x != 0
+	case []any:
+		return len(x) > 0
+	case M:
+		return len(x) > 0
+	}
+	return true
 }
