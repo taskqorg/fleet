@@ -11,7 +11,8 @@ type Point = { at: number; left: number };
 /** The recorded pool line: at each member reading, the weighted sum of every member's last known left. */
 function recordedPool(pool: any, subs: any[]): ChartPoint[] {
   const members = subs.filter(s => pool.members.includes(s.id));
-  const hist = members.map(s => ({ w: s.planWeight, h: (s.periods.find((p: any) => p.period === pool.period)?.history ?? []) as Point[] }));
+  // Members with no reading in range have no recorded line; the pool line covers the members that do.
+  const hist = members.map(s => ({ w: s.planWeight, h: (s.periods.find((p: any) => p.period === pool.period)?.history ?? []) as Point[] })).filter(m => m.h.length > 0);
   const times = [...new Set(hist.flatMap(m => m.h.map(p => p.at)))].sort((a, b) => a - b);
   // Before a member's first reading in range its first value stands in (an older reading held), never 0.
   return times.map(t => ({ at: t, v: hist.reduce((sum, m) => { const last = [...m.h].reverse().find(p => p.at <= t) ?? m.h[0]; return sum + m.w * (last ? last.left : 0); }, 0) }));
