@@ -1,0 +1,26 @@
+{
+ "id": "fleet-typed-decision-smoke",
+ "use_case_id": "fleet:UC5",
+ "version": 1,
+ "origin": "synthetic",
+ "fixture": null,
+ "prompt": "PostgreSQL listens on TCP port 5432 by default; the port setting in postgresql.conf changes it. Question: does a default PostgreSQL server listen on port 5432?",
+ "inputs": [],
+ "references": [
+  {
+   "path": "output.json",
+   "text": "{\"answer\":{\"type\":\"noul\",\"noul\":0.97},\"p\":0.97,\"answered_by\":\"jev-1.14.0\",\"tokens\":{\"input_tokens\":120,\"output_tokens\":20}}\n"
+  },
+  {
+   "path": "expected.json",
+   "text": "{\"expected\":\"yes\"}\n"
+  }
+ ],
+ "checks": [
+  {
+   "id": "agrees",
+   "run": "p=$(sed -n 's/.*\"p\": *\\([0-9.eE+-]*\\).*/\\1/p' output.json); want=$(sed -n 's/.*\"expected\": *\"\\([a-z]*\\)\".*/\\1/p' references/expected.json); [ -n \"$p\" ] && [ -n \"$want\" ] && [ \"$(awk -v p=\"$p\" 'BEGIN{print (p>=0.5)?\"yes\":\"no\"}')\" = \"$want\" ]"
+  }
+ ],
+ "split": "tune"
+}

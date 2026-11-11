@@ -28,7 +28,7 @@ import (
 var (
 	labIdent     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$`)
 	labIdent200  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$`)
-	labOrigin    = regexp.MustCompile(`^task:[A-Za-z0-9-]{1,80}$`)
+	labOrigin    = regexp.MustCompile(`^(task|export):[A-Za-z0-9._-]{1,80}$`) // export: a project export row (contracts/lab-export.schema.json)
 	labCommit    = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 	labLabel     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,59}$`)
 	draftExample = regexp.MustCompile(`/examples/[^/]+\.json$`)
@@ -1223,6 +1223,11 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			files, err := trialFiles(q, t, full)
 			if err != nil {
 				return err
+			}
+			// Script checks only (never a judge or an agent): the known-good result under references/, for comparison.
+			for _, x := range anys(full["references"]) {
+				f := mapOf(x)
+				files = append(files, labFile{"references/" + astr(f["path"]), []byte(astr(f["text"]))})
 			}
 			todo[astr(t["id"])] = pending{anys(full["checks"]), files}
 		}

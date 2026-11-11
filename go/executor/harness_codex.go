@@ -57,14 +57,14 @@ func claudeLimitReading(v M) M {
 	if !has(v, "rate_limit_info") {
 		i = v
 	}
-	period := "unknown"
-	if t, ok := str(jAt(i, "rateLimitType")); ok {
-		period = map[string]string{"five_hour": "5h", "seven_day": "weekly", "seven_day_opus": "weekly-opus", "seven_day_sonnet": "weekly-sonnet"}[t]
-		if period == "" {
-			period = t
-		}
+	period, t := "unknown", jStr(i, "rateLimitType")
+	if t != "" {
+		period = claudePeriod(t)
 	}
 	r := contract.LimitWindow{Period: period, ResetsAt: ms(jAt(i, "resetsAt"))}
+	if m := strings.TrimPrefix(t, "seven_day_"); m != t {
+		r.Model = &m // a per-model weekly limit
+	}
 	if st, ok := str(jAt(i, "status")); ok {
 		r.Status = &st
 	}
