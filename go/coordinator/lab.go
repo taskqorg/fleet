@@ -1017,6 +1017,11 @@ func trialFiles(q *Request, trial, example doc) ([]labFile, error) {
 		}
 		set(rel, b)
 	}
+	// The example's references, the known-good result, under references/: a check may compare the output with them.
+	for _, x := range anys(example["references"]) {
+		f := mapOf(x)
+		set("references/"+astr(f["path"]), []byte(astr(f["text"])))
+	}
 	out := []labFile{}
 	for _, p := range order {
 		out = append(out, labFile{p, m[p]})

@@ -11,6 +11,7 @@ import {createServer, type Server} from 'node:http';
 import {createHash, randomUUID} from 'node:crypto';
 import {existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {fakeS3} from '../s3-fake.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const SECRET_DIR = process.env.FLEET_SECRET_DIR!, GATEWAY_DIR = process.env.FLEET_GATEWAY_DIR!, GATEWAY_URL = process.env.FLEET_GATEWAY_URL!;
@@ -38,6 +39,16 @@ let gateway: Server;
 before(async () => {
   gateway = createServer((req, res) => {
     seen.push(String(req.headers.authorization));
+    if (req.url === '/v1/call/typesafe/system_one') {
+      // Plays TypeSafe's reply (shape seen live: answers.<id>.noul, model, usage) and spools the call line as fleet-gateway does.
+      const callId = randomUUID(), token = String(req.headers.authorization).replace(/^Bearer /, '');
+      const dir = join(GATEWAY_DIR, 'state', 'spool'); mkdirSync(dir, {recursive: true});
+      writeFileSync(join(dir, new Date().toISOString().slice(0, 10) + '.jsonl'), JSON.stringify({callId, tokenSha256: sha(token), executionId: 'gateway-side', connection: 'typesafe', tool: 'system_one',
+        status: 200, outcome: 'ok', keyFingerprint: 'aaaaaaaaaaaa', usage: {unit: 'input_tokens', amount: 286}, startedAt: Date.now(), ms: 5}) + '\n', {flag: 'a'});
+      res.writeHead(200, {'content-type': 'application/json', 'x-fleet-call-id': callId, 'x-fleet-outcome': 'ok'})
+        .end(JSON.stringify({model: 'jev-1.14.0', answers: {q: {type: 'noul', noul: 0.93}}, usage: {input_tokens: 286, output_tokens: 20}}));
+      return;
+    }
     res.writeHead(502, {'content-type': 'application/json', 'x-fleet-error': 'provider-timeout', 'x-fleet-call-id': randomUUID()}).end('{"error":"timeout"}');
   });
   await new Promise<void>(r => gateway.listen(Number(new URL(GATEWAY_URL).port), '127.0.0.1', r));
@@ -191,4 +202,24 @@ test('L1 Lab registry and experiment validation (requirement: docs/designs/fleet
   assert.equal((await call('POST', '/api/lab/experiments', {kind: 'single', projectId: 'hello-world', pipelineId: 'no-such-pipeline', examples: ['x'], variants: [{label: 'a'}]})).status >= 400, true);
   assert.equal((await call('GET', '/api/lab/experiments/no-such')).status, 404);
   assert.deepEqual(ok(await call('GET', '/api/lab/ratings?experimentId=no-such')).ratings, []);
+});
+
+test('A1 analytics stage 1: an api step on the typed-decision connection gives the trial output {answer, p, answered_by, tokens} and a tool_run with cost and basis (requirement: docs/designs/fleet-lab.md analytics staging 1; risk: a provider call recorded without its cost basis, or a typed answer the checks cannot read)', async () => {
+  // The step's output.json is an artifact: a store on the default location host.
+  const {port, close} = await fakeS3(); after(close);
+  const {secret} = ok(await op('hosts_register', {id: 'trial-host'}));
+  const stores = await fetch(BASE + '/api/hosts/stores', {method: 'POST', headers: {authorization: 'Bearer ' + secret, 'content-type': 'application/json'},
+    body: JSON.stringify({store: {id: 'trial-store', bucket: 'fleet', endpoint: `http://127.0.0.1:${port}`, accessKeyId: 'k', secretAccessKey: 's'}})});
+  assert.equal(stores.status, 200);
+  await until(async () => {
+    const list = ok(await op('connections_list'));
+    if (!list.connections.some((x: any) => x.name === 'typesafe')) ok(await op('connections_create', {name: 'typesafe', provider: 'typesafe'}));
+    return ok(await op('connections_set_access', {connection: 'typesafe', access: {projects: ['*']}}));
+  }, 'typesafe connection');
+  const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
+  const requestId = randomUUID();
+  const r = await until(async () => { const x = ok(await call('POST', '/api/pipelines/typed-decision/runs', {requestId, example: {prompt: example.prompt}})); return x.state !== 'running' && x.state !== 'preparing' ? x : undefined; }, 'run ends');
+  assert.equal(r.state, 'succeeded', JSON.stringify(r.steps));
+  assert.deepEqual(r.steps[0].output, {answer: {type: 'noul', noul: 0.93}, p: 0.93, answered_by: 'jev-1.14.0', tokens: {input_tokens: 286, output_tokens: 20}});
+  assert.deepEqual(r.steps[0].calls.map((c: any) => [c.tool, c.basis, c.cost?.unit, c.cost?.amount]), [['system_one', 'measured', 'input_tokens', 286]]);
 });

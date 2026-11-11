@@ -33,9 +33,11 @@ export function runChecks(e:Example,files:ExampleFile[]){const dir=mkdtempSync(j
 // Problems of one example: invalid shape, a check failing on the reference, or every check passing untouched input.
 export function checkExample(raw:any,useCases:Set<string>):string[]{let e:Example;try{e=parseExample(raw,useCases)}catch(x:any){return [x.message]}
  if(!e.checks.length)return [];// rated by the owner or a judge only (assetq cases)
- const merged=new Map([...e.inputs,...e.references].map(f=>[f.path,f]));
+ // A trial's checks see the references under references/ (go/coordinator/lab.go trialFiles); here too, in both runs.
+ const refs=e.references.map(f=>({...f,path:'references/'+f.path}));
+ const merged=new Map([...e.inputs,...e.references,...refs].map(f=>[f.path,f]));
  const problems=runChecks(e,[...merged.values()]).map(f=>`check ${f.id} fails on the reference: ${f.output}`);
- if(!runChecks(e,e.inputs).length)problems.push('every check passes on the inputs alone');
+ if(!runChecks(e,[...e.inputs,...refs]).length)problems.push('every check passes on the inputs alone');
  return problems}
 
 export async function importExamples(o:{url:string,token:string,origin?:string,person?:string,examples:any[],projectId?:string}){

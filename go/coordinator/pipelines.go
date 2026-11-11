@@ -62,7 +62,7 @@ func validatePipeline(d doc) (doc, error) {
 	if len(steps) == 0 {
 		return bad("steps")
 	}
-	allowed := map[string][]string{"api": {"id", "kind", "connection", "tool", "arguments", "mode"}, "agent": {"id", "kind", "profile", "prompt"}, "script": {"id", "kind", "command", "timeout_ms", "host"}}
+	allowed := map[string][]string{"api": {"id", "kind", "connection", "tool", "arguments", "mode", "output"}, "agent": {"id", "kind", "profile", "prompt"}, "script": {"id", "kind", "command", "timeout_ms", "host"}}
 	seen := map[string]bool{}
 	for _, x := range steps {
 		s := mapOf(x)
@@ -86,7 +86,8 @@ func validatePipeline(d doc) (doc, error) {
 			_, isStr := s["connection"].(string)
 			_, toolStr := s["tool"].(string)
 			mode, hasMode := s["mode"]
-			if !isStr || !toolStr || mapOf(s["arguments"]) == nil && anys(s["arguments"]) == nil || hasMode && mode != "sync" && mode != "job" {
+			_, hasOutput := s["output"]
+			if !isStr || !toolStr || mapOf(s["arguments"]) == nil && anys(s["arguments"]) == nil || hasMode && mode != "sync" && mode != "job" || hasOutput && (mapOf(s["output"]) == nil || mode == "job") {
 				return bad("api step " + id)
 			}
 		case "agent":
@@ -143,6 +144,9 @@ func resolveRefs(v any, example any, outputs doc, quote bool) (any, error) {
 		switch {
 		case parts[0] == "example":
 			cur, parts = example, parts[1:]
+		case parts[0] == "reply":
+			// An api step's own provider reply, for its output mapping; kept under "", which is no step id.
+			cur, parts = outputs[""], parts[1:]
 		case parts[0] == "steps" && len(parts) > 2 && parts[2] == "output":
 			cur, parts = outputs[parts[1]], parts[3:]
 		default:
@@ -267,7 +271,18 @@ func withSteps(q *Request, runs []doc) ([]doc, error) {
 	for _, r := range runs {
 		ids = append(ids, astr(r["id"]))
 	}
-	steps, err := queryRows(q, "SELECT parent_execution_id AS run,"+execJSON+" AS data FROM execution WHERE kind='pipeline_step' AND parent_execution_id=ANY($1) ORDER BY (data->>'index')::int", ids)
+	steps, err := queryRows(q, "SELECT parent_execution_id AS run,id AS step,"+execJSON+" AS data FROM execution WHERE kind='pipeline_step' AND parent_execution_id=ANY($1) ORDER BY (data->>'index')::int", ids)
+	if err != nil {
+		return nil, err
+	}
+	stepIDs := []string{}
+	for _, s := range steps {
+		stepIDs = append(stepIDs, astr(s["step"]))
+	}
+	// Each step's provider calls (tool_run children) with their cost and its basis (fleet-analytics.md, basis).
+	calls, err := queryRows(q, `SELECT e.parent_execution_id AS step,e.id,e.data->>'tool' AS tool,e.data->>'connection' AS connection,t.connection_cost AS cost,
+	 coalesce(t.connection_cost_basis,'unavailable') AS basis FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id
+	 WHERE e.kind='tool_run' AND e.parent_execution_id=ANY($1) ORDER BY e.seq`, stepIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -277,6 +292,13 @@ func withSteps(q *Request, runs []doc) ([]doc, error) {
 			if s["run"] == r["id"] {
 				d := mapOf(s["data"])
 				delete(d, "index")
+				own := []any{}
+				for _, c := range calls {
+					if c["step"] == s["step"] {
+						own = append(own, doc{"id": c["id"], "tool": c["tool"], "connection": c["connection"], "cost": c["cost"], "basis": c["basis"]})
+					}
+				}
+				d["calls"] = own
 				list = append(list, d)
 			}
 		}
@@ -910,6 +932,15 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 				})
 			}
 			out := callOutput(line)
+			if m := def["output"]; m != nil {
+				// The step's output is the mapping over the reply (${reply.<path>}); the reply's usage stays the step's usage.
+				usage := mapOf(out)["usage"]
+				mapped, err := resolveRefs(m, nil, doc{"": out}, false)
+				if err != nil {
+					return failNow(err.Error(), "Output mapping: a reference to the reply is missing")
+				}
+				return true, tx(func(q *Request) error { return completeStep(q, run, i, mapped, doc{"usage": usage}) })
+			}
 			return true, tx(func(q *Request) error {
 				return completeStep(q, run, i, out, doc{"usage": mapOf(out)["usage"]})
 			})
