@@ -41,7 +41,7 @@ func processes() ([]proc, error) {
 				p.cpu = psTime(f[4])
 			}
 			if len(f) >= 6 {
-				p.name = filepath.Base(f[5])
+				p.name = strings.TrimSuffix(filepath.Base(f[5]), ":") // postgres children retitle as "postgres: walwriter"
 			}
 			ps = append(ps, p)
 		}
