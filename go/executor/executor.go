@@ -400,8 +400,8 @@ func (e *executor) reconcileProcesses() error {
 		resolved := x.err == nil && err == nil && !alive
 		// Reported once, while the command is open; the reconcile below then finishes it unknown.
 		if b, ok := e.commandBody(x.command, true); ok {
-			if err := e.event(decM(b), uint64(nowMs()), "process.reconciled", M{"ownedProcesses": len(x.l.owned), "survived": x.survived,
-				"launchWindowUnresolved": len(x.l.owned) == 0, "resolved": resolved}); err != nil {
+			if err := e.event(decM(b), uint64(nowMs()), contract.FleetEventTypeProcessReconciled, contract.ProcessReconciled{OwnedProcesses: int64(len(x.l.owned)), Survived: x.survived,
+				LaunchWindowUnresolved: len(x.l.owned) == 0, Resolved: resolved}); err != nil {
 				return err
 			}
 		}
