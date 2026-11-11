@@ -146,6 +146,8 @@ Independent steps run concurrently within resource limits. A failed step blocks 
 
 Runs retain their caller and result route under [orchestration](docs/orchestration.md); the caller need not remain active. Recovery follows permissions and project rules; needed decisions become questions. Definitions may express branches and bounded review/rework loops. Laboratory and project runs use one run mechanism.
 
+An explicitly requested [Lab local-suffix retry](docs/designs/fleet-lab.md#local-suffix-retry) creates a new attempt from a confirmed unchanged prefix under ordinary project grants; the unknown original remains history.
+
 A definition declares run parameters, transitions and review iteration limits; each step names its executor, inputs, outputs, environment requirements and instruction path where applicable. Executors may be agents, tools, programs or pipelines. Operational retry policies, timeouts and credentials remain in project rules, resources and connections.
 
 Humans and agents use one catalogue; agent configurations select available capabilities. Human views support inspection and discussion with a PM. Agents discover applicable descriptions, recommendations and instructions on demand, without browsing the human interface or loading the whole catalogue into context.

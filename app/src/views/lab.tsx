@@ -139,6 +139,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
                   <span class="muted" data-tip={conf}>r{t.cell.repeat + 1}{t.cell.attempt ? `.${t.cell.attempt}` : ''}</span>
                   <Num m={{ value: t.durationMs === null || t.durationMs === undefined ? null : t.durationMs / 1000, basis: t.durationMs == null ? 'unavailable' : 'measured', reason: 'running' }} kind="duration" />
                   <Num m={{ value: t.spend.credits, basis: 'measured', partial: t.spend.basis === 'partial' ? 'some calls without usage' : undefined }} kind="count" />
+                  {t.recovery && <a class="muted" href={`/api/pipeline-runs/${t.recovery.sourceRunId}`} target="_blank" rel="noopener" data-tip={`Reuses ${t.recovery.reusedStepIds.join(', ')}; original spend remains in source history`}>source</a>}
                   {(t.cost ?? []).map((c: any, i: number) => <Num key={i} m={{ value: c.value, basis: c.basis, currency: c.currency ?? undefined, reason: c.value === null ? c.reason : `price ${c.prices.map((p: any) => p.id.slice(0, 8)).join(', ')}` }} kind="money" />)}
                   {t.scores.filter((s: any) => s.trialIds.length === 1).map((s: any) => s.form === 'typed'
                     ? <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator)}${s.rationale ? ": " + s.rationale : ""}`}><Icon name={typedIcon(s.value)} label={`${evaluatorLabel(s.evaluator)} ${s.value.answer}, label ${s.value.label ?? 'none'}`} />{s.value.answer}</span>

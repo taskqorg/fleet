@@ -174,6 +174,21 @@ func TestRestartKillsSurvivingProcesses(t *testing.T) {
 	if exists(filepath.Join(root, "runs", "x7.env")) || exists(filepath.Join(root, "runs", "old.env")) {
 		t.Fatal("run file kept")
 	}
+	// A delayed same-command delivery after terminal unknown must not recreate ownership or rewrite output.
+	before, _ := os.ReadFile(marker)
+	replay := M{"id": "c7", "executionId": "x7", "sessionId": "s7", "kind": "script", "payload": M{"command": `sleep 30 & echo $! > "$FLEET_OUTPUT_DIR/../pid"; wait`}}
+	if err := restarted.run(replay); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(marker)
+	if string(before) != string(after) || len(restarted.live) != 0 || count(e.db, "launches") != 1 || count(e.db, "owned") != 0 {
+		t.Fatal("terminal unknown command launched again")
+	}
+	replay["payload"] = M{"command": "echo changed"}
+	if err := restarted.run(replay); err == nil {
+		t.Fatal("changed body accepted for terminal command")
+	}
+
 	rs, _ := e.db.Query("SELECT body FROM outbox WHERE route='/api/hosts/events'")
 	reconciled := 0
 	for rs.Next() {

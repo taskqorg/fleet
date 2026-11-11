@@ -1213,12 +1213,17 @@ func expLatest(trials []doc) ([]string, map[string]doc) {
 func comparable(t doc) bool { return t["state"] == "succeeded" && !unconfirmed(t) }
 
 func expInsertRun(q *Request, exp doc, requestID, file string, example any, variant doc, extra doc) (string, error) {
+	return expInsertRunReuse(q, exp, requestID, file, example, variant, extra, nil)
+}
+
+// expInsertRunReuse reserves exactly once; an existing request never reinitializes a run.
+func expInsertRunReuse(q *Request, exp doc, requestID, file string, example any, variant doc, extra, reuseOptions doc) (string, error) {
 	id := newID()
 	var label, cfg any
 	if variant != nil {
 		label, cfg = variant["label"], doc{"config_ref": variant["config_ref"]}
 	}
-	ok, err := insertExecution(q, doc{"id": id, "kind": "pipeline_run", "state": "preparing", "projectId": exp["project_id"], "experimentId": exp["id"], "variant": label, "requestId": requestID, "configRef": cfg})
+	ok, err := insertExecution(q, doc{"id": id, "kind": "pipeline_run", "state": "preparing", "projectId": exp["project_id"], "experimentId": exp["id"], "variant": label, "requestId": requestID, "configRef": cfg, "data": doc{"recovery": extra["recovery"]}})
 	if err != nil || !ok {
 		return "", err
 	}
@@ -1227,8 +1232,12 @@ func expInsertRun(q *Request, exp doc, requestID, file string, example any, vari
 		ov = mapOf(variant["overrides"])
 	}
 	extra["priority"] = "background"
-	_, err = pipelineStart(q, doc{"id": id, "file": file, "projectId": exp["project_id"], "requestId": requestID, "example": example, "overrides": ov,
-		"experimentId": exp["id"], "variant": label, "requestedBy": doc{"kind": "lab", "experimentId": exp["id"]}, "extra": extra})
+	opts := doc{"id": id, "file": file, "projectId": exp["project_id"], "requestId": requestID, "example": example, "overrides": ov,
+		"experimentId": exp["id"], "variant": label, "requestedBy": doc{"kind": "lab", "experimentId": exp["id"]}, "extra": extra}
+	for k, v := range reuseOptions {
+		opts[k] = v
+	}
+	_, err = pipelineStart(q, opts)
 	return id, err
 }
 
@@ -1792,12 +1801,19 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 		c := mapOf(t["cell"])
 		var rid string
 		if err := runTx(q.ctx(), q.app, q, true, "experiment:"+id, func(q *Request) error {
+			runs, err := expRuns(q, id)
+			if err != nil {
+				return err
+			}
+			_, latest := expLatest(expTrials(runs))
+			if latest[cell] == nil || latest[cell]["id"] != t["id"] {
+				return fail(409, "Cell source changed; read it again")
+			}
 			if err := exec(q, "UPDATE experiment SET state='running' WHERE id=$1 AND state='done'", id); err != nil {
 				return err
 			}
 			rep, _ := intOK(c["repeat"])
 			att, _ := intOK(c["attempt"])
-			var err error
 			rid, err = expLaunchTrial(q, exp, findPin(exp, c["example"]), findVariant(exp, c["variant"]), rep, att+1)
 			return err
 		}); err != nil {
@@ -2175,8 +2191,12 @@ func expGet(q *Request, id string) (doc, error) {
 				}
 			}
 		}
-		return doc{"id": t["id"], "cell": t["cell"], "state": t["state"], "observation": t["observation"], "problem": t["problem"], "comparable": comparable(t), "startedAt": t["startedAt"], "finishedAt": t["finishedAt"],
+		v := doc{"id": t["id"], "cell": t["cell"], "state": t["state"], "observation": t["observation"], "problem": t["problem"], "comparable": comparable(t), "startedAt": t["startedAt"], "finishedAt": t["finishedAt"],
 			"durationMs": t["durationMs"], "spend": spend, "cost": append([]any{}, trialCost[t["id"]]...), "confounders": doc{"hosts": uniq(hosts), "harnesses": uniq(harnesses), "models": uniq(models), "webRoute": web}, "scores": mine}
+		if recovery := mapOf(t["recovery"]); recovery != nil {
+			v["recovery"] = doc{"sourceRunId": mapOf(recovery["identity"])["sourceRunId"], "reusedStepIds": recovery["reusedStepIds"]}
+		}
+		return v
 	}
 	order, last := expLatest(trials)
 	idsOf := func(match func(c doc) bool, onlyComparable bool) []string {
@@ -2338,8 +2358,8 @@ var labOps = map[string]struct {
 	}},
 	"lab_cell_action": {true, false, func(q *Request, b doc) (any, error) {
 		act := astr(b["action"])
-		if act != "cancel" && act != "retry" {
-			return nil, fail(400, "action is cancel or retry")
+		if act != "cancel" && act != "retry" && act != "retry_suffix" {
+			return nil, fail(400, "action is cancel, retry or retry_suffix")
 		}
 		id, err := labIDArg(b["experimentId"], "experimentId")
 		if err != nil {
@@ -2348,6 +2368,9 @@ var labOps = map[string]struct {
 		cell, err := labIDArg(b["cell"], "cell")
 		if err != nil {
 			return nil, err
+		}
+		if act == "retry_suffix" {
+			return expRetrySuffix(q, id, cell, b)
 		}
 		return expCellAction(q, id, cell, act)
 	}},
@@ -2490,10 +2513,14 @@ func init() {
 		a := a
 		r("POST /api/lab/experiments/{id}/"+a, "lab_experiment_action", func(q *Request) (doc, error) { return doc{"experimentId": q.r.PathValue("id"), "action": a}, nil })
 	}
-	for _, a := range []string{"cancel", "retry"} {
+	for _, a := range []string{"cancel", "retry", "retry_suffix"} {
 		a := a
 		r("POST /api/lab/experiments/{id}/cells/{cell}/"+a, "lab_cell_action", func(q *Request) (doc, error) {
-			return doc{"experimentId": q.r.PathValue("id"), "cell": q.r.PathValue("cell"), "action": a}, nil
+			b := doc{"experimentId": q.r.PathValue("id"), "cell": q.r.PathValue("cell"), "action": a}
+			if a == "retry_suffix" {
+				b["sourceRunId"], b["requestId"] = body(q)["sourceRunId"], body(q)["requestId"]
+			}
+			return b, nil
 		})
 	}
 	r("POST /api/lab/experiments/{id}/promote", "lab_promote", func(q *Request) (doc, error) {

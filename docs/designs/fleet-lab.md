@@ -192,6 +192,51 @@ Final trial states are execution states: `succeeded`, `failed`, `cancelled`; a t
 
 Not built: kind `loop` (refused with 400), stop rules `max_iterations`, `no_gain` and strategy `stop`, and the strategy step. Target below.
 
+## Local-suffix retry
+
+`lab_cell_action` action `retry_suffix` (also `POST …/:id/cells/:cell/retry_suffix`) creates a new attempt of the same cell, reusing the unchanged confirmed succeeded prefix and rerunning a nonempty script-only suffix. Ordinary project grants apply; audit evidence grants no authority. The source must be latest, unscored and not confirmed successful, in a launched non-stopped experiment. Freeze-check definition digest/current content, variant, pinned example and actual input/output artifact bytes. Read bytes outside the write lock; under lock recheck immutable IDs/hashes/size/state/ownership/path before mutation. Missing, corrupt or changed inputs reject with HTTP 409, never provider fallback.
+
+For each started suffix execution require its unique original script command, matching project/host/session, a canonical command-bound `process.reconciled` event (ownedProcesses > 0, resolved true, launchWindowUnresolved false, survived false), and that command's closing unknown receipt. Reject missing/ambiguous/remapped proof and additional launch-capable commands. This uses the trusted host journal's exclusive lifetime ownership and terminal same-command replay guard; output presence never proves exit. Native/API/agent suffixes and unknown prefix outcomes remain blocked.
+
+Serialize source run, GLOBAL, experiment and execution scopes in that order. Recheck latest/unscored and frozen/proof facts under lock. Atomically reserve the new attempt with existing UNIQUE execution.request_id, initialize normal Lab linkage once, and cancel only the proven-stopped old parent. No synthetic child success or speculative stop. Conflict rollback cannot cancel the source. Matching authorized replay occurs before latest/scored/content checks, never initializes/notifies/dispatches again. Ordinary full retry also rechecks latest under its write lock.
+
+For `retry_suffix`, `experimentId`, `cell`, `sourceRunId` and `requestId` are required nonempty strings. `cell` is the existing canonical cell key; `sourceRunId` is the source trial execution ID. Whitespace-only strings fail with HTTP 400. Preserve exact accepted requestId bytes in the key/signature; do not trim an accepted value into a different identity. Other actions retain existing parsing and unknown-field policy. No unknown output/reuse/proof field acquires meaning.
+
+The action reply remains the existing open experiment view. Only a successful suffix action adds the required result `recovery: {"sourceRunId":"old-run", "runId":"new-run"}`. Both fields are nonempty string execution IDs. New creation and an identical replay return the same pair. The surrounding experiment view is current at response time and may change after scoring/latest changes; the recovery pair does not. Ordinary cancel/retry replies omit `recovery`.
+
+Each recovered trial in the existing `trials` projection adds `recovery: {"sourceRunId":"old-run", "reusedStepIds":["decide"]}`. `sourceRunId` is the immediate source run, and `reusedStepIds` is a nonempty array of string step IDs in definition order. Non-recovered trials omit this property. It does not alter existing `id`, `cell`, `spend`, `cost` or score fields. The row links this source run beside incremental spend; historical spend remains on that source/history.
+
+The new attempt's execution data stores this exact object:
+
+```json
+{
+  "recovery": {
+    "identity": {
+      "experimentId": "experiment",
+      "requestId": "request",
+      "cell": "existing-canonical-cell-key",
+      "sourceRunId": "old-run"
+    },
+    "reusedStepIds": ["decide"],
+    "audit": {
+      "proofs": [{"executionId":"old-script", "commandId":"script-command", "eventId":"canonical-reconciliation-event"}],
+      "artifacts": [{"artifactId":"original-artifact", "sha256":"lowercase-64-hex"}]
+    }
+  }
+}
+```
+
+All shown properties are required for a suffix-recovery record. IDs are nonempty strings. `proofs` contains one exact command/event binding per started suffix execution in definition order; `artifacts` contains every validated prefix-output/example-input artifact once, sorted by artifactId, with the computed actual-byte SHA-256. The arrays have no caller-supplied members. These are audit references, not authority or accepted output bytes. Existing artifact records and source runs retain full ownership/path/size/state/provenance.
+
+Only the four `identity` strings participate in replay equality, after ordinary grants and authorized row lookup; compare them exactly and compare the stored typed request key. Audit arrays and current latest/scored/artifact availability are not replay-identity inputs. Malformed stored identity fails closed with a generic HTTP 409 response. The UNIQUE request key still uses only canonical `[experimentId, requestId]`, so another cell/source under the same key conflicts. A matching replay never reinitializes, cancels, notifies or dispatches.
+
+The immediate source is explicit in trial recovery, run `rerunOf`, and the existing step `reusedFrom` convention. For transitive reuse, original executionId/outputArtifactId and artifact bytes/hash/owner remain unchanged; do not replace them with the intermediate run's IDs or create copied provider outputs. Original content provenance follows those immutable references, while immediate lineage follows sourceRunId/reusedFrom. Public recovery objects do not claim that the immediate source performed the provider work. The ordinary transitive rerun test and suffix HTTP assertions verify this distinction.
+
+Schema comments, Lab trial projection and HTTP expectations use these exact shapes; keep `LabCellActionReply` an open map so other experiment-view fields survive generation.
+
+
+The request key is `lab-suffix:` plus SHA-256 of canonical `[experimentId,requestId]` in the new execution.request_id. Original calls/usage/cost remain in source history and experiment accounting once; the new trial shows incremental work and an immediate-source link. Reused original artifact/execution references remain immutable, including transitive reuse. Normal new script receipts, output storage and scoring establish the result.
+
 ## Iterative improvement
 
 Target for kind `loop`. A strategy is a pipeline step (script or agent). Input: an experiment snapshot (variants, scores, spend, budgets). Output `strategy.json`: `{action: next|stop, variants:[{label, overrides}], reason}`. Config `{generator:{kind, params}, allocator:{kind, params}}`. At iteration end reconcile runs the strategy and appends its variants.
@@ -227,7 +272,7 @@ Not built: the order-swapped blind `pick_best` judge (designed in [asset pipelin
 
 Analytics view on the same screen, dark theme first: the experiment list in plain words (goal, hypothesis, decision, when) and, per Lab group, the variant comparison from [statistics](#statistics): primary evaluator difference with interval and `n`, coverage and escalation share where typed, cost with basis and price source, p50 time, per tag. A row is identified by variant label plus `config_ref`; the kind of variant (model override, other pipeline, `api` step) is shown as text. No combined score, no ranking.
 
-Routes (each also an operation `lab_*`, `go/coordinator/lab.go`): `POST|GET /api/lab/experiments`, `GET /api/lab/experiments/:id` (trials, scores, spend), `POST …/:id/{launch,stop,resume}`, `POST …/:id/cells/:cell/{cancel,retry}`, `POST …/:id/promote {variant}`, `POST|GET /api/lab/ratings`, `GET /api/lab/ratings/:id`, `POST /api/lab/scores/:id/correct`, `GET /api/lab/registry`. Errors: 400 invalid body, 404 unknown ID, 409 wrong state.
+Routes (each also an operation `lab_*`, `go/coordinator/lab.go`): `POST|GET /api/lab/experiments`, `GET /api/lab/experiments/:id` (trials, scores, spend), `POST …/:id/{launch,stop,resume}`, `POST …/:id/cells/:cell/{cancel,retry,retry_suffix}`, `POST …/:id/promote {variant}`, `POST|GET /api/lab/ratings`, `GET /api/lab/ratings/:id`, `POST /api/lab/scores/:id/correct`, `GET /api/lab/registry`. Errors: 400 invalid body, 404 unknown ID, 409 wrong state.
 
 Promote returns `{cataloguePatch, method, recommendation}`: a catalogue method entry (pipeline, overrides, `config_ref`, source experiment) as a JSON patch for the owner to commit; the recommendation is set once a catalogue method carries the variant's `configRef`. Nothing promotes automatically.
 
