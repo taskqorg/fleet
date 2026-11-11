@@ -243,7 +243,7 @@
    "repo": "fleet",
    "path": "docs/use-cases.md",
    "anchor": "uc12",
-   "commit": "44a03a113d6070d0263d0b454a39f928bb97fbd3",
+   "commit": "6cb153edf9c12dc3f5416983d4cb61aa1b0f79f4",
    "sha256": "74ffd8d9c42fa528f099fe1564024ae9efe69d55aedfb9e1490d83d9bc758a04"
   },
   "source_status": "current",
@@ -270,7 +270,7 @@
    "repo": "fleet",
    "path": "docs/use-cases.md",
    "anchor": "uc13",
-   "commit": "44a03a113d6070d0263d0b454a39f928bb97fbd3",
+   "commit": "6cb153edf9c12dc3f5416983d4cb61aa1b0f79f4",
    "sha256": "49a2e3dee9068845e5923bcbf11dbfe8a523559169c93d952a66a3fed86c2a38"
   },
   "source_status": "current",
