@@ -12,7 +12,8 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   coordinator writes and the gateway reads, and the call line the gateway spools and the coordinator ingests.
 * `ops.schema.json`: the coordinator operations (`POST /api/ops/<name>`, and the agents' MCP tools of the same names).
   `operations` lists every operation (`read`, `long`, `errors`: the statuses its handler returns besides 401, 403 and 500);
-  each name `<name>` has `$defs` `<Name>Request` and `<Name>Reply`, and a failed call answers `OpError`. TypeScript gets
+  each name `<name>` has `$defs` `<Name>Request` and `<Name>Reply`, and a failed call answers `OpError`. `planned` lists operations specified contract first and not built yet
+  (their `$defs` exist; building one moves its name to `operations`). TypeScript gets
   `Ops` (name to request and reply, used by `op()` in `app/src/api.ts`); Go gets `contract.Operations`, which
   `go/coordinator/ops_contract_test.go` compares with the registry.
 * `profile.schema.json`: the agent profile (`config/agents/*.json`, the start command's `agentConfig`). Its validator
@@ -31,7 +32,7 @@ Every `*.schema.json` file here is generated; each `$defs` entry becomes one typ
 
 Both generators accept only these keywords and fail on any other, so a schema never yields a silently weaker type:
 `type` (one type, optionally with `"null"`), `properties`, `required`, `additionalProperties`, `items`, `enum` (strings),
-`$ref` (`#/$defs/<Name>`), `minimum`, `$comment`, `const` (a string: a literal type in TypeScript, `string` in Go) and
+`$ref` (`#/$defs/<Name>`, or `<file>.schema.json#/$defs/<Name>` for a type of another contract file: an import in TypeScript, the same package in Go), `minimum`, `$comment`, `const` (a string: a literal type in TypeScript, `string` in Go) and
 `oneOf` (only as a `$defs` entry whose members are all `$ref`: a union in TypeScript, `json.RawMessage` in Go, where
 each member is its own struct; give each member a `const` discriminator such as `kind`).
 An object without properties whose `additionalProperties` is a schema is a map (`map[string]T` in Go, `Record<string, T>` in TypeScript).
