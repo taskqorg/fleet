@@ -1776,8 +1776,9 @@ func (l *live) aliveOwned() (bool, error) {
 	return false, nil
 }
 
-// gone: a signal failed because the recorded incarnation exited between the check and the signal (ESRCH, or the
-// identity now differs or reads as absent while kill(pid, 0) says no such process). Any other failure stays an error.
+// gone: a signal failed because the recorded incarnation exited between the check and the signal: kill(pid, 0) says no
+// such process, or the pid now has another identity. An identity that cannot be read is not gone (W3-3): that failure
+// stays an error.
 func gone(pid int, ident string) bool {
 	if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
 		return true
