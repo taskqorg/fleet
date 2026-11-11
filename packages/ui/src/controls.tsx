@@ -631,28 +631,37 @@ export function Presets({ presets, active, onPick, onSave, onUnpin }: {
 /* ---------- Navigation rail with pinned sections (nav-rail.md) ---------- */
 
 export type NavItem = { id: string; label: string; icon: IconName; group: string; count?: { n: number; tone: Tone; label: string } };
-export function NavRail({ items, pinned, current, onPins, onGo, mini, head }: {
+export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, head }: {
   items: NavItem[]; current: string; onGo: (id: string) => void;
   /** The person's pinned ids in their order; onPins gets the whole new list (pin, unpin, reorder). */ pinned: string[]; onPins: (ids: string[]) => void;
   /** Collapsed to icons. */ mini?: boolean; /** Product name, need-you chip and the collapse button (app shell). */ head?: ComponentChildren;
 }) {
   const [q, setQ] = useState('');
+  // Ids of sections that no longer exist are dropped here, so they never take a position and leave on the next save.
+  const pinned = stored.filter(id => items.some(i => i.id === id));
   const [menu, setMenu] = useState<string | null>(null);
   const [drag, setDrag] = useState<string | null>(null);
   const navRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!menu) return;
-    const close = (e: Event) => { if (e instanceof KeyboardEvent ? e.key === 'Escape' : !(e.target as Element).closest?.('.rail-menu')) setMenu(null); };
-    document.addEventListener('pointerdown', close); document.addEventListener('keydown', close);
-    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close); };
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent) { if (e.key !== 'Escape') return; e.stopPropagation(); focusItem(menu.slice(2), menu[0] === 'p'); }
+      else if ((e.target as Element).closest?.('.rail-menu')) return;
+      setMenu(null);
+    };
+    document.addEventListener('pointerdown', close); document.addEventListener('keydown', close, true);
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close, true); };
   }, [menu]);
-  const toggle = (id: string) => onPins(pinned.includes(id) ? pinned.filter(x => x !== id) : [...pinned, id]);
+  const focusItem = (id: string, inPinned: boolean) => requestAnimationFrame(() =>
+    navRef.current?.querySelector<HTMLElement>(`.rail-g${inPinned ? '.pinned' : ':not(.pinned)'} [data-id="${id}"] a`)?.focus());
+  // An item unpinned from the pinned group leaves it: focus follows to the same item in its group.
+  const toggle = (id: string, inPinned = false) => { onPins(pinned.includes(id) ? pinned.filter(x => x !== id) : [...pinned, id]); if (inPinned) focusItem(id, false); };
   // move: the pinned item to position `to` (clamped); keeps focus on the moved item for keyboard reorder.
   const move = (id: string, to: number, refocus = false) => {
     const rest = pinned.filter(x => x !== id), at = Math.max(0, Math.min(rest.length, to));
     if (pinned.indexOf(id) === at) return;
     onPins([...rest.slice(0, at), id, ...rest.slice(at)]);
-    if (refocus) requestAnimationFrame(() => navRef.current?.querySelector<HTMLElement>(`.rail-g.pinned [data-id="${id}"] a`)?.focus());
+    if (refocus) focusItem(id, true);
   };
   const item = (it: NavItem, inPinned: boolean) => {
     const isPinned = pinned.includes(it.id), i = pinned.indexOf(it.id);
@@ -665,7 +674,7 @@ export function NavRail({ items, pinned, current, onPins, onGo, mini, head }: {
       onContextMenu={e => { e.preventDefault(); setMenu(`${inPinned ? 'p' : 'g'}:${it.id}`); }}>
       <a href={`#/${it.id}`} aria-current={it.id === current ? 'page' : undefined} aria-keyshortcuts={inPinned ? 'Alt+ArrowUp Alt+ArrowDown' : undefined} onClick={e => { e.preventDefault(); onGo(it.id); }}
         onKeyDown={e => {
-          if (e.key === 'p' && !e.altKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); toggle(it.id); }
+          if (e.key === 'p' && !e.altKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); toggle(it.id, inPinned); }
           else if (inPinned && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); move(it.id, i + (e.key === 'ArrowUp' ? -1 : 1), true); }
           else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); setMenu(`${inPinned ? 'p' : 'g'}:${it.id}`); }
         }}>
@@ -675,9 +684,9 @@ export function NavRail({ items, pinned, current, onPins, onGo, mini, head }: {
       <button type="button" class={`nav-pin${isPinned ? ' on' : ''}`} aria-pressed={isPinned} aria-label={`${isPinned ? 'Unpin' : 'Pin'} ${it.label}`} data-tip={isPinned ? 'Unpin' : 'Pin'} onClick={() => toggle(it.id)}>
         <Icon name="pin" /></button>
       {menu === `${inPinned ? 'p' : 'g'}:${it.id}` && <span class="menu rail-menu" role="menu" aria-label={it.label}>
-        <button type="button" role="menuitem" autoFocus onClick={act(() => toggle(it.id))}><Icon name={i < 0 ? 'pin' : 'pin-off'} />{i < 0 ? 'Pin' : 'Unpin'}</button>
-        {i > 0 && <button type="button" role="menuitem" onClick={act(() => move(it.id, i - 1))}><Icon name="arrow-up" />Move up</button>}
-        {i >= 0 && i < pinned.length - 1 && <button type="button" role="menuitem" onClick={act(() => move(it.id, i + 1))}><Icon name="arrow-down" />Move down</button>}
+        <button type="button" role="menuitem" autoFocus onClick={act(() => toggle(it.id, inPinned))}><Icon name={i < 0 ? 'pin' : 'pin-off'} />{i < 0 ? 'Pin' : 'Unpin'}</button>
+        {i > 0 && <button type="button" role="menuitem" onClick={act(() => move(it.id, i - 1, true))}><Icon name="arrow-up" />Move up</button>}
+        {i >= 0 && i < pinned.length - 1 && <button type="button" role="menuitem" onClick={act(() => move(it.id, i + 1, true))}><Icon name="arrow-down" />Move down</button>}
       </span>}
     </li>;
   };

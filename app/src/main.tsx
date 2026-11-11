@@ -1,6 +1,6 @@
 // Fleet operator app entry (docs/designs/fleet-operator-app.md): shell, routes, identity check, feed start, service worker.
 import { render } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation } from 'wouter-preact';
 import { AppShell, Empty, Button, workspaces, type NavItem, type AppScreen } from '../../packages/ui/src/index.ts';
 import { op, signedOut } from './api.ts';
@@ -35,8 +35,10 @@ function App() {
   const current = loc.split('/')[1] || 'overview';
   // Pinned sections are a person setting (person_settings_*), so they follow the person to every device.
   const [pins, setPins] = useState<string[]>([]);
-  useEffect(() => { op('person_settings_get', {}).then(s => setPins(s.pins)).catch(() => {}); }, []);
-  const savePins = (ids: string[]) => { const prev = pins; setPins(ids); op('person_settings_set', { pins: ids }).then(s => setPins(s.pins)).catch(() => setPins(prev)); };
+  // ponytail: last write wins; seq drops a stale get reply or a rollback after a newer change.
+  const seq = useRef(0);
+  useEffect(() => { const n = seq.current; op('person_settings_get', {}).then(s => { if (seq.current === n) setPins(s.pins); }).catch(() => {}); }, []);
+  const savePins = (ids: string[]) => { const prev = pins, n = ++seq.current; setPins(ids); op('person_settings_set', { pins: ids }).catch(() => { if (seq.current === n) setPins(prev); }); };
   useEffect(() => {
     // Identity and grants (D3): a changed grants version clears stored data. Re-read on focus too.
     const me = () => op('me', {}).then(m => checkGrants(m.grantsVersion ?? '')) // no person: '' still clears another person's data.catch(() => {});

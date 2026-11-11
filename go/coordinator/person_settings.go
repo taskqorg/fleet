@@ -74,6 +74,10 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	if r.Order != nil && !slices.Contains(contract.DispatchOrderValues, *r.Order) {
 		return contract.PersonSettings{}, fail(400, "order: list or soonest_reset")
 	}
+	// One writer per person: a set reads the document and writes it whole, so concurrent sets of different fields keep both.
+	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "person-setting:"+email); err != nil {
+		return contract.PersonSettings{}, err
+	}
 	prev, err := personSettings(q, email)
 	if err != nil {
 		return contract.PersonSettings{}, err
