@@ -5,6 +5,7 @@ package main
 
 import (
 	"fleet/contract"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -29,7 +30,11 @@ func settingsEmail(q *Request, email *string) (string, error) {
 	if q.person != nil && !q.person.Owner {
 		return "", fail(403, "Only the owner reads or sets another person's settings")
 	}
-	return strings.ToLower(*email), nil
+	e := strings.ToLower(*email)
+	if q.app.people[e] == nil {
+		return "", fail(400, "Unknown person "+*email)
+	}
+	return e, nil
 }
 
 // dispatchOrder: the director's order setting; list when unset.
@@ -38,7 +43,7 @@ func dispatchOrder(q *Request, email string) (contract.DispatchOrder, error) {
 	if err != nil || d == nil {
 		return contract.DispatchOrderList, err
 	}
-	if o := contract.DispatchOrder(astr(d["order"])); o == contract.DispatchOrderSoonestReset {
+	if o := contract.DispatchOrder(astr(d["order"])); slices.Contains(contract.DispatchOrderValues, o) {
 		return o, nil
 	}
 	return contract.DispatchOrderList, nil
@@ -58,22 +63,19 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	if err != nil {
 		return contract.PersonSettings{}, err
 	}
-	if r.Order != contract.DispatchOrderList && r.Order != contract.DispatchOrderSoonestReset {
+	if !slices.Contains(contract.DispatchOrderValues, r.Order) {
 		return contract.PersonSettings{}, fail(400, "order: list or soonest_reset")
 	}
 	prev, err := dispatchOrder(q, email)
 	if err != nil {
 		return contract.PersonSettings{}, err
 	}
-	actor := email
-	if q.person != nil {
-		actor = q.person.Email
-	}
+	by := actor(q, "operator")
 	_, err = unscoped(q, func() (struct{}, error) {
 		if err := put(q, "person-setting", doc{"id": "person-setting:" + email, "email": email, "order": string(r.Order)}); err != nil {
 			return struct{}{}, err
 		}
-		return struct{}{}, put(q, "setting-change", doc{"id": newID(), "target": "person:" + email, "holder": email, "field": "order", "previous": string(prev), "value": string(r.Order), "actor": actor, "at": nowMs()})
+		return struct{}{}, put(q, "setting-change", doc{"id": newID(), "target": "person:" + email, "holder": email, "field": "order", "previous": string(prev), "value": string(r.Order), "actor": by, "at": nowMs()})
 	})
 	return contract.PersonSettings{Email: email, Order: r.Order}, err
 }
@@ -83,7 +85,13 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 func soonestReset(cs []*candidate, readings map[string][]Reading) {
 	key := func(c *candidate) float64 {
 		best := -1.0
-		for _, r := range readings[astr(c.Subscription["id"])] {
+		list := readings[astr(c.Subscription["id"])]
+		for _, r := range list {
+			if r.Period == "weekly" && r.State == "known" && r.Pct != nil && *r.Pct >= 100 {
+				return -1 // the overall weekly limit is used up: a per-model window does not make it soon
+			}
+		}
+		for _, r := range list {
 			if r.State != "known" || r.ResetsAt == nil || r.Pct == nil || *r.Pct >= 100 || !(r.Period == "weekly" || strings.HasPrefix(r.Period, "weekly-")) {
 				continue
 			}

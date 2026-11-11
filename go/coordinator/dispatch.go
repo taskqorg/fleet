@@ -35,6 +35,7 @@ type dispatchContext struct {
 	roots    map[string][]string
 	accounts []doc
 	readings map[string][]Reading
+	orders   map[string]contract.DispatchOrder // the directors' order setting, read once per pass
 }
 
 func loadDispatchContext(q *Request) (*dispatchContext, error) {
@@ -42,7 +43,7 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	k := &dispatchContext{byID: map[string]doc{}, seen: map[string]float64{}, roots: map[string][]string{}}
+	k := &dispatchContext{byID: map[string]doc{}, seen: map[string]float64{}, roots: map[string][]string{}, orders: map[string]contract.DispatchOrder{}}
 	for _, h := range hs {
 		if len(anys(h["roles"])) == 0 {
 			k.hosts = append(k.hosts, h)
@@ -362,14 +363,24 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 	}
 	// The director's order setting (section 8): soonest_reset uses limit about to reset first, with the terms warning.
 	if dir != "" {
-		order, err := dispatchOrder(q, dir)
-		if err != nil {
-			return nil, err
+		order, ok := k.orders[dir]
+		if !ok {
+			o, err := dispatchOrder(q, dir)
+			if err != nil {
+				return nil, err
+			}
+			order, k.orders[dir] = o, o
 		}
 		if order == contract.DispatchOrderSoonestReset {
 			soonestReset(out, k.readings)
+			subs := map[any]bool{}
 			for _, c := range out {
 				if c.Skipped == "" && c.Subscription != nil {
+					subs[c.Subscription["id"]] = true
+				}
+			}
+			for _, c := range out {
+				if len(subs) > 1 && c.Skipped == "" && c.Subscription != nil {
 					c.Warnings = append(c.Warnings, "order soonest_reset: round-robin across accounts may conflict with provider terms")
 				}
 			}
