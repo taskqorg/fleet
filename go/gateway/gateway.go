@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -456,7 +457,7 @@ func (g *gateway) usable(c connection) []string {
 
 // send makes one provider request; the timeout covers the answer and, separately, reading its body.
 // Cancelling caller ends the request too; it does not undo what the provider already did.
-func (g *gateway) send(caller context.Context, method, url, value string, body []byte, headers map[string]string) (*http.Response, []byte, error) {
+func (g *gateway) send(caller context.Context, method, url, keyHeader, value string, body []byte, headers map[string]string) (*http.Response, []byte, error) {
 	ctx, cancel := context.WithCancel(caller)
 	defer cancel()
 	var timedOut atomic.Bool
@@ -470,7 +471,11 @@ func (g *gateway) send(caller context.Context, method, url, value string, body [
 	if err != nil {
 		return nil, nil, err
 	}
-	request.Header.Set("Authorization", "Bearer "+value)
+	if keyHeader != "" {
+		request.Header.Set(keyHeader, value)
+	} else {
+		request.Header.Set("Authorization", "Bearer "+value)
+	}
 	request.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
 		request.Header.Set(k, v)
@@ -518,7 +523,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 			lastFailure = "key " + id + " has no value file"
 			continue
 		}
-		response, data, err := g.send(ctx, t.Method, p.BaseUrl+path, value, body, t.Headers)
+		response, data, err := g.send(ctx, t.Method, p.BaseUrl+path, deref(p.KeyHeader), value, body, t.Headers)
 		var cut errBody
 		switch {
 		case err != nil && ctx.Err() != nil:
@@ -567,13 +572,12 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		// value the provider echoed is replaced: the caller never sees a key.
 		data = bytes.ReplaceAll(data, []byte(value), []byte("[key]"))
 		a := &answer{status: status, body: data, retryAfter: response.Header.Get("Retry-After"), outcome: "ok", key: id}
-		var reply struct {
-			Usage map[string]json.RawMessage `json:"usage"`
+		field := "usage." + t.Unit
+		if t.UsageField != nil {
+			field = *t.UsageField
 		}
-		if json.Unmarshal(data, &reply) == nil {
-			if amount, err := strconv.ParseInt(string(reply.Usage[t.Unit]), 10, 64); err == nil && amount >= 0 {
-				a.usage = &amount
-			}
+		if amount, ok := usageAt(data, field); ok {
+			a.usage = &amount
 		}
 		if status < 200 || status > 299 {
 			a.outcome, a.err = "error", fmt.Sprintf("provider-%d", status)
@@ -604,7 +608,7 @@ func (g *gateway) usageReport(ctx context.Context) map[string]any {
 				continue
 			}
 			row := map[string]any{"connection": name, "key": k.Id, "usage": nil}
-			response, data, err := g.send(ctx, "GET", p.BaseUrl+p.Usage.Path, value, nil, nil)
+			response, data, err := g.send(ctx, "GET", p.BaseUrl+p.Usage.Path, deref(p.KeyHeader), value, nil, nil)
 			switch {
 			case errors.Is(err, context.DeadlineExceeded) && response == nil:
 				row["unknown"] = "usage request timed out"
@@ -830,7 +834,15 @@ func fillPath(t tool, body map[string]json.RawMessage) (string, bool) {
 		}
 		field := path[start+1 : start+length]
 		var value string
-		if json.Unmarshal(body[field], &value) != nil || value == "" || strings.IndexFunc(value, func(r rune) bool {
+		if json.Unmarshal(body[field], &value) != nil || value == "" {
+			return "", false
+		}
+		if pattern, ok := t.PathPatterns[field]; ok {
+			// Patterns come from the catalogue (code); one that does not compile refuses every call.
+			if re, err := regexp.Compile(pattern); err != nil || !re.MatchString(value) || strings.Contains(value, "..") {
+				return "", false
+			}
+		} else if strings.IndexFunc(value, func(r rune) bool {
 			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_')
 		}) >= 0 {
 			return "", false
@@ -838,6 +850,33 @@ func fillPath(t tool, body map[string]json.RawMessage) (string, bool) {
 		delete(body, field)
 		path = path[:start] + value + path[start+length+1:]
 	}
+}
+
+// usageAt reads a non-negative integer at a dotted field of a JSON reply.
+func usageAt(data []byte, field string) (int64, bool) {
+	var v any
+	if json.Unmarshal(data, &v) != nil {
+		return 0, false
+	}
+	for _, f := range strings.Split(field, ".") {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return 0, false
+		}
+		v = m[f]
+	}
+	n, ok := v.(float64)
+	if !ok || n < 0 || n != float64(int64(n)) {
+		return 0, false
+	}
+	return int64(n), true
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // serve answers on listener until stop closes, then drains for drain_timeout.

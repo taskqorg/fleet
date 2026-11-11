@@ -487,3 +487,22 @@ func TestCallerCancellationReachesProvider(t *testing.T) {
 	}
 	t.Fatal("no spool line")
 }
+
+func TestPathPatternsAndUsageField(t *testing.T) {
+	model := "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+	field := "usageMetadata.totalTokenCount"
+	tl := tool{Path: "/models/{model}", PathPatterns: map[string]string{"model": model}, UsageField: &field}
+	for value, want := range map[string]bool{`"org/name-1.5"`: true, `"org/../x"`: false, `"name"`: false, `"a/b/c"`: false} {
+		body := map[string]json.RawMessage{"model": json.RawMessage(value)}
+		path, ok := fillPath(tl, body)
+		if ok != want || ok && (path != "/models/"+value[1:len(value)-1] || body["model"] != nil) {
+			t.Fatalf("%s: path %q ok %v", value, path, ok)
+		}
+	}
+	if n, ok := usageAt([]byte(`{"usageMetadata":{"totalTokenCount":42}}`), field); !ok || n != 42 {
+		t.Fatalf("usage %d %v", n, ok)
+	}
+	if _, ok := usageAt([]byte(`{"usageMetadata":{}}`), field); ok {
+		t.Fatal("missing usage read")
+	}
+}

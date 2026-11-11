@@ -11,6 +11,7 @@
       "usageTokenSha256": {"$comment": "SHA-256 of the coordinator's own token for GET /v1/usage.", "type": "string"}}},
     "GatewayProvider": {"$comment": "A provider catalogue entry (go/coordinator/providers.go); the gateway reads only these fields.", "type": "object", "additionalProperties": true, "required": ["baseUrl", "tools"], "properties": {
       "baseUrl": {"type": "string"},
+      "keyHeader": {"$comment": "Header that carries the key value as is (Google AI x-goog-api-key); absent: Authorization: Bearer <key>.", "type": "string"},
       "tools": {"type": "object", "additionalProperties": {"$ref": "#/$defs/GatewayTool"}},
       "usage": {"$ref": "#/$defs/GatewayUsageSource"}}},
     "GatewayUsageSource": {"$comment": "Per-key usage report (reconcile): GET path, and the dotted field holding the number.", "type": "object", "required": ["path", "field"], "properties": {"path": {"type": "string"}, "field": {"type": "string"}}},
@@ -20,7 +21,9 @@
       "idempotent": {"type": "boolean"},
       "unit": {"type": "string"},
       "inject": {"$comment": "Body fields the gateway adds to every call (Tavily include_usage).", "type": "object", "additionalProperties": true},
-      "headers": {"$comment": "Fixed request headers, e.g. a provider's opt-in flag.", "type": "object", "additionalProperties": {"type": "string"}}}},
+      "headers": {"$comment": "Fixed request headers, e.g. a provider's opt-in flag.", "type": "object", "additionalProperties": {"type": "string"}},
+      "pathPatterns": {"$comment": "Pattern per {field} of path; a value that does not match is refused before a key is attached. A field without a pattern takes letters, digits, - and _.", "type": "object", "additionalProperties": {"type": "string"}},
+      "usageField": {"$comment": "Dotted reply field holding the usage amount (Google AI usageMetadata.totalTokenCount); absent: usage.<unit>.", "type": "string"}}},
     "GatewayConnection": {"type": "object", "required": ["provider", "tools", "intake", "keys", "blocked"], "properties": {
       "provider": {"type": "string"},
       "tools": {"type": "array", "items": {"type": "string"}},

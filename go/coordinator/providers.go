@@ -192,7 +192,7 @@ const providersJSON = `
  },
  "meshy": {
   "baseUrl": "https://api.meshy.ai",
-  "instructions": "image_to_3d starts a Meshy Image to 3D task and returns its id; job_status reads the task. A submit is never repeated by Fleet.",
+  "instructions": "image_to_3d and multi_image_to_3d start a Meshy task and return its id; job_status and multi_job_status read it. A submit is never repeated by Fleet.",
   "tools": {
    "image_to_3d": {
     "method": "POST",
@@ -225,6 +225,28 @@ const providersJSON = `
       },
       "should_texture": {
        "type": "boolean"
+      },
+      "ai_model": {
+       "type": "string",
+       "description": "meshy-4, meshy-5 or latest"
+      },
+      "topology": {
+       "type": "string",
+       "enum": [
+        "quad",
+        "triangle"
+       ]
+      },
+      "target_polycount": {
+       "type": "integer",
+       "minimum": 100,
+       "maximum": 300000
+      },
+      "enable_pbr": {
+       "type": "boolean"
+      },
+      "texture_resolution": {
+       "type": "integer"
       }
      }
     }
@@ -245,6 +267,9 @@ const providersJSON = `
        "type": "string"
       }
      }
+    },
+    "pathPatterns": {
+     "jobId": "^[0-9a-f-]+$"
     }
    },
    "recent_tasks": {
@@ -256,6 +281,170 @@ const providersJSON = `
     "inputSchema": {
      "type": "object",
      "properties": {}
+    }
+   },
+   "multi_image_to_3d": {
+    "method": "POST",
+    "path": "/openapi/v1/multi-image-to-3d",
+    "unit": "credits",
+    "idempotent": false,
+    "description": "Start a Multi-Image to 3D task from one to four views of one object. Returns {result: <task id>}.",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "image_urls"
+     ],
+     "properties": {
+      "image_urls": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       },
+       "minItems": 1,
+       "maxItems": 4
+      },
+      "target_formats": {
+       "type": "array",
+       "items": {
+        "type": "string",
+        "enum": [
+         "glb",
+         "obj",
+         "fbx",
+         "stl",
+         "usdz",
+         "3mf"
+        ]
+       }
+      },
+      "should_texture": {
+       "type": "boolean"
+      },
+      "ai_model": {
+       "type": "string",
+       "description": "meshy-4, meshy-5 or latest"
+      },
+      "topology": {
+       "type": "string",
+       "enum": [
+        "quad",
+        "triangle"
+       ]
+      },
+      "target_polycount": {
+       "type": "integer",
+       "minimum": 100,
+       "maximum": 300000
+      },
+      "enable_pbr": {
+       "type": "boolean"
+      },
+      "texture_resolution": {
+       "type": "integer"
+      }
+     }
+    }
+   },
+   "multi_job_status": {
+    "method": "GET",
+    "path": "/openapi/v1/multi-image-to-3d/{jobId}",
+    "unit": "credits",
+    "idempotent": true,
+    "pathPatterns": {
+     "jobId": "^[0-9a-f-]+$"
+    },
+    "description": "Read a Multi-Image to 3D task: status, model_urls, consumed_credits.",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "jobId"
+     ],
+     "properties": {
+      "jobId": {
+       "type": "string"
+      }
+     }
+    }
+   },
+   "multi_recent_tasks": {
+    "method": "GET",
+    "path": "/openapi/v1/multi-image-to-3d?page_size=20&sort_by=-created_at",
+    "unit": "credits",
+    "idempotent": true,
+    "description": "The newest Multi-Image to 3D tasks of this key.",
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    }
+   }
+  }
+ },
+ "huggingface": {
+  "baseUrl": "https://router.huggingface.co",
+  "instructions": "inference calls one model on Hugging Face Inference Providers (hf-inference); the body is the model's own request body plus model.",
+  "tools": {
+   "inference": {
+    "method": "POST",
+    "path": "/hf-inference/models/{model}",
+    "unit": "requests",
+    "idempotent": false,
+    "pathPatterns": {
+     "model": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+    },
+    "description": "Run a model. Body {model: <owner>/<name>, inputs, parameters?}; the reply is the model's own answer.",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "model"
+     ],
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "inputs": {},
+      "parameters": {
+       "type": "object"
+      }
+     }
+    }
+   }
+  }
+ },
+ "google-ai": {
+  "baseUrl": "https://generativelanguage.googleapis.com",
+  "keyHeader": "x-goog-api-key",
+  "instructions": "generate_content calls a Gemini model; the body is the Gemini generateContent body plus model.",
+  "tools": {
+   "generate_content": {
+    "method": "POST",
+    "path": "/v1beta/models/{model}:generateContent",
+    "unit": "tokens",
+    "idempotent": false,
+    "pathPatterns": {
+     "model": "^[A-Za-z0-9._-]+$"
+    },
+    "usageField": "usageMetadata.totalTokenCount",
+    "description": "Generate content. Body {model, contents, generationConfig?, systemInstruction?}; usage is usageMetadata.totalTokenCount.",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "model",
+      "contents"
+     ],
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "contents": {
+       "type": "array"
+      },
+      "generationConfig": {
+       "type": "object"
+      },
+      "systemInstruction": {
+       "type": "object"
+      }
+     }
     }
    }
   }

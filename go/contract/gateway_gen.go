@@ -68,9 +68,10 @@ type GatewayKey struct {
 
 // GatewayProvider: A provider catalogue entry (go/coordinator/providers.go); the gateway reads only these fields.
 type GatewayProvider struct {
-	BaseUrl string                 `json:"baseUrl"`
-	Tools   map[string]GatewayTool `json:"tools"`
-	Usage   *GatewayUsageSource    `json:"usage,omitempty"`
+	BaseUrl   string                 `json:"baseUrl"`
+	KeyHeader *string                `json:"keyHeader,omitempty"`
+	Tools     map[string]GatewayTool `json:"tools"`
+	Usage     *GatewayUsageSource    `json:"usage,omitempty"`
 }
 
 type GatewayRunToken struct {
@@ -92,12 +93,14 @@ type GatewaySnapshot struct {
 }
 
 type GatewayTool struct {
-	Headers    map[string]string          `json:"headers,omitempty"`
-	Idempotent bool                       `json:"idempotent"`
-	Inject     map[string]json.RawMessage `json:"inject,omitempty"`
-	Method     string                     `json:"method"`
-	Path       string                     `json:"path"`
-	Unit       string                     `json:"unit"`
+	Headers      map[string]string          `json:"headers,omitempty"`
+	Idempotent   bool                       `json:"idempotent"`
+	Inject       map[string]json.RawMessage `json:"inject,omitempty"`
+	Method       string                     `json:"method"`
+	Path         string                     `json:"path"`
+	PathPatterns map[string]string          `json:"pathPatterns,omitempty"`
+	Unit         string                     `json:"unit"`
+	UsageField   *string                    `json:"usageField,omitempty"`
 }
 
 // GatewayUsageSource: Per-key usage report (reconcile): GET path, and the dotted field holding the number.
