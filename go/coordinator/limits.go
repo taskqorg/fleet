@@ -453,10 +453,12 @@ func limitsReply(q *Request, o limitOptions) (contract.SubscriptionLimitsReply, 
 		}
 		accounts = append(accounts, a)
 		periods[a.id] = limitPeriods(a, hist[a.id], o)
-		readings := []json.RawMessage{}
-		for _, rd := range latest[a.id] {
-			b, _ := json.Marshal(rd)
-			readings = append(readings, b)
+		readings, err := asT[[]contract.SubscriptionReading](latest[a.id]) // Reading's JSON is the contract's SubscriptionReading
+		if err != nil {
+			return none, err
+		}
+		if readings == nil {
+			readings = []contract.SubscriptionReading{}
 		}
 		raw := func(k string) json.RawMessage { b, _ := json.Marshal(x[k]); return b }
 		var sw *float64

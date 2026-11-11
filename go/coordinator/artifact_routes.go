@@ -59,26 +59,23 @@ func init() {
 	route("GET /api/results/{id}/preview", resultPreview)
 
 	operation("artifact_list", true, opArtifactList)
-	operation("artifact_get", true, func(q *Request) (any, error) {
-		var b struct{ ArtifactID string }
-		decode(q.body, &b)
-		return artifactGetView(withTx(q), q.app, truncate(b.ArtifactID, 200), "")
-	})
-	operation("artifact_purge", false, func(q *Request) (any, error) {
+	operation("artifact_get", true, typedOp(func(q *Request, r *contract.ArtifactGetRequest) (contract.ArtifactView, error) {
+		v, err := artifactGetView(withTx(q), q.app, truncate(r.ArtifactId, 200), "")
+		if err != nil {
+			return contract.ArtifactView{}, err
+		}
+		return asT[contract.ArtifactView](v)
+	}))
+	operation("artifact_purge", false, operatorFirst(typedOp(func(q *Request, r *contract.ArtifactPurgeRequest) (contract.ArtifactPurgeReply, error) {
 		if err := operatorOnly(q); err != nil {
-			return nil, err
+			return contract.ArtifactPurgeReply{}, err
 		}
-		var b struct {
-			ContentHash, Reason string
-			ProjectID, Scope    *string
-		}
-		decode(q.body, &b)
-		return artifactPurge(withTx(q), q.app, b.ContentHash, b.ProjectID, b.Scope, b.Reason)
-	})
-	operation("stores_list", true, func(q *Request) (any, error) {
+		return artifactPurge(withTx(q), q.app, r.ContentHash, r.ProjectId, r.Scope, r.Reason)
+	})))
+	operation("stores_list", true, typedOp(func(q *Request, _ *contract.StoresListRequest) (contract.StoresListReply, error) {
 		all, err := storeList(withTx(q), q.app)
 		if err != nil {
-			return nil, err
+			return contract.StoresListReply{}, err
 		}
 		problems := []doc{}
 		for _, s := range all {
@@ -92,39 +89,36 @@ func init() {
 				problems = append(problems, p)
 			}
 		}
-		if all == nil {
-			all = []StoreRow{}
+		stores, err := asT[[]contract.StoreView](all) // StoreRow's JSON is the contract's StoreView
+		if stores == nil {
+			stores = []contract.StoreView{}
 		}
-		return doc{"stores": all, "problems": problems}, nil
-	})
-	operation("store_set_free_space_warning", false, func(q *Request) (any, error) {
+		return contract.StoresListReply{Stores: stores, Problems: recsOf(problems)}, err
+	}))
+	operation("store_set_free_space_warning", false, operatorFirst(typedOp(func(q *Request, b *contract.StoreSetFreeSpaceWarningRequest) (contract.StoreSetFreeSpaceWarningReply, error) {
+		var none contract.StoreSetFreeSpaceWarningReply
 		if err := operatorOnly(q); err != nil {
-			return nil, err
+			return none, err
 		}
-		var b struct {
-			StoreID string
-			Bytes   *float64
-		}
-		decode(q.body, &b)
-		if !storeIDPattern.MatchString(b.StoreID) {
-			return nil, fail(400, "Invalid store id")
+		if !storeIDPattern.MatchString(b.StoreId) {
+			return none, fail(400, "Invalid store id")
 		}
 		var v any
 		if b.Bytes != nil {
 			if *b.Bytes < 0 || *b.Bytes != float64(int64(*b.Bytes)) {
-				return nil, fail(400, "Expected bytes or null")
+				return none, fail(400, "Expected bytes or null")
 			}
 			v = int64(*b.Bytes)
 		}
-		r, err := oneCtx(withTx(q), q.app, "UPDATE store SET free_space_warning_bytes=$2,state=CASE WHEN state='unreachable' THEN state WHEN $2::bigint IS NOT NULL AND capacity_bytes < $2::bigint THEN 'full' ELSE 'reachable' END WHERE id=$1 RETURNING id,state", b.StoreID, v)
+		r, err := oneCtx(withTx(q), q.app, "UPDATE store SET free_space_warning_bytes=$2,state=CASE WHEN state='unreachable' THEN state WHEN $2::bigint IS NOT NULL AND capacity_bytes < $2::bigint THEN 'full' ELSE 'reachable' END WHERE id=$1 RETURNING id,state", b.StoreId, v)
 		if err != nil {
-			return nil, err
+			return none, err
 		}
 		if r == nil {
-			return nil, fail(404, "Unknown store "+b.StoreID)
+			return none, fail(404, "Unknown store "+b.StoreId)
 		}
-		return r, nil
-	})
+		return contract.StoreSetFreeSpaceWarningReply{Id: astr(r["id"]), State: astr(r["state"])}, nil
+	})))
 	operation("subscription_limits", true, typedOp(subscriptionLimits))
 	// changes_since: the stream's read for the app's catch-up and polling fallback; no cursor is the head.
 	operation("changes_since", true, func(q *Request) (any, error) {

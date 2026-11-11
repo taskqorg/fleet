@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"fleet/contract"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -61,26 +63,35 @@ func watchSet(q *Request, b doc) (doc, error) {
 }
 
 func init() {
-	agentOp("watch_set", false, watchSet)
-	agentOp("watch_stop", false, func(q *Request, b doc) (doc, error) {
-		sid, err := strArg(b, "sessionId", "sessionId", 0)
+	agentTypedOp("watch_set", false, func(q *Request, b *contract.WatchSetRequest) (contract.WatchRecord, error) {
+		w, err := watchSet(q, docOf(b))
 		if err != nil {
-			return nil, err
+			return contract.WatchRecord{}, err
+		}
+		return asT[contract.WatchRecord](w)
+	})
+	agentTypedOp("watch_stop", false, func(q *Request, b *contract.WatchStopRequest) (contract.WatchStopReply, error) {
+		sid := b.SessionId
+		if sid == "" {
+			return contract.WatchStopReply{}, fail(400, "Expected sessionId")
 		}
 		if s, err := get(q, sid, "session"); err != nil {
-			return nil, err
+			return contract.WatchStopReply{}, err
 		} else if err := directs(q, s); err != nil {
-			return nil, err
+			return contract.WatchStopReply{}, err
 		}
-		return doc{"sessionId": sid, "stopped": true}, exec(q, "DELETE FROM document WHERE kind='watch' AND id=$1", "watch:"+sid)
+		return contract.WatchStopReply{SessionId: sid, Stopped: true}, exec(q, "DELETE FROM document WHERE kind='watch' AND id=$1", "watch:"+sid)
 	})
-	agentOp("watch_get", true, func(q *Request, b doc) (doc, error) {
-		sid, err := strArg(b, "sessionId", "sessionId", 0)
-		if err != nil {
-			return nil, err
+	agentTypedOp("watch_get", true, func(q *Request, b *contract.WatchGetRequest) (contract.WatchGetReply, error) {
+		if b.SessionId == "" {
+			return contract.WatchGetReply{}, fail(400, "Expected sessionId")
 		}
-		w, err := maybe(q, "watch:"+sid, "watch")
-		return doc{"watch": w}, err
+		w, err := maybe(q, "watch:"+b.SessionId, "watch")
+		if err != nil || w == nil {
+			return contract.WatchGetReply{}, err
+		}
+		x, err := asT[contract.WatchRecord](w)
+		return contract.WatchGetReply{Watch: &x}, err
 	})
 	agentDescriptions["watch_set"] = "Watch your focus: kinds (task, question, execution, host, limits) and optional timerMs; Fleet sends you one message per batch of foreign changes and on the timer; limits: a pool of your subscriptions projected empty before its next reset"
 	agentDescriptions["watch_stop"] = "Stop watching"

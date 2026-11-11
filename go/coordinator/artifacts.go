@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"fleet/contract"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -1278,31 +1280,32 @@ func artifactList(ctx context.Context, a *App, f listFilter) ([]doc, error) {
 }
 
 // artifactPurge (operator): every store, now where reachable, pending where not; the hash is refused from then on.
-func artifactPurge(ctx context.Context, a *App, hash string, projectID, scope *string, reason string) (doc, error) {
+func artifactPurge(ctx context.Context, a *App, hash string, projectID, scope *string, reason string) (contract.ArtifactPurgeReply, error) {
+	var none contract.ArtifactPurgeReply
 	if !shaPattern.MatchString(hash) {
-		return nil, fail(400, "Expected sha256")
+		return none, fail(400, "Expected sha256")
 	}
 	if reason == "" {
-		return nil, fail(400, "Expected reason")
+		return none, fail(400, "Expected reason")
 	}
 	reason = truncate(reason, 500)
 	rows, err := artifacts(ctx, a, "WHERE content_hash=$1 AND ($2::text IS NULL OR project_id IS NOT DISTINCT FROM $2) AND ($3::text IS NULL OR scope=$3)", hash, projectID, scope)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	all, err := storeList(ctx, a)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	deleted, pending := 0, 0
 	for i := range rows {
 		x := &rows[i]
 		if err := execCtx(ctx, a, "INSERT INTO purged_hash(project_id,scope,content_hash,reason) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING", projectKey(x.ProjectID), x.Scope, hash, reason); err != nil {
-			return nil, err
+			return none, err
 		}
 		cs, err := rowsCtx(ctx, conn(ctx, a), "SELECT store_id,staging_key FROM artifact_copy WHERE artifact_id=$1 AND state<>'deleted'", x.ID)
 		if err != nil {
-			return nil, err
+			return none, err
 		}
 		for _, c := range cs {
 			var s *StoreRow
@@ -1325,14 +1328,14 @@ func artifactPurge(ctx context.Context, a *App, hash string, projectID, scope *s
 				pending++
 			}
 			if err := execCtx(ctx, a, "UPDATE artifact_copy SET state=$3 WHERE artifact_id=$1 AND store_id=$2", x.ID, astr(c["store_id"]), state); err != nil {
-				return nil, err
+				return none, err
 			}
 		}
 		if err := execCtx(ctx, a, "UPDATE artifact SET state='deleted',deleted_at=now(),deleted_by=$2 WHERE id=$1", x.ID, "purge:"+reason); err != nil {
-			return nil, err
+			return none, err
 		}
 	}
-	return doc{"artifacts": len(rows), "deleted": deleted, "pending": pending}, nil
+	return contract.ArtifactPurgeReply{Artifacts: int64(len(rows)), Deleted: int64(deleted), Pending: int64(pending)}, nil
 }
 
 // expireLeases: reservations whose lease ran out are aborted and fail.

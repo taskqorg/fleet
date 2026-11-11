@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fleet/contract"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -274,6 +275,23 @@ func TestPayloadOfWrongTypeRefused(t *testing.T) {
 	}
 }
 
+// Requirement: teardown and project-script data are the host-protocol Teardown and ProjectScriptResult, with the exit
+// code and the refusal reason (W4). Risk: a renamed field reaches the coordinator as missing and a failed teardown
+// script looks clean.
+func TestTeardownAndProjectScriptTyped(t *testing.T) {
+	dir := t.TempDir()
+	if r := teardown(dir, "s1", dir, M{}); r.Removed || str0(r.Reason) != "no-worktree" {
+		t.Fatal(enc(r))
+	}
+	r := projectScript("setup", "echo out; exit 3", dir, dir, "s1")
+	if r.Ok || r.ExitCode == nil || *r.ExitCode != 3 || str0(r.Stdout) != "out\n" {
+		t.Fatal(enc(r))
+	}
+	if b := enc(refusedTeardown("uncommitted")); b != `{"reason":"uncommitted","removed":false}` {
+		t.Fatal(b)
+	}
+}
+
 // Requirement: an owned pid that is still running but whose identity cannot be read is unknown, never confirmed gone;
 // only a pid missing from a new snapshot is gone (W3-3). Risk: a permission or transient read failure frees a session
 // while its original process keeps running.
@@ -327,5 +345,22 @@ func TestAccountInspectStatusAndLimits(t *testing.T) {
 	}
 	if ev := rows["/api/hosts/events"]; !strings.Contains(ev, `"source":"probe"`) || !strings.Contains(ev, `"pct":42`) || !strings.Contains(ev, `"subscriptionId":"a1"`) {
 		t.Fatal("limits event", ev)
+	}
+}
+
+// Requirement: a signal that fails because the owned process exited between the check and the signal is not a cleanup
+// failure; a live process with its recorded identity still is. Risk: a script that ends while being cleaned up is
+// reported unknown (the CI flake of TestScriptOutputTimeoutAndGroupKill under -race).
+func TestSignalRaceWithExit(t *testing.T) {
+	cmd := exec.Command("true")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	me, err := identity(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gone(cmd.Process.Pid, "x") || !gone(os.Getpid(), me+"-other") || gone(os.Getpid(), me) {
+		t.Fatal("gone misjudged an exited, a reused or a live process")
 	}
 }

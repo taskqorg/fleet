@@ -417,6 +417,15 @@ type ProjectRequest struct {
 	RequestId string           `json:"requestId"`
 }
 
+// ProjectScriptResult: data of a setup event, and the teardown script inside Teardown; output is the last 4000 bytes
+type ProjectScriptResult struct {
+	ExitCode *int64  `json:"exitCode"`
+	Ok       bool    `json:"ok"`
+	Script   string  `json:"script"`
+	Stderr   *string `json:"stderr,omitempty"`
+	Stdout   *string `json:"stdout,omitempty"`
+}
+
 type ProtocolFailed struct {
 	Error  string  `json:"error"`
 	Reason *string `json:"reason,omitempty"`
@@ -455,6 +464,16 @@ type ScriptPayload struct {
 	Project   map[string]json.RawMessage `json:"project,omitempty"`
 	Repo      *string                    `json:"repo,omitempty"`
 	TimeoutMs *int64                     `json:"timeout_ms,omitempty"`
+}
+
+type ScriptStarted struct {
+	Commit        *string `json:"commit"`
+	TimeoutMs     *int64  `json:"timeoutMs"`
+	TrialWorktree string  `json:"trialWorktree"`
+}
+
+type ScriptTimeout struct {
+	TimeoutMs *int64 `json:"timeoutMs"`
 }
 
 // StartPayload: start and input. Named fields; lane A replaces the coordinator's merge of a free payload over them.
@@ -512,6 +531,18 @@ type StoreReport struct {
 type StoresRequest struct {
 	HostId string            `json:"hostId"`
 	Store  StoreRegistration `json:"store"`
+}
+
+// Teardown: data of a teardown event
+type Teardown struct {
+	BranchDeleted *bool                `json:"branchDeleted,omitempty"`
+	Reason        *string              `json:"reason,omitempty"`
+	Removed       bool                 `json:"removed"`
+	Teardown      *ProjectScriptResult `json:"teardown,omitempty"`
+}
+
+type TrialRemoved struct {
+	Removed bool `json:"removed"`
 }
 
 // UpdateResult: last of the host's update-state.json, written by fleet-update
