@@ -1293,6 +1293,11 @@ func (e *executor) stageInputs(p M, input string, execution any) error {
 	if len(list) == 0 {
 		return nil
 	}
+	root, err := os.OpenRoot(input)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	c := newTransferClient(e.url, e.token, e.host, accessToken(accessFile()))
 	for _, i := range list {
 		id, rel := jStr(i, "artifactId"), jStr(i, "path")
@@ -1309,22 +1314,12 @@ func (e *executor) stageInputs(p M, input string, execution any) error {
 		if !jIsStr(r, "url") {
 			return fmt.Errorf("input %s unavailable", rel)
 		}
-		target := filepath.Join(input, rel)
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
+		// Every component is resolved inside the held input root (os.Root): a parent swapped for a link to outside, at
+		// any moment, is refused, never followed, so an input can only be created inside the input folder.
+		if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
+			return fmt.Errorf("input %s: %s", rel, err)
 		}
-		pd, err := canon(filepath.Dir(target))
-		if err != nil {
-			return err
-		}
-		ci, err := canon(input)
-		if err != nil {
-			return err
-		}
-		if !under(pd, ci) {
-			return fmt.Errorf("input %s escapes the input folder", rel)
-		}
-		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL|unix.O_NOFOLLOW, 0o644)
+		out, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL|unix.O_NOFOLLOW, 0o644)
 		if err != nil {
 			return fmt.Errorf("input %s: %s", rel, err)
 		}
