@@ -62,3 +62,14 @@ func TestJudgeArtifactInputsReachSteps(t *testing.T) {
 		t.Fatalf("binary artifact inputs: %v, %v", got, err)
 	}
 }
+
+func TestJudgeRerunRetainsArtifactInputs(t *testing.T) {
+	// Requirement: judge reruns receive original renders; risk: a rerun silently judges no files.
+	original := doc{"exampleInputs": []any{doc{"artifactId": "immutable-png", "path": "example/trial/front.png"}}}
+	rerun := rerunInputs(original, "all")
+	rerun["example"], rerun["steps"] = doc{}, []any{}
+	got, err := inputsFor(nil, rerun, 0)
+	if err != nil || len(got) != 1 || mapOf(got[0])["artifactId"] != "immutable-png" {
+		t.Fatalf("rerun inputs: %v, %v", got, err)
+	}
+}
