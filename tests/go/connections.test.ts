@@ -138,6 +138,24 @@ test('C4 spool line naming a disabled key disables its row and asks the owner on
   ok(await op('connections_key_state', {keyId: k.fingerprint, state: 'active'}));
 });
 
+test('C7 a finished Meshy job counts its credits once however often it is polled (requirement: docs/designs/fleet-asset-pipelines.md §1, a csgo Meshy charge lands as connection_cost; risk: each poll of one job charged again)', async () => {
+  const c = name('meshy');
+  ok(await op('connections_create', {name: c, provider: 'meshy'}));
+  ok(await op('connections_set_access', {connection: c, access: {projects: ['*']}}));
+  ok(await op('connections_key_add', {connection: c, value: 'msy-' + randomUUID()}));
+  const m = ok(await op('connections_token_create', {name: name('t'), connections: [c]}));
+  ok(await op('budget_set', {scope: 'connection', scopeId: c, unit: 'credits', limit: 45, action: 'stop'}));
+  const day = new Date().toISOString().slice(0, 10), dir = join(GATEWAY_DIR, 'state', 'spool');
+  mkdirSync(dir, {recursive: true});
+  const poll = (job: string) => JSON.stringify({callId: randomUUID(), tokenSha256: sha(m.token), executionId: 'token:x', tool: 'job_status', connection: c, outcome: 'ok', status: 200, startedAt: Date.now(), ms: 5, usage: {unit: 'credits', amount: 30}, usageKey: c + ':' + job});
+  const blocked = () => (snapshot().connections[c]?.blocked ?? []).includes('connection');
+  writeFileSync(join(dir, day + '.jsonl'), poll('job-a') + '\n' + poll('job-a') + '\n' + poll('job-a') + '\n', {flag: 'a'});
+  await new Promise(r => setTimeout(r, 1500)); // ingest and budget ticks
+  assert.equal(blocked(), false, 'three polls of one job counted more than 30 credits');
+  writeFileSync(join(dir, day + '.jsonl'), poll('job-b') + '\n', {flag: 'a'});
+  await until(() => blocked() || undefined, 'a second job brings the total to 60 over the 45 stop budget');
+});
+
 test('C6 a spool line that cannot be imported keeps its file, and lines after a very long line are still imported (requirement: docs/designs/fleet-connections.md spool ingest; risk: retained accounting silently lost when a past day is retired)', async () => {
   const c = name('tavily');
   ok(await op('connections_create', {name: c, provider: 'tavily'}));

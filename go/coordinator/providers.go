@@ -271,7 +271,13 @@ const providersJSON = `
     },
     "pathPatterns": {
      "jobId": "^[0-9a-f-]+$"
-    }
+    },
+    "usageField": "consumed_credits",
+    "usageWhen": {
+     "field": "status",
+     "equals": "SUCCEEDED"
+    },
+    "usageOnce": "jobId"
    },
    "recent_tasks": {
     "method": "GET",
@@ -366,7 +372,13 @@ const providersJSON = `
        "type": "string"
       }
      }
-    }
+    },
+    "usageField": "consumed_credits",
+    "usageWhen": {
+     "field": "status",
+     "equals": "SUCCEEDED"
+    },
+    "usageOnce": "jobId"
    },
    "multi_recent_tasks": {
     "method": "GET",

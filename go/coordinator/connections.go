@@ -906,7 +906,21 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 	}
 	var cost any
 	if u := l.Usage; u != nil {
-		cost = doc{"unit": u.Unit, u.Unit: u.Amount, "amount": u.Amount, "connection": l.Connection}
+		amount := u.Amount
+		if l.UsageKey != nil {
+			// A finished job's charge (Meshy consumed_credits) counts once per (connection, job); later polls cost 0. A
+			// pipeline step's job is counted by recordJob instead.
+			var n int
+			if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM execution WHERE kind='tool_run' AND data->>'usageKey'=$1 AND id<>$2", *l.UsageKey, id).Scan(&n); err != nil {
+				return false, err
+			}
+			if n > 0 || t["step"] == true {
+				amount = 0
+			} else if err := exec(q, "UPDATE execution SET data=jsonb_set(data,'{usageKey}',to_jsonb($2::text)) WHERE id=$1", id, *l.UsageKey); err != nil {
+				return false, err
+			}
+		}
+		cost = doc{"unit": u.Unit, u.Unit: amount, "amount": amount, "connection": l.Connection}
 	}
 	if err := writeConnectionCost(q, id, t["projectId"], cost); err != nil {
 		return false, err
