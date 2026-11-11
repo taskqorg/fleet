@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 
 	"fleet/contract"
@@ -17,7 +16,7 @@ func init() {
 
 // hostProblems: the edge problems a host reports (at most 20, texts cut), redirects only.
 func hostProblems(list []contract.EdgeProblem) []any {
-	out := []any{}
+	var out []any
 	cut := func(t string, n int) string {
 		if r := []rune(t); len(r) > n {
 			return string(r[:n])
@@ -25,7 +24,7 @@ func hostProblems(list []contract.EdgeProblem) []any {
 		return t
 	}
 	for _, p := range list {
-		if p.Kind != contract.ProblemKindEdgeRedirect {
+		if p.Kind != contract.ProblemKindEdgeRedirect || p.Status == 0 {
 			continue
 		}
 		var loc any
@@ -40,20 +39,27 @@ func hostProblems(list []contract.EdgeProblem) []any {
 	return out
 }
 
+// validPlatform: one of the schema's Platform values.
+func validPlatform(p string) bool {
+	switch contract.Platform(p) {
+	case contract.PlatformDarwin, contract.PlatformWin32, contract.PlatformLinux:
+		return true
+	}
+	return false
+}
+
 func (a *App) poll(q *Request) (any, error) {
 	var b contract.PollRequest
 	if err := decode(q.body, &b); err != nil {
 		return nil, err
 	}
 	host := hostOf(q)
-	var stores any
-	json.Unmarshal(jsonBytes(b.Stores), &stores)
-	if err := storesObserve(q.ctx(), q.tx, host, stores); err != nil {
+	open := q.obj() // the open parts (stores, update) as the host's plain JSON
+	if err := storesObserve(q.ctx(), q.tx, host, open["stores"]); err != nil {
 		return nil, err
 	}
 	obs := doc{"id": host, "holder": q.host["holder"], "lastSeenAt": nowMs()}
-	switch b.Platform {
-	case contract.PlatformDarwin, contract.PlatformWin32, contract.PlatformLinux:
+	if validPlatform(string(b.Platform)) {
 		obs["platform"] = string(b.Platform)
 	}
 	if b.Capabilities != nil {
@@ -75,10 +81,7 @@ func (a *App) poll(q *Request) (any, error) {
 	if ps != nil {
 		obs["problems"] = ps
 	}
-	var upd any // the plain JSON value: stored and compared with the last poll's
-	if b.Update != nil {
-		json.Unmarshal(jsonBytes(b.Update), &upd)
-	}
+	upd := open["update"]
 	if host != "" && host == pds18Host() {
 		upd = mergeUpdate(upd) // PDS18: the coordinator side's result from fleet-update joins the executor's
 	}
