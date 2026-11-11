@@ -14,13 +14,22 @@ import (
 
 var sessionStates = []string{"idle", "preparing", "running", "waiting", "succeeded", "failed", "cancelled"}
 
-const sessionBase = `WITH x AS (SELECT d.id, d.data, d.project_id,
+// Aggregate visible history once: under RLS, JSON sessionId predicates cannot become index conditions.
+// Correlating these document scans per session makes retained history multiply the list's work.
+const sessionBase = `WITH session_messages AS MATERIALIZED (
+ SELECT DISTINCT ON (data->>'sessionId') data->>'sessionId' AS session_id, data->>'text' AS first_message
+ FROM document WHERE kind='message' ORDER BY data->>'sessionId',seq
+), session_activity AS MATERIALIZED (
+ SELECT data->>'sessionId' AS session_id,max(seq) AS last_seq
+ FROM document WHERE kind IN ('message','event') GROUP BY data->>'sessionId'
+), x AS (SELECT d.id, d.data, d.project_id,
  coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle') AS state,
  (SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) AS harness,
- (SELECT m.data->>'text' FROM document m WHERE m.kind='message' AND m.data->>'sessionId'=d.id ORDER BY m.seq LIMIT 1) AS first_message,
- greatest(d.seq,coalesce((SELECT max(e.seq) FROM execution e WHERE e.session_id=d.id),0),coalesce((SELECT max(m.seq) FROM document m WHERE m.kind IN ('message','event') AND m.data->>'sessionId'=d.id),0)) AS last_seq,
+ m.first_message,
+ greatest(d.seq,coalesce((SELECT max(e.seq) FROM execution e WHERE e.session_id=d.id),0),coalesce(a.last_seq,0)) AS last_seq,
  (SELECT count(*) FROM question q WHERE q.session_id=d.id AND q.state='open') AS open_questions
- FROM document d WHERE d.kind='session')`
+ FROM document d LEFT JOIN session_messages m ON m.session_id=d.id LEFT JOIN session_activity a ON a.session_id=d.id
+ WHERE d.kind='session')`
 
 func sessionWhere(f doc, p *[]any, withState bool) ([]string, error) {
 	c := []string{"NOT (x.data ? 'archivedAt')"}
