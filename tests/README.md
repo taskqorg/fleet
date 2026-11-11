@@ -6,4 +6,4 @@
 
 CI (`.github/workflows`) runs build, the executor MCP tests, `pnpm test`, then the design report; the job `go` runs `go vet` and `go test ./...`.
 
-* `../scripts/test-rule-report.ts`: warning-only static requirement/risk inventory for test declarations (TypeScript and Go); `--self-check` checks the inventory logic.
+* `../scripts/test-rule-report.ts`: static requirement/risk inventory for test declarations (TypeScript and Go); warnings, except that with `--strict` (CI) a case in `go/` without both fails; `--self-check` checks the inventory logic.

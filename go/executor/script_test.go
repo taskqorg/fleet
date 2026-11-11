@@ -13,7 +13,6 @@ import (
 func scriptExecutor(t *testing.T) (*executor, string) {
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	db := journal(t)
-	uploadSchema(db)
 	os.MkdirAll(filepath.Join(root, "spool"), 0o755)
 	return &executor{db: db, ex: db, root: root, host: "fake", live: map[string]*live{}, sessions: filepath.Join(root, "sessions"), harnessCache: map[string]M{}}, root
 }
@@ -128,5 +127,89 @@ func TestDuplicateAndChangedIdentity(t *testing.T) {
 		if _, err := cmdID(M{"id": s}, "id"); err == nil {
 			t.Fatal(s)
 		}
+	}
+}
+
+// Requirement: after an executor crash, the next start kills every surviving process of its runs (and their linked
+// descendants) before any poll, reports the run unknown with a process.reconciled event, and removes run files (K2-3,
+// K2-6). Risk: an orphaned harness keeps writing to a worktree and spending after its session was given to new work.
+func TestRestartKillsSurvivingProcesses(t *testing.T) {
+	e, root := scriptExecutor(t)
+	os.MkdirAll(filepath.Join(root, "runs"), 0o700)
+	for _, f := range []string{"x7.env", "old.env"} {
+		os.WriteFile(filepath.Join(root, "runs", f), []byte("FLEET_RUN_TOKEN=t\n"), 0o600)
+	}
+	if err := e.run(M{"id": "c7", "executionId": "x7", "sessionId": "s7", "kind": "script", "payload": M{"command": `sleep 30 & echo $! > "$FLEET_OUTPUT_DIR/../pid"; wait`}}); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "sessions/s7/pid")
+	for i := 0; i < 100 && !exists(marker); i++ {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := e.tick(); err != nil { // observes the grandchild into the journal
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(marker)
+	child, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	leader := e.live["x7"].cmd.Process.Pid
+	// A second launch crashed between spawn and the identity read.
+	e.launch("x8", "c7", "s8")
+	// The executor dies: its live map is gone, the journal stays.
+	restarted := &executor{db: e.db, ex: e.db, root: root, host: "fake", live: map[string]*live{}, sessions: e.sessions, harnessCache: map[string]M{}}
+	if err := restarted.reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	table, _ := processes()
+	if running(table, child) || running(table, leader) {
+		t.Fatal("a process of the crashed run survived the restart")
+	}
+	if r := lastReceipt(restarted, "c7"); r != "unknown" || count(e.db, "launches") != 0 || count(e.db, "owned") != 0 {
+		t.Fatalf("receipt %s, launches %d", r, count(e.db, "launches"))
+	}
+	if exists(filepath.Join(root, "runs", "x7.env")) || exists(filepath.Join(root, "runs", "old.env")) {
+		t.Fatal("run file kept")
+	}
+	rs, _ := e.db.Query("SELECT body FROM outbox WHERE route='/api/hosts/events'")
+	reconciled := 0
+	for rs.Next() {
+		var body string
+		rs.Scan(&body)
+		if strings.Contains(body, `"process.reconciled"`) {
+			reconciled++
+		}
+	}
+	rs.Close()
+	if reconciled != 2 {
+		t.Fatalf("%d process.reconciled events", reconciled)
+	}
+}
+
+// Requirement: automatic output collection uploads only regular single-link files inside the output folder, the same
+// policy as artifact_save (K2-7, K2-8). Risk: a hard link or a link at any level uploads bytes from outside the working area.
+func TestOutputCollectionSkipsLinks(t *testing.T) {
+	e, root := scriptExecutor(t)
+	must := func(err error) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, outside := filepath.Join(root, "s", "output"), filepath.Join(root, "secret")
+	must(os.MkdirAll(filepath.Join(out, "sub"), 0o755))
+	must(os.MkdirAll(outside, 0o755))
+	must(os.WriteFile(filepath.Join(outside, "key"), []byte("k"), 0o600))
+	must(os.WriteFile(filepath.Join(out, "sub", "a.txt"), []byte("a"), 0o644))
+	must(os.Link(filepath.Join(outside, "key"), filepath.Join(out, "hard")))
+	must(os.Symlink(outside, filepath.Join(out, "dir")))
+	must(os.Symlink(filepath.Join(outside, "key"), filepath.Join(out, "file")))
+	var declared []string
+	must(e.artifacts(filepath.Join(root, "s"), []string{"output"}, "x1", &declared))
+	if strings.Join(declared, ",") != "sub/a.txt" || count(e.db, "transfers") != 1 {
+		t.Fatalf("declared %v", declared)
+	}
+	// The output folder itself swapped for a link: refused, nothing read through it.
+	must(os.Symlink(outside, filepath.Join(root, "s", "linked")))
+	if err := e.artifacts(filepath.Join(root, "s"), []string{"linked"}, "x2", &declared); err == nil {
+		t.Fatal("linked output folder collected")
 	}
 }

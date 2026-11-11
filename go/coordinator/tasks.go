@@ -856,7 +856,7 @@ func init() {
 			return nil, err
 		} else if aq != nil {
 			// The reply reaches another session: the person must have that session's project, as for any project op.
-			if p := q.person; p != nil && !p.Owner && !mayAccessProjectID(p, astr(aq["project_id"])) {
+			if p := q.person; p != nil && !fullAccess(p) && !mayAccessProjectID(p, astr(aq["project_id"])) {
 				return nil, errNotFound
 			}
 			if _, err := agentReply(q, doc{"questionId": id, "answer": answer}); err != nil {

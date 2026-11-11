@@ -1,5 +1,5 @@
-// Outside tests of the TypeScript routes and operations the Go rewrite had dropped (go/coordinator/executions.go).
-//   FLEET_TRIAL_TESTS=tests/go/restored.test.ts FLEET_TRIAL_SERVER=go/bin/fleet-coordinator node tests/trial/run.ts
+// Outside tests of the inspection routes: execution differences, reconciliation, test sites (go/coordinator/executions.go).
+//   FLEET_TRIAL_TESTS=tests/go/inspection.test.ts FLEET_TRIAL_SERVER=go/bin/fleet-coordinator node tests/trial/run.ts
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -18,7 +18,7 @@ async function queued() {
   return {sessionId, executionId: e.body.id as string};
 }
 
-test('R1 execution differences: route and operation compare two executions of one session and refuse another session (risk: the Go rewrite drops a route the TypeScript coordinator served)', async () => {
+test('R1 execution differences: route and operation compare two executions of one session and refuse another session (requirement: docs/designs/legacy-inventory.md execution_diff; risk: the Go rewrite drops a route the TypeScript coordinator served)', async () => {
   // A second message queues behind the first and is not an execution yet: compare the execution with itself.
   const a = await queued(), b = a, other = await queued();
   const r = await call('GET', `/api/executions/${b.executionId}/differences?previous=${a.executionId}`);
@@ -28,14 +28,14 @@ test('R1 execution differences: route and operation compare two executions of on
   assert.equal((await call('GET', `/api/executions/${b.executionId}/differences?previous=${other.executionId}`)).status, 403);
 });
 
-test('R2 GET /api/reconciliation returns the latest reconcile report (risk: the report is written but no route reads it)', async () => {
+test('R2 GET /api/reconciliation returns the latest reconcile report (requirement: docs/deployment.md reconciliation; risk: the report is written but no route reads it)', async () => {
   assert.equal((await call('POST', '/api/ops/reconcile', {})).status, 200);
   const r = await call('GET', '/api/reconciliation');
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.ok(r.body.reconciliation && typeof r.body.reconciliation === 'object', JSON.stringify(r.body));
 });
 
-test('R3 /test-sites refuses unknown sites and file names (risk: the sandboxed example-site route is missing or serves arbitrary paths)', async () => {
+test('R3 /test-sites refuses unknown sites and file names (requirement: docs/coordinator-build.md test-sites; risk: the sandboxed example-site route is missing or serves arbitrary paths)', async () => {
   assert.equal((await call('GET', '/test-sites/other/index.html')).status, 404);
   assert.equal((await call('GET', '/test-sites/hello-world/..%2Fx.html')).status, 404);
 });

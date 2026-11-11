@@ -5,9 +5,12 @@ package main
 
 import (
 	"database/sql"
+	_ "embed"
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -59,21 +62,80 @@ var (
 	runMCP    = func([]string) error { return fmt.Errorf("mcp: not built") }
 )
 
-// openJournal opens the journal with the Rust executor's file format and pragmas.
+//go:embed journal.sql
+var journalSQL string
+
+// openJournal opens the journal with the Rust executor's file format and pragmas and applies the journal.sql sections
+// above its user_version. A behind journal is migrated under BEGIN IMMEDIATE, the version read again inside the lock, so
+// two processes opening one journal never run a section twice.
 func openJournal(path string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,body TEXT NOT NULL,terminal INTEGER DEFAULT 0);
-CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,native TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS delegation_requests(id TEXT PRIMARY KEY,body TEXT NOT NULL,response TEXT);`)
-	if err != nil {
+	if err := migrateJournal(db); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return db, nil
+}
+
+// journalSections: journal.sql split at its "-- version N" lines, numbers strictly increasing from 1; a header written any
+// other way is an error, never silently part of the previous section.
+func journalSections() ([]string, error) {
+	var out []string
+	for _, line := range strings.Split(journalSQL, "\n") {
+		if n, ok := strings.CutPrefix(line, "-- version "); ok {
+			if v, err := strconv.Atoi(n); err != nil || v != len(out)+1 {
+				return nil, fmt.Errorf("journal.sql: header %q, want version %d", line, len(out)+1)
+			}
+			out = append(out, "")
+			continue
+		}
+		if l := strings.ToLower(strings.TrimSpace(line)); strings.HasPrefix(l, "--") && strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(l, "--")), "version") {
+			return nil, fmt.Errorf("journal.sql: malformed header %q", line)
+		}
+		if len(out) > 0 {
+			out[len(out)-1] += line + "\n"
+		}
+	}
+	return out, nil
+}
+
+func migrateJournal(db *sql.DB) (err error) {
+	sections, err := journalSections()
+	if err != nil {
+		return err
+	}
+	var have int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&have); err != nil {
+		return err
+	}
+	if have >= len(sections) {
+		return nil // current: no write lock
+	}
+	if _, err := db.Exec("BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			db.Exec("ROLLBACK")
+		}
+	}()
+	if err := db.QueryRow("PRAGMA user_version").Scan(&have); err != nil {
+		return err
+	}
+	for i := have; i < len(sections); i++ {
+		if _, err := db.Exec(sections[i]); err != nil {
+			return fmt.Errorf("journal version %d: %w", i+1, err)
+		}
+		if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version=%d", i+1)); err != nil {
+			return err
+		}
+	}
+	_, err = db.Exec("COMMIT")
+	return err
 }
 
 // subcommands: argv[1] -> handler. No argument runs the executor loop.
