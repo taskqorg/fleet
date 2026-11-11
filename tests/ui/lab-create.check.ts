@@ -44,6 +44,14 @@ try {
   };
   mkdirSync('design-report', { recursive: true });
   const created = async () => { await p.getByRole('button', { name: 'Create draft', exact: true }).click(); await p.waitForURL(/\/lab\/[a-f0-9-]+$/); await p.getByRole('button', { name: 'Launch', exact: true }).waitFor(); };
+  await p.route('**/api/ops/lab_examples_list', route => route.request().postDataJSON()?.state === 'approved'
+    ? route.fulfill({ json: { examples: [] } }) : route.continue());
+  const emptyRead = p.waitForResponse(r => r.url().endsWith('/api/ops/lab_examples_list') && r.request().postDataJSON()?.state === 'approved');
+  await p.goto(origin + '/lab/new'); await emptyRead;
+  await p.getByRole('button', { name: /^Approved examples:/ }).click();
+  await p.getByText('No available choices. Check access and the required definitions or approved examples.', { exact: true }).waitFor();
+  assert.equal(await p.getByRole('button', { name: 'Create draft', exact: true }).getAttribute('aria-disabled'), 'true');
+  await p.unroute('**/api/ops/lab_examples_list');
   await p.goto(origin + '/lab');
   await p.getByRole('button', { name: 'New experiment', exact: true }).click();
   await p.getByRole('button', { name: 'Create draft', exact: true }).waitFor();
@@ -113,7 +121,7 @@ try {
   await p.getByRole('textbox', { name: 'Goal', exact: true }).fill('Only the original actor may restore this');
   await p.route('**/api/ops/me', async route => { const response = await route.fetch(); const m = await response.json(); await route.fulfill({ json: { ...m, email: 'agents@trial.test' } }); });
   await p.reload();
-  await p.getByRole('button', { name: /^Project:/ }).waitFor();
+  await p.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent?.startsWith('Project:') && !b.hasAttribute('aria-disabled')));
   assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), '');
   assert.equal(await p.evaluate(() => Object.keys(sessionStorage).some(k => k.startsWith('fleet-lab-create:owner@trial.test:'))), false);
   await context.close();
