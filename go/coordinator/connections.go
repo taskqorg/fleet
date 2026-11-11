@@ -61,15 +61,6 @@ func connOwner(q *Request) error {
 	return nil
 }
 
-// connRealOwner: secret exposure stays the real owner's, even for grant "*" (site-agents): a personal run token is a
-// bearer that outlives the Access service token.
-func connRealOwner(q *Request) error {
-	if q.person != nil && !q.person.Owner {
-		return fail(403, "Only the owner creates personal tokens")
-	}
-	return nil
-}
-
 func connHolderOrOwner(q *Request, c doc) error {
 	if q.person != nil && !fullAccess(q.person) && q.person.Email != c["holder"] {
 		return fail(403, "Only the holder or the owner changes this API key")
@@ -564,8 +555,9 @@ func init() {
 		return c, nil
 	}))
 	// Owner connection tokens (§4): a long-lived bearer for the owner's interactive sessions; the value is answered once.
-	gatedOp("connections_token_create", false, checkFirst(connRealOwner, shaped[contract.ConnectionsTokenCreateRequest, contract.ConnectionsTokenCreateReply](func(q *Request) (any, error) {
-		if err := connRealOwner(q); err != nil {
+	gatedOp("connections_token_create", false, checkFirst(connOwner, shaped[contract.ConnectionsTokenCreateRequest, contract.ConnectionsTokenCreateReply](func(q *Request) (any, error) {
+		// Full access (owner, grant "*" such as site-agents) mints during development; directedBy records the real actor.
+		if err := connOwner(q); err != nil {
 			return nil, err
 		}
 		b := body(q)
