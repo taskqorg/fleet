@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -105,22 +107,64 @@ func (a *App) loadPeople(ctx context.Context, file string) error {
 	return a.refreshPeople(ctx)
 }
 
-// setPeople parses and checks a people list, mirrors it into person and person_grant, then makes it current.
+var personEmail = regexp.MustCompile(`^[^@\s]+@[^@\s]+$`)
+
+// personRow: one people.json entry checked as strictly as the old parsePeople: an e-mail (a bare name for a
+// service-token person with accessCommonName), roles a non-empty list of
+// operator/architect, owner true or false, grants a list of {kind, id} strings, no other keys.
+func personRow(raw json.RawMessage) (*Person, error) {
+	var p Person
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&p); err != nil {
+		return nil, errors.New("a person is not {email, name, roles, owner, grants, accessCommonName}: " + err.Error())
+	}
+	if !personEmail.MatchString(p.Email) && (p.AccessCommonName == "" || p.Email == "" || strings.ContainsAny(p.Email, " \t\n")) {
+		return nil, errors.New("each person needs an e-mail (a service-token person: a name such as site-agents)")
+	}
+	if len(p.Roles) == 0 {
+		return nil, errors.New("roles of " + p.Email + " must be operator and/or architect")
+	}
+	for _, r := range p.Roles {
+		if r != "operator" && r != "architect" {
+			return nil, errors.New("roles of " + p.Email + " must be operator and/or architect")
+		}
+	}
+	for _, g := range p.Grants {
+		if g.Kind == "" || (g.Kind == "project" && g.ID == "") {
+			return nil, errors.New("grants of " + p.Email + " must be [{kind, id}]")
+		}
+	}
+	return &p, nil
+}
+
+// setPeople parses and checks a people list, mirrors it into person and person_grant, then makes it current. Strict
+// (people_set) refuses any malformed entry; otherwise (the file) a malformed entry is left out and named in skipped, so
+// one bad row never locks out everyone else (site-agents included).
 // ponytail: the map swap is not synchronized with concurrent readers; a person edit is rare and owner-only.
-func (a *App) setPeople(ctx context.Context, raw []byte) error {
+func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped []string, err error) {
+	var rows []json.RawMessage
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return nil, errors.New("people.json must be a list")
+	}
 	var list []*Person
-	if err := json.Unmarshal(raw, &list); err != nil {
-		return err
+	for _, r := range rows {
+		p, err := personRow(r)
+		if err != nil && strict {
+			return nil, err
+		}
+		if err != nil {
+			skipped = append(skipped, err.Error())
+			continue
+		}
+		list = append(list, p)
 	}
 	people := map[string]*Person{}
 	owners := 0
 	for _, p := range list {
-		if p == nil || p.Email == "" {
-			return errors.New("every person needs an email")
-		}
 		p.Email = strings.ToLower(p.Email)
 		if people[p.Email] != nil {
-			return errors.New("person " + p.Email + " is listed twice")
+			return nil, errors.New("person " + p.Email + " is listed twice")
 		}
 		if p.Name == "" {
 			p.Name = p.Email
@@ -135,14 +179,14 @@ func (a *App) setPeople(ctx context.Context, raw []byte) error {
 	for _, p := range list {
 		cn := strings.ToLower(p.AccessCommonName)
 		if cn != "" && (names[cn] || people[cn] != nil || strings.Contains(cn, "@")) {
-			return errors.New("accessCommonName " + p.Email + " is not unique or collides with an e-mail")
+			return nil, errors.New("accessCommonName " + p.Email + " is not unique or collides with an e-mail")
 		}
 		names[cn] = true
 	}
 	if owners != 1 {
-		return errors.New("exactly one person must have owner: true")
+		return nil, errors.New("exactly one person must have owner: true")
 	}
-	err := a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
+	err = a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "DELETE FROM person"); err != nil {
 			return err
 		}
@@ -161,7 +205,7 @@ func (a *App) setPeople(ctx context.Context, raw []byte) error {
 	if err == nil {
 		a.people = people
 	}
-	return err
+	return skipped, err
 }
 
 // scopeOf: the owner works in '*' (nil); anyone else in the projects of their grants, plus null-project rows for architects.

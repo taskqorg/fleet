@@ -245,7 +245,7 @@ func init() {
 		if err := write(b.People); err != nil {
 			return nil, err
 		}
-		if err := q.app.setPeople(q.ctx(), b.People); err != nil {
+		if _, err := q.app.setPeople(q.ctx(), b.People, true); err != nil {
 			if werr := write(previous); werr != nil {
 				return nil, errors.Join(err, werr)
 			}

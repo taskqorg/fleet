@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -45,19 +47,22 @@ func checkOrigin(q *Request) error {
 
 // The people file is re-read when its mtime or size changes; a broken file keeps the last valid load (after a restart:
 // the person rows) and raises one open needs-you question. The key is recorded only after the load was applied.
-// ponytail: no inode in the key (no portable stat); an atomic replace keeping mtime and size is missed until the next edit.
+// The key holds the inode too, so an atomic replace that keeps mtime and size is seen.
 var peopleMu sync.Mutex
 var peopleSeen string
 
 func (a *App) refreshPeople(ctx context.Context) error {
 	peopleMu.Lock()
 	defer peopleMu.Unlock()
-	key, problem := "missing", ""
+	key, problem, partial := "missing", "", false
 	raw, err := []byte(nil), error(nil)
 	if st, serr := os.Stat(a.peopleFile); serr != nil {
 		problem = "cannot read the file (" + serr.Error() + ")"
 	} else {
 		key = fmt.Sprint(st.ModTime().UnixNano(), ":", st.Size())
+		if sys, ok := st.Sys().(*syscall.Stat_t); ok {
+			key += fmt.Sprint(":", sys.Ino)
+		}
 	}
 	if key == peopleSeen {
 		return nil
@@ -68,12 +73,15 @@ func (a *App) refreshPeople(ctx context.Context) error {
 		}
 	}
 	if problem == "" {
-		err = a.setPeople(ctx, raw)
+		var skipped []string
+		skipped, err = a.setPeople(ctx, raw, false)
 		if err != nil && pgCode(err) != "" {
 			return err // a database failure is not a broken file: try again on the next request
 		}
 		if err != nil {
 			problem = err.Error()
+		} else if len(skipped) > 0 {
+			problem, partial = strings.Join(skipped, "; "), true
 		}
 	}
 	if problem != "" {
@@ -87,7 +95,7 @@ func (a *App) refreshPeople(ctx context.Context) error {
 			if err := q.tx.QueryRow(ctx, "SELECT count(*) FROM question WHERE state='open' AND data->>'peopleFile'='true'").Scan(&n); err != nil || n > 0 {
 				return err
 			}
-			_, err := askRow(q, "operator_decision", "people.json is not valid: "+problem+". Fleet keeps the last valid list of people until the file is fixed.", nil, []any{"fixed"}, "fleet", doc{"peopleFile": true})
+			_, err := askRow(q, "operator_decision", peopleQuestion(problem, partial), nil, []any{"fixed"}, "fleet", doc{"peopleFile": true})
 			return err
 		}); err != nil {
 			return err
@@ -95,6 +103,13 @@ func (a *App) refreshPeople(ctx context.Context) error {
 	}
 	peopleSeen = key
 	return nil
+}
+
+func peopleQuestion(problem string, partial bool) string {
+	if partial {
+		return "people.json has entries Fleet left out: " + problem + ". Everyone else in the file is loaded."
+	}
+	return "people.json is not valid: " + problem + ". Fleet keeps the last valid list of people until the file is fixed."
 }
 
 // peopleFromRows: after a restart with a broken file, the rows of the last valid load are that load.
