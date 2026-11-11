@@ -2,6 +2,8 @@
 // and the gateway. The generated files are committed; CI fails when go generate changes them.
 package contract
 
+import "encoding/json"
+
 //go:generate go run ../gen ../../contracts/host-protocol.schema.json contract host_protocol_gen.go
 //go:generate go run ../gen ../../contracts/gateway.schema.json contract gateway_gen.go
 //go:generate go run ../gen ../../contracts/ops.schema.json contract ops_gen.go
@@ -21,8 +23,9 @@ package contract
 // Operation is one entry of an "operations" list in contracts/ops-<domain>.schema.json: a read snapshot or a write, long (no surrounding
 // transaction), and the status codes its handler returns besides 401, 403 and 500.
 type Operation struct {
-	Read, Long bool
-	Errors     []int
+	Read, Long  bool
+	Errors      []int
+	InputSchema json.RawMessage
 }
 
 // Operations: every coordinator operation; each name has <Name>Request and <Name>Reply. The generated init of each

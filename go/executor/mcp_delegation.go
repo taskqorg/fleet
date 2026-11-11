@@ -111,7 +111,16 @@ func mcpTools(ctx any) M {
 	}
 	for _, o := range operationsOf(ctx) { // the director's operations from the start command (profile fleetOperations)
 		if n := jStr(jAt(o, "name")); !slices.ContainsFunc(out, func(t any) bool { return jStr(jAt(t, "name")) == n }) {
-			out = append(out, M{"name": n, "description": jAt(o, "description"), "inputSchema": M{"type": "object"}})
+			schema := jAt(o, "inputSchema")
+			if schema == nil {
+				if generated := contract.Operations[n].InputSchema; len(generated) > 0 {
+					schema = generated
+				}
+			}
+			if schema == nil {
+				schema = M{"type": "object"}
+			}
+			out = append(out, M{"name": n, "description": jAt(o, "description"), "inputSchema": schema})
 		}
 	}
 	return M{"tools": out}
@@ -178,6 +187,39 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 	q := any(M{})
 	if truth(jAt(p, "arguments")) {
 		q = jAt(p, "arguments")
+	}
+	if name == "agent_tool_result" {
+		key := jStr(q, "requestKey")
+		var body string
+		var raw sql.NullString
+		if !strings.HasPrefix(key, jStr(ctx, "commandId")+":agent:") {
+			return mcpText(M{"error": "Request belongs to another command"}, &yes), nil
+		}
+		err := db.QueryRow("SELECT body,response FROM delegation_requests WHERE id=?", key).Scan(&body, &raw)
+		if errors.Is(err, sql.ErrNoRows) {
+			return mcpText(M{"error": "Unknown request"}, &yes), nil
+		}
+		if err != nil {
+			return nil, dbe(err)
+		}
+		stored, err := dec(body)
+		if err != nil {
+			return nil, dbe(err)
+		}
+		if jStr(stored, "executionId") != jStr(ctx, "executionId") {
+			return mcpText(M{"error": "Request belongs to another execution"}, &yes), nil
+		}
+		if raw.String == "" {
+			return mcpText(M{"status": "pending", "requestKey": key, "instruction": "Outcome unknown; inspect this request again. Do not repeat the mutation."}, &yes), nil
+		}
+		result, err := dec(raw.String)
+		if err != nil {
+			return nil, dbe(err)
+		}
+		if has(result, "result") {
+			return jAt(result, "result"), nil
+		}
+		return mcpText(result, &yes), nil
 	}
 	if slices.Contains(artifactTools, name) && truth(jAt(ctx, "workdir")) {
 		return artifactCall(ctx, name, q, dbExec{db})
@@ -296,7 +338,7 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 			return jAt(r, "result"), nil
 		}
 		if r == nil {
-			r = M{"status": "pending", "instruction": "Outcome unknown; inspect with execution_status before repeating effects."}
+			r = M{"status": "pending", "requestKey": key, "instruction": "Outcome unknown; use agent_tool_result with this requestKey. Do not repeat the mutation."}
 		}
 		return mcpText(r, &yes), nil
 	}

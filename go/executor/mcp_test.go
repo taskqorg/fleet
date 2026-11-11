@@ -113,3 +113,30 @@ func TestProjectToolSchemas(t *testing.T) {
 		}
 	}
 }
+
+// A coordinator validation refusal must survive the actual outbox instead of becoming an opaque grant error.
+func TestAgentRejectionKeepsValidation(t *testing.T) {
+	db := journal(t)
+	defer db.Close()
+	key := "command:agent:validation"
+	body := M{"agentToolKey": key, "commandId": "command"}
+	if err := journalOnce(db, key, enc(body), "/api/hosts/agent-tools"); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		w.Write([]byte(`{"message":"Expected id","rawPayload":"must not be retained"}`))
+	}))
+	defer server.Close()
+	if err := flush(db, server.URL, "token", "host"); err != nil {
+		t.Fatal(err)
+	}
+	var response string
+	if err := db.QueryRow("SELECT response FROM delegation_requests WHERE id=?", key).Scan(&response); err != nil {
+		t.Fatal(err)
+	}
+	r := decM(response)
+	if jStr(r, "message") != "Expected id" || jAt(r, "statusCode") == nil || strings.Contains(response, "rawPayload") {
+		t.Fatal(response)
+	}
+}

@@ -25,6 +25,10 @@ func gatedObjOp(name string, read bool, h handler) {
 
 // runOp runs a named operation in its own transaction in the person's scope (q.tx is nil: called from a longRoute).
 func (a *App) runOp(q *Request, name string, b json.RawMessage) (any, error) {
+	return a.runAgentOp(q, name, b, nil, "")
+}
+
+func (a *App) runAgentOp(q *Request, name string, b json.RawMessage, key *string, execution string) (any, error) {
 	if h, ok := longOperations[name]; ok { // opens its own transactions
 		sub := *q
 		sub.body, sub.tx = b, nil
@@ -40,7 +44,20 @@ func (a *App) runOp(q *Request, name string, b json.RawMessage) (any, error) {
 	err := a.store.Tx(q.ctx(), scopeOf(q.person), !op.read, "", func(tx pgx.Tx) error {
 		sub.tx = tx
 		var err error
-		out, err = op.h(&sub)
+		if err = refreshRequestAccess(&sub); err != nil {
+			return err
+		}
+		if err = a.guardOp(&sub, name, b); err != nil {
+			return err
+		}
+		if key != nil && !op.read {
+			if _, err = getExecution(&sub, execution); err != nil {
+				return err
+			}
+			out, err = agentReceipt(&sub, key, execution, name, b, func() (any, error) { return op.h(&sub) })
+		} else {
+			out, err = op.h(&sub)
+		}
 		return err
 	})
 	return out, err

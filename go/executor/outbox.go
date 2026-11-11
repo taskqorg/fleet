@@ -358,7 +358,11 @@ func flush(db *sql.DB, url, token, host string) error {
 			_, deleg := value["delegation"]
 			_, key := value["agentToolKey"]
 			if deleg || key {
-				response = M{"error": "Coordinator rejected delegation; inspect retained command and grant"}
+				var problem struct {
+					Message string `json:"message"`
+				}
+				_ = json.Unmarshal([]byte(a.text), &problem)
+				response = M{"error": "Coordinator rejected delegation", "statusCode": a.status, "message": problem.Message}
 			} else if len(batch) > 1 {
 				single = true // retry this batch row by row so only the poisoned row is set aside
 				continue

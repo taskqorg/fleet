@@ -632,7 +632,7 @@ func (a *App) mcp(q *Request, server string, ops map[string]registeredOp, descri
 		sort.Strings(names)
 		tools := []doc{}
 		for _, n := range names {
-			t := doc{"name": n, "inputSchema": doc{"type": "object"}}
+			t := doc{"name": n, "inputSchema": contract.Operations[n].InputSchema}
 			if d, ok := descriptions[n]; ok {
 				t["description"] = d
 			} else if server == "fleet-projects" {

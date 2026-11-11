@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"go/format"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -125,6 +126,47 @@ func goType(s schema, where string) (string, bool) {
 	}
 	fail("%s: unsupported type %q", where, t)
 	return "", false
+}
+
+// toolSchema resolves canonical request references for self-contained MCP discovery.
+func toolSchema(file string, value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		if ref, ok := v["$ref"].(string); ok {
+			source, name, _ := strings.Cut(ref, "#/$defs/")
+			if source != "" {
+				file = filepath.Join(filepath.Dir(file), source)
+			}
+			raw, err := os.ReadFile(file)
+			if err != nil {
+				fail("%v", err)
+			}
+			var root struct {
+				Defs map[string]any `json:"$defs"`
+			}
+			if err := json.Unmarshal(raw, &root); err != nil {
+				fail("%v", err)
+			}
+			target, ok := root.Defs[name]
+			if !ok {
+				fail("missing schema %s", ref)
+			}
+			return toolSchema(file, target)
+		}
+		out := map[string]any{}
+		for k, x := range v {
+			out[k] = toolSchema(file, x)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, x := range v {
+			out[i] = toolSchema(file, x)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func main() {
@@ -257,7 +299,11 @@ func main() {
 		b.WriteString("func init() {\n\tfor n, o := range map[string]Operation{\n")
 		for _, n := range ops {
 			o := root.Operations[n]
-			fmt.Fprintf(&b, "\t\t%q: {Read: %v, Long: %v, Errors: %#v},\n", n, o.Read, o.Long, o.Errors)
+			raw, err := json.Marshal(toolSchema(os.Args[1], map[string]any(root.Defs[exported(n)+"Request"])))
+			if err != nil {
+				fail("%v", err)
+			}
+			fmt.Fprintf(&b, "\t\t%q: {Read: %v, Long: %v, Errors: %#v, InputSchema: json.RawMessage(%q)},\n", n, o.Read, o.Long, o.Errors, string(raw))
 		}
 		b.WriteString("\t} {\n\t\taddOperation(n, o)\n\t}\n}\n\n")
 	}

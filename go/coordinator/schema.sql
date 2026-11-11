@@ -787,3 +787,10 @@ CREATE FUNCTION fleet_session_director_immutable() RETURNS trigger LANGUAGE plpg
  RETURN NEW;
 END $$;
 CREATE TRIGGER session_director_immutable BEFORE UPDATE ON document FOR EACH ROW EXECUTE FUNCTION fleet_session_director_immutable();
+
+-- migration 36: a host MCP mutation's acknowledgment commits with its side effect, before an HTTP retry.
+-- Only the proved host-agent route reads these receipts, after current director and operation authorization.
+CREATE TABLE agent_tool_receipt(
+ id text PRIMARY KEY, execution_id text NOT NULL, directing_email text NOT NULL,
+ operation text NOT NULL, payload_sha text NOT NULL, result jsonb NOT NULL, authority jsonb NOT NULL
+);

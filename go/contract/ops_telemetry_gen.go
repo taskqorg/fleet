@@ -332,9 +332,9 @@ func (v TelemetryWindow) Valid() bool {
 
 func init() {
 	for n, o := range map[string]Operation{
-		"telemetry_findings": {Read: false, Long: true, Errors: []int{}},
-		"telemetry_summary":  {Read: false, Long: true, Errors: []int{400}},
-		"telemetry_trace":    {Read: false, Long: true, Errors: []int{400}},
+		"telemetry_findings": {Read: false, Long: true, Errors: []int{}, InputSchema: json.RawMessage("{\"properties\":{\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"telemetry_summary":  {Read: false, Long: true, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"window defaults to 1h.\",\"properties\":{\"projectId\":{\"type\":\"string\"},\"service\":{\"type\":\"string\"},\"window\":{\"enum\":[\"5m\",\"1h\",\"24h\",\"7d\"],\"type\":\"string\"}},\"type\":\"object\"}")},
+		"telemetry_trace":    {Read: false, Long: true, Errors: []int{400}, InputSchema: json.RawMessage("{\"properties\":{\"traceId\":{\"type\":\"string\"}},\"required\":[\"traceId\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}
