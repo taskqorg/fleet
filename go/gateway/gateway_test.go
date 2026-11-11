@@ -93,6 +93,7 @@ func testSnapshot(url string, keys []keyState, tokens []string, intake string) m
 type fixture struct {
 	t        *testing.T
 	dir, url string
+	revision string // of the last snapshot written
 	config   *config
 	address  string
 	stop     chan struct{}
@@ -121,6 +122,7 @@ func newFixture(t *testing.T, url string, keys ...string) *fixture {
 
 func (f *fixture) write(v any) {
 	data, _ := json.Marshal(v)
+	f.revision = sha(string(data))[:12]
 	os.WriteFile(filepath.Join(f.dir, "snapshot.tmp"), data, 0o600)
 	os.Rename(filepath.Join(f.dir, "snapshot.tmp"), filepath.Join(f.dir, "snapshot.json"))
 }
@@ -177,7 +179,10 @@ func (f *fixture) spool() (lines []map[string]any, text string) {
 	for _, file := range files {
 		data, _ := os.ReadFile(file)
 		text += string(data)
-		for _, l := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		// Only complete lines: the gateway creates the day file before it writes the first line, so a read can see an
+		// empty file or a line without its newline yet.
+		complete := strings.Split(string(data), "\n")
+		for _, l := range complete[:len(complete)-1] {
 			var v map[string]any
 			json.Unmarshal([]byte(l), &v)
 			lines = append(lines, v)
@@ -203,8 +208,20 @@ func expect(t *testing.T, got, want any, what string) {
 	}
 }
 
-// adopt waits a few snapshot polls (refreshEvery is 10 ms in tests).
-func adopt() { time.Sleep(60 * time.Millisecond) }
+// adopt waits until the gateway reports the condition on /healthz, so a test never races the snapshot poll.
+func (f *fixture) adopt(done func(health map[string]any) bool) {
+	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); {
+		if done(f.health()) {
+			return
+		}
+	}
+	f.t.Fatal("gateway did not adopt the snapshot")
+}
+
+// adoptWritten waits until the last written snapshot is the gateway's current one.
+func (f *fixture) adoptWritten() {
+	f.adopt(func(h map[string]any) bool { return field(h, "snapshot", "revision") == f.revision })
+}
 
 func TestRunTokenCallInjectsKeyAndSpoolsOneLine(t *testing.T) {
 	upstream := newProvider(t, func(string) int { return 200 })
@@ -326,7 +343,7 @@ func TestPathFieldFillsGetAndReachedBudgetRefuses(t *testing.T) {
 		t.Fatal(s)
 	}
 	gw.write(testSnapshot(gw.url, []keyState{{"invented-key-a", "active"}}, []string{testToken}, "blocked"))
-	adopt()
+	gw.adoptWritten()
 	status, _, body := gw.call("web_search", testToken)
 	expect(t, []any{status, body["error"]}, []any{403, "budget-reached"}, "budget")
 }
@@ -340,7 +357,7 @@ func TestQuotaPassesThroughAndDrainingKeysTakeNoCalls(t *testing.T) {
 	})
 	gw := newFixture(t, upstream.url, "invented-key-a", "invented-key-b")
 	gw.write(testSnapshot(gw.url, []keyState{{"invented-key-a", "draining"}, {"invented-key-b", "active"}}, []string{testToken}, "all"))
-	adopt()
+	gw.adoptWritten()
 	status, head, _ := gw.call("web_search", testToken)
 	expect(t, status, 429, "status")
 	expect(t, head.Get("Retry-After"), "7", "retry-after")
@@ -369,7 +386,7 @@ func TestInvalidSnapshotKeepsLastValidAndPausedIntakeRefuses(t *testing.T) {
 	upstream := newProvider(t, func(string) int { return 200 })
 	gw := newFixture(t, upstream.url, "invented-key-a")
 	os.WriteFile(filepath.Join(gw.dir, "snapshot.json"), []byte("not json"), 0o600)
-	adopt()
+	gw.adopt(func(h map[string]any) bool { return field(h, "snapshot", "rejected") == 1.0 })
 	if s, _, _ := gw.call("web_search", testToken); s != 200 {
 		t.Fatal(s)
 	}
@@ -380,7 +397,7 @@ func TestInvalidSnapshotKeepsLastValidAndPausedIntakeRefuses(t *testing.T) {
 		t.Fatal(s)
 	}
 	gw.write(testSnapshot(gw.url, []keyState{{"invented-key-a", "active"}}, []string{testToken}, "paused"))
-	adopt()
+	gw.adoptWritten()
 	_, _, body := gw.call("web_search", testToken)
 	expect(t, body["error"], "intake-paused", "intake")
 	_, _, body = gw.raw("POST", "/v1/call/other/web_search", "Bearer "+testToken, "{}")

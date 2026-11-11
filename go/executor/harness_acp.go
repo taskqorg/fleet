@@ -1,6 +1,6 @@
 package main
 
-// ACP 1.5.3 session. Protocol shapes: AgentQ d0f6bfa acp.rs; T3 d0f1f72 AntigravityAcpSupport and
+// ACP protocol version 1 session (qualified with Antigravity 1.5.3 and 1.5.4). Protocol shapes: AgentQ d0f6bfa acp.rs; T3 d0f1f72 AntigravityAcpSupport and
 // AcpSessionRuntime. Behavioural reuse only; no source copied. Fleet owns admission, logs and process cleanup.
 
 import (
@@ -71,8 +71,11 @@ func (s *acpSession) Receive(v map[string]any) ([]map[string]any, map[string]any
 	r := v["result"]
 	switch {
 	case isID(v, 1) && s.stage == 0:
-		if pv, _ := num(jAt(r, "protocolVersion")); pv != 1 || jAt(r, "agentInfo", "version") != "1.5.3" {
-			return nil, nil, false, errors.New("unqualified ACP protocol/runtime version")
+		// Qualification is the ACP protocol version, not the runtime release: a pin on agentInfo.version refused every
+		// vendor patch release (1.5.4) although the protocol was unchanged. The runtime version is retained in the
+		// capabilities event below; capability gaps (resume, model, mode) are refused where they are used.
+		if pv, _ := num(jAt(r, "protocolVersion")); pv != 1 {
+			return nil, nil, false, errors.New("unqualified ACP protocol version")
 		}
 		method := "session/new"
 		if s.resume != "" {

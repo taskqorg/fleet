@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "fleet-gateway seam (docs/designs/fleet-connections.md section 3): the snapshot the coordinator publishes and the gateway reads, and the call line the gateway spools and the coordinator ingests. See contracts/README.md for the supported keyword subset.",
+  "$defs": {
+    "GatewaySnapshot": {"type": "object", "required": ["schema", "generated_ms", "providers", "connections", "tokens", "usageTokenSha256"], "properties": {
+      "schema": {"type": "integer"},
+      "generated_ms": {"type": "integer"},
+      "providers": {"type": "object", "additionalProperties": {"$ref": "#/$defs/GatewayProvider"}},
+      "connections": {"type": "object", "additionalProperties": {"$ref": "#/$defs/GatewayConnection"}},
+      "tokens": {"type": "array", "items": {"$ref": "#/$defs/GatewayRunToken"}},
+      "usageTokenSha256": {"$comment": "SHA-256 of the coordinator's own token for GET /v1/usage.", "type": "string"}}},
+    "GatewayProvider": {"$comment": "A provider catalogue entry (go/coordinator/providers.go); the gateway reads only these fields.", "type": "object", "additionalProperties": true, "required": ["baseUrl", "tools"], "properties": {
+      "baseUrl": {"type": "string"},
+      "tools": {"type": "object", "additionalProperties": {"$ref": "#/$defs/GatewayTool"}},
+      "usage": {"$ref": "#/$defs/GatewayUsageSource"}}},
+    "GatewayUsageSource": {"$comment": "Per-key usage report (reconcile): GET path, and the dotted field holding the number.", "type": "object", "required": ["path", "field"], "properties": {"path": {"type": "string"}, "field": {"type": "string"}}},
+    "GatewayTool": {"type": "object", "additionalProperties": true, "required": ["method", "path", "idempotent", "unit"], "properties": {
+      "method": {"type": "string"},
+      "path": {"type": "string"},
+      "idempotent": {"type": "boolean"},
+      "unit": {"type": "string"},
+      "inject": {"$comment": "Body fields the gateway adds to every call (Tavily include_usage).", "type": "object", "additionalProperties": true},
+      "headers": {"$comment": "Fixed request headers, e.g. a provider's opt-in flag.", "type": "object", "additionalProperties": {"type": "string"}}}},
+    "GatewayConnection": {"type": "object", "required": ["provider", "tools", "intake", "keys", "blocked"], "properties": {
+      "provider": {"type": "string"},
+      "tools": {"type": "array", "items": {"type": "string"}},
+      "intake": {"type": "string"},
+      "keys": {"type": "array", "items": {"$ref": "#/$defs/GatewayKey"}},
+      "blocked": {"$comment": "Reached pause/stop budgets: \"connection\" (every call) or a run scope (person:, project:, experiment:).", "type": "array", "items": {"type": "string"}}}},
+    "GatewayKey": {"type": "object", "required": ["id", "state"], "properties": {"id": {"type": "string"}, "state": {"type": "string"}, "enabledAt": {"type": "integer"}}},
+    "GatewayRunToken": {"type": "object", "required": ["sha256", "executionId", "connections", "directedBy", "projectId", "experimentId"], "properties": {
+      "sha256": {"type": "string"},
+      "executionId": {"type": "string"},
+      "connections": {"type": "array", "items": {"type": "string"}},
+      "directedBy": {"type": "string"},
+      "projectId": {"type": "string"},
+      "experimentId": {"type": "string"}}},
+    "CallOutcome": {"type": "string", "enum": ["ok", "error", "unknown"]},
+    "CallLine": {"$comment": "One provider call: a spool line written by the gateway, and the result of contract.GatewayCall (coordinator api steps, executor connection MCP server), which adds output and leaves the spool-only fields (usage, key fields, startedAt, ms) empty; provider usage stays inside output.", "type": "object", "required": ["callId", "connection", "tool", "status", "outcome", "startedAt", "ms"], "properties": {
+      "callId": {"type": "string"},
+      "executionId": {"type": "string"},
+      "tokenSha256": {"type": "string"},
+      "connection": {"type": "string"},
+      "tool": {"type": "string"},
+      "keyFingerprint": {"type": "string"},
+      "status": {"type": "integer"},
+      "errorCode": {"type": "string"},
+      "outcome": {"$ref": "#/$defs/CallOutcome"},
+      "usage": {"$ref": "#/$defs/CallUsage"},
+      "disabled": {"$ref": "#/$defs/CallKeyDisabled"},
+      "keyProblem": {"$ref": "#/$defs/CallKeyProblem"},
+      "startedAt": {"type": "integer"},
+      "ms": {"type": "integer"},
+      "output": {"$comment": "In-process call only: the provider's reply body."}}},
+    "CallUsage": {"type": "object", "required": ["unit", "amount"], "properties": {"unit": {"type": "string"}, "amount": {"type": "integer"}}},
+    "CallKeyDisabled": {"type": "object", "required": ["key", "status"], "properties": {"key": {"type": "string"}, "status": {"type": "integer"}}},
+    "CallKeyProblem": {"type": "object", "required": ["key", "status", "message"], "properties": {"key": {"type": "string"}, "status": {"type": "integer"}, "message": {"type": "string"}}}
+  }
+}
