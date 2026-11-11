@@ -1182,6 +1182,18 @@ type LabScoreCorrectRequest struct {
 	Value     *string `json:"value,omitempty"`
 }
 
+type LimitRefreshSent struct {
+	Binding        string `json:"binding"`
+	ExecutionId    string `json:"executionId"`
+	HostId         string `json:"hostId"`
+	SubscriptionId string `json:"subscriptionId"`
+}
+
+type LimitRefreshSkipped struct {
+	Reason         string `json:"reason"`
+	SubscriptionId string `json:"subscriptionId"`
+}
+
 // ListFilter: The list filter of packages/view-url toPageParams; a null projectId is work outside projects.
 type ListFilter struct {
 	Archived  *bool    `json:"archived,omitempty"`
@@ -1796,6 +1808,16 @@ type StreamCursor struct {
 	Cursor int64 `json:"cursor"`
 }
 
+type SubscriptionLimitsRefreshReply struct {
+	Sent    []LimitRefreshSent    `json:"sent"`
+	Skipped []LimitRefreshSkipped `json:"skipped"`
+}
+
+// SubscriptionLimitsRefreshRequest: fleet-people-access.md section 8 "Read without a run": one subscription, or every one the caller holds (the owner: all)
+type SubscriptionLimitsRefreshRequest struct {
+	SubscriptionId *string `json:"subscriptionId,omitempty"`
+}
+
 type SubscriptionLimitsReply struct {
 	ServerNow     json.RawMessage `json:"serverNow,omitempty"`
 	Subscriptions json.RawMessage `json:"subscriptions,omitempty"`
@@ -2193,6 +2215,7 @@ var Operations = map[string]Operation{
 	"store_set_free_space_warning": {Read: false, Long: false, Errors: []int{400, 403, 404}},
 	"stores_list":                  {Read: true, Long: false, Errors: []int{}},
 	"subscription_limits":          {Read: true, Long: false, Errors: []int{}},
+	"subscription_limits_refresh":  {Read: false, Long: false, Errors: []int{403, 404}},
 	"task_cancel":                  {Read: false, Long: false, Errors: []int{}},
 	"task_create":                  {Read: false, Long: false, Errors: []int{400}},
 	"task_derived_check":           {Read: true, Long: false, Errors: []int{}},
