@@ -304,3 +304,22 @@ func TestPruneDumps(t *testing.T) {
 		t.Fatal("wrong dumps pruned")
 	}
 }
+
+// The PDS18 smoke: up only when the guard refuses a request without an Access assertion (403); down otherwise.
+func TestSmoke(t *testing.T) {
+	code := 403
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(code) }))
+	u := &updater{guardURL: srv.URL + "/verify"}
+	c := &http.Client{Timeout: time.Second}
+	if u.smoke(c) != up {
+		t.Fatal("403 from the guard must be up")
+	}
+	code = 404
+	if u.smoke(c) != down {
+		t.Fatal("another status must be down")
+	}
+	srv.Close()
+	if u.smoke(c) != down {
+		t.Fatal("guard not answering must be down")
+	}
+}

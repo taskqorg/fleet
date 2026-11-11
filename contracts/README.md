@@ -12,7 +12,8 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   each name `<name>` has `$defs` `<Name>Request` and `<Name>Reply`, and a failed call answers `OpError`. TypeScript gets
   `Ops` (name to request and reply, used by `op()` in `app/src/api.ts`); Go gets `contract.Operations`, which
   `go/coordinator/ops_contract_test.go` compares with the registry.
-* `lab-config.json`: JSON Schema for agent configurations in laboratory configurations (copied as an asset; not generated).
+* `profile.schema.json`: the agent profile (`config/agents/*.json`, the start command's `agentConfig`). Its validator
+  `contract.ParseProfile` (`go/contract/profile.go`) is the one the coordinator and the executor run; a Go test checks every shipped profile.
 
 ## Generated types
 

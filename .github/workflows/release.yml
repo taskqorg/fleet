@@ -1,55 +1,73 @@
-# Release (docs/designs/fleet-self-update.md, section 1): a tag v<N>.<yymmdd>.<M> on a green main commit publishes one
-# tarball per target, SHA256SUMS signed with the release key (Ed25519, checked by fleet-update), latest.json and GitHub
-# build provenance. Every host's fleet-update installs it by itself. Least privilege: each job gets only what it writes.
+# Release (docs/designs/fleet-delivery-pipeline.md#4-automatic-release, docs/designs/fleet-self-update.md section 1): every
+# green main batch publishes one tarball per target, SHA256SUMS signed with the release key (Ed25519, checked by
+# fleet-update), latest.json and GitHub build provenance. The version 1.<UTC yymmdd>.<M> is computed here; nobody tags.
+# Every host's fleet-update installs it by itself. Least privilege: each job gets only what it writes.
 name: release
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+  # A chosen commit on main (the rollback drill, or the first release after a pause); empty means the head of main.
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit on main to release (empty for the head of main)
+        required: false
+# One run at a time; a newer pending run replaces the older pending one, so merges during a run form the next batch.
+concurrency:
+  group: release
+  cancel-in-progress: false
 permissions: {}
 jobs:
   gate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 30
     permissions:
       contents: read
       actions: read
     outputs:
+      release: ${{ steps.check.outputs.release }}
+      sha: ${{ steps.check.outputs.sha }}
       version: ${{ steps.check.outputs.version }}
       previous: ${{ steps.check.outputs.previous }}
+      recent: ${{ steps.check.outputs.recent }}
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      TAG: ${{ github.ref_name }}
+      PAUSE: ${{ github.event_name == 'push' && vars.FLEET_RELEASE_PAUSE || '' }}
+      INPUT_SHA: ${{ inputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
       - id: check
-        name: Tag name, date, ancestry, order
+        name: Pause, commit, version
         run: |
-          echo "$TAG" | grep -Eq '^v[1-9][0-9]*\.[0-9]{6}\.(0|[1-9][0-9]*)$' || { echo "::error::tag $TAG is not v<N>.<yymmdd>.<M>"; exit 1; }
-          version=${TAG#v} day=$(echo "$version" | cut -d. -f2)
-          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG" main
-          # Annotated tag: its tagger date; lightweight: the commit date. Both in UTC.
-          when=$(git for-each-ref --format='%(taggerdate:unix)' "refs/tags/$TAG"); [ -n "$when" ] || when=$(git log -1 --format=%ct "$TAG^{commit}")
-          [ "$(date -u -d "@$when" +%y%m%d)" = "$day" ] || { echo "::error::$TAG: $day is not the UTC date of the tag"; exit 1; }
-          git merge-base --is-ancestor "$TAG^{commit}" origin/main || { echo "::error::$TAG is not on main"; exit 1; }
+          [ -z "$PAUSE" ] || { echo "paused (FLEET_RELEASE_PAUSE)" | tee -a "$GITHUB_STEP_SUMMARY"; echo release=false >> "$GITHUB_OUTPUT"; exit 0; }
+          git fetch --force --tags origin main
+          sha=$(git rev-parse "${INPUT_SHA:-origin/main}^{commit}")
+          git merge-base --is-ancestor "$sha" origin/main || { echo "::error::$sha is not on main"; exit 1; }
           latest=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
-          if [ -n "$latest" ]; then
-            newest=$(printf '%s\n%s\n' "${latest#v}" "$version" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
-            [ "$newest" = "$version" ] && [ "${latest#v}" != "$version" ] || { echo "::error::$version is not newer than $latest"; exit 1; }
+          if [ -n "$latest" ] && git merge-base --is-ancestor "$sha" "$latest^{commit}"; then
+            echo "$sha is already in $latest" | tee -a "$GITHUB_STEP_SUMMARY"; echo release=false >> "$GITHUB_OUTPUT"; exit 0
           fi
-          previous=${latest#v}  # the latest published release: migrate-check downloads it
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "previous=$previous" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse "$TAG^{commit}")" >> "$GITHUB_OUTPUT"
+          day=$(date -u +%y%m%d)
+          m=$(git tag -l "v1.$day.*" | sed "s/^v1\.$day\.//" | sort -n | tail -1)
+          version=1.$day.$(( ${m:--1} + 1 ))
+          # migrate-check pairs the new coordinator with each of these (fleet-delivery-pipeline.md section 5).
+          recent=$(gh release list --exclude-drafts --exclude-pre-releases --limit 5 --json tagName -q '[.[].tagName | ltrimstr("v")] | join(" ")')
+          { echo release=true; echo "sha=$sha"; echo "version=$version"; echo "previous=${latest#v}"; echo "recent=$recent"; } >> "$GITHUB_OUTPUT"
+          echo "release $version from $sha, checked with: ${recent:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Wait for the go, app and browser jobs on the commit
+        if: steps.check.outputs.release == 'true'
         env:
           SHA: ${{ steps.check.outputs.sha }}
         run: |
-          until id=$(gh run list --workflow ci --commit "$SHA" --event push --branch main --json databaseId -q '.[0].databaseId') && [ -n "$id" ]; do
-            echo "no ci run for $SHA yet"; sleep 30
+          # The merge queue run tested this exact commit; the push run covers an admin bypass.
+          id=$(gh run list --workflow ci --commit "$SHA" --event merge_group --json databaseId -q '.[0].databaseId')
+          until [ -n "$id" ]; do
+            id=$(gh run list --workflow ci --commit "$SHA" --event push --json databaseId -q '.[0].databaseId')
+            [ -n "$id" ] || { echo "no ci run for $SHA yet"; sleep 30; }
           done
           gh run watch "$id" --interval 30 >/dev/null || true
           for job in go app browser; do
@@ -58,12 +76,14 @@ jobs:
           done
   build:
     needs: gate
+    if: needs.gate.outputs.release == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.gate.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@v4
@@ -79,7 +99,8 @@ jobs:
         env:
           VERSION: ${{ needs.gate.outputs.version }}
           PREVIOUS: ${{ needs.gate.outputs.previous }}
-        run: mkdir out && deploy/build-release.sh "$GITHUB_SHA" out "$VERSION" "$PREVIOUS" linux/amd64 darwin/arm64
+          SHA: ${{ needs.gate.outputs.sha }}
+        run: mkdir out && deploy/build-release.sh "$SHA" out "$VERSION" "$PREVIOUS" linux/amd64 darwin/arm64
       - name: Selftest linux binaries
         run: |
           mkdir t && tar -xzf out/fleet-*-linux-amd64.tgz -C t
@@ -101,10 +122,11 @@ jobs:
       - run: |
           mkdir t && tar -xzf fleet-*-darwin-arm64.tgz -C t
           for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/t/$b" selftest); done
-  # Expand in N, contract in N+1: the previous coordinator must still serve on the database the new one migrated.
+  # Expand, then contract: each of the last 5 releases' coordinators must still serve on the database the new one migrated,
+  # so a rollback on PDS18 from up to 5 releases behind returns to a checked pair (fleet-delivery-pipeline.md section 5).
   migrate-check:
     needs: [gate, build]
-    if: needs.gate.outputs.previous != ''
+    if: needs.gate.outputs.recent != ''
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -112,35 +134,41 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       VERSION: ${{ needs.gate.outputs.version }}
-      PREVIOUS: ${{ needs.gate.outputs.previous }}
+      RECENT: ${{ needs.gate.outputs.recent }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.gate.outputs.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           name: release
           path: out
-      - name: New coordinator migrates, previous one still serves
+      - name: New coordinator migrates, each recent one still serves
         run: |
           export PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pg=$RUNNER_TEMP/pg
           initdb -D "$pg" -U postgres -A trust -E UTF8 --no-instructions >/dev/null
           pg_ctl -D "$pg" -l "$pg/log" -w -o "-k $pg -p 54329 -c listen_addresses=" start
           psql -h "$pg" -p 54329 -U postgres -v ON_ERROR_STOP=1 -q -d postgres -f deploy/infrastructure/fleet-postgres.sql
-          gh release download "v$PREVIOUS" -p "fleet-$PREVIOUS-linux-amd64.tgz" -D prev
-          mkdir new old && tar -xzf "out/fleet-$VERSION-linux-amd64.tgz" -C new && tar -xzf prev/*.tgz -C old
+          mkdir new && tar -xzf "out/fleet-$VERSION-linux-amd64.tgz" -C new
+          for v in $RECENT; do
+            gh release download "v$v" -p "fleet-$v-linux-amd64.tgz" -D "prev-$v" || { echo "::error::download v$v failed"; exit 1; }
+            mkdir "old-$v"; tar -xzf "prev-$v/fleet-$v-linux-amd64.tgz" -C "old-$v"
+          done
           url() { echo "postgresql://$1@/fleet?host=$pg&port=54329"; }
           export PORT=9470 FLEET_DATABASE_URL=$(url fleet_app) FLEET_MIGRATION_DATABASE_URL=$(url fleet) \
             FLEET_PEOPLE_FILE=$PWD/tests/trial/people.json FLEET_BROWSER_SECRET=migrate-check FLEET_HOST_ID=pds18
-          for dir in new old; do
-            (cd $dir && ./fleet-coordinator) & pid=$!
-            i=0; until curl -fsS -m 3 http://127.0.0.1:9470/api/health; do
+          # exec: kill stops the coordinator itself; the version check catches a leftover one still on the port.
+          for v in "$VERSION" $RECENT; do
+            dir=old-$v; [ "$v" = "$VERSION" ] && dir=new
+            (cd "$dir" && exec ./fleet-coordinator) & pid=$!
+            i=0; until curl -fsS -m 3 http://127.0.0.1:9470/api/health | grep -q "\"version\":\"$v\""; do
               i=$((i+1)); [ $i -lt 60 ] || { echo "::error::$dir coordinator not healthy"; exit 1; }; sleep 1; done
             echo; kill $pid; wait $pid || true
           done
   publish:
     needs: [gate, selftest-macos, migrate-check]
-    if: always() && needs.selftest-macos.result == 'success' && (needs.migrate-check.result == 'success' || needs.migrate-check.result == 'skipped')
+    if: always() && needs.gate.outputs.release == 'true' && needs.selftest-macos.result == 'success' && (needs.migrate-check.result == 'success' || needs.migrate-check.result == 'skipped')
     runs-on: ubuntu-24.04
     environment: release
     permissions:
@@ -151,10 +179,19 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       VERSION: ${{ needs.gate.outputs.version }}
+      SHA: ${{ needs.gate.outputs.sha }}
+      RECENT: ${{ needs.gate.outputs.recent }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: release
+      # A re-run after a later release published must not reuse its version or move latest backwards.
+      - name: Version still free and newest
+        run: |
+          ! gh release view "v$VERSION" >/dev/null 2>&1 || { echo "::error::v$VERSION already exists"; exit 1; }
+          latest=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
+          [ -z "$latest" ] || [ "$(printf '%s\n%s\n' "${latest#v}" "$VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" = "$VERSION" ] \
+            || { echo "::error::$VERSION is not newer than $latest; start a new run"; exit 1; }
       - name: Sign SHA256SUMS, write latest.json
         env:
           FLEET_RELEASE_KEY: ${{ secrets.FLEET_RELEASE_KEY }}
@@ -164,13 +201,15 @@ jobs:
           printf '%s\n' "$FLEET_RELEASE_KEY" > "$key"
           openssl pkeyutl -sign -inkey "$key" -rawin -in SHA256SUMS -out SHA256SUMS.sig
           rm -f "$key"
-          printf '{"version":"%s","files":{"linux-amd64":"fleet-%s-linux-amd64.tgz","darwin-arm64":"fleet-%s-darwin-arm64.tgz"}}\n' \
-            "$VERSION" "$VERSION" "$VERSION" > latest.json
+          # checkedWith: the releases migrate-check paired with this one; fleet-update pds18 asks when it runs another.
+          checked=$(jq -nc '$ARGS.positional' --args $RECENT)
+          printf '{"version":"%s","files":{"linux-amd64":"fleet-%s-linux-amd64.tgz","darwin-arm64":"fleet-%s-darwin-arm64.tgz"},"checkedWith":%s}\n' \
+            "$VERSION" "$VERSION" "$VERSION" "$checked" > latest.json
       - id: attest
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: fleet-*.tgz
       - run: |
           cp "${{ steps.attest.outputs.bundle-path }}" provenance.sigstore.jsonl
-          gh release create "v$VERSION" --latest --title "v$VERSION" --notes "Fleet $VERSION" \
+          gh release create "v$VERSION" --target "$SHA" --latest --title "v$VERSION" --notes "Fleet $VERSION" \
             fleet-*.tgz SHA256SUMS SHA256SUMS.sig latest.json provenance.sigstore.jsonl
