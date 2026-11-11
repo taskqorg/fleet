@@ -37,7 +37,7 @@ async function host() {
 const {port: s3port, close: closeS3} = await fakeS3();
 after(closeS3);
 
-test('S1 lists: a member lists only granted projects and their sessions; an outsider lists none (risk: row-level security or project settings leak another project)', async () => {
+test('S1 lists: a member lists only granted projects and their sessions; an outsider lists none (requirement: docs/designs/fleet-people-access.md grants; risk: row-level security or project settings leak another project)', async () => {
   const theirs = ok(await start(OWNER, OTHER)).sessionId, mine = ok(await start(MEMBER, MINE)).sessionId;
   assert.deepEqual(ok(await call('GET', '/api/projects', undefined, as(MEMBER))).projects.map((p: any) => p.id), [MINE]);
   assert.equal(ok(await call('GET', '/api/projects', undefined, as(OUTSIDER))).projects.length, 0);
@@ -48,7 +48,7 @@ test('S1 lists: a member lists only granted projects and their sessions; an outs
   assert.equal((await call('GET', '/api/sessions/' + theirs, undefined, as(MEMBER))).status, 404);
 });
 
-test('S2 dispatch: a member\'s message picks the owner-held host and a take-rule subscription, and the host claims it; readiness runs too (risk: knownHost, pickAccount or readiness rows run in the person\'s scope: 400 Unknown host, no account, 403)', async () => {
+test('S2 dispatch: a member\'s message picks the owner-held host and a take-rule subscription, and the host claims it; readiness runs too (requirement: docs/designs/fleet-people-access.md grants; risk: knownHost, pickAccount or readiness rows run in the person\'s scope: 400 Unknown host, no account, 403)', async () => {
   const h = await host();
   const a = ok(await op('account_create', {name: 'scope-sub', harness: 'codex'}));
   ok(await h('/api/hosts/accounts', {accountId: a.id, hostId: 'trial-host', binding: 'scope-bind', platform: 'darwin', readiness: 'ready'}));
@@ -65,7 +65,7 @@ test('S2 dispatch: a member\'s message picks the owner-held host and a take-rule
   assert.equal((await op('project_readiness', {projectId: OTHER}, MEMBER)).status, 404);
 });
 
-test('S3a questions: a person cannot answer an agent question of a project they are not granted, and changes nothing (risk: questions_answer replies to another project\'s session)', async () => {
+test('S3a questions: a person cannot answer an agent question of a project they are not granted, and changes nothing (requirement: docs/designs/fleet-people-access.md grants; risk: questions_answer replies to another project\'s session)', async () => {
   const s = ok(await start(MEMBER, MINE));
   const q = ok(await op('ask', {executionId: s.executionId, requestId: 'scope-qa', question: 'Which colour?'}));
   assert.equal((await op('questions_answer', {questionId: q.id, answer: 'red'}, OUTSIDER)).status, 404);
@@ -80,7 +80,7 @@ test('S3a questions: a person cannot answer an agent question of a project they 
 
 // Expected to fail: defect found by this file. agentReply (agent.go) writes the answered question back with put(), whose
 // row carries no project, so row-level security refuses the member with 403 "Not in your scope". Owner-only B6b passes.
-test('S3b questions: a member answers an agent question of their project and the answer reaches the asking session (risk: the question project is read from a null column, or the reply write runs outside the member\'s scope)', async () => {
+test('S3b questions: a member answers an agent question of their project and the answer reaches the asking session (requirement: docs/designs/fleet-people-access.md grants; risk: the question project is read from a null column, or the reply write runs outside the member\'s scope)', async () => {
   const s = ok(await start(MEMBER, MINE));
   const q = ok(await op('ask', {executionId: s.executionId, requestId: 'scope-qb', question: 'Which colour?'}));
   const r = await op('questions_answer', {questionId: q.id, answer: 'blue'}, MEMBER);
@@ -91,7 +91,7 @@ test('S3b questions: a member answers an agent question of their project and the
   assert.ok(got.queued.some((m: any) => /blue/.test(m.text)), 'the answer reaches the asking session');
 });
 
-test('S4 task take: a member takes a task of a granted project; not one of another project; an outsider takes none (risk: take moves direction across projects)', async () => {
+test('S4 task take: a member takes a task of a granted project; not one of another project; an outsider takes none (requirement: docs/designs/fleet-people-access.md grants; risk: take moves direction across projects)', async () => {
   const mine = ok(await op('task_create', {projectId: MINE, title: 'S4 mine ' + randomUUID()}));
   const other = ok(await op('task_create', {projectId: OTHER, title: 'S4 other ' + randomUUID()}));
   assert.equal(ok(await op('task_take', {taskId: mine.id}, MEMBER)).directedBy, MEMBER);
@@ -99,7 +99,7 @@ test('S4 task take: a member takes a task of a granted project; not one of anoth
   assert.notEqual((await op('task_take', {taskId: mine.id}, OUTSIDER)).status, 200);
 });
 
-test('S5 artifacts: a member lists and reads a result of a granted project; an outsider neither lists nor reads it (risk: result bytes leak across projects)', async () => {
+test('S5 artifacts: a member lists and reads a result of a granted project; an outsider neither lists nor reads it (requirement: docs/designs/fleet-people-access.md grants; risk: result bytes leak across projects)', async () => {
   const h = await host();
   ok(await h('/api/hosts/stores', {store: {id: 'scope-store', bucket: 'fleet', endpoint: `http://127.0.0.1:${s3port}`, accessKeyId: 'k', secretAccessKey: 's'}}));
   const s = ok(await start(MEMBER, MINE, {hostId: 'trial-host'}));
@@ -118,7 +118,7 @@ test('S5 artifacts: a member lists and reads a result of a granted project; an o
   assert.notEqual((await call('GET', `/api/results/${r.artifactId}`, undefined, as(OUTSIDER))).status, 200);
 });
 
-test('S6 stream: a member\'s /api/stream carries changes of granted projects only (risk: the change feed skips row scope)', async () => {
+test('S6 stream: a member\'s /api/stream carries changes of granted projects only (requirement: docs/designs/fleet-people-access.md grants; risk: the change feed skips row scope)', async () => {
   const ac = new AbortController();
   const r = await fetch(BASE + '/api/stream', {headers: as(MEMBER), signal: ac.signal});
   let text = '';
@@ -131,7 +131,7 @@ test('S6 stream: a member\'s /api/stream carries changes of granted projects onl
   assert.ok(!text.includes(theirs), 'the member sees no change of another project');
 });
 
-test('S7 owner-only and director-only: people_set stays the owner\'s, its audit is hidden from a non-owner architect, and focus is set only by a session\'s director (risk: people list audit or another person\'s session changed by a non-owner)', async () => {
+test('S7 owner-only and director-only: people_set stays the owner\'s, its audit is hidden from a non-owner architect, and focus is set only by a session\'s director (requirement: docs/designs/fleet-people-access.md grants; risk: people list audit or another person\'s session changed by a non-owner)', async () => {
   assert.equal((await op('people_set', {people: []}, MEMBER)).status, 403);
   const people = ok(await op('people_list')).people;
   ok(await op('people_set', {people: [...people, {email: ARCHITECT, name: 'Architect', roles: ['operator', 'architect'], grants: [{kind: 'project', id: MINE}]}]}));

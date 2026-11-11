@@ -196,7 +196,7 @@ func budgetAnswerCheck(qn doc, answer string, p *Person) error {
 	if answer != "approve" && answer != "decline" {
 		return fail(400, "Answer approve or decline")
 	}
-	if answer == "approve" && p != nil && !p.Owner {
+	if answer == "approve" && p != nil && !fullAccess(p) {
 		return fail(403, "Only the owner raises a budget")
 	}
 	return nil

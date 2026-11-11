@@ -288,7 +288,7 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 	}
 	approved := b["approved"] == true
 	// Fix: approval lets the coordinator run the example's check commands, so only the owner approves at import.
-	if approved && q.person != nil && !q.person.Owner {
+	if approved && q.person != nil && !fullAccess(q.person) {
 		return nil, fail(403, "Only the owner approves examples")
 	}
 	out := []any{}
@@ -771,7 +771,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 		if o == nil || !keysOnly(o, labOverrides...) {
 			return nil, fail(400, "Variant overrides are "+strings.Join(labOverrides, ", "))
 		}
-		if q.person != nil && !q.person.Owner && (o["host"] != nil || o["account"] != nil || o["profile"] != nil) {
+		if q.person != nil && !fullAccess(q.person) && (o["host"] != nil || o["account"] != nil || o["profile"] != nil) {
 			return nil, fail(403, "Only the owner overrides host, account or profile")
 		}
 		if w, has := o["web_route"]; has && w != "connections" && w != "builtin" {
@@ -1673,7 +1673,7 @@ func labAnswerCheck(q *Request, question doc, answer string) error {
 	// Lab ratings are the owner's (scored as human:owner; a pass on a drafted example lets the coordinator run its checks)
 	// and budget asks move the owner's spend: owner only.
 	lab := question["kind"] == "rating" && (o["example_artifact_id"] != nil || o["experiment_id"] != nil) || d["experimentId"] != nil && d["budget"] != nil
-	if lab && q.person != nil && !q.person.Owner {
+	if lab && q.person != nil && !fullAccess(q.person) {
 		return fail(403, "Only the owner answers Lab ratings and budget questions")
 	}
 	if question["kind"] == "rating" {

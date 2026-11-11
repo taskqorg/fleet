@@ -1,8 +1,8 @@
-// Outside tests of area C of the Go rewrite (connections, pipeline runner, Lab). HTTP only, plus the two file seams the
+// Outside tests of connections, the pipeline runner and Lab (one file: they share the fake gateway). HTTP only, plus the two file seams the
 // coordinator shares with fleet-gateway: <FLEET_GATEWAY_DIR>/snapshot.json and <FLEET_GATEWAY_DIR>/state/spool/*.jsonl,
 // and the key files in FLEET_SECRET_DIR. This file plays the gateway on FLEET_GATEWAY_URL. Run:
 //   d=$(mktemp -d); FLEET_SECRET_DIR=$d/secret FLEET_GATEWAY_DIR=$d/gateway FLEET_GATEWAY_URL=http://127.0.0.1:47811 \
-//   FLEET_CONNECTION_TICK_MS=200 FLEET_PIPELINE_TICK_MS=200 FLEET_TRIAL_TESTS=tests/go/c.test.ts \
+//   FLEET_CONNECTION_TICK_MS=200 FLEET_PIPELINE_TICK_MS=200 FLEET_TRIAL_TESTS=tests/go/connections.test.ts \
 //   [FLEET_TRIAL_SERVER=...] node tests/trial/run.ts
 // Each test names its requirement (docs/designs/fleet-connections.md, fleet-lab.md) and the risk it guards.
 import {after, before, test as nodeTest} from 'node:test';
@@ -46,7 +46,7 @@ after(() => gateway.close());
 
 const name = (p: string) => p + '-' + randomUUID().slice(0, 8);
 
-test('C1 key value stays in the secret file: risk a key value in a row, a reply or the gateway snapshot', async () => {
+test('C1 key value stays in the secret file (requirement: docs/designs/fleet-connections.md; risk: a key value in a row, a reply or the gateway snapshot)', async () => {
   const c = name('tavily');
   ok(await op('connections_create', {name: c, provider: 'tavily'}));
   const value = 'tvly-' + randomUUID();
@@ -66,14 +66,14 @@ test('C1 key value stays in the secret file: risk a key value in a row, a reply 
   await until(() => snapshot().connections[c].keys.length === 0 || undefined, 'retired key leaves the snapshot');
 });
 
-test('C2 only the owner handles key values: risk a non-owner reading or adding a key', async () => {
+test('C2 only the owner handles key values (requirement: docs/designs/fleet-connections.md; risk: a non-owner reading or adding a key)', async () => {
   const c = name('tavily');
   ok(await op('connections_create', {name: c, provider: 'tavily', holder: OUTSIDER}));
   assert.equal((await op('connections_key_add', {connection: c, value: 'x'.repeat(20)}, OUTSIDER)).status, 403);
   assert.equal((await op('connections_token_create', {name: name('t'), connections: [c]}, OUTSIDER)).status, 403);
 });
 
-test('C3 owner token: hash only in the snapshot, revoke removes it: risk a revoked bearer still reaching providers', async () => {
+test('C3 owner token: hash only in the snapshot, revoke removes it (requirement: docs/designs/fleet-connections.md; risk: a revoked bearer still reaching providers)', async () => {
   const c = name('tavily');
   ok(await op('connections_create', {name: c, provider: 'tavily'}));
   ok(await op('connections_set_access', {connection: c, access: {projects: ['*']}}));
@@ -88,7 +88,7 @@ test('C3 owner token: hash only in the snapshot, revoke removes it: risk a revok
   assert.equal((await op('connections_token_create', {name: t, connections: [c]})).status, 200, 'a revoked name can be reused');
 });
 
-test('C4 spool line naming a disabled key disables its row and asks the owner once: risk a dead key kept in rotation', async () => {
+test('C4 spool line naming a disabled key disables its row and asks the owner once (requirement: docs/designs/fleet-connections.md; risk: a dead key kept in rotation)', async () => {
   const c = name('tavily');
   ok(await op('connections_create', {name: c, provider: 'tavily'}));
   ok(await op('connections_set_access', {connection: c, access: {projects: ['*']}}));
@@ -110,7 +110,7 @@ test('C4 spool line naming a disabled key disables its row and asks the owner on
   ok(await op('connections_key_state', {keyId: k.fingerprint, state: 'active'}));
 });
 
-test('P1 pipeline run is idempotent by requestId and refuses a changed body: risk a retried request running twice', async () => {
+test('P1 pipeline run is idempotent by requestId and refuses a changed body (requirement: docs/designs/fleet-asset-pipelines.md; risk: a retried request running twice)', async () => {
   const requestId = randomUUID();
   const a = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId, example: {}}));
   const b = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId, example: {}}));
@@ -122,7 +122,7 @@ test('P1 pipeline run is idempotent by requestId and refuses a changed body: ris
   assert.equal(done.state, 'failed'); assert.equal(done.steps[0].problem, 'ref:example.query');
 });
 
-test('P2 api step without a usable connection fails as infra, and an unanswered call is unknown, never replayed: risk a charged call sent twice', async () => {
+test('P2 api step without a usable connection fails as infra, and an unanswered call is unknown, never replayed (requirement: docs/designs/fleet-asset-pipelines.md; risk: a charged call sent twice)', async () => {
   // No connection named tavily-less: refused at mint, nothing is sent.
   const seenBefore = seen.length;
   const none = await until(async () => { const r = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId: 'p2a', example: {query: 'q'}})); return r.state !== 'running' ? r : undefined; }, 'run ends');
@@ -144,7 +144,7 @@ test('P2 api step without a usable connection fails as infra, and an unanswered 
   await until(() => snapshot().tokens.every((t: any) => !String(t.executionId).startsWith(r.id)) || undefined, 'step token revoked');
 });
 
-test('P3 pipeline_run waits for the run of the project method and is idempotent: risk the project search path left unported', async () => {
+test('P3 pipeline_run waits for the run of the project method and is idempotent (requirement: docs/designs/fleet-asset-pipelines.md; risk: the project search path left unported)', async () => {
   const requestId = randomUUID();
   const r = ok(await op('pipeline_run', {projectId: 'hello-world', requestId, query: 'fleet'}));
   assert.notEqual(r.state, 'running'); assert.equal(r.projectId, 'hello-world'); assert.equal(typeof r.selectedMethod, 'string');
@@ -153,7 +153,7 @@ test('P3 pipeline_run waits for the run of the project method and is idempotent:
   assert.equal(ok(await call('GET', '/api/pipeline-runs/' + r.id)).id, r.id);
 });
 
-test('L1 Lab registry and experiment validation: risk an experiment created over an unknown example or pipeline', async () => {
+test('L1 Lab registry and experiment validation (requirement: docs/designs/fleet-lab.md; risk: an experiment created over an unknown example or pipeline)', async () => {
   const reg = ok(await call('GET', '/api/lab/registry'));
   assert.ok(reg.useCases.length > 0 && reg.useCases.every((u: any) => typeof u.id === 'string'));
   assert.equal((await call('POST', '/api/lab/experiments', {kind: 'single', projectId: 'hello-world', pipelineId: 'hello-search', examples: ['nope'], variants: [{label: 'a'}]})).status, 400);
