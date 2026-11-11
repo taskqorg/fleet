@@ -528,15 +528,21 @@ func (u *updater) latestAPI() string {
 	if u.api == "" {
 		return ""
 	}
-	req, _ := http.NewRequest("GET", u.api+"/releases/latest", nil)
+	req, err := http.NewRequest("GET", u.api+"/releases/latest", nil)
+	if err != nil {
+		log.Print("releases/latest: ", err)
+		return ""
+	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := u.client.Do(req)
 	if err != nil {
 		log.Print("releases/latest: ", err)
 		return ""
 	}
-	defer resp.Body.Close()
+	defer func() { io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
 	if resp.StatusCode == 403 || resp.StatusCode == 429 {
+		log.Printf("releases/latest: %s (remaining %s, reset %s): using latest.json", resp.Status,
+			resp.Header.Get("X-RateLimit-Remaining"), resp.Header.Get("X-RateLimit-Reset"))
 		return ""
 	}
 	var r struct {

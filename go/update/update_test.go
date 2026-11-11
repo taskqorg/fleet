@@ -380,6 +380,11 @@ func TestLatestAPI(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/releases/latest":
+			if code == 299 {
+				w.WriteHeader(200)
+				w.Write([]byte(`{"tag_name":"1.261111.5"}`)) // no v: malformed
+				return
+			}
 			w.WriteHeader(code)
 			w.Write([]byte(`{"tag_name":"v1.261111.5"}`))
 		case "/rel/latest/download/latest.json":
@@ -393,9 +398,13 @@ func TestLatestAPI(t *testing.T) {
 	if v := u.latest(); v != "1.261111.5" {
 		t.Fatalf("API: %q", v)
 	}
-	for _, code = range []int{403, 429, 500} {
+	for _, code = range []int{403, 429, 500, 299} {
 		if v := u.latest(); v != "1.261111.4" {
 			t.Fatalf("HTTP %d: %q, want the redirect's version", code, v)
 		}
+	}
+	u.api = "http://127.0.0.1:1"
+	if v := u.latest(); v != "1.261111.4" {
+		t.Fatalf("API unreachable: %q", v)
 	}
 }

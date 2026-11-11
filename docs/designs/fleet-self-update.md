@@ -166,7 +166,7 @@ Releases root `R`: `~/releases` of the service user; on PDS18 `/home/fleet/relea
 1.  Take `update.lock`; if held, exit 0. Prune.
 2.  Read the inputs.
     *   Executor mode: `<data dir>/update/update.json` `{target, autoUpdate, running, pollOk, pollError, at}`, written by the executor from its last poll answer. Missing file: exit (the executor has not polled yet).
-    *   `pds18` mode: `version` and `autoUpdate` from `GET 127.0.0.1:9470/api/health` (the coordinator reports `autoUpdate` of its machine's host record). Coordinator not answering: treat as `"on"`, so an update can repair it. Candidate from `https://github.com/taskqorg/fleet/releases/latest/download/latest.json`.
+    *   `pds18` mode: `version` and `autoUpdate` from `GET 127.0.0.1:9470/api/health` (the coordinator reports `autoUpdate` of its machine's host record). Coordinator not answering: treat as `"on"`, so an update can repair it. Candidate: `tag_name` of `GET https://api.github.com/repos/taskqorg/fleet/releases/latest` (unauthenticated, 60 an hour per IP, 304s included); on 403, 429 or any API failure, `version` of `https://github.com/taskqorg/fleet/releases/latest/download/latest.json`.
 3.  `autoUpdate` is `"off"` or a future time: record `held`, exit.
 4.  Candidate: executor mode `target`; `pds18` mode `latest.json.version`. Stop when not newer than the running version (COREQ-R14), refused in state, or not matching the strict version regex of section 1 (stricter than COREQ-R12 step 2).
 5.  Download the tarball for this `<os>-<arch>`, `SHA256SUMS` and `SHA256SUMS.sig` from `https://github.com/taskqorg/fleet/releases/download/v<ver>/` into the stage (`S/stage/` on PDS18; `R/<ver>.tmp/` elsewhere). Streamed to disk; no size cap beyond the checksum.
