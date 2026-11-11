@@ -134,7 +134,9 @@ export function formatView(v: View): string {
   const ps = known(v, () => true), table = TABLE[v.view];
   for (const [k, x] of Object.entries(v.extra ?? {})) if (!Object.hasOwn(table, k)) ps.push([enc(k), enc(x)]);
   const q = join(ps);
-  return `/${v.view}${v.focus ? '/' + enc(v.focus) : ''}${q ? '?' + q : ''}`;
+  // A dot segment ('.', '..') would be resolved away by the browser, so its dots are escaped.
+  const focus = v.focus === '.' || v.focus === '..' ? v.focus.replace(/\./g, '%2E') : v.focus && enc(v.focus);
+  return `/${v.view}${focus ? '/' + focus : ''}${q ? '?' + q : ''}`;
 }
 
 /** The store and IndexedDB key of a list: view plus canonical query without focus, sel, preset and unknown keys. */

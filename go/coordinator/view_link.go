@@ -12,12 +12,13 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
 	viewNames     = []string{"tasks", "conversations", "hosts", "overview", "results"}
 	artifactState = []string{"stored", "pending", "failed", "deleted"}
-	viewGroups    = []string{"priority", "state", "project", "agent", "host", "none"}
+	viewGroups    = slices.Sorted(maps.Keys(taskGroups)) // task_page's groups
 	viewKeys      = map[string][]string{"tasks": {"group", "preset", "project", "q", "sel", "state"},
 		"conversations": {"archived", "preset", "q", "sel", "state"}, "results": {"project", "q", "state"}}
 	schemeURL = regexp.MustCompile(`(?i)^[a-z][a-z0-9+.-]*://`)
@@ -65,12 +66,13 @@ func viewDec(s string, query bool) string {
 	if query {
 		s = strings.ReplaceAll(s, "+", " ")
 	}
-	if d, err := url.PathUnescape(s); err == nil {
+	if d, err := url.PathUnescape(s); err == nil && utf8.ValidString(d) { // decodeURIComponent throws on both
 		return d
 	}
 	return s
 }
 
+// ponytail: byte order; JS sorts by UTF-16 code units, so the two differ only for ids mixing astral and high-BMP characters.
 func sortedSet(xs []string) []string {
 	out := slices.Clone(xs)
 	sort.Strings(out)
@@ -205,11 +207,8 @@ func parseView(input, origin string) (view, bool) {
 		if err != nil {
 			return view{}, false
 		}
-		if origin != "" {
-			want, err := url.Parse(origin)
-			if err != nil || !strings.EqualFold(u.Scheme+"://"+u.Host, want.Scheme+"://"+want.Host) {
-				return view{}, false
-			}
+		if origin != "" && originOf(u) != originOf(must(url.Parse(origin))) {
+			return view{}, false
 		}
 		s = u.EscapedPath()
 		if u.RawQuery != "" {
@@ -300,6 +299,24 @@ func parseView(input, origin string) (view, bool) {
 	return v, true
 }
 
+// originOf is a URL's origin as WHATWG writes it: lower-case scheme and host, default port dropped; "" for nil.
+func originOf(u *url.URL) string {
+	if u == nil || u.Host == "" {
+		return ""
+	}
+	host := strings.ToLower(u.Host)
+	scheme := strings.ToLower(u.Scheme)
+	host = strings.TrimSuffix(host, map[string]string{"https": ":443", "http": ":80"}[scheme])
+	return scheme + "://" + host
+}
+
+func must(u *url.URL, err error) *url.URL {
+	if err != nil {
+		return nil
+	}
+	return u
+}
+
 // formatView: the canonical path and query, keys sorted, defaults omitted.
 func formatView(v view) string {
 	ps := map[string]string{}
@@ -354,7 +371,11 @@ func formatView(v view) string {
 		q = append(q, k+"="+ps[k])
 	}
 	out := "/" + v.View
-	if v.Focus != "" {
+	switch v.Focus {
+	case "":
+	case ".", "..": // a dot segment would be resolved away by the browser
+		out += "/" + strings.ReplaceAll(v.Focus, ".", "%2E")
+	default:
 		out += "/" + viewEnc(v.Focus)
 	}
 	if len(q) > 0 {
@@ -370,7 +391,10 @@ func viewLink(q *Request, b doc) (doc, error) {
 		return nil, fail(400, "Expected exactly one of view or url")
 	}
 	if hasURL {
-		s, _ := u.(string)
+		s, ok := u.(string)
+		if !ok {
+			return nil, fail(400, "Expected url")
+		}
 		parsed, ok := parseView(s, browserOrigin)
 		if !ok {
 			return nil, fail(400, "Not a Fleet view URL")
@@ -378,12 +402,12 @@ func viewLink(q *Request, b doc) (doc, error) {
 		return doc{"view": parsed}, nil
 	}
 	if p := viewProblem(v); p != "" {
-		return nil, fail(400, p)
+		return nil, fail(400, "Invalid view: "+p)
 	}
 	path := formatView(viewOf(v.(map[string]any)))
 	var full any
-	if browserOrigin != "" {
-		full = strings.TrimRight(browserOrigin, "/") + path
+	if o := originOf(must(url.Parse(browserOrigin))); o != "" {
+		full = o + path
 	}
 	return doc{"url": full, "path": path}, nil
 }

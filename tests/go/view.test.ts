@@ -23,6 +23,7 @@ test('V1 view_link gives agents the operator-app link the app itself writes, and
       {view: 'conversations', archived: true, state: ['running'], q: 'x+y', extra: {tab: 'log', 'odd key': 'é'}},
       {view: 'results', state: ['stored'], project: ['p1']},
       {view: 'hosts', focus: 'pds18'},
+      {view: 'hosts', focus: '..'},
     ];
     for (const v of views) {
       const r = await op({view: v});
@@ -38,6 +39,7 @@ test('V1 view_link gives agents the operator-app link the app itself writes, and
       [{url: 'https://elsewhere.test/tasks'}, /Not a Fleet view URL/],
       [{url: '/settings'}, /Not a Fleet view URL/],
       [{}, /exactly one of view or url/],
+      [{url: 123}, /Expected url/],
     ] as const) {
       const r = await op(body);
       assert.equal(r.status, 400, JSON.stringify(body));
