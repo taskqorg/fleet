@@ -705,6 +705,18 @@ var recordFields = []string{"goal", "hypothesis", "decisionRule", "labGroup", "p
 
 var recordColumns = map[string]string{"goal": "goal", "hypothesis": "hypothesis", "decisionRule": "decision_rule", "labGroup": "lab_group", "primaryEvaluator": "primary_evaluator"}
 
+// expLocked: the experiment row, locked for this transaction (a record change reads and writes it once).
+func expLocked(q *Request, id string) (doc, error) {
+	rs, err := queryRows(q, "SELECT * FROM experiment WHERE id=$1 FOR UPDATE", id)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, fail(404, "Unknown experiment")
+	}
+	return rs[0], nil
+}
+
 // expLaunch: draft to running, refused without a goal and a hypothesis; the record is frozen from here on.
 func expLaunch(q *Request, id string) error {
 	e, err := expRow(q, id)
@@ -714,10 +726,7 @@ func expLaunch(q *Request, id string) error {
 	if strings.TrimSpace(astr(e["goal"])) == "" || strings.TrimSpace(astr(e["hypothesis"])) == "" {
 		return fail(400, "Launch needs the experiment's goal and hypothesis")
 	}
-	if err := expSetState(q, id, []string{"draft"}, "running", nil); err != nil {
-		return err
-	}
-	return exec(q, "UPDATE experiment SET launched_at=now() WHERE id=$1", id)
+	return expSetState(q, id, []string{"draft"}, "running", nil) // the experiment_record trigger stamps launched_at
 }
 
 // expNote: an append-only note, or an amendment that changes one record field and keeps its old and new value.
@@ -725,7 +734,7 @@ func expNote(q *Request, b doc) (doc, error) {
 	if !keysOnly(b, "experimentId", "kind", "field", "value", "text") {
 		return nil, fail(400, "Expected experimentId, kind, field, value, text")
 	}
-	e, err := expRow(q, astr(b["experimentId"]))
+	e, err := expLocked(q, astr(b["experimentId"]))
 	if err != nil {
 		return nil, err
 	}
@@ -749,6 +758,12 @@ func expNote(q *Request, b doc) (doc, error) {
 		if b["value"] != nil && !isText {
 			return nil, fail(400, "value must be text or null")
 		}
+		if (field == "goal" || field == "hypothesis") && strings.TrimSpace(v) == "" {
+			return nil, fail(400, field+" cannot be cleared")
+		}
+		if field == "primaryEvaluator" && v != "" && !slices.ContainsFunc(anys(e["evaluators"]), func(x any) bool { return evaluatorName(mapOf(x)) == v }) {
+			return nil, fail(400, "primaryEvaluator names none of the evaluators")
+		}
 		old, value = e[col], b["value"]
 		if err := exec(q, "UPDATE experiment SET "+col+"=$2 WHERE id=$1", e["id"], nilIf(v)); err != nil {
 			return nil, err
@@ -761,10 +776,9 @@ func expNote(q *Request, b doc) (doc, error) {
 		n["id"], e["id"], e["project_id"], kind, n["field"], jsonBytes(old), jsonBytes(value), text, n["author"]); err != nil {
 		return nil, err
 	}
-	return n, nil
+	// A note changes the experiment as its readers see it: touch the row so its change reaches the feed.
+	return n, exec(q, "UPDATE experiment SET id=id WHERE id=$1", e["id"])
 }
-
-var decisionPattern = regexp.MustCompile(`^(keep baseline|inconclusive|pending|adopt [a-z0-9][a-z0-9_-]*)$`)
 
 // expDecide: a person confirms or overrides the decision of a stopped or done experiment; an override needs a reason and
 // is an amendment.
@@ -772,7 +786,7 @@ func expDecide(q *Request, b doc) (doc, error) {
 	if !keysOnly(b, "experimentId", "decision", "reason") {
 		return nil, fail(400, "Expected experimentId, decision, reason")
 	}
-	e, err := expRow(q, astr(b["experimentId"]))
+	e, err := expLocked(q, astr(b["experimentId"]))
 	if err != nil {
 		return nil, err
 	}
@@ -780,13 +794,17 @@ func expDecide(q *Request, b doc) (doc, error) {
 		return nil, fail(409, "An experiment is decided once it is stopped or done")
 	}
 	d, reason := astr(b["decision"]), strings.TrimSpace(astr(b["reason"]))
-	if !decisionPattern.MatchString(d) {
-		return nil, fail(400, "decision is adopt <variant>, keep baseline, inconclusive or pending")
-	}
-	if label, adopt := strings.CutPrefix(d, "adopt "); adopt && !slices.ContainsFunc(anys(e["variants"]), func(v any) bool { return mapOf(v)["label"] == label }) {
+	label, adopt := strings.CutPrefix(d, "adopt ")
+	if adopt && !slices.ContainsFunc(anys(e["variants"]), func(v any) bool { return mapOf(v)["label"] == label }) {
 		return nil, fail(400, "Unknown variant "+label)
 	}
+	if !adopt && d != "keep baseline" && d != "inconclusive" {
+		return nil, fail(400, "decision is adopt <variant>, keep baseline or inconclusive")
+	}
 	prev := astr(e["decision"])
+	if prev == d {
+		return expGet(q, astr(e["id"])) // already decided so: nothing changes, no second record
+	}
 	if prev != "" && prev != "pending" && prev != d {
 		if reason == "" {
 			return nil, fail(400, "Overriding a decision needs a reason")
@@ -796,7 +814,7 @@ func expDecide(q *Request, b doc) (doc, error) {
 			return nil, err
 		}
 	}
-	if err := exec(q, "UPDATE experiment SET decision=$2,decision_reason=coalesce($3,decision_reason),decided_by=$4,decided_at=now() WHERE id=$1",
+	if err := exec(q, "UPDATE experiment SET decision=$2,decision_reason=$3,decided_by=$4,decided_at=now() WHERE id=$1",
 		e["id"], d, nilIf(reason), actor(q, "operator")); err != nil {
 		return nil, err
 	}
@@ -1418,7 +1436,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			}
 		}
 		if changed || state != "running" {
-			if err := exec(q, "UPDATE experiment SET budgets=$2,state=$3,stop_reason=coalesce($4,stop_reason),decision=CASE WHEN $3 IN ('stopped','done') THEN coalesce(decision,'pending') ELSE decision END WHERE id=$1", id, jsonBytes(budgets), state, reason); err != nil {
+			if err := exec(q, "UPDATE experiment SET budgets=$2,state=$3,stop_reason=coalesce($4,stop_reason) WHERE id=$1", id, jsonBytes(budgets), state, reason); err != nil {
 				return err
 			}
 		}
@@ -1461,7 +1479,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			allFinal = allFinal && terminal(last[k])
 		}
 		if len(launched) == 0 && len(order) == total && allFinal && evaluated {
-			return exec(q, "UPDATE experiment SET state='done',stop_reason='complete',decision=coalesce(decision,'pending') WHERE id=$1 AND state='running'", id)
+			return exec(q, "UPDATE experiment SET state='done',stop_reason='complete' WHERE id=$1 AND state='running'", id)
 		}
 		return nil
 	})
@@ -1497,7 +1515,7 @@ func labReconcileWhere(ctx context.Context, a *App, states string, skipBusy bool
 func labReconcileRunning(ctx context.Context, a *App) { labReconcileWhere(ctx, a, "running", true) }
 
 func expSetState(q *Request, id string, from []string, to string, reason any) error {
-	rs, err := queryRows(q, "UPDATE experiment SET state=$2,stop_reason=coalesce($3,stop_reason),decision=CASE WHEN $2 IN ('stopped','done') THEN coalesce(decision,'pending') ELSE decision END WHERE id=$1 AND state=ANY($4) RETURNING id", id, to, reason, from)
+	rs, err := queryRows(q, "UPDATE experiment SET state=$2,stop_reason=coalesce($3,stop_reason) WHERE id=$1 AND state=ANY($4) RETURNING id", id, to, reason, from)
 	if err != nil {
 		return err
 	}
@@ -1836,7 +1854,7 @@ func labAnswerAfter(q *Request, question doc) error {
 		if answer == "resume" {
 			to = "running"
 		}
-		if err := exec(q, "UPDATE experiment SET state=$2,stop_reason=CASE WHEN $2='stopped' THEN 'owner' ELSE stop_reason END,decision=CASE WHEN $2='stopped' THEN coalesce(decision,'pending') ELSE decision END WHERE id=$1 AND state='paused'", d["experimentId"], to); err != nil {
+		if err := exec(q, "UPDATE experiment SET state=$2,stop_reason=CASE WHEN $2='stopped' THEN 'owner' ELSE stop_reason END WHERE id=$1 AND state='paused'", d["experimentId"], to); err != nil {
 			return err
 		}
 		eid = astr(d["experimentId"])

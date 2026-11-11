@@ -636,5 +636,8 @@ CREATE INDEX experiment_note_experiment ON experiment_note(experiment_id, seq);
 ALTER TABLE experiment_note ENABLE ROW LEVEL SECURITY;
 ALTER TABLE experiment_note FORCE ROW LEVEL SECURITY;
 CREATE POLICY project_scope ON experiment_note USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')));
+-- The one place for the record's state rules: a stop or completion leaves the decision pending; launch stamps launched_at.
+CREATE OR REPLACE FUNCTION fleet_experiment_record() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.state IN ('stopped', 'done') AND NEW.decision IS NULL THEN NEW.decision := 'pending'; END IF; IF OLD.state = 'draft' AND NEW.state <> 'draft' AND NEW.launched_at IS NULL THEN NEW.launched_at := now(); END IF; RETURN NEW; END $$;
+CREATE TRIGGER experiment_record BEFORE UPDATE ON experiment FOR EACH ROW EXECUTE FUNCTION fleet_experiment_record();
 CREATE OR REPLACE FUNCTION fleet_note_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'experiment notes are append-only'; END $$;
 CREATE TRIGGER experiment_note_append_only BEFORE UPDATE OR DELETE ON experiment_note FOR EACH ROW EXECUTE FUNCTION fleet_note_append_only();
