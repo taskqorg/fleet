@@ -145,6 +145,25 @@ func asT[T any](v any) (T, error) {
 	return t, err
 }
 
+// shaped: a handler that still reads the body as a map, on its contract types: the body is decoded into Req and replaced
+// by Req's own encoding, so the handler sees only the fields the request type names; the reply is converted to Rep.
+func shaped[Req, Rep any](h handler) handler {
+	return typedOp(func(q *Request, r *Req) (Rep, error) {
+		q.body = jsonBytes(r)
+		out, err := h(q)
+		return replyAs[Rep](out, err)
+	})
+}
+
+// replyAs: a handler's map reply (keys fixed by the handler) as its contract type.
+func replyAs[T any](v any, err error) (T, error) {
+	if err != nil {
+		var t T
+		return t, err
+	}
+	return asT[T](v)
+}
+
 // recOf: an open record as the contract's map; never nil, so a required record is written as {}.
 func recOf(v any) map[string]json.RawMessage {
 	if m := rawMap(v); m != nil {

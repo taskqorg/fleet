@@ -485,70 +485,109 @@ const (
 // ConflictReasonValues lists every ConflictReason in schema order.
 var ConflictReasonValues = []ConflictReason{ConflictReasonBaseMoved, ConflictReasonRepositoryChanged, ConflictReasonNoChange, ConflictReasonWrongState, ConflictReasonInvalidDraft}
 
-type ConnectionsCreateReply = map[string]json.RawMessage
+// ConnectionAccess: Who besides the holder may use the API key: people (emails), projects and experiments.
+type ConnectionAccess struct {
+	Experiments []string `json:"experiments,omitempty"`
+	People      []string `json:"people,omitempty"`
+	Projects    []string `json:"projects,omitempty"`
+}
 
+// ConnectionView: An API connection; keys, spend and history only in connections_list.
+type ConnectionView struct {
+	Access    ConnectionAccess             `json:"access"`
+	Comment   string                       `json:"comment"`
+	CreatedAt float64                      `json:"createdAt"`
+	History   []map[string]json.RawMessage `json:"history,omitempty"`
+	Holder    string                       `json:"holder"`
+	Id        string                       `json:"id"`
+	Intake    string                       `json:"intake"`
+	Keys      []map[string]json.RawMessage `json:"keys,omitempty"`
+	Name      string                       `json:"name"`
+	Provider  string                       `json:"provider"`
+	Spend     map[string]json.RawMessage   `json:"spend,omitempty"`
+	Tools     []string                     `json:"tools,omitempty"`
+	UpdatedAt *float64                     `json:"updatedAt,omitempty"`
+}
+
+type ConnectionsCreateReply = ConnectionView
+
+// ConnectionsCreateRequest: holder: the owner may create a key for another person.
 type ConnectionsCreateRequest struct {
 	Comment  *string `json:"comment,omitempty"`
 	Holder   *string `json:"holder,omitempty"`
-	Name     *string `json:"name,omitempty"`
-	Provider *string `json:"provider,omitempty"`
+	Name     string  `json:"name"`
+	Provider string  `json:"provider"`
 }
 
+// ConnectionsKeyAddReply: The new key row (fingerprint, state, addedAt, addedBy); never the value.
 type ConnectionsKeyAddReply = map[string]json.RawMessage
 
+// ConnectionsKeyAddRequest: Owner only. The value goes to the secret file; the reply has its fingerprint only.
 type ConnectionsKeyAddRequest struct {
-	Connection *string `json:"connection,omitempty"`
-	Value      *string `json:"value,omitempty"`
+	Connection string `json:"connection"`
+	Value      string `json:"value"`
 }
 
+// ConnectionsKeyStateReply: The key row after the change.
 type ConnectionsKeyStateReply = map[string]json.RawMessage
 
+// ConnectionsKeyStateRequest: state active, draining or retired.
 type ConnectionsKeyStateRequest struct {
-	KeyId *string `json:"keyId,omitempty"`
-	State *string `json:"state,omitempty"`
+	KeyId string `json:"keyId"`
+	State string `json:"state"`
 }
 
 type ConnectionsListReply struct {
-	Connections json.RawMessage `json:"connections,omitempty"`
-	Providers   json.RawMessage `json:"providers,omitempty"`
+	Connections []ConnectionView           `json:"connections"`
+	Providers   map[string]json.RawMessage `json:"providers"`
 }
 
 type ConnectionsListRequest = map[string]json.RawMessage
 
-type ConnectionsSetAccessReply = map[string]json.RawMessage
+type ConnectionsSetAccessReply = ConnectionView
 
+// ConnectionsSetAccessRequest: access: {people, projects, experiments}, each a list of ids.
 type ConnectionsSetAccessRequest struct {
-	Access     json.RawMessage `json:"access,omitempty"`
-	Connection *string         `json:"connection,omitempty"`
+	Access     json.RawMessage `json:"access"`
+	Connection string          `json:"connection"`
 }
 
-type ConnectionsSetIntakeReply = map[string]json.RawMessage
+type ConnectionsSetIntakeReply = ConnectionView
 
+// ConnectionsSetIntakeRequest: intake all or paused.
 type ConnectionsSetIntakeRequest struct {
-	Connection *string         `json:"connection,omitempty"`
-	Intake     json.RawMessage `json:"intake,omitempty"`
+	Connection string `json:"connection"`
+	Intake     string `json:"intake"`
 }
 
-type ConnectionsTokenCreateReply = map[string]json.RawMessage
+// ConnectionsTokenCreateReply: token: the bearer value, shown once; refused: requested connections the owner cannot use.
+type ConnectionsTokenCreateReply struct {
+	Connections []map[string]json.RawMessage `json:"connections,omitempty"`
+	Name        string                       `json:"name"`
+	Refused     []string                     `json:"refused,omitempty"`
+	Token       *string                      `json:"token"`
+}
 
+// ConnectionsTokenCreateRequest: The owner only (not an agent). The token value is answered once.
 type ConnectionsTokenCreateRequest struct {
-	Connections json.RawMessage `json:"connections,omitempty"`
-	Name        *string         `json:"name,omitempty"`
+	Connections []string `json:"connections,omitempty"`
+	Name        string   `json:"name"`
 }
 
 type ConnectionsTokenListReply struct {
-	Tokens json.RawMessage `json:"tokens,omitempty"`
+	Tokens []TokenInfo `json:"tokens"`
 }
 
 type ConnectionsTokenListRequest = map[string]json.RawMessage
 
 type ConnectionsTokenRevokeReply struct {
-	Name    json.RawMessage `json:"name,omitempty"`
-	Revoked json.RawMessage `json:"revoked,omitempty"`
+	Name    string `json:"name"`
+	Revoked bool   `json:"revoked"`
 }
 
+// ConnectionsTokenRevokeRequest: Owner only.
 type ConnectionsTokenRevokeRequest struct {
-	Name *string `json:"name,omitempty"`
+	Name string `json:"name"`
 }
 
 // DefinitionConflict: Body of a 409 from definition_save and definition_create.
@@ -998,42 +1037,83 @@ type HarnessModelsRequest struct {
 	Harness string `json:"harness"`
 }
 
+// HostRecord: A registered host (without its secret hash). harnesses: per harness name whether it is allowed; autoUpdate on, off or an RFC 3339 time.
+type HostRecord struct {
+	AutoUpdate json.RawMessage `json:"autoUpdate,omitempty"`
+	CreatedAt  float64         `json:"createdAt"`
+	Harnesses  json.RawMessage `json:"harnesses"`
+	Holder     *string         `json:"holder,omitempty"`
+	HostId     *string         `json:"hostId,omitempty"`
+	Id         string          `json:"id"`
+	Intake     string          `json:"intake"`
+	Name       *string         `json:"name,omitempty"`
+	Platform   *string         `json:"platform,omitempty"`
+	Roles      []string        `json:"roles,omitempty"`
+}
+
+// HostRow: One host as the Hosts screen shows it: configured, observed, or both; problems only while it polls.
+type HostRow struct {
+	AutoUpdate       json.RawMessage  `json:"autoUpdate"`
+	Capabilities     json.RawMessage  `json:"capabilities"`
+	Configured       bool             `json:"configured"`
+	Id               string           `json:"id"`
+	LastSeenAt       *float64         `json:"lastSeenAt"`
+	Platform         *string          `json:"platform"`
+	Problems         json.RawMessage  `json:"problems"`
+	Queued           int64            `json:"queued"`
+	Running          int64            `json:"running"`
+	RunningByHarness map[string]int64 `json:"runningByHarness"`
+	Slots            json.RawMessage  `json:"slots"`
+	Stores           string           `json:"stores"`
+	Update           json.RawMessage  `json:"update"`
+	Version          *string          `json:"version"`
+}
+
+// HostWriteReply: secret: only when Fleet minted it (no secretSha256 given); shown once.
+type HostWriteReply struct {
+	Host   HostRecord `json:"host"`
+	Secret *string    `json:"secret,omitempty"`
+}
+
 type HostsListReply struct {
-	Hosts        []map[string]json.RawMessage `json:"hosts"`
-	ServerNow    float64                      `json:"serverNow"`
-	StaleAfterMs float64                      `json:"staleAfterMs"`
+	Hosts        []HostRow `json:"hosts"`
+	ServerNow    int64     `json:"serverNow"`
+	StaleAfterMs int64     `json:"staleAfterMs"`
 }
 
 type HostsListRequest = map[string]json.RawMessage
 
-type HostsRegisterReply = map[string]json.RawMessage
+type HostsRegisterReply = HostWriteReply
 
+// HostsRegisterRequest: Owner only. secretSha256: the sha256 of a secret the host already holds; absent: Fleet mints one.
 type HostsRegisterRequest struct {
 	Harnesses    json.RawMessage `json:"harnesses,omitempty"`
 	Holder       *string         `json:"holder,omitempty"`
-	Id           json.RawMessage `json:"id,omitempty"`
+	Id           string          `json:"id"`
 	Name         *string         `json:"name,omitempty"`
-	Platform     json.RawMessage `json:"platform,omitempty"`
-	Roles        json.RawMessage `json:"roles,omitempty"`
-	SecretSha256 json.RawMessage `json:"secretSha256,omitempty"`
+	Platform     *string         `json:"platform,omitempty"`
+	Roles        []string        `json:"roles,omitempty"`
+	SecretSha256 *string         `json:"secretSha256,omitempty"`
 }
 
-type HostsRotateSecretReply = map[string]json.RawMessage
+type HostsRotateSecretReply = HostWriteReply
 
+// HostsRotateSecretRequest: Owner only.
 type HostsRotateSecretRequest struct {
-	Id           json.RawMessage `json:"id,omitempty"`
-	SecretSha256 json.RawMessage `json:"secretSha256,omitempty"`
+	Id           string  `json:"id"`
+	SecretSha256 *string `json:"secretSha256,omitempty"`
 }
 
 type HostsUpdateReply struct {
-	Host json.RawMessage `json:"host,omitempty"`
+	Host HostRecord `json:"host"`
 }
 
+// HostsUpdateRequest: Owner, or the holder for their own host.
 type HostsUpdateRequest struct {
 	AutoUpdate json.RawMessage `json:"autoUpdate,omitempty"`
 	Harnesses  json.RawMessage `json:"harnesses,omitempty"`
-	Id         json.RawMessage `json:"id,omitempty"`
-	Intake     json.RawMessage `json:"intake,omitempty"`
+	Id         string          `json:"id"`
+	Intake     *string         `json:"intake,omitempty"`
 }
 
 type LabCellActionReply = map[string]json.RawMessage
@@ -2257,6 +2337,14 @@ type ThreadSearchRequest struct {
 	Key    ThreadKey `json:"key"`
 	Limit  *int64    `json:"limit,omitempty"`
 	Q      string    `json:"q"`
+}
+
+type TokenInfo struct {
+	Connections json.RawMessage `json:"connections"`
+	CreatedAt   json.RawMessage `json:"createdAt"`
+	DirectedBy  json.RawMessage `json:"directedBy"`
+	Name        string          `json:"name"`
+	RevokedAt   json.RawMessage `json:"revokedAt"`
 }
 
 // ToolBlock: input and output are the harness's own values; times in ms.
