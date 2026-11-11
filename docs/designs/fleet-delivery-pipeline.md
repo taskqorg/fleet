@@ -168,7 +168,7 @@ Amendment of 2026-11-11, decided by the owner. Data from pull requests #171 to #
 * A worker brings its branch up to date by `git rebase origin/main` and `git push --force-with-lease`, never by merging `main` or a sibling branch into it. It rebases only when GitHub reports a conflict or the queue removed the pull request for one; an out-of-date branch without a conflict needs nothing, because the queue tests it on top of `main`.
 * On `pull_request` only, the `go` job fails when the pull request's commits include a merge commit (`gh api repos/{repo}/pulls/<n>/commits`, any commit with two parents) and prints the rebase command. A merge group has no pull request number and its own commit is a merge, so the step does not run there.
 * No stacks. A change that needs another one waits for it to merge, then branches from `main`. Section 2 still covers a stack that already exists.
-* Migration numbers in `go/coordinator/schema.sql` rise by one with no repeat; `go/coordinator/migrations_test.go` fails otherwise. A repeated number is otherwise silent: a database that already applied the first section skips the second.
+* Migration numbers in `go/coordinator/schema.sql` increase; `go/coordinator/migrations_test.go` fails otherwise. A repeated number is otherwise silent: a database that already applied the first section skips the second.
 * Generated files (`go/contract/*_gen.go`) are never merged by hand. On a conflict in one, take either side, run `cd go && go generate ./contract`, add the result and continue the rebase. Their schemas in `contracts/` are merged by hand, as source.
 
 **Watch to the hosts.**
@@ -201,7 +201,7 @@ Amendment of 2026-11-11, decided by the owner. Data from pull requests #171 to #
 * **PDS18 installs every intermediate release in sequence.** Rejected by author: needs a release list beyond `latest.json`, stalls on a refused release, and slows catch-up.
 * **Smoke and rollback from a GitHub runner.** Rejected: runners cannot reach the Mac or WSL, and rollback already lives in `fleet-update`.
 * **`.gitattributes` `merge=union` for shared indexes** (section 8). Rejected by author: GitHub's merge queue ignores merge drivers, and a union of JSON or Go lines produces invalid files.
-* **Migration numbers by timestamp.** Rejected by author: `schema_migration.version` is an `int`, and numbers out of order break the 5-release rollback check; a collision is caught by `go/coordinator/migrations_test.go` and, for two pull requests in flight, by the queue run that holds both.
+* **Migration numbers by timestamp.** Rejected by author: `schema_migration.version` is an `int`, and numbers out of order break the 5-release rollback check; a collision is caught by `go/coordinator/migrations_test.go` (`TestMigrationNumbersIncrease`) and, for two pull requests in flight, by the queue run that holds both.
 * **Files owned by lanes.** Rejected by author: it limits which lane can take which task, a hidden concurrency limit.
 * **Fewer, larger pull requests.** Rejected by author: a larger change conflicts more and waits longer in review.
 * **Generated Go files not committed.** Rejected by author for now: every build path (`go:build`, `deploy/build-release.sh`, `go vet` in CI, editors) would need `go generate` first; regenerating on a conflict removes the hand-merge for one rule.
@@ -242,7 +242,7 @@ One pull request per item, in this order. Items 1 and 2 wait for #191: the rules
     * Check: a release reaches all hosts within 15 minutes; a release whose coordinator refuses the executor poll rolls back on PDS18 and opens the needs-you question.
 4. **Workers merge** (section 8), one pull request per step, each from `main`:
     * This section, `fleet.md` Stack and Verification, `AGENTS.md` lifecycle, `scripts/watch-landing.sh`.
-    * Same pull request: `.github/workflows/review-gate.yml`, the merge-commit step in the `go` job of `.github/workflows/ci.yml`, `go/coordinator/migrations_test.go`. After it lands, the ruleset change of Rollout.
+    * Same pull request: `.github/workflows/review-gate.yml`, the merge-commit step in the `go` job of `.github/workflows/ci.yml`. After it lands, the ruleset change of Rollout.
     * `docs/designs/fleet-stack.md` split; inbound links updated.
     * `contracts/ops.schema.json` split by domain; `go/gen/main.go`, `contracts/gen-ts.mjs`, `go/contract/contract.go`, `contracts/README.md`, imports of `contracts/generated/ops.ts`.
     * Check: the next pull request after step 2 is enqueued by its worker, and the queue refuses one without the status.
