@@ -323,3 +323,53 @@ func TestSmoke(t *testing.T) {
 		t.Fatal("guard not answering must be down")
 	}
 }
+
+// The trigger names the real data dir, is rewritten only on change, and is skipped where fleet-update is not installed.
+func TestTrigger(t *testing.T) {
+	home := t.TempDir()
+	if triggerFor(home, "linux", "/d/update/update.json", 501) != nil {
+		t.Fatal("no fleet-update.service: no trigger")
+	}
+	os.MkdirAll(filepath.Join(home, ".config", "systemd", "user"), 0o755)
+	os.WriteFile(filepath.Join(home, ".config", "systemd", "user", "fleet-update.service"), nil, 0o644)
+	tr := triggerFor(home, "linux", "/d/update/update.json", 501)
+	if tr == nil || !bytes.Contains(tr.body, []byte("PathChanged=/d/update/update.json\n")) {
+		t.Fatalf("linux trigger: %+v", tr)
+	}
+	os.MkdirAll(filepath.Join(home, "Library", "LaunchAgents"), 0o755)
+	os.WriteFile(filepath.Join(home, "Library", "LaunchAgents", "com.ufobe.fleet-update.plist"), nil, 0o644)
+	if !bytes.Contains(triggerFor(home, "linux", "/d%1/update.json", 501).body, []byte("PathChanged=/d%%1/update.json")) {
+		t.Fatal("% must be escaped for systemd")
+	}
+	m := triggerFor(home, "darwin", "/Users/x/a&b/update/update.json", 501)
+	if m == nil || !bytes.Contains(m.body, []byte("<string>/Users/x/a&amp;b/update/update.json</string>")) || !bytes.Contains(m.body, []byte("gui/501/com.ufobe.fleet-update<")) {
+		t.Fatalf("darwin trigger: %s", m.body)
+	}
+}
+
+// A failed load removes the unit so the next run retries; an unchanged unit runs nothing.
+func TestLoadTrigger(t *testing.T) {
+	var ran int
+	fail := true
+	old, oldWait := runTrigger, triggerWait
+	defer func() { runTrigger, triggerWait = old, oldWait }()
+	triggerWait = 0
+	runTrigger = func(argv []string) error {
+		ran++
+		if fail && argv[0] == "load" {
+			return os.ErrPermission
+		}
+		return nil
+	}
+	tr := &trigger{file: filepath.Join(t.TempDir(), "u"), body: []byte("x"), load: []step{{argv: []string{"out"}, tolerate: true}, {argv: []string{"load"}, retry: 3}}}
+	loadTrigger(tr)
+	if exists(tr.file) || ran != 4 {
+		t.Fatalf("failed load: file kept or %d runs (want 1 + 3 retries)", ran)
+	}
+	fail, ran = false, 0
+	loadTrigger(tr)
+	loadTrigger(tr)
+	if !exists(tr.file) || ran != 2 {
+		t.Fatalf("load then unchanged: %d runs, want 2", ran)
+	}
+}

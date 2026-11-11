@@ -91,6 +91,7 @@ func (u *updater) runExecutor() error {
 	st := &State{}
 	readJSON(stateFile, st)
 	signal := filepath.Join(s, "update.json")
+	ensureTrigger(signal)
 	restart := []string{"systemctl", "--user", "restart", "fleet-executor"}
 	if runtime.GOOS == "darwin" {
 		restart = []string{"launchctl", "kickstart", "-k", "gui/" + strconv.Itoa(os.Getuid()) + "/com.ufobe.fleet-executor"}
