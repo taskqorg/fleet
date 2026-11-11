@@ -55,7 +55,7 @@ func TestLastUpdate(t *testing.T) {
 	}
 	os.MkdirAll(filepath.Join(root, "update"), 0o700)
 	os.WriteFile(filepath.Join(root, "update", "update-state.json"), []byte(`{"last":{"version":"1.261111.0","state":"ok","at":"x"}}`), 0o600)
-	if m, ok := lastUpdate(root).(M); !ok || m["state"] != "ok" {
+	if u := lastUpdate(root); u == nil || u.State != "ok" || u.Version != "1.261111.0" {
 		t.Fatalf("%v", lastUpdate(root))
 	}
 }

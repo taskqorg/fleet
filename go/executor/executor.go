@@ -88,8 +88,8 @@ func platform() string {
 	return runtime.GOOS
 }
 
-func capabilities() []any {
-	c := []any{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script"}
+func capabilities() []string {
+	c := []string{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script"}
 	if v := ffmpegVersion(); v != "" {
 		c = append(c, "ffmpeg:"+v)
 	}
@@ -204,7 +204,7 @@ type executor struct {
 	storeCfg     M
 	declared     []string
 	storeAt      time.Time
-	storeLast    []any
+	storeLast    []contract.StoreReport
 }
 
 // inTx runs fn with every journal write of the executor inside one transaction.
@@ -399,8 +399,13 @@ func (e *executor) reconcileProcesses() error {
 		waiting := false
 		for _, x := range launches {
 			if x.err == nil {
+				// An unknown identity is asked again on the next pass; the final check below decides.
 				alive, err := x.l.aliveOwned()
-				x.err, waiting = err, waiting || alive
+				var unknown identityUnknown
+				waiting = waiting || alive || errors.As(err, &unknown)
+				if !errors.As(err, &unknown) {
+					x.err = err
+				}
 			}
 		}
 		if !waiting {
@@ -1481,6 +1486,11 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	}
 	if exited {
 		alive, err := l.aliveOwned()
+		var unknown identityUnknown
+		if errors.As(err, &unknown) {
+			// Not confirmed gone: the run stays live (and its session held) until the process can be seen to leave.
+			return false, nil
+		}
 		if err != nil {
 			return false, err
 		}
@@ -1643,9 +1653,9 @@ func (e *executor) collect(d *os.File, rel, execution string, declared *[]string
 	return nil
 }
 
-func (e *executor) stores() []any {
+func (e *executor) stores() []contract.StoreReport {
 	if e.storeCfg == nil {
-		return []any{}
+		return []contract.StoreReport{}
 	}
 	if e.storeAt.IsZero() || time.Since(e.storeAt) >= 15*time.Second {
 		e.storeAt, e.storeLast = time.Now(), storeReport(e.storeCfg)
@@ -1723,6 +1733,17 @@ func (l *live) observe() error {
 	return nil
 }
 
+// identityUnknown: an owned pid exists but its identity cannot be read, so whether it is the recorded process is
+// unknown.
+type identityUnknown struct {
+	pid int
+	err error
+}
+
+func (u identityUnknown) Error() string {
+	return fmt.Sprintf("process %d exists but its identity cannot be read: %v", u.pid, u.err)
+}
+
 func (l *live) aliveOwned() (bool, error) {
 	table, err := processes()
 	if err != nil {
@@ -1732,13 +1753,23 @@ func (l *live) aliveOwned() (bool, error) {
 		if strings.HasPrefix(p.stat, "Z") {
 			continue
 		}
-		// An identity that cannot be read is not the recorded incarnation: the process left between the snapshot
-		// and the read, or the pid now belongs to a process this user cannot inspect.
-		if expected, ok := l.owned[p.pid]; ok {
-			if cur, err := identity(p.pid); err == nil && cur == expected {
+		expected, ok := l.owned[p.pid]
+		if !ok {
+			continue
+		}
+		cur, err := identity(p.pid)
+		if err == nil {
+			if cur == expected {
 				return true, nil
 			}
+			continue // another incarnation holds the pid
 		}
+		// An identity read failure proves nothing (W3-3): only ESRCH from kill(pid, 0) shows the pid has gone; a pid
+		// that still exists but cannot be inspected is unknown.
+		if errors.Is(syscall.Kill(p.pid, 0), syscall.ESRCH) {
+			continue
+		}
+		return false, identityUnknown{p.pid, err}
 	}
 	return false, nil
 }
@@ -1963,11 +1994,9 @@ func (e *executor) exchange() error {
 	if edgeWait(pollRoute) {
 		return nil
 	}
-	body := M{"hostId": e.host, "platform": platform(), "capabilities": capabilities(), "stores": e.stores(),
-		"problems": edgeProblems(pollRoute), "projectRoots": anyStrings(reportedRoots()), "version": version}
-	if u := lastUpdate(e.root); u != nil {
-		body["update"] = u
-	}
+	v, roots := version, reportedRoots()
+	body := contract.PollRequest{HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
+		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, Update: lastUpdate(e.root)}
 	a := send(e.url, e.token, pollRoute, body)
 	sig := updateSignal{HostID: e.host, Running: version, AutoUpdate: "on"}
 	if lastSignal != nil {

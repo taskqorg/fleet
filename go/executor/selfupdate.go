@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fleet/contract"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -126,19 +127,15 @@ func pollSignal(a answer) (ok bool, perr string) {
 }
 
 // lastUpdate: last of <data dir>/update/update-state.json (written by fleet-update), nil when absent.
-func lastUpdate(root string) any {
+func lastUpdate(root string) *contract.UpdateResult {
 	var st struct {
-		Last json.RawMessage `json:"last"`
+		Last *contract.UpdateResult `json:"last"`
 	}
 	b, err := os.ReadFile(filepath.Join(root, "update", "update-state.json"))
-	if err != nil || json.Unmarshal(b, &st) != nil || len(st.Last) == 0 {
+	if err != nil || json.Unmarshal(b, &st) != nil {
 		return nil
 	}
-	v, err := dec(string(st.Last))
-	if err != nil {
-		return nil
-	}
-	return v
+	return st.Last
 }
 
 // selftest: no network; an in-memory journal opens and the harness table is loaded.

@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"database/sql"
+	"fleet/contract"
 	"fmt"
 	"io"
 	"net/http"
@@ -215,7 +216,7 @@ func edgeWait(route string) bool {
 }
 
 // edgeProblems is the poll's problems list; the poll's own route is left out.
-func edgeProblems(except string) []any {
+func edgeProblems(except string) []contract.EdgeProblem {
 	edgeMu.Lock()
 	defer edgeMu.Unlock()
 	keys := make([]string, 0, len(edges))
@@ -223,17 +224,16 @@ func edgeProblems(except string) []any {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	out := []any{}
+	out := []contract.EdgeProblem{}
 	for _, route := range keys {
 		if route == except {
 			continue
 		}
 		e := edges[route]
-		redirect := e.status >= 300 && e.status < 400
-		p := M{"kind": "edge-redirect", "route": route, "status": e.status, "location": nil, "detail": e.detail}
-		if redirect {
-			p["location"] = e.detail
-			p["detail"] = "redirect to " + e.detail
+		p := contract.EdgeProblem{Kind: contract.ProblemKindEdgeRedirect, Route: route, Status: int64(e.status), Detail: e.detail}
+		if e.status >= 300 && e.status < 400 {
+			loc := e.detail
+			p.Location, p.Detail = &loc, "redirect to "+e.detail
 		}
 		out = append(out, p)
 	}
