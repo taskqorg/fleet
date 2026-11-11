@@ -31,8 +31,8 @@
    "repo": "fleet",
    "path": "docs/use-cases.md",
    "anchor": "uc2",
-   "commit": "67f07f29e04f61aeaecbe226f4be0a8880e6d01d",
-   "sha256": "323cdfc54101f9adae2b89b60d33bf88997c9374f5567bcc462850fcbe4f586e"
+   "commit": "5501eed758de3374bc5e051f29b4588151b52b21",
+   "sha256": "a7e9a611f66e38a3f2194b96e89c1f88107bbfcaff45453e7dd42f14844b3f46"
   },
   "source_status": "current",
   "actor": "architect",
