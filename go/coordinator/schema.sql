@@ -726,6 +726,9 @@ ALTER TABLE artifact ADD CONSTRAINT artifact_role_check CHECK (role IN ('origina
 -- and task, legacy_id from task.
 ALTER TABLE question ADD COLUMN request_id text NULL;
 UPDATE question SET request_id = data->>'requestId' WHERE legacy_kind IN ('question', 'project-question');
+-- A column the record names but the row lacks takes the record's value first.
+UPDATE question SET answer = coalesce(answer, data->>'answer'), answered_by = coalesce(answered_by, data->>'answeredBy'),
+ answered_at = coalesce(answered_at, to_timestamp((data->>'answeredAt')::float8 / 1000)) WHERE legacy_kind IN ('question', 'project-question') AND data ? 'answer';
 UPDATE question SET data = '{}' WHERE legacy_kind = 'project-question';
 UPDATE question SET data = data - 'id' - 'executionId' - 'sessionId' - 'projectId' - 'requestId' - 'question' - 'state' - 'answer' - 'answeredBy' - 'answeredAt' - 'createdAt' WHERE legacy_kind = 'question';
 DROP INDEX question_legacy;
@@ -733,3 +736,5 @@ DROP INDEX task_legacy;
 ALTER TABLE question DROP COLUMN legacy_kind;
 ALTER TABLE task DROP COLUMN legacy_kind, DROP COLUMN legacy_id;
 CREATE INDEX question_request ON question(execution_id, request_id) WHERE request_id IS NOT NULL;
+CREATE INDEX question_project_request ON question(project_id, request_id) WHERE request_id IS NOT NULL;
+CREATE INDEX question_kind_state ON question(kind, state, seq);

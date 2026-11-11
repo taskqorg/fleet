@@ -718,5 +718,5 @@ func catalogueHead(q *Request) (doc, error) {
 const projectQuestion = "kind='operator_decision' AND request_id IS NOT NULL"
 
 // projectQuestionJSON: a project question (contract.ProjectQuestion) from its columns.
-const projectQuestionJSON = `jsonb_build_object('id',id,'projectId',project_id,'requestId',request_id,'text',text,'state',CASE WHEN state='answered' THEN 'answered' ELSE 'waiting' END,
+const projectQuestionJSON = `jsonb_build_object('id',id,'projectId',project_id,'requestId',request_id,'text',text,'state',CASE WHEN state='open' THEN 'waiting' ELSE state::text END,
  'createdAt',(extract(epoch FROM asked_at)*1000)::bigint,'actor',asked_by) || CASE WHEN state='answered' THEN jsonb_build_object('answer',answer,'answeredAt',(extract(epoch FROM answered_at)*1000)::bigint,'answeredBy',answered_by) ELSE '{}' END`

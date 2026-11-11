@@ -241,8 +241,8 @@ func writeEnded(q *Request, id string) error {
 }
 
 // agentQuestionJSON: an agent question record ('question') from its columns; data holds the open rest (delivery).
-const agentQuestionJSON = `data || jsonb_build_object('id',id,'executionId',execution_id,'sessionId',session_id,'projectId',project_id,'requestId',request_id,
- 'question',text,'state',state,'answer',answer,'answeredBy',answered_by,'answeredAt',(extract(epoch FROM answered_at)*1000)::bigint,'createdAt',(extract(epoch FROM asked_at)*1000)::bigint)`
+const agentQuestionJSON = `data || jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'sessionId',session_id,'projectId',project_id,'requestId',request_id,
+ 'question',text,'state',state,'answer',answer,'answeredBy',answered_by,'answeredAt',(extract(epoch FROM answered_at)*1000)::bigint,'createdAt',(extract(epoch FROM asked_at)*1000)::bigint))`
 
 // agentQuestionColumns: the record fields all() filters on, by column.
 var agentQuestionColumns = map[string]string{"executionId": "execution_id", "sessionId": "session_id", "projectId": "project_id", "requestId": "request_id", "state": "state::text"}
@@ -291,13 +291,14 @@ func putQuestion(q *Request, v doc) error {
 	return exec(q, "UPDATE question SET data=$2,project_id=coalesce(project_id,$3) WHERE id=$1", id, js(questionRest(v)), nilIf(astr(v["projectId"])))
 }
 
+// agentQuestionFields: the record fields agentQuestionJSON builds from columns (migration 32 strips the same from data).
+var agentQuestionFields = []string{"id", "executionId", "sessionId", "projectId", "requestId", "question", "state", "answer", "answeredBy", "answeredAt", "createdAt"}
+
 // questionRest: the agent question fields without a column.
 func questionRest(v doc) doc {
 	d := doc{}
 	for k, x := range v {
-		switch k {
-		case "id", "executionId", "sessionId", "projectId", "requestId", "question", "state", "answer", "answeredBy", "answeredAt", "createdAt":
-		default:
+		if !inList(agentQuestionFields, k) {
 			d[k] = x
 		}
 	}
