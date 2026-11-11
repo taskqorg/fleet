@@ -7,6 +7,8 @@ import bpy
 parser = argparse.ArgumentParser()
 parser.add_argument('--mode', choices=['fixture-sheet', 'gemini-sheet', 'url-images'], required=True)
 parser.add_argument('--source-step', default='prep')
+parser.add_argument('--include-reference', help='Retained relative reference path selected by the already verified reference encoder')
+parser.add_argument('--reference-map', action='store_true', help='Use an explicit source-hash-bound canonical fixture inspection, never provider ordering')
 parser.add_argument('--grid', default='3,1')
 parser.add_argument('--size', type=int, default=1024)
 parser.add_argument('--padding', type=float, default=.05)
@@ -64,18 +66,33 @@ try:
     if args.mode=='fixture-sheet':
         sources=[((root/'example'/'turnaround.png').read_bytes(),'example/turnaround.png')]
     else:
-        reply=json.loads((root/args.source_step/'output.json').read_text())
         if args.mode=='url-images':
-            urls=reply.get('image_urls',reply.get('receipt',{}).get('image_urls',[]))
-            if not isinstance(urls,list): raise ValueError('image_urls must be an array')
-            for index,url in enumerate(urls):
-                if not isinstance(url,str) or not url.startswith('https://'): raise ValueError('prepared view URL must be HTTPS')
-                with urllib.request.urlopen(url,timeout=300) as response: data=response.read()
-                sources.append((data,url))
+            urls=[]
+            if args.include_reference:
+                path=(root/args.include_reference).resolve()
+                if not path.is_relative_to(root.resolve()): raise ValueError('reference path escapes retained inputs')
+                data=path.read_bytes();sources.append((data,'retained-reference:'+args.include_reference))
+                target=out/'raw'/'source-0.bin';target.write_bytes(data)
+                record['sources'].append({'index':0,'source':'retained-reference:'+args.include_reference,'path':'raw/'+target.name,'sha256':digest(data),'bytes':len(data)});retain()
+            for step in args.source_step.split(','):
+                reply=json.loads((root/step/'output.json').read_text())
+                listed=reply.get('image_urls',reply.get('receipt',{}).get('image_urls'))
+                if listed is None: listed=[image['url'] for image in reply.get('images',[])]
+                if not isinstance(listed,list): raise ValueError('prepared image URLs must be an array')
+                urls.extend(listed)
+            for url in urls:
+                if not isinstance(url,str): raise ValueError('prepared image URL must be a string')
+                if url.startswith('data:image/') and ';base64,' in url:
+                    data=base64.b64decode(url.split(',',1)[1],validate=True);source_name='data-uri:sha256:'+digest(url.encode())
+                elif url.startswith('https://'):
+                    with urllib.request.urlopen(url,timeout=300) as response:data=response.read()
+                    source_name=url
+                else:raise ValueError('prepared view must be HTTPS or a base64 image data URI')
+                index=len(sources);sources.append((data,source_name))
                 path=out/'raw'/('source-'+str(index)+'.bin');path.write_bytes(data)
-                record['sources'].append({'index':index,'source':url,'path':'raw/'+path.name,'sha256':digest(data),'bytes':len(data)})
-                retain()
+                record['sources'].append({'index':index,'source':source_name,'path':'raw/'+path.name,'sha256':digest(data),'bytes':len(data)});retain()
         else:
+            reply=json.loads((root/args.source_step/'output.json').read_text())
             for candidate in reply.get('candidates',[]):
                 for part in candidate.get('content',{}).get('parts',[]):
                     inline=part.get('inlineData',part.get('inline_data',{}))
@@ -104,6 +121,18 @@ try:
                     normalize(image,(col*width//cols,(rows-row-1)*height//rows,(col+1)*width//cols,(rows-row)*height//rows),len(record['candidates']),source)
         bpy.data.images.remove(image);retain()
     record['state']='ready-for-mapping';retain()
+    if args.reference_map:
+        if args.mode!='fixture-sheet': raise ValueError('canonical reference mapping applies only to the input fixture')
+        guide=json.loads((root/'example'/'rig-guide.json').read_text())['reference_sheet']
+        if guide['sha256']!=record['sources'][0]['sha256'] or len(guide['views'])!=len(record['candidates']):
+            raise ValueError('canonical fixture inspection does not bind the actual reference bytes/count')
+        mapped=[]
+        for candidate,inspection in zip(record['candidates'],guide['views']):
+            if inspection.get('basis') not in ['operator-verified','agent-inspected'] or not inspection.get('rationale'):
+                raise ValueError('canonical reference inspection is unavailable')
+            mapped.append({'candidate_index':candidate['index'],'source_sha256':candidate['source_sha256'],
+                'sha256':candidate['sha256'],'view':inspection['view'],'basis':inspection['basis'],'rationale':inspection['rationale']})
+        (out/'view-map.json').write_text(json.dumps({'views':mapped},indent=2)+'\n')
     (out/'output.json').write_text(json.dumps(record)+'\n')
 except Exception as error:
     record['state']='failed';record['error']=str(error);retain()

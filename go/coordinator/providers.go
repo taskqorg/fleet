@@ -339,7 +339,7 @@ const providersJSON = `
       },
       "ai_model": {
        "type": "string",
-       "description": "meshy-4, meshy-5 or latest"
+       "description": "latest (Meshy7.1), meshy-7.1, meshy-6 or meshy-6-lite; record actual model choice."
       },
       "topology": {
        "type": "string",
@@ -368,6 +368,9 @@ const providersJSON = `
       },
       "texture_prompt": {
        "type": "string"
+      },
+      "save_pre_remeshed_model": {
+       "type": "boolean"
       }
      }
     },
@@ -382,7 +385,8 @@ const providersJSON = `
      "target_formats",
      "should_remesh",
      "pose_mode",
-     "texture_prompt"
+     "texture_prompt",
+     "save_pre_remeshed_model"
     ]
    },
    "multi_job_status": {
@@ -500,12 +504,76 @@ const providersJSON = `
      "type": "object",
      "properties": {}
     }
+   },
+   "rigging": {
+    "method": "POST",
+    "path": "/openapi/v1/rigging",
+    "unit": "credits",
+    "idempotent": false,
+    "description": "Rig the confirmed generated textured humanoid task for source joint guides; output mesh is reference only. Never repeat an uncertain submit.",
+    "adoptMatch": "input_task_id",
+    "adoptFields": [
+     "height_meters"
+    ],
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "input_task_id",
+      "height_meters"
+     ],
+     "properties": {
+      "input_task_id": {
+       "type": "string"
+      },
+      "height_meters": {
+       "type": "number"
+      }
+     }
+    }
+   },
+   "rigging_job_status": {
+    "method": "GET",
+    "path": "/openapi/v1/rigging/{jobId}",
+    "unit": "credits",
+    "idempotent": true,
+    "description": "Read rigging status, result.rigged_character_glb_url and actual consumed_credits.",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "jobId"
+     ],
+     "properties": {
+      "jobId": {
+       "type": "string"
+      }
+     }
+    },
+    "pathPatterns": {
+     "jobId": "^[A-Za-z0-9_-]+$"
+    },
+    "usageField": "consumed_credits",
+    "usageWhen": {
+     "field": "status",
+     "equals": "SUCCEEDED"
+    },
+    "usageOnce": "jobId"
+   },
+   "rigging_recent_tasks": {
+    "method": "GET",
+    "path": "/openapi/v1/rigging?page_size=20&page_num=1",
+    "unit": "credits",
+    "idempotent": true,
+    "description": "Read newest rigging tasks. Missing submitted input_task_id/height cannot establish adoption.",
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    }
    }
   }
  },
  "huggingface": {
   "baseUrl": "https://router.huggingface.co",
-  "instructions": "inference calls one model on Hugging Face Inference Providers (hf-inference); the body is the model's own request body plus model.",
+  "instructions": "inference calls one model on Hugging Face Inference Providers (hf-inference); the body is the model's own request body plus model. angle_view is the explicit fal-ai Qwen2511 angle route; never infer anatomical view from its prompt or retry an uncertain POST.",
   "tools": {
    "inference": {
     "method": "POST",
@@ -528,6 +596,58 @@ const providersJSON = `
       "inputs": {},
       "parameters": {
        "type": "object"
+      }
+     }
+    }
+   },
+   "angle_view": {
+    "method": "POST",
+    "path": "/fal-ai/fal-ai/qwen-image-edit-2511/lora",
+    "unit": "requests",
+    "idempotent": false,
+    "description": "Explicit HF Inference Providers/fal-ai Qwen angle-view call. Returns images; provider angle words do not establish semantic view identity. No automatic retry after uncertainty.",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "image_urls",
+      "prompt",
+      "loras",
+      "num_inference_steps",
+      "guidance_scale",
+      "seed",
+      "output_format",
+      "sync_mode"
+     ],
+     "properties": {
+      "image_urls": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "prompt": {
+       "type": "string"
+      },
+      "loras": {
+       "type": "array",
+       "items": {
+        "type": "object"
+       }
+      },
+      "num_inference_steps": {
+       "type": "integer"
+      },
+      "guidance_scale": {
+       "type": "number"
+      },
+      "seed": {
+       "type": "integer"
+      },
+      "output_format": {
+       "type": "string"
+      },
+      "sync_mode": {
+       "type": "boolean"
       }
      }
     }

@@ -485,6 +485,43 @@ func init() {
 		publish(q)
 		return k, nil
 	}))
+
+	gatedOp("connections_set_tools", false, checkFirst(connOwner, shaped[contract.ConnectionsSetToolsRequest, contract.ConnectionView](func(q *Request) (any, error) {
+		b := body(q)
+		if !keysOnly(b, "connection", "tools") {
+			return nil, fail(400, "Expected connection and tools")
+		}
+		if err := exec(q, "SELECT 1 FROM document WHERE id=$1 AND kind='api-connection' FOR UPDATE", "connection:"+astr(b["connection"])); err != nil {
+			return nil, err
+		}
+		c, err := connByName(q, b["connection"])
+		if err != nil {
+			return nil, err
+		}
+		tools, ok := b["tools"].([]any)
+		if !ok {
+			return nil, fail(400, "tools must be an explicit array")
+		}
+		seen := map[string]bool{}
+		for _, value := range tools {
+			name, ok := value.(string)
+			if !ok || name == "" || seen[name] || providerTools(astr(c["provider"]))[name] == nil {
+				return nil, fail(400, "tools must be unique recognized provider tool names")
+			}
+			seen[name] = true
+		}
+		if canonical(tools) != canonical(c["tools"]) {
+			if err := connChange(q, c, "tools", c["tools"], tools); err != nil {
+				return nil, err
+			}
+			c["tools"], c["updatedAt"] = tools, nowMs()
+			if err := put(q, "api-connection", c); err != nil {
+				return nil, err
+			}
+			publish(q)
+		}
+		return c, nil
+	})))
 	gatedOp("connections_set_access", false, shaped[contract.ConnectionsSetAccessRequest, contract.ConnectionView](func(q *Request) (any, error) {
 		b := body(q)
 		c, err := connByName(q, b["connection"])

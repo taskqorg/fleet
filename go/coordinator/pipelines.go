@@ -1173,7 +1173,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			if c, ok := numOK(out["consumed_credits"]); ok {
 				usage = doc{"credits": c}
 			}
-			out = doc{"state": state, "output": doc{"jobId": s["jobId"], "model_urls": urls, "thumbnail_url": out["thumbnail_url"], "image_urls": out["image_urls"], "receipt": out}, "usage": usage, "error": mapOf(out["task_error"])["message"]}
+			out = doc{"state": state, "output": doc{"jobId": s["jobId"], "request": s["arguments"], "result": out["result"], "model_urls": urls, "thumbnail_url": out["thumbnail_url"], "image_urls": out["image_urls"], "receipt": out}, "usage": usage, "error": mapOf(out["task_error"])["message"]}
 		}
 		switch out["state"] {
 		case "succeeded":

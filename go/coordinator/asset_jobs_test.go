@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	osexec "os/exec"
 	"testing"
 )
@@ -43,6 +44,20 @@ func TestAssetJobIdentity(t *testing.T) {
 	}
 }
 
+func TestSourceRigIdentity(t *testing.T) {
+	// Requirement: source rig is bound to the exact generated task and height; risk: a different rig is adopted after lost POST.
+	tool := mapOf(providerTools("meshy")["rigging"])
+	args := doc{"input_task_id": "invented-task", "height_meters": 2.05}
+	for _, candidate := range []doc{{"input_task_id": "invented-task"}, {"height_meters": 2.05}, {"input_task_id": "other", "height_meters": 2.05}, {"input_task_id": "invented-task", "height_meters": 1.8}} {
+		if jobMatches(candidate, args, tool) {
+			t.Fatal("incomplete/different rig identity adopted", candidate)
+		}
+	}
+	if !jobMatches(args, args, tool) {
+		t.Fatal("exact rig identity rejected")
+	}
+}
+
 func TestAssetJobTools(t *testing.T) {
 	// Requirement: explicit S7 status/list tools preserve defaults; risk: preparation polls the wrong provider job API.
 	for _, tc := range []struct {
@@ -78,5 +93,22 @@ func TestAssetViewEncoderBoundary(t *testing.T) {
 	command := osexec.Command("python3", "../../tests/assets/character-views.test.py")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("view encoder: %v\n%s", err, output)
+	}
+}
+
+func TestCharacterPipelineDefinitions(t *testing.T) {
+	// Requirement: all explicit S7 methods are executable registered definitions; risk: a missing dependency or wrong output reference breaks the shared downstream path.
+	for _, name := range []string{"character-multiview", "character-multiview-hf", "character-multiview-meshy-prep"} {
+		raw, err := os.ReadFile("../../config/pipelines/" + name + ".json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var definition doc
+		if err = json.Unmarshal(raw, &definition); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = validatePipeline(definition); err != nil {
+			t.Fatal(name, err)
+		}
 	}
 }

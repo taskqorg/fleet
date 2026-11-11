@@ -74,7 +74,7 @@ def main():
     parser.add_argument('--compose-step',default='compose')
     parser.add_argument('--map-step',default='map')
     parser.add_argument('--expected',default='front,left,back')
-    parser.add_argument('--request-kind',choices=['prep','multi'],required=True)
+    parser.add_argument('--request-kind',choices=['prep','multi','google','hf'],required=True)
     parser.add_argument('--prompt',default='')
     parser.add_argument('--max-request-bytes',type=int,required=True)
     args=parser.parse_args()
@@ -85,12 +85,23 @@ def main():
     if args.request_kind=='prep':
         if not args.prompt.strip(): raise ValueError('preparation prompt required')
         request={'reference_image_urls':views,'prompt':args.prompt,'ai_model':'nano-banana-2','generate_multi_view':True}
+    elif args.request_kind=='google':
+        parts=[{'text':args.prompt+' Produce one image with exactly three equal-width columns: front, left, back of the same character, no labels, full body, consistent A-pose, white background.'}]
+        for name,uri in zip(args.expected.split(','),views):parts.extend([{'text':'Reference '+name+' view'},{'inlineData':{'mimeType':'image/png','data':uri.split(',',1)[1]}}])
+        request={'model':'gemini-3.1-flash-image-preview','contents':[{'role':'user','parts':parts}],'generationConfig':{'responseModalities':['IMAGE']}}
+    elif args.request_kind=='hf':
+        request={'prompt':'<sks> right side view eye-level shot medium shot','image_urls':[views[args.expected.split(',').index('front')]],'loras':[{'path':'https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA/resolve/main/qwen-image-edit-2511-multiple-angles-lora.safetensors','scale':.9}],'num_inference_steps':40,'guidance_scale':4.,'seed':42,'output_format':'png','sync_mode':True}
     else:
-        request={'image_urls':views,'ai_model':'latest','should_remesh':False,'should_texture':True,'enable_pbr':True,'pose_mode':'a-pose','target_formats':['glb']}
+        request={'image_urls':views,'ai_model':'latest','should_remesh':True,'target_polycount':200000,'topology':'triangle','save_pre_remeshed_model':True,'should_texture':True,'enable_pbr':True,'pose_mode':'a-pose','target_formats':['glb']}
         if args.prompt.strip(): request['texture_prompt']=args.prompt
     body=json.dumps(request,separators=(',',':')).encode()
     if args.max_request_bytes<=0 or len(body)>args.max_request_bytes: raise ValueError('encoded request exceeds declared gateway body contract before paid submission')
-    result={'request':request,'payload_bytes':len(body),'view_map':mapping,'normalization':{'size':provenance['size'],'padding':provenance['padding'],'grid':provenance['grid']}}
+    candidate_by_index={candidate['index']:candidate for candidate in provenance['candidates']}
+    paths_by_view={view['view']:args.compose_step+'/'+candidate_by_index[view['candidate_index']]['path'] for view in mapping['views']}
+    result={'request':request,'payload_bytes':len(body),'view_map':mapping,'paths_by_view':paths_by_view,'normalization':{'size':provenance['size'],'padding':provenance['padding'],'grid':provenance['grid']}}
+    if args.request_kind=='hf':
+        result['angle_requests']={name:{**request,'prompt':'<sks> '+name+' side view eye-level shot medium shot' if name!='back' else '<sks> back view eye-level shot medium shot'} for name in ['right','back','left']}
+        if any(len(json.dumps(value,separators=(',',':')).encode())>args.max_request_bytes for value in result['angle_requests'].values()): raise ValueError('HF request exceeds declared gateway body contract before paid submission')
     (out/'output.json').write_text(json.dumps(result)+'\n')
 
 if __name__=='__main__': main()

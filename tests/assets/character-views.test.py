@@ -48,7 +48,7 @@ class Encoder(unittest.TestCase):
             self.assertNotEqual(bad.returncode,0);self.assertIn(b'body contract',bad.stderr);self.assertFalse((out/'output.json').exists())
             command[-1]='1048576';subprocess.run(command,env=env,check=True,capture_output=True)
             result=json.loads((out/'output.json').read_text());self.assertEqual(len(result['request']['image_urls']),3)
-            self.assertFalse(result['request']['should_remesh']);self.assertEqual(result['request']['pose_mode'],'a-pose')
+            self.assertTrue(result['request']['save_pre_remeshed_model']);self.assertEqual(result['request']['target_polycount'],200000);self.assertEqual(result['request']['pose_mode'],'a-pose')
 
 @unittest.skipUnless(os.environ.get('FLEET_TEST_BLENDER'),'Blender native qualification runs separately on owner-mac')
 class Composer(unittest.TestCase):
@@ -70,4 +70,21 @@ class Composer(unittest.TestCase):
             self.assertNotEqual(result.returncode,0,'Blender Python exception must fail the pipeline step')
             p=json.loads((root/'out'/'provenance.json').read_text());self.assertEqual(p['state'],'failed');self.assertEqual(len(p['sources']),2)
             self.assertTrue(all((root/'out'/s['path']).exists() for s in p['sources']));self.assertFalse((root/'out'/'output.json').exists())
+    def test_canonical_reference_and_hf_transport(self):
+        # Requirement: actual fixture mapping and all explicit HF outputs survive staging; risk: source hash drift or dropped angle bytes.
+        with tempfile.TemporaryDirectory() as d:
+            root=pathlib.Path(d);(root/'example').mkdir()
+            for name in ['turnaround.png','rig-guide.json']:
+                (root/'example'/name).write_bytes((REPO/'config/lab/examples/fleet-uc6-character'/name).read_bytes())
+            out=root/'references';out.mkdir()
+            env={**os.environ,'FLEET_INPUT_DIR':str(root),'FLEET_OUTPUT_DIR':str(out),'FLEET_BLENDER':os.environ['FLEET_TEST_BLENDER']}
+            command=['sh',str(REPO/'scripts/lab/blender/run.sh'),'compose-views','--mode','fixture-sheet','--reference-map','--size','32']
+            r=subprocess.run(command,env=env,capture_output=True);self.assertEqual(r.returncode,0,r.stderr.decode())
+            provenance=json.loads((out/'provenance.json').read_text());mapping=json.loads((out/'view-map.json').read_text())
+            self.assertEqual(len(views.encode_views(out,provenance,mapping,['front','left','back'])),3)
+            for angle in ['right','back','left']:
+                folder=root/('hf-'+angle);folder.mkdir();(folder/'output.json').write_text(json.dumps({'images':[{'url':'data:image/png;base64,'+base64.b64encode(png()).decode()}]}))
+            compose=root/'compose';compose.mkdir();env['FLEET_OUTPUT_DIR']=str(compose)
+            r=subprocess.run(['sh',str(REPO/'scripts/lab/blender/run.sh'),'compose-views','--mode','url-images','--source-step','hf-right,hf-back,hf-left','--include-reference','references/views/candidate-0.png','--expected-count','4','--size','32'],env=env,capture_output=True)
+            self.assertEqual(r.returncode,0,r.stderr.decode());record=json.loads((compose/'provenance.json').read_text());self.assertEqual(len(record['sources']),4);self.assertEqual(len(record['candidates']),4)
 if __name__=='__main__':unittest.main()
