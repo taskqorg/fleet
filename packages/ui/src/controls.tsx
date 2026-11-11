@@ -795,7 +795,7 @@ export function CodeEditor({ label, value, onChange, problems = [], disabledReas
   label: string; value: string; onChange: (text: string) => void; problems?: { path: string; message: string }[]; disabledReason?: string;
 }) {
   return <div class="code-editor" data-ui="code-editor">
-    <textarea class="mono" spellcheck={false} aria-label={label} value={value} disabled={!!disabledReason} rows={Math.min(40, Math.max(8, value.split('\n').length + 1))}
+    <textarea class="mono" spellcheck={false} aria-label={label} value={value} disabled={!!disabledReason}
       onInput={e => onChange((e.target as HTMLTextAreaElement).value)} aria-invalid={problems.length > 0 || undefined} />
     {problems.map(p => <div key={p.path + p.message} class="problem-line t-danger" role="alert"><Icon name="circle-alert" />{p.path && <span class="mono">{p.path}</span>}{p.message}</div>)}
   </div>;

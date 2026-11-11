@@ -101,6 +101,7 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
     {tab === 'Configuration' && <>
       {draft && <SettingField label="Message" value={message} help="Says what the revision changes; shown in History." now={Date.now()} status={{ kind: 'pending' }} onSave={setMessage} />}
       {kind === 'pipeline' && <Steps text={text} />}
+      {kind === 'agent' && <AgentFacts text={text} />}
       <DetailSection title="Definition">
         <CodeEditor label={def.path} value={text} onChange={edit} problems={draft?.problems ?? []} />
       </DetailSection>
@@ -110,11 +111,26 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
   </DefinitionEditor>;
 }
 
+// reads: what a step's arguments or prompt reference (${example.x}, ${steps.<id>.output…}).
+const readsOf = (s: any) => [...new Set([...JSON.stringify(s).matchAll(/\$\{(example|steps\.[\w-]+)/g)].map(m => m[1].replace('steps.', '')))].join(', ') || 'nothing';
+
 function Steps({ text }: { text: string }) {
   let steps: any[] = [];
   try { steps = JSON.parse(text).steps ?? []; } catch { return null; }
-  const items: StepItem[] = steps.map(s => ({ id: s.id, kind: s.kind === 'api' ? 'tool' : s.kind === 'script' ? 'program' : 'agent', executor: s.profile ?? s.tool ?? s.command ?? '', reads: '', writes: 'output' }));
+  const items: StepItem[] = steps.map(s => ({ id: s.id, kind: s.kind === 'api' ? 'tool' : s.kind === 'script' ? 'program' : 'agent', executor: s.profile ?? s.tool ?? s.command ?? '', reads: readsOf(s), writes: 'output' }));
   return <DetailSection title="Steps"><StepList items={items} label="Steps" /></DetailSection>;
+}
+
+function AgentFacts({ text }: { text: string }) {
+  let a: any;
+  try { a = JSON.parse(text); } catch { return null; }
+  return <DetailSection title="Identity">
+    <KvRow icon="settings" label="Harness" meta={<span class="mono">{a.harness ?? 'codex'}</span>} />
+    <KvRow icon="bot" label="Model" meta={<span class="mono">{a.model}{a.effort ? ` · ${a.effort}` : ''}</span>} />
+    {a.skills?.length > 0 && <KvRow icon="file-text" label="Skills" meta={a.skills.join(', ')} />}
+    {a.tools?.length > 0 && <KvRow icon="terminal" label="Tools" meta={a.tools.join(', ')} />}
+    {a.connections?.length > 0 && <KvRow icon="link" label="Connections" meta={`${a.connections.join(', ')} · credentials stay in the connection`} />}
+  </DetailSection>;
 }
 
 function DiffTab({ kind, id, hasDraft, head }: { kind: Kind; id: string; hasDraft: boolean; head: number }) {
