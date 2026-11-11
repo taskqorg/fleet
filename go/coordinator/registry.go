@@ -88,7 +88,7 @@ func typedOp[Req, Rep any](h func(q *Request, r *Req) (Rep, error)) handler {
 	}
 }
 
-// exactKeys refuses a body key that names a request field only case-insensitively. encoding/json matches field names
+// exactKeys refuses a missing required field, and a body key that names a request field only case-insensitively. encoding/json matches field names
 // case-insensitively and the last key wins, so {"executionid": x} would override an executionId the agent tool path
 // bound (bound in agent.go) and act on another execution.
 func exactKeys(body json.RawMessage, t reflect.Type) error {
@@ -100,24 +100,34 @@ func exactKeys(body json.RawMessage, t reflect.Type) error {
 		return nil // not an object: decode reports it
 	}
 	for i := 0; i < t.NumField(); i++ {
-		tag, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		tag, opts, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
 		for k := range m {
 			if k != tag && strings.EqualFold(k, tag) {
 				return fail(400, "Unknown field "+k+": use "+tag)
 			}
 		}
+		// A field the schema requires has no omitempty: a missing one is 400, not its zero value (a limit of 0).
+		if _, ok := m[tag]; !ok && !strings.Contains(opts, "omitempty") {
+			return fail(400, "Expected "+tag)
+		}
 	}
 	return nil
 }
 
-// operatorFirst: the operator check before the body is read, so a caller without the role learns nothing from a 400.
-func operatorFirst(h handler) handler {
+// checkFirst: a role check before the body is read, so a caller without the role learns nothing from a 400.
+func checkFirst(check func(*Request) error, h handler) handler {
 	return func(q *Request) (any, error) {
-		if err := operatorOnly(q); err != nil {
+		if err := check(q); err != nil {
 			return nil, err
 		}
 		return h(q)
 	}
+}
+
+func operatorFirst(h handler) handler { return checkFirst(operatorOnly, h) }
+
+func ownerFirst(msg string, h handler) handler {
+	return checkFirst(func(q *Request) error { return ownerOnly(q, msg) }, h)
 }
 
 // docOf: a decoded request as the map a handler not yet on struct fields reads; only the request type's fields reach it.
