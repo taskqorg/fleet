@@ -43,10 +43,14 @@ func capable(q *Request, name string) (bool, error) {
 
 // knownHost: configured (the default or a registered host) or has polled once.
 func knownHost(q *Request, id string) (bool, error) {
-	if id == defaultHost() {
-		return true, nil
-	}
 	return unscoped(q, func() (bool, error) {
+		removed, err := has(q, "SELECT 1 FROM document WHERE kind='host' AND id='host:'||$1 AND data->>'state'='removed'", id)
+		if err != nil || removed {
+			return false, err
+		}
+		if id == defaultHost() {
+			return true, nil
+		}
 		return has(q, "SELECT 1 FROM document WHERE (kind='host' AND id='host:'||$1) OR (kind='host-observation' AND id=$1)", id)
 	})
 }
