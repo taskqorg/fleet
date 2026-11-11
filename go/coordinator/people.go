@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 
+	"fleet/contract"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -173,23 +175,24 @@ func (a *App) ownSubscription(q *Request, name string, b map[string]any) bool {
 }
 
 func init() {
-	gatedObjOp("me", true, func(q *Request) (any, error) {
+	gatedObjOp("me", true, typedOp(func(q *Request, _ *contract.MeRequest) (contract.MeReply, error) {
 		p := q.person
 		if p == nil {
-			return doc{"email": nil, "name": nil, "roles": []string{}, "owner": false, "grantsVersion": nil, "changeLogRetentionDays": 7}, nil
+			return contract.MeReply{Roles: []string{}, ChangeLogRetentionDays: 7}, nil
 		}
 		roles := p.Roles
 		if roles == nil {
 			roles = []string{}
 		}
-		return doc{"email": p.Email, "name": p.Name, "roles": roles, "owner": p.Owner, "grantsVersion": grantsVersion(p), "changeLogRetentionDays": 7}, nil
-	})
+		g := grantsVersion(p)
+		return contract.MeReply{Email: &p.Email, Name: &p.Name, Roles: roles, Owner: p.Owner, GrantsVersion: &g, ChangeLogRetentionDays: 7}, nil
+	}))
 }
 
 // people_list and people_set: people.json as operations (docs/designs/fleet-pm-agent.md §8). A non-owner sees only
 // themself, as the person row-level policy does; only the owner sets the list, written atomically and reloaded.
 func init() {
-	gatedObjOp("people_list", true, func(q *Request) (any, error) {
+	gatedObjOp("people_list", true, shaped[contract.PeopleListRequest, contract.PeopleListReply](func(q *Request) (any, error) {
 		out := []*Person{}
 		for _, p := range q.app.people {
 			if q.person == nil || fullAccess(q.person) || p.Email == q.person.Email {
@@ -200,9 +203,9 @@ func init() {
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].Email < out[j].Email })
 		return doc{"people": out}, nil
-	})
+	}))
 	// setting_changes: the audit of settings, newest first, optionally of one target (host:<id>, people, ...).
-	gatedObjOp("setting_changes", true, func(q *Request) (any, error) {
+	gatedObjOp("setting_changes", true, shaped[contract.SettingChangesRequest, contract.SettingChangesReply](func(q *Request) (any, error) {
 		// The people list is the owner's: its audit (with service-token client IDs) is not shown to architects or site-agents.
 		owner := q.person == nil || q.person.Owner
 		b := body(q)
@@ -219,8 +222,13 @@ func init() {
 			out = append(out, r["data"])
 		}
 		return doc{"changes": out, "nextBefore": next}, err
-	})
-	longOp("people_set", func(q *Request) (any, error) {
+	}))
+	longOp("people_set", checkFirst(func(q *Request) error {
+		if q.person != nil && !q.person.Owner {
+			return fail(403, "Only the owner sets people")
+		}
+		return nil
+	}, shaped[contract.PeopleSetRequest, contract.PeopleSetReply](func(q *Request) (any, error) {
 		if q.person != nil && !q.person.Owner {
 			return nil, fail(403, "Only the owner sets people")
 		}
@@ -263,5 +271,5 @@ func init() {
 			return put(q, "setting-change", doc{"id": newID(), "target": "people", "field": "people", "previous": prev, "value": next, "actor": actor(q, "operator"), "at": nowMs()})
 		})
 		return doc{"people": len(q.app.people)}, err
-	})
+	})))
 }
