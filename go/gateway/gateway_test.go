@@ -108,7 +108,7 @@ func newFixture(t *testing.T, url string, keys ...string) *fixture {
 		states = append(states, keyState{k, "active"})
 	}
 	f := &fixture{t: t, dir: dir, url: url, config: &config{Snapshot: filepath.Join(dir, "snapshot.json"), KeysDir: filepath.Join(dir, "keys"),
-		StateDir: filepath.Join(dir, "state"), requestTimeout: 1500 * time.Millisecond, drainTimeout: 5 * time.Second}}
+		StateDir: filepath.Join(dir, "state"), requestTimeout: 1500 * time.Millisecond, drainTimeout: 5 * time.Second, refreshEvery: 10 * time.Millisecond}}
 	f.write(testSnapshot(url, states, []string{testToken}, "all"))
 	f.start()
 	t.Cleanup(func() {
@@ -142,6 +142,8 @@ func (f *fixture) start() {
 }
 
 func (f *fixture) halt() {
+	// A spare client connection that never sent a request holds Shutdown for 5 s (net/http treats it as new, not idle).
+	http.DefaultClient.CloseIdleConnections()
 	close(f.stop)
 	if err := <-f.done; err != nil {
 		f.t.Fatal(err)
@@ -201,7 +203,8 @@ func expect(t *testing.T, got, want any, what string) {
 	}
 }
 
-func adopt() { time.Sleep(1200 * time.Millisecond) }
+// adopt waits a few snapshot polls (refreshEvery is 10 ms in tests).
+func adopt() { time.Sleep(60 * time.Millisecond) }
 
 func TestRunTokenCallInjectsKeyAndSpoolsOneLine(t *testing.T) {
 	upstream := newProvider(t, func(string) int { return 200 })
@@ -459,7 +462,7 @@ func TestCallerCancellationReachesProvider(t *testing.T) {
 		t.Fatalf("provider request not released; %d requests", calls.Load())
 	}
 	for end := time.Now().Add(3 * time.Second); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
-		if lines, _ := gw.spool(); len(lines) == 1 {
+		if lines, _ := gw.spool(); len(lines) == 1 && lines[0]["outcome"] != nil { // a line still being written reads as null
 			expect(t, []any{lines[0]["outcome"], lines[0]["errorCode"]}, []any{"unknown", "caller-cancelled"}, "spooled cancel")
 			expect(t, calls.Load(), int32(1), "provider requests")
 			return
