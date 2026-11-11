@@ -184,3 +184,32 @@ func TestRestartKillsSurvivingProcesses(t *testing.T) {
 		t.Fatalf("%d process.reconciled events", reconciled)
 	}
 }
+
+// Requirement: automatic output collection uploads only regular single-link files inside the output folder, the same
+// policy as artifact_save (K2-7, K2-8). Risk: a hard link or a link at any level uploads bytes from outside the working area.
+func TestOutputCollectionSkipsLinks(t *testing.T) {
+	e, root := scriptExecutor(t)
+	must := func(err error) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, outside := filepath.Join(root, "s", "output"), filepath.Join(root, "secret")
+	must(os.MkdirAll(filepath.Join(out, "sub"), 0o755))
+	must(os.MkdirAll(outside, 0o755))
+	must(os.WriteFile(filepath.Join(outside, "key"), []byte("k"), 0o600))
+	must(os.WriteFile(filepath.Join(out, "sub", "a.txt"), []byte("a"), 0o644))
+	must(os.Link(filepath.Join(outside, "key"), filepath.Join(out, "hard")))
+	must(os.Symlink(outside, filepath.Join(out, "dir")))
+	must(os.Symlink(filepath.Join(outside, "key"), filepath.Join(out, "file")))
+	var declared []string
+	must(e.artifacts(filepath.Join(root, "s"), []string{"output"}, "x1", &declared))
+	if strings.Join(declared, ",") != "sub/a.txt" || count(e.db, "transfers") != 1 {
+		t.Fatalf("declared %v", declared)
+	}
+	// The output folder itself swapped for a link: refused, nothing read through it.
+	must(os.Symlink(outside, filepath.Join(root, "s", "linked")))
+	if err := e.artifacts(filepath.Join(root, "s"), []string{"linked"}, "x2", &declared); err == nil {
+		t.Fatal("linked output folder collected")
+	}
+}

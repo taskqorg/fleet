@@ -64,7 +64,7 @@ func openInside(workdir string, parts []string) (*os.File, error) {
 		return nil, refusal(notLink)
 	}
 	for i, p := range parts {
-		flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC
+		flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC // O_NONBLOCK: a FIFO never blocks the open
 		if i+1 < len(parts) {
 			flags |= unix.O_DIRECTORY
 		}
