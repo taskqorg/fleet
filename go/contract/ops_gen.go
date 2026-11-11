@@ -999,6 +999,18 @@ type ExecutionsListRequest struct {
 	TaskId            *string `json:"taskId,omitempty"`
 }
 
+// ExperimentNote: Append-only (fleet-lab.md, Experiment record): an amendment of a record field, or a note.
+type ExperimentNote struct {
+	At     json.RawMessage `json:"at"`
+	Author string          `json:"author"`
+	Field  *string         `json:"field,omitempty"`
+	Id     string          `json:"id"`
+	Kind   string          `json:"kind"`
+	New    json.RawMessage `json:"new,omitempty"`
+	Old    json.RawMessage `json:"old,omitempty"`
+	Text   string          `json:"text"`
+}
+
 type ExportFile struct {
 	BaseSha *string `json:"baseSha"`
 	Path    string  `json:"path"`
@@ -1214,11 +1226,16 @@ type LabExperimentCreateReply struct {
 	State       json.RawMessage `json:"state,omitempty"`
 }
 
+// LabExperimentCreateRequest: goal and hypothesis are required at launch (fleet-lab.md, Experiment record).
 type LabExperimentCreateRequest struct {
 	Budgets          json.RawMessage `json:"budgets,omitempty"`
+	DecisionRule     *string         `json:"decisionRule,omitempty"`
 	Evaluators       json.RawMessage `json:"evaluators,omitempty"`
 	Examples         json.RawMessage `json:"examples,omitempty"`
+	Goal             *string         `json:"goal,omitempty"`
+	Hypothesis       *string         `json:"hypothesis,omitempty"`
 	Kind             *string         `json:"kind,omitempty"`
+	LabGroup         *string         `json:"labGroup,omitempty"`
 	PipelineId       *string         `json:"pipelineId,omitempty"`
 	PrimaryEvaluator json.RawMessage `json:"primaryEvaluator,omitempty"`
 	ProjectId        *string         `json:"projectId,omitempty"`
@@ -1227,25 +1244,63 @@ type LabExperimentCreateRequest struct {
 	Variants         json.RawMessage `json:"variants,omitempty"`
 }
 
+type LabExperimentDecideReply struct {
+	DecidedAt      json.RawMessage `json:"decidedAt,omitempty"`
+	DecidedBy      json.RawMessage `json:"decidedBy,omitempty"`
+	Decision       json.RawMessage `json:"decision,omitempty"`
+	DecisionReason json.RawMessage `json:"decisionReason,omitempty"`
+	Id             json.RawMessage `json:"id,omitempty"`
+}
+
+type LabExperimentDecideRequest struct {
+	Decision     string  `json:"decision"`
+	ExperimentId string  `json:"experimentId"`
+	Reason       *string `json:"reason,omitempty"`
+}
+
 type LabExperimentGetReply struct {
-	Baseline    *string             `json:"baseline,omitempty"`
-	Cell        json.RawMessage     `json:"cell,omitempty"`
-	Comparable  json.RawMessage     `json:"comparable,omitempty"`
-	Confounders json.RawMessage     `json:"confounders,omitempty"`
-	DurationMs  json.RawMessage     `json:"durationMs,omitempty"`
-	FinishedAt  json.RawMessage     `json:"finishedAt,omitempty"`
-	Id          json.RawMessage     `json:"id,omitempty"`
-	Observation json.RawMessage     `json:"observation,omitempty"`
-	Problem     json.RawMessage     `json:"problem,omitempty"`
-	Scores      json.RawMessage     `json:"scores,omitempty"`
-	Spend       json.RawMessage     `json:"spend,omitempty"`
-	StartedAt   json.RawMessage     `json:"startedAt,omitempty"`
-	State       json.RawMessage     `json:"state,omitempty"`
-	VsBaseline  []VariantVsBaseline `json:"vsBaseline,omitempty"`
+	Baseline       *string             `json:"baseline,omitempty"`
+	Cell           json.RawMessage     `json:"cell,omitempty"`
+	Comparable     json.RawMessage     `json:"comparable,omitempty"`
+	Confounders    json.RawMessage     `json:"confounders,omitempty"`
+	DecidedAt      json.RawMessage     `json:"decidedAt,omitempty"`
+	DecidedBy      json.RawMessage     `json:"decidedBy,omitempty"`
+	Decision       json.RawMessage     `json:"decision,omitempty"`
+	DecisionReason json.RawMessage     `json:"decisionReason,omitempty"`
+	DecisionRule   json.RawMessage     `json:"decisionRule,omitempty"`
+	DurationMs     json.RawMessage     `json:"durationMs,omitempty"`
+	FinishedAt     json.RawMessage     `json:"finishedAt,omitempty"`
+	Goal           json.RawMessage     `json:"goal,omitempty"`
+	Hypothesis     json.RawMessage     `json:"hypothesis,omitempty"`
+	Id             json.RawMessage     `json:"id,omitempty"`
+	LabGroup       json.RawMessage     `json:"labGroup,omitempty"`
+	LaunchedAt     json.RawMessage     `json:"launchedAt,omitempty"`
+	Notes          []ExperimentNote    `json:"notes,omitempty"`
+	Observation    json.RawMessage     `json:"observation,omitempty"`
+	Problem        json.RawMessage     `json:"problem,omitempty"`
+	Scores         json.RawMessage     `json:"scores,omitempty"`
+	Spend          json.RawMessage     `json:"spend,omitempty"`
+	StartedAt      json.RawMessage     `json:"startedAt,omitempty"`
+	State          json.RawMessage     `json:"state,omitempty"`
+	VsBaseline     []VariantVsBaseline `json:"vsBaseline,omitempty"`
 }
 
 type LabExperimentGetRequest struct {
 	ExperimentId *string `json:"experimentId,omitempty"`
+}
+
+type LabExperimentNoteReply struct {
+	Id   *string `json:"id,omitempty"`
+	Kind *string `json:"kind,omitempty"`
+	Text *string `json:"text,omitempty"`
+}
+
+type LabExperimentNoteRequest struct {
+	ExperimentId string  `json:"experimentId"`
+	Field        *string `json:"field,omitempty"`
+	Kind         string  `json:"kind"`
+	Text         string  `json:"text"`
+	Value        *string `json:"value,omitempty"`
 }
 
 type LabExperimentPromoteReply struct {
@@ -2594,7 +2649,9 @@ var Operations = map[string]Operation{
 	"lab_examples_list":            {Read: true, Long: false, Errors: []int{400}},
 	"lab_experiment_action":        {Read: false, Long: true, Errors: []int{400, 404, 409}},
 	"lab_experiment_create":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
+	"lab_experiment_decide":        {Read: false, Long: false, Errors: []int{400, 404, 409}},
 	"lab_experiment_get":           {Read: true, Long: false, Errors: []int{400, 404}},
+	"lab_experiment_note":          {Read: false, Long: false, Errors: []int{400, 404}},
 	"lab_experiments_list":         {Read: true, Long: false, Errors: []int{}},
 	"lab_promote":                  {Read: false, Long: false, Errors: []int{400, 404}},
 	"lab_rating_create":            {Read: false, Long: false, Errors: []int{400, 404, 409}},

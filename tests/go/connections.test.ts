@@ -56,6 +56,9 @@ before(async () => {
 after(() => gateway.close());
 
 const name = (p: string) => p + '-' + randomUUID().slice(0, 8);
+// One fake S3 for the file: artifacts written in one test are read in later ones.
+const s3 = fakeS3();
+after(async () => (await s3).close());
 
 test('C1 key value stays in the secret file (requirement: docs/designs/fleet-connections.md; risk: a key value in a row, a reply or the gateway snapshot)', async () => {
   const c = name('tavily');
@@ -209,7 +212,7 @@ test('L1 Lab registry and experiment validation (requirement: docs/designs/fleet
 
 test('A1 analytics stage 1: an api step on the typed-decision connection gives the trial output {answer, p, answered_by, tokens} and a tool_run with cost and basis (requirement: docs/designs/fleet-lab.md analytics staging 1; risk: a provider call recorded without its cost basis, or a typed answer the checks cannot read)', async () => {
   // The step's output.json is an artifact: a store on the default location host.
-  const {port, close} = await fakeS3(); after(close);
+  const {port} = await s3;
   const {secret} = ok(await op('hosts_register', {id: 'trial-host'}));
   const stores = await fetch(BASE + '/api/hosts/stores', {method: 'POST', headers: {authorization: 'Bearer ' + secret, 'content-type': 'application/json'},
     body: JSON.stringify({store: {id: 'trial-store', bucket: 'fleet', endpoint: `http://127.0.0.1:${port}`, accessKeyId: 'k', secretAccessKey: 's'}})});
@@ -225,4 +228,28 @@ test('A1 analytics stage 1: an api step on the typed-decision connection gives t
   assert.equal(r.state, 'succeeded', JSON.stringify(r.steps));
   assert.deepEqual(r.steps[0].output, {answer: {type: 'noul', noul: 0.93}, p: 0.93, answered_by: 'jev-1.14.0', tokens: {input_tokens: 286, output_tokens: 20}});
   assert.deepEqual(r.steps[0].calls.map((c: any) => [c.tool, c.basis, c.cost?.unit, c.cost?.amount]), [['system_one', 'measured', 'input_tokens', 286]]);
+});
+
+test('A2 analytics stage 2: the experiment record is required at launch, amended visibly, and an automatic or owner stop leaves the decision pending (requirement: docs/designs/fleet-lab.md, Experiment record; risk: an experiment runs without a stated goal and hypothesis, a changed hypothesis hides, or a stop reads as decided)', async () => {
+  const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
+  example.version = 1000 + Math.floor(Math.random() * 1e6);
+  const {examples: [imported]} = ok(await call('POST', '/api/lab/examples', {examples: [example], approved: true}));
+  const create = (record: object) => call('POST', '/api/lab/experiments', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: [imported.artifactId], variants: [{label: 'jev'}],
+    evaluators: [{kind: 'script', ref: 'example.checks', form: 'pass_fail'}], ...record});
+  const bare = ok(await create({}));
+  const refused = await call('POST', `/api/lab/experiments/${bare.id}/launch`, {});
+  assert.equal(refused.status, 400); assert.match(refused.body.message ?? refused.body.error, /goal and hypothesis/);
+  const e = ok(await create({goal: 'Decide yes/no questions cheaply', hypothesis: 'Jev answers the smoke question with p >= 0.5', decisionRule: 'adopt when the check passes'}));
+  ok(await call('POST', `/api/lab/experiments/${e.id}/launch`, {}));
+  const amended = ok(await op('lab_experiment_note', {experimentId: e.id, kind: 'amendment', field: 'hypothesis', value: 'Jev answers with p >= 0.8', text: 'tighter after the first trial'}));
+  assert.equal(amended.kind, 'amendment');
+  assert.equal((await op('lab_experiment_note', {experimentId: e.id, kind: 'amendment', field: 'variants', value: 'x', text: 'no'})).status, 400);
+  ok(await call('POST', `/api/lab/experiments/${e.id}/stop`, {}));
+  const got = ok(await call('GET', `/api/lab/experiments/${e.id}`));
+  assert.deepEqual([got.state, got.decision, got.hypothesis, got.notes.map((n: any) => [n.kind, n.field, n.old, n.new])],
+    ['stopped', 'pending', 'Jev answers with p >= 0.8', [['amendment', 'hypothesis', 'Jev answers the smoke question with p >= 0.5', 'Jev answers with p >= 0.8']]]);
+  ok(await op('lab_experiment_decide', {experimentId: e.id, decision: 'inconclusive'}));
+  assert.equal((await op('lab_experiment_decide', {experimentId: e.id, decision: 'adopt jev'})).status, 400, 'an override needs a reason');
+  const decided = ok(await op('lab_experiment_decide', {experimentId: e.id, decision: 'adopt jev', reason: 'check passed on rerun'}));
+  assert.deepEqual([decided.decision, decided.decidedBy, decided.notes.at(-1).field], ['adopt jev', OWNER, 'decision']);
 });
