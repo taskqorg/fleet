@@ -378,12 +378,16 @@ func flush(db *sql.DB, url, token, host string) error {
 					return err
 				}
 				own := false
-				var batch contract.HostEvents
-				if json.Unmarshal([]byte(enc(value)), &batch) == nil {
-					for _, e := range batch.Events {
-						if e.Type == string(contract.FleetEventTypeOutboxFailed) {
-							own = true
-						}
+				// Only the event types are read: a batch that does not decode otherwise still counts by its types.
+				var batch struct {
+					Events []struct {
+						Type string `json:"type"`
+					} `json:"events"`
+				}
+				json.Unmarshal([]byte(enc(value)), &batch)
+				for _, e := range batch.Events {
+					if e.Type == string(contract.FleetEventTypeOutboxFailed) {
+						own = true
 					}
 				}
 				if hasExec && !own {
