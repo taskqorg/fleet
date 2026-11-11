@@ -35,7 +35,9 @@ var (
 	labCommit    = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 	labLabel     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,59}$`)
 	draftExample = regexp.MustCompile(`/examples/[^/]+\.json$`)
-	labOverrides = []string{"profile", "model", "skills", "prompt", "web_route", "account", "host", "bands"}
+	labOverrides = []string{"profile", "model", "skills", "prompt", "web_route", "account", "host"}
+	// labVariantKeys: a Lab variant's keys; bands steer its typed evaluator, never a run, so runs take labOverrides only.
+	labVariantKeys = append(append([]string{}, labOverrides...), "bands")
 )
 
 func labStr(v any, what string, max int) (string, error) {
@@ -613,7 +615,7 @@ func agreement(scores []doc) doc {
 func scoreNumber(s doc) float64 {
 	if s["form"] == "typed" { // correct confident answer 1; a wrong one or an abstention 0
 		m := mapOf(s["value"])
-		if m["answer"] == m["label"] {
+		if (m["answer"] == "yes" || m["answer"] == "no") && m["answer"] == m["label"] {
 			return 1
 		}
 		return 0
@@ -644,7 +646,7 @@ func summarize(scores []doc, trials []string) doc {
 		for _, t := range trialIDsOf(s) {
 			mine = mine || in[astr(t)]
 		}
-		if !mine {
+		if !mine || s["form"] == "typed" && mapOf(s["value"])["answer"] == "unscored" {
 			continue
 		}
 		k := astr(s["evaluator"])
@@ -918,8 +920,8 @@ func expCreate(q *Request, b doc) (doc, error) {
 			ov = doc{}
 		}
 		o := mapOf(ov)
-		if o == nil || !keysOnly(o, labOverrides...) {
-			return nil, fail(400, "Variant overrides are "+strings.Join(labOverrides, ", "))
+		if o == nil || !keysOnly(o, labVariantKeys...) {
+			return nil, fail(400, "Variant overrides are "+strings.Join(labVariantKeys, ", "))
 		}
 		if q.person != nil && !fullAccess(q.person) && (o["host"] != nil || o["account"] != nil || o["profile"] != nil) {
 			return nil, fail(403, "Only the owner overrides host, account or profile")
@@ -1204,7 +1206,7 @@ func findVariant(exp doc, label any) doc {
 
 // expEvaluate: automatic evaluators over completed trials; true when every completed trial is evaluated by each.
 func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]string, checked map[string]doc) (bool, error) {
-	complete := true
+	complete, typedExamples := true, map[string]doc{} // each pinned example read once per pass
 	for _, t := range trials {
 		if !comparable(t) {
 			continue
@@ -1224,7 +1226,7 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 			}
 			pin := findPin(exp, mapOf(t["cell"])["example"])
 			if e["kind"] == "typed" {
-				if err := scoreTyped(q, exp, t, pin, name); err != nil {
+				if err := scoreTyped(q, exp, t, pin, name, typedExamples); err != nil {
 					return false, err
 				}
 				continue
@@ -1700,8 +1702,17 @@ func expPromote(q *Request, id, label string) (doc, error) {
 		return nil, fail(400, "Unknown variant")
 	}
 	slug := strings.Trim(methodSlug.ReplaceAllString(strings.ToLower(label), "-"), "-")
+	// Bands steer the Lab's typed evaluator; a method run applies no overrides of that kind, so they are left out and named.
+	overrides, note := doc{}, any(nil)
+	for k, x := range mapOf(v["overrides"]) {
+		if k == "bands" {
+			note = fmt.Sprintf("bands %s are a Lab scoring setting and do not travel with the method", jsonBytes(x))
+			continue
+		}
+		overrides[k] = x
+	}
 	method := doc{"id": fmt.Sprintf("%v-%s", exp["pipeline_id"], slug), "name": fmt.Sprintf("%v %s", exp["pipeline_id"], label), "scope": exp["project_id"],
-		"pipeline": astr(exp["pipeline_id"]) + ".json", "overrides": v["overrides"], "configRef": v["config_ref"], "sourceExperiment": id}
+		"pipeline": astr(exp["pipeline_id"]) + ".json", "overrides": overrides, "configRef": v["config_ref"], "sourceExperiment": id}
 	var existing doc
 	if c, err := catalogue(q, astr(exp["project_id"])); err == nil {
 		for _, m := range anys(c["methods"]) {
@@ -1711,7 +1722,7 @@ func expPromote(q *Request, id, label string) (doc, error) {
 		}
 	}
 	if existing == nil {
-		return doc{"cataloguePatch": []any{doc{"op": "add", "path": "/methods/-", "value": method}}, "method": method, "recommendation": nil}, nil
+		return doc{"cataloguePatch": []any{doc{"op": "add", "path": "/methods/-", "value": method}}, "method": method, "recommendation": nil, "note": note}, nil
 	}
 	var rec any
 	if rec, err = recommend(q, astr(exp["project_id"]), astr(existing["id"])); err != nil {
@@ -2251,6 +2262,9 @@ func scoreCorrect(q *Request, id string, b doc) (doc, error) {
 		return nil, fail(404, "Unknown score")
 	}
 	old := rs[0]
+	if old["form"] == "typed" {
+		return nil, fail(400, "A typed score follows from the trial's p, its bands and the label; correct the example or the bands instead")
+	}
 	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "experiment:"+astr(old["experiment_id"])); err != nil {
 		return nil, err
 	}
@@ -2469,22 +2483,24 @@ func bandsOf(v any) (float64, float64, error) {
 // scoreTyped: the typed evaluator for one trial: its output's p (the last step's output in the run record) through the
 // variant's bands, against the example's label (references/expected.json {expected, tag?}). A trial it cannot score is
 // recorded as {answer: unscored, reason} so the reason is visible and it is not tried again; it counts in no statistic.
-func scoreTyped(q *Request, exp, t, pin doc, name string) error {
-	full, _, err := exampleOf(q, pin)
-	if err != nil {
-		return err
+func scoreTyped(q *Request, exp, t, pin doc, name string, examples map[string]doc) error {
+	key := astr(pin["artifact_id"])
+	full := examples[key]
+	if full == nil {
+		var err error
+		if full, _, err = exampleOf(q, pin); err != nil {
+			return err
+		}
+		examples[key] = full
 	}
 	var label, tag, reason string
 	for _, x := range anys(full["references"]) {
 		if f := mapOf(x); f["path"] == "expected.json" {
-			var e struct {
-				Expected string `json:"expected"`
-				Tag      string `json:"tag"`
-			}
+			var e map[string]any
 			if err := json.Unmarshal([]byte(astr(f["text"])), &e); err != nil {
-				reason = "references/expected.json is not JSON"
+				reason = "references/expected.json is not a JSON object"
 			}
-			label, tag = e.Expected, e.Tag
+			label, tag = astr(e["expected"]), astr(e["tag"])
 		}
 	}
 	steps := anys(t["steps"])
@@ -2507,13 +2523,7 @@ func scoreTyped(q *Request, exp, t, pin doc, name string) error {
 	if reason != "" {
 		value, rationale = doc{"answer": "unscored", "reason": reason, "label": nilIf(label), "tag": nilIf(tag)}, "unscored: "+reason
 	} else {
-		var bands any
-		for _, v := range anys(exp["variants"]) {
-			if mapOf(v)["label"] == mapOf(t["cell"])["variant"] {
-				bands = mapOf(mapOf(v)["overrides"])["bands"]
-			}
-		}
-		yes, no, err := bandsOf(bands)
+		yes, no, err := bandsOf(mapOf(findVariant(exp, mapOf(t["cell"])["variant"])["overrides"])["bands"])
 		if err != nil {
 			return err
 		}
@@ -2521,7 +2531,7 @@ func scoreTyped(q *Request, exp, t, pin doc, name string) error {
 		value = doc{"answer": answer, "label": label, "p": p, "tag": nilIf(tag)}
 		rationale = fmt.Sprintf("%s at p %.3g (bands %.3g/%.3g), label %s", answer, p, yes, no, label)
 	}
-	_, err = scoreAdd(q, doc{"experimentId": exp["id"], "projectId": exp["project_id"], "trialIds": []any{t["id"]}, "evaluator": name,
+	_, err := scoreAdd(q, doc{"experimentId": exp["id"], "projectId": exp["project_id"], "trialIds": []any{t["id"]}, "evaluator": name,
 		"evaluatorVersion": "labels-v1", "form": "typed", "value": value, "rationale": rationale})
 	return err
 }
@@ -2571,14 +2581,24 @@ func hasHeldOut(exp doc) bool {
 // tag (the language). Bands are tuned on tune and reported on held_out, so both splits are shown, never mixed.
 func expTyped(exp doc, trials []doc, cur []doc) []any {
 	out := []any{}
-	answers := map[[2]string][]typedAnswer{}
+	answers, perExample := map[[2]string][]typedAnswer{}, map[[3]string][]typedAnswer{}
 	for _, st := range scoredLatest(exp, trials, cur, func(sc doc) bool { return sc["form"] == "typed" }) {
 		v := mapOf(st.score["value"])
 		if v["answer"] == "unscored" {
 			continue
 		}
-		k := [2]string{st.variant, st.split}
-		answers[k] = append(answers[k], typedAnswer{astr(v["tag"]), astr(v["answer"]), astr(v["label"])})
+		perExample[[3]string{st.variant, st.split, st.example}] = append(perExample[[3]string{st.variant, st.split, st.example}], typedAnswer{astr(v["tag"]), astr(v["answer"]), astr(v["label"])})
+	}
+	// Identical repeats of one example count as one answer (a near-deterministic variant); differing ones count each.
+	for k, as := range perExample {
+		same := true
+		for _, a := range as[1:] {
+			same = same && a.Answer == as[0].Answer
+		}
+		if same {
+			as = as[:1]
+		}
+		answers[[2]string{k[0], k[1]}] = append(answers[[2]string{k[0], k[1]}], as...)
 	}
 	for _, x := range anys(exp["variants"]) {
 		label := astr(mapOf(x)["label"])

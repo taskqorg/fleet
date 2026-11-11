@@ -165,8 +165,8 @@ type typedStat struct {
 }
 
 // typedStats: coverage (confident / all), selective accuracy (correct confident / confident; null with no confident
-// answer) and escalation share (1 - coverage), per tag in tag order, then the aggregate (Tag "all", last). Used by the
-// typed-decision scorer (next stage-4 change).
+// answer) and escalation share (1 - coverage), per tag in tag order, then the aggregate (Tag "all", last). Used by
+// lab_experiment_get's typed block (expTyped).
 func typedStats(as []typedAnswer) []typedStat {
 	by, total := map[string]*typedStat{}, &typedStat{Tag: "all"}
 	add := func(tag string, a typedAnswer) {

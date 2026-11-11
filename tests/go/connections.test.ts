@@ -273,24 +273,30 @@ test('A3 analytics stage 3: a trial cost is usage times the price entry in force
   assert.ok(Math.abs(cost.value - 286 * 0.000002) < 1e-12, String(cost.value));
 });
 
-test('A4 analytics stage 4: a typed evaluator scores each trial through its variant bands against the label, per language (requirement: docs/designs/fleet-lab.md, Statistics, typed answers; risk: a confident-looking answer counted as correct without a label, or a middle-band answer counted as confident)', async () => {
+test('A4 analytics stage 4: a typed evaluator scores each trial through its variant bands against the label, per split and language (requirement: docs/designs/fleet-lab.md, Statistics, typed answers; risk: a confident-looking answer counted as correct without a label, a middle-band answer counted as confident, or tune and held_out mixed)', async () => {
   // A small synthetic labelled set in the export format (version 1); the fake gateway answers p 0.93 for every row.
-  const rows = [{rowId: 'ru1', input: 'Name: Λεμεσός. Is it Greek?', label: 'yes', tag: 'el', split: 'held_out'},
-    {rowId: 'ru2', input: 'Name: Лимасол. Is it Russian?', label: 'yes', tag: 'ru', split: 'held_out'},
-    {rowId: 'en1', input: 'Name: Limassol. Is it Greek?', label: 'no', tag: 'en', split: 'held_out'}];
+  const rows = [{rowId: 'el1', input: 'Name: Λεμεσός. Is it Greek?', label: 'yes', tag: 'el', split: 'held_out'},
+    {rowId: 'ru1', input: 'Name: Лимасол. Is it Russian?', label: 'yes', tag: 'ru', split: 'held_out'},
+    {rowId: 'en1', input: 'Name: Limassol. Is it Greek?', label: 'no', tag: 'en', split: 'tune'}];
   const version = 3000000 + Math.floor(Math.random() * 1e6);
-  const examples = examplesFromExport({schema: 1, project: 'cs', stepId: 'lang', exportedAt: '2026-11-11T00:00:00Z', rows}, 'cs:translate_taxonomy-language', version);
+  const examples: any[] = examplesFromExport({schema: 1, project: 'cs', stepId: 'lang', exportedAt: '2026-11-11T00:00:00Z', rows}, 'cs:translate_taxonomy-language', version);
+  // One example without a label: its trials are unscored with the reason, never counted.
+  examples.push({...examples[0], id: 'cs-lang-nolabel', references: examples[0].references.filter((f: any) => f.path !== 'expected.json'), checks: []});
   const {examples: imported} = ok(await call('POST', '/api/lab/examples', {examples, approved: true}));
-  const e = ok(await call('POST', '/api/lab/experiments', {kind: 'ab', projectId: 'hello-world', pipelineId: 'typed-decision', examples: imported.map((x: any) => x.artifactId),
-    variants: [{label: 'wide', overrides: {bands: {yes: 0.8, no: 0.2}}}, {label: 'strict', overrides: {bands: {yes: 0.95, no: 0.05}}}],
-    evaluators: [{kind: 'typed', ref: 'labels', form: 'typed'}], primaryEvaluator: 'typed:labels:typed', goal: 'Bands for the language step', hypothesis: 'Strict bands escalate more'}));
-  assert.equal((await call('POST', '/api/lab/experiments', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: [imported[0].artifactId], variants: [{label: 'x', overrides: {bands: {yes: 0.2, no: 0.8}}}]})).status, 400, 'no above yes');
+  const create = (variants: object[]) => call('POST', '/api/lab/experiments', {kind: 'ab', projectId: 'hello-world', pipelineId: 'typed-decision', examples: imported.map((x: any) => x.artifactId),
+    variants, evaluators: [{kind: 'typed', ref: 'labels', form: 'typed'}], primaryEvaluator: 'typed:labels:typed', goal: 'Bands for the language step', hypothesis: 'Strict bands escalate more'});
+  const inverted = await create([{label: 'a', overrides: {bands: {yes: 0.2, no: 0.8}}}, {label: 'b'}]);
+  assert.equal(inverted.status, 400); assert.match(inverted.body.message, /0 <= no <= yes <= 1/);
+  assert.equal((await call('POST', '/api/pipelines/typed-decision/runs', {requestId: randomUUID(), example: {prompt: 'x'}, overrides: {bands: {yes: 0.9, no: 0.1}}})).status, 400, 'a direct run takes no bands');
+  const e = ok(await create([{label: 'wide', overrides: {bands: {yes: 0.8, no: 0.2}}}, {label: 'strict', overrides: {bands: {yes: 0.95, no: 0.05}}}]));
   ok(await call('POST', `/api/lab/experiments/${e.id}/launch`, {}));
-  const got = await until(async () => { const x = ok(await call('GET', `/api/lab/experiments/${e.id}`)); return x.typed?.length === 2 && x.typed.every((v: any) => v.stats.at(-1).n === 3) ? x : undefined; }, 'typed scores');
-  const stats = Object.fromEntries(got.typed.map((v: any) => [v.variant, Object.fromEntries(v.stats.map((s: any) => [s.tag, [s.n, s.coverage, s.selectiveAccuracy]]))]));
-  // wide: every p 0.93 is a confident yes, right on el and ru, wrong on en; strict: all abstain (0.93 < 0.95).
-  assert.deepEqual(stats.wide, {el: [1, 1, 1], en: [1, 1, 0], ru: [1, 1, 1], all: [3, 1, 2 / 3]});
-  assert.deepEqual(stats.strict, {el: [1, 0, null], en: [1, 0, null], ru: [1, 0, null], all: [3, 0, null]});
+  const got = await until(async () => { const x = ok(await call('GET', `/api/lab/experiments/${e.id}`)); return x.scores?.filter((s: any) => s.form === 'typed').length === 8 ? x : undefined; }, 'typed scores');
+  const unscored = got.scores.filter((s: any) => s.value.answer === 'unscored');
+  assert.deepEqual(unscored.map((s: any) => s.value.reason), Array(2).fill('the example has no yes/no label in references/expected.json'));
+  const stats = Object.fromEntries(got.typed.map((v: any) => [`${v.variant}/${v.split}`, Object.fromEntries(v.stats.map((s: any) => [s.tag, [s.n, s.coverage, s.selectiveAccuracy]]))]));
+  // wide: p 0.93 is a confident yes: right on el and ru (held_out), wrong on en (tune). strict: everything abstains.
+  assert.deepEqual(stats, {'wide/tune': {en: [1, 1, 0], all: [1, 1, 0]}, 'wide/held_out': {el: [1, 1, 1], ru: [1, 1, 1], all: [2, 1, 1]},
+    'strict/tune': {en: [1, 0, null], all: [1, 0, null]}, 'strict/held_out': {el: [1, 0, null], ru: [1, 0, null], all: [2, 0, null]}});
   const [c] = got.comparison;
-  assert.deepEqual([c.variant, c.baseline, c.split, c.result.n, c.result.mean], ['strict', 'wide', 'held_out', 3, -2 / 3]);
+  assert.deepEqual([c.variant, c.baseline, c.split, c.result.n, c.result.mean], ['strict', 'wide', 'held_out', 2, -1]);
 });
