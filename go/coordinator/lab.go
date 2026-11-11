@@ -1616,8 +1616,8 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		if err != nil {
 			return err
 		}
-		evaluated, err := expEvaluate(q, exp, trials, runs, cur, &launched, checked)
-		if err != nil || exp["state"] != "running" {
+		if exp["state"] != "running" {
+			_, err := expEvaluate(q, exp, trials, runs, cur, &launched, checked)
 			return err
 		}
 		order, last := expLatest(trials)
@@ -1668,6 +1668,12 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			if err := exec(q, "UPDATE experiment SET budgets=$2,state=$3,stop_reason=coalesce($4,stop_reason) WHERE id=$1", id, jsonBytes(budgets), state, reason); err != nil {
 				return err
 			}
+		}
+		evalExp := mapOf(clone(exp))
+		evalExp["state"] = state
+		evaluated, err := expEvaluate(q, evalExp, trials, runs, cur, &launched, checked)
+		if err != nil {
+			return err
 		}
 		if state != "running" {
 			return nil

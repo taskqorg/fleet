@@ -256,6 +256,35 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 			}
 		}
 		snapshot := doc{"experimentId": exp["id"], "iteration": iteration, "variants": exp["variants"], "scores": tuneScores, "primaryEvaluator": exp["primary_evaluator"], "generator": generator, "allocator": s["allocator"], "spend": spend, "budgets": exp["budgets"]}
+		inputs := []any{}
+		losing := []any{}
+		if generator["kind"] == "propose" {
+			best := loopBestVariant(exp, trials, scores)
+			order, latest := expLatest(trials)
+			for _, key := range order {
+				t := latest[key]
+				if !tuneTrials[t["id"]] || mapOf(t["cell"])["variant"] == best["label"] {
+					continue
+				}
+				for _, step := range anys(t["steps"]) {
+					st := mapOf(step)
+					id := astr(st["executionId"])
+					if id == "" {
+						continue
+					}
+					events, err := executionEventsOf(q, id)
+					path := "history/" + astr(t["id"]) + "/" + astr(st["id"]) + ".json"
+					record := doc{"trialId": t["id"], "executionId": id, "state": st["state"], "events": events, "available": err == nil}
+					if err != nil {
+						record["error"] = err.Error()
+					}
+					inputs = append(inputs, doc{"path": path, "text": string(jsonBytes(record))})
+					losing = append(losing, doc{"trialId": t["id"], "step": st["id"], "path": path, "available": err == nil})
+				}
+			}
+		}
+		snapshot["losingTranscripts"] = losing
+		inputs = append(inputs, doc{"path": "snapshot.json", "text": string(jsonBytes(snapshot))})
 		ov := mapOf(mapOf(generator["params"])["step_overrides"])
 		if ov == nil {
 			ov = doc{}
@@ -266,7 +295,7 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 		if s["ownerOverrides"] != true && (ov["host"] != nil || ov["account"] != nil || ov["profile"] != nil) {
 			return halt("strategy:unauthorized-overrides")
 		}
-		id, err := expInsertRun(q, exp, "loop:"+sha256hex(jsonBytes([]any{exp["id"], iteration})), pipeline+".json", doc{"inputs": []any{doc{"path": "snapshot.json", "text": string(jsonBytes(snapshot))}}}, doc{"overrides": ov, "config_ref": sha256hex(jsonBytes(s))}, doc{"loopStrategy": doc{"iteration": iteration}})
+		id, err := expInsertRun(q, exp, "loop:"+sha256hex(jsonBytes([]any{exp["id"], iteration})), pipeline+".json", doc{"inputs": inputs}, doc{"overrides": ov, "config_ref": sha256hex(jsonBytes(s))}, doc{"loopStrategy": doc{"iteration": iteration}})
 		if err != nil {
 			return err
 		}
