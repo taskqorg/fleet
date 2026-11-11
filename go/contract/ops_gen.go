@@ -111,6 +111,7 @@ type DefinitionRef struct {
 type ExecutionRow struct {
 	AccountId         *string         `json:"accountId"`
 	ConfigRef         json.RawMessage `json:"configRef"`
+	Definitions       []DefinitionRef `json:"definitions"`
 	EndedAt           *string         `json:"endedAt"`
 	EnvironmentId     *string         `json:"environmentId"`
 	ExperimentId      *string         `json:"experimentId"`

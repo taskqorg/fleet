@@ -260,6 +260,11 @@ func putRun(q *Request, run doc) error {
 		run["id"], state, obs, run["projectId"], msTime(run["startedAt"]), msTime(run["finishedAt"]), jsonBytes(rest), jsonBytes(cfg), run["experimentId"], run["variant"]); err != nil {
 		return err
 	}
+	if run["definitions"] != nil {
+		if err := exec(q, "UPDATE execution SET definitions=$2 WHERE id=$1", run["id"], jsonBytes(run["definitions"])); err != nil {
+			return err
+		}
+	}
 	for i, x := range anys(run["steps"]) {
 		s := mapOf(x)
 		st, sobs, err := runState(s)
@@ -406,6 +411,11 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 	for k, v := range mapOf(o["extra"]) {
 		run[k] = v
 	}
+	ref, err := definitionRef(q, "pipeline", astr(def["id"]), def)
+	if err != nil {
+		return nil, err
+	}
+	run["definitions"] = []contract.DefinitionRef{ref}
 	return run, putRun(q, run)
 }
 

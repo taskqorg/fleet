@@ -421,6 +421,26 @@ func headText(q *Request, kind, id string) ([]byte, bool, error) {
 	return text, err == nil, err
 }
 
+// definitionRef: the revision an execution uses for content it resolved: the newest revision with that exact content, or
+// (no revision has it) a draft ref on the head.
+func definitionRef(q *Request, kind, id string, content any) (contract.DefinitionRef, error) {
+	text, err := canonicalText(jsonBytes(content))
+	if err != nil {
+		return contract.DefinitionRef{}, err
+	}
+	ref := contract.DefinitionRef{Kind: contract.DefinitionKind(kind), Id: id, ContentSha: sha256Text(text)}
+	err = q.tx.QueryRow(q.ctx(), "SELECT revision FROM definition_revision WHERE kind=$1 AND id=$2 AND content_sha=$3 ORDER BY revision DESC LIMIT 1", kind, id, ref.ContentSha).Scan(&ref.Revision)
+	if err == pgx.ErrNoRows {
+		yes := true
+		ref.Draft = &yes
+		err = q.tx.QueryRow(q.ctx(), "SELECT head FROM definition WHERE kind=$1 AND id=$2", kind, id).Scan(&ref.Revision)
+		if err == pgx.ErrNoRows {
+			ref.Revision, err = 0, nil
+		}
+	}
+	return ref, err
+}
+
 type headRow struct {
 	id   string
 	text []byte
