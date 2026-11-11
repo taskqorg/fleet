@@ -1,5 +1,5 @@
-// Outside tests of area B of the Go rewrite (sessions and conversation). HTTP only; they run unchanged against the TypeScript
-// coordinator and the Go port: FLEET_TRIAL_TESTS=tests/go/b.test.ts node tests/trial/run.ts (FLEET_TRIAL_SERVER selects Go).
+// Outside tests of sessions and conversation. HTTP only:
+//   FLEET_TRIAL_TESTS=tests/go/sessions.test.ts FLEET_TRIAL_SERVER=go/bin/fleet-coordinator node tests/trial/run.ts
 // Each test names its requirement and the defect it guards against.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +17,7 @@ const op = (name: string, b: unknown, person = OWNER) => call('POST', '/api/ops/
 const session = async () => ok(await call('POST', '/api/sessions', {})).sessionId as string;
 const send = (sid: string, text: string, requestId = randomUUID()) => call('POST', `/api/sessions/${sid}/messages`, {requestId, text});
 
-test('B1 queue: a message to a busy session is queued in order, never refused or started twice', async () => {
+test('B1 queue: a message to a busy session is queued in order, never refused or started twice (requirement: docs/designs/fleet-conversations.md queue; risk: a second message starts a parallel run or is lost)', async () => {
   // Risk: a second turn starts while one runs (two executions on one native session) or the message is lost.
   const sid = await session();
   const first = ok(await send(sid, 'one'));
@@ -29,7 +29,7 @@ test('B1 queue: a message to a busy session is queued in order, never refused or
   assert.deepEqual(s.queued.map((q: any) => q.text), ['two', 'three']);
 });
 
-test('B2 idempotent submit: a repeated requestId returns the same execution; other text is a conflict', async () => {
+test('B2 idempotent submit: a repeated requestId returns the same execution; other text is a conflict (requirement: docs/designs/fleet-data-foundation.md requestId; risk: a retried submit runs the work twice)', async () => {
   // Risk: a client retry runs the turn twice, or a reused id silently drops the new text.
   const sid = await session(), rid = randomUUID();
   const a = ok(await send(sid, 'hello', rid)), b = ok(await send(sid, 'hello', rid));
@@ -38,7 +38,7 @@ test('B2 idempotent submit: a repeated requestId returns the same execution; oth
   assert.equal((await call('POST', `/api/sessions/${sid}/messages`, {requestId: randomUUID(), text: 'x', extra: 1})).status, 400);
 });
 
-test('B3 grants: a person without a project grant sees no project and cannot read it', async () => {
+test('B3 grants: a person without a project grant sees no project and cannot read it (requirement: docs/designs/fleet-people-access.md grants; risk: a person reads a project without its grant)', async () => {
   // Risk: project settings and context (outside row-level security) leak to people without a grant.
   const own = ok(await call('GET', '/api/projects'));
   assert.ok(own.projects.some((p: any) => p.id === 'hello-world'));
@@ -47,7 +47,7 @@ test('B3 grants: a person without a project grant sees no project and cannot rea
   assert.equal((await op('project_context', {projectId: 'hello-world'}, OUTSIDER)).status, 404);
 });
 
-test('B4 task states: state changes only through allowed transitions and the list counts follow', async () => {
+test('B4 task states: state changes only through allowed transitions and the list counts follow (requirement: fleet.md task states; risk: a task jumps to a state the rules forbid, or the counts lie)', async () => {
   // Risk: an operator action moves a task into an impossible state, or the list counters disagree with the rows.
   const t = ok(await op('task_create', {title: 'B4 ' + randomUUID()}));
   assert.equal(t.state, 'queued');
@@ -59,7 +59,7 @@ test('B4 task states: state changes only through allowed transitions and the lis
   assert.equal(page.counts.queued, 1);
 });
 
-test('B5 thread: a session thread pages its execution boundary and the operator message by block key', async () => {
+test('B5 thread: a session thread pages its execution boundary and the operator message by block key (requirement: docs/designs/fleet-conversations.md thread_entries; risk: a thread page skips or repeats a block)', async () => {
   // Risk: the conversation view misses or reorders turns, or a page cursor skips a block.
   const sid = await session();
   const e = ok(await send(sid, 'thread text'));
@@ -76,7 +76,7 @@ test('B5 thread: a session thread pages its execution boundary and the operator 
   assert.equal((await call('GET', `/api/threads/session/${randomUUID()}/entries?limit=1`)).status, 404);
 });
 
-test('B6 ask and reply: an answer reaches the asking session as its next message', async () => {
+test('B6 ask and reply: an answer reaches the asking session as its next message (requirement: docs/system-operations.md agent communication; risk: an answer is recorded but never reaches the session)', async () => {
   // Risk: an agent waits forever because the reply is recorded but never delivered.
   const sid = await session();
   const e = ok(await send(sid, 'start'));
@@ -90,7 +90,7 @@ test('B6 ask and reply: an answer reaches the asking session as its next message
   assert.equal((await op('reply', {questionId: q.id, answer: 'red'})).status, 409);
 });
 
-test('B6c project readiness: a member with the project grant starts it and reads its result', async () => {
+test('B6c project readiness: a member with the project grant starts it and reads its result (requirement: docs/designs/fleet-people-access.md grants; risk: a granted member cannot start or read project readiness)', async () => {
   // Risk: readiness rows carry no project, so row-level security refuses every non-owner (403 Not in your scope).
   const member = 'member@trial.test';
   const secret = ok(await op('hosts_register', {id: 'owner-mac'})).secret;
@@ -106,7 +106,7 @@ test('B6c project readiness: a member with the project grant starts it and reads
   assert.equal(ok(await op('execution_status', {executionId: h.executionId}, member)).readiness?.[0]?.hostId, 'owner-mac');
 });
 
-test('B6b the web answer to an agent question (questions_answer) is delivered to the asking session like reply', async () => {
+test('B6b the web answer to an agent question (questions_answer) is delivered to the asking session like reply (requirement: docs/system-operations.md agent communication; risk: the UI answer is recorded but the agent never receives it, live stand 2026-11-10)', async () => {
   // Risk: the UI answers an agent question, the answer is recorded, but the agent never receives it (live stand, 2026-11-10).
   const sid = await session();
   const e = ok(await send(sid, 'start'));
@@ -117,7 +117,7 @@ test('B6b the web answer to an agent question (questions_answer) is delivered to
   assert.match(s.queued[0].text, /blue/);
 });
 
-test('B7 tools: the operation table is served as MCP tools', async () => {
+test('B7 tools: the operation table is served as MCP tools (requirement: fleet.md R2 shared core; risk: an operation exists for people but not as an agent tool)', async () => {
   // Risk: agents and the app lose tools they call by name.
   const list = ok(await call('POST', '/api/tools', {jsonrpc: '2.0', id: 1, method: 'tools/list'}));
   const names = list.result.tools.map((t: any) => t.name);
