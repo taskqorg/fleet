@@ -10,9 +10,9 @@ import (
 )
 
 func init() {
-	operation("budget_set", false, checkFirst(func(q *Request) error { return ownerOnly(q, "Only the owner sets budgets") }, typedOp(budgetSet)))
+	operation("budget_set", false, ownerFirst("Only the owner sets budgets", typedOp(budgetSet)))
 	operation("budget_ask", false, typedOp(budgetAsk))
-	operation("budget_delete", false, checkFirst(func(q *Request) error { return ownerOnly(q, "Only the owner deletes budgets") }, typedOp(budgetDelete)))
+	operation("budget_delete", false, ownerFirst("Only the owner deletes budgets", typedOp(budgetDelete)))
 	operation("budgets_list", true, typedOp(budgetsList))
 }
 
@@ -70,11 +70,7 @@ func budgetSet(q *Request, b *contract.BudgetSetRequest) (contract.Budget, error
 	if b.Action != nil {
 		action = *b.Action
 	}
-	var period any
-	if b.Period != nil {
-		period = *b.Period
-	}
-	if !inList(budgetActions, action) || (period != nil && !inList(budgetPeriods, *b.Period)) {
+	if !inList(budgetActions, action) || (b.Period != nil && !inList(budgetPeriods, *b.Period)) {
 		return none, fail(400, "action warn|pause|stop; period day|week|month")
 	}
 	id := deref(b.Id)
@@ -83,7 +79,7 @@ func budgetSet(q *Request, b *contract.BudgetSetRequest) (contract.Budget, error
 	}
 	if err := exec(q, `INSERT INTO budget(id,scope,scope_id,unit,"limit",period,action,set_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
     ON CONFLICT(id) DO UPDATE SET scope=excluded.scope,scope_id=excluded.scope_id,unit=excluded.unit,"limit"=excluded."limit",period=excluded.period,action=excluded.action,set_by=excluded.set_by,set_at=now()`,
-		id, b.Scope, b.ScopeId, b.Unit, b.Limit, period, action, q.person.Email); err != nil {
+		id, b.Scope, b.ScopeId, b.Unit, b.Limit, b.Period, action, q.person.Email); err != nil {
 		return none, err
 	}
 	rs, err := queryRows(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action,set_by,set_at FROM budget WHERE id=$1`, id)
