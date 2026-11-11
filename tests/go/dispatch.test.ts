@@ -117,3 +117,16 @@ test('A9 an execution record has one state vocabulary and its real kind and harn
   const e = await execution(sessionId, executionId);
   assert.deepEqual([e.state, e.observation], ['running', 'unconfirmed']);
 });
+
+test('A12 receipts have one route per envelope: a project operation on /api/hosts/project-operations, a status on /api/hosts/receipts; a body that is not its envelope is 400, and the combined route still serves every envelope for one release (requirement: contracts/host-protocol.schema.json ProjectReceipt and Receipt, C4; risk: a stray field picks another handler; a host on the previous release loses its receipts)', {timeout: 30_000}, async () => {
+  const h = await host('trial-host');
+  ok(await h('/api/hosts/poll', poll));
+  const {sessionId} = ok(await op('session_start', {requestId: randomUUID(), text: 'hi', projectId: 'hello-world', profileId: 'pm'}));
+  const command = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.sessionId === sessionId && c.kind === 'start');
+  const body = (requestId: unknown) => ({commandId: command.id, executionId: command.executionId, delegation: {operation: 'project_context', projectId: 'hello-world', arguments: {}, requestId}});
+  assert.equal(ok(await h('/api/hosts/project-operations', body('r1'))).id, 'hello-world');
+  assert.equal((await h('/api/hosts/project-operations', body(5))).status, 400, 'requestId must be a string');
+  assert.equal(ok(await h('/api/hosts/receipts', body('r2'))).id, 'hello-world', 'the combined route of the previous release');
+  assert.equal((await h('/api/hosts/receipts', {commandId: command.id, executionId: command.executionId, status: 'started', nativeSessionId: 7})).status, 400);
+  ok(await h('/api/hosts/receipts', {commandId: command.id, executionId: command.executionId, status: 'started'}));
+});
