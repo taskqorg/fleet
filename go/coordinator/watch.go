@@ -173,7 +173,7 @@ func watchOne(q *Request, wid string) error {
 			}
 			if !slices.Contains(kinds, c.Kind) || seen[c.Kind+c.ID] ||
 				(c.Actor != nil && own[*c.Actor]) || (c.SessionID != nil && (children[*c.SessionID] || *c.SessionID == id)) ||
-				(focus != nil && c.Kind != "host" && !slices.Contains(focus, p)) || (!dir.Owner && !mayAccessProjectID(dir, p)) {
+				(focus != nil && c.Kind != "host" && !slices.Contains(focus, p)) || (!fullAccess(dir) && !mayAccessProjectID(dir, p)) {
 				continue
 			}
 			seen[c.Kind+c.ID] = true

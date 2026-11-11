@@ -17,11 +17,9 @@ import (
 	"time"
 )
 
-func outboxSchema(db *sql.DB) error {
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS outbox(route TEXT NOT NULL,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS outbox_failed(route TEXT NOT NULL,body TEXT NOT NULL,status INTEGER NOT NULL,reason TEXT NOT NULL,failed_at INTEGER NOT NULL);`); err != nil {
-		return err
-	}
-	// A 401 is a credential condition of the host, not of the row: those rows go back to the queue.
+// requeueUnauthorized: a 401 is a credential condition of the host, not of the row: at start those rows go back to the
+// queue.
+func requeueUnauthorized(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err

@@ -87,7 +87,7 @@ func init() {
 			}
 		}
 		for _, p := range lastPlacementProblems() {
-			if pid, _ := p["projectId"].(*string); q.person == nil || q.person.Owner || pid != nil && mayAccessProject(q.person, pid) {
+			if pid, _ := p["projectId"].(*string); q.person == nil || fullAccess(q.person) || pid != nil && mayAccessProject(q.person, pid) {
 				problems = append(problems, p)
 			}
 		}
@@ -219,7 +219,7 @@ func mayAccessProject(p *Person, projectID *string) bool {
 	if p == nil {
 		return false
 	}
-	if p.Owner {
+	if fullAccess(p) {
 		return true
 	}
 	if projectID == nil {
@@ -715,7 +715,7 @@ func (n noDirs) Open(name string) (http.File, error) {
 // operatorOnly: purge and store settings change every project's bytes; the owner or an architect only (TypeScript let any
 // person call them, inside row-level security).
 func operatorOnly(q *Request) error {
-	if q.person == nil || !(q.person.Owner || contains(q.person.Roles, "architect")) {
+	if q.person == nil || !(fullAccess(q.person) || contains(q.person.Roles, "architect")) {
 		return fail(403, "Architect role required")
 	}
 	return nil

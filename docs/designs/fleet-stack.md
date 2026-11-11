@@ -44,7 +44,7 @@ The owner's first goal is fast agent work in parallel worktrees: the Mac must st
 
 - `AGENTS.md` sends every agent attempt to `fleet.md` and the specq shared core at a pinned commit.
 - `fleet.md` names one merge-gate command and a diagnostic time budget of 180 s on an idle Mac ([verification](../../fleet.md#verification)). The full gate runs only in CI ([why](#why-this-stack)).
-- CI runs specq `contract_lint.py` on `fleet.md` and `scripts/test-rule-report.ts`, which reports tests that name no requirement and risk as a warning. Nothing fails because a test lacks a reference.
+- CI runs specq `contract_lint.py` on `fleet.md` and `scripts/test-rule-report.ts --strict`: an outside test in `tests/go/` that names no requirement or risk fails CI; any other test is reported as a warning.
 - Not built: a `fleet` project in `config/projects/`, so that specq rule delivery also applies to agents Fleet itself dispatches to work on Fleet.
 
 ## Toolchain
@@ -152,7 +152,7 @@ Not built: delivery (`delivery_create`, `delivery_generate`, `delivery_step`, `d
 
 Both were ported to Go in one pass after the coordinator (owner direction 2026-11-11), with no compatibility layer and no fallback to the Rust binaries, behind the unchanged `/api/hosts/*` and `contracts/*.schema.json`. The executor is `go/executor` (binary `fleet-executor`), the gateway `go/gateway` (`fleet-gateway`, with its `guard` command).
 
-- Journal: `modernc.org/sqlite`, the same `journal.sqlite` tables, WAL, `synchronous=FULL`. The probe showed 0 lost acknowledged commits in the crash test at about 14k commits/s ([evidence](../../evidence/fleet-stack.md#executor-probe)). A standard-library journal was rejected ([why](#why-this-stack)).
+- Journal: `modernc.org/sqlite`, WAL, `synchronous=FULL`; one schema source, `go/executor/journal.sql`, applied in sections by `PRAGMA user_version`. The probe showed 0 lost acknowledged commits in the crash test at about 14k commits/s ([evidence](../../evidence/fleet-stack.md#executor-probe)). A standard-library journal was rejected ([why](#why-this-stack)).
 - macOS kernel calls: `github.com/ebitengine/purego` for `proc_pidinfo` and `proc_signal_with_audittoken`; the signal is refused when the private symbol is missing. Linux identity-bound signals use `os.Process` with pidfd. `golang.org/x/sys/unix` for `Openat`, `Statfs`, `Flock` and the terminal check.
 - Preview memory cap: `prlimit --as=<bytes>` in the ffmpeg command line on Linux (Go has no `pre_exec`); on macOS `RLIMIT_AS` is not enforced, as before.
 - The executor writes OSC 7501 program status to stderr when stderr is a terminal (working, blocked with kind `auth` on an edge answer to the poll, done, error).
