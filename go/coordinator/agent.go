@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fleet/contract"
 	"fmt"
 	"os"
 	"regexp"
@@ -358,11 +359,10 @@ func wake(q *Request, e doc, status string) error {
 }
 
 // agentDecorate: inline handoff delivery and the native fork request on a start command (call before storing it).
-func agentDecorate(q *Request, s, e, command doc) error {
+func agentDecorate(q *Request, s, e doc, payload *contract.StartPayload) error {
 	e["continuationKey"] = continuationKeyOf(s)
-	payload := mapOf(command["payload"])
 	if f := astr(s["forkNativeSessionId"]); f != "" && astr(s["nativeSessionId"]) == "" {
-		payload["fork"] = doc{"nativeSessionId": f, "argv": forkArgv(harnessOf(s), f)}
+		payload.Fork = rawMap(doc{"nativeSessionId": f, "argv": forkArgv(harnessOf(s), f)})
 		e["forkOfNativeSessionId"] = f
 	}
 	if hid := astr(s["pendingHandoffId"]); hid != "" {
@@ -370,7 +370,11 @@ func agentDecorate(q *Request, s, e, command doc) error {
 		if err != nil {
 			return err
 		}
-		payload["text"] = astr(h["text"]) + "\n\nCurrent request:\n" + astr(payload["text"])
+		text := astr(h["text"]) + "\n\nCurrent request:\n"
+		if payload.Text != nil {
+			text += *payload.Text
+		}
+		payload.Text = &text
 		h["state"], h["executionId"] = "sent", e["id"]
 		if err := put(q, "handoff", h); err != nil {
 			return err
