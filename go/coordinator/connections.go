@@ -4,7 +4,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -799,7 +798,7 @@ func revokeSteps(q *Request) error {
 }
 
 // Spool ingest (§3): every gateway line becomes one tool_run with connection_cost, idempotent by callId. A past day's
-// file is deleted once its lines are committed. A line naming a disabled key disables its row and asks the owner once.
+// file is deleted once its lines are committed; a file with a line that could not be imported is kept. A line naming a disabled key disables its row and asks the owner once.
 func connIngest(q *Request) (int, error) {
 	if gatewayDir() == "" {
 		return 0, nil
@@ -826,13 +825,17 @@ func connIngest(q *Request) (int, error) {
 		}
 		// Only complete lines: the gateway may be writing the last one; the next pass reads it.
 		b = b[:bytes.LastIndexByte(b, '\n')+1]
-		sc := bufio.NewScanner(bytes.NewReader(b))
-		sc.Buffer(make([]byte, 1<<20), 16<<20)
-		for sc.Scan() {
+		// Whole lines of any length (no Scanner token cap, W3-2); a line not imported keeps the file.
+		unimported := 0
+		for _, line := range bytes.Split(b, []byte{'\n'}) {
+			if len(bytes.TrimSpace(line)) == 0 {
+				continue
+			}
 			var l contract.CallLine
-			if err := json.Unmarshal(sc.Bytes(), &l); err != nil {
-				// Kept in the file until its day is retired; a line here means the gateway and the contract disagree.
+			if err := json.Unmarshal(line, &l); err != nil {
+				// Kept in the file; a line here means the gateway and the contract disagree.
 				log.Printf("spool %s: line not imported: %v", f, err)
+				unimported++
 				continue
 			}
 			ok, err := connRecord(q, l)
@@ -846,7 +849,9 @@ func connIngest(q *Request) (int, error) {
 		if added > 0 {
 			publish(q)
 		}
-		if f[:10] < yesterday {
+		if unimported > 0 {
+			log.Printf("spool %s: kept, %d line(s) not imported", f, unimported)
+		} else if f[:10] < yesterday {
 			// Retired only once the imported lines are committed; a re-read after a lost commit is deduplicated by callId.
 			path := filepath.Join(dir, f)
 			onEnd(q.tx, func(committed bool) {

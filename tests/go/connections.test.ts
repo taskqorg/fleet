@@ -123,6 +123,22 @@ test('C4 spool line naming a disabled key disables its row and asks the owner on
   ok(await op('connections_key_state', {keyId: k.fingerprint, state: 'active'}));
 });
 
+test('C6 a spool line that cannot be imported keeps its file, and lines after a very long line are still imported (requirement: docs/designs/fleet-connections.md spool ingest; risk: retained accounting silently lost when a past day is retired)', async () => {
+  const c = name('tavily');
+  ok(await op('connections_create', {name: c, provider: 'tavily'}));
+  ok(await op('connections_set_access', {connection: c, access: {projects: ['*']}}));
+  const k = ok(await op('connections_key_add', {connection: c, value: 'tvly-' + randomUUID()}));
+  const m = ok(await op('connections_token_create', {name: name('t'), connections: [c]}));
+  const dir = join(GATEWAY_DIR, 'state', 'spool'), file = join(dir, '2000-01-0' + (1 + Math.floor(Math.random() * 9)) + '.jsonl');
+  mkdirSync(dir, {recursive: true});
+  const line = JSON.stringify({callId: randomUUID(), tokenSha256: sha(m.token), executionId: 'token:x', tool: 'web_search', connection: c, outcome: 'error', errorCode: 'http-401', status: 401, keyFingerprint: k.fingerprint, startedAt: Date.now(), ms: 5, disabled: {key: k.fingerprint, status: 401}});
+  // A 17 MiB line (past the former 16 MiB scanner cap) before a valid line of a past day.
+  writeFileSync(join(file), 'x'.repeat(17 << 20) + '\n' + line + '\n');
+  await until(async () => ok(await op('connections_list')).connections.find((x: any) => x.name === c)?.keys.find((x: any) => x.state === 'disabled'), 'line after the long one imported');
+  await new Promise(r => setTimeout(r, 600)); // more ingest passes
+  assert.ok(existsSync(file), 'a past-day file with an unimported line was deleted');
+});
+
 test('P1 pipeline run is idempotent by requestId and refuses a changed body (requirement: docs/designs/fleet-asset-pipelines.md; risk: a retried request running twice)', async () => {
   const requestId = randomUUID();
   const a = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId, example: {}}));
