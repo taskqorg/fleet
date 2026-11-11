@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"syscall"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -59,10 +58,7 @@ func (a *App) refreshPeople(ctx context.Context) error {
 	if st, serr := os.Stat(a.peopleFile); serr != nil {
 		problem = "cannot read the file (" + serr.Error() + ")"
 	} else {
-		key = fmt.Sprint(st.ModTime().UnixNano(), ":", st.Size())
-		if sys, ok := st.Sys().(*syscall.Stat_t); ok {
-			key += fmt.Sprint(":", sys.Ino)
-		}
+		key = fmt.Sprint(st.ModTime().UnixNano(), ":", st.Size(), ":", inodeOf(st))
 	}
 	if key == peopleSeen {
 		return nil

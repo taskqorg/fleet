@@ -93,10 +93,10 @@ test('P2 a people.json entry as malformed as the old parsePeople refused (e-mail
   try {
     assert.equal((await call(c, 'POST', '/api/ops/questions_list', {person: NEW})).status, 200, 'a good entry next to bad ones works');
     assert.equal((await call(c, 'POST', '/api/ops/questions_list', {person: 'agents-client'})).status, 200, 'site-agents works next to bad rows');
-    for (const p of ['r@trial.test', 'o@trial.test', 'g@trial.test', 'k@trial.test'])
+    for (const p of ['not-an-email', 'r@trial.test', 'o@trial.test', 'g@trial.test', 'k@trial.test'])
       assert.equal((await call(c, 'POST', '/api/ops/questions_list', {person: p})).status, 403, p);
     const qs = (await call(c, 'POST', '/api/ops/questions_list', {body: {state: 'open'}})).body.questions.filter((x: any) => /left out/.test(x.text));
-    assert.equal(qs.length, 1); assert.match(qs[0].text, /operator and\/or architect/);
+    assert.equal(qs.length, 1); assert.equal(qs[0].text.match(/entry \d+:/g).length, bad.length, qs[0].text);
     const set = await call(c, 'POST', '/api/ops/people_set', {body: {people: [...list, bad[1]]}});
     assert.equal(set.status, 400, 'people_set refuses any malformed entry');
   } finally { await c.stop(); }
