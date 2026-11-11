@@ -14,6 +14,8 @@ Design: [data foundation](../docs/designs/fleet-data-foundation.md) Phase 0 and 
 
 ## Releases
 
+Target: every green `main` batch releases by itself with a computed version ([delivery pipeline](../docs/designs/fleet-delivery-pipeline.md#4-automatic-release)); until that lands, the tag below is the release action.
+
 The owner releases by tag: `git tag v<N>.<yymmdd>.<M> <commit on main> && git push origin v<N>.<yymmdd>.<M>`, with `yymmdd` the UTC date of the tag and `M` the sequence that day from 0. The release workflow waits for the commit's CI jobs `go`, `app` and `browser`, builds, checks migrations against the previous release and publishes on GitHub Releases: the tarballs, `SHA256SUMS`, `SHA256SUMS.sig` (Ed25519, key in environment `release`), `latest.json` and `provenance.sigstore.jsonl`. A failed gate is re-run from the Actions page; no new tag is needed. Every host then installs the release by itself ([self-update](../docs/designs/fleet-self-update.md)): PDS18 within 5 minutes, each other executor on its next timer run after the coordinator is healthy.
 
 ## Check
