@@ -389,7 +389,9 @@ func hostsList(q *Request, includeRemoved bool) (any, error) {
 	}
 	if includeRemoved {
 		for _, t := range tomb {
-			ids = append(ids, astr(t["hostId"]))
+			if !inList(ids, astr(t["hostId"])) {
+				ids = append(ids, astr(t["hostId"]))
+			}
 		}
 	}
 	running, err := queryRows(q, "SELECT host_id,harness,count(*)::int AS n FROM execution WHERE state IN ('preparing','running') AND host_id IS NOT NULL GROUP BY 1,2")
