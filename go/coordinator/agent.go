@@ -1783,8 +1783,12 @@ func bound(q *Request, name string, a doc, executionID string) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	d, _ := r.(doc)
-	return d, nil
+	if d, ok := r.(doc); ok {
+		return d, nil
+	}
+	var d doc // a typed reply (typedOp), e.g. execution_status
+	err = json.Unmarshal(jsonBytes(r), &d)
+	return d, err
 }
 
 var _ = errors.New
