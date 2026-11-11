@@ -168,16 +168,22 @@ type AskRequest struct {
 	Resume      json.RawMessage `json:"resume,omitempty"`
 }
 
-type BlockKind string
+// Block: One thread entry (docs/designs/fleet-conversations.md), told apart by kind. key is its position seq:part. Fleet's own projection: closed.
+type Block = json.RawMessage
 
-const (
-	BlockKindText      BlockKind = "text"
-	BlockKindTool      BlockKind = "tool"
-	BlockKindReasoning BlockKind = "reasoning"
-	BlockKindQuestion  BlockKind = "question"
-	BlockKindResult    BlockKind = "result"
-	BlockKindBoundary  BlockKind = "boundary"
-)
+// BoundaryBlock: Start of an execution in the thread.
+type BoundaryBlock struct {
+	Effort      *string        `json:"effort,omitempty"`
+	EndedAt     *int64         `json:"endedAt,omitempty"`
+	ExecutionId string         `json:"executionId"`
+	Harness     *string        `json:"harness,omitempty"`
+	Key         string         `json:"key"`
+	Kind        string         `json:"kind"`
+	Model       *string        `json:"model,omitempty"`
+	SessionId   *string        `json:"sessionId,omitempty"`
+	StartedAt   *int64         `json:"startedAt,omitempty"`
+	State       ExecutionState `json:"state"`
+}
 
 type BudgetAskReply struct {
 	QuestionId json.RawMessage `json:"questionId,omitempty"`
@@ -387,6 +393,18 @@ type ExecutionEventsReply struct {
 type ExecutionEventsRequest struct {
 	ExecutionId *string `json:"executionId,omitempty"`
 }
+
+// ExecutionState: execution_state in go/coordinator/schema.sql.
+type ExecutionState string
+
+const (
+	ExecutionStatePreparing ExecutionState = "preparing"
+	ExecutionStateRunning   ExecutionState = "running"
+	ExecutionStateWaiting   ExecutionState = "waiting"
+	ExecutionStateSucceeded ExecutionState = "succeeded"
+	ExecutionStateFailed    ExecutionState = "failed"
+	ExecutionStateCancelled ExecutionState = "cancelled"
+)
 
 type ExecutionStatusReply = map[string]json.RawMessage
 
@@ -802,6 +820,20 @@ type QuestionAskRequest struct {
 	Text      *string `json:"text,omitempty"`
 }
 
+type QuestionBlock struct {
+	Answer      json.RawMessage `json:"answer,omitempty"`
+	AnsweredAt  *int64          `json:"answeredAt,omitempty"`
+	AnsweredBy  *string         `json:"answeredBy,omitempty"`
+	AskedAt     *int64          `json:"askedAt,omitempty"`
+	ExecutionId *string         `json:"executionId,omitempty"`
+	Key         string          `json:"key"`
+	Kind        string          `json:"kind"`
+	Options     []string        `json:"options"`
+	QuestionId  string          `json:"questionId"`
+	State       string          `json:"state"`
+	Text        string          `json:"text"`
+}
+
 type QuestionHistoryReply struct {
 	Questions json.RawMessage `json:"questions,omitempty"`
 }
@@ -845,6 +877,16 @@ type QueueListRequest struct {
 	SessionId *string `json:"sessionId,omitempty"`
 }
 
+type ReasoningBlock struct {
+	At          *int64  `json:"at,omitempty"`
+	ExecutionId *string `json:"executionId,omitempty"`
+	Key         string  `json:"key"`
+	Kind        string  `json:"kind"`
+	Markdown    string  `json:"markdown"`
+	Plain       *string `json:"plain,omitempty"`
+	Stream      *string `json:"stream,omitempty"`
+}
+
 type RecommendationSetReply = map[string]json.RawMessage
 
 type RecommendationSetRequest struct {
@@ -861,6 +903,22 @@ type ReplyReply = map[string]json.RawMessage
 type ReplyRequest struct {
 	Answer     json.RawMessage `json:"answer,omitempty"`
 	QuestionId *string         `json:"questionId,omitempty"`
+}
+
+type ResultArtifact struct {
+	Id        string `json:"id"`
+	MediaType string `json:"mediaType"`
+	Name      string `json:"name"`
+	Size      int64  `json:"size"`
+}
+
+// ResultBlock: The stored artifacts of an ended execution.
+type ResultBlock struct {
+	ArtifactIds []string         `json:"artifactIds"`
+	Artifacts   []ResultArtifact `json:"artifacts"`
+	ExecutionId *string          `json:"executionId,omitempty"`
+	Key         string           `json:"key"`
+	Kind        string           `json:"kind"`
 }
 
 type RouteDecisionsReply struct {
@@ -1150,17 +1208,26 @@ type TaskUpdateRequest struct {
 	TaskId *string `json:"taskId,omitempty"`
 }
 
-// ThreadBlock: One thread entry; key is its position (e.g. seq:part).
-type ThreadBlock struct {
-	ExecutionId *string   `json:"executionId,omitempty"`
-	Key         string    `json:"key"`
-	Kind        BlockKind `json:"kind"`
+// TextBlock: role agent or operator; by: the sender of an operator message; stream open or cut-off while a delta is the newest text; harness, model and effort mark agent text.
+type TextBlock struct {
+	At          *int64  `json:"at,omitempty"`
+	By          *string `json:"by,omitempty"`
+	Effort      *string `json:"effort,omitempty"`
+	ExecutionId *string `json:"executionId,omitempty"`
+	Harness     *string `json:"harness,omitempty"`
+	Key         string  `json:"key"`
+	Kind        string  `json:"kind"`
+	Markdown    string  `json:"markdown"`
+	Model       *string `json:"model,omitempty"`
+	Plain       *string `json:"plain,omitempty"`
+	Role        string  `json:"role"`
+	Stream      *string `json:"stream,omitempty"`
 }
 
 // ThreadBlocksReply: removed: block keys that no longer exist.
 type ThreadBlocksReply struct {
-	Entries []ThreadBlock `json:"entries"`
-	Removed []string      `json:"removed"`
+	Entries []Block  `json:"entries"`
+	Removed []string `json:"removed"`
 }
 
 // ThreadBlocksRequest: rows: changed records; the reply has their current blocks.
@@ -1171,15 +1238,15 @@ type ThreadBlocksRequest struct {
 
 // ThreadEntriesReply: total: only with around. feedCursor: the change cursor of this read, to catch up from.
 type ThreadEntriesReply struct {
-	Entries    []ThreadBlock `json:"entries"`
-	FeedCursor int64         `json:"feedCursor"`
-	First      *string       `json:"first"`
-	HasAfter   bool          `json:"hasAfter"`
-	HasBefore  bool          `json:"hasBefore"`
-	Key        ThreadKey     `json:"key"`
-	Last       *string       `json:"last"`
-	SessionIds []string      `json:"sessionIds"`
-	Total      *int64        `json:"total,omitempty"`
+	Entries    []Block   `json:"entries"`
+	FeedCursor int64     `json:"feedCursor"`
+	First      *string   `json:"first"`
+	HasAfter   bool      `json:"hasAfter"`
+	HasBefore  bool      `json:"hasBefore"`
+	Key        ThreadKey `json:"key"`
+	Last       *string   `json:"last"`
+	SessionIds []string  `json:"sessionIds"`
+	Total      *int64    `json:"total,omitempty"`
 }
 
 type ThreadEntriesRequest struct {
@@ -1223,6 +1290,20 @@ type ThreadSearchRequest struct {
 	Key    ThreadKey `json:"key"`
 	Limit  *int64    `json:"limit,omitempty"`
 	Q      string    `json:"q"`
+}
+
+// ToolBlock: input and output are the harness's own values; times in ms.
+type ToolBlock struct {
+	At          *int64          `json:"at,omitempty"`
+	EndedAt     *int64          `json:"endedAt,omitempty"`
+	ExecutionId *string         `json:"executionId,omitempty"`
+	Input       json.RawMessage `json:"input,omitempty"`
+	Key         string          `json:"key"`
+	Kind        string          `json:"kind"`
+	Name        string          `json:"name"`
+	Output      json.RawMessage `json:"output,omitempty"`
+	StartedAt   *int64          `json:"startedAt,omitempty"`
+	State       string          `json:"state"`
 }
 
 type TransportAuthorizeReply struct {

@@ -4,12 +4,20 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 
 const dir = new URL('./', import.meta.url);
-const KEYS = new Set(['$comment', 'type', 'properties', 'required', 'additionalProperties', 'items', 'enum', '$ref', 'minimum']);
+const KEYS = new Set(['$comment', 'type', 'properties', 'required', 'additionalProperties', 'items', 'enum', '$ref', 'minimum', 'const', 'oneOf']);
 const SCALAR = { string: 'string', integer: 'number', number: 'number', boolean: 'boolean', null: 'null' };
 
 function type(s, at) {
   for (const k of Object.keys(s)) if (!KEYS.has(k)) throw Error(`${at}: unsupported keyword ${k}`);
   if (s.$ref) return s.$ref.replace(/^#\/\$defs\//, '');
+  if (s.oneOf) {
+    if (/[.[]/.test(at) || s.oneOf.some((x) => !x.$ref)) throw Error(`${at}: oneOf must be a $defs entry of $refs`);
+    return s.oneOf.map((x) => type(x, at)).join(' | ');
+  }
+  if (s.const !== undefined) {
+    if (typeof s.const !== 'string') throw Error(`${at}: const must be a string`);
+    return JSON.stringify(s.const);
+  }
   if (s.enum && /[.[]/.test(at)) throw Error(`${at}: an enum must be a $defs entry (Go needs its name)`);
   if (s.enum) return s.enum.map((v) => JSON.stringify(v)).join(' | ');
   if (s.type === undefined) return 'unknown';

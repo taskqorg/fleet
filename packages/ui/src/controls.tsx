@@ -495,7 +495,8 @@ export function SearchField({ label, value, onInput, onSearch }: { label: string
   return <label class="search"><Icon name={actions.search} /><input type="search" placeholder={label} aria-label={label} value={value}
     onInput={e => onInput((e.target as HTMLInputElement).value)} onKeyDown={e => { if (e.key === 'Enter') onSearch(); }} /></label>;
 }
-export type ThreadBlock = { kind: string; key: string; executionId?: string; [k: string]: any };
+export type { Block as ThreadBlock } from '../../../contracts/generated/ops.ts';
+import type { Block as ThreadBlock } from '../../../contracts/generated/ops.ts';
 /**
  * A thread: one row per block in a measured VirtualList that follows the bottom, loads older rows upward (onStart) and
  * newer ones downward (onEnd), and jumps through `handle`. Open tool and reasoning rows are kept by key across the window.
@@ -509,16 +510,16 @@ export function Thread({ blocks, label, now, marked, selected, onRowClick, showS
 }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const toggle = (k: string) => setOpen(o => { const n = new Set(o); n.has(k) ? n.delete(k) : n.add(k); return n; });
-  const markOf = (b: ThreadBlock): Mark => ({ harness: b.harness, model: b.model, effort: b.effort });
+  const markOf = (b: Mark): Mark => ({ harness: b.harness, model: b.model, effort: b.effort });
   const row = (b: ThreadBlock) => {
     switch (b.kind) {
       case 'text': return <TextRow who={b.role === 'operator' ? 'operator' : 'agent'} markdown={b.markdown ?? ''} mark={markOf(b)} by={b.by} at={b.at} now={now} onCopyFail={onCopyFail} />;
       case 'tool': return <ToolRow name={b.name} input={b.input} output={b.output} state={b.state} startedAt={b.startedAt} endedAt={b.endedAt} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
-      case 'question': return <QuestionRow text={b.text} options={b.options ?? []} state={b.state} answer={b.answer} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} />;
-      case 'result': return <ResultRow artifacts={b.artifacts ?? (b.artifactIds ?? []).map((id: string) => ({ id, name: id.slice(0, 8), mediaType: '', size: 0 }))} stage={b.stage} onOpen={onOpenResult} />;
-      case 'boundary': return <BoundaryRow session={showSession ? b.sessionId : undefined} executionId={b.executionId!} state={b.state} mark={markOf(b)} startedAt={b.startedAt} endedAt={b.endedAt} now={now} stopReason={stopReason}
-        onStop={onStop && ['preparing', 'running', 'waiting'].includes(b.state) ? () => onStop(b.executionId!) : undefined} />;
+      case 'question': return <QuestionRow text={b.text} options={b.options ?? []} state={b.state} answer={b.answer === undefined || typeof b.answer === 'string' ? b.answer : JSON.stringify(b.answer)} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} />;
+      case 'result': return <ResultRow artifacts={b.artifacts} onOpen={onOpenResult} />;
+      case 'boundary': return <BoundaryRow session={showSession ? b.sessionId ?? undefined : undefined} executionId={b.executionId} state={b.state} mark={markOf(b)} startedAt={b.startedAt} endedAt={b.endedAt} now={now} stopReason={stopReason}
+        onStop={onStop && ['preparing', 'running', 'waiting'].includes(b.state) ? () => onStop(b.executionId) : undefined} />;
       default: return null;
     }
   };
