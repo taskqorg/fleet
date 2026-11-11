@@ -844,6 +844,10 @@
         },
         "cleanupUnknown": {
           "type": "boolean"
+        },
+        "stderrTail": {
+          "$comment": "the last 2000 bytes of the harness stderr when it exited non-zero (the coordinator records its last line as the execution problem)",
+          "type": "string"
         }
       },
       "required": [
