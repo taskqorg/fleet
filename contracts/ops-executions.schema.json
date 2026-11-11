@@ -14,11 +14,11 @@
     "pipeline_get": {"read": true, "errors": [400, 403]},
     "pipeline_history": {"read": true, "errors": [404]},
     "pipeline_run": {"read": false, "long": true, "errors": []},
+    "pipeline_run_create": {"read": false, "errors": [400, 403, 404, 409], "long": true},
     "queue_list": {"read": true, "errors": []},
     "route_decisions": {"read": true, "errors": [400]}
   },
   "planned": {
-    "pipeline_run_create": {"read": false, "errors": [400, 403, 404, 409]},
     "pipeline_rerun": {"read": false, "errors": [400, 403, 404, 409]}
   },
   "$defs": {
@@ -52,7 +52,7 @@
     "PipelineRerunReply": {"type": "object", "required": ["runId", "reused", "definitions"], "properties": {"runId": {"type": "string"}, "reused": {"type": "array", "items": {"type": "string"}}, "definitions": {"type": "array", "items": {"$ref": "ops.schema.json#/$defs/DefinitionRef"}}}},
     "PipelineRerunRequest": {"type": "object", "required": ["runId", "mode"], "properties": {"runId": {"type": "string"}, "mode": {"$ref": "#/$defs/RerunMode"}, "draft": {"type": "boolean"}, "requestId": {"type": "string"}}},
     "PipelineRunCreateReply": {"type": "object", "required": ["runId", "definitions"], "properties": {"runId": {"type": "string"}, "definitions": {"type": "array", "items": {"$ref": "ops.schema.json#/$defs/DefinitionRef"}}}},
-    "PipelineRunCreateRequest": {"type": "object", "required": ["pipelineId", "projectId", "requestId"], "properties": {"pipelineId": {"type": "string"}, "projectId": {"type": "string"}, "requestId": {"type": "string"}, "draft": {"type": "boolean"}, "exampleArtifactId": {"type": "string"}, "example": {"type": "object", "additionalProperties": true}, "overrides": {"type": "object", "additionalProperties": true}}, "$comment": "Body of POST /api/pipelines/{id}/runs (pipelineRunCreate) as an operation pipeline_run_create; pipelineId was the URL segment. draft true runs the caller's draft. The request signature includes draft and the content sha."},
+    "PipelineRunCreateRequest": {"type": "object", "required": ["pipelineId", "requestId"], "properties": {"pipelineId": {"type": "string"}, "projectId": {"type": "string"}, "requestId": {"type": "string"}, "draft": {"type": "boolean"}, "exampleArtifactId": {"type": "string"}, "example": {"type": "object", "additionalProperties": true}, "overrides": {"type": "object", "additionalProperties": true}}, "$comment": "Body of POST /api/pipelines/{id}/runs (pipelineRunCreate) as an operation pipeline_run_create; pipelineId was the URL segment. draft true runs the caller's draft. The request signature includes draft and the content sha."},
     "PipelineRunReply": {"type": "object", "additionalProperties": true, "$comment": "A pipeline run with its steps, state and results (pipelineRun)."},
     "PipelineRunRequest": {"type": "object", "required": ["projectId", "requestId", "query"], "properties": {"projectId": {"type": "string"}, "requestId": {"type": "string"}, "methodId": {"type": "string"}, "query": {"type": "string"}}, "additionalProperties": true, "$comment": "Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId."},
     "QueueListReply": {"type": "object", "required": ["queued"], "properties": {"queued": {"type": "array", "items": {"type": "object", "additionalProperties": true, "$comment": "A queued message with queued: true and its position (1 is next)."}}}},
