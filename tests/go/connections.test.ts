@@ -597,3 +597,21 @@ test('L2 missing primary evidence stops a loop without optional no_gain (require
   assert.equal(done.trials.length, 1);
   assert.equal(done.strategies.length, 0, 'unavailable is not permission to continue');
 });
+
+test('L3 withdrawing a weak rating records refusal without a quality label (requirement: owner can decline Lab comparison; risk: refusal recorded as a pick/tie, overwritten answer or lingering needs-you)', async () => {
+  const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
+  example.version = 8000000 + Math.floor(Math.random() * 1e8);
+  const {examples: [pin]} = ok(await op('lab_examples_add', {examples: [example], approved: true}));
+  const exp = ok(await op('lab_experiment_create', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: [pin.artifactId], variants: [{label: 'baseline'}],
+    goal: 'Withdrawal fixture', hypothesis: 'Withdrawal creates no human score'}));
+  ok(await op('lab_experiment_action', {experimentId: exp.id, action: 'launch'}));
+  const done: any = await until(async () => { const x = ok(await op('lab_experiment_get', {experimentId: exp.id})); return x.state === 'done' ? x : undefined; }, 'withdrawal trial');
+  const rating = ok(await op('lab_rating_create', {experimentId: exp.id, form: 'pass_fail', trialIds: [done.trials[0].id]}));
+  assert.equal((await op('lab_rating_withdraw', {questionId: rating.id, reason: 'not meaningful'}, OUTSIDER)).status, 403);
+  const withdrawn = ok(await op('lab_rating_withdraw', {questionId: rating.id, reason: 'not meaningful'}));
+  assert.equal(withdrawn.state, 'withdrawn'); assert.equal(withdrawn.answer, null);
+  assert.equal(withdrawn.withdrawal.reason, 'not meaningful'); assert.equal(withdrawn.withdrawal.actor, OWNER);
+  assert.equal(ok(await op('lab_rating_withdraw', {questionId: rating.id, reason: 'replay'})).withdrawal.reason, 'not meaningful');
+  assert.equal((await op('questions_answer', {questionId: rating.id, answer: 'true'})).status, 409);
+  assert.equal(ok(await op('lab_experiment_get', {experimentId: exp.id})).scores.length, 0);
+});

@@ -2094,7 +2094,7 @@ func labRating(q *Request, qid string) (doc, error) {
 		items = append(items, doc{"label": string(rune('A' + i)), "trialId": tid, "files": files})
 	}
 	return doc{"id": r["id"], "kind": r["kind"], "form": o["form"], "experimentId": o["experiment_id"], "exampleArtifactId": o["example_artifact_id"],
-		"state": r["state"], "answer": r["answer"], "text": r["text"], "items": items}, nil
+		"state": r["state"], "answer": r["answer"], "text": r["text"], "items": items, "withdrawal": mapOf(r["data"])["withdrawal"]}, nil
 }
 
 func labRatings(q *Request, experimentID, state any) (doc, error) {
@@ -2443,6 +2443,7 @@ var labShapes = map[string]func(handler) handler{
 	"lab_experiments_list":  shaped[contract.LabExperimentsListRequest, contract.LabExperimentsListReply],
 	"lab_promote":           shaped[contract.LabPromoteRequest, contract.LabPromoteReply],
 	"lab_rating_create":     shaped[contract.LabRatingCreateRequest, contract.LabRatingCreateReply],
+	"lab_rating_withdraw":   shaped[contract.LabRatingWithdrawRequest, contract.LabRatingWithdrawReply],
 	"lab_rating_get":        shaped[contract.LabRatingGetRequest, contract.LabRatingGetReply],
 	"lab_ratings_list":      shaped[contract.LabRatingsListRequest, contract.LabRatingsListReply],
 	"lab_registry":          shaped[contract.LabRegistryRequest, contract.LabRegistryReply],
@@ -2518,8 +2519,9 @@ var labOps = map[string]struct {
 		}
 		return expPromote(q, id, v)
 	}},
-	"lab_rating_create": {false, false, func(q *Request, b doc) (any, error) { return expRate(q, b) }},
-	"lab_ratings_list":  {false, true, func(q *Request, b doc) (any, error) { return labRatings(q, b["experimentId"], b["state"]) }},
+	"lab_rating_create":   {false, false, func(q *Request, b doc) (any, error) { return expRate(q, b) }},
+	"lab_rating_withdraw": {false, false, func(q *Request, b doc) (any, error) { return labRatingWithdraw(q, b) }},
+	"lab_ratings_list":    {false, true, func(q *Request, b doc) (any, error) { return labRatings(q, b["experimentId"], b["state"]) }},
 	"lab_rating_get": {false, true, func(q *Request, b doc) (any, error) {
 		id, err := labIDArg(b["questionId"], "questionId")
 		if err != nil {
@@ -2910,4 +2912,39 @@ func exampleRef(id, version any) string {
 		return fmt.Sprintf("%v@%d", id, v)
 	}
 	return fmt.Sprintf("%v@%v", id, version)
+}
+
+func labRatingWithdraw(q *Request, b doc) (doc, error) {
+	if q.person != nil && !fullAccess(q.person) {
+		return nil, fail(403, "Only the owner withdraws Lab ratings")
+	}
+	id, err := labIDArg(b["questionId"], "questionId")
+	if err != nil {
+		return nil, err
+	}
+	reason, err := labStr(b["reason"], "withdrawal reason", 4000)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(reason) == "" {
+		return nil, fail(400, "Withdrawal reason is empty")
+	}
+
+	row, err := first(q, "SELECT * FROM question WHERE id=$1 AND kind='rating' FOR UPDATE", id)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, fail(404, "Unknown Lab rating")
+	}
+	if row["state"] == "answered" {
+		return nil, fail(409, "Rating already answered")
+	}
+	if row["state"] == "open" {
+		withdrawal := doc{"reason": reason, "actor": actor(q, "operator"), "at": nowMs()}
+		if err := exec(q, "UPDATE question SET state='withdrawn',data=coalesce(data,'{}'::jsonb)||jsonb_build_object('withdrawal',$2::jsonb) WHERE id=$1 AND state='open'", id, jsonBytes(withdrawal)); err != nil {
+			return nil, err
+		}
+	}
+	return labRating(q, id)
 }

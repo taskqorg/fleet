@@ -427,6 +427,19 @@ func (v *LabRatingGetRequest) Validate() error {
 	return nil
 }
 
+// LabRatingWithdrawReply: Withdrawn Lab rating, with original trial references and no answer/score.
+type LabRatingWithdrawReply = map[string]json.RawMessage
+
+type LabRatingWithdrawRequest struct {
+	QuestionId string `json:"questionId"`
+	Reason     string `json:"reason"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabRatingWithdrawRequest) Validate() error {
+	return nil
+}
+
 type LabRatingsListReply struct {
 	Ratings []map[string]json.RawMessage `json:"ratings"`
 }
@@ -495,6 +508,7 @@ func init() {
 		"lab_promote":           {Read: false, Long: false, Errors: []int{400, 404}},
 		"lab_rating_create":     {Read: false, Long: false, Errors: []int{400, 404, 409}},
 		"lab_rating_get":        {Read: true, Long: false, Errors: []int{400, 404}},
+		"lab_rating_withdraw":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
 		"lab_ratings_list":      {Read: true, Long: false, Errors: []int{404}},
 		"lab_registry":          {Read: true, Long: false, Errors: []int{}},
 		"lab_score_correct":     {Read: false, Long: false, Errors: []int{400, 404, 409}},

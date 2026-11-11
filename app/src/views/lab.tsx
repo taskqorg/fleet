@@ -81,6 +81,7 @@ function Rating({ r, now }: { r: any; now: number }) {
   const shown = (a: string) => r.form === 'pick_best' ? (r.items.find((i: any) => i.trialId === a)?.label ?? a) : a;
   const files = r.items.length > 0 && <div class="stack">{r.items.map((i: any) => <div key={i.label}><b>{i.label}</b>{' '}
     {i.files.filter((f: any) => !f.path.endsWith('/output.json') || i.files.length === 1).map((f: any) => <a key={f.artifactId} class="id" href={`/api/results/${f.artifactId}${/\.(html?|svg)$/i.test(f.path) ? '/preview' : ''}`} target="_blank" rel="noopener">{f.path.split('/').slice(1).join('/')}</a>)}</div>)}</div>;
+  if (r.state === 'withdrawn') return <div id={`rating-${r.id}`}><DetailSection title="Withdrawn rating"><KvRow icon="circle-slash" label={r.text} meta={r.withdrawal?.reason ?? 'No answer or score recorded'} />{files}</DetailSection></div>;
   return <div id={`rating-${r.id}`}><DecisionBlock question={r.text} askedBy="lab" addressedTo="you" since={now} now={now} waits={busy ? 'saving' : 'never blocks'} context={files || undefined} options={opts}
     answered={r.state === 'answered' ? { by: 'you', answer: shown(r.answer), at: now, delivered: true } : undefined}
     onAnswer={a => { setBusy(true); op('questions_answer', { questionId: r.id, answer: toAnswer(a) }).finally(() => setBusy(false)); }} /></div>;
@@ -181,7 +182,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
         <KvRow icon="clock" label="Priority background" meta={e.priority.note} />
       </DetailSection>
     </section>
-    <section class="panel"><header class="panel-h"><Icon name="message-circle-question" /><h2>Ratings</h2><span class="muted">rated {e.ratings.filter((r: any) => r.state === 'answered').length} of {e.ratings.length}</span></header>
+    <section class="panel"><header class="panel-h"><Icon name="message-circle-question" /><h2>Ratings</h2><span class="muted">rated {e.ratings.filter((r: any) => r.state === 'answered').length} of {e.ratings.filter((r: any) => r.state !== 'withdrawn').length}</span></header>
       {e.ratings.length ? e.ratings.map((r: any) => <Rating key={r.id} r={r} now={now} />) : <Empty text="Select comparable trials in the matrix to ask for a rating." />}
     </section>
   </article>;
