@@ -236,7 +236,15 @@ func pairwiseGroups(exp doc, trials []doc) (map[string][]doc, bool) {
 	ready := map[string][]doc{}
 	complete := true
 	for k, g := range groups {
-		done := len(g) == len(anys(exp["variants"]))
+		iteration, _ := intOK(mapOf(g[0]["cell"])["iteration"])
+		expected := 0
+		for _, v := range anys(exp["variants"]) {
+			i, _ := intOK(mapOf(v)["iteration"])
+			if i == iteration {
+				expected++
+			}
+		}
+		done := len(g) == expected
 		for _, t := range g {
 			done = done && terminal(t)
 		}

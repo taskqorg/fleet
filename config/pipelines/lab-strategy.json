@@ -1,0 +1,11 @@
+{
+  "id": "lab-strategy",
+  "steps": [
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/loop-strategy.py",
+      "id": "strategy",
+      "kind": "script"
+    }
+  ],
+  "version": 2
+}

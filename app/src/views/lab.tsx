@@ -153,7 +153,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
       </div>
     </section>
     <section class="panel"><header class="panel-h"><Icon name="sliders-horizontal" /><h2>Variants</h2></header>
-      <DetailSection title="Spread across repeats">{e.variants.map((v: any) => <KvRow key={v.label} icon="git-merge" label={v.label}
+      <DetailSection title="Spread across repeats">{e.variants.map((v: any) => <KvRow key={v.label} icon="git-merge" label={v.proposalLabel ? `${v.proposalLabel} · ${v.label}` : v.label}
         meta={Object.entries(v.summary).map(([k, s]: any) => `${evaluatorLabel(k)} ${scoreText(s)}`).join(' · ') || 'no scores yet'}
         value={<Button label="Promote" icon="check-check" onClick={() => act('lab_promote', { experimentId: id, variant: v.label }).then(setPatch)} />} />)}</DetailSection>
       {patch && <DetailSection title="Promote"><KvRow icon="check" label={`Recommendation set to ${patch.method.id}`}
@@ -170,6 +170,8 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
           meta={`${c.result.tooFew ? `n ${c.result.n} · too few examples for an interval` : `n ${c.result.n} · 95% interval ${c.result.low.toFixed(2)} to ${c.result.high.toFixed(2)}`}${c.evaluator.startsWith('typed:') ? ' · an escalation counts as not correct; see coverage and accuracy above' : ''}`}
           value={c.reason ? <span class="muted">{c.reason}</span> : undefined} />
       </DetailSection>)}
+      {(e.strategies ?? []).length > 0 && <DetailSection title="Loop strategies"><VirtualList items={e.strategies} getKey={(v: any) => v.id} rowHeight={ROW2} follow="top" label="Strategy runs" columns="1.25rem minmax(0,1fr) auto"
+        render={(v: any) => <><span class="lead"><StateBadge family="execution" state={v.state} compact /></span><span class="tt">Iteration {v.iteration} · {v.output?.reason ?? v.problem ?? 'pending'}</span><span class="id">{v.id.slice(0, 8)}</span></>} /></DetailSection>}
       <DetailSection title="Decision gate">
         <KvRow icon="check-check" label="Judge agrees with you" meta={e.agreement.compared ? `${e.agreement.matched} of ${e.agreement.compared} (${e.agreement.percent}%)` : 'no trial rated by both yet'} />
         {(e.agreement.byVersion ?? []).length > 0 && <VirtualList items={e.agreement.byVersion} getKey={(v: any) => v.version} rowHeight={ROW2} follow="top" label="Agreement by rubric version" columns="1.25rem minmax(0,1fr) auto"

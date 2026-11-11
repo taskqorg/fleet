@@ -190,7 +190,7 @@ Every provider call goes through fleet-gateway, from two entry points; the conne
 
 Final trial states are execution states: `succeeded`, `failed`, `cancelled`; a trial whose outcome nobody can prove is `failed` with `observation = unconfirmed` (shown as Unknown). Only a confirmed `succeeded` trial is comparable. Cancel cell ends the run `cancelled` and stops its running step. Retry cell inserts attempt + 1.
 
-Not built: kind `loop` (refused with 400), stop rules `max_iterations`, `no_gain` and strategy `stop`, and the strategy step. Target below.
+Loop experiments use the strategy and stop rules under Iterative improvement. Each strategy is an ordinary retained pipeline run; failed or unconfirmed strategy work stops autonomous continuation with its reason.
 
 ## Local-suffix retry
 
@@ -246,7 +246,9 @@ Target for kind `loop`. A strategy is a pipeline step (script or agent). Input: 
 *   `no_gain {k}`: gain = best variant's mean of the primary evaluator on tune examples minus the baseline mean; stop when gain ≤ (max − min of baseline repeats) for k consecutive iterations. The owner sets `k`; no default.
 *   A strategy never changes a budget.
 
-Not built: strategies, generators, allocators and `loop` experiments.
+Loop configuration is `strategy: {generator:{kind,params},allocator:{kind:"full",params:{}},max_iterations?:N,no_gain?:{k}}`. Both stop settings are optional; there is no coded iteration ceiling or default k. `primaryEvaluator` is required and must have a scalar form. `list` takes `params.variants`; `grid` takes `params.overrides` (override keys mapped to value arrays); `propose` takes an agent strategy and may set `keep_best`. Generator `params.step_overrides` selects the strategy run’s pipeline overrides. Ordinary owner-only override authority is preserved from experiment creation.
+
+List/grid use `lab-strategy`; propose uses `lab-strategy-propose`. The runner stages a retained `snapshot.json` with variants, tune scores, spend, budgets and generator/allocator configuration. Held-out results stay in history but do not steer strategies. The last step writes matching `strategy.json` and `output.json`. The coordinator accepts only `{action,variants,reason}`, so a strategy cannot replace budgets. Successful outputs append uniquely identified variants with their proposal labels and iteration. Strategy identity includes experiment and iteration, and consumption is transactional. Missing primary-score evidence stops with `primary-score-unavailable`, never a false `no_gain`.
 
 ## Budgets
 

@@ -1,0 +1,27 @@
+{
+  "id": "fleet-uc9-loop-stop",
+  "use_case_id": "fleet:UC9",
+  "version": 1,
+  "origin": "synthetic",
+  "fixture": null,
+  "prompt": "Technical no_gain control: copy seed.txt to answer.txt unchanged. This fixture measures loop termination on a flat score, not improvement quality.",
+  "inputs": [
+    {
+      "path": "seed.txt",
+      "text": "stable loop fixture\n"
+    }
+  ],
+  "references": [
+    {
+      "path": "answer.txt",
+      "text": "stable loop fixture\n"
+    }
+  ],
+  "checks": [
+    {
+      "id": "stable-answer",
+      "run": "python3 -I -c \"from pathlib import Path; assert Path('answer.txt').read_text() == 'stable loop fixture\\n'\""
+    }
+  ],
+  "split": "tune"
+}

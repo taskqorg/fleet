@@ -845,7 +845,7 @@ func expRow(q *Request, id string) (doc, error) {
 
 func expView(r doc) doc {
 	return doc{"id": r["id"], "projectId": r["project_id"], "kind": r["kind"], "pipelineId": r["pipeline_id"], "examples": r["examples"], "variants": r["variants"],
-		"repeats": r["repeats"], "evaluators": r["evaluators"], "primaryEvaluator": r["primary_evaluator"], "budgets": r["budgets"], "state": r["state"],
+		"repeats": r["repeats"], "evaluators": r["evaluators"], "primaryEvaluator": r["primary_evaluator"], "strategy": r["strategy"], "budgets": r["budgets"], "state": r["state"],
 		"stopReason": r["stop_reason"], "createdAt": r["created_at"], "goal": r["goal"], "hypothesis": r["hypothesis"], "decisionRule": r["decision_rule"],
 		"labGroup": r["lab_group"], "decision": r["decision"], "decisionReason": r["decision_reason"], "decidedBy": r["decided_by"], "decidedAt": r["decided_at"],
 		"launchedAt": r["launched_at"]}
@@ -982,13 +982,10 @@ func expCreate(q *Request, b doc) (doc, error) {
 		}
 	}
 	kind := astr(b["kind"])
-	if kind == "loop" {
-		return nil, fail(400, "Loop experiments need strategies (Stage 4)")
-	}
-	if kind != "single" && kind != "ab" {
+	if kind != "single" && kind != "ab" && kind != "loop" {
 		return nil, fail(400, "Invalid kind")
 	}
-	if b["strategy"] != nil {
+	if b["strategy"] != nil && kind != "loop" {
 		return nil, fail(400, "strategy is for loop experiments")
 	}
 	projectID, err := expID(b["projectId"], "projectId")
@@ -1146,6 +1143,17 @@ func expCreate(q *Request, b doc) (doc, error) {
 	if b["primaryEvaluator"] != nil && !names[astr(b["primaryEvaluator"])] {
 		return nil, fail(400, "primaryEvaluator names none of the evaluators")
 	}
+	var strategy any
+	if kind == "loop" {
+		if astr(b["primaryEvaluator"]) == "" || strings.HasSuffix(astr(b["primaryEvaluator"]), ":pick_best") {
+			return nil, fail(400, "Loop primaryEvaluator must name a scalar evaluator")
+		}
+		st, err := loopStrategy(q, b["strategy"])
+		if err != nil {
+			return nil, err
+		}
+		strategy = st
+	}
 	budgets := []any{}
 	for _, x := range anys(b["budgets"]) {
 		bu := mapOf(x)
@@ -1167,9 +1175,9 @@ func expCreate(q *Request, b doc) (doc, error) {
 		budgets = append(budgets, doc{"unit": u, "limit": l, "action": act})
 	}
 	id := newID()
-	if err := exec(q, "INSERT INTO experiment(id,project_id,kind,pipeline_id,examples,variants,repeats,evaluators,primary_evaluator,budgets,goal,hypothesis,decision_rule,lab_group) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
+	if err := exec(q, "INSERT INTO experiment(id,project_id,kind,pipeline_id,examples,variants,repeats,evaluators,primary_evaluator,budgets,goal,hypothesis,decision_rule,lab_group,strategy) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
 		id, projectID, kind, pipelineID, jsonBytes(examples), jsonBytes(variants), repeats, jsonBytes(evaluators), b["primaryEvaluator"], jsonBytes(budgets),
-		b["goal"], b["hypothesis"], b["decisionRule"], b["labGroup"]); err != nil {
+		b["goal"], b["hypothesis"], b["decisionRule"], b["labGroup"], jsonBytes(strategy)); err != nil {
 		return nil, err
 	}
 	return expGet(q, id)
@@ -1299,12 +1307,13 @@ func exampleOf(q *Request, pin doc) (doc, doc, error) {
 }
 
 func expLaunchTrial(q *Request, exp, pin, variant doc, repeat, attempt int64) (string, error) {
-	cell := doc{"iteration": 0, "example": pin["id"], "variant": variant["label"], "repeat": repeat, "attempt": attempt}
+	iteration, _ := intOK(variant["iteration"])
+	cell := doc{"iteration": iteration, "example": pin["id"], "variant": variant["label"], "repeat": repeat, "attempt": attempt}
 	_, run, err := exampleOf(q, pin)
 	if err != nil {
 		return "", err
 	}
-	rid := "lab:" + sha256hex(jsonBytes([]any{exp["id"], 0, pin["id"], variant["label"], repeat, attempt}))
+	rid := "lab:" + sha256hex(jsonBytes([]any{exp["id"], iteration, pin["id"], variant["label"], repeat, attempt}))
 	return expInsertRun(q, exp, rid, astr(exp["pipeline_id"])+".json", run, variant, doc{"cell": cell})
 }
 
@@ -1620,7 +1629,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			return err
 		}
 		budgets := []any{}
-		if missing > 0 {
+		if missing > 0 || exp["kind"] == "loop" {
 			budgets = anys(exp["budgets"])
 		}
 		state, changed := "running", false
@@ -1699,6 +1708,9 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			allFinal = allFinal && terminal(last[k])
 		}
 		if len(launched) == 0 && len(order) == total && allFinal && evaluated {
+			if exp["kind"] == "loop" {
+				return loopAdvance(q, exp, trials, runs, cur, s, &launched)
+			}
 			return exec(q, "UPDATE experiment SET state='done',stop_reason='complete' WHERE id=$1 AND state='running'", id)
 		}
 		return nil
@@ -2366,6 +2378,13 @@ func expGet(q *Request, id string) (doc, error) {
 	out["notes"] = notes
 	out["variants"], out["spend"], out["trials"], out["cells"], out["scores"], out["agreement"], out["judges"] = variants, s, tv, cells, scores, agreement(cur), judges
 	out["pairwise"] = pairwiseView(runs)
+	strategies := []any{}
+	for _, r := range runs {
+		if st := mapOf(r["loopStrategy"]); st != nil {
+			strategies = append(strategies, doc{"id": r["id"], "iteration": st["iteration"], "state": r["state"], "problem": r["problem"], "output": judgeOutput(r)})
+		}
+	}
+	out["strategies"] = strategies
 	out["comparison"] = expComparison(exp, trials, cur)
 	out["typed"] = expTyped(exp, trials, cur)
 	out["priority"] = doc{"value": "background", "note": "No effect until the scheduler exists"}
