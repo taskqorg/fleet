@@ -141,9 +141,20 @@ jobs:
               cat "$file"
             fi
           done
-          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com; do
-            echo "DNS $host"
+          echo "ImageOS=$ImageOS ImageVersion=$ImageVersion"
+          cat /etc/resolv.conf
+          resolvectl status --no-pager
+          ip -4 route show default
+          for host in github.com packages.microsoft.com ubuntu.com azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com; do
+            echo "System DNS $host"
             getent ahostsv4 "$host" || true
+            dig "$host" A +time=3 +tries=1 +noall +comments +answer || true
+          done
+          for resolver in 1.1.1.1 8.8.8.8; do
+            for host in github.com archive.ubuntu.com security.ubuntu.com; do
+              echo "Independent DNS $resolver $host"
+              dig "@$resolver" "$host" A +time=3 +tries=1 +noall +comments +answer || true
+            done
           done
           for url in https://archive.ubuntu.com/ubuntu/dists/noble/InRelease https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease; do
             curl --fail --head --max-time 30 "$url" || true
