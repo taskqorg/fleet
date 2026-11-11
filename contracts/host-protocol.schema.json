@@ -150,7 +150,7 @@
           "type": "string"
         },
         "platform": {
-          "type": "string"
+          "$ref": "#/$defs/Platform"
         },
         "roots": {
           "$ref": "#/$defs/AccountRoots"
@@ -276,7 +276,7 @@
           "type": "string"
         },
         "platform": {
-          "type": "string"
+          "$ref": "#/$defs/Platform"
         },
         "capabilities": {
           "type": "array",
@@ -984,6 +984,351 @@
       "required": [
         "accountId",
         "harness"
+      ]
+    },
+    "ArtifactReserveRequest": {
+      "type": "object",
+      "required": [
+        "hostId",
+        "executionId",
+        "name",
+        "mediaType",
+        "size",
+        "sha256"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "artifactId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "mediaType": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "derivedFrom": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "previousArtifactId": {
+          "type": "string"
+        }
+      },
+      "$comment": "POST /api/hosts/artifacts/reserve: an upload's artifact row; the reply names its state and store."
+    },
+    "ArtifactPart": {
+      "type": "object",
+      "required": [
+        "partNumber"
+      ],
+      "properties": {
+        "partNumber": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "etag": {
+          "type": "string"
+        }
+      }
+    },
+    "ArtifactPartsRequest": {
+      "type": "object",
+      "required": [
+        "hostId",
+        "artifactId",
+        "partNumbers"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "artifactId": {
+          "type": "string"
+        },
+        "storeId": {
+          "type": "string"
+        },
+        "partNumbers": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "$comment": "POST /api/hosts/artifacts/parts: presigned URLs for these part numbers."
+    },
+    "ArtifactCommitRequest": {
+      "type": "object",
+      "required": [
+        "hostId",
+        "artifactId",
+        "parts"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "artifactId": {
+          "type": "string"
+        },
+        "storeId": {
+          "type": "string"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArtifactPart"
+          }
+        }
+      },
+      "$comment": "POST /api/hosts/artifacts/commit: the uploaded parts with their etags."
+    },
+    "ArtifactVerifiedRequest": {
+      "type": "object",
+      "required": [
+        "hostId",
+        "artifactId",
+        "storeId",
+        "sha256"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "artifactId": {
+          "type": "string"
+        },
+        "storeId": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "$comment": "POST /api/hosts/artifacts/verified: the digest a store's host read back."
+    },
+    "ArtifactLeaseRequest": {
+      "type": "object",
+      "required": [
+        "hostId",
+        "artifactId"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "artifactId": {
+          "type": "string"
+        },
+        "storeId": {
+          "type": "string"
+        }
+      },
+      "$comment": "POST /api/hosts/artifacts/renew: the lease of a running transfer."
+    },
+    "ArtifactFailedRequest": {
+      "type": "object",
+      "required": [
+        "hostId",
+        "artifactId",
+        "error"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "artifactId": {
+          "type": "string"
+        },
+        "storeId": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "$comment": "POST /api/hosts/artifacts/failed: a transfer that cannot finish."
+    },
+    "ArtifactDeclareRequest": {
+      "type": "object",
+      "required": [
+        "hostId",
+        "executionId",
+        "name"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "$comment": "POST /api/hosts/artifacts/declare: a required artifact the execution will upload."
+    },
+    "HostArtifactGetRequest": {
+      "type": "object",
+      "required": [
+        "hostId",
+        "executionId",
+        "artifactId"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "artifactId": {
+          "type": "string"
+        }
+      },
+      "$comment": "POST /api/hosts/artifacts/get and /read: one artifact the execution may read."
+    },
+    "HostArtifactListRequest": {
+      "type": "object",
+      "required": [
+        "hostId",
+        "executionId"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "filter": {
+          "$ref": "#/$defs/HostArtifactListFilter"
+        }
+      },
+      "$comment": "POST /api/hosts/artifacts/list: the artifacts the execution may read."
+    },
+    "StoreRegistration": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "zone": {
+          "type": "string"
+        },
+        "bucket": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "localEndpoint": {
+          "type": "string"
+        },
+        "accessKeyId": {
+          "type": "string"
+        },
+        "secretAccessKey": {
+          "type": "string"
+        },
+        "capacityBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requiresLogon": {
+          "type": "boolean"
+        },
+        "usedBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "$comment": "A store a host serves; the keys go to the coordinator's secret directory, never to rows."
+    },
+    "StoresRequest": {
+      "type": "object",
+      "required": [
+        "hostId",
+        "store"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "store": {
+          "$ref": "#/$defs/StoreRegistration"
+        }
+      },
+      "$comment": "POST /api/hosts/stores."
+    },
+    "AgentToolsRequest": {
+      "type": "object",
+      "required": [
+        "hostId",
+        "commandId",
+        "request"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "commandId": {
+          "type": "string"
+        },
+        "agentToolKey": {
+          "type": "string"
+        },
+        "request": {}
+      },
+      "$comment": "POST /api/hosts/agent-tools: one MCP JSON-RPC request of a native agent (request stays the raw JSON-RPC frame)."
+    },
+    "HostArtifactListFilter": {
+      "type": "object",
+      "properties": {
+        "executionId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "mediaType": {
+          "type": "string"
+        }
+      },
+      "$comment": "Optional narrowing of /api/hosts/artifacts/list."
+    },
+    "Platform": {
+      "type": "string",
+      "enum": [
+        "darwin",
+        "win32",
+        "linux"
       ]
     }
   }
