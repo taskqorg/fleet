@@ -365,4 +365,3 @@ func (a *App) delegationReconcile(q *Request) error {
 	}
 	return nil
 }
-

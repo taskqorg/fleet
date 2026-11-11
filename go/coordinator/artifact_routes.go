@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -194,6 +195,10 @@ func decodeValid[T any, P interface {
 	Validate() error
 }](body []byte, strict bool) (*T, error) {
 	t := new(T)
+	// A key that names a field only case-insensitively (HostID) is refused: readBody checks the exact hostId key.
+	if err := caseExact(body, reflect.TypeOf(*t)); err != nil {
+		return nil, err
+	}
 	dec := json.NewDecoder(bytes.NewReader(body))
 	if strict {
 		dec.DisallowUnknownFields()

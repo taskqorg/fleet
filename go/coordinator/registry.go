@@ -120,6 +120,34 @@ func exactKeys(body json.RawMessage, t reflect.Type) error {
 	return nil
 }
 
+// caseExact: exactKeys' case check alone, on this struct and its nested structs (host bodies keep required checks in Validate).
+func caseExact(body json.RawMessage, t reflect.Type) error {
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(body, &m) != nil {
+		return nil
+	}
+	for i := 0; i < t.NumField(); i++ {
+		tag, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		for k, v := range m {
+			if k != tag && strings.EqualFold(k, tag) {
+				return fail(400, "Unknown field "+k+": use "+tag)
+			}
+			if k == tag {
+				if err := caseExact(v, t.Field(i).Type); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // checkFirst: a role check before the body is read, so a caller without the role learns nothing from a 400.
 func checkFirst(check func(*Request) error, h handler) handler {
 	return func(q *Request) (any, error) {
