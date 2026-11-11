@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -14,8 +16,9 @@ import (
 func TestStageInputsNeverLeaveTheInputFolder(t *testing.T) {
 	base := t.TempDir()
 	input, outside := filepath.Join(base, "input"), filepath.Join(base, "outside")
-	os.MkdirAll(input, 0o755)
-	os.MkdirAll(outside, 0o755)
+	if err := errors.Join(os.MkdirAll(input, 0o755), os.MkdirAll(outside, 0o755)); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(outside, filepath.Join(input, "sub")); err != nil {
 		t.Fatal(err)
 	}
@@ -31,8 +34,8 @@ func TestStageInputsNeverLeaveTheInputFolder(t *testing.T) {
 	t.Setenv("FLEET_CF_ACCESS_FILE", filepath.Join(base, "none"))
 	e := &executor{url: server.URL, token: "t", host: "h"}
 	for _, rel := range []string{"sub/f", "sub/deeper/f"} {
-		if err := e.stageInputs(M{"inputs": []any{M{"artifactId": "a", "path": rel}}}, input, "e1"); err == nil {
-			t.Errorf("%s: staged through a link to outside", rel)
+		if err := e.stageInputs(M{"inputs": []any{M{"artifactId": "a", "path": rel}}}, input, "e1"); err == nil || !strings.Contains(err.Error(), "escapes") {
+			t.Errorf("%s: %v; want the escape refused", rel, err)
 		}
 	}
 	if left, _ := os.ReadDir(outside); len(left) > 0 {
