@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"sort"
 	"strings"
 )
@@ -29,7 +30,8 @@ func dec(s string) (any, error) {
 	if err := d.Decode(&v); err != nil {
 		return nil, err
 	}
-	if d.More() {
+	// A second Decode, not More: More is false before a stray ']' or '}'.
+	if d.Decode(new(json.RawMessage)) != io.EOF {
 		return nil, errors.New("trailing data after JSON value")
 	}
 	return v, nil

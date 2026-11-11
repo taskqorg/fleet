@@ -1,4 +1,4 @@
-// fleet-stack L4: preserve captured stdio behavior and concurrent durable journal effects without a Python runner.
+// fleet-stack L4: replay stdio exchanges (first captured from the former Python servers) and concurrent durable journal effects against the Go binary.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
