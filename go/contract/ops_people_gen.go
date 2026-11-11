@@ -280,14 +280,14 @@ func (v *ViewLinkRequest) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
-		"focus_set":           {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
-		"list_membership":     {Read: true, Long: false, Errors: []int{400}},
-		"me":                  {Read: true, Long: false, Errors: []int{}},
-		"people_list":         {Read: true, Long: false, Errors: []int{}},
-		"people_set":          {Read: false, Long: true, Errors: []int{400, 403, 409}},
-		"person_settings_get": {Read: true, Long: false, Errors: []int{403}},
-		"person_settings_set": {Read: false, Long: false, Errors: []int{400, 403}},
-		"view_link":           {Read: true, Long: false, Errors: []int{400}},
+		"focus_set":           {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"projectIds: a list of project ids in the caller's grants, or \\\"*\\\".\",\"additionalProperties\":true,\"properties\":{\"projectIds\":{},\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"projectIds\"],\"type\":\"object\"}")},
+		"list_membership":     {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"At most 1000 ids and one or two lists.\",\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"lists\":{\"items\":{\"$comment\":\"name: tasks or sessions.\",\"additionalProperties\":true,\"properties\":{\"filter\":{\"$comment\":\"The list filter of packages/view-url toPageParams; a null projectId is work outside projects.\",\"additionalProperties\":true,\"properties\":{\"archived\":{\"type\":\"boolean\"},\"projectId\":{\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"search\":{\"type\":\"string\"},\"state\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"group\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"}},\"required\":[\"name\"],\"type\":\"object\"},\"type\":\"array\"}},\"required\":[\"ids\",\"lists\"],\"type\":\"object\"}")},
+		"me":                  {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
+		"people_list":         {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
+		"people_set":          {Read: false, Long: true, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only: the whole people.json list, written atomically and reloaded.\",\"additionalProperties\":true,\"properties\":{\"people\":{}},\"required\":[\"people\"],\"type\":\"object\"}")},
+		"person_settings_get": {Read: true, Long: false, Errors: []int{403}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"email\":{\"$comment\":\"default: the caller; another person: the owner only\",\"type\":\"string\"}},\"type\":\"object\"}")},
+		"person_settings_set": {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"email\":{\"$comment\":\"default: the caller; another person: the owner only\",\"type\":\"string\"},\"order\":{\"$comment\":\"list: the section 6 order list; soonest_reset: ready candidates by earliest weekly reset among those with weekly left above 0 (fleet-people-access.md section 8)\",\"enum\":[\"list\",\"soonest_reset\"],\"type\":\"string\"},\"pins\":{\"$comment\":\"omitted: unchanged; the full ordered list replaces the previous one\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"}")},
+		"view_link":           {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"Exactly one of view (a view state to link) or url (a Fleet URL to read back).\",\"additionalProperties\":true,\"properties\":{\"url\":{},\"view\":{}},\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}

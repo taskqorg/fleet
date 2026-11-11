@@ -1560,7 +1560,7 @@ func init() {
 				}
 			}
 			args := json.RawMessage(js(a))
-			r, err := q.app.runOp(q, name, args)
+			r, err := q.app.runAgentOp(q, name, args, b.AgentToolKey, executionID)
 			if err != nil {
 				return nil, err
 			}
@@ -1583,7 +1583,17 @@ func init() {
 			}
 			var args doc
 			json.Unmarshal(rpc.Params.Arguments, &args)
-			r, err := bound(q, name, args, executionID)
+			args, err := boundArguments(q, name, args, executionID)
+			if err != nil {
+				return err
+			}
+			q.body = json.RawMessage(js(args))
+			var r any
+			if agentTool.read {
+				r, err = agentTool.h(q)
+			} else {
+				r, err = agentReceipt(q, b.AgentToolKey, executionID, name, args, func() (any, error) { return agentTool.h(q) })
+			}
 			if err != nil {
 				return err
 			}
@@ -1624,7 +1634,7 @@ func focusProject(q *Request, s doc, given any) (string, error) {
 }
 
 // directs: a person changes only sessions they direct (the owner any); an agent call is already bound to its own
-// session tree by bound().
+// session tree by boundArguments().
 func directs(q *Request, s doc) error {
 	if q.agent != "" || q.person == nil || fullAccess(q.person) || astr(s["directedBy"]) == q.person.Email {
 		return nil
@@ -1702,8 +1712,8 @@ func agentTools(p *Person) map[string]registeredOp {
 	return out
 }
 
-// bound: host-run agents act only on their own session (or one they created); lists never default to all sessions.
-func bound(q *Request, name string, a doc, executionID string) (doc, error) {
+// boundArguments: host-run agents act only on their own session (or one they created); lists never default to all sessions.
+func boundArguments(q *Request, name string, a doc, executionID string) (doc, error) {
 	if a == nil {
 		a = doc{}
 	}
@@ -1846,17 +1856,7 @@ func bound(q *Request, name string, a doc, executionID string) (doc, error) {
 			}
 		}
 	}
-	q.body = json.RawMessage(js(a))
-	r, err := agentOps[name].h(q)
-	if err != nil {
-		return nil, err
-	}
-	if d, ok := r.(doc); ok {
-		return d, nil
-	}
-	var d doc // a typed reply (typedOp), e.g. execution_status
-	err = json.Unmarshal(jsonBytes(r), &d)
-	return d, err
+	return a, nil
 }
 
 var _ = errors.New
@@ -1866,7 +1866,7 @@ var _ = errors.New
 func fleetOperations(p *Person) []doc {
 	out := []doc{}
 	for n := range agentTools(p) { // the agent table too: the executor's own list predates focus_set and watch_*
-		out = append(out, doc{"name": n, "description": firstString(agentDescriptions[n], "Fleet operation "+n+" (POST /api/ops/"+n+" body as arguments)")})
+		out = append(out, doc{"name": n, "inputSchema": contract.Operations[n].InputSchema, "description": firstString(agentDescriptions[n], "Fleet operation "+n+" (POST /api/ops/"+n+" body as arguments)")})
 	}
 	slices.SortFunc(out, func(a, b doc) int { return strings.Compare(astr(a["name"]), astr(b["name"])) })
 	return out

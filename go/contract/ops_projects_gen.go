@@ -85,9 +85,9 @@ func (v *ProjectUpdateRequest) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
-		"project_create":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
-		"project_initial_access_revoke": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
-		"project_update":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
+		"project_create":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"properties\":{\"content\":{\"properties\":{\"contextFiles\":{\"items\":{\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\"},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\"},\"id\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"id\",\"content\"],\"type\":\"object\"}")},
+		"project_initial_access_revoke": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"properties\":{\"baseAccessVersion\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"baseAccessVersion\"],\"type\":\"object\"}")},
+		"project_update":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"content\":{\"properties\":{\"contextFiles\":{\"items\":{\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\"},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\"},\"projectId\":{\"type\":\"string\"},\"repoSha\":{\"type\":[\"string\",\"null\"]},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"projectId\",\"baseRevision\",\"content\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}

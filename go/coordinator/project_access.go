@@ -123,6 +123,9 @@ func projectAgentArguments(q *Request, args doc, executionID string) (doc, error
 		return args, nil
 	}
 	project := astr(session["projectId"])
+	if args["projectId"] == nil {
+		args["projectId"] = project
+	}
 	if project == "" || args["projectId"] != project || !mayAccessProjectID(q.person, project) {
 		return nil, fail(403, "Project outside the session focus")
 	}

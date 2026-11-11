@@ -637,6 +637,22 @@
                   "type": "object"
                 },
                 "name": "execution_status"
+              },
+              {
+                "name": "agent_tool_result",
+                "description": "Read the eventual acknowledgment of a pending Fleet tool call from this command. This does not repeat the operation. After task_create returns an ID, use session_task_attach to link the Held task; creation alone does not attach it.",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "requestKey": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "requestKey"
+                  ],
+                  "additionalProperties": false
+                }
               }
             ]
           }
@@ -2009,6 +2025,22 @@
                   "type": "object"
                 },
                 "name": "execution_status"
+              },
+              {
+                "name": "agent_tool_result",
+                "description": "Read the eventual acknowledgment of a pending Fleet tool call from this command. This does not repeat the operation. After task_create returns an ID, use session_task_attach to link the Held task; creation alone does not attach it.",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "requestKey": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "requestKey"
+                  ],
+                  "additionalProperties": false
+                }
               }
             ]
           }
