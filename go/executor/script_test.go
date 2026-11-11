@@ -165,7 +165,8 @@ func TestRestartKillsSurvivingProcesses(t *testing.T) {
 	if running(table, child) || running(table, leader) {
 		t.Fatal("a process of the crashed run survived the restart")
 	}
-	if r := lastReceipt(restarted, "c7"); r != "unknown" || count(e.db, "launches") != 0 || count(e.db, "owned") != 0 {
+	// The launch window (x8) is not released: its process could not be named.
+	if r := lastReceipt(restarted, "c7"); r != "unknown" || count(e.db, "launches") != 1 || count(e.db, "owned") != 0 {
 		t.Fatalf("receipt %s, launches %d", r, count(e.db, "launches"))
 	}
 	if exists(filepath.Join(root, "runs", "x7.env")) || exists(filepath.Join(root, "runs", "old.env")) {
@@ -183,6 +184,25 @@ func TestRestartKillsSurvivingProcesses(t *testing.T) {
 	rs.Close()
 	if reconciled != 2 {
 		t.Fatalf("%d process.reconciled events", reconciled)
+	}
+}
+
+// Requirement: a launch whose process identity was never recorded survives restart and refuses its session until an
+// explicit stop (W3-1). Risk: a surviving paid process keeps writing while the same session is admitted again.
+func TestLaunchWindowKeepsSessionUntilStop(t *testing.T) {
+	e, _ := scriptExecutor(t)
+	e.db.Exec("INSERT INTO commands(id,body,terminal) VALUES('c20','{}',1)")
+	e.launch("x20", "c20", "s20")
+	if err := e.reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	e.run(M{"id": "c21", "executionId": "x21", "sessionId": "s20", "kind": "start", "payload": M{}})
+	if count(e.db, "launches") != 1 || lastReceipt(e, "c21") != "failed" {
+		t.Fatal("launch window released or its session admitted")
+	}
+	e.run(M{"id": "c22", "executionId": "x20", "sessionId": "s20", "kind": "stop", "payload": M{}})
+	if count(e.db, "launches") != 0 {
+		t.Fatal("stop did not release the launch window")
 	}
 }
 

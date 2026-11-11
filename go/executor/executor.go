@@ -316,6 +316,20 @@ func (e *executor) ownGroup(execution string, grp int, l *live) error {
 	return e.own(execution, l)
 }
 
+// releaseLaunchWindow: a stop for an execution whose launch never recorded a process is the explicit decision to
+// accept that uncertainty; the session is admitted again. The stop's result stays unknown.
+func (e *executor) releaseLaunchWindow(execution string) error {
+	var owned int
+	if err := e.db.QueryRow("SELECT count(*) FROM owned WHERE execution=?", execution).Scan(&owned); err != nil {
+		return err
+	}
+	if owned > 0 {
+		return nil
+	}
+	_, err := e.db.Exec("DELETE FROM launches WHERE execution=?", execution)
+	return err
+}
+
 func (e *executor) release(execution string) error {
 	return e.inTx(func() error {
 		if _, err := e.ex.Exec("DELETE FROM owned WHERE execution=?", execution); err != nil {
@@ -398,7 +412,9 @@ func (e *executor) reconcileProcesses() error {
 	unresolved := map[string]bool{}
 	for _, x := range launches {
 		alive, err := x.l.aliveOwned()
-		resolved := x.err == nil && err == nil && !alive
+		// No owned row: the executor died between spawn and the identity write, so the process cannot be named and
+		// its absence is not proven. The launch stays and keeps its session refused until a stop for it (W3-1).
+		resolved := len(x.l.owned) > 0 && x.err == nil && err == nil && !alive
 		// Reported once, while the command is open; the reconcile below then finishes it unknown.
 		if b, ok := e.commandBody(x.command, true); ok {
 			if err := e.event(decM(b), uint64(nowMs()), contract.FleetEventTypeProcessReconciled, contract.ProcessReconciled{OwnedProcesses: int64(len(x.l.owned)), Survived: x.survived,
@@ -596,6 +612,8 @@ func (e *executor) run(c M) error {
 			} else {
 				l.cleanupUnknown = true
 			}
+		} else if err := e.releaseLaunchWindow(execution); err != nil {
+			return err
 		}
 		if err := e.receipt(c, result, ""); err != nil {
 			return err
