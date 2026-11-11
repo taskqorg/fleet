@@ -327,14 +327,14 @@ type PollReply struct {
 }
 
 type PollRequest struct {
-	Capabilities []string          `json:"capabilities"`
-	HostId       string            `json:"hostId"`
-	Platform     Platform          `json:"platform"`
-	Problems     []EdgeProblem     `json:"problems"`
-	ProjectRoots []string          `json:"projectRoots,omitempty"`
-	Stores       []json.RawMessage `json:"stores"`
-	Update       *UpdateResult     `json:"update,omitempty"`
-	Version      *string           `json:"version,omitempty"`
+	Capabilities []string      `json:"capabilities"`
+	HostId       string        `json:"hostId"`
+	Platform     Platform      `json:"platform"`
+	Problems     []EdgeProblem `json:"problems"`
+	ProjectRoots []string      `json:"projectRoots"`
+	Stores       []StoreReport `json:"stores"`
+	Update       *UpdateResult `json:"update,omitempty"`
+	Version      *string       `json:"version,omitempty"`
 }
 
 type PreparationFailed struct {
@@ -485,6 +485,14 @@ type StoreRegistration struct {
 	SecretAccessKey *string `json:"secretAccessKey,omitempty"`
 	UsedBytes       *int64  `json:"usedBytes,omitempty"`
 	Zone            *string `json:"zone,omitempty"`
+}
+
+// StoreReport: one store's reachability and capacity, sent with each poll
+type StoreReport struct {
+	CapacityBytes *int64 `json:"capacityBytes,omitempty"`
+	Id            string `json:"id"`
+	Reachable     bool   `json:"reachable"`
+	UsedBytes     *int64 `json:"usedBytes,omitempty"`
 }
 
 // StoresRequest: POST /api/hosts/stores.

@@ -8,11 +8,12 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fleet/contract"
 	"math"
 	"reflect"
 	"sort"
 	"strings"
+
+	"fleet/contract"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -20,10 +21,11 @@ import (
 func init() {
 	longRoute("POST /api/hosts/events", func(q *Request) (any, error) { return q.app.ingest(q) })
 	route("GET /api/executions/{id}/events", executionEvents)
-	operation("execution_events", true, func(q *Request) (any, error) {
-		q.params = []string{astr(q.obj()["executionId"])}
-		return executionEvents(q)
-	})
+	operation("execution_events", true, typedOp(func(q *Request, r *contract.ExecutionEventsRequest) (contract.ExecutionEventsReply, error) {
+		es, err := executionEventsOf(q, r.ExecutionId)
+		return contract.ExecutionEventsReply{Events: recsOf(es)}, err
+	}))
+	// ponytail: the transport requests stay maps: transport_authorize signs its exact body (frameHash).
 	operation("transport_inspect", true, func(q *Request) (any, error) { return transportInspect(q, q.obj()) })
 	operation("transport_authorize", false, func(q *Request) (any, error) { return transportAuthorize(q, q.obj()) })
 	route("POST /api/recovery/{name}", func(q *Request) (any, error) {
@@ -39,15 +41,15 @@ func init() {
 }
 
 func executionEvents(q *Request) (any, error) {
-	id := q.r.PathValue("id")
-	if id == "" && len(q.params) > 0 {
-		id = q.params[0]
-	}
+	es, err := executionEventsOf(q, q.r.PathValue("id"))
+	return doc{"events": es}, err
+}
+
+func executionEventsOf(q *Request, id string) ([]doc, error) {
 	if _, err := get(q, id, "execution"); err != nil {
 		return nil, err
 	}
-	es, err := rows(q, "SELECT data FROM document WHERE kind='event' AND data->>'executionId'=$1 AND (data->>'type') IS DISTINCT FROM 'execution.ended' ORDER BY (data->'seq')::numeric, seq", id)
-	return doc{"events": es}, err
+	return rows(q, "SELECT data FROM document WHERE kind='event' AND data->>'executionId'=$1 AND (data->>'type') IS DISTINCT FROM 'execution.ended' ORDER BY (data->'seq')::numeric, seq", id)
 }
 
 // frameHash: sha256 of the canonical JSON of a value.
@@ -274,46 +276,48 @@ func ingestIn(q *Request, b doc) (any, error) {
 	return doc{"ok": true}, writeTotals(q, xid)
 }
 
-func transportInspect(q *Request, b doc) (any, error) {
+func transportInspect(q *Request, b doc) (contract.TransportInspectReply, error) {
+	var rep contract.TransportInspectReply
 	e, err := get(q, b["executionId"], "execution")
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
 	f := doc{"executionId": e["id"]}
 	cs, err := all(q, "command", f)
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
-	commands := []doc{}
+	commands := []contract.CommandRef{}
 	for _, c := range cs {
-		commands = append(commands, doc{"id": c["id"], "kind": c["kind"], "status": c["status"]})
+		commands = append(commands, contract.CommandRef{Id: astr(c["id"]), Kind: astr(c["kind"]), Status: astr(c["status"])})
 	}
 	evs, err := eventsWhere(q, f)
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
 	results, err := executionArtifacts(q, astr(e["id"]))
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
 	conflicts, err := all(q, "transport-conflict", f)
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
 	for _, c := range conflicts {
 		delete(c, "original")
 	}
 	audit, err := all(q, "transport-audit", f)
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
-	return doc{"executionId": e["id"], "hostId": e["hostId"], "state": e["state"], "error": nonNil(e["error"]),
-		"hostJournal": "Unknown to coordinator; delivery observation is not native reinspection", "nativeOutcome": "Not inferred from transport; inspect native evidence and validated receipts",
-		"commands": commands, "eventCount": len(evs), "results": results, "conflicts": conflicts, "audit": audit,
-		"resend": "Owning host automatically resends its unchanged retained outbox; no native dispatch or program-effect replay"}, nil
+	return contract.TransportInspectReply{ExecutionId: astr(e["id"]), HostId: strPtr(e["hostId"]), State: astr(e["state"]), Error: jsonBytes(nonNil(e["error"])),
+		HostJournal: "Unknown to coordinator; delivery observation is not native reinspection", NativeOutcome: "Not inferred from transport; inspect native evidence and validated receipts",
+		Commands: commands, EventCount: int64(len(evs)), Results: recsOf(results), Conflicts: recsOf(conflicts), Audit: recsOf(audit),
+		Resend: "Owning host automatically resends its unchanged retained outbox; no native dispatch or program-effect replay"}, nil
 }
 
-func transportAuthorize(q *Request, b doc) (any, error) {
+func transportAuthorize(q *Request, b doc) (contract.TransportAuthorizeReply, error) {
+	var rep contract.TransportAuthorizeReply
 	ks := []string{}
 	for k := range b {
 		ks = append(ks, k)
@@ -321,36 +325,36 @@ func transportAuthorize(q *Request, b doc) (any, error) {
 	sort.Strings(ks)
 	rid, ok := b["requestId"].(string)
 	if strings.Join(ks, ",") != "conflictId,executionId,frameSha256,requestId" || !ok || rid == "" || len([]rune(rid)) > 200 {
-		return nil, fail(400, "Expected exact recovery identity")
+		return rep, fail(400, "Expected exact recovery identity")
 	}
 	xid, ok := b["executionId"].(string)
 	if !ok {
-		return nil, fail(400, "Expected exact recovery identity")
+		return rep, fail(400, "Expected exact recovery identity")
 	}
 	// Authorization rewrites the execution's transport records, which host ingest writes too: take its scope as well.
 	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "execution:"+xid); err != nil {
-		return nil, err
+		return rep, err
 	}
 	c, err := get(q, b["conflictId"], "transport-conflict")
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
 	if c["executionId"] != xid || c["frameSha256"] != b["frameSha256"] {
-		return nil, fail(409, "Recovery identity mismatch")
+		return rep, fail(409, "Recovery identity mismatch")
 	}
 	if _, err := get(q, c["executionId"], "execution"); err != nil {
-		return nil, err
+		return rep, err
 	}
 	if c["supported"] != true {
-		return nil, fail(409, "Unsupported conflict; inspect original host evidence, no replay")
+		return rep, fail(409, "Unsupported conflict; inspect original host evidence, no replay")
 	}
 	olds, err := all(q, "transport-audit", doc{"requestId": rid})
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
 	if len(olds) > 0 {
 		if olds[0]["signature"] != frameHash(b) {
-			return nil, fail(409, "Recovery request conflict")
+			return rep, fail(409, "Recovery request conflict")
 		}
 		return transportInspect(q, b)
 	}
@@ -358,7 +362,7 @@ func transportAuthorize(q *Request, b doc) (any, error) {
 		top := -1.0
 		evs, err := eventsWhere(q, doc{"executionId": xid})
 		if err != nil {
-			return nil, err
+			return rep, err
 		}
 		for _, e := range evs {
 			if s, ok := safeSeq(e["seq"]); ok && float64(s) > top {
@@ -367,7 +371,7 @@ func transportAuthorize(q *Request, b doc) (any, error) {
 		}
 		others, err := all(q, "transport-conflict", doc{"executionId": xid})
 		if err != nil {
-			return nil, err
+			return rep, err
 		}
 		for _, o := range others {
 			if r, ok := o["reservedSequence"].(float64); ok && r > top {
@@ -376,12 +380,12 @@ func transportAuthorize(q *Request, b doc) (any, error) {
 		}
 		c["reservedSequence"], c["state"], c["authorizedAt"] = top+1, "authorized", nowMs()
 		if err := put(q, "transport-conflict", c); err != nil {
-			return nil, err
+			return rep, err
 		}
 	}
 	if err := put(q, "transport-audit", doc{"id": newID(), "executionId": c["executionId"], "conflictId": c["id"], "requestId": rid, "signature": frameHash(b),
 		"actor": "operator-authority", "operation": "authorize-retained-transport", "at": nowMs(), "nativeEffectReplayed": false}); err != nil {
-		return nil, err
+		return rep, err
 	}
 	return transportInspect(q, b)
 }

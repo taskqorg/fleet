@@ -88,8 +88,8 @@ func platform() string {
 	return runtime.GOOS
 }
 
-func capabilities() []any {
-	c := []any{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script"}
+func capabilities() []string {
+	c := []string{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script"}
 	if v := ffmpegVersion(); v != "" {
 		c = append(c, "ffmpeg:"+v)
 	}
@@ -204,7 +204,7 @@ type executor struct {
 	storeCfg     M
 	declared     []string
 	storeAt      time.Time
-	storeLast    []any
+	storeLast    []contract.StoreReport
 }
 
 // inTx runs fn with every journal write of the executor inside one transaction.
@@ -1317,6 +1317,11 @@ func (e *executor) stageInputs(p M, input string, execution any) error {
 	if len(list) == 0 {
 		return nil
 	}
+	root, err := os.OpenRoot(input)
+	if err != nil {
+		return fmt.Errorf("input folder: %w", err)
+	}
+	defer root.Close()
 	c := newTransferClient(e.url, e.token, e.host, accessToken(accessFile()))
 	for _, i := range list {
 		id, rel := jStr(i, "artifactId"), jStr(i, "path")
@@ -1333,35 +1338,26 @@ func (e *executor) stageInputs(p M, input string, execution any) error {
 		if !jIsStr(r, "url") {
 			return fmt.Errorf("input %s unavailable", rel)
 		}
-		target := filepath.Join(input, rel)
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
+		// Every component is resolved inside the held input root (os.Root): a link whose target leaves the input folder,
+		// present or swapped in at any moment, is refused, so an input can only be created inside the input folder.
+		if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
+			return fmt.Errorf("input %s: %w", rel, err)
 		}
-		pd, err := canon(filepath.Dir(target))
+		out, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err != nil {
-			return err
-		}
-		ci, err := canon(input)
-		if err != nil {
-			return err
-		}
-		if !under(pd, ci) {
-			return fmt.Errorf("input %s escapes the input folder", rel)
-		}
-		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL|unix.O_NOFOLLOW, 0o644)
-		if err != nil {
-			return fmt.Errorf("input %s: %s", rel, err)
+			return fmt.Errorf("input %s: %w", rel, err)
 		}
 		src, f := c.get(jStr(r, "url"))
-		if f != nil {
-			out.Close()
-			return fmt.Errorf("input %s: %s", rel, f.msg)
+		if f == nil {
+			_, err = io.Copy(out, src)
+			src.Close()
+		} else {
+			err = errors.New(f.msg)
 		}
-		_, err = io.Copy(out, src)
-		src.Close()
 		out.Close()
 		if err != nil {
-			return err
+			root.Remove(rel) // no partial input left behind
+			return fmt.Errorf("input %s: %w", rel, err)
 		}
 	}
 	return nil
@@ -1647,9 +1643,9 @@ func (e *executor) collect(d *os.File, rel, execution string, declared *[]string
 	return nil
 }
 
-func (e *executor) stores() []any {
+func (e *executor) stores() []contract.StoreReport {
 	if e.storeCfg == nil {
-		return []any{}
+		return []contract.StoreReport{}
 	}
 	if e.storeAt.IsZero() || time.Since(e.storeAt) >= 15*time.Second {
 		e.storeAt, e.storeLast = time.Now(), storeReport(e.storeCfg)
@@ -1967,11 +1963,9 @@ func (e *executor) exchange() error {
 	if edgeWait(pollRoute) {
 		return nil
 	}
-	body := M{"hostId": e.host, "platform": platform(), "capabilities": capabilities(), "stores": e.stores(),
-		"problems": edgeProblems(pollRoute), "projectRoots": anyStrings(reportedRoots()), "version": version}
-	if u := lastUpdate(e.root); u != nil {
-		body["update"] = u
-	}
+	v, roots := version, reportedRoots()
+	body := contract.PollRequest{HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
+		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, Update: lastUpdate(e.root)}
 	a := send(e.url, e.token, pollRoute, body)
 	sig := updateSignal{HostID: e.host, Running: version, AutoUpdate: "on"}
 	if lastSignal != nil {

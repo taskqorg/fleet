@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -61,7 +63,56 @@ func longRoute(pattern string, h handler) {
 func publicRoute(pattern string, h http.HandlerFunc) {
 	routeTable = append(routeTable, registeredRoute{pattern, nil, txNone, h})
 }
-func operation(name string, read bool, h handler)  { operations[name] = registeredOp{read, h} }
+func operation(name string, read bool, h handler) { operations[name] = registeredOp{read, h} }
+
+// typedOp: an operation on its generated request and reply types (contracts/ops.schema.json). The body decodes into Req:
+// fields the request type does not name are ignored, a named field of the wrong JSON type is 400.
+func typedOp[Req, Rep any](h func(q *Request, r *Req) (Rep, error)) handler {
+	return func(q *Request) (any, error) {
+		var r Req
+		if len(q.body) > 0 && string(q.body) != "null" {
+			if err := decode(q.body, &r); err != nil {
+				return nil, err
+			}
+		}
+		return h(q, &r)
+	}
+}
+
+// asT: rows and records read as maps, as their contract type. For values whose map keys are fixed by the query or the
+// builder (a SELECT column list); a reply built field by field names its struct directly.
+func asT[T any](v any) (T, error) {
+	var t T
+	err := json.Unmarshal(jsonBytes(v), &t)
+	return t, err
+}
+
+// recOf: an open record as the contract's map; never nil, so a required record is written as {}.
+func recOf(v any) map[string]json.RawMessage {
+	if m := rawMap(v); m != nil {
+		return m
+	}
+	return map[string]json.RawMessage{}
+}
+
+// timeText: a SELECTed timestamp as its JSON text (RFC 3339), as a map reply wrote it.
+func timeText(v any) string {
+	switch t := v.(type) {
+	case time.Time:
+		return t.Format(time.RFC3339Nano)
+	case string:
+		return t
+	}
+	return fmt.Sprint(v)
+}
+
+func recsOf(vs []doc) []map[string]json.RawMessage {
+	out := make([]map[string]json.RawMessage, 0, len(vs))
+	for _, v := range vs {
+		out = append(out, recOf(v))
+	}
+	return out
+}
 func onStart(fn func(ctx context.Context, a *App)) { starters = append(starters, fn) }
 
 func startAll(ctx context.Context, a *App) {
@@ -127,7 +178,7 @@ func (a *App) routes() http.Handler {
 func (a *App) serve(w http.ResponseWriter, hr *http.Request, kind int, h handler) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	q := &Request{r: hr, app: a, params: []string{hr.PathValue("id"), hr.PathValue("name")}}
+	q := &Request{r: hr, app: a}
 	var out any
 	err := a.authorize(q)
 	if err == nil {

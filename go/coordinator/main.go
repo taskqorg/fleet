@@ -242,7 +242,6 @@ type Request struct {
 	agent  string // execution:<id> when a host agent calls on behalf of person (its director)
 	body   json.RawMessage
 	tx     pgx.Tx
-	params []string
 }
 
 func (q *Request) ctx() context.Context { return q.r.Context() }

@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 
+	"fleet/contract"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -174,19 +176,22 @@ func previousState(q *Request, id any) (string, error) {
 // a completed start, and settling an execution that waits for its artifacts.
 
 func init() {
-	operation("execution_stop", false, func(q *Request) (any, error) { return executionStop(q, q.obj()["executionId"]) })
+	operation("execution_stop", false, typedOp(func(q *Request, r *contract.ExecutionStopRequest) (contract.ExecutionStopReply, error) {
+		return executionStop(q, r.ExecutionId)
+	}))
 	route("POST /api/executions/{id}/stop", func(q *Request) (any, error) { return executionStop(q, q.r.PathValue("id")) })
 }
 
 // executionStop: one stop command; an execution no host can confirm is settled here.
-func executionStop(q *Request, id any) (any, error) {
+func executionStop(q *Request, id string) (contract.ExecutionStopReply, error) {
+	var rep contract.ExecutionStopReply
 	e, err := get(q, id, "execution")
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
 	stops, err := all(q, "command", doc{"executionId": e["id"], "kind": "stop"})
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
 	var c doc
 	if len(stops) > 0 {
@@ -194,25 +199,25 @@ func executionStop(q *Request, id any) (any, error) {
 	} else {
 		c = doc{"id": newID(), "executionId": e["id"], "sessionId": e["sessionId"], "hostId": e["hostId"], "kind": "stop", "payload": doc{}, "status": "pending"}
 		if err := put(q, "command", c); err != nil {
-			return nil, err
+			return rep, err
 		}
 	}
 	e["stopRequested"] = true
 	known := false
 	if h := astr(e["hostId"]); h != "" {
 		if known, err = knownHost(q, h); err != nil {
-			return nil, err
+			return rep, err
 		}
 	}
 	if !known && !terminal(e) {
 		pending, err := all(q, "command", doc{"executionId": e["id"], "status": "pending"})
 		if err != nil {
-			return nil, err
+			return rep, err
 		}
 		for _, x := range pending {
 			x["status"] = "stopped"
 			if err := put(q, "command", x); err != nil {
-				return nil, err
+				return rep, err
 			}
 		}
 		e["state"], e["stopDetail"] = "cancelled", "stopped before dispatch"
@@ -220,22 +225,18 @@ func executionStop(q *Request, id any) (any, error) {
 			e["stopDetail"] = "host never registered"
 		}
 		if c, err = get(q, c["id"], "command"); err != nil {
-			return nil, err
+			return rep, err
 		}
 	}
 	if err := put(q, "execution", e); err != nil {
-		return nil, err
+		return rep, err
 	}
 	out, err := stopOutcome(q, e)
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
-	r := doc{}
-	for k, v := range c {
-		r[k] = v
-	}
-	r["stop"] = out
-	return r, nil
+	return contract.ExecutionStopReply{Id: astr(c["id"]), ExecutionId: astr(c["executionId"]), SessionId: strPtr(c["sessionId"]), HostId: strPtr(c["hostId"]),
+		Kind: astr(c["kind"]), Payload: recOf(c["payload"]), Status: astr(c["status"]), Stop: out}, nil
 }
 
 // blockedConnections: connections whose stop budget is reached; the gateway refuses their calls.
@@ -257,10 +258,12 @@ func blockedConnections(q *Request) (map[string]bool, error) {
 	return out, nil
 }
 
+// declaredNames: the declared artifact names, each once, in declaration order; non-strings are not names.
 func declaredNames(declared []any) []string {
-	out := []string{}
+	out, seen := []string{}, map[string]bool{}
 	for _, d := range declared {
-		if s, ok := d.(string); ok {
+		if s, ok := d.(string); ok && !seen[s] {
+			seen[s] = true
 			out = append(out, s)
 		}
 	}
@@ -269,7 +272,8 @@ func declaredNames(declared []any) []string {
 
 // artifactGate: a completed start waits for its required artifacts; a missing or failed one fails it.
 func artifactGate(q *Request, e doc, declared []any) (doc, error) {
-	r, err := artifactRequirement(q.ctx(), q.app, astr(e["id"]), declaredNames(declared))
+	names := declaredNames(declared)
+	r, err := artifactRequirement(q.ctx(), q.app, astr(e["id"]), names)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +281,7 @@ func artifactGate(q *Request, e doc, declared []any) (doc, error) {
 		return doc{"state": "failed", "error": doc{"code": "artifact-required", "message": "Required artifacts missing or failed", "missing": r.Missing, "failed": r.Failed}}, nil
 	}
 	if len(r.Pending) > 0 {
-		return doc{"state": "waiting", "waitReason": "artifacts", "waitingSince": nowMs(), "pendingArtifacts": r.Pending, "declaredArtifacts": declared}, nil
+		return doc{"state": "waiting", "waitReason": "artifacts", "waitingSince": nowMs(), "pendingArtifacts": r.Pending, "declaredArtifacts": names}, nil
 	}
 	return doc{}, nil
 }
@@ -355,28 +359,29 @@ func stopExecution(ctx context.Context, a *App, id string) error {
 const differenceTextLimit = 131072
 
 // executionDifferences compares the stored files of two executions of one session.
-func executionDifferences(q *Request, id, previousID string) (any, error) {
+func executionDifferences(q *Request, id, previousID string) (contract.ExecutionDifferencesReply, error) {
+	var rep contract.ExecutionDifferencesReply
 	if len(previousID) > 300 {
 		previousID = previousID[:300]
 	}
 	current, err := get(q, id, "execution")
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
 	previous, err := get(q, previousID, "execution")
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
 	if astr(current["sessionId"]) != astr(previous["sessionId"]) {
-		return nil, fail(403, "Different session")
+		return rep, fail(403, "Different session")
 	}
 	before, err := executionArtifacts(q, astr(previous["id"]))
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
 	after, err := executionArtifacts(q, astr(current["id"]))
 	if err != nil {
-		return nil, err
+		return rep, err
 	}
 	byPath := func(xs []doc) map[string]doc {
 		m := map[string]doc{}
@@ -407,25 +412,25 @@ func executionDifferences(q *Request, id, previousID string) (any, error) {
 		return strings.Split(string(b), "\n"), nil
 	}
 	small := func(x doc) bool { n, _ := numOK(x["size"]); return x == nil || n <= differenceTextLimit }
-	ref := func(x doc) any {
+	ref := func(x doc) *contract.FileRef {
 		if x == nil {
 			return nil
 		}
-		return doc{"id": x["id"], "sha256": x["sha256"]}
+		return &contract.FileRef{Id: astr(x["id"]), Sha256: strPtr(x["sha256"])}
 	}
 	textual := regexp.MustCompile(`(?i)\.(html|css)$`)
-	files := []doc{}
+	files := []contract.DiffFile{}
 	for _, p := range paths {
 		l, r := left[p], right[p]
-		var change any
+		var change *contract.TextChange
 		if textual.MatchString(p) && small(l) && small(r) {
 			b, err := lines(l)
 			if err != nil {
-				return nil, err
+				return rep, err
 			}
 			a, err := lines(r)
 			if err != nil {
-				return nil, err
+				return rep, err
 			}
 			start, end := 0, 0
 			for start < len(b) && start < len(a) && b[start] == a[start] {
@@ -434,7 +439,7 @@ func executionDifferences(q *Request, id, previousID string) (any, error) {
 			for end < len(b)-start && end < len(a)-start && b[len(b)-1-end] == a[len(a)-1-end] {
 				end++
 			}
-			change = doc{"firstLine": start + 1, "removed": b[start : len(b)-end], "added": a[start : len(a)-end]}
+			change = &contract.TextChange{FirstLine: int64(start + 1), Removed: b[start : len(b)-end], Added: a[start : len(a)-end]}
 		}
 		state := "modified"
 		switch {
@@ -445,18 +450,17 @@ func executionDifferences(q *Request, id, previousID string) (any, error) {
 		case astr(l["sha256"]) == astr(r["sha256"]):
 			state = "unchanged"
 		}
-		files = append(files, doc{"path": p, "textChange": change, "state": state, "previous": ref(l), "current": ref(r)})
+		files = append(files, contract.DiffFile{Path: p, TextChange: change, State: state, Previous: ref(l), Current: ref(r)})
 	}
-	return doc{"sessionId": current["sessionId"], "previousExecutionId": previous["id"], "executionId": current["id"], "files": files}, nil
+	return contract.ExecutionDifferencesReply{SessionId: strPtr(current["sessionId"]), PreviousExecutionId: strPtr(previous["id"]), ExecutionId: astr(current["id"]), Files: files}, nil
 }
 
 var testSiteFile = regexp.MustCompile(`^[a-zA-Z0-9_-]+\.(html|css)$`)
 
 func init() {
-	gatedObjOp("execution_differences", true, func(q *Request) (any, error) {
-		b := body(q)
-		return executionDifferences(q, astr(b["executionId"]), astr(b["previous"]))
-	})
+	gatedObjOp("execution_differences", true, typedOp(func(q *Request, r *contract.ExecutionDifferencesRequest) (contract.ExecutionDifferencesReply, error) {
+		return executionDifferences(q, r.ExecutionId, r.Previous)
+	}))
 	gatedRoute("GET /api/executions/{id}/differences", func(q *Request) (any, error) {
 		return executionDifferences(q, q.r.PathValue("id"), q.r.URL.Query().Get("previous"))
 	})
