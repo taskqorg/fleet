@@ -75,12 +75,11 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - name: Test requirement and risk report (warning only)
-        if: always()
-        continue-on-error: true
+      # Blocks on an outside test in tests/go/ that names no requirement or risk; warns for every other test.
+      - name: Test requirement and risk report
         run: |
           node scripts/test-rule-report.ts --self-check
-          node scripts/test-rule-report.ts
+          node scripts/test-rule-report.ts --strict
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod

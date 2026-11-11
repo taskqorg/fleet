@@ -1256,18 +1256,16 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	}
 	dir := e.sessionDir(sid)
 	// Project sessions run in their worktree, so the agent writes output/ there.
-	output := filepath.Join(dir, "output")
-	if st, err := os.Stat(filepath.Join(dir, "worktree", "output")); err == nil && st.IsDir() {
-		output = filepath.Join(dir, "worktree", "output")
+	output := []string{"output"}
+	if st, err := os.Lstat(filepath.Join(dir, "worktree", "output")); err == nil && st.IsDir() {
+		output = []string{"worktree", "output"}
 	}
 	var declared []string
-	if st, err := os.Stat(output); err == nil && st.IsDir() {
-		if e.artifacts(output, output, execution, &declared) != nil {
-			if l.trial != nil {
-				removeTrial(l.trial[0], l.trial[1])
-			}
-			return true, e.finish(l.command, "failed", l.native)
+	if e.artifacts(dir, output, execution, &declared) != nil {
+		if l.trial != nil {
+			removeTrial(l.trial[0], l.trial[1])
 		}
+		return true, e.finish(l.command, "failed", l.native)
 	}
 	// The coordinator holds a completed run with required artifacts still uploading as waiting.
 	e.declared = declared
@@ -1315,68 +1313,73 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	return true, nil
 }
 
-// artifacts collects the output folder: each regular file (symlinks skipped, nothing outside the root) is copied into the
-// spool, so later edits and worktree cleanup cannot change what is uploaded, and queued with its relative path as name.
-func (e *executor) artifacts(root, dir, execution string, declared *[]string) error {
-	m, err := os.Lstat(root)
+// artifacts collects the output folder dir/parts...: the folder and every entry below it are opened relative to their
+// parent descriptor with O_NOFOLLOW, so no link at any level (including one swapped in after listing) leads outside.
+// Each regular file with one link is copied into the spool, so later edits and worktree cleanup cannot change what is
+// uploaded, and queued with its relative path as name. Links and hard-linked files are skipped, the same policy as
+// artifact_save. A missing folder collects nothing.
+func (e *executor) artifacts(dir string, parts []string, execution string, declared *[]string) error {
+	root, err := openInside(dir, parts)
 	if err != nil {
-		return err
+		if _, serr := os.Lstat(filepath.Join(append([]string{dir}, parts...)...)); os.IsNotExist(serr) {
+			return nil
+		}
+		return errors.New("artifact folder is a link or unreadable")
 	}
-	if m.Mode()&os.ModeSymlink != 0 {
-		return errors.New("artifact root symlink")
+	return e.collect(root, "", execution, declared)
+}
+
+func (e *executor) collect(d *os.File, rel, execution string, declared *[]string) error {
+	defer d.Close()
+	if st, err := d.Stat(); err != nil || !st.IsDir() {
+		return errors.New("artifact folder is not a directory")
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	croot, err := canon(root)
+	entries, err := d.ReadDir(-1)
 	if err != nil {
 		return err
 	}
 	for _, en := range entries {
-		path := filepath.Join(dir, en.Name())
-		t := en.Type()
-		switch {
-		case t&os.ModeSymlink != 0:
-		case en.IsDir():
-			if err := e.artifacts(root, path, execution, declared); err != nil {
-				return err
-			}
-		case t.IsRegular():
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			if anyPart(rel, func(x string) bool { return x == "" || x == "." || x == ".." }) {
-				return errors.New("artifact path invalid")
-			}
-			cp, err := canon(path)
-			if err != nil {
-				return err
-			}
-			if !under(cp, croot) {
-				return errors.New("artifact escaped root")
-			}
-			f, err := os.OpenFile(path, os.O_RDONLY|unix.O_NOFOLLOW, 0)
-			if err != nil {
-				return err
-			}
-			id := newUUID()
-			spool := filepath.Join(e.root, "spool", id)
-			out, err := os.Create(spool)
-			if err == nil {
-				_, err = io.Copy(out, f)
-				out.Close()
-			}
-			f.Close()
-			if err != nil {
-				return err
-			}
-			if err := enqueue(e.db, id, "upload", M{"path": spool, "spool": true, "previews": true, "name": rel, "mediaType": mediaType(rel), "executionId": execution, "required": false}); err != nil {
-				return err
-			}
-			*declared = append(*declared, rel)
+		name := en.Name()
+		if rel != "" {
+			name = rel + "/" + en.Name()
 		}
+		fd, err := unix.Openat(int(d.Fd()), en.Name(), unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+		if errors.Is(err, unix.ELOOP) {
+			continue // a link
+		}
+		if err != nil {
+			return err
+		}
+		f := os.NewFile(uintptr(fd), name)
+		st, err := f.Stat()
+		switch {
+		case err != nil:
+			f.Close()
+			return err
+		case st.IsDir():
+			if err := e.collect(f, name, execution, declared); err != nil {
+				return err
+			}
+			continue
+		case !st.Mode().IsRegular() || st.Sys().(*syscall.Stat_t).Nlink != 1:
+			f.Close()
+			continue
+		}
+		id := newUUID()
+		spool := filepath.Join(e.root, "spool", id)
+		out, err := os.Create(spool)
+		if err == nil {
+			_, err = io.Copy(out, f)
+			out.Close()
+		}
+		f.Close()
+		if err != nil {
+			return err
+		}
+		if err := enqueue(e.db, id, "upload", M{"path": spool, "spool": true, "previews": true, "name": name, "mediaType": mediaType(name), "executionId": execution, "required": false}); err != nil {
+			return err
+		}
+		*declared = append(*declared, name)
 	}
 	return nil
 }
@@ -1494,11 +1497,16 @@ func running(table []proc, pid int) bool {
 
 // cleanup freezes every owned process (SIGSTOP, repeated until no new descendant appears), then kills them, each signal
 // bound to the recorded incarnation. Script commands also kill their whole group; the group id is dropped once killpg
-// reports no members.
+// reports no such group (ESRCH).
 func (l *live) cleanup() error {
+	// Only ESRCH proves the group has no members; any other error keeps the group, the owned processes are still
+	// killed one by one below, and the error leaves cleanup unknown.
+	var groupErr error
 	if l.group != 0 {
-		if syscall.Kill(-l.group, syscall.SIGKILL) != nil {
+		if err := syscall.Kill(-l.group, syscall.SIGKILL); errors.Is(err, syscall.ESRCH) {
 			l.group = 0
+		} else {
+			groupErr = err
 		}
 	}
 	frozen := map[int]bool{}
@@ -1537,7 +1545,7 @@ func (l *live) cleanup() error {
 			}
 		}
 	}
-	return nil
+	return groupErr
 }
 
 // reproject: `executor reproject`: one JSON line per stored record on stdin, {executionId, harness, timestamp, record}, in
@@ -1619,10 +1627,7 @@ func runExecutor() error {
 		sessions = filepath.Join(root, "sessions")
 	}
 	e := &executor{db: db, ex: db, root: root, url: url, token: token, host: host, live: map[string]*live{}, sessions: sessions, harnessCache: map[string]M{}, storeCfg: storeConfig()}
-	if err := outboxSchema(db); err != nil {
-		return err
-	}
-	if err := uploadSchema(db); err != nil {
+	if err := requeueUnauthorized(db); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Join(root, "spool"), 0o755); err != nil {

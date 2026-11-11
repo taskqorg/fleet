@@ -85,7 +85,7 @@ test("today's links still parse", () => {
   assert.equal(p('/tasks/0b6c1f2e-6f1d-4e0a-9d3b-1a2b3c4d5e6f').focus, '0b6c1f2e-6f1d-4e0a-9d3b-1a2b3c4d5e6f');
 });
 
-// review 7 (every codec grouping is accepted by task_page) is an outside test now: tests/go/d.test.ts.
+// review 7 (every codec grouping is accepted by task_page) is an outside test now: tests/go/artifacts.test.ts.
 
 test("review #31-7: a project named '-' does not collide with the no-project marker", () => {
   const v: View = { view: 'tasks', project: ['-', null, 'a'] };
