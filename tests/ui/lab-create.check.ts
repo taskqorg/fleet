@@ -19,7 +19,7 @@ const counts = () => seed.rows("SELECT (SELECT count(*) FROM execution) AS execu
 const before = counts();
 const browser = await chromium.launch();
 try {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, hasTouch: true });
   const p = await context.newPage();
   const errors: string[] = []; p.on('pageerror', e => errors.push(e.message));
   let posts = 0; p.on('request', r => { if (r.url().endsWith('/api/ops/lab_experiment_create')) posts++; });
@@ -59,6 +59,7 @@ try {
   for (const kind of ['single', 'ab', 'loop'] as const) {
     if (kind === 'single') await p.setViewportSize({ width: 600, height: 900 });
     await fill(kind); if (kind === 'single') {
+      assert.ok((await p.getByRole('spinbutton', { name: 'Repeats', exact: true }).boundingBox())!.height >= 44, 'TextField meets the existing touch target minimum');
       assert.ok(await p.getByRole('article', { name: 'Create experiment', exact: true }).evaluate(e => e.scrollWidth <= e.clientWidth));
       assert.ok(await p.evaluate(() => document.documentElement.scrollHeight <= innerHeight), 'the work area, not the page, scrolls');
       await p.screenshot({ path: 'design-report/lab-create-form.png' });

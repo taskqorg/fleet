@@ -575,3 +575,6 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
   .split-view:has([data-ui=lab-picker])>.split-list { display: flex; }
   .split-view:has([data-ui=lab-picker])>.detail { display: none; }
 }
+@media (pointer:coarse) {
+  .text-field input,.text-field textarea { min-height: var(--size-hit-phone); }
+}
