@@ -220,23 +220,24 @@ function CatalogueMethods() {
   const [selected, setSelected] = useState<string[]>([]), [baseline, setBaseline] = useState('');
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
-  const {data: c, error: catalogueError, restored} = useDoc(`catalogue:${project}:${revision}`, () => project ? op('catalogue', {projectId: project}) : Promise.resolve(null), change => ['definition', 'experiment', 'score', 'execution', 'project-recommendation'].includes(change.kind));
+  const {data: candidate, error: catalogueError, restored} = useDoc(`catalogue:${project}:${revision}`, async () => { if (!project) return null; const reply = await op('catalogue', {projectId: project}); if (reply.projectId !== project) throw new Error('Catalogue response project mismatch'); return reply; }, change => ['definition', 'experiment', 'score', 'execution', 'project-recommendation'].includes(change.kind));
   useEffect(() => { op('project_list', {}).then(r => { const ids = (r.projects as any[]).map(p => String(p.id)); setProjects(ids); setProject(ids[0] ?? ''); }, x => setError(x.message)); op('lab_registry', {}).then(r => setUseCases(r.useCases as any), x => setError(x.message)); }, []);
+  const c = candidate?.projectId === project && !catalogueError ? candidate : null;
   const methods = c?.methods ?? [];
-  const choose = (id: string) => { const next = selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id]; setSelected(next); if (!next.includes(baseline)) setBaseline(next.includes(String(c?.recommendedMethod)) ? String(c?.recommendedMethod) : ''); };
+  const choose = (id: string) => { if (!c || restored || busy) return; const next = selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id]; setSelected(next); if (!next.includes(baseline)) setBaseline(next.includes(String(c?.recommendedMethod)) ? String(c?.recommendedMethod) : ''); };
   const act = async (run: () => Promise<void>) => { setBusy(true); try { await run(); setError(null); } catch (x: any) {setError(x.message);} finally {setBusy(false);} };
   return <>
-    <DetailSection title="Project"><SearchField label="Find project" value={scopeSearch} onInput={setScopeSearch} onSearch={() => {}} /><Choice label="Project" value={project} options={projects.filter(p => p.includes(scopeSearch)).map(p => ({id:p,label:p}))} onChange={p => {setProject(p);setSelected([]);setBaseline('');}} /></DetailSection>
+    <DetailSection title="Project"><SearchField label="Find project" value={scopeSearch} onInput={setScopeSearch} onSearch={() => {}} /><Choice label="Project" value={project} options={projects.filter(p => p.includes(scopeSearch)).map(p => ({id:p,label:p}))} onChange={p => {setProject(p);setSelected([]);setBaseline('');setUseCase('');setError(null);setRevision(r=>r+1);}} /></DetailSection>
     {error && <div class="error" role="alert">{error}</div>}
-    {catalogueError && <div class="error" role="alert">Catalogue unavailable: {catalogueError}. {c ? 'Shown evidence may be stale.' : 'No current evidence loaded.'}<Button label="Retry Catalogue" icon="rotate-cw" onClick={() => setRevision(r=>r+1)} /></div>}
-    {restored && <p class="muted">Restored evidence; awaiting current confirmation.</p>}
+    {catalogueError && <div class="error" role="alert">Catalogue unavailable: {catalogueError}. No current evidence loaded for {project}.<Button label="Retry Catalogue" icon="rotate-cw" onClick={() => setRevision(r=>r+1)} /></div>}
+    {c && <p class="muted">Evidence project: {c.projectId}{restored ? ' · restored, read-only until current confirmation' : ''}</p>}
     <DetailSection title="Methods"><SearchField label="Find method" value={search} onInput={setSearch} onSearch={() => {}} />
       {methods.filter(m => `${m.name} ${m.id}`.toLowerCase().includes(search.toLowerCase())).map(m => {
         const a = m.assessment;
         return <div key={m.id}>
-          <KvRow icon="circle-check" label={`${m.name} · ${m.id}`} meta={`${m.scope} · ${m.pipeline}`} value={<><Choice label={`Select ${m.name}`} value={selected} options={[{id:m.id,label:selected.includes(m.id) ? 'Selected' : 'Select'}]} onChange={choose} /><Button label="Recommend for project" icon="check" iconOnly busy={busy} onClick={() => act(async () => {await op('recommendation_set', {projectId:project,methodId:m.id});setRevision(r=>r+1);})} /></>} />
-          <KvRow icon="chart-no-axes-column" label={a.scoreForm === 'typed' ? 'Comparison score' : 'Quality'} meta={a.score == null ? 'Unavailable' : `${a.score.toFixed(3)}${a.partial ? ' · partial/incomplete' : ''}`} value={`${a.basis} · ${a.eligibleCells ?? 0}/${a.expectedCells ?? 0} cells · ${a.examples ?? 0} examples`} />
-          <KvRow icon="clock" label="Time / cost" meta={a.wallMsMedian == null ? 'Time unavailable' : `${a.wallMsMedian} ms · ${a.durationSamples == null ? 'pipeline usage window' : `${a.durationSamples} samples`}`} value={`${a.costUsd == null ? 'Cost unavailable' : `$${a.costUsd}`} · ${a.costBasis}`} />
+          <KvRow icon="circle-check" label={`${m.name} · ${m.id}`} meta={`${m.scope} · ${m.pipeline}`} value={<><Choice label={`Select ${m.name}`} value={selected} options={[{id:m.id,label:selected.includes(m.id) ? 'Selected' : 'Select'}]} onChange={choose} /><Button label="Recommend for project" icon="check" iconOnly busy={busy} disabledReason={restored ? 'Await current scoped Catalogue read' : undefined} onClick={() => act(async () => {await op('recommendation_set', {projectId:project,methodId:m.id});setRevision(r=>r+1);})} /></>} />
+          <KvRow icon="chart-no-axes-column" label={a.scoreForm === 'typed' ? 'Comparison score' : 'Quality'} meta={a.score == null ? 'Unavailable' : `${a.score.toFixed(3)}${a.partial ? ' · partial/incomplete' : ''}`} value={`${a.basis} · ${a.eligibleCells ?? 0}/${a.expectedCells ?? 0} cells · ${a.examples ?? 0} ${a.examples === 1 ? 'example' : 'examples'}`} />
+          <KvRow icon="clock" label="Time / cost" meta={a.wallMsMedian == null ? 'Time unavailable' : `${a.wallMsMedian} ms · ${a.durationSamples == null ? 'pipeline usage window' : `${a.durationSamples} samples`}`} value={`${a.costUsd == null ? 'Cost unavailable' : `$${a.costUsd} · ${a.costBasis}`}`} />
           <KvRow icon="folder-open" label="Recommended for" meta={m.recommendedFor.join(', ') || 'None'} />
           {a.state && <p class="muted">{a.state} · {a.stopReason ?? ''} · {a.failedCells ?? 0} failed · {a.excludedCells ?? 0} excluded</p>}
           {a.reason && <p>{a.reason}</p>}{a.exclusions && <p>{a.exclusions}</p>}
@@ -251,7 +252,7 @@ function CatalogueMethods() {
       <Choice label="Baseline" value={baseline} options={methods.filter(m=>selected.includes(m.id)).map(m=>({id:m.id,label:m.name}))} onChange={setBaseline} />
       <SearchField label="Find use case" value={useSearch} onInput={setUseSearch} onSearch={() => {}} />
       <Choice label="Use case" value={useCase} options={useCases.filter(u=>`${u.id} ${u.goal}`.toLowerCase().includes(useSearch.toLowerCase())).map(u=>({id:u.id,label:u.id}))} onChange={setUseCase} />
-      <Button label="Create comparison" icon="play" busy={busy} disabledReason={catalogueError ? 'Current Catalogue evidence is unavailable' : !project || selected.length<2 || !baseline || !useCase ? 'Select two methods, a baseline and use case' : undefined} onClick={() => act(async () => {const r = await op('lab_compare_methods', {projectId:project,capability:String(c?.capability),methods:selected,baseline,useCase});go(`/lab/${r.experimentId}`);})} />
+      <Button label="Create comparison" icon="play" busy={busy} disabledReason={catalogueError || restored || !c ? 'Await current scoped Catalogue read' : !project || selected.length<2 || !baseline || !selected.includes(baseline) || selected.some(id => !methods.some(m => m.id === id)) || !useCase ? 'Select two methods, a baseline and use case' : undefined} onClick={() => act(async () => {const r = await op('lab_compare_methods', {projectId:project,capability:String(c?.capability),methods:selected,baseline,useCase});go(`/lab/${r.experimentId}`);})} />
     </DetailSection>
   </>;
 }

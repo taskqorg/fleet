@@ -110,7 +110,7 @@ try {
   // Controlled render fixture: a measured partial comparison score must stay visible with its population.
   const preview = await (await fetch(origin + '/api/ops/catalogue', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({projectId:'hello-world'})})).json();
   preview.methods[0].assessment = {...preview.methods[0].assessment, basis:'lab', score:0.5, scoreForm:'typed', partial:true, eligibleCells:1,expectedCells:2,examples:1,failedCells:1,excludedCells:1,state:'stopped',stopReason:'fixture',variant:'preview-variant',split:'held_out',evaluator:'typed:labels:typed',evaluatorVersion:'fixture-version',reason:'One observed cell; one failed cell is excluded'};
-  await page.route('**/api/ops/catalogue', route => route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(preview)}));
+  await page.route('**/api/ops/catalogue', route => route.request().postDataJSON().projectId === 'hello-world' ? route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(preview)}) : route.continue());
   await page.reload();
   await page.getByRole('button', {name:'hello-world',exact:true}).click();
   await page.getByText('0.500 · partial/incomplete', {exact:true}).waitFor();
@@ -121,11 +121,39 @@ try {
   await page.route('**/api/ops/catalogue', route => route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({message:'fixture catalogue unavailable',error:'Service Unavailable',statusCode:503})}));
   await page.getByRole('button', {name:'cs',exact:true}).click();
   await page.getByRole('alert').filter({hasText:'Catalogue unavailable:'}).waitFor();
+  assert.equal(await page.getByText('0.500 · partial/incomplete', {exact:true}).count(), 0);
+  assert.equal(await page.getByRole('group', {name:'Baseline',exact:true}).getByRole('button').count(), 0);
+  assert.equal(await page.getByRole('button', {name:'Recommend for project',exact:true}).count(), 0);
+  assert.equal(await page.getByRole('button', {name:'Create comparison',exact:true}).getAttribute('aria-disabled'), 'true');
   await page.screenshot({path:`${shots}/catalogue-fetch-error.png`});
   await page.unroute('**/api/ops/catalogue');
   await page.getByRole('button', {name:'Retry Catalogue',exact:true}).click();
   await page.getByRole('alert').filter({hasText:'Catalogue unavailable:'}).waitFor({state:'hidden'});
   expectedCatalogueFailure = false;
+  // A late previous-project response must not repopulate the current project or hidden selections.
+  let releasePrevious!: () => void, previousRequested!: () => void;
+  const previousGate = new Promise<void>(r => {releasePrevious = r;});
+  const previousHit = new Promise<void>(r => {previousRequested = r;});
+  await page.route('**/api/ops/catalogue', async route => {
+    if (route.request().postDataJSON().projectId !== 'hello-world') return route.continue();
+    previousRequested(); await previousGate;
+    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(preview)});
+  });
+  await page.getByRole('group', {name:'Select Basic source discovery',exact:true}).getByRole('button').click();
+  await page.getByRole('button', {name:'hello-world',exact:true}).click();
+  try {
+    await previousHit;
+    assert.equal(await page.getByRole('button', {name:'Recommend for project',exact:true}).count(), 0);
+    await page.getByRole('button', {name:'cs',exact:true}).click();
+    await page.getByText('Evidence project: cs', {exact:true}).waitFor();
+  } finally {releasePrevious();}
+  await page.waitForResponse(r => r.url().endsWith('/api/ops/catalogue') && r.request().postDataJSON()?.projectId === 'hello-world');
+  await page.getByText('Evidence project: cs', {exact:true}).waitFor();
+  assert.equal(await page.getByText('0.500 · partial/incomplete', {exact:true}).count(), 0);
+  assert.equal(await page.getByRole('group', {name:'Baseline',exact:true}).getByRole('button').count(), 0);
+  assert.equal(await page.getByRole('button', {name:'Create comparison',exact:true}).getAttribute('aria-disabled'), 'true');
+  await page.screenshot({path:`${shots}/catalogue-project-race.png`});
+  await page.unroute('**/api/ops/catalogue');
   c.sql(`INSERT INTO experiment(id,project_id,kind,pipeline_id,variants) VALUES('catalogue-ui-draft','hello-world','single','typed-decision','[{"label":"selected-method","pipelineId":"typed-decision","overrides":{},"config_ref":"digest-ui-fixture","catalogueConfigRef":"identity-ui-fixture","catalogueRef":{"kind":"catalogue","id":"catalogue","revision":1,"contentSha":"fixture"}}]'::jsonb)`);
   await page.goto(origin + '/lab/catalogue-ui-draft');
   await page.getByRole('heading', {name: 'Experiment record', exact: true}).waitFor();
