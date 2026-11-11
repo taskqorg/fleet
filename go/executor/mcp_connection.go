@@ -8,22 +8,15 @@ package main
 
 import (
 	"bufio"
-	"bytes"
-	"errors"
+	"context"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
-	"syscall"
-	"time"
-)
 
-// Gateway reasons that leave the provider charge unknown; every other reason is a plain error.
-var unknownReasons = map[string]bool{"provider-body": true, "provider-timeout": true, "client-timeout": true, "invalid-response": true}
+	"fleet/contract"
+)
 
 func accessHeaders() map[string]string {
 	path := os.Getenv("FLEET_CF_ACCESS_FILE")
@@ -50,85 +43,19 @@ func accessHeaders() map[string]string {
 	return out
 }
 
-var gatewayClient = &http.Client{Timeout: 60 * time.Second}
-
-// connectionCall is one gateway call: {tool, callId, outcome: ok|error|unknown, error_code, usage, output}.
-func connectionCall(connection, tool string, arguments any) M {
-	url, token := strings.TrimRight(os.Getenv("FLEET_GATEWAY_URL"), "/"), os.Getenv("FLEET_RUN_TOKEN")
+// connectionCall is one gateway call (contract.GatewayCall) with this run's token.
+func connectionCall(connection, tool string, arguments any) contract.CallLine {
+	url, token := os.Getenv("FLEET_GATEWAY_URL"), os.Getenv("FLEET_RUN_TOKEN")
 	// An owner connection token lives in a 0600 file (FLEET_TOKEN_FILE), never in the session config.
 	if f := os.Getenv("FLEET_TOKEN_FILE"); token == "" && f != "" {
 		b, _ := os.ReadFile(f)
 		token = strings.TrimSpace(string(b))
 	}
-	line := M{"tool": tool, "callId": nil, "outcome": "error", "error_code": nil, "usage": nil, "output": nil}
-	with := func(kv ...any) M {
-		r := M{}
-		for k, v := range line {
-			r[k] = v
-		}
-		for i := 0; i < len(kv); i += 2 {
-			r[kv[i].(string)] = kv[i+1]
-		}
-		return r
-	}
-	if url == "" || token == "" {
-		return with("error_code", "connection-unavailable")
-	}
-	req, err := http.NewRequest("POST", url+"/v1/call/"+connection+"/"+tool, bytes.NewReader([]byte(enc(arguments))))
-	if err != nil {
-		return with("error_code", "unreachable")
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "fleet-connection/1")
+	var header map[string]string
 	if strings.HasPrefix(url, "https://") {
-		for k, v := range accessHeaders() {
-			req.Header.Set(k, v)
-		}
+		header = accessHeaders()
 	}
-	r, err := gatewayClient.Do(req)
-	if err != nil {
-		var ne net.Error
-		var dns *net.DNSError
-		switch {
-		case errors.As(err, &ne) && ne.Timeout():
-			return with("outcome", "unknown", "error_code", "client-timeout")
-		case errors.Is(err, syscall.ECONNREFUSED) || errors.As(err, &dns):
-			// Not connected at all: nothing was sent.
-			return with("error_code", "unreachable")
-		}
-		return with("outcome", "unknown", "error_code", "unreachable")
-	}
-	defer r.Body.Close()
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return with("outcome", "unknown", "error_code", "connection-lost")
-	}
-	if id := r.Header.Get("x-fleet-call-id"); id != "" {
-		line["callId"] = id
-	}
-	ok := r.StatusCode >= 200 && r.StatusCode < 300
-	output, err := dec(string(body))
-	if err != nil {
-		output = M{"text": strings.ToValidUTF8(string(body[:min(len(body), 2000)]), "�")}
-		if ok {
-			return with("outcome", "unknown", "error_code", "invalid-response", "output", output)
-		}
-	}
-	if ok {
-		return with("outcome", "ok", "output", output, "usage", jAt(output, "usage"))
-	}
-	// The gateway names its own refusals in x-fleet-error; a provider reply passed through is http-<status>.
-	reason := r.Header.Get("x-fleet-error")
-	code := reason
-	if reason == "" || regexp.MustCompile(`^provider-\d+$`).MatchString(reason) {
-		code = fmt.Sprintf("http-%d", r.StatusCode)
-	}
-	outcome := "error"
-	if r.Header.Get("x-fleet-outcome") == "unknown" || unknownReasons[code] {
-		outcome = "unknown"
-	}
-	return with("outcome", outcome, "error_code", code, "output", output)
+	return contract.GatewayCall(context.Background(), url, token, connection, tool, []byte(enc(arguments)), header)
 }
 
 func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error {
@@ -167,7 +94,8 @@ func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error
 			reply["result"] = M{"tools": tools}
 		case "tools/call":
 			name, _ := str(params["name"])
-			line := M{"outcome": "error", "error_code": "tool-not-granted", "output": nil}
+			code := "tool-not-granted"
+			line := contract.CallLine{Outcome: contract.CallOutcomeError, ErrorCode: &code}
 			if names[name] && name != "" {
 				args := params["arguments"]
 				if !truth(args) {
@@ -175,12 +103,15 @@ func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error
 				}
 				line = connectionCall(connection, name, args)
 			}
-			ok := line["outcome"] == "ok"
-			text := enc(line["output"])
+			ok := line.Outcome == contract.CallOutcomeOk
+			text := string(line.Output)
+			if text == "" {
+				text = "null"
+			}
 			if !ok {
-				text = fmt.Sprintf("Call %v: %v", line["outcome"], line["error_code"])
-				if truth(line["output"]) {
-					text += " " + enc(line["output"])
+				text = fmt.Sprintf("Call %s: %s", line.Outcome, *line.ErrorCode)
+				if o := string(line.Output); o != "" && o != "null" {
+					text += " " + o
 				}
 			}
 			reply["result"] = M{"content": []any{M{"type": "text", "text": text}}, "isError": !ok}

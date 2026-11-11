@@ -81,7 +81,7 @@ export function viewProblem(v: unknown): string | null {
   if (!(VIEWS as string[]).includes(o.view as string)) return 'view.view must be one of ' + VIEWS.join(', ');
   const name = o.view as ViewName, table = TABLE[name];
   const strs = (x: unknown) => Array.isArray(x) && x.every(i => typeof i === 'string' && i !== '');
-  const states: readonly string[] = name === 'tasks' ? TASK_STATES : SESSION_STATES;
+  const states: readonly string[] = name === 'tasks' ? TASK_STATES : name === 'results' ? ARTIFACT_STATES : SESSION_STATES;
   for (const [k, x] of Object.entries(o)) {
     if (k === 'view' || x === undefined) continue;
     if (k === 'focus') { if (typeof x !== 'string' || !x) return 'focus must be a non-empty string'; continue; }
@@ -134,7 +134,9 @@ export function formatView(v: View): string {
   const ps = known(v, () => true), table = TABLE[v.view];
   for (const [k, x] of Object.entries(v.extra ?? {})) if (!Object.hasOwn(table, k)) ps.push([enc(k), enc(x)]);
   const q = join(ps);
-  return `/${v.view}${v.focus ? '/' + enc(v.focus) : ''}${q ? '?' + q : ''}`;
+  // A dot segment ('.', '..') would be resolved away by the browser, so its dots are escaped.
+  const focus = v.focus === '.' || v.focus === '..' ? v.focus.replace(/\./g, '%2E') : v.focus && enc(v.focus);
+  return `/${v.view}${focus ? '/' + focus : ''}${q ? '?' + q : ''}`;
 }
 
 /** The store and IndexedDB key of a list: view plus canonical query without focus, sel, preset and unknown keys. */

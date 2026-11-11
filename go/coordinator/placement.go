@@ -371,7 +371,7 @@ func reconcilePurges(ctx context.Context, a *App) error {
 
 // expireWaiting: executions waiting for their artifacts longer than the retry window fail (P3-D2).
 func expireWaiting(ctx context.Context, a *App) error {
-	rs, err := rowsCtx(ctx, conn(ctx, a), "SELECT id FROM execution WHERE legacy_kind='execution' AND data->>'state'='waiting' AND data->>'waitReason'='artifacts' AND coalesce((data->>'waitingSince')::bigint,0) < $1", nowMs()-int64(retryWindowMS))
+	rs, err := rowsCtx(ctx, conn(ctx, a), "SELECT id FROM execution WHERE "+execKinds+" AND state='waiting' AND data->>'waitReason'='artifacts' AND coalesce((data->>'waitingSince')::bigint,0) < $1", nowMs()-int64(retryWindowMS))
 	if err != nil {
 		return err
 	}
