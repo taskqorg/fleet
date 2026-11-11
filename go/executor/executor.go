@@ -386,8 +386,13 @@ func (e *executor) reconcileProcesses() error {
 		waiting := false
 		for _, x := range launches {
 			if x.err == nil {
+				// An unknown identity is asked again on the next pass; the final check below decides.
 				alive, err := x.l.aliveOwned()
-				x.err, waiting = err, waiting || alive
+				var unknown identityUnknown
+				waiting = waiting || alive || errors.As(err, &unknown)
+				if !errors.As(err, &unknown) {
+					x.err = err
+				}
 			}
 		}
 		if !waiting {
@@ -1461,10 +1466,13 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	}
 	if exited {
 		alive, err := l.aliveOwned()
-		if err != nil {
+		var unknown identityUnknown
+		if errors.As(err, &unknown) {
 			// Not confirmed gone: the run stays live (and its session held) until the process can be seen to leave.
-			l.cleanupUnknown = true
 			return false, nil
+		}
+		if err != nil {
+			return false, err
 		}
 		if alive {
 			return false, nil
@@ -1705,6 +1713,17 @@ func (l *live) observe() error {
 	return nil
 }
 
+// identityUnknown: an owned pid exists but its identity cannot be read, so whether it is the recorded process is
+// unknown.
+type identityUnknown struct {
+	pid int
+	err error
+}
+
+func (u identityUnknown) Error() string {
+	return fmt.Sprintf("process %d exists but its identity cannot be read: %v", u.pid, u.err)
+}
+
 func (l *live) aliveOwned() (bool, error) {
 	table, err := processes()
 	if err != nil {
@@ -1725,15 +1744,12 @@ func (l *live) aliveOwned() (bool, error) {
 			}
 			continue // another incarnation holds the pid
 		}
-		// An identity read failure proves nothing (W3-3): the pid is gone only if a new snapshot no longer lists it
-		// as a running process; otherwise the process is there but cannot be inspected, and the answer is unknown.
-		again, serr := processes()
-		if serr != nil {
-			return false, serr
+		// An identity read failure proves nothing (W3-3): only ESRCH from kill(pid, 0) shows the pid has gone; a pid
+		// that still exists but cannot be inspected is unknown.
+		if errors.Is(syscall.Kill(p.pid, 0), syscall.ESRCH) {
+			continue
 		}
-		if running(again, p.pid) {
-			return false, fmt.Errorf("process %d is running but its identity cannot be read: %w", p.pid, err)
-		}
+		return false, identityUnknown{p.pid, err}
 	}
 	return false, nil
 }

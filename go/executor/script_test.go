@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fleet/contract"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -254,12 +253,9 @@ func TestIdentityReadFailureIsNotTermination(t *testing.T) {
 	if alive, err := l.aliveOwned(); err == nil || alive {
 		t.Fatal("unreadable running process reported gone")
 	}
-	cmd := exec.Command("true")
-	if err := cmd.Run(); err != nil {
-		t.Fatal(err)
-	}
-	l = &live{owned: map[int]string{cmd.Process.Pid: "x"}}
+	// A recorded pid no process holds any more is gone, with or without a readable identity.
+	l = &live{owned: map[int]string{1<<22 + 7: "x"}}
 	if alive, err := l.aliveOwned(); err != nil || alive {
-		t.Fatal("a pid gone from the snapshot is not reported gone", err)
+		t.Fatal("a pid nobody holds is not reported gone", err)
 	}
 }
