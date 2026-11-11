@@ -24,10 +24,7 @@ func subscriptionLimitsRefresh(q *Request, req *contract.SubscriptionLimitsRefre
 			continue
 		}
 		if !mine(a) {
-			if req.SubscriptionId != nil {
-				return reply, fail(403, "Only the holder or the owner refreshes this subscription")
-			}
-			continue
+			continue // another person's subscription is not found, the same as an unknown id
 		}
 		targets = append(targets, a)
 	}
@@ -44,16 +41,41 @@ func subscriptionLimitsRefresh(q *Request, req *contract.SubscriptionLimitsRefre
 	}
 	for _, a := range targets {
 		id := astr(a["id"])
-		var host, binding string
+		// A read already on its way is the answer to a repeated refresh.
+		inflight, err := rowsCtx(q.ctx(), q.tx, `SELECT data FROM document WHERE kind='command' AND data->>'kind'=$1 AND data->'payload'->>'mode'='limits'
+		   AND data->'payload'->>'accountId'=$2 AND coalesce(data->>'status','pending') NOT IN ('completed','failed','stopped','unknown') LIMIT 1`, string(contract.CommandKindAccountInspect), id)
+		if err != nil {
+			return reply, err
+		}
+		if len(inflight) > 0 {
+			c := mapOf(inflight[0]["data"])
+			p := mapOf(c["payload"])
+			reply.Sent = append(reply.Sent, contract.LimitRefreshSent{SubscriptionId: id, HostId: astr(c["hostId"]), Binding: astr(p["binding"]), ExecutionId: astr(c["executionId"])})
+			continue
+		}
+		var host, binding, reason string
+		reason = "no binding on any host; connect the subscription first"
 		for _, b := range bindingsOf(a) {
 			h := astr(b["hostId"])
-			if b["readiness"] == "ready" && float64(nowMs())-seen[h] < 30000 {
-				host, binding = h, astr(b["binding"])
-				break
+			allowed, err := harnessAllowed(q, h, astr(a["harness"]))
+			switch {
+			case err != nil:
+				return reply, err
+			case b["readiness"] != "ready":
+				reason = "binding " + astr(b["binding"]) + " on " + h + " is not ready; login needed"
+				continue
+			case !allowed:
+				reason = astr(a["harness"]) + " is not allowed on host " + h
+				continue
+			case float64(nowMs())-seen[h] >= onlineMs:
+				reason = "host " + h + " is offline"
+				continue
 			}
+			host, binding = h, astr(b["binding"])
+			break
 		}
 		if host == "" {
-			reply.Skipped = append(reply.Skipped, contract.LimitRefreshSkipped{SubscriptionId: id, Reason: "no online host with a ready binding"})
+			reply.Skipped = append(reply.Skipped, contract.LimitRefreshSkipped{SubscriptionId: id, Reason: reason})
 			continue
 		}
 		sid, eid, mode := newID(), newID(), "limits"
