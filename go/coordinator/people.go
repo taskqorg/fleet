@@ -228,48 +228,54 @@ func init() {
 			return fail(403, "Only the owner sets people")
 		}
 		return nil
-	}, shaped[contract.PeopleSetRequest, contract.PeopleSetReply](func(q *Request) (any, error) {
-		if q.person != nil && !q.person.Owner {
-			return nil, fail(403, "Only the owner sets people")
-		}
-		var b struct {
-			People json.RawMessage `json:"people"`
-		}
-		if json.Unmarshal(q.body, &b) != nil || len(b.People) == 0 || b.People[0] != '[' {
-			return nil, fail(400, "Expected people: the whole people.json list")
-		}
-		previous, err := os.ReadFile(q.app.peopleFile)
-		if err != nil {
-			return nil, err
-		}
-		// The file first, so a failed write leaves Fleet on the old list; a failed apply puts the old file back.
-		write := func(raw []byte) error {
-			tmp := q.app.peopleFile + ".tmp"
-			if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-				return err
-			}
-			return os.Rename(tmp, q.app.peopleFile)
-		}
-		if err := write(b.People); err != nil {
-			return nil, err
-		}
-		if _, err := q.app.setPeople(q.ctx(), b.People, true); err != nil {
-			if werr := write(previous); werr != nil {
-				return nil, errors.Join(err, werr)
-			}
-			var pe *pgconn.PgError
-			if errors.As(err, &pe) {
-				return nil, err
-			}
-			return nil, fail(400, err.Error())
-		}
-		var prev, next any
-		json.Unmarshal(previous, &prev)
-		json.Unmarshal(b.People, &next)
-		err = q.app.store.Tx(q.ctx(), nil, true, "", func(tx pgx.Tx) error {
-			q.tx = tx
-			return put(q, "setting-change", doc{"id": newID(), "target": "people", "field": "people", "previous": prev, "value": next, "actor": actor(q, "operator"), "at": nowMs()})
-		})
-		return doc{"people": len(q.app.people)}, err
+	}, typedOp(func(q *Request, _ *contract.PeopleSetRequest) (contract.PeopleSetReply, error) {
+		// The handler reads the body as sent: people.json keeps the owner's bytes (the struct only checked them).
+		out, err := peopleSet(q)
+		return replyAs[contract.PeopleSetReply](out, err)
 	})))
+}
+
+func peopleSet(q *Request) (any, error) {
+	if q.person != nil && !q.person.Owner {
+		return nil, fail(403, "Only the owner sets people")
+	}
+	var b struct {
+		People json.RawMessage `json:"people"`
+	}
+	if json.Unmarshal(q.body, &b) != nil || len(b.People) == 0 || b.People[0] != '[' {
+		return nil, fail(400, "Expected people: the whole people.json list")
+	}
+	previous, err := os.ReadFile(q.app.peopleFile)
+	if err != nil {
+		return nil, err
+	}
+	// The file first, so a failed write leaves Fleet on the old list; a failed apply puts the old file back.
+	write := func(raw []byte) error {
+		tmp := q.app.peopleFile + ".tmp"
+		if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+			return err
+		}
+		return os.Rename(tmp, q.app.peopleFile)
+	}
+	if err := write(b.People); err != nil {
+		return nil, err
+	}
+	if _, err := q.app.setPeople(q.ctx(), b.People, true); err != nil {
+		if werr := write(previous); werr != nil {
+			return nil, errors.Join(err, werr)
+		}
+		var pe *pgconn.PgError
+		if errors.As(err, &pe) {
+			return nil, err
+		}
+		return nil, fail(400, err.Error())
+	}
+	var prev, next any
+	json.Unmarshal(previous, &prev)
+	json.Unmarshal(b.People, &next)
+	err = q.app.store.Tx(q.ctx(), nil, true, "", func(tx pgx.Tx) error {
+		q.tx = tx
+		return put(q, "setting-change", doc{"id": newID(), "target": "people", "field": "people", "previous": prev, "value": next, "actor": actor(q, "operator"), "at": nowMs()})
+	})
+	return doc{"people": len(q.app.people)}, err
 }

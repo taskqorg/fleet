@@ -1453,8 +1453,9 @@ type PeopleListReply struct {
 
 type PeopleListRequest = map[string]json.RawMessage
 
+// PeopleSetReply: people: how many people the list now has.
 type PeopleSetReply struct {
-	People json.RawMessage `json:"people"`
+	People int64 `json:"people"`
 }
 
 // PeopleSetRequest: Owner only: the whole people.json list, written atomically and reloaded.
@@ -1965,9 +1966,9 @@ type SettingChangesReply struct {
 
 // SettingChangesRequest: target: one setting target (host:<id>, connection:<name>, people, ...); before: the nextBefore of the previous page.
 type SettingChangesRequest struct {
-	Before json.RawMessage `json:"before,omitempty"`
-	Limit  json.RawMessage `json:"limit,omitempty"`
-	Target *string         `json:"target,omitempty"`
+	Before *int64  `json:"before,omitempty"`
+	Limit  *int64  `json:"limit,omitempty"`
+	Target *string `json:"target,omitempty"`
 }
 
 type StopCommandRef struct {
