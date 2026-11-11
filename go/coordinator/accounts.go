@@ -21,13 +21,13 @@ func init() {
 	operation("account_connect", false, func(q *Request) (any, error) { return accountInspect(q, q.obj(), false) })
 	operation("account_login_handoff", true, accountLoginHandoff)
 	operation("account_update", false, accountUpdate)
-	route("POST /api/hosts/accounts", func(q *Request) (any, error) {
+	route("POST /api/hosts/accounts", typed[contract.AccountObservation](func(q *Request) (any, error) {
 		if !q.app.hostMaySee(q.host, nil) {
 			return nil, fail(403, "Account observations need an owner-held host")
 		}
 		b := q.obj()
 		return accountReport(q, b, astr(b["hostId"]))
-	})
+	}))
 	route("GET /api/accounts", accountList)
 	route("POST /api/accounts", accountCreate)
 	route("POST /api/accounts/{id}", func(q *Request) (any, error) {

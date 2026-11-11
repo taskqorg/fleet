@@ -138,3 +138,11 @@ func truth(v any) bool {
 	}
 	return true
 }
+
+// optStr: an optional contract string field; "" is absent.
+func optStr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}

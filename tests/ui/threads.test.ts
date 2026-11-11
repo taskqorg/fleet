@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { fromPage, prepend, append, fed, cmpKey, touches, type Block, type Page } from '../../app/src/threads.ts';
 import type { Change } from '../../app/src/feed.ts';
 
-const b = (key: string, text = key): Block => ({ kind: 'text', key, markdown: text });
+const b = (key: string, text = key): Block => ({ kind: 'text', key, role: 'agent', markdown: text });
 const page = (keys: string[], o: Partial<Page> = {}): Page => ({ entries: keys.map(k => b(k)), first: keys[0] ?? null, last: keys.at(-1) ?? null, hasBefore: false, hasAfter: false, feedCursor: 0, ...o });
 const keys = (w: { blocks: Block[] }) => w.blocks.map(x => x.key);
 
@@ -29,7 +29,7 @@ test('a jump replaces the window', () => {
 test('fed blocks: replaced in place, inserted inside the window by key, appended at the live end, counted past last', () => {
   let w = fromPage(page(['10:0', '12:0'], { total: 2, hasBefore: true }));
   w = fed(w, [b('11:0'), b('12:0', 'edited'), b('13:0')]);
-  assert.deepEqual(keys(w), ['10:0', '11:0', '12:0', '13:0']); assert.equal(w.blocks[2].markdown, 'edited'); assert.equal(w.total, 4); assert.equal(w.last, '13:0');
+  assert.deepEqual(keys(w), ['10:0', '11:0', '12:0', '13:0']); assert.equal((w.blocks[2] as { markdown: string }).markdown, 'edited'); assert.equal(w.total, 4); assert.equal(w.last, '13:0');
   // A late commit with a lower key lands where its key says; one before the window is left to a later page read.
   w = fed(w, [b('10:1'), b('5:0')]); assert.deepEqual(keys(w), ['10:0', '10:1', '11:0', '12:0', '13:0']);
   // After a jump (newer history not loaded) a fed block past last only counts in the pill.
