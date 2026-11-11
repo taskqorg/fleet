@@ -160,23 +160,17 @@ func init() {
 	// Stores a host has not reported for 2 minutes are unreachable; expired upload leases fail. Single flight per tick.
 	// Then one placement pass (copies, purges, rules, lease expiry, the artifact retry window).
 	onStart(func(ctx context.Context, a *App) {
-		go func() {
-			t := time.NewTicker(placementTick)
-			defer t.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-t.C:
-					if err := execCtx(ctx, a, "UPDATE store SET state='unreachable' WHERE state<>'unreachable' AND (observed_at IS NULL OR observed_at < now() - ($1::text||' milliseconds')::interval)", strconv.Itoa(storeUnseenMS)); err != nil {
-						log.Printf("store sweep: %v", err)
-					}
-					if _, _, err := runPlacement(ctx, a); err != nil {
-						log.Printf("placement: %v", err)
-					}
-				}
+		every(ctx, "placement", placementTick, func() error {
+			if err := execCtx(ctx, a, "UPDATE store SET state='unreachable' WHERE state<>'unreachable' AND (observed_at IS NULL OR observed_at < now() - ($1::text||' milliseconds')::interval)", strconv.Itoa(storeUnseenMS)); err != nil {
+				log.Printf("store sweep: %v", err)
+				return err
 			}
-		}()
+			_, _, err := runPlacement(ctx, a)
+			if err != nil {
+				log.Printf("placement: %v", err)
+			}
+			return err
+		})
 	})
 }
 

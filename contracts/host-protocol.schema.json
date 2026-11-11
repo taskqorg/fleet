@@ -1569,6 +1569,38 @@
           ]
         }
       }
+    },
+    "SpanBatchRequest": {
+      "$comment": "POST /api/hosts/spans (docs/designs/fleet-telemetry.md section 4): spans of an executor or gateway. Each item is one span row with the ClickHouse column names (go/obs Span); a row naming another host_id, or an execution_id not on this host, is skipped. batchId makes a retried batch idempotent.",
+      "type": "object",
+      "required": [
+        "batchId",
+        "spans"
+      ],
+      "properties": {
+        "batchId": {
+          "type": "string"
+        },
+        "spans": {
+          "type": "array",
+          "items": {}
+        }
+      }
+    },
+    "SpanBatchReply": {
+      "type": "object",
+      "required": [
+        "accepted",
+        "skipped"
+      ],
+      "properties": {
+        "accepted": {
+          "type": "integer"
+        },
+        "skipped": {
+          "type": "integer"
+        }
+      }
     }
   }
 }

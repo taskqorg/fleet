@@ -95,7 +95,7 @@ func init() {
 	agentDescriptions["watch_stop"] = "Stop watching"
 	agentDescriptions["watch_get"] = "Your watch: kinds, timer, wakes, last wake, last error"
 	onStart(func(ctx context.Context, a *App) {
-		every(ctx, envMs("FLEET_WATCH_TICK_MS", 15000), func() { watchPass(ctx, a) })
+		every(ctx, "watch", envMs("FLEET_WATCH_TICK_MS", 15000), func() error { watchPass(ctx, a); return nil })
 	})
 }
 

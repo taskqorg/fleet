@@ -4,6 +4,8 @@
 package main
 
 import (
+	"fleet/obs"
+
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -653,12 +655,14 @@ func init() {
 			log.Printf("snapshot: %v", err)
 		}
 		// Spool ingest and token revocation (FLEET_CONNECTION_TICK_MS: test seam, 0 turns it off); usage reconcile every 10 min.
-		every(ctx, envMs("FLEET_CONNECTION_TICK_MS", 3000), func() {
-			if err := runTx(ctx, a, nil, true, "", connTick); err != nil {
+		every(ctx, "connections", envMs("FLEET_CONNECTION_TICK_MS", 3000), func() error {
+			err := runTx(ctx, a, nil, true, "", connTick)
+			if err != nil {
 				log.Printf("connections tick: %v", err)
 			}
+			return err
 		})
-		every(ctx, envMs("FLEET_RECONCILE_MS", 600000), func() { connReconcile(ctx, a) })
+		every(ctx, "reconcile", envMs("FLEET_RECONCILE_MS", 600000), func() error { connReconcile(ctx, a); return nil })
 	})
 }
 
@@ -671,10 +675,12 @@ func envMs(k string, d int) time.Duration {
 }
 
 // every runs fn on a ticker until ctx ends; single flight (a slow pass never overlaps the next). 0 turns it off.
-func every(ctx context.Context, d time.Duration, fn func()) {
+// every runs fn every d as the pass pass.<name>; d <= 0 turns it off. passIntervals feeds the absence-pass rule.
+func every(ctx context.Context, name string, d time.Duration, fn func() error) {
 	if d <= 0 {
 		return
 	}
+	passIntervals.Store(name, d)
 	go func() {
 		t := time.NewTicker(d)
 		defer t.Stop()
@@ -683,7 +689,7 @@ func every(ctx context.Context, d time.Duration, fn func()) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				fn()
+				obs.Pass(ctx, name, func(context.Context) (int, error) { return 0, fn() })
 			}
 		}
 	}()

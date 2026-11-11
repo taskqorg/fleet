@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Coordinator operations of the telemetry domain (docs/designs/fleet-telemetry.md section 5): spans in ClickHouse read through operations, never raw SQL. Project spans need the project grant; system spans (no projectId) need full access. The rules are in ops.schema.json $comment and contracts/README.md.",
+  "operations": {
+    "telemetry_summary": {"read": false, "long": true, "errors": [400]},
+    "telemetry_trace": {"read": false, "long": true, "errors": [400]}
+  },
+  "$defs": {
+    "TelemetryWindow": {"type": "string", "enum": ["5m", "1h", "24h", "7d"]},
+    "SpanOutcome": {"type": "string", "enum": ["ok", "error", "refused", "cancelled"]},
+    "SpanKind": {"type": "string", "enum": ["server", "client", "internal", "pass", "check"]},
+    "OperationStats": {"type": "object", "required": ["service", "name", "count", "errors", "refused", "p50Ms", "p95Ms"], "properties": {
+      "service": {"type": "string"}, "name": {"type": "string"}, "count": {"type": "integer"}, "errors": {"type": "integer"},
+      "refused": {"type": "integer"}, "p50Ms": {"type": "number"}, "p95Ms": {"type": "number"},
+      "previousCount": {"type": "integer"}, "previousErrors": {"type": "integer"}, "baselineP95Ms": {"type": "number"}}},
+    "HostReading": {"type": "object", "required": ["hostId", "at"], "properties": {
+      "hostId": {"type": "string"}, "at": {"type": "string"}, "version": {"type": "string"}, "load1": {"type": "number"}, "cpus": {"type": "integer"},
+      "memFree": {"type": "number"}, "memTotal": {"type": "number"}, "diskFree": {"type": "number"}}, "$comment": "The latest host.heartbeat check span of a host; at is its RFC 3339 start. memFree, memTotal and diskFree are bytes."},
+    "ProcessReading": {"type": "object", "required": ["hostId", "process", "at"], "properties": {
+      "hostId": {"type": "string"}, "process": {"type": "string"}, "at": {"type": "string"}, "cpuSeconds": {"type": "number"},
+      "rssBytes": {"type": "integer"}, "openFiles": {"type": "integer"}}, "$comment": "The latest process.reading of one Fleet process on a host: CPU seconds since the previous beat, resident memory, open files. A value not collected is absent."},
+    "RunReading": {"type": "object", "required": ["executionId", "at"], "properties": {
+      "executionId": {"type": "string"}, "hostId": {"type": "string"}, "projectId": {"type": "string"}, "at": {"type": "string"}, "durationMs": {"type": "number"},
+      "outcome": {"$ref": "#/$defs/SpanOutcome"}, "cpuSeconds": {"type": "number"}, "peakRssBytes": {"type": "integer"}, "orphans": {"type": "integer"}, "traceId": {"type": "string"}},
+      "$comment": "One execution end span: CPU seconds and peak memory of the harness process tree, processes left alive."},
+    "TelemetrySummaryRequest": {"type": "object", "properties": {"window": {"$ref": "#/$defs/TelemetryWindow"}, "projectId": {"type": "string"}, "service": {"type": "string"}}, "$comment": "window defaults to 1h."},
+    "TelemetrySummaryReply": {"type": "object", "required": ["window", "enabled", "operations", "hosts", "processes", "runs", "droppedSpans", "rulesLastRun"], "properties": {
+      "window": {"$ref": "#/$defs/TelemetryWindow"}, "enabled": {"type": "boolean"}, "error": {"type": "string"},
+      "operations": {"type": "array", "items": {"$ref": "#/$defs/OperationStats"}},
+      "hosts": {"type": "array", "items": {"$ref": "#/$defs/HostReading"}},
+      "processes": {"type": "array", "items": {"$ref": "#/$defs/ProcessReading"}},
+      "runs": {"type": "array", "items": {"$ref": "#/$defs/RunReading"}},
+      "droppedSpans": {"type": "integer"}, "rulesLastRun": {"type": ["string", "null"]}, "bytesPerDay": {"type": "integer"}},
+      "$comment": "enabled false: no span store configured (FLEET_CLICKHOUSE_URL) or telemetry switched off; error: the store did not answer. hosts and processes need full access; runs are the latest 50 execution ends in the caller's projects."},
+    "Span": {"type": "object", "required": ["traceId", "spanId", "service", "name", "kind", "start", "durationMs", "outcome"], "properties": {
+      "traceId": {"type": "string"}, "spanId": {"type": "string"}, "parentSpanId": {"type": "string"}, "service": {"type": "string"},
+      "hostId": {"type": "string"}, "name": {"type": "string"}, "kind": {"$ref": "#/$defs/SpanKind"}, "start": {"type": "string"},
+      "durationMs": {"type": "number"}, "outcome": {"$ref": "#/$defs/SpanOutcome"}, "errorClass": {"type": "string"},
+      "executionId": {"type": "string"}, "cpuSeconds": {"type": "number"}, "rssBytes": {"type": "integer"}, "peakRssBytes": {"type": "integer"},
+      "attrs": {"type": "object", "additionalProperties": {"type": "string"}}}},
+    "TelemetryTraceRequest": {"type": "object", "required": ["traceId"], "properties": {"traceId": {"type": "string"}}},
+    "TelemetryTraceReply": {"type": "object", "required": ["spans", "hidden"], "properties": {"spans": {"type": "array", "items": {"$ref": "#/$defs/Span"}}, "hidden": {"type": "integer"}},
+      "$comment": "spans ordered by start; the app builds the tree by parentSpanId. hidden counts spans of the trace the caller may not see."}
+  }
+}

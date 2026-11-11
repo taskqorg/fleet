@@ -39,6 +39,8 @@ type HTTPError struct {
 	Code  int
 	Msg   string
 	Extra map[string]any // more fields of the error body (a 409's DefinitionConflict)
+	// Refused marks a refusal by design (a limit, a paused host, a missing grant): its span outcome is refused, not error.
+	Refused bool
 }
 
 func (e *HTTPError) Error() string    { return e.Msg }
