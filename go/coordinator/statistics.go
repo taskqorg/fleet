@@ -165,14 +165,17 @@ type typedStat struct {
 }
 
 // typedStats: coverage (confident / all), selective accuracy (correct confident / confident; null with no confident
-// answer) and escalation share (1 - coverage), per tag in tag order, plus "all".
+// answer) and escalation share (1 - coverage), per tag in tag order, then the aggregate (Tag "all", last). Used by the
+// typed-decision scorer (next stage-4 change).
 func typedStats(as []typedAnswer) []typedStat {
-	by := map[string]*typedStat{}
+	by, total := map[string]*typedStat{}, &typedStat{Tag: "all"}
 	add := func(tag string, a typedAnswer) {
-		s := by[tag]
-		if s == nil {
-			s = &typedStat{Tag: tag}
-			by[tag] = s
+		s := total
+		if tag != "\x00all" {
+			if s = by[tag]; s == nil {
+				s = &typedStat{Tag: tag}
+				by[tag] = s
+			}
 		}
 		s.N++
 		if a.Answer == "yes" || a.Answer == "no" {
@@ -183,24 +186,25 @@ func typedStats(as []typedAnswer) []typedStat {
 		}
 	}
 	for _, a := range as {
-		add("all", a)
+		add("\x00all", a)
 		if a.Tag != "" {
 			add(a.Tag, a)
 		}
 	}
 	tags := []string{}
 	for t := range by {
-		if t != "all" {
-			tags = append(tags, t)
-		}
+		tags = append(tags, t)
 	}
 	sort.Strings(tags)
 	out := []typedStat{}
-	for _, t := range append(tags, "all") {
-		s := by[t]
-		if s == nil {
-			continue
-		}
+	stats := []*typedStat{}
+	for _, t := range tags {
+		stats = append(stats, by[t])
+	}
+	if total.N == 0 {
+		return out
+	}
+	for _, s := range append(stats, total) {
 		s.Coverage = float64(s.Confident) / float64(s.N)
 		s.Escalation = 1 - s.Coverage
 		if s.Confident > 0 {

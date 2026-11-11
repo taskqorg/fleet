@@ -24,6 +24,7 @@ The coordinator is one Go binary, `fleet-coordinator`, built from `go/coordinato
 | `FLEET_PROJECT_CONFIG_DIRECTORY` | `config` | Project settings. |
 | `FLEET_PROFILES_DIRECTORY` | `config/agents` | Agent profiles. |
 | `FLEET_LAB_DIRECTORY` | `config/lab` | Lab configuration. |
+| `FLEET_LAB_MIN_EXAMPLES` | `2` | Lab statistics: below this many paired examples a comparison says "too few examples" and draws no interval; values under 2 are ignored. |
 | `FLEET_DEFAULT_ACCOUNT_BINDING` | empty | Account binding used for Codex when a request names none. |
 | `FLEET_DEFAULT_ARTIFACT_LOCATIONS` | `pds18` | Artifact locations when a project names none. |
 | `FLEET_STORE_SECRETS` | `var/stores` | Artifact store credentials. |
