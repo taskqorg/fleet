@@ -30,7 +30,7 @@ Every `*.schema.json` file here is generated; each `$defs` entry becomes one typ
 
 Both generators accept only these keywords and fail on any other, so a schema never yields a silently weaker type:
 `type` (one type, optionally with `"null"`), `properties`, `required`, `additionalProperties`, `items`, `enum` (strings),
-`$ref` (`#/$defs/<Name>`), `minimum`, `$comment`, `const` (a string: a literal type in TypeScript, `string` in Go) and
+`$ref` (`#/$defs/<Name>`, or `<file>.schema.json#/$defs/<Name>` for a type of another contract file: an import in TypeScript, the same package in Go), `minimum`, `$comment`, `const` (a string: a literal type in TypeScript, `string` in Go) and
 `oneOf` (only as a `$defs` entry whose members are all `$ref`: a union in TypeScript, `json.RawMessage` in Go, where
 each member is its own struct; give each member a `const` discriminator such as `kind`).
 An object without properties whose `additionalProperties` is a schema is a map (`map[string]T` in Go, `Record<string, T>` in TypeScript).

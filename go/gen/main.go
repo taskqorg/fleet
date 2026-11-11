@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"go/format"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -70,10 +71,12 @@ func types(s schema, where string) (string, bool) {
 func goType(s schema, where string) (string, bool) {
 	check(s, where)
 	if ref, ok := s["$ref"].(string); ok {
-		if !strings.HasPrefix(ref, "#/$defs/") {
-			fail("%s: $ref must be #/$defs/<Name>", where)
+		// <file>.schema.json#/$defs/<Name>: a type of another contract file, in the same Go package.
+		_, local, _ := strings.Cut(ref, "#")
+		if !strings.HasPrefix(local, "/$defs/") || (!strings.HasPrefix(ref, "#") && !regexp.MustCompile(`^[a-z-]+\.schema\.json#`).MatchString(ref)) {
+			fail("%s: $ref must be [<file>.schema.json]#/$defs/<Name>", where)
 		}
-		return exported(strings.TrimPrefix(ref, "#/$defs/")), false
+		return exported(strings.TrimPrefix(local, "/$defs/")), false
 	}
 	if s["oneOf"] != nil {
 		fail("%s: oneOf must be a $defs entry", where)
@@ -204,6 +207,9 @@ func main() {
 		}
 	}
 	for n := range root.Planned {
+		if _, ok := root.Operations[n]; ok {
+			fail("operation %s is both planned and built: remove it from planned", n)
+		}
 		for _, d := range []string{"Request", "Reply"} {
 			if root.Defs[exported(n)+d] == nil {
 				fail("planned operation %s has no $defs %s%s", n, exported(n), d)

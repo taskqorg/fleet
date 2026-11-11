@@ -100,8 +100,8 @@ type AgentCompatibilityRequest struct {
 	Id string `json:"id"`
 }
 
-// AgentDefinition: The Profile type of contracts/profile.schema.json, copied into this file when it is written (the generators take no cross-file $ref); go/contract.ParseProfile is its validator.
-type AgentDefinition = json.RawMessage
+// AgentDefinition: The agent profile (contracts/profile.schema.json); go/contract.ParseProfile is its validator.
+type AgentDefinition = Profile
 
 type AgentEffectiveReply struct {
 	Layers []EffectiveLayer `json:"layers"`
@@ -325,20 +325,18 @@ type CatalogueMethodView struct {
 	RecommendedFor []string         `json:"recommendedFor,omitempty"`
 }
 
-// CatalogueReply: The reply shape of the definition editors; catalogue answers it once they are built.
+// CatalogueReply: The definition editors change methods to CatalogueMethodView items (docs/designs/fleet-definition-editors.md).
 type CatalogueReply struct {
-	Capability           string                `json:"capability"`
-	Methods              []CatalogueMethodView `json:"methods"`
-	RecommendationSource *string               `json:"recommendationSource"`
-	RecommendedMethod    *string               `json:"recommendedMethod"`
-	Revision             *int64                `json:"revision,omitempty"`
-	SharedDefault        *string               `json:"sharedDefault"`
+	Capability           json.RawMessage `json:"capability,omitempty"`
+	Methods              json.RawMessage `json:"methods,omitempty"`
+	ProjectId            json.RawMessage `json:"projectId,omitempty"`
+	RecommendationSource json.RawMessage `json:"recommendationSource,omitempty"`
+	RecommendedMethod    json.RawMessage `json:"recommendedMethod,omitempty"`
+	SharedDefault        json.RawMessage `json:"sharedDefault,omitempty"`
 }
 
-// CatalogueRequest: The reply shape of the definition editors; catalogue answers it once they are built.
 type CatalogueRequest struct {
-	Capability *string `json:"capability,omitempty"`
-	ProjectId  string  `json:"projectId"`
+	ProjectId *string `json:"projectId,omitempty"`
 }
 
 // Change: One committed change (the change table), as GET /api/stream and changes_since deliver it.
