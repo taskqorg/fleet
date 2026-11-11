@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -28,6 +29,7 @@ func TestRunChecksCancelKillsChildren(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("the check did not start its child")
 		}
+		runtime.Gosched()
 		b, _ := os.ReadFile(pidFile)
 		pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
 	}
@@ -37,6 +39,7 @@ func TestRunChecksCancelKillsChildren(t *testing.T) {
 	}
 	// The child is no longer ours to wait for (init reaps it), so wait for the kernel to report it gone.
 	for deadline := time.Now().Add(5 * time.Second); syscall.Kill(pid, 0) == nil; {
+		runtime.Gosched()
 		if time.Now().After(deadline) {
 			syscall.Kill(pid, syscall.SIGKILL)
 			t.Fatalf("child %d outlived the cancelled check", pid)
