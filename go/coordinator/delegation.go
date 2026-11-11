@@ -25,7 +25,7 @@ const sourcesTooLarge = "Website text inputs unavailable or exceed 128000 charac
 // delegationRequest: a child receipt from a running parent.
 func (a *App) delegationRequest(q *Request, req *contract.ChildRequest, c doc) (any, error) {
 	rid, input := req.RequestId, req.Input
-	if len([]rune(rid)) > 200 || len([]rune(input)) > 32000 {
+	if rid == "" || input == "" || len([]rune(rid)) > 200 || len([]rune(input)) > 32000 {
 		return nil, fail(400, "Invalid delegation request")
 	}
 	r := doc{"input": input, "profileId": req.ProfileId, "requestId": rid}

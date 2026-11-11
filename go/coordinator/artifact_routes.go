@@ -189,7 +189,7 @@ func typed[T any, P interface {
 	}
 }
 
-// decodeValid: required keys (exactKeys), body into T, then T's generated Validate (enums, nested structs, required lists
+// decodeValid: required keys at every depth (hostKeys), body into T, then T's generated Validate (enums, nested structs, required lists
 // not null); strict refuses unknown fields.
 func decodeValid[T any, P interface {
 	*T
@@ -197,7 +197,7 @@ func decodeValid[T any, P interface {
 }](body []byte, strict bool) (*T, error) {
 	t := new(T)
 	// Required keys present, and none named only case-insensitively (HostID): readBody checks the exact hostId key.
-	if err := exactKeys(body, reflect.TypeOf(*t)); err != nil {
+	if err := hostKeys(body, reflect.TypeOf(*t)); err != nil {
 		return nil, err
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))

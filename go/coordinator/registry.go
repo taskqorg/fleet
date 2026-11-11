@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -84,6 +85,12 @@ func typedOp[Req, Rep any](h func(q *Request, r *Req) (Rep, error)) handler {
 				return nil, fail(400, "Invalid body")
 			}
 		}
+		// The generated enum, nested-struct and null-list check (contract.Check).
+		if v, ok := any(&r).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return nil, fail(400, err.Error())
+			}
+		}
 		return h(q, &r)
 	}
 }
@@ -92,11 +99,20 @@ func typedOp[Req, Rep any](h func(q *Request, r *Req) (Rep, error)) handler {
 // struct and every nested object and list element. encoding/json matches field names case-insensitively and the last key
 // wins, so {"executionid": x} would override an executionId the agent tool path bound (agent.go), and {"HostID": x} the
 // hostId readBody checked.
+// Required keys are checked at the top only: an operation such as definition_draft_put stores incomplete nested content.
 func exactKeys(body json.RawMessage, t reflect.Type) error {
-	return keysAt(body, t, "")
+	return keysAt(body, t, "", false)
 }
 
-func keysAt(body json.RawMessage, t reflect.Type, path string) error {
+// hostKeys: exactKeys with required keys checked at every depth (host bodies are whole contract values).
+func hostKeys(body json.RawMessage, t reflect.Type) error {
+	return keysAt(body, t, "", true)
+}
+
+func keysAt(body json.RawMessage, t reflect.Type, path string, deep bool) error {
+	if string(bytes.TrimSpace(body)) == "null" {
+		return nil // an absent optional value: decode leaves it nil
+	}
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
@@ -106,7 +122,7 @@ func keysAt(body json.RawMessage, t reflect.Type, path string) error {
 			return nil // not a list: decode reports it
 		}
 		for _, x := range xs {
-			if err := keysAt(x, t.Elem(), path); err != nil {
+			if err := keysAt(x, t.Elem(), path, deep); err != nil {
 				return err
 			}
 		}
@@ -128,11 +144,11 @@ func keysAt(body json.RawMessage, t reflect.Type, path string) error {
 		}
 		v, ok := m[tag]
 		// A field the schema requires has no omitempty: a missing one is 400, not its zero value (a limit of 0).
-		if !ok && !strings.Contains(opts, "omitempty") {
+		if !ok && !strings.Contains(opts, "omitempty") && (deep || path == "") {
 			return fail(400, "Expected "+path+tag)
 		}
 		if ok {
-			if err := keysAt(v, t.Field(i).Type, path+tag+"."); err != nil {
+			if err := keysAt(v, t.Field(i).Type, path+tag+".", deep); err != nil {
 				return err
 			}
 		}

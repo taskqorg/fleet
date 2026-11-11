@@ -119,6 +119,9 @@ func (a *App) ingest(q *Request) (any, error) {
 }
 
 func ingestIn(q *Request, b doc) (any, error) {
+	if err := hostKeys(q.body, reflect.TypeOf(contract.HostEvents{})); err != nil {
+		return nil, err
+	}
 	if err := ownedBody(q, astr(b["hostId"]), astr(b["executionId"])); err != nil {
 		return nil, err
 	}
