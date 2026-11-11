@@ -660,7 +660,7 @@ func firstTrial(s doc) any {
 	return nil
 }
 
-func agreement(scores []doc) doc {
+func agreementBase(scores []doc) doc {
 	compared, matched := 0, 0
 	var judges []doc
 	for _, s := range scores {
@@ -690,6 +690,20 @@ func agreement(scores []doc) doc {
 			}
 		case "pick_best":
 			ts := trialIDsOf(o)
+			paired := false
+			for _, j := range judges {
+				if j["form"] == "pick_best" && sameTrialSet(ts, trialIDsOf(j)) {
+					compared++
+					if j["value"] == o["value"] {
+						matched++
+					}
+					paired = true
+					break
+				}
+			}
+			if paired {
+				continue
+			}
 			vals, ok := []float64{}, true
 			for _, t := range ts {
 				j := judgeOf("scale", t)
@@ -1101,8 +1115,8 @@ func expCreate(q *Request, b doc) (doc, error) {
 			if _, err := loadPipeline(q, r+".json"); err != nil {
 				return nil, err
 			}
-			if f != "pass_fail" && f != "scale" {
-				return nil, fail(400, "A judge form is pass_fail or scale")
+			if f != "pass_fail" && f != "scale" && f != "pick_best" {
+				return nil, fail(400, "A judge form is pass_fail, scale or pick_best")
 			}
 		case "typed":
 			if ref != "labels" || f != "typed" {
@@ -1116,6 +1130,16 @@ func expCreate(q *Request, b doc) (doc, error) {
 			return nil, fail(400, "Evaluator kind is script, typed, judge or human")
 		}
 		ev := doc{"kind": k, "ref": ref, "form": f}
+		if o, has := e["overrides"]; has {
+			ov := mapOf(o)
+			if k != "judge" || ov == nil || !keysOnly(ov, labOverrides...) {
+				return nil, fail(400, "Judge overrides use pipeline override keys")
+			}
+			if q.person != nil && !fullAccess(q.person) && (ov["host"] != nil || ov["account"] != nil || ov["profile"] != nil) {
+				return nil, fail(403, "Only the owner overrides host, account or profile")
+			}
+			ev["overrides"] = ov
+		}
 		names[evaluatorName(ev)] = true
 		evaluators = append(evaluators, ev)
 	}
@@ -1349,13 +1373,23 @@ func findVariant(exp doc, label any) doc {
 // expEvaluate: automatic evaluators over completed trials; true when every completed trial is evaluated by each.
 func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]string, checked map[string]doc) (bool, error) {
 	complete, typedExamples := true, map[string]doc{} // each pinned example read once per pass
+	for _, x := range anys(exp["evaluators"]) {
+		e := mapOf(x)
+		if e["kind"] == "judge" && e["form"] == "pick_best" {
+			done, err := pairwiseEvaluate(q, exp, e, trials, runs, current, launched)
+			if err != nil {
+				return false, err
+			}
+			complete = complete && done
+		}
+	}
 	for _, t := range trials {
 		if !comparable(t) {
 			continue
 		}
 		for _, x := range anys(exp["evaluators"]) {
 			e := mapOf(x)
-			if e["kind"] == "human" {
+			if e["kind"] == "human" || e["kind"] == "judge" && e["form"] == "pick_best" {
 				continue
 			}
 			name := evaluatorName(e)
@@ -1440,7 +1474,7 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 					inputs = append(inputs, doc{"artifactId": id, "path": "example/trial/" + f.path})
 				}
 				jid, err := expInsertRun(q, exp, "lab:"+sha256hex(jsonBytes([]any{exp["id"], "judge", name, t["id"]})), astr(e["ref"])+".json",
-					doc{"prompt": full["prompt"], "form": e["form"]}, nil, doc{"exampleInputs": inputs, "judge": doc{"evaluator": name, "trialId": t["id"]}})
+					doc{"prompt": full["prompt"], "form": e["form"]}, doc{"overrides": e["overrides"], "config_ref": sha256hex(jsonBytes(e["overrides"]))}, doc{"exampleInputs": inputs, "judge": doc{"evaluator": name, "trialId": t["id"]}})
 				if err != nil {
 					return false, err
 				}
@@ -1467,7 +1501,7 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 			}
 			ver := "unknown"
 			if d := astr(run["definitionSha256"]); len(d) >= 16 {
-				ver = d[:16]
+				ver = sha256hex(jsonBytes([]any{d, e["overrides"]}))[:16]
 			}
 			if _, err := scoreAdd(q, doc{"experimentId": exp["id"], "projectId": exp["project_id"], "trialIds": []any{t["id"]}, "evaluator": name, "evaluatorVersion": ver,
 				"form": e["form"], "value": last["value"], "sourceExecutionId": run["id"], "rationale": last["rationale"]}); err != nil {
@@ -2317,7 +2351,7 @@ func expGet(q *Request, id string) (doc, error) {
 	judges := []any{}
 	for _, r := range runs {
 		if j := mapOf(r["judge"]); j != nil {
-			judges = append(judges, doc{"id": r["id"], "state": r["state"], "evaluator": j["evaluator"], "trialId": j["trialId"], "problem": r["problem"]})
+			judges = append(judges, doc{"id": r["id"], "state": r["state"], "evaluator": j["evaluator"], "trialId": j["trialId"], "trialIds": j["trialIds"], "groupId": j["groupId"], "order": j["order"], "output": judgeOutput(r), "problem": r["problem"]})
 		}
 	}
 	scores := []any{}
@@ -2331,6 +2365,7 @@ func expGet(q *Request, id string) (doc, error) {
 	}
 	out["notes"] = notes
 	out["variants"], out["spend"], out["trials"], out["cells"], out["scores"], out["agreement"], out["judges"] = variants, s, tv, cells, scores, agreement(cur), judges
+	out["pairwise"] = pairwiseView(runs)
 	out["comparison"] = expComparison(exp, trials, cur)
 	out["typed"] = expTyped(exp, trials, cur)
 	out["priority"] = doc{"value": "background", "note": "No effect until the scheduler exists"}

@@ -73,3 +73,24 @@ func TestJudgeRerunRetainsArtifactInputs(t *testing.T) {
 		t.Fatalf("rerun inputs: %v, %v", got, err)
 	}
 }
+
+func TestPairwiseOrderDependenceAndVersions(t *testing.T) {
+	// Requirement: S5 never scores position bias and separates rubrics; risk: false agreement across versions.
+	run := func(id, value string, order int) doc {
+		return doc{"id": id, "state": "succeeded", "judge": doc{"evaluator": "judge:pair:pick_best", "groupId": "g", "trialIds": []any{"a", "b"}, "order": order}, "steps": []any{doc{"output": doc{"value": value}}}}
+	}
+	view := pairwiseView([]doc{run("one", "a", 0), run("two", "b", 1)})
+	if len(view) != 1 || mapOf(view[0])["reason"] != "order-dependent" {
+		t.Fatalf("%v", view)
+	}
+	scores := []doc{
+		{"evaluator": "human:owner:pick_best", "form": "pick_best", "trialIds": []any{"b", "a"}, "value": "a"},
+		{"evaluator": "judge:pair:pick_best", "evaluatorVersion": "v1", "form": "pick_best", "trialIds": []any{"a", "b"}, "value": "a"},
+		{"evaluator": "judge:pair:pick_best", "evaluatorVersion": "v2", "form": "pick_best", "trialIds": []any{"a", "b"}, "value": "b"},
+	}
+	a := agreement(scores)
+	vs := anys(a["byVersion"])
+	if len(vs) != 2 || mapOf(vs[0])["matched"] != 1 || mapOf(vs[1])["matched"] != 0 {
+		t.Fatalf("%v", a)
+	}
+}

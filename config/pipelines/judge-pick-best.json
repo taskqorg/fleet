@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "id": "judge-pick-best",
+  "steps": [
+    {
+      "id": "judge",
+      "kind": "agent",
+      "profile": "codex-judge",
+      "prompt": "Task: ${example.prompt}\nCandidate trial IDs, in display order: ${example.candidates}\nFiles are under $FLEET_INPUT_DIR/example/trial/<trial ID>/. Compare all candidates against the brief, ignoring presentation order. Write output/output.json as {\"value\": \"<winning trial ID or tie>\", \"rationale\": \"reason grounded in observed files\"}. Use tie only when indistinguishable."
+    }
+  ]
+}
