@@ -61,10 +61,99 @@ type AccountRoots struct {
 	NativeHome          *string `json:"nativeHome,omitempty"`
 }
 
+// AgentToolsRequest: POST /api/hosts/agent-tools: one MCP JSON-RPC request of a native agent (request stays the raw JSON-RPC frame).
+type AgentToolsRequest struct {
+	AgentToolKey *string         `json:"agentToolKey,omitempty"`
+	CommandId    string          `json:"commandId"`
+	ExecutionId  string          `json:"executionId"`
+	HostId       string          `json:"hostId"`
+	Request      json.RawMessage `json:"request"`
+}
+
+// ArtifactCommitRequest: POST /api/hosts/artifacts/commit: the uploaded parts with their etags.
+type ArtifactCommitRequest struct {
+	ArtifactId string         `json:"artifactId"`
+	HostId     string         `json:"hostId"`
+	Parts      []ArtifactPart `json:"parts"`
+	StoreId    *string        `json:"storeId,omitempty"`
+}
+
+// ArtifactDeclareRequest: POST /api/hosts/artifacts/declare: a required artifact the execution will upload.
+type ArtifactDeclareRequest struct {
+	ExecutionId string `json:"executionId"`
+	HostId      string `json:"hostId"`
+	Name        string `json:"name"`
+}
+
+// ArtifactFailedRequest: POST /api/hosts/artifacts/failed: a transfer that cannot finish.
+type ArtifactFailedRequest struct {
+	ArtifactId string  `json:"artifactId"`
+	Error      string  `json:"error"`
+	HostId     string  `json:"hostId"`
+	StoreId    *string `json:"storeId,omitempty"`
+}
+
+// ArtifactGetRequest: POST /api/hosts/artifacts/get and /read: one artifact the execution may read.
+type ArtifactGetRequest struct {
+	ArtifactId  string `json:"artifactId"`
+	ExecutionId string `json:"executionId"`
+	HostId      string `json:"hostId"`
+}
+
+// ArtifactLeaseRequest: POST /api/hosts/artifacts/renew: the lease of a running transfer.
+type ArtifactLeaseRequest struct {
+	ArtifactId string  `json:"artifactId"`
+	HostId     string  `json:"hostId"`
+	StoreId    *string `json:"storeId,omitempty"`
+}
+
+// ArtifactListRequest: POST /api/hosts/artifacts/list: the artifacts the execution may read.
+type ArtifactListRequest struct {
+	ExecutionId string                     `json:"executionId"`
+	Filter      map[string]json.RawMessage `json:"filter,omitempty"`
+	HostId      string                     `json:"hostId"`
+}
+
+type ArtifactPart struct {
+	Etag       *string `json:"etag,omitempty"`
+	PartNumber int64   `json:"partNumber"`
+}
+
+// ArtifactPartsRequest: POST /api/hosts/artifacts/parts: presigned URLs for these part numbers.
+type ArtifactPartsRequest struct {
+	ArtifactId  string  `json:"artifactId"`
+	HostId      string  `json:"hostId"`
+	PartNumbers []int64 `json:"partNumbers"`
+	StoreId     *string `json:"storeId,omitempty"`
+}
+
+// ArtifactReserveRequest: POST /api/hosts/artifacts/reserve: an upload's artifact row; the reply names its state and store.
+type ArtifactReserveRequest struct {
+	ArtifactId         *string `json:"artifactId,omitempty"`
+	DerivedFrom        *string `json:"derivedFrom,omitempty"`
+	ExecutionId        string  `json:"executionId"`
+	HostId             string  `json:"hostId"`
+	MediaType          string  `json:"mediaType"`
+	Name               string  `json:"name"`
+	PreviousArtifactId *string `json:"previousArtifactId,omitempty"`
+	Required           *bool   `json:"required,omitempty"`
+	Role               *string `json:"role,omitempty"`
+	Sha256             string  `json:"sha256"`
+	Size               int64   `json:"size"`
+}
+
 // ArtifactTransferPayload: artifact-copy and artifact-verify; the transfer worker reads the rest
 type ArtifactTransferPayload struct {
 	ArtifactId *string `json:"artifactId,omitempty"`
 	StoreId    *string `json:"storeId,omitempty"`
+}
+
+// ArtifactVerifiedRequest: POST /api/hosts/artifacts/verified: the digest a store's host read back.
+type ArtifactVerifiedRequest struct {
+	ArtifactId string `json:"artifactId"`
+	HostId     string `json:"hostId"`
+	Sha256     string `json:"sha256"`
+	StoreId    string `json:"storeId"`
 }
 
 type ChildReceipt struct {
@@ -349,6 +438,25 @@ type StartPayload struct {
 
 type SteerPayload struct {
 	Text string `json:"text"`
+}
+
+// StoreRegistration: A store a host serves; the keys go to the coordinator's secret directory, never to rows.
+type StoreRegistration struct {
+	AccessKeyId     *string `json:"accessKeyId,omitempty"`
+	Bucket          *string `json:"bucket,omitempty"`
+	CapacityBytes   *int64  `json:"capacityBytes,omitempty"`
+	Endpoint        *string `json:"endpoint,omitempty"`
+	Id              string  `json:"id"`
+	LocalEndpoint   *string `json:"localEndpoint,omitempty"`
+	RequiresLogon   *bool   `json:"requiresLogon,omitempty"`
+	SecretAccessKey *string `json:"secretAccessKey,omitempty"`
+	Zone            *string `json:"zone,omitempty"`
+}
+
+// StoresRequest: POST /api/hosts/stores.
+type StoresRequest struct {
+	HostId string            `json:"hostId"`
+	Store  StoreRegistration `json:"store"`
 }
 
 // UpdateResult: last of the host's update-state.json, written by fleet-update

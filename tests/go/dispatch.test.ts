@@ -117,3 +117,14 @@ test('A9 an execution record has one state vocabulary and its real kind and harn
   const e = await execution(sessionId, executionId);
   assert.deepEqual([e.state, e.observation], ['running', 'unconfirmed']);
 });
+
+test('A13 every artifact, store, account and agent-tools host route decodes into its host-protocol type: a field of the wrong type is 400 (requirement: contracts/host-protocol.schema.json Artifact*Request, StoresRequest, AgentToolsRequest, C3; risk: the artifact transfer seam has no contract and a retyped field reads as empty)', {timeout: 30_000}, async () => {
+  const h = await host('trial-host');
+  ok(await h('/api/hosts/poll', poll));
+  for (const [route, body] of [['/api/hosts/artifacts/parts', {artifactId: 'a', partNumbers: '1'}], ['/api/hosts/artifacts/commit', {artifactId: 'a', parts: [{partNumber: 'one'}]}],
+    ['/api/hosts/artifacts/verified', {artifactId: 'a', storeId: 's', sha256: 5}], ['/api/hosts/artifacts/failed', {artifactId: 'a', error: {}}],
+    ['/api/hosts/stores', {store: {id: 's', capacityBytes: 'big'}}], ['/api/hosts/agent-tools', {executionId: 7, commandId: 'c', request: {}}]] as const)
+    assert.ok([400, 403].includes((await h(route, body)).status), route);
+  assert.equal((await h('/api/hosts/artifacts/parts', {artifactId: 'a', partNumbers: '1'})).status, 400);
+  assert.equal((await h('/api/hosts/stores', {store: {id: 's', capacityBytes: 'big'}})).status, 400);
+});
