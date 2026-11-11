@@ -90,11 +90,11 @@ Variant `config_ref` = SHA-256 of canonical `{pipeline, overrides}`. Trial `requ
 
 The record turns an experiment into a decision. Columns on `experiment`: `goal`, `hypothesis`, `primary_evaluator`, `decision_rule`, `lab_group`, `decision` (`adopt <variant> | keep baseline | inconclusive | pending`), `decision_reason`, `decided_by`, `decided_at`.
 
-- **Frozen at launch.** Launch is refused (400) without `goal`, `hypothesis`, `primary_evaluator` and `decision_rule`. From launch on, these fields, the variants and the suite are fixed.
-- **Amendments are visible.** A change after launch is an `experiment_note` row `{experiment_id, kind: amendment | note, field, old, new, text, author, at}`, append-only, shown on the experiment page with its time relative to the first trial result. Notes are never edited or deleted.
-- **Decision.** At close the coordinator applies the frozen `decision_rule` to the [statistics](#statistics) and writes `decision` with `decided_by` null as the proposal. An agent may write `decision_reason`. A person confirms or overrides; an override needs a reason and is an amendment.
+- **Frozen at launch.** Launch is refused (400) without `goal` and `hypothesis` (`lab_experiment_create` takes them with `decisionRule` and `labGroup`; `primary_evaluator` and `decision_rule` become required at launch with the statistics function, stage 4). From launch on (`launched_at`), these fields, the variants and the suite are fixed.
+- **Amendments are visible.** A change after launch is an `experiment_note` row `{experiment_id, kind: amendment | note, field, old, new, text, author, at}`, append-only (a trigger refuses update and delete), written by `lab_experiment_note` and listed as `notes` by `lab_experiment_get`; the experiment page shows it with its time relative to the first trial result (not built). Notes are never edited or deleted.
+- **Decision.** At close the coordinator applies the frozen `decision_rule` to the [statistics](#statistics) and writes `decision` with `decided_by` null as the proposal (until stage 4 it writes `pending`). An agent may write `decision_reason`. A person confirms or overrides with `lab_experiment_decide {experimentId, decision, reason?}` once the experiment is stopped or done; an override of a decision already made needs a reason and is an amendment.
 - An automatic stop (budget `stop`, owner stop) leaves `decision: pending`.
-- Scores outlive their experiment: `score.experiment_id` no longer cascades on delete, so a deleted experiment cannot erase evidence a decision cited. Deleting an experiment with a decision is refused (409).
+- Scores outlive their experiment: `score.experiment_id` has no foreign key (migration 26), so a deleted experiment cannot erase evidence a decision cited. Deleting an experiment with a decision is refused (409); no delete operation exists yet.
 - Record kinds stay distinct: a trial is a run; a score is an assessment; Promote writes the recommendation. The decision is the experiment's own field and is what the [model-selection skill](fleet-pm-agent.md#9-pm-profile) cites.
 
 ## Statistics

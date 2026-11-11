@@ -610,3 +610,31 @@ ALTER TABLE change ADD COLUMN holder text NULL;
 DROP POLICY project_scope ON change;
 CREATE POLICY project_scope ON change USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')) OR holder = current_setting('fleet.person', true));
 CREATE OR REPLACE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; w text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'document' THEN IF r.kind = 'host-observation' AND TG_OP = 'UPDATE' AND (OLD.data - 'lastSeenAt') = (NEW.data - 'lastSeenAt') THEN RETURN NULL; END IF; IF r.kind = 'session' THEN k := 'session'; s := r.id; ELSIF r.kind IN ('event', 'event-delta', 'message') THEN k := 'event'; s := r.data->>'sessionId'; ELSIF r.kind = 'host-observation' THEN k := 'host'; h := r.id; ELSIF r.kind = 'command' THEN k := 'command'; h := r.data->>'hostId'; s := r.data->>'sessionId'; ELSIF r.kind = 'artifact' THEN k := 'artifact'; s := r.data->>'sessionId'; SELECT e.task_id INTO t FROM execution e WHERE e.id = r.data->>'executionId'; ELSIF r.kind IN ('managed-account', 'api-connection', 'connection-key', 'setting-change') THEN k := r.kind; w := r.data->>'holder'; ELSE RETURN NULL; END IF; i := r.id; ELSIF TG_TABLE_NAME = 'task' THEN k := 'task'; i := r.id; t := r.id; ELSIF TG_TABLE_NAME = 'task_derived' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'task_dependency' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'execution' THEN k := 'execution'; i := r.id; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME = 'execution_totals' THEN k := 'execution'; i := r.execution_id; SELECT e.task_id, e.session_id, e.host_id INTO t, s, h FROM execution e WHERE e.id = r.execution_id; ELSIF TG_TABLE_NAME = 'question' THEN k := 'question'; i := r.id; t := r.task_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'experiment' THEN k := 'experiment'; i := r.id; ELSIF TG_TABLE_NAME = 'score' THEN k := 'score'; i := r.id; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op, actor, holder) VALUES (k, i, t, s, h, r.project_id, left(TG_OP, 1), nullif(current_setting('fleet.actor', true), ''), w); PERFORM pg_notify('fleet_change', ''); RETURN NULL; END $$;
+
+-- migration 26: the experiment record (docs/designs/fleet-lab.md, Experiment record). goal and hypothesis are required at
+-- launch; the record fields are frozen from launch on, and a later change is an append-only experiment_note amendment.
+-- decision is written at close (pending until a person or the decision rule settles it). Scores outlive their experiment.
+ALTER TABLE experiment ADD COLUMN goal text NULL, ADD COLUMN hypothesis text NULL, ADD COLUMN decision_rule text NULL,
+ ADD COLUMN lab_group text NULL, ADD COLUMN decision text NULL, ADD COLUMN decision_reason text NULL,
+ ADD COLUMN decided_by text NULL, ADD COLUMN decided_at timestamptz NULL, ADD COLUMN launched_at timestamptz NULL;
+ALTER TABLE experiment ADD CONSTRAINT experiment_decision CHECK (decision IS NULL OR decision IN ('keep baseline', 'inconclusive', 'pending') OR decision LIKE 'adopt %');
+ALTER TABLE score DROP CONSTRAINT score_experiment_id_fkey;
+CREATE TABLE experiment_note(
+ id text PRIMARY KEY,
+ experiment_id text NOT NULL REFERENCES experiment(id),
+ project_id text NOT NULL,
+ kind text NOT NULL CHECK (kind IN ('amendment', 'note')),
+ field text NULL,
+ old jsonb NULL,
+ new jsonb NULL,
+ text text NOT NULL,
+ author text NOT NULL,
+ at timestamptz NOT NULL DEFAULT now(),
+ seq bigint NOT NULL DEFAULT nextval(pg_get_serial_sequence('document', 'seq'))
+);
+CREATE INDEX experiment_note_experiment ON experiment_note(experiment_id, seq);
+ALTER TABLE experiment_note ENABLE ROW LEVEL SECURITY;
+ALTER TABLE experiment_note FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON experiment_note USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')));
+CREATE OR REPLACE FUNCTION fleet_note_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'experiment notes are append-only'; END $$;
+CREATE TRIGGER experiment_note_append_only BEFORE UPDATE OR DELETE ON experiment_note FOR EACH ROW EXECUTE FUNCTION fleet_note_append_only();
