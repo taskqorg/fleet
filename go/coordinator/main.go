@@ -260,7 +260,13 @@ func writeError(w http.ResponseWriter, err error) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]any{"statusCode": code, "error": http.StatusText(code), "message": msg})
+	body := map[string]any{"statusCode": code, "error": http.StatusText(code), "message": msg}
+	if he != nil {
+		for k, v := range he.Extra {
+			body[k] = v
+		}
+	}
+	json.NewEncoder(w).Encode(body)
 }
 
 // readBody keeps the JSON body and applies the host preHandler: a body hostId of another host is 403, a missing one is the
