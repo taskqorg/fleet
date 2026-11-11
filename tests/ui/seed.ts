@@ -20,12 +20,12 @@ export function seeder(c: Coordinator, store?: {port: number, objects: Map<strin
   // A document of kind (session, message, event, host-observation, command, delivery ...): the coordinator's put().
   const put = (kind: string, d: any) => { if (kind === 'execution') return execution(d);
     sql(`INSERT INTO document(kind,id,data,project_id) VALUES(${lit(kind)},${lit(d.id)},${lit(d)}::jsonb,${lit(typeof d.projectId === 'string' ? d.projectId : null)}) ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated_at=now()`); };
-  // An agent run as the API record (legacy state) or typed (kind and typed state).
+  // An agent run as the API record (state mapped to the typed column) or typed (kind and typed state).
   const execution = (e: any) => {
     const state = e.kind ? e.state ?? 'preparing' : LEGACY[e.state] ?? 'preparing';
-    sql(`INSERT INTO execution(id,kind,state,project_id,task_id,session_id,host_id,harness,model,started_at,ended_at,legacy_kind,legacy_id,data,config_ref)
+    sql(`INSERT INTO execution(id,kind,state,project_id,task_id,session_id,host_id,harness,model,started_at,ended_at,data,config_ref)
      VALUES(${lit(e.id)},${lit(e.kind ?? 'agent_run')},${lit(state)},${lit(e.projectId ?? null)},${lit(e.taskId ?? null)},${lit(e.sessionId ?? null)},${lit(e.hostId ?? null)},${lit(e.harness ?? e.agentConfig?.harness ?? 'codex')},${lit(e.model ?? null)},${ms(e.startedAt)},${ms(e.finishedAt)},
-      ${e.kind ? 'NULL' : "'execution'"},${e.kind ? 'NULL' : lit(e.id)},${lit(e.kind ? {} : e)}::jsonb,${lit({effort: e.effort ?? null})}::jsonb)
+      ${lit(e.kind ? {} : {...e, state: undefined})}::jsonb,${lit({effort: e.effort ?? null})}::jsonb)
      ON CONFLICT(id) DO UPDATE SET state=excluded.state,data=excluded.data,started_at=excluded.started_at,ended_at=excluded.ended_at`);
   };
   const task = (v: {title: string, projectId?: string, priority?: string, expectedOutcome?: string, state?: string, waitReason?: string}) => {
