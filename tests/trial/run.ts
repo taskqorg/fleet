@@ -1,4 +1,4 @@
-// Trial slice runner (docs/designs/fleet-stack.md#trial-slice-l1). One command: a fresh Postgres database for this worktree
+// Trial slice runner (docs/designs/fleet-stack-trial.md#trial-slice-l1). One command: a fresh Postgres database for this worktree
 // on one local server, the coordinator under test started against it, the outside tests, teardown. Node standard library
 // and the PostgreSQL client programs only.
 //

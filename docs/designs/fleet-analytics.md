@@ -28,7 +28,7 @@ One operation under the [data foundation §6](fleet-data-foundation.md#6-operati
 **Rules.**
 
 - It runs under the caller's row-level security (`fleet.project_ids`) and never sets the project setting to `'*'`. A test proves that project A sees nothing from project B, including through `score` joins and `tool_run` children.
-- Grouping uses the typed columns only, never JSON extraction from `execution.data`. The columns are added to `execution` in the [coordinator rewrite](fleet-stack.md#coordinator-rewrite) and filled at row creation; rows without them read as `unknown`.
+- Grouping uses the typed columns only, never JSON extraction from `execution.data`. The columns are added to `execution` in the [coordinator rewrite](fleet-go-code.md#coordinator-rewrite) and filled at row creation; rows without them read as `unknown`.
 - Nested usage is not counted again: each measure is summed from the row that recorded it (a `tool_run` for calls and credits, the run for tokens), never from a parent's rolled-up totals. Grouping by `parent` attributes children to their parent.
 - A new index `execution(project_id, started_at)` serves the window; rows with null `started_at` fall outside every window.
 - Sources: `calls` and `connection` from `tool_run` rows, `credits` and money from `execution_totals.connection_cost`, tokens and times from `execution_totals`.

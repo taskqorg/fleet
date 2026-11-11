@@ -208,7 +208,7 @@ The browser app stays TypeScript. Reason: one build from any machine for every p
 
 Go rules:
 
-- Standard library first: `net/http` (routing, SSE), `encoding/json`, `log/slog`. Each third-party module has one row in the [module table](docs/designs/fleet-stack.md#third-party-go-modules): module, what it replaces, why the standard library does not cover it.
+- Standard library first: `net/http` (routing, SSE), `encoding/json`, `log/slog`. Each third-party module has one row in the [module table](docs/designs/fleet-go-code.md#third-party-go-modules): module, what it replaces, why the standard library does not cover it.
 - Allowed now: `github.com/jackc/pgx/v5`, used directly, not through `database/sql`, because LISTEN and connection options need its own API. ClickHouse through its HTTP interface with `net/http`. S3 (Garage) through a hand-written SigV4 signer; `minio-go` would add 19 compiled-in modules.
 - Allowed for the executor: `modernc.org/sqlite` (SQLite without cgo, keeps `journal.sqlite`) and `github.com/ebitengine/purego` (macOS libproc calls without cgo).
 - Not built: a Linux run of the executor probe's signal and crash checks in CI; it precedes the executor port.
