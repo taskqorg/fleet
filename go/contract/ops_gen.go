@@ -410,8 +410,7 @@ type CatalogueReply struct {
 }
 
 type CatalogueRequest struct {
-	Capability *string `json:"capability,omitempty"`
-	ProjectId  string  `json:"projectId"`
+	ProjectId string `json:"projectId"`
 }
 
 // Change: One committed change (the change table), as GET /api/stream and changes_since deliver it.
@@ -848,11 +847,10 @@ type DirectSearchReply = map[string]json.RawMessage
 
 // DirectSearchRequest: Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.
 type DirectSearchRequest struct {
-	Invocation *string `json:"invocation,omitempty"`
-	MethodId   *string `json:"methodId,omitempty"`
-	ProjectId  string  `json:"projectId"`
-	Query      string  `json:"query"`
-	RequestId  string  `json:"requestId"`
+	MethodId  *string `json:"methodId,omitempty"`
+	ProjectId string  `json:"projectId"`
+	Query     string  `json:"query"`
+	RequestId string  `json:"requestId"`
 }
 
 // DispatchOrder: list: the section 6 order list; soonest_reset: ready candidates by earliest weekly reset among those with weekly left above 0 (fleet-people-access.md section 8)
@@ -1566,11 +1564,10 @@ type PipelineRunReply = map[string]json.RawMessage
 
 // PipelineRunRequest: Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.
 type PipelineRunRequest struct {
-	Invocation *string `json:"invocation,omitempty"`
-	MethodId   *string `json:"methodId,omitempty"`
-	ProjectId  string  `json:"projectId"`
-	Query      string  `json:"query"`
-	RequestId  string  `json:"requestId"`
+	MethodId  *string `json:"methodId,omitempty"`
+	ProjectId string  `json:"projectId"`
+	Query     string  `json:"query"`
+	RequestId string  `json:"requestId"`
 }
 
 // PipelineStep: Step kinds are the registry's (D20); validatePipeline stays the full check.
@@ -1610,16 +1607,16 @@ type ProjectListRequest = map[string]json.RawMessage
 
 // ProjectQuestion: A project question to the operator; state waiting or answered.
 type ProjectQuestion struct {
-	Actor      string   `json:"actor"`
-	Answer     *string  `json:"answer,omitempty"`
-	AnsweredAt *float64 `json:"answeredAt,omitempty"`
-	AnsweredBy *string  `json:"answeredBy,omitempty"`
-	CreatedAt  float64  `json:"createdAt"`
-	Id         string   `json:"id"`
-	ProjectId  string   `json:"projectId"`
-	RequestId  string   `json:"requestId"`
-	State      string   `json:"state"`
-	Text       string   `json:"text"`
+	Actor      string  `json:"actor"`
+	Answer     *string `json:"answer,omitempty"`
+	AnsweredAt *int64  `json:"answeredAt,omitempty"`
+	AnsweredBy *string `json:"answeredBy,omitempty"`
+	CreatedAt  int64   `json:"createdAt"`
+	Id         string  `json:"id"`
+	ProjectId  string  `json:"projectId"`
+	RequestId  string  `json:"requestId"`
+	State      string  `json:"state"`
+	Text       string  `json:"text"`
 }
 
 type ProjectReadinessReply struct {

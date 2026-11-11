@@ -447,7 +447,7 @@ func init() {
 		r := doc{"id": "recommendation:" + astr(b["projectId"]), "projectId": b["projectId"], "methodId": b["methodId"], "selectedAt": nowMs(), "actor": actor(q, "operator")}
 		return r, put(q, "project-recommendation", r)
 	}))
-	projectOp("question_ask", false, shaped[contract.QuestionAskRequest, contract.ProjectQuestion](func(q *Request) (any, error) {
+	projectOp("question_ask", false, shaped[contract.QuestionAskRequest, contract.QuestionAskReply](func(q *Request) (any, error) {
 		b := body(q)
 		if _, err := projectContext(astr(b["projectId"])); err != nil {
 			return nil, err
@@ -527,6 +527,7 @@ func init() {
 		if p := astr(b["projectId"]); p != "" && astr(r["projectId"]) != p {
 			return nil, fail(403, "Pipeline belongs to another project")
 		}
+
 		return r, nil
 	}))
 	projectOp("pipeline_history", true, shaped[contract.PipelineHistoryRequest, contract.PipelineHistoryReply](func(q *Request) (any, error) {
