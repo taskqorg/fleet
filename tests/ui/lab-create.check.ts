@@ -25,7 +25,7 @@ try {
   let posts = 0; p.on('request', r => { if (r.url().endsWith('/api/ops/lab_experiment_create')) posts++; });
   const pick = async (button: string | RegExp, group: string, id: string, multiple = false) => {
     await p.getByRole('button', { name: button, exact: typeof button === 'string' }).click();
-    await p.getByRole('textbox', { name: `Search ${group}` }).fill(id);
+    await p.getByRole('searchbox', { name: `Search ${group}` }).fill(id);
     const row = p.getByRole('grid', { name: group, exact: true }).getByRole('row').filter({ has: p.locator('.id', { hasText: new RegExp('^' + id + '$') }) });
     await row.getByRole('button').click();
     if (multiple) await p.getByRole('button', { name: 'Done choosing', exact: true }).click();
@@ -95,13 +95,13 @@ try {
   await p.reload(); assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), 'Actor-scoped draft');
   // Grant change invalidates the key even if another tab already updated the common grant marker.
   await p.getByRole('button', { name: /^Project:/ }).click();
-  await p.getByRole('textbox', { name: 'Search Projects' }).waitFor();
+  await p.getByRole('searchbox', { name: 'Search Projects' }).waitFor();
   await p.route('**/api/ops/me', async route => { const response = await route.fetch(); const m = await response.json(); await route.fulfill({ json: { ...m, grantsVersion: 'changed-for-fixture' } }); });
   await p.evaluate(() => window.dispatchEvent(new Event('focus')));
   await p.getByText('Access changed. Reload before creating a draft.', { exact: true }).waitFor();
   assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), '');
   assert.equal(await p.getByRole('grid', { name: 'Projects', exact: true }).count(), 0);
-  assert.equal(await p.getByRole('textbox', { name: 'Search Projects' }).count(), 0);
+  assert.equal(await p.getByRole('searchbox', { name: 'Search Projects' }).count(), 0);
   assert.deepEqual(counts(), before);
   await context.close();
 } finally { await browser.close(); await close(); }
