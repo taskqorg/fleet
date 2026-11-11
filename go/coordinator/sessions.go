@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -235,7 +236,8 @@ func sessionArchive(q *Request, sid string) (doc, error) {
 			last = e
 		}
 	}
-	if old, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown"}); err != nil || len(old) > 0 {
+	// A teardown still on its way is the answer; a finished one (kept, or sent on delivery) does not stop a new one.
+	if old, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown", "status": "pending"}); err != nil || len(old) > 0 {
 		if err != nil {
 			return nil, err
 		}
@@ -271,7 +273,7 @@ func teardownCommand(q *Request, s, last doc, deleteBranch bool) (doc, error) {
 }
 
 // deliveredTeardown: an accepted task's sessions get their worktree teardown (fleet-system-management.md, Worktree on
-// delivery). A session with a live execution, or a teardown already sent, is left alone.
+// delivery). A session with a live execution, or a teardown still pending, is left alone; archiving it later sends one.
 func deliveredTeardown(q *Request, taskID string) error {
 	sids, err := queryRows(q, "SELECT DISTINCT session_id FROM execution WHERE task_id=$1 AND session_id IS NOT NULL", taskID)
 	if err != nil {
@@ -280,10 +282,12 @@ func deliveredTeardown(q *Request, taskID string) error {
 	for _, r := range sids {
 		sid := astr(r["session_id"])
 		s, err := get(q, sid, "session")
-		if err != nil {
-			continue // a session row this scope cannot read
+		if errors.Is(err, errNotFound) {
+			continue
+		} else if err != nil {
+			return err
 		}
-		if old, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown"}); err != nil || len(old) > 0 {
+		if old, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown", "status": "pending"}); err != nil || len(old) > 0 {
 			if err != nil {
 				return err
 			}

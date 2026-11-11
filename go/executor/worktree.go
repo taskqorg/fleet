@@ -334,7 +334,7 @@ func keepReasons(project any) map[string]bool {
 }
 
 // teardown: teardown script, then remove the worktree unless a cleanup.keepWhen reason holds (uncommitted changes,
-// commits not on the upstream or no upstream, a failed teardown script). The branch goes with -d (merged only), or -D
+// commits on no remote branch, a failed teardown script). The branch goes with -d (merged only), or -D
 // when the work was delivered (deleteBranch: the task was accepted).
 func teardown(dir, session, top string, project any, deleteBranch bool) contract.Teardown {
 	keep := keepReasons(project)
@@ -372,8 +372,9 @@ func teardown(dir, session, top string, project any, deleteBranch bool) contract
 		return out
 	}
 	if keep["unpushed"] {
-		ahead, err := hardenedGit("-C", w, "rev-list", "@{u}..HEAD").Output()
-		if err != nil || len(strings.TrimSpace(string(ahead))) > 0 { // no upstream, or commits the upstream lacks
+		// Commits on no remote-tracking branch (session branches are created --no-track, so there is no @{u} to ask).
+		ahead, err := hardenedGit("-C", w, "rev-list", "-n", "1", "HEAD", "--not", "--remotes").Output()
+		if err != nil || len(strings.TrimSpace(string(ahead))) > 0 {
 			out.Reason = new("unpushed")
 			return out
 		}

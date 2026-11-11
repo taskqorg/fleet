@@ -18,6 +18,7 @@ test('W1 accepting a task sends one teardown with deleteBranch for its finished 
     const task = await call('/api/ops/task_create', {projectId: 'hello-world', title: 'delivered'});
     const taskId = task.id ?? task.taskId;
     const {sessionId} = await call('/api/sessions', {});
+    c.sql(`UPDATE document SET data=data||'{"projectId":"hello-world"}' WHERE kind='session' AND id='${sessionId}'`);
     const e = await call(`/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'hello'});
     c.sql(`UPDATE execution SET task_id='${taskId}' WHERE id='${e.id}'`);
     const poll = () => call('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
@@ -30,6 +31,6 @@ test('W1 accepting a task sends one teardown with deleteBranch for its finished 
     const teardowns = (await poll()).commands.filter((x: any) => x.kind === 'teardown' && x.sessionId === sessionId);
     assert.equal(teardowns.length, 1);
     assert.equal(teardowns[0].payload.deleteBranch, true);
-    assert.deepEqual(teardowns[0].payload.project?.cleanup?.keepWhen ?? ['uncommitted', 'unpushed', 'teardown-failed'], ['uncommitted', 'unpushed', 'teardown-failed']);
+    assert.deepEqual(teardowns[0].payload.project.cleanup.keepWhen, ['uncommitted', 'unpushed', 'teardown-failed']);
   } finally { await c.stop(); }
 });

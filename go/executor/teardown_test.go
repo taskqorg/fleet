@@ -7,9 +7,10 @@ import (
 	"testing"
 )
 
-// Requirement: fleet-system-management.md, Worktree on delivery. A worktree whose commits are not on its upstream (or
-// that has none) is kept with reason unpushed; a pushed one is removed, and on delivery its local branch goes with -D
-// (git -d refuses a branch merged neither into HEAD nor its upstream, as after a squash merge). Risk: delivered worktrees pile up, or unpushed work is deleted.
+// Requirement: fleet-system-management.md, Worktree on delivery. A worktree with commits on no remote branch is kept
+// as unpushed; a pushed one is removed. A session branch has no upstream (--no-track) and a squash merge leaves it
+// unmerged into main, so git branch -d refuses it; on delivery it goes with -D. Risk: delivered worktrees and branches
+// pile up, or unpushed work is deleted.
 func TestTeardownUnpushedAndDelivered(t *testing.T) {
 	top, dir := t.TempDir(), t.TempDir()
 	git := func(d string, args ...string) {
@@ -21,28 +22,30 @@ func TestTeardownUnpushedAndDelivered(t *testing.T) {
 	}
 	git(top, "init", "-q", "-b", "main")
 	git(top, "commit", "-q", "--allow-empty", "-m", "base")
-	w := filepath.Join(dir, "worktree")
-	git(top, "worktree", "add", "-q", "-b", "fleet/s1", w)
-	git(w, "commit", "-q", "--allow-empty", "-m", "work") // not merged into main: -d would refuse
-	if r := teardown(dir, "s1", top, M{}, true); r.Removed || str0(r.Reason) != "unpushed" {
-		t.Fatalf("no upstream: %+v", r)
-	}
 	git(top, "remote", "add", "origin", "https://example.invalid/r.git")
-	git(top, "update-ref", "refs/remotes/origin/fleet/s1", "fleet/s1")
-	git(top, "config", "branch.fleet/s1.remote", "origin")
-	git(top, "config", "branch.fleet/s1.merge", "refs/heads/fleet/s1")
-	if r := teardown(dir, "s1", top, M{"cleanup": M{"keepWhen": []any{"uncommitted"}}}, false); !r.Removed {
-		t.Fatalf("pushed: removed: %+v", r)
+	git(top, "update-ref", "refs/remotes/origin/main", "main")
+	w := filepath.Join(dir, "worktree")
+	add := func() { git(top, "worktree", "add", "-q", "--no-track", "-b", "fleet/s1", w, "main") }
+	add()
+	if r := teardown(dir, "s1", top, M{}, false); !r.Removed {
+		t.Fatalf("no commits of its own: removed: %+v", r)
 	}
-	git(top, "worktree", "add", "-q", w, "fleet/s1")
-	git(w, "commit", "-q", "--allow-empty", "-m", "more")
-	git(top, "update-ref", "refs/remotes/origin/fleet/s1", "fleet/s1") // pushed, not merged into main
+	add()
+	git(w, "commit", "-q", "--allow-empty", "-m", "work")
+	if r := teardown(dir, "s1", top, M{}, true); r.Removed || str0(r.Reason) != "unpushed" {
+		t.Fatalf("local commit: kept: %+v", r)
+	}
 	os.WriteFile(filepath.Join(w, "x"), []byte("x"), 0o600)
 	if r := teardown(dir, "s1", top, M{}, true); r.Removed || str0(r.Reason) != "uncommitted" {
-		t.Fatalf("dirty: %+v", r)
+		t.Fatalf("dirty: kept: %+v", r)
 	}
 	os.Remove(filepath.Join(w, "x"))
+	git(top, "update-ref", "refs/remotes/origin/fleet/s1", "fleet/s1") // pushed (git push origin HEAD), squash-merged elsewhere
+	if r := teardown(dir, "s1", top, M{}, false); !r.Removed || r.BranchDeleted == nil || *r.BranchDeleted {
+		t.Fatalf("not delivered: removed, -d keeps the unmerged branch: %+v", r)
+	}
+	git(top, "worktree", "add", "-q", w, "fleet/s1")
 	if r := teardown(dir, "s1", top, M{}, true); !r.Removed || r.BranchDeleted == nil || !*r.BranchDeleted {
-		t.Fatalf("delivered: removed with its branch: %+v %s", r, str0(r.Reason))
+		t.Fatalf("delivered: removed with its branch: %+v", r)
 	}
 }
