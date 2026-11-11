@@ -505,13 +505,21 @@ func (u *updater) executorHealth(signal string) func(string) probe {
 }
 
 func (u *updater) latest() string {
-	b, err := u.get(u.base + "/latest/download/latest.json")
+	resp, err := u.client.Get(u.base + "/latest/download/latest.json")
 	if err != nil {
 		log.Print("latest.json: ", err)
 		return ""
 	}
+	defer resp.Body.Close()
 	var l struct{ Version string }
-	json.Unmarshal(b, &l)
+	json.NewDecoder(resp.Body).Decode(&l)
+	// ponytail: diagnostic for the pickup lag (delivery pipeline §6); remove once the cause is known.
+	h := resp.Header.Get
+	log.Printf("latest.json: %s version=%q from=%s date=%q age=%q etag=%q last-modified=%q x-cache=%q x-served-by=%q",
+		resp.Status, l.Version, resp.Request.URL.Host+resp.Request.URL.Path, h("Date"), h("Age"), h("ETag"), h("Last-Modified"), h("X-Cache"), h("X-Served-By"))
+	if resp.StatusCode != 200 {
+		return ""
+	}
 	return l.Version
 }
 
