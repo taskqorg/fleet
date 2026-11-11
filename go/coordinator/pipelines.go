@@ -111,7 +111,7 @@ func loadPipeline(file string) (doc, error) {
 	if !pipelineFile.MatchString(file) {
 		return nil, fail(500, "Invalid pipeline reference")
 	}
-	b, err := os.ReadFile(filepath.Join(projectConfigDir(), "pipelines", file))
+	b, err := os.ReadFile(filepath.Join(configDir(), "pipelines", file))
 	if err != nil {
 		return nil, fail(404, "Unknown pipeline "+strings.TrimSuffix(file, ".json"))
 	}
@@ -400,7 +400,7 @@ func pipelineAdvance(a *App, runID string) {
 func pipelineWait(ctx context.Context, a *App, runID string) (doc, error) {
 	for {
 		var r doc
-		if err := readTx(ctx, a, func(q *Request) (err error) { r, err = getRun(q, runID); return }); err != nil {
+		if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) { r, err = getRun(q, runID); return }); err != nil {
 			return nil, err
 		}
 		if r == nil {
@@ -420,7 +420,7 @@ func pipelineWait(ctx context.Context, a *App, runID string) (doc, error) {
 // pipelineOnExecution: the run whose step is this execution moves on (receipt hook; the tick is the backstop).
 func pipelineOnExecution(a *App, executionID string) {
 	var ids []string
-	readTx(context.Background(), a, func(q *Request) error {
+	runTx(context.Background(), a, nil, false, "", func(q *Request) error {
 		rs, err := queryRows(q, "SELECT parent_execution_id AS id FROM execution WHERE kind='pipeline_step' AND data->>'executionId'=$1", executionID)
 		for _, r := range rs {
 			ids = append(ids, astr(r["id"]))
@@ -434,7 +434,7 @@ func pipelineOnExecution(a *App, executionID string) {
 
 func pipelineTick(ctx context.Context, a *App) {
 	var ids []string
-	readTx(ctx, a, func(q *Request) error {
+	runTx(ctx, a, nil, false, "", func(q *Request) error {
 		rs, err := queryRows(q, "SELECT id FROM execution WHERE "+runRows+" AND state='running' AND (data->'definition'->>'version')::int=2 ORDER BY seq")
 		for _, r := range rs {
 			ids = append(ids, astr(r["id"]))
@@ -458,7 +458,7 @@ func pipelineCancel(ctx context.Context, a *App, runID string) (string, error) {
 	defer m.Unlock()
 	own := ""
 	var done doc
-	err := writeTx(ctx, a, "", func(q *Request) error {
+	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 		run, err := getRun(q, runID)
 		if err != nil || run == nil || run["state"] != "running" {
 			return err
@@ -714,7 +714,7 @@ func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, 
 		return unavailable
 	}
 	var token string
-	err := writeTx(ctx, a, "", func(q *Request) error {
+	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 		by := mapOf(run["requestedBy"])["email"]
 		m, err := mint(q, doc{"executionId": executionID, "directedBy": by, "projectId": run["projectId"], "experimentId": run["experimentId"], "step": true}, []string{connection})
 		if err == nil {
@@ -727,7 +727,7 @@ func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, 
 	}
 	writeSnapshot(ctx, a) // the gateway must see the token before the call
 	line := gatewayCall(ctx, token, connection, tool, args)
-	if err := writeTx(ctx, a, "", func(q *Request) error {
+	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 		if err := revokeTokens(q, executionID); err != nil {
 			return err
 		}
@@ -766,7 +766,7 @@ func creditsOf(q *Request, executionID string) (any, error) {
 func advanceOnce(ctx context.Context, a *App, runID string) error {
 	for {
 		var run doc
-		if err := readTx(ctx, a, func(q *Request) (err error) { run, err = getRun(q, runID); return }); err != nil {
+		if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) { run, err = getRun(q, runID); return }); err != nil {
 			return err
 		}
 		if run == nil || run["state"] != "running" || mapOf(run["definition"])["version"] != float64(2) {
@@ -780,7 +780,7 @@ func advanceOnce(ctx context.Context, a *App, runID string) error {
 			}
 		}
 		if i < 0 {
-			if err := writeTx(ctx, a, "", func(q *Request) error { return finishRun(q, run, "succeeded", "") }); err != nil {
+			if err := runTx(ctx, a, nil, true, "", func(q *Request) error { return finishRun(q, run, "succeeded", "") }); err != nil {
 				return err
 			}
 			notifyFinished(a, run)
@@ -809,7 +809,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	row := stepRow(run, i)
 	kind := astr(def["kind"])
-	tx := func(fn func(q *Request) error) error { return writeTx(ctx, a, "", fn) }
+	tx := func(fn func(q *Request) error) error { return runTx(ctx, a, nil, true, "", fn) }
 	failNow := func(problem, message string) (bool, error) {
 		return false, tx(func(q *Request) error { return failStep(q, run, i, problem, message) })
 	}
@@ -857,7 +857,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 					tasks = anys(mapOf(listed)["result"])
 				}
 				owned := map[string]bool{}
-				readTx(ctx, a, func(q *Request) error {
+				runTx(ctx, a, nil, false, "", func(q *Request) error {
 					rs, err := queryRows(q, "SELECT data->>'jobId' AS id FROM execution WHERE data ? 'jobId'")
 					for _, r := range rs {
 						owned[astr(r["id"])] = true
@@ -1019,7 +1019,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	// Agent or script step running: wait for its execution.
 	var e doc
-	if err := readTx(ctx, a, func(q *Request) (err error) { e, err = maybe(q, s["executionId"], "execution"); return }); err != nil || e == nil {
+	if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) { e, err = maybe(q, s["executionId"], "execution"); return }); err != nil || e == nil {
 		return false, err
 	}
 	st := astr(e["state"])
@@ -1046,7 +1046,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	var arts []doc
 	var pending int
-	if err := readTx(ctx, a, func(q *Request) error {
+	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
 		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM artifact WHERE execution_id=$1 AND state='pending'", s["executionId"]).Scan(&pending); err != nil {
 			return err
 		}
@@ -1142,10 +1142,7 @@ func init() {
 
 func pipelineRunCreate(q *Request) (doc, error) {
 	{
-		b, err := bodyObject(q)
-		if err != nil {
-			return nil, err
-		}
+		b := body(q)
 		rid, ok := b["requestId"].(string)
 		if !ok || rid == "" || len(rid) > 200 || !keysOnly(b, "requestId", "projectId", "exampleArtifactId", "example", "overrides") {
 			return nil, fail(400, "Expected requestId and optional projectId, exampleArtifactId or example, overrides")
@@ -1154,7 +1151,7 @@ func pipelineRunCreate(q *Request) (doc, error) {
 		if _, err := loadPipeline(file); err != nil {
 			return nil, err
 		}
-		signature := sha256hex([]byte(canonicalJSON(b)))
+		signature := sha256hex([]byte(canonical(b)))
 		old, err := runsWhere(q, "data->>'requestId'=$1 AND data->>'pipeline'=$2", rid, file)
 		if err != nil {
 			return nil, err
@@ -1251,21 +1248,9 @@ func longOp(name string, h handler) {
 	})
 }
 
-// writeTxAs runs fn in one write transaction in the person's scope (long operations and routes).
-func writeTxAs(q *Request, lock string, fn func(q *Request) error) error {
-	return q.app.store.Tx(q.ctx(), scopeOf(q.person), true, lock, func(tx pgx.Tx) error {
-		q.tx = tx
-		defer func() { q.tx = nil }()
-		return fn(q)
-	})
-}
-
 // runPipeline: the selected method's v2 pipeline with the query as the example ({query, prompt}); waits for the run.
 func runPipeline(q *Request, invocation string) (any, error) {
-	b, err := bodyObject(q)
-	if err != nil {
-		return nil, err
-	}
+	b := body(q)
 	if invocation == "direct" {
 		b["invocation"] = "direct"
 	}
@@ -1281,8 +1266,8 @@ func runPipeline(q *Request, invocation string) (any, error) {
 	}
 	var run doc
 	old := false
-	err = writeTxAs(q, "", func(q *Request) error {
-		signature := sha256hex([]byte(canonicalJSON(doc{"projectId": b["projectId"], "query": query, "methodId": b["methodId"], "invocation": inv})))
+	err := runTx(q.ctx(), q.app, q, true, "", func(q *Request) error {
+		signature := sha256hex([]byte(canonical(doc{"projectId": b["projectId"], "query": query, "methodId": b["methodId"], "invocation": inv})))
 		prev, err := runsWhere(q, "data->>'projectId'=$1 AND data->>'requestId'=$2", astr(b["projectId"]), rid)
 		if err != nil {
 			return err
@@ -1362,7 +1347,7 @@ func profileSkills(profile doc) ([]any, error) {
 		if !skillID.MatchString(id) {
 			return nil, fail(400, "Invalid skill")
 		}
-		text, err := os.ReadFile(filepath.Join(projectConfigDir(), "skills", id, "SKILL.md"))
+		text, err := os.ReadFile(filepath.Join(configDir(), "skills", id, "SKILL.md"))
 		if err != nil {
 			return nil, fail(400, "Unknown skill "+id)
 		}

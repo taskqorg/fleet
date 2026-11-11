@@ -123,7 +123,11 @@ func main() {
 		fail("%v", err)
 	}
 	var root struct {
-		Defs map[string]schema `json:"$defs"`
+		Defs       map[string]schema `json:"$defs"`
+		Operations map[string]struct {
+			Read, Long bool
+			Errors     []int
+		} `json:"operations"`
 	}
 	if err := json.Unmarshal(raw, &root); err != nil {
 		fail("%v", err)
@@ -186,6 +190,24 @@ func main() {
 			ft, _ := goType(s, n)
 			fmt.Fprintf(&b, "type %s = %s\n\n", name, ft)
 		}
+	}
+	if len(root.Operations) > 0 {
+		ops := make([]string, 0, len(root.Operations))
+		for n := range root.Operations {
+			for _, d := range []string{"Request", "Reply"} {
+				if root.Defs[exported(n)+d] == nil {
+					fail("operation %s has no $defs %s%s", n, exported(n), d)
+				}
+			}
+			ops = append(ops, n)
+		}
+		sort.Strings(ops)
+		b.WriteString("// Operations: every coordinator operation; each name has <Name>Request and <Name>Reply.\nvar Operations = map[string]Operation{\n")
+		for _, n := range ops {
+			o := root.Operations[n]
+			fmt.Fprintf(&b, "\t%q: {Read: %v, Long: %v, Errors: %#v},\n", n, o.Read, o.Long, o.Errors)
+		}
+		b.WriteString("}\n\n")
 	}
 	out, err := format.Source(b.Bytes())
 	if err != nil {

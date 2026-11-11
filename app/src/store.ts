@@ -8,7 +8,7 @@
 // newer record or list. Changes that arrive while a list's page is loading are asked about once the page has landed.
 import { signal, effect, type Signal } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { op, online, signedOut, OpError } from './api.ts';
+import { op, online, signedOut, OpError, type Ops } from './api.ts';
 import { subscribe, currentCursor, feedState, type Change } from './feed.ts';
 import { applyMembership, chunks, touched, type Row, type SortKey } from './lists.ts';
 import { save, load, onClear, pruneKeys } from './offline.ts';
@@ -70,7 +70,7 @@ function putRows(rows: Row[], seq: number) {
 }
 /** Drop records no list holds any more. */
 function pruneRecords() { for (const id of records.keys()) if (!holders.get(id)?.size) { records.delete(id); holders.delete(id); } }
-const rowsOf = (r: any): Row[] => r.tasks ?? r.sessions;
+const rowsOf = (r: Ops['task_page']['reply'] | Ops['sessions_list']['reply']): Row[] => ('tasks' in r ? r.tasks : r.sessions) as Row[];
 const opName = (k: Kind) => k === 'tasks' ? 'task_page' : 'sessions_list';
 // The snapshot is built when the write happens (offline.save calls it at most once a second).
 const persist = (key: string, e: Entry) => save<Saved>('list:' + key, () => { const s = e.state.value!; return { ids: s.ids, keys: s.keys, counts: s.counts, total: s.total, groups: s.groups, nextAfter: s.nextAfter, at: s.at, rows: s.ids.map(id => records.get(id)?.row).filter((r): r is Row => !!r) }; }, currentCursor());
@@ -95,7 +95,7 @@ export async function loadList(kind: Kind, key: string, view: View, abort?: Abor
     const r = await op(opName(kind), { ...e.params, limit: 100 }, { signal: abort });
     if (from < e.seq) return; // a newer membership answer already updated this list
     const rows = rowsOf(r);
-    setList(key, e, { ...idsAndKeys(rows), counts: r.counts, total: r.total, groups: r.groups ?? [], nextAfter: r.nextAfter, at: Date.now(), restored: false, error: null });
+    setList(key, e, { ...idsAndKeys(rows), counts: r.counts, total: r.total, groups: 'groups' in r ? r.groups : [], nextAfter: r.nextAfter, at: Date.now(), restored: false, error: null });
     putRows(rows, from); e.seq = from; persist(key, e); pruneRecords();
   } catch (err: any) {
     if (err instanceof OpError && err.message === 'aborted') return;
@@ -114,7 +114,7 @@ export async function nextPage(key: string) {
   if (!e || !st?.nextAfter || e.paging || e.loading) return;
   e.paging = true; const from = cursorNow();
   try {
-    const r = await op(opName(e.kind), { ...e.params, limit: 100, after: st.nextAfter });
+    const r = await op(opName(e.kind), { ...e.params, limit: 100, after: st.nextAfter as unknown[] });
     const now = e.state.value;
     if (!now || now.nextAfter !== st.nextAfter) return; // a reload or another page got there first
     const rows = rowsOf(r), have = new Set(now.ids), add = idsAndKeys(rows.filter(x => !have.has(x.id)));

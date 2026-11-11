@@ -5,6 +5,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const OWNER = 'owner@trial.test';
@@ -116,4 +117,15 @@ test('A9 an execution record has one state vocabulary and its real kind and harn
   ok(await h('/api/hosts/receipts', {commandId: command.id, executionId, status: 'unknown'}));
   const e = await execution(sessionId, executionId);
   assert.deepEqual([e.state, e.observation], ['running', 'unconfirmed']);
+});
+
+test('A11 the start command payload is the StartPayload contract: named fields only, no blind merge (requirement: contracts/host-protocol.schema.json StartPayload, C7 coordinator side; risk: a dead or overriding payload field reaches the executor)', {timeout: 30_000}, async () => {
+  const h = await host('trial-host');
+  ok(await h('/api/hosts/poll', poll));
+  const {executionId} = await queued();
+  const c = ok(await h('/api/hosts/poll', poll)).commands.find((x: any) => x.executionId === executionId);
+  const schema = JSON.parse(readFileSync(new URL('../../contracts/host-protocol.schema.json', import.meta.url), 'utf8'));
+  const allowed = Object.keys(schema.$defs.StartPayload.properties);
+  assert.deepEqual(Object.keys(c.payload).filter(k => !allowed.includes(k)), []);
+  assert.deepEqual([c.kind, c.payload.harness, c.payload.text], ['start', 'codex', 'hello']);
 });

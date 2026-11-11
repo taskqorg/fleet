@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fleet/contract"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -211,5 +212,32 @@ func TestOutputCollectionSkipsLinks(t *testing.T) {
 	must(os.Symlink(outside, filepath.Join(root, "s", "linked")))
 	if err := e.artifacts(filepath.Join(root, "s"), []string{"linked"}, "x2", &declared); err == nil {
 		t.Fatal("linked output folder collected")
+	}
+}
+
+// Requirement: a command payload is read through its per-kind contract type; a field of the wrong type refuses the
+// command with its reason, an unknown field is ignored (C7). Risk: a drifted coordinator field silently becomes "" and a run starts with wrong input.
+func TestPayloadOfWrongTypeRefused(t *testing.T) {
+	// Hosts update at different times: a field this executor does not know is ignored, never a refusal.
+	sp, err := payloadOf[contract.StartPayload](M{"payload": M{"instructions": "x", "fieldFromANewerCoordinator": M{"a": 1}}})
+	if err != nil || str0(sp.Instructions) != "x" {
+		t.Fatal("unknown payload field refused", err)
+	}
+	e, _ := scriptExecutor(t)
+	e.run(M{"id": "c9", "executionId": "x9", "sessionId": "s9", "kind": "start", "payload": M{"instructions": 5}})
+	e.run(M{"id": "c10", "executionId": "x10", "sessionId": "s10", "kind": "script", "payload": M{"command": "true", "timeout_ms": 1.5}})
+	if lastReceipt(e, "c9") != "failed" || lastReceipt(e, "c10") != "failed" {
+		t.Fatal(lastReceipt(e, "c9"), lastReceipt(e, "c10"))
+	}
+	rs, _ := e.db.Query("SELECT body FROM outbox WHERE route='/api/hosts/events'")
+	var all strings.Builder
+	for rs.Next() {
+		var b string
+		rs.Scan(&b)
+		all.WriteString(b)
+	}
+	rs.Close()
+	if !strings.Contains(all.String(), "invalid start payload") || !strings.Contains(all.String(), "invalid script payload") {
+		t.Fatal("refusal reasons missing:", all.String())
 	}
 }
