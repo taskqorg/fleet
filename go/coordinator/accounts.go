@@ -692,16 +692,18 @@ func resolveAccount(q *Request, selection *string, harness, host string, directo
 	if a["harness"] != harness {
 		return nil, fail(409, "Selected account harness mismatch")
 	}
-	takes := inList(strs(mapOf(a["take"])["projects"]), astr(projectID))
 	dir := astr(director)
-	if selection == nil && dir != "" && a["holder"] != dir && !(astr(projectID) != "" && takes) {
+	// A take rule covers its projects; a director with full access (the owner, or a grant on *, as site-agents has
+	// in development) may take any subscription. Either way the execution records takenFrom, the real director.
+	takes := inList(strs(mapOf(a["take"])["projects"]), astr(projectID)) && astr(projectID) != "" || q.app.people[dir] != nil && fullAccess(q.app.people[dir])
+	if selection == nil && dir != "" && a["holder"] != dir && !takes {
 		return nil, nil
 	}
 	if a["intake"] == "paused" {
 		return nil, fail(409, fmt.Sprintf("Subscription %s is Paused", a["name"]))
 	}
 	taken := dir != "" && a["holder"] != dir
-	if taken && !(astr(projectID) != "" && takes) {
+	if taken && !takes {
 		return nil, fail(409, fmt.Sprintf("Subscription %s is held by %s; work directed by %s needs a take", a["name"], a["holder"], dir))
 	}
 	if ok, err := harnessAllowed(q, host, harness); err != nil || !ok {

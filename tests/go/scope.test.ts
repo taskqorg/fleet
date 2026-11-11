@@ -148,3 +148,15 @@ test('S-SESS session routes: a member cannot message or re-profile a session of 
   assert.equal((await call('POST', `/api/sessions/${theirs}/profile`, {profileId: 'pm'}, as(MEMBER))).status, 404);
   ok(await call('POST', `/api/sessions/${shared}/messages`, {requestId: randomUUID(), text: 'x'}, as(MEMBER)));
 });
+
+test('S9 a director with grant * takes the owner\'s subscription without a take rule, and the execution keeps who directed it (requirement: development owner rule 2026-11-11, agents may do every owner-only operation; risk: site-agents cannot run Claude on owner-mac, or a take hides the real director)', async () => {
+  const AGENTS = 'agents@trial.test';
+  const h = await host();
+  const a = ok(await op('account_create', {name: 'star-sub', harness: 'codex'}));
+  ok(await h('/api/hosts/accounts', {accountId: a.id, hostId: 'trial-host', binding: 'star-bind', platform: 'darwin', readiness: 'ready'}));
+  const s = ok(await op('session_start', {requestId: randomUUID(), text: 'star turn', projectId: OTHER, profileId: 'pm', hostId: 'trial-host', account: 'star-sub'}, AGENTS));
+  const {commands} = ok(await h('/api/hosts/poll', poll));
+  assert.ok(commands.some((c: any) => c.executionId === s.executionId && c.kind === 'start'), 'the owner-held subscription runs work directed by grant *');
+  const e = ok(await call('GET', '/api/sessions/' + s.sessionId, undefined, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
+  assert.equal(e.takenFrom, AGENTS, 'the real director stays on the execution');
+});
