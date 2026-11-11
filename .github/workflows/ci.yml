@@ -195,6 +195,7 @@ jobs:
         run: pnpm exec playwright install-deps chromium
       - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/filter.check.ts --assert
       - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/conversations.check.ts
+      - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/lab-create.check.ts
       # Use-case registry drift (docs/designs/fleet-lab.md "Use-case registry and examples"): warns, never blocks. Only Fleet's own sources are
       # checked here; the other org repos are not checked out, so their entries report nothing.
       - name: Use-case drift (warning only)

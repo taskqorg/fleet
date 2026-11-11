@@ -7,6 +7,7 @@ import { useLocation } from 'wouter-preact';
 import { StateBadge, Button, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, ROW2, percent, SettingField } from '../../../packages/ui/src/index.ts';
 import { op, type OpName, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
+import { LabCreate } from './lab-create.tsx';
 
 const LAB_KINDS = new Set(['experiment', 'score', 'question', 'execution']);
 const touches = (c: { kind: string }) => LAB_KINDS.has(c.kind);
@@ -22,11 +23,12 @@ export function Lab({ id }: { id?: string }) {
     return { experiments: x.experiments, useCases: r.useCases, ratings: p.ratings, proposed: ex.examples };
   }, touches);
   const now = Date.now();
+  if (id === 'new') return <LabCreate />;
   if (!data) return <><header class="page-h"><h1>Lab</h1></header><Empty text="Loading…" /></>;
   const approvals = data.ratings.filter((r: any) => r.exampleArtifactId), open = data.ratings.filter((r: any) => r.experimentId);
   // Control column: what waits for the owner, then the experiments catalogue (its one scroller, OR-25).
   const list = <>
-    <header class="page-h"><h1>Lab</h1><span class="grow" /><OfflineMarker state={state} now={now} /></header>
+    <header class="page-h"><h1>Lab</h1><span class="grow" /><Button label="New experiment" icon="plus" iconOnly onClick={() => go('/lab/new')} /><OfflineMarker state={state} now={now} /></header>
     {(approvals.length > 0 || open.length > 0) && <section class="panel"><header class="panel-h"><Icon name="bell" /><h2>Waiting for you</h2></header>
       {open.length > 0 && <div class="vl-row static"><span>{open.length} open ratings</span></div>}
       {approvals.map((r: any) => <Rating key={r.id} r={r} now={now} />)}
@@ -39,7 +41,7 @@ export function Lab({ id }: { id?: string }) {
           <span class="tt"><a class="title row-link" href={`/lab/${e.id}`} onClick={ev => { ev.preventDefault(); go(`/lab/${e.id}`); }}>{title(e)}</a><span class="id">{e.id.slice(0, 8)}</span></span>
           <AgeChip t={ms(e.createdAt)} now={now} />
         </>} />
-        : <Empty text="No experiments yet. Create one with POST /api/lab/experiments." />}
+        : <Empty text="No experiments yet. Choose New experiment to create a draft." />}
     </section>
   </>;
   return <ListDetail list={list} detail={id ? <Experiment key={id} id={id} onClose={() => go('/lab')} /> : undefined} detailKey={id}

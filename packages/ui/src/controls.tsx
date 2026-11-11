@@ -1,6 +1,6 @@
 // Fleet controls. Specs: docs/design-system/controls/*.md. Styling: styles.css with tokens only.
 import type { ComponentChildren } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages, stepKinds, type StepKind } from './registry.ts';
 import { type Measured, type Kind, measured, age, bytes, exact, stamp, percent, duration, agentLabel } from './format.ts';
 import { VirtualList, type VirtualListHandle } from './virtual-list.tsx';
@@ -20,12 +20,12 @@ export function Icon({ name, label }: { name: IconName; label?: string }) {
 
 type ButtonProps = {
   label: string; icon?: IconName; iconOnly?: boolean; kind?: 'primary' | 'default' | 'quiet' | 'danger';
-  kbd?: string; busy?: boolean; disabledReason?: string; pressed?: boolean; onClick?: () => void;
+  kbd?: string; rowLink?: boolean; busy?: boolean; disabledReason?: string; pressed?: boolean; onClick?: () => void;
 };
 export function Button(p: ButtonProps) {
   const disabled = p.busy || !!p.disabledReason;
   return (
-    <button type="button" data-ui="button" class={`btn ${p.kind ?? 'default'}${p.iconOnly ? ' icon-only' : ''}${p.busy ? ' busy' : ''}`}
+    <button type="button" data-ui="button" class={`btn ${p.kind ?? 'default'}${p.iconOnly ? ' icon-only' : ''}${p.rowLink ? ' row-link' : ''}${p.busy ? ' busy' : ''}`}
       aria-label={p.iconOnly ? p.label : undefined} data-tip={p.disabledReason ?? (p.iconOnly ? p.label : undefined)}
       aria-disabled={disabled || undefined} aria-pressed={p.pressed} onClick={disabled ? undefined : p.onClick}>
       {p.icon && <Icon name={p.icon} />}
@@ -355,6 +355,20 @@ export function ArtifactView({ a, src }: { a: ArtifactMeta; src: string }) {
     </>}
     {kind === 'download' && <Empty text={`${a.mediaType} has no view here.`} />}
     {err && <ErrorBanner text={`Did not load: ${err}`} onRetry={more} />}
+  </div>;
+}
+
+/** An unsaved form value; it never claims that a setting was applied (controls/text-field.md). */
+export function TextField({ label, value, onChange, multiline, type = 'text', help, error, disabledReason }: {
+  label: string; value: string; onChange: (value: string) => void; multiline?: boolean; type?: 'text' | 'number';
+  help?: string; error?: string; disabledReason?: string;
+}) {
+  const id = useId(), note = error || disabledReason || help;
+  const props = { id, value, disabled: !!disabledReason, 'aria-invalid': error ? true : undefined,
+    'aria-describedby': note ? id + '-note' : undefined, onInput: (e: Event) => onChange((e.target as HTMLInputElement).value) };
+  return <div class="text-field" data-ui="text-field"><label for={id}>{label}</label>
+    {multiline ? <textarea {...props} rows={3} /> : type === 'number' ? <input {...props} type="number" /> : <input {...props} type="text" />}
+    {note && <span id={id + '-note'} class={error ? 't-danger' : 'muted'} role={error ? 'alert' : undefined}>{note}</span>}
   </div>;
 }
 

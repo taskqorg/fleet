@@ -4,7 +4,7 @@ import { useEffect, useState } from 'preact/hooks';
 import {
   Choice, DraftBar, StepList, FlowStrip,
   Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, StatStrip,
-  SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions,
+  TextField, SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions,
   Composer, CodeEditor, DiffText, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type ThreadBlock, type Family, type Stage,
 } from '../src/index.ts';
@@ -232,6 +232,13 @@ function ResultDemo() {
   </ResultViewer>;
 }
 
+function DraftFieldDemo() {
+  const [value, setValue] = useState('Compare the existing pipeline variants');
+  return <div class="col"><TextField label="Goal" value={value} onChange={setValue} help="Unsaved draft; creation is separate." />
+    <TextField label="Hypothesis" multiline value="" onChange={() => {}} error="Describe what this experiment will test before launch." />
+    <TextField label="Repeats" type="number" value="1" onChange={() => {}} disabledReason="Creation is pending" /></div>;
+}
+
 function SettingsDemo() {
   return <div>
     <SettingField label="Store capacity" value="1 TB" help="Garage layout capacity on PDS18." now={NOW} status={{ kind: 'applied', at: NOW - 18 * min }} changed={{ by: 'Alex', at: NOW - 20 * min }} />
@@ -322,6 +329,7 @@ const SECTIONS: [string, string, string | undefined, () => ComponentChildren, Co
   ['transcript-viewer', 'Live transcript', 'transcript-viewer', () => <TranscriptDemo />],
   ['decision-block', 'Decision block', 'decision-block', () => <DecisionDemo />, <>Click Accept or press a while the block has focus: the block collapses to the answered line.</>],
   ['result-viewer', 'Result viewer shell', 'result-viewer', () => <ResultDemo />],
+  ['text-field', 'Text field', 'text-field', () => <DraftFieldDemo />, <>Draft values stay local until the form is submitted.</>],
   ['setting-field', 'Setting field', 'setting-field', () => <SettingsDemo />, <>Click a value to edit it inline.</>],
   ['composer', 'Composer', 'composer', () => <div class="pane"><Composer draftKey="book" onSend={() => {}} /></div>, <>Enter sends, Shift+Enter adds a line; the draft is kept per conversation.</>],
   ['code-editor', 'Code editor and diff text', 'code-editor', () => <div class="pane"><CodeEditor label="config/pipelines/hello-search.json" value={'{\n  "id": "hello-search",\n  "steps": [],\n  "version": 2\n}\n'} onChange={() => {}} problems={[{ path: '', message: 'Invalid pipeline: steps' }]} /><DiffText label="Draft against revision 3" text={'@@ -1,4 +1,4 @@\n {\n-  "id": "hello"\n+  "id": "hello-search"\n }'} /></div>, <>A definition's text is edited in place and kept as a draft; problems come from the coordinator and do not block typing.</>],

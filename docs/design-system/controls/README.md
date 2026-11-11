@@ -18,6 +18,7 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [transcript-viewer](transcript-viewer.md) | Live transcript with paging and search |
 | [decision-block](decision-block.md) | Decisions inline |
 | [result-viewer](result-viewer.md) | Result viewers |
+| [text-field](text-field.md) | Unsaved form values with accessible labels and errors |
 | [setting-field](setting-field.md) | Settings with applied or apply error |
 | [nav-rail](nav-rail.md) | Many sections; pinned per person |
 | [split-button](split-button.md) | Default action with alternatives |
