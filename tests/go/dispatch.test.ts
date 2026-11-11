@@ -119,6 +119,16 @@ test('A9 an execution record has one state vocabulary and its real kind and harn
   assert.deepEqual([e.state, e.observation], ['running', 'unconfirmed']);
 });
 
+test('A10 host poll and events decode into the host-protocol types: a field of the wrong type is 400, not read as empty (requirement: contracts/host-protocol.schema.json PollRequest and HostEvents, C1; risk: a renamed or retyped field reaches the coordinator as a missing value)', {timeout: 30_000}, async () => {
+  const h = await host('trial-host');
+  ok(await h('/api/hosts/poll', poll));
+  { const r = await h('/api/hosts/poll', {...poll, capabilities: 'codex'}); assert.equal(r.status, 400, JSON.stringify(r)); }
+  assert.equal((await h('/api/hosts/poll', {...poll, version: 7})).status, 400);
+  const {executionId} = await queued();
+  ok(await h('/api/hosts/poll', poll));
+  assert.equal((await h('/api/hosts/events', {executionId, events: [{id: 'a', seq: 1.5, type: 'x', timestamp: 1, data: {}}]})).status, 400);
+});
+
 test('A13 every artifact, store, account and agent-tools host route decodes into its host-protocol type: a field of the wrong type is 400 (requirement: contracts/host-protocol.schema.json Artifact*Request, StoresRequest, AgentToolsRequest, C3; risk: the artifact transfer seam has no contract and a retyped field reads as empty)', {timeout: 30_000}, async () => {
   const h = await host('trial-host');
   ok(await h('/api/hosts/poll', poll));
@@ -132,7 +142,7 @@ test('A13 every artifact, store, account and agent-tools host route decodes into
     assert.equal((await h(route, body)).status, 400, route);
 });
 
-test('A12 receipts have one route per envelope: a project operation on /api/hosts/project-operations, a status on /api/hosts/receipts; a body that is not its envelope is 400 on the split routes, and the combined route still serves every envelope for one release (requirement: contracts/host-protocol.schema.json ProjectReceipt and Receipt, C4; risk: a stray field picks another handler; a host on the previous release loses its receipts)', {timeout: 30_000}, async () => {
+test('A12 receipts have one route per envelope: a project operation on /api/hosts/project-operations, a status on /api/hosts/receipts; a body that is not its envelope is 400 on the split routes, and /api/hosts/receipts takes only a status (requirement: contracts/host-protocol.schema.json ProjectReceipt and Receipt, C4; risk: a stray field picks another handler; a host on the previous release loses its receipts)', {timeout: 30_000}, async () => {
   const h = await host('trial-host');
   ok(await h('/api/hosts/poll', poll));
   const {sessionId} = ok(await op('session_start', {requestId: randomUUID(), text: 'hi', projectId: 'hello-world', profileId: 'pm'}));
@@ -140,7 +150,7 @@ test('A12 receipts have one route per envelope: a project operation on /api/host
   const body = (requestId: unknown) => ({commandId: command.id, executionId: command.executionId, delegation: {operation: 'project_context', projectId: 'hello-world', arguments: {}, requestId}});
   assert.equal(ok(await h('/api/hosts/project-operations', body('r1'))).id, 'hello-world');
   assert.equal((await h('/api/hosts/project-operations', body(5))).status, 400, 'requestId must be a string');
-  assert.equal(ok(await h('/api/hosts/receipts', body('r2'))).id, 'hello-world', 'the combined route of the previous release');
+  assert.equal((await h('/api/hosts/receipts', body('r2'))).status, 400, 'a project operation is not a status receipt');
   const status = {commandId: command.id, executionId: command.executionId, status: 'started'};
   assert.equal((await h('/api/hosts/project-operations', status)).status, 400, 'a status receipt is not a project operation');
   assert.equal((await h('/api/hosts/delegations', body('r3'))).status, 400, 'a project operation is not a child request');
