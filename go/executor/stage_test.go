@@ -34,7 +34,7 @@ func TestStageInputsNeverLeaveTheInputFolder(t *testing.T) {
 	t.Setenv("FLEET_CF_ACCESS_FILE", filepath.Join(base, "none"))
 	e := &executor{url: server.URL, token: "t", host: "h"}
 	for _, rel := range []string{"sub/f", "sub/deeper/f"} {
-		if err := e.stageInputs(M{"inputs": []any{M{"artifactId": "a", "path": rel}}}, input, "e1"); err == nil || !strings.Contains(err.Error(), "escapes") {
+		if err := e.stageInputs(M{"inputs": []any{M{"artifactId": "a", "path": rel}}}, input, "e1"); err == nil || !strings.Contains(err.Error(), "escapes") && !errors.Is(err, os.ErrExist) { // darwin: escapes; linux: the link is not followed
 			t.Errorf("%s: %v; want the escape refused", rel, err)
 		}
 	}
