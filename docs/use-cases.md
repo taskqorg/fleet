@@ -52,7 +52,7 @@ Two pipelines create 3D objects. An architect wants to compare their suitability
 1. The architect, optionally with an agent, selects methods, example objects and comparison criteria.
 2. The system runs both methods on the selected examples and retains actual settings, inputs, outputs and errors.
 3. The architect and assisting agents inspect objects, add comments and tags, and compare quality, time and known costs. Conclusions link to supporting runs.
-4. Through the [laboratory workflow](interfaces.md#architect-workflow), the architect recommends methods for specific uses within a project or across the system. Different methods may suit characters and props.
+4. Through the [laboratory workflow](designs/fleet-operator-app.md#architect-workflow), the architect recommends methods for specific uses within a project or across the system. Different methods may suit characters and props.
 5. A worker receives a character task and follows the [catalogue selection rules](../fleet.md#tools-and-pipelines). With no explicit method choice, it reads applicable recommendations and usage conditions before choosing.
 6. The worker runs the chosen method, retains the object and execution evidence, and checks the task's requirements.
 

@@ -1,6 +1,6 @@
 # Interface inventory
 
-What the operator and architect interfaces must let people see, configure, choose and decide. It is derived from `fleet.md`, `docs/interfaces.md`, `docs/use-cases.md` and `docs/designs/fleet-data-foundation.md`. It names information and actions, not screens. The design work decides how they are grouped into pages and which controls carry them.
+What the operator and architect interfaces must let people see, configure, choose and decide. It is derived from `fleet.md`, `docs/designs/fleet-operator-app.md#interface-workflows`, `docs/use-cases.md` and `docs/designs/fleet-data-foundation.md`. It names information and actions, not screens. The design work decides how they are grouped into pages and which controls carry them.
 
 Item kinds used below:
 

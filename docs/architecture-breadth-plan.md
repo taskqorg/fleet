@@ -19,7 +19,7 @@ Legend: **L** proven live (real native/provider/host), **F** fake/fixture only, 
 | B5 | Pipelines/programs and catalogue (methods, recommendations) | fleet.md §Tools and pipelines, [capabilities and pipelines](configuration.md#capabilities-methods-and-tools) |
 | B6 | Laboratory: experiments, variants, assessments, recommendations, balancing settings | fleet.md §Observation and evaluation, [experiments](designs/fleet-lab.md) |
 | B7 | Agent tool surface over Fleet (MCP) | fleet.md R2, §Tools and pipelines last paragraph |
-| B8 | Web on the same operations as agents (one API/MCP surface) | fleet.md R2, [interfaces](interfaces.md) |
+| B8 | Web on the same operations as agents (one API/MCP surface) | fleet.md R2, [interfaces](designs/fleet-operator-app.md#interface-workflows) |
 | B9 | Repositories, worktrees, merge, publication/deploy | fleet.md §Work management (delivery), [deployment](deployment.md) |
 | B10 | Allocation and balancing across hosts/accounts | [work allocation](work-allocation.md), UC11 |
 | B11 | Recovery and unknown effects | fleet.md §System requirements (reliability), UC3 |

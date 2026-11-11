@@ -36,7 +36,7 @@ The principal responsibilities and scenarios are described. The specification is
 
 ### F3. Session flexibility lacks an explicit context/access mapping
 
-[Interfaces](interfaces.md#interaction-model) allow sessions spanning projects; the [root authority rules](../fleet.md#system-requirements) describe project-scoped execution/history. The exact association for a projectless architect conversation or a session discussing two projects remains unspecified. This is a gap, not evidence that cross-project access currently leaks.
+[Interfaces](designs/fleet-operator-app.md#interaction-model) allow sessions spanning projects; the [root authority rules](../fleet.md#system-requirements) describe project-scoped execution/history. The exact association for a projectless architect conversation or a session discussing two projects remains unspecified. This is a gap, not evidence that cross-project access currently leaks.
 
 **Next:** describe one session spanning two projects and one task continued by another agent: current context, action target, question recipient, history visibility and result links. Do not create a mandatory task or repository for every conversation.
 

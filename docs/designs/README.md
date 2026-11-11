@@ -3,7 +3,7 @@
 Technical designs, briefs and their reviews. A design here is accepted direction, not shipped behaviour; check the code.
 
 * `fleet-data-foundation.md`: Postgres, typed tasks and executions, the artifact store, ingest, isolation, people and hosts, in phases. `fleet-data-foundation-brief.md` is its brief; `fleet-data-foundation-review/phase3/live-findings.md` holds live findings it cites.
-* `fleet-operator-app.md`: the operator web app and its live change feed; `reviews/fleet-operator-app/` is its review.
+* `fleet-operator-app.md`: operator and architect workflows, the operator web app, live change feed and surviving retirement requirements.
 * `fleet-view-urls-and-list-path.md`: view URLs and the list path.
 * `fleet-analytics.md`: `analytics_query` over work records and the price table.
 * `fleet-lab.md`: the Fleet Lab (experiments, examples, evaluators, Promote) and work analysis.
@@ -23,7 +23,6 @@ Technical designs, briefs and their reviews. A design here is accepted direction
 * `fleet-delivery-pipeline.md`: merge queue and ruleset, stacked and flaky rules, automatic release per green `main` batch, faster host pickup, smoke in the host health probe.
 * `fleet-telemetry.md`: one span per operation across all services in ClickHouse, trace context, process CPU and memory, the rules pass, telemetry operations and the System screen read panels.
 * `fleet-system-management.md`: host remove, archive, delete and purge with previews, worktree removal on delivery, problems as needs-you questions, Postgres backups and restore drill, the audit journal and the System screen.
-* `legacy-inventory.md`: what the removed legacy pages did and which app section rebuilds each gap.
 * `entity-ids-brief.md`: human entity codes such as `T-FLT-42`.
 * `web-stack-brief.md`: front-end stack choice.
 * `reviews/drift-2026-11-10.md` and `reviews/drift-2026-11-10-web-stack.md`: drift between these designs and the code, cited by the conversations and view-URL designs.
