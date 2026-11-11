@@ -76,6 +76,67 @@ type AccountUpdateRequest struct {
 	Take      json.RawMessage `json:"take,omitempty"`
 }
 
+// Actor: person: the person (kind person); executionId: the agent execution (kind agent); system: reconcile. directedBy is set for person and agent.
+type Actor struct {
+	DirectedBy  *Person   `json:"directedBy,omitempty"`
+	ExecutionId *string   `json:"executionId,omitempty"`
+	Kind        ActorKind `json:"kind"`
+	Person      *Person   `json:"person,omitempty"`
+}
+
+type ActorKind string
+
+const (
+	ActorKindPerson ActorKind = "person"
+	ActorKindAgent  ActorKind = "agent"
+	ActorKindSystem ActorKind = "system"
+)
+
+type AgentCompatibilityReply struct {
+	Rows []CompatibilityRow `json:"rows"`
+}
+
+type AgentCompatibilityRequest struct {
+	Id string `json:"id"`
+}
+
+// AgentDefinition: The agent profile (contracts/profile.schema.json); go/contract.ParseProfile is its validator.
+type AgentDefinition = Profile
+
+type AgentEffectiveReply struct {
+	Layers []EffectiveLayer `json:"layers"`
+	Result AgentDefinition  `json:"result"`
+}
+
+type AgentEffectiveRequest struct {
+	Draft     *bool  `json:"draft,omitempty"`
+	Id        string `json:"id"`
+	ProjectId string `json:"projectId"`
+}
+
+// AgentListFacts: harness defaults as at session start; roles: the project roles (project.json roles) that name this profile.
+type AgentListFacts struct {
+	Effort  *string  `json:"effort,omitempty"`
+	Harness string   `json:"harness"`
+	Model   string   `json:"model"`
+	Roles   []string `json:"roles"`
+}
+
+type AgentTestReply struct {
+	Definition  DefinitionRef `json:"definition"`
+	ExecutionId string        `json:"executionId"`
+	SessionId   string        `json:"sessionId"`
+}
+
+// AgentTestRequest: draft true uses the caller's draft; false the head revision.
+type AgentTestRequest struct {
+	Draft     *bool   `json:"draft,omitempty"`
+	HostId    *string `json:"hostId,omitempty"`
+	Id        string  `json:"id"`
+	ProjectId string  `json:"projectId"`
+	Prompt    string  `json:"prompt"`
+}
+
 type ArtifactCopyRetryReply struct {
 	Retrying json.RawMessage `json:"retrying,omitempty"`
 }
@@ -168,16 +229,30 @@ type AskRequest struct {
 	Resume      json.RawMessage `json:"resume,omitempty"`
 }
 
-type BlockKind string
+type AssessmentBasis string
 
 const (
-	BlockKindText      BlockKind = "text"
-	BlockKindTool      BlockKind = "tool"
-	BlockKindReasoning BlockKind = "reasoning"
-	BlockKindQuestion  BlockKind = "question"
-	BlockKindResult    BlockKind = "result"
-	BlockKindBoundary  BlockKind = "boundary"
+	AssessmentBasisLab   AssessmentBasis = "lab"
+	AssessmentBasisUsage AssessmentBasis = "usage"
+	AssessmentBasisNone  AssessmentBasis = "none"
 )
+
+// Block: One thread entry (docs/designs/fleet-conversations.md), told apart by kind. key is its position seq:part. Fleet's own projection: closed.
+type Block = json.RawMessage
+
+// BoundaryBlock: Start of an execution in the thread.
+type BoundaryBlock struct {
+	Effort      *string        `json:"effort,omitempty"`
+	EndedAt     *int64         `json:"endedAt,omitempty"`
+	ExecutionId string         `json:"executionId"`
+	Harness     *string        `json:"harness,omitempty"`
+	Key         string         `json:"key"`
+	Kind        string         `json:"kind"`
+	Model       *string        `json:"model,omitempty"`
+	SessionId   *string        `json:"sessionId,omitempty"`
+	StartedAt   *int64         `json:"startedAt,omitempty"`
+	State       ExecutionState `json:"state"`
+}
 
 type BudgetAskReply struct {
 	QuestionId json.RawMessage `json:"questionId,omitempty"`
@@ -226,6 +301,31 @@ type BudgetsListReply struct {
 
 type BudgetsListRequest = map[string]json.RawMessage
 
+// CatalogueDefinition: The whole config/catalogue.json as it is today (one capability).
+type CatalogueDefinition struct {
+	Capability    string            `json:"capability"`
+	Methods       []CatalogueMethod `json:"methods"`
+	SharedDefault *string           `json:"sharedDefault,omitempty"`
+}
+
+type CatalogueMethod struct {
+	AgentProfile     *string                    `json:"agentProfile,omitempty"`
+	ConfigRef        *string                    `json:"configRef,omitempty"`
+	Id               string                     `json:"id"`
+	Name             string                     `json:"name"`
+	Overrides        map[string]json.RawMessage `json:"overrides,omitempty"`
+	Pipeline         string                     `json:"pipeline"`
+	Scope            string                     `json:"scope"`
+	SourceExperiment *string                    `json:"sourceExperiment,omitempty"`
+}
+
+type CatalogueMethodView struct {
+	Assessment     MethodAssessment `json:"assessment"`
+	Method         CatalogueMethod  `json:"method"`
+	RecommendedFor []string         `json:"recommendedFor,omitempty"`
+}
+
+// CatalogueReply: The definition editors change methods to CatalogueMethodView items (docs/designs/fleet-definition-editors.md).
 type CatalogueReply struct {
 	Capability           json.RawMessage `json:"capability,omitempty"`
 	Methods              json.RawMessage `json:"methods,omitempty"`
@@ -288,6 +388,35 @@ type ChangesSinceRequest struct {
 	Cursor *int64 `json:"cursor,omitempty"`
 	Limit  *int64 `json:"limit,omitempty"`
 }
+
+type CompatibilityRow struct {
+	Effort         *string            `json:"effort,omitempty"`
+	Error          *string            `json:"error,omitempty"`
+	Evidence       *RunSummary        `json:"evidence,omitempty"`
+	Harness        string             `json:"harness"`
+	HarnessVersion *string            `json:"harnessVersion"`
+	Model          string             `json:"model"`
+	Revision       *int64             `json:"revision,omitempty"`
+	State          CompatibilityState `json:"state"`
+}
+
+type CompatibilityState string
+
+const (
+	CompatibilityStateChecked   CompatibilityState = "checked"
+	CompatibilityStateFailed    CompatibilityState = "failed"
+	CompatibilityStateUnchecked CompatibilityState = "unchecked"
+)
+
+type ConflictReason string
+
+const (
+	ConflictReasonBaseMoved         ConflictReason = "base-moved"
+	ConflictReasonRepositoryChanged ConflictReason = "repository-changed"
+	ConflictReasonNoChange          ConflictReason = "no-change"
+	ConflictReasonWrongState        ConflictReason = "wrong-state"
+	ConflictReasonInvalidDraft      ConflictReason = "invalid-draft"
+)
 
 type ConnectionsCreateReply = map[string]json.RawMessage
 
@@ -355,6 +484,221 @@ type ConnectionsTokenRevokeRequest struct {
 	Name *string `json:"name,omitempty"`
 }
 
+// DefinitionConflict: Body of a 409 from definition_save and definition_create.
+type DefinitionConflict struct {
+	Head    int64          `json:"head"`
+	Reason  ConflictReason `json:"reason"`
+	RepoSha *string        `json:"repoSha,omitempty"`
+}
+
+// DefinitionContent: Exactly one property, matching the kind.
+type DefinitionContent struct {
+	Agent     *AgentDefinition     `json:"agent,omitempty"`
+	Catalogue *CatalogueDefinition `json:"catalogue,omitempty"`
+	Pipeline  *PipelineDefinition  `json:"pipeline,omitempty"`
+}
+
+type DefinitionCreateReply struct {
+	Revision Revision `json:"revision"`
+}
+
+type DefinitionCreateRequest struct {
+	Content DefinitionContent `json:"content"`
+	Id      string            `json:"id"`
+	Kind    DefinitionKind    `json:"kind"`
+	Message string            `json:"message"`
+}
+
+type DefinitionDiffReply struct {
+	Fields  []FieldChange `json:"fields"`
+	Unified string        `json:"unified"`
+}
+
+type DefinitionDiffRequest struct {
+	From DiffSide       `json:"from"`
+	Id   string         `json:"id"`
+	Kind DefinitionKind `json:"kind"`
+	To   DiffSide       `json:"to"`
+}
+
+type DefinitionDraftDiscardReply struct {
+	Discarded bool `json:"discarded"`
+}
+
+type DefinitionDraftDiscardRequest struct {
+	Id   string         `json:"id"`
+	Kind DefinitionKind `json:"kind"`
+}
+
+// DefinitionDraftGetReply: No draft: 404.
+type DefinitionDraftGetReply struct {
+	Content  *DefinitionContent `json:"content,omitempty"`
+	Draft    DraftInfo          `json:"draft"`
+	Problems []Problem          `json:"problems,omitempty"`
+}
+
+type DefinitionDraftGetRequest struct {
+	Id   string         `json:"id"`
+	Kind DefinitionKind `json:"kind"`
+}
+
+type DefinitionDraftPutReply struct {
+	Draft    DraftInfo `json:"draft"`
+	Problems []Problem `json:"problems"`
+}
+
+type DefinitionDraftPutRequest struct {
+	BaseRevision int64             `json:"baseRevision"`
+	Content      DefinitionContent `json:"content"`
+	Id           string            `json:"id"`
+	Kind         DefinitionKind    `json:"kind"`
+}
+
+type DefinitionExportReply struct {
+	Covers []DefinitionRef `json:"covers"`
+	Files  []ExportFile    `json:"files"`
+	Patch  string          `json:"patch"`
+}
+
+// DefinitionExportRequest: No keys: every definition in state ahead or store-only. repository-changed and repository-deleted are never exported (named keys in those states: 409 repository-changed) until a save resolves them, so an export cannot revert a release.
+type DefinitionExportRequest struct {
+	Keys []DefinitionKey `json:"keys,omitempty"`
+}
+
+type DefinitionGetReply struct {
+	Content  DefinitionContent `json:"content"`
+	Draft    *DraftInfo        `json:"draft,omitempty"`
+	Head     int64             `json:"head"`
+	Id       string            `json:"id"`
+	Kind     DefinitionKind    `json:"kind"`
+	Meta     Revision          `json:"meta"`
+	Mirror   *MirrorState      `json:"mirror,omitempty"`
+	Path     string            `json:"path"`
+	RepoSha  *string           `json:"repoSha,omitempty"`
+	Revision int64             `json:"revision"`
+	Scope    string            `json:"scope"`
+	State    DefinitionState   `json:"state"`
+	Text     string            `json:"text"`
+}
+
+type DefinitionGetRequest struct {
+	Id       string         `json:"id"`
+	Kind     DefinitionKind `json:"kind"`
+	Revision *int64         `json:"revision,omitempty"`
+}
+
+type DefinitionHistoryReply struct {
+	RepoSha   *string    `json:"repoSha"`
+	Revisions []Revision `json:"revisions"`
+}
+
+type DefinitionHistoryRequest struct {
+	Before *int64         `json:"before,omitempty"`
+	Id     string         `json:"id"`
+	Kind   DefinitionKind `json:"kind"`
+	Limit  *int64         `json:"limit,omitempty"`
+}
+
+type DefinitionKey struct {
+	Id   string         `json:"id"`
+	Kind DefinitionKind `json:"kind"`
+}
+
+type DefinitionKind string
+
+const (
+	DefinitionKindAgent     DefinitionKind = "agent"
+	DefinitionKindPipeline  DefinitionKind = "pipeline"
+	DefinitionKindCatalogue DefinitionKind = "catalogue"
+)
+
+type DefinitionListItem struct {
+	Agent         *AgentListFacts     `json:"agent,omitempty"`
+	Compatibility *CompatibilityState `json:"compatibility,omitempty"`
+	Draft         *DraftInfo          `json:"draft,omitempty"`
+	Id            string              `json:"id"`
+	Kind          DefinitionKind      `json:"kind"`
+	Last30        Window              `json:"last30"`
+	LastRun       *RunSummary         `json:"lastRun,omitempty"`
+	Mirror        *MirrorState        `json:"mirror,omitempty"`
+	Name          string              `json:"name"`
+	Path          string              `json:"path"`
+	Revision      int64               `json:"revision"`
+	Scope         string              `json:"scope"`
+	State         DefinitionState     `json:"state"`
+}
+
+type DefinitionListReply struct {
+	Items []DefinitionListItem `json:"items"`
+}
+
+type DefinitionListRequest struct {
+	IncludeRetired *bool          `json:"includeRetired,omitempty"`
+	Kind           DefinitionKind `json:"kind"`
+	ProjectId      *string        `json:"projectId,omitempty"`
+}
+
+type DefinitionMirrorResetReply struct {
+	Commits int64 `json:"commits"`
+}
+
+// DefinitionMirrorResetRequest: confirm must be the repository name; owner only. Rebuilds the mirror branch from store history and force-pushes.
+type DefinitionMirrorResetRequest struct {
+	Confirm string `json:"confirm"`
+}
+
+// DefinitionRef: With draft true, revision is the base revision (0 for a new definition) and contentSha is the draft's.
+type DefinitionRef struct {
+	ContentSha string         `json:"contentSha"`
+	Draft      *bool          `json:"draft,omitempty"`
+	Id         string         `json:"id"`
+	Kind       DefinitionKind `json:"kind"`
+	Revision   int64          `json:"revision"`
+}
+
+type DefinitionSaveReply struct {
+	Revision Revision        `json:"revision"`
+	State    DefinitionState `json:"state"`
+}
+
+type DefinitionSaveRequest struct {
+	BaseRevision int64             `json:"baseRevision"`
+	Content      DefinitionContent `json:"content"`
+	Id           string            `json:"id"`
+	Kind         DefinitionKind    `json:"kind"`
+	Message      string            `json:"message"`
+	RepoSha      *string           `json:"repoSha,omitempty"`
+}
+
+type DefinitionState string
+
+const (
+	DefinitionStateSynced            DefinitionState = "synced"
+	DefinitionStateAhead             DefinitionState = "ahead"
+	DefinitionStateRepositoryChanged DefinitionState = "repository-changed"
+	DefinitionStateStoreOnly         DefinitionState = "store-only"
+	DefinitionStateRepositoryDeleted DefinitionState = "repository-deleted"
+)
+
+type DefinitionUsageReply struct {
+	ByRevision []RevisionWindow `json:"byRevision"`
+	Total      Window           `json:"total"`
+	UsedBy     []DefinitionKey  `json:"usedBy"`
+}
+
+type DefinitionUsageRequest struct {
+	Days *int64         `json:"days,omitempty"`
+	Id   string         `json:"id"`
+	Kind DefinitionKind `json:"kind"`
+}
+
+// DiffSide: Exactly one of revision, draft (the caller's draft) or repository (the shipped file).
+type DiffSide struct {
+	Draft      *bool  `json:"draft,omitempty"`
+	Repository *bool  `json:"repository,omitempty"`
+	Revision   *int64 `json:"revision,omitempty"`
+}
+
 type DirectSearchReply = map[string]json.RawMessage
 
 type DirectSearchRequest struct {
@@ -365,6 +709,31 @@ type DirectSearchRequest struct {
 	RequestId  *string `json:"requestId,omitempty"`
 	Signature  *string `json:"signature,omitempty"`
 }
+
+type DraftInfo struct {
+	BaseRevision int64  `json:"baseRevision"`
+	Changes      int64  `json:"changes"`
+	Stale        bool   `json:"stale"`
+	UpdatedAt    string `json:"updatedAt"`
+}
+
+// EffectiveLayer: source is a path or a URL; revision is the store revision, the specq commit or the project file sha; fields lists the setting paths this layer decides.
+type EffectiveLayer struct {
+	Fields   []string           `json:"fields"`
+	Name     EffectiveLayerName `json:"name"`
+	Revision *string            `json:"revision,omitempty"`
+	Source   string             `json:"source"`
+	Text     *string            `json:"text,omitempty"`
+}
+
+type EffectiveLayerName string
+
+const (
+	EffectiveLayerNameSharedRules EffectiveLayerName = "shared-rules"
+	EffectiveLayerNameRole        EffectiveLayerName = "role"
+	EffectiveLayerNameDefinition  EffectiveLayerName = "definition"
+	EffectiveLayerNameProject     EffectiveLayerName = "project"
+)
 
 type ExecutionDifferencesReply struct {
 	ExecutionId         json.RawMessage `json:"executionId,omitempty"`
@@ -388,6 +757,18 @@ type ExecutionEventsRequest struct {
 	ExecutionId *string `json:"executionId,omitempty"`
 }
 
+// ExecutionState: execution_state in go/coordinator/schema.sql.
+type ExecutionState string
+
+const (
+	ExecutionStatePreparing ExecutionState = "preparing"
+	ExecutionStateRunning   ExecutionState = "running"
+	ExecutionStateWaiting   ExecutionState = "waiting"
+	ExecutionStateSucceeded ExecutionState = "succeeded"
+	ExecutionStateFailed    ExecutionState = "failed"
+	ExecutionStateCancelled ExecutionState = "cancelled"
+)
+
 type ExecutionStatusReply = map[string]json.RawMessage
 
 type ExecutionStatusRequest struct {
@@ -408,6 +789,28 @@ type ExecutionsListRequest struct {
 	Problem json.RawMessage `json:"problem,omitempty"`
 }
 
+type ExportFile struct {
+	BaseSha *string `json:"baseSha"`
+	Path    string  `json:"path"`
+	Text    string  `json:"text"`
+}
+
+// FieldChange: fromText and toText are the canonical JSON text of the old and new values; the editor uses path to place the attention tick.
+type FieldChange struct {
+	FromText *string `json:"fromText,omitempty"`
+	Op       FieldOp `json:"op"`
+	Path     string  `json:"path"`
+	ToText   *string `json:"toText,omitempty"`
+}
+
+type FieldOp string
+
+const (
+	FieldOpAdd     FieldOp = "add"
+	FieldOpRemove  FieldOp = "remove"
+	FieldOpReplace FieldOp = "replace"
+)
+
 type FocusSetReply struct {
 	Focus     json.RawMessage `json:"focus,omitempty"`
 	SessionId json.RawMessage `json:"sessionId,omitempty"`
@@ -416,6 +819,22 @@ type FocusSetReply struct {
 type FocusSetRequest struct {
 	ProjectIds []string `json:"projectIds,omitempty"`
 	SessionId  *string  `json:"sessionId,omitempty"`
+}
+
+type HarnessModel struct {
+	Efforts []string    `json:"efforts"`
+	Hosts   []string    `json:"hosts,omitempty"`
+	Id      string      `json:"id"`
+	Label   *string     `json:"label,omitempty"`
+	Source  ModelSource `json:"source"`
+}
+
+type HarnessModelsReply struct {
+	Models []HarnessModel `json:"models"`
+}
+
+type HarnessModelsRequest struct {
+	Harness string `json:"harness"`
 }
 
 type HostsListReply struct {
@@ -462,6 +881,18 @@ type LabCellActionRequest struct {
 	Action       *string         `json:"action,omitempty"`
 	Cell         json.RawMessage `json:"cell,omitempty"`
 	ExperimentId *string         `json:"experimentId,omitempty"`
+}
+
+type LabCompareMethodsReply struct {
+	ExperimentId string `json:"experimentId"`
+}
+
+type LabCompareMethodsRequest struct {
+	Baseline   *string  `json:"baseline,omitempty"`
+	Capability string   `json:"capability"`
+	Methods    []string `json:"methods"`
+	ProjectId  string   `json:"projectId"`
+	UseCase    *string  `json:"useCase,omitempty"`
 }
 
 type LabExampleGetReply struct {
@@ -533,22 +964,36 @@ type LabExperimentCreateRequest struct {
 }
 
 type LabExperimentGetReply struct {
-	Cell        json.RawMessage `json:"cell,omitempty"`
-	Comparable  json.RawMessage `json:"comparable,omitempty"`
-	Confounders json.RawMessage `json:"confounders,omitempty"`
-	DurationMs  json.RawMessage `json:"durationMs,omitempty"`
-	FinishedAt  json.RawMessage `json:"finishedAt,omitempty"`
-	Id          json.RawMessage `json:"id,omitempty"`
-	Observation json.RawMessage `json:"observation,omitempty"`
-	Problem     json.RawMessage `json:"problem,omitempty"`
-	Scores      json.RawMessage `json:"scores,omitempty"`
-	Spend       json.RawMessage `json:"spend,omitempty"`
-	StartedAt   json.RawMessage `json:"startedAt,omitempty"`
-	State       json.RawMessage `json:"state,omitempty"`
+	Baseline    *string             `json:"baseline,omitempty"`
+	Cell        json.RawMessage     `json:"cell,omitempty"`
+	Comparable  json.RawMessage     `json:"comparable,omitempty"`
+	Confounders json.RawMessage     `json:"confounders,omitempty"`
+	DurationMs  json.RawMessage     `json:"durationMs,omitempty"`
+	FinishedAt  json.RawMessage     `json:"finishedAt,omitempty"`
+	Id          json.RawMessage     `json:"id,omitempty"`
+	Observation json.RawMessage     `json:"observation,omitempty"`
+	Problem     json.RawMessage     `json:"problem,omitempty"`
+	Scores      json.RawMessage     `json:"scores,omitempty"`
+	Spend       json.RawMessage     `json:"spend,omitempty"`
+	StartedAt   json.RawMessage     `json:"startedAt,omitempty"`
+	State       json.RawMessage     `json:"state,omitempty"`
+	VsBaseline  []VariantVsBaseline `json:"vsBaseline,omitempty"`
 }
 
 type LabExperimentGetRequest struct {
 	ExperimentId *string `json:"experimentId,omitempty"`
+}
+
+type LabExperimentPromoteReply struct {
+	Catalogue      DefinitionRef   `json:"catalogue"`
+	Method         CatalogueMethod `json:"method"`
+	Recommendation *string         `json:"recommendation"`
+}
+
+// LabExperimentPromoteRequest: Replaces lab_promote's request when lab_experiment_promote is built.
+type LabExperimentPromoteRequest struct {
+	ExperimentId string `json:"experimentId"`
+	Variant      string `json:"variant"`
 }
 
 type LabExperimentsListReply struct {
@@ -706,6 +1151,35 @@ type MessageSendRequest struct {
 	Text      *string         `json:"text,omitempty"`
 }
 
+type MethodAssessment struct {
+	At           *string         `json:"at,omitempty"`
+	Basis        AssessmentBasis `json:"basis"`
+	CostBasis    *string         `json:"costBasis,omitempty"`
+	CostUsd      *float64        `json:"costUsd,omitempty"`
+	Examples     *int64          `json:"examples,omitempty"`
+	ExperimentId *string         `json:"experimentId,omitempty"`
+	Score        *float64        `json:"score,omitempty"`
+	ScoreForm    *string         `json:"scoreForm,omitempty"`
+	WallMsMedian *int64          `json:"wallMsMedian,omitempty"`
+}
+
+// MirrorState: Stage 2 only; the mirror and definition_mirror_reset fields and operation are added with it.
+type MirrorState string
+
+const (
+	MirrorStateMirrored MirrorState = "mirrored"
+	MirrorStatePending  MirrorState = "pending"
+	MirrorStateFailed   MirrorState = "failed"
+	MirrorStateOff      MirrorState = "off"
+)
+
+type ModelSource string
+
+const (
+	ModelSourceShipped  ModelSource = "shipped"
+	ModelSourceReported ModelSource = "reported"
+)
+
 // OpError: Body of every failed operation (writeError in go/coordinator/main.go).
 type OpError struct {
 	Error      string `json:"error"`
@@ -727,6 +1201,17 @@ type PeopleSetRequest struct {
 	People json.RawMessage `json:"people,omitempty"`
 }
 
+type Person struct {
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
+
+type PipelineDefinition struct {
+	Id      string         `json:"id"`
+	Steps   []PipelineStep `json:"steps"`
+	Version int64          `json:"version"`
+}
+
 type PipelineGetReply = map[string]json.RawMessage
 
 type PipelineGetRequest struct {
@@ -742,6 +1227,35 @@ type PipelineHistoryRequest struct {
 	ProjectId *string `json:"projectId,omitempty"`
 }
 
+type PipelineRerunReply struct {
+	Definitions []DefinitionRef `json:"definitions"`
+	Reused      []string        `json:"reused"`
+	RunId       string          `json:"runId"`
+}
+
+type PipelineRerunRequest struct {
+	Draft     *bool     `json:"draft,omitempty"`
+	Mode      RerunMode `json:"mode"`
+	RequestId *string   `json:"requestId,omitempty"`
+	RunId     string    `json:"runId"`
+}
+
+type PipelineRunCreateReply struct {
+	Definitions []DefinitionRef `json:"definitions"`
+	RunId       string          `json:"runId"`
+}
+
+// PipelineRunCreateRequest: Body of POST /api/pipelines/{id}/runs (pipelineRunCreate) as an operation pipeline_run_create; pipelineId was the URL segment. draft true runs the caller's draft. The request signature includes draft and the content sha.
+type PipelineRunCreateRequest struct {
+	Draft             *bool                      `json:"draft,omitempty"`
+	Example           map[string]json.RawMessage `json:"example,omitempty"`
+	ExampleArtifactId *string                    `json:"exampleArtifactId,omitempty"`
+	Overrides         map[string]json.RawMessage `json:"overrides,omitempty"`
+	PipelineId        string                     `json:"pipelineId"`
+	ProjectId         string                     `json:"projectId"`
+	RequestId         string                     `json:"requestId"`
+}
+
 type PipelineRunReply = map[string]json.RawMessage
 
 type PipelineRunRequest struct {
@@ -752,6 +1266,22 @@ type PipelineRunRequest struct {
 	Query      *string         `json:"query,omitempty"`
 	RequestId  *string         `json:"requestId,omitempty"`
 	Signature  *string         `json:"signature,omitempty"`
+}
+
+// PipelineStep: Step kinds are the registry's (D20); validatePipeline stays the full check.
+type PipelineStep struct {
+	Agent      *string                    `json:"agent,omitempty"`
+	Arguments  map[string]json.RawMessage `json:"arguments,omitempty"`
+	Connection *string                    `json:"connection,omitempty"`
+	Id         string                     `json:"id"`
+	Kind       string                     `json:"kind"`
+	Tool       *string                    `json:"tool,omitempty"`
+}
+
+// Problem: Validation finding; path is a JSON pointer into the content. A draft is stored even when invalid; save refuses it.
+type Problem struct {
+	Message string `json:"message"`
+	Path    string `json:"path"`
 }
 
 type ProfilesListReply struct {
@@ -802,6 +1332,21 @@ type QuestionAskRequest struct {
 	Text      *string `json:"text,omitempty"`
 }
 
+// QuestionBlock: options: the stored options as they are (a list of labels for agent questions).
+type QuestionBlock struct {
+	Answer      json.RawMessage `json:"answer,omitempty"`
+	AnsweredAt  *int64          `json:"answeredAt,omitempty"`
+	AnsweredBy  *string         `json:"answeredBy,omitempty"`
+	AskedAt     *int64          `json:"askedAt,omitempty"`
+	ExecutionId *string         `json:"executionId,omitempty"`
+	Key         string          `json:"key"`
+	Kind        string          `json:"kind"`
+	Options     json.RawMessage `json:"options"`
+	QuestionId  string          `json:"questionId"`
+	State       string          `json:"state"`
+	Text        string          `json:"text"`
+}
+
 type QuestionHistoryReply struct {
 	Questions json.RawMessage `json:"questions,omitempty"`
 }
@@ -845,6 +1390,16 @@ type QueueListRequest struct {
 	SessionId *string `json:"sessionId,omitempty"`
 }
 
+type ReasoningBlock struct {
+	At          *int64  `json:"at,omitempty"`
+	ExecutionId *string `json:"executionId,omitempty"`
+	Key         string  `json:"key"`
+	Kind        string  `json:"kind"`
+	Markdown    string  `json:"markdown"`
+	Plain       *string `json:"plain,omitempty"`
+	Stream      *string `json:"stream,omitempty"`
+}
+
 type RecommendationSetReply = map[string]json.RawMessage
 
 type RecommendationSetRequest struct {
@@ -863,12 +1418,68 @@ type ReplyRequest struct {
 	QuestionId *string         `json:"questionId,omitempty"`
 }
 
+type RerunMode string
+
+const (
+	RerunModeFailed RerunMode = "failed"
+	RerunModeAll    RerunMode = "all"
+)
+
+type ResultArtifact struct {
+	Id        string `json:"id"`
+	MediaType string `json:"mediaType"`
+	Name      string `json:"name"`
+	Size      int64  `json:"size"`
+}
+
+// ResultBlock: The stored artifacts of an ended execution.
+type ResultBlock struct {
+	ArtifactIds []string         `json:"artifactIds"`
+	Artifacts   []ResultArtifact `json:"artifacts"`
+	ExecutionId *string          `json:"executionId,omitempty"`
+	Key         string           `json:"key"`
+	Kind        string           `json:"kind"`
+}
+
+// Revision: mirrorCommit: stage 2 only.
+type Revision struct {
+	Actor        Actor          `json:"actor"`
+	At           string         `json:"at"`
+	ContentSha   string         `json:"contentSha"`
+	Message      string         `json:"message"`
+	MirrorCommit *string        `json:"mirrorCommit,omitempty"`
+	Parent       *int64         `json:"parent,omitempty"`
+	RepoBase     *string        `json:"repoBase,omitempty"`
+	Revision     int64          `json:"revision"`
+	Source       RevisionSource `json:"source"`
+}
+
+type RevisionSource string
+
+const (
+	RevisionSourceRepo   RevisionSource = "repo"
+	RevisionSourceEditor RevisionSource = "editor"
+	RevisionSourceLab    RevisionSource = "lab"
+	RevisionSourceAgent  RevisionSource = "agent"
+)
+
+type RevisionWindow struct {
+	Revision int64  `json:"revision"`
+	Window   Window `json:"window"`
+}
+
 type RouteDecisionsReply struct {
 	Decisions json.RawMessage `json:"decisions,omitempty"`
 }
 
 type RouteDecisionsRequest struct {
 	ExecutionId *string `json:"executionId,omitempty"`
+}
+
+type RunSummary struct {
+	At          string  `json:"at"`
+	ExecutionId *string `json:"executionId,omitempty"`
+	State       string  `json:"state"`
 }
 
 type SearchHit struct {
@@ -1150,17 +1761,26 @@ type TaskUpdateRequest struct {
 	TaskId *string `json:"taskId,omitempty"`
 }
 
-// ThreadBlock: One thread entry; key is its position (e.g. seq:part).
-type ThreadBlock struct {
-	ExecutionId *string   `json:"executionId,omitempty"`
-	Key         string    `json:"key"`
-	Kind        BlockKind `json:"kind"`
+// TextBlock: role agent or operator; by: the sender of an operator message; stream open or cut-off while a delta is the newest text; harness, model and effort mark agent text.
+type TextBlock struct {
+	At          *int64  `json:"at,omitempty"`
+	By          *string `json:"by,omitempty"`
+	Effort      *string `json:"effort,omitempty"`
+	ExecutionId *string `json:"executionId,omitempty"`
+	Harness     *string `json:"harness,omitempty"`
+	Key         string  `json:"key"`
+	Kind        string  `json:"kind"`
+	Markdown    string  `json:"markdown"`
+	Model       *string `json:"model,omitempty"`
+	Plain       *string `json:"plain,omitempty"`
+	Role        string  `json:"role"`
+	Stream      *string `json:"stream,omitempty"`
 }
 
 // ThreadBlocksReply: removed: block keys that no longer exist.
 type ThreadBlocksReply struct {
-	Entries []ThreadBlock `json:"entries"`
-	Removed []string      `json:"removed"`
+	Entries []Block  `json:"entries"`
+	Removed []string `json:"removed"`
 }
 
 // ThreadBlocksRequest: rows: changed records; the reply has their current blocks.
@@ -1171,15 +1791,15 @@ type ThreadBlocksRequest struct {
 
 // ThreadEntriesReply: total: only with around. feedCursor: the change cursor of this read, to catch up from.
 type ThreadEntriesReply struct {
-	Entries    []ThreadBlock `json:"entries"`
-	FeedCursor int64         `json:"feedCursor"`
-	First      *string       `json:"first"`
-	HasAfter   bool          `json:"hasAfter"`
-	HasBefore  bool          `json:"hasBefore"`
-	Key        ThreadKey     `json:"key"`
-	Last       *string       `json:"last"`
-	SessionIds []string      `json:"sessionIds"`
-	Total      *int64        `json:"total,omitempty"`
+	Entries    []Block   `json:"entries"`
+	FeedCursor int64     `json:"feedCursor"`
+	First      *string   `json:"first"`
+	HasAfter   bool      `json:"hasAfter"`
+	HasBefore  bool      `json:"hasBefore"`
+	Key        ThreadKey `json:"key"`
+	Last       *string   `json:"last"`
+	SessionIds []string  `json:"sessionIds"`
+	Total      *int64    `json:"total,omitempty"`
 }
 
 type ThreadEntriesRequest struct {
@@ -1225,6 +1845,20 @@ type ThreadSearchRequest struct {
 	Q      string    `json:"q"`
 }
 
+// ToolBlock: input and output are the harness's own values; times in ms.
+type ToolBlock struct {
+	At          *int64          `json:"at,omitempty"`
+	EndedAt     *int64          `json:"endedAt,omitempty"`
+	ExecutionId *string         `json:"executionId,omitempty"`
+	Input       json.RawMessage `json:"input,omitempty"`
+	Key         string          `json:"key"`
+	Kind        string          `json:"kind"`
+	Name        string          `json:"name"`
+	Output      json.RawMessage `json:"output,omitempty"`
+	StartedAt   *int64          `json:"startedAt,omitempty"`
+	State       string          `json:"state"`
+}
+
 type TransportAuthorizeReply struct {
 	Audit         json.RawMessage `json:"audit,omitempty"`
 	Commands      json.RawMessage `json:"commands,omitempty"`
@@ -1266,6 +1900,18 @@ type TransportInspectRequest struct {
 	ExecutionId *string `json:"executionId,omitempty"`
 }
 
+// VariantVsBaseline: Added to lab_experiment_get: one per non-baseline variant, over examples where both have a final score.
+type VariantVsBaseline struct {
+	CostUsdDelta *float64 `json:"costUsdDelta,omitempty"`
+	Examples     int64    `json:"examples"`
+	Losses       *int64   `json:"losses,omitempty"`
+	ScoreDelta   *float64 `json:"scoreDelta"`
+	Ties         *int64   `json:"ties,omitempty"`
+	Variant      string   `json:"variant"`
+	WallMsDelta  *int64   `json:"wallMsDelta,omitempty"`
+	Wins         *int64   `json:"wins,omitempty"`
+}
+
 type ViewLinkReply struct {
 	Path json.RawMessage `json:"path,omitempty"`
 	Url  json.RawMessage `json:"url,omitempty"`
@@ -1300,6 +1946,15 @@ type WatchStopReply struct {
 
 type WatchStopRequest struct {
 	SessionId *string `json:"sessionId,omitempty"`
+}
+
+type Window struct {
+	CostBasis    *string  `json:"costBasis,omitempty"`
+	CostUsd      *float64 `json:"costUsd,omitempty"`
+	Runs         int64    `json:"runs"`
+	Succeeded    int64    `json:"succeeded"`
+	Tokens       int64    `json:"tokens"`
+	WallMsMedian *int64   `json:"wallMsMedian"`
 }
 
 type WorkerDoneReply struct {

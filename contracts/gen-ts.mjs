@@ -4,12 +4,25 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 
 const dir = new URL('./', import.meta.url);
-const KEYS = new Set(['$comment', 'type', 'properties', 'required', 'additionalProperties', 'items', 'enum', '$ref', 'minimum']);
+const KEYS = new Set(['$comment', 'type', 'properties', 'required', 'additionalProperties', 'items', 'enum', '$ref', 'minimum', 'const', 'oneOf']);
 const SCALAR = { string: 'string', integer: 'number', number: 'number', boolean: 'boolean', null: 'null' };
 
 function type(s, at) {
   for (const k of Object.keys(s)) if (!KEYS.has(k)) throw Error(`${at}: unsupported keyword ${k}`);
-  if (s.$ref) return s.$ref.replace(/^#\/\$defs\//, '');
+  if (s.$ref) {
+    const m = /^(?:([a-z-]+)\.schema\.json)?#\/\$defs\/(\w+)$/.exec(s.$ref);
+    if (!m) throw Error(`${at}: $ref must be [<file>.schema.json]#/$defs/<Name>`);
+    if (m[1]) imports.add(`import type { ${m[2]} } from './${m[1]}.ts';`);
+    return m[2];
+  }
+  if (s.oneOf) {
+    if (/[.[]/.test(at) || s.oneOf.some((x) => !x.$ref || Object.keys(x).length !== 1)) throw Error(`${at}: oneOf must be a $defs entry of $refs`);
+    return s.oneOf.map((x) => type(x, at)).join(' | ');
+  }
+  if (s.const !== undefined) {
+    if (typeof s.const !== 'string' || (s.type !== undefined && s.type !== 'string')) throw Error(`${at}: const must be a string, with no other type`);
+    return JSON.stringify(s.const);
+  }
   if (s.enum && /[.[]/.test(at)) throw Error(`${at}: an enum must be a $defs entry (Go needs its name)`);
   if (s.enum) return s.enum.map((v) => JSON.stringify(v)).join(' | ');
   if (s.type === undefined) return 'unknown';
@@ -27,9 +40,11 @@ function type(s, at) {
   throw Error(`${at}: unsupported type ${s.type}`);
 }
 
+let imports = new Set();
 mkdirSync(new URL('generated/', dir), { recursive: true });
 for (const f of readdirSync(dir).filter((f) => f.endsWith('.schema.json'))) {
   const root = JSON.parse(readFileSync(new URL(f, dir), 'utf8'));
+  imports = new Set();
   const out = Object.entries(root.$defs).map(([name, s]) => `export type ${name} = ${type(s, name)};`);
   // operations: each name maps to its <Name>Request and <Name>Reply (contracts/README.md, Operations).
   if (root.operations) out.push(`export type Ops = {\n${Object.keys(root.operations).map((n) => {
@@ -37,5 +52,10 @@ for (const f of readdirSync(dir).filter((f) => f.endsWith('.schema.json'))) {
     for (const d of [t + 'Request', t + 'Reply']) if (!root.$defs[d]) throw Error(`${f}: operation ${n} has no $defs ${d}`);
     return `  ${JSON.stringify(n)}: { request: ${t}Request; reply: ${t}Reply };`;
   }).join('\n')}\n};`);
-  writeFileSync(new URL(`generated/${f.replace('.schema.json', '.ts')}`, dir), `// Generated from contracts/${f} by contracts/gen-ts.mjs. Do not edit.\n\n${out.join('\n\n')}\n`);
+  for (const n of Object.keys(root.planned ?? {})) {
+    if (root.operations?.[n]) throw Error(`${f}: operation ${n} is both planned and built`);
+    const t = n.split(/[_.-]/).filter(Boolean).map((p) => p[0].toUpperCase() + p.slice(1)).join('');
+    for (const d of [t + 'Request', t + 'Reply']) if (!root.$defs[d]) throw Error(`${f}: planned operation ${n} has no $defs ${d}`);
+  }
+  writeFileSync(new URL(`generated/${f.replace('.schema.json', '.ts')}`, dir), `// Generated from contracts/${f} by contracts/gen-ts.mjs. Do not edit.\n\n${imports.size ? [...imports].join('\n') + '\n\n' : ''}${out.join('\n\n')}\n`);
 }

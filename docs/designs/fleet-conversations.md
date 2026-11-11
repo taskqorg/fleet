@@ -170,15 +170,15 @@ It searches the plain text of text, reasoning, tool-call and question blocks in 
 
 ### Block model
 
-One normalizer produces typed blocks. The screen and copy code only read blocks.
+One normalizer produces typed blocks. The screen and copy code only read blocks. The types are `Block` and its six members in `contracts/ops.schema.json` (closed, told apart by `kind`); the app's `Block` and `packages/ui`'s `ThreadBlock` are the generated union, and the coordinator builds its blocks from the generated structs.
 
 ```text
 Block =
-  | { kind: 'text',      key, executionId, role: 'operator'|'agent', markdown, plain }
-  | { kind: 'tool',      key, executionId, name, input, output, state, startedAt, endedAt }
-  | { kind: 'reasoning', key, executionId, markdown, plain }
-  | { kind: 'question',  key, executionId, questionId, text, options, state, answer?, answeredBy? }
-  | { kind: 'result',    key, executionId, artifactIds, delivery? }
+  | { kind: 'text',      key, executionId, role: 'operator'|'agent', markdown, plain, at, by?, stream?, harness?, model?, effort? }
+  | { kind: 'tool',      key, executionId, at, name, input, output, state, startedAt, endedAt }
+  | { kind: 'reasoning', key, executionId, markdown, plain, at, stream? }
+  | { kind: 'question',  key, executionId, questionId, text, options, state, askedAt, answeredAt, answer?, answeredBy? }
+  | { kind: 'result',    key, executionId, artifactIds, artifacts }
   | { kind: 'boundary',  key, sessionId, executionId, harness, model, effort, state, startedAt, endedAt }
 ```
 
@@ -186,7 +186,7 @@ Block =
 *   Streaming: delta records (projection with `deltaOf`) are stored as documents of kind `event-delta`, not `event`, so pages, search and export never scan them. When the stream ends, the executor writes one final block on the completing `event`. An open stream is shown as one entry at the end of the newest page, built in full from its `event-delta` rows; it is never split across a page edge.
 *   Execution end: on an execution's terminal transition the coordinator writes one `event` of type `execution.ended`. It carries no text; its `seq` places the result block. A stream cut off without a final block (the execution ended first) is shown as one closed entry built from its `event-delta` rows at read time, so the executor stays the only producer of text blocks.
 *   Records with no raw data or an unknown shape get one `tool` block named after the event type, with the raw JSON as output, so every event has `blocks`.
-*   `question` and `boundary` come from the coordinator, from the `question` and `execution` rows, at their own `seq`. `result` comes from the `artifact` rows and the delivery, at the key of the `execution.ended` event.
+*   `question` and `boundary` come from the coordinator, from the `question` and `execution` rows, at their own `seq`. `result` comes from the stored `artifact` rows, at the key of the `execution.ended` event.
 *   `plain` is the block's text with stable character offsets. Selection and copy use it.
 
 Old stored events are not re-projected (owner decision); the app no longer reads `data.item`.

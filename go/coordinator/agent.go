@@ -1390,14 +1390,16 @@ func init() {
 
 	// /api/hosts/agent-tools: an executor's agent calls a tool; every call is bound to the calling execution's session.
 	longRoute("POST /api/hosts/agent-tools", func(q *Request) (any, error) {
-		var b struct {
-			HostID      string          `json:"hostId"`
-			ExecutionID string          `json:"executionId"`
-			CommandID   string          `json:"commandId"`
-			Request     json.RawMessage `json:"request"`
-		}
-		if decode(q.body, &b) != nil || q.host == nil {
+		var b contract.AgentToolsRequest
+		if q.host == nil {
 			return nil, fail(403, "Host rejected")
+		}
+		if err := decode(q.body, &b); err != nil {
+			return nil, err
+		}
+		executionID := ""
+		if b.ExecutionId != nil {
+			executionID = *b.ExecutionId
 		}
 		var rpc struct {
 			Method string `json:"method"`
@@ -1409,25 +1411,25 @@ func init() {
 		json.Unmarshal(b.Request, &rpc)
 		name := rpc.Params.Name
 		// The director's rights, the execution as actor (docs/designs/fleet-pm-agent.md §1).
-		q.agent = "execution:" + b.ExecutionID
+		q.agent = "execution:" + executionID
 		q.r = q.r.WithContext(context.WithValue(q.ctx(), actorKey{}, q.agent))
 		var focus []string // nil: no focus or "*"
 		prove := func() error {
 			e := doc{}
-			if b.ExecutionID != "" {
+			if executionID != "" {
 				var err error
-				if e, err = getExecution(q, b.ExecutionID); err != nil {
+				if e, err = getExecution(q, executionID); err != nil {
 					return err
 				}
-				if astr(e["hostId"]) != b.HostID {
+				if astr(e["hostId"]) != b.HostId {
 					return fail(403, "Execution rejected")
 				}
 			}
-			c, err := get(q, b.CommandID, "command")
+			c, err := get(q, b.CommandId, "command")
 			if err != nil {
 				return err
 			}
-			if astr(c["executionId"]) != b.ExecutionID || astr(c["hostId"]) != b.HostID {
+			if astr(c["executionId"]) != executionID || astr(c["hostId"]) != b.HostId {
 				return fail(403, "Command rejected")
 			}
 			if sid := astr(e["sessionId"]); sid != "" {
@@ -1446,7 +1448,7 @@ func init() {
 			// A host acts with its director's rights only when its holder is that director or the owner (whose hosts
 			// run taken work, people-access §5); another holder's host never borrows a director's grants.
 			if hp := q.app.people[holder]; d != holder && (hp == nil || !hp.Owner) {
-				return fail(403, "Host "+b.HostID+" is held by "+holder+", not the director "+d)
+				return fail(403, "Host "+b.HostId+" is held by "+holder+", not the director "+d)
 			}
 			return nil
 		}
@@ -1462,7 +1464,7 @@ func init() {
 			if agentDenied[name] {
 				return nil, fail(403, "Only a person may do this")
 			}
-			if b.ExecutionID == "" {
+			if executionID == "" {
 				return nil, fail(403, "Execution rejected")
 			}
 			if err := q.app.store.Tx(q.ctx(), nil, false, "", func(tx pgx.Tx) error { q.tx = tx; return prove() }); err != nil {
@@ -1507,7 +1509,7 @@ func init() {
 			}
 			var args doc
 			json.Unmarshal(rpc.Params.Arguments, &args)
-			r, err := bound(q, name, args, b.ExecutionID)
+			r, err := bound(q, name, args, executionID)
 			if err != nil {
 				return err
 			}

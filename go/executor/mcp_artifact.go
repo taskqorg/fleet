@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"errors"
+	"fleet/contract"
 	"io"
 	"os"
 	"path/filepath"
@@ -146,7 +147,7 @@ func artifactSave(ctx, q any, db dbExec) (any, error) {
 			return err
 		}
 		if body["required"] == true {
-			decl := M{"hostId": jAt(ctx, "hostId"), "executionId": jAt(ctx, "executionId"), "name": body["name"]}
+			decl := contract.ArtifactDeclareRequest{HostId: jStr(ctx, "hostId"), ExecutionId: jStr(ctx, "executionId"), Name: jStr(body, "name")}
 			_, err := x.Exec("INSERT INTO outbox(route,body) VALUES('/api/hosts/artifacts/declare',?)", enc(decl))
 			return err
 		}
