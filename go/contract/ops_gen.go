@@ -8,10 +8,10 @@ var _ json.RawMessage
 
 type AccountConnectReply = AccountInspection
 
-// AccountConnectRequest: hostId: default the caller's host; binding: the native login name (account_connect).
+// AccountConnectRequest: Inspects one native login. hostId: default the caller's host; binding: the native login name.
 type AccountConnectRequest struct {
 	AccountId string  `json:"accountId"`
-	Binding   *string `json:"binding,omitempty"`
+	Binding   string  `json:"binding"`
 	HostId    *string `json:"hostId,omitempty"`
 }
 
@@ -29,10 +29,9 @@ type AccountCreateRequest struct {
 
 type AccountDiscoverReply = AccountInspection
 
-// AccountDiscoverRequest: hostId: default the caller's host; binding: the native login name (account_connect).
+// AccountDiscoverRequest: Reads the host's native account catalogue. hostId: default the caller's host.
 type AccountDiscoverRequest struct {
 	AccountId string  `json:"accountId"`
-	Binding   *string `json:"binding,omitempty"`
 	HostId    *string `json:"hostId,omitempty"`
 }
 
@@ -48,13 +47,13 @@ type AccountHostsRequest struct {
 
 // AccountInspection: A read-only native inspection queued on a host; an identical one still pending is answered instead of a new one.
 type AccountInspection struct {
-	AccountId   string          `json:"accountId"`
-	Binding     json.RawMessage `json:"binding"`
-	CreatedAt   float64         `json:"createdAt"`
-	ExecutionId string          `json:"executionId"`
-	HostId      string          `json:"hostId"`
-	Id          string          `json:"id"`
-	LoginAction *string         `json:"loginAction,omitempty"`
+	AccountId   string  `json:"accountId"`
+	Binding     *string `json:"binding"`
+	CreatedAt   float64 `json:"createdAt"`
+	ExecutionId string  `json:"executionId"`
+	HostId      string  `json:"hostId"`
+	Id          string  `json:"id"`
+	LoginAction *string `json:"loginAction,omitempty"`
 }
 
 type AccountListReply struct {
@@ -82,7 +81,7 @@ type AccountLoginHandoffReply struct {
 type AccountLoginHandoffRequest struct {
 	AccountId string  `json:"accountId"`
 	Binding   *string `json:"binding,omitempty"`
-	HostId    *string `json:"hostId,omitempty"`
+	HostId    string  `json:"hostId"`
 }
 
 // AccountUpdateReply: A managed-account record: id, name, harness, holder, kind, plan, intake, take, switchPct, comment, bindings and times.
@@ -91,9 +90,11 @@ type AccountUpdateReply = map[string]json.RawMessage
 // AccountUpdateRequest: Holder or owner; switchPct null clears it; take {projects}; holder: owner only.
 type AccountUpdateRequest struct {
 	AccountId string          `json:"accountId"`
+	Comment   *string         `json:"comment,omitempty"`
 	Holder    *string         `json:"holder,omitempty"`
 	Intake    *string         `json:"intake,omitempty"`
-	SwitchPct json.RawMessage `json:"switchPct,omitempty"`
+	Plan      *string         `json:"plan,omitempty"`
+	SwitchPct *float64        `json:"switchPct,omitempty"`
 	Take      json.RawMessage `json:"take,omitempty"`
 }
 
