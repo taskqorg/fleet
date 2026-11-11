@@ -142,6 +142,11 @@ func main() {
 				fmt.Fprintf(&b, "\t%s%s %s = %q\n", name, exported(v.(string)), name, v)
 			}
 			b.WriteString(")\n\n")
+			fmt.Fprintf(&b, "// %sValues lists every %s in schema order.\nvar %sValues = []%s{", name, name, name, name)
+			for _, v := range s["enum"].([]any) {
+				fmt.Fprintf(&b, "%s%s, ", name, exported(v.(string)))
+			}
+			b.WriteString("}\n\n")
 		case t == "object" && len(props) > 0:
 			req := map[string]bool{}
 			rs, _ := s["required"].([]any)

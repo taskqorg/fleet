@@ -153,6 +153,9 @@ const (
 	ProblemKindVersionBehind ProblemKind = "version-behind"
 )
 
+// ProblemKindValues lists every ProblemKind in schema order.
+var ProblemKindValues = []ProblemKind{ProblemKindEdgeRedirect, ProblemKindVersionBehind}
+
 // ProjectArguments: Native tool arguments are forwarded unchanged to the owning project operation validator.
 type ProjectArguments = map[string]json.RawMessage
 
@@ -169,6 +172,9 @@ const (
 	ProjectOperationQuestionHistory ProjectOperation = "question_history"
 	ProjectOperationAccountList     ProjectOperation = "account_list"
 )
+
+// ProjectOperationValues lists every ProjectOperation in schema order.
+var ProjectOperationValues = []ProjectOperation{ProjectOperationProjectContext, ProjectOperationCatalogue, ProjectOperationPipelineRun, ProjectOperationDirectSearch, ProjectOperationPipelineHistory, ProjectOperationPipelineGet, ProjectOperationQuestionAsk, ProjectOperationQuestionHistory, ProjectOperationAccountList}
 
 type ProjectReceipt struct {
 	CommandId   string         `json:"commandId"`
@@ -206,6 +212,9 @@ const (
 	ReceiptStatusUnknown   ReceiptStatus = "unknown"
 )
 
+// ReceiptStatusValues lists every ReceiptStatus in schema order.
+var ReceiptStatusValues = []ReceiptStatus{ReceiptStatusAccepted, ReceiptStatusStarted, ReceiptStatusCompleted, ReceiptStatusFailed, ReceiptStatusStopped, ReceiptStatusUnknown}
+
 // UpdateResult: last of the host's update-state.json, written by fleet-update
 type UpdateResult struct {
 	At      string      `json:"at"`
@@ -224,3 +233,6 @@ const (
 	UpdateStateRefused UpdateState = "refused"
 	UpdateStateFailed  UpdateState = "failed"
 )
+
+// UpdateStateValues lists every UpdateState in schema order.
+var UpdateStateValues = []UpdateState{UpdateStateOk, UpdateStatePending, UpdateStateHeld, UpdateStateError, UpdateStateRefused, UpdateStateFailed}

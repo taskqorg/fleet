@@ -5,6 +5,8 @@ package main
 
 import (
 	"github.com/jackc/pgx/v5"
+
+	"fleet/contract"
 )
 
 func init() {
@@ -13,8 +15,13 @@ func init() {
 
 var receiptRank = map[string]int{"pending": 0, "accepted": 1, "started": 2, "unknown": 2, "completed": 3, "failed": 3, "stopped": 3}
 
-// projectReceiptOps: the project operations a native agent may call through a receipt.
-var projectReceiptOps = []string{"project_context", "catalogue", "pipeline_run", "direct_search", "pipeline_history", "pipeline_get", "question_ask", "question_history", "account_list"}
+// projectReceiptOps: the project operations a native agent may call through a receipt (the contract's ProjectOperation).
+var projectReceiptOps = func() (out []string) {
+	for _, o := range contract.ProjectOperationValues {
+		out = append(out, string(o))
+	}
+	return out
+}()
 
 // projectReceipt runs one project operation for a native agent (projects area: the operation, its native-agent actor
 // and the early return of a started pipeline run). Otherwise the registered operation runs in this transaction.

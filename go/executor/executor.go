@@ -852,7 +852,9 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 				tools = append(tools, "request_child")
 			}
 			if jIsStr(p, "projectId") {
-				tools = append(tools, "project_context", "catalogue", "pipeline_run", "direct_search", "pipeline_history", "pipeline_get", "question_ask", "question_history", "account_list")
+				for _, t := range projectTools {
+					tools = append(tools, t)
+				}
 			}
 			for _, o := range jArr(p, "fleetOperations") {
 				if n := jStr(o, "name"); n != "" && !slices.Contains(tools, any(n)) {

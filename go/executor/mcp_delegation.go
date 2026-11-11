@@ -18,18 +18,36 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"fleet/contract"
 )
 
 //go:embed mcp-tools.json
 var mcpToolsJSON []byte
 
 var (
-	projectTools  = []string{"project_context", "catalogue", "pipeline_run", "direct_search", "pipeline_history", "pipeline_get", "question_ask", "question_history", "account_list"}
+	projectTools = func() (out []string) { // the contract's ProjectOperation
+		for _, o := range contract.ProjectOperationValues {
+			out = append(out, string(o))
+		}
+		return out
+	}()
 	agentTools    = []string{"session_start", "session_deliver", "session_transition", "session_fork", "session_resume", "session_handoffs", "message_send", "queue_list", "ask", "reply", "questions", "worker_done", "execution_status"}
 	artifactTools = []string{"artifact_save", "artifact_list", "artifact_get"}
 )
 
 func init() { runMCP = mcpRun }
+
+// toolSchema: the inputSchema of one tool in mcp-tools.json, nil when there is none.
+func toolSchema(name string) any {
+	all, _ := decode(mcpToolsJSON)
+	for _, t := range jArr(all) {
+		if jStr(t, "name") == name {
+			return jAt(t, "inputSchema")
+		}
+	}
+	return nil
+}
 
 // newID is a random UUID v4.
 func newID() string {
@@ -179,9 +197,16 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 			if !isObj {
 				return nil, errors.New("Invalid project request")
 			}
+			// The tool's own inputSchema (mcp-tools.json) is the check: only its properties, its required ones present.
+			schema := toolSchema(name)
 			for k := range qo {
-				if !slices.Contains([]string{"requestId", "query", "methodId", "text", "runId"}, k) {
-					return nil, errors.New("Invalid project request")
+				if !has(jAt(schema, "properties"), k) {
+					return nil, fmt.Errorf("Invalid project request: %s takes no %s", name, k)
+				}
+			}
+			for _, k := range jArr(schema, "required") {
+				if s, ok := str(qo[jStr(k)]); !ok || s == "" {
+					return nil, fmt.Errorf("Invalid project request: %s needs %s", name, jStr(k))
 				}
 			}
 			effect := slices.Contains([]string{"pipeline_run", "direct_search", "question_ask"}, name)

@@ -3,7 +3,11 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
+
+	"fleet/contract"
 )
 
 // Risk: a provider charge is reported as a plain error (or the reverse), so an agent repeats a paid call
@@ -66,5 +70,34 @@ func TestFleetOperationsListed(t *testing.T) {
 	}
 	if len(operationsOf(M{})) != 0 {
 		t.Fatal("no operations without the list")
+	}
+}
+
+// Requirement: each project tool tells the model its own arguments (review C5, C6): the project tools in mcp-tools.json
+// are exactly the contract's ProjectOperation list, each with a closed schema, and a call outside its schema is refused
+// here, before it reaches the coordinator. Risk: the model gets one generic schema and learns a missing or wrong argument
+// only from a runtime error after a coordinator round trip.
+func TestProjectToolSchemas(t *testing.T) {
+	ctx := M{"projectId": "p1", "hostId": "h", "commandId": "c", "executionId": "e"}
+	listed := []string{}
+	for _, x := range mcpTools(ctx)["tools"].([]any) {
+		if slices.Contains(projectTools, jStr(x, "name")) {
+			listed = append(listed, jStr(x, "name"))
+			if jAt(x, "inputSchema", "additionalProperties") != false {
+				t.Errorf("%s: open schema", jStr(x, "name"))
+			}
+		}
+	}
+	if len(listed) != len(contract.ProjectOperationValues) {
+		t.Fatalf("project tools %v, contract %v", listed, contract.ProjectOperationValues)
+	}
+	for _, bad := range []M{
+		{"name": "pipeline_get", "arguments": M{"text": "x", "runId": "r"}}, // not an argument of pipeline_get
+		{"name": "pipeline_get", "arguments": M{}},                         // runId missing
+		{"name": "question_ask", "arguments": M{"requestId": "r"}},         // text missing
+	} {
+		if _, err := delegation(M{"method": "tools/call", "params": bad}, ctx, nil); err == nil || !strings.Contains(err.Error(), "Invalid project request") {
+			t.Errorf("%v: %v", bad, err)
+		}
 	}
 }
