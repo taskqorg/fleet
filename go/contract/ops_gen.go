@@ -141,18 +141,24 @@ type AgentTestRequest struct {
 }
 
 type ArtifactCopyRetryReply struct {
-	Retrying json.RawMessage `json:"retrying,omitempty"`
+	Retrying bool `json:"retrying"`
 }
 
+// ArtifactCopyRetryRequest: Operator only.
 type ArtifactCopyRetryRequest struct {
-	ArtifactId *string `json:"artifactId,omitempty"`
-	StoreId    *string `json:"storeId,omitempty"`
+	ArtifactId string `json:"artifactId"`
+	StoreId    string `json:"storeId"`
 }
 
-type ArtifactGetReply = map[string]json.RawMessage
+type ArtifactCopyState struct {
+	State   string `json:"state"`
+	StoreId string `json:"storeId"`
+}
+
+type ArtifactGetReply = ArtifactView
 
 type ArtifactGetRequest struct {
-	ArtifactId *string `json:"artifactId,omitempty"`
+	ArtifactId string `json:"artifactId"`
 }
 
 // ArtifactListReply: nextBefore: only with limit; null on the last page.
@@ -175,15 +181,16 @@ type ArtifactListRequest struct {
 }
 
 type ArtifactPurgeReply struct {
-	Artifacts json.RawMessage `json:"artifacts,omitempty"`
-	Deleted   json.RawMessage `json:"deleted,omitempty"`
-	Pending   json.RawMessage `json:"pending,omitempty"`
+	Artifacts int64 `json:"artifacts"`
+	Deleted   int64 `json:"deleted"`
+	Pending   int64 `json:"pending"`
 }
 
+// ArtifactPurgeRequest: Operator only.
 type ArtifactPurgeRequest struct {
-	ContentHash *string `json:"contentHash,omitempty"`
+	ContentHash string  `json:"contentHash"`
 	ProjectId   *string `json:"projectId,omitempty"`
-	Reason      *string `json:"reason,omitempty"`
+	Reason      string  `json:"reason"`
 	Scope       *string `json:"scope,omitempty"`
 }
 
@@ -201,26 +208,51 @@ type ArtifactRow struct {
 }
 
 type ArtifactRuleConfirmReply struct {
-	Confirmed json.RawMessage `json:"confirmed,omitempty"`
-	RuleHash  json.RawMessage `json:"ruleHash,omitempty"`
+	Confirmed bool   `json:"confirmed"`
+	RuleHash  string `json:"ruleHash"`
 }
 
+// ArtifactRuleConfirmRequest: Operator only.
 type ArtifactRuleConfirmRequest struct {
 	ProjectId *string         `json:"projectId,omitempty"`
-	Rule      json.RawMessage `json:"rule,omitempty"`
-	RuleHash  json.RawMessage `json:"ruleHash,omitempty"`
+	Rule      json.RawMessage `json:"rule"`
 }
 
+// ArtifactRulePreviewReply: sample: up to 10 matching artifacts (id, name, size).
 type ArtifactRulePreviewReply struct {
-	Bytes    json.RawMessage `json:"bytes,omitempty"`
-	Count    json.RawMessage `json:"count,omitempty"`
-	RuleHash json.RawMessage `json:"ruleHash,omitempty"`
-	Sample   json.RawMessage `json:"sample,omitempty"`
+	Bytes    int64                        `json:"bytes"`
+	Count    int64                        `json:"count"`
+	RuleHash string                       `json:"ruleHash"`
+	Sample   []map[string]json.RawMessage `json:"sample"`
 }
 
+// ArtifactRulePreviewRequest: Operator only. rule: a retention rule of the project settings.
 type ArtifactRulePreviewRequest struct {
 	ProjectId *string         `json:"projectId,omitempty"`
-	Rule      json.RawMessage `json:"rule,omitempty"`
+	Rule      json.RawMessage `json:"rule"`
+}
+
+// ArtifactView: One artifact with its copies; availability available (with a presigned url), unavailable, or the artifact state.
+type ArtifactView struct {
+	Availability          string              `json:"availability"`
+	Copies                []ArtifactCopyState `json:"copies"`
+	DerivedFromArtifactId *string             `json:"derivedFromArtifactId"`
+	Error                 *string             `json:"error"`
+	ExecutionId           *string             `json:"executionId"`
+	Id                    string              `json:"id"`
+	LegacyId              *string             `json:"legacyId"`
+	MediaType             string              `json:"mediaType"`
+	Name                  string              `json:"name"`
+	PreviousArtifactId    *string             `json:"previousArtifactId"`
+	ProjectId             *string             `json:"projectId"`
+	Required              bool                `json:"required"`
+	Role                  string              `json:"role"`
+	Scope                 string              `json:"scope"`
+	Sha256                string              `json:"sha256"`
+	Size                  int64               `json:"size"`
+	State                 string              `json:"state"`
+	TaskId                *string             `json:"taskId"`
+	Url                   *string             `json:"url,omitempty"`
 }
 
 type AskReply = map[string]json.RawMessage
@@ -1808,16 +1840,37 @@ type StopOutcome struct {
 	StopCommand *StopCommandRef `json:"stopCommand,omitempty"`
 }
 
-type StoreSetFreeSpaceWarningReply = map[string]json.RawMessage
-
-type StoreSetFreeSpaceWarningRequest struct {
-	Bytes   *float64 `json:"bytes,omitempty"`
-	StoreId *string  `json:"storeId,omitempty"`
+type StoreSetFreeSpaceWarningReply struct {
+	Id    string `json:"id"`
+	State string `json:"state"`
 }
 
+// StoreSetFreeSpaceWarningRequest: Operator only. bytes null clears the warning.
+type StoreSetFreeSpaceWarningRequest struct {
+	Bytes   *int64 `json:"bytes,omitempty"`
+	StoreId string `json:"storeId"`
+}
+
+// StoreView: One store row (StoreRow in go/coordinator/artifacts.go).
+type StoreView struct {
+	Bucket                string  `json:"bucket"`
+	CapacityBytes         *int64  `json:"capacity_bytes"`
+	Endpoint              string  `json:"endpoint"`
+	FreeSpaceWarningBytes *int64  `json:"free_space_warning_bytes"`
+	Holder                *string `json:"holder"`
+	HostId                string  `json:"host_id"`
+	Id                    string  `json:"id"`
+	LocalEndpoint         *string `json:"local_endpoint"`
+	RequiresLogon         bool    `json:"requires_logon"`
+	State                 string  `json:"state"`
+	UsedBytes             *int64  `json:"used_bytes"`
+	Zone                  *string `json:"zone"`
+}
+
+// StoresListReply: problems: full stores and placement problems the caller may see, each with its actions.
 type StoresListReply struct {
-	Problems json.RawMessage `json:"problems,omitempty"`
-	Stores   json.RawMessage `json:"stores,omitempty"`
+	Problems []map[string]json.RawMessage `json:"problems"`
+	Stores   []StoreView                  `json:"stores"`
 }
 
 type StoresListRequest = map[string]json.RawMessage
@@ -1827,12 +1880,33 @@ type StreamCursor struct {
 	Cursor int64 `json:"cursor"`
 }
 
+// SubscriptionLimit: The subscription fields as stored on the managed-account record.
+type SubscriptionLimit struct {
+	Harness   json.RawMessage       `json:"harness"`
+	Holder    json.RawMessage       `json:"holder"`
+	Id        string                `json:"id"`
+	Intake    json.RawMessage       `json:"intake"`
+	Name      json.RawMessage       `json:"name"`
+	Readings  []SubscriptionReading `json:"readings"`
+	SwitchPct json.RawMessage       `json:"switchPct"`
+}
+
 type SubscriptionLimitsReply struct {
-	ServerNow     json.RawMessage `json:"serverNow,omitempty"`
-	Subscriptions json.RawMessage `json:"subscriptions,omitempty"`
+	ServerNow     int64               `json:"serverNow"`
+	Subscriptions []SubscriptionLimit `json:"subscriptions"`
 }
 
 type SubscriptionLimitsRequest = map[string]json.RawMessage
+
+type SubscriptionReading struct {
+	At       int64    `json:"at"`
+	HostId   *string  `json:"hostId"`
+	Pct      *float64 `json:"pct"`
+	Period   string   `json:"period"`
+	ResetsAt *float64 `json:"resetsAt"`
+	State    string   `json:"state"`
+	Status   *string  `json:"status"`
+}
 
 type TaskCancelReply = TaskDetail
 
