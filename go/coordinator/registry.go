@@ -145,6 +145,15 @@ func asT[T any](v any) (T, error) {
 	return t, err
 }
 
+// replyAs: a handler's map reply (keys fixed by the handler) as its contract type.
+func replyAs[T any](v any, err error) (T, error) {
+	if err != nil {
+		var t T
+		return t, err
+	}
+	return asT[T](v)
+}
+
 // recOf: an open record as the contract's map; never nil, so a required record is written as {}.
 func recOf(v any) map[string]json.RawMessage {
 	if m := rawMap(v); m != nil {

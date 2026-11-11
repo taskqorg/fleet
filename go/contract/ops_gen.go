@@ -998,42 +998,83 @@ type HarnessModelsRequest struct {
 	Harness string `json:"harness"`
 }
 
+// HostRecord: A registered host (without its secret hash). harnesses: per harness name whether it is allowed; autoUpdate on, off or an RFC 3339 time.
+type HostRecord struct {
+	AutoUpdate json.RawMessage `json:"autoUpdate,omitempty"`
+	CreatedAt  float64         `json:"createdAt"`
+	Harnesses  json.RawMessage `json:"harnesses"`
+	Holder     *string         `json:"holder,omitempty"`
+	HostId     *string         `json:"hostId,omitempty"`
+	Id         string          `json:"id"`
+	Intake     string          `json:"intake"`
+	Name       *string         `json:"name,omitempty"`
+	Platform   *string         `json:"platform,omitempty"`
+	Roles      []string        `json:"roles"`
+}
+
+// HostRow: One host as the Hosts screen shows it: configured, observed, or both; problems only while it polls.
+type HostRow struct {
+	AutoUpdate       json.RawMessage  `json:"autoUpdate"`
+	Capabilities     json.RawMessage  `json:"capabilities"`
+	Configured       bool             `json:"configured"`
+	Id               string           `json:"id"`
+	LastSeenAt       *float64         `json:"lastSeenAt"`
+	Platform         *string          `json:"platform"`
+	Problems         json.RawMessage  `json:"problems"`
+	Queued           int64            `json:"queued"`
+	Running          int64            `json:"running"`
+	RunningByHarness map[string]int64 `json:"runningByHarness"`
+	Slots            json.RawMessage  `json:"slots"`
+	Stores           string           `json:"stores"`
+	Update           json.RawMessage  `json:"update"`
+	Version          *string          `json:"version"`
+}
+
+// HostWriteReply: secret: only when Fleet minted it (no secretSha256 given); shown once.
+type HostWriteReply struct {
+	Host   HostRecord `json:"host"`
+	Secret *string    `json:"secret,omitempty"`
+}
+
 type HostsListReply struct {
-	Hosts        []map[string]json.RawMessage `json:"hosts"`
-	ServerNow    float64                      `json:"serverNow"`
-	StaleAfterMs float64                      `json:"staleAfterMs"`
+	Hosts        []HostRow `json:"hosts"`
+	ServerNow    int64     `json:"serverNow"`
+	StaleAfterMs int64     `json:"staleAfterMs"`
 }
 
 type HostsListRequest = map[string]json.RawMessage
 
-type HostsRegisterReply = map[string]json.RawMessage
+type HostsRegisterReply = HostWriteReply
 
+// HostsRegisterRequest: Owner only. secretSha256: the sha256 of a secret the host already holds; absent: Fleet mints one.
 type HostsRegisterRequest struct {
 	Harnesses    json.RawMessage `json:"harnesses,omitempty"`
 	Holder       *string         `json:"holder,omitempty"`
-	Id           json.RawMessage `json:"id,omitempty"`
+	Id           string          `json:"id"`
 	Name         *string         `json:"name,omitempty"`
-	Platform     json.RawMessage `json:"platform,omitempty"`
-	Roles        json.RawMessage `json:"roles,omitempty"`
-	SecretSha256 json.RawMessage `json:"secretSha256,omitempty"`
+	Platform     *string         `json:"platform,omitempty"`
+	Roles        []string        `json:"roles,omitempty"`
+	SecretSha256 *string         `json:"secretSha256,omitempty"`
 }
 
-type HostsRotateSecretReply = map[string]json.RawMessage
+type HostsRotateSecretReply = HostWriteReply
 
+// HostsRotateSecretRequest: Owner only.
 type HostsRotateSecretRequest struct {
-	Id           json.RawMessage `json:"id,omitempty"`
-	SecretSha256 json.RawMessage `json:"secretSha256,omitempty"`
+	Id           string  `json:"id"`
+	SecretSha256 *string `json:"secretSha256,omitempty"`
 }
 
 type HostsUpdateReply struct {
-	Host json.RawMessage `json:"host,omitempty"`
+	Host HostRecord `json:"host"`
 }
 
+// HostsUpdateRequest: Owner, or the holder for their own host.
 type HostsUpdateRequest struct {
 	AutoUpdate json.RawMessage `json:"autoUpdate,omitempty"`
 	Harnesses  json.RawMessage `json:"harnesses,omitempty"`
-	Id         json.RawMessage `json:"id,omitempty"`
-	Intake     json.RawMessage `json:"intake,omitempty"`
+	Id         string          `json:"id"`
+	Intake     *string         `json:"intake,omitempty"`
 }
 
 type LabCellActionReply = map[string]json.RawMessage
