@@ -33,11 +33,17 @@ test('Native projectless PM discovers project tools, creates/focuses project, ed
   const tools=(await rpc('tools/list')).tools.map((t:any)=>t.name);assert.ok(tools.includes('project_create'));assert.ok(tools.includes('project_update'));
   const id='pm-'+randomUUID();const content={settings:{id,name:'PM project',contextFiles:['rules.md'],roles:{pm:'pm'}},contextFiles:[{path:'rules.md',text:'Retain linked task evidence.'}]};
   const made=await tool('project_create',{id,requestId:randomUUID(),content});assert.equal(made.revision,1);
+  assert.deepEqual((await tool('project_readiness',{projectId:id})).hosts,[],'native special tools see fresh initial membership');
   const read=await tool('project_context',{projectId:id});assert.equal(read.context[0].text,'Retain linked task evidence.');
   content.settings.name='Edited by PM';assert.equal((await tool('project_update',{projectId:id,requestId:randomUUID(),baseRevision:1,content})).revision,2);
   const denied=await rpc('tools/call',{name:'project_context',arguments:{projectId:'hello-world'}});assert.equal(denied.isError,true);
   const task=await tool('task_create',{projectId:id,title:'Retained PM task',expectedOutcome:'Readable linked result'});assert.ok(task.id);
   const taskRead=await call('/api/ops/task_get',{taskId:task.id},member);assert.equal(taskRead.projectId,id);assert.equal(taskRead.state,'paused');assert.equal(taskRead.pauseReason,'held');assert.equal(taskRead.createdBy,'execution:'+execution.id);assert.equal(taskRead.directedBy,member);
+  const started=await tool('session_start',{projectId:id,role:'pm',requestId:randomUUID(),text:'Retain this project context; no provider process is launched by this test.'});
+  const childSession=await call('/api/ops/session_get',{sessionId:started.sessionId},member);assert.equal(childSession.projectId,id);assert.equal(childSession.role,'pm');
+  await call('/api/ops/project_initial_access_revoke',{projectId:id,baseAccessVersion:1},owner);
+  assert.equal((await rpc('tools/call',{name:'project_readiness',arguments:{projectId:id}})).isError,true,'special tools recheck revoked membership');
+  assert.equal((await rpc('tools/call',{name:'project_context',arguments:{projectId:id}})).isError,true,'ordinary tools recheck revoked membership');
   assert.equal(bridgeError,undefined);
  }finally{clearInterval(bridge);child.stdin.end();if(child.exitCode===null){child.kill('SIGTERM');}await closed;db.close();rmSync(root,{recursive:true,force:true});}
 });

@@ -1572,6 +1572,9 @@ func init() {
 			if err := prove(); err != nil {
 				return err
 			}
+			if err := refreshRequestAccess(q); err != nil {
+				return err
+			}
 			if rpc.Method != "tools/call" {
 				q.body = b.Request
 				var err error
