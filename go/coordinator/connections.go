@@ -10,11 +10,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"fleet/contract"
 )
 
 var (
@@ -100,51 +99,53 @@ func connKeys(q *Request, name string) ([]doc, error) {
 }
 
 // Snapshot (§3). Built in its own read transaction, so it shows only committed rows.
-func connSnapshot(q *Request) (doc, error) {
+func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
+	snap := contract.GatewaySnapshot{Schema: 2, GeneratedMs: nowMs(), Providers: gatewayProviders, Connections: map[string]contract.GatewayConnection{},
+		Tokens: []contract.GatewayRunToken{}, UsageTokenSha256: sha256hex([]byte(usageToken))}
 	blocked, err := blockedConnections(q)
 	if err != nil {
-		return nil, err
+		return snap, err
 	}
-	conns := doc{}
 	connections, err := all(q, "api-connection", nil)
 	if err != nil {
-		return nil, err
+		return snap, err
 	}
 	for _, c := range connections {
 		name := astr(c["name"])
 		ks, err := connKeys(q, name)
 		if err != nil {
-			return nil, err
+			return snap, err
 		}
-		keys := []any{}
+		keys := []contract.GatewayKey{}
 		for _, k := range ks {
 			if k["state"] == "retired" {
 				continue
 			}
-			e := doc{"id": strings.TrimPrefix(astr(k["id"]), "key:"), "state": k["state"]}
-			if k["enabledAt"] != nil {
-				e["enabledAt"] = k["enabledAt"]
+			e := contract.GatewayKey{Id: strings.TrimPrefix(astr(k["id"]), "key:"), State: astr(k["state"])}
+			if at, ok := numOK(k["enabledAt"]); ok {
+				ms := int64(at)
+				e.EnabledAt = &ms
 			}
 			keys = append(keys, e)
 		}
-		bl := []any{}
+		bl := []string{}
 		if blocked[name] {
 			bl = append(bl, "connection")
 		}
-		conns[name] = doc{"provider": c["provider"], "tools": c["tools"], "intake": c["intake"], "keys": keys, "blocked": bl}
+		snap.Connections[name] = contract.GatewayConnection{Provider: astr(c["provider"]), Tools: strs(c["tools"]), Intake: astr(c["intake"]), Keys: keys, Blocked: bl}
 	}
 	toks, err := all(q, "run-token", nil)
 	if err != nil {
-		return nil, err
+		return snap, err
 	}
-	tokens := []any{}
 	for _, t := range toks {
 		if t["revokedAt"] != nil {
 			continue
 		}
-		tokens = append(tokens, doc{"sha256": t["sha256"], "executionId": t["executionId"], "directedBy": t["directedBy"], "projectId": t["projectId"], "experimentId": t["experimentId"], "connections": t["connections"]})
+		snap.Tokens = append(snap.Tokens, contract.GatewayRunToken{Sha256: astr(t["sha256"]), ExecutionId: astr(t["executionId"]), DirectedBy: astr(t["directedBy"]),
+			ProjectId: astr(t["projectId"]), ExperimentId: astr(t["experimentId"]), Connections: strs(t["connections"])})
 	}
-	return doc{"schema": 2, "generated_ms": nowMs(), "providers": providers, "connections": conns, "tokens": tokens, "usageTokenSha256": sha256hex([]byte(usageToken))}, nil
+	return snap, nil
 }
 
 var snapshotMu sync.Mutex
@@ -155,7 +156,7 @@ func writeSnapshot(ctx context.Context, a *App) error {
 	}
 	snapshotMu.Lock()
 	defer snapshotMu.Unlock()
-	var s doc
+	var s contract.GatewaySnapshot
 	if err := readTx(ctx, a, func(q *Request) (err error) { s, err = connSnapshot(q); return }); err != nil {
 		return err
 	}
@@ -845,11 +846,15 @@ func connIngest(q *Request) (int, error) {
 		if err != nil {
 			continue
 		}
+		// Only complete lines: the gateway may be writing the last one; the next pass reads it.
+		b = b[:bytes.LastIndexByte(b, '\n')+1]
 		sc := bufio.NewScanner(bytes.NewReader(b))
 		sc.Buffer(make([]byte, 1<<20), 16<<20)
 		for sc.Scan() {
-			var l doc
-			if json.Unmarshal(sc.Bytes(), &l) != nil {
+			var l contract.CallLine
+			if err := json.Unmarshal(sc.Bytes(), &l); err != nil {
+				// Kept in the file until its day is retired; a line here means the gateway and the contract disagree.
+				log.Printf("spool %s: line not imported: %v", f, err)
 				continue
 			}
 			ok, err := connRecord(q, l)
@@ -876,23 +881,21 @@ func connIngest(q *Request) (int, error) {
 	return added, nil
 }
 
-func connRecord(q *Request, l doc) (bool, error) {
-	callID, ok := l["callId"].(string)
-	if !ok || l["tokenSha256"] == nil || l["executionId"] == nil {
+func connRecord(q *Request, l contract.CallLine) (bool, error) {
+	if l.CallId == "" || l.TokenSha256 == nil || l.ExecutionId == nil {
 		return false, nil
 	}
-	t, err := maybe(q, "run-token:"+astr(l["tokenSha256"]), "run-token")
+	t, err := maybe(q, "run-token:"+*l.TokenSha256, "run-token")
 	if err != nil || t == nil {
 		return false, err
 	}
-	id := "call:" + callID
-	usage := mapOf(l["usage"])
+	id := "call:" + l.CallId
 	state := "failed"
-	if l["outcome"] == "ok" {
+	if l.Outcome == contract.CallOutcomeOk {
 		state = "succeeded"
 	}
-	data := doc{"tool": l["tool"], "connection": l["connection"], "outcome": l["outcome"], "errorCode": l["errorCode"], "status": l["status"],
-		"keyFingerprint": l["keyFingerprint"], "usage": l["usage"], "directedBy": t["directedBy"], "startedAt": l["startedAt"], "ms": l["ms"]}
+	data := doc{"tool": l.Tool, "connection": l.Connection, "outcome": l.Outcome, "errorCode": l.ErrorCode, "status": l.Status,
+		"keyFingerprint": l.KeyFingerprint, "usage": l.Usage, "directedBy": t["directedBy"], "startedAt": l.StartedAt, "ms": l.Ms}
 	if t["personal"] != nil {
 		data["tokenName"] = t["personal"]
 	}
@@ -907,42 +910,38 @@ func connRecord(q *Request, l doc) (bool, error) {
 	if err != nil || !inserted {
 		return false, err
 	}
-	if l["outcome"] != "ok" {
-		if err := exec(q, "UPDATE execution SET problem=$2 WHERE id=$1 AND problem IS NULL", id, problemOf(astr(l["outcome"]), l["errorCode"])); err != nil {
+	if l.Outcome != contract.CallOutcomeOk {
+		if err := exec(q, "UPDATE execution SET problem=$2 WHERE id=$1 AND problem IS NULL", id, problemOf(string(l.Outcome), deref(l.ErrorCode))); err != nil {
 			return false, err
 		}
 	}
 	var cost any
-	if amount, ok := numOK(usage["amount"]); ok {
-		unit := astr(usage["unit"])
-		cost = doc{"unit": unit, unit: amount, "amount": amount, "connection": l["connection"]}
+	if u := l.Usage; u != nil {
+		cost = doc{"unit": u.Unit, u.Unit: u.Amount, "amount": u.Amount, "connection": l.Connection}
 	}
 	if err := writeConnectionCost(q, id, t["projectId"], cost); err != nil {
 		return false, err
 	}
-	if d := mapOf(l["disabled"]); d != nil && d["key"] != nil {
-		if err := connDisable(q, astr(d["key"]), d["status"]); err != nil {
+	if d := l.Disabled; d != nil && d.Key != "" {
+		if err := connDisable(q, d.Key, d.Status); err != nil {
 			return false, err
 		}
 	}
-	if p := mapOf(l["keyProblem"]); p != nil && p["key"] != nil {
-		k, err := maybe(q, "key:"+astr(p["key"]), "connection-key")
+	if p := l.KeyProblem; p != nil && p.Key != "" {
+		k, err := maybe(q, "key:"+p.Key, "connection-key")
 		if err != nil {
 			return false, err
 		}
 		if k != nil {
-			msg := fmt.Sprint(p["message"])
-			if p["message"] == nil {
-				msg = ""
-			}
+			msg := p.Message
 			if len(msg) > 500 {
 				msg = msg[:500]
 			}
-			at := l["startedAt"]
-			if at == nil {
+			at := l.StartedAt
+			if at == 0 {
 				at = nowMs()
 			}
-			k["problem"] = doc{"status": p["status"], "message": msg, "at": at}
+			k["problem"] = doc{"status": p.Status, "message": msg, "at": at}
 			if err := put(q, "connection-key", k); err != nil {
 				return false, err
 			}
@@ -951,15 +950,12 @@ func connRecord(q *Request, l doc) (bool, error) {
 	return true, nil
 }
 
-func connDisable(q *Request, fp string, status any) error {
+func connDisable(q *Request, fp string, status int64) error {
 	k, err := maybe(q, "key:"+fp, "connection-key")
 	if err != nil || k == nil || k["state"] == "retired" || k["state"] == "disabled" {
 		return err
 	}
 	st := fmt.Sprint(status)
-	if f, ok := numOK(status); ok {
-		st = fmt.Sprint(int64(f))
-	}
 	k["state"], k["disabledReason"], k["disabledAt"] = "disabled", "provider answered HTTP "+st, nowMs()
 	if err := put(q, "connection-key", k); err != nil {
 		return err
@@ -1092,80 +1088,13 @@ func connReconcile(ctx context.Context, a *App) {
 	}
 }
 
-// gatewayCall: one in-process call through fleet-gateway (docs/designs/fleet-connections.md §5). Returns the call line
-// {tool, callId, outcome: ok|error|unknown, error_code, usage, output}.
-var gatewayUnknown = map[string]bool{"provider-body": true, "provider-timeout": true, "client-timeout": true, "invalid-response": true}
-var providerCode = regexp.MustCompile(`^provider-\d+$`)
-
-func gatewayCall(ctx context.Context, token, connection, tool string, args any) doc {
-	line := doc{"tool": tool, "callId": nil, "outcome": "error", "error_code": nil, "usage": nil, "output": nil}
-	url := gatewayURL()
-	if url == "" || token == "" {
-		line["error_code"] = "connection-unavailable"
-		return line
+// gatewayCall: one in-process call through fleet-gateway (contract.GatewayCall).
+func gatewayCall(ctx context.Context, token, connection, tool string, args any) contract.CallLine {
+	var header map[string]string
+	if strings.HasPrefix(gatewayURL(), "https://") {
+		header = cfAccessHeaders()
 	}
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, "POST", url+"/v1/call/"+connection+"/"+tool, bytes.NewReader(jsonBytes(args)))
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "fleet-connection/1")
-	if strings.HasPrefix(url, "https://") {
-		for k, v := range cfAccessHeaders() {
-			req.Header.Set(k, v)
-		}
-	}
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		var op *net.OpError
-		switch {
-		case errors.Is(err, context.DeadlineExceeded):
-			line["outcome"], line["error_code"] = "unknown", "client-timeout"
-		case errors.As(err, &op) && op.Op == "dial":
-			line["error_code"] = "unreachable" // not connected: nothing was sent
-		default:
-			line["outcome"], line["error_code"] = "unknown", "unreachable"
-		}
-		return line
-	}
-	defer res.Body.Close()
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		line["outcome"], line["error_code"] = "unknown", "connection-lost"
-		return line
-	}
-	if id := res.Header.Get("x-fleet-call-id"); id != "" {
-		line["callId"] = id
-	}
-	ok := res.StatusCode/100 == 2
-	var output any
-	if json.Unmarshal(body, &output) != nil {
-		if len(body) > 2000 {
-			body = body[:2000]
-		}
-		output = doc{"text": strings.ToValidUTF8(string(body), "�")}
-		if ok {
-			line["outcome"], line["error_code"], line["output"] = "unknown", "invalid-response", output
-			return line
-		}
-	}
-	if ok {
-		line["outcome"], line["output"] = "ok", output
-		if m := mapOf(output); m != nil {
-			line["usage"] = m["usage"]
-		}
-		return line
-	}
-	errHeader := res.Header.Get("x-fleet-error")
-	code := errHeader
-	if errHeader == "" || providerCode.MatchString(errHeader) {
-		code = fmt.Sprintf("http-%d", res.StatusCode)
-	}
-	line["outcome"], line["error_code"], line["output"] = "error", code, output
-	if res.Header.Get("x-fleet-outcome") == "unknown" || gatewayUnknown[code] {
-		line["outcome"] = "unknown"
-	}
-	return line
+	return contract.GatewayCall(ctx, gatewayURL(), token, connection, tool, jsonBytes(args), header)
 }
 
 func cfAccessHeaders() map[string]string {

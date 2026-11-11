@@ -18,6 +18,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"fleet/contract"
 )
 
 const (
@@ -27,7 +29,7 @@ const (
 	providerBytes   = 16 << 20
 )
 
-func nowMs() uint64 { return uint64(time.Now().UnixMilli()) }
+func nowMs() int64 { return time.Now().UnixMilli() }
 
 func sha(text string) string {
 	sum := sha256.Sum256([]byte(text))
@@ -62,7 +64,7 @@ func writeAtomic(path string, data []byte) error {
 }
 
 // day is the UTC date of a millisecond time, for the spool file name.
-func day(ms uint64) string { return time.UnixMilli(int64(ms)).UTC().Format("2006-01-02") }
+func day(ms int64) string { return time.UnixMilli(ms).UTC().Format("2006-01-02") }
 
 func logf(format string, args ...any) { fmt.Fprintf(os.Stderr, "fleet-gateway: "+format+"\n", args...) }
 
@@ -102,61 +104,23 @@ func loadConfig(path string) (*config, error) {
 
 // ---------------------------------------------------------------- snapshot
 
-type tool struct {
-	Method     string                     `json:"method"`
-	Path       string                     `json:"path"`
-	Idempotent bool                       `json:"idempotent"`
-	Unit       string                     `json:"unit"`
-	Inject     map[string]json.RawMessage `json:"inject"`
-	Headers    map[string]string          `json:"headers"` // fixed request headers, e.g. a provider's opt-in flag
-}
-
-type provider struct {
-	BaseURL string           `json:"baseUrl"`
-	Tools   map[string]*tool `json:"tools"`
-	// Per-key usage report (reconcile): GET path, and the dotted field holding the number.
-	Usage *struct {
-		Path  string `json:"path"`
-		Field string `json:"field"`
-	} `json:"usage"`
-}
-
-type key struct {
-	ID        string `json:"id"`
-	State     string `json:"state"`
-	EnabledMs uint64 `json:"enabledAt"`
-}
-
-type connection struct {
-	Provider string   `json:"provider"`
-	Tools    []string `json:"tools"`
-	Intake   string   `json:"intake"`
-	Keys     []key    `json:"keys"`
-	// Reached pause/stop budgets: "connection" (every call) or a run scope (person:, project:, experiment:).
-	Blocked []string `json:"blocked"`
-}
+// The snapshot and call line types are the contract the coordinator writes (contracts/gateway.schema.json).
+type (
+	tool       = contract.GatewayTool
+	provider   = contract.GatewayProvider
+	connection = contract.GatewayConnection
+)
 
 type token struct {
-	SHA256       string   `json:"sha256"`
-	ExecutionID  string   `json:"executionId"`
-	Connections  []string `json:"connections"`
-	DirectedBy   string   `json:"directedBy"`
-	ProjectID    string   `json:"projectId"`
-	ExperimentID string   `json:"experimentId"`
+	contract.GatewayRunToken
 	// Budget scopes this run belongs to: person:<email>, project:<id>, experiment:<id>.
 	scopes []string
 }
 
 type snapshot struct {
-	Schema      float64                `json:"schema"`
-	GeneratedMs *uint64                `json:"generated_ms"`
-	Providers   map[string]*provider   `json:"providers"`
-	Connections map[string]*connection `json:"connections"`
-	TokenList   []*token               `json:"tokens"`
-	// SHA-256 of the coordinator's own token for /v1/usage.
-	UsageToken *string `json:"usageTokenSha256"`
-	revision   string
-	tokens     map[string]*token
+	contract.GatewaySnapshot
+	revision string
+	tokens   map[string]*token
 }
 
 func parseSnapshot(data []byte) (*snapshot, error) {
@@ -167,24 +131,24 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 	switch {
 	case s.Schema != 2:
 		return nil, errors.New("unsupported schema")
-	case s.GeneratedMs == nil:
+	case s.GeneratedMs == 0:
 		return nil, errors.New("generated_ms is missing")
 	case s.Providers == nil:
 		return nil, errors.New("providers is missing")
 	case s.Connections == nil:
 		return nil, errors.New("connections is missing")
-	case s.TokenList == nil:
+	case s.Tokens == nil:
 		return nil, errors.New("tokens is missing")
 	}
-	for _, p := range s.Providers {
+	for name, p := range s.Providers {
 		if p.Tools == nil {
 			return nil, errors.New("provider tools are missing")
 		}
-		if p.BaseURL == "" {
+		if p.BaseUrl == "" {
 			return nil, errors.New("provider baseUrl is missing")
 		}
-		p.BaseURL = strings.TrimRight(p.BaseURL, "/")
-		for _, t := range p.Tools {
+		p.BaseUrl = strings.TrimRight(p.BaseUrl, "/")
+		for toolName, t := range p.Tools {
 			if t.Method != "GET" {
 				t.Method = "POST"
 			}
@@ -194,7 +158,9 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 			if t.Unit == "" {
 				t.Unit = "calls"
 			}
+			p.Tools[toolName] = t
 		}
+		s.Providers[name] = p
 	}
 	for name, c := range s.Connections {
 		if !isName(name) {
@@ -204,7 +170,7 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 			return nil, errors.New("connection keys are missing")
 		}
 		for _, k := range c.Keys {
-			if !isHex(k.ID, 12) {
+			if !isHex(k.Id, 12) {
 				return nil, errors.New("key id is not a fingerprint")
 			}
 			if k.State == "" {
@@ -216,22 +182,24 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 		}
 		if c.Intake == "" {
 			c.Intake = "all"
+			s.Connections[name] = c
 		}
 	}
 	s.tokens = map[string]*token{}
-	for _, t := range s.TokenList {
-		if !isHex(t.SHA256, 64) {
+	for _, rt := range s.Tokens {
+		t := &token{GatewayRunToken: rt}
+		if !isHex(t.Sha256, 64) {
 			return nil, errors.New("token hash is not SHA-256")
 		}
-		if t.ExecutionID == "" {
+		if t.ExecutionId == "" {
 			return nil, errors.New("token executionId is missing")
 		}
-		for scope, value := range map[string]string{"person": t.DirectedBy, "project": t.ProjectID, "experiment": t.ExperimentID} {
+		for scope, value := range map[string]string{"person": t.DirectedBy, "project": t.ProjectId, "experiment": t.ExperimentId} {
 			if value != "" {
 				t.scopes = append(t.scopes, scope+":"+value)
 			}
 		}
-		s.tokens[t.SHA256] = t
+		s.tokens[t.Sha256] = t
 	}
 	s.revision = sha(string(data))[:12]
 	return s, nil
@@ -272,7 +240,7 @@ func openSpool(stateDir string) (*spool, error) {
 	return s, nil
 }
 
-func (s *spool) append(line map[string]any) {
+func (s *spool) append(line contract.CallLine) {
 	s.write.Lock()
 	defer s.write.Unlock()
 	data, _ := json.Marshal(line)
@@ -324,7 +292,7 @@ type answer struct {
 	outcome    string
 	err        string
 	key        string
-	usage      *uint64
+	usage      *int64
 	disabled   int // HTTP status that disabled `key`, or 0
 	// A provider 403 on this key: the provider's message. Recorded, never disabling (one bad body must not take out keys).
 	problem *string
@@ -335,7 +303,10 @@ func refusal(status int, outcome, code, reason string) *answer {
 	return &answer{status: status, body: body, outcome: outcome, err: code}
 }
 
-type disabledKey struct{ status, at uint64 }
+type disabledKey struct {
+	status int
+	at     int64
+}
 
 type gateway struct {
 	config   *config
@@ -402,19 +373,19 @@ func newGateway(c *config) (*gateway, error) {
 func (g *gateway) loadValues(s *snapshot) {
 	for name, c := range s.Connections {
 		for _, k := range c.Keys {
-			if _, ok := g.values.Load(k.ID); ok {
+			if _, ok := g.values.Load(k.Id); ok {
 				continue
 			}
-			text, err := os.ReadFile(filepath.Join(g.config.KeysDir, name, k.ID))
+			text, err := os.ReadFile(filepath.Join(g.config.KeysDir, name, k.Id))
 			value := strings.TrimSpace(string(text))
 			switch {
 			case err != nil:
-				logf("key %s/%s: %v", name, k.ID, err)
+				logf("key %s/%s: %v", name, k.Id, err)
 			// A file whose value does not match its fingerprint is never used under that name.
-			case sha(value)[:12] != k.ID:
-				logf("key file %s/%s does not match its fingerprint", name, k.ID)
+			case sha(value)[:12] != k.Id:
+				logf("key file %s/%s does not match its fingerprint", name, k.Id)
 			default:
-				g.values.Store(k.ID, value)
+				g.values.Store(k.Id, value)
 			}
 		}
 	}
@@ -470,13 +441,13 @@ func (g *gateway) authenticate(bearer string) *token {
 	return g.snapshot.Load().tokens[hash]
 }
 
-func (g *gateway) usable(c *connection) []string {
+func (g *gateway) usable(c connection) []string {
 	g.disabledLock.Lock()
 	defer g.disabledLock.Unlock()
 	var ids []string
 	for _, k := range c.Keys {
-		if d, off := g.disabled[k.ID]; k.State == "active" && (!off || k.EnabledMs > d.at) {
-			ids = append(ids, k.ID)
+		if d, off := g.disabled[k.Id]; k.State == "active" && (!off || k.EnabledAt != nil && *k.EnabledAt > d.at) {
+			ids = append(ids, k.Id)
 		}
 	}
 	return ids
@@ -529,7 +500,7 @@ func (e errBody) orNil() error {
 	return e
 }
 
-func (g *gateway) call(ctx context.Context, name string, c *connection, p *provider, t *tool, path string, body []byte) *answer {
+func (g *gateway) call(ctx context.Context, name string, c connection, p provider, t tool, path string, body []byte) *answer {
 	keys := g.usable(c)
 	if len(keys) == 0 {
 		return refusal(503, "error", "no-usable-key", "no active key; the holder or the owner must act")
@@ -546,7 +517,7 @@ func (g *gateway) call(ctx context.Context, name string, c *connection, p *provi
 			lastFailure = "key " + id + " has no value file"
 			continue
 		}
-		response, data, err := g.send(ctx, t.Method, p.BaseURL+path, value, body, t.Headers)
+		response, data, err := g.send(ctx, t.Method, p.BaseUrl+path, value, body, t.Headers)
 		var cut errBody
 		switch {
 		case err != nil && ctx.Err() != nil:
@@ -599,7 +570,7 @@ func (g *gateway) call(ctx context.Context, name string, c *connection, p *provi
 			Usage map[string]json.RawMessage `json:"usage"`
 		}
 		if json.Unmarshal(data, &reply) == nil {
-			if amount, err := strconv.ParseUint(string(reply.Usage[t.Unit]), 10, 64); err == nil {
+			if amount, err := strconv.ParseInt(string(reply.Usage[t.Unit]), 10, 64); err == nil && amount >= 0 {
 				a.usage = &amount
 			}
 		}
@@ -627,12 +598,12 @@ func (g *gateway) usageReport(ctx context.Context) map[string]any {
 			continue
 		}
 		for _, k := range c.Keys {
-			value, ok := g.value(k.ID)
+			value, ok := g.value(k.Id)
 			if k.State == "retired" || !ok {
 				continue
 			}
-			row := map[string]any{"connection": name, "key": k.ID, "usage": nil}
-			response, data, err := g.send(ctx, "GET", p.BaseURL+p.Usage.Path, value, nil, nil)
+			row := map[string]any{"connection": name, "key": k.Id, "usage": nil}
+			response, data, err := g.send(ctx, "GET", p.BaseUrl+p.Usage.Path, value, nil, nil)
 			switch {
 			case errors.Is(err, context.DeadlineExceeded) && response == nil:
 				row["unknown"] = "usage request timed out"
@@ -663,7 +634,7 @@ func (g *gateway) usageReport(ctx context.Context) map[string]any {
 
 func (g *gateway) onDisabled(id string, status int) {
 	g.disabledLock.Lock()
-	g.disabled[id] = disabledKey{uint64(status), nowMs()}
+	g.disabled[id] = disabledKey{status, nowMs()}
 	var text strings.Builder
 	for k, d := range g.disabled {
 		fmt.Fprintf(&text, "%s %d %d\n", k, d.status, d.at)
@@ -691,7 +662,7 @@ func (g *gateway) health() map[string]any {
 	g.disabledLock.Unlock()
 	return map[string]any{
 		"status": status, "version": version, "uptime_s": int(time.Since(g.started).Seconds()),
-		"snapshot": map[string]any{"revision": s.revision, "age_s": max(int64(nowMs())-int64(*s.GeneratedMs), 0) / 1000,
+		"snapshot": map[string]any{"revision": s.revision, "age_s": max(nowMs()-s.GeneratedMs, 0) / 1000,
 			"tokens": len(s.tokens), "rejected": g.rejected.Load()},
 		"keys":  map[string]any{"total": keys, "usable": usable, "disabled": disabled},
 		"spool": map[string]any{"lost": g.spool.lost.Load(), "lostRecorded": g.spool.lostRecorded.Load()},
@@ -721,8 +692,8 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Loopback only: Caddy forwards /v1/call/* alone, so remote callers never reach this.
 	if r.Method == "GET" && r.URL.Path == "/v1/usage" {
 		t, ok := bearer(r)
-		expected := g.snapshot.Load().UsageToken
-		if !ok || expected == nil || sha(t) != *expected {
+		expected := g.snapshot.Load().UsageTokenSha256
+		if !ok || expected == "" || sha(t) != expected {
 			writeJSON(w, 401, map[string]string{"error": "unauthenticated", "reason": "the coordinator's usage token is required"})
 			return
 		}
@@ -750,22 +721,17 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	raw, readErr := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	http.NewResponseController(w).SetReadDeadline(time.Time{})
 	s := g.snapshot.Load()
-	c := s.Connections[connectionName]
-	var p *provider
-	var t *tool
-	if c != nil {
-		p = s.Providers[c.Provider]
-		if contains(c.Tools, toolName) {
-			t = p.Tools[toolName]
-		}
-	}
+	c, known := s.Connections[connectionName]
+	p := s.Providers[c.Provider]
+	t, offered := p.Tools[toolName]
+	offered = offered && known && contains(c.Tools, toolName)
 	var a *answer
 	switch {
 	case run == nil:
 		a = refusal(401, "error", "unauthenticated", "a valid run token is required")
 	case !contains(run.Connections, connectionName):
 		a = refusal(403, "error", "not-granted", "this run is not granted the connection")
-	case t == nil:
+	case !offered:
 		a = refusal(404, "error", "unknown-tool", "the connection has no such tool")
 	case c.Intake != "all":
 		a = refusal(403, "error", "intake-paused", "the connection's intake is paused")
@@ -794,30 +760,25 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.onDisabled(a.key, a.disabled)
 	}
 	callID := fmt.Sprintf("%x-%x-%x", startedMs, os.Getpid(), g.calls.Add(1)-1)
-	line := map[string]any{"callId": callID, "executionId": nil, "tokenSha256": nil, "connection": connectionName, "tool": toolName,
-		"keyFingerprint": nil, "status": a.status, "errorCode": nil, "outcome": a.outcome, "usage": nil, "disabled": nil,
-		"keyProblem": nil, "startedAt": startedMs, "ms": time.Since(begun).Milliseconds()}
+	line := contract.CallLine{CallId: callID, Connection: connectionName, Tool: toolName, Status: int64(a.status),
+		Outcome: contract.CallOutcome(a.outcome), StartedAt: startedMs, Ms: time.Since(begun).Milliseconds()}
 	if run != nil {
-		line["executionId"], line["tokenSha256"] = run.ExecutionID, run.SHA256
+		line.ExecutionId, line.TokenSha256 = &run.ExecutionId, &run.Sha256
 	}
 	if a.key != "" {
-		line["keyFingerprint"] = a.key
+		line.KeyFingerprint = &a.key
 	}
 	if a.err != "" {
-		line["errorCode"] = a.err
+		line.ErrorCode = &a.err
 	}
 	if a.usage != nil {
-		var unit any
-		if t != nil {
-			unit = t.Unit
-		}
-		line["usage"] = map[string]any{"unit": unit, "amount": *a.usage}
+		line.Usage = &contract.CallUsage{Unit: t.Unit, Amount: *a.usage}
 	}
 	if a.disabled != 0 {
-		line["disabled"] = map[string]any{"key": a.key, "status": a.disabled}
+		line.Disabled = &contract.CallKeyDisabled{Key: a.key, Status: int64(a.disabled)}
 	}
 	if a.problem != nil {
-		line["keyProblem"] = map[string]any{"key": a.key, "status": 403, "message": *a.problem}
+		line.KeyProblem = &contract.CallKeyProblem{Key: a.key, Status: 403, Message: *a.problem}
 	}
 	g.spool.append(line)
 	w.Header().Set("X-Fleet-Call-Id", callID)
@@ -840,7 +801,7 @@ func contains(list []string, item string) bool {
 	return false
 }
 
-func blockedScope(c *connection, run *token) string {
+func blockedScope(c connection, run *token) string {
 	for _, b := range c.Blocked {
 		if b == "connection" || contains(run.scopes, b) {
 			return b
@@ -851,7 +812,7 @@ func blockedScope(c *connection, run *token) string {
 
 // fillPath puts body fields into {field} in the catalogue path (Meshy task id); a used field leaves the body.
 // The caller never selects a key: api_key is dropped, and catalogue fields (Tavily include_usage) are added.
-func fillPath(t *tool, body map[string]json.RawMessage) (string, bool) {
+func fillPath(t tool, body map[string]json.RawMessage) (string, bool) {
 	delete(body, "api_key")
 	for k, v := range t.Inject {
 		body[k] = v
