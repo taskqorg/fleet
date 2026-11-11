@@ -527,7 +527,7 @@ func contains(l []string, s string) bool {
 	return false
 }
 
-func failCode(code int, msg, c string) error { return &codedError{HTTPError{code, msg}, c} }
+func failCode(code int, msg, c string) error { return &codedError{HTTPError{Code: code, Msg: msg}, c} }
 
 type codedError struct {
 	HTTPError

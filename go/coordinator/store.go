@@ -36,12 +36,13 @@ type actorKey struct{}
 const GLOBAL = "fleet:write"
 
 type HTTPError struct {
-	Code int
-	Msg  string
+	Code  int
+	Msg   string
+	Extra map[string]any // more fields of the error body (a 409's DefinitionConflict)
 }
 
 func (e *HTTPError) Error() string    { return e.Msg }
-func fail(code int, msg string) error { return &HTTPError{code, msg} }
+func fail(code int, msg string) error { return &HTTPError{Code: code, Msg: msg} }
 
 var errNotFound = fail(404, "Not found")
 
