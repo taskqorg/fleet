@@ -1326,7 +1326,8 @@ func glob(p string) *regexp.Regexp {
 }
 
 // ArtifactRequirement: required artifacts of an execution (P3-D3) for the completion gate (receipts area): the task's
-// completion_requirements.artifacts (names or globs) plus artifacts saved or declared required.
+// completion_requirements.artifacts (names or globs) plus artifacts saved or declared required; the outputs a completed
+// receipt declared are waited for while they upload.
 type ArtifactRequirement struct {
 	Pending []string `json:"pending"`
 	Failed  []doc    `json:"failed"`
@@ -1379,12 +1380,17 @@ func artifactRequirement(ctx context.Context, a *App, executionID string, declar
 			} else if r.State == "failed" {
 				out.Failed = append(out.Failed, doc{"name": r.Name, "error": r.LastError})
 			}
+		} else if contains(declared, r.Name) && r.State == "pending" {
+			// An output the completed receipt declared is still uploading: the run is not done until it is stored
+			// (a failed optional output does not fail the run). Lab script steps read output.json too early otherwise.
+			out.Pending = append(out.Pending, r.Name)
 		}
 	}
 	seen := map[string]bool{}
 	unreserved := []string{}
 	for _, n := range append(append([]string{}, declared...), named...) {
-		if (contains(named, n) || match(n)) && !have[n] && !seen[n] {
+		// A declared output not reserved yet is pending too: the receipt arrives before the executor's uploads start.
+		if (contains(named, n) || match(n) || contains(declared, n)) && !have[n] && !seen[n] {
 			seen[n] = true
 			unreserved = append(unreserved, n)
 		}
