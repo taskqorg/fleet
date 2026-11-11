@@ -35,7 +35,7 @@ var (
 	labCommit    = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 	labLabel     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,59}$`)
 	draftExample = regexp.MustCompile(`/examples/[^/]+\.json$`)
-	labOverrides = []string{"profile", "model", "skills", "prompt", "web_route", "account", "host"}
+	labOverrides = []string{"profile", "model", "skills", "prompt", "web_route", "account", "host", "bands"}
 )
 
 func labStr(v any, what string, max int) (string, error) {
@@ -420,6 +420,10 @@ func checkValue(form string, v any, trials []any) error {
 	case "metric":
 		f, isNum := numOK(v)
 		ok = isNum && !math.IsInf(f, 0) && !math.IsNaN(f)
+	case "typed":
+		m := mapOf(v)
+		_, isP := numOK(m["p"])
+		ok = m != nil && isP && (m["answer"] == "yes" || m["answer"] == "no" || m["answer"] == "abstain") && (m["label"] == "yes" || m["label"] == "no")
 	}
 	if !ok {
 		return fail(400, "Invalid "+form+" value")
@@ -607,6 +611,13 @@ func agreement(scores []doc) doc {
 
 // scoreNumber: a one-trial score as a number (pass is 1, fail 0; metric and scale as given).
 func scoreNumber(s doc) float64 {
+	if s["form"] == "typed" { // correct confident answer 1; a wrong one or an abstention 0
+		m := mapOf(s["value"])
+		if m["answer"] == m["label"] {
+			return 1
+		}
+		return 0
+	}
 	if s["form"] == "pass_fail" {
 		if s["value"] == true {
 			return 1
@@ -916,6 +927,11 @@ func expCreate(q *Request, b doc) (doc, error) {
 		if w, has := o["web_route"]; has && w != "connections" && w != "builtin" {
 			return nil, fail(400, "web_route must be connections or builtin")
 		}
+		if b, has := o["bands"]; has {
+			if _, _, err := bandsOf(b); err != nil {
+				return nil, err
+			}
+		}
 		if labels[label] {
 			return nil, fail(400, "Duplicate variant label")
 		}
@@ -957,12 +973,16 @@ func expCreate(q *Request, b doc) (doc, error) {
 			if f != "pass_fail" && f != "scale" {
 				return nil, fail(400, "A judge form is pass_fail or scale")
 			}
+		case "typed":
+			if ref != "labels" || f != "typed" {
+				return nil, fail(400, "A typed evaluator is {kind: typed, ref: labels, form: typed}: the trial's p through the variant's bands against the example's label")
+			}
 		case "human":
 			if ref != "owner" || f != "pass_fail" && f != "pick_best" && f != "scale" {
 				return nil, fail(400, "A human evaluator is {kind: human, ref: owner, form: pass_fail|pick_best|scale}")
 			}
 		default:
-			return nil, fail(400, "Evaluator kind is script, judge or human")
+			return nil, fail(400, "Evaluator kind is script, typed, judge or human")
 		}
 		ev := doc{"kind": k, "ref": ref, "form": f}
 		names[evaluatorName(ev)] = true
@@ -1203,6 +1223,12 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 				continue
 			}
 			pin := findPin(exp, mapOf(t["cell"])["example"])
+			if e["kind"] == "typed" {
+				if err := scoreTyped(q, exp, t, pin, name); err != nil {
+					return false, err
+				}
+				continue
+			}
 			if e["kind"] == "script" {
 				r := checked[astr(t["id"])]
 				if r == nil {
@@ -2082,6 +2108,7 @@ func expGet(q *Request, id string) (doc, error) {
 	out["notes"] = notes
 	out["variants"], out["spend"], out["trials"], out["cells"], out["scores"], out["agreement"], out["judges"] = variants, s, tv, cells, scores, agreement(cur), judges
 	out["comparison"] = expComparison(exp, trials, cur)
+	out["typed"] = expTyped(exp, trials, cur)
 	out["priority"] = doc{"value": "background", "note": "No effect until the scheduler exists"}
 	return out, nil
 }
@@ -2430,6 +2457,118 @@ func expComparison(exp doc, trials []doc, cur []doc) []any {
 		label := astr(mapOf(x)["label"])
 		out = append(out, doc{"variant": label, "baseline": baseline, "evaluator": primary, "evaluatorVersion": version, "split": scope, "reason": nilIf(reason),
 			"result": compare(values[baseline], values[label])})
+	}
+	return out
+}
+
+// bandsOf: a variant's bands {yes, no}: p >= yes answers yes, p <= no answers no, between abstains. Without bands every
+// answer is confident at 0.5 (no middle band).
+func bandsOf(v any) (float64, float64, error) {
+	if v == nil {
+		return 0.5, 0.5, nil
+	}
+	m := mapOf(v)
+	yes, okY := numOK(m["yes"])
+	no, okN := numOK(m["no"])
+	if m == nil || len(m) != 2 || !okY || !okN || no < 0 || yes > 1 || no > yes {
+		return 0, 0, fail(400, "bands are {yes, no} with 0 <= no <= yes <= 1")
+	}
+	return yes, no, nil
+}
+
+// scoreTyped: the typed evaluator for one trial: its output's p through the variant's bands, against the example's label
+// (references/expected.json {expected, tag?}). A trial without a p or an example without a label gets no score (and
+// the reason in the log), never a guessed one.
+func scoreTyped(q *Request, exp, t, pin doc, name string) error {
+	full, _, err := exampleOf(q, pin)
+	if err != nil {
+		return err
+	}
+	var label, tag string
+	for _, x := range anys(full["references"]) {
+		if f := mapOf(x); f["path"] == "expected.json" {
+			var e struct {
+				Expected string `json:"expected"`
+				Tag      string `json:"tag"`
+			}
+			json.Unmarshal([]byte(astr(f["text"])), &e)
+			label, tag = e.Expected, e.Tag
+		}
+	}
+	files, err := trialFiles(q, t, full)
+	if err != nil {
+		return err
+	}
+	var p *float64
+	for _, f := range files {
+		if f.path == "output.json" {
+			var o struct {
+				P *float64 `json:"p"`
+			}
+			json.Unmarshal(f.bytes, &o)
+			p = o.P
+		}
+	}
+	if p == nil || label != "yes" && label != "no" {
+		log.Printf("lab %v: trial %v has no typed score (p %v, label %q)", exp["id"], t["id"], p, label)
+		return nil
+	}
+	var bands any
+	for _, v := range anys(exp["variants"]) {
+		if mapOf(v)["label"] == mapOf(t["cell"])["variant"] {
+			bands = mapOf(mapOf(v)["overrides"])["bands"]
+		}
+	}
+	yes, no, err := bandsOf(bands)
+	if err != nil {
+		return err
+	}
+	answer := bandAnswer(*p, yes, no)
+	value := doc{"answer": answer, "label": label, "p": *p, "tag": nilIf(tag)}
+	_, err = scoreAdd(q, doc{"experimentId": exp["id"], "projectId": exp["project_id"], "trialIds": []any{t["id"]}, "evaluator": name,
+		"evaluatorVersion": "labels-v1", "form": "typed", "value": value,
+		"rationale": fmt.Sprintf("%s at p %.3g (bands %.3g/%.3g), label %s", answer, *p, yes, no, label)})
+	return err
+}
+
+// expTyped: per variant, the typed evaluator's coverage, selective accuracy and escalation share per example tag (the
+// language), over held_out examples when the suite has any; latest attempts only.
+func expTyped(exp doc, trials []doc, cur []doc) []any {
+	out := []any{}
+	scope, split := "all", map[string]string{}
+	for _, p := range anys(exp["examples"]) {
+		m := mapOf(p)
+		split[astr(m["id"])] = astr(m["split"])
+		if m["split"] == "held_out" {
+			scope = "held_out"
+		}
+	}
+	byTrial := map[any]doc{}
+	for _, sc := range cur {
+		if sc["form"] == "typed" {
+			byTrial[firstTrial(sc)] = sc
+		}
+	}
+	if len(byTrial) == 0 {
+		return out
+	}
+	order, latest := expLatest(trials)
+	answers := map[string][]typedAnswer{}
+	for _, k := range order {
+		t := latest[k]
+		sc := byTrial[t["id"]]
+		cell := mapOf(t["cell"])
+		if sc == nil || !comparable(t) || scope == "held_out" && split[astr(cell["example"])] != "held_out" {
+			continue
+		}
+		v := mapOf(sc["value"])
+		answers[astr(cell["variant"])] = append(answers[astr(cell["variant"])], typedAnswer{astr(v["tag"]), astr(v["answer"]), astr(v["label"])})
+	}
+	for _, x := range anys(exp["variants"]) {
+		label := astr(mapOf(x)["label"])
+		if as := answers[label]; len(as) > 0 {
+			out = append(out, doc{"variant": label, "split": scope, "stats": typedStats(as)})
+		}
 	}
 	return out
 }
