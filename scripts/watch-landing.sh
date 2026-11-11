@@ -53,9 +53,9 @@ hdr=$(mktemp); chmod 600 "$hdr"; trap 'rm -f "$hdr"' EXIT
 want=${tag#v}
 site_seen=false
 while :; do
-  # Evidence only: site/API health does not add a new acceptance gate to this host watcher.
+  # Evidence only, bounded by the existing deploy health probe's 3s request budget; never a new host gate.
   if [ "$site_seen" = false ]; then
-    site=$(curl -sf -H @"$hdr" https://fleet.ufobe.com/api/health | WANT="$want" python3 -I -c '
+    site=$(curl -sf --max-time 3 -H @"$hdr" https://fleet.ufobe.com/api/health | WANT="$want" python3 -I -c '
 import json, os, sys
 try: h = json.load(sys.stdin)
 except ValueError: sys.exit(1)
