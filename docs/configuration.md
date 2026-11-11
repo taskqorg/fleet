@@ -186,7 +186,7 @@ Not built: review branches and rework loops in pipeline definitions.
 
 ## Host settings: Blender
 
-Lab Blender script steps (`scripts/lab/blender/run.sh`) run `FLEET_BLENDER`, else `blender` on `PATH`, headless. A pipeline pins such steps to a host with Blender through the step's `host` ([asset pipelines §4](designs/fleet-asset-pipelines.md#4-asset-pipelines-s4)).
+Lab script steps find the release's `scripts/lab/` through `FLEET_LAB_SCRIPTS`, which the executor sets. Blender steps (`scripts/lab/blender/run.sh`) run `FLEET_BLENDER` from the executor environment, else `blender` on `PATH`, headless. `encode.sh` and `image-check.sh` use `sips`, so `meshy-prop` and `image-brief` pin their script steps to `owner-mac`. A pipeline pins such steps to a host with Blender through the step's `host` ([asset pipelines §4](designs/fleet-asset-pipelines.md#4-asset-pipelines-s4)).
 
 ## Host settings: Claude placement
 

@@ -41,3 +41,11 @@ func TestRegistryLoadRefusesBadEntries(t *testing.T) {
 		}
 	}
 }
+
+func TestVariantArgumentsMergeOverStep(t *testing.T) {
+	def := doc{"id": "gen", "arguments": doc{"image_url": "${steps.encode.output.data_uri}", "target_polycount": 3000}}
+	got := mapOf(withArguments(def, doc{"arguments": doc{"gen": doc{"target_polycount": 8000, "topology": "quad"}, "other": doc{"x": 1}}}))
+	if got["target_polycount"] != 8000 || got["topology"] != "quad" || got["image_url"] != "${steps.encode.output.data_uri}" || mapOf(def["arguments"])["target_polycount"] != 3000 {
+		t.Fatalf("%v", got)
+	}
+}

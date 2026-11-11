@@ -38,7 +38,7 @@ var (
 	draftExample = regexp.MustCompile(`/examples/[^/]+\.json$`)
 	labOverrides = []string{"profile", "model", "skills", "prompt", "web_route", "account", "host"}
 	// labVariantKeys: a Lab variant's keys; bands steer its typed evaluator, never a run, so runs take labOverrides only.
-	labVariantKeys = append(append([]string{}, labOverrides...), "bands")
+	labVariantKeys = append(append([]string{}, labOverrides...), "bands", "arguments")
 )
 
 func labStr(v any, what string, max int) (string, error) {
@@ -1045,6 +1045,17 @@ func expCreate(q *Request, b doc) (doc, error) {
 		}
 		if w, has := o["web_route"]; has && w != "connections" && w != "builtin" {
 			return nil, fail(400, "web_route must be connections or builtin")
+		}
+		if args, has := o["arguments"]; has {
+			m := mapOf(args)
+			for _, step := range m {
+				if mapOf(step) == nil {
+					m = nil
+				}
+			}
+			if m == nil {
+				return nil, fail(400, "arguments must be {<step id>: {<argument>: value}}")
+			}
 		}
 		if bands, has := o["bands"]; has {
 			if _, _, err := bandsOf(bands); err != nil {

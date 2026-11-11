@@ -1,0 +1,39 @@
+{
+  "id": "meshy-prop",
+  "steps": [
+    {
+      "command": "\"$FLEET_LAB_SCRIPTS\"/encode.sh",
+      "host": "owner-mac",
+      "id": "encode",
+      "kind": "script"
+    },
+    {
+      "arguments": {
+        "image_url": "${steps.encode.output.data_uri}",
+        "target_formats": [
+          "glb"
+        ]
+      },
+      "connection": "meshy",
+      "id": "gen",
+      "kind": "api",
+      "mode": "job",
+      "tool": "image_to_3d"
+    },
+    {
+      "command": "\"$FLEET_LAB_SCRIPTS\"/blender/run.sh fetch-measure",
+      "host": "owner-mac",
+      "id": "measure",
+      "kind": "script",
+      "timeout_ms": 600000
+    },
+    {
+      "command": "\"$FLEET_LAB_SCRIPTS\"/blender/run.sh render --views front,side,top,three-quarter --size 1024",
+      "host": "owner-mac",
+      "id": "render",
+      "kind": "script",
+      "timeout_ms": 900000
+    }
+  ],
+  "version": 2
+}
