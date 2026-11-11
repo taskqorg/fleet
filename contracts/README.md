@@ -10,7 +10,8 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   coordinator writes and the gateway reads, and the call line the gateway spools and the coordinator ingests.
 * `ops.schema.json`: the coordinator operations (`POST /api/ops/<name>`, and the agents' MCP tools of the same names).
   `operations` lists every operation (`read`, `long`, `errors`: the statuses its handler returns besides 401, 403 and 500);
-  each name `<name>` has `$defs` `<Name>Request` and `<Name>Reply`, and a failed call answers `OpError`. TypeScript gets
+  each name `<name>` has `$defs` `<Name>Request` and `<Name>Reply`, and a failed call answers `OpError`. `planned` lists operations specified contract first and not built yet
+  (their `$defs` exist; building one moves its name to `operations`). TypeScript gets
   `Ops` (name to request and reply, used by `op()` in `app/src/api.ts`); Go gets `contract.Operations`, which
   `go/coordinator/ops_contract_test.go` compares with the registry.
 * `profile.schema.json`: the agent profile (`config/agents/*.json`, the start command's `agentConfig`). Its validator

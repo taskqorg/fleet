@@ -136,6 +136,7 @@ func main() {
 			Read, Long bool
 			Errors     []int
 		} `json:"operations"`
+		Planned map[string]any `json:"planned"`
 	}
 	if err := json.Unmarshal(raw, &root); err != nil {
 		fail("%v", err)
@@ -200,6 +201,13 @@ func main() {
 			}
 			ft, _ := goType(s, n)
 			fmt.Fprintf(&b, "type %s = %s\n\n", name, ft)
+		}
+	}
+	for n := range root.Planned {
+		for _, d := range []string{"Request", "Reply"} {
+			if root.Defs[exported(n)+d] == nil {
+				fail("planned operation %s has no $defs %s%s", n, exported(n), d)
+			}
 		}
 	}
 	if len(root.Operations) > 0 {
