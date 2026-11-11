@@ -1,7 +1,12 @@
 // Requirement: fleet.md Verification; risk: an incomplete candidate diff silently omits behavioral protection.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {comparison, changedPaths, select, makePlan, families, verifyEvidence} from '../../scripts/test-selection.ts';
+import {execFileSync} from 'node:child_process';
+import {mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {comparison, changedPaths, select, makePlan, families, verifyEvidence, execution, previousResult} from '../../scripts/test-selection.ts';
 const base = 'a'.repeat(40), head = 'b'.repeat(40);
 test('complete group uses event base and unions UI and coordinator consumers', () => {
   assert.equal(comparison('merge_group', {merge_group: {base_sha: base, head_sha: head}}, head), base);
@@ -28,7 +33,7 @@ test('missing base, malformed diff, unavailable history and checkout mismatch ca
     assert.deepEqual(plan.executed, [...families]);
   }
 });
-test('shadow always executes full suites even when impact selection proposes docs only', () => {
+test('unqualified history executes full suites even when impact selection proposes docs only', () => {
   const plan = makePlan('push', {before: base, after: head}, head, args => args[0] === 'rev-parse' ? head : args[0] === 'diff' ? 'M\0docs/example.md\0' : '');
   assert.deepEqual(plan.selected, []);
   assert.deepEqual(plan.executed, [...families]);
@@ -44,4 +49,42 @@ test('release rejects missing, failed or mismatched candidate evidence', () => {
   assert.throws(() => verifyEvidence(plan, head, {...jobs, go: {result: 'failure'}}));
   const {browser, ...missing} = jobs;
   assert.throws(() => verifyEvidence(plan, head, missing));
+});
+
+test('only qualified prose and Lab-create can omit suites, and prior failure or rollback restores full', () => {
+  assert.deepEqual(execution(['docs/example.md'], true, false), []);
+  assert.deepEqual(execution(['app/src/views/lab-create.tsx'], true, false), ['app', 'browser']);
+  for (const paths of [['app/src/views/lab.tsx'], ['packages/view-url/view-url.ts'], ['app/src/views/lab-create.tsx', 'go/coordinator/access.go']])
+    assert.deepEqual(execution(paths, true, false), [...families]);
+  assert.deepEqual(execution(['docs/example.md'], false, false), [...families]);
+  assert.deepEqual(execution(['docs/example.md'], true, true), [...families]);
+  assert.equal(previousResult([{databaseId: 1, status: 'completed', conclusion: 'failure'}], 2), false);
+  assert.equal(previousResult([{databaseId: 1, status: 'in_progress', conclusion: ''}], 2), false);
+  assert.equal(previousResult([{databaseId: 1, status: 'completed', conclusion: 'success'}], 2), true);
+  assert.equal(previousResult([{databaseId: 2, status: 'completed', conclusion: 'success'}], 2), null);
+});
+test('qualified omitted families require actual skipped results and cannot hide selected failure', () => {
+  const plan = makePlan('push', {before: base, after: head}, head, args => args[0] === 'rev-parse' ? head : args[0] === 'diff' ? 'M\0docs/example.md\0' : '', true);
+  const jobs = {selection: {result: 'success'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))};
+  assert.doesNotThrow(() => verifyEvidence(plan, head, jobs));
+  assert.throws(() => verifyEvidence({...plan, previousGreen: false}, head, jobs));
+  assert.throws(() => verifyEvidence({...plan, paths: ['go/coordinator/access.go']}, head, jobs));
+  assert.throws(() => verifyEvidence(plan, head, {...jobs, go: {result: 'failure'}}));
+});
+
+test('actual Git comparison accepts a qualified plan and rejects a corrupted omission manifest', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fleet-selection-'));
+  const git = (args: string[]) => execFileSync('git', args, {cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']});
+  const commit = () => { git(['add', '.']); git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'fixture']); return git(['rev-parse', 'HEAD']).trim(); };
+  try {
+    git(['init', '--quiet']); writeFileSync(join(root, 'README.md'), 'fixture'); const before = commit();
+    mkdirSync(join(root, 'docs')); writeFileSync(join(root, 'docs/example.md'), 'prose'); const after = commit();
+    const plan = makePlan('push', {before, after}, after, git, true);
+    const path = join(root, 'plan.json'), results = join(root, 'results.json');
+    writeFileSync(results, JSON.stringify({selection: {result: 'success'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))}));
+    const verify = () => execFileSync(process.execPath, [fileURLToPath(new URL('../../scripts/test-selection.ts', import.meta.url)), '--verify', path, results],
+      {cwd: root, env: {...process.env, GITHUB_SHA: after}, stdio: 'pipe'});
+    writeFileSync(path, JSON.stringify(plan)); assert.match(verify().toString(), /PASS/);
+    writeFileSync(path, JSON.stringify({...plan, paths: ['docs/unrelated.md']})); assert.throws(verify);
+  } finally { rmSync(root, {recursive: true, force: true}); }
 });
