@@ -1376,7 +1376,12 @@ func init() {
 	for _, inv := range []string{"pipeline", "direct"} {
 		inv := inv
 		name := map[string]string{"pipeline": "pipeline_run", "direct": "direct_search"}[inv]
-		h := func(q *Request) (any, error) { return runPipeline(q, inv) }
+		var h handler = func(q *Request) (any, error) { return runPipeline(q, inv) }
+		if inv == "pipeline" {
+			h = shaped[contract.PipelineRunRequest, contract.PipelineRunReply](h)
+		} else {
+			h = shaped[contract.DirectSearchRequest, contract.DirectSearchReply](h)
+		}
 		longOp(name, h)
 		projectOps[name] = registeredOp{false, h}
 	}

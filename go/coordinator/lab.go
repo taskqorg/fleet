@@ -29,7 +29,7 @@ import (
 var (
 	labIdent     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$`)
 	labIdent200  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$`)
-	labOrigin    = regexp.MustCompile(`^task:[A-Za-z0-9-]{1,80}$`)
+	labOrigin    = regexp.MustCompile(`^(task|export):[A-Za-z0-9._-]{1,80}$`) // export: a project export row (contracts/lab-export.schema.json)
 	labCommit    = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 	labLabel     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,59}$`)
 	draftExample = regexp.MustCompile(`/examples/[^/]+\.json$`)

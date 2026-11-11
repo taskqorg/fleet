@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Project export, version 1 (docs/designs/fleet-lab.md, Project data in examples): the rows a project hands to Lab for one of its steps, with labels. scripts/lab-examples.ts from-export turns each row into an inline example; production cost becomes the production reference, never a comparison row. Frozen: a change is a new schema version. See contracts/README.md for the keyword subset.",
+  "$defs": {
+    "LabExport": {"type": "object", "additionalProperties": false, "required": ["schema", "project", "stepId", "exportedAt", "rows"], "properties": {
+      "schema": {"type": "integer", "$comment": "Always 1 for this version."},
+      "project": {"type": "string", "$comment": "The Fleet project id (config/projects/<id>)."},
+      "stepId": {"type": "string", "$comment": "The project's own step these rows come from."},
+      "exportedAt": {"type": "string", "$comment": "ISO 8601 time of the export."},
+      "rows": {"type": "array", "items": {"$ref": "#/$defs/LabExportRow"}}}},
+    "LabExportRow": {"type": "object", "additionalProperties": false, "required": ["rowId", "input", "label", "split"], "properties": {
+      "rowId": {"type": "string", "$comment": "Stable in the project; with stepId it names the example."},
+      "input": {"type": "string", "$comment": "What the step decides about (the typed-decision state)."},
+      "label": {"type": "string", "$comment": "The known-good answer (yes or no for a noul question)."},
+      "tag": {"type": "string", "$comment": "A grouping such as the language; results are reported per tag."},
+      "productionCost": {"$ref": "#/$defs/LabExportCost"},
+      "split": {"$ref": "#/$defs/LabExportSplit"}}},
+    "LabExportCost": {"type": "object", "additionalProperties": false, "required": ["value", "currency", "basis"], "properties": {
+      "value": {"type": ["number", "null"]},
+      "currency": {"type": "string"},
+      "basis": {"$ref": "#/$defs/LabExportBasis"}}},
+    "LabExportBasis": {"type": "string", "enum": ["measured", "estimated", "subscription", "unavailable"]},
+    "LabExportSplit": {"type": "string", "enum": ["tune", "held_out"]}
+  }
+}

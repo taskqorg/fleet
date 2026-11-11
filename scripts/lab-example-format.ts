@@ -24,7 +24,7 @@ export function parseExample(v:any,useCases:Set<string>):Example{
  if(!v||typeof v!=='object'||Array.isArray(v))fail(400,'Expected an example object');
  const id=ident(v.id,'example id'),use_case_id=str(v.use_case_id,'use_case_id',200);if(!useCases.has(use_case_id))fail(400,`Unknown use case ${use_case_id}`);
  const version=Number.isSafeInteger(v.version)&&v.version>=1?v.version:fail(400,'Invalid version');
- const origin=v.origin==='synthetic'||typeof v.origin==='string'&&/^task:[A-Za-z0-9-]{1,80}$/.test(v.origin)?v.origin:fail(400,'Invalid origin');
+ const origin=v.origin==='synthetic'||typeof v.origin==='string'&&/^(task|export):[A-Za-z0-9._-]{1,80}$/.test(v.origin)?v.origin:fail(400,'Invalid origin');
  const fixture=v.fixture==null?null:{repo:ident(v.fixture.repo,'fixture repo'),commit:typeof v.fixture.commit==='string'&&/^[0-9a-f]{7,40}$/.test(v.fixture.commit)?v.fixture.commit:fail(400,'Invalid fixture commit')};
  const checks=Array.isArray(v.checks)?v.checks.map((c:any)=>({id:ident(c?.id,'check id'),run:str(c?.run,'check command',10000)})):fail(400,'Invalid checks');
  if(new Set(checks.map((c:any)=>c.id)).size!==checks.length)fail(400,'Duplicate check id');

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fleet/contract"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -270,5 +272,95 @@ func TestPayloadOfWrongTypeRefused(t *testing.T) {
 	rs.Close()
 	if !strings.Contains(all.String(), "invalid start payload") || !strings.Contains(all.String(), "invalid script payload") {
 		t.Fatal("refusal reasons missing:", all.String())
+	}
+}
+
+// Requirement: teardown and project-script data are the host-protocol Teardown and ProjectScriptResult, with the exit
+// code and the refusal reason (W4). Risk: a renamed field reaches the coordinator as missing and a failed teardown
+// script looks clean.
+func TestTeardownAndProjectScriptTyped(t *testing.T) {
+	dir := t.TempDir()
+	if r := teardown(dir, "s1", dir, M{}); r.Removed || str0(r.Reason) != "no-worktree" {
+		t.Fatal(enc(r))
+	}
+	r := projectScript("setup", "echo out; exit 3", dir, dir, "s1")
+	if r.Ok || r.ExitCode == nil || *r.ExitCode != 3 || str0(r.Stdout) != "out\n" {
+		t.Fatal(enc(r))
+	}
+	if b := enc(refusedTeardown("uncommitted")); b != `{"reason":"uncommitted","removed":false}` {
+		t.Fatal(b)
+	}
+}
+
+// Requirement: an owned pid that is still running but whose identity cannot be read is unknown, never confirmed gone;
+// only a pid missing from a new snapshot is gone (W3-3). Risk: a permission or transient read failure frees a session
+// while its original process keeps running.
+func TestIdentityReadFailureIsNotTermination(t *testing.T) {
+	defer func(f func(int) (string, error)) { identity = f }(identity)
+	identity = func(int) (string, error) { return "", errors.New("permission denied") }
+	l := &live{owned: map[int]string{os.Getpid(): "x"}}
+	if alive, err := l.aliveOwned(); err == nil || alive {
+		t.Fatal("unreadable running process reported gone")
+	}
+	// A recorded pid no process holds any more is gone, with or without a readable identity.
+	l = &live{owned: map[int]string{1<<22 + 7: "x"}}
+	if alive, err := l.aliveOwned(); err != nil || alive {
+		t.Fatal("a pid nobody holds is not reported gone", err)
+	}
+}
+
+// Requirement: account-inspect has an executor handler (contracts review N6): status reports the registry binding,
+// limits asks the vendor CLI on this host and reports a limit_reading with source probe (fleet-people-access.md
+// section 8 "Read without a run"); no token is read. Risk: account_connect and subscription_limits_refresh always fail.
+func TestAccountInspectStatusAndLimits(t *testing.T) {
+	e, root := scriptExecutor(t)
+	must := func(err error) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	home, native := filepath.Join(root, "h"), filepath.Join(root, "nh")
+	must(os.MkdirAll(home, 0o700))
+	must(os.MkdirAll(native, 0o700))
+	cli := filepath.Join(root, "codex")
+	must(os.WriteFile(cli, []byte("#!/bin/sh\nwhile read l; do case \"$l\" in *rateLimits/read*) echo '{\"id\":2,\"result\":{\"rateLimits\":{\"primary\":{\"usedPercent\":42,\"windowDurationMins\":300,\"resetsAt\":1794400000}}}}';; esac; done\n"), 0o700))
+	reg := filepath.Join(root, "accounts.json")
+	must(os.WriteFile(reg, []byte(enc(M{"work": M{"harness": "codex", "home": home, "nativeHome": native, "executable": cli, "readiness": "ready"}})), 0o600))
+	t.Setenv("FLEET_NATIVE_ACCOUNTS", reg)
+	must(e.run(M{"id": "c30", "executionId": "x30", "sessionId": "s30", "kind": "account-inspect", "payload": M{"accountId": "a1", "harness": "codex", "binding": "work", "mode": "status"}}))
+	must(e.run(M{"id": "c31", "executionId": "x31", "sessionId": "s31", "kind": "account-inspect", "payload": M{"accountId": "a1", "harness": "codex", "binding": "work", "mode": "limits"}}))
+	if lastReceipt(e, "c30") != "completed" || lastReceipt(e, "c31") != "completed" {
+		t.Fatal(lastReceipt(e, "c30"), lastReceipt(e, "c31"))
+	}
+	rows := map[string]string{}
+	rs, _ := e.db.Query("SELECT route, body FROM outbox")
+	for rs.Next() {
+		var r, b string
+		rs.Scan(&r, &b)
+		rows[r] += b
+	}
+	rs.Close()
+	if !strings.Contains(rows["/api/hosts/accounts/report"], `"readiness":"ready"`) {
+		t.Fatal("status report", rows["/api/hosts/accounts/report"])
+	}
+	if ev := rows["/api/hosts/events"]; !strings.Contains(ev, `"source":"probe"`) || !strings.Contains(ev, `"pct":42`) || !strings.Contains(ev, `"subscriptionId":"a1"`) {
+		t.Fatal("limits event", ev)
+	}
+}
+
+// Requirement: a signal that fails because the owned process exited between the check and the signal is not a cleanup
+// failure; a live process with its recorded identity still is. Risk: a script that ends while being cleaned up is
+// reported unknown (the CI flake of TestScriptOutputTimeoutAndGroupKill under -race).
+func TestSignalRaceWithExit(t *testing.T) {
+	cmd := exec.Command("true")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	me, err := identity(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gone(cmd.Process.Pid, "x") || !gone(os.Getpid(), me+"-other") || gone(os.Getpid(), me) {
+		t.Fatal("gone misjudged an exited, a reused or a live process")
 	}
 }
