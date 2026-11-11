@@ -175,11 +175,12 @@ type live struct {
 	lastSample     time.Time
 	wire           *wire
 	// Script commands: the process group stop and timeout kill, the deadline, and the trial worktree (top, path).
-	group    int
-	deadline time.Time
-	timedOut bool
-	trial    *[2]string
-	blocks   Blocks
+	group     int
+	deadline  time.Time
+	timedOut  bool
+	timeoutMs *int64 // the script payload's timeout_ms, for the script.timeout event
+	trial     *[2]string
+	blocks    Blocks
 }
 
 func (l *live) exitedNow() bool {
@@ -672,17 +673,18 @@ func (e *executor) run(c M) error {
 		// worktree; the session dir must be a real dir under the executor or session roots.
 		dir := e.sessionDir(session)
 		repo, hasRepo := repoPath(p, e.host)
-		data := M{"removed": false, "reason": "no-worktree"}
+		data := refusedTeardown("no-worktree")
 		if e.insideDirs(dir) && exists(filepath.Join(dir, "worktree", ".git")) {
 			_, top, created, ok, err := worktree(dir, session, repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"))
 			switch {
 			case err != nil:
-				data = M{"removed": false, "reason": err.Error()}
+				data = refusedTeardown(err.Error())
 			case ok && !created:
 				data = teardown(dir, session, top, jAt(p, "project"))
 			}
 		}
-		ok := data["removed"] == true || data["reason"] == "uncommitted" || data["reason"] == "no-worktree"
+		reason := str0(data.Reason)
+		ok := data.Removed || reason == "uncommitted" || reason == "no-worktree"
 		// The teardown command reuses the last execution, whose seq 0.. are taken by its turn: use a fresh seq.
 		if err := e.event(c, uint64(nowMs()), contract.FleetEventTypeTeardown, data); err != nil {
 			return err
@@ -858,7 +860,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			if err := e.event(c, 1, contract.FleetEventTypeSetup, r); err != nil {
 				return err
 			}
-			if r["ok"] != true {
+			if !r.Ok {
 				return fail(2, "setup-failed")
 			}
 		}
@@ -1301,10 +1303,10 @@ func (e *executor) script(c M, execution, session string) error {
 	close(lines)
 	l.lines = lines
 	if timeout > 0 {
-		l.deadline = time.Now().Add(timeout)
+		l.deadline, l.timeoutMs = time.Now().Add(timeout), sp.TimeoutMs
 	}
 	e.live[execution] = l
-	if err := e.event(c, 1, contract.FleetEventTypeScriptStarted, M{"commit": p["commit"], "timeoutMs": p["timeout_ms"], "trialWorktree": work}); err != nil {
+	if err := e.event(c, 1, contract.FleetEventTypeScriptStarted, contract.ScriptStarted{Commit: sp.Commit, TimeoutMs: sp.TimeoutMs, TrialWorktree: work}); err != nil {
 		return err
 	}
 	return e.receipt(c, "started", "")
@@ -1399,7 +1401,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	if !exited && !l.stopped && !l.deadline.IsZero() && !time.Now().Before(l.deadline) {
 		l.timedOut, l.stopped = true, true
 		l.seq++
-		if err := e.event(l.command, l.seq, contract.FleetEventTypeScriptTimeout, M{"timeoutMs": jAt(l.command, "payload", "timeout_ms")}); err != nil {
+		if err := e.event(l.command, l.seq, contract.FleetEventTypeScriptTimeout, contract.ScriptTimeout{TimeoutMs: l.timeoutMs}); err != nil {
 			return false, err
 		}
 	}
@@ -1530,7 +1532,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	e.declared = declared
 	if l.trial != nil {
 		l.seq++
-		if err := e.event(l.command, l.seq, contract.FleetEventTypeTrialRemoved, M{"removed": removeTrial(l.trial[0], l.trial[1])}); err != nil {
+		if err := e.event(l.command, l.seq, contract.FleetEventTypeTrialRemoved, contract.TrialRemoved{Removed: removeTrial(l.trial[0], l.trial[1])}); err != nil {
 			return false, err
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -190,7 +191,7 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 	}
 	agent := slices.Contains(agentTools, name) || slices.ContainsFunc(operationsOf(ctx), func(o any) bool { return jStr(jAt(o, "name")) == name })
 	var key string
-	var body M
+	var body any
 	route := "/api/hosts/agent-tools" // one route per envelope (contracts/host-protocol.schema.json)
 	if agent {
 		cmd, err := need("commandId")
@@ -198,8 +199,16 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 			return nil, err
 		}
 		key = cmd + ":agent:" + newID()
-		body = M{"hostId": jAt(ctx, "hostId"), "commandId": jAt(ctx, "commandId"), "executionId": jAt(ctx, "executionId"), "agentToolKey": key,
-			"request": M{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": M{"name": name, "arguments": q}}}
+		host, err := need("hostId")
+		if err != nil {
+			return nil, err
+		}
+		var execution *string
+		if s, ok := str(jAt(ctx, "executionId")); ok {
+			execution = &s
+		}
+		body = contract.AgentToolsRequest{HostId: host, CommandId: cmd, ExecutionId: execution, AgentToolKey: &key,
+			Request: json.RawMessage(enc(M{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": M{"name": name, "arguments": q}}))}
 	} else {
 		child := name == "request_child"
 		route = map[bool]string{true: "/api/hosts/delegations", false: "/api/hosts/project-operations"}[child]
@@ -244,7 +253,7 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 		}
 		key = cmd + ":" + rid
 		// The typed receipt (contracts ChildReceipt / ProjectReceipt): every identity must be a string.
-		ids := M{}
+		ids := map[string]string{}
 		for _, k := range []string{"hostId", "commandId", "executionId"} {
 			s, err := need(k)
 			if err != nil {
@@ -253,14 +262,24 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 			ids[k] = s
 		}
 		if child {
-			d = M{"requestId": d["requestId"], "profileId": d["profileId"], "input": d["input"]}
-			if _, ok := str(d["profileId"]); !ok {
+			profile, ok := str(d["profileId"])
+			if !ok {
 				return nil, errors.New("Invalid child request")
 			}
-		} else if _, err := need("projectId"); err != nil {
-			return nil, err
+			body = contract.ChildReceipt{HostId: ids["hostId"], CommandId: ids["commandId"], ExecutionId: ids["executionId"],
+				Delegation: contract.ChildRequest{RequestId: rid, ProfileId: profile, Input: jStr(d, "input")}}
+		} else {
+			project, err := need("projectId")
+			if err != nil {
+				return nil, err
+			}
+			var args contract.ProjectArguments
+			if err := json.Unmarshal([]byte(enc(q)), &args); err != nil {
+				return nil, errors.New("Invalid project request")
+			}
+			body = contract.ProjectReceipt{HostId: ids["hostId"], CommandId: ids["commandId"], ExecutionId: ids["executionId"],
+				Delegation: contract.ProjectRequest{Operation: contract.ProjectOperation(name), Arguments: args, RequestId: rid, ProjectId: project}}
 		}
-		body = M{"hostId": ids["hostId"], "commandId": ids["commandId"], "executionId": ids["executionId"], "delegation": d}
 	}
 	raw := enc(body)
 	// Acquire the writer before reading: a deferred WAL read cannot upgrade after a concurrent host reply.
