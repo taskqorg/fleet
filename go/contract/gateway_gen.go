@@ -206,6 +206,8 @@ func (v *GatewaySnapshot) Validate() error {
 }
 
 type GatewayTool struct {
+	AdoptFields  []string                   `json:"adoptFields,omitempty"`
+	AdoptMatch   *string                    `json:"adoptMatch,omitempty"`
 	Headers      map[string]string          `json:"headers,omitempty"`
 	Idempotent   bool                       `json:"idempotent"`
 	Inject       map[string]json.RawMessage `json:"inject,omitempty"`

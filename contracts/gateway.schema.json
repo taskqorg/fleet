@@ -23,6 +23,8 @@
       "inject": {"$comment": "Body fields the gateway adds to every call (Tavily include_usage).", "type": "object", "additionalProperties": true},
       "headers": {"$comment": "Fixed request headers, e.g. a provider's opt-in flag.", "type": "object", "additionalProperties": {"type": "string"}},
       "pathPatterns": {"$comment": "Pattern per {field} of path; a value that does not match is refused before a key is attached. A field without a pattern takes letters, digits, - and _.", "type": "object", "additionalProperties": {"type": "string"}},
+      "adoptMatch": {"$comment": "Primary submitted identity field required for uncertain job adoption; absent returned input stays unknown.", "type": "string"},
+      "adoptFields": {"$comment": "Additional submitted fields that must be returned unchanged to adopt a job.", "type": "array", "items": {"type": "string"}},
       "usageField": {"$comment": "Dotted reply field holding the usage amount (Google AI usageMetadata.totalTokenCount); absent: usage.<unit>.", "type": "string"},
       "usageWhen": {"$ref": "#/$defs/GatewayUsageWhen"},
       "usageOnce": {"$comment": "Path field whose value keys the usage: the coordinator counts it once per (connection, value), so repeated polls of one finished job are not counted again.", "type": "string"}}},

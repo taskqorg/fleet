@@ -1040,6 +1040,8 @@ type PipelineStep struct {
 	Output     json.RawMessage `json:"output,omitempty"`
 	Profile    *string         `json:"profile,omitempty"`
 	Prompt     *string         `json:"prompt,omitempty"`
+	RecentTool *string         `json:"recent_tool,omitempty"`
+	StatusTool *string         `json:"status_tool,omitempty"`
 	TimeoutMs  *int64          `json:"timeout_ms,omitempty"`
 	Tool       *string         `json:"tool,omitempty"`
 }

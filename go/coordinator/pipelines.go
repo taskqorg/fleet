@@ -6,6 +6,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -62,7 +63,7 @@ func validatePipeline(d doc) (doc, error) {
 	if len(steps) == 0 {
 		return bad("steps")
 	}
-	allowed := map[string][]string{"api": {"id", "kind", "connection", "tool", "arguments", "mode", "output"}, "agent": {"id", "kind", "profile", "prompt"}, "script": {"id", "kind", "command", "timeout_ms", "host"}}
+	allowed := map[string][]string{"api": {"id", "kind", "connection", "tool", "arguments", "mode", "output", "status_tool", "recent_tool"}, "agent": {"id", "kind", "profile", "prompt"}, "script": {"id", "kind", "command", "timeout_ms", "host"}}
 	seen := map[string]bool{}
 	for _, x := range steps {
 		s := mapOf(x)
@@ -92,6 +93,14 @@ func validatePipeline(d doc) (doc, error) {
 			}
 			if !isStr || !toolStr || mapOf(s["arguments"]) == nil && anys(s["arguments"]) == nil || hasMode && mode != "sync" && mode != "job" || hasOutput && (mapOf(s["output"]) == nil || mode == "job") {
 				return bad("api step " + id)
+			}
+			for _, key := range []string{"status_tool", "recent_tool"} {
+				if value, has := s[key]; has {
+					name, ok := value.(string)
+					if !ok || strings.TrimSpace(name) == "" || mode != "job" {
+						return bad("api step " + id + " " + key + " requires job mode and a tool name")
+					}
+				}
 			}
 		case "agent":
 			if _, ok := s["profile"].(string); !ok {
@@ -976,6 +985,31 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 		}
 		s["state"], s["startedAt"] = "running", nowMs()
 		if kind == "api" {
+			var submitTool doc
+			if def["mode"] == "job" {
+				err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+					c, err := connByName(q, connection)
+					if err != nil {
+						return err
+					}
+					tools := providerTools(astr(c["provider"]))
+					submitTool = mapOf(tools[astr(def["tool"])])
+					for _, name := range []string{jobTool(def, "job_status"), jobTool(def, "recent_tasks")} {
+						tool := mapOf(tools[name])
+						granted := false
+						for _, t := range anys(c["tools"]) {
+							granted = granted || t == name
+						}
+						if tool["method"] != "GET" || tool["idempotent"] != true || !granted {
+							return fmt.Errorf("job read tool %s must be a granted idempotent GET", name)
+						}
+					}
+					return nil
+				})
+				if err != nil {
+					return failNow("step:job-tools", err.Error())
+				}
+			}
 			s["arguments"] = resolved
 			if err := tx(func(q *Request) error { return putRun(q, run) }); err != nil {
 				return false, err
@@ -1009,7 +1043,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 						t := mapOf(x)
 						id, ok := t["id"].(string)
 						c, _ := numOK(t["created_at"])
-						if ok && c >= started-5000 && !owned[id] && (t["image_url"] == nil || t["image_url"] == mapOf(resolved)["image_url"]) {
+						if ok && id != "" && jobCreatedDuring(c, started, float64(nowMs())) && !owned[id] && jobMatches(t, mapOf(resolved), submitTool) {
 							mine = append(mine, t)
 						}
 					}
@@ -1139,7 +1173,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			if c, ok := numOK(out["consumed_credits"]); ok {
 				usage = doc{"credits": c}
 			}
-			out = doc{"state": state, "output": doc{"model_urls": urls, "thumbnail_url": out["thumbnail_url"]}, "usage": usage, "error": mapOf(out["task_error"])["message"]}
+			out = doc{"state": state, "output": doc{"jobId": s["jobId"], "model_urls": urls, "thumbnail_url": out["thumbnail_url"], "image_urls": out["image_urls"], "receipt": out}, "usage": usage, "error": mapOf(out["task_error"])["message"]}
 		}
 		switch out["state"] {
 		case "succeeded":
@@ -1696,8 +1730,11 @@ func startAgentStep(q *Request, run, step doc, stepExecutionID, prompt string, i
 }
 
 // jobTool names the status or listing tool of a job step's submit tool: Meshy multi_image_to_3d reads multi_job_status.
-// ponytail: naming rule for Meshy only; S7's status_tool and recent_tool replace it.
 func jobTool(def doc, name string) string {
+	field := map[string]string{"job_status": "status_tool", "recent_tasks": "recent_tool"}[name]
+	if override := astr(def[field]); override != "" {
+		return override
+	}
 	if strings.HasPrefix(astr(def["tool"]), "multi_") {
 		return "multi_" + name
 	}
@@ -1864,4 +1901,53 @@ func withArguments(def, overrides doc) any {
 // Reruns retain immutable staged inputs even when the example contains no text files.
 func rerunInputs(old doc, identity string) doc {
 	return doc{"rerunIdentity": identity, "exampleInputs": old["exampleInputs"]}
+}
+
+// jobMatches requires every declared input; output views never establish request identity.
+func jobMatches(task, args, tool doc) bool {
+	primary := astr(tool["adoptMatch"])
+	if primary == "" {
+		return false
+	}
+	fields := []string{primary}
+	for _, f := range anys(tool["adoptFields"]) {
+		name, ok := f.(string)
+		if !ok || name == "" {
+			return false
+		}
+		fields = append(fields, name)
+	}
+	for _, field := range fields {
+		expected, sent := args[field]
+		if !sent && field != primary {
+			continue
+		}
+		actual, returned := task[field]
+		if !sent || !returned || expected == nil || actual == nil || !bytes.Equal(jsonBytes(expected), jsonBytes(actual)) {
+			return false
+		}
+	}
+	switch input := args[primary].(type) {
+	case string:
+		return strings.TrimSpace(input) != ""
+	case []any:
+		if len(input) == 0 {
+			return false
+		}
+		for _, value := range input {
+			if s, ok := value.(string); !ok || strings.TrimSpace(s) == "" {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// Meshy timestamps are Unix seconds; test adapters may return Unix milliseconds.
+func jobCreatedDuring(created, started, finished float64) bool {
+	if created >= 1e9 && created < 1e11 {
+		created *= 1000
+	}
+	return created > 0 && created >= started-5000 && created <= finished+5000
 }

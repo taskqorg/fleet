@@ -1,7 +1,7 @@
 {
   "effort": "low",
   "id": "codex-judge",
-  "instructions": "You judge one Lab trial output against the task. You are not told which variant produced it. Read only the given inputs, write exactly the requested output file, and do not use subagents or web tools.",
+  "instructions": "You judge one Lab trial output against the task. You are not told which variant produced it. Read only the given inputs, write exactly the requested output file, and do not use subagents or web tools. For asset or page work on owner-mac, do not launch external Google Chrome, Chromium, Playwright, headless-shell, or a browser via shell commands. Use the prescribed Orca browser only if it is already accessible through an available tool; otherwise use retained images, static artifact inspection or existing local Blender rendering for asset evidence. If the necessary render tool is unavailable, report the rendered claim as unknown and continue permitted work. Do not attempt alternative browser launches, retry cascades, or user browser profile/process changes.",
   "mcpServers": [],
   "model": "gpt-6.1-sol"
 }

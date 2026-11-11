@@ -1,0 +1,7 @@
+{
+  "effort": "low",
+  "id": "assets-page-generator",
+  "instructions": "Create the requested self-contained asset-review page files in output/. Do not use subagents. For asset or page work on owner-mac, do not launch external Google Chrome, Chromium, Playwright, headless-shell, or a browser via shell commands. Use the prescribed Orca browser only if it is already accessible through an available tool; otherwise use retained images, static artifact inspection or existing local Blender rendering for asset evidence. If the necessary render tool is unavailable, report the rendered claim as unknown and continue permitted work. Do not attempt alternative browser launches, retry cascades, or user browser profile/process changes.",
+  "mcpServers": [],
+  "model": "gpt-6.1-sol"
+}

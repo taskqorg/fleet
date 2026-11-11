@@ -192,7 +192,7 @@ const providersJSON = `
  },
  "meshy": {
   "baseUrl": "https://api.meshy.ai",
-  "instructions": "image_to_3d and multi_image_to_3d start a Meshy task and return its id; job_status and multi_job_status read it. A submit is never repeated by Fleet.",
+  "instructions": "Image and 3D submits return task IDs. Read known IDs through their registered status tools. Never repeat an uncertain submit; recent tasks must exactly identify the original submitted inputs or the outcome remains unknown.",
   "tools": {
    "image_to_3d": {
     "method": "POST",
@@ -250,7 +250,17 @@ const providersJSON = `
        "description": "for example 2k"
       }
      }
-    }
+    },
+    "adoptMatch": "image_url",
+    "adoptFields": [
+     "ai_model",
+     "target_polycount",
+     "topology",
+     "should_texture",
+     "enable_pbr",
+     "texture_resolution",
+     "target_formats"
+    ]
    },
    "job_status": {
     "method": "GET",
@@ -351,7 +361,17 @@ const providersJSON = `
        "description": "for example 2k"
       }
      }
-    }
+    },
+    "adoptMatch": "image_urls",
+    "adoptFields": [
+     "ai_model",
+     "target_polycount",
+     "topology",
+     "should_texture",
+     "enable_pbr",
+     "texture_resolution",
+     "target_formats"
+    ]
    },
    "multi_job_status": {
     "method": "GET",
@@ -386,6 +406,84 @@ const providersJSON = `
     "unit": "credits",
     "idempotent": true,
     "description": "The newest Multi-Image to 3D tasks of this key.",
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    }
+   },
+   "image_to_image": {
+    "method": "POST",
+    "path": "/openapi/v1/image-to-image",
+    "unit": "credits",
+    "idempotent": false,
+    "description": "Prepare images from exact reference images and prompt; returns a job ID. Never repeat an uncertain submit.",
+    "adoptMatch": "reference_image_urls",
+    "adoptFields": [
+     "prompt",
+     "ai_model",
+     "generate_multi_view"
+    ],
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "reference_image_urls",
+      "prompt",
+      "ai_model",
+      "generate_multi_view"
+     ],
+     "properties": {
+      "reference_image_urls": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       },
+       "minItems": 1
+      },
+      "prompt": {
+       "type": "string"
+      },
+      "ai_model": {
+       "type": "string"
+      },
+      "generate_multi_view": {
+       "type": "boolean"
+      }
+     }
+    }
+   },
+   "image_job_status": {
+    "method": "GET",
+    "path": "/openapi/v1/image-to-image/{jobId}",
+    "unit": "credits",
+    "idempotent": true,
+    "description": "Read image preparation status, retained image_urls and actual consumed_credits.",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "jobId"
+     ],
+     "properties": {
+      "jobId": {
+       "type": "string"
+      }
+     }
+    },
+    "pathPatterns": {
+     "jobId": "^[0-9a-f-]+$"
+    },
+    "usageField": "consumed_credits",
+    "usageWhen": {
+     "field": "status",
+     "equals": "SUCCEEDED"
+    },
+    "usageOnce": "jobId"
+   },
+   "image_recent_tasks": {
+    "method": "GET",
+    "path": "/openapi/v1/image-to-image?page_size=20&sort_by=-created_at",
+    "unit": "credits",
+    "idempotent": true,
+    "description": "Read newest image preparation tasks; omitted request identity cannot establish adoption.",
     "inputSchema": {
      "type": "object",
      "properties": {}
@@ -463,4 +561,5 @@ const providersJSON = `
    }
   }
  }
-}`
+}
+`
