@@ -10,6 +10,7 @@ import (
 	"fleet/contract"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -33,6 +34,7 @@ type dispatchContext struct {
 	byID     map[string]doc
 	seen     map[string]float64
 	roots    map[string][]string
+	conns    map[string][]string // git connection names each host reported; absent: unknown
 	accounts []doc
 	readings map[string][]Reading
 	orders   map[string]contract.DispatchOrder // the directors' order setting, read once per pass
@@ -43,7 +45,7 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	k := &dispatchContext{byID: map[string]doc{}, seen: map[string]float64{}, roots: map[string][]string{}, orders: map[string]contract.DispatchOrder{}}
+	k := &dispatchContext{byID: map[string]doc{}, seen: map[string]float64{}, roots: map[string][]string{}, conns: map[string][]string{}, orders: map[string]contract.DispatchOrder{}}
 	for _, h := range hs {
 		if len(anys(h["roles"])) == 0 {
 			k.hosts = append(k.hosts, h)
@@ -56,6 +58,9 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 	}
 	for _, o := range obs {
 		k.seen[astr(o["id"])] = num(o["lastSeenAt"])
+		if o["gitConnections"] != nil {
+			k.conns[astr(o["id"])] = strs(o["gitConnections"])
+		}
 		if o["projectRoots"] != nil {
 			k.roots[astr(o["id"])] = strs(o["projectRoots"])
 		}
@@ -78,6 +83,25 @@ func checkouts(projectID any) []map[string]any {
 		}
 	}
 	return out
+}
+
+// repoConnection: the git connection of the repository a project runs on a host (its environment's repo, else the
+// first repo), as the executor's gitRepo chooses it; empty when that repo declares none.
+func repoConnection(projectID any, cos []map[string]any, host string) string {
+	var repo any
+	for _, co := range cos {
+		if co["hostId"] == host {
+			repo = co["repo"]
+		}
+	}
+	repos := anys(projectSetting(projectID, "repos"))
+	for _, r := range repos {
+		m := mapOf(r)
+		if repo == nil || m["id"] == repo {
+			return astr(m["connection"])
+		}
+	}
+	return ""
 }
 
 func accountHarness(a doc) string {
@@ -316,6 +340,13 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 						of = " of " + astr(projectID)
 					}
 					skip(fmt.Sprintf("checkout %s%s is outside FLEET_PROJECT_ROOTS on %s", checkout, of, id), fmt.Sprintf("host:%s:roots:%v", id, jsText(projectID)))
+					continue
+				}
+			}
+			// The repository's git connection must be on the host, else the run fails after setup (2026-11-11).
+			if have, known := k.conns[id]; known {
+				if need := repoConnection(projectID, cos, id); need != "" && !slices.Contains(have, need) {
+					skip(fmt.Sprintf("%s has no git connection %s", id, need), fmt.Sprintf("host:%s:connection:%s", id, need))
 					continue
 				}
 			}

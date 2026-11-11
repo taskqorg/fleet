@@ -745,14 +745,15 @@ func (v *PollReply) Validate() error {
 }
 
 type PollRequest struct {
-	Capabilities []string      `json:"capabilities"`
-	HostId       string        `json:"hostId"`
-	Platform     Platform      `json:"platform"`
-	Problems     []EdgeProblem `json:"problems"`
-	ProjectRoots []string      `json:"projectRoots"`
-	Stores       []StoreReport `json:"stores"`
-	Update       *UpdateResult `json:"update,omitempty"`
-	Version      *string       `json:"version,omitempty"`
+	Capabilities   []string      `json:"capabilities"`
+	GitConnections []string      `json:"gitConnections,omitempty"`
+	HostId         string        `json:"hostId"`
+	Platform       Platform      `json:"platform"`
+	Problems       []EdgeProblem `json:"problems"`
+	ProjectRoots   []string      `json:"projectRoots"`
+	Stores         []StoreReport `json:"stores"`
+	Update         *UpdateResult `json:"update,omitempty"`
+	Version        *string       `json:"version,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

@@ -2066,7 +2066,7 @@ func (e *executor) exchange() error {
 	}
 	v, roots := version, reportedRoots()
 	body := contract.PollRequest{HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
-		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, Update: lastUpdate(e.root)}
+		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, Update: lastUpdate(e.root), GitConnections: gitConnections(connectionsDir())}
 	a := send(e.url, e.token, pollRoute, body)
 	if a.status == 410 && strings.Contains(a.text, "host-removed") {
 		return errHostRemoved

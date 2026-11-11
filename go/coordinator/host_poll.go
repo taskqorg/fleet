@@ -57,6 +57,9 @@ func (a *App) poll(q *Request) (any, error) {
 	if b.Capabilities != nil {
 		obs["capabilities"] = b.Capabilities
 	}
+	if b.GitConnections != nil {
+		obs["gitConnections"] = b.GitConnections
+	}
 	if b.ProjectRoots != nil {
 		obs["projectRoots"] = b.ProjectRoots
 	}

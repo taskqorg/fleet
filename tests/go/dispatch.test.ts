@@ -168,3 +168,13 @@ test('A11 the start command payload is the StartPayload contract: named fields o
   assert.deepEqual(Object.keys(c.payload).filter(k => !allowed.includes(k)), []);
   assert.deepEqual([c.kind, c.payload.harness, c.payload.text], ['start', 'codex', 'hello']);
 });
+
+test('A9 a host without the project repository\'s git connection takes no run of it: the execution waits with the reason, and starts once the host reports the connection (requirement: git connections in each poll, 2026-11-11; risk: a run fails after setup with connection-missing)', async () => {
+  const h = await host('owner-mac');
+  ok(await h('/api/hosts/poll', {...poll, gitConnections: []}));
+  const s = ok(await op('session_start', {requestId: randomUUID(), text: 'hi', projectId: 'fleet-hello-world', profileId: 'pm', hostId: 'owner-mac'}));
+  assert.ok(!ok(await h('/api/hosts/poll', {...poll, gitConnections: []})).commands.some((c: any) => c.executionId === s.executionId), 'no start without the connection');
+  assert.equal((await execution(s.sessionId, s.executionId)).waitDetail, 'owner-mac has no git connection fleet-hello-world');
+  const {commands} = ok(await h('/api/hosts/poll', {...poll, gitConnections: ['fleet-hello-world']}));
+  assert.ok(commands.some((c: any) => c.executionId === s.executionId && c.kind === 'start'), 'starts once the host holds the connection');
+});

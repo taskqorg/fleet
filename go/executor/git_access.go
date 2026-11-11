@@ -49,6 +49,23 @@ func onlyBytes(s string, ok func(byte) bool) bool {
 
 func alnum(b byte) bool { return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' }
 
+// gitConnections: the names of the git connections this host holds (a directory with an id_ed25519 under the
+// connections dir), sent with each poll so dispatch places a run only where its repository's connection exists.
+// Names only: no key bytes and no paths leave the host.
+func gitConnections(dir string) []string {
+	out := []string{}
+	if dir == "" {
+		return out
+	}
+	es, _ := os.ReadDir(dir)
+	for _, e := range es {
+		if e.IsDir() && isFile(filepath.Join(dir, e.Name(), "id_ed25519")) {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
 func gitEnv(project, repo any, dir string) ([]string, error) {
 	var v []string
 	if n, e := jStr(project, "identity", "name"), jStr(project, "identity", "email"); jIsStr(project, "identity", "name") && jIsStr(project, "identity", "email") {
