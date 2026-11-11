@@ -127,6 +127,27 @@ jobs:
   # Browser: one build, Chromium from a cache keyed on the Playwright version, then every browser check in sequence:
   # filter path (fleet-view-urls-and-list-path.md §4), Conversations (fleet-conversations.md "Browser check"), the
   # design book and report. The docs and design reports warn only (D6, D14).
+  # Temporary read-only diagnosis of the hosted runner's failing Ubuntu mirror.
+  apt-source-diagnostic:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Inspect public Ubuntu sources and endpoints
+        run: |
+          for file in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt; do
+            if test -f "$file"; then
+              echo "$file"
+              cat "$file"
+            fi
+          done
+          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com; do
+            echo "DNS $host"
+            getent ahostsv4 "$host" || true
+          done
+          for url in https://archive.ubuntu.com/ubuntu/dists/noble/InRelease https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease; do
+            curl --fail --head --max-time 30 "$url" || true
+          done
   browser:
     runs-on: ubuntu-24.04
     permissions:
