@@ -70,7 +70,7 @@ try {
   }
   assert.equal(posts, 3); assert.deepEqual(counts(), before, 'creation must produce no executions, commands or pipeline steps');
   // Confirmed rejection preserves edits and permits correction, rather than widening the submitted request.
-  await fill('single'); await p.getByRole('textbox', { name: 'Variant 1 label', exact: true }).fill('invalid label');
+  await fill('single'); await p.getByRole('textbox', { name: 'Variant 1 label', exact: true }).fill('invalid/label');
   await p.getByRole('button', { name: 'Create draft', exact: true }).click();
   await p.getByText('Invalid variant label', { exact: true }).waitFor();
   assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), 'Create only; retain the real experiment record');
