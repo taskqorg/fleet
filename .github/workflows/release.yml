@@ -63,18 +63,11 @@ jobs:
         env:
           SHA: ${{ steps.check.outputs.sha }}
         run: |
-          # The merge queue run tested this exact commit; the push run covers an admin bypass. The first to succeed counts.
-          for event in merge_group push; do
-            id=$(gh run list --workflow ci --commit "$SHA" --event $event --json databaseId -q '.[0].databaseId')
-            [ -n "$id" ] || continue
-            gh run watch "$id" --interval 30 >/dev/null || true
-            ok=1; for job in go app browser; do
-              [ "$(gh run view "$id" --json jobs -q ".jobs[] | select(.name == \"$job\") | .conclusion")" = success ] || ok=0
-            done
-            [ $ok = 1 ] && exit 0
-          done
-          until id=$(gh run list --workflow ci --commit "$SHA" --event push --json databaseId -q '.[0].databaseId') && [ -n "$id" ]; do
-            echo "no ci run for $SHA yet"; sleep 30
+          # The merge queue run tested this exact commit; the push run covers an admin bypass.
+          id=$(gh run list --workflow ci --commit "$SHA" --event merge_group --json databaseId -q '.[0].databaseId')
+          until [ -n "$id" ]; do
+            id=$(gh run list --workflow ci --commit "$SHA" --event push --json databaseId -q '.[0].databaseId')
+            [ -n "$id" ] || { echo "no ci run for $SHA yet"; sleep 30; }
           done
           gh run watch "$id" --interval 30 >/dev/null || true
           for job in go app browser; do
@@ -90,6 +83,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.gate.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@v4
@@ -158,14 +152,17 @@ jobs:
           psql -h "$pg" -p 54329 -U postgres -v ON_ERROR_STOP=1 -q -d postgres -f deploy/infrastructure/fleet-postgres.sql
           mkdir new && tar -xzf "out/fleet-$VERSION-linux-amd64.tgz" -C new
           for v in $RECENT; do
-            gh release download "v$v" -p "fleet-$v-linux-amd64.tgz" -D "prev-$v" && mkdir "old-$v" && tar -xzf prev-$v/*.tgz -C "old-$v"
+            gh release download "v$v" -p "fleet-$v-linux-amd64.tgz" -D "prev-$v" || { echo "::error::download v$v failed"; exit 1; }
+            mkdir "old-$v"; tar -xzf "prev-$v/fleet-$v-linux-amd64.tgz" -C "old-$v"
           done
           url() { echo "postgresql://$1@/fleet?host=$pg&port=54329"; }
           export PORT=9470 FLEET_DATABASE_URL=$(url fleet_app) FLEET_MIGRATION_DATABASE_URL=$(url fleet) \
             FLEET_PEOPLE_FILE=$PWD/tests/trial/people.json FLEET_BROWSER_SECRET=migrate-check FLEET_HOST_ID=pds18
-          for dir in new $(printf 'old-%s ' $RECENT); do
-            (cd $dir && ./fleet-coordinator) & pid=$!
-            i=0; until curl -fsS -m 3 http://127.0.0.1:9470/api/health; do
+          # exec: kill stops the coordinator itself; the version check catches a leftover one still on the port.
+          for v in "$VERSION" $RECENT; do
+            dir=old-$v; [ "$v" = "$VERSION" ] && dir=new
+            (cd "$dir" && exec ./fleet-coordinator) & pid=$!
+            i=0; until curl -fsS -m 3 http://127.0.0.1:9470/api/health | grep -q "\"version\":\"$v\""; do
               i=$((i+1)); [ $i -lt 60 ] || { echo "::error::$dir coordinator not healthy"; exit 1; }; sleep 1; done
             echo; kill $pid; wait $pid || true
           done
@@ -188,6 +185,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: release
+      # A re-run after a later release published must not reuse its version or move latest backwards.
+      - name: Version still free and newest
+        run: |
+          ! gh release view "v$VERSION" >/dev/null 2>&1 || { echo "::error::v$VERSION already exists"; exit 1; }
+          latest=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
+          [ -z "$latest" ] || [ "$(printf '%s\n%s\n' "${latest#v}" "$VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" = "$VERSION" ] \
+            || { echo "::error::$VERSION is not newer than $latest; start a new run"; exit 1; }
       - name: Sign SHA256SUMS, write latest.json
         env:
           FLEET_RELEASE_KEY: ${{ secrets.FLEET_RELEASE_KEY }}
