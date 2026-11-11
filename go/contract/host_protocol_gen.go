@@ -761,6 +761,9 @@ func (v *PollRequest) Validate() error {
 	if v.Capabilities == nil {
 		return Missing("capabilities")
 	}
+	if v.GitConnections == nil {
+		return Missing("gitConnections")
+	}
 	if err := Check(&v.Platform, "platform"); err != nil {
 		return err
 	}
