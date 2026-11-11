@@ -47,15 +47,16 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const timer = useRef(0);
+  const pending = useRef<(() => Promise<void>) | null>(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
   const load = async () => {
     try {
       const g = await op('definition_get', { kind, id });
       setDef(g);
       try {
         const d = await op('definition_draft_get', { kind, id });
-        const t = JSON.stringify(d.content?.[kind], null, 2) + '\n';
-        setDraft({ base: d.draft.baseRevision, text: t, changes: d.draft.changes, stale: d.draft.stale, problems: d.problems ?? [] });
-        setText(t);
+        setDraft({ base: d.draft.baseRevision, text: d.text, changes: d.draft.changes, stale: d.draft.stale, problems: d.problems ?? [] });
+        setText(d.text); // the bytes the draft holds, not a re-encoding of its typed content
       } catch (e) {
         if (!(e instanceof OpError && e.status === 404)) throw e;
         setDraft(null); setText(g.text);
@@ -65,10 +66,11 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
   };
   useEffect(() => { load(); }, [kind, id]);
   // Typing keeps a draft: written after a pause, so the next execution still uses the saved revision.
+  const flush = async () => { clearTimeout(timer.current); const f = pending.current; pending.current = null; if (f) await f(); };
   const edit = (t: string) => {
     setText(t);
     clearTimeout(timer.current);
-    timer.current = setTimeout(async () => {
+    pending.current = async () => {
       if (!def) return;
       if (t === def.text) { await op('definition_draft_discard', { kind, id }).catch(() => {}); setDraft(null); return; }
       let content;
@@ -77,15 +79,20 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
         const r = await op('definition_draft_put', { kind, id, baseRevision: draft?.base ?? def.head, content: content as any });
         setDraft({ base: r.draft.baseRevision, text: t, changes: r.draft.changes, stale: r.draft.stale, problems: r.problems });
       } catch (e: any) { setError(e.message); }
-    }, 700) as unknown as number;
+    };
+    timer.current = setTimeout(flush, 700) as unknown as number;
   };
   const run = async (f: () => Promise<unknown>) => { setBusy(true); try { await f(); setError(null); } catch (e: any) { setError(e.message); } finally { setBusy(false); } };
+  // Save from the draft's own base: the server refuses it (409) when someone else saved meanwhile or the repository file
+  // changed, and the error says what to look at.
   const save = () => run(async () => {
+    await flush();
     if (!def || !draft) return;
-    await op('definition_save', { kind, id, baseRevision: def.head, content: contentOf(kind, text) as any, message: message.trim() || 'Edited in Fleet', ...(def.state === 'repository-changed' && def.repoSha ? { repoSha: def.repoSha } : {}) });
+    await op('definition_save', { kind, id, baseRevision: draft.base, content: contentOf(kind, text) as any, message: message.trim() || 'Edited in Fleet' });
     setMessage(''); await load();
   });
-  const discard = () => run(async () => { await op('definition_draft_discard', { kind, id }); await load(); });
+  const discard = () => run(async () => { clearTimeout(timer.current); pending.current = null; await op('definition_draft_discard', { kind, id }); await load(); });
+  const runDraft = () => run(async () => { await flush(); await op('pipeline_run_create', { pipelineId: id, requestId: crypto.randomUUID(), draft: true }); });
   if (!def) return <article class="detail" data-ui="detail" tabIndex={-1}>{error ? <div class="error" role="alert">{error}</div> : <Empty text="Loading…" />}</article>;
   const tabs = ['Configuration', 'Diff', 'History'];
   return <DefinitionEditor label={id} crumb={`shared · ${def.path} · r${def.head}${def.state !== 'synced' ? ` · ${def.state}` : ''}`} title={def.id}
@@ -93,7 +100,7 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
     {error && <div class="error" role="alert">{error}</div>}
     {draft && <DraftBar changes={draft.changes} base={`r${draft.base}`} note={draft.stale ? `The saved revision moved to r${def.head}: look at the diff before saving.` : 'New executions keep using the saved revision.'}
       actions={[
-        ...(kind === 'pipeline' ? [{ label: 'Run', icon: 'play' as const, onClick: () => run(() => op('pipeline_run_create', { pipelineId: id, requestId: crypto.randomUUID(), draft: true })) }] : []),
+        ...(kind === 'pipeline' ? [{ label: 'Run', icon: 'play' as const, onClick: busy || draft.problems.length ? undefined : runDraft }] : []),
         { label: 'Diff', onClick: () => setTab('Diff') },
         { label: 'Discard', icon: 'x' as const, onClick: discard },
         { label: 'Save as commit', icon: 'save' as const, primary: true, onClick: busy || draft.problems.length ? undefined : save },
@@ -116,7 +123,9 @@ const readsOf = (s: any) => [...new Set([...JSON.stringify(s).matchAll(/\$\{(exa
 
 function Steps({ text }: { text: string }) {
   let steps: any[] = [];
-  try { steps = JSON.parse(text).steps ?? []; } catch { return null; }
+  try { steps = JSON.parse(text)?.steps; } catch { return null; }
+  if (!Array.isArray(steps)) return null;
+  steps = steps.filter(s => s && typeof s === 'object');
   const items: StepItem[] = steps.map(s => ({ id: s.id, kind: s.kind === 'api' ? 'tool' : s.kind === 'script' ? 'program' : 'agent', executor: s.profile ?? s.tool ?? s.command ?? '', reads: readsOf(s), writes: 'output' }));
   return <DetailSection title="Steps"><StepList items={items} label="Steps" /></DetailSection>;
 }
@@ -124,12 +133,14 @@ function Steps({ text }: { text: string }) {
 function AgentFacts({ text }: { text: string }) {
   let a: any;
   try { a = JSON.parse(text); } catch { return null; }
+  if (!a || typeof a !== 'object') return null;
+  const list = (v: unknown) => Array.isArray(v) ? v.join(', ') : '';
   return <DetailSection title="Identity">
     <KvRow icon="settings" label="Harness" meta={<span class="mono">{a.harness ?? 'codex'}</span>} />
     <KvRow icon="bot" label="Model" meta={<span class="mono">{a.model}{a.effort ? ` · ${a.effort}` : ''}</span>} />
-    {a.skills?.length > 0 && <KvRow icon="file-text" label="Skills" meta={a.skills.join(', ')} />}
-    {a.tools?.length > 0 && <KvRow icon="terminal" label="Tools" meta={a.tools.join(', ')} />}
-    {a.connections?.length > 0 && <KvRow icon="link" label="Connections" meta={`${a.connections.join(', ')} · credentials stay in the connection`} />}
+    {list(a.skills) && <KvRow icon="file-text" label="Skills" meta={list(a.skills)} />}
+    {list(a.tools) && <KvRow icon="terminal" label="Tools" meta={list(a.tools)} />}
+    {list(a.connections) && <KvRow icon="link" label="Connections" meta={`${list(a.connections)} · credentials stay in the connection`} />}
   </DetailSection>;
 }
 
@@ -145,7 +156,9 @@ function DiffTab({ kind, id, hasDraft, head }: { kind: Kind; id: string; hasDraf
 
 function HistoryTab({ kind, id }: { kind: Kind; id: string }) {
   const [h, setH] = useState<Ops['definition_history']['reply'] | null>(null);
-  useEffect(() => { op('definition_history', { kind, id }).then(setH, () => {}); }, [kind, id]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { op('definition_history', { kind, id }).then(setH, e => setError(e.message)); }, [kind, id]);
+  if (error) return <DetailSection title="Revisions"><div class="error" role="alert">{error}</div></DetailSection>;
   const now = Date.now();
   return <DetailSection title="Revisions">
     {!h ? <Empty text="Loading…" /> : h.revisions.map(r => <KvRow key={r.revision} icon={r.source === 'agent' ? 'bot' : r.source === 'repo' ? 'git-merge' : 'file-plus-2'} label={`r${r.revision} · ${r.message}`}

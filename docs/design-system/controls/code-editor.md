@@ -4,7 +4,7 @@
 
 **Purpose.** Edit a definition's text (an agent, a pipeline, the catalogue) in place, and read a draft's difference from its base.
 
-**Anatomy.** `CodeEditor`: a monospace text area as tall as its text (8 to 40 lines, then it scrolls by its own handle), and the validation problems under it, each with its JSON path. `DiffText`: a unified diff in mono, added lines on the success tint and removed lines on the danger tint.
+**Anatomy.** `CodeEditor`: a monospace text area as tall as its text (8 to 40 lines, then it scrolls inside its own frame, as code does), and the validation problems under it, each with its JSON path. `DiffText`: a unified diff in mono, added lines on the success tint and removed lines on the danger tint.
 
 **Behaviour.**
 * The caller keeps the text as a draft (`definition_draft_put`); the editor never saves.

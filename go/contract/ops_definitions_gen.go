@@ -380,11 +380,12 @@ func (v *DefinitionDraftDiscardRequest) Validate() error {
 	return nil
 }
 
-// DefinitionDraftGetReply: No draft: 404.
+// DefinitionDraftGetReply: No draft: 404. text: the draft as stored (canonical text), byte for byte.
 type DefinitionDraftGetReply struct {
 	Content  *DefinitionContent `json:"content,omitempty"`
 	Draft    DraftInfo          `json:"draft"`
 	Problems []Problem          `json:"problems,omitempty"`
+	Text     string             `json:"text"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
