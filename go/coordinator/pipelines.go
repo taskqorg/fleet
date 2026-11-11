@@ -216,13 +216,6 @@ func resolveRefs(v any, example any, outputs doc, quote bool) (any, error) {
 	return v, nil
 }
 
-func msTime(v any) any {
-	if f, ok := numOK(v); ok {
-		return time.UnixMilli(int64(f))
-	}
-	return nil
-}
-
 // putRun writes the pipeline_run row and one pipeline_step row per step.
 func putRun(q *Request, run doc) error {
 	rest := doc{}

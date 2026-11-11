@@ -26,6 +26,14 @@ type AccountEnvironment struct {
 	HOME            *string `json:"HOME,omitempty"`
 }
 
+type AccountInspectPayload struct {
+	AccountId    string  `json:"accountId"`
+	Binding      *string `json:"binding,omitempty"`
+	Harness      string  `json:"harness"`
+	Mode         *string `json:"mode,omitempty"`
+	NativeHostId *string `json:"nativeHostId,omitempty"`
+}
+
 type AccountObservation struct {
 	AccountId           string        `json:"accountId"`
 	Binding             string        `json:"binding"`
@@ -53,6 +61,12 @@ type AccountRoots struct {
 	NativeHome          *string `json:"nativeHome,omitempty"`
 }
 
+// ArtifactTransferPayload: artifact-copy and artifact-verify; the transfer worker reads the rest
+type ArtifactTransferPayload struct {
+	ArtifactId *string `json:"artifactId,omitempty"`
+	StoreId    *string `json:"storeId,omitempty"`
+}
+
 type ChildReceipt struct {
 	CommandId   string       `json:"commandId"`
 	Delegation  ChildRequest `json:"delegation"`
@@ -66,15 +80,34 @@ type ChildRequest struct {
 	RequestId string `json:"requestId"`
 }
 
-// Command: Envelope only: payloads differ by kind and are described when each kind is next changed.
+// Command: Envelope. payload is decoded by kind: start and input StartPayload, steer SteerPayload, script ScriptPayload, readiness/base-updated/teardown ProjectPayload, artifact-copy/artifact-verify ArtifactTransferPayload, account-inspect AccountInspectPayload, stop none.
 type Command struct {
-	ExecutionId string                     `json:"executionId"`
-	HostId      *string                    `json:"hostId,omitempty"`
-	Id          string                     `json:"id"`
-	Kind        string                     `json:"kind"`
-	Payload     map[string]json.RawMessage `json:"payload,omitempty"`
-	SessionId   *string                    `json:"sessionId,omitempty"`
+	ExecutionId string          `json:"executionId"`
+	HostId      *string         `json:"hostId,omitempty"`
+	Id          string          `json:"id"`
+	Kind        CommandKind     `json:"kind"`
+	Payload     json.RawMessage `json:"payload,omitempty"`
+	SessionId   *string         `json:"sessionId,omitempty"`
 }
+
+type CommandKind string
+
+const (
+	CommandKindStart          CommandKind = "start"
+	CommandKindInput          CommandKind = "input"
+	CommandKindSteer          CommandKind = "steer"
+	CommandKindStop           CommandKind = "stop"
+	CommandKindScript         CommandKind = "script"
+	CommandKindReadiness      CommandKind = "readiness"
+	CommandKindBaseUpdated    CommandKind = "base-updated"
+	CommandKindTeardown       CommandKind = "teardown"
+	CommandKindArtifactCopy   CommandKind = "artifact-copy"
+	CommandKindArtifactVerify CommandKind = "artifact-verify"
+	CommandKindAccountInspect CommandKind = "account-inspect"
+)
+
+// CommandKindValues lists every CommandKind in schema order.
+var CommandKindValues = []CommandKind{CommandKindStart, CommandKindInput, CommandKindSteer, CommandKindStop, CommandKindScript, CommandKindReadiness, CommandKindBaseUpdated, CommandKindTeardown, CommandKindArtifactCopy, CommandKindArtifactVerify, CommandKindAccountInspect}
 
 type EdgeProblem struct {
 	Detail   string      `json:"detail"`
@@ -92,18 +125,53 @@ type EventData struct {
 	Item            *Item             `json:"item,omitempty"`
 }
 
+// FleetEventType: Event types the executor itself originates. Native harness records keep their own open type. Readers log an unknown type as a problem, never fail (hosts may run another release during self-update).
+type FleetEventType string
+
+const (
+	FleetEventTypePreparation         FleetEventType = "preparation"
+	FleetEventTypePreparationFailed   FleetEventType = "preparation.failed"
+	FleetEventTypeHarness             FleetEventType = "harness"
+	FleetEventTypeSetup               FleetEventType = "setup"
+	FleetEventTypeReadiness           FleetEventType = "readiness"
+	FleetEventTypeReadinessFailed     FleetEventType = "readiness.failed"
+	FleetEventTypeCheckoutSynced      FleetEventType = "checkout.synced"
+	FleetEventTypeSyncFailed          FleetEventType = "sync-failed"
+	FleetEventTypeTeardown            FleetEventType = "teardown"
+	FleetEventTypeScriptStarted       FleetEventType = "script.started"
+	FleetEventTypeScriptTimeout       FleetEventType = "script.timeout"
+	FleetEventTypeTrialRemoved        FleetEventType = "trial.removed"
+	FleetEventTypeProcessClosed       FleetEventType = "process.closed"
+	FleetEventTypeProcessReconciled   FleetEventType = "process.reconciled"
+	FleetEventTypeResourceObservation FleetEventType = "resource.observation"
+	FleetEventTypeProtocolWrite       FleetEventType = "protocol.write"
+	FleetEventTypeProtocolFailed      FleetEventType = "protocol.failed"
+	FleetEventTypeSteerResult         FleetEventType = "steer.result"
+	FleetEventTypeLimitReading        FleetEventType = "limit_reading"
+	FleetEventTypeOutboxFailed        FleetEventType = "outbox.failed"
+	FleetEventTypeUnparsed            FleetEventType = "unparsed"
+)
+
+// FleetEventTypeValues lists every FleetEventType in schema order.
+var FleetEventTypeValues = []FleetEventType{FleetEventTypePreparation, FleetEventTypePreparationFailed, FleetEventTypeHarness, FleetEventTypeSetup, FleetEventTypeReadiness, FleetEventTypeReadinessFailed, FleetEventTypeCheckoutSynced, FleetEventTypeSyncFailed, FleetEventTypeTeardown, FleetEventTypeScriptStarted, FleetEventTypeScriptTimeout, FleetEventTypeTrialRemoved, FleetEventTypeProcessClosed, FleetEventTypeProcessReconciled, FleetEventTypeResourceObservation, FleetEventTypeProtocolWrite, FleetEventTypeProtocolFailed, FleetEventTypeSteerResult, FleetEventTypeLimitReading, FleetEventTypeOutboxFailed, FleetEventTypeUnparsed}
+
 type HostEvent struct {
-	Data      EventData `json:"data"`
-	Id        string    `json:"id"`
-	Seq       int64     `json:"seq"`
-	Timestamp int64     `json:"timestamp"`
-	Type      string    `json:"type"`
+	Data      json.RawMessage `json:"data"`
+	Id        string          `json:"id"`
+	Seq       int64           `json:"seq"`
+	Timestamp int64           `json:"timestamp"`
+	Type      string          `json:"type"`
 }
 
 type HostEvents struct {
 	Events      []HostEvent `json:"events"`
 	ExecutionId string      `json:"executionId"`
 	HostId      string      `json:"hostId"`
+}
+
+type InputArtifact struct {
+	ArtifactId string `json:"artifactId"`
+	Path       string `json:"path"`
 }
 
 // Item: A completed native item (codex), agentMessage renamed agent_message.
@@ -113,6 +181,22 @@ type Item struct {
 	Status  *string `json:"status,omitempty"`
 	Text    *string `json:"text,omitempty"`
 	Type    *string `json:"type,omitempty"`
+}
+
+// LimitReading: fleet-people-access.md section 8: one reading per provider window
+type LimitReading struct {
+	Harness  string          `json:"harness"`
+	Native   json.RawMessage `json:"native,omitempty"`
+	Readings []LimitWindow   `json:"readings"`
+	Type     *string         `json:"type,omitempty"`
+}
+
+type LimitWindow struct {
+	Model    *string  `json:"model,omitempty"`
+	Pct      *float64 `json:"pct,omitempty"`
+	Period   string   `json:"period"`
+	ResetsAt *int64   `json:"resetsAt,omitempty"`
+	Status   *string  `json:"status,omitempty"`
 }
 
 // Normalized: harness::project and Blocks::project output; only the fields the coordinator and app read are named.
@@ -146,6 +230,10 @@ type PollRequest struct {
 	Version      *string           `json:"version,omitempty"`
 }
 
+type PreparationFailed struct {
+	Reason string `json:"reason"`
+}
+
 type ProblemKind string
 
 const (
@@ -155,6 +243,20 @@ const (
 
 // ProblemKindValues lists every ProblemKind in schema order.
 var ProblemKindValues = []ProblemKind{ProblemKindEdgeRedirect, ProblemKindVersionBehind}
+
+type ProcessClosed struct {
+	CleanupUnknown                  bool   `json:"cleanupUnknown"`
+	ExitCode                        *int64 `json:"exitCode"`
+	ObservedOwnedProcessesRemaining *bool  `json:"observedOwnedProcessesRemaining,omitempty"`
+	StdoutClosed                    bool   `json:"stdoutClosed"`
+}
+
+type ProcessReconciled struct {
+	LaunchWindowUnresolved bool  `json:"launchWindowUnresolved"`
+	OwnedProcesses         int64 `json:"ownedProcesses"`
+	Resolved               bool  `json:"resolved"`
+	Survived               bool  `json:"survived"`
+}
 
 // ProjectArguments: Native tool arguments are forwarded unchanged to the owning project operation validator.
 type ProjectArguments = map[string]json.RawMessage
@@ -176,6 +278,11 @@ const (
 // ProjectOperationValues lists every ProjectOperation in schema order.
 var ProjectOperationValues = []ProjectOperation{ProjectOperationProjectContext, ProjectOperationCatalogue, ProjectOperationPipelineRun, ProjectOperationDirectSearch, ProjectOperationPipelineHistory, ProjectOperationPipelineGet, ProjectOperationQuestionAsk, ProjectOperationQuestionHistory, ProjectOperationAccountList}
 
+// ProjectPayload: readiness, base-updated and teardown: the project context plus kind-specific fields
+type ProjectPayload struct {
+	Project map[string]json.RawMessage `json:"project,omitempty"`
+}
+
 type ProjectReceipt struct {
 	CommandId   string         `json:"commandId"`
 	Delegation  ProjectRequest `json:"delegation"`
@@ -188,6 +295,12 @@ type ProjectRequest struct {
 	Operation ProjectOperation `json:"operation"`
 	ProjectId string           `json:"projectId"`
 	RequestId string           `json:"requestId"`
+}
+
+type ProtocolFailed struct {
+	Error  string  `json:"error"`
+	Reason *string `json:"reason,omitempty"`
+	Type   *string `json:"type,omitempty"`
 }
 
 // Receipt: Execution status receipt; delegation and account envelopes have their own generated types.
@@ -214,6 +327,44 @@ const (
 
 // ReceiptStatusValues lists every ReceiptStatus in schema order.
 var ReceiptStatusValues = []ReceiptStatus{ReceiptStatusAccepted, ReceiptStatusStarted, ReceiptStatusCompleted, ReceiptStatusFailed, ReceiptStatusStopped, ReceiptStatusUnknown}
+
+type ScriptPayload struct {
+	Command   string                     `json:"command"`
+	Commit    *string                    `json:"commit,omitempty"`
+	Inputs    []InputArtifact            `json:"inputs,omitempty"`
+	Project   map[string]json.RawMessage `json:"project,omitempty"`
+	Repo      *string                    `json:"repo,omitempty"`
+	TimeoutMs *int64                     `json:"timeout_ms,omitempty"`
+}
+
+// StartPayload: start and input. Named fields; lane A replaces the coordinator's merge of a free payload over them.
+type StartPayload struct {
+	Account          *string                    `json:"account,omitempty"`
+	AgentConfig      map[string]json.RawMessage `json:"agentConfig,omitempty"`
+	Connections      []json.RawMessage          `json:"connections,omitempty"`
+	Effort           *string                    `json:"effort,omitempty"`
+	FleetOperations  []json.RawMessage          `json:"fleetOperations,omitempty"`
+	Fork             map[string]json.RawMessage `json:"fork,omitempty"`
+	GitNetwork       *bool                      `json:"gitNetwork,omitempty"`
+	Harness          *string                    `json:"harness,omitempty"`
+	Inputs           []InputArtifact            `json:"inputs,omitempty"`
+	Instructions     *string                    `json:"instructions,omitempty"`
+	Model            *string                    `json:"model,omitempty"`
+	NativeSessionId  *string                    `json:"nativeSessionId,omitempty"`
+	Project          map[string]json.RawMessage `json:"project,omitempty"`
+	ProjectId        *string                    `json:"projectId,omitempty"`
+	RunToken         *string                    `json:"runToken,omitempty"`
+	Setup            *string                    `json:"setup,omitempty"`
+	Skills           []json.RawMessage          `json:"skills,omitempty"`
+	Text             *string                    `json:"text,omitempty"`
+	Turn             json.RawMessage            `json:"turn,omitempty"`
+	WebRoute         *string                    `json:"webRoute,omitempty"`
+	WorkingDirectory *string                    `json:"workingDirectory,omitempty"`
+}
+
+type SteerPayload struct {
+	Text string `json:"text"`
+}
 
 // UpdateResult: last of the host's update-state.json, written by fleet-update
 type UpdateResult struct {

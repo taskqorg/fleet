@@ -81,6 +81,27 @@ test('P1 people.json is re-read when it changes; a broken file keeps the last va
   } finally { await c.stop(); }
 });
 
+test('P2 a people.json entry as malformed as the old parsePeople refused (e-mail, roles, owner type, grants shape) is left out and named once; everyone else keeps working (requirement: fleet-people-access people file; risk: a loose entry grants a role, or one bad row locks out site-agents)', async () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'fleet-people-')), 'people.json');
+  const list = JSON.parse(readFileSync(join(root, 'tests/trial/people.json'), 'utf8'));
+  const NEW = 'new@trial.test';
+  const bad = [{email: 'not-an-email', roles: ['operator']}, {email: 'r@trial.test', roles: ['admin']}, {email: 'o@trial.test', roles: ['operator'], owner: 'yes'},
+    {email: 'g@trial.test', roles: ['operator'], grants: [{kind: 'project'}]}, {email: 'k@trial.test', roles: ['operator'], extra: 1}];
+  const AGENTS = {email: 'site-agents', name: 'Site agents', roles: ['operator', 'architect'], accessCommonName: 'agents-client', grants: [{kind: '*', id: '*'}]};
+  writeFileSync(file, JSON.stringify([...list, {email: NEW, roles: ['operator']}, AGENTS, ...bad]));
+  const c = await startCoordinator({name: 'people-rows', env: {FLEET_PEOPLE_FILE: file}});
+  try {
+    assert.equal((await call(c, 'POST', '/api/ops/questions_list', {person: NEW})).status, 200, 'a good entry next to bad ones works');
+    assert.equal((await call(c, 'POST', '/api/ops/questions_list', {person: 'agents-client'})).status, 200, 'site-agents works next to bad rows');
+    for (const p of ['not-an-email', 'r@trial.test', 'o@trial.test', 'g@trial.test', 'k@trial.test'])
+      assert.equal((await call(c, 'POST', '/api/ops/questions_list', {person: p})).status, 403, p);
+    const qs = (await call(c, 'POST', '/api/ops/questions_list', {body: {state: 'open'}})).body.questions.filter((x: any) => /left out/.test(x.text));
+    assert.equal(qs.length, 1); assert.equal(qs[0].text.match(/entry \d+:/g).length, bad.length, qs[0].text);
+    const set = await call(c, 'POST', '/api/ops/people_set', {body: {people: [...list, bad[1]]}});
+    assert.equal(set.status, 400, 'people_set refuses any malformed entry');
+  } finally { await c.stop(); }
+});
+
 test('G1 the person gate covers every route and operation, not only those registered through it (requirement: fleet-people-access §2 architect role and project grants; risk: a plain operator reads subscriptions or transport records, or names an ungranted project)', async () => {
   const c = await startCoordinator({name: 'gate'});
   const OUT = 'outsider@trial.test', MEMBER = 'member@trial.test';

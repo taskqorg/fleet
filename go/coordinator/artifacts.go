@@ -118,17 +118,6 @@ func execCtx(ctx context.Context, a *App, sql string, args ...any) error {
 	return txCtx(ctx, a, func(tx pgx.Tx) error { _, err := tx.Exec(ctx, sql, args...); return err })
 }
 
-func i64(m map[string]any, k string) int64 {
-	switch v := m[k].(type) {
-	case int64:
-		return v
-	case int32:
-		return int64(v)
-	case float64:
-		return int64(v)
-	}
-	return 0
-}
 func strp(m map[string]any, k string) *string {
 	if s, ok := m[k].(string); ok {
 		return &s

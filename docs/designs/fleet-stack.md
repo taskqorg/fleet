@@ -72,7 +72,7 @@ The TypeScript-era label D4 (`node:sqlite` and the bundled Node server) ended wi
 Two sources, each owning one seam ([why](#why-this-stack)):
 
 - `go/coordinator/schema.sql` owns table rows.
-- `contracts/host-protocol.schema.json` (JSON Schema) owns the host protocol (`/api/hosts/poll` request and reply, status receipts, event batches) and event payloads.
+- `contracts/host-protocol.schema.json` (JSON Schema) owns the host protocol (`/api/hosts/poll` request and reply, status receipts, event batches), the command kinds with one payload def per kind (`CommandKind`, `StartPayload`, `ScriptPayload`, …), the executor-originated event types (`FleetEventType`, closed; readers log an unknown type as a problem, since hosts may run another release during self-update) with data defs for `process.closed`, `process.reconciled`, `preparation.failed`, `protocol.failed` and `limit_reading`. Native harness record types stay open. The executor builds receipts and event batches from these types.
 
 Rules:
 
@@ -87,7 +87,7 @@ The generators were checked against off-the-shelf output for the transcript even
 
 ## MCP servers as executor subcommands (L4)
 
-- The executor starts delegation, design-rules and connection servers as `fleet-executor mcp <name>` (`go/executor/mcp_*.go`); no Python process serves them. `tests/executor/mcp-replay.test.ts` replays the stdio exchanges captured from the former Python servers (`tests/executor/fixtures/mcp.json`) against the Go binary.
+- The executor starts delegation, design-rules and connection servers as `fleet-executor mcp <name>` (`go/executor/mcp_*.go`); no Python process serves them. `tests/executor/mcp-replay.test.ts` replays stdio exchanges (`tests/executor/fixtures/mcp.json`, first captured from the former Python servers) against the Go binary; a malformed line answers the JSON-RPC parse error `-32700 "Parse error"`.
 - The Access origin guard is the gateway's `guard` command (`go/gateway/guard.go`).
 
 ## Go code
@@ -102,7 +102,7 @@ The goal of the quality round (2026-11-11). Each line stays `Not built:` until t
 2. Built in part: `agent-tools` (`go/executor/mcp-tools.json` is the one source of MCP input schemas, one closed schema per tool; before forwarding a project tool call the executor checks its property names, string lengths and required arguments against it; the project tool names are the contract's `ProjectOperation`, `contract.ProjectOperationValues`). Not built: contracts `host-protocol` (every `/api/hosts/*` route, one envelope per route, per-kind command payloads, Fleet event types), `ops` (request and reply per operation, SSE `Change`, thread `Block`), `profile` (one validator for both sides) and `gateway` (snapshot, call line). Handlers decode into structs and refuse unknown fields on closed types. Vendor-owned payloads (native harness records, provider bodies, usage) stay raw.
 3. Not built: the app calls `op<'name'>` with types generated from `ops`; `Change` and `Block` come from the same source.
 4. Built in part: executions (agent runs, host jobs, pipeline runs and steps) have one state vocabulary (the typed column), their real kind and harness, and no `legacy_kind`; an agent run or host job has one writer. Not built: the same for commands, sessions, questions and tasks; typed tables scanned into structs.
-5. Built in part: the coordinator stays one `package main` with files named by domain, no area prefixes, no hook variables or glue files (direct calls), one router and one JSON helper set per binary. Not built: one transaction wrapper (`store.Tx` still has `writeTx`, `readTx`, `writeTxAs` and `txCtx` beside it), one auth path, and the last duplicate helpers whose merge changes behaviour (number readers `num`/`anum`/`numOK`; `canonical`/`canonicalJSON` differ in HTML escaping; `body`/`bodyObject`; `ms`/`msOf`/`msTimestamp`).
+5. Built in part: the coordinator stays one `package main` with files named by domain, no area prefixes, no hook variables or glue files (direct calls), one router and one JSON helper set per binary. Not built: one transaction wrapper (`store.Tx` still has `writeTx`, `readTx`, `writeTxAs` and `txCtx` beside it), one auth path, and the last duplicate helpers whose merge changes behaviour (`canonical`/`canonicalJSON` differ in HTML escaping; `body`/`bodyObject`); numbers are read by one `num`/`numOK` pair and millisecond times by one `msTime`.
 6. Built: binaries built with `-race` for tests; CI jobs `go` (generate diff, vet, race, outside tests), `app` (the release tarballs from the release script) and `browser` (cached Chromium). Not built: outside tests named by domain and requirement, one non-owner scope file.
 7. Not built: every correctness finding of the round fixed with a failing-then-passing test.
 8. Not built: docs and code comments name Go paths; nothing points at deleted TypeScript, Rust or Python.

@@ -618,12 +618,16 @@ func subscriptionLimits(q *Request) (any, error) {
 	return doc{"serverNow": nowMs(), "subscriptions": subs}, nil
 }
 
-// readingOverSwitch: the dispatch skip (§6) for an account: provider rejected, or a percent at or over switchPct. Only
+// readingOverSwitch: the dispatch skip (§6) for an account: provider rejected, or a percent at or over switchPct (100
+// without one: a full subscription cannot run anyway). Only
 // readings that know when their period ends count. Empty when none applies. For the dispatch area.
 func readingOverSwitch(account map[string]any, list []Reading) string {
 	old := func(r Reading) string { return strconv.FormatInt(max(0, (nowMs()-r.At+30000)/60000), 10) + " min old" }
 	var best *Reading
-	sw, hasSw := account["switchPct"].(float64)
+	sw, ok := account["switchPct"].(float64)
+	if !ok {
+		sw = 100
+	}
 	for i := range list {
 		r := list[i]
 		if r.State != "known" || r.ResetsAt == nil {
@@ -632,7 +636,7 @@ func readingOverSwitch(account map[string]any, list []Reading) string {
 		if r.Status != nil && *r.Status == "rejected" {
 			return "provider limit reached (" + r.Period + "), " + old(r)
 		}
-		if hasSw && r.Pct != nil && *r.Pct >= sw && (best == nil || *r.Pct > *best.Pct) {
+		if r.Pct != nil && *r.Pct >= sw && (best == nil || *r.Pct > *best.Pct) {
 			best = &list[i]
 		}
 	}
@@ -640,6 +644,9 @@ func readingOverSwitch(account map[string]any, list []Reading) string {
 		return ""
 	}
 	f := func(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+	if !ok {
+		return "subscription full; reading " + f(*best.Pct) + " % (" + best.Period + "), " + old(*best)
+	}
 	return "switch point " + f(sw) + " %; reading " + f(*best.Pct) + " % (" + best.Period + "), " + old(*best)
 }
 

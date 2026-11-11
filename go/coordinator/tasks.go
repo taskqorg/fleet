@@ -223,7 +223,7 @@ func askQuestion(q *Request, v doc) (string, error) {
 		data = doc{}
 	}
 	if err := exec(q, "INSERT INTO question(id,kind,project_id,task_id,execution_id,session_id,text,options,asked_by,asked_at,legacy_kind,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,coalesce($10::timestamptz,now()),$11,$12)",
-		id, v["kind"], nilIf(projectID), nilIf(taskID), v["executionId"], v["sessionId"], v["text"], options, v["askedBy"], ms(v["askedAt"]), v["legacyKind"], js(data)); err != nil {
+		id, v["kind"], nilIf(projectID), nilIf(taskID), v["executionId"], v["sessionId"], v["text"], options, v["askedBy"], msTime(v["askedAt"]), v["legacyKind"], js(data)); err != nil {
 		return "", err
 	}
 	if taskID != "" && v["kind"] != "acceptance" {
@@ -508,17 +508,6 @@ const taskListCols = "t.id,t.project_id,t.title,t.state,t.pause_reason,t.wait_re
 func taskListRow(x doc) doc {
 	return doc{"id": x["id"], "projectId": x["project_id"], "title": x["title"], "state": x["state"], "pauseReason": x["pause_reason"], "waitReason": x["wait_reason"], "priority": x["priority"], "agent": x["agent"], "host": x["host"],
 		"startedAt": x["started_at"], "createdAt": x["created_at"], "updatedAt": x["updated_at"], "openQuestions": x["open_questions"], "sortKey": []any{x["g"], -num(x["seq"]), x["id"]}}
-}
-
-func num(v any) float64 {
-	switch n := v.(type) {
-	case float64:
-		return n
-	case string:
-		f, _ := strconv.ParseFloat(n, 64)
-		return f
-	}
-	return 0
 }
 
 func pageLimit(v any, def int) int {
