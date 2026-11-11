@@ -260,7 +260,7 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 		return nil, ioFailure(err)
 	}
 	defer f.Close()
-	var missing []any
+	var missing []uint64
 	for n := uint64(1); n <= count; n++ {
 		have := false
 		for _, d := range done {
@@ -275,9 +275,9 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 	for len(missing) > 0 {
 		batch := missing[:min(16, len(missing))]
 		missing = missing[len(batch):]
-		req := M{"hostId": c.host, "artifactId": artifactID, "partNumbers": batch}
-		if storeID != "" {
-			req["storeId"] = storeID
+		req := contract.ArtifactPartsRequest{HostId: c.host, ArtifactId: artifactID, StoreId: optStr(storeID)}
+		for _, n := range batch {
+			req.PartNumbers = append(req.PartNumbers, int64(n))
 		}
 		urls, fl := c.post("/api/hosts/artifacts/parts", req)
 		if fl != nil {
@@ -311,9 +311,11 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 			db.Exec("UPDATE transfers SET body=? WHERE id=?", enc(b), jobID)
 		}
 	}
-	req := M{"hostId": c.host, "artifactId": artifactID, "parts": done}
-	if storeID != "" {
-		req["storeId"] = storeID
+	req := contract.ArtifactCommitRequest{HostId: c.host, ArtifactId: artifactID, StoreId: optStr(storeID)}
+	for _, d := range done {
+		n, _ := jU64(d, "partNumber")
+		etag := jStr(d, "etag")
+		req.Parts = append(req.Parts, contract.ArtifactPart{PartNumber: int64(n), Etag: &etag})
 	}
 	commit, fl := c.post("/api/hosts/artifacts/commit", req)
 	if fl != nil {
@@ -339,7 +341,7 @@ func verifyArtifact(c *transferClient, artifactID, storeID, url string) (any, *f
 	if err != nil {
 		return nil, ioFailure(err)
 	}
-	return c.post("/api/hosts/artifacts/verified", M{"hostId": c.host, "artifactId": artifactID, "storeId": storeID, "sha256": digest})
+	return c.post("/api/hosts/artifacts/verified", contract.ArtifactVerifiedRequest{HostId: c.host, ArtifactId: artifactID, StoreId: storeID, Sha256: digest})
 }
 
 func u64Or(def uint64, v any, keys ...string) uint64 {
@@ -357,12 +359,9 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		if err != nil {
 			return nil, ioFailure(err)
 		}
-		req := M{"hostId": c.host, "executionId": body["executionId"], "artifactId": id, "name": body["name"], "mediaType": body["mediaType"], "size": size, "sha256": digest, "required": body["required"]}
-		for _, k := range []string{"derivedFrom", "role"} {
-			if body[k] != nil {
-				req[k] = body[k]
-			}
-		}
+		required := body["required"] == true
+		req := contract.ArtifactReserveRequest{HostId: c.host, ExecutionId: jStr(body, "executionId"), ArtifactId: optStr(id), Name: jStr(body, "name"), MediaType: jStr(body, "mediaType"),
+			Size: int64(size), Sha256: digest, Required: &required, DerivedFrom: optStr(jStr(body, "derivedFrom")), Role: optStr(jStr(body, "role"))}
 		r, f := c.post("/api/hosts/artifacts/reserve", req)
 		if f != nil {
 			return nil, f
@@ -413,7 +412,7 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		os.Remove(tmp)
 		return out, f
 	case "get":
-		r, f := c.post("/api/hosts/artifacts/get", M{"hostId": c.host, "executionId": body["executionId"], "artifactId": body["artifactId"]})
+		r, f := c.post("/api/hosts/artifacts/get", contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: jStr(body, "executionId"), ArtifactId: jStr(body, "artifactId")})
 		if f != nil {
 			return nil, f
 		}
@@ -479,7 +478,11 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		}
 		return M{"artifactId": jAt(r, "id"), "path": target, "mediaType": jAt(r, "mediaType"), "size": jAt(r, "size")}, nil
 	case "list":
-		return c.post("/api/hosts/artifacts/list", M{"hostId": c.host, "executionId": body["executionId"], "filter": body["filter"]})
+		req := contract.HostArtifactListRequest{HostId: c.host, ExecutionId: jStr(body, "executionId")}
+		if f, ok := body["filter"].(map[string]any); ok {
+			req.Filter = &contract.HostArtifactListFilter{ExecutionId: optStr(jStr(f, "executionId")), TaskId: optStr(jStr(f, "taskId")), MediaType: optStr(jStr(f, "mediaType"))}
+		}
+		return c.post("/api/hosts/artifacts/list", req)
 	}
 	return nil, permanentf("unknown transfer kind %s", kind)
 }
@@ -536,11 +539,7 @@ func spawnTransfers(journal string, c *transferClient, after afterJob) error {
 			}
 			for _, j := range jobs {
 				if a, s, ok := leased(j.kind, j.id, decM(j.body)); ok {
-					req := M{"hostId": c.host, "artifactId": a}
-					if s != "" {
-						req["storeId"] = s
-					}
-					c.post("/api/hosts/artifacts/renew", req)
+					c.post("/api/hosts/artifacts/renew", contract.ArtifactLeaseRequest{HostId: c.host, ArtifactId: a, StoreId: optStr(s)})
 				}
 			}
 		}
@@ -614,7 +613,7 @@ func settleJob(x execer, host, id, kind string, body M, attempts int64, v any, f
 			}
 		}
 		if kind == "upload" {
-			return queue(x, "/api/hosts/artifacts/failed", M{"hostId": host, "artifactId": id, "error": f.msg})
+			return queue(x, "/api/hosts/artifacts/failed", contract.ArtifactFailedRequest{HostId: host, ArtifactId: id, Error: f.msg})
 		}
 	}
 	return nil

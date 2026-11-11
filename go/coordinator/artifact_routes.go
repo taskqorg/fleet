@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fleet/contract"
 	"io"
 	"log"
 	"net/http"
@@ -20,21 +21,21 @@ import (
 
 func init() {
 	// Long routes: each takes short transactions around its store calls.
-	longRoute("POST /api/hosts/artifacts/reserve", hostOwned(true, artifactReserve))
-	longRoute("POST /api/hosts/artifacts/parts", hostOwned(false, artifactParts))
-	longRoute("POST /api/hosts/artifacts/commit", hostOwned(false, artifactCommit))
-	longRoute("POST /api/hosts/artifacts/verified", hostOwned(false, artifactVerified))
-	longRoute("POST /api/hosts/artifacts/renew", hostOwned(false, artifactRenew))
-	longRoute("POST /api/hosts/artifacts/failed", hostOwned(false, artifactRefused))
-	longRoute("POST /api/hosts/artifacts/declare", hostOwned(true, artifactDeclare))
-	longRoute("POST /api/hosts/artifacts/get", hostOwned(false, func(q *Request) (any, error) {
+	longRoute("POST /api/hosts/artifacts/reserve", hostOwned(true, typed[contract.ArtifactReserveRequest](artifactReserve)))
+	longRoute("POST /api/hosts/artifacts/parts", hostOwned(false, typed[contract.ArtifactPartsRequest](artifactParts)))
+	longRoute("POST /api/hosts/artifacts/commit", hostOwned(false, typed[contract.ArtifactCommitRequest](artifactCommit)))
+	longRoute("POST /api/hosts/artifacts/verified", hostOwned(false, typed[contract.ArtifactVerifiedRequest](artifactVerified)))
+	longRoute("POST /api/hosts/artifacts/renew", hostOwned(false, typed[contract.ArtifactLeaseRequest](artifactRenew)))
+	longRoute("POST /api/hosts/artifacts/failed", hostOwned(false, typed[contract.ArtifactFailedRequest](artifactRefused)))
+	longRoute("POST /api/hosts/artifacts/declare", hostOwned(true, typed[contract.ArtifactDeclareRequest](artifactDeclare)))
+	longRoute("POST /api/hosts/artifacts/get", hostOwned(false, typed[contract.HostArtifactGetRequest](func(q *Request) (any, error) {
 		x, err := hostMayRead(q)
 		if err != nil {
 			return nil, err
 		}
 		return artifactGetView(q.ctx(), q.app, x.ID, q.hostID())
-	}))
-	longRoute("POST /api/hosts/artifacts/read", hostOwned(false, func(q *Request) (any, error) {
+	})))
+	longRoute("POST /api/hosts/artifacts/read", hostOwned(false, typed[contract.HostArtifactGetRequest](func(q *Request) (any, error) {
 		x, err := hostMayRead(q)
 		if err != nil {
 			return nil, err
@@ -44,16 +45,16 @@ func init() {
 			return nil, err
 		}
 		return streamed(open, x.MediaType, nil), nil
-	}))
-	longRoute("POST /api/hosts/artifacts/list", hostOwned(true, hostArtifactList))
-	longRoute("POST /api/hosts/stores", hostOwned(false, func(q *Request) (any, error) {
+	})))
+	longRoute("POST /api/hosts/artifacts/list", hostOwned(true, typed[contract.HostArtifactListRequest](hostArtifactList)))
+	longRoute("POST /api/hosts/stores", hostOwned(false, typed[contract.StoresRequest](func(q *Request) (any, error) {
 		var b struct {
 			Store map[string]any `json:"store"`
 		}
 		decode(q.body, &b)
 		holder, _ := q.host["holder"].(string)
 		return storeRegister(q, q.hostID(), b.Store, holder)
-	}))
+	})))
 	route("GET /api/results/{id}", resultBytes)
 	route("GET /api/results/{id}/preview", resultPreview)
 
@@ -183,6 +184,18 @@ func init() {
 			}
 		}()
 	})
+}
+
+// typed: the host route's body must decode into its contract type (contracts/host-protocol.schema.json) before h reads
+// it: a field of the wrong type is 400, not an empty value. Unknown fields pass while hosts update one at a time.
+func typed[T any](h handler) handler {
+	return func(q *Request) (any, error) {
+		var t T
+		if err := decode(q.body, &t); err != nil {
+			return nil, err
+		}
+		return h(q)
+	}
 }
 
 // hostOwned: the host routes' ownership check; a body hostId is the authenticated host (readBody), and with execution the

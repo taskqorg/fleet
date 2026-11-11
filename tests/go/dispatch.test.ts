@@ -119,6 +119,19 @@ test('A9 an execution record has one state vocabulary and its real kind and harn
   assert.deepEqual([e.state, e.observation], ['running', 'unconfirmed']);
 });
 
+test('A13 every artifact, store, account and agent-tools host route decodes into its host-protocol type: a field of the wrong type is 400 (requirement: contracts/host-protocol.schema.json Artifact*Request, StoresRequest, AgentToolsRequest, C3; risk: the artifact transfer seam has no contract and a retyped field reads as empty)', {timeout: 30_000}, async () => {
+  const h = await host('trial-host');
+  ok(await h('/api/hosts/poll', poll));
+  const {executionId} = await queued();
+  ok(await h('/api/hosts/poll', poll));
+  // Each of these was read as empty before: the store size, the reserve media type, a list filter, an agent-tools id.
+  for (const [route, body] of [['/api/hosts/stores', {store: {id: 's', capacityBytes: 'big'}}],
+    ['/api/hosts/artifacts/reserve', {executionId, name: 'a.txt', mediaType: 5, size: 1, sha256: 'x'}],
+    ['/api/hosts/artifacts/list', {executionId, filter: {taskId: 5}}],
+    ['/api/hosts/agent-tools', {executionId: 7, commandId: 'c', request: {}}]] as const)
+    assert.equal((await h(route, body)).status, 400, route);
+});
+
 test('A12 receipts have one route per envelope: a project operation on /api/hosts/project-operations, a status on /api/hosts/receipts; a body that is not its envelope is 400 on the split routes, and the combined route still serves every envelope for one release (requirement: contracts/host-protocol.schema.json ProjectReceipt and Receipt, C4; risk: a stray field picks another handler; a host on the previous release loses its receipts)', {timeout: 30_000}, async () => {
   const h = await host('trial-host');
   ok(await h('/api/hosts/poll', poll));
