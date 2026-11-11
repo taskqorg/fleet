@@ -321,7 +321,7 @@ func init() {
 		}
 		return sessionGet(q, sid)
 	}))
-	gatedObjOp("session_profile", false, shaped[contract.SessionProfileRequest, contract.SessionTransitionReply](func(q *Request) (any, error) {
+	gatedObjOp("session_profile", false, shaped[contract.SessionProfileRequest, contract.SessionProfileReply](func(q *Request) (any, error) {
 		b := body(q)
 		sid, err := sessionArg(b)
 		if err != nil {

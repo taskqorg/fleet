@@ -1357,10 +1357,6 @@ func agentTypedOp[Req, Rep any](name string, read bool, h func(*Request, *Req) (
 	agentTool(name, read, typedOp(h))
 }
 
-func agentOp(name string, read bool, h func(*Request, doc) (doc, error)) {
-	agentTool(name, read, func(q *Request) (any, error) { return h(q, body(q)) })
-}
-
 // agentShapedOp: an agent tool whose handler still reads a map, checked against its contract types (shaped).
 func agentShapedOp[Req, Rep any](name string, read bool, h func(*Request, doc) (doc, error)) {
 	agentTool(name, read, shaped[Req, Rep](func(q *Request) (any, error) { return h(q, body(q)) }))

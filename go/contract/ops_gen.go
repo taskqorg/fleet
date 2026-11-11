@@ -1887,7 +1887,7 @@ type SessionForkReply struct {
 
 type SessionForkRequest struct {
 	CallerSessionId *string `json:"callerSessionId,omitempty"`
-	RequestId       *string `json:"requestId,omitempty"`
+	RequestId       string  `json:"requestId"`
 	SessionId       *string `json:"sessionId,omitempty"`
 	Strategy        *string `json:"strategy,omitempty"`
 	Text            *string `json:"text,omitempty"`
@@ -1908,7 +1908,15 @@ type SessionHandoffsRequest struct {
 	SessionId string `json:"sessionId"`
 }
 
-type SessionProfileReply = SessionTransitionReply
+// SessionProfileReply: transition, handoffId and nativeSessionId only when the session has a native session to move.
+type SessionProfileReply struct {
+	Account         *string `json:"account"`
+	HandoffId       *string `json:"handoffId,omitempty"`
+	NativeSessionId *string `json:"nativeSessionId,omitempty"`
+	ProfileId       string  `json:"profileId"`
+	SessionId       string  `json:"sessionId"`
+	Transition      *string `json:"transition,omitempty"`
+}
 
 type SessionProfileRequest struct {
 	Account          *string `json:"account,omitempty"`
