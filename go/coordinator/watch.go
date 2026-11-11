@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fleet/contract"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,12 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"fleet/contract"
-
 	"github.com/jackc/pgx/v5"
 )
 
-var watchKinds = []string{"task", "question", "execution", "host"}
+var watchKinds = []string{"task", "question", "execution", "host", "limits"}
 
 func watchSet(q *Request, b doc) (doc, error) {
 	sid, err := strArg(b, "sessionId", "sessionId", 0)
@@ -30,11 +30,11 @@ func watchSet(q *Request, b doc) (doc, error) {
 	}
 	kinds := strList(b["kinds"])
 	if xs, _ := b["kinds"].([]any); len(kinds) == 0 || len(kinds) != len(xs) {
-		return nil, fail(400, "Expected kinds: task, question, execution, host")
+		return nil, fail(400, "Expected kinds: task, question, execution, host, limits")
 	}
 	for _, k := range kinds {
 		if !slices.Contains(watchKinds, k) {
-			return nil, fail(400, "Unknown kind "+k+": use task, question, execution, host")
+			return nil, fail(400, "Unknown kind "+k+": use task, question, execution, host, limits")
 		}
 	}
 	old, err := maybe(q, "watch:"+sid, "watch")
@@ -91,7 +91,7 @@ func init() {
 		x, err := asT[contract.WatchRecord](w)
 		return contract.WatchGetReply{Watch: &x}, err
 	})
-	agentDescriptions["watch_set"] = "Watch your focus: kinds (task, question, execution, host) and optional timerMs; Fleet sends you one message per batch of foreign changes and on the timer"
+	agentDescriptions["watch_set"] = "Watch your focus: kinds (task, question, execution, host, limits) and optional timerMs; Fleet sends you one message per batch of foreign changes and on the timer; limits: a pool of your subscriptions projected empty before its next reset"
 	agentDescriptions["watch_stop"] = "Stop watching"
 	agentDescriptions["watch_get"] = "Your watch: kinds, timer, wakes, last wake, last error"
 	onStart(func(ctx context.Context, a *App) {
@@ -199,9 +199,19 @@ func watchOne(q *Request, wid string) error {
 			break
 		}
 	}
+	var limits []string
+	if slices.Contains(kinds, "limits") {
+		signals, keys, err := limitSignals(q, dir, strList(w["limitsSignaled"]))
+		if err != nil {
+			log.Printf("watch %s: limits: %v", wid, err) // a limits read problem never blocks the other wakes
+		} else if len(signals) > 0 {
+			limits = signals
+			w["limitsSignaled"] = keys
+		}
+	}
 	nowMs := time.Now().UnixMilli()
 	timer := w["timerMs"] != nil && int64(num(w["nextWakeAt"])) <= nowMs
-	if len(parts) == 0 && !timer && cursor == start {
+	if len(parts) == 0 && len(limits) == 0 && !timer && cursor == start {
 		return nil // nothing to send or move: no write
 	}
 	w["cursor"] = cursor
@@ -214,6 +224,12 @@ func watchOne(q *Request, wid string) error {
 	}
 	if len(parts) > 0 {
 		if err := send(fmt.Sprintf("watch:%s:%d", id, start), fmt.Sprintf("Fleet: %d changes in your focus: %s", len(parts), strings.Join(parts, "; "))); err != nil {
+			return err
+		}
+	}
+	if len(limits) > 0 { // its own message: a limits signal is not a change in the focus
+		ks := strList(w["limitsSignaled"])
+		if err := send(fmt.Sprintf("limits:%s:%s", id, ks[len(ks)-1]), "Fleet: limits: "+strings.Join(limits, "; ")); err != nil {
 			return err
 		}
 	}
@@ -265,4 +281,61 @@ func classify(q *Request, c change) (string, error) {
 		return "host " + c.Id + " reports problems", nil
 	}
 	return "", nil
+}
+
+// limitsCache: one limits reply per watch pass for every watch (the reply reads all readings).
+// ponytail: a 10 s reuse window shared by all watches; key it by pass if passes get more frequent.
+var limitsCache struct {
+	at    int64
+	reply contract.SubscriptionLimitsReply
+}
+
+// limitSignals (fleet-people-access.md section 8 "PM agents"): a subscription held by the director with a period
+// projected empty before its own next reset. Each (subscription, period, reset) is sent once; the agent may propose a
+// refresh or order soonest_reset to the director, never set it.
+func limitSignals(q *Request, dir *Person, sent []string) ([]string, []string, error) {
+	now := time.Now().UnixMilli()
+	if now-limitsCache.at > 10_000 {
+		r, err := limitsReply(q, limitsDefaults(now))
+		if err != nil {
+			return nil, nil, err
+		}
+		limitsCache.at, limitsCache.reply = now, r
+	}
+	parts, keys := limitSignalsOf(limitsCache.reply, dir, sent)
+	return parts, keys, nil
+}
+
+func limitSignalsOf(r contract.SubscriptionLimitsReply, dir *Person, sent []string) ([]string, []string) {
+	var parts []string
+	keys := slices.Clone(sent)
+	for _, s := range r.Subscriptions {
+		var holder string
+		json.Unmarshal(s.Holder, &holder)
+		if holder != dir.Email {
+			continue
+		}
+		for _, p := range s.Periods {
+			if p.FirstEmpty.State != contract.LimitEmptyStateAt {
+				continue
+			}
+			empty := time.UnixMilli(*p.FirstEmpty.At).UTC().Format(time.RFC3339)
+			reset := "unknown"
+			if p.ResetsAt != nil {
+				reset = time.UnixMilli(*p.ResetsAt).UTC().Format(time.RFC3339)
+			}
+			key := s.Id + ":" + p.Period + ":" + reset
+			if slices.Contains(keys, key) {
+				continue
+			}
+			keys = append(keys, key)
+			parts = append(parts, fmt.Sprintf("subscription %s %s %s runs empty at %s, before its next reset (%s); you may propose subscription_limits_refresh or order soonest_reset to the director, never set it",
+				s.Id, s.Harness, p.Period, empty, reset))
+		}
+	}
+	// ponytail: the sent list keeps the last 100 keys; older resets are long past.
+	if len(keys) > 100 {
+		keys = keys[len(keys)-100:]
+	}
+	return parts, keys
 }

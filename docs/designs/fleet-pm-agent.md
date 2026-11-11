@@ -172,6 +172,7 @@ Defaults below are used in this design. Each can be changed by the owner without
 | `question` | `kind='question'`, op `I` | open question row |
 | `execution` | `kind='execution'` | current state `failed` or `unknown` only |
 | `host` | `kind='host'` | `host-observation` problems (owner only) |
+| `limits` | none (read each pass) | a subscription the director holds is projected empty before its own next reset ([people access §8](fleet-people-access.md#limit-history-pool-and-projection)); sent once per subscription, period and reset, as its own `Fleet: limits:` message; the PM may propose `subscription_limits_refresh` or `order: soonest_reset`, never set it |
 
 *   **Message text:** `Fleet: <n> changes in your focus: task <id> now <state>; question <id> on task <id>; execution <id> failed; …` with only IDs and states, so the PM reads details with its tools.
 *   **Rights.** A wake is a message, not a call. The PM's next execution calls tools through §1 under its director.
