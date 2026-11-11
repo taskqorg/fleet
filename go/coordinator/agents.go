@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 
 	"fleet/contract"
 )
@@ -22,7 +24,10 @@ func agentContent(q *Request, id string, draft bool) (doc, string, error) {
 			return nil, "", err
 		}
 		var p doc
-		return p, "draft on r" + jsString(d.Base), json.Unmarshal([]byte(d.Content), &p)
+		if err := json.Unmarshal([]byte(d.Content), &p); err != nil {
+			return nil, "", err
+		}
+		return p, "draft on r" + strconv.FormatInt(d.Base, 10), nil
 	}
 	h, err := headOf(q, "agent", id, false)
 	if err != nil || h == nil {
@@ -31,11 +36,13 @@ func agentContent(q *Request, id string, draft bool) (doc, string, error) {
 		}
 		return nil, "", err
 	}
-	var p doc
-	return p, "r" + jsString(h.Head), json.Unmarshal(h.Content, &p)
+	// The profile a session start would get: the same reader and validator.
+	p, err := readTrustedProfile(q, id)
+	if err != nil {
+		return nil, "", err
+	}
+	return p, "r" + strconv.FormatInt(h.Head, 10), nil
 }
-
-func jsString(n int64) string { b, _ := json.Marshal(n); return string(b) }
 
 // agentEffective: what a session of this agent in the project receives, in layers. Fleet sends the profile as saved
 // (the definition layer decides every setting); the project's roles pick it, and its context files reach the agent as
@@ -79,11 +86,15 @@ func agentCompatibility(q *Request, r *contract.AgentCompatibilityRequest) (cont
 	if err != nil {
 		return out, err
 	}
-	rows, err := q.tx.Query(q.ctx(), `SELECT DISTINCT ON (coalesce(e.harness,''),coalesce(e.harness_version,''),coalesce(e.model,''),coalesce(e.data->>'effort',''))
+	hd, err := headOf(q, "agent", r.Id, false)
+	if err != nil || hd == nil {
+		return out, err
+	}
+	rows, err := q.tx.Query(q.ctx(), `SELECT DISTINCT ON (coalesce(e.harness,'codex'),coalesce(e.harness_version,''),coalesce(e.model,''),coalesce(e.data->>'effort',''))
 	   coalesce(e.harness,'codex'),e.harness_version,coalesce(e.model,''),e.data->>'effort',e.state::text,e.problem,e.id,coalesce(e.ended_at,e.started_at,e.updated_at)::text,(d->>'revision')::int
 	 FROM execution e CROSS JOIN LATERAL jsonb_array_elements(e.definitions) d
-	 WHERE e.definitions @> $1 AND d->>'id'=$2 AND coalesce(e.started_at,e.updated_at) >= now() - interval '30 days'
-	 ORDER BY coalesce(e.harness,''),coalesce(e.harness_version,''),coalesce(e.model,''),coalesce(e.data->>'effort',''),e.seq DESC`,
+	 WHERE e.definitions @> $1 AND d->>'kind'='agent' AND d->>'id'=$2 AND coalesce(e.started_at,e.updated_at) >= now() - interval '30 days'
+	 ORDER BY coalesce(e.harness,'codex'),coalesce(e.harness_version,''),coalesce(e.model,''),coalesce(e.data->>'effort',''),e.seq DESC`,
 		jsonBytes([]map[string]string{{"kind": "agent", "id": r.Id}}), r.Id)
 	if err != nil {
 		return out, err
@@ -99,15 +110,18 @@ func agentCompatibility(q *Request, r *contract.AgentCompatibilityRequest) (cont
 			return out, err
 		}
 		c.Revision, c.Evidence = rev, &contract.RunSummary{ExecutionId: &id, State: state, At: at}
+		// Judged only on a run at the head revision; failed only for a harness or start problem (never incompatible
+		// without a run that says so).
+		atHead := rev != nil && *rev == hd.Head
 		switch {
-		case state == "succeeded":
+		case atHead && state == "succeeded":
 			c.State = contract.CompatibilityStateChecked
-		case state == "failed" && problem != nil:
+		case atHead && state == "failed" && problem != nil && harnessProblem(*problem):
 			c.State, c.Error = contract.CompatibilityStateFailed, problem
 		default:
-			c.State = contract.CompatibilityStateUnchecked // never shown as incompatible without a run that says so
+			c.State = contract.CompatibilityStateUnchecked
 		}
-		if c.Harness == firstString(head["harness"], "codex") && c.Model == astr(head["model"]) {
+		if c.Harness == firstString(head["harness"], "codex") && c.Model == astr(head["model"]) && astr(c.Effort) == astr(head["effort"]) {
 			seenHead = true
 		}
 		out.Rows = append(out.Rows, c)
@@ -117,9 +131,20 @@ func agentCompatibility(q *Request, r *contract.AgentCompatibilityRequest) (cont
 	}
 	if !seenHead {
 		e := strPtr(head["effort"])
-		out.Rows = append(out.Rows, contract.CompatibilityRow{Harness: firstString(head["harness"], "codex"), Model: astr(head["model"]), Effort: e, State: contract.CompatibilityStateUnchecked})
+		h := hd.Head
+		out.Rows = append(out.Rows, contract.CompatibilityRow{Harness: firstString(head["harness"], "codex"), Model: astr(head["model"]), Effort: e, Revision: &h, State: contract.CompatibilityStateUnchecked})
 	}
 	return out, nil
+}
+
+// harnessProblem: an execution problem that comes from the harness or its start, not from the work (a task's tests).
+func harnessProblem(p string) bool {
+	for _, x := range []string{"harness", "start", "infra:", "preparation", "protocol", "auth", "spawn"} {
+		if strings.Contains(p, x) {
+			return true
+		}
+	}
+	return false
 }
 
 // harnessModels: the shipped list config/harness-models.json (a release default, not a definition).
@@ -128,7 +153,7 @@ func harnessModels(q *Request, r *contract.HarnessModelsRequest) (contract.Harne
 	out := contract.HarnessModelsReply{Models: []contract.HarnessModel{}}
 	b, err := os.ReadFile(filepath.Join(configDir(), "harness-models.json"))
 	if err != nil {
-		return out, nil
+		return out, fail(500, "No config/harness-models.json in this release")
 	}
 	var all map[string][]contract.HarnessModel
 	if err := json.Unmarshal(b, &all); err != nil {

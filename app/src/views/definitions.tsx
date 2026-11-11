@@ -115,7 +115,7 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
     </>}
     {tab === 'Diff' && <DiffTab kind={kind} id={id} hasDraft={!!draft} head={def.head} />}
     {tab === 'History' && <HistoryTab kind={kind} id={id} />}
-    {tab === 'Effective' && <EffectiveTab id={id} draft={!!draft} />}
+    {tab === 'Effective' && <EffectiveTab id={id} draft={!!draft} version={draft?.text ?? ''} />}
     {tab === 'Compatibility' && <CompatibilityTab id={id} />}
   </DefinitionEditor>;
 }
@@ -169,13 +169,18 @@ function HistoryTab({ kind, id }: { kind: Kind; id: string }) {
   </DetailSection>;
 }
 
-function EffectiveTab({ id, draft }: { id: string; draft: boolean }) {
+function EffectiveTab({ id, draft, version }: { id: string; draft: boolean; version: string }) {
   const [projects, setProjects] = useState<string[]>([]);
   const [project, setProject] = useState('');
   const [e, setE] = useState<Ops['agent_effective']['reply'] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { op('project_list', {}).then(r => { const ids = (r.projects as any[]).map(p => String(p.id)); setProjects(ids); setProject(p => p || ids[0] || ''); }, x => setError(x.message)); }, []);
-  useEffect(() => { if (project) op('agent_effective', { id, projectId: project, draft }).then(setE, x => setError(x.message)); }, [id, project, draft]);
+  useEffect(() => {
+    if (!project) return;
+    let live = true; // a later project or draft replaces this answer
+    const t = setTimeout(() => op('agent_effective', { id, projectId: project, draft }).then(r => { if (live) { setE(r); setError(null); } }, x => { if (live) setError(x.message); }), 800);
+    return () => { live = false; clearTimeout(t); };
+  }, [id, project, draft, version]);
   return <>
     {projects.length > 0 && <DetailSection title="Project"><Choice label="Project" value={project} onChange={setProject} options={projects.map(p => ({ id: p, label: p }))} /></DetailSection>}
     {error && <div class="error" role="alert">{error}</div>}
