@@ -227,15 +227,24 @@ Builds fleet-lab "Iterative improvement" as written there; this design adds noth
 
 `character-multiview` (UC6), the fixed route csgo #435–#437 found; UC6's conversational refinement stays outside the pipeline, and this pipeline is one tool an operator uses in it:
 
-1.  `api google-ai generate_content`: multi-view sheet from the brief (variant: `api huggingface inference` for angle views).
+1.  `api google-ai generate_content`: multi-view sheet from the brief (variant: `api huggingface angle_view` for angle views).
 2.  `script` compose: split and normalise views, write data URIs.
 3.  `api meshy multi_image_to_3d`, `mode: job`.
-4.  `script` on the Mac: rebuild, rig and conform with Blender scripts in `scripts/lab/blender/`, written for Fleet from csgo's route (csgo stays the source of the route, not of the code).
-5.  Owner `scale` rating; a judge only after S5 shows agreement for UC2.
+4.  Retain the high scaffold and textured remeshed model, decode the rig input before submission, then `api meshy rigging`, `mode: job`, bound to the confirmed generated task and declared height.
+5.  `script` on the Mac: use actual source rig joints to rebuild, retarget to CT94 and conform with Blender scripts in `scripts/lab/blender/`, written for Fleet from csgo's route (csgo stays the source of the route, not of the code).
+6.  Owner `scale` rating; a judge only after S5 shows agreement for UC2.
 
-The `api` step's `job` mode today polls `job_status` and, after a lost submit, adopts from `recent_tasks` by matching `image_url` (both hard-coded). S7 adds optional step fields `status_tool` and `recent_tool`, and a per-tool match field in the catalogue (`adoptMatch: "image_url"` or `"image_urls"`), so a lost `multi_image_to_3d` submit is adopted from `multi_recent_tasks` or ends `unknown:submit-unconfirmed`.
+Preparation methods are selected explicitly. `character-multiview` uses Google AI, `character-multiview-hf` uses the Hugging Face angle route, and `character-multiview-meshy-prep` uses Meshy Image to Image (`nano-banana-2`, `generate_multi_view: true`) through the existing connection and project grants. The Meshy preparation method is neither an automatic fallback after a provider failure nor an owner-selected default.
 
-**Done when:** one UC6 trial completes end to end.
+Job steps may set `status_tool` and `recent_tool`; absent fields retain the existing single-image and multi-image status/list defaults. Both read tools must be granted idempotent GET tools before submission. Catalogue `adoptMatch` names the primary submitted identity field; `adoptFields` names additional submitted fields that must be returned unchanged. A lost submit is adopted only from one unowned task created during the original attempt with exact input identity. Meshy preparation requires the reference images, prompt, model and preparation mode; generated `image_urls` do not establish the submitted reference identity. Missing inputs, ambiguous matches or an unreadable listing leave `unknown:submit-unconfirmed`; Fleet never sends a second POST. Known job IDs use their status tool. Retain the provider receipt, every returned view and actual consumed credits; finished-job accounting remains once per job.
+
+The initial Meshy method declares front, left and back as exactly three views; this is a method parameter, not a global character limit. Retain all downloaded bytes and URLs with hashes, dimensions and media types. Missing or extra views fail visibly before charged downstream generation without discarding evidence. Sheet-grid extraction and separate returned images are distinct input modes. A mapping inspection reads actual image bytes against the references and records each source index/hash, semantic view, rationale and operator-verified or agent-inspected basis in `view-map.json`. Provider array order never implies semantic order. Unknown or conflicting mappings stop preparation. The encoder independently verifies hashes, dimensions and the one-to-one expected view names/count before constructing the downstream request. Resizing records its parameters and does not imply original resolution. Mapping annotations are not quality scores or owner labels.
+
+The initial generation requests triangle remeshing at target200000 with `save_pre_remeshed_model: true`. The high scaffold guides own geometry; the textured lower-resolution copy guides baking and source rigging. A decoded triangle count must satisfy Meshy rigging’s documented380000-triangle maximum before the charged rig submit. Source rig joint heads, model/rig hashes and source-to-CT94 transforms are retained. Provider geometry remains reference only. A lost rigging submit requires exact task/height identity for adoption; undocumented or missing identity remains unknown. The example retains six available pose transforms and explicitly missing `aim_up`; this is partial qualification, not original seven-pose equivalence.
+
+Rebuild, rig and conform remain Fleet Blender implementations of the source route, not imported csgo scripts. Retain topology/part/UV/material statistics, rig and bind evidence, conform measurements and renders, including defects. Successful preparation or generation proves transport only; trial completion does not establish game readiness or aesthetic acceptance. The actual owner scale rating remains separate from a judge result.
+
+**Mechanism completion:** registered executable steps retain run/step state, errors, actual cost observations and a visible result through Fleet. A clearly labelled retained-source replay may demonstrate the downstream mechanism with zero new provider spend; it does not qualify fresh provider integration. Geometry, texture and pose quality improvement belongs to a separately configured Lab experiment, not manual pipeline development. Owner aesthetic acceptance and original seven-pose equivalence are not implied by mechanism completion.
 
 ### Methodology
 
@@ -302,7 +311,7 @@ Files are named as they exist today; wave 1 is renaming the Go files, so a renam
 | S4 | Scripts and pipelines | C `scripts/lab/encode.sh`, `scripts/lab/blender/{run.sh,fetch-measure.py,render.py}`, `scripts/lab/image-check.sh`, `config/pipelines/meshy-prop.json`, `config/pipelines/image-brief.json`; M `docs/configuration.md` (`FLEET_BLENDER`) | UC2 `ab` with owner `pick_best` | S1 |
 | S5 | Rubrics, order-swapped pairwise judge, agreement per rubric | C `config/lab/rubrics/fleet-uc1.md`, `fleet-uc2.md`; M `go/coordinator/c_lab.go` (evaluators); M `app/src/views/lab.tsx` | agreement shown for UC1, UC2 | S4 |
 | S6 | `loop` per fleet-lab | M `go/coordinator/c_lab.go` | UC9 loop stops by `no_gain` | — |
-| S7 | `character-multiview`; `status_tool`, `recent_tool`, `adoptMatch` | C `config/pipelines/character-multiview.json`, character scripts in `scripts/lab/blender/`; M `go/coordinator/c_pipelines.go`, `c_providers.go` | one UC6 trial end to end | S4 |
+| S7 | `character-multiview`; `status_tool`, `recent_tool`, `adoptMatch` | C `config/pipelines/character-multiview.json`, character scripts in `scripts/lab/blender/`; M `go/coordinator/pipelines.go`, `providers.go` | one UC6 trial end to end | S4 |
 
 S2 needs the S4 binary example form and the measure and render scripts for the seed's references; it does not need the S4 experiment. S3 and S6 do not depend on S1.
 

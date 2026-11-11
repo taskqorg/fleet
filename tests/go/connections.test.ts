@@ -38,9 +38,29 @@ async function until<T>(fn: () => Promise<T | undefined> | T | undefined, what: 
 const seen: string[] = [];
 let gateway: Server;
 let trialHostSecret = '';
+let assetJob: {connection: string; mode: 'exact'|'missing'|'ambiguous'|'wrong-tool'|'ungranted'; jobId: string; kind?: 'rigging'; args: any; calls: string[]} | undefined;
 before(async () => {
   gateway = createServer((req, res) => {
     seen.push(String(req.headers.authorization));
+    if (assetJob && req.url?.startsWith('/v1/call/' + assetJob.connection + '/')) {
+      const fixture = assetJob, tool = req.url.split('/').at(-1)!;
+      fixture.calls.push(tool);
+      const reply = (body: unknown) => res.writeHead(200, {'content-type':'application/json','x-fleet-call-id':randomUUID(),'x-fleet-outcome':'ok'}).end(JSON.stringify(body));
+      if (tool === (fixture.kind || 'image_to_image')) {
+        let body = ''; req.on('data', chunk => { body += chunk; }); req.on('end', () => {
+          assert.deepEqual(JSON.parse(body), fixture.args);
+          res.writeHead(502, {'content-type':'application/json','x-fleet-call-id':randomUUID(),'x-fleet-outcome':'unknown','x-fleet-error':'provider-timeout'}).end('{}');
+        });
+      } else if (tool === (fixture.kind ? 'rigging_recent_tasks' : 'image_recent_tasks')) {
+        const candidate = {...fixture.args, id:fixture.jobId, created_at:Math.floor(Date.now()/1000)};
+        if (fixture.mode === 'missing') delete candidate[fixture.kind ? 'input_task_id' : 'reference_image_urls'];
+        reply({result:fixture.mode === 'ambiguous' ? [candidate,{...candidate,id:randomUUID()}] : [candidate]});
+      } else if (tool === 'rigging_job_status') reply({status:'SUCCEEDED',result:{rigged_character_glb_url:'https://invented.invalid/rig.glb'},consumed_credits:7});
+      else if (tool === 'image_job_status') reply({status:'SUCCEEDED',image_urls:['https://invented.invalid/front.png'],consumed_credits:6});
+      else res.writeHead(500).end('unexpected tool');
+      return;
+    }
+
     if (req.url === '/v1/call/typesafe/system_one') {
       // Plays TypeSafe's reply (shape seen live: answers.<id>.noul, model, usage) and spools the call line as fleet-gateway does.
       const callId = randomUUID(), token = String(req.headers.authorization).replace(/^Bearer /, '');
@@ -716,3 +736,77 @@ test('Catalogue reports a compatible observed partial mean and keeps banded sour
 });
 
 
+
+test('P4 S7 preparation adopts exact identity only and retains image receipts (requirement: fleet-asset-pipelines S7; risk: unrelated jobs adopted, a second charged POST or lost prepared views)', async () => {
+  const args = {reference_image_urls:['data:image/png;base64,a'],prompt:'invented own character',ai_model:'nano-banana-2',generate_multi_view:true};
+  try {
+    for (const mode of ['exact','missing','ambiguous','wrong-tool','ungranted'] as const) {
+      const connection = name('meshy-prep'), pipelineId = name('prep');
+      ok(await op('connections_create',{name:connection,provider:'meshy'}));
+      ok(await op('connections_set_access',{connection,access:{projects:['*']}}));
+      ok(await op('connections_key_add',{connection,value:'msy-invented-'+randomUUID()}));
+      const legacy=['image_to_3d','job_status','recent_tasks'];
+      assert.equal((await op('connections_set_tools',{connection,tools:['image_job_status']},OUTSIDER)).status,403);
+      assert.equal((await op('connections_set_tools',{connection,tools:['invented-unknown']})).status,400);
+      assert.equal((await op('connections_set_tools',{connection,tools:['job_status','job_status']})).status,400);
+      ok(await op('connections_set_tools',{connection,tools:legacy}));
+      if (mode!=='ungranted') {
+        const granted=ok(await op('connections_set_tools',{connection,tools:[...legacy,'image_to_image','image_job_status','image_recent_tasks']}));
+        assert.deepEqual(granted.access.projects,['*'],'tool update preserves project grants');
+        await until(()=>snapshot().connections[connection]?.tools.includes('image_job_status')||undefined,'explicit tools reach gateway snapshot');
+        const changes=ok(await op('setting_changes',{target:'connection:'+connection})).changes;
+        assert.ok(changes.some((c:any)=>c.field==='tools'&&c.previous.includes('job_status')&&c.value.includes('image_job_status')),'tool grant keeps previous and next settings');
+      }
+
+      assetJob = {connection,mode,jobId:randomUUID(),args,calls:[]};
+      const step = {id:'prep',kind:'api',connection,tool:'image_to_image',mode:'job',status_tool:mode==='wrong-tool'?'image_to_image':'image_job_status',recent_tool:'image_recent_tasks',arguments:args};
+      ok(await op('definition_create',{kind:'pipeline',id:pipelineId,content:{pipeline:{id:pipelineId,version:2,steps:[step]}},message:'Invented uncharged S7 job fixture'}));
+      const started = ok(await op('pipeline_run_create',{pipelineId,projectId:'hello-world',requestId:randomUUID(),example:{}}));
+      const run = await until(async()=>{const r=ok(await op('pipeline_get',{runId:started.runId}));return r.state!=='running'?r:undefined;},'preparation job ends');
+      if (mode==='wrong-tool'||mode==='ungranted') {
+        assert.equal(run.steps[0].problem,'step:job-tools'); assert.deepEqual(assetJob.calls,[],'a POST cannot be configured as polling before any paid submit'); continue;
+      }
+      assert.equal(assetJob.calls.filter(t=>t==='image_to_image').length,1,'uncertain POST never sent twice');
+      assert.equal(assetJob.calls.filter(t=>t==='image_recent_tasks').length,1);
+      if (mode==='exact') {
+        assert.equal(run.state,'succeeded');
+        assert.deepEqual(run.steps[0].output.image_urls,['https://invented.invalid/front.png']);
+        assert.equal(run.steps[0].output.receipt.consumed_credits,6);
+        assert.equal(run.steps[0].output.jobId,assetJob.jobId);
+      } else {
+        assert.equal(run.steps[0].problem,'unknown:submit-unconfirmed');
+        assert.equal(run.observation,'unconfirmed');
+        assert.equal(assetJob.calls.includes('image_job_status'),false,'unknown job never polled or resubmitted');
+      }
+    }
+  } finally {assetJob=undefined;}
+});
+
+
+test('P5 source rig job preserves exact request and confirmed result (requirement: fleet-asset-pipelines S7; risk: wrong source rig adopted or uncertain charged POST repeated)', async () => {
+  try {
+    for (const mode of ['exact','missing'] as const) {
+      const connection=name('meshy-rig'),pipelineId=name('rig');
+      ok(await op('connections_create',{name:connection,provider:'meshy'}));
+      ok(await op('connections_set_access',{connection,access:{projects:['*']}}));
+      ok(await op('connections_key_add',{connection,value:'msy-invented-'+randomUUID()}));
+      ok(await op('connections_set_tools',{connection,tools:['rigging','rigging_job_status','rigging_recent_tasks']}));
+      const args={input_task_id:randomUUID(),height_meters:2.05};
+      assetJob={connection,mode,kind:'rigging',jobId:randomUUID(),args,calls:[]};
+      const step={id:'rig',kind:'api',connection,tool:'rigging',mode:'job',status_tool:'rigging_job_status',recent_tool:'rigging_recent_tasks',arguments:args};
+      ok(await op('definition_create',{kind:'pipeline',id:pipelineId,content:{pipeline:{id:pipelineId,version:2,steps:[step]}},message:'Invented uncharged source rig fixture'}));
+      const started=ok(await op('pipeline_run_create',{pipelineId,projectId:'hello-world',requestId:randomUUID(),example:{}}));
+      const run=await until(async()=>{const r=ok(await op('pipeline_get',{runId:started.runId}));return r.state!=='running'?r:undefined;},'source rig job ends');
+      assert.equal(assetJob.calls.filter(t=>t==='rigging').length,1);
+      if (mode==='exact') {
+        assert.equal(run.state,'succeeded');
+        assert.deepEqual(run.steps[0].output.request,args);
+        assert.deepEqual(run.steps[0].output.result,{rigged_character_glb_url:'https://invented.invalid/rig.glb'});
+        assert.equal(run.steps[0].output.receipt.consumed_credits,7);
+      } else {
+        assert.equal(run.steps[0].problem,'unknown:submit-unconfirmed');
+        assert.equal(assetJob.calls.includes('rigging_job_status'),false);
+      }
+    }
+  } finally {assetJob=undefined;}
+});

@@ -436,6 +436,22 @@ func (v *ConnectionsSetIntakeRequest) Validate() error {
 	return nil
 }
 
+type ConnectionsSetToolsReply = ConnectionView
+
+// ConnectionsSetToolsRequest: Owner-only explicit recognized provider tool grant; does not change people/project/experiment access.
+type ConnectionsSetToolsRequest struct {
+	Connection string   `json:"connection"`
+	Tools      []string `json:"tools"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsSetToolsRequest) Validate() error {
+	if v.Tools == nil {
+		return Missing("tools")
+	}
+	return nil
+}
+
 // ConnectionsTokenCreateReply: token: the bearer value, shown once; refused: requested connections the owner cannot use.
 type ConnectionsTokenCreateReply struct {
 	Connections []map[string]json.RawMessage `json:"connections,omitempty"`
@@ -997,6 +1013,7 @@ func init() {
 		"connections_list":            {Read: true, Long: false, Errors: []int{}},
 		"connections_set_access":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
 		"connections_set_intake":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
+		"connections_set_tools":       {Read: false, Long: false, Errors: []int{400, 403, 404}},
 		"connections_token_create":    {Read: false, Long: false, Errors: []int{400, 403, 409}},
 		"connections_token_list":      {Read: true, Long: false, Errors: []int{}},
 		"connections_token_revoke":    {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},

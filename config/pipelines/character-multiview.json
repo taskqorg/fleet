@@ -1,0 +1,109 @@
+{
+  "id": "character-multiview",
+  "steps": [
+    {
+      "command": "\"$FLEET_LAB_SCRIPTS\"/blender/run.sh character-build --validate-guide-only",
+      "host": "owner-mac",
+      "id": "preflight",
+      "kind": "script"
+    },
+    {
+      "command": "\"$FLEET_LAB_SCRIPTS\"/blender/run.sh compose-views --mode fixture-sheet --grid 3,1 --size 512 --reference-map",
+      "host": "owner-mac",
+      "id": "references",
+      "kind": "script"
+    },
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/character-views.py --compose-step references --map-step references --expected front,left,back --request-kind google --prompt ${example.prompt} --max-request-bytes 1048576",
+      "host": "owner-mac",
+      "id": "reference-encode",
+      "kind": "script"
+    },
+    {
+      "arguments": {
+        "contents": "${steps.reference-encode.output.request.contents}",
+        "generationConfig": "${steps.reference-encode.output.request.generationConfig}",
+        "model": "${steps.reference-encode.output.request.model}"
+      },
+      "connection": "google-ai",
+      "id": "prep",
+      "kind": "api",
+      "tool": "generate_content"
+    },
+    {
+      "command": "\"$FLEET_LAB_SCRIPTS\"/blender/run.sh compose-views --mode gemini-sheet --source-step prep --grid 3,1 --expected-count 3 --size 512",
+      "host": "owner-mac",
+      "id": "compose",
+      "kind": "script"
+    },
+    {
+      "id": "map",
+      "kind": "agent",
+      "profile": "asset-view-inspector",
+      "prompt": "Read $FLEET_INPUT_DIR/compose/provenance.json and the retained normalized candidate PNG bytes under compose/views/. Read the actual reference turnaround.png and rig-guide.json under example/. Do not paste encoded request JSON or infer semantics from provider order/prompt intent. Inspect asymmetry (right-leg holster and harness), face versus back, and which anatomical side is visible. Assign exactly the expected names front,left,back, one-to-one across ALL candidates, only if supported by actual bytes. If ambiguous, assign unknown and explain; do not guess. Write both $FLEET_OUTPUT_DIR/view-map.json and $FLEET_OUTPUT_DIR/output.json with identical JSON {\"views\":[{\"candidate_index\":0,\"source_sha256\":\"<actual retained source hash>\",\"sha256\":\"<actual normalized candidate hash>\",\"view\":\"<semantic name or unknown>\",\"basis\":\"agent-inspected\",\"rationale\":\"actual observed evidence or ambiguity\"}]}. Hashes/index must be copied from provenance after reading those actual files. This is technical orientation annotation, not a quality score, owner preference or approval. Do not use subagents, provider calls, external Chrome/Chromium/Playwright/headless-shell or shell browser launches on owner-mac. If an available native image-reading tool cannot inspect the files, emit unknown; no fallback launch cascade."
+    },
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/character-views.py --expected front,left,back --request-kind multi --prompt ${example.prompt} --max-request-bytes 1048576",
+      "host": "owner-mac",
+      "id": "encode",
+      "kind": "script"
+    },
+    {
+      "arguments": {
+        "ai_model": "${steps.encode.output.request.ai_model}",
+        "enable_pbr": "${steps.encode.output.request.enable_pbr}",
+        "image_urls": "${steps.encode.output.request.image_urls}",
+        "pose_mode": "${steps.encode.output.request.pose_mode}",
+        "save_pre_remeshed_model": "${steps.encode.output.request.save_pre_remeshed_model}",
+        "should_remesh": "${steps.encode.output.request.should_remesh}",
+        "should_texture": "${steps.encode.output.request.should_texture}",
+        "target_formats": "${steps.encode.output.request.target_formats}",
+        "target_polycount": "${steps.encode.output.request.target_polycount}",
+        "texture_prompt": "${steps.encode.output.request.texture_prompt}",
+        "topology": "${steps.encode.output.request.topology}"
+      },
+      "connection": "meshy",
+      "id": "gen",
+      "kind": "api",
+      "mode": "job",
+      "recent_tool": "multi_recent_tasks",
+      "status_tool": "multi_job_status",
+      "tool": "multi_image_to_3d"
+    },
+    {
+      "command": "\"$FLEET_LAB_SCRIPTS\"/blender/run.sh character-build --fetch-source",
+      "host": "owner-mac",
+      "id": "source",
+      "kind": "script",
+      "timeout_ms": 600000
+    },
+    {
+      "arguments": {
+        "height_meters": "${steps.source.output.height_meters}",
+        "input_task_id": "${steps.source.output.input_task_id}"
+      },
+      "connection": "meshy",
+      "id": "rig",
+      "kind": "api",
+      "mode": "job",
+      "recent_tool": "rigging_recent_tasks",
+      "status_tool": "rigging_job_status",
+      "tool": "rigging"
+    },
+    {
+      "command": "\"$FLEET_LAB_SCRIPTS\"/blender/run.sh character-build",
+      "host": "owner-mac",
+      "id": "build",
+      "kind": "script",
+      "timeout_ms": 1800000
+    },
+    {
+      "command": "\"$FLEET_LAB_SCRIPTS\"/blender/run.sh render --blend \"$FLEET_INPUT_DIR/build/character.blend\" --guide \"$FLEET_INPUT_DIR/example/rig-guide.json\" --front-axis +X --views front,left,back,three-quarter --size 512 --poses",
+      "host": "owner-mac",
+      "id": "render",
+      "kind": "script",
+      "timeout_ms": 900000
+    }
+  ],
+  "version": 2
+}

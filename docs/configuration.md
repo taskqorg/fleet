@@ -164,6 +164,8 @@ A pipeline is a process the system runs; the caller supplies inputs and gets res
 
 A single-step pipeline is valid; a simple API call needs no pipeline. Direct tools and pipelines share invocation and observation. MCP exposes tools to agents; a tool may call an API or run a pipeline. Provider configuration, accounts and key pools belong to connections.
 
+Job-mode API steps may select granted `status_tool` and `recent_tool` names. Both must be idempotent GET tools before any submission; absent names preserve the provider's existing defaults. An owner changes a connection's explicit tool allowlist through `connections_set_tools`; it preserves access/key settings and records the previous and new grant. It never automatically adds provider tools to existing connections. Exact-input adoption requirements and character method inputs are specified in [asset pipelines S7](designs/fleet-asset-pipelines.md#7-character-s7).
+
 ### Results and transfer
 
 A capability declares named required and optional outputs. An output holds data or references material in its source system, with type and description; Fleet need not copy it. Downstream steps bind inputs to these outputs and the system makes the material reachable in the receiving environment within permissions. Availability and verification are separate: keep the artifact and its check report even when it needs rework. Code results reference repository changes with a diff. Result viewers are in the [operator app](designs/fleet-operator-app.md).

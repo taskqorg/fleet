@@ -192,7 +192,7 @@ const providersJSON = `
  },
  "meshy": {
   "baseUrl": "https://api.meshy.ai",
-  "instructions": "image_to_3d and multi_image_to_3d start a Meshy task and return its id; job_status and multi_job_status read it. A submit is never repeated by Fleet.",
+  "instructions": "Image and 3D submits return task IDs. Read known IDs through their registered status tools. Never repeat an uncertain submit; recent tasks must exactly identify the original submitted inputs or the outcome remains unknown.",
   "tools": {
    "image_to_3d": {
     "method": "POST",
@@ -250,7 +250,17 @@ const providersJSON = `
        "description": "for example 2k"
       }
      }
-    }
+    },
+    "adoptMatch": "image_url",
+    "adoptFields": [
+     "ai_model",
+     "target_polycount",
+     "topology",
+     "should_texture",
+     "enable_pbr",
+     "texture_resolution",
+     "target_formats"
+    ]
    },
    "job_status": {
     "method": "GET",
@@ -329,7 +339,7 @@ const providersJSON = `
       },
       "ai_model": {
        "type": "string",
-       "description": "meshy-4, meshy-5 or latest"
+       "description": "latest (Meshy7.1), meshy-7.1, meshy-6 or meshy-6-lite; record actual model choice."
       },
       "topology": {
        "type": "string",
@@ -349,9 +359,35 @@ const providersJSON = `
       "texture_resolution": {
        "type": "string",
        "description": "for example 2k"
+      },
+      "should_remesh": {
+       "type": "boolean"
+      },
+      "pose_mode": {
+       "type": "string"
+      },
+      "texture_prompt": {
+       "type": "string"
+      },
+      "save_pre_remeshed_model": {
+       "type": "boolean"
       }
      }
-    }
+    },
+    "adoptMatch": "image_urls",
+    "adoptFields": [
+     "ai_model",
+     "target_polycount",
+     "topology",
+     "should_texture",
+     "enable_pbr",
+     "texture_resolution",
+     "target_formats",
+     "should_remesh",
+     "pose_mode",
+     "texture_prompt",
+     "save_pre_remeshed_model"
+    ]
    },
    "multi_job_status": {
     "method": "GET",
@@ -390,12 +426,154 @@ const providersJSON = `
      "type": "object",
      "properties": {}
     }
+   },
+   "image_to_image": {
+    "method": "POST",
+    "path": "/openapi/v1/image-to-image",
+    "unit": "credits",
+    "idempotent": false,
+    "description": "Prepare images from exact reference images and prompt; returns a job ID. Never repeat an uncertain submit.",
+    "adoptMatch": "reference_image_urls",
+    "adoptFields": [
+     "prompt",
+     "ai_model",
+     "generate_multi_view"
+    ],
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "reference_image_urls",
+      "prompt",
+      "ai_model",
+      "generate_multi_view"
+     ],
+     "properties": {
+      "reference_image_urls": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       },
+       "minItems": 1
+      },
+      "prompt": {
+       "type": "string"
+      },
+      "ai_model": {
+       "type": "string"
+      },
+      "generate_multi_view": {
+       "type": "boolean"
+      }
+     }
+    }
+   },
+   "image_job_status": {
+    "method": "GET",
+    "path": "/openapi/v1/image-to-image/{jobId}",
+    "unit": "credits",
+    "idempotent": true,
+    "description": "Read image preparation status, retained image_urls and actual consumed_credits.",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "jobId"
+     ],
+     "properties": {
+      "jobId": {
+       "type": "string"
+      }
+     }
+    },
+    "pathPatterns": {
+     "jobId": "^[0-9a-f-]+$"
+    },
+    "usageField": "consumed_credits",
+    "usageWhen": {
+     "field": "status",
+     "equals": "SUCCEEDED"
+    },
+    "usageOnce": "jobId"
+   },
+   "image_recent_tasks": {
+    "method": "GET",
+    "path": "/openapi/v1/image-to-image?page_size=20&sort_by=-created_at",
+    "unit": "credits",
+    "idempotent": true,
+    "description": "Read newest image preparation tasks; omitted request identity cannot establish adoption.",
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    }
+   },
+   "rigging": {
+    "method": "POST",
+    "path": "/openapi/v1/rigging",
+    "unit": "credits",
+    "idempotent": false,
+    "description": "Rig the confirmed generated textured humanoid task for source joint guides; output mesh is reference only. Never repeat an uncertain submit.",
+    "adoptMatch": "input_task_id",
+    "adoptFields": [
+     "height_meters"
+    ],
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "input_task_id",
+      "height_meters"
+     ],
+     "properties": {
+      "input_task_id": {
+       "type": "string"
+      },
+      "height_meters": {
+       "type": "number"
+      }
+     }
+    }
+   },
+   "rigging_job_status": {
+    "method": "GET",
+    "path": "/openapi/v1/rigging/{jobId}",
+    "unit": "credits",
+    "idempotent": true,
+    "description": "Read rigging status, result.rigged_character_glb_url and actual consumed_credits.",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "jobId"
+     ],
+     "properties": {
+      "jobId": {
+       "type": "string"
+      }
+     }
+    },
+    "pathPatterns": {
+     "jobId": "^[A-Za-z0-9_-]+$"
+    },
+    "usageField": "consumed_credits",
+    "usageWhen": {
+     "field": "status",
+     "equals": "SUCCEEDED"
+    },
+    "usageOnce": "jobId"
+   },
+   "rigging_recent_tasks": {
+    "method": "GET",
+    "path": "/openapi/v1/rigging?page_size=20&page_num=1",
+    "unit": "credits",
+    "idempotent": true,
+    "description": "Read newest rigging tasks. Missing submitted input_task_id/height cannot establish adoption.",
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    }
    }
   }
  },
  "huggingface": {
   "baseUrl": "https://router.huggingface.co",
-  "instructions": "inference calls one model on Hugging Face Inference Providers (hf-inference); the body is the model's own request body plus model.",
+  "instructions": "inference calls one model on Hugging Face Inference Providers (hf-inference); the body is the model's own request body plus model. angle_view is the explicit fal-ai Qwen2511 angle route; never infer anatomical view from its prompt or retry an uncertain POST.",
   "tools": {
    "inference": {
     "method": "POST",
@@ -418,6 +596,58 @@ const providersJSON = `
       "inputs": {},
       "parameters": {
        "type": "object"
+      }
+     }
+    }
+   },
+   "angle_view": {
+    "method": "POST",
+    "path": "/fal-ai/fal-ai/qwen-image-edit-2511/lora",
+    "unit": "requests",
+    "idempotent": false,
+    "description": "Explicit HF Inference Providers/fal-ai Qwen angle-view call. Returns images; provider angle words do not establish semantic view identity. No automatic retry after uncertainty.",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "image_urls",
+      "prompt",
+      "loras",
+      "num_inference_steps",
+      "guidance_scale",
+      "seed",
+      "output_format",
+      "sync_mode"
+     ],
+     "properties": {
+      "image_urls": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "prompt": {
+       "type": "string"
+      },
+      "loras": {
+       "type": "array",
+       "items": {
+        "type": "object"
+       }
+      },
+      "num_inference_steps": {
+       "type": "integer"
+      },
+      "guidance_scale": {
+       "type": "number"
+      },
+      "seed": {
+       "type": "integer"
+      },
+      "output_format": {
+       "type": "string"
+      },
+      "sync_mode": {
+       "type": "boolean"
       }
      }
     }
@@ -463,4 +693,5 @@ const providersJSON = `
    }
   }
  }
-}`
+}
+`
