@@ -1,25 +1,25 @@
 {
   "capability": "web-research",
-  "sharedDefault": "search-basic",
   "methods": [
     {
       "id": "search-basic",
       "name": "Basic source discovery",
-      "scope": "shared",
-      "pipeline": "search-basic.json"
+      "pipeline": "search-basic.json",
+      "scope": "shared"
     },
     {
       "id": "hello-search",
       "name": "Hello World source discovery",
-      "scope": "hello-world",
-      "pipeline": "hello-search.json"
+      "pipeline": "hello-search.json",
+      "scope": "hello-world"
     },
     {
+      "agentProfile": "design-rules",
       "id": "hello-guided",
       "name": "Guided Hello World delivery",
-      "scope": "hello-world",
       "pipeline": "hello-search.json",
-      "agentProfile": "design-rules"
+      "scope": "hello-world"
     }
-  ]
+  ],
+  "sharedDefault": "search-basic"
 }

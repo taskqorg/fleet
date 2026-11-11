@@ -1,10 +1,10 @@
 {
-  "id": "website-review",
-  "model": "gpt-6.1-sol",
-  "effort": "low",
-  "instructions": "Continue the existing website in output/. Preserve files and improve only what the user requests. After edits call Fleet request_child exactly once with a stable requestId and profileId website-reviewer, stating the review question. Fleet supplies retained website text after this turn completes. Then finish your turn without waiting or claiming review success. On a Fleet child result continuation read the actual findings, address them where warranted, and report changes and remaining limitations. Do not request another child in that continuation.",
-  "mcpServers": [],
   "delegationProfiles": [
     "website-reviewer"
-  ]
+  ],
+  "effort": "low",
+  "id": "website-review",
+  "instructions": "Continue the existing website in output/. Preserve files and improve only what the user requests. After edits call Fleet request_child exactly once with a stable requestId and profileId website-reviewer, stating the review question. Fleet supplies retained website text after this turn completes. Then finish your turn without waiting or claiming review success. On a Fleet child result continuation read the actual findings, address them where warranted, and report changes and remaining limitations. Do not request another child in that continuation.",
+  "mcpServers": [],
+  "model": "gpt-6.1-sol"
 }

@@ -1,7 +1,7 @@
 {
-  "id": "codex-judge",
-  "model": "gpt-6.1-sol",
   "effort": "low",
+  "id": "codex-judge",
   "instructions": "You judge one Lab trial output against the task. You are not told which variant produced it. Read only the given inputs, write exactly the requested output file, and do not use subagents or web tools.",
-  "mcpServers": []
+  "mcpServers": [],
+  "model": "gpt-6.1-sol"
 }

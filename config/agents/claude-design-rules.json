@@ -1,24 +1,24 @@
 {
-  "id": "claude-design-rules",
-  "model": "sonnet",
   "effort": null,
+  "harness": "claude",
+  "id": "claude-design-rules",
+  "instructionRole": "system",
   "instructions": "Create the requested files in output/. Before designing the website, call design-rules get_design_rules with empty arguments and apply its heading, palette and layout to the generated HTML and CSS. Do not use subagents.",
   "mcpServers": [
     {
-      "id": "design-rules",
       "data": {
         "heading": "Quiet systems, clear decisions",
+        "layout": "A narrow left introduction column beside three vertically stacked feature cards.",
         "palette": {
+          "accent": "#f4b860",
           "background": "#101b28",
-          "foreground": "#eef4ed",
-          "accent": "#f4b860"
-        },
-        "layout": "A narrow left introduction column beside three vertically stacked feature cards."
-      }
+          "foreground": "#eef4ed"
+        }
+      },
+      "id": "design-rules"
     }
   ],
-  "harness": "claude",
-  "instructionRole": "system",
+  "model": "sonnet",
   "tools": [
     "Read",
     "Edit",

@@ -266,9 +266,10 @@ Shared types:
     "version": {"type": "integer"}, "id": {"type": "string"}, "steps": {"type": "array", "items": {"$ref": "#/$defs/PipelineStep"}}},
     "additionalProperties": true},
   "PipelineStep": {"type": "object", "required": ["id", "kind"], "properties": {
-    "id": {"type": "string"}, "kind": {"type": "string"}, "agent": {"type": "string"}, "connection": {"type": "string"}, "tool": {"type": "string"},
-    "arguments": {"type": "object", "additionalProperties": true}}, "additionalProperties": true,
-    "$comment": "Step kinds are the registry's (D20); validatePipeline stays the full check."},
+    "id": {"type": "string"}, "kind": {"type": "string"}, "connection": {"type": "string"}, "tool": {"type": "string"}, "arguments": {},
+    "mode": {"type": "string"}, "output": {}, "profile": {"type": "string"}, "prompt": {"type": "string"}, "command": {"type": "string"},
+    "timeout_ms": {"type": "integer"}, "host": {"type": "string"}},
+    "$comment": "kind api (connection, tool, arguments, mode, output), agent (profile, prompt) or script (command, timeout_ms, host); closed, as validatePipeline allows only these keys."},
   "CatalogueDefinition": {"type": "object", "required": ["capability", "methods"], "$comment": "The whole config/catalogue.json as it is today (one capability).", "properties": {
     "capability": {"type": "string"}, "sharedDefault": {"type": "string"},
     "methods": {"type": "array", "items": {"$ref": "#/$defs/CatalogueMethod"}}}},
@@ -476,7 +477,7 @@ The SSE `Change` type (lane F) gains kind `definition` with `{kind, id, revision
 
 ### Data model
 
-Migration 22 (the next after 21) in the coordinator's `schema.sql` (`go/coordinator/schema.sql`):
+Migration 28 in the coordinator's `schema.sql` (`go/coordinator/schema.sql`) has the three tables (built). As built, `content` and `repo_content` are `text` holding the canonical text, not `jsonb` (which reorders keys and drops the formatting the diff, `contentSha` and export rely on), and `definition` has a `project_id` column that stays null so the change trigger can write its row. The `execution` columns come with the run operations. The plan as designed:
 
 ```sql
 CREATE TABLE definition (

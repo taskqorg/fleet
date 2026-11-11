@@ -1,9 +1,9 @@
 {
   "heading": "Quiet systems, clear decisions",
+  "layout": "A narrow left introduction column beside three vertically stacked feature cards.",
   "palette": {
+    "accent": "#f4b860",
     "background": "#101b28",
-    "foreground": "#eef4ed",
-    "accent": "#f4b860"
-  },
-  "layout": "A narrow left introduction column beside three vertically stacked feature cards."
+    "foreground": "#eef4ed"
+  }
 }
