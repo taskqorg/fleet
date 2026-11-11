@@ -396,7 +396,7 @@ func limitPools(accounts []limitAccount, periods map[string][]contract.LimitPeri
 func subscriptionLimits(q *Request, req *contract.SubscriptionLimitsRequest) (contract.SubscriptionLimitsReply, error) {
 	var none contract.SubscriptionLimitsReply
 	now := nowMs()
-	o := limitOptions{now: now, from: now - 7*24*hourMs, to: now + 7*24*hourMs, windowHours: 3, margin: 5}
+	o := limitsDefaults(now)
 	if req.WindowHours != nil {
 		if !(*req.WindowHours > 0 && *req.WindowHours*hourMs < float64(now)) {
 			return none, fail(400, "windowHours: a positive number of hours since the epoch at most")
@@ -415,6 +415,17 @@ func subscriptionLimits(q *Request, req *contract.SubscriptionLimitsRequest) (co
 	if req.PaceMargin != nil {
 		o.margin = *req.PaceMargin
 	}
+	return limitsReply(q, o)
+}
+
+// limitsDefaults: one week back and ahead, a 3 h burn window, a 5 point pace margin.
+func limitsDefaults(now int64) limitOptions {
+	return limitOptions{now: now, from: now - 7*24*hourMs, to: now + 7*24*hourMs, windowHours: 3, margin: 5}
+}
+
+func limitsReply(q *Request, o limitOptions) (contract.SubscriptionLimitsReply, error) {
+	var none contract.SubscriptionLimitsReply
+	now := o.now
 	ctx := withTx(q)
 	latest, err := latestReadings(ctx, q.app)
 	if err != nil {

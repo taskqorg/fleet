@@ -2,6 +2,7 @@ package main
 
 import (
 	"fleet/contract"
+	"strings"
 	"testing"
 )
 
@@ -35,5 +36,26 @@ func TestLimitBurnProjectionPool(t *testing.T) {
 	}
 	if pools[0].PoolEmpty.State != contract.LimitEmptyStateAt || pools[0].NextReset.At == nil || *pools[0].NextReset.Restore != 200 {
 		t.Fatalf("pool empty %+v reset %+v", pools[0].PoolEmpty, pools[0].NextReset)
+	}
+}
+
+// Requirement: section 8 "PM agents": the watch tells a director's PM once per (harness, period, next reset) when a
+// pool holding their subscription has a member empty before that reset; other people's pools stay silent. Risk: the
+// PM is never told before limits run out, or is told every tick.
+func TestPoolSignalsOncePerReset(t *testing.T) {
+	at, reset := int64(1_000), int64(2_000)
+	r := contract.SubscriptionLimitsReply{
+		Subscriptions: []contract.LimitSubscription{{Id: "a", Holder: []byte(`"d@x"`)}, {Id: "b", Holder: []byte(`"o@x"`)}},
+		Pools: []contract.LimitPool{
+			{Harness: "codex", Period: "weekly", Members: []string{"a"}, FirstEmpty: contract.LimitEmpty{State: contract.LimitEmptyStateAt, At: &at}, NextReset: contract.LimitReset{At: &reset}},
+			{Harness: "claude", Period: "weekly", Members: []string{"b"}, FirstEmpty: contract.LimitEmpty{State: contract.LimitEmptyStateAt, At: &at}, NextReset: contract.LimitReset{At: &reset}},
+		}}
+	dir := &Person{Email: "d@x"}
+	parts, keys := poolSignals(r, dir, nil)
+	if len(parts) != 1 || !strings.Contains(parts[0], "codex weekly") || !strings.Contains(parts[0], "never set it") {
+		t.Fatal(parts)
+	}
+	if again, _ := poolSignals(r, dir, keys); len(again) != 0 {
+		t.Fatal("sent twice", again)
 	}
 }
