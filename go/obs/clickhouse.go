@@ -130,6 +130,8 @@ type Writer struct {
 	OnDown      func()
 	OnUp        func(dropped int64)
 	ch          chan *Span
+	done        chan struct{}
+	notes       chan func()
 	dropped     atomic.Int64
 	downDrop    int64
 	failed      int
@@ -138,6 +140,17 @@ type Writer struct {
 
 // Dropped is the count of spans dropped since start.
 func (w *Writer) Dropped() int64 { return w.dropped.Load() }
+
+// Wait blocks until the writer stopped after its ctx ended (its last flush done), at most d.
+func (w *Writer) Wait(d time.Duration) {
+	if w.done == nil {
+		return
+	}
+	select {
+	case <-w.done:
+	case <-time.After(d):
+	}
+}
 
 // Discard counts n spans dropped without a store (telemetry off).
 func (w *Writer) Discard(n int) { w.dropped.Add(int64(n)) }
@@ -162,8 +175,14 @@ func (w *Writer) Run(ctx context.Context) {
 	if w.Fails == 0 {
 		w.Fails = 3
 	}
-	w.ch = make(chan *Span, 10*w.Rows)
+	w.ch, w.done, w.notes = make(chan *Span, 10*w.Rows), make(chan struct{}), make(chan func(), 16)
+	go func() { // OnDown and OnUp in order, off the writer goroutine
+		for f := range w.notes {
+			f()
+		}
+	}()
 	go func() {
+		defer close(w.done)
 		t := time.NewTicker(w.Every)
 		defer t.Stop()
 		var batch []*Span
@@ -210,7 +229,7 @@ func (w *Writer) flush(ctx context.Context, batch []*Span) {
 		if w.failed++; w.failed >= w.Fails && !w.down {
 			w.down = true
 			if w.OnDown != nil {
-				go w.OnDown() // a Postgres write: never on the writer goroutine
+				w.notes <- w.OnDown // a Postgres write: never on the writer goroutine
 			}
 		}
 		return
@@ -224,7 +243,7 @@ func (w *Writer) flush(ctx context.Context, batch []*Span) {
 		s.Items = &u
 		s.End(nil)
 		if w.OnUp != nil {
-			go w.OnUp(lost)
+			w.notes <- func() { w.OnUp(lost) }
 		}
 	}
 }

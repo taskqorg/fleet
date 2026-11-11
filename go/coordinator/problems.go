@@ -6,35 +6,21 @@ package main
 
 var problemOptions = []any{"investigate", "dismiss"}
 
-// Problem is one current cause of a source.
+// Problem is one current cause of a source; a system cause (no project) is addressed to the owner.
 type Problem struct {
-	Cause, Text, Rule string
-	ProjectID         string // "" for a system cause: addressed to the owner
-	AddressedTo       string // "" : the owner, or the project's director
-	Data              doc    // hostId, storeId, exemplars, value
+	Cause, Text, ProjectID string
 }
 
 func problemAsk(q *Request, source string, p Problem) error {
-	data := doc{"cause": p.Cause, "source": source}
-	if p.Rule != "" {
-		data["rule"] = p.Rule
-	}
-	for k, v := range p.Data {
-		data[k] = v
-	}
-	to := p.AddressedTo
-	if to == "" {
-		to = ownerEmail(q)
-	}
 	var pid any
 	if p.ProjectID != "" {
 		pid = p.ProjectID
 	}
-	qid, err := askQuestion(q, doc{"kind": "operator_decision", "text": p.Text, "options": problemOptions, "askedBy": "fleet", "projectId": pid, "data": data})
+	qid, err := askQuestion(q, doc{"kind": "operator_decision", "text": p.Text, "options": problemOptions, "askedBy": "fleet", "projectId": pid, "data": doc{"cause": p.Cause, "source": source}})
 	if err != nil {
 		return err
 	}
-	return exec(q, "UPDATE question SET cause=$2,addressed_to=$3 WHERE id=$1", qid, p.Cause, to)
+	return exec(q, "UPDATE question SET cause=$2,addressed_to=$3 WHERE id=$1", qid, p.Cause, ownerEmail(q))
 }
 
 // problemHeld: the open or answered question holding cause, if any.

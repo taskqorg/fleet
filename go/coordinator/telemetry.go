@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -14,8 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 
 	"fleet/contract"
 	"fleet/obs"
@@ -60,6 +57,9 @@ func clickhouseFromEnv() *obs.ClickHouse {
 	return &obs.ClickHouse{URL: u, Database: db, User: vals["CLICKHOUSE_USER"], Password: vals["CLICKHOUSE_PASSWORD"]}
 }
 
+// stopTelemetry ends the span writer after one last flush (main, on SIGTERM).
+var stopTelemetry = func() {}
+
 // startTelemetry: called by main before the other starters, so every loop's first span already has the identity and sink.
 func startTelemetry(ctx context.Context, a *App) {
 	{
@@ -75,7 +75,9 @@ func startTelemetry(ctx context.Context, a *App) {
 			obs.SetSink(func(*obs.Span) { spanWriter.Discard(1) }) // telemetry off: dropped and counted
 			return
 		}
-		spanWriter.Run(ctx)
+		wctx, cancel := context.WithCancel(ctx)
+		stopTelemetry = func() { cancel(); spanWriter.Wait(2 * time.Second) }
+		spanWriter.Run(wctx)
 		obs.SetSink(spanWriter.Add)
 		go func() {
 			for ctx.Err() == nil {
@@ -122,15 +124,18 @@ func hostService(s string) bool {
 // spanName: the server span name of a request, after the mux served it: the operation name for /api/ops/{name} when it
 // exists, else the matched route pattern; "" for an unmatched path.
 func spanName(r *http.Request) string {
-	if r.Pattern == "" && r.URL.Path == "/api/stream" {
-		return "GET /api/stream"
+	if r.URL.Path == "/api/stream" {
+		return "" // a stream lasts as long as the tab: no span, it would only skew latency
+	}
+	if r.Pattern == "" {
+		return "unmatched"
 	}
 	if r.Pattern == "POST /api/ops/{name}" || strings.HasPrefix(r.Pattern, "POST /api/ops/") {
 		n := strings.TrimPrefix(r.URL.Path, "/api/ops/")
 		if _, ok := operations[n]; ok {
 			return n
 		}
-		return ""
+		return "unmatched"
 	}
 	return r.Pattern
 }
@@ -144,11 +149,37 @@ func hostSpans(q *Request) (any, error) {
 		return nil, fail(400, "Expected batchId and at most 5000 spans")
 	}
 	host := hostOf(q)
-	type run struct {
-		ok                                 bool
-		project, task, experiment, account *string
+	type run struct{ project, task, experiment, account *string }
+	// The executions the batch names that run on this host, in one query; any other execution id is skipped.
+	ids := []string{}
+	for _, raw := range b.Spans {
+		var x struct {
+			E *string `json:"execution_id"`
+		}
+		if json.Unmarshal(raw, &x) == nil && x.E != nil {
+			ids = append(ids, *x.E)
+		}
 	}
 	execs := map[string]*run{}
+	if len(ids) > 0 {
+		rs, err := q.app.store.pool.Query(q.ctx(), "SELECT id,project_id,task_id,experiment_id,account_id FROM execution WHERE id = ANY($1) AND host_id=$2", ids, host)
+		if err != nil {
+			return nil, err // the host retries the batch
+		}
+		for rs.Next() {
+			var id string
+			r := &run{}
+			if err := rs.Scan(&id, &r.project, &r.task, &r.experiment, &r.account); err != nil {
+				rs.Close()
+				return nil, err
+			}
+			execs[id] = r
+		}
+		rs.Close()
+		if err := rs.Err(); err != nil {
+			return nil, err
+		}
+	}
 	var buf bytes.Buffer
 	skipped := 0
 	for _, raw := range b.Spans {
@@ -160,19 +191,8 @@ func hostSpans(q *Request) (any, error) {
 		// The work identity comes from the execution row, never from the host: a host cannot write into a project's view.
 		s.ProjectID, s.TaskID, s.ExperimentID, s.AccountID = nil, nil, nil, nil
 		if s.ExecutionID != nil {
-			id := *s.ExecutionID
-			r := execs[id]
+			r := execs[*s.ExecutionID]
 			if r == nil {
-				r = &run{}
-				var on *string
-				err := q.app.store.pool.QueryRow(q.ctx(), "SELECT host_id,project_id,task_id,experiment_id,account_id FROM execution WHERE id=$1", id).Scan(&on, &r.project, &r.task, &r.experiment, &r.account)
-				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-					return nil, err // the host retries the batch
-				}
-				r.ok = err == nil && on != nil && *on == host
-				execs[id] = r
-			}
-			if !r.ok {
 				skipped++
 				continue
 			}

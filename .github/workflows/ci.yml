@@ -35,6 +35,9 @@ jobs:
           CLICKHOUSE_USER: t
           CLICKHOUSE_PASSWORD: t
         ports: ["127.0.0.1:8123:8123"]
+        options: >-
+          --health-cmd "clickhouse client --user t --password t -q 'SELECT 1'"
+          --health-interval 2s --health-retries 30
     steps:
       # Branches are rebased on main, never merged with it (docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests).
       # Pull requests only: a merge group has no number and its own commit is a merge.

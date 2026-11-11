@@ -674,8 +674,8 @@ func envMs(k string, d int) time.Duration {
 	return time.Duration(n) * time.Millisecond
 }
 
-// every runs fn on a ticker until ctx ends; single flight (a slow pass never overlaps the next). 0 turns it off.
-// every runs fn every d as the pass pass.<name>, with the pass span in its ctx; d <= 0 turns it off.
+// every runs fn on a ticker until ctx ends, each run as the pass span pass.<name> in fn's ctx; single flight (a slow
+// pass never overlaps the next); d <= 0 turns it off.
 func every(ctx context.Context, name string, d time.Duration, fn func(context.Context) error) {
 	if d <= 0 {
 		return

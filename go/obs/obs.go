@@ -344,7 +344,7 @@ func MarkRefused(w http.ResponseWriter) {
 }
 
 // Handler records one server span per request; name gives the span name from the request after next served it
-// (the matched route pattern); "" names it "unmatched", so scans of unknown paths stay one low-cardinality series.
+// (the matched route pattern); "" drops the span (a long-lived stream).
 func Handler(next http.Handler, name func(*http.Request) string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, s := Start(WithRemote(r.Context(), r.Header.Get("traceparent")), "", KindServer)
@@ -354,7 +354,10 @@ func Handler(next http.Handler, name func(*http.Request) string) http.Handler {
 			p := recover()
 			n := name(r2)
 			if n == "" {
-				n = "unmatched"
+				if p != nil {
+					panic(p)
+				}
+				return
 			}
 			s.Name = n
 			s.Set("http.route", n)
