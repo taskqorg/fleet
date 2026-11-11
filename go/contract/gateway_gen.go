@@ -44,6 +44,7 @@ type CallLine struct {
 	TokenSha256    *string          `json:"tokenSha256,omitempty"`
 	Tool           string           `json:"tool"`
 	Usage          *CallUsage       `json:"usage,omitempty"`
+	UsageKey       *string          `json:"usageKey,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -213,10 +214,17 @@ type GatewayTool struct {
 	PathPatterns map[string]string          `json:"pathPatterns,omitempty"`
 	Unit         string                     `json:"unit"`
 	UsageField   *string                    `json:"usageField,omitempty"`
+	UsageOnce    *string                    `json:"usageOnce,omitempty"`
+	UsageWhen    *GatewayUsageWhen          `json:"usageWhen,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *GatewayTool) Validate() error {
+	if v.UsageWhen != nil {
+		if err := Check(v.UsageWhen, "usageWhen"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -228,5 +236,16 @@ type GatewayUsageSource struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *GatewayUsageSource) Validate() error {
+	return nil
+}
+
+// GatewayUsageWhen: Usage counts only when this reply field equals the value (Meshy job_status: status SUCCEEDED).
+type GatewayUsageWhen struct {
+	Equals string `json:"equals"`
+	Field  string `json:"field"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GatewayUsageWhen) Validate() error {
 	return nil
 }

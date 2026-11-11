@@ -581,7 +581,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		if t.UsageField != nil {
 			field = *t.UsageField
 		}
-		if amount, ok := usageAt(data, field); ok {
+		if amount, ok := usageAt(data, field); ok && (t.UsageWhen == nil || stringAt(data, t.UsageWhen.Field) == t.UsageWhen.Equals) {
 			a.usage = &amount
 		}
 		if status < 200 || status > 299 {
@@ -736,6 +736,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	t, offered := p.Tools[toolName]
 	offered = offered && known && contains(c.Tools, toolName)
 	var a *answer
+	usageKey := ""
 	switch {
 	case run == nil:
 		a = refusal(401, "error", "unauthenticated", "a valid run token is required")
@@ -754,6 +755,11 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if readErr != nil || json.Unmarshal(raw, &body) != nil || body == nil {
 			a = refusal(400, "error", "bad-request", "the body must be a JSON object of at most 1 MiB")
 			break
+		}
+		if t.UsageOnce != nil {
+			var v string
+			json.Unmarshal(body[*t.UsageOnce], &v)
+			usageKey = connectionName + ":" + v
 		}
 		path, ok := fillPath(t, body)
 		if !ok {
@@ -783,6 +789,9 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.usage != nil {
 		line.Usage = &contract.CallUsage{Unit: t.Unit, Amount: *a.usage}
+		if usageKey != "" {
+			line.UsageKey = &usageKey
+		}
 	}
 	if a.disabled != 0 {
 		line.Disabled = &contract.CallKeyDisabled{Key: a.key, Status: int64(a.disabled)}
@@ -884,6 +893,20 @@ func dotSegment(value string) bool {
 		}
 	}
 	return false
+}
+
+// stringAt reads a string at a dotted field of a JSON reply ("" when absent).
+func stringAt(data []byte, field string) string {
+	var v any
+	if json.Unmarshal(data, &v) != nil {
+		return ""
+	}
+	for _, f := range strings.Split(field, ".") {
+		m, _ := v.(map[string]any)
+		v = m[f]
+	}
+	s, _ := v.(string)
+	return s
 }
 
 func deref(s *string) string {
