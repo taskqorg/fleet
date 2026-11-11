@@ -2611,8 +2611,11 @@ func expTyped(exp doc, trials []doc, cur []doc) []any {
 	return out
 }
 
-// exampleRef: <id>@<version>, the version as a whole number (a JSON number decodes as float64, which %v prints as 1e+06).
+// exampleRef: <id>@<version>. A version read back from stored example JSON is a float64, which %v prints as 1e+06; a
+// whole number prints as one. Anything else keeps %v (the importer only stores whole versions).
 func exampleRef(id, version any) string {
-	v, _ := intOK(version)
-	return fmt.Sprintf("%v@%d", id, v)
+	if v, ok := intOK(version); ok {
+		return fmt.Sprintf("%v@%d", id, v)
+	}
+	return fmt.Sprintf("%v@%v", id, version)
 }

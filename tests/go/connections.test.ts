@@ -293,7 +293,7 @@ test('A4 analytics stage 4: a typed evaluator scores each trial through its vari
   const got = await until(async () => { const x = ok(await call('GET', `/api/lab/experiments/${e.id}`)); return x.scores?.filter((s: any) => s.form === 'typed').length === 8 ? x : undefined; }, 'typed scores');
   const unscored = got.scores.filter((s: any) => s.value.answer === 'unscored');
   assert.deepEqual(unscored.map((s: any) => s.value.reason), Array(2).fill('the example has no yes/no label in references/expected.json'));
-  const stats = Object.fromEntries(got.typed.map((v: any) => [`${v.variant}/${v.split}`, Object.fromEntries(v.stats.map((s: any) => [s.tag, [s.n, s.coverage, s.selectiveAccuracy]]))]));
+  const stats = Object.fromEntries(got.typed.map((v: any) => [`${v.variant}/${v.split}`, Object.fromEntries(v.stats.map((s: any) => [s.aggregate ? 'all' : s.tag, [s.n, s.coverage, s.selectiveAccuracy]]))]));
   // wide: p 0.93 is a confident yes: right on el and ru (held_out), wrong on en (tune). strict: everything abstains.
   assert.deepEqual(stats, {'wide/tune': {en: [1, 1, 0], all: [1, 1, 0]}, 'wide/held_out': {el: [1, 1, 1], ru: [1, 1, 1], all: [2, 1, 1]},
     'strict/tune': {en: [1, 0, null], all: [1, 0, null]}, 'strict/held_out': {el: [1, 0, null], ru: [1, 0, null], all: [2, 0, null]}});

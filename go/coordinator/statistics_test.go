@@ -44,7 +44,11 @@ func TestStatisticsOnSyntheticLabelledSet(t *testing.T) {
 	for _, s := range typedStats(as) {
 		got[s.Tag] = s
 	}
-	ru, en, all := got["ru"], got["en"], got["all"]
+	ru, en, all := got["ru"], got["en"], got[""]
+	// A tag literally named "all" stays a tag: the aggregate is marked, not named.
+	if withAll := typedStats(append(as, typedAnswer{"all", "yes", "yes"})); withAll[0].Tag != "all" || withAll[0].Aggregate || withAll[0].N != 1 || !withAll[len(withAll)-1].Aggregate || withAll[len(withAll)-1].N != 6 {
+		t.Fatalf("tag all: %+v", withAll)
+	}
 	if ru.N != 3 || !near(ru.Coverage, 2.0/3) || !near(*ru.SelectiveAccuracy, 1) || !near(ru.Escalation, 1.0/3) {
 		t.Fatalf("ru: %+v", ru)
 	}

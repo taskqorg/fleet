@@ -151,13 +151,14 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
       {patch && <DetailSection title="Promote">{patch.recommendation ? <KvRow icon="check" label={`Recommendation set to ${patch.method.id}`} />
         : <><KvRow icon="file-text" label="Commit this patch to config/catalogue.json, then promote again" /><pre class="lab-patch">{JSON.stringify(patch.cataloguePatch, null, 1)}</pre></>}</DetailSection>}
       {(e.typed ?? []).map((t: any) => <DetailSection key={`${t.variant}/${t.split}`} title={`${t.variant} · typed answers · ${t.split === 'tune' ? 'tune (bands are set here)' : 'held out (reported)'}`}>
-        {t.stats.map((s: any) => <KvRow key={s.tag} icon={s.tag === 'all' ? 'chart-no-axes-column' : 'file-text'} label={s.tag === 'all' ? 'All languages' : s.tag}
-          meta={`n ${s.n} · coverage ${percent(s.confident, s.n).text} · escalated ${percent(s.n - s.confident, s.n).text}`}
-          value={s.selectiveAccuracy === null ? <span class="muted">no confident answer</span> : `accuracy ${percent(s.correct, s.confident).text}`} />)}
+        {t.stats.map((s: any) => { const cov = percent(s.confident, s.n), esc = percent(100 - parseInt(cov.text, 10), 100);
+          return <KvRow key={s.aggregate ? '\u0000all' : s.tag} icon={s.aggregate ? 'chart-no-axes-column' : 'file-text'} label={s.aggregate ? 'All languages' : s.tag}
+            meta={`n ${s.n} · coverage ${cov.text} · escalated ${esc.text}`}
+            value={s.selectiveAccuracy === null ? <span class="muted">no confident answer</span> : `accuracy ${percent(s.correct, s.confident).text}`} />; })}
       </DetailSection>)}
       {(e.comparison ?? []).map((c: any) => <DetailSection key={c.variant} title={`${c.variant} vs ${c.baseline} · ${c.split === 'held_out' ? 'held out' : 'all examples'}`}>
-        <KvRow icon="git-merge" label={c.result.mean === null ? 'No paired example' : `Mean difference ${c.result.mean >= 0 ? '+' : ''}${c.result.mean.toFixed(2)}`}
-          meta={c.result.tooFew ? `n ${c.result.n} · too few examples for an interval` : `n ${c.result.n} · 95% interval ${c.result.low.toFixed(2)} to ${c.result.high.toFixed(2)}`}
+        <KvRow icon="git-merge" label={c.result.mean === null ? 'No paired example' : `${c.evaluator.startsWith('typed:') ? 'Correct confident answers' : 'Mean'} difference ${c.result.mean >= 0 ? '+' : ''}${c.result.mean.toFixed(2)}`}
+          meta={`${c.result.tooFew ? `n ${c.result.n} · too few examples for an interval` : `n ${c.result.n} · 95% interval ${c.result.low.toFixed(2)} to ${c.result.high.toFixed(2)}`}${c.evaluator.startsWith('typed:') ? ' · an escalation counts as not correct; see coverage and accuracy above' : ''}`}
           value={c.reason ? <span class="muted">{c.reason}</span> : undefined} />
       </DetailSection>)}
       <DetailSection title="Decision gate">
