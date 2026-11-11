@@ -290,3 +290,42 @@ func TestIdentityReadFailureIsNotTermination(t *testing.T) {
 		t.Fatal("a pid nobody holds is not reported gone", err)
 	}
 }
+
+// Requirement: account-inspect has an executor handler (contracts review N6): status reports the registry binding,
+// limits asks the vendor CLI on this host and reports a limit_reading with source probe (fleet-people-access.md
+// section 8 "Read without a run"); no token is read. Risk: account_connect and subscription_limits_refresh always fail.
+func TestAccountInspectStatusAndLimits(t *testing.T) {
+	e, root := scriptExecutor(t)
+	must := func(err error) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	home, native := filepath.Join(root, "h"), filepath.Join(root, "nh")
+	must(os.MkdirAll(home, 0o700))
+	must(os.MkdirAll(native, 0o700))
+	cli := filepath.Join(root, "codex")
+	must(os.WriteFile(cli, []byte("#!/bin/sh\nwhile read l; do case \"$l\" in *rateLimits/read*) echo '{\"id\":2,\"result\":{\"rateLimits\":{\"primary\":{\"usedPercent\":42,\"windowDurationMins\":300,\"resetsAt\":1794400000}}}}';; esac; done\n"), 0o700))
+	reg := filepath.Join(root, "accounts.json")
+	must(os.WriteFile(reg, []byte(enc(M{"work": M{"harness": "codex", "home": home, "nativeHome": native, "executable": cli, "readiness": "ready"}})), 0o600))
+	t.Setenv("FLEET_NATIVE_ACCOUNTS", reg)
+	must(e.run(M{"id": "c30", "executionId": "x30", "sessionId": "s30", "kind": "account-inspect", "payload": M{"accountId": "a1", "harness": "codex", "binding": "work", "mode": "status"}}))
+	must(e.run(M{"id": "c31", "executionId": "x31", "sessionId": "s31", "kind": "account-inspect", "payload": M{"accountId": "a1", "harness": "codex", "binding": "work", "mode": "limits"}}))
+	if lastReceipt(e, "c30") != "completed" || lastReceipt(e, "c31") != "completed" {
+		t.Fatal(lastReceipt(e, "c30"), lastReceipt(e, "c31"))
+	}
+	rows := map[string]string{}
+	rs, _ := e.db.Query("SELECT route, body FROM outbox")
+	for rs.Next() {
+		var r, b string
+		rs.Scan(&r, &b)
+		rows[r] += b
+	}
+	rs.Close()
+	if !strings.Contains(rows["/api/hosts/accounts/report"], `"readiness":"ready"`) {
+		t.Fatal("status report", rows["/api/hosts/accounts/report"])
+	}
+	if ev := rows["/api/hosts/events"]; !strings.Contains(ev, `"source":"probe"`) || !strings.Contains(ev, `"pct":42`) || !strings.Contains(ev, `"subscriptionId":"a1"`) {
+		t.Fatal("limits event", ev)
+	}
+}

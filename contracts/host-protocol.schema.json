@@ -923,7 +923,18 @@
             "$ref": "#/$defs/LimitWindow"
           }
         },
-        "native": {}
+        "native": {},
+        "source": {
+          "$ref": "#/$defs/LimitSource"
+        },
+        "subscriptionId": {
+          "$comment": "probe only: the managed-account read",
+          "type": "string"
+        },
+        "hostId": {
+          "$comment": "probe only: the host that read it",
+          "type": "string"
+        }
       },
       "required": [
         "harness",
@@ -1363,6 +1374,13 @@
           "minimum": 0
         }
       }
+    },
+    "LimitSource": {
+      "type": "string",
+      "enum": [
+        "execution",
+        "probe"
+      ]
     }
   }
 }
