@@ -1242,7 +1242,7 @@ type LabExperimentDecideRequest struct {
 	Reason       *string `json:"reason,omitempty"`
 }
 
-// LabExperimentGetReply: An experiment view (expView). Planned with the definition editors: baseline and vsBaseline.
+// LabExperimentGetReply: An experiment view (expView). Planned with the definition editors: baseline and vsBaseline. comparison: each non-baseline variant vs the first on the primary evaluator, {variant, baseline, evaluator, split, result: {n, mean, low, high, tooFew, examples}} (fleet-lab.md, Statistics).
 type LabExperimentGetReply = map[string]json.RawMessage
 
 type LabExperimentGetRequest struct {
