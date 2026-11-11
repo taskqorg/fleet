@@ -232,12 +232,13 @@ func main() {
 			ops = append(ops, n)
 		}
 		sort.Strings(ops)
-		b.WriteString("// Operations: every coordinator operation; each name has <Name>Request and <Name>Reply.\nvar Operations = map[string]Operation{\n")
+		// Each domain file adds its operations to the one Operations map (go/contract/contract.go); a name in two files fails at start.
+		b.WriteString("func init() {\n\tfor n, o := range map[string]Operation{\n")
 		for _, n := range ops {
 			o := root.Operations[n]
-			fmt.Fprintf(&b, "\t%q: {Read: %v, Long: %v, Errors: %#v},\n", n, o.Read, o.Long, o.Errors)
+			fmt.Fprintf(&b, "\t\t%q: {Read: %v, Long: %v, Errors: %#v},\n", n, o.Read, o.Long, o.Errors)
 		}
-		b.WriteString("}\n\n")
+		b.WriteString("\t} {\n\t\taddOperation(n, o)\n\t}\n}\n\n")
 	}
 	out, err := format.Source(b.Bytes())
 	if err != nil {

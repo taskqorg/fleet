@@ -67,7 +67,7 @@ func publicRoute(pattern string, h http.HandlerFunc) {
 }
 func operation(name string, read bool, h handler) { operations[name] = registeredOp{read, h} }
 
-// typedOp: an operation on its generated request and reply types (contracts/ops.schema.json). The body decodes into Req:
+// typedOp: an operation on its generated request and reply types (contracts/ops*.schema.json). The body decodes into Req:
 // fields the request type does not name are ignored, a named field of the wrong JSON type is 400.
 func typedOp[Req, Rep any](h func(q *Request, r *Req) (Rep, error)) handler {
 	return func(q *Request) (any, error) {
@@ -167,7 +167,7 @@ func replyAs[T any](v any, err error) (T, error) {
 			for i := 0; i < rt.NumField(); i++ {
 				tag, opts, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
 				if _, ok := m[tag]; !ok && !strings.Contains(opts, "omitempty") {
-					return t, fmt.Errorf("reply misses required %s (contracts/ops.schema.json)", tag)
+					return t, fmt.Errorf("reply misses required %s (contracts/ops*.schema.json)", tag)
 				}
 			}
 		}

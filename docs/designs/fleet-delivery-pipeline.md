@@ -183,7 +183,7 @@ Amendment of 2026-11-11, decided by the owner. Data from pull requests #171 to #
 **Shared files.**
 
 * `docs/designs/fleet-stack.md` is split by part into separate design files, so lanes that change different parts touch different files.
-* `contracts/ops.schema.json` is split by domain into `contracts/ops/<domain>.schema.json`, each generating `go/contract/ops_<domain>_gen.go` and `contracts/generated/ops-<domain>.ts`. The generators merge the domain files into the one `Operations` map and `Ops` type, so callers do not change.
+* `contracts/ops.schema.json` is split by domain into `contracts/ops-<domain>.schema.json` (types only one domain reaches; shared ones stay in `ops.schema.json`, [contracts/README.md](../../contracts/README.md)), each generating `go/contract/ops_<domain>_gen.go` and `contracts/generated/ops-<domain>.ts`. The generators merge the domain files into the one `Operations` map and `Ops` type, so callers do not change.
 
 **Measure.** Before (pull requests #171 to #270): merge commits per pull request 0.96 (93 of 97), queue entries by the orchestrator 77 of 77, conflict removals 15, relayed "landed" and "released" messages about two per pull request. After, over the next 100 pull requests, by the same GraphQL query (kept in the description of the pull request that adds this section): merge commits per pull request at most half of before; queue entries by the orchestrator only after a veto; time from "auto-merge enabled" to "on hosts" from `watch-landing.sh` output, median and worst case, against the 15-minute target.
 

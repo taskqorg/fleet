@@ -2144,7 +2144,7 @@ func labIDArg(v any, what string) (string, error) {
 	return s, nil
 }
 
-// labShapes: each Lab operation's contract types (contracts/ops.schema.json); registration fails without one.
+// labShapes: each Lab operation's contract types (contracts/ops-<domain>.schema.json); registration fails without one.
 var labShapes = map[string]func(handler) handler{
 	"lab_cell_action":       shaped[contract.LabCellActionRequest, contract.LabCellActionReply],
 	"lab_example_get":       shaped[contract.LabExampleGetRequest, contract.LabExampleGetReply],

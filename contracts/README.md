@@ -10,11 +10,24 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   (docs/designs/fleet-contracts.md); `go/coordinator/schema.sql` stays the source of table rows only.
 * `gateway.schema.json`: the fleet-gateway seam (docs/designs/fleet-connections.md section 3): the snapshot the
   coordinator writes and the gateway reads, and the call line the gateway spools and the coordinator ingests.
-* `ops.schema.json`: the coordinator operations (`POST /api/ops/<name>`, and the agents' MCP tools of the same names).
+* `ops-<domain>.schema.json` (accounts, artifacts, definitions, executions, lab, people, sessions, tasks) and `ops.schema.json`: the coordinator operations (`POST /api/ops/<name>`, and the agents' MCP tools of the same names), split by domain so lanes that change different domains edit different files. A type that only one domain's operations reach lives in that domain's file; `OpError`, `ChangeKind`, types two domains share and types no operation reaches live in `ops.schema.json`; a reference across files is `<file>.schema.json#/$defs/<Name>`. A name is in one file only (built or planned); `gen-ts.mjs` fails otherwise. A new operation goes into the file of its name's first word:
+
+  | File | First words of operation names |
+  | --- | --- |
+  | `ops-accounts` | `account`, `subscription`, `connections`, `transport`, `budget`, `budgets`, `price`, `prices` |
+  | `ops-artifacts` | `artifact`, `store`, `stores` |
+  | `ops-definitions` | `definition`, `agent`, `harness`, `profiles`, `catalogue`, `setting`, `reconcile` |
+  | `ops-executions` | `execution`, `executions`, `pipeline`, `queue`, `route`, `hosts` |
+  | `ops-lab` | `lab` |
+  | `ops-people` | `me`, `people`, `person`, `focus`, `view`, `list` |
+  | `ops-sessions` | `session`, `sessions`, `thread`, `message`, `reply`, `ask`, `direct`, `watch`, `worker`, `changes`, `recommendation` |
+  | `ops-tasks` | `task`, `question`, `questions`, `project` |
+
+  A new first word joins the closest row here. A new domain file also needs its `go:generate` line in `go/contract/contract.go`.
   `operations` lists every operation (`read`, `long`, `errors`: the statuses its handler returns besides 401, 403 and 500);
   each name `<name>` has `$defs` `<Name>Request` and `<Name>Reply`, and a failed call answers `OpError`. `planned` lists operations specified contract first and not built yet
   (their `$defs` exist; building one moves its name to `operations`). TypeScript gets
-  `Ops` (name to request and reply, used by `op()` in `app/src/api.ts`); Go gets `contract.Operations`, which
+  `Ops` (name to request and reply, used by `op()` in `app/src/api.ts`; `generated/ops.ts` re-exports every domain file and joins their `Ops<Domain>`); Go gets `contract.Operations`, filled by the `init` of each domain's generated file, which
   `go/coordinator/ops_contract_test.go` compares with the registry. A handler registered through `typedOp` (`go/coordinator/registry.go`)
   decodes the body into `<Name>Request` and returns `<Name>Reply`; operations move to it domain by domain.
 * `profile.schema.json`: the agent profile (`config/agents/*.json`, the start command's `agentConfig`). Its validator

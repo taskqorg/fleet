@@ -139,7 +139,7 @@ func msPtr(v any) *int64 {
 	return nil
 }
 
-// blockDoc: a block built from its contract struct (contracts/ops.schema.json Block), as the doc the thread code sorts and
+// blockDoc: a block built from its contract struct (contracts/ops-sessions.schema.json Block), as the doc the thread code sorts and
 // merges. Top-level integers stay int64, as in the executor blocks (tsMs), so every block carries one number type.
 func blockDoc(v any) doc {
 	dec := json.NewDecoder(bytes.NewReader(jsonBytes(v)))
