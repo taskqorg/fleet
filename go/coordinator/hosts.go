@@ -34,21 +34,27 @@ func init() {
 		out, err := hostsRotateSecret(q, docOf(b))
 		return replyAs[contract.HostWriteReply](out, err)
 	})))
-	operation("hosts_list", true, typedOp(func(q *Request, _ *contract.HostsListRequest) (contract.HostsListReply, error) {
-		out, err := hostsList(q)
+	operation("hosts_list", true, typedOp(func(q *Request, r *contract.HostsListRequest) (contract.HostsListReply, error) {
+		out, err := hostsList(q, r.IncludeRemoved != nil && *r.IncludeRemoved)
 		return replyAs[contract.HostsListReply](out, err)
 	}))
 	operation("route_decisions", true, typedOp(routeDecisions))
 }
 
 // hostList: every host with its bare id.
+// hostList: every host with its bare id; removed hosts (tombstones, host_remove.go) are left out.
 func hostList(q *Request) ([]doc, error) {
 	rows, err := all(q, "host", nil)
+	out := []doc{}
 	for _, h := range rows {
+		if hostRemoved(h) {
+			continue
+		}
 		h["id"] = h["hostId"]
 		delete(h, "hostId")
+		out = append(out, h)
 	}
-	return rows, err
+	return out, err
 }
 
 func hostByID(q *Request, id any) (doc, error) {
@@ -359,7 +365,7 @@ func hostsRotateSecret(q *Request, b doc) (any, error) {
 	return out, nil
 }
 
-func hostsList(q *Request) (any, error) {
+func hostsList(q *Request, includeRemoved bool) (any, error) {
 	configured, err := hostIDs(q)
 	if err != nil {
 		return nil, err
@@ -368,10 +374,23 @@ func hostsList(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	tomb, err := all(q, "host", doc{"state": "removed"})
+	if err != nil {
+		return nil, err
+	}
+	removedAt := map[string]any{}
+	for _, t := range tomb {
+		removedAt[astr(t["hostId"])] = t["removedAt"]
+	}
 	ids := append([]string{}, configured...)
 	for _, o := range observed {
-		if !inList(ids, astr(o["id"])) {
+		if _, gone := removedAt[astr(o["id"])]; !inList(ids, astr(o["id"])) && !gone {
 			ids = append(ids, astr(o["id"]))
+		}
+	}
+	if includeRemoved {
+		for _, t := range tomb {
+			ids = append(ids, astr(t["hostId"]))
 		}
 	}
 	running, err := queryRows(q, "SELECT host_id,harness,count(*)::int AS n FROM execution WHERE state IN ('preparing','running') AND host_id IS NOT NULL GROUP BY 1,2")
@@ -422,6 +441,9 @@ func hostsList(q *Request) (any, error) {
 			"version": nil, "autoUpdate": "on", "update": nil}
 		if r := records[id]; r != nil {
 			h["autoUpdate"] = autoUpdateOf(r)
+		}
+		if at, gone := removedAt[id]; gone {
+			h["removedAt"], h["configured"] = at, false
 		}
 		if id == pds18Host() {
 			h["update"] = mergeUpdate(nil)

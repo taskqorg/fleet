@@ -229,6 +229,7 @@ type HostRow struct {
 	Platform         *string          `json:"platform"`
 	Problems         json.RawMessage  `json:"problems"`
 	Queued           int64            `json:"queued"`
+	RemovedAt        *float64         `json:"removedAt,omitempty"`
 	Running          int64            `json:"running"`
 	RunningByHarness map[string]int64 `json:"runningByHarness"`
 	Slots            json.RawMessage  `json:"slots"`
@@ -293,7 +294,15 @@ func (v *HostsListReply) Validate() error {
 	return nil
 }
 
-type HostsListRequest = map[string]json.RawMessage
+// HostsListRequest: includeRemoved: also hosts removed by hosts_remove (state removed).
+type HostsListRequest struct {
+	IncludeRemoved *bool `json:"includeRemoved,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostsListRequest) Validate() error {
+	return nil
+}
 
 type HostsRegisterReply = HostWriteReply
 
@@ -310,6 +319,31 @@ type HostsRegisterRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *HostsRegisterRequest) Validate() error {
+	return nil
+}
+
+// HostsRemoveReply: unreplicatedArtifacts: artifacts whose only verified copy is in a store on this host; they become lost on remove.
+type HostsRemoveReply struct {
+	Id                    string `json:"id"`
+	OpenSessions          int64  `json:"openSessions"`
+	Removed               bool   `json:"removed"`
+	RunningExecutions     int64  `json:"runningExecutions"`
+	UnreplicatedArtifacts int64  `json:"unreplicatedArtifacts"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostsRemoveReply) Validate() error {
+	return nil
+}
+
+// HostsRemoveRequest: Owner, or the holder for their own host (fleet-system-management.md, Hosts). preview true changes nothing and returns the counts; false removes: running work is cancelled, the secret and settings are dropped, the host record stays as a tombstone (state removed) for history.
+type HostsRemoveRequest struct {
+	Id      string `json:"id"`
+	Preview bool   `json:"preview"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostsRemoveRequest) Validate() error {
 	return nil
 }
 
@@ -472,6 +506,43 @@ func (v *PipelineRunRequest) Validate() error {
 	return nil
 }
 
+type PurgeCount struct {
+	Count int64     `json:"count"`
+	Ids   []string  `json:"ids"`
+	Kind  PurgeKind `json:"kind"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PurgeCount) Validate() error {
+	if v.Ids == nil {
+		return Missing("ids")
+	}
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// PurgeKind: Kinds system_purge removes; the other object kinds of fleet-system-management.md join with their delete operations.
+type PurgeKind string
+
+const (
+	PurgeKindHost PurgeKind = "host"
+)
+
+// PurgeKindValues lists every PurgeKind in schema order.
+var PurgeKindValues = []PurgeKind{PurgeKindHost}
+
+// Valid: v is one of the schema's values.
+func (v PurgeKind) Valid() bool {
+	for _, x := range PurgeKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type QueueListReply struct {
 	Queued []map[string]json.RawMessage `json:"queued"`
 }
@@ -586,6 +657,47 @@ func (v *StopOutcome) Validate() error {
 	return nil
 }
 
+// SystemPurgeReply: kept: tombstoned rows still referenced by history; they stay.
+type SystemPurgeReply struct {
+	Kept    []PurgeCount `json:"kept,omitempty"`
+	Purged  bool         `json:"purged"`
+	Removed []PurgeCount `json:"removed"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SystemPurgeReply) Validate() error {
+	for i := range v.Kept {
+		if err := Check(&v.Kept[i], "kept"); err != nil {
+			return err
+		}
+	}
+	if v.Removed == nil {
+		return Missing("removed")
+	}
+	for i := range v.Removed {
+		if err := Check(&v.Removed[i], "removed"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SystemPurgeRequest: Owner only. Removes tombstoned rows no live or tombstoned row references (a removed host with no execution, session, command, store or artifact copy naming it). preview true counts them and changes nothing; the confirm recomputes with the same query.
+type SystemPurgeRequest struct {
+	Kinds   []PurgeKind `json:"kinds,omitempty"`
+	Preview bool        `json:"preview"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SystemPurgeRequest) Validate() error {
+	for i := range v.Kinds {
+		if err := Check(&v.Kinds[i], "kinds"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type TextChange struct {
 	Added     []string `json:"added"`
 	FirstLine int64    `json:"firstLine"`
@@ -612,6 +724,7 @@ func init() {
 		"executions_list":       {Read: true, Long: false, Errors: []int{}},
 		"hosts_list":            {Read: true, Long: false, Errors: []int{}},
 		"hosts_register":        {Read: false, Long: false, Errors: []int{400, 403, 409}},
+		"hosts_remove":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
 		"hosts_rotate_secret":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
 		"hosts_update":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
 		"pipeline_get":          {Read: true, Long: false, Errors: []int{400, 403}},
@@ -621,6 +734,7 @@ func init() {
 		"pipeline_run_create":   {Read: false, Long: true, Errors: []int{400, 403, 404, 409}},
 		"queue_list":            {Read: true, Long: false, Errors: []int{}},
 		"route_decisions":       {Read: true, Long: false, Errors: []int{400}},
+		"system_purge":          {Read: false, Long: false, Errors: []int{400, 403}},
 	} {
 		addOperation(n, o)
 	}

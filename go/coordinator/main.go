@@ -257,8 +257,8 @@ func writeError(w http.ResponseWriter, err error) {
 	code, msg := 500, err.Error()
 	if errors.As(err, &he) {
 		code = he.Code
-		if code == 403 {
-			obs.MarkRefused(w) // a missing role or grant: a decision, not an error (fleet-telemetry.md §1)
+		if code == 403 || he.Refused {
+			obs.MarkRefused(w) // a missing role or grant, a removed host: a decision, not an error (fleet-telemetry.md §1)
 		}
 	} else if pgCode(err) == "42501" { // a write outside the person's scope (row-level security): 403, not 500
 		code, msg = 403, "Not in your scope"
@@ -329,6 +329,11 @@ func (a *App) authorize(q *Request) error {
 			return err
 		}
 		if host == nil {
+			if removed, err := a.removedHostSecret(q.ctx(), supplied); err != nil {
+				return err
+			} else if removed {
+				return &HTTPError{Code: 410, Msg: "host-removed", Refused: true} // the executor stops polling and exits 0
+			}
 			return fail(401, "Unauthorized")
 		}
 		if named {
@@ -356,6 +361,16 @@ func (a *App) authorize(q *Request) error {
 	}
 	q.person = p
 	return checkOrigin(q)
+}
+
+// removedHostSecret: the secret belongs to a removed host.
+func (a *App) removedHostSecret(ctx context.Context, secret string) (bool, error) {
+	if secret == "" {
+		return false, nil
+	}
+	var n int
+	err := a.store.pool.QueryRow(ctx, "SELECT count(*) FROM document WHERE kind='host' AND data->>'removedSecretHash'=$1", secretHash(secret)).Scan(&n)
+	return n > 0, err
 }
 
 // hostFromSecret: the host document whose secretHash matches, if its holder is still a person.

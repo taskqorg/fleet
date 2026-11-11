@@ -2005,7 +2005,13 @@ func runExecutor() error {
 			status("error", "")
 			return err
 		}
-		if err := e.exchange(); err != nil {
+		if err := e.exchange(); errors.Is(err, errHostRemoved) {
+			// The owner removed this host (fleet-system-management.md, Hosts): stop polling and exit 0, so the unit's
+			// Restart=on-failure does not start it again.
+			fmt.Fprintln(os.Stderr, "executor: this host was removed from Fleet; stopping")
+			status("done", "")
+			return nil
+		} else if err != nil {
 			// A redirected poll is already signalled once by the edge state; other failures log here.
 			var r redirected
 			if !errors.As(err, &r) {
@@ -2021,6 +2027,8 @@ func runExecutor() error {
 	}
 }
 
+var errHostRemoved = errors.New("host removed")
+
 // exchange: one poll; each returned command runs once. A command that failed before it went live is finished as failed
 // when its accepted journal row is still this exact command.
 func (e *executor) exchange() error {
@@ -2032,6 +2040,9 @@ func (e *executor) exchange() error {
 	body := contract.PollRequest{HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
 		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, Update: lastUpdate(e.root)}
 	a := send(e.url, e.token, pollRoute, body)
+	if a.status == 410 {
+		return errHostRemoved
+	}
 	sig := updateSignal{HostID: e.host, Running: version, AutoUpdate: "on"}
 	if lastSignal != nil {
 		sig.Target, sig.AutoUpdate = lastSignal.Target, lastSignal.AutoUpdate

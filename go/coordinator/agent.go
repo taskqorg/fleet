@@ -47,7 +47,7 @@ func knownHost(q *Request, id string) (bool, error) {
 		return true, nil
 	}
 	return unscoped(q, func() (bool, error) {
-		return has(q, "SELECT 1 FROM document WHERE (kind='host' AND id='host:'||$1) OR (kind='host-observation' AND id=$1)", id)
+		return has(q, "SELECT 1 FROM document WHERE ((kind='host' AND id='host:'||$1) OR (kind='host-observation' AND id=$1)) AND NOT EXISTS (SELECT 1 FROM document r WHERE r.kind='host' AND r.id='host:'||$1 AND r.data->>'state'='removed')", id)
 	})
 }
 
