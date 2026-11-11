@@ -7,7 +7,8 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   (docs/designs/fleet-stack.md, Contracts); `go/coordinator/schema.sql` stays the source of table rows only.
 * `gateway.schema.json`: the fleet-gateway seam (docs/designs/fleet-connections.md section 3): the snapshot the
   coordinator writes and the gateway reads, and the call line the gateway spools and the coordinator ingests.
-* `lab-config.json`: JSON Schema for agent configurations in laboratory configurations (copied as an asset; not generated).
+* `profile.schema.json`: the agent profile (`config/agents/*.json`, the start command's `agentConfig`). Its validator
+  `contract.ParseProfile` (`go/contract/profile.go`) is the one the coordinator and the executor run; a Go test checks every shipped profile.
 
 ## Generated types
 
