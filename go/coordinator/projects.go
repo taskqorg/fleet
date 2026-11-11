@@ -91,18 +91,25 @@ func readTrustedProfile(q *Request, id string) (doc, error) {
 	if _, err := contract.ParseProfile(raw); err != nil {
 		return nil, fail(400, "Invalid profile: "+err.Error())
 	}
+	if p["id"] != id {
+		return nil, fail(400, "Invalid profile: id differs from its definition")
+	}
 	return p, nil
 }
 
-func listProfiles(q *Request) []doc {
+// listProfiles: every live agent definition that is a valid profile, in one read.
+func listProfiles(q *Request) ([]doc, error) {
 	out := []doc{}
-	ids, _ := headIDs(q, "agent")
-	for _, id := range ids {
-		if p, err := readTrustedProfile(q, id); err == nil {
-			out = append(out, p)
+	heads, err := headTexts(q, "agent")
+	for _, h := range heads {
+		var p doc
+		if json.Unmarshal(h.text, &p) == nil && p["id"] == h.id {
+			if _, err := contract.ParseProfile(h.text); err == nil {
+				out = append(out, p)
+			}
 		}
 	}
-	return out
+	return out, err
 }
 
 // Project settings (docs/configuration.md): defaults for absent keys, unknown keys reported.
@@ -408,9 +415,13 @@ func projectOp(name string, read bool, h handler) {
 }
 
 func init() {
-	gatedRoute("GET /api/profiles", func(q *Request) (any, error) { return doc{"profiles": listProfiles(q)}, nil })
+	gatedRoute("GET /api/profiles", func(q *Request) (any, error) {
+		ps, err := listProfiles(q)
+		return doc{"profiles": ps}, err
+	})
 	gatedObjOp("profiles_list", true, typedOp(func(q *Request, _ *contract.ProfilesListRequest) (contract.ProfilesListReply, error) {
-		return contract.ProfilesListReply{Profiles: recsOf(listProfiles(q))}, nil
+		ps, err := listProfiles(q)
+		return contract.ProfilesListReply{Profiles: recsOf(ps)}, err
 	}))
 	projectOp("project_list", true, shaped[contract.ProjectListRequest, contract.ProjectListReply](func(q *Request) (any, error) {
 		out := []doc{}
@@ -694,5 +705,8 @@ func catalogueHead(q *Request) (doc, error) {
 		return nil, err
 	}
 	var c doc
-	return c, json.Unmarshal(raw, &c)
+	if err := json.Unmarshal(raw, &c); err != nil || c == nil {
+		return nil, fail(500, "Invalid catalogue definition")
+	}
+	return c, nil
 }

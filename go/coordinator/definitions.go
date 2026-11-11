@@ -421,21 +421,27 @@ func headText(q *Request, kind, id string) ([]byte, bool, error) {
 	return text, err == nil, err
 }
 
-// headIDs: the live definitions of a kind.
-func headIDs(q *Request, kind string) ([]string, error) {
-	var ids []string
+type headRow struct {
+	id   string
+	text []byte
+}
+
+// headTexts: every live definition of a kind with its head content, in one read.
+func headTexts(q *Request, kind string) ([]headRow, error) {
+	var out []headRow
 	read := func(tx pgx.Tx) error {
-		rs, err := tx.Query(q.ctx(), "SELECT id FROM definition WHERE kind=$1 AND retired_at IS NULL ORDER BY id", kind)
+		rs, err := tx.Query(q.ctx(), `SELECT d.id,r.content FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
+		  WHERE d.kind=$1 AND d.retired_at IS NULL ORDER BY d.id`, kind)
 		if err != nil {
 			return err
 		}
-		ids, err = pgx.CollectRows(rs, pgx.RowTo[string])
+		out, err = pgx.CollectRows(rs, func(r pgx.CollectableRow) (headRow, error) { var h headRow; return h, r.Scan(&h.id, &h.text) })
 		return err
 	}
 	if q.tx != nil {
-		return ids, read(q.tx)
+		return out, read(q.tx)
 	}
-	return ids, q.app.store.Tx(q.ctx(), nil, false, "", read)
+	return out, q.app.store.Tx(q.ctx(), nil, false, "", read)
 }
 
 func init() {
