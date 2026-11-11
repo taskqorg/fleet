@@ -1468,6 +1468,9 @@ const (
 	QuestionKindAcceptance       QuestionKind = "acceptance"
 )
 
+// QuestionKindValues lists every QuestionKind in schema order.
+var QuestionKindValues = []QuestionKind{QuestionKindOperatorDecision, QuestionKindAgentQuestion, QuestionKindAcceptance}
+
 // QuestionRow: One question row (questionCols in go/coordinator/tasks.go); artifactIds and cause only when set.
 type QuestionRow struct {
 	Answer      *string         `json:"answer"`
@@ -2000,6 +2003,9 @@ const (
 	TaskStateFailed     TaskState = "failed"
 	TaskStateCancelled  TaskState = "cancelled"
 )
+
+// TaskStateValues lists every TaskState in schema order.
+var TaskStateValues = []TaskState{TaskStateQueued, TaskStateInProgress, TaskStateWaiting, TaskStatePaused, TaskStateCompleted, TaskStateFailed, TaskStateCancelled}
 
 type TaskTakeReply = TaskDetail
 
