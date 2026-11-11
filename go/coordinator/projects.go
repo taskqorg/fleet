@@ -412,8 +412,10 @@ func projectOp(name string, read bool, h handler) {
 
 func init() {
 	gatedRoute("GET /api/profiles", func(q *Request) (any, error) { return doc{"profiles": listProfiles()}, nil })
-	gatedObjOp("profiles_list", true, func(q *Request) (any, error) { return doc{"profiles": listProfiles()}, nil })
-	projectOp("project_list", true, func(q *Request) (any, error) {
+	gatedObjOp("profiles_list", true, typedOp(func(q *Request, _ *contract.ProfilesListRequest) (contract.ProfilesListReply, error) {
+		return contract.ProfilesListReply{Profiles: recsOf(listProfiles())}, nil
+	}))
+	projectOp("project_list", true, shaped[contract.ProjectListRequest, contract.ProjectListReply](func(q *Request) (any, error) {
 		out := []doc{}
 		for _, id := range projectIDs() {
 			if q.person != nil && !mayAccessProjectID(q.person, id) {
@@ -426,10 +428,10 @@ func init() {
 			out = append(out, p)
 		}
 		return doc{"projects": out}, nil
-	})
-	projectOp("project_context", true, func(q *Request) (any, error) { return projectContext(astr(body(q)["projectId"])) })
-	projectOp("catalogue", true, func(q *Request) (any, error) { return catalogue(q, astr(body(q)["projectId"])) })
-	projectOp("recommendation_set", false, func(q *Request) (any, error) {
+	}))
+	projectOp("project_context", true, shaped[contract.ProjectContextRequest, contract.ProjectContextReply](func(q *Request) (any, error) { return projectContext(astr(body(q)["projectId"])) }))
+	projectOp("catalogue", true, shaped[contract.CatalogueRequest, contract.CatalogueReply](func(q *Request) (any, error) { return catalogue(q, astr(body(q)["projectId"])) }))
+	projectOp("recommendation_set", false, shaped[contract.RecommendationSetRequest, contract.RecommendationSetReply](func(q *Request) (any, error) {
 		b := body(q)
 		c, err := catalogue(q, astr(b["projectId"]))
 		if err != nil {
@@ -444,8 +446,8 @@ func init() {
 		}
 		r := doc{"id": "recommendation:" + astr(b["projectId"]), "projectId": b["projectId"], "methodId": b["methodId"], "selectedAt": nowMs(), "actor": actor(q, "operator")}
 		return r, put(q, "project-recommendation", r)
-	})
-	projectOp("question_ask", false, func(q *Request) (any, error) {
+	}))
+	projectOp("question_ask", false, shaped[contract.QuestionAskRequest, contract.QuestionAskReply](func(q *Request) (any, error) {
 		b := body(q)
 		if _, err := projectContext(astr(b["projectId"])); err != nil {
 			return nil, err
@@ -468,8 +470,8 @@ func init() {
 		v := doc{"id": newID(), "projectId": b["projectId"], "requestId": rid, "text": text, "state": "waiting", "createdAt": nowMs(), "actor": actor(q, "operator")}
 		_, err = askQuestion(q, doc{"id": v["id"], "kind": "operator_decision", "text": text, "projectId": b["projectId"], "askedBy": v["actor"], "legacyKind": "project-question", "data": v, "askedAt": v["createdAt"]})
 		return v, err
-	})
-	projectOp("question_answer", false, func(q *Request) (any, error) {
+	}))
+	projectOp("question_answer", false, shaped[contract.QuestionAnswerRequest, contract.QuestionAnswerReply](func(q *Request) (any, error) {
 		b := body(q)
 		id := astr(b["questionId"])
 		answer, err := strArg(b, "answer", "answer", 4000)
@@ -503,16 +505,16 @@ func init() {
 			return nil, err
 		}
 		return v, exec(q, "UPDATE question SET data=$2 WHERE id=$1", id, js(v))
-	})
-	projectOp("question_history", true, func(q *Request) (any, error) {
+	}))
+	projectOp("question_history", true, shaped[contract.QuestionHistoryRequest, contract.QuestionHistoryReply](func(q *Request) (any, error) {
 		b := body(q)
 		if _, err := projectContext(astr(b["projectId"])); err != nil {
 			return nil, err
 		}
 		qs, err := rows(q, "SELECT data FROM question WHERE legacy_kind='project-question' AND data->>'projectId'=$1 ORDER BY seq", b["projectId"])
 		return doc{"questions": qs}, err
-	})
-	projectOp("pipeline_get", true, func(q *Request) (any, error) {
+	}))
+	projectOp("pipeline_get", true, shaped[contract.PipelineGetRequest, contract.PipelineGetReply](func(q *Request) (any, error) {
 		b := body(q)
 		id := astr(b["runId"])
 		if id == "" || len(id) > 200 {
@@ -525,9 +527,10 @@ func init() {
 		if p := astr(b["projectId"]); p != "" && astr(r["projectId"]) != p {
 			return nil, fail(403, "Pipeline belongs to another project")
 		}
+
 		return r, nil
-	})
-	projectOp("pipeline_history", true, func(q *Request) (any, error) {
+	}))
+	projectOp("pipeline_history", true, shaped[contract.PipelineHistoryRequest, contract.PipelineHistoryReply](func(q *Request) (any, error) {
 		b := body(q)
 		if _, err := projectContext(astr(b["projectId"])); err != nil {
 			return nil, err
@@ -545,7 +548,7 @@ func init() {
 			runs = append(runs, r)
 		}
 		return doc{"runs": runs}, nil
-	})
+	}))
 	gatedRoute("GET /api/projects", func(q *Request) (any, error) { return projectOps["project_list"].h(q) })
 	projectRoute := func(path, op string) {
 		gatedRoute("GET "+path, func(q *Request) (any, error) {

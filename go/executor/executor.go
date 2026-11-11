@@ -175,11 +175,12 @@ type live struct {
 	lastSample     time.Time
 	wire           *wire
 	// Script commands: the process group stop and timeout kill, the deadline, and the trial worktree (top, path).
-	group    int
-	deadline time.Time
-	timedOut bool
-	trial    *[2]string
-	blocks   Blocks
+	group     int
+	deadline  time.Time
+	timedOut  bool
+	timeoutMs *int64 // the script payload's timeout_ms, for the script.timeout event
+	trial     *[2]string
+	blocks    Blocks
 }
 
 func (l *live) exitedNow() bool {
@@ -399,8 +400,13 @@ func (e *executor) reconcileProcesses() error {
 		waiting := false
 		for _, x := range launches {
 			if x.err == nil {
+				// An unknown identity is asked again on the next pass; the final check below decides.
 				alive, err := x.l.aliveOwned()
-				x.err, waiting = err, waiting || alive
+				var unknown identityUnknown
+				waiting = waiting || alive || errors.As(err, &unknown)
+				if !errors.As(err, &unknown) {
+					x.err = err
+				}
 			}
 		}
 		if !waiting {
@@ -672,17 +678,18 @@ func (e *executor) run(c M) error {
 		// worktree; the session dir must be a real dir under the executor or session roots.
 		dir := e.sessionDir(session)
 		repo, hasRepo := repoPath(p, e.host)
-		data := M{"removed": false, "reason": "no-worktree"}
+		data := refusedTeardown("no-worktree")
 		if e.insideDirs(dir) && exists(filepath.Join(dir, "worktree", ".git")) {
 			_, top, created, ok, err := worktree(dir, session, repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"))
 			switch {
 			case err != nil:
-				data = M{"removed": false, "reason": err.Error()}
+				data = refusedTeardown(err.Error())
 			case ok && !created:
 				data = teardown(dir, session, top, jAt(p, "project"))
 			}
 		}
-		ok := data["removed"] == true || data["reason"] == "uncommitted" || data["reason"] == "no-worktree"
+		reason := str0(data.Reason)
+		ok := data.Removed || reason == "uncommitted" || reason == "no-worktree"
 		// The teardown command reuses the last execution, whose seq 0.. are taken by its turn: use a fresh seq.
 		if err := e.event(c, uint64(nowMs()), contract.FleetEventTypeTeardown, data); err != nil {
 			return err
@@ -705,6 +712,8 @@ func (e *executor) run(c M) error {
 		}
 		_, err := e.db.Exec("UPDATE commands SET terminal=1 WHERE id=?", cid)
 		return err
+	case "account-inspect":
+		return e.accountInspect(c)
 	case "script":
 		return e.script(c, execution, session)
 	case "start", "input":
@@ -858,7 +867,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			if err := e.event(c, 1, contract.FleetEventTypeSetup, r); err != nil {
 				return err
 			}
-			if r["ok"] != true {
+			if !r.Ok {
 				return fail(2, "setup-failed")
 			}
 		}
@@ -1301,10 +1310,10 @@ func (e *executor) script(c M, execution, session string) error {
 	close(lines)
 	l.lines = lines
 	if timeout > 0 {
-		l.deadline = time.Now().Add(timeout)
+		l.deadline, l.timeoutMs = time.Now().Add(timeout), sp.TimeoutMs
 	}
 	e.live[execution] = l
-	if err := e.event(c, 1, contract.FleetEventTypeScriptStarted, M{"commit": p["commit"], "timeoutMs": p["timeout_ms"], "trialWorktree": work}); err != nil {
+	if err := e.event(c, 1, contract.FleetEventTypeScriptStarted, contract.ScriptStarted{Commit: sp.Commit, TimeoutMs: sp.TimeoutMs, TrialWorktree: work}); err != nil {
 		return err
 	}
 	return e.receipt(c, "started", "")
@@ -1399,7 +1408,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	if !exited && !l.stopped && !l.deadline.IsZero() && !time.Now().Before(l.deadline) {
 		l.timedOut, l.stopped = true, true
 		l.seq++
-		if err := e.event(l.command, l.seq, contract.FleetEventTypeScriptTimeout, M{"timeoutMs": jAt(l.command, "payload", "timeout_ms")}); err != nil {
+		if err := e.event(l.command, l.seq, contract.FleetEventTypeScriptTimeout, contract.ScriptTimeout{TimeoutMs: l.timeoutMs}); err != nil {
 			return false, err
 		}
 	}
@@ -1481,6 +1490,11 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	}
 	if exited {
 		alive, err := l.aliveOwned()
+		var unknown identityUnknown
+		if errors.As(err, &unknown) {
+			// Not confirmed gone: the run stays live (and its session held) until the process can be seen to leave.
+			return false, nil
+		}
 		if err != nil {
 			return false, err
 		}
@@ -1530,7 +1544,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	e.declared = declared
 	if l.trial != nil {
 		l.seq++
-		if err := e.event(l.command, l.seq, contract.FleetEventTypeTrialRemoved, M{"removed": removeTrial(l.trial[0], l.trial[1])}); err != nil {
+		if err := e.event(l.command, l.seq, contract.FleetEventTypeTrialRemoved, contract.TrialRemoved{Removed: removeTrial(l.trial[0], l.trial[1])}); err != nil {
 			return false, err
 		}
 	}
@@ -1723,6 +1737,17 @@ func (l *live) observe() error {
 	return nil
 }
 
+// identityUnknown: an owned pid exists but its identity cannot be read, so whether it is the recorded process is
+// unknown.
+type identityUnknown struct {
+	pid int
+	err error
+}
+
+func (u identityUnknown) Error() string {
+	return fmt.Sprintf("process %d exists but its identity cannot be read: %v", u.pid, u.err)
+}
+
 func (l *live) aliveOwned() (bool, error) {
 	table, err := processes()
 	if err != nil {
@@ -1732,15 +1757,36 @@ func (l *live) aliveOwned() (bool, error) {
 		if strings.HasPrefix(p.stat, "Z") {
 			continue
 		}
-		// An identity that cannot be read is not the recorded incarnation: the process left between the snapshot
-		// and the read, or the pid now belongs to a process this user cannot inspect.
-		if expected, ok := l.owned[p.pid]; ok {
-			if cur, err := identity(p.pid); err == nil && cur == expected {
+		expected, ok := l.owned[p.pid]
+		if !ok {
+			continue
+		}
+		cur, err := identity(p.pid)
+		if err == nil {
+			if cur == expected {
 				return true, nil
 			}
+			continue // another incarnation holds the pid
 		}
+		// An identity read failure proves nothing (W3-3): only ESRCH from kill(pid, 0) shows the pid has gone; a pid
+		// that still exists but cannot be inspected is unknown.
+		if errors.Is(syscall.Kill(p.pid, 0), syscall.ESRCH) {
+			continue
+		}
+		return false, identityUnknown{p.pid, err}
 	}
 	return false, nil
+}
+
+// gone: a signal failed because the recorded incarnation exited between the check and the signal: kill(pid, 0) says no
+// such process, or the pid now has another identity. An identity that cannot be read is not gone (W3-3): that failure
+// stays an error.
+func gone(pid int, ident string) bool {
+	if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+		return true
+	}
+	id, err := identity(pid)
+	return err == nil && id != ident
 }
 
 func running(table []proc, pid int) bool {
@@ -1781,7 +1827,7 @@ func (l *live) cleanup() error {
 				continue
 			}
 			if id, err := identity(pid); err == nil && id == ident {
-				if err := signalOwned(pid, ident, syscall.SIGSTOP); err != nil {
+				if err := signalOwned(pid, ident, syscall.SIGSTOP); err != nil && !errors.Is(err, syscall.ESRCH) && !gone(pid, ident) {
 					return err
 				}
 				frozen[pid], changed = true, true
@@ -1797,7 +1843,7 @@ func (l *live) cleanup() error {
 	}
 	for pid, ident := range l.owned {
 		if id, err := identity(pid); running(table, pid) && err == nil && id == ident {
-			if err := signalOwned(pid, ident, syscall.SIGKILL); err != nil {
+			if err := signalOwned(pid, ident, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) && !gone(pid, ident) {
 				return err
 			}
 		}

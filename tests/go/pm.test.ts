@@ -102,6 +102,8 @@ test('PM5 Held: an agent task starts Held with the execution as creator, and lea
   ok(await pm.tool('focus_set', {projectIds: [PROJECT]}));
   const t = ok(await pm.tool('task_create', {title: 'PM5 ' + randomUUID(), held: false, createdBy: 'operator'}));
   assert.deepEqual([t.state, t.pauseReason, t.createdBy, t.directedBy, t.projectId], ['paused', 'held', 'execution:' + pm.executionId, MEMBER, PROJECT]);
+  // A typed operation reply reaches the agent too (risk: the tool path dropped every reply that is not a map).
+  assert.equal(ok(await pm.tool('execution_status', {executionId: pm.executionId})).executionId, pm.executionId);
   const page = (state: string) => op('task_page', {filter: {state: [state], search: t.title}}).then(r => ok(r));
   const held = await page('held');
   assert.deepEqual([held.tasks.map((x: any) => x.id), held.counts.held, held.counts.paused], [[t.id], 1, 0]);

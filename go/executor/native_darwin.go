@@ -30,8 +30,8 @@ func init() {
 	}
 }
 
-// identity is the start time from PROC_PIDTBSDINFO (pbi_pid at 12, pbi_start_tvsec at 120, usec at 128).
-func identity(pid int) (string, error) {
+// processIdentity is the start time from PROC_PIDTBSDINFO (pbi_pid at 12, pbi_start_tvsec at 120, usec at 128).
+func processIdentity(pid int) (string, error) {
 	if procPidinfo == nil {
 		return "", errors.New("proc_pidinfo unavailable")
 	}

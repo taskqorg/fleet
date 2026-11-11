@@ -120,7 +120,7 @@ One Go function computes every comparison: the experiment matrix, the Lab group 
 
 A project's raw data (names, texts, translations) is stored in Fleet as ordinary `inline` example artifacts (owner answer 2026-11-11). Preparation comes first: examples, labels, the project's export and Lab experiments on stored data; no test task runs on the project itself until the owner says so.
 
-Trial outputs of typed decisions are `{answer, p, answered_by, tokens}`. A project export follows a versioned schema: step ID, row ID, input, label, tag (for example language), production cost and basis, split. Its production numbers become the production reference, never a comparison row.
+Trial outputs of typed decisions are `{answer, p, answered_by, tokens}`. A project export follows a versioned schema: step ID, row ID, input, label, tag (for example language), production cost and basis, split. Version 1 is [`contracts/lab-export.schema.json`](../../contracts/lab-export.schema.json) (frozen; a change is a new version). `scripts/lab-examples.ts from-export FILE --use-case ID` turns each row into an inline example (origin `export:<project>`, prompt = input, references = a certain `output.json` and `expected.json` with the label, tag and production cost, one check that the trial's `p` is on the label's side of 0.5); `import` then stores them. Its production numbers become the production reference, never a comparison row.
 
 Not adopted: fetching example text at run time or importing externally run trials; neither earns its place while project data may be stored.
 
@@ -168,7 +168,7 @@ Every provider call goes through fleet-gateway, from two entry points; the conne
     *   `lab_fit`: `work` = an agent produces a checkable result; `behavior` = an agent's conduct is judged; `none` = not exercised by Lab.
     *   `maturity`: `indexed | example drafted | synthetic ready | calibrated | linked to a real task`.
 *   Drift check `scripts/lab-drift.ts` recomputes hashes from each repo's `HEAD` (`FLEET_LAB_REPOS`, default the directory above the Fleet checkout) and prints changed or missing entries; `--write` stores `source_status`; `--pin <id…>` accepts the current source. CI runs it on Fleet's own entries as a warning; it never blocks.
-*   Examples are artifacts: scope `lab`, `role: example`, name `examples/<id>@<version>.json`, hash = content hash. JSON `{id, use_case_id, version, origin: synthetic|task:<id>, fixture: {repo, commit}|null, prompt, inputs[], references[], checks[], split: tune|held_out}`. `inputs[]` and `references[]` are files `{path, text}`, or binary `{path, sha256, media_type}` stored next to the seed (not built, [asset pipelines §4](fleet-asset-pipelines.md#4-asset-pipelines-s4)); `references` are one known-good result. `checks[]` are `{id, run}`: a shell command run in the trial's output directory with `FLEET_OUTPUT_DIR` set; exit 0 passes. The example's `references` are there too for script checks only (never for a judge or an agent), under `references/<path>`, so a check can compare the output with the known-good result.
+*   Examples are artifacts: scope `lab`, `role: example`, name `examples/<id>@<version>.json`, hash = content hash. JSON `{id, use_case_id, version, origin: synthetic|task:<id>|export:<project>, fixture: {repo, commit}|null, prompt, inputs[], references[], checks[], split: tune|held_out}`. `inputs[]` and `references[]` are files `{path, text}`, or binary `{path, sha256, media_type}` stored next to the seed (not built, [asset pipelines §4](fleet-asset-pipelines.md#4-asset-pipelines-s4)); `references` are one known-good result. `checks[]` are `{id, run}`: a shell command run in the trial's output directory with `FLEET_OUTPUT_DIR` set; exit 0 passes. The example's `references` are there too for script checks only (never for a judge or an agent), under `references/<path>`, so a check can compare the output with the known-good result.
     *   An `id@version` never changes content; other content under it is refused (409). The coordinator writes the artifact itself, stored and verified like a backfilled artifact; a refused batch stores nothing.
     *   Approval is `artifact.approved_at`, null while proposed.
     *   "Checks pass with no agent": on inputs plus references every check passes; on inputs alone at least one fails. `scripts/lab-examples.ts check` runs this; the test suite runs it on every seed.
@@ -258,7 +258,7 @@ Production signals (acceptance, rework) find examples worth mining and calibrate
 
 | Stage | Content | Done when |
 |---|---|---|
-| 0 | Register the project; freeze export schema v1; import examples with labels. | Schema file exists; examples approved |
+| 0 | Register the project; freeze export schema v1; import examples with labels. | Schema file exists; examples approved. Built: the Cyprus.BZ project is `config/projects/cs`; the schema and the converter exist; no project rows imported yet |
 | 1 | Smoke test: one `single` experiment with one `api` step on a typed-decision connection; trial output `{answer, p, answered_by, tokens}`; a check that reads `references`. | A `tool_run` row with cost and basis |
 | 2 | Experiment record, frozen at launch, decision at close. | Launch fails without goal and hypothesis; amendments visible |
 | 3 | Price entries and estimated cost per trial. | Matrix shows cost with basis |

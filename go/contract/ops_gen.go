@@ -6,72 +6,94 @@ import "encoding/json"
 
 var _ json.RawMessage
 
-type AccountConnectReply = map[string]json.RawMessage
+type AccountConnectReply = AccountInspection
 
+// AccountConnectRequest: Inspects one native login. hostId: default the caller's host; binding: the native login name.
 type AccountConnectRequest struct {
-	AccountId *string `json:"accountId,omitempty"`
-	Binding   *string `json:"binding,omitempty"`
+	AccountId string  `json:"accountId"`
+	Binding   string  `json:"binding"`
 	HostId    *string `json:"hostId,omitempty"`
 }
 
+// AccountCreateReply: A managed-account record: id, name, harness, holder, kind, plan, intake, take, switchPct, comment, bindings and times.
 type AccountCreateReply = map[string]json.RawMessage
 
+// AccountCreateRequest: harness codex, claude, antigravity or acp; holder: the owner may create one for another person.
 type AccountCreateRequest struct {
-	Harness json.RawMessage `json:"harness,omitempty"`
-	Holder  *string         `json:"holder,omitempty"`
-	Name    *string         `json:"name,omitempty"`
+	Comment *string `json:"comment,omitempty"`
+	Harness string  `json:"harness"`
+	Holder  *string `json:"holder,omitempty"`
+	Name    string  `json:"name"`
+	Plan    *string `json:"plan,omitempty"`
 }
 
-type AccountDiscoverReply = map[string]json.RawMessage
+type AccountDiscoverReply = AccountInspection
 
+// AccountDiscoverRequest: Reads the host's native account catalogue. hostId: default the caller's host.
 type AccountDiscoverRequest struct {
-	AccountId *string `json:"accountId,omitempty"`
-	Binding   *string `json:"binding,omitempty"`
+	AccountId string  `json:"accountId"`
 	HostId    *string `json:"hostId,omitempty"`
 }
 
 type AccountHostsReply struct {
-	Hosts json.RawMessage `json:"hosts,omitempty"`
+	Hosts []map[string]json.RawMessage `json:"hosts"`
 }
 
+// AccountHostsRequest: harness default codex; accountId takes the account's harness.
 type AccountHostsRequest struct {
-	AccountId *string         `json:"accountId,omitempty"`
-	Harness   json.RawMessage `json:"harness,omitempty"`
+	AccountId *string `json:"accountId,omitempty"`
+	Harness   *string `json:"harness,omitempty"`
+}
+
+// AccountInspection: A read-only native inspection queued on a host; an identical one still pending is answered instead of a new one.
+type AccountInspection struct {
+	AccountId   string  `json:"accountId"`
+	Binding     *string `json:"binding"`
+	CreatedAt   float64 `json:"createdAt"`
+	ExecutionId string  `json:"executionId"`
+	HostId      string  `json:"hostId"`
+	Id          string  `json:"id"`
+	LoginAction *string `json:"loginAction,omitempty"`
 }
 
 type AccountListReply struct {
-	Accounts   json.RawMessage `json:"accounts,omitempty"`
-	Catalogues json.RawMessage `json:"catalogues,omitempty"`
+	Accounts   []map[string]json.RawMessage `json:"accounts"`
+	Catalogues []map[string]json.RawMessage `json:"catalogues"`
 }
 
 type AccountListRequest = map[string]json.RawMessage
 
+// AccountLoginHandoffReply: What a person runs to log the binding in; Fleet changes no authentication itself.
 type AccountLoginHandoffReply struct {
-	AuthChanged             json.RawMessage `json:"authChanged,omitempty"`
-	BasedOnCheckAt          json.RawMessage `json:"basedOnCheckAt,omitempty"`
-	Binding                 json.RawMessage `json:"binding,omitempty"`
-	Command                 json.RawMessage `json:"command,omitempty"`
-	Environment             json.RawMessage `json:"environment,omitempty"`
-	Executable              json.RawMessage `json:"executable,omitempty"`
-	HostId                  json.RawMessage `json:"hostId,omitempty"`
-	ObservedAt              json.RawMessage `json:"observedAt,omitempty"`
-	Quota                   json.RawMessage `json:"quota,omitempty"`
-	RequiredUserInteraction json.RawMessage `json:"requiredUserInteraction,omitempty"`
-	Warning                 json.RawMessage `json:"warning,omitempty"`
+	AuthChanged             bool            `json:"authChanged"`
+	BasedOnCheckAt          json.RawMessage `json:"basedOnCheckAt"`
+	Binding                 json.RawMessage `json:"binding"`
+	Command                 json.RawMessage `json:"command"`
+	Environment             json.RawMessage `json:"environment"`
+	Executable              json.RawMessage `json:"executable"`
+	HostId                  string          `json:"hostId"`
+	ObservedAt              int64           `json:"observedAt"`
+	Quota                   string          `json:"quota"`
+	RequiredUserInteraction json.RawMessage `json:"requiredUserInteraction"`
+	Warning                 json.RawMessage `json:"warning"`
 }
 
 type AccountLoginHandoffRequest struct {
-	AccountId *string `json:"accountId,omitempty"`
+	AccountId string  `json:"accountId"`
 	Binding   *string `json:"binding,omitempty"`
-	HostId    *string `json:"hostId,omitempty"`
+	HostId    string  `json:"hostId"`
 }
 
+// AccountUpdateReply: A managed-account record: id, name, harness, holder, kind, plan, intake, take, switchPct, comment, bindings and times.
 type AccountUpdateReply = map[string]json.RawMessage
 
+// AccountUpdateRequest: Holder or owner; switchPct null clears it; take {projects}; holder: owner only.
 type AccountUpdateRequest struct {
-	AccountId *string         `json:"accountId,omitempty"`
+	AccountId string          `json:"accountId"`
+	Comment   *string         `json:"comment,omitempty"`
 	Holder    *string         `json:"holder,omitempty"`
-	Intake    json.RawMessage `json:"intake,omitempty"`
+	Intake    *string         `json:"intake,omitempty"`
+	Plan      *string         `json:"plan,omitempty"`
 	SwitchPct *float64        `json:"switchPct,omitempty"`
 	Take      json.RawMessage `json:"take,omitempty"`
 }
@@ -141,18 +163,24 @@ type AgentTestRequest struct {
 }
 
 type ArtifactCopyRetryReply struct {
-	Retrying json.RawMessage `json:"retrying,omitempty"`
+	Retrying bool `json:"retrying"`
 }
 
+// ArtifactCopyRetryRequest: Operator only.
 type ArtifactCopyRetryRequest struct {
-	ArtifactId *string `json:"artifactId,omitempty"`
-	StoreId    *string `json:"storeId,omitempty"`
+	ArtifactId string `json:"artifactId"`
+	StoreId    string `json:"storeId"`
 }
 
-type ArtifactGetReply = map[string]json.RawMessage
+type ArtifactCopyState struct {
+	State   string `json:"state"`
+	StoreId string `json:"storeId"`
+}
+
+type ArtifactGetReply = ArtifactView
 
 type ArtifactGetRequest struct {
-	ArtifactId *string `json:"artifactId,omitempty"`
+	ArtifactId string `json:"artifactId"`
 }
 
 // ArtifactListReply: nextBefore: only with limit; null on the last page.
@@ -175,15 +203,16 @@ type ArtifactListRequest struct {
 }
 
 type ArtifactPurgeReply struct {
-	Artifacts json.RawMessage `json:"artifacts,omitempty"`
-	Deleted   json.RawMessage `json:"deleted,omitempty"`
-	Pending   json.RawMessage `json:"pending,omitempty"`
+	Artifacts int64 `json:"artifacts"`
+	Deleted   int64 `json:"deleted"`
+	Pending   int64 `json:"pending"`
 }
 
+// ArtifactPurgeRequest: Operator only.
 type ArtifactPurgeRequest struct {
-	ContentHash *string `json:"contentHash,omitempty"`
+	ContentHash string  `json:"contentHash"`
 	ProjectId   *string `json:"projectId,omitempty"`
-	Reason      *string `json:"reason,omitempty"`
+	Reason      string  `json:"reason"`
 	Scope       *string `json:"scope,omitempty"`
 }
 
@@ -201,26 +230,52 @@ type ArtifactRow struct {
 }
 
 type ArtifactRuleConfirmReply struct {
-	Confirmed json.RawMessage `json:"confirmed,omitempty"`
-	RuleHash  json.RawMessage `json:"ruleHash,omitempty"`
+	Confirmed bool   `json:"confirmed"`
+	RuleHash  string `json:"ruleHash"`
 }
 
+// ArtifactRuleConfirmRequest: Operator only. ruleHash: the preview's hash; a changed rule is 409.
 type ArtifactRuleConfirmRequest struct {
 	ProjectId *string         `json:"projectId,omitempty"`
-	Rule      json.RawMessage `json:"rule,omitempty"`
-	RuleHash  json.RawMessage `json:"ruleHash,omitempty"`
+	Rule      json.RawMessage `json:"rule"`
+	RuleHash  *string         `json:"ruleHash,omitempty"`
 }
 
+// ArtifactRulePreviewReply: sample: up to 10 matching artifacts (id, name, size).
 type ArtifactRulePreviewReply struct {
-	Bytes    json.RawMessage `json:"bytes,omitempty"`
-	Count    json.RawMessage `json:"count,omitempty"`
-	RuleHash json.RawMessage `json:"ruleHash,omitempty"`
-	Sample   json.RawMessage `json:"sample,omitempty"`
+	Bytes    int64                        `json:"bytes"`
+	Count    int64                        `json:"count"`
+	RuleHash string                       `json:"ruleHash"`
+	Sample   []map[string]json.RawMessage `json:"sample"`
 }
 
+// ArtifactRulePreviewRequest: Operator only. rule: a retention rule of the project settings.
 type ArtifactRulePreviewRequest struct {
 	ProjectId *string         `json:"projectId,omitempty"`
-	Rule      json.RawMessage `json:"rule,omitempty"`
+	Rule      json.RawMessage `json:"rule"`
+}
+
+// ArtifactView: One artifact with its copies; availability available (with a presigned url), unavailable, or the artifact state.
+type ArtifactView struct {
+	Availability          string              `json:"availability"`
+	Copies                []ArtifactCopyState `json:"copies"`
+	DerivedFromArtifactId *string             `json:"derivedFromArtifactId"`
+	Error                 *string             `json:"error"`
+	ExecutionId           *string             `json:"executionId"`
+	Id                    string              `json:"id"`
+	LegacyId              *string             `json:"legacyId"`
+	MediaType             string              `json:"mediaType"`
+	Name                  string              `json:"name"`
+	PreviousArtifactId    *string             `json:"previousArtifactId"`
+	ProjectId             *string             `json:"projectId"`
+	Required              bool                `json:"required"`
+	Role                  string              `json:"role"`
+	Scope                 string              `json:"scope"`
+	Sha256                string              `json:"sha256"`
+	Size                  int64               `json:"size"`
+	State                 string              `json:"state"`
+	TaskId                *string             `json:"taskId"`
+	Url                   *string             `json:"url,omitempty"`
 }
 
 type AskReply = map[string]json.RawMessage
@@ -260,49 +315,62 @@ type BoundaryBlock struct {
 	State       ExecutionState `json:"state"`
 }
 
-type BudgetAskReply struct {
-	QuestionId json.RawMessage `json:"questionId,omitempty"`
+// Budget: scope person, project, experiment or connection; action warn, pause or stop; period day, week, month or null (all time). spend only in budgets_list.
+type Budget struct {
+	Action  string       `json:"action"`
+	Id      string       `json:"id"`
+	Limit   float64      `json:"limit"`
+	Period  *string      `json:"period"`
+	Scope   string       `json:"scope"`
+	ScopeId string       `json:"scopeId"`
+	SetAt   string       `json:"setAt"`
+	SetBy   string       `json:"setBy"`
+	Spend   *BudgetSpend `json:"spend,omitempty"`
+	Unit    string       `json:"unit"`
 }
 
+type BudgetAskReply struct {
+	QuestionId string `json:"questionId"`
+}
+
+// BudgetAskRequest: Asks the owner to raise a budget above its current limit.
 type BudgetAskRequest struct {
-	BudgetId *string  `json:"budgetId,omitempty"`
-	Limit    *float64 `json:"limit,omitempty"`
-	Reason   *string  `json:"reason,omitempty"`
+	BudgetId string  `json:"budgetId"`
+	Limit    float64 `json:"limit"`
+	Reason   *string `json:"reason,omitempty"`
 }
 
 type BudgetDeleteReply struct {
-	Deleted json.RawMessage `json:"deleted,omitempty"`
-	Id      json.RawMessage `json:"id,omitempty"`
+	Deleted bool   `json:"deleted"`
+	Id      string `json:"id"`
 }
 
+// BudgetDeleteRequest: Owner only.
 type BudgetDeleteRequest struct {
-	Id json.RawMessage `json:"id,omitempty"`
+	Id string `json:"id"`
 }
 
-type BudgetSetReply struct {
-	Action  json.RawMessage `json:"action,omitempty"`
-	Id      json.RawMessage `json:"id,omitempty"`
-	Limit   json.RawMessage `json:"limit,omitempty"`
-	Period  json.RawMessage `json:"period,omitempty"`
-	Scope   json.RawMessage `json:"scope,omitempty"`
-	ScopeId json.RawMessage `json:"scopeId,omitempty"`
-	SetAt   json.RawMessage `json:"setAt,omitempty"`
-	SetBy   json.RawMessage `json:"setBy,omitempty"`
-	Unit    json.RawMessage `json:"unit,omitempty"`
-}
+type BudgetSetReply = Budget
 
+// BudgetSetRequest: Owner only. No id: a new budget. action defaults to warn.
 type BudgetSetRequest struct {
-	Action  *string         `json:"action,omitempty"`
-	Id      json.RawMessage `json:"id,omitempty"`
-	Limit   *float64        `json:"limit,omitempty"`
-	Period  json.RawMessage `json:"period,omitempty"`
-	Scope   *string         `json:"scope,omitempty"`
-	ScopeId *string         `json:"scopeId,omitempty"`
-	Unit    json.RawMessage `json:"unit,omitempty"`
+	Action  *string `json:"action,omitempty"`
+	Id      *string `json:"id,omitempty"`
+	Limit   float64 `json:"limit"`
+	Period  *string `json:"period,omitempty"`
+	Scope   string  `json:"scope"`
+	ScopeId string  `json:"scopeId"`
+	Unit    string  `json:"unit"`
+}
+
+// BudgetSpend: basis measured (value is the spend in the budget's unit and period) or unverifiable (value null).
+type BudgetSpend struct {
+	Basis string   `json:"basis"`
+	Value *float64 `json:"value"`
 }
 
 type BudgetsListReply struct {
-	Budgets json.RawMessage `json:"budgets,omitempty"`
+	Budgets []Budget `json:"budgets"`
 }
 
 type BudgetsListRequest = map[string]json.RawMessage
@@ -333,16 +401,16 @@ type CatalogueMethodView struct {
 
 // CatalogueReply: The definition editors change methods to CatalogueMethodView items (docs/designs/fleet-definition-editors.md).
 type CatalogueReply struct {
-	Capability           json.RawMessage `json:"capability,omitempty"`
-	Methods              json.RawMessage `json:"methods,omitempty"`
-	ProjectId            json.RawMessage `json:"projectId,omitempty"`
-	RecommendationSource json.RawMessage `json:"recommendationSource,omitempty"`
-	RecommendedMethod    json.RawMessage `json:"recommendedMethod,omitempty"`
-	SharedDefault        json.RawMessage `json:"sharedDefault,omitempty"`
+	Capability           json.RawMessage              `json:"capability"`
+	Methods              []map[string]json.RawMessage `json:"methods"`
+	ProjectId            string                       `json:"projectId"`
+	RecommendationSource json.RawMessage              `json:"recommendationSource"`
+	RecommendedMethod    json.RawMessage              `json:"recommendedMethod"`
+	SharedDefault        json.RawMessage              `json:"sharedDefault"`
 }
 
 type CatalogueRequest struct {
-	ProjectId *string `json:"projectId,omitempty"`
+	ProjectId string `json:"projectId"`
 }
 
 // Change: One committed change (the change table), as GET /api/stream and changes_since deliver it.
@@ -439,70 +507,109 @@ const (
 // ConflictReasonValues lists every ConflictReason in schema order.
 var ConflictReasonValues = []ConflictReason{ConflictReasonBaseMoved, ConflictReasonRepositoryChanged, ConflictReasonNoChange, ConflictReasonWrongState, ConflictReasonInvalidDraft}
 
-type ConnectionsCreateReply = map[string]json.RawMessage
+// ConnectionAccess: Who besides the holder may use the API key: people (emails), projects and experiments.
+type ConnectionAccess struct {
+	Experiments []string `json:"experiments,omitempty"`
+	People      []string `json:"people,omitempty"`
+	Projects    []string `json:"projects,omitempty"`
+}
 
+// ConnectionView: An API connection; keys, spend and history only in connections_list.
+type ConnectionView struct {
+	Access    ConnectionAccess             `json:"access"`
+	Comment   string                       `json:"comment"`
+	CreatedAt float64                      `json:"createdAt"`
+	History   []map[string]json.RawMessage `json:"history,omitempty"`
+	Holder    string                       `json:"holder"`
+	Id        string                       `json:"id"`
+	Intake    string                       `json:"intake"`
+	Keys      []map[string]json.RawMessage `json:"keys,omitempty"`
+	Name      string                       `json:"name"`
+	Provider  string                       `json:"provider"`
+	Spend     map[string]json.RawMessage   `json:"spend,omitempty"`
+	Tools     []string                     `json:"tools,omitempty"`
+	UpdatedAt *float64                     `json:"updatedAt,omitempty"`
+}
+
+type ConnectionsCreateReply = ConnectionView
+
+// ConnectionsCreateRequest: holder: the owner may create a key for another person.
 type ConnectionsCreateRequest struct {
 	Comment  *string `json:"comment,omitempty"`
 	Holder   *string `json:"holder,omitempty"`
-	Name     *string `json:"name,omitempty"`
-	Provider *string `json:"provider,omitempty"`
+	Name     string  `json:"name"`
+	Provider string  `json:"provider"`
 }
 
+// ConnectionsKeyAddReply: The new key row (fingerprint, state, addedAt, addedBy); never the value.
 type ConnectionsKeyAddReply = map[string]json.RawMessage
 
+// ConnectionsKeyAddRequest: Owner only. The value goes to the secret file; the reply has its fingerprint only.
 type ConnectionsKeyAddRequest struct {
-	Connection *string `json:"connection,omitempty"`
-	Value      *string `json:"value,omitempty"`
+	Connection string `json:"connection"`
+	Value      string `json:"value"`
 }
 
+// ConnectionsKeyStateReply: The key row after the change.
 type ConnectionsKeyStateReply = map[string]json.RawMessage
 
+// ConnectionsKeyStateRequest: state active, draining or retired.
 type ConnectionsKeyStateRequest struct {
-	KeyId *string `json:"keyId,omitempty"`
-	State *string `json:"state,omitempty"`
+	KeyId string `json:"keyId"`
+	State string `json:"state"`
 }
 
 type ConnectionsListReply struct {
-	Connections json.RawMessage `json:"connections,omitempty"`
-	Providers   json.RawMessage `json:"providers,omitempty"`
+	Connections []ConnectionView           `json:"connections"`
+	Providers   map[string]json.RawMessage `json:"providers"`
 }
 
 type ConnectionsListRequest = map[string]json.RawMessage
 
-type ConnectionsSetAccessReply = map[string]json.RawMessage
+type ConnectionsSetAccessReply = ConnectionView
 
+// ConnectionsSetAccessRequest: access: {people, projects, experiments}, each a list of ids.
 type ConnectionsSetAccessRequest struct {
-	Access     json.RawMessage `json:"access,omitempty"`
-	Connection *string         `json:"connection,omitempty"`
+	Access     json.RawMessage `json:"access"`
+	Connection string          `json:"connection"`
 }
 
-type ConnectionsSetIntakeReply = map[string]json.RawMessage
+type ConnectionsSetIntakeReply = ConnectionView
 
+// ConnectionsSetIntakeRequest: intake all or paused.
 type ConnectionsSetIntakeRequest struct {
-	Connection *string         `json:"connection,omitempty"`
-	Intake     json.RawMessage `json:"intake,omitempty"`
+	Connection string `json:"connection"`
+	Intake     string `json:"intake"`
 }
 
-type ConnectionsTokenCreateReply = map[string]json.RawMessage
+// ConnectionsTokenCreateReply: token: the bearer value, shown once; refused: requested connections the owner cannot use.
+type ConnectionsTokenCreateReply struct {
+	Connections []map[string]json.RawMessage `json:"connections,omitempty"`
+	Name        string                       `json:"name"`
+	Refused     []string                     `json:"refused,omitempty"`
+	Token       *string                      `json:"token"`
+}
 
+// ConnectionsTokenCreateRequest: The owner only (not an agent). The token value is answered once.
 type ConnectionsTokenCreateRequest struct {
-	Connections json.RawMessage `json:"connections,omitempty"`
-	Name        *string         `json:"name,omitempty"`
+	Connections []string `json:"connections,omitempty"`
+	Name        string   `json:"name"`
 }
 
 type ConnectionsTokenListReply struct {
-	Tokens json.RawMessage `json:"tokens,omitempty"`
+	Tokens []TokenInfo `json:"tokens"`
 }
 
 type ConnectionsTokenListRequest = map[string]json.RawMessage
 
 type ConnectionsTokenRevokeReply struct {
-	Name    json.RawMessage `json:"name,omitempty"`
-	Revoked json.RawMessage `json:"revoked,omitempty"`
+	Name    string `json:"name"`
+	Revoked bool   `json:"revoked"`
 }
 
+// ConnectionsTokenRevokeRequest: Owner only.
 type ConnectionsTokenRevokeRequest struct {
-	Name *string `json:"name,omitempty"`
+	Name string `json:"name"`
 }
 
 // DefinitionConflict: Body of a 409 from definition_save and definition_create.
@@ -735,16 +842,27 @@ type DiffSide struct {
 	Revision   *int64 `json:"revision,omitempty"`
 }
 
+// DirectSearchReply: A pipeline run with its steps, state and results (pipelineRun).
 type DirectSearchReply = map[string]json.RawMessage
 
+// DirectSearchRequest: Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.
 type DirectSearchRequest struct {
-	Invocation *string `json:"invocation,omitempty"`
-	MethodId   *string `json:"methodId,omitempty"`
-	ProjectId  *string `json:"projectId,omitempty"`
-	Query      *string `json:"query,omitempty"`
-	RequestId  *string `json:"requestId,omitempty"`
-	Signature  *string `json:"signature,omitempty"`
+	MethodId  *string `json:"methodId,omitempty"`
+	ProjectId string  `json:"projectId"`
+	Query     string  `json:"query"`
+	RequestId string  `json:"requestId"`
 }
+
+// DispatchOrder: list: the section 6 order list; soonest_reset: ready candidates by earliest weekly reset among those with weekly left above 0 (fleet-people-access.md section 8)
+type DispatchOrder string
+
+const (
+	DispatchOrderList         DispatchOrder = "list"
+	DispatchOrderSoonestReset DispatchOrder = "soonest_reset"
+)
+
+// DispatchOrderValues lists every DispatchOrder in schema order.
+var DispatchOrderValues = []DispatchOrder{DispatchOrderList, DispatchOrderSoonestReset}
 
 type DraftInfo struct {
 	BaseRevision int64  `json:"baseRevision"`
@@ -922,14 +1040,19 @@ type FileRef struct {
 	Sha256 *string `json:"sha256"`
 }
 
-type FocusSetReply struct {
-	Focus     json.RawMessage `json:"focus,omitempty"`
-	SessionId json.RawMessage `json:"sessionId,omitempty"`
+type Focus struct {
+	ProjectIds json.RawMessage `json:"projectIds"`
 }
 
+type FocusSetReply struct {
+	Focus     Focus  `json:"focus"`
+	SessionId string `json:"sessionId"`
+}
+
+// FocusSetRequest: projectIds: a list of project ids in the caller's grants, or "*".
 type FocusSetRequest struct {
-	ProjectIds []string `json:"projectIds,omitempty"`
-	SessionId  *string  `json:"sessionId,omitempty"`
+	ProjectIds json.RawMessage `json:"projectIds"`
+	SessionId  string          `json:"sessionId"`
 }
 
 type HarnessModel struct {
@@ -948,42 +1071,83 @@ type HarnessModelsRequest struct {
 	Harness string `json:"harness"`
 }
 
+// HostRecord: A registered host (without its secret hash). harnesses: per harness name whether it is allowed; autoUpdate on, off or an RFC 3339 time.
+type HostRecord struct {
+	AutoUpdate json.RawMessage `json:"autoUpdate,omitempty"`
+	CreatedAt  float64         `json:"createdAt"`
+	Harnesses  json.RawMessage `json:"harnesses"`
+	Holder     *string         `json:"holder,omitempty"`
+	HostId     *string         `json:"hostId,omitempty"`
+	Id         string          `json:"id"`
+	Intake     string          `json:"intake"`
+	Name       *string         `json:"name,omitempty"`
+	Platform   *string         `json:"platform,omitempty"`
+	Roles      []string        `json:"roles,omitempty"`
+}
+
+// HostRow: One host as the Hosts screen shows it: configured, observed, or both; problems only while it polls.
+type HostRow struct {
+	AutoUpdate       json.RawMessage  `json:"autoUpdate"`
+	Capabilities     json.RawMessage  `json:"capabilities"`
+	Configured       bool             `json:"configured"`
+	Id               string           `json:"id"`
+	LastSeenAt       *float64         `json:"lastSeenAt"`
+	Platform         *string          `json:"platform"`
+	Problems         json.RawMessage  `json:"problems"`
+	Queued           int64            `json:"queued"`
+	Running          int64            `json:"running"`
+	RunningByHarness map[string]int64 `json:"runningByHarness"`
+	Slots            json.RawMessage  `json:"slots"`
+	Stores           string           `json:"stores"`
+	Update           json.RawMessage  `json:"update"`
+	Version          *string          `json:"version"`
+}
+
+// HostWriteReply: secret: only when Fleet minted it (no secretSha256 given); shown once.
+type HostWriteReply struct {
+	Host   HostRecord `json:"host"`
+	Secret *string    `json:"secret,omitempty"`
+}
+
 type HostsListReply struct {
-	Hosts        []map[string]json.RawMessage `json:"hosts"`
-	ServerNow    float64                      `json:"serverNow"`
-	StaleAfterMs float64                      `json:"staleAfterMs"`
+	Hosts        []HostRow `json:"hosts"`
+	ServerNow    int64     `json:"serverNow"`
+	StaleAfterMs int64     `json:"staleAfterMs"`
 }
 
 type HostsListRequest = map[string]json.RawMessage
 
-type HostsRegisterReply = map[string]json.RawMessage
+type HostsRegisterReply = HostWriteReply
 
+// HostsRegisterRequest: Owner only. secretSha256: the sha256 of a secret the host already holds; absent: Fleet mints one.
 type HostsRegisterRequest struct {
 	Harnesses    json.RawMessage `json:"harnesses,omitempty"`
 	Holder       *string         `json:"holder,omitempty"`
-	Id           json.RawMessage `json:"id,omitempty"`
+	Id           string          `json:"id"`
 	Name         *string         `json:"name,omitempty"`
-	Platform     json.RawMessage `json:"platform,omitempty"`
-	Roles        json.RawMessage `json:"roles,omitempty"`
-	SecretSha256 json.RawMessage `json:"secretSha256,omitempty"`
+	Platform     *string         `json:"platform,omitempty"`
+	Roles        []string        `json:"roles,omitempty"`
+	SecretSha256 *string         `json:"secretSha256,omitempty"`
 }
 
-type HostsRotateSecretReply = map[string]json.RawMessage
+type HostsRotateSecretReply = HostWriteReply
 
+// HostsRotateSecretRequest: Owner only.
 type HostsRotateSecretRequest struct {
-	Id           json.RawMessage `json:"id,omitempty"`
-	SecretSha256 json.RawMessage `json:"secretSha256,omitempty"`
+	Id           string  `json:"id"`
+	SecretSha256 *string `json:"secretSha256,omitempty"`
 }
 
 type HostsUpdateReply struct {
-	Host json.RawMessage `json:"host,omitempty"`
+	Host HostRecord `json:"host"`
 }
 
+// HostsUpdateRequest: Owner, or the holder for their own host.
 type HostsUpdateRequest struct {
 	AutoUpdate json.RawMessage `json:"autoUpdate,omitempty"`
 	Harnesses  json.RawMessage `json:"harnesses,omitempty"`
-	Id         json.RawMessage `json:"id,omitempty"`
-	Intake     json.RawMessage `json:"intake,omitempty"`
+	Id         string          `json:"id"`
+	Intake     *string         `json:"intake,omitempty"`
 }
 
 type LabCellActionReply = map[string]json.RawMessage
@@ -1237,6 +1401,18 @@ type LabScoreCorrectRequest struct {
 	Value     *string `json:"value,omitempty"`
 }
 
+type LimitRefreshSent struct {
+	Binding        string `json:"binding"`
+	ExecutionId    string `json:"executionId"`
+	HostId         string `json:"hostId"`
+	SubscriptionId string `json:"subscriptionId"`
+}
+
+type LimitRefreshSkipped struct {
+	Reason         string `json:"reason"`
+	SubscriptionId string `json:"subscriptionId"`
+}
+
 // ListFilter: The list filter of packages/view-url toPageParams; a null projectId is work outside projects.
 type ListFilter struct {
 	Archived  *bool    `json:"archived,omitempty"`
@@ -1347,23 +1523,44 @@ type OpError struct {
 	StatusCode int64  `json:"statusCode"`
 }
 
+// PeopleListReply: A non-owner sees only themself.
 type PeopleListReply struct {
-	People json.RawMessage `json:"people,omitempty"`
+	People []map[string]json.RawMessage `json:"people"`
 }
 
 type PeopleListRequest = map[string]json.RawMessage
 
+// PeopleSetReply: people: how many people the list now has.
 type PeopleSetReply struct {
-	People json.RawMessage `json:"people,omitempty"`
+	People int64 `json:"people"`
 }
 
+// PeopleSetRequest: Owner only: the whole people.json list, written atomically and reloaded.
 type PeopleSetRequest struct {
-	People json.RawMessage `json:"people,omitempty"`
+	People json.RawMessage `json:"people"`
 }
 
 type Person struct {
 	Email string `json:"email"`
 	Name  string `json:"name"`
+}
+
+type PersonSettings struct {
+	Email string        `json:"email"`
+	Order DispatchOrder `json:"order"`
+}
+
+type PersonSettingsGetReply = PersonSettings
+
+type PersonSettingsGetRequest struct {
+	Email *string `json:"email,omitempty"`
+}
+
+type PersonSettingsSetReply = PersonSettings
+
+type PersonSettingsSetRequest struct {
+	Email *string       `json:"email,omitempty"`
+	Order DispatchOrder `json:"order"`
 }
 
 type PipelineDefinition struct {
@@ -1372,19 +1569,20 @@ type PipelineDefinition struct {
 	Version int64          `json:"version"`
 }
 
+// PipelineGetReply: A pipeline run with its steps, state and results (pipelineRun).
 type PipelineGetReply = map[string]json.RawMessage
 
 type PipelineGetRequest struct {
 	ProjectId *string `json:"projectId,omitempty"`
-	RunId     *string `json:"runId,omitempty"`
+	RunId     string  `json:"runId"`
 }
 
 type PipelineHistoryReply struct {
-	Runs json.RawMessage `json:"runs,omitempty"`
+	Runs []map[string]json.RawMessage `json:"runs"`
 }
 
 type PipelineHistoryRequest struct {
-	ProjectId *string `json:"projectId,omitempty"`
+	ProjectId string `json:"projectId"`
 }
 
 type PipelineRerunReply struct {
@@ -1416,16 +1614,15 @@ type PipelineRunCreateRequest struct {
 	RequestId         string                     `json:"requestId"`
 }
 
+// PipelineRunReply: A pipeline run with its steps, state and results (pipelineRun).
 type PipelineRunReply = map[string]json.RawMessage
 
+// PipelineRunRequest: Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.
 type PipelineRunRequest struct {
-	Invocation *string         `json:"invocation,omitempty"`
-	MethodId   *string         `json:"methodId,omitempty"`
-	Pipeline   json.RawMessage `json:"pipeline,omitempty"`
-	ProjectId  *string         `json:"projectId,omitempty"`
-	Query      *string         `json:"query,omitempty"`
-	RequestId  *string         `json:"requestId,omitempty"`
-	Signature  *string         `json:"signature,omitempty"`
+	MethodId  *string `json:"methodId,omitempty"`
+	ProjectId string  `json:"projectId"`
+	Query     string  `json:"query"`
+	RequestId string  `json:"requestId"`
 }
 
 // PipelineStep: Step kinds are the registry's (D20); validatePipeline stays the full check.
@@ -1445,22 +1642,37 @@ type Problem struct {
 }
 
 type ProfilesListReply struct {
-	Profiles json.RawMessage `json:"profiles,omitempty"`
+	Profiles []map[string]json.RawMessage `json:"profiles"`
 }
 
 type ProfilesListRequest = map[string]json.RawMessage
 
+// ProjectContextReply: The project's context (projectContext): settings, roles, connections, rules.
 type ProjectContextReply = map[string]json.RawMessage
 
 type ProjectContextRequest struct {
-	ProjectId *string `json:"projectId,omitempty"`
+	ProjectId string `json:"projectId"`
 }
 
 type ProjectListReply struct {
-	Projects json.RawMessage `json:"projects,omitempty"`
+	Projects []map[string]json.RawMessage `json:"projects"`
 }
 
 type ProjectListRequest = map[string]json.RawMessage
+
+// ProjectQuestion: A project question to the operator; state waiting or answered.
+type ProjectQuestion struct {
+	Actor      string  `json:"actor"`
+	Answer     *string `json:"answer,omitempty"`
+	AnsweredAt *int64  `json:"answeredAt,omitempty"`
+	AnsweredBy *string `json:"answeredBy,omitempty"`
+	CreatedAt  int64   `json:"createdAt"`
+	Id         string  `json:"id"`
+	ProjectId  string  `json:"projectId"`
+	RequestId  string  `json:"requestId"`
+	State      string  `json:"state"`
+	Text       string  `json:"text"`
+}
 
 type ProjectReadinessReply struct {
 	Hosts     json.RawMessage `json:"hosts,omitempty"`
@@ -1472,24 +1684,22 @@ type ProjectReadinessRequest struct {
 	ProjectId       *string `json:"projectId,omitempty"`
 }
 
-type QuestionAnswerReply struct {
-	Answer json.RawMessage `json:"answer,omitempty"`
-	Id     json.RawMessage `json:"id,omitempty"`
-	State  json.RawMessage `json:"state,omitempty"`
-}
+// QuestionAnswerReply: A project question (ProjectQuestion), or the answered question row for any other question.
+type QuestionAnswerReply = map[string]json.RawMessage
 
+// QuestionAnswerRequest: Answers a project question, or any other question by id.
 type QuestionAnswerRequest struct {
-	Answer      json.RawMessage `json:"answer,omitempty"`
-	ArtifactIds []string        `json:"artifactIds,omitempty"`
-	QuestionId  *string         `json:"questionId,omitempty"`
+	Answer      string   `json:"answer"`
+	ArtifactIds []string `json:"artifactIds,omitempty"`
+	QuestionId  string   `json:"questionId"`
 }
 
-type QuestionAskReply = map[string]json.RawMessage
+type QuestionAskReply = ProjectQuestion
 
 type QuestionAskRequest struct {
-	ProjectId *string `json:"projectId,omitempty"`
-	RequestId *string `json:"requestId,omitempty"`
-	Text      *string `json:"text,omitempty"`
+	ProjectId string `json:"projectId"`
+	RequestId string `json:"requestId"`
+	Text      string `json:"text"`
 }
 
 // QuestionBlock: options: the stored options as they are (a list of labels for agent questions).
@@ -1508,23 +1718,54 @@ type QuestionBlock struct {
 }
 
 type QuestionHistoryReply struct {
-	Questions json.RawMessage `json:"questions,omitempty"`
+	Questions []ProjectQuestion `json:"questions"`
 }
 
 type QuestionHistoryRequest struct {
-	ProjectId *string `json:"projectId,omitempty"`
+	ProjectId string `json:"projectId"`
 }
 
-type QuestionsAnswerReply = map[string]json.RawMessage
+type QuestionKind string
+
+const (
+	QuestionKindOperatorDecision QuestionKind = "operator_decision"
+	QuestionKindAgentQuestion    QuestionKind = "agent_question"
+	QuestionKindAcceptance       QuestionKind = "acceptance"
+)
+
+// QuestionKindValues lists every QuestionKind in schema order.
+var QuestionKindValues = []QuestionKind{QuestionKindOperatorDecision, QuestionKindAgentQuestion, QuestionKindAcceptance}
+
+// QuestionRow: One question row (questionCols in go/coordinator/tasks.go); artifactIds and cause only when set.
+type QuestionRow struct {
+	Answer      *string         `json:"answer"`
+	AnsweredAt  *string         `json:"answeredAt"`
+	AnsweredBy  *string         `json:"answeredBy"`
+	ArtifactIds json.RawMessage `json:"artifactIds,omitempty"`
+	AskedAt     string          `json:"askedAt"`
+	AskedBy     *string         `json:"askedBy"`
+	Cause       json.RawMessage `json:"cause,omitempty"`
+	ExecutionId *string         `json:"executionId"`
+	Id          string          `json:"id"`
+	Kind        QuestionKind    `json:"kind"`
+	Options     json.RawMessage `json:"options"`
+	ProjectId   *string         `json:"projectId"`
+	SessionId   *string         `json:"sessionId"`
+	State       string          `json:"state"`
+	TaskId      *string         `json:"taskId"`
+	Text        string          `json:"text"`
+}
+
+type QuestionsAnswerReply = QuestionRow
 
 type QuestionsAnswerRequest struct {
-	Answer      json.RawMessage `json:"answer,omitempty"`
-	ArtifactIds []string        `json:"artifactIds,omitempty"`
-	QuestionId  *string         `json:"questionId,omitempty"`
+	Answer      string   `json:"answer"`
+	ArtifactIds []string `json:"artifactIds,omitempty"`
+	QuestionId  string   `json:"questionId"`
 }
 
 type QuestionsListReply struct {
-	Questions []map[string]json.RawMessage `json:"questions"`
+	Questions []QuestionRow `json:"questions"`
 }
 
 type QuestionsListRequest struct {
@@ -1534,7 +1775,7 @@ type QuestionsListRequest struct {
 }
 
 type QuestionsReply struct {
-	Questions json.RawMessage `json:"questions,omitempty"`
+	Questions []map[string]json.RawMessage `json:"questions"`
 }
 
 type QuestionsRequest struct {
@@ -1543,7 +1784,7 @@ type QuestionsRequest struct {
 }
 
 type QueueListReply struct {
-	Queued json.RawMessage `json:"queued,omitempty"`
+	Queued []map[string]json.RawMessage `json:"queued"`
 }
 
 type QueueListRequest struct {
@@ -1560,11 +1801,17 @@ type ReasoningBlock struct {
 	Stream      *string `json:"stream,omitempty"`
 }
 
-type RecommendationSetReply = map[string]json.RawMessage
+type RecommendationSetReply struct {
+	Actor      string `json:"actor"`
+	Id         string `json:"id"`
+	MethodId   string `json:"methodId"`
+	ProjectId  string `json:"projectId"`
+	SelectedAt int64  `json:"selectedAt"`
+}
 
 type RecommendationSetRequest struct {
-	MethodId  *string `json:"methodId,omitempty"`
-	ProjectId *string `json:"projectId,omitempty"`
+	MethodId  string `json:"methodId"`
+	ProjectId string `json:"projectId"`
 }
 
 type ReconcileReply = map[string]json.RawMessage
@@ -1706,11 +1953,11 @@ type SessionGetRequest struct {
 }
 
 type SessionHandoffsReply struct {
-	Handoffs json.RawMessage `json:"handoffs,omitempty"`
+	Handoffs []map[string]json.RawMessage `json:"handoffs"`
 }
 
 type SessionHandoffsRequest struct {
-	SessionId *string `json:"sessionId,omitempty"`
+	SessionId string `json:"sessionId"`
 }
 
 type SessionProfileReply struct {
@@ -1809,14 +2056,15 @@ type SessionsListRequest struct {
 }
 
 type SettingChangesReply struct {
-	Changes    json.RawMessage `json:"changes,omitempty"`
-	NextBefore json.RawMessage `json:"nextBefore,omitempty"`
+	Changes    []map[string]json.RawMessage `json:"changes"`
+	NextBefore *int64                       `json:"nextBefore"`
 }
 
+// SettingChangesRequest: target: one setting target (host:<id>, connection:<name>, people, ...); before: the nextBefore of the previous page.
 type SettingChangesRequest struct {
-	Before json.RawMessage `json:"before,omitempty"`
-	Limit  *float64        `json:"limit,omitempty"`
-	Target json.RawMessage `json:"target,omitempty"`
+	Before *int64  `json:"before,omitempty"`
+	Limit  *int64  `json:"limit,omitempty"`
+	Target *string `json:"target,omitempty"`
 }
 
 type StopCommandRef struct {
@@ -1832,16 +2080,37 @@ type StopOutcome struct {
 	StopCommand *StopCommandRef `json:"stopCommand,omitempty"`
 }
 
-type StoreSetFreeSpaceWarningReply = map[string]json.RawMessage
-
-type StoreSetFreeSpaceWarningRequest struct {
-	Bytes   *float64 `json:"bytes,omitempty"`
-	StoreId *string  `json:"storeId,omitempty"`
+type StoreSetFreeSpaceWarningReply struct {
+	Id    string `json:"id"`
+	State string `json:"state"`
 }
 
+// StoreSetFreeSpaceWarningRequest: Operator only. bytes: a whole number; null clears the warning.
+type StoreSetFreeSpaceWarningRequest struct {
+	Bytes   *float64 `json:"bytes,omitempty"`
+	StoreId string   `json:"storeId"`
+}
+
+// StoreView: One store row (StoreRow in go/coordinator/artifacts.go).
+type StoreView struct {
+	Bucket                string  `json:"bucket"`
+	CapacityBytes         *int64  `json:"capacity_bytes"`
+	Endpoint              string  `json:"endpoint"`
+	FreeSpaceWarningBytes *int64  `json:"free_space_warning_bytes"`
+	Holder                *string `json:"holder"`
+	HostId                string  `json:"host_id"`
+	Id                    string  `json:"id"`
+	LocalEndpoint         *string `json:"local_endpoint"`
+	RequiresLogon         bool    `json:"requires_logon"`
+	State                 string  `json:"state"`
+	UsedBytes             *int64  `json:"used_bytes"`
+	Zone                  *string `json:"zone"`
+}
+
+// StoresListReply: problems: full stores and placement problems the caller may see, each with its actions.
 type StoresListReply struct {
-	Problems json.RawMessage `json:"problems,omitempty"`
-	Stores   json.RawMessage `json:"stores,omitempty"`
+	Problems []map[string]json.RawMessage `json:"problems"`
+	Stores   []StoreView                  `json:"stores"`
 }
 
 type StoresListRequest = map[string]json.RawMessage
@@ -1851,53 +2120,157 @@ type StreamCursor struct {
 	Cursor int64 `json:"cursor"`
 }
 
+// SubscriptionLimit: The subscription fields as stored on the managed-account record.
+type SubscriptionLimit struct {
+	Harness   json.RawMessage       `json:"harness"`
+	Holder    json.RawMessage       `json:"holder"`
+	Id        string                `json:"id"`
+	Intake    json.RawMessage       `json:"intake"`
+	Name      json.RawMessage       `json:"name"`
+	Readings  []SubscriptionReading `json:"readings"`
+	SwitchPct json.RawMessage       `json:"switchPct"`
+}
+
+type SubscriptionLimitsRefreshReply struct {
+	Sent    []LimitRefreshSent    `json:"sent"`
+	Skipped []LimitRefreshSkipped `json:"skipped"`
+}
+
+// SubscriptionLimitsRefreshRequest: fleet-people-access.md section 8 "Read without a run": one subscription, or every one the caller holds (the owner: all)
+type SubscriptionLimitsRefreshRequest struct {
+	SubscriptionId *string `json:"subscriptionId,omitempty"`
+}
+
 type SubscriptionLimitsReply struct {
-	ServerNow     json.RawMessage `json:"serverNow,omitempty"`
-	Subscriptions json.RawMessage `json:"subscriptions,omitempty"`
+	ServerNow     int64               `json:"serverNow"`
+	Subscriptions []SubscriptionLimit `json:"subscriptions"`
 }
 
 type SubscriptionLimitsRequest = map[string]json.RawMessage
 
-type TaskCancelReply = map[string]json.RawMessage
-
-type TaskCancelRequest struct {
-	TaskId *string `json:"taskId,omitempty"`
+type SubscriptionReading struct {
+	At       int64    `json:"at"`
+	HostId   *string  `json:"hostId"`
+	Pct      *float64 `json:"pct"`
+	Period   string   `json:"period"`
+	ResetsAt *float64 `json:"resetsAt"`
+	State    string   `json:"state"`
+	Status   *string  `json:"status"`
 }
 
-type TaskCreateReply = map[string]json.RawMessage
+type TaskCancelReply = TaskDetail
 
+type TaskCancelRequest struct {
+	TaskId string `json:"taskId"`
+}
+
+type TaskCreateReply = TaskDetail
+
+// TaskCreateRequest: held: the task waits for task_release (always for an agent).
 type TaskCreateRequest struct {
 	CompletionRequirements json.RawMessage `json:"completionRequirements,omitempty"`
-	DependsOn              json.RawMessage `json:"dependsOn,omitempty"`
-	ExpectedOutcome        json.RawMessage `json:"expectedOutcome,omitempty"`
+	DependsOn              []string        `json:"dependsOn,omitempty"`
+	ExpectedOutcome        *string         `json:"expectedOutcome,omitempty"`
 	Held                   *bool           `json:"held,omitempty"`
-	Priority               json.RawMessage `json:"priority,omitempty"`
+	Priority               *string         `json:"priority,omitempty"`
 	ProjectId              *string         `json:"projectId,omitempty"`
-	ResultDestination      json.RawMessage `json:"resultDestination,omitempty"`
-	Title                  json.RawMessage `json:"title,omitempty"`
+	ResultDestination      *string         `json:"resultDestination,omitempty"`
+	Title                  string          `json:"title"`
+}
+
+// TaskDependency: kind blocks or revision_of.
+type TaskDependency struct {
+	Id   string `json:"id"`
+	Kind string `json:"kind"`
 }
 
 type TaskDerivedCheckReply struct {
-	Checked json.RawMessage `json:"checked,omitempty"`
-	Drifted json.RawMessage `json:"drifted,omitempty"`
+	Checked int64              `json:"checked"`
+	Drifted []TaskDerivedDrift `json:"drifted"`
 }
 
 type TaskDerivedCheckRequest = map[string]json.RawMessage
 
-type TaskGetReply = map[string]json.RawMessage
-
-type TaskGetRequest struct {
-	TaskId *string `json:"taskId,omitempty"`
+type TaskDerivedDrift struct {
+	Expected json.RawMessage `json:"expected"`
+	Stored   json.RawMessage `json:"stored"`
+	TaskId   string          `json:"taskId"`
 }
 
-type TaskHoldReply = map[string]json.RawMessage
+// TaskDetail: A task with its progress, totals, executions, dependencies and questions (taskGet).
+type TaskDetail struct {
+	AcceptedArtifactIds    []string         `json:"acceptedArtifactIds"`
+	AcceptedAt             *string          `json:"acceptedAt"`
+	AcceptedBy             *string          `json:"acceptedBy"`
+	CompletionRequirements json.RawMessage  `json:"completionRequirements"`
+	Cost                   json.RawMessage  `json:"cost"`
+	CreatedAt              string           `json:"createdAt"`
+	CreatedBy              *string          `json:"createdBy"`
+	DeliveryMethod         json.RawMessage  `json:"deliveryMethod"`
+	Dependencies           []TaskDependency `json:"dependencies"`
+	DirectedBy             *string          `json:"directedBy"`
+	Executions             []ExecutionRow   `json:"executions"`
+	ExpectedOutcome        *string          `json:"expectedOutcome"`
+	Id                     string           `json:"id"`
+	LatestResult           json.RawMessage  `json:"latestResult"`
+	LegacyId               *string          `json:"legacyId"`
+	LegacyKind             *string          `json:"legacyKind"`
+	OpenQuestions          json.RawMessage  `json:"openQuestions"`
+	PauseReason            *string          `json:"pauseReason"`
+	Priority               string           `json:"priority"`
+	Progress               TaskProgress     `json:"progress"`
+	ProjectId              *string          `json:"projectId"`
+	Questions              []QuestionRow    `json:"questions"`
+	RequestedBy            *string          `json:"requestedBy"`
+	ResultDestination      *string          `json:"resultDestination"`
+	State                  TaskState        `json:"state"`
+	TakenFrom              *string          `json:"takenFrom"`
+	Title                  string           `json:"title"`
+	UpdatedAt              string           `json:"updatedAt"`
+	WaitReason             *string          `json:"waitReason"`
+}
+
+type TaskGetReply = TaskDetail
+
+type TaskGetRequest struct {
+	TaskId string `json:"taskId"`
+}
+
+type TaskHoldReply = TaskDetail
 
 type TaskHoldRequest struct {
-	TaskId *string `json:"taskId,omitempty"`
+	TaskId string `json:"taskId"`
+}
+
+type TaskListItem struct {
+	AcceptedArtifactIds    []string        `json:"acceptedArtifactIds"`
+	AcceptedAt             *string         `json:"acceptedAt"`
+	AcceptedBy             *string         `json:"acceptedBy"`
+	CompletionRequirements json.RawMessage `json:"completionRequirements"`
+	CreatedAt              string          `json:"createdAt"`
+	CreatedBy              *string         `json:"createdBy"`
+	DeliveryMethod         json.RawMessage `json:"deliveryMethod"`
+	DirectedBy             *string         `json:"directedBy"`
+	ExpectedOutcome        *string         `json:"expectedOutcome"`
+	Id                     string          `json:"id"`
+	LegacyId               *string         `json:"legacyId"`
+	LegacyKind             *string         `json:"legacyKind"`
+	OpenQuestions          json.RawMessage `json:"openQuestions"`
+	PauseReason            *string         `json:"pauseReason"`
+	Priority               string          `json:"priority"`
+	Progress               TaskProgress    `json:"progress"`
+	ProjectId              *string         `json:"projectId"`
+	RequestedBy            *string         `json:"requestedBy"`
+	ResultDestination      *string         `json:"resultDestination"`
+	State                  TaskState       `json:"state"`
+	TakenFrom              *string         `json:"takenFrom"`
+	Title                  string          `json:"title"`
+	UpdatedAt              string          `json:"updatedAt"`
+	WaitReason             *string         `json:"waitReason"`
 }
 
 type TaskListReply struct {
-	Tasks json.RawMessage `json:"tasks,omitempty"`
+	Tasks []TaskListItem `json:"tasks"`
 }
 
 type TaskListRequest struct {
@@ -1921,31 +2294,59 @@ type TaskPageRequest struct {
 	Limit       *int64            `json:"limit,omitempty"`
 }
 
-type TaskReleaseReply = map[string]json.RawMessage
-
-type TaskReleaseRequest struct {
-	TaskId *string `json:"taskId,omitempty"`
+// TaskProgress: executions: the count; byState: counts by execution state.
+type TaskProgress struct {
+	ByState    json.RawMessage `json:"byState"`
+	Executions json.RawMessage `json:"executions"`
 }
 
-type TaskRequestAcceptanceReply = map[string]json.RawMessage
+type TaskReleaseReply = TaskDetail
 
+type TaskReleaseRequest struct {
+	TaskId string `json:"taskId"`
+}
+
+type TaskRequestAcceptanceReply = QuestionRow
+
+// TaskRequestAcceptanceRequest: No artifactIds: the task's stored originals.
 type TaskRequestAcceptanceRequest struct {
 	ArtifactIds []string `json:"artifactIds,omitempty"`
-	TaskId      *string  `json:"taskId,omitempty"`
+	TaskId      string   `json:"taskId"`
 	Text        *string  `json:"text,omitempty"`
 }
 
-type TaskTakeReply = map[string]json.RawMessage
+// TaskState: task_state in go/coordinator/schema.sql.
+type TaskState string
+
+const (
+	TaskStateQueued     TaskState = "queued"
+	TaskStateInProgress TaskState = "in_progress"
+	TaskStateWaiting    TaskState = "waiting"
+	TaskStatePaused     TaskState = "paused"
+	TaskStateCompleted  TaskState = "completed"
+	TaskStateFailed     TaskState = "failed"
+	TaskStateCancelled  TaskState = "cancelled"
+)
+
+// TaskStateValues lists every TaskState in schema order.
+var TaskStateValues = []TaskState{TaskStateQueued, TaskStateInProgress, TaskStateWaiting, TaskStatePaused, TaskStateCompleted, TaskStateFailed, TaskStateCancelled}
+
+type TaskTakeReply = TaskDetail
 
 type TaskTakeRequest struct {
-	TaskId *string `json:"taskId,omitempty"`
+	TaskId string `json:"taskId"`
 }
 
-type TaskUpdateReply = map[string]json.RawMessage
+type TaskUpdateReply = TaskDetail
 
+// TaskUpdateRequest: action pause, resume, cancel or fail (people only); the other fields replace the stored value when present.
 type TaskUpdateRequest struct {
-	Action *string `json:"action,omitempty"`
-	TaskId *string `json:"taskId,omitempty"`
+	Action            *string `json:"action,omitempty"`
+	ExpectedOutcome   *string `json:"expectedOutcome,omitempty"`
+	Priority          *string `json:"priority,omitempty"`
+	ResultDestination *string `json:"resultDestination,omitempty"`
+	TaskId            string  `json:"taskId"`
+	Title             *string `json:"title,omitempty"`
 }
 
 // TextBlock: role agent or operator; by: the sender of an operator message; stream open or cut-off while a delta is the newest text; harness, model and effort mark agent text.
@@ -2038,6 +2439,14 @@ type ThreadSearchRequest struct {
 	Q      string    `json:"q"`
 }
 
+type TokenInfo struct {
+	Connections json.RawMessage `json:"connections"`
+	CreatedAt   json.RawMessage `json:"createdAt"`
+	DirectedBy  json.RawMessage `json:"directedBy"`
+	Name        string          `json:"name"`
+	RevokedAt   json.RawMessage `json:"revokedAt"`
+}
+
 // ToolBlock: input and output are the harness's own values; times in ms.
 type ToolBlock struct {
 	At          *int64          `json:"at,omitempty"`
@@ -2095,40 +2504,57 @@ type VariantVsBaseline struct {
 	Wins         *int64   `json:"wins,omitempty"`
 }
 
+// ViewLinkReply: For view: url and path; for url: the parsed view.
 type ViewLinkReply struct {
-	Path json.RawMessage `json:"path,omitempty"`
+	Path *string         `json:"path,omitempty"`
+	Url  *string         `json:"url,omitempty"`
+	View json.RawMessage `json:"view,omitempty"`
+}
+
+// ViewLinkRequest: Exactly one of view (a view state to link) or url (a Fleet URL to read back).
+type ViewLinkRequest struct {
 	Url  json.RawMessage `json:"url,omitempty"`
 	View json.RawMessage `json:"view,omitempty"`
 }
 
-type ViewLinkRequest struct {
-	Url  *string `json:"url,omitempty"`
-	View *string `json:"view,omitempty"`
-}
-
+// WatchGetReply: No watch: watch is absent.
 type WatchGetReply struct {
-	Watch json.RawMessage `json:"watch,omitempty"`
+	Watch *WatchRecord `json:"watch,omitempty"`
 }
 
 type WatchGetRequest struct {
-	SessionId *string `json:"sessionId,omitempty"`
+	SessionId string `json:"sessionId"`
 }
 
-type WatchSetReply = map[string]json.RawMessage
+// WatchRecord: A session's watch: kinds of foreign changes that wake it, an optional timer, and its wake count.
+type WatchRecord struct {
+	Cursor     int64           `json:"cursor"`
+	Id         string          `json:"id"`
+	Kinds      []string        `json:"kinds"`
+	LastError  *string         `json:"lastError,omitempty"`
+	LastWakeAt json.RawMessage `json:"lastWakeAt,omitempty"`
+	NextWakeAt *int64          `json:"nextWakeAt,omitempty"`
+	SessionId  string          `json:"sessionId"`
+	TimerMs    *float64        `json:"timerMs,omitempty"`
+	Wakes      int64           `json:"wakes"`
+}
 
+type WatchSetReply = WatchRecord
+
+// WatchSetRequest: kinds: task, question, execution, host.
 type WatchSetRequest struct {
-	Kinds     json.RawMessage `json:"kinds,omitempty"`
-	SessionId *string         `json:"sessionId,omitempty"`
-	TimerMs   *float64        `json:"timerMs,omitempty"`
+	Kinds     []string `json:"kinds"`
+	SessionId string   `json:"sessionId"`
+	TimerMs   *float64 `json:"timerMs,omitempty"`
 }
 
 type WatchStopReply struct {
-	SessionId json.RawMessage `json:"sessionId,omitempty"`
-	Stopped   json.RawMessage `json:"stopped,omitempty"`
+	SessionId string `json:"sessionId"`
+	Stopped   bool   `json:"stopped"`
 }
 
 type WatchStopRequest struct {
-	SessionId *string `json:"sessionId,omitempty"`
+	SessionId string `json:"sessionId"`
 }
 
 type Window struct {
@@ -2140,18 +2566,30 @@ type Window struct {
 	WallMsMedian *int64   `json:"wallMsMedian"`
 }
 
+// WorkerDoneReply: action accepted (with the report) or rejected (with code: invalid_outcome, stale_dispatch, already_reported, native_identity_conflict, and reason).
 type WorkerDoneReply struct {
-	Action      json.RawMessage `json:"action,omitempty"`
-	Duplicate   json.RawMessage `json:"duplicate,omitempty"`
-	ExecutionId json.RawMessage `json:"executionId,omitempty"`
-	Report      json.RawMessage `json:"report,omitempty"`
+	Action      string        `json:"action"`
+	At          *int64        `json:"at,omitempty"`
+	Code        *string       `json:"code,omitempty"`
+	Duplicate   *bool         `json:"duplicate,omitempty"`
+	ExecutionId string        `json:"executionId"`
+	Id          *string       `json:"id,omitempty"`
+	Reason      *string       `json:"reason,omitempty"`
+	Report      *WorkerReport `json:"report,omitempty"`
 }
 
+// WorkerDoneRequest: outcome succeeded or failed; anything else is recorded as rejected (invalid_outcome). summary: a string; any other value is stored as null.
 type WorkerDoneRequest struct {
-	ExecutionId     *string `json:"executionId,omitempty"`
-	NativeSessionId *string `json:"nativeSessionId,omitempty"`
-	Outcome         *string `json:"outcome,omitempty"`
-	Summary         *string `json:"summary,omitempty"`
+	ExecutionId     string          `json:"executionId"`
+	NativeSessionId *string         `json:"nativeSessionId,omitempty"`
+	Outcome         json.RawMessage `json:"outcome,omitempty"`
+	Summary         json.RawMessage `json:"summary,omitempty"`
+}
+
+type WorkerReport struct {
+	At      int64   `json:"at"`
+	Outcome string  `json:"outcome"`
+	Summary *string `json:"summary"`
 }
 
 // Operations: every coordinator operation; each name has <Name>Request and <Name>Reply.
@@ -2217,6 +2655,8 @@ var Operations = map[string]Operation{
 	"message_send":                 {Read: false, Long: false, Errors: []int{400, 409}},
 	"people_list":                  {Read: true, Long: false, Errors: []int{}},
 	"people_set":                   {Read: false, Long: true, Errors: []int{400, 403, 409}},
+	"person_settings_get":          {Read: true, Long: false, Errors: []int{403}},
+	"person_settings_set":          {Read: false, Long: false, Errors: []int{400, 403}},
 	"pipeline_get":                 {Read: true, Long: false, Errors: []int{400, 403}},
 	"pipeline_history":             {Read: true, Long: false, Errors: []int{404}},
 	"pipeline_run":                 {Read: false, Long: true, Errors: []int{}},
@@ -2250,6 +2690,7 @@ var Operations = map[string]Operation{
 	"store_set_free_space_warning": {Read: false, Long: false, Errors: []int{400, 403, 404}},
 	"stores_list":                  {Read: true, Long: false, Errors: []int{}},
 	"subscription_limits":          {Read: true, Long: false, Errors: []int{}},
+	"subscription_limits_refresh":  {Read: false, Long: false, Errors: []int{403, 404}},
 	"task_cancel":                  {Read: false, Long: false, Errors: []int{}},
 	"task_create":                  {Read: false, Long: false, Errors: []int{400}},
 	"task_derived_check":           {Read: true, Long: false, Errors: []int{}},

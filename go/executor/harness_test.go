@@ -215,3 +215,14 @@ func TestRegistryCommand(t *testing.T) {
 		t.Fatal(app.Args)
 	}
 }
+
+// Requirement: a Claude get_usage answer (shape seen live from Claude Code 2.1.319) becomes limit windows: seven_day
+// as weekly with its percent and reset, model_scoped as weekly-<model>, null windows and non-limit keys skipped
+// (fleet-people-access.md section 8). Risk: Claude subscriptions show no percent and no per-model limit.
+func TestClaudeUsageReading(t *testing.T) {
+	answer := j(`{"rate_limits":{"five_hour":null,"seven_day":{"utilization":74,"resets_at":"2026-11-16T05:00:00.015107+00:00","limit_dollars":null},
+		"seven_day_opus":null,"seven_day_breakdown":{"rows":[]},"extra_usage":{"utilization":null},
+		"model_scoped":[{"display_name":"Fable","utilization":14,"resets_at":"2026-11-16T05:00:00.015240+00:00"}]}}`)
+	eq(t, claudeUsageReading(answer, nil)["readings"],
+		`[{"period":"weekly","pct":74,"resetsAt":1794805200015},{"period":"weekly-fable","pct":14,"resetsAt":1794805200015,"model":"fable"}]`)
+}
