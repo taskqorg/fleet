@@ -53,9 +53,15 @@ export function LabCreate() {
   const live = useRef(true), identity = useRef(''), current = useRef(receipt), busy = useRef(false);
   current.current = receipt;
   const persist = (next: Receipt) => { current.current = next; if (live.current) setReceipt(next); if (identity.current) try { sessionStorage.setItem(identity.current, JSON.stringify(next)); } catch { if (live.current) setStorageWarning('Browser storage is unavailable. Keep this page open until creation is resolved.'); } };
+  const clearAccess = () => {
+    identity.current = ''; busy.current = true; setKey('');
+    current.current = { draft: blank(), state: 'editing' }; setReceipt(current.current);
+    setPicker(null); setQuery(''); setProjects([]); setPipelines([]); setExamples([]);
+    setError('Access changed. Reload before creating a draft.');
+  };
   useEffect(() => {
     live.current = true;
-    const cleared = () => { identity.current = ''; busy.current = true; setKey(''); setReceipt({ draft: blank(), state: 'editing' }); setError('Access changed. Reload before creating a draft.'); };
+    const cleared = clearAccess;
     onClear.add(cleared);
     (async () => {
       try {
@@ -65,6 +71,7 @@ export function LabCreate() {
         let saved: Receipt | null = null; try { saved = JSON.parse(sessionStorage.getItem(k) ?? 'null'); } catch { /* start an empty draft */ }
         if (saved?.draft && typeof saved.draft.projectId === 'string' && typeof saved.draft.pipelineId === 'string' && typeof saved.draft.repeats === 'string' && Array.isArray(saved.draft.examples) && Array.isArray(saved.draft.variants) && Array.isArray(saved.draft.evaluators) && Array.isArray(saved.draft.budgets) && ['editing', 'pending', 'uncertain', 'created'].includes(saved.state)) {
           if (saved.state === 'pending') saved = { ...saved, state: 'uncertain', message: 'The previous request has no confirmed reply. Review experiments before starting another draft.' };
+          if (saved.state === 'created') saved = saved.id ? { ...saved, message: 'Creation confirmed. Read the retained details to continue.' } : { ...saved, state: 'uncertain', message: 'The saved reply has no experiment identity. Review experiments.' };
           persist(saved);
         }
         busy.current = false; setKey(k); setError('');
@@ -74,18 +81,18 @@ export function LabCreate() {
         setExamples(e.examples.map(e => ({ id: String(e.artifactId), name: String(e.name) })));
       } catch (e: any) { if (live.current) setError(e.message); }
     })();
-    return () => { live.current = false; onClear.delete(cleared); };
+    return () => { live.current = false; identity.current = ''; onClear.delete(cleared); }; 
   }, []);
   useEffect(() => {
     const verify = async () => { try { const me = await op('me', {}); const next = PREFIX + me.email + ':' + me.grantsVersion;
-      if (identity.current && next !== identity.current) { clearDrafts(); identity.current = ''; busy.current = true; setKey(''); setReceipt({ draft: blank(), state: 'editing' }); setError('Access changed. Reload before creating a draft.'); }
+      if (identity.current && next !== identity.current) { clearDrafts(); clearAccess(); }
     } catch { /* ordinary signed-out handling clears the cache */ } };
     addEventListener('focus', verify); return () => removeEventListener('focus', verify);
   }, []);
   const d = receipt.draft;
-  useEffect(() => { let active = true; setPipelines([]); if (d.projectId) op('definition_list', { kind: 'pipeline', projectId: d.projectId }).then(x => {
-    if (active) setPipelines(x.items.filter(p => p.revision > 0).map(p => ({ id: p.id, name: `${p.name} · r${p.revision}` })));
-  }).catch(e => { if (active) setError(e.message); }); return () => { active = false; }; }, [d.projectId]);
+  useEffect(() => { let active = true; const scope = identity.current, project = d.projectId; setPipelines([]); if (d.projectId) op('definition_list', { kind: 'pipeline', projectId: d.projectId }).then(x => {
+    if (active && identity.current === scope && current.current.draft.projectId === project) setPipelines(x.items.filter(p => p.revision > 0).map(p => ({ id: p.id, name: `${p.name} · r${p.revision}` })));
+  }).catch(e => { if (active && identity.current === scope) setError(e.message); }); return () => { active = false; }; }, [d.projectId]);
   const edit = (change: Partial<Draft>) => { if (busy.current || current.current.state !== 'editing') return; persist({ draft: { ...current.current.draft, ...change }, state: 'editing' }); setError(''); };
   const pick = (label: string, options: Option[], selected: string[], choose: (id: string) => void, multiple = false) => { invoker.current = document.activeElement as HTMLElement; setQuery(''); setPicker({ label, options, selected, choose, multiple }); };
   const closePicker = () => { setPicker(null); requestAnimationFrame(() => invoker.current?.focus()); };
@@ -103,7 +110,7 @@ export function LabCreate() {
     } catch (e: any) { if (identity.current === k) persist({ draft, state: 'created', id, message: `Creation confirmed; details unavailable: ${e.message}` }); }
   };
   const create = async () => {
-    if (!key || busy.current || current.current.state !== 'editing' || !online.value || signedOut.value) return;
+    if (picker || !key || busy.current || current.current.state !== 'editing' || !online.value || signedOut.value) return;
     const draft = current.current.draft; let body: Ops['lab_experiment_create']['request'];
     try { body = request(draft); } catch (e: any) { setError(e.message); return; }
     busy.current = true; setPicker(null); const k = identity.current; persist({ draft, state: 'pending' }); setError('');
@@ -119,13 +126,15 @@ export function LabCreate() {
     } finally { busy.current = false; }
   };
   let invalid = ''; try { request(d); } catch (e: any) { invalid = e.message; }
-  const disabled = !key ? 'Loading identity and access' : receipt.state !== 'editing' ? 'Resolve the previous creation first' : !online.value ? 'offline' : signedOut.value ? 'signed out' : undefined;
+  const disabled = picker ? 'Finish choosing first' : !key ? 'Loading identity and access' : receipt.state !== 'editing' ? 'Resolve the previous creation first' : !online.value ? 'offline' : signedOut.value ? 'signed out' : undefined;
   const field = (label: string, key: 'goal' | 'hypothesis' | 'decisionRule' | 'labGroup' | 'repeats' | 'max' | 'k', multiline = false) => <TextField label={label} value={d[key]} onChange={v => edit({ [key]: v })} multiline={multiline} type={['repeats', 'max', 'k'].includes(key) ? 'number' : 'text'} disabledReason={disabled} />;
   const options = (xs: string[]) => xs.map(id => ({ id, label: id }));
-  const list = <><header class="page-h"><h1>{picker?.label ?? 'New experiment'}</h1><span class="grow" /><Button label={picker ? 'Done choosing' : 'Experiments'} icon="x" iconOnly onClick={() => picker ? closePicker() : go('/lab')} /></header>
-    {picker ? <><SearchField label={`Search ${picker.label}`} value={query} onInput={setQuery} onSearch={() => {}} /><VirtualList items={picker.options.filter(x => (x.name + x.id).toLowerCase().includes(query.toLowerCase()))} getKey={x => x.id} rowHeight={ROW2} follow="top" label={picker.label} columns="1.25rem minmax(0,1fr) auto"
+  const available = !picker ? [] : picker.label === 'Projects' ? projects : picker.label === 'Approved examples' ? examples : picker.label === 'Primary evaluators' ? [{ id: '', name: 'None' }, ...d.evaluators.map(e => ({ id: nameOf(e), name: nameOf(e) }))] : picker.label === 'Variant pipelines' ? [{ id: '', name: 'Base pipeline' }, ...pipelines] : pipelines;
+  useEffect(() => { if (picker) requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.split-list .search input')?.focus()); }, [picker?.label]);
+  const list = <><header class="page-h" data-ui={picker ? 'lab-picker' : undefined}><h1>{picker?.label ?? 'New experiment'}</h1><span class="grow" /><Button label={picker ? 'Done choosing' : 'Experiments'} icon="x" iconOnly onClick={() => picker ? closePicker() : go('/lab')} /></header>
+    {picker ? <><SearchField label={`Search ${picker.label}`} value={query} onInput={setQuery} onSearch={() => {}} /><VirtualList items={available.filter(x => (x.name + x.id).toLowerCase().includes(query.toLowerCase()))} getKey={x => x.id} rowHeight={ROW2} follow="top" label={picker.label} columns="1.25rem minmax(0,1fr) auto"
       render={x => <><StateBadge family="source" state="current" compact /><span class="tt"><Button label={x.name} rowLink kind="quiet" onClick={() => choose(x.id)} /><span class="id">{x.id}</span></span>{picker.multiple && <RowCheck label={`Choose ${x.name}`} checked={picker.selected.includes(x.id)} onToggle={() => choose(x.id)} />}</>} />
-      {picker.options.length === 0 && <Empty text="No available choices. Check access and the required definitions or approved examples." />}</>
+      {available.length === 0 && <Empty text="No available choices. Check access and the required definitions or approved examples." />}</>
       : <section class="panel"><p>Create a draft, inspect it, then use its separate Launch control.</p><Button label="Choose project" onClick={() => pick('Projects', projects, [d.projectId], id => edit({ projectId: id }))} disabledReason={disabled} /></section>}</>;
   const detail = <article class="detail" data-ui="detail" aria-label="Create experiment" tabIndex={-1}><header class="detail-h"><h2>New experiment</h2><span class="grow" /><Button label="Create draft" icon="plus" kind="primary" busy={receipt.state === 'pending'} disabledReason={disabled || invalid || undefined} onClick={create} /></header>
     <div class="status-line" role="status">{receipt.state === 'pending' ? 'Creating draft…' : invalid && !error ? invalid : ''}</div>

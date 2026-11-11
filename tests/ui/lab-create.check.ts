@@ -48,10 +48,12 @@ try {
   await p.getByRole('button', { name: 'Create draft', exact: true }).waitFor();
   // All server-supported kinds remain available, and creating any of them never launches.
   for (const kind of ['single', 'ab', 'loop'] as const) {
+    if (kind === 'single') await p.setViewportSize({ width: 600, height: 900 });
     await fill(kind); if (kind === 'single') await p.screenshot({ path: 'design-report/lab-create-form.png' }); await created();
     const id = new URL(p.url()).pathname.split('/').pop()!;
     const [row] = seed.rows(`SELECT state,kind FROM experiment WHERE id='${id}'`);
     assert.deepEqual(row, { state: 'draft', kind });
+    await p.setViewportSize({ width: 1440, height: 900 });
   }
   assert.equal(posts, 3); assert.deepEqual(counts(), before, 'creation must produce no executions, commands or pipeline steps');
   // Confirmed rejection preserves edits and permits correction, rather than widening the submitted request.
@@ -63,6 +65,8 @@ try {
   // A confirmed create plus failed GET is not an unknown creation or a reason to POST again.
   await p.route('**/api/ops/lab_experiment_get', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{"message":"fixture read unavailable"}' }));
   await p.getByRole('button', { name: 'Create draft', exact: true }).click();
+  await p.getByRole('button', { name: 'Read details again', exact: true }).waitFor();
+  await p.reload();
   await p.getByRole('button', { name: 'Read details again', exact: true }).waitFor();
   const afterConfirmed = posts;
   await p.unroute('**/api/ops/lab_experiment_get');
@@ -85,10 +89,14 @@ try {
   await p.getByRole('textbox', { name: 'Goal', exact: true }).fill('Actor-scoped draft');
   await p.reload(); assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), 'Actor-scoped draft');
   // Grant change invalidates the key even if another tab already updated the common grant marker.
+  await p.getByRole('button', { name: /^Project:/ }).click();
+  await p.getByRole('textbox', { name: 'Search Projects' }).waitFor();
   await p.route('**/api/ops/me', async route => { const response = await route.fetch(); const m = await response.json(); await route.fulfill({ json: { ...m, grantsVersion: 'changed-for-fixture' } }); });
   await p.evaluate(() => window.dispatchEvent(new Event('focus')));
   await p.getByText('Access changed. Reload before creating a draft.', { exact: true }).waitFor();
   assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), '');
+  assert.equal(await p.getByRole('grid', { name: 'Projects', exact: true }).count(), 0);
+  assert.equal(await p.getByRole('textbox', { name: 'Search Projects' }).count(), 0);
   assert.deepEqual(counts(), before);
   await context.close();
 } finally { await browser.close(); await close(); }
