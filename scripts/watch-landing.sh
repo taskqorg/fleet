@@ -9,6 +9,9 @@ set -euo pipefail
 pr=$1
 deadline=$(( $(date +%s) + ${2:-45} * 60 ))
 repo=taskqorg/fleet
+# Observations are poll times, not the instant a host/site transitioned. Keep stdout's stage contract unchanged.
+observed() { printf 'observed_at=%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
+observed "watch_start pr=$pr"
 wait_step() { [ "$(date +%s)" -lt "$deadline" ] || { echo "timeout at: $1"; exit 2; }; sleep 30; }
 
 q='query($n:Int!){repository(owner:"taskqorg",name:"fleet"){pullRequest(number:$n){state mergeStateStatus mergeCommit{oid} autoMergeRequest{enabledAt} mergeQueueEntry{state}
@@ -26,6 +29,7 @@ while :; do
   [ "$state" = OPEN ] && [ "$waiting" = waiting ] || { echo "not merged: $state, $reason"; exit 1; }
   wait_step "queue"
 done
+observed "merged sha=$sha"
 echo "merged $sha"
 
 # The first release whose tagged commit contains the merge commit; a batch release may carry several merges.
@@ -36,7 +40,10 @@ while :; do
   [ -n "$tag" ] && break
   wait_step "release"
 done
+observed "release_tag tag=$tag"
 echo "released $tag"
+published=$(gh release view "$tag" -R "$repo" --json publishedAt -q '.publishedAt // empty' 2>/dev/null || true)
+printf 'published_at=%s source=github_release tag=%s\n' "${published:-unavailable}" "$tag" >&2
 
 env_file=~/.config/ufobe-agents/site-access.env
 [ -f "$env_file" ] || { echo "no site access: check hosts_list yourself"; exit 3; }
@@ -44,7 +51,20 @@ env_file=~/.config/ufobe-agents/site-access.env
 hdr=$(mktemp); chmod 600 "$hdr"; trap 'rm -f "$hdr"' EXIT
 ( . "$env_file"; printf 'CF-Access-Client-Id: %s\nCF-Access-Client-Secret: %s\n' "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET" ) >"$hdr"
 want=${tag#v}
+site_seen=false
 while :; do
+  # Evidence only, bounded by the existing deploy health probe's 3s request budget; never a new host gate.
+  if [ "$site_seen" = false ]; then
+    site=$(curl -sf --max-time 3 -H @"$hdr" https://fleet.ufobe.com/api/health | WANT="$want" python3 -I -c '
+import json, os, sys
+try: h = json.load(sys.stdin)
+except ValueError: sys.exit(1)
+s = h.get("version", "")
+release = lambda v: len(v.split(".")) == 3 and all(x.isdigit() for x in v.split("."))
+if h.get("database") == "ok" and release(s) and tuple(map(int, s.split("."))) >= tuple(map(int, os.environ["WANT"].split("."))): print(s)
+') || site=""
+    if [ -n "$site" ]; then observed "site_healthy version=$site"; site_seen=true; fi
+  fi
   behind=$(curl -sf -H @"$hdr" -H 'Content-Type: application/json' -H 'Origin: https://fleet.ufobe.com' \
     https://fleet.ufobe.com/api/ops/hosts_list -d '{}' | WANT="$want" python3 -I -c '
 import json, os, sys, time
@@ -67,4 +87,6 @@ print(" ".join(h["id"] + "@" + h["version"] for h in hosts if v(h["version"]) < 
   [ -z "$behind" ] && break
   wait_step "hosts, behind: $behind"
 done
+[ "$site_seen" = true ] || observed "site_health unavailable"
+observed "hosts_ready target=$tag"
 echo "on hosts $tag"

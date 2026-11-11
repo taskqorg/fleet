@@ -1,5 +1,5 @@
 // Lab draft creation uses the existing operation, never launch (laboratory.md, Create experiment).
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import { Button, Choice, CodeEditor, DetailSection, Empty, ListDetail, ProblemRow, RowCheck, SearchField, StateBadge, TextField, VirtualList, ROW2 } from '../../../packages/ui/src/index.ts';
 import { op, online, signedOut, OpError, type Ops } from '../api.ts';
@@ -53,12 +53,12 @@ export function LabCreate() {
   const [key, setKey] = useState(''), [error, setError] = useState(''), [storageWarning, setStorageWarning] = useState('');
   const [projects, setProjects] = useState<Option[]>([]), [pipelines, setPipelines] = useState<Option[]>([]), [examples, setExamples] = useState<Option[]>([]);
   const [picker, setPicker] = useState<Picker | null>(null), [query, setQuery] = useState('');
-  const invoker = useRef<HTMLElement | null>(null);
+  const invoker = useRef<HTMLElement | null>(null), startPanel = useRef<HTMLElement | null>(null);
   const live = useRef(true), identity = useRef(''), current = useRef(receipt), busy = useRef(false);
   current.current = receipt;
   const persist = (next: Receipt) => { current.current = next; if (live.current) setReceipt(next); if (identity.current) try { sessionStorage.setItem(identity.current, JSON.stringify(next)); } catch { if (live.current) setStorageWarning('Browser storage is unavailable. Keep this page open until creation is resolved.'); } };
   const clearAccess = () => {
-    identity.current = ''; busy.current = true; setKey('');
+    identity.current = ''; invoker.current = null; busy.current = true; setKey('');
     current.current = { draft: blank(), state: 'editing' }; setReceipt(current.current);
     setPicker(null); setQuery(''); setProjects([]); setPipelines([]); setExamples([]);
     setError('Access changed. Reload before creating a draft.');
@@ -103,8 +103,8 @@ export function LabCreate() {
     if (active && identity.current === scope && current.current.draft.projectId === project) setPipelines(x.items.filter(p => p.revision > 0).map(p => ({ id: p.id, name: `${p.name} · r${p.revision}` })));
   }).catch(e => { if (active && identity.current === scope) setError(e.message); }); return () => { active = false; }; }, [d.projectId]);
   const edit = (change: Partial<Draft>) => { if (busy.current || current.current.state !== 'editing') return; persist({ draft: { ...current.current.draft, ...change }, state: 'editing' }); setError(''); };
-  const pick = (label: string, options: Option[], selected: string[], choose: (id: string) => void, multiple = false) => { invoker.current = document.activeElement as HTMLElement; setQuery(''); setPicker({ label, options, selected, choose, multiple }); };
-  const closePicker = () => { setPicker(null); requestAnimationFrame(() => invoker.current?.focus()); };
+  const pick = (trigger: HTMLElement, label: string, options: Option[], selected: string[], choose: (id: string) => void, multiple = false) => { invoker.current = trigger; setQuery(''); setPicker({ label, options, selected, choose, multiple }); };
+  const closePicker = () => setPicker(null);
   const choose = (id: string) => { if (!picker) return; picker.choose(id); if (!picker.multiple) closePicker(); else setPicker(previous => previous ? { ...previous, selected: previous.selected.includes(id) ? previous.selected.filter(x => x !== id) : [...previous.selected, id] } : null); };
   const variants = (i: number, change: Partial<Variant>) => edit({ variants: current.current.draft.variants.map((v, j) => j === i ? { ...v, ...change } : v) });
   const evaluators = (i: number, change: Partial<Evaluator>) => edit({ evaluators: current.current.draft.evaluators.map((v, j) => j === i ? { ...v, ...change } : v) });
@@ -144,12 +144,16 @@ export function LabCreate() {
       <CodeEditor label={label} value={value} onChange={change} problems={error ? [{ path: '', message: error }] : []} disabledReason={disabled} /></details>;
   };
   const available = !picker ? [] : picker.label === 'Projects' ? projects : picker.label === 'Approved examples' ? examples : picker.label === 'Primary evaluators' ? [{ id: '', name: 'None' }, ...d.evaluators.map(e => ({ id: nameOf(e), name: nameOf(e) }))] : picker.label === 'Variant pipelines' ? [{ id: '', name: 'Base pipeline' }, ...pipelines] : pipelines;
-  useEffect(() => { if (picker) requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.split-list .search input')?.focus()); }, [picker?.label]);
+  // Focus after the DOM commit re-enables the form; no deferred picker autofocus can outlive it.
+  useLayoutEffect(() => {
+    if (picker) document.querySelector<HTMLInputElement>('.split-list .search input')?.focus();
+    else { const trigger = invoker.current; invoker.current = null; if (trigger) (trigger.isConnected ? trigger : startPanel.current?.querySelector<HTMLButtonElement>('button'))?.focus(); }
+  }, [picker?.label]);
   const list = <><header class="page-h" data-ui={picker ? 'lab-picker' : undefined}><h1>{picker?.label ?? 'New experiment'}</h1><span class="grow" /><Button label={picker ? 'Done choosing' : 'Experiments'} icon="x" iconOnly onClick={() => picker ? closePicker() : go('/lab')} /></header>
     {picker ? <><SearchField label={`Search ${picker.label}`} value={query} onInput={setQuery} onSearch={() => {}} /><VirtualList items={available.filter(x => (x.name + x.id).toLowerCase().includes(query.toLowerCase()))} getKey={x => x.id} rowHeight={ROW2} follow="top" label={picker.label} columns="1.25rem minmax(0,1fr) auto"
       render={x => <><StateBadge family="source" state="current" compact /><span class="tt"><Button label={x.name} rowLink kind="quiet" onClick={() => choose(x.id)} /><span class="id">{x.id}</span></span>{picker.multiple && <RowCheck label={`Choose ${x.name}`} checked={picker.selected.includes(x.id)} onToggle={() => choose(x.id)} />}</>} />
       {available.length === 0 && <Empty text="No available choices. Check access and the required definitions or approved examples." />}</>
-      : <section class="panel"><p>Create a draft, inspect it, then use its separate Launch control.</p><Button label="Choose project" onClick={() => pick('Projects', projects, [d.projectId], id => edit({ projectId: id }))} disabledReason={disabled} /></section>}</>;
+      : <section class="panel" ref={startPanel}><p>Create a draft, inspect it, then use its separate Launch control.</p><Button label="Choose project" onClick={event => pick(event.currentTarget, 'Projects', projects, [d.projectId], id => edit({ projectId: id }))} disabledReason={disabled} /></section>}</>;
   const detail = <article class="detail" data-ui="detail" aria-label="Create experiment" tabIndex={-1}><header class="detail-h"><h2>New experiment</h2><span class="grow" /><Button label="Create draft" icon="plus" kind="primary" busy={receipt.state === 'pending'} disabledReason={disabled || invalid || undefined} onClick={create} /></header>
     <div class="status-line" role="status">{receipt.state === 'pending' ? 'Creating draft…' : invalid && !error ? invalid : ''}</div>
     {error && <ProblemRow title="Draft not created" facts={error} severity="failure" actions={[]} />}
@@ -158,22 +162,22 @@ export function LabCreate() {
     {receipt.message && <div class="answers"><Button label="Review experiments" onClick={() => go('/lab')} />{receipt.id && <Button label="Read details again" onClick={() => readback(receipt.id!, d, identity.current)} />}</div>}
     <fieldset class="draft-fields" disabled={!!disabled}>
     <DetailSection title="Record">{field('Goal', 'goal', true)}{field('Hypothesis', 'hypothesis', true)}{field('Decision rule', 'decisionRule', true)}{field('Group', 'labGroup')}</DetailSection>
-    <DetailSection title="Setup"><Button label={`Project: ${projects.find(p => p.id === d.projectId)?.name ?? (d.projectId || 'Choose')}`} disabledReason={disabled} onClick={() => pick('Projects', projects, [d.projectId], id => edit({ projectId: id }))} />
-      <Button label={`Pipeline: ${d.pipelineId || 'Choose'}`} disabledReason={disabled || (!d.projectId ? 'Choose a project first' : undefined)} onClick={() => pick('Pipelines', pipelines, [d.pipelineId], id => edit({ pipelineId: id }))} />
+    <DetailSection title="Setup"><Button label={`Project: ${projects.find(p => p.id === d.projectId)?.name ?? (d.projectId || 'Choose')}`} disabledReason={disabled} onClick={event => pick(event.currentTarget, 'Projects', projects, [d.projectId], id => edit({ projectId: id }))} />
+      <Button label={`Pipeline: ${d.pipelineId || 'Choose'}`} disabledReason={disabled || (!d.projectId ? 'Choose a project first' : undefined)} onClick={event => pick(event.currentTarget, 'Pipelines', pipelines, [d.pipelineId], id => edit({ pipelineId: id }))} />
       <Choice label="Experiment kind" options={options(['single', 'ab', 'loop'])} value={d.kind} onChange={v => edit({ kind: v })} />{field('Repeats', 'repeats')}
-      <Button label={`Approved examples: ${d.examples.length} selected`} disabledReason={disabled} onClick={() => pick('Approved examples', examples, d.examples, id => { const xs = current.current.draft.examples; edit({ examples: xs.includes(id) ? xs.filter(x => x !== id) : [...xs, id] }); }, true)} /></DetailSection>
+      <Button label={`Approved examples: ${d.examples.length} selected`} disabledReason={disabled} onClick={event => pick(event.currentTarget, 'Approved examples', examples, d.examples, id => { const xs = current.current.draft.examples; edit({ examples: xs.includes(id) ? xs.filter(x => x !== id) : [...xs, id] }); }, true)} /></DetailSection>
     <DetailSection title="Variants">{d.variants.map((v, i) => <section class="panel" key={i}><TextField label={`Variant ${i + 1} label`} value={v.label} onChange={label => variants(i, { label })} disabledReason={disabled} />
-      <Button label={`Variant ${i + 1} pipeline: ${v.pipelineId || 'Base pipeline'}`} disabledReason={disabled} onClick={() => pick('Variant pipelines', [{ id: '', name: 'Base pipeline' }, ...pipelines], [v.pipelineId], id => variants(i, { pipelineId: id }))} />
+      <Button label={`Variant ${i + 1} pipeline: ${v.pipelineId || 'Base pipeline'}`} disabledReason={disabled} onClick={event => pick(event.currentTarget, 'Variant pipelines', [{ id: '', name: 'Base pipeline' }, ...pipelines], [v.pipelineId], id => variants(i, { pipelineId: id }))} />
       {advanced(`Variant ${i + 1} overrides`, v.overrides, overrides => variants(i, { overrides }), 'Optional model, skills, prompt, web_route, account, host, profile, arguments or bands. Server permissions still apply.')}
       <Button label={`Remove variant ${i + 1}`} icon="x" disabledReason={disabled} onClick={() => edit({ variants: d.variants.filter((_, j) => i !== j) })} /></section>)}
       <Button label="Add variant" icon="plus" disabledReason={disabled} onClick={() => edit({ variants: [...d.variants, { label: '', pipelineId: '', overrides: '{}' }] })} /></DetailSection>
     <DetailSection title="Evaluators">{d.evaluators.map((e, i) => <section class="panel" key={i}><Choice label={`Evaluator ${i + 1} kind`} options={options(['script', 'judge', 'typed', 'human'])} value={e.kind} onChange={kind => evaluators(i, { kind, ref: kind === 'script' ? 'example.checks' : kind === 'typed' ? 'labels' : kind === 'human' ? 'owner' : '', form: kind === 'typed' ? 'typed' : 'pass_fail' })} />
-      {e.kind === 'judge' && <Button label={`Judge pipeline: ${e.ref || 'Choose'}`} disabledReason={disabled} onClick={() => pick('Judge pipelines', pipelines, [e.ref], id => evaluators(i, { ref: id }))} />}
+      {e.kind === 'judge' && <Button label={`Judge pipeline: ${e.ref || 'Choose'}`} disabledReason={disabled} onClick={event => pick(event.currentTarget, 'Judge pipelines', pipelines, [e.ref], id => evaluators(i, { ref: id }))} />}
       <Choice label={`Evaluator ${i + 1} form`} options={options(e.kind === 'typed' ? ['typed'] : e.kind === 'script' ? ['pass_fail', 'metric'] : ['pass_fail', 'scale', 'pick_best'])} value={e.form} onChange={form => evaluators(i, { form })} />
       {e.kind === 'judge' && advanced(`Judge ${i + 1} overrides`, e.overrides, overrides => evaluators(i, { overrides }), 'Optional existing pipeline overrides; host, account and profile require the server’s owner authority.')}
       <Button label={`Remove evaluator ${i + 1}`} icon="x" disabledReason={disabled} onClick={() => edit({ evaluators: d.evaluators.filter((_, j) => i !== j) })} /></section>)}
       <Button label="Add evaluator" icon="plus" disabledReason={disabled} onClick={() => edit({ evaluators: [...d.evaluators, { kind: 'script', ref: 'example.checks', form: 'pass_fail', overrides: '{}' }] })} />
-      <Button label={`Primary evaluator: ${d.primary || 'None'}`} disabledReason={disabled} onClick={() => pick('Primary evaluators', [{ id: '', name: 'None' }, ...d.evaluators.map(e => ({ id: nameOf(e), name: nameOf(e) }))], [d.primary], primary => edit({ primary }))} /></DetailSection>
+      <Button label={`Primary evaluator: ${d.primary || 'None'}`} disabledReason={disabled} onClick={event => pick(event.currentTarget, 'Primary evaluators', [{ id: '', name: 'None' }, ...d.evaluators.map(e => ({ id: nameOf(e), name: nameOf(e) }))], [d.primary], primary => edit({ primary }))} /></DetailSection>
     {d.kind === 'loop' && <DetailSection title="Loop strategy"><Choice label="Generator" options={options(['list', 'grid', 'propose'])} value={d.generator} onChange={generator => edit({ generator })} />
       {advanced('Generator parameters', d.params, params => edit({ params }), 'List uses a variants array; grid uses override axes; propose uses the existing agent-strategy parameters. No strategy runs on create.')}<p>Allocator: full. Stop rules are optional and have no default ceiling.</p>{field('Maximum iterations (optional)', 'max')}{field('No gain iterations (optional)', 'k')}</DetailSection>}
     <DetailSection title="Budgets">{d.budgets.length === 0 && <p>No experiment budget configured. Project, account and provider limits still apply; cost is not estimated here.</p>}{d.budgets.map((b, i) => <section class="panel" key={i}><Choice label={`Budget ${i + 1} unit`} options={options(['trials', 'wall_ms', 'calls', 'credits'])} value={b.unit} onChange={unit => budgets(i, { unit })} />

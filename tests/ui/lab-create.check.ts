@@ -23,11 +23,34 @@ try {
   const p = await context.newPage();
   const errors: string[] = []; p.on('pageerror', e => errors.push(e.message));
   let posts = 0; p.on('request', r => { if (r.url().endsWith('/api/ops/lab_experiment_create')) posts++; });
+  let checkPostCommitFocus = true;
   const pick = async (button: string | RegExp, group: string, id: string, multiple = false) => {
     await p.getByRole('button', { name: button, exact: typeof button === 'string' }).click();
     await p.getByRole('searchbox', { name: `Search ${group}` }).fill(id);
     const row = p.getByRole('grid', { name: group, exact: true }).getByRole('row').filter({ has: p.locator('.id', { hasText: new RegExp('^' + id + '$') }) });
-    if (group === 'Projects') { await row.getByRole('button').focus(); await p.keyboard.press('Enter'); } else await row.getByRole('button').click();
+    if (group === 'Projects') {
+      const holdFrames = checkPostCommitFocus; checkPostCommitFocus = false;
+      await row.getByRole('button').focus();
+      if (holdFrames) await p.evaluate(() => {
+        const request = window.requestAnimationFrame, cancel = window.cancelAnimationFrame;
+        let next = 0; const frames = new Map<number, FrameRequestCallback>();
+        window.requestAnimationFrame = cb => { const id = --next; frames.set(id, cb); return id; };
+        window.cancelAnimationFrame = id => { if (id < 0) frames.delete(id); else cancel.call(window, id); };
+        (window as any).releaseLabFocusFrames = () => {
+          window.requestAnimationFrame = request; window.cancelAnimationFrame = cancel;
+          for (const cb of frames.values()) request.call(window, cb);
+          delete (window as any).releaseLabFocusFrames;
+        };
+      });
+      try {
+        await p.keyboard.press('Enter');
+        if (holdFrames) {
+          // R3; risk: returning focus waits for an animation frame or runs before the disabled form commits.
+          await p.getByRole('searchbox', { name: 'Search Projects' }).waitFor({ state: 'detached' });
+          assert.ok(await p.getByRole('button', { name: /^Project:/ }).evaluate(e => document.activeElement === e && !e.matches(':disabled')));
+        }
+      } finally { if (holdFrames) await p.evaluate(() => (window as any).releaseLabFocusFrames?.()); }
+    } else await row.getByRole('button').click();
     if (group === 'Projects') await p.waitForFunction(() => document.activeElement?.textContent?.startsWith('Project:'));
     if (multiple) await p.getByRole('button', { name: 'Done choosing', exact: true }).click();
   };
@@ -55,6 +78,14 @@ try {
   await p.goto(origin + '/lab');
   await p.getByRole('button', { name: 'New experiment', exact: true }).click();
   await p.getByRole('button', { name: 'Create draft', exact: true }).waitFor();
+  // The sidebar invoker is recreated after choosing; focus must return to its current button, not a detached node.
+  const startProject = p.getByRole('button', { name: 'Choose project', exact: true });
+  await startProject.click();
+  await p.getByRole('searchbox', { name: 'Search Projects' }).fill('hello-world');
+  await p.getByRole('grid', { name: 'Projects', exact: true }).getByRole('row').filter({ has: p.locator('.id', { hasText: /^hello-world$/ }) }).getByRole('button').focus();
+  await p.keyboard.press('Enter');
+  await p.getByRole('searchbox', { name: 'Search Projects' }).waitFor({ state: 'detached' });
+  assert.ok(await startProject.evaluate(e => document.activeElement === e));
   // All server-supported kinds remain available, and creating any of them never launches.
   for (const kind of ['single', 'ab', 'loop'] as const) {
     if (kind === 'single') await p.setViewportSize({ width: 600, height: 900 });
