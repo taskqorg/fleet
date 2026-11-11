@@ -310,7 +310,7 @@ func idList(v any, field string) ([]any, error) {
 
 func init() {
 	// Agent dispatch mints the run token for the profile's connections (dispatch.go).
-	gatedOp("connections_list", true, func(q *Request) (any, error) {
+	gatedOp("connections_list", true, shaped[contract.ConnectionsListRequest, contract.ConnectionsListReply](func(q *Request) (any, error) {
 		keys, err := all(q, "connection-key", nil)
 		if err != nil {
 			return nil, err
@@ -345,8 +345,8 @@ func init() {
 			out = append(out, c)
 		}
 		return doc{"providers": providers, "connections": out}, nil
-	})
-	gatedOp("connections_create", false, func(q *Request) (any, error) {
+	}))
+	gatedOp("connections_create", false, shaped[contract.ConnectionsCreateRequest, contract.ConnectionView](func(q *Request) (any, error) {
 		b := body(q)
 		name, provider := astr(b["name"]), astr(b["provider"])
 		if !connName.MatchString(name) || providers[provider] == nil || !keysOnly(b, "name", "provider", "holder", "comment") {
@@ -375,9 +375,9 @@ func init() {
 		}
 		publish(q)
 		return c, nil
-	})
+	}))
 	// Owner only. Writes the value file and the row; answers with the fingerprint only.
-	gatedOp("connections_key_add", false, func(q *Request) (any, error) {
+	gatedOp("connections_key_add", false, checkFirst(connOwner, shaped[contract.ConnectionsKeyAddRequest, contract.ConnectionsKeyAddReply](func(q *Request) (any, error) {
 		if err := connOwner(q); err != nil {
 			return nil, err
 		}
@@ -423,9 +423,9 @@ func init() {
 		})
 		publish(q)
 		return k, nil
-	})
+	})))
 	// Rotation (§2): active <-> draining, any -> retired (the value file is deleted; the row stays); disabled -> active is the owner's.
-	gatedOp("connections_key_state", false, func(q *Request) (any, error) {
+	gatedOp("connections_key_state", false, shaped[contract.ConnectionsKeyStateRequest, contract.ConnectionsKeyStateReply](func(q *Request) (any, error) {
 		b := body(q)
 		id := astr(b["keyId"])
 		if id != "" && !strings.HasPrefix(id, "key:") {
@@ -486,8 +486,8 @@ func init() {
 		}
 		publish(q)
 		return k, nil
-	})
-	gatedOp("connections_set_access", false, func(q *Request) (any, error) {
+	}))
+	gatedOp("connections_set_access", false, shaped[contract.ConnectionsSetAccessRequest, contract.ConnectionView](func(q *Request) (any, error) {
 		b := body(q)
 		c, err := connByName(q, b["connection"])
 		if err != nil {
@@ -530,8 +530,8 @@ func init() {
 			publish(q)
 		}
 		return c, nil
-	})
-	gatedOp("connections_set_intake", false, func(q *Request) (any, error) {
+	}))
+	gatedOp("connections_set_intake", false, shaped[contract.ConnectionsSetIntakeRequest, contract.ConnectionView](func(q *Request) (any, error) {
 		b := body(q)
 		c, err := connByName(q, b["connection"])
 		if err != nil {
@@ -555,9 +555,9 @@ func init() {
 			publish(q)
 		}
 		return c, nil
-	})
+	}))
 	// Owner connection tokens (§4): a long-lived bearer for the owner's interactive sessions; the value is answered once.
-	gatedOp("connections_token_create", false, func(q *Request) (any, error) {
+	gatedOp("connections_token_create", false, checkFirst(connRealOwner, shaped[contract.ConnectionsTokenCreateRequest, contract.ConnectionsTokenCreateReply](func(q *Request) (any, error) {
 		if err := connRealOwner(q); err != nil {
 			return nil, err
 		}
@@ -594,8 +594,8 @@ func init() {
 		}
 		m["name"] = name
 		return m, nil
-	})
-	gatedOp("connections_token_list", true, func(q *Request) (any, error) {
+	})))
+	gatedOp("connections_token_list", true, shaped[contract.ConnectionsTokenListRequest, contract.ConnectionsTokenListReply](func(q *Request) (any, error) {
 		toks, err := all(q, "run-token", nil)
 		if err != nil {
 			return nil, err
@@ -607,8 +607,8 @@ func init() {
 			}
 		}
 		return doc{"tokens": out}, nil
-	})
-	gatedOp("connections_token_revoke", false, func(q *Request) (any, error) {
+	}))
+	gatedOp("connections_token_revoke", false, checkFirst(connOwner, shaped[contract.ConnectionsTokenRevokeRequest, contract.ConnectionsTokenRevokeReply](func(q *Request) (any, error) {
 		if err := connOwner(q); err != nil {
 			return nil, err
 		}
@@ -632,7 +632,7 @@ func init() {
 		}
 		publish(q)
 		return doc{"name": b["name"], "revoked": true}, nil
-	})
+	})))
 
 	onStart(func(ctx context.Context, a *App) {
 		runningApp = a

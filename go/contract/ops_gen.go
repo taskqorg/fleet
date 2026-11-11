@@ -485,70 +485,109 @@ const (
 // ConflictReasonValues lists every ConflictReason in schema order.
 var ConflictReasonValues = []ConflictReason{ConflictReasonBaseMoved, ConflictReasonRepositoryChanged, ConflictReasonNoChange, ConflictReasonWrongState, ConflictReasonInvalidDraft}
 
-type ConnectionsCreateReply = map[string]json.RawMessage
+// ConnectionAccess: Who besides the holder may use the API key: people (emails), projects and experiments.
+type ConnectionAccess struct {
+	Experiments []string `json:"experiments"`
+	People      []string `json:"people"`
+	Projects    []string `json:"projects"`
+}
 
+// ConnectionView: An API connection; keys, spend and history only in connections_list.
+type ConnectionView struct {
+	Access    ConnectionAccess             `json:"access"`
+	Comment   string                       `json:"comment"`
+	CreatedAt float64                      `json:"createdAt"`
+	History   []map[string]json.RawMessage `json:"history,omitempty"`
+	Holder    string                       `json:"holder"`
+	Id        string                       `json:"id"`
+	Intake    string                       `json:"intake"`
+	Keys      []map[string]json.RawMessage `json:"keys,omitempty"`
+	Name      string                       `json:"name"`
+	Provider  string                       `json:"provider"`
+	Spend     map[string]json.RawMessage   `json:"spend,omitempty"`
+	Tools     []string                     `json:"tools"`
+	UpdatedAt *float64                     `json:"updatedAt,omitempty"`
+}
+
+type ConnectionsCreateReply = ConnectionView
+
+// ConnectionsCreateRequest: holder: the owner may create a key for another person.
 type ConnectionsCreateRequest struct {
 	Comment  *string `json:"comment,omitempty"`
 	Holder   *string `json:"holder,omitempty"`
-	Name     *string `json:"name,omitempty"`
-	Provider *string `json:"provider,omitempty"`
+	Name     string  `json:"name"`
+	Provider string  `json:"provider"`
 }
 
+// ConnectionsKeyAddReply: The new key row (fingerprint, state, addedAt, addedBy); never the value.
 type ConnectionsKeyAddReply = map[string]json.RawMessage
 
+// ConnectionsKeyAddRequest: Owner only. The value goes to the secret file; the reply has its fingerprint only.
 type ConnectionsKeyAddRequest struct {
-	Connection *string `json:"connection,omitempty"`
-	Value      *string `json:"value,omitempty"`
+	Connection string `json:"connection"`
+	Value      string `json:"value"`
 }
 
+// ConnectionsKeyStateReply: The key row after the change.
 type ConnectionsKeyStateReply = map[string]json.RawMessage
 
+// ConnectionsKeyStateRequest: state active, draining or retired.
 type ConnectionsKeyStateRequest struct {
-	KeyId *string `json:"keyId,omitempty"`
-	State *string `json:"state,omitempty"`
+	KeyId string `json:"keyId"`
+	State string `json:"state"`
 }
 
 type ConnectionsListReply struct {
-	Connections json.RawMessage `json:"connections,omitempty"`
-	Providers   json.RawMessage `json:"providers,omitempty"`
+	Connections []ConnectionView           `json:"connections"`
+	Providers   map[string]json.RawMessage `json:"providers"`
 }
 
 type ConnectionsListRequest = map[string]json.RawMessage
 
-type ConnectionsSetAccessReply = map[string]json.RawMessage
+type ConnectionsSetAccessReply = ConnectionView
 
+// ConnectionsSetAccessRequest: access: {people, projects, experiments}, each a list of ids.
 type ConnectionsSetAccessRequest struct {
-	Access     json.RawMessage `json:"access,omitempty"`
-	Connection *string         `json:"connection,omitempty"`
+	Access     json.RawMessage `json:"access"`
+	Connection string          `json:"connection"`
 }
 
-type ConnectionsSetIntakeReply = map[string]json.RawMessage
+type ConnectionsSetIntakeReply = ConnectionView
 
+// ConnectionsSetIntakeRequest: intake all or paused.
 type ConnectionsSetIntakeRequest struct {
-	Connection *string         `json:"connection,omitempty"`
-	Intake     json.RawMessage `json:"intake,omitempty"`
+	Connection string `json:"connection"`
+	Intake     string `json:"intake"`
 }
 
-type ConnectionsTokenCreateReply = map[string]json.RawMessage
+// ConnectionsTokenCreateReply: token: the bearer value, shown once; refused: requested connections the owner cannot use.
+type ConnectionsTokenCreateReply struct {
+	Connections []map[string]json.RawMessage `json:"connections"`
+	Name        string                       `json:"name"`
+	Refused     []string                     `json:"refused"`
+	Token       *string                      `json:"token"`
+}
 
+// ConnectionsTokenCreateRequest: The owner only (not an agent). The token value is answered once.
 type ConnectionsTokenCreateRequest struct {
-	Connections json.RawMessage `json:"connections,omitempty"`
-	Name        *string         `json:"name,omitempty"`
+	Connections []string `json:"connections,omitempty"`
+	Name        string   `json:"name"`
 }
 
 type ConnectionsTokenListReply struct {
-	Tokens json.RawMessage `json:"tokens,omitempty"`
+	Tokens []TokenInfo `json:"tokens"`
 }
 
 type ConnectionsTokenListRequest = map[string]json.RawMessage
 
 type ConnectionsTokenRevokeReply struct {
-	Name    json.RawMessage `json:"name,omitempty"`
-	Revoked json.RawMessage `json:"revoked,omitempty"`
+	Name    string `json:"name"`
+	Revoked bool   `json:"revoked"`
 }
 
+// ConnectionsTokenRevokeRequest: Owner only.
 type ConnectionsTokenRevokeRequest struct {
-	Name *string `json:"name,omitempty"`
+	Name string `json:"name"`
 }
 
 // DefinitionConflict: Body of a 409 from definition_save and definition_create.
@@ -2298,6 +2337,14 @@ type ThreadSearchRequest struct {
 	Key    ThreadKey `json:"key"`
 	Limit  *int64    `json:"limit,omitempty"`
 	Q      string    `json:"q"`
+}
+
+type TokenInfo struct {
+	Connections json.RawMessage `json:"connections"`
+	CreatedAt   json.RawMessage `json:"createdAt"`
+	DirectedBy  json.RawMessage `json:"directedBy"`
+	Name        string          `json:"name"`
+	RevokedAt   json.RawMessage `json:"revokedAt"`
 }
 
 // ToolBlock: input and output are the harness's own values; times in ms.
