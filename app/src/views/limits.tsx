@@ -15,7 +15,7 @@ function recordedPool(pool: any, subs: any[]): ChartPoint[] {
   const hist = members.map(s => ({ w: s.planWeight, h: (s.periods.find((p: any) => p.period === pool.period)?.history ?? []) as Point[] })).filter(m => m.h.length > 0);
   const times = [...new Set(hist.flatMap(m => m.h.map(p => p.at)))].sort((a, b) => a - b);
   // Before a member's first reading in range its first value stands in (an older reading held), never 0.
-  return times.map(t => ({ at: t, v: hist.reduce((sum, m) => { const last = [...m.h].reverse().find(p => p.at <= t) ?? m.h[0]; return sum + m.w * (last ? last.left : 0); }, 0) }));
+  return times.map(t => ({ at: t, v: hist.reduce((sum, m) => { const last = [...m.h].reverse().find(p => p.at <= t) ?? m.h[0]; return sum + m.w * last.left; }, 0) }));
 }
 
 /** Burn per hour between consecutive points (drops only; a reset adds nothing), as a step line. */
@@ -74,7 +74,7 @@ export function Limits() {
           ? [{ label: 'recorded', points: recorded, tone: 'd1' }, { label: 'projected', points: projected, tone: 'd1', projected: true }]
           : [{ label: 'burn', points: burnLine(recorded), tone: 'd2', step: true },
             ...(p.burn !== null ? [{ label: 'burn', points: [{ at: now, v: p.burn }, { at: to, v: p.burn }], tone: 'd2' as const, projected: true, step: true }] : [])];
-        const max = mode === 'left' ? p.capacity : Math.max(1, ...series.flatMap(s => s.points.map(q => q.v)));
+        const max = mode === 'left' ? (p.capacity || 1) : Math.max(1, ...series.flatMap(s => s.points.map(q => q.v)));
         return <article key={p.harness + p.period} class="panel limit-card" aria-label={`${p.harness} ${p.period}`}>
           <header class="panel-h"><h2>{p.harness} <span class="id">{p.period}</span></h2><span class="grow" />
             {p.leftPct !== null ? <span class="num">{pct(p.leftPct)}</span> : <span class="muted">unknown</span>}</header>
