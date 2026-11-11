@@ -112,6 +112,7 @@ try {
   preview.methods[0].assessment = {...preview.methods[0].assessment, basis:'lab', score:0.5, scoreForm:'typed', partial:true, eligibleCells:1,expectedCells:2,examples:1,failedCells:1,excludedCells:1,state:'stopped',stopReason:'fixture',variant:'preview-variant',split:'held_out',evaluator:'typed:labels:typed',evaluatorVersion:'fixture-version',reason:'One observed cell; one failed cell is excluded'};
   await page.route('**/api/ops/catalogue', route => route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(preview)}));
   await page.reload();
+  await page.getByRole('button', {name:'hello-world',exact:true}).click();
   await page.getByText('0.500 · partial/incomplete', {exact:true}).waitFor();
   assert.ok(await page.getByText('Comparison score', {exact:true}).count());
   for (const colorScheme of ['dark', 'light'] as const) { await page.emulateMedia({colorScheme}); await page.screenshot({path: `${shots}/catalogue-methods-${colorScheme}.png`}); }
