@@ -407,8 +407,6 @@ func definitionSave(q *Request, r *contract.DefinitionSaveRequest) (contract.Def
 	}
 	// A person with the architect role saves shared definitions (the role is global). An agent acts with its director's
 	// grants: it may not change a definition that a project outside those grants uses (owner decision).
-	// ponytail: use is read from roles and catalogue methods, as decided; direct pipeline runs and explicit profileIds are
-	// not counted. Read their executions too if agents start editing those.
 	if q.agent != "" && !fullAccess(q.person) {
 		var outside []string
 		used, err := usedByProjects(q, string(r.Kind), r.Id)
@@ -547,8 +545,9 @@ func init() {
 	gatedObjOp("definition_export", true, typedOp(definitionExport))
 }
 
-// usedByProjects: the projects that use a definition: a profile through project roles, catalogue methods (agentProfile) and
-// the pipelines their agent steps run; a pipeline through catalogue methods; the catalogue everywhere. A method's scope is
+// usedByProjects: the projects that use a definition: a profile through project roles, catalogue methods (agentProfile),
+// the pipelines their agent steps run and the sessions that run it; a pipeline through catalogue methods and its runs; the
+// catalogue everywhere. A method's scope is
 // a project id, or "shared" (every project).
 func usedByProjects(q *Request, kind, id string) ([]string, error) {
 	all := projectIDs()
@@ -600,6 +599,19 @@ func usedByProjects(q *Request, kind, id string) ([]string, error) {
 			}
 		}
 		methodProjects(func(m doc) bool { return astr(m["agentProfile"]) == id || usesProfile[astr(m["pipeline"])] })
+	}
+	// Use in practice too, read across projects (the agent's own scope would hide exactly the projects this guards):
+	// sessions that run the profile, pipeline runs of the pipeline.
+	sql := map[string]string{
+		"agent":    "SELECT DISTINCT data->>'projectId' AS p FROM document WHERE kind='session' AND data->'agentConfig'->>'id'=$1 AND data->>'projectId' IS NOT NULL",
+		"pipeline": "SELECT DISTINCT project_id AS p FROM execution WHERE kind='pipeline_run' AND data->>'pipelineId'=$1 AND project_id IS NOT NULL",
+	}[kind]
+	rs, err := unscoped(q, func() ([]doc, error) { return queryRows(q, sql, id) })
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rs {
+		set[astr(r["p"])] = true
 	}
 	out := make([]string, 0, len(set))
 	for p := range set {
