@@ -1778,6 +1778,17 @@ func (l *live) aliveOwned() (bool, error) {
 	return false, nil
 }
 
+// gone: a signal failed because the recorded incarnation exited between the check and the signal: kill(pid, 0) says no
+// such process, or the pid now has another identity. An identity that cannot be read is not gone (W3-3): that failure
+// stays an error.
+func gone(pid int, ident string) bool {
+	if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+		return true
+	}
+	id, err := identity(pid)
+	return err == nil && id != ident
+}
+
 func running(table []proc, pid int) bool {
 	for _, p := range table {
 		if p.pid == pid && !strings.HasPrefix(p.stat, "Z") {
@@ -1816,7 +1827,7 @@ func (l *live) cleanup() error {
 				continue
 			}
 			if id, err := identity(pid); err == nil && id == ident {
-				if err := signalOwned(pid, ident, syscall.SIGSTOP); err != nil {
+				if err := signalOwned(pid, ident, syscall.SIGSTOP); err != nil && !errors.Is(err, syscall.ESRCH) && !gone(pid, ident) {
 					return err
 				}
 				frozen[pid], changed = true, true
@@ -1832,7 +1843,7 @@ func (l *live) cleanup() error {
 	}
 	for pid, ident := range l.owned {
 		if id, err := identity(pid); running(table, pid) && err == nil && id == ident {
-			if err := signalOwned(pid, ident, syscall.SIGKILL); err != nil {
+			if err := signalOwned(pid, ident, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) && !gone(pid, ident) {
 				return err
 			}
 		}

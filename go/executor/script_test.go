@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fleet/contract"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -344,5 +345,22 @@ func TestAccountInspectStatusAndLimits(t *testing.T) {
 	}
 	if ev := rows["/api/hosts/events"]; !strings.Contains(ev, `"source":"probe"`) || !strings.Contains(ev, `"pct":42`) || !strings.Contains(ev, `"subscriptionId":"a1"`) {
 		t.Fatal("limits event", ev)
+	}
+}
+
+// Requirement: a signal that fails because the owned process exited between the check and the signal is not a cleanup
+// failure; a live process with its recorded identity still is. Risk: a script that ends while being cleaned up is
+// reported unknown (the CI flake of TestScriptOutputTimeoutAndGroupKill under -race).
+func TestSignalRaceWithExit(t *testing.T) {
+	cmd := exec.Command("true")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	me, err := identity(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gone(cmd.Process.Pid, "x") || !gone(os.Getpid(), me+"-other") || gone(os.Getpid(), me) {
+		t.Fatal("gone misjudged an exited, a reused or a live process")
 	}
 }
