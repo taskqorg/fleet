@@ -124,7 +124,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
               {(c?.trials ?? []).map((key: string) => { const t = trial(key); if (!t) return null;
                 const conf = [t.confounders.hosts.join(', '), t.confounders.harnesses.join(', '), t.confounders.models.join(', '), 'web ' + t.confounders.webRoute].filter(Boolean).join(' · ');
                 return <span key={key} class="lab-trial">
-                  <StateBadge family="trial" state={t.state} reason={t.problem ?? (t.comparable ? undefined : 'left out of comparison')} compact />
+                  <StateBadge family="trial" state={t.observation === 'unconfirmed' ? 'unknown' : t.state} reason={t.problem ?? (t.comparable ? undefined : 'left out of comparison')} compact />
                   {t.comparable && <RowCheck checked={sel.includes(t.id)} label={`Select repeat ${t.cell.repeat + 1} for rating`} onToggle={() => toggle(t.id)} />}
                   <span class="muted" data-tip={conf}>r{t.cell.repeat + 1}{t.cell.attempt ? `.${t.cell.attempt}` : ''}</span>
                   <Num m={{ value: t.durationMs === null || t.durationMs === undefined ? null : t.durationMs / 1000, basis: t.durationMs == null ? 'unavailable' : 'measured', reason: 'running' }} kind="duration" />

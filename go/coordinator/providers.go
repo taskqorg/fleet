@@ -2,10 +2,23 @@
 // coordinator copies it into the gateway snapshot. Kept as the JSON the TypeScript coordinator produced.
 package main
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"fleet/contract"
+)
 
 var providers = func() map[string]any {
 	var p map[string]any
+	if err := json.Unmarshal([]byte(providersJSON), &p); err != nil {
+		panic(err)
+	}
+	return p
+}()
+
+// gatewayProviders: the same catalogue as the gateway reads it (contracts/gateway.schema.json GatewayProvider).
+var gatewayProviders = func() map[string]contract.GatewayProvider {
+	var p map[string]contract.GatewayProvider
 	if err := json.Unmarshal([]byte(providersJSON), &p); err != nil {
 		panic(err)
 	}
