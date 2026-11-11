@@ -18,7 +18,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L02",
@@ -39,7 +43,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L03",
@@ -60,7 +68,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L04",
@@ -81,7 +93,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L05",
@@ -102,7 +118,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L06",
@@ -123,7 +143,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L07",
@@ -144,7 +168,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L08",
@@ -165,7 +193,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L09",
@@ -186,7 +218,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L10",
@@ -207,7 +243,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L11",
@@ -228,7 +268,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L12",
@@ -249,7 +293,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L13",
@@ -270,7 +318,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L14",
@@ -291,7 +343,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L15",
@@ -312,7 +368,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L16",
@@ -333,7 +393,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L17",
@@ -354,7 +418,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L18",
@@ -375,7 +443,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L19",
@@ -396,7 +468,11 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  },
  {
   "id": "pilotq:L20",
@@ -417,6 +493,10 @@
    "pilotq",
    "acceptance"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "to-design",
+  "maps_to": [
+   "fleet:UC13"
+  ]
  }
 ]

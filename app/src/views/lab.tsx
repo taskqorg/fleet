@@ -51,15 +51,22 @@ const title = (e: any) => `${e.pipelineId} · ${e.kind === 'ab' ? 'A/B' : e.kind
 // The use-case registry fills the work area while no experiment is open. It scrolls with the work area, so its rows are plain.
 // ponytail: static rows, fine for tens of use cases; make it its own catalogue with a virtual list if the registry grows past a few hundred.
 function Registry({ useCases }: { useCases: any[] }) {
+  // Obsolete and duplicate entries collapse under their source; maps_to names what covers them.
+  const replaced = (u: any) => u.status === 'obsolete' || u.status === 'duplicate';
+  const live = useCases.filter(u => !replaced(u)), gone = useCases.filter(replaced);
+  const repos = [...new Set(gone.map(u => u.source?.repo ?? '?'))];
+  const row = (u: any) => <div key={u.id} role="row" class="vl-row static">
+    <StateBadge family="source" state={u.source_status} reason={u.source ? `${u.source.repo}/${u.source.path}#${u.source.anchor}` : undefined} compact />
+    <span class="tt"><span class="title">{u.goal}</span><span class="id">{u.id}{u.maps_to?.length ? ` → ${u.maps_to.join(', ')}` : ''}</span></span>
+    <span class="muted">{u.status ?? 'current'}</span><span class="muted">{u.lab_fit}</span><span class="muted">{u.maturity}</span>
+  </div>;
   return <article class="detail" aria-label="Use-case registry">
     <h2 class="detail-title">Use-case registry</h2>
-    <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) 5rem 9rem' }}>
-      <div class="vl-head" role="row"><span /><span>Use case</span><span>Fit</span><span>Maturity</span></div>
-      {useCases.map((u: any) => <div key={u.id} role="row" class="vl-row static">
-        <StateBadge family="source" state={u.source_status} reason={u.source ? `${u.source.repo}/${u.source.path}#${u.source.anchor}` : undefined} compact />
-        <span class="tt"><span class="title">{u.goal}</span><span class="id">{u.id}</span></span>
-        <span class="muted">{u.lab_fit}</span><span class="muted">{u.maturity}</span>
-      </div>)}
+    <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) 6rem 5rem 9rem' }}>
+      <div class="vl-head" role="row"><span /><span>Use case</span><span>Status</span><span>Fit</span><span>Maturity</span></div>
+      {live.map(row)}
+      {repos.map(repo => { const of = gone.filter(u => (u.source?.repo ?? '?') === repo);
+        return <details key={repo} style={{ gridColumn: '1 / -1' }}><summary class="muted">{repo}: {of.length} replaced</summary>{of.map(row)}</details>; })}
     </div>
   </article>;
 }

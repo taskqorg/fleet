@@ -1,0 +1,22 @@
+{"$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "lab-registry.schema.json",
+ "$comment": "Lab use-case registry entries, config/lab/use-cases/*.json (docs/designs/fleet-asset-pipelines.md §3). Each file is an array of UseCase; useCases() validates every entry.",
+ "$defs": {
+  "UseCaseStatus": {"type": "string", "enum": ["current", "obsolete", "duplicate", "to-design"]},
+  "LabFit": {"type": "string", "enum": ["work", "behavior", "none"]},
+  "SourceStatus": {"type": "string", "enum": ["current", "changed", "missing"]},
+  "UseCaseSource": {"type": "object", "additionalProperties": false, "required": ["repo", "path", "anchor", "commit", "sha256"],
+   "properties": {"repo": {"type": "string"}, "path": {"type": "string"}, "anchor": {"type": "string"}, "commit": {"type": "string"}, "sha256": {"type": "string"}}},
+  "UseCaseCheck": {"type": "object", "additionalProperties": false, "required": ["kind", "ref"],
+   "properties": {"kind": {"type": "string"}, "ref": {"type": "string"}, "metric": {"type": "string"}}},
+  "UseCase": {"type": "object", "additionalProperties": false,
+   "required": ["id", "source", "source_status", "actor", "goal", "expected_outcome", "checks", "lab_fit", "tags", "maturity"],
+   "properties": {
+    "id": {"type": "string"}, "source": {"$ref": "#/$defs/UseCaseSource"},
+    "source_status": {"$ref": "#/$defs/SourceStatus"},
+    "status": {"$ref": "#/$defs/UseCaseStatus"},
+    "maps_to": {"type": "array", "items": {"type": "string"}, "$comment": "fleet:UCn entries (no #) that this entry belongs to or is covered by"},
+    "actor": {"type": "string"}, "goal": {"type": "string"}, "expected_outcome": {"type": "string"},
+    "checks": {"type": "array", "items": {"$ref": "#/$defs/UseCaseCheck"}},
+    "lab_fit": {"$ref": "#/$defs/LabFit"},
+    "tags": {"type": "array", "items": {"type": "string"}}, "maturity": {"type": "string"}}}}}

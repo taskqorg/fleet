@@ -236,5 +236,129 @@
    "fleet"
   ],
   "maturity": "indexed"
+ },
+ {
+  "id": "fleet:UC12",
+  "source": {
+   "repo": "fleet",
+   "path": "docs/use-cases.md",
+   "anchor": "uc12",
+   "commit": "44a03a113d6070d0263d0b454a39f928bb97fbd3",
+   "sha256": "74ffd8d9c42fa528f099fe1564024ae9efe69d55aedfb9e1490d83d9bc758a04"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Generate a product visual to a brief",
+  "expected_outcome": "One image that meets the brief's size, alpha and colour profile and is accepted by the owner or a judge.",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "fleet",
+   "image"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "fleet:UC13",
+  "source": {
+   "repo": "fleet",
+   "path": "docs/use-cases.md",
+   "anchor": "uc13",
+   "commit": "44a03a113d6070d0263d0b454a39f928bb97fbd3",
+   "sha256": "49a2e3dee9068845e5923bcbf11dbfe8a523559169c93d952a66a3fed86c2a38"
+  },
+  "source_status": "current",
+  "status": "to-design",
+  "actor": "owner",
+  "goal": "Telegram channel",
+  "expected_outcome": "A Telegram thread works as a PM session; agents act on the owner's message under agreed rules.",
+  "checks": [],
+  "lab_fit": "none",
+  "tags": [
+   "fleet"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "fleet:UC2#csgo-437",
+  "source": {
+   "repo": "csgo",
+   "path": "docs/research/437.md",
+   "anchor": "weapons-glock-t-and-usp-ct-a3",
+   "commit": "2b5105e5c63580b7fc6f3b989c20cb34971508a2",
+   "sha256": "f532112c3fb83b5f754d38b5475219452f866abb8f2faa30621c057427846ad5"
+  },
+  "source_status": "current",
+  "status": "current",
+  "maps_to": [
+   "fleet:UC2"
+  ],
+  "actor": "owner",
+  "goal": "Weapon and prop route for csgo",
+  "expected_outcome": "A game-ready weapon or prop model from the chosen route, measured and rendered.",
+  "checks": [],
+  "lab_fit": "work",
+  "tags": [
+   "csgo",
+   "3d"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "fleet:UC6#csgo-435",
+  "source": {
+   "repo": "csgo",
+   "path": "docs/research/435.md",
+   "anchor": "routes-and-inputs-a1-a2-a3",
+   "commit": "2b5105e5c63580b7fc6f3b989c20cb34971508a2",
+   "sha256": "98eac3904144d244e8871fe82bbf9dcaba2fd53a571e9fc0cf1baea0380f7e9a"
+  },
+  "source_status": "current",
+  "status": "current",
+  "maps_to": [
+   "fleet:UC6"
+  ],
+  "actor": "owner",
+  "goal": "Character route for csgo",
+  "expected_outcome": "A player character built from parts with likeness to the accepted turnaround.",
+  "checks": [],
+  "lab_fit": "work",
+  "tags": [
+   "csgo",
+   "3d",
+   "character"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "fleet:UC12#desiign-hero",
+  "source": {
+   "repo": "desiign",
+   "path": "docs/hero-background/README.md",
+   "anchor": "канон-hero",
+   "commit": "42f380e06f554d2bd491ffcf85e8408d158b4c9a",
+   "sha256": "0d9b5719b6b9e9309ce68077ab4a1cfac3a801379f320fba02e26a4156d1905e"
+  },
+  "source_status": "current",
+  "status": "current",
+  "maps_to": [
+   "fleet:UC12"
+  ],
+  "actor": "owner",
+  "goal": "Hero visual for desiign",
+  "expected_outcome": "A hero background image generated to the hero canon.",
+  "checks": [],
+  "lab_fit": "work",
+  "tags": [
+   "desiign",
+   "image"
+  ],
+  "maturity": "indexed"
  }
 ]

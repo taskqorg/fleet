@@ -18,7 +18,11 @@
    "dashq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC10"
+  ]
  },
  {
   "id": "dashq:DQ-02",
@@ -39,7 +43,11 @@
    "dashq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC10"
+  ]
  },
  {
   "id": "dashq:DQ-03",
@@ -60,7 +68,11 @@
    "dashq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC10"
+  ]
  },
  {
   "id": "dashq:DQ-04",
@@ -81,7 +93,11 @@
    "dashq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC10"
+  ]
  },
  {
   "id": "dashq:DQ-05",
@@ -102,7 +118,11 @@
    "dashq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC10"
+  ]
  },
  {
   "id": "dashq:DQ-06",
@@ -123,7 +143,11 @@
    "dashq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC8"
+  ]
  },
  {
   "id": "dashq:DQ-07",
@@ -139,12 +163,16 @@
   "goal": "Ask PM to diagnose, plan or create work",
   "expected_outcome": "Same TaskQ conversation workspace and project context; inspect plan/effects and per-operation readback; preserve draft across navigation/outage. Worker attempts stay separate.",
   "checks": [],
-  "lab_fit": "behavior",
+  "lab_fit": "none",
   "tags": [
    "dashq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC10"
+  ]
  },
  {
   "id": "dashq:DQ-08",
@@ -165,7 +193,11 @@
    "dashq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC10"
+  ]
  },
  {
   "id": "dashq:DQ-09",
@@ -186,7 +218,11 @@
    "dashq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC10"
+  ]
  },
  {
   "id": "dashq:DQ-10",
@@ -207,6 +243,10 @@
    "dashq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC10"
+  ]
  }
 ]
