@@ -1,0 +1,27 @@
+{
+  "id": "fleet-uc12-bitmap-pilot",
+  "use_case_id": "fleet:UC12",
+  "version": 1,
+  "origin": "synthetic",
+  "fixture": null,
+  "prompt": "Technical pipeline fixture only: a geometric product illustration, 1024x1024 PNG, opaque, sRGB. This synthetic fixture does not qualify vector artwork or a product rubric.",
+  "inputs": [],
+  "references": [
+    {
+      "path": "image.png",
+      "sha256": "0ad232e9c182a01d050e4b7e192d0cac2b03b427a2fd5136486107cfbffec5ad",
+      "media_type": "image/png"
+    },
+    {
+      "path": "image.json",
+      "text": "{\"width\": 1024, \"height\": 1024, \"alpha\": false, \"profile\": \"sRGB IEC61966-2.1\", \"media_type\": \"image/png\"}\n"
+    }
+  ],
+  "checks": [
+    {
+      "id": "decoded-image-requirements",
+      "run": "python3 -I -c 'import json,subprocess; m=json.load(open('\"'\"'image.json'\"'\"')); assert m=={'\"'\"'width'\"'\"': 1024, '\"'\"'height'\"'\"': 1024, '\"'\"'alpha'\"'\"': False, '\"'\"'profile'\"'\"': '\"'\"'sRGB IEC61966-2.1'\"'\"', '\"'\"'media_type'\"'\"': '\"'\"'image/png'\"'\"'}; b=open('\"'\"'image.png'\"'\"','\"'\"'rb'\"'\"').read(); assert b.startswith(b'\"'\"'\\x89PNG\\r\\n\\x1a\\n'\"'\"'); s=subprocess.check_output(['\"'\"'sips'\"'\"','\"'\"'-g'\"'\"','\"'\"'pixelWidth'\"'\"','\"'\"'-g'\"'\"','\"'\"'pixelHeight'\"'\"','\"'\"'-g'\"'\"','\"'\"'hasAlpha'\"'\"','\"'\"'-g'\"'\"','\"'\"'profile'\"'\"','\"'\"'image.png'\"'\"'],text=True); d=dict(l.strip().split('\"'\"': '\"'\"',1) for l in s.splitlines()[1:] if '\"'\"': '\"'\"' in l); assert (d['\"'\"'pixelWidth'\"'\"'],d['\"'\"'pixelHeight'\"'\"'],d['\"'\"'hasAlpha'\"'\"'],d['\"'\"'profile'\"'\"'])==('\"'\"'1024'\"'\"','\"'\"'1024'\"'\"','\"'\"'no'\"'\"','\"'\"'sRGB IEC61966-2.1'\"'\"')'"
+    }
+  ],
+  "split": "tune"
+}

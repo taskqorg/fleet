@@ -4,19 +4,23 @@
 # for the example's checks (docs/designs/fleet-asset-pipelines.md §4).
 set -eu
 out=$FLEET_OUTPUT_DIR
-python3 -I - "$FLEET_INPUT_DIR/gen/output.json" "$out" <<'PY'
-import base64, json, sys
-reply, out = json.load(open(sys.argv[1])), sys.argv[2]
+python3 -I - "$FLEET_INPUT_DIR/gen/output.json" "$out" <<'PYTHON'
+import base64, json, pathlib, subprocess, sys
+reply, out = json.load(open(sys.argv[1])), pathlib.Path(sys.argv[2])
 parts = [p for c in reply.get('candidates', []) for p in c.get('content', {}).get('parts', []) if 'inlineData' in p]
 if not parts:
     sys.exit('the reply has no image')
 d = parts[0]['inlineData']
-ext = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp'}.get(d['mimeType'], 'bin')
-open(f'{out}/image.{ext}', 'wb').write(base64.b64decode(d['data']))
-open(f'{out}/.media', 'w').write(d['mimeType'])
-PY
-img=$(ls "$out"/image.* | head -1)
-p() { sips -g "$1" "$img" | awk -v k="$1:" '$1==k {print $2}'; }
-printf '{"width":%s,"height":%s,"alpha":%s,"profile":"%s","media_type":"%s"}\n' "$(p pixelWidth)" "$(p pixelHeight)" \
-    "$([ "$(p hasAlpha)" = yes ] && echo true || echo false)" "$(sips -g profile "$img" | sed -n 's/^ *profile: //p')" "$(cat "$out/.media")" > "$out/image.json"
-rm -f "$out/.media"
+ext = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp'}.get(d['mimeType'])
+if ext is None:
+    sys.exit('unsupported image media type')
+img = out / ('image.' + ext)
+img.write_bytes(base64.b64decode(d['data'], validate=True))
+# sips reads decoded bytes; missing metadata fails rather than becoming false or zero.
+raw = subprocess.check_output(['sips', '-g', 'pixelWidth', '-g', 'pixelHeight', '-g', 'hasAlpha', '-g', 'profile', str(img)], text=True)
+meta = dict(line.strip().split(': ', 1) for line in raw.splitlines()[1:] if ': ' in line)
+w, h = int(meta['pixelWidth']), int(meta['pixelHeight'])
+if w <= 0 or h <= 0 or meta['hasAlpha'] not in ('yes', 'no') or meta.get('profile', '') in ('', '<nil>'):
+    sys.exit('missing or invalid decoded image metadata')
+(out / 'image.json').write_text(json.dumps(dict(width=w, height=h, alpha=meta['hasAlpha']=='yes', profile=meta['profile'], media_type=d['mimeType']))+'\n')
+PYTHON
