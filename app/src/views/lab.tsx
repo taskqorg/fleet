@@ -66,7 +66,7 @@ function Registry({ useCases }: { useCases: any[] }) {
       <div class="vl-head" role="row"><span /><span>Use case</span><span>Status</span><span>Fit</span><span>Maturity</span></div>
       {live.map(row)}
       {repos.map(repo => { const of = gone.filter(u => (u.source?.repo ?? '?') === repo);
-        return <details key={repo} style={{ gridColumn: '1 / -1' }}><summary class="muted">{repo}: {of.length} replaced</summary>{of.map(row)}</details>; })}
+        return <details key={repo}><summary class="muted">{repo}: {of.length} replaced</summary>{of.map(row)}</details>; })}
     </div>
   </article>;
 }
