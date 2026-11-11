@@ -13,6 +13,7 @@ package contract
 //go:generate go run ../gen ../../contracts/ops-people.schema.json contract ops_people_gen.go
 //go:generate go run ../gen ../../contracts/ops-sessions.schema.json contract ops_sessions_gen.go
 //go:generate go run ../gen ../../contracts/ops-tasks.schema.json contract ops_tasks_gen.go
+//go:generate go run ../gen ../../contracts/ops-telemetry.schema.json contract ops_telemetry_gen.go
 //go:generate go run ../gen ../../contracts/profile.schema.json contract profile_gen.go
 
 // Operation is one entry of an "operations" list in contracts/ops-<domain>.schema.json: a read snapshot or a write, long (no surrounding

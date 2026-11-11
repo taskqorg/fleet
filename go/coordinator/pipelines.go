@@ -1203,7 +1203,7 @@ func init() {
 		runningApp = a
 		// On start, running v2 runs move on (an interrupted sync call becomes unknown, never replayed).
 		pipelineTick(ctx, a)
-		every(ctx, envMs("FLEET_PIPELINE_TICK_MS", 5000), func() { pipelineTick(ctx, a); labReconcileRunning(ctx, a) })
+		every(ctx, "pipelines", envMs("FLEET_PIPELINE_TICK_MS", 5000), func(ctx context.Context) error { pipelineTick(ctx, a); labReconcileRunning(ctx, a); return nil })
 	})
 }
 

@@ -10,7 +10,7 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   (docs/designs/fleet-contracts.md); `go/coordinator/schema.sql` stays the source of table rows only.
 * `gateway.schema.json`: the fleet-gateway seam (docs/designs/fleet-connections.md section 3): the snapshot the
   coordinator writes and the gateway reads, and the call line the gateway spools and the coordinator ingests.
-* `ops-<domain>.schema.json` (accounts, artifacts, definitions, executions, lab, people, sessions, tasks) and `ops.schema.json`: the coordinator operations (`POST /api/ops/<name>`, and the agents' MCP tools of the same names), split by domain so lanes that change different domains edit different files. A type that only one domain's operations reach lives in that domain's file; `OpError`, `ChangeKind`, types two domains share and types no operation reaches live in `ops.schema.json`; a reference across files is `<file>.schema.json#/$defs/<Name>`. A name is in one file only (built or planned); `gen-ts.mjs` fails otherwise. A new operation goes into the file of its name's first word:
+* `ops-<domain>.schema.json` (accounts, artifacts, definitions, executions, lab, people, sessions, tasks, telemetry) and `ops.schema.json`: the coordinator operations (`POST /api/ops/<name>`, and the agents' MCP tools of the same names), split by domain so lanes that change different domains edit different files. A type that only one domain's operations reach lives in that domain's file; `OpError`, `ChangeKind`, types two domains share and types no operation reaches live in `ops.schema.json`; a reference across files is `<file>.schema.json#/$defs/<Name>`. A name is in one file only (built or planned); `gen-ts.mjs` fails otherwise. A new operation goes into the file of its name's first word:
 
   | File | First words of operation names |
   | --- | --- |
@@ -22,6 +22,7 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   | `ops-people` | `me`, `people`, `person`, `focus`, `view`, `list` |
   | `ops-sessions` | `session`, `sessions`, `thread`, `message`, `reply`, `ask`, `direct`, `watch`, `worker`, `changes`, `recommendation` |
   | `ops-tasks` | `task`, `question`, `questions`, `project` |
+  | `ops-telemetry` | `telemetry` |
 
   A new first word joins the closest row here. A new domain file also needs its `go:generate` line in `go/contract/contract.go`.
   `operations` lists every operation (`read`, `long`, `errors`: the statuses its handler returns besides 401, 403 and 500);

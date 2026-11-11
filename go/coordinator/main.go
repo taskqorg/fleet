@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"fleet/obs"
 )
 
 type Person struct {
@@ -80,17 +82,19 @@ func main() {
 		log.Fatal(err)
 	}
 	a.stream = listen(ctx, database)
+	startTelemetry(ctx, a)
 	startAll(ctx, a)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8787"
 	}
-	srv := &http.Server{Addr: "127.0.0.1:" + port, Handler: a.routes()}
+	srv := &http.Server{Addr: "127.0.0.1:" + port, Handler: obs.Handler(a.routes(), spanName)}
 	go func() {
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGTERM, os.Interrupt)
 		<-ch
 		a.stream.close()
+		stopTelemetry() // the queued spans get their last flush
 		c, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		srv.Shutdown(c)
@@ -253,8 +257,12 @@ func writeError(w http.ResponseWriter, err error) {
 	code, msg := 500, err.Error()
 	if errors.As(err, &he) {
 		code = he.Code
+		if code == 403 {
+			obs.MarkRefused(w) // a missing role or grant: a decision, not an error (fleet-telemetry.md §1)
+		}
 	} else if pgCode(err) == "42501" { // a write outside the person's scope (row-level security): 403, not 500
 		code, msg = 403, "Not in your scope"
+		obs.MarkRefused(w)
 	} else {
 		log.Printf("error: %v", err)
 	}

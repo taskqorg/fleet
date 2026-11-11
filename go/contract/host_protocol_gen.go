@@ -477,6 +477,17 @@ type ScriptTimeout struct {
 	TimeoutMs *int64 `json:"timeoutMs"`
 }
 
+type SpanBatchReply struct {
+	Accepted int64 `json:"accepted"`
+	Skipped  int64 `json:"skipped"`
+}
+
+// SpanBatchRequest: POST /api/hosts/spans (docs/designs/fleet-telemetry.md section 4): spans of an executor or gateway. Each item is one span row with the ClickHouse column names (go/obs Span); a row naming another host_id, or an execution_id not on this host, is skipped. batchId makes a retried batch idempotent.
+type SpanBatchRequest struct {
+	BatchId string            `json:"batchId"`
+	Spans   []json.RawMessage `json:"spans"`
+}
+
 // StartPayload: start and input. Named fields; lane A replaces the coordinator's merge of a free payload over them.
 type StartPayload struct {
 	Account          *string                    `json:"account,omitempty"`
