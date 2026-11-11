@@ -602,33 +602,6 @@ func latestReadings(ctx context.Context, a *App) (map[string][]Reading, error) {
 	return out, rs.Err()
 }
 
-func subscriptionLimits(q *Request, _ *contract.SubscriptionLimitsRequest) (contract.SubscriptionLimitsReply, error) {
-	out := contract.SubscriptionLimitsReply{ServerNow: nowMs(), Subscriptions: []contract.SubscriptionLimit{}}
-	ctx := withTx(q)
-	m, err := latestReadings(ctx, q.app)
-	if err != nil {
-		return out, err
-	}
-	accounts, err := rowsCtx(ctx, conn(ctx, q.app), "SELECT data FROM document WHERE kind='managed-account' ORDER BY seq")
-	if err != nil {
-		return out, err
-	}
-	for _, r := range accounts {
-		x, _ := r["data"].(map[string]any)
-		id, _ := x["id"].(string)
-		rd, err := asT[[]contract.SubscriptionReading](m[id]) // Reading's JSON is the contract's SubscriptionReading
-		if err != nil {
-			return out, err
-		}
-		if rd == nil {
-			rd = []contract.SubscriptionReading{}
-		}
-		out.Subscriptions = append(out.Subscriptions, contract.SubscriptionLimit{Id: id, Name: jsonBytes(x["name"]), Harness: jsonBytes(x["harness"]), Holder: jsonBytes(x["holder"]),
-			Intake: jsonBytes(x["intake"]), SwitchPct: jsonBytes(x["switchPct"]), Readings: rd})
-	}
-	return out, nil
-}
-
 // readingOverSwitch: the dispatch skip (§6) for an account: provider rejected, or a percent at or over switchPct (100
 // without one: a full subscription cannot run anyway). Only
 // readings that know when their period ends count. Empty when none applies. For the dispatch area.

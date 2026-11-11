@@ -89,13 +89,15 @@ type AccountUpdateReply = map[string]json.RawMessage
 
 // AccountUpdateRequest: Holder or owner; switchPct null clears it; take {projects}; holder: owner only.
 type AccountUpdateRequest struct {
-	AccountId string          `json:"accountId"`
-	Comment   *string         `json:"comment,omitempty"`
-	Holder    *string         `json:"holder,omitempty"`
-	Intake    *string         `json:"intake,omitempty"`
-	Plan      *string         `json:"plan,omitempty"`
-	SwitchPct *float64        `json:"switchPct,omitempty"`
-	Take      json.RawMessage `json:"take,omitempty"`
+	AccountId  string          `json:"accountId"`
+	Comment    *string         `json:"comment,omitempty"`
+	Holder     *string         `json:"holder,omitempty"`
+	Intake     *string         `json:"intake,omitempty"`
+	LowPct     *float64        `json:"lowPct,omitempty"`
+	Plan       *string         `json:"plan,omitempty"`
+	PlanWeight *float64        `json:"planWeight,omitempty"`
+	SwitchPct  *float64        `json:"switchPct,omitempty"`
+	Take       json.RawMessage `json:"take,omitempty"`
 }
 
 // Actor: person: the person (kind person); executionId: the agent execution (kind agent); system: reconcile. directedBy is set for person and agent.
@@ -1402,6 +1404,74 @@ type LabScoreCorrectRequest struct {
 	Value     *string `json:"value,omitempty"`
 }
 
+// LimitEmpty: when a line reaches 0: at a time, not before the line ends, or unknown
+type LimitEmpty struct {
+	At    *int64          `json:"at"`
+	State LimitEmptyState `json:"state"`
+}
+
+type LimitEmptyState string
+
+const (
+	LimitEmptyStateAt           LimitEmptyState = "at"
+	LimitEmptyStateNotBeforeEnd LimitEmptyState = "not-before-end"
+	LimitEmptyStateUnknown      LimitEmptyState = "unknown"
+)
+
+// LimitEmptyStateValues lists every LimitEmptyState in schema order.
+var LimitEmptyStateValues = []LimitEmptyState{LimitEmptyStateAt, LimitEmptyStateNotBeforeEnd, LimitEmptyStateUnknown}
+
+type LimitPace string
+
+const (
+	LimitPaceAhead   LimitPace = "ahead"
+	LimitPaceOn      LimitPace = "on"
+	LimitPaceUnder   LimitPace = "under"
+	LimitPaceUnknown LimitPace = "unknown"
+)
+
+// LimitPaceValues lists every LimitPace in schema order.
+var LimitPaceValues = []LimitPace{LimitPaceAhead, LimitPaceOn, LimitPaceUnder, LimitPaceUnknown}
+
+// LimitPeriod: one (subscription, period): the latest reading, its history and its projection (fleet-people-access.md section 8)
+type LimitPeriod struct {
+	Burn       *float64     `json:"burn"`
+	FirstEmpty LimitEmpty   `json:"firstEmpty"`
+	History    []LimitPoint `json:"history"`
+	Left       *float64     `json:"left"`
+	Low        bool         `json:"low"`
+	Pace       LimitPace    `json:"pace"`
+	Pct        *float64     `json:"pct"`
+	Period     string       `json:"period"`
+	Projection []LimitPoint `json:"projection"`
+	ReadingAt  *int64       `json:"readingAt"`
+	ResetsAt   *int64       `json:"resetsAt"`
+	Source     string       `json:"source"`
+	Status     *string      `json:"status"`
+}
+
+// LimitPoint: left in percent of the member (or weighted points for a pool) at a time
+type LimitPoint struct {
+	At   int64   `json:"at"`
+	Left float64 `json:"left"`
+}
+
+// LimitPool: per harness and period over members with a known percent, weighted by planWeight
+type LimitPool struct {
+	Burn       *float64     `json:"burn"`
+	Capacity   float64      `json:"capacity"`
+	FirstEmpty LimitEmpty   `json:"firstEmpty"`
+	Harness    string       `json:"harness"`
+	Left       float64      `json:"left"`
+	LeftPct    *float64     `json:"leftPct"`
+	Members    []string     `json:"members"`
+	NextReset  LimitReset   `json:"nextReset"`
+	Period     string       `json:"period"`
+	PoolEmpty  LimitEmpty   `json:"poolEmpty"`
+	Projection []LimitPoint `json:"projection"`
+	Unknown    []string     `json:"unknown"`
+}
+
 type LimitRefreshSent struct {
 	Binding        string `json:"binding"`
 	ExecutionId    string `json:"executionId"`
@@ -1412,6 +1482,25 @@ type LimitRefreshSent struct {
 type LimitRefreshSkipped struct {
 	Reason         string `json:"reason"`
 	SubscriptionId string `json:"subscriptionId"`
+}
+
+// LimitReset: earliest member reset and the weighted points it adds back
+type LimitReset struct {
+	At      *int64   `json:"at"`
+	Restore *float64 `json:"restore"`
+}
+
+type LimitSubscription struct {
+	Harness    string                `json:"harness"`
+	Holder     json.RawMessage       `json:"holder"`
+	Id         string                `json:"id"`
+	Intake     json.RawMessage       `json:"intake"`
+	LowPct     *float64              `json:"lowPct"`
+	Name       json.RawMessage       `json:"name"`
+	Periods    []LimitPeriod         `json:"periods"`
+	PlanWeight float64               `json:"planWeight"`
+	Readings   []SubscriptionReading `json:"readings"`
+	SwitchPct  *float64              `json:"switchPct"`
 }
 
 // ListFilter: The list filter of packages/view-url toPageParams; a null projectId is work outside projects.
@@ -2164,17 +2253,6 @@ type StreamCursor struct {
 	Cursor int64 `json:"cursor"`
 }
 
-// SubscriptionLimit: The subscription fields as stored on the managed-account record.
-type SubscriptionLimit struct {
-	Harness   json.RawMessage       `json:"harness"`
-	Holder    json.RawMessage       `json:"holder"`
-	Id        string                `json:"id"`
-	Intake    json.RawMessage       `json:"intake"`
-	Name      json.RawMessage       `json:"name"`
-	Readings  []SubscriptionReading `json:"readings"`
-	SwitchPct json.RawMessage       `json:"switchPct"`
-}
-
 type SubscriptionLimitsRefreshReply struct {
 	Sent    []LimitRefreshSent    `json:"sent"`
 	Skipped []LimitRefreshSkipped `json:"skipped"`
@@ -2186,11 +2264,20 @@ type SubscriptionLimitsRefreshRequest struct {
 }
 
 type SubscriptionLimitsReply struct {
+	From          int64               `json:"from"`
+	Pools         []LimitPool         `json:"pools"`
 	ServerNow     int64               `json:"serverNow"`
-	Subscriptions []SubscriptionLimit `json:"subscriptions"`
+	Subscriptions []LimitSubscription `json:"subscriptions"`
+	To            int64               `json:"to"`
+	WindowHours   float64             `json:"windowHours"`
 }
 
-type SubscriptionLimitsRequest = map[string]json.RawMessage
+type SubscriptionLimitsRequest struct {
+	From        *int64   `json:"from,omitempty"`
+	PaceMargin  *float64 `json:"paceMargin,omitempty"`
+	To          *int64   `json:"to,omitempty"`
+	WindowHours *float64 `json:"windowHours,omitempty"`
+}
 
 type SubscriptionReading struct {
 	At       int64    `json:"at"`
