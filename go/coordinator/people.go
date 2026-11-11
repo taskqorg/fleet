@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 
+	"fleet/contract"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -173,23 +175,24 @@ func (a *App) ownSubscription(q *Request, name string, b map[string]any) bool {
 }
 
 func init() {
-	gatedObjOp("me", true, func(q *Request) (any, error) {
+	gatedObjOp("me", true, typedOp(func(q *Request, _ *contract.MeRequest) (contract.MeReply, error) {
 		p := q.person
 		if p == nil {
-			return doc{"email": nil, "name": nil, "roles": []string{}, "owner": false, "grantsVersion": nil, "changeLogRetentionDays": 7}, nil
+			return contract.MeReply{Roles: []string{}, ChangeLogRetentionDays: 7}, nil
 		}
 		roles := p.Roles
 		if roles == nil {
 			roles = []string{}
 		}
-		return doc{"email": p.Email, "name": p.Name, "roles": roles, "owner": p.Owner, "grantsVersion": grantsVersion(p), "changeLogRetentionDays": 7}, nil
-	})
+		g := grantsVersion(p)
+		return contract.MeReply{Email: &p.Email, Name: &p.Name, Roles: roles, Owner: p.Owner, GrantsVersion: &g, ChangeLogRetentionDays: 7}, nil
+	}))
 }
 
 // people_list and people_set: people.json as operations (docs/designs/fleet-pm-agent.md §8). A non-owner sees only
 // themself, as the person row-level policy does; only the owner sets the list, written atomically and reloaded.
 func init() {
-	gatedObjOp("people_list", true, func(q *Request) (any, error) {
+	gatedObjOp("people_list", true, shaped[contract.PeopleListRequest, contract.PeopleListReply](func(q *Request) (any, error) {
 		out := []*Person{}
 		for _, p := range q.app.people {
 			if q.person == nil || fullAccess(q.person) || p.Email == q.person.Email {
@@ -200,9 +203,9 @@ func init() {
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].Email < out[j].Email })
 		return doc{"people": out}, nil
-	})
+	}))
 	// setting_changes: the audit of settings, newest first, optionally of one target (host:<id>, people, ...).
-	gatedObjOp("setting_changes", true, func(q *Request) (any, error) {
+	gatedObjOp("setting_changes", true, shaped[contract.SettingChangesRequest, contract.SettingChangesReply](func(q *Request) (any, error) {
 		// The people list is the owner's: its audit (with service-token client IDs) is not shown to architects or site-agents.
 		owner := q.person == nil || q.person.Owner
 		b := body(q)
@@ -219,49 +222,60 @@ func init() {
 			out = append(out, r["data"])
 		}
 		return doc{"changes": out, "nextBefore": next}, err
-	})
-	longOp("people_set", func(q *Request) (any, error) {
+	}))
+	longOp("people_set", checkFirst(func(q *Request) error {
 		if q.person != nil && !q.person.Owner {
-			return nil, fail(403, "Only the owner sets people")
+			return fail(403, "Only the owner sets people")
 		}
-		var b struct {
-			People json.RawMessage `json:"people"`
+		return nil
+	}, typedOp(func(q *Request, _ *contract.PeopleSetRequest) (contract.PeopleSetReply, error) {
+		// The handler reads the body as sent: people.json keeps the owner's bytes (the struct only checked them).
+		out, err := peopleSet(q)
+		return replyAs[contract.PeopleSetReply](out, err)
+	})))
+}
+
+func peopleSet(q *Request) (any, error) {
+	if q.person != nil && !q.person.Owner {
+		return nil, fail(403, "Only the owner sets people")
+	}
+	var b struct {
+		People json.RawMessage `json:"people"`
+	}
+	if json.Unmarshal(q.body, &b) != nil || len(b.People) == 0 || b.People[0] != '[' {
+		return nil, fail(400, "Expected people: the whole people.json list")
+	}
+	previous, err := os.ReadFile(q.app.peopleFile)
+	if err != nil {
+		return nil, err
+	}
+	// The file first, so a failed write leaves Fleet on the old list; a failed apply puts the old file back.
+	write := func(raw []byte) error {
+		tmp := q.app.peopleFile + ".tmp"
+		if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+			return err
 		}
-		if json.Unmarshal(q.body, &b) != nil || len(b.People) == 0 || b.People[0] != '[' {
-			return nil, fail(400, "Expected people: the whole people.json list")
+		return os.Rename(tmp, q.app.peopleFile)
+	}
+	if err := write(b.People); err != nil {
+		return nil, err
+	}
+	if _, err := q.app.setPeople(q.ctx(), b.People, true); err != nil {
+		if werr := write(previous); werr != nil {
+			return nil, errors.Join(err, werr)
 		}
-		previous, err := os.ReadFile(q.app.peopleFile)
-		if err != nil {
+		var pe *pgconn.PgError
+		if errors.As(err, &pe) {
 			return nil, err
 		}
-		// The file first, so a failed write leaves Fleet on the old list; a failed apply puts the old file back.
-		write := func(raw []byte) error {
-			tmp := q.app.peopleFile + ".tmp"
-			if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-				return err
-			}
-			return os.Rename(tmp, q.app.peopleFile)
-		}
-		if err := write(b.People); err != nil {
-			return nil, err
-		}
-		if _, err := q.app.setPeople(q.ctx(), b.People, true); err != nil {
-			if werr := write(previous); werr != nil {
-				return nil, errors.Join(err, werr)
-			}
-			var pe *pgconn.PgError
-			if errors.As(err, &pe) {
-				return nil, err
-			}
-			return nil, fail(400, err.Error())
-		}
-		var prev, next any
-		json.Unmarshal(previous, &prev)
-		json.Unmarshal(b.People, &next)
-		err = q.app.store.Tx(q.ctx(), nil, true, "", func(tx pgx.Tx) error {
-			q.tx = tx
-			return put(q, "setting-change", doc{"id": newID(), "target": "people", "field": "people", "previous": prev, "value": next, "actor": actor(q, "operator"), "at": nowMs()})
-		})
-		return doc{"people": len(q.app.people)}, err
+		return nil, fail(400, err.Error())
+	}
+	var prev, next any
+	json.Unmarshal(previous, &prev)
+	json.Unmarshal(b.People, &next)
+	err = q.app.store.Tx(q.ctx(), nil, true, "", func(tx pgx.Tx) error {
+		q.tx = tx
+		return put(q, "setting-change", doc{"id": newID(), "target": "people", "field": "people", "previous": prev, "value": next, "actor": actor(q, "operator"), "at": nowMs()})
 	})
+	return doc{"people": len(q.app.people)}, err
 }

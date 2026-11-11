@@ -16,6 +16,7 @@ import (
 	osexec "os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -694,12 +695,140 @@ func expRow(q *Request, id string) (doc, error) {
 func expView(r doc) doc {
 	return doc{"id": r["id"], "projectId": r["project_id"], "kind": r["kind"], "pipelineId": r["pipeline_id"], "examples": r["examples"], "variants": r["variants"],
 		"repeats": r["repeats"], "evaluators": r["evaluators"], "primaryEvaluator": r["primary_evaluator"], "budgets": r["budgets"], "state": r["state"],
-		"stopReason": r["stop_reason"], "createdAt": r["created_at"]}
+		"stopReason": r["stop_reason"], "createdAt": r["created_at"], "goal": r["goal"], "hypothesis": r["hypothesis"], "decisionRule": r["decision_rule"],
+		"labGroup": r["lab_group"], "decision": r["decision"], "decisionReason": r["decision_reason"], "decidedBy": r["decided_by"], "decidedAt": r["decided_at"],
+		"launchedAt": r["launched_at"]}
+}
+
+// recordFields: the experiment record fields of a create request, frozen at launch (fleet-lab.md, Experiment record).
+var recordFields = []string{"goal", "hypothesis", "decisionRule", "labGroup", "primaryEvaluator"}
+
+var recordColumns = map[string]string{"goal": "goal", "hypothesis": "hypothesis", "decisionRule": "decision_rule", "labGroup": "lab_group", "primaryEvaluator": "primary_evaluator"}
+
+// expLocked: the experiment row, locked for this transaction (a record change reads and writes it once).
+func expLocked(q *Request, id string) (doc, error) {
+	rs, err := queryRows(q, "SELECT * FROM experiment WHERE id=$1 FOR UPDATE", id)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, fail(404, "Unknown experiment")
+	}
+	return rs[0], nil
+}
+
+// expLaunch: draft to running, refused without a goal and a hypothesis; the record is frozen from here on.
+func expLaunch(q *Request, id string) error {
+	e, err := expRow(q, id)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(astr(e["goal"])) == "" || strings.TrimSpace(astr(e["hypothesis"])) == "" {
+		return fail(400, "Launch needs the experiment's goal and hypothesis")
+	}
+	return expSetState(q, id, []string{"draft"}, "running", nil) // the experiment_record trigger stamps launched_at
+}
+
+// expNote: an append-only note, or an amendment that changes one record field and keeps its old and new value.
+func expNote(q *Request, b doc) (doc, error) {
+	if !keysOnly(b, "experimentId", "kind", "field", "value", "text") {
+		return nil, fail(400, "Expected experimentId, kind, field, value, text")
+	}
+	e, err := expLocked(q, astr(b["experimentId"]))
+	if err != nil {
+		return nil, err
+	}
+	text, _ := b["text"].(string)
+	if strings.TrimSpace(text) == "" {
+		return nil, fail(400, "A note needs text")
+	}
+	kind, field := astr(b["kind"]), astr(b["field"])
+	var old, value any
+	switch kind {
+	case "note":
+		if b["field"] != nil || b["value"] != nil {
+			return nil, fail(400, "A note has no field or value")
+		}
+	case "amendment":
+		col, ok := recordColumns[field]
+		if !ok {
+			return nil, fail(400, "An amendment changes one of "+strings.Join(recordFields, ", "))
+		}
+		v, isText := b["value"].(string)
+		if b["value"] != nil && !isText {
+			return nil, fail(400, "value must be text or null")
+		}
+		if (field == "goal" || field == "hypothesis") && strings.TrimSpace(v) == "" {
+			return nil, fail(400, field+" cannot be cleared")
+		}
+		if field == "primaryEvaluator" && v != "" && !slices.ContainsFunc(anys(e["evaluators"]), func(x any) bool { return evaluatorName(mapOf(x)) == v }) {
+			return nil, fail(400, "primaryEvaluator names none of the evaluators")
+		}
+		old, value = e[col], b["value"]
+		if err := exec(q, "UPDATE experiment SET "+col+"=$2 WHERE id=$1", e["id"], nilIf(v)); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fail(400, "kind is amendment or note")
+	}
+	n := doc{"id": newID(), "experimentId": e["id"], "kind": kind, "field": nilIf(field), "old": old, "new": value, "text": text, "author": actor(q, "operator")}
+	if err := exec(q, "INSERT INTO experiment_note(id,experiment_id,project_id,kind,field,old,new,text,author) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+		n["id"], e["id"], e["project_id"], kind, n["field"], jsonBytes(old), jsonBytes(value), text, n["author"]); err != nil {
+		return nil, err
+	}
+	// A note changes the experiment as its readers see it: touch the row so its change reaches the feed.
+	return n, exec(q, "UPDATE experiment SET id=id WHERE id=$1", e["id"])
+}
+
+// expDecide: a person confirms or overrides the decision of a stopped or done experiment; an override needs a reason and
+// is an amendment.
+func expDecide(q *Request, b doc) (doc, error) {
+	if !keysOnly(b, "experimentId", "decision", "reason") {
+		return nil, fail(400, "Expected experimentId, decision, reason")
+	}
+	e, err := expLocked(q, astr(b["experimentId"]))
+	if err != nil {
+		return nil, err
+	}
+	if e["state"] != "stopped" && e["state"] != "done" {
+		return nil, fail(409, "An experiment is decided once it is stopped or done")
+	}
+	d, reason := astr(b["decision"]), strings.TrimSpace(astr(b["reason"]))
+	label, adopt := strings.CutPrefix(d, "adopt ")
+	if adopt && !slices.ContainsFunc(anys(e["variants"]), func(v any) bool { return mapOf(v)["label"] == label }) {
+		return nil, fail(400, "Unknown variant "+label)
+	}
+	if !adopt && d != "keep baseline" && d != "inconclusive" {
+		return nil, fail(400, "decision is adopt <variant>, keep baseline or inconclusive")
+	}
+	prev := astr(e["decision"])
+	if prev == d {
+		return expGet(q, astr(e["id"])) // already decided so: nothing changes, no second record
+	}
+	if prev != "" && prev != "pending" && prev != d {
+		if reason == "" {
+			return nil, fail(400, "Overriding a decision needs a reason")
+		}
+		if err := exec(q, "INSERT INTO experiment_note(id,experiment_id,project_id,kind,field,old,new,text,author) VALUES($1,$2,$3,'amendment','decision',$4,$5,$6,$7)",
+			newID(), e["id"], e["project_id"], jsonBytes(prev), jsonBytes(d), reason, actor(q, "operator")); err != nil {
+			return nil, err
+		}
+	}
+	if err := exec(q, "UPDATE experiment SET decision=$2,decision_reason=$3,decided_by=$4,decided_at=now() WHERE id=$1",
+		e["id"], d, nilIf(reason), actor(q, "operator")); err != nil {
+		return nil, err
+	}
+	return expGet(q, astr(e["id"]))
 }
 
 func expCreate(q *Request, b doc) (doc, error) {
-	if !keysOnly(b, "kind", "projectId", "pipelineId", "examples", "variants", "repeats", "evaluators", "budgets", "primaryEvaluator", "strategy") {
-		return nil, fail(400, "Expected kind, projectId, pipelineId, examples, variants, repeats, evaluators, budgets, primaryEvaluator, strategy")
+	if !keysOnly(b, "kind", "projectId", "pipelineId", "examples", "variants", "repeats", "evaluators", "budgets", "primaryEvaluator", "strategy", "goal", "hypothesis", "decisionRule", "labGroup") {
+		return nil, fail(400, "Expected kind, projectId, pipelineId, examples, variants, repeats, evaluators, budgets, primaryEvaluator, strategy, goal, hypothesis, decisionRule, labGroup")
+	}
+	for _, k := range recordFields {
+		if _, ok := b[k].(string); b[k] != nil && !ok {
+			return nil, fail(400, k+" must be text")
+		}
 	}
 	kind := astr(b["kind"])
 	if kind == "loop" {
@@ -857,8 +986,9 @@ func expCreate(q *Request, b doc) (doc, error) {
 		budgets = append(budgets, doc{"unit": u, "limit": l, "action": act})
 	}
 	id := newID()
-	if err := exec(q, "INSERT INTO experiment(id,project_id,kind,pipeline_id,examples,variants,repeats,evaluators,primary_evaluator,budgets) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-		id, projectID, kind, pipelineID, jsonBytes(examples), jsonBytes(variants), repeats, jsonBytes(evaluators), b["primaryEvaluator"], jsonBytes(budgets)); err != nil {
+	if err := exec(q, "INSERT INTO experiment(id,project_id,kind,pipeline_id,examples,variants,repeats,evaluators,primary_evaluator,budgets,goal,hypothesis,decision_rule,lab_group) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
+		id, projectID, kind, pipelineID, jsonBytes(examples), jsonBytes(variants), repeats, jsonBytes(evaluators), b["primaryEvaluator"], jsonBytes(budgets),
+		b["goal"], b["hypothesis"], b["decisionRule"], b["labGroup"]); err != nil {
 		return nil, err
 	}
 	return expGet(q, id)
@@ -1417,7 +1547,7 @@ func expAction(q *Request, id, action string) (doc, error) {
 	var err error
 	switch action {
 	case "launch":
-		err = runTx(q.ctx(), q.app, q, true, "", func(q *Request) error { return expSetState(q, id, []string{"draft"}, "running", nil) })
+		err = runTx(q.ctx(), q.app, q, true, "", func(q *Request) error { return expLaunch(q, id) })
 	case "stop":
 		err = runTx(q.ctx(), q.app, q, true, "", func(q *Request) error { return expSetState(q, id, []string{"running", "paused"}, "stopped", "owner") })
 	case "resume":
@@ -1913,6 +2043,11 @@ func expGet(q *Request, id string) (doc, error) {
 		scores = append(scores, sc)
 	}
 	out := expView(exp)
+	notes, err := queryRows(q, "SELECT id,kind,field,old,new,text,author,at FROM experiment_note WHERE experiment_id=$1 ORDER BY seq", id)
+	if err != nil {
+		return nil, err
+	}
+	out["notes"] = notes
 	out["variants"], out["spend"], out["trials"], out["cells"], out["scores"], out["agreement"], out["judges"] = variants, s, tv, cells, scores, agreement(cur), judges
 	out["priority"] = doc{"value": "background", "note": "No effect until the scheduler exists"}
 	return out, nil
@@ -1954,6 +2089,8 @@ var labOps = map[string]struct {
 		return labExampleGet(q, id)
 	}},
 	"lab_experiment_create": {false, false, func(q *Request, b doc) (any, error) { return expCreate(q, b) }},
+	"lab_experiment_note":   {false, false, func(q *Request, b doc) (any, error) { return expNote(q, b) }},
+	"lab_experiment_decide": {false, false, func(q *Request, b doc) (any, error) { return expDecide(q, b) }},
 	"lab_experiments_list": {false, true, func(q *Request, b doc) (any, error) {
 		rs, err := queryRows(q, "SELECT * FROM experiment ORDER BY seq DESC")
 		out := []any{}

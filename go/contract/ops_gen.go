@@ -6,73 +6,95 @@ import "encoding/json"
 
 var _ json.RawMessage
 
-type AccountConnectReply = map[string]json.RawMessage
+type AccountConnectReply = AccountInspection
 
+// AccountConnectRequest: Inspects one native login. hostId: default the caller's host; binding: the native login name.
 type AccountConnectRequest struct {
-	AccountId *string `json:"accountId,omitempty"`
-	Binding   *string `json:"binding,omitempty"`
+	AccountId string  `json:"accountId"`
+	Binding   string  `json:"binding"`
 	HostId    *string `json:"hostId,omitempty"`
 }
 
+// AccountCreateReply: A managed-account record: id, name, harness, holder, kind, plan, intake, take, switchPct, comment, bindings and times.
 type AccountCreateReply = map[string]json.RawMessage
 
+// AccountCreateRequest: harness codex, claude, antigravity or acp; holder: the owner may create one for another person.
 type AccountCreateRequest struct {
-	Harness json.RawMessage `json:"harness,omitempty"`
-	Holder  *string         `json:"holder,omitempty"`
-	Name    *string         `json:"name,omitempty"`
+	Comment *string `json:"comment,omitempty"`
+	Harness string  `json:"harness"`
+	Holder  *string `json:"holder,omitempty"`
+	Name    string  `json:"name"`
+	Plan    *string `json:"plan,omitempty"`
 }
 
-type AccountDiscoverReply = map[string]json.RawMessage
+type AccountDiscoverReply = AccountInspection
 
+// AccountDiscoverRequest: Reads the host's native account catalogue. hostId: default the caller's host.
 type AccountDiscoverRequest struct {
-	AccountId *string `json:"accountId,omitempty"`
-	Binding   *string `json:"binding,omitempty"`
+	AccountId string  `json:"accountId"`
 	HostId    *string `json:"hostId,omitempty"`
 }
 
 type AccountHostsReply struct {
-	Hosts json.RawMessage `json:"hosts,omitempty"`
+	Hosts []map[string]json.RawMessage `json:"hosts"`
 }
 
+// AccountHostsRequest: harness default codex; accountId takes the account's harness.
 type AccountHostsRequest struct {
-	AccountId *string         `json:"accountId,omitempty"`
-	Harness   json.RawMessage `json:"harness,omitempty"`
+	AccountId *string `json:"accountId,omitempty"`
+	Harness   *string `json:"harness,omitempty"`
+}
+
+// AccountInspection: A read-only native inspection queued on a host; an identical one still pending is answered instead of a new one.
+type AccountInspection struct {
+	AccountId   string  `json:"accountId"`
+	Binding     *string `json:"binding"`
+	CreatedAt   float64 `json:"createdAt"`
+	ExecutionId string  `json:"executionId"`
+	HostId      string  `json:"hostId"`
+	Id          string  `json:"id"`
+	LoginAction *string `json:"loginAction,omitempty"`
 }
 
 type AccountListReply struct {
-	Accounts   json.RawMessage `json:"accounts,omitempty"`
-	Catalogues json.RawMessage `json:"catalogues,omitempty"`
+	Accounts   []map[string]json.RawMessage `json:"accounts"`
+	Catalogues []map[string]json.RawMessage `json:"catalogues"`
 }
 
 type AccountListRequest = map[string]json.RawMessage
 
+// AccountLoginHandoffReply: What a person runs to log the binding in; Fleet changes no authentication itself.
 type AccountLoginHandoffReply struct {
-	AuthChanged             json.RawMessage `json:"authChanged,omitempty"`
-	BasedOnCheckAt          json.RawMessage `json:"basedOnCheckAt,omitempty"`
-	Binding                 json.RawMessage `json:"binding,omitempty"`
-	Command                 json.RawMessage `json:"command,omitempty"`
-	Environment             json.RawMessage `json:"environment,omitempty"`
-	Executable              json.RawMessage `json:"executable,omitempty"`
-	HostId                  json.RawMessage `json:"hostId,omitempty"`
-	ObservedAt              json.RawMessage `json:"observedAt,omitempty"`
-	Quota                   json.RawMessage `json:"quota,omitempty"`
-	RequiredUserInteraction json.RawMessage `json:"requiredUserInteraction,omitempty"`
-	Warning                 json.RawMessage `json:"warning,omitempty"`
+	AuthChanged             bool            `json:"authChanged"`
+	BasedOnCheckAt          json.RawMessage `json:"basedOnCheckAt"`
+	Binding                 json.RawMessage `json:"binding"`
+	Command                 json.RawMessage `json:"command"`
+	Environment             json.RawMessage `json:"environment"`
+	Executable              json.RawMessage `json:"executable"`
+	HostId                  string          `json:"hostId"`
+	ObservedAt              int64           `json:"observedAt"`
+	Quota                   string          `json:"quota"`
+	RequiredUserInteraction json.RawMessage `json:"requiredUserInteraction"`
+	Warning                 json.RawMessage `json:"warning"`
 }
 
 type AccountLoginHandoffRequest struct {
-	AccountId *string `json:"accountId,omitempty"`
+	AccountId string  `json:"accountId"`
 	Binding   *string `json:"binding,omitempty"`
-	HostId    *string `json:"hostId,omitempty"`
+	HostId    string  `json:"hostId"`
 }
 
+// AccountUpdateReply: A managed-account record: id, name, harness, holder, kind, plan, intake, take, switchPct, comment, bindings and times.
 type AccountUpdateReply = map[string]json.RawMessage
 
+// AccountUpdateRequest: Holder or owner; switchPct null clears it; take {projects}; holder: owner only.
 type AccountUpdateRequest struct {
-	AccountId  *string         `json:"accountId,omitempty"`
+	AccountId  string          `json:"accountId"`
+	Comment    *string         `json:"comment,omitempty"`
 	Holder     *string         `json:"holder,omitempty"`
-	Intake     json.RawMessage `json:"intake,omitempty"`
+	Intake     *string         `json:"intake,omitempty"`
 	LowPct     *float64        `json:"lowPct,omitempty"`
+	Plan       *string         `json:"plan,omitempty"`
 	PlanWeight *float64        `json:"planWeight,omitempty"`
 	SwitchPct  *float64        `json:"switchPct,omitempty"`
 	Take       json.RawMessage `json:"take,omitempty"`
@@ -258,6 +280,7 @@ type ArtifactView struct {
 	Url                   *string             `json:"url,omitempty"`
 }
 
+// AskReply: The agent question record.
 type AskReply = map[string]json.RawMessage
 
 type AskRequest struct {
@@ -381,16 +404,16 @@ type CatalogueMethodView struct {
 
 // CatalogueReply: The definition editors change methods to CatalogueMethodView items (docs/designs/fleet-definition-editors.md).
 type CatalogueReply struct {
-	Capability           json.RawMessage `json:"capability,omitempty"`
-	Methods              json.RawMessage `json:"methods,omitempty"`
-	ProjectId            json.RawMessage `json:"projectId,omitempty"`
-	RecommendationSource json.RawMessage `json:"recommendationSource,omitempty"`
-	RecommendedMethod    json.RawMessage `json:"recommendedMethod,omitempty"`
-	SharedDefault        json.RawMessage `json:"sharedDefault,omitempty"`
+	Capability           json.RawMessage              `json:"capability"`
+	Methods              []map[string]json.RawMessage `json:"methods"`
+	ProjectId            string                       `json:"projectId"`
+	RecommendationSource json.RawMessage              `json:"recommendationSource"`
+	RecommendedMethod    json.RawMessage              `json:"recommendedMethod"`
+	SharedDefault        json.RawMessage              `json:"sharedDefault"`
 }
 
 type CatalogueRequest struct {
-	ProjectId *string `json:"projectId,omitempty"`
+	ProjectId string `json:"projectId"`
 }
 
 // Change: One committed change (the change table), as GET /api/stream and changes_since deliver it.
@@ -822,15 +845,15 @@ type DiffSide struct {
 	Revision   *int64 `json:"revision,omitempty"`
 }
 
+// DirectSearchReply: A pipeline run with its steps, state and results (pipelineRun).
 type DirectSearchReply = map[string]json.RawMessage
 
+// DirectSearchRequest: Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.
 type DirectSearchRequest struct {
-	Invocation *string `json:"invocation,omitempty"`
-	MethodId   *string `json:"methodId,omitempty"`
-	ProjectId  *string `json:"projectId,omitempty"`
-	Query      *string `json:"query,omitempty"`
-	RequestId  *string `json:"requestId,omitempty"`
-	Signature  *string `json:"signature,omitempty"`
+	MethodId  *string `json:"methodId,omitempty"`
+	ProjectId string  `json:"projectId"`
+	Query     string  `json:"query"`
+	RequestId string  `json:"requestId"`
 }
 
 // DispatchOrder: list: the section 6 order list; soonest_reset: ready candidates by earliest weekly reset among those with weekly left above 0 (fleet-people-access.md section 8)
@@ -976,6 +999,18 @@ type ExecutionsListRequest struct {
 	ProjectId         *string `json:"projectId,omitempty"`
 	SessionId         *string `json:"sessionId,omitempty"`
 	TaskId            *string `json:"taskId,omitempty"`
+}
+
+// ExperimentNote: Append-only (fleet-lab.md, Experiment record): an amendment of a record field, or a note.
+type ExperimentNote struct {
+	At     json.RawMessage `json:"at"`
+	Author string          `json:"author"`
+	Field  *string         `json:"field,omitempty"`
+	Id     string          `json:"id"`
+	Kind   string          `json:"kind"`
+	New    json.RawMessage `json:"new,omitempty"`
+	Old    json.RawMessage `json:"old,omitempty"`
+	Text   string          `json:"text"`
 }
 
 type ExportFile struct {
@@ -1193,11 +1228,16 @@ type LabExperimentCreateReply struct {
 	State       json.RawMessage `json:"state,omitempty"`
 }
 
+// LabExperimentCreateRequest: goal and hypothesis are required at launch (fleet-lab.md, Experiment record).
 type LabExperimentCreateRequest struct {
 	Budgets          json.RawMessage `json:"budgets,omitempty"`
+	DecisionRule     *string         `json:"decisionRule,omitempty"`
 	Evaluators       json.RawMessage `json:"evaluators,omitempty"`
 	Examples         json.RawMessage `json:"examples,omitempty"`
+	Goal             *string         `json:"goal,omitempty"`
+	Hypothesis       *string         `json:"hypothesis,omitempty"`
 	Kind             *string         `json:"kind,omitempty"`
+	LabGroup         *string         `json:"labGroup,omitempty"`
 	PipelineId       *string         `json:"pipelineId,omitempty"`
 	PrimaryEvaluator json.RawMessage `json:"primaryEvaluator,omitempty"`
 	ProjectId        *string         `json:"projectId,omitempty"`
@@ -1206,25 +1246,63 @@ type LabExperimentCreateRequest struct {
 	Variants         json.RawMessage `json:"variants,omitempty"`
 }
 
+type LabExperimentDecideReply struct {
+	DecidedAt      json.RawMessage `json:"decidedAt,omitempty"`
+	DecidedBy      json.RawMessage `json:"decidedBy,omitempty"`
+	Decision       json.RawMessage `json:"decision,omitempty"`
+	DecisionReason json.RawMessage `json:"decisionReason,omitempty"`
+	Id             json.RawMessage `json:"id,omitempty"`
+}
+
+type LabExperimentDecideRequest struct {
+	Decision     string  `json:"decision"`
+	ExperimentId string  `json:"experimentId"`
+	Reason       *string `json:"reason,omitempty"`
+}
+
 type LabExperimentGetReply struct {
-	Baseline    *string             `json:"baseline,omitempty"`
-	Cell        json.RawMessage     `json:"cell,omitempty"`
-	Comparable  json.RawMessage     `json:"comparable,omitempty"`
-	Confounders json.RawMessage     `json:"confounders,omitempty"`
-	DurationMs  json.RawMessage     `json:"durationMs,omitempty"`
-	FinishedAt  json.RawMessage     `json:"finishedAt,omitempty"`
-	Id          json.RawMessage     `json:"id,omitempty"`
-	Observation json.RawMessage     `json:"observation,omitempty"`
-	Problem     json.RawMessage     `json:"problem,omitempty"`
-	Scores      json.RawMessage     `json:"scores,omitempty"`
-	Spend       json.RawMessage     `json:"spend,omitempty"`
-	StartedAt   json.RawMessage     `json:"startedAt,omitempty"`
-	State       json.RawMessage     `json:"state,omitempty"`
-	VsBaseline  []VariantVsBaseline `json:"vsBaseline,omitempty"`
+	Baseline       *string             `json:"baseline,omitempty"`
+	Cell           json.RawMessage     `json:"cell,omitempty"`
+	Comparable     json.RawMessage     `json:"comparable,omitempty"`
+	Confounders    json.RawMessage     `json:"confounders,omitempty"`
+	DecidedAt      json.RawMessage     `json:"decidedAt,omitempty"`
+	DecidedBy      json.RawMessage     `json:"decidedBy,omitempty"`
+	Decision       json.RawMessage     `json:"decision,omitempty"`
+	DecisionReason json.RawMessage     `json:"decisionReason,omitempty"`
+	DecisionRule   json.RawMessage     `json:"decisionRule,omitempty"`
+	DurationMs     json.RawMessage     `json:"durationMs,omitempty"`
+	FinishedAt     json.RawMessage     `json:"finishedAt,omitempty"`
+	Goal           json.RawMessage     `json:"goal,omitempty"`
+	Hypothesis     json.RawMessage     `json:"hypothesis,omitempty"`
+	Id             json.RawMessage     `json:"id,omitempty"`
+	LabGroup       json.RawMessage     `json:"labGroup,omitempty"`
+	LaunchedAt     json.RawMessage     `json:"launchedAt,omitempty"`
+	Notes          []ExperimentNote    `json:"notes,omitempty"`
+	Observation    json.RawMessage     `json:"observation,omitempty"`
+	Problem        json.RawMessage     `json:"problem,omitempty"`
+	Scores         json.RawMessage     `json:"scores,omitempty"`
+	Spend          json.RawMessage     `json:"spend,omitempty"`
+	StartedAt      json.RawMessage     `json:"startedAt,omitempty"`
+	State          json.RawMessage     `json:"state,omitempty"`
+	VsBaseline     []VariantVsBaseline `json:"vsBaseline,omitempty"`
 }
 
 type LabExperimentGetRequest struct {
 	ExperimentId *string `json:"experimentId,omitempty"`
+}
+
+type LabExperimentNoteReply struct {
+	Id   *string `json:"id,omitempty"`
+	Kind *string `json:"kind,omitempty"`
+	Text *string `json:"text,omitempty"`
+}
+
+type LabExperimentNoteRequest struct {
+	ExperimentId string  `json:"experimentId"`
+	Field        *string `json:"field,omitempty"`
+	Kind         string  `json:"kind"`
+	Text         string  `json:"text"`
+	Value        *string `json:"value,omitempty"`
 }
 
 type LabExperimentPromoteReply struct {
@@ -1482,6 +1560,7 @@ type MembershipList struct {
 	Name   string      `json:"name"`
 }
 
+// MessageSendReply: The execution the message started, or the queued message with queued: true and its position.
 type MessageSendReply = map[string]json.RawMessage
 
 type MessageSendRequest struct {
@@ -1535,18 +1614,21 @@ type OpError struct {
 	StatusCode int64  `json:"statusCode"`
 }
 
+// PeopleListReply: A non-owner sees only themself.
 type PeopleListReply struct {
-	People json.RawMessage `json:"people,omitempty"`
+	People []map[string]json.RawMessage `json:"people"`
 }
 
 type PeopleListRequest = map[string]json.RawMessage
 
+// PeopleSetReply: people: how many people the list now has.
 type PeopleSetReply struct {
-	People json.RawMessage `json:"people,omitempty"`
+	People int64 `json:"people"`
 }
 
+// PeopleSetRequest: Owner only: the whole people.json list, written atomically and reloaded.
 type PeopleSetRequest struct {
-	People json.RawMessage `json:"people,omitempty"`
+	People json.RawMessage `json:"people"`
 }
 
 type Person struct {
@@ -1578,19 +1660,20 @@ type PipelineDefinition struct {
 	Version int64          `json:"version"`
 }
 
+// PipelineGetReply: A pipeline run with its steps, state and results (pipelineRun).
 type PipelineGetReply = map[string]json.RawMessage
 
 type PipelineGetRequest struct {
 	ProjectId *string `json:"projectId,omitempty"`
-	RunId     *string `json:"runId,omitempty"`
+	RunId     string  `json:"runId"`
 }
 
 type PipelineHistoryReply struct {
-	Runs json.RawMessage `json:"runs,omitempty"`
+	Runs []map[string]json.RawMessage `json:"runs"`
 }
 
 type PipelineHistoryRequest struct {
-	ProjectId *string `json:"projectId,omitempty"`
+	ProjectId string `json:"projectId"`
 }
 
 type PipelineRerunReply struct {
@@ -1622,16 +1705,15 @@ type PipelineRunCreateRequest struct {
 	RequestId         string                     `json:"requestId"`
 }
 
+// PipelineRunReply: A pipeline run with its steps, state and results (pipelineRun).
 type PipelineRunReply = map[string]json.RawMessage
 
+// PipelineRunRequest: Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.
 type PipelineRunRequest struct {
-	Invocation *string         `json:"invocation,omitempty"`
-	MethodId   *string         `json:"methodId,omitempty"`
-	Pipeline   json.RawMessage `json:"pipeline,omitempty"`
-	ProjectId  *string         `json:"projectId,omitempty"`
-	Query      *string         `json:"query,omitempty"`
-	RequestId  *string         `json:"requestId,omitempty"`
-	Signature  *string         `json:"signature,omitempty"`
+	MethodId  *string `json:"methodId,omitempty"`
+	ProjectId string  `json:"projectId"`
+	Query     string  `json:"query"`
+	RequestId string  `json:"requestId"`
 }
 
 // PipelineStep: Step kinds are the registry's (D20); validatePipeline stays the full check.
@@ -1651,26 +1733,41 @@ type Problem struct {
 }
 
 type ProfilesListReply struct {
-	Profiles json.RawMessage `json:"profiles,omitempty"`
+	Profiles []map[string]json.RawMessage `json:"profiles"`
 }
 
 type ProfilesListRequest = map[string]json.RawMessage
 
+// ProjectContextReply: The project's context (projectContext): settings, roles, connections, rules.
 type ProjectContextReply = map[string]json.RawMessage
 
 type ProjectContextRequest struct {
-	ProjectId *string `json:"projectId,omitempty"`
+	ProjectId string `json:"projectId"`
 }
 
 type ProjectListReply struct {
-	Projects json.RawMessage `json:"projects,omitempty"`
+	Projects []map[string]json.RawMessage `json:"projects"`
 }
 
 type ProjectListRequest = map[string]json.RawMessage
 
+// ProjectQuestion: A project question to the operator; state waiting or answered.
+type ProjectQuestion struct {
+	Actor      string  `json:"actor"`
+	Answer     *string `json:"answer,omitempty"`
+	AnsweredAt *int64  `json:"answeredAt,omitempty"`
+	AnsweredBy *string `json:"answeredBy,omitempty"`
+	CreatedAt  int64   `json:"createdAt"`
+	Id         string  `json:"id"`
+	ProjectId  string  `json:"projectId"`
+	RequestId  string  `json:"requestId"`
+	State      string  `json:"state"`
+	Text       string  `json:"text"`
+}
+
 type ProjectReadinessReply struct {
-	Hosts     json.RawMessage `json:"hosts,omitempty"`
-	ProjectId json.RawMessage `json:"projectId,omitempty"`
+	Hosts     []map[string]json.RawMessage `json:"hosts"`
+	ProjectId string                       `json:"projectId"`
 }
 
 type ProjectReadinessRequest struct {
@@ -1678,24 +1775,22 @@ type ProjectReadinessRequest struct {
 	ProjectId       *string `json:"projectId,omitempty"`
 }
 
-type QuestionAnswerReply struct {
-	Answer json.RawMessage `json:"answer,omitempty"`
-	Id     json.RawMessage `json:"id,omitempty"`
-	State  json.RawMessage `json:"state,omitempty"`
-}
+// QuestionAnswerReply: A project question (ProjectQuestion), or the answered question row for any other question.
+type QuestionAnswerReply = map[string]json.RawMessage
 
+// QuestionAnswerRequest: Answers a project question, or any other question by id.
 type QuestionAnswerRequest struct {
-	Answer      json.RawMessage `json:"answer,omitempty"`
-	ArtifactIds []string        `json:"artifactIds,omitempty"`
-	QuestionId  *string         `json:"questionId,omitempty"`
+	Answer      string   `json:"answer"`
+	ArtifactIds []string `json:"artifactIds,omitempty"`
+	QuestionId  string   `json:"questionId"`
 }
 
-type QuestionAskReply = map[string]json.RawMessage
+type QuestionAskReply = ProjectQuestion
 
 type QuestionAskRequest struct {
-	ProjectId *string `json:"projectId,omitempty"`
-	RequestId *string `json:"requestId,omitempty"`
-	Text      *string `json:"text,omitempty"`
+	ProjectId string `json:"projectId"`
+	RequestId string `json:"requestId"`
+	Text      string `json:"text"`
 }
 
 // QuestionBlock: options: the stored options as they are (a list of labels for agent questions).
@@ -1714,11 +1809,11 @@ type QuestionBlock struct {
 }
 
 type QuestionHistoryReply struct {
-	Questions json.RawMessage `json:"questions,omitempty"`
+	Questions []ProjectQuestion `json:"questions"`
 }
 
 type QuestionHistoryRequest struct {
-	ProjectId *string `json:"projectId,omitempty"`
+	ProjectId string `json:"projectId"`
 }
 
 type QuestionKind string
@@ -1797,17 +1892,25 @@ type ReasoningBlock struct {
 	Stream      *string `json:"stream,omitempty"`
 }
 
-type RecommendationSetReply = map[string]json.RawMessage
-
-type RecommendationSetRequest struct {
-	MethodId  *string `json:"methodId,omitempty"`
-	ProjectId *string `json:"projectId,omitempty"`
+type RecommendationSetReply struct {
+	Actor      string `json:"actor"`
+	Id         string `json:"id"`
+	MethodId   string `json:"methodId"`
+	ProjectId  string `json:"projectId"`
+	SelectedAt int64  `json:"selectedAt"`
 }
 
+type RecommendationSetRequest struct {
+	MethodId  string `json:"methodId"`
+	ProjectId string `json:"projectId"`
+}
+
+// ReconcileReply: What reconcile settled: queue and handoff state, and the executions it could not prove.
 type ReconcileReply = map[string]json.RawMessage
 
 type ReconcileRequest = map[string]json.RawMessage
 
+// ReplyReply: The answered agent question record with its delivery.
 type ReplyReply = map[string]json.RawMessage
 
 type ReplyRequest struct {
@@ -1898,21 +2001,19 @@ type SearchHit struct {
 	Snippet string `json:"snippet"`
 }
 
-type SessionArchiveReply struct {
-	ArchivedAt json.RawMessage `json:"archivedAt,omitempty"`
-	SessionId  json.RawMessage `json:"sessionId,omitempty"`
-	Teardown   json.RawMessage `json:"teardown,omitempty"`
-}
+// SessionArchiveReply: {sessionId, archivedAt, teardown: null} when no execution is left to tear down, else the teardown command it queued (id, executionId, hostId, kind teardown, payload, status).
+type SessionArchiveReply = map[string]json.RawMessage
 
 type SessionArchiveRequest struct {
-	SessionId *string `json:"sessionId,omitempty"`
+	SessionId string `json:"sessionId"`
 }
 
 // SessionCreateReply: The new session row, plus sessionId.
 type SessionCreateReply struct {
-	CreatedAt float64 `json:"createdAt"`
-	Id        string  `json:"id"`
-	SessionId string  `json:"sessionId"`
+	CreatedAt  int64           `json:"createdAt"`
+	DirectedBy json.RawMessage `json:"directedBy,omitempty"`
+	Id         string          `json:"id"`
+	SessionId  string          `json:"sessionId"`
 }
 
 type SessionCreateRequest = map[string]json.RawMessage
@@ -1931,15 +2032,16 @@ type SessionForkReply struct {
 type SessionForkRequest struct {
 	CallerSessionId *string `json:"callerSessionId,omitempty"`
 	RequestId       string  `json:"requestId"`
-	SessionId       string  `json:"sessionId"`
+	SessionId       *string `json:"sessionId,omitempty"`
 	Strategy        *string `json:"strategy,omitempty"`
 	Text            *string `json:"text,omitempty"`
 }
 
+// SessionGetReply: The session view: the session row with its executions, questions, focus and handoffs.
 type SessionGetReply = map[string]json.RawMessage
 
 type SessionGetRequest struct {
-	SessionId *string `json:"sessionId,omitempty"`
+	SessionId string `json:"sessionId"`
 }
 
 type SessionHandoffsReply struct {
@@ -1950,42 +2052,48 @@ type SessionHandoffsRequest struct {
 	SessionId string `json:"sessionId"`
 }
 
+// SessionProfileReply: transition, handoffId and nativeSessionId only when the session has a native session to move.
 type SessionProfileReply struct {
-	Account         json.RawMessage `json:"account,omitempty"`
-	HandoffId       json.RawMessage `json:"handoffId,omitempty"`
-	NativeSessionId json.RawMessage `json:"nativeSessionId,omitempty"`
-	ProfileId       json.RawMessage `json:"profileId,omitempty"`
-	SessionId       json.RawMessage `json:"sessionId,omitempty"`
-	Transition      json.RawMessage `json:"transition,omitempty"`
+	Account         *string `json:"account"`
+	HandoffId       *string `json:"handoffId,omitempty"`
+	NativeSessionId *string `json:"nativeSessionId,omitempty"`
+	ProfileId       string  `json:"profileId"`
+	SessionId       string  `json:"sessionId"`
+	Transition      *string `json:"transition,omitempty"`
 }
 
 type SessionProfileRequest struct {
-	Account          *string         `json:"account,omitempty"`
-	ProfileId        *string         `json:"profileId,omitempty"`
-	SessionId        *string         `json:"sessionId,omitempty"`
-	WorkingDirectory json.RawMessage `json:"workingDirectory,omitempty"`
+	Account          *string `json:"account,omitempty"`
+	ProfileId        string  `json:"profileId"`
+	SessionId        string  `json:"sessionId"`
+	WorkingDirectory *string `json:"workingDirectory,omitempty"`
 }
 
+// SessionResumeReply: How the session continues: its harness, account and native session ids.
 type SessionResumeReply struct {
-	Account        json.RawMessage `json:"account,omitempty"`
-	ForkOf         json.RawMessage `json:"forkOf,omitempty"`
-	Harness        json.RawMessage `json:"harness,omitempty"`
-	Native         json.RawMessage `json:"native,omitempty"`
-	NativeSessions json.RawMessage `json:"nativeSessions,omitempty"`
-	SessionId      json.RawMessage `json:"sessionId,omitempty"`
+	Account        json.RawMessage `json:"account"`
+	ForkOf         json.RawMessage `json:"forkOf"`
+	Harness        json.RawMessage `json:"harness"`
+	Native         json.RawMessage `json:"native"`
+	NativeSessions json.RawMessage `json:"nativeSessions"`
+	SessionId      string          `json:"sessionId"`
 }
 
 type SessionResumeRequest struct {
 	SessionId *string `json:"sessionId,omitempty"`
 }
 
+// SessionStartReply: existing: the requestId already started this session.
 type SessionStartReply struct {
-	Account   json.RawMessage `json:"account,omitempty"`
-	Existing  json.RawMessage `json:"existing,omitempty"`
-	ProfileId json.RawMessage `json:"profileId,omitempty"`
-	ProjectId json.RawMessage `json:"projectId,omitempty"`
-	Role      json.RawMessage `json:"role,omitempty"`
-	SessionId json.RawMessage `json:"sessionId,omitempty"`
+	Account     json.RawMessage `json:"account,omitempty"`
+	ExecutionId json.RawMessage `json:"executionId,omitempty"`
+	Existing    *bool           `json:"existing,omitempty"`
+	HostId      json.RawMessage `json:"hostId,omitempty"`
+	ProfileId   json.RawMessage `json:"profileId,omitempty"`
+	ProjectId   json.RawMessage `json:"projectId,omitempty"`
+	Role        json.RawMessage `json:"role,omitempty"`
+	SessionId   string          `json:"sessionId"`
+	TaskId      json.RawMessage `json:"taskId,omitempty"`
 }
 
 type SessionStartRequest struct {
@@ -2003,9 +2111,9 @@ type SessionStartRequest struct {
 }
 
 type SessionTaskAttachReply struct {
-	Existing  json.RawMessage `json:"existing,omitempty"`
-	SessionId json.RawMessage `json:"sessionId,omitempty"`
-	TaskId    json.RawMessage `json:"taskId,omitempty"`
+	Existing  *bool  `json:"existing,omitempty"`
+	SessionId string `json:"sessionId"`
+	TaskId    string `json:"taskId"`
 }
 
 type SessionTaskAttachRequest struct {
@@ -2046,14 +2154,15 @@ type SessionsListRequest struct {
 }
 
 type SettingChangesReply struct {
-	Changes    json.RawMessage `json:"changes,omitempty"`
-	NextBefore json.RawMessage `json:"nextBefore,omitempty"`
+	Changes    []map[string]json.RawMessage `json:"changes"`
+	NextBefore *int64                       `json:"nextBefore"`
 }
 
+// SettingChangesRequest: target: one setting target (host:<id>, connection:<name>, people, ...); before: the nextBefore of the previous page.
 type SettingChangesRequest struct {
-	Before json.RawMessage `json:"before,omitempty"`
-	Limit  *float64        `json:"limit,omitempty"`
-	Target json.RawMessage `json:"target,omitempty"`
+	Before *int64  `json:"before,omitempty"`
+	Limit  *int64  `json:"limit,omitempty"`
+	Target *string `json:"target,omitempty"`
 }
 
 type StopCommandRef struct {
@@ -2627,7 +2736,9 @@ var Operations = map[string]Operation{
 	"lab_examples_list":            {Read: true, Long: false, Errors: []int{400}},
 	"lab_experiment_action":        {Read: false, Long: true, Errors: []int{400, 404, 409}},
 	"lab_experiment_create":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
+	"lab_experiment_decide":        {Read: false, Long: false, Errors: []int{400, 404, 409}},
 	"lab_experiment_get":           {Read: true, Long: false, Errors: []int{400, 404}},
+	"lab_experiment_note":          {Read: false, Long: false, Errors: []int{400, 404}},
 	"lab_experiments_list":         {Read: true, Long: false, Errors: []int{}},
 	"lab_promote":                  {Read: false, Long: false, Errors: []int{400, 404}},
 	"lab_rating_create":            {Read: false, Long: false, Errors: []int{400, 404, 409}},

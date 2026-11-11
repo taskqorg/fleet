@@ -145,11 +145,11 @@ func asT[T any](v any) (T, error) {
 	return t, err
 }
 
-// shaped: a handler that still reads the body as a map, on its contract types: the body is decoded into Req and replaced
-// by Req's own encoding, so the handler sees only the fields the request type names; the reply is converted to Rep.
+// shaped: a handler that still reads the body as a map, on its contract types: the body must decode into Req (required
+// fields, JSON types, no case-variant keys), then the handler reads the body as sent, so its own checks (unknown keys
+// refused, exact bytes kept) still apply; the reply is converted to Rep.
 func shaped[Req, Rep any](h handler) handler {
-	return typedOp(func(q *Request, r *Req) (Rep, error) {
-		q.body = jsonBytes(r)
+	return typedOp(func(q *Request, _ *Req) (Rep, error) {
 		out, err := h(q)
 		return replyAs[Rep](out, err)
 	})
@@ -157,9 +157,20 @@ func shaped[Req, Rep any](h handler) handler {
 
 // replyAs: a handler's map reply (keys fixed by the handler) as its contract type.
 func replyAs[T any](v any, err error) (T, error) {
+	var t T
 	if err != nil {
-		var t T
 		return t, err
+	}
+	// A key the contract requires that the handler did not write is a contract break, not a zero value.
+	if m, ok := v.(doc); ok {
+		if rt := reflect.TypeOf(t); rt.Kind() == reflect.Struct {
+			for i := 0; i < rt.NumField(); i++ {
+				tag, opts, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+				if _, ok := m[tag]; !ok && !strings.Contains(opts, "omitempty") {
+					return t, fmt.Errorf("reply misses required %s (contracts/ops.schema.json)", tag)
+				}
+			}
+		}
 	}
 	return asT[T](v)
 }
