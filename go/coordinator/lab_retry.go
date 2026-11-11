@@ -3,6 +3,7 @@ package main
 // Local-suffix retry is one Lab action, not outcome reconciliation. The original unknown exit stays unknown.
 import (
 	"encoding/json"
+	"fleet/contract"
 	"fmt"
 	"sort"
 	"strings"
@@ -173,7 +174,19 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !same(source["definitions"], []any{ref}) {
+	refs := []any{ref}
+	if pid := astr(source["projectId"]); pid != "" {
+		frozen := mapOf(source["projectSnapshot"])
+		current, err := projectContext(q, pid)
+		if err != nil {
+			return nil, err
+		}
+		if frozen == nil || frozen["contentSha"] != current["contentSha"] || num(frozen["revision"]) != num(current["revision"]) {
+			return nil, suffixConflict("frozen project revision changed or unavailable")
+		}
+		refs = append(refs, contract.DefinitionRef{Kind: contract.DefinitionKindProject, Id: pid, Revision: int64(num(frozen["revision"])), ContentSha: astr(frozen["contentSha"])})
+	}
+	if !same(source["definitions"], refs) {
 		return nil, suffixConflict("frozen pipeline revision changed")
 	}
 	reuse, err := succeededPrefix(q, source, def)

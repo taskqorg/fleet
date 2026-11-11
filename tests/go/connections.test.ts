@@ -477,6 +477,16 @@ test('L4 content checks fail before mutation (requirement: fleet-lab frozen inpu
   assert.equal((await f.host('/api/hosts/events',{executionId:f.command.executionId,events:[{id:'wrong',seq:7,type:'process.reconciled',timestamp:Date.now(),data:{}}]},wrongSecret)).status,403);
 });
 
+// R3; risk: local reuse accepts an old project context after a saved effective project change.
+test('Project revision drift rejects suffix reuse before cancellation or new provider work', async () => {
+  const f=await suffixFixture(); await f.prove(); await f.receipt(f.command,'unknown'); const before=seen.length;
+  const project=ok(await op('project_context',{projectId:'fleet-hello-world'}));
+  const content=structuredClone(project.content);content.contextFiles[0].text+='\nNew context requires a fresh run.';
+  ok(await op('project_update',{projectId:'fleet-hello-world',requestId:randomUUID(),baseRevision:project.revision,content}));
+  const result=await op('lab_cell_action',f.request);assert.equal(result.status,409);assert.match(result.body.message,/frozen project revision/);
+  assert.equal((await f.view()).trials.length,1);assert.equal(seen.length,before);
+});
+
 test('L5 ordinary failed rerun preserves immutable API output through transitive reuse (requirement: fleet-lab shared pipelineOutputs; risk: reused API bytes disappear or another provider call is made)', async () => {
   const f=await suffixFixture(); await f.prove(); await f.receipt(f.command,'unknown');
   ok(await op('lab_cell_action',{experimentId:f.exp.id,cell:f.request.cell,action:'cancel'}));
