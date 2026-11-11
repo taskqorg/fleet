@@ -278,6 +278,7 @@ type ArtifactView struct {
 	Url                   *string             `json:"url,omitempty"`
 }
 
+// AskReply: The agent question record.
 type AskReply = map[string]json.RawMessage
 
 type AskRequest struct {
@@ -1415,6 +1416,7 @@ type MembershipList struct {
 	Name   string      `json:"name"`
 }
 
+// MessageSendReply: The execution the message started, or the queued message with queued: true and its position.
 type MessageSendReply = map[string]json.RawMessage
 
 type MessageSendRequest struct {
@@ -1620,8 +1622,8 @@ type ProjectQuestion struct {
 }
 
 type ProjectReadinessReply struct {
-	Hosts     json.RawMessage `json:"hosts,omitempty"`
-	ProjectId json.RawMessage `json:"projectId,omitempty"`
+	Hosts     []map[string]json.RawMessage `json:"hosts"`
+	ProjectId string                       `json:"projectId"`
 }
 
 type ProjectReadinessRequest struct {
@@ -1759,10 +1761,12 @@ type RecommendationSetRequest struct {
 	ProjectId string `json:"projectId"`
 }
 
+// ReconcileReply: What reconcile settled: queue and handoff state, and the executions it could not prove.
 type ReconcileReply = map[string]json.RawMessage
 
 type ReconcileRequest = map[string]json.RawMessage
 
+// ReplyReply: The answered agent question record with its delivery.
 type ReplyReply = map[string]json.RawMessage
 
 type ReplyRequest struct {
@@ -1853,21 +1857,19 @@ type SearchHit struct {
 	Snippet string `json:"snippet"`
 }
 
-type SessionArchiveReply struct {
-	ArchivedAt json.RawMessage `json:"archivedAt,omitempty"`
-	SessionId  json.RawMessage `json:"sessionId,omitempty"`
-	Teardown   json.RawMessage `json:"teardown,omitempty"`
-}
+// SessionArchiveReply: {sessionId, archivedAt, teardown: null} when no execution is left to tear down, else the teardown command it queued (id, executionId, hostId, kind teardown, payload, status).
+type SessionArchiveReply = map[string]json.RawMessage
 
 type SessionArchiveRequest struct {
-	SessionId *string `json:"sessionId,omitempty"`
+	SessionId string `json:"sessionId"`
 }
 
 // SessionCreateReply: The new session row, plus sessionId.
 type SessionCreateReply struct {
-	CreatedAt float64 `json:"createdAt"`
-	Id        string  `json:"id"`
-	SessionId string  `json:"sessionId"`
+	CreatedAt  int64           `json:"createdAt"`
+	DirectedBy json.RawMessage `json:"directedBy,omitempty"`
+	Id         string          `json:"id"`
+	SessionId  string          `json:"sessionId"`
 }
 
 type SessionCreateRequest = map[string]json.RawMessage
@@ -1886,15 +1888,16 @@ type SessionForkReply struct {
 type SessionForkRequest struct {
 	CallerSessionId *string `json:"callerSessionId,omitempty"`
 	RequestId       string  `json:"requestId"`
-	SessionId       string  `json:"sessionId"`
+	SessionId       *string `json:"sessionId,omitempty"`
 	Strategy        *string `json:"strategy,omitempty"`
 	Text            *string `json:"text,omitempty"`
 }
 
+// SessionGetReply: The session view: the session row with its executions, questions, focus and handoffs.
 type SessionGetReply = map[string]json.RawMessage
 
 type SessionGetRequest struct {
-	SessionId *string `json:"sessionId,omitempty"`
+	SessionId string `json:"sessionId"`
 }
 
 type SessionHandoffsReply struct {
@@ -1905,42 +1908,48 @@ type SessionHandoffsRequest struct {
 	SessionId string `json:"sessionId"`
 }
 
+// SessionProfileReply: transition, handoffId and nativeSessionId only when the session has a native session to move.
 type SessionProfileReply struct {
-	Account         json.RawMessage `json:"account,omitempty"`
-	HandoffId       json.RawMessage `json:"handoffId,omitempty"`
-	NativeSessionId json.RawMessage `json:"nativeSessionId,omitempty"`
-	ProfileId       json.RawMessage `json:"profileId,omitempty"`
-	SessionId       json.RawMessage `json:"sessionId,omitempty"`
-	Transition      json.RawMessage `json:"transition,omitempty"`
+	Account         *string `json:"account"`
+	HandoffId       *string `json:"handoffId,omitempty"`
+	NativeSessionId *string `json:"nativeSessionId,omitempty"`
+	ProfileId       string  `json:"profileId"`
+	SessionId       string  `json:"sessionId"`
+	Transition      *string `json:"transition,omitempty"`
 }
 
 type SessionProfileRequest struct {
-	Account          *string         `json:"account,omitempty"`
-	ProfileId        *string         `json:"profileId,omitempty"`
-	SessionId        *string         `json:"sessionId,omitempty"`
-	WorkingDirectory json.RawMessage `json:"workingDirectory,omitempty"`
+	Account          *string `json:"account,omitempty"`
+	ProfileId        string  `json:"profileId"`
+	SessionId        string  `json:"sessionId"`
+	WorkingDirectory *string `json:"workingDirectory,omitempty"`
 }
 
+// SessionResumeReply: How the session continues: its harness, account and native session ids.
 type SessionResumeReply struct {
-	Account        json.RawMessage `json:"account,omitempty"`
-	ForkOf         json.RawMessage `json:"forkOf,omitempty"`
-	Harness        json.RawMessage `json:"harness,omitempty"`
-	Native         json.RawMessage `json:"native,omitempty"`
-	NativeSessions json.RawMessage `json:"nativeSessions,omitempty"`
-	SessionId      json.RawMessage `json:"sessionId,omitempty"`
+	Account        json.RawMessage `json:"account"`
+	ForkOf         json.RawMessage `json:"forkOf"`
+	Harness        json.RawMessage `json:"harness"`
+	Native         json.RawMessage `json:"native"`
+	NativeSessions json.RawMessage `json:"nativeSessions"`
+	SessionId      string          `json:"sessionId"`
 }
 
 type SessionResumeRequest struct {
 	SessionId *string `json:"sessionId,omitempty"`
 }
 
+// SessionStartReply: existing: the requestId already started this session.
 type SessionStartReply struct {
-	Account   json.RawMessage `json:"account,omitempty"`
-	Existing  json.RawMessage `json:"existing,omitempty"`
-	ProfileId json.RawMessage `json:"profileId,omitempty"`
-	ProjectId json.RawMessage `json:"projectId,omitempty"`
-	Role      json.RawMessage `json:"role,omitempty"`
-	SessionId json.RawMessage `json:"sessionId,omitempty"`
+	Account     json.RawMessage `json:"account,omitempty"`
+	ExecutionId json.RawMessage `json:"executionId,omitempty"`
+	Existing    *bool           `json:"existing,omitempty"`
+	HostId      json.RawMessage `json:"hostId,omitempty"`
+	ProfileId   json.RawMessage `json:"profileId,omitempty"`
+	ProjectId   json.RawMessage `json:"projectId,omitempty"`
+	Role        json.RawMessage `json:"role,omitempty"`
+	SessionId   string          `json:"sessionId"`
+	TaskId      json.RawMessage `json:"taskId,omitempty"`
 }
 
 type SessionStartRequest struct {
@@ -1958,9 +1967,9 @@ type SessionStartRequest struct {
 }
 
 type SessionTaskAttachReply struct {
-	Existing  json.RawMessage `json:"existing,omitempty"`
-	SessionId json.RawMessage `json:"sessionId,omitempty"`
-	TaskId    json.RawMessage `json:"taskId,omitempty"`
+	Existing  *bool  `json:"existing,omitempty"`
+	SessionId string `json:"sessionId"`
+	TaskId    string `json:"taskId"`
 }
 
 type SessionTaskAttachRequest struct {

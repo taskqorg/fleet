@@ -157,9 +157,20 @@ func shaped[Req, Rep any](h handler) handler {
 
 // replyAs: a handler's map reply (keys fixed by the handler) as its contract type.
 func replyAs[T any](v any, err error) (T, error) {
+	var t T
 	if err != nil {
-		var t T
 		return t, err
+	}
+	// A key the contract requires that the handler did not write is a contract break, not a zero value.
+	if m, ok := v.(doc); ok {
+		if rt := reflect.TypeOf(t); rt.Kind() == reflect.Struct {
+			for i := 0; i < rt.NumField(); i++ {
+				tag, opts, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+				if _, ok := m[tag]; !ok && !strings.Contains(opts, "omitempty") {
+					return t, fmt.Errorf("reply misses required %s (contracts/ops.schema.json)", tag)
+				}
+			}
+		}
 	}
 	return asT[T](v)
 }
