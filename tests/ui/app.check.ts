@@ -32,8 +32,9 @@ seed.bulk(() => {
 const b = await chromium.launch();
 try {
   const page = await b.newPage({ viewport: { width: 1440, height: 900 } });
+  let expectedCatalogueFailure = false;
   const errors: string[] = [];
-  page.on('pageerror', e => errors.push(e.message)); page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('pageerror', e => errors.push(e.message)); page.on('console', m => { if (m.type() === 'error' && !(expectedCatalogueFailure && m.text().includes('503'))) errors.push(m.text()); });
   const ROUTES: [string, string[]][] = [
     ['/overview', ['app-shell', 'nav-rail', 'ops-summary', 'stat-strip', 'needs-you', 'decision-block', 'harness-counts', 'state-counters']],
     ['/tasks', ['app-shell', 'nav-rail', 'list-view', 'filter-bar', 'state-counters', 'data-list', 'state-badge']],
@@ -46,7 +47,7 @@ try {
     ['/lab', ['list-detail', 'state-badge']],
   ];
   page.on('requestfailed', r => { if (!r.url().includes('/api/stream') && !r.failure()?.errorText.includes('ERR_ABORTED')) errors.push('request failed ' + r.url()); }); // navigation aborts the stream
-  page.on('response', r => { if (r.status() >= 400) errors.push(r.status() + ' ' + r.url()); });
+  page.on('response', r => { if (r.status() >= 400 && !(expectedCatalogueFailure && r.url().includes('/api/ops/catalogue') && r.status() === 503)) errors.push(r.status() + ' ' + r.url()); });
   if (process.env.APP_DEBUG) { await page.goto(origin + '/overview'); await page.waitForTimeout(1500); console.log(errors); }
   for (const [n, [route, want]] of ROUTES.entries()) {
     await page.goto(origin + route); await page.waitForTimeout(700);
@@ -106,10 +107,29 @@ try {
   await page.getByRole('button', {name: 'hello-world', exact: true}).click();
   await page.getByText('Basic source discovery · search-basic', {exact: true}).waitFor();
   assert.ok(await page.getByText('Recommended for', {exact: true}).count());
+  // Controlled render fixture: a measured partial comparison score must stay visible with its population.
+  const preview = await (await fetch(origin + '/api/ops/catalogue', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({projectId:'hello-world'})})).json();
+  preview.methods[0].assessment = {...preview.methods[0].assessment, basis:'lab', score:0.5, scoreForm:'typed', partial:true, eligibleCells:1,expectedCells:2,examples:1,failedCells:1,excludedCells:1,state:'stopped',stopReason:'fixture',variant:'preview-variant',split:'held_out',evaluator:'typed:labels:typed',evaluatorVersion:'fixture-version',reason:'One observed cell; one failed cell is excluded'};
+  await page.route('**/api/ops/catalogue', route => route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(preview)}));
+  await page.reload();
+  await page.getByText('0.500 · partial/incomplete', {exact:true}).waitFor();
+  assert.ok(await page.getByText('Comparison score', {exact:true}).count());
   for (const colorScheme of ['dark', 'light'] as const) { await page.emulateMedia({colorScheme}); await page.screenshot({path: `${shots}/catalogue-methods-${colorScheme}.png`}); }
-  c.sql(`INSERT INTO experiment(id,project_id,kind,pipeline_id) VALUES('catalogue-ui-draft','hello-world','single','typed-decision')`);
+  await page.unroute('**/api/ops/catalogue');
+  expectedCatalogueFailure = true;
+  await page.route('**/api/ops/catalogue', route => route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({message:'fixture catalogue unavailable',error:'Service Unavailable',statusCode:503})}));
+  await page.getByRole('button', {name:'cs',exact:true}).click();
+  await page.getByRole('alert').filter({hasText:'Catalogue unavailable:'}).waitFor();
+  await page.screenshot({path:`${shots}/catalogue-fetch-error.png`});
+  await page.unroute('**/api/ops/catalogue');
+  await page.getByRole('button', {name:'Retry Catalogue',exact:true}).click();
+  await page.getByRole('alert').filter({hasText:'Catalogue unavailable:'}).waitFor({state:'hidden'});
+  expectedCatalogueFailure = false;
+  c.sql(`INSERT INTO experiment(id,project_id,kind,pipeline_id,variants) VALUES('catalogue-ui-draft','hello-world','single','typed-decision','[{"label":"selected-method","pipelineId":"typed-decision","overrides":{},"config_ref":"digest-ui-fixture","catalogueConfigRef":"identity-ui-fixture","catalogueRef":{"kind":"catalogue","id":"catalogue","revision":1,"contentSha":"fixture"}}]'::jsonb)`);
   await page.goto(origin + '/lab/catalogue-ui-draft');
   await page.getByRole('heading', {name: 'Experiment record', exact: true}).waitFor();
+  await page.getByText('Executable digest: digest-ui-fixture', {exact:false}).waitFor();
+  await page.getByText('Catalogue identity: identity-ui-fixture', {exact:false}).waitFor();
   const launch = page.getByRole('button', {name: 'Launch', exact: true});
   assert.equal(await launch.getAttribute('aria-disabled'), 'true');
   for (const [label, value] of [['Goal', 'Inspect Catalogue comparison'], ['Hypothesis', 'The selected method improves the example outcome']]) {

@@ -150,6 +150,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
                   <span class="muted" data-tip={conf}>r{t.cell.repeat + 1}{t.cell.attempt ? `.${t.cell.attempt}` : ''}</span>
                   <Num m={{ value: t.durationMs === null || t.durationMs === undefined ? null : t.durationMs / 1000, basis: t.durationMs == null ? 'unavailable' : 'measured', reason: 'running' }} kind="duration" />
                   <Num m={{ value: t.spend.credits, basis: 'measured', partial: t.spend.basis === 'partial' ? 'some calls without usage' : undefined }} kind="count" />
+                  <a class="muted" href={`/api/pipeline-runs/${t.id}`} target="_blank" rel="noopener">Run and definitions</a>
                   {t.recovery && <a class="muted" href={`/api/pipeline-runs/${t.recovery.sourceRunId}`} target="_blank" rel="noopener" data-tip={`Reuses ${t.recovery.reusedStepIds.join(', ')}; original spend remains in source history`}>source</a>}
                   {(t.cost ?? []).map((c: any, i: number) => <Num key={i} m={{ value: c.value, basis: c.basis, currency: c.currency ?? undefined, reason: c.value === null ? c.reason : `price ${c.prices.map((p: any) => p.id.slice(0, 8)).join(', ')}` }} kind="money" />)}
                   {t.scores.filter((s: any) => s.trialIds.length === 1).map((s: any) => s.form === 'typed'
@@ -165,7 +166,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
     </section>
     <section class="panel"><header class="panel-h"><Icon name="sliders-horizontal" /><h2>Variants</h2></header>
       <DetailSection title="Spread across repeats">{e.variants.map((v: any) => <KvRow key={v.label} icon="git-merge" label={v.proposalLabel ? `${v.proposalLabel} · ${v.label}` : v.label}
-        meta={Object.entries(v.summary).map(([k, s]: any) => `${evaluatorLabel(k)} ${scoreText(s)}`).join(' · ') || 'no scores yet'}
+        meta={<><span>{Object.entries(v.summary).map(([k, s]: any) => `${evaluatorLabel(k)} ${scoreText(s)}`).join(' · ') || 'no scores yet'}</span><span> · Pipeline: <a href={`/pipelines/${v.pipelineId ?? e.pipelineId}`}>{v.pipelineId ?? e.pipelineId}</a></span><span class="id"> · Executable digest: {v.config_ref}</span>{v.catalogueConfigRef && <span class="id"> · Catalogue identity: {v.catalogueConfigRef}</span>}{v.catalogueRef && <span> · <a href={`/catalogue/${v.catalogueRef.id}`}>Catalogue r{v.catalogueRef.revision}</a></span>}</>}
         value={<Button label="Promote" icon="check-check" onClick={() => act('lab_promote', { experimentId: id, variant: v.label }).then(setPatch)} />} />)}</DetailSection>
       {patch && <DetailSection title="Promote"><KvRow icon="check" label={`Recommendation set to ${patch.method.id}`}
         meta={patch.catalogue ? <span class="mono">catalogue r{patch.catalogue.revision}</span> : 'method already in the catalogue'} />

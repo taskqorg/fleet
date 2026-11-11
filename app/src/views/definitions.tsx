@@ -220,7 +220,7 @@ function CatalogueMethods() {
   const [selected, setSelected] = useState<string[]>([]), [baseline, setBaseline] = useState('');
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
-  const {data: c} = useDoc(`catalogue:${project}:${revision}`, () => project ? op('catalogue', {projectId: project}) : Promise.resolve(null), change => ['definition', 'experiment', 'score', 'execution', 'project-recommendation'].includes(change.kind));
+  const {data: c, error: catalogueError, restored} = useDoc(`catalogue:${project}:${revision}`, () => project ? op('catalogue', {projectId: project}) : Promise.resolve(null), change => ['definition', 'experiment', 'score', 'execution', 'project-recommendation'].includes(change.kind));
   useEffect(() => { op('project_list', {}).then(r => { const ids = (r.projects as any[]).map(p => String(p.id)); setProjects(ids); setProject(ids[0] ?? ''); }, x => setError(x.message)); op('lab_registry', {}).then(r => setUseCases(r.useCases as any), x => setError(x.message)); }, []);
   const methods = c?.methods ?? [];
   const choose = (id: string) => { const next = selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id]; setSelected(next); if (!next.includes(baseline)) setBaseline(next.includes(String(c?.recommendedMethod)) ? String(c?.recommendedMethod) : ''); };
@@ -228,6 +228,8 @@ function CatalogueMethods() {
   return <>
     <DetailSection title="Project"><SearchField label="Find project" value={scopeSearch} onInput={setScopeSearch} onSearch={() => {}} /><Choice label="Project" value={project} options={projects.filter(p => p.includes(scopeSearch)).map(p => ({id:p,label:p}))} onChange={p => {setProject(p);setSelected([]);setBaseline('');}} /></DetailSection>
     {error && <div class="error" role="alert">{error}</div>}
+    {catalogueError && <div class="error" role="alert">Catalogue unavailable: {catalogueError}. {c ? 'Shown evidence may be stale.' : 'No current evidence loaded.'}<Button label="Retry Catalogue" icon="rotate-cw" onClick={() => setRevision(r=>r+1)} /></div>}
+    {restored && <p class="muted">Restored evidence; awaiting current confirmation.</p>}
     <DetailSection title="Methods"><SearchField label="Find method" value={search} onInput={setSearch} onSearch={() => {}} />
       {methods.filter(m => `${m.name} ${m.id}`.toLowerCase().includes(search.toLowerCase())).map(m => {
         const a = m.assessment;
@@ -249,7 +251,7 @@ function CatalogueMethods() {
       <Choice label="Baseline" value={baseline} options={methods.filter(m=>selected.includes(m.id)).map(m=>({id:m.id,label:m.name}))} onChange={setBaseline} />
       <SearchField label="Find use case" value={useSearch} onInput={setUseSearch} onSearch={() => {}} />
       <Choice label="Use case" value={useCase} options={useCases.filter(u=>`${u.id} ${u.goal}`.toLowerCase().includes(useSearch.toLowerCase())).map(u=>({id:u.id,label:u.id}))} onChange={setUseCase} />
-      <Button label="Create comparison" icon="play" busy={busy} disabledReason={!project || selected.length<2 || !baseline || !useCase ? 'Select two methods, a baseline and use case' : undefined} onClick={() => act(async () => {const r = await op('lab_compare_methods', {projectId:project,capability:String(c?.capability),methods:selected,baseline,useCase});go(`/lab/${r.experimentId}`);})} />
+      <Button label="Create comparison" icon="play" busy={busy} disabledReason={catalogueError ? 'Current Catalogue evidence is unavailable' : !project || selected.length<2 || !baseline || !useCase ? 'Select two methods, a baseline and use case' : undefined} onClick={() => act(async () => {const r = await op('lab_compare_methods', {projectId:project,capability:String(c?.capability),methods:selected,baseline,useCase});go(`/lab/${r.experimentId}`);})} />
     </DetailSection>
   </>;
 }

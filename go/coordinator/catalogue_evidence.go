@@ -42,7 +42,7 @@ func methodAssessment(q *Request, project string, method doc) (doc, error) {
 			continue
 		}
 		if exp["state"] == "running" || exp["state"] == "paused" {
-			if out["ongoingExperimentId"] == nil {
+			if chosen == nil && out["ongoingExperimentId"] == nil {
 				out["ongoingExperimentId"], out["ongoingState"] = exp["id"], exp["state"]
 			}
 			continue

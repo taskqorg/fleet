@@ -676,6 +676,13 @@ test('Catalogue reports a compatible observed partial mean and keeps banded sour
   const missing = structuredClone(ex); missing.id += '-unscored'; missing.references = missing.references.filter((r: any) => r.path !== 'expected.json');
   const imported = ok(await op('lab_examples_add', {projectId: 'hello-world', examples: [ex, missing], approved: true})).examples;
   const create = (label: string, overrides: object) => op('lab_experiment_create', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: imported.map((e: any) => e.artifactId), variants: [{label, overrides}], evaluators: [{kind: 'typed', ref: 'labels', form: 'typed'}], primaryEvaluator: 'typed:labels:typed', goal: 'Measure eligible partial population', hypothesis: 'A missing label stays unscored'}).then(ok);
+  const active = async (label: string) => {
+    const v = ok(await op('lab_experiment_create', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: imported.map((e: any) => e.artifactId), variants: [{label, overrides: {prompt: 'Catalogue evidence fixture'}}], evaluators: [{kind:'human',ref:'owner',form:'pass_fail'}], primaryEvaluator:'human:owner:pass_fail', budgets:[{unit:'trials',limit:1,action:'pause'}], goal:'Keep active evidence visible', hypothesis:'Unrated human evaluator stays incomplete'}));
+    ok(await op('lab_experiment_action', {experimentId:v.id,action:'launch'}));
+    await until(async () => {const got = ok(await op('lab_experiment_get', {experimentId:v.id})); return got.state === 'paused' ? got : undefined;}, 'budget pauses active fixture');
+    return v;
+  };
+  const older = await active('older-paused');
   const e = await create('partial-evidence', {prompt: 'Catalogue evidence fixture'});
   ok(await op('lab_experiment_action', {experimentId: e.id, action: 'launch'}));
   await until(async () => {const v = ok(await op('lab_experiment_get', {experimentId: e.id})); return v.state === 'done' && v.scores.length === 2 ? v : undefined;}, 'partial evidence scores');
@@ -683,10 +690,14 @@ test('Catalogue reports a compatible observed partial mean and keeps banded sour
   const methods = ok(await op('catalogue', {projectId: 'hello-world'})).methods;
   const a = methods.find((m: any) => m.id === promoted.method.id).assessment;
   assert.deepEqual([a.basis, a.score, a.scoreForm, a.eligibleCells, a.expectedCells, a.partial], ['lab', 1, 'typed', 1, 2, true]);
+  assert.notEqual(a.ongoingExperimentId, older.id, 'older paused work is not a newer follow-up');
   assert.equal(a.variant, 'partial-evidence'); assert.ok(a.evaluatorVersion); assert.equal(a.experimentId, e.id);
   assert.ok(methods.find((m: any) => m.id === promoted.method.id).recommendedFor.includes('hello-world'));
   const foreign = ok(await op('catalogue', {projectId: 'fleet-hello-world'}));
   assert.ok(!JSON.stringify(foreign).includes(e.id), 'same system catalogue must not leak project experiment links');
+  const newer = await active('newer-paused');
+  const refreshed = ok(await op('catalogue', {projectId:'hello-world'})).methods.find((m: any) => m.id === promoted.method.id).assessment;
+  assert.equal(refreshed.ongoingExperimentId, newer.id); assert.equal(refreshed.experimentId, e.id);
   const banded = await create('banded-evidence', {prompt: 'Catalogue banded fixture', bands: {yes: 0.95, no: 0.05}});
   const collisionHead = ok(await op('definition_get', {kind: 'catalogue', id: 'catalogue'}));
   const collisionContent = structuredClone(collisionHead.content);
