@@ -6,6 +6,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os/exec"
 	"strings"
 )
@@ -54,10 +55,14 @@ func claudeLimitReading(v M) M {
 			period = t
 		}
 	}
-	r := M{"period": period, "status": jAt(i, "status"), "resetsAt": ms(jAt(i, "resetsAt"))}
-	// fleet-people-access.md section 8: utilization (0-1) gives the percent; without it the reading stays status only.
+	r := M{"period": period, "resetsAt": ms(jAt(i, "resetsAt"))}
+	if st, ok := str(jAt(i, "status")); ok {
+		r["status"] = st
+	}
+	// fleet-people-access.md section 8: utilization (0-1) gives the percent, to 0.01; without it the reading stays
+	// status only.
 	if u, ok := num(jAt(i, "utilization")); ok {
-		r["pct"] = u * 100
+		r["pct"] = math.Round(u*10000) / 100
 	}
 	return M{"type": "limit_reading", "harness": "claude", "readings": []any{r}, "native": v}
 }

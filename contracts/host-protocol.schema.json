@@ -526,6 +526,7 @@
           "minimum": 0
         },
         "type": {
+          "$comment": "a FleetEventType, or the native harness record type (open)",
           "type": "string"
         },
         "timestamp": {
@@ -533,7 +534,7 @@
           "minimum": 0
         },
         "data": {
-          "$ref": "#/$defs/EventData"
+          "$comment": "EventData for harness records; a Fleet type's own data def (FleetEventType) otherwise. Raw, so native records keep every field."
         }
       }
     },
@@ -705,9 +706,12 @@
           "type": "object",
           "additionalProperties": true
         },
-        "turn": {}
+        "turn": {},
+        "workingDirectory": {
+          "type": "string"
+        }
       },
-      "$comment": "start and input. Named fields only; the coordinator no longer merges a free payload over them."
+      "$comment": "start and input. Named fields; lane A replaces the coordinator's merge of a free payload over them."
     },
     "InputArtifact": {
       "type": "object",

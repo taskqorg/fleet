@@ -150,11 +150,11 @@ const (
 )
 
 type HostEvent struct {
-	Data      EventData `json:"data"`
-	Id        string    `json:"id"`
-	Seq       int64     `json:"seq"`
-	Timestamp int64     `json:"timestamp"`
-	Type      string    `json:"type"`
+	Data      json.RawMessage `json:"data"`
+	Id        string          `json:"id"`
+	Seq       int64           `json:"seq"`
+	Timestamp int64           `json:"timestamp"`
+	Type      string          `json:"type"`
 }
 
 type HostEvents struct {
@@ -322,28 +322,29 @@ type ScriptPayload struct {
 	TimeoutMs *int64                     `json:"timeout_ms,omitempty"`
 }
 
-// StartPayload: start and input. Named fields only; the coordinator no longer merges a free payload over them.
+// StartPayload: start and input. Named fields; lane A replaces the coordinator's merge of a free payload over them.
 type StartPayload struct {
-	Account         *string                    `json:"account,omitempty"`
-	AgentConfig     map[string]json.RawMessage `json:"agentConfig,omitempty"`
-	Connections     []json.RawMessage          `json:"connections,omitempty"`
-	Effort          *string                    `json:"effort,omitempty"`
-	FleetOperations []json.RawMessage          `json:"fleetOperations,omitempty"`
-	Fork            map[string]json.RawMessage `json:"fork,omitempty"`
-	GitNetwork      *bool                      `json:"gitNetwork,omitempty"`
-	Harness         *string                    `json:"harness,omitempty"`
-	Inputs          []InputArtifact            `json:"inputs,omitempty"`
-	Instructions    *string                    `json:"instructions,omitempty"`
-	Model           *string                    `json:"model,omitempty"`
-	NativeSessionId *string                    `json:"nativeSessionId,omitempty"`
-	Project         map[string]json.RawMessage `json:"project,omitempty"`
-	ProjectId       *string                    `json:"projectId,omitempty"`
-	RunToken        *string                    `json:"runToken,omitempty"`
-	Setup           *string                    `json:"setup,omitempty"`
-	Skills          []json.RawMessage          `json:"skills,omitempty"`
-	Text            *string                    `json:"text,omitempty"`
-	Turn            json.RawMessage            `json:"turn,omitempty"`
-	WebRoute        *string                    `json:"webRoute,omitempty"`
+	Account          *string                    `json:"account,omitempty"`
+	AgentConfig      map[string]json.RawMessage `json:"agentConfig,omitempty"`
+	Connections      []json.RawMessage          `json:"connections,omitempty"`
+	Effort           *string                    `json:"effort,omitempty"`
+	FleetOperations  []json.RawMessage          `json:"fleetOperations,omitempty"`
+	Fork             map[string]json.RawMessage `json:"fork,omitempty"`
+	GitNetwork       *bool                      `json:"gitNetwork,omitempty"`
+	Harness          *string                    `json:"harness,omitempty"`
+	Inputs           []InputArtifact            `json:"inputs,omitempty"`
+	Instructions     *string                    `json:"instructions,omitempty"`
+	Model            *string                    `json:"model,omitempty"`
+	NativeSessionId  *string                    `json:"nativeSessionId,omitempty"`
+	Project          map[string]json.RawMessage `json:"project,omitempty"`
+	ProjectId        *string                    `json:"projectId,omitempty"`
+	RunToken         *string                    `json:"runToken,omitempty"`
+	Setup            *string                    `json:"setup,omitempty"`
+	Skills           []json.RawMessage          `json:"skills,omitempty"`
+	Text             *string                    `json:"text,omitempty"`
+	Turn             json.RawMessage            `json:"turn,omitempty"`
+	WebRoute         *string                    `json:"webRoute,omitempty"`
+	WorkingDirectory *string                    `json:"workingDirectory,omitempty"`
 }
 
 type SteerPayload struct {

@@ -252,22 +252,12 @@ func (e *executor) receipt(c M, status string, native string) error {
 	return e.queue("/api/hosts/receipts", r)
 }
 
-// hostEvents is contract.HostEvents with the event data kept as the executor's own JSON (native records stay open).
-type hostEvents struct {
-	HostId      string      `json:"hostId"`
-	ExecutionId string      `json:"executionId"`
-	Events      []hostEvent `json:"events"`
-}
-
-type hostEvent struct {
-	Id        string          `json:"id"`
-	Seq       int64           `json:"seq"`
-	Type      string          `json:"type"`
-	Timestamp int64           `json:"timestamp"`
-	Data      json.RawMessage `json:"data"`
-}
-
+// event queues one Fleet-originated execution event; nativeEvent one harness record under its own open type.
 func (e *executor) event(c M, seq uint64, kind contract.FleetEventType, data any) error {
+	return e.nativeEvent(c, seq, string(kind), data)
+}
+
+func (e *executor) nativeEvent(c M, seq uint64, kind string, data any) error {
 	cid, err := cmdID(c, "id")
 	if err != nil {
 		return err
@@ -276,11 +266,7 @@ func (e *executor) event(c M, seq uint64, kind contract.FleetEventType, data any
 	if err != nil {
 		return err
 	}
-	raw, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-	ev := hostEvents{HostId: e.host, ExecutionId: ex, Events: []hostEvent{{Id: fmt.Sprintf("%s-%d", cid, seq), Seq: int64(seq), Type: string(kind), Timestamp: nowMs(), Data: raw}}}
+	ev := contract.HostEvents{HostId: e.host, ExecutionId: ex, Events: []contract.HostEvent{{Id: fmt.Sprintf("%s-%d", cid, seq), Seq: int64(seq), Type: kind, Timestamp: nowMs(), Data: json.RawMessage(enc(data))}}}
 	return e.queue("/api/hosts/events", ev)
 }
 
@@ -601,13 +587,13 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	// The coordinator owns the native id per harness:account continuation; no id means a new native session.
 	native := jStr(p, "nativeSessionId")
 	if native != "" && !safeNativeID(native) || jIsStr(p, "nativeSessionId") && native == "" {
-		if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, M{"reason": "invalid native session id"}); err != nil {
+		if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: "invalid native session id"}); err != nil {
 			return err
 		}
 		return e.finish(c, "failed", "")
 	}
 	fail := func(seq uint64, reason string) error {
-		if err := e.event(c, seq, contract.FleetEventTypePreparationFailed, M{"reason": reason}); err != nil {
+		if err := e.event(c, seq, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: reason}); err != nil {
 			return err
 		}
 		return e.finish(c, "failed", native)
@@ -982,7 +968,7 @@ func (e *executor) script(c M, execution, session string) error {
 		return e.finish(c, "failed", "")
 	}
 	refuse := func(reason string) error {
-		if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, M{"reason": reason}); err != nil {
+		if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: reason}); err != nil {
 			return err
 		}
 		return e.finish(c, "failed", "")
@@ -1226,7 +1212,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 			if jIsStr(event, "type") {
 				kind = jStr(event, "type")
 			}
-			if err := e.event(l.command, l.seq, contract.FleetEventType(kind), retained); err != nil {
+			if err := e.nativeEvent(l.command, l.seq, kind, retained); err != nil {
 				return false, err
 			}
 		default:
@@ -1261,12 +1247,13 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 		l.wire.mu.Unlock()
 	}
 	os.Remove(filepath.Join(e.root, "runs", execution+".env")) // the run token is not needed after the run
-	var code any
+	var code *int64
 	if l.state != nil && l.state.Exited() {
-		code = l.state.ExitCode()
+		c := int64(l.state.ExitCode())
+		code = &c
 	}
 	l.seq++
-	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, M{"exitCode": code, "stdoutClosed": l.eof, "observedOwnedProcessesRemaining": false, "cleanupUnknown": l.cleanupUnknown}); err != nil {
+	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{ExitCode: code, StdoutClosed: l.eof, ObservedOwnedProcessesRemaining: new(bool), CleanupUnknown: l.cleanupUnknown}); err != nil {
 		return false, err
 	}
 	sid, err := cmdID(l.command, "sessionId")
@@ -1754,9 +1741,8 @@ func (e *executor) exchange() error {
 	}
 	for _, cv := range jArr(reply, "commands") {
 		c, ok := cv.(M)
-		var env contract.Command
-		if b, err := json.Marshal(cv); !ok || err != nil || json.Unmarshal(b, &env) != nil {
-			continue // not a command envelope
+		if !ok {
+			continue
 		}
 		if e.run(c) != nil {
 			if _, isLive := e.live[jStr(c, "executionId")]; isLive {
