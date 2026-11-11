@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"math"
 	"math/rand/v2"
@@ -11,7 +10,6 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -209,20 +207,7 @@ func unscoped[T any](q *Request, fn func() (T, error)) (T, error) {
 // runningApp: the running coordinator, set at start (background work and snapshot publishing need the store).
 var runningApp *App
 
-func projectConfigDir() string { return envOr("FLEET_PROJECT_CONFIG_DIRECTORY", "config") }
-func labDir() string           { return envOr("FLEET_LAB_DIRECTORY", "config/lab") }
-
-// bodyObject: the request body as a JSON object; absent or null is an empty object.
-func bodyObject(q *Request) (doc, error) {
-	b := doc{}
-	if len(q.body) == 0 || string(q.body) == "null" {
-		return b, nil
-	}
-	if json.Unmarshal(q.body, &b) != nil {
-		return nil, fail(400, "Invalid body")
-	}
-	return b, nil
-}
+func labDir() string { return envDir("FLEET_LAB_DIRECTORY", "config/lab") }
 
 // numOK: a JSON number or a SQL integer column (pgx scans integer as int32, smallint as int16).
 func numOK(v any) (float64, bool) {
@@ -323,15 +308,17 @@ func directorOf(q *Request) string {
 	return ownerEmailOf(q.app)
 }
 
-// writeTx runs fn in its own write transaction under lock (GLOBAL when empty), as the coordinator.
-func writeTx(ctx context.Context, a *App, lock string, fn func(q *Request) error) error {
-	return a.store.Tx(ctx, nil, true, lock, func(tx pgx.Tx) error {
-		return fn(backgroundRequest(ctx, a, tx))
+// runTx: fn in one store transaction as a request: as person q (its scope; q.tx set for fn), or as the coordinator's
+// background work when q is nil. A write takes lock (GLOBAL when empty).
+func runTx(ctx context.Context, a *App, q *Request, write bool, lock string, fn func(q *Request) error) error {
+	if q == nil {
+		return a.store.Tx(ctx, nil, write, lock, func(tx pgx.Tx) error { return fn(backgroundRequest(ctx, a, tx)) })
+	}
+	return a.store.Tx(ctx, scopeOf(q.person), write, lock, func(tx pgx.Tx) error {
+		q.tx = tx
+		defer func() { q.tx = nil }()
+		return fn(q)
 	})
-}
-
-func readTx(ctx context.Context, a *App, fn func(q *Request) error) error {
-	return a.store.Tx(ctx, nil, false, "", func(tx pgx.Tx) error { return fn(backgroundRequest(ctx, a, tx)) })
 }
 
 // backgroundRequest: a request value for background work (no person: the coordinator's own scope).
@@ -398,26 +385,6 @@ func sortedKeysOf(m map[string]any) []string {
 	}
 	sort.Strings(k)
 	return k
-}
-
-// canonicalJSON: canonical JSON with sorted keys (equal values give equal hashes).
-func canonicalJSON(v any) string {
-	switch x := v.(type) {
-	case map[string]any:
-		parts := []string{}
-		for _, k := range sortedKeysOf(x) {
-			parts = append(parts, string(jsonBytes(k))+":"+canonicalJSON(x[k]))
-		}
-		return "{" + strings.Join(parts, ",") + "}"
-	case []any:
-		parts := []string{}
-		for _, e := range x {
-			parts = append(parts, canonicalJSON(e))
-		}
-		return "[" + strings.Join(parts, ",") + "]"
-	default:
-		return string(jsonBytes(x))
-	}
 }
 
 func msOf(t any) any {

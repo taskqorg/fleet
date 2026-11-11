@@ -2,7 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   fleet-update on the Mac (docs/designs/fleet-self-update.md §3.5), a LaunchAgent of the executor service user, every
-  5 minutes. Install: replace FLEET_HOME with that user's home, copy to
+  5 minutes. Each run also writes com.ufobe.fleet-update-watch.plist, which starts this job as soon as the executor
+  rewrites <data dir>/update/update.json (a new target from its poll). Install: replace FLEET_HOME with that user's home, copy to
   FLEET_HOME/Library/LaunchAgents/com.ufobe.fleet-update.plist, then: launchctl bootstrap gui/$(id -u) <plist>.
 -->
 <plist version="1.0">

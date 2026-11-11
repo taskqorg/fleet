@@ -781,7 +781,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 			return nil, fail(400, "Duplicate variant label")
 		}
 		labels[label] = true
-		variants = append(variants, doc{"label": label, "overrides": o, "config_ref": sha256hex([]byte(canonicalJSON(doc{"pipeline": pipelineID, "overrides": o})))})
+		variants = append(variants, doc{"label": label, "overrides": o, "config_ref": sha256hex([]byte(canonical(doc{"pipeline": pipelineID, "overrides": o})))})
 	}
 	if kind == "single" && len(variants) != 1 {
 		return nil, fail(400, "A single experiment has one variant")
@@ -1181,7 +1181,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		files  []labFile
 	}
 	todo := map[string]pending{}
-	if err := readTx(ctx, a, func(q *Request) error {
+	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
 		exp, err := expRow(q, id)
 		if err != nil || exp["state"] == "draft" {
 			return err
@@ -1234,7 +1234,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		}
 		checked[id] = r
 	}
-	err := writeTx(ctx, a, "experiment:"+id, func(q *Request) error {
+	err := runTx(ctx, a, nil, true, "experiment:"+id, func(q *Request) error {
 		exp, err := expRow(q, id)
 		if err != nil || exp["state"] == "draft" {
 			return err
@@ -1352,7 +1352,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 
 func labReconcileWhere(ctx context.Context, a *App, states string, skipBusy bool) {
 	var ids []string
-	readTx(ctx, a, func(q *Request) error {
+	runTx(ctx, a, nil, false, "", func(q *Request) error {
 		rs, err := queryRows(q, "SELECT id FROM experiment WHERE state = ANY(string_to_array($1, ','))", states)
 		for _, r := range rs {
 			ids = append(ids, astr(r["id"]))
@@ -1408,11 +1408,11 @@ func expAction(q *Request, id, action string) (doc, error) {
 	var err error
 	switch action {
 	case "launch":
-		err = writeTxAs(q, "", func(q *Request) error { return expSetState(q, id, []string{"draft"}, "running", nil) })
+		err = runTx(q.ctx(), q.app, q, true, "", func(q *Request) error { return expSetState(q, id, []string{"draft"}, "running", nil) })
 	case "stop":
-		err = writeTxAs(q, "", func(q *Request) error { return expSetState(q, id, []string{"running", "paused"}, "stopped", "owner") })
+		err = runTx(q.ctx(), q.app, q, true, "", func(q *Request) error { return expSetState(q, id, []string{"running", "paused"}, "stopped", "owner") })
 	case "resume":
-		err = writeTxAs(q, "", func(q *Request) error { return expSetState(q, id, []string{"paused"}, "running", nil) })
+		err = runTx(q.ctx(), q.app, q, true, "", func(q *Request) error { return expSetState(q, id, []string{"paused"}, "running", nil) })
 	default:
 		return nil, fail(400, "action is launch, stop or resume")
 	}
@@ -1480,7 +1480,9 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 			return nil, err
 		}
 		if own != "" {
-			stopExecution(q.ctx(), q.app, own)
+			if err := stopExecution(q.ctx(), q.app, own); err != nil && !isNotFound(err) { // the run is cancelled already
+				return nil, err
+			}
 		}
 	} else {
 		if !terminal(t) {
@@ -1491,7 +1493,7 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 		}
 		c := mapOf(t["cell"])
 		var rid string
-		if err := writeTxAs(q, "experiment:"+id, func(q *Request) error {
+		if err := runTx(q.ctx(), q.app, q, true, "experiment:"+id, func(q *Request) error {
 			if err := exec(q, "UPDATE experiment SET state='running' WHERE id=$1 AND state='done'", id); err != nil {
 				return err
 			}
@@ -1732,7 +1734,7 @@ func labAnswerAfter(q *Request, question doc) error {
 // rating question; the owner's pass approves it. A file that is not a valid example is skipped.
 func importDrafts(ctx context.Context, a *App, run doc) {
 	var files []fileRef
-	readTx(ctx, a, func(q *Request) (err error) { files, err = pipelineOutputs(q, run, -1); return })
+	runTx(ctx, a, nil, false, "", func(q *Request) (err error) { files, err = pipelineOutputs(q, run, -1); return })
 	for _, f := range files {
 		if !draftExample.MatchString(f.Path) {
 			continue
@@ -1745,7 +1747,7 @@ func importDrafts(ctx context.Context, a *App, run doc) {
 		if json.Unmarshal(b, &ex) != nil {
 			continue
 		}
-		writeTx(ctx, a, "", func(q *Request) error {
+		runTx(ctx, a, nil, true, "", func(q *Request) error {
 			res, err := labExamplesAdd(q, doc{"examples": []any{ex}, "projectId": run["projectId"], "approved": false})
 			if err != nil {
 				return nil
@@ -2075,19 +2077,13 @@ func init() {
 		name, op := name, op
 		if op.long {
 			longOp(name, func(q *Request) (any, error) {
-				b, err := bodyObject(q)
-				if err != nil {
-					return nil, err
-				}
+				b := body(q)
 				return runLabOp(name, q, b)
 			})
 			continue
 		}
 		gatedOp(name, op.read, func(q *Request) (any, error) {
-			b, err := bodyObject(q)
-			if err != nil {
-				return nil, err
-			}
+			b := body(q)
 			return op.h(q, b)
 		})
 	}
@@ -2100,7 +2096,7 @@ func init() {
 			return runLabOp(name, q, b)
 		})
 	}
-	bodyOf := func(q *Request) (doc, error) { return bodyObject(q) }
+	bodyOf := func(q *Request) (doc, error) { return body(q), nil }
 	none := func(q *Request) (doc, error) { return doc{}, nil }
 	r("POST /api/lab/examples", "lab_examples_add", bodyOf)
 	r("GET /api/lab/examples", "lab_examples_list", func(q *Request) (doc, error) {
@@ -2125,8 +2121,7 @@ func init() {
 		})
 	}
 	r("POST /api/lab/experiments/{id}/promote", "lab_promote", func(q *Request) (doc, error) {
-		b, err := bodyObject(q)
-		return doc{"experimentId": q.r.PathValue("id"), "variant": b["variant"]}, err
+		return doc{"experimentId": q.r.PathValue("id"), "variant": body(q)["variant"]}, nil
 	})
 	r("POST /api/lab/ratings", "lab_rating_create", bodyOf)
 	r("GET /api/lab/ratings", "lab_ratings_list", func(q *Request) (doc, error) {
@@ -2140,11 +2135,9 @@ func init() {
 	})
 	r("GET /api/lab/ratings/{id}", "lab_rating_get", func(q *Request) (doc, error) { return doc{"questionId": q.r.PathValue("id")}, nil })
 	r("POST /api/lab/scores/{id}/correct", "lab_score_correct", func(q *Request) (doc, error) {
-		b, err := bodyObject(q)
-		if b != nil {
-			b["scoreId"] = q.r.PathValue("id")
-		}
-		return b, err
+		b := body(q)
+		b["scoreId"] = q.r.PathValue("id")
+		return b, nil
 	})
 	r("GET /api/lab/registry", "lab_registry", none)
 
@@ -2153,7 +2146,7 @@ func init() {
 			labReconcileWhere(ctx, a, "running,paused,stopped", false)
 			// A finish hook lost to a restart: completed draft runs are imported again (idempotent).
 			var runs []doc
-			readTx(ctx, a, func(q *Request) (err error) {
+			runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
 				runs, err = runsWhere(q, "data->>'pipelineId'='draft-examples' AND state='succeeded'")
 				return
 			})

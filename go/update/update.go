@@ -102,6 +102,7 @@ type updater struct {
 	window, tick time.Duration
 	coordURL     string // coordinator health on PDS18
 	gatewayURL   string
+	guardURL     string // Access origin guard /verify on PDS18; "" skips the smoke
 	dumpCmd      func(ver, file string) error
 }
 
@@ -109,7 +110,8 @@ func newUpdater(key ed25519.PublicKey) *updater {
 	return &updater{base: releasesURL, key: key, target: runtime.GOOS + "-" + runtime.GOARCH,
 		client: &http.Client{Timeout: 10 * time.Minute}, now: time.Now, window: 30 * time.Second, tick: time.Second,
 		coordURL: "http://127.0.0.1:9470/api/health", gatewayURL: "http://127.0.0.1:8742/healthz",
-		dumpCmd: pgDump}
+		guardURL: "http://127.0.0.1:9471/verify",
+		dumpCmd:  pgDump}
 }
 
 func (u *updater) result(ver, state, msg string) *Result {
@@ -462,6 +464,25 @@ func (u *updater) coordinatorHealth(ver string) probe {
 	}
 	g.Body.Close()
 	if g.StatusCode != 200 {
+		return down
+	}
+	return u.smoke(c)
+}
+
+// smoke: the Access origin guard, restarted with the coordinator, answers its /verify route; without a Cloudflare Access
+// assertion that is 403. A guard that is down takes the whole site down while health stays green (delivery pipeline §7).
+func (u *updater) smoke(c *http.Client) probe {
+	if u.guardURL == "" {
+		return up
+	}
+	resp, err := c.Get(u.guardURL)
+	if err != nil {
+		log.Print("smoke: ", err)
+		return down
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 403 {
+		log.Printf("smoke: %s %s", u.guardURL, resp.Status)
 		return down
 	}
 	return up

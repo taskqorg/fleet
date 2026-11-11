@@ -4,6 +4,7 @@ package main
 // on the holder's host, Fleet keeps only what hosts observe.
 
 import (
+	"fleet/contract"
 	"fmt"
 	"os"
 	"regexp"
@@ -324,8 +325,8 @@ func accountInspect(q *Request, b doc, catalogue bool) (any, error) {
 	if err := put(q, "execution", doc{"id": id, "executionId": id, "sessionId": sid, "hostId": integ, "state": "preparing", "createdAt": nowMs(), "actor": "program-worker", "accountId": a["id"]}); err != nil {
 		return nil, err
 	}
-	if err := put(q, "command", doc{"id": newID(), "executionId": id, "sessionId": sid, "hostId": integ, "kind": "account-inspect", "status": "pending",
-		"payload": doc{"accountId": a["id"], "harness": a["harness"], "binding": binding, "nativeHostId": host, "mode": mode}}); err != nil {
+	if err := put(q, "command", doc{"id": newID(), "executionId": id, "sessionId": sid, "hostId": integ, "kind": string(contract.CommandKindAccountInspect), "status": "pending",
+		"payload": contract.AccountInspectPayload{AccountId: astr(a["id"]), Harness: astr(a["harness"]), Binding: strPtr(binding), NativeHostId: strPtr(host), Mode: &mode}}); err != nil {
 		return nil, err
 	}
 	r := doc{"id": newID(), "accountId": a["id"], "hostId": host, "binding": binding, "executionId": id, "createdAt": nowMs(),

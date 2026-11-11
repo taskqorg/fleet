@@ -13,6 +13,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"fleet/contract"
 )
 
 func repoRoot() string {
@@ -40,19 +42,14 @@ func configDir() string   { return envDir("FLEET_PROJECT_CONFIG_DIRECTORY", "con
 func canonical(v any) string {
 	switch x := v.(type) {
 	case map[string]any:
-		keys := make([]string, 0, len(x))
-		for k := range x {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
+		keys := sortedKeysOf(x)
 		var b bytes.Buffer
 		b.WriteByte('{')
 		for i, k := range keys {
 			if i > 0 {
 				b.WriteByte(',')
 			}
-			kb, _ := json.Marshal(k)
-			b.Write(kb)
+			b.WriteString(canonical(k))
 			b.WriteByte(':')
 			b.WriteString(canonical(x[k]))
 		}
@@ -74,85 +71,6 @@ func canonical(v any) string {
 
 var idPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,79}$`)
 
-func validAntigravitySettings(v any) bool {
-	if v == nil {
-		return true
-	}
-	o, ok := v.(map[string]any)
-	if !ok {
-		return false
-	}
-	for k, x := range o {
-		switch k {
-		case "sandbox":
-			if _, ok := x.(bool); !ok {
-				return false
-			}
-		case "includeDefaultCustomizations":
-			if x != false {
-				return false
-			}
-		case "mode":
-			if x != "plan" && x != "accept-edits" {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-func validNativeProfile(p doc) bool {
-	h := firstString(p["harness"], "codex")
-	for _, k := range []string{"fleetTools", "collaborationTools", "gitNetwork"} {
-		if v, ok := p[k]; ok {
-			if _, isBool := v.(bool); !isBool {
-				return false
-			}
-		}
-	}
-	model, _ := p["model"].(string)
-	_, hasSettings := p["settings"]
-	_, hasTools := p["tools"]
-	if h == "codex" {
-		effort, _ := p["effort"].(string)
-		role := p["instructionRole"]
-		return model != "" && !strings.HasPrefix(model, "-") && effort != "" && (role == nil || role == "" || role == false || role == "developer") && (p["tools"] == nil || p["tools"] == false) && !hasSettings
-	}
-	if !slices.Contains([]string{"claude", "antigravity", "acp"}, h) || model == "" || strings.HasPrefix(model, "-") {
-		return false
-	}
-	if e, ok := p["effort"]; !ok || e != nil {
-		return false
-	}
-	want := "user"
-	if h == "claude" {
-		want = "system"
-	}
-	if p["instructionRole"] != want {
-		return false
-	}
-	if h == "claude" {
-		if hasSettings {
-			return false
-		}
-		tools, ok := p["tools"].([]any)
-		if !ok {
-			return false
-		}
-		for _, t := range tools {
-			if !slices.Contains([]any{"Read", "Edit", "Write", "Bash", "Glob", "Grep"}, t) {
-				return false
-			}
-		}
-		return true
-	}
-	return validAntigravitySettings(p["settings"]) && !hasTools
-}
-
-var profileOptional = []string{"delegationProfiles", "harness", "instructionRole", "tools", "settings", "fleetTools", "collaborationTools", "gitNetwork", "skills", "connections", "fleetOperations"}
-
 func readTrustedProfile(id string) (doc, error) {
 	if !idPattern.MatchString(id) {
 		return nil, fail(400, "Unknown trusted profile")
@@ -165,47 +83,12 @@ func readTrustedProfile(id string) (doc, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fail(400, "Invalid repository profile")
 	}
-	req := []string{}
-	for k := range p {
-		if !slices.Contains(profileOptional, k) {
-			req = append(req, k)
-		}
+	// One validator with the executor (contracts/profile.schema.json), so a profile listed here is never refused on a host.
+	if _, err := contract.ParseProfile(raw); err != nil {
+		return nil, fail(400, "Invalid repository profile: "+err.Error())
 	}
-	sort.Strings(req)
-	instr, _ := p["instructions"].(string)
-	mcp, mcpOK := p["mcpServers"].([]any)
-	if strings.Join(req, ",") != "effort,id,instructions,mcpServers,model" || p["id"] != id || !validNativeProfile(p) || p["instructions"] == nil || instr != p["instructions"] || len(instr) > 16384 || !mcpOK || len(mcp) > 1 {
-		return nil, fail(400, "Invalid repository profile")
-	}
-	for _, c := range []struct {
-		k   string
-		max int
-		msg string
-	}{{"delegationProfiles", 8, "Invalid delegation grant"}, {"skills", 32, "Invalid profile skills"}, {"connections", 32, "Invalid profile connections"}} {
-		v, ok := p[c.k]
-		if !ok {
-			continue
-		}
-		xs, isList := v.([]any)
-		seen := map[string]bool{}
-		bad := !isList || len(xs) > c.max
-		for _, x := range xs {
-			s, _ := x.(string)
-			if !idPattern.MatchString(s) || seen[s] {
-				bad = true
-			}
-			seen[s] = true
-		}
-		if bad {
-			return nil, fail(400, c.msg)
-		}
-	}
-	for _, x := range mcp {
-		o, _ := x.(map[string]any)
-		d, isObj := o["data"].(map[string]any)
-		if len(o) != 2 || o["id"] != "design-rules" || !isObj || len(canonical(d)) > 16384 {
-			return nil, fail(400, "Invalid repository grant")
-		}
+	if p["id"] != id {
+		return nil, fail(400, "Invalid repository profile: id differs from the file name")
 	}
 	return p, nil
 }

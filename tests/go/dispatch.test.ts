@@ -5,6 +5,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const OWNER = 'owner@trial.test';
@@ -36,7 +37,7 @@ test('A1 a paused host takes no work: the execution waits with the skip reason a
   ok(await op('hosts_update', {id: 'trial-host', intake: 'paused'}));
   const {sessionId, executionId} = await queued();
   assert.ok(!ok(await h('/api/hosts/poll', poll)).commands.some((c: any) => c.executionId === executionId), 'no start command while paused');
-  assert.equal((await execution(sessionId, executionId)).waitReason, 'trial-host is Paused');
+  assert.deepEqual([(await execution(sessionId, executionId)).waitReason, (await execution(sessionId, executionId)).waitDetail], ['placement', 'trial-host is Paused']);
   const waiting = () => op('questions_list', {state: 'open'}).then(r => ok(r).questions.filter((q: any) => /Work is waiting: trial-host is Paused/.test(q.text)));
   assert.equal((await waiting()).length, 1, 'one open stall question');
   ok(await h('/api/hosts/poll', poll));
@@ -126,4 +127,15 @@ test('A10 host poll and events decode into the host-protocol types: a field of t
   const {executionId} = await queued();
   ok(await h('/api/hosts/poll', poll));
   assert.equal((await h('/api/hosts/events', {executionId, events: [{id: 'a', seq: 1.5, type: 'x', timestamp: 1, data: {}}]})).status, 400);
+});
+
+test('A11 the start command payload is the StartPayload contract: named fields only, no blind merge (requirement: contracts/host-protocol.schema.json StartPayload, C7 coordinator side; risk: a dead or overriding payload field reaches the executor)', {timeout: 30_000}, async () => {
+  const h = await host('trial-host');
+  ok(await h('/api/hosts/poll', poll));
+  const {executionId} = await queued();
+  const c = ok(await h('/api/hosts/poll', poll)).commands.find((x: any) => x.executionId === executionId);
+  const schema = JSON.parse(readFileSync(new URL('../../contracts/host-protocol.schema.json', import.meta.url), 'utf8'));
+  const allowed = Object.keys(schema.$defs.StartPayload.properties);
+  assert.deepEqual(Object.keys(c.payload).filter(k => !allowed.includes(k)), []);
+  assert.deepEqual([c.kind, c.payload.harness, c.payload.text], ['start', 'codex', 'hello']);
 });

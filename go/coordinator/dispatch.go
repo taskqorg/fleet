@@ -6,6 +6,8 @@ package main
 // needs-you question is open per cause.
 
 import (
+	"encoding/json"
+	"fleet/contract"
 	"fmt"
 	"regexp"
 	"sort"
@@ -82,6 +84,48 @@ func accountHarness(a doc) string {
 		return h
 	}
 	return "codex"
+}
+
+// Wait reasons, one list for tasks and executions (waitReason; the free text is waitDetail). The first three are the
+// "waits for a person" kinds of OSC 7501 blocked (go/executor/status.go): a grant or decision (permission), an answer
+// (question), a login or subscription (auth). The others wait on Fleet itself.
+var waitReasons = []string{"permission", "question", "auth", "dependency", "artifacts", "placement"}
+
+// waitKindOf: the wait reason of a dispatch stall cause (dispatch causes, causeOf).
+func waitKindOf(cause string) string {
+	switch {
+	case strings.HasSuffix(cause, ":trust"), strings.HasSuffix(cause, ":holder"), strings.HasSuffix(cause, ":not-taken"), strings.HasPrefix(cause, "budget:"):
+		return "permission" // a holder's grant, a take rule or a raised budget
+	case strings.HasPrefix(cause, "director:"), strings.HasSuffix(cause, ":not-ready"):
+		return "auth" // no subscription of the director, or a login to complete
+	}
+	return "placement" // offline, paused, roots, placement, limits: Fleet retries
+}
+
+// strPtr: a string value as an optional contract field; nil for anything else or "" (strp keeps "").
+func strPtr(v any) *string {
+	if s, ok := v.(string); ok && s != "" {
+		return &s
+	}
+	return nil
+}
+
+// rawMap and rawList: Fleet-built JSON values as the contract's open fields. nil and empty stay absent (omitempty);
+// a profile (agentConfig) is never empty, and the executor reads an absent list as empty.
+func rawMap(v any) map[string]json.RawMessage {
+	var m map[string]json.RawMessage
+	if v != nil {
+		json.Unmarshal(jsonBytes(v), &m)
+	}
+	return m
+}
+
+func rawList(v any) []json.RawMessage {
+	var l []json.RawMessage
+	if v != nil {
+		json.Unmarshal(jsonBytes(v), &l)
+	}
+	return l
 }
 
 // causeOf: a skip reason's stall cause key. ponytail: keyed on resolve's messages; structured codes if they start to change.
@@ -420,6 +464,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				continue
 			}
 			delete(e, "waitReason")
+			delete(e, "waitDetail")
 			if _, err := a.startCommand(q, e, best.Host, best.binding); err != nil {
 				return err
 			}
@@ -443,7 +488,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			}
 		}
 		if first != nil && first.Stop {
-			e["state"], e["stopDetail"], e["waitReason"] = "cancelled", reason, reason
+			e["state"], e["stopDetail"], e["waitReason"], e["waitDetail"] = "cancelled", reason, waitKindOf(cause), reason
 			if err := put(q, "execution", e); err != nil {
 				return err
 			}
@@ -452,12 +497,12 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			}
 			continue
 		}
-		if e["waitReason"] != reason {
-			e["waitReason"] = reason
+		if e["waitDetail"] != reason {
+			e["waitReason"], e["waitDetail"] = waitKindOf(cause), reason
 			if err := put(q, "execution", e); err != nil {
 				return err
 			}
-			if err := exec(q, "UPDATE execution SET wait_reason=$2 WHERE id=$1", e["id"], reason); err != nil {
+			if err := exec(q, "UPDATE execution SET wait_reason=$2 WHERE id=$1", e["id"], e["waitReason"]); err != nil {
 				return err
 			}
 			if err := recordDecision(q, e, polling, cs, nil); err != nil {
@@ -537,52 +582,45 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 		e["takenFrom"], e["directedBy"] = e["directedBy"], binding["holder"]
 	}
 	cfg := mapOf(s["agentConfig"])
-	harness := "codex"
-	if h := astr(cfg["harness"]); h != "" {
-		harness = h
-	}
-	p := doc{"harness": harness}
+	// The start payload is contract.StartPayload, field by field: the enqueue extras (inputs, skills, webRoute) are named
+	// fields, never a blind merge over the fields above (C7).
+	p := &contract.StartPayload{Harness: ptr(harnessOf(s)), Text: strPtr(d["input"]), Setup: strPtr(nonNil(s["setup"], "run")),
+		WorkingDirectory: strPtr(s["workingDirectory"]), Model: strPtr(e["model"]), Effort: strPtr(e["effort"]),
+		Instructions: ptr(defaultInstructions), NativeSessionId: strp(s, "nativeSessionId")} // "" still reaches the executor's check
 	if s["account"] != nil || (binding != nil && s["nativeSessionId"] == nil) {
 		if binding != nil {
-			p["account"], p["managedAccount"] = binding["binding"], binding
+			p.Account = strPtr(binding["binding"])
 		} else {
-			p["account"] = s["account"]
+			p.Account = strPtr(s["account"])
 		}
 	}
-	p["text"] = d["input"]
 	if pid := astr(s["projectId"]); pid != "" {
-		p["projectId"] = pid
 		st, err := projectSettingsByID(pid)
 		if err != nil {
 			return nil, err
 		}
-		p["project"] = st
+		p.ProjectId, p.Project = &pid, rawMap(st)
 	}
 	if gitNetworkOf(s) {
-		p["gitNetwork"] = true
+		p.GitNetwork = ptr(true)
 	}
-	p["setup"] = nonNil(s["setup"], "run")
-	if wd := astr(s["workingDirectory"]); wd != "" {
-		p["workingDirectory"] = wd
-	}
-	p["model"], p["effort"] = e["model"], e["effort"]
-	p["instructions"] = defaultInstructions
 	if cfg != nil {
-		p["agentConfig"], p["instructions"] = cfg, ""
+		p.AgentConfig, p.Instructions = rawMap(cfg), ptr("")
 		if cfg["fleetOperations"] == true { // the profile opts in to every operation its director may call (fleet-pm-agent.md §1)
 			if dir := q.app.people[firstString(e["directedBy"], ownerEmail(q))]; dir != nil {
-				p["fleetOperations"] = fleetOperations(dir)
+				p.FleetOperations = rawList(fleetOperations(dir))
 			}
 		}
 	}
-	if s["nativeSessionId"] != nil {
-		p["nativeSessionId"] = s["nativeSessionId"]
+	extra := mapOf(d["payload"])
+	if v, ok := extra["inputs"]; ok {
+		if err := json.Unmarshal(jsonBytes(v), &p.Inputs); err != nil {
+			return nil, fmt.Errorf("execution %v: pipeline inputs are not [{artifactId, path}]: %w", e["id"], err)
+		}
 	}
-	for k, v := range mapOf(d["payload"]) {
-		p[k] = v
-	}
-	command := doc{"id": newID(), "executionId": e["id"], "sessionId": s["id"], "hostId": host, "kind": "start", "payload": p, "status": "pending"}
-	if err := agentDecorate(q, s, e, command); err != nil {
+	p.Skills, p.WebRoute = rawList(extra["skills"]), strPtr(extra["webRoute"])
+	command := doc{"id": newID(), "executionId": e["id"], "sessionId": s["id"], "hostId": host, "kind": string(contract.CommandKindStart), "payload": p, "status": "pending"}
+	if err := agentDecorate(q, s, e, p); err != nil {
 		return nil, err
 	}
 	if granted := strs(cfg["connections"]); len(granted) > 0 {
@@ -592,7 +630,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 		}
 		if run != nil {
 			if run["token"] != nil {
-				p["runToken"], p["connections"] = run["token"], run["connections"]
+				p.RunToken, p.Connections = strPtr(run["token"]), rawList(run["connections"])
 			}
 			if len(anys(run["refused"])) > 0 {
 				e["connectionsRefused"] = run["refused"]
