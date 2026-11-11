@@ -22,7 +22,7 @@ import (
 type schema map[string]any
 
 var allowed = map[string]bool{"type": true, "properties": true, "required": true, "additionalProperties": true, "items": true,
-	"enum": true, "$ref": true, "minimum": true, "$comment": true}
+	"enum": true, "$ref": true, "minimum": true, "$comment": true, "const": true, "oneOf": true}
 
 func check(s schema, where string) {
 	for k := range s {
@@ -75,7 +75,15 @@ func goType(s schema, where string) (string, bool) {
 		}
 		return exported(strings.TrimPrefix(ref, "#/$defs/")), false
 	}
+	if s["oneOf"] != nil {
+		fail("%s: oneOf must be a $defs entry", where)
+	}
 	t, null := types(s, where)
+	if _, ok := s["const"].(string); ok && (t == "" || t == "string") && !null {
+		t = "string"
+	} else if s["const"] != nil {
+		fail("%s: const must be a string", where)
+	}
 	switch t {
 	case "":
 		return "json.RawMessage", false
@@ -183,6 +191,14 @@ func main() {
 				fmt.Fprintf(&b, "\t%s %s `json:%q`\n", exported(k), ft, tag)
 			}
 			b.WriteString("}\n\n")
+		case s["oneOf"] != nil:
+			// A union of $refs: each member is its own struct; the union itself stays JSON (Go has no sum type).
+			for i, x := range s["oneOf"].([]any) {
+				if m, _ := x.(map[string]any); m == nil || m["$ref"] == nil || len(m) != 1 {
+					fail("%s.oneOf[%d]: only $ref", n, i)
+				}
+			}
+			fmt.Fprintf(&b, "type %s = json.RawMessage\n\n", name)
 		default:
 			if r, ok := s["required"].([]any); ok && len(r) > 0 {
 				fail("%s: required without properties", n)

@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -10,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"fleet/contract"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -122,27 +126,53 @@ func tsMs(v any) any {
 
 func mark(e doc) doc { return doc{"harness": e["harness"], "model": e["model"], "effort": e["effort"]} }
 
-func boundary(e member) doc {
-	b := doc{"kind": "boundary", "key": bkey{e.seq, 0}.String(), "sessionId": e.doc["session_id"], "executionId": e.doc["id"], "state": e.doc["state"], "startedAt": tsMs(e.doc["started_at"]), "endedAt": tsMs(e.doc["ended_at"])}
-	for k, v := range mark(e.doc) {
-		b[k] = v
+// markOf: mark as the contract's optional fields.
+func markOf(e doc) (harness, model, effort *string) {
+	return strPtr(e["harness"]), strPtr(e["model"]), strPtr(e["effort"])
+}
+
+// msPtr: tsMs as an optional contract time.
+func msPtr(v any) *int64 {
+	if n, ok := tsMs(v).(int64); ok {
+		return &n
 	}
-	return b
+	return nil
+}
+
+// blockDoc: a block built from its contract struct (contracts/ops.schema.json Block), as the doc the thread code sorts and
+// merges. Top-level integers stay int64, as in the executor blocks (tsMs), so every block carries one number type.
+func blockDoc(v any) doc {
+	dec := json.NewDecoder(bytes.NewReader(jsonBytes(v)))
+	dec.UseNumber()
+	var d doc
+	dec.Decode(&d)
+	for k, x := range d {
+		if n, ok := x.(json.Number); ok {
+			if i, err := n.Int64(); err == nil {
+				d[k] = i
+			}
+		}
+	}
+	return d
+}
+
+func boundary(e member) doc {
+	b := contract.BoundaryBlock{Kind: "boundary", Key: bkey{e.seq, 0}.String(), SessionId: strPtr(e.doc["session_id"]), ExecutionId: astr(e.doc["id"]),
+		State: contract.ExecutionState(astr(e.doc["state"])), StartedAt: msPtr(e.doc["started_at"]), EndedAt: msPtr(e.doc["ended_at"])}
+	b.Harness, b.Model, b.Effort = markOf(e.doc)
+	return blockDoc(b)
 }
 
 func questionBlock(qu doc, seq int64) doc {
-	b := doc{"kind": "question", "key": bkey{seq, 0}.String(), "executionId": qu["execution_id"], "questionId": qu["id"], "text": qu["text"], "options": qu["options"], "state": qu["state"],
-		"askedAt": tsMs(qu["asked_at"]), "answeredAt": tsMs(qu["answered_at"])}
-	if b["options"] == nil {
-		b["options"] = []any{}
+	b := contract.QuestionBlock{Kind: "question", Key: bkey{seq, 0}.String(), ExecutionId: strPtr(qu["execution_id"]), QuestionId: astr(qu["id"]), Text: astr(qu["text"]),
+		Options: json.RawMessage("[]"), State: astr(qu["state"]), AskedAt: msPtr(qu["asked_at"]), AnsweredAt: msPtr(qu["answered_at"]), AnsweredBy: strPtr(qu["answered_by"])}
+	if qu["options"] != nil {
+		b.Options = jsonBytes(qu["options"])
 	}
 	if qu["answer"] != nil {
-		b["answer"] = qu["answer"]
+		b.Answer = jsonBytes(qu["answer"])
 	}
-	if qu["answered_by"] != nil {
-		b["answeredBy"] = qu["answered_by"]
-	}
-	return b
+	return blockDoc(b)
 }
 
 const rowExpr = `jsonb_build_object('id',id,'executionId',data->>'executionId','type',data->>'type','text',data->'text','blocks',data->'data'->'fleetNormalized'->'blocks','deltaOf',data->'data'->'fleetNormalized'->'deltaOf','closes',data->'data'->'fleetNormalized'->'closes','at',updated_at,'sentBy',data->>'sentBy')`
@@ -209,27 +239,22 @@ func expand(q *Request, r trow, m map[string]member) ([]doc, error) {
 		if !ok {
 			return nil, nil
 		}
-		return []doc{{"kind": "text", "key": at(0), "executionId": v["executionId"], "role": "operator", "markdown": t, "plain": t, "at": tsMs(v["at"]), "by": v["sentBy"]}}, nil
+		return []doc{blockDoc(contract.TextBlock{Kind: "text", Key: at(0), ExecutionId: strPtr(v["executionId"]), Role: "operator", Markdown: t, Plain: &t, At: msPtr(v["at"]), By: strPtr(v["sentBy"])})}, nil
 	case "event-delta":
 		text, open, err := streamText(q, astr(v["executionId"]), astr(v["deltaOf"]))
 		if err != nil || !open {
 			return nil, err
 		}
-		kind := "text"
-		if strings.HasPrefix(astr(v["deltaOf"]), "reasoning:") {
-			kind = "reasoning"
-		}
-		b := doc{"kind": kind, "key": at(0), "executionId": v["executionId"], "markdown": text, "plain": text, "stream": "open", "at": tsMs(v["at"])}
+		stream := "open"
 		if e.doc != nil && terminalState[astr(e.doc["state"])] {
-			b["stream"] = "cut-off"
+			stream = "cut-off"
 		}
-		if kind == "text" {
-			b["role"] = "agent"
-			for k, x := range mark(e.doc) {
-				b[k] = x
-			}
+		if strings.HasPrefix(astr(v["deltaOf"]), "reasoning:") {
+			return []doc{blockDoc(contract.ReasoningBlock{Kind: "reasoning", Key: at(0), ExecutionId: strPtr(v["executionId"]), Markdown: text, Plain: &text, Stream: &stream, At: msPtr(v["at"])})}, nil
 		}
-		return []doc{b}, nil
+		b := contract.TextBlock{Kind: "text", Key: at(0), ExecutionId: strPtr(v["executionId"]), Role: "agent", Markdown: text, Plain: &text, Stream: &stream, At: msPtr(v["at"])}
+		b.Harness, b.Model, b.Effort = markOf(e.doc)
+		return []doc{blockDoc(b)}, nil
 	}
 	own := []doc{}
 	bs, _ := v["blocks"].([]any)
@@ -257,11 +282,12 @@ func expand(q *Request, r trow, m map[string]member) ([]doc, error) {
 			return nil, err
 		}
 		if len(arts) > 0 {
-			ids := []any{}
+			r := contract.ResultBlock{Kind: "result", Key: at(len(own)), ExecutionId: strPtr(v["executionId"]), ArtifactIds: []string{}}
 			for _, a := range arts {
-				ids = append(ids, a["id"])
+				r.ArtifactIds = append(r.ArtifactIds, astr(a["id"]))
+				r.Artifacts = append(r.Artifacts, contract.ResultArtifact{Id: astr(a["id"]), Name: astr(a["name"]), MediaType: astr(a["mediaType"]), Size: int64(num(a["size"]))})
 			}
-			own = append(own, doc{"kind": "result", "key": at(len(own)), "executionId": v["executionId"], "artifactIds": ids, "artifacts": arts})
+			own = append(own, blockDoc(r))
 		}
 	}
 	return own, nil
@@ -726,11 +752,11 @@ type point struct {
 
 // clipTime: the compact time of a copied message (OR-2, design-system/formats.md "Copy"): 11 Nov 14:03, with the year when it is not this year.
 func clipTime(ms any, loc *time.Location) string {
-	n, ok := ms.(int64)
+	n, ok := numOK(ms) // int64 from tsMs, float64 from a block built through its contract struct
 	if !ok {
 		return ""
 	}
-	t := time.UnixMilli(n).In(loc)
+	t := time.UnixMilli(int64(n)).In(loc)
 	if t.Year() != time.Now().In(loc).Year() {
 		return t.Format("2 Jan 2006 15:04")
 	}

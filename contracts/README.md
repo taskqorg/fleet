@@ -3,7 +3,8 @@
 JSON Schema contracts shared by the coordinator, the app, the executor and the gateway.
 
 * `host-protocol.schema.json`: the host protocol (`/api/hosts/poll` request and reply, `/api/hosts/receipts` status
-  receipts, `/api/hosts/events` batches) and event payloads. It is the source of the types on all three sides
+  receipts, one route per other receipt envelope: `/api/hosts/project-operations` `ProjectReceipt`,
+  `/api/hosts/delegations` `ChildReceipt`, `/api/hosts/accounts/report` `AccountReceipt`; `/api/hosts/events` batches) and event payloads. It is the source of the types on all three sides
   (docs/designs/fleet-stack.md, Contracts); `go/coordinator/schema.sql` stays the source of table rows only.
 * `gateway.schema.json`: the fleet-gateway seam (docs/designs/fleet-connections.md section 3): the snapshot the
   coordinator writes and the gateway reads, and the call line the gateway spools and the coordinator ingests.
@@ -28,7 +29,9 @@ Every `*.schema.json` file here is generated; each `$defs` entry becomes one typ
 
 Both generators accept only these keywords and fail on any other, so a schema never yields a silently weaker type:
 `type` (one type, optionally with `"null"`), `properties`, `required`, `additionalProperties`, `items`, `enum` (strings),
-`$ref` (`#/$defs/<Name>`), `minimum`, `$comment`.
+`$ref` (`#/$defs/<Name>`), `minimum`, `$comment`, `const` (a string: a literal type in TypeScript, `string` in Go) and
+`oneOf` (only as a `$defs` entry whose members are all `$ref`: a union in TypeScript, `json.RawMessage` in Go, where
+each member is its own struct; give each member a `const` discriminator such as `kind`).
 An object without properties whose `additionalProperties` is a schema is a map (`map[string]T` in Go, `Record<string, T>` in TypeScript).
 
 * An object with properties, and an enum, must be a `$defs` entry (Go needs its name).
