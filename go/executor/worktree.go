@@ -330,7 +330,7 @@ func teardown(dir, session, top string, project any) contract.Teardown {
 		t := projectScript("teardown", jStr(project, "scripts", "teardown"), top, w, session)
 		out.Teardown = &t
 		if !t.Ok {
-			out.Reason = refusedTeardown("teardown-failed").Reason
+			out.Reason = new("teardown-failed")
 			return out
 		}
 	}
@@ -351,7 +351,7 @@ func teardown(dir, session, top string, project any) contract.Teardown {
 	}
 	o, err := hardenedGit(args...).Output()
 	if err != nil || len(o) > 0 {
-		out.Reason = refusedTeardown("uncommitted").Reason
+		out.Reason = new("uncommitted")
 		return out
 	}
 	for _, r := range links {
@@ -360,7 +360,7 @@ func teardown(dir, session, top string, project any) contract.Teardown {
 	removed := hardenedGit("-C", top, "worktree", "remove", w).Run() == nil
 	out.Removed = removed
 	if !removed {
-		out.Reason = refusedTeardown("worktree-remove-failed").Reason
+		out.Reason = new("worktree-remove-failed")
 		return out
 	}
 	prefix := "fleet"

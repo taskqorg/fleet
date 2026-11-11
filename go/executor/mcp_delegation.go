@@ -199,10 +199,7 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 			return nil, err
 		}
 		key = cmd + ":agent:" + newID()
-		host, err := need("hostId")
-		if err != nil {
-			return nil, err
-		}
+		host := jStr(ctx, "hostId") // the coordinator derives the host from its token
 		var execution *string
 		if s, ok := str(jAt(ctx, "executionId")); ok {
 			execution = &s
@@ -249,7 +246,7 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 		}
 		rid, ok := str(d["requestId"])
 		if !ok {
-			return nil, errors.New("Invalid child request")
+			return nil, errors.New(map[bool]string{true: "Invalid child request", false: "Invalid project request"}[child])
 		}
 		key = cmd + ":" + rid
 		// The typed receipt (contracts ChildReceipt / ProjectReceipt): every identity must be a string.
@@ -273,9 +270,9 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 			if err != nil {
 				return nil, err
 			}
-			var args contract.ProjectArguments
-			if err := json.Unmarshal([]byte(enc(q)), &args); err != nil {
-				return nil, errors.New("Invalid project request")
+			args := contract.ProjectArguments{}
+			for k, v := range qo {
+				args[k] = json.RawMessage(enc(v))
 			}
 			body = contract.ProjectReceipt{HostId: ids["hostId"], CommandId: ids["commandId"], ExecutionId: ids["executionId"],
 				Delegation: contract.ProjectRequest{Operation: contract.ProjectOperation(name), Arguments: args, RequestId: rid, ProjectId: project}}

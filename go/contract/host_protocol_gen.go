@@ -454,13 +454,13 @@ type ScriptPayload struct {
 }
 
 type ScriptStarted struct {
-	Commit        *string `json:"commit,omitempty"`
-	TimeoutMs     *int64  `json:"timeoutMs,omitempty"`
+	Commit        *string `json:"commit"`
+	TimeoutMs     *int64  `json:"timeoutMs"`
 	TrialWorktree string  `json:"trialWorktree"`
 }
 
 type ScriptTimeout struct {
-	TimeoutMs *int64 `json:"timeoutMs,omitempty"`
+	TimeoutMs *int64 `json:"timeoutMs"`
 }
 
 // StartPayload: start and input. Named fields; lane A replaces the coordinator's merge of a free payload over them.
