@@ -26,7 +26,7 @@ func TestChangeKindsMatchTriggers(t *testing.T) {
 	}
 	var kinds []string
 	for _, fn := range []string{"fleet_change", "fleet_artifact_change"} {
-		at := strings.LastIndex(schemaSQL, "FUNCTION "+fn+"()")
+		at := strings.LastIndex(schemaSQL, "FUNCTION "+fn+"() RETURNS")
 		if at < 0 {
 			t.Fatalf("schema.sql has no %s", fn)
 		}

@@ -435,6 +435,7 @@ const (
 	ChangeKindArtifact       ChangeKind = "artifact"
 	ChangeKindCommand        ChangeKind = "command"
 	ChangeKindConnectionKey  ChangeKind = "connection-key"
+	ChangeKindDefinition     ChangeKind = "definition"
 	ChangeKindEvent          ChangeKind = "event"
 	ChangeKindExecution      ChangeKind = "execution"
 	ChangeKindExperiment     ChangeKind = "experiment"
@@ -448,7 +449,7 @@ const (
 )
 
 // ChangeKindValues lists every ChangeKind in schema order.
-var ChangeKindValues = []ChangeKind{ChangeKindApiConnection, ChangeKindArtifact, ChangeKindCommand, ChangeKindConnectionKey, ChangeKindEvent, ChangeKindExecution, ChangeKindExperiment, ChangeKindHost, ChangeKindManagedAccount, ChangeKindQuestion, ChangeKindScore, ChangeKindSession, ChangeKindSettingChange, ChangeKindTask}
+var ChangeKindValues = []ChangeKind{ChangeKindApiConnection, ChangeKindArtifact, ChangeKindCommand, ChangeKindConnectionKey, ChangeKindDefinition, ChangeKindEvent, ChangeKindExecution, ChangeKindExperiment, ChangeKindHost, ChangeKindManagedAccount, ChangeKindQuestion, ChangeKindScore, ChangeKindSession, ChangeKindSettingChange, ChangeKindTask}
 
 type ChangeRef struct {
 	Id   string     `json:"id"`
@@ -1582,6 +1583,7 @@ type PersonSettingsSetRequest struct {
 	Order DispatchOrder `json:"order"`
 }
 
+// PipelineDefinition: A pipeline file (config/pipelines/<id>.json); validatePipeline is its full check.
 type PipelineDefinition struct {
 	Id      string         `json:"id"`
 	Steps   []PipelineStep `json:"steps"`
@@ -1644,14 +1646,20 @@ type PipelineRunRequest struct {
 	RequestId string  `json:"requestId"`
 }
 
-// PipelineStep: Step kinds are the registry's (D20); validatePipeline stays the full check.
+// PipelineStep: kind api (connection, tool, arguments, mode, output), agent (profile, prompt) or script (command, timeout_ms, host); validatePipeline is the full check.
 type PipelineStep struct {
-	Agent      *string                    `json:"agent,omitempty"`
-	Arguments  map[string]json.RawMessage `json:"arguments,omitempty"`
-	Connection *string                    `json:"connection,omitempty"`
-	Id         string                     `json:"id"`
-	Kind       string                     `json:"kind"`
-	Tool       *string                    `json:"tool,omitempty"`
+	Arguments  json.RawMessage `json:"arguments,omitempty"`
+	Command    *string         `json:"command,omitempty"`
+	Connection *string         `json:"connection,omitempty"`
+	Host       *string         `json:"host,omitempty"`
+	Id         string          `json:"id"`
+	Kind       string          `json:"kind"`
+	Mode       *string         `json:"mode,omitempty"`
+	Output     json.RawMessage `json:"output,omitempty"`
+	Profile    *string         `json:"profile,omitempty"`
+	Prompt     *string         `json:"prompt,omitempty"`
+	TimeoutMs  *int64          `json:"timeout_ms,omitempty"`
+	Tool       *string         `json:"tool,omitempty"`
 }
 
 type PriceAddReply = PriceEntry
@@ -2682,6 +2690,8 @@ var Operations = map[string]Operation{
 	"connections_token_create":     {Read: false, Long: false, Errors: []int{400, 403, 409}},
 	"connections_token_list":       {Read: true, Long: false, Errors: []int{}},
 	"connections_token_revoke":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
+	"definition_get":               {Read: true, Long: false, Errors: []int{400, 403, 404}},
+	"definition_list":              {Read: true, Long: false, Errors: []int{400, 403, 404}},
 	"direct_search":                {Read: false, Long: true, Errors: []int{}},
 	"execution_differences":        {Read: true, Long: false, Errors: []int{403, 409, 503}},
 	"execution_events":             {Read: true, Long: false, Errors: []int{}},

@@ -1,1 +1,17 @@
-{"version":2,"id":"search-basic","steps":[{"id":"search","kind":"api","connection":"tavily","tool":"web_search","arguments":{"query":"${example.query}","max_results":3,"search_depth":"basic"}}]}
+{
+  "id": "search-basic",
+  "steps": [
+    {
+      "arguments": {
+        "max_results": 3,
+        "query": "${example.query}",
+        "search_depth": "basic"
+      },
+      "connection": "tavily",
+      "id": "search",
+      "kind": "api",
+      "tool": "web_search"
+    }
+  ],
+  "version": 2
+}

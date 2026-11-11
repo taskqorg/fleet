@@ -1,11 +1,11 @@
 {
-  "id": "claude-reviewer",
-  "harness": "claude",
-  "model": "sonnet",
   "effort": null,
+  "harness": "claude",
+  "id": "claude-reviewer",
   "instructionRole": "system",
   "instructions": "Review the explicit supplied task and retained materials. Do not modify files or delegate work.",
   "mcpServers": [],
+  "model": "sonnet",
   "tools": [
     "Read",
     "Glob",

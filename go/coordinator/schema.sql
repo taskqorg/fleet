@@ -662,3 +662,49 @@ CREATE INDEX price_entry_subject ON price_entry(subject, unit, effective_from);
 -- its own function.
 CREATE OR REPLACE FUNCTION fleet_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION '% rows are append-only', TG_TABLE_NAME; END $$;
 CREATE TRIGGER price_entry_append_only BEFORE UPDATE OR DELETE ON price_entry FOR EACH ROW EXECUTE FUNCTION fleet_append_only();
+
+-- migration 28 (27 is the price table of #249): definitions in the store (docs/designs/fleet-definition-editors.md, Data model). Content is the canonical
+-- text (keys sorted, two-space indent, trailing newline), kept as text so diff, sha and export see the exact bytes.
+-- Revisions are never updated or deleted. project_id stays null: definitions are shared, the change feed needs the column.
+CREATE TABLE definition(
+ kind text NOT NULL CHECK (kind IN ('agent', 'pipeline', 'catalogue')),
+ id text NOT NULL,
+ path text NOT NULL,
+ head int NOT NULL,
+ repo_sha text NULL,
+ repo_content text NULL,
+ repo_content_sha text NULL,
+ ever_shipped boolean NOT NULL DEFAULT false,
+ retired_at timestamptz NULL,
+ project_id text NULL,
+ PRIMARY KEY (kind, id)
+);
+CREATE TABLE definition_revision(
+ kind text NOT NULL,
+ id text NOT NULL,
+ revision int NOT NULL,
+ parent int NULL,
+ content text NOT NULL,
+ content_sha text NOT NULL,
+ repo_base text NULL,
+ source text NOT NULL CHECK (source IN ('repo', 'editor', 'lab', 'agent')),
+ actor_kind text NOT NULL CHECK (actor_kind IN ('person', 'agent', 'system')),
+ by_email text NULL,
+ by_execution text NULL,
+ directed_by text NULL,
+ message text NOT NULL,
+ at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY (kind, id, revision),
+ FOREIGN KEY (kind, id) REFERENCES definition
+);
+CREATE TABLE definition_draft(
+ kind text NOT NULL CHECK (kind IN ('agent', 'pipeline', 'catalogue')),
+ id text NOT NULL,
+ person text NOT NULL,
+ base int NOT NULL,
+ content text NOT NULL,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY (kind, id, person)
+);
+CREATE OR REPLACE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; w text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'document' THEN IF r.kind = 'host-observation' AND TG_OP = 'UPDATE' AND (OLD.data - 'lastSeenAt') = (NEW.data - 'lastSeenAt') THEN RETURN NULL; END IF; IF r.kind = 'session' THEN k := 'session'; s := r.id; ELSIF r.kind IN ('event', 'event-delta', 'message') THEN k := 'event'; s := r.data->>'sessionId'; ELSIF r.kind = 'host-observation' THEN k := 'host'; h := r.id; ELSIF r.kind = 'command' THEN k := 'command'; h := r.data->>'hostId'; s := r.data->>'sessionId'; ELSIF r.kind = 'artifact' THEN k := 'artifact'; s := r.data->>'sessionId'; SELECT e.task_id INTO t FROM execution e WHERE e.id = r.data->>'executionId'; ELSIF r.kind IN ('managed-account', 'api-connection', 'connection-key', 'setting-change') THEN k := r.kind; w := r.data->>'holder'; ELSE RETURN NULL; END IF; i := r.id; ELSIF TG_TABLE_NAME = 'task' THEN k := 'task'; i := r.id; t := r.id; ELSIF TG_TABLE_NAME = 'task_derived' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'task_dependency' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'execution' THEN k := 'execution'; i := r.id; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME = 'execution_totals' THEN k := 'execution'; i := r.execution_id; SELECT e.task_id, e.session_id, e.host_id INTO t, s, h FROM execution e WHERE e.id = r.execution_id; ELSIF TG_TABLE_NAME = 'question' THEN k := 'question'; i := r.id; t := r.task_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'experiment' THEN k := 'experiment'; i := r.id; ELSIF TG_TABLE_NAME = 'score' THEN k := 'score'; i := r.id; ELSIF TG_TABLE_NAME = 'definition' THEN k := 'definition'; i := r.kind || '/' || r.id; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op, actor, holder) VALUES (k, i, t, s, h, r.project_id, left(TG_OP, 1), nullif(current_setting('fleet.actor', true), ''), w); PERFORM pg_notify('fleet_change', ''); RETURN NULL; END $$;
+CREATE TRIGGER definition_change AFTER INSERT OR UPDATE OR DELETE ON definition FOR EACH ROW EXECUTE FUNCTION fleet_change();
