@@ -140,9 +140,10 @@ func migrateJournal(db *sql.DB) (err error) {
 
 // subcommands: argv[1] -> handler. No argument runs the executor loop.
 var subcommands = map[string]func(args []string) error{
-	"mcp":       func(args []string) error { return runMCP(args) }, // part E2
-	"reproject": func([]string) error { return reproject() },
-	"selftest":  selftest,
+	"mcp":            func(args []string) error { return runMCP(args) }, // part E2
+	"qualify-serena": qualifySerena,
+	"reproject":      func([]string) error { return reproject() },
+	"selftest":       selftest,
 }
 
 func main() {

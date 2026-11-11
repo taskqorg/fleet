@@ -9,7 +9,7 @@
       "effort": {"$comment": "Codex only (required there); null or absent for the other harnesses.", "type": ["string", "null"]},
       "instructionRole": {"$comment": "codex: developer (or absent); claude: system; antigravity and acp: user.", "type": "string"},
       "instructions": {"type": "string"},
-      "mcpServers": {"$comment": "At most one design-rules grant.", "type": "array", "items": {"$ref": "#/$defs/ProfileMcpGrant"}},
+      "mcpServers": {"$comment": "Named grants: design-rules and Serena Go navigation; each at most once.", "type": "array", "items": {"$ref": "#/$defs/ProfileMcpGrant"}},
       "tools": {"$comment": "Claude only, required there: native tool grants.", "type": "array", "items": {"$ref": "#/$defs/ClaudeTool"}},
       "settings": {"$comment": "Antigravity and acp only.", "$ref": "#/$defs/AntigravitySettings"},
       "delegationProfiles": {"$comment": "At most 8 profile ids this profile may delegate to.", "type": "array", "items": {"type": "string"}},
@@ -27,7 +27,7 @@
       "includeDefaultCustomizations": {"$comment": "Only false is supported.", "type": "boolean"},
       "mode": {"$ref": "#/$defs/AntigravityMode"}}},
     "ProfileMcpGrant": {"type": "object", "additionalProperties": false, "required": ["id", "data"], "properties": {
-      "id": {"$comment": "Only design-rules.", "type": "string"},
+      "id": {"$comment": "design-rules or serena; no executable or environment values.", "type": "string"},
       "data": {"$comment": "Opaque experiment data, at most 16384 bytes as compact JSON.", "type": "object"}}}
   }
 }

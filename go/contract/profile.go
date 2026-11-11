@@ -102,14 +102,22 @@ func (p Profile) check() error {
 	if badArg(p.Id) || len(p.Id) > 80 || badArg(p.Model) || len(p.Instructions) > 16384 {
 		return errors.New("unsupported agent profile: id, model or instructions")
 	}
-	if len(p.McpServers) > 1 {
-		return errors.New("at most one design-rules grant")
-	}
-	for _, s := range p.McpServers {
+	seenServers := map[string]bool{}
+	for _, server := range p.McpServers {
+		if seenServers[server.Id] {
+			return errors.New("duplicate MCP grant")
+		}
+		seenServers[server.Id] = true
+		if server.Id == "serena" {
+			if len(server.Data) != 1 || string(server.Data["language"]) != `"go"` {
+				return errors.New("Serena grant requires only language go; executable and environment are host-owned")
+			}
+			continue
+		}
 		var data bytes.Buffer
 		e := json.NewEncoder(&data)
-		e.SetEscapeHTML(false) // measured as the executor passes it on
-		if s.Id != "design-rules" || s.Data == nil || e.Encode(s.Data) != nil || data.Len()-1 > 16384 {
+		e.SetEscapeHTML(false)
+		if server.Id != "design-rules" || server.Data == nil || e.Encode(server.Data) != nil || data.Len()-1 > 16384 {
 			return errors.New("unsupported MCP grant")
 		}
 	}

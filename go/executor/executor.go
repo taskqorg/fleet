@@ -841,9 +841,9 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	var evidence M
 	if hasCfg {
-		ev, err := profilePrepare(cfg)
+		ev, err := profilePrepare(cfg, jStr(p, "account"))
 		if err != nil {
-			return e.finish(c, "failed", native)
+			return fail(1, err.Error())
 		}
 		evidence = ev
 	}
@@ -927,10 +927,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		gitApply(cmd, access)
 	}
 	observed := e.observeHarness(cmd, name)
-	servers := M{}
-	if name != "codex" {
-		servers = profileServers(jAt(p, "agentConfig"))
-	}
+	servers := profileServers(jAt(p, "agentConfig"), dir, name, jStr(p, "account"))
 	profiles := jArr(p, "agentConfig", "delegationProfiles")
 	if profiles == nil {
 		profiles = []any{}

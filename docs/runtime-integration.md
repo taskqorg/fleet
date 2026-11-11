@@ -20,3 +20,9 @@ Agents may organize their internal work. Retain available tool and child-agent o
 Native token usage is one observation, not total assignment cost or infrastructure consumption. Missing observations remain unknown under [work analysis](designs/fleet-lab.md#work-analysis).
 
 AgentQ is a reuse candidate. The [source review](runtime-boundary-review.md) does not establish native qualification.
+
+## Named capability readiness
+
+A selected Serena Go-navigation grant resolves through the existing profile and host launch path. Missing required executables produce a preparation failure with the dependency name before model launch. Requested/applied preparation receipts identify the selected tools and dependency paths; they mark native calls unqualified until actual history or a capability check supplies evidence. Host-root, account and project grants still apply.
+
+`fleet-executor qualify-serena PROFILE FIXTURE_ROOT RECEIPT NATIVE_ACCOUNT HOST_REGISTRY` is the model-free program checker used by the Lab capability pipeline. It starts the same local sidecar in a temporary private HOME, initializes MCP, checks the selected advertised tools, calls the startup manual, observes onboarding separately and queries the known temporary Go symbol. Its retained receipt separates setup/startup and symbol work, includes source/profile/instruction/manual hashes and versions, and leaves USD unavailable. An actual model witness is required to qualify instruction following; no native cross-harness or platform parity is inferred from this checker. Desktop/browser, provider and task-release operations are outside the check.

@@ -7,6 +7,21 @@ import (
 	"testing"
 )
 
+// R1, R3; risk: role-specific exclusion or arbitrary host commands enter a named capability grant.
+func TestSerenaGrantAcrossHarnesses(t *testing.T) {
+	for _, fields := range []string{`"effort":"low"`, `"harness":"claude","instructionRole":"system","tools":["Read"]`, `"harness":"antigravity","instructionRole":"user"`} {
+		raw := `{"id":"pm-or-worker","model":"m","instructions":"x","mcpServers":[{"id":"serena","data":{"language":"go"}}],` + fields + `}`
+		if _, err := ParseProfile([]byte(raw)); err != nil {
+			t.Fatal(raw, err)
+		}
+	}
+	for _, data := range []string{`{}`, `{"language":"go","command":"arbitrary"}`, `{"language":"python"}`} {
+		if _, err := ParseProfile([]byte(`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[{"id":"serena","data":` + data + `}]}`)); err == nil {
+			t.Fatal("accepted", data)
+		}
+	}
+}
+
 // Requirement: one profile validator for coordinator and executor (review C8); every shipped profile passes it and
 // profiles outside the supported shapes are refused. Risk: a profile the coordinator lists and dispatches (gitNetwork on
 // a Claude profile) fails on the host, or an unmapped grant silently widens what the agent may do.
