@@ -4,7 +4,7 @@ A system for performing work through agents across projects. This specification 
 
 ## Principles
 
-- **R1 Shared rules.** [specq](https://github.com/taskqorg/specq) governs engineering, design and documentation.
+- **R1 Shared rules.** [specq](https://github.com/taskqorg/specq) governs engineering, design and documentation. [Fleet document governance](docs/designs/fleet-docs-governance.md) defines the project paths and document kinds.
 - **R2 Shared core.** Every system operation is a tool over one core state; a data layer serves queries. Human interfaces, pipelines and agents use the same tools and data, each within its own permissions. Interfaces add no operations of their own.
 - **R3 System requirements.** [Reliability, authority and resources](#system-requirements) apply to every block.
 - **R4 Design depth.** Agree on each level's parts, responsibilities and relationships before detailing any part. Revisit earlier levels when needed. Existing product implementations and contracts are evidence to assess, not a template for Fleet's structure.
@@ -232,7 +232,7 @@ The full gate runs in CI on the pull request, never on the owner’s Mac: severa
 
 The full gate has a diagnostic elapsed-time budget of 180 s on an idle Mac (arm64), including setup, build and tests. Exceeding it calls for diagnosis; it is never a timeout or a skip rule.
 
-Each persistent test names the requirement and the risk it protects; follow [specq Testing](https://github.com/taskqorg/specq/blob/13772b779be68103d0581d61a5f8fe7af2b92dd1/engineering/testing.md). CI fails on an outside test in `tests/go/` that misses either name and reports other tests as warnings.
+Each persistent test names the requirement and the risk it protects; follow [specq Testing](https://github.com/taskqorg/specq/blob/1fc3716cc0971f8ca11f313d383db09751ffc132/engineering/testing.md). CI fails on an outside test in `tests/go/` that misses either name and reports other tests as warnings.
 
 ## Linked detail
 
