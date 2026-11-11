@@ -711,7 +711,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 			workspaces = doc{}
 		}
 		if workspaces[host] == nil {
-			workspaces[host] = doc{"executionId": e["id"], "project": snapshot["settings"], "revision": snapshot["revision"], "contentSha": snapshot["contentSha"]}
+			workspaces[host] = doc{"executionId": e["id"], "project": snapshot["settings"], "revision": snapshot["revision"], "contentSha": snapshot["contentSha"], "workingDirectory": s["workingDirectory"]}
 			s["workspaceSnapshots"] = workspaces
 			if err := put(q, "session", s); err != nil {
 				return nil, err
