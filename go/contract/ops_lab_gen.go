@@ -258,6 +258,7 @@ type LabPromoteReply struct {
 	Catalogue      *DefinitionRef  `json:"catalogue,omitempty"`
 	CataloguePatch json.RawMessage `json:"cataloguePatch"`
 	Method         json.RawMessage `json:"method"`
+	Note           *string         `json:"note,omitempty"`
 	Recommendation json.RawMessage `json:"recommendation"`
 }
 

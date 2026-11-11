@@ -1854,12 +1854,25 @@ func expPromote(q *Request, id, label string) (doc, error) {
 	}
 	method := doc{"id": fmt.Sprintf("%v-%s", exp["pipeline_id"], slug), "name": fmt.Sprintf("%v %s", exp["pipeline_id"], label), "scope": exp["project_id"],
 		"pipeline": astr(exp["pipeline_id"]) + ".json", "overrides": overrides, "configRef": v["config_ref"], "sourceExperiment": id}
+	// A method's config ref is its configRef, else the hash Lab gives a variant (pipeline id and overrides).
+	refOf := func(m doc) string {
+		if r := astr(m["configRef"]); r != "" {
+			return r
+		}
+		o := mapOf(m["overrides"])
+		if o == nil {
+			o = doc{}
+		}
+		return sha256hex([]byte(canonical(doc{"pipeline": strings.TrimSuffix(astr(m["pipeline"]), ".json"), "overrides": o})))
+	}
 	var existing doc
-	if c, err := catalogue(q, astr(exp["project_id"])); err == nil {
-		for _, m := range anys(c["methods"]) {
-			if mapOf(m)["configRef"] == v["config_ref"] {
-				existing = mapOf(m)
-			}
+	c, err := catalogue(q, astr(exp["project_id"]))
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range anys(c["methods"]) {
+		if refOf(mapOf(m)) == astr(v["config_ref"]) {
+			existing = mapOf(m)
 		}
 	}
 	// A new method is saved as a catalogue revision (source lab) in this transaction, so the recommendation below sees it
@@ -1873,14 +1886,27 @@ func expPromote(q *Request, id, label string) (doc, error) {
 		if head == nil {
 			return nil, fail(404, "No catalogue definition")
 		}
-		var c doc
-		if err := json.Unmarshal(head.Content, &c); err != nil {
-			return nil, err
+		if st := head.state(); st == contract.DefinitionStateRepositoryChanged || st == contract.DefinitionStateRepositoryDeleted {
+			return nil, &HTTPError{Code: 409, Msg: "The catalogue's repository file changed: resolve it in the Catalogue editor, then promote", Extra: map[string]any{"reason": contract.ConflictReasonRepositoryChanged, "head": head.Head, "repoSha": head.RepoSha}}
+		}
+		c, _ := decodeNumbers(string(head.Content)).(map[string]any) // numbers keep their text
+		if c == nil {
+			return nil, fail(500, "Invalid catalogue definition")
+		}
+		ids := map[string]bool{}
+		for _, m := range anys(c["methods"]) {
+			ids[astr(mapOf(m)["id"])] = true
+		}
+		for base, n := astr(method["id"]), 2; ids[astr(method["id"])]; n++ { // an id already taken gets a number
+			method["id"] = fmt.Sprintf("%s-%d", base, n)
 		}
 		c["methods"] = append(anys(c["methods"]), method)
 		text, err := canonicalText(jsonBytes(c))
 		if err != nil {
 			return nil, err
+		}
+		if ps := problems("catalogue", "catalogue", text); len(ps) > 0 {
+			return nil, fail(400, "The promoted catalogue is invalid: "+ps[0].Message)
 		}
 		rev, err := appendRevision(q, "catalogue", "catalogue", head.Head, &text, head.RepoSha, "lab", fmt.Sprintf("Promote %s from %s", label, id))
 		if err != nil {

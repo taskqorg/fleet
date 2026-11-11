@@ -157,7 +157,8 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
         meta={Object.entries(v.summary).map(([k, s]: any) => `${evaluatorLabel(k)} ${scoreText(s)}`).join(' · ') || 'no scores yet'}
         value={<Button label="Promote" icon="check-check" onClick={() => act('lab_promote', { experimentId: id, variant: v.label }).then(setPatch)} />} />)}</DetailSection>
       {patch && <DetailSection title="Promote"><KvRow icon="check" label={`Recommendation set to ${patch.method.id}`}
-        meta={patch.catalogue ? <span class="mono">catalogue r{patch.catalogue.revision}</span> : 'method already in the catalogue'} /></DetailSection>}
+        meta={patch.catalogue ? <span class="mono">catalogue r{patch.catalogue.revision}</span> : 'method already in the catalogue'} />
+        {patch.note && <KvRow icon="circle-alert" label={String(patch.note)} />}</DetailSection>}
       {(e.typed ?? []).map((t: any) => <DetailSection key={`${t.variant}/${t.split}`} title={`${t.variant} · typed answers · ${t.split === 'tune' ? 'tune (bands are set here)' : 'held out (reported)'}`}>
         {t.stats.map((s: any) => { const cov = percent(s.confident, s.n), esc = percent(100 - parseInt(cov.text, 10), 100);
           return <KvRow key={s.aggregate ? '\u0000all' : s.tag} icon={s.aggregate ? 'chart-no-axes-column' : 'file-text'} label={s.aggregate ? 'All languages' : s.tag}
