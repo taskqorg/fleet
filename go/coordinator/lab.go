@@ -471,7 +471,11 @@ func runChecks(ctx context.Context, checks []any, files []labFile) (doc, error) 
 		cmd := osexec.CommandContext(ctx, "sh", "-c", astr(c["run"]))
 		cmd.Dir = dir
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "FLEET_OUTPUT_DIR=" + dir}
+		// On Unix the check runs in its own process group; cancelling, and finishing, kills the whole group, so a child the shell
+		// left behind (`sleep 1000 &`) never outlives the check or its deleted directory.
+		ownGroup(cmd)
 		err := cmd.Run()
+		killGroup(cmd)
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
