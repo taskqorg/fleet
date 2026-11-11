@@ -156,6 +156,9 @@ test('P1 pipeline run is idempotent by requestId and refuses a changed body (req
   const a = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId, example: {}}));
   const b = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId, example: {}}));
   assert.equal(a.id, b.id);
+  // A run is read only in its own project's scope (risk: pipeline_get without projectId returned any run).
+  assert.equal((await op('pipeline_get', {runId: a.id}, OUTSIDER)).status, 404);
+  assert.equal(ok(await op('pipeline_get', {runId: a.id})).id, a.id);
   assert.equal((await call('POST', '/api/pipelines/hello-search/runs', {requestId, example: {query: 'x'}})).status, 409);
   assert.equal((await call('POST', '/api/pipelines/hello-search/runs', {requestId: randomUUID(), bogus: 1})).status, 400);
   // A missing reference fails the step before any call: problem ref:<path>.

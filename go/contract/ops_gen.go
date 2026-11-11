@@ -401,16 +401,16 @@ type CatalogueMethodView struct {
 
 // CatalogueReply: The definition editors change methods to CatalogueMethodView items (docs/designs/fleet-definition-editors.md).
 type CatalogueReply struct {
-	Capability           json.RawMessage `json:"capability,omitempty"`
-	Methods              json.RawMessage `json:"methods,omitempty"`
-	ProjectId            json.RawMessage `json:"projectId,omitempty"`
-	RecommendationSource json.RawMessage `json:"recommendationSource,omitempty"`
-	RecommendedMethod    json.RawMessage `json:"recommendedMethod,omitempty"`
-	SharedDefault        json.RawMessage `json:"sharedDefault,omitempty"`
+	Capability           json.RawMessage              `json:"capability"`
+	Methods              []map[string]json.RawMessage `json:"methods"`
+	ProjectId            string                       `json:"projectId"`
+	RecommendationSource json.RawMessage              `json:"recommendationSource"`
+	RecommendedMethod    json.RawMessage              `json:"recommendedMethod"`
+	SharedDefault        json.RawMessage              `json:"sharedDefault"`
 }
 
 type CatalogueRequest struct {
-	ProjectId *string `json:"projectId,omitempty"`
+	ProjectId string `json:"projectId"`
 }
 
 // Change: One committed change (the change table), as GET /api/stream and changes_since deliver it.
@@ -842,15 +842,15 @@ type DiffSide struct {
 	Revision   *int64 `json:"revision,omitempty"`
 }
 
+// DirectSearchReply: A pipeline run with its steps, state and results (pipelineRun).
 type DirectSearchReply = map[string]json.RawMessage
 
+// DirectSearchRequest: Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.
 type DirectSearchRequest struct {
-	Invocation *string `json:"invocation,omitempty"`
-	MethodId   *string `json:"methodId,omitempty"`
-	ProjectId  *string `json:"projectId,omitempty"`
-	Query      *string `json:"query,omitempty"`
-	RequestId  *string `json:"requestId,omitempty"`
-	Signature  *string `json:"signature,omitempty"`
+	MethodId  *string `json:"methodId,omitempty"`
+	ProjectId string  `json:"projectId"`
+	Query     string  `json:"query"`
+	RequestId string  `json:"requestId"`
 }
 
 // DispatchOrder: list: the section 6 order list; soonest_reset: ready candidates by earliest weekly reset among those with weekly left above 0 (fleet-people-access.md section 8)
@@ -1514,19 +1514,20 @@ type PipelineDefinition struct {
 	Version int64          `json:"version"`
 }
 
+// PipelineGetReply: A pipeline run with its steps, state and results (pipelineRun).
 type PipelineGetReply = map[string]json.RawMessage
 
 type PipelineGetRequest struct {
 	ProjectId *string `json:"projectId,omitempty"`
-	RunId     *string `json:"runId,omitempty"`
+	RunId     string  `json:"runId"`
 }
 
 type PipelineHistoryReply struct {
-	Runs json.RawMessage `json:"runs,omitempty"`
+	Runs []map[string]json.RawMessage `json:"runs"`
 }
 
 type PipelineHistoryRequest struct {
-	ProjectId *string `json:"projectId,omitempty"`
+	ProjectId string `json:"projectId"`
 }
 
 type PipelineRerunReply struct {
@@ -1558,16 +1559,15 @@ type PipelineRunCreateRequest struct {
 	RequestId         string                     `json:"requestId"`
 }
 
+// PipelineRunReply: A pipeline run with its steps, state and results (pipelineRun).
 type PipelineRunReply = map[string]json.RawMessage
 
+// PipelineRunRequest: Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.
 type PipelineRunRequest struct {
-	Invocation *string         `json:"invocation,omitempty"`
-	MethodId   *string         `json:"methodId,omitempty"`
-	Pipeline   json.RawMessage `json:"pipeline,omitempty"`
-	ProjectId  *string         `json:"projectId,omitempty"`
-	Query      *string         `json:"query,omitempty"`
-	RequestId  *string         `json:"requestId,omitempty"`
-	Signature  *string         `json:"signature,omitempty"`
+	MethodId  *string `json:"methodId,omitempty"`
+	ProjectId string  `json:"projectId"`
+	Query     string  `json:"query"`
+	RequestId string  `json:"requestId"`
 }
 
 // PipelineStep: Step kinds are the registry's (D20); validatePipeline stays the full check.
@@ -1592,17 +1592,32 @@ type ProfilesListReply struct {
 
 type ProfilesListRequest = map[string]json.RawMessage
 
+// ProjectContextReply: The project's context (projectContext): settings, roles, connections, rules.
 type ProjectContextReply = map[string]json.RawMessage
 
 type ProjectContextRequest struct {
-	ProjectId *string `json:"projectId,omitempty"`
+	ProjectId string `json:"projectId"`
 }
 
 type ProjectListReply struct {
-	Projects json.RawMessage `json:"projects,omitempty"`
+	Projects []map[string]json.RawMessage `json:"projects"`
 }
 
 type ProjectListRequest = map[string]json.RawMessage
+
+// ProjectQuestion: A project question to the operator; state waiting or answered.
+type ProjectQuestion struct {
+	Actor      string  `json:"actor"`
+	Answer     *string `json:"answer,omitempty"`
+	AnsweredAt *int64  `json:"answeredAt,omitempty"`
+	AnsweredBy *string `json:"answeredBy,omitempty"`
+	CreatedAt  int64   `json:"createdAt"`
+	Id         string  `json:"id"`
+	ProjectId  string  `json:"projectId"`
+	RequestId  string  `json:"requestId"`
+	State      string  `json:"state"`
+	Text       string  `json:"text"`
+}
 
 type ProjectReadinessReply struct {
 	Hosts     json.RawMessage `json:"hosts,omitempty"`
@@ -1614,24 +1629,22 @@ type ProjectReadinessRequest struct {
 	ProjectId       *string `json:"projectId,omitempty"`
 }
 
-type QuestionAnswerReply struct {
-	Answer json.RawMessage `json:"answer,omitempty"`
-	Id     json.RawMessage `json:"id,omitempty"`
-	State  json.RawMessage `json:"state,omitempty"`
-}
+// QuestionAnswerReply: A project question (ProjectQuestion), or the answered question row for any other question.
+type QuestionAnswerReply = map[string]json.RawMessage
 
+// QuestionAnswerRequest: Answers a project question, or any other question by id.
 type QuestionAnswerRequest struct {
-	Answer      json.RawMessage `json:"answer,omitempty"`
-	ArtifactIds []string        `json:"artifactIds,omitempty"`
-	QuestionId  *string         `json:"questionId,omitempty"`
+	Answer      string   `json:"answer"`
+	ArtifactIds []string `json:"artifactIds,omitempty"`
+	QuestionId  string   `json:"questionId"`
 }
 
-type QuestionAskReply = map[string]json.RawMessage
+type QuestionAskReply = ProjectQuestion
 
 type QuestionAskRequest struct {
-	ProjectId *string `json:"projectId,omitempty"`
-	RequestId *string `json:"requestId,omitempty"`
-	Text      *string `json:"text,omitempty"`
+	ProjectId string `json:"projectId"`
+	RequestId string `json:"requestId"`
+	Text      string `json:"text"`
 }
 
 // QuestionBlock: options: the stored options as they are (a list of labels for agent questions).
@@ -1650,11 +1663,11 @@ type QuestionBlock struct {
 }
 
 type QuestionHistoryReply struct {
-	Questions json.RawMessage `json:"questions,omitempty"`
+	Questions []ProjectQuestion `json:"questions"`
 }
 
 type QuestionHistoryRequest struct {
-	ProjectId *string `json:"projectId,omitempty"`
+	ProjectId string `json:"projectId"`
 }
 
 type QuestionKind string
@@ -1733,11 +1746,17 @@ type ReasoningBlock struct {
 	Stream      *string `json:"stream,omitempty"`
 }
 
-type RecommendationSetReply = map[string]json.RawMessage
+type RecommendationSetReply struct {
+	Actor      string `json:"actor"`
+	Id         string `json:"id"`
+	MethodId   string `json:"methodId"`
+	ProjectId  string `json:"projectId"`
+	SelectedAt int64  `json:"selectedAt"`
+}
 
 type RecommendationSetRequest struct {
-	MethodId  *string `json:"methodId,omitempty"`
-	ProjectId *string `json:"projectId,omitempty"`
+	MethodId  string `json:"methodId"`
+	ProjectId string `json:"projectId"`
 }
 
 type ReconcileReply = map[string]json.RawMessage
