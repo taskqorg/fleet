@@ -127,38 +127,6 @@ jobs:
   # Browser: one build, Chromium from a cache keyed on the Playwright version, then every browser check in sequence:
   # filter path (fleet-view-urls-and-list-path.md §4), Conversations (fleet-conversations.md "Browser check"), the
   # design book and report. The docs and design reports warn only (D6, D14).
-  # Temporary read-only diagnosis of the hosted runner's failing Ubuntu mirror.
-  apt-source-diagnostic:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    steps:
-      - name: Inspect public Ubuntu sources and endpoints
-        run: |
-          for file in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt; do
-            if test -f "$file"; then
-              echo "$file"
-              cat "$file"
-            fi
-          done
-          echo "ImageOS=$ImageOS ImageVersion=$ImageVersion"
-          cat /etc/resolv.conf
-          resolvectl status --no-pager
-          ip -4 route show default
-          for host in github.com packages.microsoft.com ubuntu.com azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com; do
-            echo "System DNS $host"
-            getent ahostsv4 "$host" || true
-            dig "$host" A +time=3 +tries=1 +noall +comments +answer || true
-          done
-          for resolver in 1.1.1.1 8.8.8.8; do
-            for host in github.com archive.ubuntu.com security.ubuntu.com; do
-              echo "Independent DNS $resolver $host"
-              dig "@$resolver" "$host" A +time=3 +tries=1 +noall +comments +answer || true
-            done
-          done
-          for url in https://archive.ubuntu.com/ubuntu/dists/noble/InRelease https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease; do
-            curl --fail --head --max-time 30 "$url" || true
-          done
   browser:
     runs-on: ubuntu-24.04
     permissions:
@@ -193,6 +161,32 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ steps.playwright.outputs.version }}-chromium
+      # The hosted Azure resolver returned SERVFAIL for Ubuntu while public DNS answered.
+      # Change only this ephemeral job's runtime DNS, and only after checking the alternate.
+      - name: Recover Ubuntu DNS when the runner resolver fails
+        run: |
+          recover=false
+          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com; do
+            if ! getent ahostsv4 "$host" > /dev/null; then
+              recover=true
+              break
+            fi
+          done
+          if "$recover"; then
+            for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com github.com; do
+              dig @1.1.1.1 "$host" A +short +time=3 +tries=1 | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
+            done
+            link=$(ip -4 route show default | awk '{print $5; exit}')
+            test -n "$link"
+            sudo resolvectl dns "$link" 1.1.1.1
+            sudo resolvectl flush-caches
+            resolvectl dns "$link"
+          fi
+          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com github.com; do
+            getent ahostsv4 "$host"
+          done
+          curl --fail --head https://archive.ubuntu.com/ubuntu/dists/noble/InRelease
+          curl --fail --head https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease
       - if: steps.chromium.outputs.cache-hit != 'true'
         run: pnpm exec playwright install --with-deps chromium
       - if: steps.chromium.outputs.cache-hit == 'true'
