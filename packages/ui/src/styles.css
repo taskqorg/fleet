@@ -561,3 +561,11 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .limit-cell{display:inline-flex;flex-wrap:wrap;align-items:center;gap:var(--space-2)}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .limit-cell .legend{white-space:nowrap}
+
+/* Draft fields share the work area's scroller; no applied-setting badge. */
+.text-field { display: grid; gap: var(--space-1); margin-block: var(--space-2); }
+.text-field input, .text-field textarea { width: 100%; min-width: 0; box-sizing: border-box; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-md); padding: var(--space-2); }
+.text-field textarea { resize: vertical; }
+.text-field [aria-invalid=true] { border-color: var(--danger-fg); }
+
+.draft-fields { border: 0; padding: 0; margin: 0; min-width: 0; }

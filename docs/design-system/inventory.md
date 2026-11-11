@@ -107,7 +107,7 @@ These apply to every workspace and are the main input for the controls:
 
 | Item | Kind | Source |
 |---|---|---|
-| Experiments: variants, configuration differences, evaluators, task set | Setting | experiments |
+| Create an experiment draft; variants, configuration differences, evaluators, task set | Setting, Action | `lab_experiment_create`, experiments |
 | Trials per variant with scores (objective and judge), tokens, time and cost, each with its basis | View | executions linked to the experiment |
 | Comparison of variants, with drill-down to individual runs | View | `usage.summary`, scores |
 | Assessments (comments, limitations, suitability) and recommendations per kind of work | Decision, Action | assessments, recommendations |
