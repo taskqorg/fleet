@@ -308,7 +308,7 @@ func accountInspect(q *Request, b doc, catalogue bool) (any, error) {
 			if err != nil {
 				return nil, err
 			}
-			if s := astr(e["state"]); s != "completed" && s != "failed" && s != "stopped" && s != "unknown" {
+			if !terminal(e) && !unconfirmed(e) {
 				return x, nil
 			}
 		}
@@ -321,7 +321,7 @@ func accountInspect(q *Request, b doc, catalogue bool) (any, error) {
 	if err := put(q, "session", doc{"id": sid, "createdAt": nowMs(), "actor": "program-worker"}); err != nil {
 		return nil, err
 	}
-	if err := put(q, "execution", doc{"id": id, "executionId": id, "sessionId": sid, "hostId": integ, "state": "queued", "createdAt": nowMs(), "actor": "program-worker", "accountId": a["id"]}); err != nil {
+	if err := put(q, "execution", doc{"id": id, "executionId": id, "sessionId": sid, "hostId": integ, "state": "preparing", "createdAt": nowMs(), "actor": "program-worker", "accountId": a["id"]}); err != nil {
 		return nil, err
 	}
 	if err := put(q, "command", doc{"id": newID(), "executionId": id, "sessionId": sid, "hostId": integ, "kind": "account-inspect", "status": "pending",

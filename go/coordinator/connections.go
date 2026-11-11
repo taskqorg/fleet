@@ -30,7 +30,6 @@ var (
 	keyFile        = regexp.MustCompile(`^[0-9a-f]{12}$`)
 	stagedKey      = regexp.MustCompile(`^\.([0-9a-f]{12})\.add$`)
 	spoolFile      = regexp.MustCompile(`^\d{4}-\d\d-\d\d\.jsonl$`)
-	connEnded      = map[string]bool{"completed": true, "failed": true, "stopped": true}
 	usageToken     = randomToken()
 	processStarted = nowMs()
 )
@@ -1010,11 +1009,11 @@ func connTick(q *Request) error {
 	for _, t := range open {
 		id := astr(t["executionId"])
 		var state *string
-		err := q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT data->>'state' FROM execution WHERE id=$1 AND legacy_kind='execution'),'')", id).Scan(&state)
+		err := q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT state::text FROM execution WHERE id=$1 AND "+execKinds+"),'')", id).Scan(&state)
 		if err != nil {
 			return err
 		}
-		if state == nil || *state == "" || connEnded[*state] {
+		if state == nil || *state == "" || terminalTyped[*state] {
 			if err := revokeTokens(q, id); err != nil {
 				return err
 			}
