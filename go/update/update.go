@@ -112,7 +112,7 @@ func newUpdater(key ed25519.PublicKey) *updater {
 		client: &http.Client{Timeout: 10 * time.Minute}, now: time.Now, window: 30 * time.Second, tick: time.Second,
 		coordURL: "http://127.0.0.1:9470/api/health", gatewayURL: "http://127.0.0.1:8742/healthz",
 		smokeURL: "http://127.0.0.1:9470/api/hosts/whoami",
-		dumpCmd: pgDump}
+		dumpCmd:  pgDump}
 }
 
 func (u *updater) result(ver, state, msg string) *Result {
