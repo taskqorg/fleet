@@ -1488,6 +1488,83 @@
           "type": "boolean"
         }
       }
+    },
+    "TranscriptText": {
+      "$comment": "a text block of fleetNormalized.blocks (kind text); the app's Block (ops) adds key and the thread fields",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "role",
+        "markdown"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "markdown": {
+          "type": "string"
+        }
+      }
+    },
+    "TranscriptReasoning": {
+      "$comment": "a reasoning block of fleetNormalized.blocks (kind reasoning)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "markdown"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "markdown": {
+          "type": "string"
+        }
+      }
+    },
+    "TranscriptTool": {
+      "$comment": "a tool block of fleetNormalized.blocks (kind tool); input and output are the native values",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "name",
+        "input",
+        "output",
+        "state",
+        "startedAt",
+        "endedAt"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "input": {},
+        "output": {},
+        "state": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "endedAt": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
     }
   }
 }
