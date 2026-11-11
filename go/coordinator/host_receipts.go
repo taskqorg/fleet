@@ -262,11 +262,8 @@ func (a *App) statusReceiptIn(q *Request, b doc) (any, string, error) {
 		e["error"] = b["error"]
 	}
 	if (kind == "start" || kind == "script") && status == "completed" && !wasFinal {
-		declared := anys(b["artifacts"])
-		if len(declared) > 10000 {
-			declared = declared[:10000]
-		}
-		gate, err := artifactGate(q, e, declared)
+		// Every declaration reaches the gate: a dropped one would let a required output go unwaited.
+		gate, err := artifactGate(q, e, anys(b["artifacts"]))
 		if err != nil {
 			return nil, "", err
 		}
