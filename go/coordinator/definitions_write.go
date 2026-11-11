@@ -405,6 +405,24 @@ func definitionSave(q *Request, r *contract.DefinitionSaveRequest) (contract.Def
 	if strings.TrimSpace(r.Message) == "" {
 		return out, fail(400, "Expected message")
 	}
+	// A person with the architect role saves shared definitions (the role is global). An agent acts with its director's
+	// grants: it may not change a definition another project of theirs does not cover uses (owner decision).
+	if q.agent != "" && q.person != nil && !fullAccess(q.person) {
+		var outside []string
+		used, err := usedByProjects(q, string(r.Kind), r.Id)
+		if err != nil {
+			return out, err
+		}
+		for _, p := range used {
+			if !mayAccessProjectID(q.person, p) {
+				outside = append(outside, p)
+			}
+		}
+		if len(outside) > 0 {
+			return out, &HTTPError{Code: 409, Msg: "Used by projects outside your director's grants (" + strings.Join(outside, ", ") + "): save a copy under a new id with definition_create",
+				Extra: map[string]any{"reason": contract.ConflictReasonUsedOutsideGrants, "head": head.Head, "repoSha": head.RepoSha, "projects": outside}}
+		}
+	}
 	rev, err := appendRevision(q, string(r.Kind), r.Id, head.Head, &text, head.RepoSha, "editor", r.Message)
 	if err != nil {
 		return out, err
@@ -525,4 +543,66 @@ func init() {
 	gatedObjOp("definition_create", false, typedOp(definitionCreate))
 	gatedObjOp("definition_history", true, typedOp(definitionHistory))
 	gatedObjOp("definition_export", true, typedOp(definitionExport))
+}
+
+// usedByProjects: the projects that use a definition: a profile through project roles, catalogue methods (agentProfile) and
+// the pipelines their agent steps run; a pipeline through catalogue methods; the catalogue everywhere. A method's scope is
+// a project id, or "shared" (every project).
+func usedByProjects(q *Request, kind, id string) ([]string, error) {
+	all := projectIDs()
+	set := map[string]bool{}
+	cat, err := catalogueHead(q)
+	if err != nil {
+		return nil, err
+	}
+	methodProjects := func(match func(m doc) bool) {
+		for _, x := range anys(cat["methods"]) {
+			m := mapOf(x)
+			if m == nil || !match(m) {
+				continue
+			}
+			if sc := astr(m["scope"]); sc == "shared" || sc == "" {
+				for _, p := range all {
+					set[p] = true
+				}
+			} else {
+				set[sc] = true
+			}
+		}
+	}
+	switch kind {
+	case "catalogue":
+		return all, nil
+	case "pipeline":
+		methodProjects(func(m doc) bool { return astr(m["pipeline"]) == id+".json" })
+	case "agent":
+		for _, p := range all {
+			for _, v := range mapOf(projectSettingsOf(p)["roles"]) {
+				if astr(v) == id || astr(mapOf(v)["profile"]) == id {
+					set[p] = true
+				}
+			}
+		}
+		pipes, err := headTexts(q, "pipeline")
+		if err != nil {
+			return nil, err
+		}
+		usesProfile := map[string]bool{}
+		for _, h := range pipes {
+			var d doc
+			json.Unmarshal(h.text, &d)
+			for _, st := range anys(d["steps"]) {
+				if astr(mapOf(st)["profile"]) == id {
+					usesProfile[h.id+".json"] = true
+				}
+			}
+		}
+		methodProjects(func(m doc) bool { return astr(m["agentProfile"]) == id || usesProfile[astr(m["pipeline"])] })
+	}
+	out := make([]string, 0, len(set))
+	for p := range set {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out, nil
 }
