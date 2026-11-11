@@ -105,7 +105,9 @@ try {
   await p.unroute('**/api/ops/lab_experiment_create');
   await p.getByRole('button', { name: 'Discard local draft', exact: true }).click();
   await p.getByRole('textbox', { name: 'Goal', exact: true }).fill('Actor-scoped draft');
-  await p.reload(); assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), 'Actor-scoped draft');
+  await p.reload();
+  await p.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent?.startsWith('Project:') && !b.hasAttribute('aria-disabled')));
+  assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), 'Actor-scoped draft');
   // Grant change invalidates the key even if another tab already updated the common grant marker.
   await p.getByRole('button', { name: /^Project:/ }).click();
   await p.getByRole('searchbox', { name: 'Search Projects' }).waitFor();

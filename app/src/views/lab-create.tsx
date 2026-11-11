@@ -19,7 +19,11 @@ const blank = (): Draft => ({ projectId: '', pipelineId: '', kind: '', examples:
   variants: [{ label: 'A', pipelineId: '', overrides: '{}' }], evaluators: [], primary: '', budgets: [], generator: 'list', params: '{"variants":[]}', max: '', k: '' });
 const clearDrafts = () => { try { for (const key of Object.keys(sessionStorage)) if (key.startsWith(PREFIX)) sessionStorage.removeItem(key); } catch { /* storage unavailable */ } };
 onClear.add(clearDrafts);
-const object = (text: string, label: string): Record<string, unknown> => { const x = JSON.parse(text); if (!x || typeof x !== 'object' || Array.isArray(x)) throw Error(label + ' must be an object'); return x; };
+const object = (text: string, label: string): Record<string, unknown> => {
+  let x: unknown; try { x = JSON.parse(text); } catch (e) { throw Error(`${label}: ${(e as Error).message}`); }
+  if (!x || typeof x !== 'object' || Array.isArray(x)) throw Error(label + ' must be an object');
+  return x as Record<string, unknown>;
+};
 const nameOf = (e: Evaluator) => `${e.kind}:${e.ref}:${e.form}`;
 function request(d: Draft): Ops['lab_experiment_create']['request'] {
   if (!d.projectId || !d.pipelineId || !d.kind || !d.examples.length) throw Error('Choose a project, pipeline, kind and approved examples.');
@@ -27,12 +31,12 @@ function request(d: Draft): Ops['lab_experiment_create']['request'] {
   if (!Number.isSafeInteger(repeats) || repeats < 1) throw Error('Repeats must be a positive integer.');
   if (!d.variants.length || (d.kind === 'single' && d.variants.length !== 1) || (d.kind === 'ab' && d.variants.length < 2)) throw Error('Single needs one variant; A/B needs at least two.');
   if (d.variants.some(v => !v.label.trim()) || new Set(d.variants.map(v => v.label)).size !== d.variants.length) throw Error('Variant labels must be nonempty and unique.');
-  const evaluators = d.evaluators.map(e => ({ kind: e.kind, ref: e.ref, form: e.form, ...(e.kind === 'judge' ? { overrides: object(e.overrides, 'Judge overrides') } : {}) }));
+  const evaluators = d.evaluators.map((e, i) => ({ kind: e.kind, ref: e.ref, form: e.form, ...(e.kind === 'judge' ? { overrides: object(e.overrides, `Judge ${i + 1} overrides`) } : {}) }));
   if (d.primary && !d.evaluators.some(e => nameOf(e) === d.primary)) throw Error('Choose a primary from the current evaluators.');
   const budgets = d.budgets.map(b => { const limit = Number(b.limit); if (!Number.isFinite(limit) || limit <= 0) throw Error('Budget limits must be positive.'); return { unit: b.unit, limit, action: b.action }; });
   const out: Ops['lab_experiment_create']['request'] = { projectId: d.projectId, pipelineId: d.pipelineId, kind: d.kind, examples: d.examples, repeats,
     goal: d.goal, hypothesis: d.hypothesis, decisionRule: d.decisionRule, labGroup: d.labGroup,
-    variants: d.variants.map(v => ({ label: v.label, ...(v.pipelineId ? { pipelineId: v.pipelineId } : {}), overrides: object(v.overrides, 'Variant overrides') })), evaluators, budgets,
+    variants: d.variants.map((v, i) => ({ label: v.label, ...(v.pipelineId ? { pipelineId: v.pipelineId } : {}), overrides: object(v.overrides, `Variant ${i + 1} overrides`) })), evaluators, budgets,
     ...(d.primary ? { primaryEvaluator: d.primary } : {}) };
   if (d.kind === 'loop') {
     if (!d.primary || d.primary.endsWith(':pick_best')) throw Error('Loop needs a scalar primary evaluator.');
@@ -134,6 +138,11 @@ export function LabCreate() {
   const disabled = picker ? 'Finish choosing first' : !key ? 'Loading identity and access' : receipt.state !== 'editing' ? 'Resolve the previous creation first' : !online.value ? 'offline' : signedOut.value ? 'signed out' : undefined;
   const field = (label: string, key: 'goal' | 'hypothesis' | 'decisionRule' | 'labGroup' | 'repeats' | 'max' | 'k', multiline = false) => <TextField label={label} value={d[key]} onChange={v => edit({ [key]: v })} multiline={multiline} type={['repeats', 'max', 'k'].includes(key) ? 'number' : 'text'} disabledReason={disabled} />;
   const options = (xs: string[]) => xs.map(id => ({ id, label: id }));
+  const advanced = (label: string, value: string, change: (value: string) => void, help: string) => {
+    let error = ''; try { object(value, label); } catch (e) { error = (e as Error).message; }
+    return <details open={error ? true : undefined}><summary>{label}</summary><p class="muted">{help}</p>
+      <CodeEditor label={label} value={value} onChange={change} problems={error ? [{ path: '', message: error }] : []} disabledReason={disabled} /></details>;
+  };
   const available = !picker ? [] : picker.label === 'Projects' ? projects : picker.label === 'Approved examples' ? examples : picker.label === 'Primary evaluators' ? [{ id: '', name: 'None' }, ...d.evaluators.map(e => ({ id: nameOf(e), name: nameOf(e) }))] : picker.label === 'Variant pipelines' ? [{ id: '', name: 'Base pipeline' }, ...pipelines] : pipelines;
   useEffect(() => { if (picker) requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.split-list .search input')?.focus()); }, [picker?.label]);
   const list = <><header class="page-h" data-ui={picker ? 'lab-picker' : undefined}><h1>{picker?.label ?? 'New experiment'}</h1><span class="grow" /><Button label={picker ? 'Done choosing' : 'Experiments'} icon="x" iconOnly onClick={() => picker ? closePicker() : go('/lab')} /></header>
@@ -155,18 +164,18 @@ export function LabCreate() {
       <Button label={`Approved examples: ${d.examples.length} selected`} disabledReason={disabled} onClick={() => pick('Approved examples', examples, d.examples, id => { const xs = current.current.draft.examples; edit({ examples: xs.includes(id) ? xs.filter(x => x !== id) : [...xs, id] }); }, true)} /></DetailSection>
     <DetailSection title="Variants">{d.variants.map((v, i) => <section class="panel" key={i}><TextField label={`Variant ${i + 1} label`} value={v.label} onChange={label => variants(i, { label })} disabledReason={disabled} />
       <Button label={`Variant ${i + 1} pipeline: ${v.pipelineId || 'Base pipeline'}`} disabledReason={disabled} onClick={() => pick('Variant pipelines', [{ id: '', name: 'Base pipeline' }, ...pipelines], [v.pipelineId], id => variants(i, { pipelineId: id }))} />
-      <CodeEditor label={`Variant ${i + 1} overrides`} value={v.overrides} onChange={overrides => variants(i, { overrides })} disabledReason={disabled} />
+      {advanced(`Variant ${i + 1} overrides`, v.overrides, overrides => variants(i, { overrides }), 'Optional model, skills, prompt, web_route, account, host, profile, arguments or bands. Server permissions still apply.')}
       <Button label={`Remove variant ${i + 1}`} icon="x" disabledReason={disabled} onClick={() => edit({ variants: d.variants.filter((_, j) => i !== j) })} /></section>)}
       <Button label="Add variant" icon="plus" disabledReason={disabled} onClick={() => edit({ variants: [...d.variants, { label: '', pipelineId: '', overrides: '{}' }] })} /></DetailSection>
     <DetailSection title="Evaluators">{d.evaluators.map((e, i) => <section class="panel" key={i}><Choice label={`Evaluator ${i + 1} kind`} options={options(['script', 'judge', 'typed', 'human'])} value={e.kind} onChange={kind => evaluators(i, { kind, ref: kind === 'script' ? 'example.checks' : kind === 'typed' ? 'labels' : kind === 'human' ? 'owner' : '', form: kind === 'typed' ? 'typed' : 'pass_fail' })} />
       {e.kind === 'judge' && <Button label={`Judge pipeline: ${e.ref || 'Choose'}`} disabledReason={disabled} onClick={() => pick('Judge pipelines', pipelines, [e.ref], id => evaluators(i, { ref: id }))} />}
       <Choice label={`Evaluator ${i + 1} form`} options={options(e.kind === 'typed' ? ['typed'] : e.kind === 'script' ? ['pass_fail', 'metric'] : ['pass_fail', 'scale', 'pick_best'])} value={e.form} onChange={form => evaluators(i, { form })} />
-      {e.kind === 'judge' && <CodeEditor label={`Judge ${i + 1} overrides`} value={e.overrides} onChange={overrides => evaluators(i, { overrides })} disabledReason={disabled} />}
+      {e.kind === 'judge' && advanced(`Judge ${i + 1} overrides`, e.overrides, overrides => evaluators(i, { overrides }), 'Optional existing pipeline overrides; host, account and profile require the server’s owner authority.')}
       <Button label={`Remove evaluator ${i + 1}`} icon="x" disabledReason={disabled} onClick={() => edit({ evaluators: d.evaluators.filter((_, j) => i !== j) })} /></section>)}
       <Button label="Add evaluator" icon="plus" disabledReason={disabled} onClick={() => edit({ evaluators: [...d.evaluators, { kind: 'script', ref: 'example.checks', form: 'pass_fail', overrides: '{}' }] })} />
       <Button label={`Primary evaluator: ${d.primary || 'None'}`} disabledReason={disabled} onClick={() => pick('Primary evaluators', [{ id: '', name: 'None' }, ...d.evaluators.map(e => ({ id: nameOf(e), name: nameOf(e) }))], [d.primary], primary => edit({ primary }))} /></DetailSection>
     {d.kind === 'loop' && <DetailSection title="Loop strategy"><Choice label="Generator" options={options(['list', 'grid', 'propose'])} value={d.generator} onChange={generator => edit({ generator })} />
-      <CodeEditor label="Generator parameters" value={d.params} onChange={params => edit({ params })} disabledReason={disabled} /><p>Allocator: full. Stop rules are optional and have no default ceiling.</p>{field('Maximum iterations (optional)', 'max')}{field('No gain iterations (optional)', 'k')}</DetailSection>}
+      {advanced('Generator parameters', d.params, params => edit({ params }), 'List uses a variants array; grid uses override axes; propose uses the existing agent-strategy parameters. No strategy runs on create.')}<p>Allocator: full. Stop rules are optional and have no default ceiling.</p>{field('Maximum iterations (optional)', 'max')}{field('No gain iterations (optional)', 'k')}</DetailSection>}
     <DetailSection title="Budgets">{d.budgets.length === 0 && <p>No experiment budget configured. Project, account and provider limits still apply; cost is not estimated here.</p>}{d.budgets.map((b, i) => <section class="panel" key={i}><Choice label={`Budget ${i + 1} unit`} options={options(['trials', 'wall_ms', 'calls', 'credits'])} value={b.unit} onChange={unit => budgets(i, { unit })} />
       <TextField label={`Budget ${i + 1} limit`} type="number" value={b.limit} onChange={limit => budgets(i, { limit })} disabledReason={disabled} /><Choice label={`Budget ${i + 1} action`} options={options(['warn', 'pause', 'stop'])} value={b.action} onChange={action => budgets(i, { action })} />
       <Button label={`Remove budget ${i + 1}`} icon="x" disabledReason={disabled} onClick={() => edit({ budgets: d.budgets.filter((_, j) => i !== j) })} /></section>)}
