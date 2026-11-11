@@ -12,6 +12,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import {existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {fakeS3} from '../s3-fake.ts';
+import {examplesFromExport} from '../../scripts/lab-export.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const SECRET_DIR = process.env.FLEET_SECRET_DIR!, GATEWAY_DIR = process.env.FLEET_GATEWAY_DIR!, GATEWAY_URL = process.env.FLEET_GATEWAY_URL!;
@@ -270,4 +271,32 @@ test('A3 analytics stage 3: a trial cost is usage times the price entry in force
   const [cost] = (await trial()).cost;
   assert.deepEqual([cost.basis, cost.currency, cost.prices.map((p: any) => p.id).includes(price.id)], ['estimated', 'USD', true]);
   assert.ok(Math.abs(cost.value - 286 * 0.000002) < 1e-12, String(cost.value));
+});
+
+test('A4 analytics stage 4: a typed evaluator scores each trial through its variant bands against the label, per split and language (requirement: docs/designs/fleet-lab.md, Statistics, typed answers; risk: a confident-looking answer counted as correct without a label, a middle-band answer counted as confident, or tune and held_out mixed)', async () => {
+  // A small synthetic labelled set in the export format (version 1); the fake gateway answers p 0.93 for every row.
+  const rows = [{rowId: 'el1', input: 'Name: Λεμεσός. Is it Greek?', label: 'yes', tag: 'el', split: 'held_out'},
+    {rowId: 'ru1', input: 'Name: Лимасол. Is it Russian?', label: 'yes', tag: 'ru', split: 'held_out'},
+    {rowId: 'en1', input: 'Name: Limassol. Is it Greek?', label: 'no', tag: 'en', split: 'tune'}];
+  const version = 3000000 + Math.floor(Math.random() * 1e6);
+  const examples: any[] = examplesFromExport({schema: 1, project: 'cs', stepId: 'lang', exportedAt: '2026-11-11T00:00:00Z', rows}, 'cs:translate_taxonomy-language', version);
+  // One example without a label: its trials are unscored with the reason, never counted.
+  examples.push({...examples[0], id: 'cs-lang-nolabel', references: examples[0].references.filter((f: any) => f.path !== 'expected.json'), checks: []});
+  const {examples: imported} = ok(await call('POST', '/api/lab/examples', {examples, approved: true}));
+  const create = (variants: object[]) => call('POST', '/api/lab/experiments', {kind: 'ab', projectId: 'hello-world', pipelineId: 'typed-decision', examples: imported.map((x: any) => x.artifactId),
+    variants, evaluators: [{kind: 'typed', ref: 'labels', form: 'typed'}], primaryEvaluator: 'typed:labels:typed', goal: 'Bands for the language step', hypothesis: 'Strict bands escalate more'});
+  const inverted = await create([{label: 'a', overrides: {bands: {yes: 0.2, no: 0.8}}}, {label: 'b'}]);
+  assert.equal(inverted.status, 400); assert.match(inverted.body.message, /0 <= no <= yes <= 1/);
+  assert.equal((await call('POST', '/api/pipelines/typed-decision/runs', {requestId: randomUUID(), example: {prompt: 'x'}, overrides: {bands: {yes: 0.9, no: 0.1}}})).status, 400, 'a direct run takes no bands');
+  const e = ok(await create([{label: 'wide', overrides: {bands: {yes: 0.8, no: 0.2}}}, {label: 'strict', overrides: {bands: {yes: 0.95, no: 0.05}}}]));
+  ok(await call('POST', `/api/lab/experiments/${e.id}/launch`, {}));
+  const got = await until(async () => { const x = ok(await call('GET', `/api/lab/experiments/${e.id}`)); return x.scores?.filter((s: any) => s.form === 'typed').length === 8 ? x : undefined; }, 'typed scores');
+  const unscored = got.scores.filter((s: any) => s.value.answer === 'unscored');
+  assert.deepEqual(unscored.map((s: any) => s.value.reason), Array(2).fill('the example has no yes/no label in references/expected.json'));
+  const stats = Object.fromEntries(got.typed.map((v: any) => [`${v.variant}/${v.split}`, Object.fromEntries(v.stats.map((s: any) => [s.tag, [s.n, s.coverage, s.selectiveAccuracy]]))]));
+  // wide: p 0.93 is a confident yes: right on el and ru (held_out), wrong on en (tune). strict: everything abstains.
+  assert.deepEqual(stats, {'wide/tune': {en: [1, 1, 0], all: [1, 1, 0]}, 'wide/held_out': {el: [1, 1, 1], ru: [1, 1, 1], all: [2, 1, 1]},
+    'strict/tune': {en: [1, 0, null], all: [1, 0, null]}, 'strict/held_out': {el: [1, 0, null], ru: [1, 0, null], all: [2, 0, null]}});
+  const [c] = got.comparison;
+  assert.deepEqual([c.variant, c.baseline, c.split, c.result.n, c.result.mean], ['strict', 'wide', 'held_out', 2, -1]);
 });
