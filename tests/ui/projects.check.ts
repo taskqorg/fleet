@@ -13,8 +13,12 @@ export async function checkProjects(browser:Browser,origin:string,host:(id:strin
   await edit('Project ID',id);await edit('Name','UI retained project');
   await p.getByRole('button',{name:'Save project',exact:true}).click();await p.waitForURL('**/projects/'+id);
   const first=await call('project_context',{projectId:id});assert.equal(first.revision,1);assert.equal(first.name,'UI retained project');
-  await edit('Name','UI edited project');await p.getByRole('button',{name:'Save project',exact:true}).click();
-  await p.getByText('2',{exact:true}).waitFor();const second=await call('project_context',{projectId:id});assert.equal(second.revision,2);assert.equal(second.name,'UI edited project');
+  await edit('Name','UI edited project');await p.getByRole('heading',{name:'UI edited project',exact:true}).waitFor();
+  const update=p.waitForResponse(r=>r.url().endsWith('/api/ops/project_update'));
+  await p.getByRole('button',{name:'Save project',exact:true}).click();
+  const updateResponse=await update;assert.equal(updateResponse.status(),200,await updateResponse.text());
+  const second=await call('project_context',{projectId:id});assert.equal(second.revision,2);assert.equal(second.name,'UI edited project');
+  await p.locator('.kv-row').filter({hasText:/Saved version2$/}).waitFor();
   await p.reload();await p.getByRole('heading',{name:'UI edited project',exact:true}).waitFor();
   await p.getByRole('button',{name:'Check readiness',exact:true}).click();await p.getByText('No environment is configured.',{exact:true}).waitFor();
   const sendHost=await host('project-readiness-ui');
@@ -25,7 +29,7 @@ export async function checkProjects(browser:Browser,origin:string,host:(id:strin
   await p.getByRole('button',{name:'Check readiness',exact:true}).click();
   const check=(await (await queued).json()).hosts[0];assert.ok(check.executionId);
   const posted=await sendHost('/api/hosts/events',{executionId:check.executionId,events:[{id:'late-ready',seq:0,type:'readiness',timestamp:Date.now(),data:{hostId:'project-readiness-ui',ok:false,checks:[{check:'checkout',target:'/tmp/ui-readiness',status:'failed',reason:'checkout-missing'}]}}]});assert.equal(posted.status,200);
-  await p.getByText('Not ready',{exact:true}).waitFor();await p.getByText('/tmp/ui-readiness · checkout-missing',{exact:true}).waitFor();
+  await p.locator('.kv-row').filter({hasText:/Not ready$/}).waitFor();await p.getByText('/tmp/ui-readiness · checkout-missing',{exact:true}).waitFor();
   await p.getByRole('button',{name:'Open PM conversation',exact:true}).click();await p.getByRole('group',{name:'Role / configuration'}).getByRole('button',{name:'pm · pm',exact:true}).waitFor();
   assert.equal(await p.getByRole('group',{name:'Project',exact:true}).getByRole('button',{name:'UI edited project',exact:true}).getAttribute('aria-pressed'),'true');
   assert.equal(await p.getByRole('group',{name:'Role / configuration'}).getByRole('button',{name:'pm · pm',exact:true}).getAttribute('aria-pressed'),'true');
