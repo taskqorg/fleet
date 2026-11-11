@@ -186,8 +186,6 @@ func init() {
 	})
 }
 
-// hostOwned: the host routes' ownership check; a body hostId is the authenticated host (readBody), and with execution the
-// named execution must be that host's.
 // typed: the host route's body must decode into its contract type (contracts/host-protocol.schema.json) before h reads
 // it: a field of the wrong type is 400, not an empty value. Unknown fields pass while hosts update one at a time.
 func typed[T any](h handler) handler {
@@ -200,6 +198,8 @@ func typed[T any](h handler) handler {
 	}
 }
 
+// hostOwned: the host routes' ownership check; a body hostId is the authenticated host (readBody), and with execution the
+// named execution must be that host's.
 func hostOwned(execution bool, h handler) handler {
 	return func(q *Request) (any, error) {
 		if q.host == nil {

@@ -65,7 +65,7 @@ type AccountRoots struct {
 type AgentToolsRequest struct {
 	AgentToolKey *string         `json:"agentToolKey,omitempty"`
 	CommandId    string          `json:"commandId"`
-	ExecutionId  string          `json:"executionId"`
+	ExecutionId  *string         `json:"executionId,omitempty"`
 	HostId       string          `json:"hostId"`
 	Request      json.RawMessage `json:"request"`
 }
@@ -107,11 +107,18 @@ type ArtifactLeaseRequest struct {
 	StoreId    *string `json:"storeId,omitempty"`
 }
 
+// ArtifactListFilter: Optional narrowing of /api/hosts/artifacts/list.
+type ArtifactListFilter struct {
+	ExecutionId *string `json:"executionId,omitempty"`
+	MediaType   *string `json:"mediaType,omitempty"`
+	TaskId      *string `json:"taskId,omitempty"`
+}
+
 // ArtifactListRequest: POST /api/hosts/artifacts/list: the artifacts the execution may read.
 type ArtifactListRequest struct {
-	ExecutionId string                     `json:"executionId"`
-	Filter      map[string]json.RawMessage `json:"filter,omitempty"`
-	HostId      string                     `json:"hostId"`
+	ExecutionId string              `json:"executionId"`
+	Filter      *ArtifactListFilter `json:"filter,omitempty"`
+	HostId      string              `json:"hostId"`
 }
 
 type ArtifactPart struct {
@@ -450,6 +457,7 @@ type StoreRegistration struct {
 	LocalEndpoint   *string `json:"localEndpoint,omitempty"`
 	RequiresLogon   *bool   `json:"requiresLogon,omitempty"`
 	SecretAccessKey *string `json:"secretAccessKey,omitempty"`
+	UsedBytes       *int64  `json:"usedBytes,omitempty"`
 	Zone            *string `json:"zone,omitempty"`
 }
 

@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fleet/contract"
 	"fmt"
@@ -261,7 +260,7 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 		return nil, ioFailure(err)
 	}
 	defer f.Close()
-	var missing []any
+	var missing []uint64
 	for n := uint64(1); n <= count; n++ {
 		have := false
 		for _, d := range done {
@@ -278,7 +277,7 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 		missing = missing[len(batch):]
 		req := contract.ArtifactPartsRequest{HostId: c.host, ArtifactId: artifactID, StoreId: optStr(storeID)}
 		for _, n := range batch {
-			req.PartNumbers = append(req.PartNumbers, int64(n.(uint64)))
+			req.PartNumbers = append(req.PartNumbers, int64(n))
 		}
 		urls, fl := c.post("/api/hosts/artifacts/parts", req)
 		if fl != nil {
@@ -481,10 +480,7 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 	case "list":
 		req := contract.ArtifactListRequest{HostId: c.host, ExecutionId: jStr(body, "executionId")}
 		if f, ok := body["filter"].(map[string]any); ok {
-			req.Filter = map[string]json.RawMessage{}
-			for k, v := range f {
-				req.Filter[k] = json.RawMessage(enc(v))
-			}
+			req.Filter = &contract.ArtifactListFilter{ExecutionId: optStr(jStr(f, "executionId")), TaskId: optStr(jStr(f, "taskId")), MediaType: optStr(jStr(f, "mediaType"))}
 		}
 		return c.post("/api/hosts/artifacts/list", req)
 	}

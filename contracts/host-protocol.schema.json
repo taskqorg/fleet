@@ -1222,8 +1222,7 @@
           "type": "string"
         },
         "filter": {
-          "type": "object",
-          "additionalProperties": true
+          "$ref": "#/$defs/ArtifactListFilter"
         }
       },
       "$comment": "POST /api/hosts/artifacts/list: the artifacts the execution may read."
@@ -1261,6 +1260,10 @@
         },
         "requiresLogon": {
           "type": "boolean"
+        },
+        "usedBytes": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "$comment": "A store a host serves; the keys go to the coordinator's secret directory, never to rows."
@@ -1285,7 +1288,6 @@
       "type": "object",
       "required": [
         "hostId",
-        "executionId",
         "commandId",
         "request"
       ],
@@ -1305,6 +1307,21 @@
         "request": {}
       },
       "$comment": "POST /api/hosts/agent-tools: one MCP JSON-RPC request of a native agent (request stays the raw JSON-RPC frame)."
+    },
+    "ArtifactListFilter": {
+      "type": "object",
+      "properties": {
+        "executionId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "mediaType": {
+          "type": "string"
+        }
+      },
+      "$comment": "Optional narrowing of /api/hosts/artifacts/list."
     }
   }
 }
