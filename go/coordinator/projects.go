@@ -377,6 +377,17 @@ func projectSettingsOf(id string) doc {
 }
 
 func catalogue(q *Request, id string) (doc, error) {
+	c, err := catalogueBase(q, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := enrichCatalogue(q, c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func catalogueBase(q *Request, id string) (doc, error) {
 	p, err := projectContext(id)
 	if err != nil {
 		return nil, err
@@ -707,8 +718,8 @@ func catalogueHead(q *Request) (doc, error) {
 		}
 		return nil, err
 	}
-	var c doc
-	if err := json.Unmarshal(raw, &c); err != nil || c == nil {
+	c := mapOf(decodeNumbers(string(raw)))
+	if c == nil {
 		return nil, fail(500, "Invalid catalogue definition")
 	}
 	return c, nil

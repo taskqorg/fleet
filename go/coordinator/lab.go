@@ -1078,7 +1078,17 @@ func expCreate(q *Request, b doc) (doc, error) {
 			return nil, fail(400, "Duplicate variant label")
 		}
 		labels[label] = true
-		variants = append(variants, doc{"label": label, "overrides": o, "config_ref": sha256hex([]byte(canonical(doc{"pipeline": pipelineID, "overrides": o})))})
+		variantPipeline := pipelineID
+		if v["pipelineId"] != nil {
+			variantPipeline, err = expID(v["pipelineId"], "variant pipelineId")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := loadPipeline(q, variantPipeline+".json"); err != nil {
+				return nil, err
+			}
+		}
+		variants = append(variants, doc{"label": label, "pipelineId": variantPipeline, "overrides": o, "config_ref": labConfigDigest(variantPipeline, o)})
 	}
 	if kind == "single" && len(variants) != 1 {
 		return nil, fail(400, "A single experiment has one variant")
@@ -1314,7 +1324,7 @@ func expLaunchTrial(q *Request, exp, pin, variant doc, repeat, attempt int64) (s
 		return "", err
 	}
 	rid := "lab:" + sha256hex(jsonBytes([]any{exp["id"], iteration, pin["id"], variant["label"], repeat, attempt}))
-	return expInsertRun(q, exp, rid, astr(exp["pipeline_id"])+".json", run, variant, doc{"cell": cell})
+	return expInsertRun(q, exp, rid, variantPipelineID(exp, variant)+".json", run, variant, doc{"cell": cell})
 }
 
 type labFile struct {
@@ -1917,6 +1927,7 @@ func expPromote(q *Request, id, label string) (doc, error) {
 	if v == nil {
 		return nil, fail(400, "Unknown variant")
 	}
+	identity := firstString(v["catalogueConfigRef"], v["config_ref"])
 	slug := strings.Trim(methodSlug.ReplaceAllString(strings.ToLower(label), "-"), "-")
 	// Bands steer the Lab's typed evaluator; a method run applies no overrides of that kind, so they are left out and named.
 	overrides, note := doc{}, any(nil)
@@ -1927,8 +1938,8 @@ func expPromote(q *Request, id, label string) (doc, error) {
 		}
 		overrides[k] = x
 	}
-	method := doc{"id": fmt.Sprintf("%v-%s", exp["pipeline_id"], slug), "name": fmt.Sprintf("%v %s", exp["pipeline_id"], label), "scope": exp["project_id"],
-		"pipeline": astr(exp["pipeline_id"]) + ".json", "overrides": overrides, "configRef": v["config_ref"], "sourceExperiment": id}
+	method := doc{"id": fmt.Sprintf("%v-%s", variantPipelineID(exp, v), slug), "name": fmt.Sprintf("%v %s", variantPipelineID(exp, v), label), "scope": exp["project_id"],
+		"pipeline": variantPipelineID(exp, v) + ".json", "overrides": overrides, "configRef": identity, "sourceExperiment": id}
 	// A method's config ref is its configRef, else the hash Lab gives a variant (pipeline id and overrides).
 	refOf := func(m doc) string {
 		if r := astr(m["configRef"]); r != "" {
@@ -1941,12 +1952,12 @@ func expPromote(q *Request, id, label string) (doc, error) {
 		return sha256hex([]byte(canonical(doc{"pipeline": strings.TrimSuffix(astr(m["pipeline"]), ".json"), "overrides": o})))
 	}
 	var existing doc
-	c, err := catalogue(q, astr(exp["project_id"]))
+	c, err := catalogueBase(q, astr(exp["project_id"]))
 	if err != nil {
 		return nil, err
 	}
 	for _, m := range anys(c["methods"]) {
-		if refOf(mapOf(m)) == astr(v["config_ref"]) {
+		if refOf(mapOf(m)) == identity && labConfigDigest(strings.TrimSuffix(astr(mapOf(m)["pipeline"]), ".json"), mapOf(mapOf(m)["overrides"])) == labConfigDigest(variantPipelineID(exp, v), overrides) {
 			existing = mapOf(m)
 		}
 	}
@@ -2431,6 +2442,7 @@ func labIDArg(v any, what string) (string, error) {
 
 // labShapes: each Lab operation's contract types (contracts/ops-<domain>.schema.json); registration fails without one.
 var labShapes = map[string]func(handler) handler{
+	"lab_compare_methods":   shaped[contract.LabCompareMethodsRequest, contract.LabCompareMethodsReply],
 	"lab_cell_action":       shaped[contract.LabCellActionRequest, contract.LabCellActionReply],
 	"lab_example_get":       shaped[contract.LabExampleGetRequest, contract.LabExampleGetReply],
 	"lab_examples_add":      shaped[contract.LabExamplesAddRequest, contract.LabExamplesAddReply],
@@ -2456,8 +2468,9 @@ var labOps = map[string]struct {
 	long, read bool
 	h          func(q *Request, b doc) (any, error)
 }{
-	"lab_examples_add":  {false, false, func(q *Request, b doc) (any, error) { return labExamplesAdd(q, b) }},
-	"lab_examples_list": {false, true, func(q *Request, b doc) (any, error) { return labExamplesList(q, b["state"]) }},
+	"lab_compare_methods": {false, false, func(q *Request, b doc) (any, error) { return labCompareMethods(q, b) }},
+	"lab_examples_add":    {false, false, func(q *Request, b doc) (any, error) { return labExamplesAdd(q, b) }},
+	"lab_examples_list":   {false, true, func(q *Request, b doc) (any, error) { return labExamplesList(q, b["state"]) }},
 	"lab_example_get": {false, true, func(q *Request, b doc) (any, error) {
 		id, err := labIDArg(b["artifactId"], "artifactId")
 		if err != nil {

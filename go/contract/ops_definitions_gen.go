@@ -178,14 +178,13 @@ func (v *CatalogueDefinition) Validate() error {
 	return nil
 }
 
-// CatalogueReply: The definition editors change methods to CatalogueMethodView items (docs/designs/fleet-definition-editors.md).
 type CatalogueReply struct {
-	Capability           json.RawMessage              `json:"capability"`
-	Methods              []map[string]json.RawMessage `json:"methods"`
-	ProjectId            string                       `json:"projectId"`
-	RecommendationSource json.RawMessage              `json:"recommendationSource"`
-	RecommendedMethod    json.RawMessage              `json:"recommendedMethod"`
-	SharedDefault        json.RawMessage              `json:"sharedDefault"`
+	Capability           json.RawMessage       `json:"capability"`
+	Methods              []CatalogueMethodView `json:"methods"`
+	ProjectId            string                `json:"projectId"`
+	RecommendationSource json.RawMessage       `json:"recommendationSource"`
+	RecommendedMethod    json.RawMessage       `json:"recommendedMethod"`
+	SharedDefault        json.RawMessage       `json:"sharedDefault"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -195,6 +194,11 @@ func (v *CatalogueReply) Validate() error {
 	}
 	if v.Methods == nil {
 		return Missing("methods")
+	}
+	for i := range v.Methods {
+		if err := Check(&v.Methods[i], "methods"); err != nil {
+			return err
+		}
 	}
 	if v.RecommendationSource == nil {
 		return Missing("recommendationSource")

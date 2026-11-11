@@ -346,7 +346,7 @@ test('A4 analytics stage 4: a typed evaluator scores each trial through its vari
 });
 
 // One domain fixture extends the counted gateway/S3 above. It speaks the real host protocol; no DB repairs or provider calls.
-async function suffixFixture(projectId = 'fleet-hello-world') {
+async function suffixFixture(projectId = 'fleet-hello-world', differentOuter = false) {
   const secret = trialHostSecret;
   assert.ok(secret, 'shared store host registered');
   const host = async (path: string, body: object, auth = secret) => {
@@ -362,7 +362,7 @@ async function suffixFixture(projectId = 'fleet-hello-world') {
   example.version = 4000000 + Math.floor(Math.random() * 1e8);
   example.inputs = [{path: 'seed.txt', text: 'frozen local input\n'}];
   const {examples: [pin]} = ok(await op('lab_examples_add', {projectId, examples: [example], approved: true}));
-  const exp = ok(await op('lab_experiment_create', {kind: 'single', projectId, pipelineId, examples: [pin.artifactId], variants: [{label: 'v'}],
+  const exp = ok(await op('lab_experiment_create', {kind: 'single', projectId, pipelineId: differentOuter ? 'typed-decision' : pipelineId, examples: [pin.artifactId], variants: [{label: 'v', ...(differentOuter ? {pipelineId} : {})}],
     evaluators: [{kind: 'script', ref: 'example.checks', form: 'pass_fail'}], goal: 'Recover only local suffix', hypothesis: 'The confirmed result is reused without another call'}));
   ok(await op('lab_experiment_action', {experimentId: exp.id, action: 'launch'}));
   const view = () => op('lab_experiment_get', {experimentId: exp.id}).then(ok);
@@ -535,6 +535,19 @@ test('L8 transitive Lab suffix retains immediate source and original artifact (r
   assert.equal(done.spend.calls.value,1);assert.equal(seen.length,before);
 });
 
+test('Lab suffix recovery uses variant pipeline when outer pipeline differs (requirement: Compare lifecycle and local-suffix provenance; risk: resolver bypasses pinned source definition or repeats provider work)', async () => {
+  const f = await suffixFixture('fleet-hello-world', true);
+  await f.prove(); await f.receipt(f.command, 'unknown');
+  const before = seen.length;
+  const recovered = ok(await op('lab_cell_action', f.request)).recovery.runId;
+  const done = await f.complete(recovered);
+  assert.equal(seen.length, before);
+  assert.ok(done.trials.find((t: any) => t.id === recovered).comparable);
+  const run = ok(await call('GET', `/api/pipeline-runs/${recovered}`));
+  assert.equal(run.pipelineId, f.pipelineId);
+  assert.equal(run.steps[0].outputArtifactId, f.run.steps[0].outputArtifactId);
+});
+
 test('L6 preflight never holds the write lock and revalidates lifecycle changes (requirement: fleet-lab preflight/commit boundary; risk: a slow store blocks writes or deleted content passes a stale snapshot)', async () => {
   const f=await suffixFixture();await f.prove();await f.receipt(f.command,'unknown');
   const hash=sha(JSON.stringify(f.run.steps[0].output));
@@ -615,3 +628,91 @@ test('L3 withdrawing a weak rating records refusal without a quality label (requ
   assert.equal((await op('questions_answer', {questionId: rating.id, answer: 'true'})).status, 409);
   assert.equal(ok(await op('lab_experiment_get', {experimentId: exp.id})).scores.length, 0);
 });
+
+test('Catalogue Compare snapshots selected variant pipelines without dispatch (requirement: D20 Compare methods; risk: another pipeline or catalogue ref masquerades as the executed method)', async () => {
+  const pipe = name('compare');
+  const original = ok(await op('definition_get', {kind: 'pipeline', id: 'typed-decision'}));
+  const content = structuredClone(original.content); content.pipeline.id = pipe;
+  ok(await op('definition_create', {kind: 'pipeline', id: pipe, content, message: 'Compare fixture'}));
+  const ex = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
+  ex.use_case_id = 'fleet:UC1'; ex.version = 5000000 + Math.floor(Math.random() * 1e6);
+  ok(await op('lab_examples_add', {projectId: 'hello-world', examples: [ex], approved: true}));
+  const head = ok(await op('definition_get', {kind: 'catalogue', id: 'catalogue'}));
+  const cat = structuredClone(head.content);
+  cat.catalogue.methods.push({id: 'compare-a', name: 'Compare A', scope: 'hello-world', pipeline: 'typed-decision.json'},
+    {id: 'compare-b', name: 'Compare B', scope: 'hello-world', pipeline: pipe + '.json', configRef: 'explicit-catalogue-identity'});
+  ok(await op('definition_save', {kind: 'catalogue', id: 'catalogue', baseRevision: head.head, content: cat, message: 'Compare methods fixture'}));
+  const body = {projectId: 'hello-world', capability: cat.catalogue.capability, methods: ['compare-a', 'compare-b'], baseline: 'compare-b', useCase: 'fleet:UC1'};
+  const before = seen.length;
+  const created = ok(await op('lab_compare_methods', body));
+  const view = ok(await op('lab_experiment_get', {experimentId: created.experimentId}));
+  assert.equal(view.state, 'draft'); assert.equal(view.trials.length, 0); assert.equal(seen.length, before);
+  assert.deepEqual(view.variants.map((v: any) => [v.label, v.pipelineId]), [['compare-b', pipe], ['compare-a', 'typed-decision']]);
+  assert.equal(view.variants[0].catalogueConfigRef, 'explicit-catalogue-identity');
+  assert.notEqual(view.variants[0].config_ref, view.variants[0].catalogueConfigRef);
+  assert.equal(view.variants[0].catalogueRef.revision, head.head + 1);
+  assert.equal((await op('lab_compare_methods', {...body, baseline: 'search-basic'})).status, 400);
+  assert.equal((await op('lab_compare_methods', {...body, methods: ['compare-a', 'compare-a']})).status, 400);
+  assert.equal((await op('lab_compare_methods', {...body, useCase: undefined})).status, 400);
+  assert.equal((await op('lab_compare_methods', body, OUTSIDER)).status, 403);
+  for (const field of ['goal', 'hypothesis']) ok(await op('lab_experiment_note', {experimentId: created.experimentId, kind: 'amendment', field, value: 'Controlled Compare execution fixture', text: `Set ${field} before explicit launch`}));
+  ok(await op('lab_experiment_action', {experimentId: created.experimentId, action: 'launch'}));
+  const completed = await until(async () => {const v = ok(await op('lab_experiment_get', {experimentId: created.experimentId})); return v.state === 'done' ? v : undefined;}, 'two variant pipelines complete');
+  for (const t of completed.trials) {
+    const r = ok(await call('GET', `/api/pipeline-runs/${t.id}`));
+    const expected = t.cell.variant === 'compare-b' ? pipe : 'typed-decision';
+    assert.equal(r.pipelineId, expected);
+    assert.ok(r.definitions.some((d: any) => d.kind === 'pipeline' && d.id === expected));
+  }
+
+  const promoted = ok(await op('lab_promote', {experimentId: created.experimentId, variant: 'compare-b'}));
+  assert.equal(promoted.method.pipeline, pipe + '.json');
+  assert.equal(ok(await op('lab_promote', {experimentId: created.experimentId, variant: 'compare-b'})).catalogue ?? null, null);
+});
+
+test('Catalogue reports a compatible observed partial mean and keeps banded source evidence separate (requirement: D20 method assessments; risk: unscored cells become zero, or catalogue identity hides a different executable configuration)', async () => {
+  const ex = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
+  ex.version = 6000000 + Math.floor(Math.random() * 1e6);
+  const missing = structuredClone(ex); missing.id += '-unscored'; missing.references = missing.references.filter((r: any) => r.path !== 'expected.json');
+  const imported = ok(await op('lab_examples_add', {projectId: 'hello-world', examples: [ex, missing], approved: true})).examples;
+  const create = (label: string, overrides: object) => op('lab_experiment_create', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: imported.map((e: any) => e.artifactId), variants: [{label, overrides}], evaluators: [{kind: 'typed', ref: 'labels', form: 'typed'}], primaryEvaluator: 'typed:labels:typed', goal: 'Measure eligible partial population', hypothesis: 'A missing label stays unscored'}).then(ok);
+  const active = async (label: string) => {
+    const v = ok(await op('lab_experiment_create', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: imported.map((e: any) => e.artifactId), variants: [{label, overrides: {prompt: 'Catalogue evidence fixture'}}], evaluators: [{kind:'human',ref:'owner',form:'pass_fail'}], primaryEvaluator:'human:owner:pass_fail', budgets:[{unit:'trials',limit:1,action:'pause'}], goal:'Keep active evidence visible', hypothesis:'Unrated human evaluator stays incomplete'}));
+    ok(await op('lab_experiment_action', {experimentId:v.id,action:'launch'}));
+    await until(async () => {const got = ok(await op('lab_experiment_get', {experimentId:v.id})); return got.state === 'paused' ? got : undefined;}, 'budget pauses active fixture');
+    return v;
+  };
+  const older = await active('older-paused');
+  const e = await create('partial-evidence', {prompt: 'Catalogue evidence fixture'});
+  ok(await op('lab_experiment_action', {experimentId: e.id, action: 'launch'}));
+  await until(async () => {const v = ok(await op('lab_experiment_get', {experimentId: e.id})); return v.state === 'done' && v.scores.length === 2 ? v : undefined;}, 'partial evidence scores');
+  const promoted = ok(await op('lab_promote', {experimentId: e.id, variant: 'partial-evidence'}));
+  const methods = ok(await op('catalogue', {projectId: 'hello-world'})).methods;
+  const a = methods.find((m: any) => m.id === promoted.method.id).assessment;
+  assert.deepEqual([a.basis, a.score, a.scoreForm, a.eligibleCells, a.expectedCells, a.partial], ['lab', 1, 'typed', 1, 2, true]);
+  assert.notEqual(a.ongoingExperimentId, older.id, 'older paused work is not a newer follow-up');
+  assert.equal(a.variant, 'partial-evidence'); assert.ok(a.evaluatorVersion); assert.equal(a.experimentId, e.id);
+  assert.ok(methods.find((m: any) => m.id === promoted.method.id).recommendedFor.includes('hello-world'));
+  const foreign = ok(await op('catalogue', {projectId: 'fleet-hello-world'}));
+  assert.ok(!JSON.stringify(foreign).includes(e.id), 'same system catalogue must not leak project experiment links');
+  const newer = await active('newer-paused');
+  const refreshed = ok(await op('catalogue', {projectId:'hello-world'})).methods.find((m: any) => m.id === promoted.method.id).assessment;
+  assert.equal(refreshed.ongoingExperimentId, newer.id); assert.equal(refreshed.experimentId, e.id);
+  const banded = await create('banded-evidence', {prompt: 'Catalogue banded fixture', bands: {yes: 0.95, no: 0.05}});
+  const collisionHead = ok(await op('definition_get', {kind: 'catalogue', id: 'catalogue'}));
+  const collisionContent = structuredClone(collisionHead.content);
+  collisionContent.catalogue.methods.push({id: 'banded-ref-collision', name: 'Other executable', scope: 'hello-world', pipeline: 'hello-search.json', configRef: banded.variants[0].config_ref});
+  ok(await op('definition_save', {kind: 'catalogue', id: 'catalogue', baseRevision: collisionHead.head, content: collisionContent, message: 'Explicit ref collision fixture'}));
+  const b = ok(await op('lab_promote', {experimentId: banded.id, variant: 'banded-evidence'}));
+  assert.equal(b.method.overrides.bands, undefined);
+  assert.notEqual(b.method.id, 'banded-ref-collision');
+  assert.equal(ok(await op('lab_promote', {experimentId: banded.id, variant: 'banded-evidence'})).catalogue ?? null, null);
+  const assessment = ok(await op('catalogue', {projectId: 'hello-world'})).methods.find((m: any) => m.id === b.method.id).assessment;
+  // A draft source is visible only as provenance, never a completed assessment.
+  assert.equal(assessment.score, null);
+  assert.ok(!assessment.experimentId);
+  assert.equal(assessment.sourceExperimentId, banded.id);
+  assert.match(assessment.reason, /different executable configuration/);
+});
+
+

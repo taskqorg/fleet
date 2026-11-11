@@ -123,7 +123,7 @@ func loopVariants(exp doc, proposed []any, iteration int64) ([]any, error) {
 			id += "x"
 		}
 		used[id] = true
-		out = append(out, doc{"label": id, "proposalLabel": label, "iteration": iteration, "overrides": ov, "config_ref": sha256hex(jsonBytes(doc{"pipeline": exp["pipeline_id"], "overrides": ov}))})
+		out = append(out, doc{"label": id, "proposalLabel": label, "iteration": iteration, "overrides": ov, "config_ref": labConfigDigest(astr(exp["pipeline_id"]), ov)})
 	}
 	return out, nil
 }

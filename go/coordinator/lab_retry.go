@@ -162,7 +162,7 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 	if variant == nil || pin == nil || !same(source["overrides"], overrides) {
 		return nil, suffixConflict("variant or example changed")
 	}
-	def, err := loadPipeline(q, astr(exp["pipeline_id"])+".json")
+	def, err := loadPipeline(q, variantPipelineID(exp, variant)+".json")
 	if err != nil {
 		return nil, err
 	}
@@ -453,7 +453,7 @@ func expRetrySuffix(q *Request, id, cell string, b doc) (doc, error) {
 		}
 		attempt, _ := intOK(c["attempt"])
 		c["attempt"] = attempt + 1
-		result, err = expInsertRunReuse(q, fresh.exp, suffixKey(identity), astr(fresh.exp["pipeline_id"])+".json", fresh.source["example"], fresh.variant, doc{"cell": c, "recovery": recovery, "exampleInputs": fresh.source["exampleInputs"]}, doc{"reuse": fresh.reuse, "rerunOf": fresh.source["id"]})
+		result, err = expInsertRunReuse(q, fresh.exp, suffixKey(identity), variantPipelineID(fresh.exp, fresh.variant)+".json", fresh.source["example"], fresh.variant, doc{"cell": c, "recovery": recovery, "exampleInputs": fresh.source["exampleInputs"]}, doc{"reuse": fresh.reuse, "rerunOf": fresh.source["id"]})
 		if err != nil {
 			return err
 		}

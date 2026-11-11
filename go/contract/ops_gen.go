@@ -44,9 +44,16 @@ func (v *CatalogueMethod) Validate() error {
 }
 
 type CatalogueMethodView struct {
-	Assessment     MethodAssessment `json:"assessment"`
-	Method         CatalogueMethod  `json:"method"`
-	RecommendedFor []string         `json:"recommendedFor,omitempty"`
+	AgentProfile     *string                    `json:"agentProfile,omitempty"`
+	Assessment       MethodAssessment           `json:"assessment"`
+	ConfigRef        *string                    `json:"configRef,omitempty"`
+	Id               string                     `json:"id"`
+	Name             string                     `json:"name"`
+	Overrides        map[string]json.RawMessage `json:"overrides,omitempty"`
+	Pipeline         string                     `json:"pipeline"`
+	RecommendedFor   []string                   `json:"recommendedFor"`
+	Scope            string                     `json:"scope"`
+	SourceExperiment *string                    `json:"sourceExperiment,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -54,8 +61,8 @@ func (v *CatalogueMethodView) Validate() error {
 	if err := Check(&v.Assessment, "assessment"); err != nil {
 		return err
 	}
-	if err := Check(&v.Method, "method"); err != nil {
-		return err
+	if v.RecommendedFor == nil {
+		return Missing("recommendedFor")
 	}
 	return nil
 }
@@ -64,25 +71,26 @@ func (v *CatalogueMethodView) Validate() error {
 type ChangeKind string
 
 const (
-	ChangeKindApiConnection  ChangeKind = "api-connection"
-	ChangeKindArtifact       ChangeKind = "artifact"
-	ChangeKindCommand        ChangeKind = "command"
-	ChangeKindConnectionKey  ChangeKind = "connection-key"
-	ChangeKindDefinition     ChangeKind = "definition"
-	ChangeKindEvent          ChangeKind = "event"
-	ChangeKindExecution      ChangeKind = "execution"
-	ChangeKindExperiment     ChangeKind = "experiment"
-	ChangeKindHost           ChangeKind = "host"
-	ChangeKindManagedAccount ChangeKind = "managed-account"
-	ChangeKindQuestion       ChangeKind = "question"
-	ChangeKindScore          ChangeKind = "score"
-	ChangeKindSession        ChangeKind = "session"
-	ChangeKindSettingChange  ChangeKind = "setting-change"
-	ChangeKindTask           ChangeKind = "task"
+	ChangeKindApiConnection         ChangeKind = "api-connection"
+	ChangeKindArtifact              ChangeKind = "artifact"
+	ChangeKindCommand               ChangeKind = "command"
+	ChangeKindConnectionKey         ChangeKind = "connection-key"
+	ChangeKindDefinition            ChangeKind = "definition"
+	ChangeKindEvent                 ChangeKind = "event"
+	ChangeKindExecution             ChangeKind = "execution"
+	ChangeKindExperiment            ChangeKind = "experiment"
+	ChangeKindHost                  ChangeKind = "host"
+	ChangeKindManagedAccount        ChangeKind = "managed-account"
+	ChangeKindProjectRecommendation ChangeKind = "project-recommendation"
+	ChangeKindQuestion              ChangeKind = "question"
+	ChangeKindScore                 ChangeKind = "score"
+	ChangeKindSession               ChangeKind = "session"
+	ChangeKindSettingChange         ChangeKind = "setting-change"
+	ChangeKindTask                  ChangeKind = "task"
 )
 
 // ChangeKindValues lists every ChangeKind in schema order.
-var ChangeKindValues = []ChangeKind{ChangeKindApiConnection, ChangeKindArtifact, ChangeKindCommand, ChangeKindConnectionKey, ChangeKindDefinition, ChangeKindEvent, ChangeKindExecution, ChangeKindExperiment, ChangeKindHost, ChangeKindManagedAccount, ChangeKindQuestion, ChangeKindScore, ChangeKindSession, ChangeKindSettingChange, ChangeKindTask}
+var ChangeKindValues = []ChangeKind{ChangeKindApiConnection, ChangeKindArtifact, ChangeKindCommand, ChangeKindConnectionKey, ChangeKindDefinition, ChangeKindEvent, ChangeKindExecution, ChangeKindExperiment, ChangeKindHost, ChangeKindManagedAccount, ChangeKindProjectRecommendation, ChangeKindQuestion, ChangeKindScore, ChangeKindSession, ChangeKindSettingChange, ChangeKindTask}
 
 // Valid: v is one of the schema's values.
 func (v ChangeKind) Valid() bool {
@@ -318,15 +326,35 @@ func (v *ListRow) Validate() error {
 }
 
 type MethodAssessment struct {
-	At           *string         `json:"at,omitempty"`
-	Basis        AssessmentBasis `json:"basis"`
-	CostBasis    *string         `json:"costBasis,omitempty"`
-	CostUsd      *float64        `json:"costUsd,omitempty"`
-	Examples     *int64          `json:"examples,omitempty"`
-	ExperimentId *string         `json:"experimentId,omitempty"`
-	Score        *float64        `json:"score,omitempty"`
-	ScoreForm    *string         `json:"scoreForm,omitempty"`
-	WallMsMedian *int64          `json:"wallMsMedian,omitempty"`
+	At                  *string                    `json:"at,omitempty"`
+	Basis               AssessmentBasis            `json:"basis"`
+	ConfigRef           *string                    `json:"configRef,omitempty"`
+	CostBasis           string                     `json:"costBasis"`
+	CostUsd             *float64                   `json:"costUsd"`
+	DurationSamples     *int64                     `json:"durationSamples,omitempty"`
+	EligibleCells       *int64                     `json:"eligibleCells,omitempty"`
+	Evaluator           *string                    `json:"evaluator,omitempty"`
+	EvaluatorVersion    *string                    `json:"evaluatorVersion,omitempty"`
+	Examples            *int64                     `json:"examples,omitempty"`
+	ExcludedCells       *int64                     `json:"excludedCells,omitempty"`
+	Exclusions          *string                    `json:"exclusions,omitempty"`
+	ExpectedCells       *int64                     `json:"expectedCells,omitempty"`
+	ExperimentId        *string                    `json:"experimentId,omitempty"`
+	FailedCells         *int64                     `json:"failedCells,omitempty"`
+	OngoingExperimentId *string                    `json:"ongoingExperimentId,omitempty"`
+	OngoingState        *string                    `json:"ongoingState,omitempty"`
+	Partial             *bool                      `json:"partial,omitempty"`
+	PipelineId          *string                    `json:"pipelineId,omitempty"`
+	Reason              *string                    `json:"reason,omitempty"`
+	Score               *float64                   `json:"score"`
+	ScoreForm           *string                    `json:"scoreForm,omitempty"`
+	SourceExperimentId  *string                    `json:"sourceExperimentId,omitempty"`
+	Split               *string                    `json:"split,omitempty"`
+	State               *string                    `json:"state,omitempty"`
+	StopReason          *string                    `json:"stopReason,omitempty"`
+	Usage               map[string]json.RawMessage `json:"usage,omitempty"`
+	Variant             *string                    `json:"variant,omitempty"`
+	WallMsMedian        *int64                     `json:"wallMsMedian"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

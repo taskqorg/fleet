@@ -4,7 +4,7 @@
 // answered through questions_answer like every question; rating outputs show blind (A, B, …) in the seeded order.
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { StateBadge, Button, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, ROW2, percent } from '../../../packages/ui/src/index.ts';
+import { StateBadge, Button, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, ROW2, percent, SettingField } from '../../../packages/ui/src/index.ts';
 import { op, type OpName, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 
@@ -95,6 +95,10 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
     const [x, r] = await Promise.all([op('lab_experiment_get', { experimentId: id }), op('lab_ratings_list', { experimentId: id })]);
     return { ...x, ratings: r.ratings };
   }, touches, 5000);
+  const [savingRecord, setSavingRecord] = useState(0);
+  const [recordDraft, setRecordDraft] = useState<Record<string, string>>({});
+  const [recordErrors, setRecordErrors] = useState<Record<string, string>>({});
+  const [savedRecord, setSavedRecord] = useState<Record<string, string>>({});
   const [sel, setSel] = useState<string[]>([]);
   const [msg, setMsg] = useState<{ text: string; tone: 'warning' | 'failure' } | null>(null);
   const [patch, setPatch] = useState<any>(null);
@@ -110,11 +114,17 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
   const cols = `minmax(8rem,14rem) ${e.variants.map(() => 'minmax(12rem,1fr)').join(' ')}`;
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={title(e)}>
     <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><StateBadge family="experiment" state={e.state} reason={e.stopReason ?? undefined} /><span class="id">{e.id.slice(0, 8)}</span><span class="grow" />
-      {e.state === 'draft' && <Button label="Launch" icon="play" kind="primary" onClick={() => act('lab_experiment_action', { experimentId: id, action: 'launch' })} />}
+      {e.state === 'draft' && <Button label="Launch" icon="play" kind="primary" disabledReason={savingRecord ? 'Saving experiment record' : Object.values(recordErrors).some(Boolean) || Object.entries(recordDraft).some(([field, value]) => value !== String(savedRecord[field] ?? e[field] ?? '')) ? 'Save the experiment record successfully before launch' : !String(savedRecord.goal ?? e.goal ?? '').trim() || !String(savedRecord.hypothesis ?? e.hypothesis ?? '').trim() ? 'Save a goal and hypothesis before launch' : undefined} onClick={() => act('lab_experiment_action', { experimentId: id, action: 'launch' })} />}
       {e.state === 'paused' && <Button label="Resume" icon="play" kind="primary" onClick={() => act('lab_experiment_action', { experimentId: id, action: 'resume' })} />}
       {(e.state === 'running' || e.state === 'paused') && <Button label="Stop" icon="square" kind="danger" onClick={() => act('lab_experiment_action', { experimentId: id, action: 'stop' })} />}
       <OfflineMarker state={state} now={now} /></header>
     <h2 class="detail-title">{title(e)}</h2>
+    {e.state === 'draft' && <DetailSection title="Experiment record">{(['goal', 'hypothesis'] as const).map(field => <SettingField key={field} label={field === 'goal' ? 'Goal' : 'Hypothesis'} help="Saved in the experiment record before explicit launch" value={recordDraft[field] ?? savedRecord[field] ?? e[field] ?? ''} now={now} status={recordErrors[field] ? {kind: 'apply_error', error: recordErrors[field]} : {kind: 'pending'}} onSave={async value => {
+      setRecordDraft(r => ({...r, [field]: value})); setSavingRecord(n => n + 1);
+      try { await op('lab_experiment_note', {experimentId: id, kind: 'amendment', field, value, text: `Set ${field} before launch`}); setSavedRecord(r => ({...r, [field]: value})); setRecordErrors(r => ({...r, [field]: ''})); setMsg(null); }
+      catch (x: any) { setRecordErrors(r => ({...r, [field]: x.message})); setMsg({text: x.message, tone: 'failure'}); }
+      finally { setSavingRecord(n => n - 1); }
+    }} />)}</DetailSection>}
     {msg && <ProblemRow title={msg.tone === 'warning' ? 'Launched with warnings' : 'Action refused'} facts={msg.text} severity={msg.tone} actions={[]} />}
     <Totals items={[
       { label: 'Trials', m: e.spend.trials, kind: 'count', note: note('trials') },
@@ -140,6 +150,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
                   <span class="muted" data-tip={conf}>r{t.cell.repeat + 1}{t.cell.attempt ? `.${t.cell.attempt}` : ''}</span>
                   <Num m={{ value: t.durationMs === null || t.durationMs === undefined ? null : t.durationMs / 1000, basis: t.durationMs == null ? 'unavailable' : 'measured', reason: 'running' }} kind="duration" />
                   <Num m={{ value: t.spend.credits, basis: 'measured', partial: t.spend.basis === 'partial' ? 'some calls without usage' : undefined }} kind="count" />
+                  <a class="muted" href={`/api/pipeline-runs/${t.id}`} target="_blank" rel="noopener">Run and definitions</a>
                   {t.recovery && <a class="muted" href={`/api/pipeline-runs/${t.recovery.sourceRunId}`} target="_blank" rel="noopener" data-tip={`Reuses ${t.recovery.reusedStepIds.join(', ')}; original spend remains in source history`}>source</a>}
                   {(t.cost ?? []).map((c: any, i: number) => <Num key={i} m={{ value: c.value, basis: c.basis, currency: c.currency ?? undefined, reason: c.value === null ? c.reason : `price ${c.prices.map((p: any) => p.id.slice(0, 8)).join(', ')}` }} kind="money" />)}
                   {t.scores.filter((s: any) => s.trialIds.length === 1).map((s: any) => s.form === 'typed'
@@ -155,7 +166,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
     </section>
     <section class="panel"><header class="panel-h"><Icon name="sliders-horizontal" /><h2>Variants</h2></header>
       <DetailSection title="Spread across repeats">{e.variants.map((v: any) => <KvRow key={v.label} icon="git-merge" label={v.proposalLabel ? `${v.proposalLabel} · ${v.label}` : v.label}
-        meta={Object.entries(v.summary).map(([k, s]: any) => `${evaluatorLabel(k)} ${scoreText(s)}`).join(' · ') || 'no scores yet'}
+        meta={<><span>{Object.entries(v.summary).map(([k, s]: any) => `${evaluatorLabel(k)} ${scoreText(s)}`).join(' · ') || 'no scores yet'}</span><span> · Pipeline: <a href={`/pipelines/${v.pipelineId ?? e.pipelineId}`}>{v.pipelineId ?? e.pipelineId}</a></span><span class="id"> · Executable digest: {v.config_ref}</span>{v.catalogueConfigRef && <span class="id"> · Catalogue identity: {v.catalogueConfigRef}</span>}{v.catalogueRef && <span> · <a href={`/catalogue/${v.catalogueRef.id}`}>Catalogue r{v.catalogueRef.revision}</a></span>}</>}
         value={<Button label="Promote" icon="check-check" onClick={() => act('lab_promote', { experimentId: id, variant: v.label }).then(setPatch)} />} />)}</DetailSection>
       {patch && <DetailSection title="Promote"><KvRow icon="check" label={`Recommendation set to ${patch.method.id}`}
         meta={patch.catalogue ? <span class="mono">catalogue r{patch.catalogue.revision}</span> : 'method already in the catalogue'} />
