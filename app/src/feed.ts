@@ -2,7 +2,7 @@
 // three failed connects, resync. Changes are batched per animation frame and handed to every subscriber at once.
 import { signal } from '@preact/signals';
 import { op, online } from './api.ts';
-import type { Change } from '../../contracts/generated/ops.ts';
+import type { Change, StreamCursor } from '../../contracts/generated/ops.ts';
 
 export type { Change };
 type Sub = { changes: (c: Change[]) => void; resync: () => void };
@@ -43,8 +43,8 @@ function connect() {
   }
   const es = new EventSource('/api/stream' + (cursor === null ? '' : '?cursor=' + cursor));
   source = es;
-  es.addEventListener('ready', e => { const d = JSON.parse((e as MessageEvent).data); if (cursor === null) cursor = d.cursor; failures = 0; feedState.value = 'live'; });
-  es.addEventListener('resync', e => { cursor = JSON.parse((e as MessageEvent).data).cursor; resync(); });
+  es.addEventListener('ready', e => { const d: StreamCursor = JSON.parse((e as MessageEvent).data); if (cursor === null) cursor = d.cursor; failures = 0; feedState.value = 'live'; });
+  es.addEventListener('resync', e => { cursor = (JSON.parse((e as MessageEvent).data) as StreamCursor).cursor; resync(); });
   es.onmessage = e => { const c = JSON.parse(e.data) as Change; deliver(c); cursor = c.seq; };
   es.onerror = () => {
     es.close(); failures++;

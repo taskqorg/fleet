@@ -66,6 +66,19 @@ test('C1 key value stays in the secret file (requirement: docs/designs/fleet-con
   await until(() => snapshot().connections[c].keys.length === 0 || undefined, 'retired key leaves the snapshot');
 });
 
+test('C5 connection writes reach the change feed of the owner and the holder (requirement: C14, the Keys screen follows api-connection and connection-key changes; risk: the screen never updates after an action)', async () => {
+  const kindsAfter = async (cursor: number, person: string) => { // every page after cursor
+    const k = new Set<string>();
+    for (let c = cursor; ;) { const r = ok(await op('changes_since', {cursor: c, limit: 1000}, person)); r.changes.forEach((x: any) => k.add(x.kind)); if (r.changes.length < 1000) return k; c = r.cursor; }
+  };
+  const start = ok(await op('changes_since', {})).cursor, startOutsider = ok(await op('changes_since', {}, OUTSIDER)).cursor;
+  const c = name('tavily');
+  ok(await op('connections_create', {name: c, provider: 'tavily', holder: OUTSIDER}));
+  ok(await op('connections_key_add', {connection: c, value: 'tvly-' + randomUUID()}));
+  await until(async () => { const k = await kindsAfter(start, OWNER); return k.has('api-connection') && k.has('connection-key'); }, 'owner sees connection changes');
+  await until(async () => (await kindsAfter(startOutsider, OUTSIDER)).has('api-connection'), 'holder sees the change of their connection');
+});
+
 test('C2 only the owner handles key values (requirement: docs/designs/fleet-connections.md; risk: a non-owner reading or adding a key)', async () => {
   const c = name('tavily');
   ok(await op('connections_create', {name: c, provider: 'tavily', holder: OUTSIDER}));
