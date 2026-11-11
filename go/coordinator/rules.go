@@ -62,6 +62,17 @@ func rulesPass(ctx context.Context, a *App) error {
 	if spanStore != nil {
 		fs, spanErr = spanRules(ctx)
 	}
+	if spanErr != nil {
+		// The span rules could not run: their findings of the last pass stand, so the sync neither closes their
+		// questions nor resets their since; the Postgres rules still apply.
+		rulesMu.Lock()
+		for _, f := range rulesFindings {
+			if spanRule[f.Rule] {
+				fs = append(fs, f)
+			}
+		}
+		rulesMu.Unlock()
+	}
 	fs = groupFindings(append(fs, more...), active)
 	rulesMu.Lock()
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -99,9 +110,6 @@ func rulesPass(ctx context.Context, a *App) error {
 		}
 		ps = append(ps, p)
 	}
-	if spanErr != nil {
-		return spanErr // without the span findings a sync would close their questions
-	}
 	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 		for i := range ps {
 			if id, ok := ps[i].Data["executionId"].(string); ok && ps[i].ProjectID != "" {
@@ -122,10 +130,12 @@ func rulesPass(ctx context.Context, a *App) error {
 	rulesMu.Lock()
 	rulesLast, rulesFindings = time.Now(), fs
 	rulesMu.Unlock()
-	return nil
+	return spanErr
 }
 
 func text(f *contract.Finding, s string) { f.Text = &s }
+
+var spanRule = map[string]bool{"absence-host": true, "absence-pass": true, "error-spike": true, "host-saturation": true}
 
 // spanRules: absence-host, absence-pass, error-spike, host-saturation over the span table.
 func spanRules(ctx context.Context) ([]contract.Finding, error) {
@@ -237,7 +247,7 @@ func stateRules(ctx context.Context, a *App) ([]contract.Finding, map[string]boo
 			f := contract.Finding{Subject: id, StoreId: ptr(id), HostId: ptr(host), Exemplars: []string{}}
 			if s["state"] == "full" {
 				f.Rule, f.Cause = "store-fill", "problem:store:"+id+":fill"
-				f.Value = num(s["capacity_bytes"])
+				f.Value = num(s["capacity_bytes"]) // capacity left (store observe), compared with the warning level
 				f.Baseline = ptr(num(s["free_space_warning_bytes"]))
 				text(&f, fmt.Sprintf("Store %s on %s has less free space than its warning level.", id, host))
 			} else {
