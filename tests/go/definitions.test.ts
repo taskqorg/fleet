@@ -110,3 +110,16 @@ test('D7 an execution pins the revision it resolved; a later save does not move 
   assert.equal((await refOf(a))[0].revision, g.head, 'the earlier run keeps its revision');
   assert.equal((await refOf(b))[0].revision, g.head + 1);
 });
+
+test('D8 pipeline_run_create runs the head or the caller\'s draft and lists what it resolved (requirement: pipeline_run_create, draft runs; risk: a test from the editor runs the saved version, or an operator runs unsaved content)', async () => {
+  const g = ok(await op('definition_get', {kind: 'pipeline', id: 'judge-scale'}));
+  const head = ok(await op('pipeline_run_create', {pipelineId: 'judge-scale', requestId: 'd8-head'}));
+  assert.deepEqual(head.definitions.map((d: any) => [d.id, d.revision, d.draft ?? false]), [['judge-scale', g.head, false]]);
+  const c = content(g); c.pipeline.steps[0].prompt = 'd8 draft prompt';
+  ok(await op('definition_draft_put', {kind: 'pipeline', id: 'judge-scale', baseRevision: g.head, content: c}));
+  const draft = ok(await op('pipeline_run_create', {pipelineId: 'judge-scale', requestId: 'd8-draft', draft: true}));
+  assert.deepEqual(draft.definitions.map((d: any) => [d.id, d.revision, d.draft]), [['judge-scale', g.head, true]]);
+  assert.notEqual(draft.definitions[0].contentSha, g.meta.contentSha);
+  assert.equal((await op('pipeline_run_create', {pipelineId: 'judge-scale', requestId: 'd8-m', draft: true}, MEMBER)).status, 403);
+  assert.equal((await op('pipeline_run_create', {pipelineId: 'no-such', requestId: 'd8-x'})).status, 404);
+});
