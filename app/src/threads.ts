@@ -4,10 +4,11 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { op } from './api.ts';
 import { subscribe, type Change } from './feed.ts';
+import type { ThreadEntriesReply } from '../../contracts/generated/ops.ts';
 
 export type Block = { kind: 'text' | 'tool' | 'reasoning' | 'question' | 'result' | 'boundary'; key: string; executionId?: string; [k: string]: any };
 export type ThreadKey = { task: string } | { session: string };
-export type Page = { key?: ThreadKey; entries: Block[]; first: string | null; last: string | null; hasBefore: boolean; hasAfter: boolean; total?: number; feedCursor: number; sessionIds?: string[] };
+export type Page = Omit<ThreadEntriesReply, 'key' | 'entries' | 'sessionIds'> & { key?: ThreadKey; entries: Block[]; sessionIds?: string[] };
 /** fresh: entries fed past `last` while newer history is not loaded (after a jump); the pill counts them. */
 export type Win = { blocks: Block[]; first: string | null; last: string | null; hasBefore: boolean; hasAfter: boolean; total: number; fresh: number; freshKeys?: string[]; sessionIds?: string[]; key?: ThreadKey };
 
@@ -72,7 +73,7 @@ export function useThread(key: ThreadKey | null) {
     for (const c of cs) if (f.task && c.kind === 'execution' && c.taskId === f.task && c.sessionId) f.sessions.add(c.sessionId);
     const rows = cs.filter(c => touches(c, f.sessions, f.task)).map(c => ({ kind: c.kind, id: c.id }));
     if (!rows.length || !key) return;
-    const r = await op<{ entries: Block[]; removed?: string[] }>('thread_blocks', { key: ref.current?.key ?? key, rows });
+    const r = await op('thread_blocks', { key: ref.current?.key ?? key, rows });
     if (g === gen.current) apply(w => fed(w, r.entries, r.removed));
   };
   // Changes committed after the page's snapshot: read from its feed cursor, so no row is skipped.
@@ -86,8 +87,8 @@ export function useThread(key: ThreadKey | null) {
   const load = async (args: object, place: (p: Page) => void) => {
     if (!key) return;
     const g = gen.current;
-    try { const p = await op<Page>('thread_entries', { key: ref.current?.key ?? key, resolve: true, limit: PAGE, ...args }); if (g !== gen.current) return;
-      if (p.key) follow.current.task = 'task' in p.key ? p.key.task : undefined; for (const s of p.sessionIds ?? []) follow.current.sessions.add(s); place(p); setError(null); await catchUp(p.feedCursor, g); }
+    try { const p = await op('thread_entries', { key: ref.current?.key ?? key, resolve: true, limit: PAGE, ...args }); if (g !== gen.current) return;
+      if (p.key) follow.current.task = 'task' in p.key ? p.key.task : undefined; for (const s of p.sessionIds ?? []) follow.current.sessions.add(s); place(p as Page); setError(null); await catchUp(p.feedCursor, g); }
     catch (e: any) { if (g === gen.current) setError(e.message); }
   };
   const newest = () => { gen.current++; return load({}, p => setWin(fromPage(p))); };

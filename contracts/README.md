@@ -7,6 +7,11 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   (docs/designs/fleet-stack.md, Contracts); `go/coordinator/schema.sql` stays the source of table rows only.
 * `gateway.schema.json`: the fleet-gateway seam (docs/designs/fleet-connections.md section 3): the snapshot the
   coordinator writes and the gateway reads, and the call line the gateway spools and the coordinator ingests.
+* `ops.schema.json`: the coordinator operations (`POST /api/ops/<name>`, and the agents' MCP tools of the same names).
+  `operations` lists every operation (`read`, `long`, `errors`: the statuses its handler returns besides 401, 403 and 500);
+  each name `<name>` has `$defs` `<Name>Request` and `<Name>Reply`, and a failed call answers `OpError`. TypeScript gets
+  `Ops` (name to request and reply, used by `op()` in `app/src/api.ts`); Go gets `contract.Operations`, which
+  `go/coordinator/ops_contract_test.go` compares with the registry.
 * `lab-config.json`: JSON Schema for agent configurations in laboratory configurations (copied as an asset; not generated).
 
 ## Generated types

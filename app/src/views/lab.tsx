@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import { StateBadge, Button, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, ROW2 } from '../../../packages/ui/src/index.ts';
-import { op } from '../api.ts';
+import { op, type OpName, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 
 const LAB_KINDS = new Set(['experiment', 'score', 'question', 'execution']);
@@ -15,7 +15,7 @@ const ms = (t: any) => typeof t === 'number' ? t : Date.parse(t);
 export function Lab({ id }: { id?: string }) {
   const [, go] = useLocation();
   const { data, state } = useDoc<any>('lab', async () => {
-    const [x, r, p, ex] = await Promise.all([op('lab_experiments_list'), op('lab_registry'), op('lab_ratings_list', { state: 'open' }), op('lab_examples_list', { state: 'proposed' }).catch(() => ({ examples: [] }))]);
+    const [x, r, p, ex] = await Promise.all([op('lab_experiments_list', {}), op('lab_registry', {}), op('lab_ratings_list', { state: 'open' }), op('lab_examples_list', { state: 'proposed' }).catch(() => ({ examples: [] }))]);
     return { experiments: x.experiments, useCases: r.useCases, ratings: p.ratings, proposed: ex.examples };
   }, touches);
   const now = Date.now();
@@ -90,7 +90,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
   useEffect(() => { if (e && location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView(); }, [!!e]);
   const now = Date.now();
   if (!e) return <article class="detail" data-ui="detail" tabIndex={-1}><Empty text="Loading…" /></article>;
-  const act = (name: string, body: any) => op(name, body).then((r: any) => { setMsg(r?.warnings?.length ? { text: r.warnings.join('; '), tone: 'warning' } : null); return r; }).catch((x: any) => setMsg({ text: x.message, tone: 'failure' }));
+  const act = <K extends OpName>(name: K, body: Ops[K]['request']) => op(name, body).then((r: any) => { setMsg(r?.warnings?.length ? { text: r.warnings.join('; '), tone: 'warning' } : null); return r; }).catch((x: any) => setMsg({ text: x.message, tone: 'failure' }));
   const trial = (key: string) => e.trials.filter((t: any) => `${t.cell.example}|${t.cell.variant}|${t.cell.repeat}` === key).sort((a: any, b: any) => b.cell.attempt - a.cell.attempt)[0];
   const toggle = (t: string) => setSel(s => s.includes(t) ? s.filter(x => x !== t) : [...s, t]);
   const rate = (form: string) => act('lab_rating_create', { experimentId: id, form, trialIds: sel }).then((r: any) => { if (r?.id) { setSel([]); location.hash = 'rating-' + r.id; } });

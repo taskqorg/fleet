@@ -69,10 +69,11 @@ The TypeScript-era label D4 (`node:sqlite` and the bundled Node server) ended wi
 
 ## Contracts (L3)
 
-Two sources, each owning one seam ([why](#why-this-stack)):
+Three sources, each owning one seam ([why](#why-this-stack)):
 
 - `go/coordinator/schema.sql` owns table rows.
 - `contracts/host-protocol.schema.json` (JSON Schema) owns the host protocol (`/api/hosts/poll` request and reply, status receipts, event batches), the command kinds with one payload def per kind (`CommandKind`, `StartPayload`, `ScriptPayload`, …), the executor-originated event types (`FleetEventType`, closed; readers log an unknown type as a problem, since hosts may run another release during self-update) with data defs for `process.closed`, `process.reconciled`, `preparation.failed`, `protocol.failed` and `limit_reading`. Native harness record types stay open. The executor builds receipts and event batches from these types.
+- `contracts/ops.schema.json` owns the coordinator operations (`POST /api/ops/<name>`, also the agents' MCP tools): `operations` lists every name with its read, long and error statuses, and each name has `<Name>Request` and `<Name>Reply`. A go test (`go/coordinator/ops_contract_test.go`) fails when the registry and the list differ. Types the app reads are named; the others are open objects with the fields the handler reads.
 
 Rules:
 
@@ -100,7 +101,7 @@ The goal of the quality round (2026-11-11). Each line stays `Not built:` until t
 
 1. Built in part: one shared generated package `go/contract`, built from `contracts/*.schema.json`; generated Go code and `schema.sql` are committed next to their users; a fresh clone runs `go build ./... && go vet ./...` with no prior step; CI fails on `go generate` drift. Not built: imports from the gateway and typed executor senders (item 2).
 2. Not built: contracts `host-protocol` (every `/api/hosts/*` route, one envelope per route, per-kind command payloads, Fleet event types), `ops` (request and reply per operation, SSE `Change`, thread `Block`), `agent-tools` (MCP input schemas, generated `mcp-tools.json`), `profile` (one validator for both sides) and `gateway` (snapshot, call line). Handlers decode into structs and refuse unknown fields on closed types. Vendor-owned payloads (native harness records, provider bodies, usage) stay raw.
-3. Not built: the app calls `op<'name'>` with types generated from `ops`; `Change` and `Block` come from the same source.
+3. Built in part: the app calls `op('name', request)` typed by the generated `Ops` map, and `Change` comes from `ops`. Not built: `Block` per kind.
 4. Built in part: executions (agent runs, host jobs, pipeline runs and steps) have one state vocabulary (the typed column), their real kind and harness, and no `legacy_kind`; an agent run or host job has one writer. Not built: the same for commands, sessions, questions and tasks; typed tables scanned into structs.
 5. Built in part: the coordinator stays one `package main` with files named by domain, no area prefixes, no hook variables or glue files (direct calls), one router and one JSON helper set per binary. Not built: one transaction wrapper (`store.Tx` still has `writeTx`, `readTx`, `writeTxAs` and `txCtx` beside it), one auth path, and the last duplicate helpers whose merge changes behaviour (`canonical`/`canonicalJSON` differ in HTML escaping; `body`/`bodyObject`); numbers are read by one `num`/`numOK` pair and millisecond times by one `msTime`.
 6. Built: binaries built with `-race` for tests; CI jobs `go` (generate diff, vet, race, outside tests), `app` (the release tarballs from the release script) and `browser` (cached Chromium). Not built: outside tests named by domain and requirement, one non-owner scope file.
