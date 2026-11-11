@@ -228,13 +228,11 @@ The full fallback merge-gate command is `pnpm install --frozen-lockfile && pnpm 
 
 `pnpm run build` runs `app:build` (typecheck and bundle) and `go:build` (the four Go binaries in `go/bin/`). `pnpm test` runs the app unit tests and `tests/go/run.sh`: the binary on a fresh database of a local PostgreSQL server (server programs on `PATH`, `tests/harness.ts`), with `tests/trial` and `tests/go` over HTTP.
 
-CI records a shadow impact plan from `scripts/test-selection.ts` for the exact event base and candidate.
+CI records an exact-candidate impact plan from `scripts/test-selection.ts`. The core runs contract lint, test metadata/self-checks, selector fixtures and documentation checks; candidates that execute app tests also run the pure view-URL check. Required `go`, `app` and `browser` statuses validate the plan and actual results before release.
 
-It proposes coarse test families; every family still executes. Missing history, invalid comparisons and unknown paths select the full fallback.
+Only prose under `docs/`, root README and isolated `app/src/views/lab-create.tsx` changes may omit unrelated families after successful previous CI. Lab-create retains app and all browser checks. Unknown history, impact, paths or comparisons run the full fallback, as do shared/runtime/config, new tests and selector changes. Nonempty `FLEET_TEST_FULL` restores full execution.
 
-The `selection` self-checks and integrated evidence check are required by the existing `app` status; release validates that same exact-candidate evidence. [Selected-gate qualification](docs/designs/fleet-delivery-pipeline.md#selected-gate-qualification) defines promotion and rollback.
-
-No suite is skipped by the shadow plan.
+[Selected-gate qualification](docs/designs/fleet-delivery-pipeline.md#selected-gate-qualification) defines the narrow rollout and rollback. Native archives, migrations, provenance and signing remain checked before publication.
 
 The full gate runs in CI on the pull request, never on the owner’s Mac: several agents work there at once, and each full run takes about 1.5 cores and 1 GB per test file. Locally run only the build of what you changed and the test files that cover it (`node <test file>`); push and read the CI result for everything else.
 

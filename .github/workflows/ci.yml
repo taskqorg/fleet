@@ -17,8 +17,12 @@ permissions: {}
 jobs:
   selection:
     runs-on: ubuntu-24.04
+    outputs:
+      executed: ${{ steps.plan.outputs.executed }}
     permissions:
       contents: read
+      actions: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,9 +31,44 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node --test tests/ui/test-selection.test.ts tests/ui/view-url.test.ts
-      - name: Record shadow selection
-        run: node scripts/test-selection.ts > "$RUNNER_TEMP/test-selection.json"
+      - name: Check out shared rules
+        uses: actions/checkout@v4
+        with:
+          repository: taskqorg/specq
+          ref: 1fc3716cc0971f8ca11f313d383db09751ffc132
+          path: .specq
+          persist-credentials: false
+      - name: Contract lint
+        run: python3 .specq/engineering/scripts/contract_lint.py fleet.md
+      # Blocks on an outside test in tests/go/ that names no requirement or risk; warns for every other test.
+      - name: Test requirement and risk report
+        run: |
+          node scripts/test-rule-report.ts --self-check
+          node scripts/test-rule-report.ts --strict
+      # Branches are rebased on main, never merged with it (docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests).
+      # Pull requests only: a merge group has no number and its own commit is a merge.
+      - name: No merge commits in the branch
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          merges=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits" -q '.[] | select(.parents | length > 1) | .sha[0:12]')
+          [ -z "$merges" ] || { echo "Merge commits in this branch: $merges"; echo "Run: git fetch origin && git rebase origin/main && git push --force-with-lease"; exit 1; }
+      - run: node --test tests/ui/test-selection.test.ts
+      - name: Record qualified selection
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FLEET_TEST_FULL: ${{ vars.FLEET_TEST_FULL }}
+        run: |
+          node scripts/test-selection.ts > "$RUNNER_TEMP/test-selection.json"
+          node -e 'const fs=require("node:fs"),p=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+"/test-selection.json","utf8"));fs.appendFileSync(process.env.GITHUB_OUTPUT,"executed="+JSON.stringify(p.executed)+"\n")'
+      - if: contains(fromJSON(steps.plan.outputs.executed), 'app')
+        run: node --test tests/ui/view-url.test.ts
+      - name: Documentation checks
+        run: |
+          node scripts/docs-report.ts --self-check
+          node scripts/docs-report.ts
       - uses: actions/upload-artifact@v4
         with:
           name: test-selection
@@ -37,7 +76,7 @@ jobs:
           if-no-files-found: error
   # Keep the required app status as the exact-candidate qualification boundary.
   app:
-    needs: [selection, go, app-tests, browser]
+    needs: [selection, go-tests, app-tests, browser-tests]
     if: always()
     runs-on: ubuntu-24.04
     permissions:
@@ -45,6 +84,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -57,21 +97,46 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
         run: |
-          node -e 'const fs=require("node:fs"),r=JSON.parse(process.env.RESULTS);r.app=r["app-tests"];delete r["app-tests"];fs.writeFileSync(process.env.RUNNER_TEMP+"/qualification/test-results.json",JSON.stringify(r))'
+          node -e 'const fs=require("node:fs"),r=JSON.parse(process.env.RESULTS);for(const f of ["app","go","browser"]){r[f]=r[f+"-tests"];delete r[f+"-tests"];}fs.writeFileSync(process.env.RUNNER_TEMP+"/qualification/test-results.json",JSON.stringify(r))'
           node scripts/test-selection.ts --verify "$RUNNER_TEMP/qualification/test-selection.json" "$RUNNER_TEMP/qualification/test-results.json"
       - uses: actions/upload-artifact@v4
         with:
           name: test-qualification
           path: ${{ runner.temp }}/qualification/
           if-no-files-found: error
+  go:
+    needs: app
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Require validated selection and results
+        env:
+          RESULT: ${{ needs.app.result }}
+        run: |
+          [ "$RESULT" = success ] || exit 1
+          echo 'Qualified by app; test-qualification records executed and omitted families.'
+  browser:
+    needs: app
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Require validated selection and results
+        env:
+          RESULT: ${{ needs.app.result }}
+        run: |
+          [ "$RESULT" = success ] || exit 1
+          echo 'Qualified by app; test-qualification records executed and omitted families.'
   # Go (docs/designs/fleet-go-code.md): generated-code drift, vet, unit tests with -race, the executor's MCP adapter tests,
   # the outside tests against a -race coordinator on the runner's PostgreSQL, a Windows compile of the coordinator.
   # Node only as the test runner: the outside tests import node: builtins, so no pnpm install here.
-  go:
+  go-tests:
+    needs: selection
+    if: contains(fromJSON(needs.selection.outputs.executed), 'go')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      pull-requests: read
     env:
       GOFLAGS: -mod=readonly
       # The span store for go/obs and tests/go/telemetry.test.ts live tests (docs/designs/fleet-telemetry.md); same LTS as deploy/infrastructure/fleet-clickhouse.container.
@@ -88,15 +153,6 @@ jobs:
           --health-cmd "clickhouse client --user t --password t -q 'SELECT 1'"
           --health-interval 2s --health-retries 30
     steps:
-      # Branches are rebased on main, never merged with it (docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests).
-      # Pull requests only: a merge group has no number and its own commit is a merge.
-      - name: No merge commits in the branch
-        if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          merges=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits" -q '.[] | select(.parents | length > 1) | .sha[0:12]')
-          [ -z "$merges" ] || { echo "Merge commits in this branch: $merges"; echo "Run: git fetch origin && git rebase origin/main && git push --force-with-lease"; exit 1; }
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -130,6 +186,8 @@ jobs:
   # App and release: contract lint, test-rule report, typecheck and bundle, UI unit tests, then the release tarballs of
   # every target from deploy/build-release.sh, the same script and flags the release workflow uses.
   app-tests:
+    needs: selection
+    if: contains(fromJSON(needs.selection.outputs.executed), 'app')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -137,25 +195,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Check out shared rules
-        uses: actions/checkout@v4
-        with:
-          repository: taskqorg/specq
-          ref: 1fc3716cc0971f8ca11f313d383db09751ffc132
-          path: .specq
-          persist-credentials: false
-      - name: Contract lint
-        run: python3 .specq/engineering/scripts/contract_lint.py fleet.md
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-      # Blocks on an outside test in tests/go/ that names no requirement or risk; warns for every other test.
-      - name: Test requirement and risk report
-        run: |
-          node scripts/test-rule-report.ts --self-check
-          node scripts/test-rule-report.ts --strict
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
@@ -177,7 +221,9 @@ jobs:
   # Browser: one build, Chromium from a cache keyed on the Playwright version, then every browser check in sequence:
   # filter path (fleet-view-urls-and-list-path.md §4), Conversations (fleet-conversations.md "Browser check"), the
   # design book and report. The docs and design reports warn only (D6, D14).
-  browser:
+  browser-tests:
+    needs: selection
+    if: contains(fromJSON(needs.selection.outputs.executed), 'browser')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
