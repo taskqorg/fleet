@@ -5,8 +5,10 @@ import (
 	"testing"
 )
 
-// One list of wait reasons (lane A): every dispatch stall cause maps to a member, and the three "waits for a person"
-// kinds of OSC 7501 (permission, question, auth) come from the causes a person must act on.
+// Requirement: fleet-people-access.md route decision, one list of wait reasons: every dispatch stall cause maps to a
+// member, and the three "waits for a person"
+// kinds of OSC 7501 (permission, question, auth) come from the causes a person must act on. Risk: free-text reasons
+// nobody can filter, or a person-blocked wait shown as Fleet retrying.
 func TestDispatchCausesMapToWaitReasons(t *testing.T) {
 	for cause, want := range map[string]string{
 		"host:h:trust": "permission", "host:h:holder": "permission", "subscription:s:not-taken": "permission", "budget:b:reached": "permission",
