@@ -1,22 +1,15 @@
 # Fleet view URLs and list data path
 
-* **Author:** Alex Kirs
-* **Status:** Implemented (owner-approved 2026-11-10); PRs #29-#31, #33-#37; live on PDS18 since 425d7a1. Drift check 2026-11-10: [reviews/drift-2026-11-10-web-stack.md](reviews/drift-2026-11-10-web-stack.md)
-* **Date:** 2026-11-10
-* **Brief:** [web-stack-brief.md](web-stack-brief.md) (measurements, alternatives, owner answers)
-
---------------------------------------------------------------------------------
-
 ## Overview
 
-This design fixes how the operator app's lists behave when the operator changes a filter, grouping, search or selection, and defines the URL format that carries every view state. It has four parts:
+This specification defines the operator app's URL codec and live list path for filter, grouping, search and selection changes. It has four parts:
 
 1. **URL view contract.** One grammar for filters, grouping, search, presets, the focused row and the checked rows. A shared codec (`parseView` / `formatView`) used by the app and the coordinator, and a `view_link` operation for agents.
-2. **List data path.** The normalized entity store that [operator-app](fleet-operator-app.md) decision D4 already chose, which the current code does not implement. Lists keep their rows on screen while new data loads, the list element is created once, and search sends one request per typing pause.
+2. **List data path.** The normalized entity store implemented in `app/src/store.ts`, following [operator-app](fleet-operator-app.md) decision D4. Lists keep their rows on screen while new data loads, the list element is created once, and search sends one request per typing pause.
 3. **`task_page` query.** A side table `task_derived`, kept by Postgres triggers, so a page read no longer computes four subqueries for every task in the table.
 4. **Asserting check.** `tests/ui/filter.check.ts` gains an asserting mode that fails when any of the above regresses.
 
-The Node toolchain cleanup from the brief is a separate, later slice (see Future Improvements).
+The [stack toolchain](fleet-stack.md#toolchain) is canonical for Node/pnpm, exact dependencies and shared stores; this topic does not retain the superseded vendoring/Bun proposal.
 
 ### Terms
 
@@ -25,18 +18,14 @@ The Node toolchain cleanup from the brief is a separate, later slice (see Future
 * **Operation:** a named coordinator function in one table, served as `POST /api/ops/<name>` to the browser and as MCP tools to agents. The browser calls it through `op()` in `app/src/api.ts`, typed by name from `contracts/ops.schema.json`; the coordinator dispatches it in `runOp`. Read operations (`READ_OPERATIONS`) run in a read transaction without a write lock.
 * **`task_page`:** the operation that returns one page of the task list, plus counts per state and group summaries. **`list_membership`:** the operation that takes up to 1,000 changed ids and a list definition and returns which of them belong to that list now, with their rows and the list's counts. The client never decides membership itself (D4).
 * **Change feed:** every write to a watched table adds a row to `change` through the trigger `fleet_change` (migration 8); the browser receives these over `/api/stream` and asks `list_membership` about the touched ids.
-* **Scope:** the coordinator's write lock. Most writers hold GLOBAL; host ingest of one execution holds only that execution's scope and runs in parallel ([data foundation §12](fleet-data-foundation.md)). Row-level security limits every query to the projects in `fleet.project_ids`; the coordinator itself uses `*`.
+* **Scope:** the coordinator's write lock. Most writers hold GLOBAL; host ingest of one execution holds only that execution's scope and runs in parallel ([data foundation §12](fleet-data-foundation.md)). Row-level security limits every query to the projects in `fleet.project_ids`; request reads use the person scope under [people and access](fleet-people-access.md#2-visibility); background work uses its documented service authority.
 * **Entity codes** such as `T-FLT-42` are decided in [design-system D17](../design-system/decisions.md) and allocated per [data foundation §2](fleet-data-foundation.md); they do not exist in the database yet.
 
-## The Problem
+## Rationale
 
-Measured in the brief on the TypeScript coordinator with an embedded database (in-process coordinator, generated tasks with every fifth task running, Chromium):
+A filter change must not clear counters, remove the list or discard the reader's anchor. The normalized store keeps the previous rows while the requested list loads, and the server remains the authority for membership. Derived task values avoid recomputing execution/question subqueries across the whole task history for every page; counts and search still depend on the matching set.
 
-* Every filter, grouping or "All" change makes the state counters disappear, replaces the list with a loading skeleton, and creates the list element again. Scroll and focus are lost. Cause: the old `useLiveList` list hook called `setPage(EMPTY)` on every key change; `StateCounters` draws nothing for undefined counts; `tasks.tsx` shows `<Skeleton>` while `!list.at`.
-* Typing "hero" in search sends four `task_page` requests and blanks the list four times.
-* `task_page` computes four correlated subqueries (current harness, last host, first start, open questions) for every task in the table before it filters, three times per call. At 20,000 tasks, grouping by agent takes 194 ms over HTTP and grows with history, not with the page. The operation layer adds about 1 to 2 ms and is not the cause.
-* The URL carries only `state`, `group` and `q`. Presets live in local preferences, so a copied link does not reproduce the view, and agents have no documented way to build one.
-* **Drift found:** D4 decided "one normalized entity store on Preact Signals". The old list hook kept each list in component state (`useState`) with no shared store. Going Back or switching nav tabs therefore starts from the IndexedDB copy or a skeleton.
+The earlier TypeScript/PGlite measurements explained this design choice; they do not establish current Go/PostgreSQL production performance. Current measurements name their fixture, head and environment, following §4.
 
 ## Goals
 
@@ -103,7 +92,7 @@ Measured in the brief on the TypeScript coordinator with an embedded database (i
 /<view>[/<focus>]?<key>=<value>&...      keys in alphabetical order, defaults omitted
 ```
 
-* **Views:** `tasks`, `conversations`, `hosts`, `overview`. Only `tasks` and `conversations` have keys today.
+* **Views:** `tasks`, `conversations`, `hosts`, `overview`, `results`. Tasks, Conversations and Results have codec keys; other built workspace routes are selected by the app registry, not silently added to this codec.
 * **Focus (path segment):** the row shown in the detail pane. A UUID today. A code is passed through unchanged; the D17 slice decides resolution.
 * **Keys, tasks view:**
 
@@ -116,22 +105,23 @@ Measured in the brief on the TypeScript coordinator with an embedded database (i
   | `sel` | comma list of checked rows | empty | not sent |
   | `state` | comma list of task states | all | `filter.state` |
 
-* **Keys, conversations view:** `archived` (`1` or omitted → `filter.archived`), `q` (→ `filter.search`), `sel`, `state` (→ `filter.state`).
+* **Keys, conversations view:** `archived` (`1` or omitted → `filter.archived`), `preset`, `q` (→ `filter.search`), `sel`, `state` (→ `filter.state`).
+* **Keys, results view:** `project`, `q` and artifact `state` (`stored`, `pending`, `failed`, `deleted`). Additional Results filters (`task`, `execution`, `media`, `since`) travel in `extra`, per the [Results contract](fleet-conversations.md). The codec does not grant artifact access.
 * **Lists:** comma-separated. A comma, `%` or `&` inside a value is percent-encoded (`%2C`, `%25`, `%26`). List values are sorted and de-duplicated.
 * **Canonical form:** keys in alphabetical order, list values sorted, defaults and empty lists omitted, no trailing `?`. Two equal views produce byte-identical URLs.
 * **List key:** the canonical query string without `focus`, `sel` and `preset`, prefixed by the view (`tasks?group=agent&state=failed`). It identifies a list in the store and in IndexedDB. Checking rows, focusing and the preset label never create a new list.
 * **Focus and `sel` are independent.** The focused row need not be in `sel`; focusing does not change `sel`; checking does not change focus.
 * **Presets:** a link carries the preset expanded into explicit keys, plus `preset=<name>` as an inert label. The codec never validates it. The app's preset bar highlights a preset only when the receiver has a preset of that name whose keys equal the URL's keys (the matching that `tasks.tsx` does today); otherwise the label is ignored.
-* **History:** a discrete change (counter, grouping, preset, focus, checking a row) pushes a new entry. Search pushes one entry when the operator starts typing and replaces it while they keep typing, so one Back leaves the search. Today every change replaces; this is a behaviour change.
+* **History:** a discrete change (counter, grouping, preset, focus, checking a row) pushes a new entry. Search pushes one entry when the operator starts typing and replaces it while they keep typing, so one Back leaves the search. `app/src/url.ts` implements this history behavior.
 * **Unknown keys** are kept in `extra`, written back in alphabetical order with the known keys, ignored by the app, and not part of the list key. No version key is added until an incompatible change happens.
 * **Meaning:** a link is a live query, not a snapshot. Access is the receiver's.
 * **Length:** no fixed limit. If a real limit is hit (chat tools, Cloudflare Access, MCP transport), it is recorded and short links are designed then. URLs are never cut.
 * **Privacy:** URLs carry search text and preset names into chats and logs; the app renders them as text only.
 
-**Codec.** `packages/view-url/view-url.ts`, a module with no imports, compiled by both builds (see Detailed Implementation, Phase 1):
+**Codec.** `packages/view-url/view-url.ts`, the import-free browser codec. The coordinator implements the equivalent codec in `go/coordinator/view_link.go`; `tests/go/view.test.ts` compares the two. They are separate implementations with a parity test, not one runtime module:
 
 ```ts
-type ViewName = 'tasks' | 'conversations' | 'hosts' | 'overview';
+type ViewName = 'tasks' | 'conversations' | 'hosts' | 'overview' | 'results';
 type View = { view: ViewName; focus?: string; group?: string; preset?: string; project?: (string | null)[];
   q?: string; sel?: string[]; state?: string[]; archived?: boolean; extra?: Record<string, string> };
 parseView(input: string, opts?: { origin?: string | null }): View | null  // a path or full URL; null if not a view or a foreign origin
@@ -198,14 +188,14 @@ Migration 10 in `go/coordinator/schema.sql` (migration 9 is the artifact store):
 * **Indexes:** `execution_task_seq ON execution(task_id, seq DESC)`, which replaces `execution_task`, and `task_priority_order ON task((CASE priority ...), seq DESC, id)` for the default page order. No indexes on `task_derived(agent|host)`: the group order uses `coalesce(...)`, which plain indexes cannot serve.
 * **Query** (`taskPage`, `go/coordinator/tasks.go`). The CTE with correlated subqueries is removed. Filters: `state`, `projectId` (one id, null, or a list of both), `search`.
   * The page joins `task_derived` (LEFT JOIN, so a task missing its row still lists with empty values) only where it is needed: for agent and host grouping the order needs it; otherwise the page is chosen on `task` alone and only its rows are joined.
-  * `summary(filter, group)` returns per-state counts (the `WHERE` without the state filter, so every counter keeps its number) and group summaries (joined only for agent and host). `page` and `list_membership` both use it.
-  * The group expression comes from the fixed `GROUPS` map, `{ sql, derived }` per grouping, checked with `Object.hasOwn`; only map values are interpolated.
+  * `taskSummary(q, filter, group, groupCounts)` returns per-state counts (the `WHERE` without the state filter, so every counter keeps its number) and group summaries (joined only for agent and host). `page` and `list_membership` both use it.
+  * The group expression comes from the fixed Go `taskGroups` map (`taskGroup` and `groupOf`); an unknown group is rejected, and only the selected map values are interpolated.
 * **Cost after the change.** The page read is an index-ordered read of `n` rows. Counts and group summaries remain a scan of the matching rows on plain columns. This is why the growth factor is reported, not asserted.
-* **Drift check:** `derivedDrift()` returns `{ checked, drifted: [{ taskId, stored, expected }] }` for the caller's projects; `checked` counts the same tasks. Used by tests and exposed as the read operation `task_derived_check`.
+* **Drift check:** `task_derived_check` reads `task_derived_drift()` and returns `{ checked, drifted: [{ taskId, stored, expected }] }` for the caller's projects; `checked` counts the same tasks. Used by tests and exposed as the read operation `task_derived_check`.
 
 ### 4. Asserting filter check
 
-`tests/ui/filter.check.ts [--assert] [--sizes 3000,20000,100000]`. Each size gets a fresh in-memory store and coordinator. Without `--assert` it only prints. With `--assert` it exits 1 when a rule fails at 3,000 or 20,000 tasks; the 100,000-task run is always report-only. On CI (env `CI` set) the two 300 ms budgets are written to the job summary and do not fail the job, because a shared runner's timing is noise; locally they are asserted. Rules:
+`tests/ui/filter.check.ts [--assert] [--sizes 3000,20000,100000]`. Each size gets a fresh Go coordinator and PostgreSQL fixture through `tests/ui/seed.ts` and `tests/harness.ts`. Without `--assert` it only prints. With `--assert` it exits 1 when a rule fails at 3,000 or 20,000 tasks; the 100,000-task run is always report-only. On CI (env `CI` set) the two 300 ms budgets are written to the job summary and do not fail the job, because a shared runner's timing is noise; locally they are asserted. Rules:
 
 * the `[data-ui=data-list]` element is the same node before and after a filter, grouping, "All", preset, focus and check change;
 * no `.skeleton` appears after the first load;
@@ -217,7 +207,7 @@ Migration 10 in `go/coordinator/schema.sql` (migration 9 is the artifact store):
 * a URL copied from one page and opened in a second page reproduces focus, `sel`, filters and grouping;
 * `task_page` over HTTP: median under 300 ms at 20,000 tasks per case.
 
-It also prints the fixture load time, the migration 10 backfill time and the growth factor.
+It prints fixture load time and, when the larger sizes are requested, the growth factor. Not built: a separate migration10 backfill timing in this check.
 
 ## Alternatives Considered
 
@@ -266,7 +256,7 @@ It also prints the fixture load time, the migration 10 backfill time and the gro
 ## Non-Functional Requirements
 
 * **Performance:** targets in Goals; the check measures them.
-* **Write cost:** an execution or question write that changes a watched column adds one function call, one row lock and at most one write of `task_derived`. The check records the fixture load time before and after migration 10.
+* **Write cost:** an execution or question write that changes a watched column adds one function call, one row lock and at most one write of `task_derived`. The filter check records fixture load time; it does not currently measure a before/after migration10 comparison.
 * **Security:** `fleet_task_derived` sets `fleet.project_ids` to `*` for its own call, so it reads all of one task's rows whatever the writer's scope. It takes only a task id, writes only `task_derived`, and copies the task's `project_id`, so reads of `task_derived` and its change rows stay scoped. `view_link` builds URLs only on the configured origin and never includes credentials. A shared link grants nothing.
 * **Rollout and rollback:** migration 10 is additive. The reading code ships in the same release. If values drift, `task_derived_check` finds them; re-running the recompute for the drifted ids repairs them: `SELECT fleet_task_derived(id) FROM unnest(ARRAY[...]) AS id` as the owner role. The old query stays as the reference in the tasks test.
 
@@ -274,18 +264,21 @@ It also prints the fixture load time, the migration 10 backfill time and the gro
 
 ### Additional Resources
 
-* [web-stack-brief.md](web-stack-brief.md)
 * [fleet-operator-app.md](fleet-operator-app.md) (D3 offline copy, D4 entity store, routing)
 * [fleet-data-foundation.md](fleet-data-foundation.md) (§2 task, §12 concurrency model, G2 derived values)
 * [design-system decisions](../design-system/decisions.md) (D17 entity codes, OR-22 via owner rules)
-* Review reports: reviews/fleet-view-urls/
 
 ### Future Improvements
 
-* **Node toolchain slice (done, see [fleet-stack.md](fleet-stack.md#toolchain); it chose pnpm 10 with `minimumReleaseAge` over vendoring and a Bun trial):** exact pins, `--ignore-scripts`, an allowlist and audit policy, a decision on `better-sqlite3`, a shared content-addressed store for esbuild, tsc and Playwright outside the worktrees, the six front-end packages vendored as hashed ESM, and a Bun trial for tooling. See the brief, Key Decisions item 6.
-* **`sessions_list`** with the same side-table pattern.
-* **Overview** calls `task_page` once per project; it gets faster with §3, and one aggregate read would remove the per-project calls.
-* **Per-operation timing** in `runOp` and a slow-query log, needed for the production re-measurement.
+These targets remain in the backlog; polishing them is not the critical path for project/PM/first-task and Lab control breadth. Existing acceptance targets above are unchanged.
+
+* Not built: a Conversations list filter-path browser assertion equivalent to `filter.check.ts` (the current check exercises Tasks; transcript paging checks are a separate concern).
+* Not qualified: the deployed SSE list-update path after a real write. Source and fixture checks alone do not establish that live-chain observation; a read-only URL smoke does not either.
+
+* **Toolchain:** follow [fleet-stack.md](fleet-stack.md#toolchain). Its selected Node22/pnpm10 and native TypeScript paths supersede the old vendoring/Bun proposal; those rejected options are not remaining work for this topic.
+* Not built: optimizing the per-session subqueries in `go/coordinator/sessions.go` with the proposed side-table pattern. This remains performance work, not a new requirement to launch a first supervised task.
+* **Overview** calls `task_page` once per project; one aggregate read remains proposed performance work, not an additional operation required before a supervised task can start.
+* **Per-operation timing:** coordinator request spans are implemented in `go/coordinator/telemetry.go`; their live availability is a separate [telemetry](fleet-telemetry.md) observation. Not built: the separately proposed slow-query log. A span mechanism alone does not establish production query latency.
 * **Counts at very large sizes:** cached counters if the reported growth factor shows counts dominate.
 
 --------------------------------------------------------------------------------
@@ -294,7 +287,7 @@ It also prints the fixture load time, the migration 10 backfill time and the gro
 
 Built: the codec `packages/view-url/view-url.ts` (`tests/ui/view-url.test.ts`); `task_derived` and its triggers in `go/coordinator/schema.sql`; the query in `taskPage` (`go/coordinator/tasks.go`); the entity store `app/src/store.ts` with `app/src/offline.ts` (`tests/ui/store.test.ts`, `tests/ui/lists.test.ts`); the filter check `tests/ui/filter.check.ts`.
 
-Not built: the `view_link` operation (§1, CUJ 3); the Go coordinator has no route for it.
+Built: `view_link` is registered by `agentTypedOp` in `go/coordinator/view_link.go`, with generated request/reply types; `tests/go/view.test.ts` checks parity and validation.
 
 ### Verification
 
@@ -303,5 +296,3 @@ Not built: the `view_link` operation (§1, CUJ 3); the Go coordinator has no rou
 * Design: `pnpm run check:design`.
 
 --------------------------------------------------------------------------------
-
-*Drafted with EGM*
