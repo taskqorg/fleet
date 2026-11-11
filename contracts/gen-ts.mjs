@@ -33,7 +33,7 @@ for (const f of readdirSync(dir).filter((f) => f.endsWith('.schema.json'))) {
   const out = Object.entries(root.$defs).map(([name, s]) => `export type ${name} = ${type(s, name)};`);
   // operations: each name maps to its <Name>Request and <Name>Reply (contracts/README.md, Operations).
   if (root.operations) out.push(`export type Ops = {\n${Object.keys(root.operations).map((n) => {
-    const t = n.split(/[_.-]/).map((p) => p[0].toUpperCase() + p.slice(1)).join('');
+    const t = n.split(/[_.-]/).filter(Boolean).map((p) => p[0].toUpperCase() + p.slice(1)).join('');
     for (const d of [t + 'Request', t + 'Reply']) if (!root.$defs[d]) throw Error(`${f}: operation ${n} has no $defs ${d}`);
     return `  ${JSON.stringify(n)}: { request: ${t}Request; reply: ${t}Reply };`;
   }).join('\n')}\n};`);

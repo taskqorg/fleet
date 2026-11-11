@@ -90,7 +90,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
   useEffect(() => { if (e && location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView(); }, [!!e]);
   const now = Date.now();
   if (!e) return <article class="detail" data-ui="detail" tabIndex={-1}><Empty text="Loading…" /></article>;
-  const act = <K extends OpName>(name: K, body: Ops[K]['request']) => op(name, body).then((r: any) => { setMsg(r?.warnings?.length ? { text: r.warnings.join('; '), tone: 'warning' } : null); return r; }).catch((x: any) => setMsg({ text: x.message, tone: 'failure' }));
+  const act = <K extends OpName>(name: K, body: Ops[K]['request']) => op(name, body).then(r => { const w = (r as { warnings?: string[] }).warnings; setMsg(w?.length ? { text: w.join('; '), tone: 'warning' } : null); return r; }).catch((x: any) => setMsg({ text: x.message, tone: 'failure' }));
   const trial = (key: string) => e.trials.filter((t: any) => `${t.cell.example}|${t.cell.variant}|${t.cell.repeat}` === key).sort((a: any, b: any) => b.cell.attempt - a.cell.attempt)[0];
   const toggle = (t: string) => setSel(s => s.includes(t) ? s.filter(x => x !== t) : [...s, t]);
   const rate = (form: string) => act('lab_rating_create', { experimentId: id, form, trialIds: sel }).then((r: any) => { if (r?.id) { setSel([]); location.hash = 'rating-' + r.id; } });

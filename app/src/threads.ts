@@ -8,6 +8,7 @@ import type { ThreadEntriesReply } from '../../contracts/generated/ops.ts';
 
 export type Block = { kind: 'text' | 'tool' | 'reasoning' | 'question' | 'result' | 'boundary'; key: string; executionId?: string; [k: string]: any };
 export type ThreadKey = { task: string } | { session: string };
+// ponytail: cast from ThreadEntriesReply until Block is generated per kind (C15).
 export type Page = Omit<ThreadEntriesReply, 'key' | 'entries' | 'sessionIds'> & { key?: ThreadKey; entries: Block[]; sessionIds?: string[] };
 /** fresh: entries fed past `last` while newer history is not loaded (after a jump); the pill counts them. */
 export type Win = { blocks: Block[]; first: string | null; last: string | null; hasBefore: boolean; hasAfter: boolean; total: number; fresh: number; freshKeys?: string[]; sessionIds?: string[]; key?: ThreadKey };

@@ -15,7 +15,7 @@ func TestOperationsMatchContract(t *testing.T) {
 		switch {
 		case !ok:
 			t.Errorf("%s is registered but missing from contracts/ops.schema.json", name)
-		case c.Long != long || (!long && c.Read != op.read):
+		case c.Long != long || c.Read != op.read:
 			t.Errorf("%s: contract read=%v long=%v, registry read=%v long=%v", name, c.Read, c.Long, op.read, long)
 		}
 	}
