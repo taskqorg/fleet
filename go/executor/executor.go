@@ -159,6 +159,7 @@ func writeFrame(w io.Writer, log *os.File, v M) (M, error) {
 }
 
 type live struct {
+	mcp            *mcpOwner
 	cmd            *exec.Cmd
 	exited         chan struct{} // closed when Wait returned
 	state          *os.ProcessState
@@ -295,12 +296,20 @@ func (e *executor) nativeEvent(c M, seq uint64, kind string, data any) error {
 }
 
 func (e *executor) finish(c M, status, native string) error {
+	if l := e.live[jStr(c, "executionId")]; l != nil && l.mcp != nil {
+		if err := l.mcp.close(); err != nil {
+			return err
+		}
+	}
 	return e.inTx(func() error {
 		if err := e.receipt(c, status, native); err != nil {
 			return err
 		}
 		cid, err := cmdID(c, "id")
 		if err != nil {
+			return err
+		}
+		if _, err = e.ex.Exec("UPDATE launches SET mcp_fenced=1 WHERE execution=?", jStr(c, "executionId")); err != nil {
 			return err
 		}
 		_, err = e.ex.Exec("UPDATE commands SET terminal=1 WHERE id=?", cid)
@@ -341,7 +350,7 @@ func (e *executor) ownGroup(execution string, grp int, l *live) error {
 // releaseLaunchWindow: a stop for an execution whose launch never recorded a process is the explicit decision to
 // accept that uncertainty; the session is admitted again. The stop's result stays unknown.
 func (e *executor) releaseLaunchWindow(execution, session string) error {
-	res, err := e.db.Exec("DELETE FROM launches WHERE execution=? AND session=? AND NOT EXISTS (SELECT 1 FROM owned WHERE execution=?)", execution, session, execution)
+	res, err := e.db.Exec("DELETE FROM launches WHERE execution=? AND session=? AND NOT EXISTS (SELECT 1 FROM owned WHERE execution=?) AND NOT EXISTS (SELECT 1 FROM mcp_groups WHERE execution=?)", execution, session, execution, execution)
 	if err != nil {
 		return err
 	}
@@ -352,13 +361,22 @@ func (e *executor) releaseLaunchWindow(execution, session string) error {
 }
 
 func (e *executor) release(execution string) error {
-	return e.inTx(func() error {
+	if err := cleanupMCPGroups(e.db, execution); err != nil {
+		return err
+	}
+	var directory sql.NullString
+	e.db.QueryRow("SELECT mcp_dir FROM launches WHERE execution=?", execution).Scan(&directory)
+	err := e.inTx(func() error {
 		if _, err := e.ex.Exec("DELETE FROM owned WHERE execution=?", execution); err != nil {
 			return err
 		}
 		_, err := e.ex.Exec("DELETE FROM launches WHERE execution=?", execution)
 		return err
 	})
+	if err == nil && directory.Valid {
+		removeMCPOwnerDir(directory.String)
+	}
+	return err
 }
 
 // reconcileProcesses runs at start, before any poll (K2-3). The stdout and stdin pipes of a run died with the executor
@@ -368,6 +386,9 @@ func (e *executor) release(execution string) error {
 // and only a stop for that execution releases it (releaseLaunchWindow). A launch whose processes cannot be confirmed
 // gone stays recorded, which keeps its session refused, and is tried again at the next start.
 func (e *executor) reconcileProcesses() error {
+	if _, err := e.db.Exec("UPDATE launches SET mcp_fenced=1"); err != nil {
+		return err
+	}
 	type launch struct {
 		execution, command string
 		l                  *live
@@ -405,6 +426,10 @@ func (e *executor) reconcileProcesses() error {
 			x.l.owned[pid] = ident
 		}
 		rows.Close()
+		if err := cleanupMCPGroups(e.db, x.execution); err != nil {
+			x.err = err
+			continue
+		}
 		// The group id is ours only while its leader is the recorded incarnation.
 		if g := groups[x]; g != 0 {
 			if id, err := identity(g); err == nil && id == x.l.owned[g] {
@@ -840,12 +865,14 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		return e.finish(c, "failed", native)
 	}
 	var evidence M
+	selectedMCP := M{}
 	if hasCfg {
-		ev, err := profilePrepare(cfg, jStr(p, "account"))
+		ev, selected, err := profilePrepare(cfg, jStr(p, "account"), p["skills"])
 		if err != nil {
 			return fail(1, err.Error())
 		}
 		evidence = ev
+		selectedMCP = selected
 	}
 	h := Harnesses[name]
 	if h == nil {
@@ -927,7 +954,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		gitApply(cmd, access)
 	}
 	observed := e.observeHarness(cmd, name)
-	servers := profileServers(jAt(p, "agentConfig"), dir, name, jStr(p, "account"))
+	servers := mcpAtRoot(selectedMCP, work)
 	profiles := jArr(p, "agentConfig", "delegationProfiles")
 	if profiles == nil {
 		profiles = []any{}
@@ -937,7 +964,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		context := M{"hostId": e.host, "commandId": c["id"], "executionId": c["executionId"], "profiles": profiles, "projectId": p["projectId"], "workdir": work, "inputDir": inputDir, "spool": filepath.Join(e.root, "spool"), "operations": p["fleetOperations"]}
 		args := []any{"mcp", "delegation", filepath.Join(e.root, "journal.sqlite"), enc(context)}
 		server := M{"command": exe(), "args": args}
-		if name == "codex" {
+		{
 			tools := []any{"session_start", "session_deliver", "session_transition", "session_fork", "session_resume", "session_handoffs", "message_send", "queue_list", "ask", "reply", "questions", "worker_done", "execution_status", "artifact_save", "artifact_list", "artifact_get"}
 			if len(profiles) > 0 {
 				tools = append(tools, "request_child")
@@ -1006,6 +1033,9 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 				connectionTools = append(connectionTools, "mcp__"+conn+"__"+n)
 			}
 		}
+		if has(servers, conn) {
+			return fail(1, "MCP server name collides with a granted connection")
+		}
 		servers[conn] = M{"command": exe(), "args": []any{"mcp", "connection", conn, enc(spec), runFile}, "tools": tools, "env": []any{"HOME"}}
 	}
 	// Built-in web for pipeline agent steps: off unless the step's run sets webRoute builtin.
@@ -1023,6 +1053,23 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		}
 		if len(jArr(p, "skills")) > 0 {
 			extra = append(extra, "Skill")
+		}
+	}
+	var mcp *mcpOwner
+	if len(servers) > 0 {
+		mcp, err = newMCPOwner(e.db, execution)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if !launched {
+				mcp.close()
+				os.RemoveAll(mcp.dir)
+			}
+		}()
+		servers, err = wrapMCPServers(servers, mcp.socket, work)
+		if err != nil {
+			return err
 		}
 	}
 	h.WireMCP(cmd, p, servers, extra)
@@ -1083,6 +1130,11 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		closeAll()
 		return err
 	}
+	if mcp != nil {
+		if _, err = e.db.Exec("UPDATE launches SET mcp_dir=? WHERE execution=?", mcp.dir, execution); err != nil {
+			return err
+		}
+	}
 	if err := cmd.Start(); err != nil {
 		pw.Close()
 		closeAll()
@@ -1091,7 +1143,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	pw.Close()
 	exited := make(chan struct{})
-	l := &live{cmd: cmd, exited: exited, command: c, native: native, seq: 2, owned: map[int]string{}, lastSample: time.Now(), started: time.Now()}
+	l := &live{mcp: mcp, cmd: cmd, exited: exited, command: c, native: native, seq: 2, owned: map[int]string{}, lastSample: time.Now(), started: time.Now()}
 	go func() { cmd.Wait(); l.state = cmd.ProcessState; close(exited) }()
 	kill := func() { cmd.Process.Kill(); <-exited; closeAll(); e.release(execution) }
 	if nativeInput != nil && !protocol {
@@ -1112,6 +1164,9 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	if err := e.ownGroup(execution, cmd.Process.Pid, l); err != nil {
 		kill()
 		return e.finish(c, "unknown", native)
+	}
+	if mcp != nil {
+		mcp.readyOnce.Do(func() { close(mcp.ready) })
 	}
 	lines := make(chan string, 1024)
 	l.lines = lines
@@ -1308,18 +1363,33 @@ func (e *executor) script(c M, execution, session string) error {
 			removeTrial(trial[0], trial[1])
 		}
 	}
+	mcp, err := newMCPOwner(e.db, execution)
+	if err != nil {
+		dropTrial()
+		return err
+	}
+	admitted := false
+	defer func() {
+		if !admitted {
+			mcp.close()
+			os.RemoveAll(mcp.dir)
+		}
+	}()
 	cmd := cleanCmd("sh", "-c", command)
 	cmd.Dir = work
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.Env = append(cmd.Env, "FLEET_INPUT_DIR="+input, "FLEET_OUTPUT_DIR="+output, "FLEET_SESSION_ID="+session,
 		// Lab scripts ship in the release next to the binary (fleet-asset-pipelines §4); Blender is a host setting.
-		"FLEET_LAB_SCRIPTS="+filepath.Join(filepath.Dir(exe()), "scripts", "lab"))
+		"FLEET_LAB_SCRIPTS="+filepath.Join(filepath.Dir(exe()), "scripts", "lab"), "FLEET_MCP_OWNER="+mcp.socket)
 	if v := os.Getenv("FLEET_BLENDER"); v != "" {
 		cmd.Env = append(cmd.Env, "FLEET_BLENDER="+v)
 	}
 	if err := e.launch(execution, jStr(c, "id"), session); err != nil {
 		dropTrial()
+		return err
+	}
+	if _, err = e.db.Exec("UPDATE launches SET mcp_dir=? WHERE execution=?", mcp.dir, execution); err != nil {
 		return err
 	}
 	if err := cmd.Start(); err != nil {
@@ -1329,7 +1399,7 @@ func (e *executor) script(c M, execution, session string) error {
 	}
 	pid := cmd.Process.Pid
 	exited := make(chan struct{})
-	l := &live{cmd: cmd, exited: exited, command: c, seq: 2, completed: true, owned: map[int]string{}, lastSample: time.Now(), started: time.Now(), group: pid, trial: trial}
+	l := &live{mcp: mcp, cmd: cmd, exited: exited, command: c, seq: 2, completed: true, owned: map[int]string{}, lastSample: time.Now(), started: time.Now(), group: pid, trial: trial}
 	go func() { cmd.Wait(); l.state = cmd.ProcessState; close(exited) }()
 	ident, err := identity(pid)
 	if err != nil {
@@ -1347,6 +1417,8 @@ func (e *executor) script(c M, execution, session string) error {
 		e.release(execution)
 		return e.finish(c, "unknown", "")
 	}
+	mcp.readyOnce.Do(func() { close(mcp.ready) })
+	admitted = true
 	// No stdout stream to read: the closed channel marks EOF at once.
 	lines := make(chan string)
 	close(lines)
@@ -1430,10 +1502,10 @@ func (e *executor) tick() error {
 			return err
 		}
 		if done {
-			delete(e.live, execution)
 			if err := e.release(execution); err != nil {
 				return err
 			}
+			delete(e.live, execution)
 		}
 	}
 	return nil
@@ -1455,6 +1527,24 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 		}
 	}
 	if exited || l.stopped {
+		if l.mcp != nil {
+			if err := l.mcp.close(); err != nil {
+				return false, err
+			}
+		}
+		if err := cleanupMCPGroups(e.db, execution); err != nil {
+			l.cleanupUnknown = true
+			if _, open := e.commandBody(jStr(l.command, "id"), true); open {
+				l.seq++
+				if reportErr := e.nativeEvent(l.command, l.seq, "mcp.cleanup_unknown", M{"reason": err.Error(), "ownershipRetained": true}); reportErr != nil {
+					return false, reportErr
+				}
+				if reportErr := e.finish(l.command, "unknown", l.native); reportErr != nil {
+					return false, reportErr
+				}
+			}
+			return false, err
+		}
 		if l.cleanup() != nil {
 			l.cleanupUnknown = true
 		}

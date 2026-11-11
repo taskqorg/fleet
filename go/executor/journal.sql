@@ -15,3 +15,9 @@ CREATE TABLE IF NOT EXISTS transfers(id TEXT PRIMARY KEY,kind TEXT NOT NULL,body
 -- identity) as processes are observed; both go when the run is reaped. A restart kills what survives before polling.
 CREATE TABLE launches(execution TEXT PRIMARY KEY,command TEXT NOT NULL,session TEXT NOT NULL,grp INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE owned(execution TEXT NOT NULL,pid INTEGER NOT NULL,identity TEXT NOT NULL,PRIMARY KEY(execution,pid));
+
+-- version 3
+-- Additional local MCP guardians are execution-owned incarnation identities, not bare reusable PGIDs.
+ALTER TABLE launches ADD COLUMN mcp_fenced INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE launches ADD COLUMN mcp_dir TEXT;
+CREATE TABLE mcp_groups(execution TEXT NOT NULL,pid INTEGER NOT NULL,identity TEXT NOT NULL,PRIMARY KEY(execution,pid));

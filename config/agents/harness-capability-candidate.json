@@ -7,9 +7,16 @@
   "mcpServers": [
     {
       "data": {
-        "language": "go"
+        "tools": [
+          "initial_instructions",
+          "check_onboarding_performed",
+          "get_symbols_overview",
+          "find_symbol",
+          "find_referencing_symbols",
+          "search_for_pattern"
+        ]
       },
-      "id": "serena"
+      "id": "serena-go"
     }
   ],
   "model": "gpt-6.1-sol",

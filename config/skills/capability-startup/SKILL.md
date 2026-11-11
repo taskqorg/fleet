@@ -5,7 +5,9 @@ description: Verify explicitly selected Fleet capabilities and instructions befo
 
 Read the project contract, its pinned shared rules and the current request. Tool access does not grant new project, account or network authority.
 
-For a selected Serena capability, call `initial_instructions` and read its manual before code work. Check the already bound project's onboarding status separately. Missing navigation-cache memories do not prove that language-server navigation failed and do not require copying project rules into a second canonical store. Do not switch to another project.
+Initialize explicitly selected MCP servers, inspect their actual tool schemas and call their configured startup/manual tool when supplied. A named binding or listed tool alone does not establish readiness. Use only the selected allowlist; report unsupported transport/harness outcomes.
+
+For the selected Serena instance, call `initial_instructions` and read its manual before code work. Check the already bound project's onboarding status separately. Missing navigation-cache memories do not prove that language-server navigation failed and do not require copying project rules into a second canonical store. Do not switch to another project.
 
 Use one non-mutating symbol query on the agreed source to check the selected language server. A listed tool, successful transport or `isError: false` is not sufficient if the result says initialization failed or a dependency is missing. Report that exact missing capability; do not pretend a shell substitute qualified it.
 

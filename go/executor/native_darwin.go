@@ -3,9 +3,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"syscall"
 
 	"github.com/ebitengine/purego"
@@ -14,6 +16,7 @@ import (
 // libproc through purego (no cgo): proc_pidinfo, and the private proc_signal_with_audittoken looked up at run time.
 var (
 	procPidinfo func(pid, flavor int32, arg uint64, buf *byte, size int32) int32
+	procPidpath func(pid int32, buffer *byte, size uint32) int32
 	procSignal  func(token *[8]uint32, sig int32) int32
 )
 
@@ -21,6 +24,9 @@ func init() {
 	lib, err := purego.Dlopen("/usr/lib/libSystem.B.dylib", purego.RTLD_NOW|purego.RTLD_GLOBAL)
 	if err != nil {
 		return // identity and signal refuse below
+	}
+	if sym, err := purego.Dlsym(lib, "proc_pidpath"); err == nil {
+		purego.RegisterFunc(&procPidpath, sym)
 	}
 	if sym, err := purego.Dlsym(lib, "proc_pidinfo"); err == nil {
 		purego.RegisterFunc(&procPidinfo, sym)
@@ -69,4 +75,16 @@ func signalOwned(pid int, expected string, sig syscall.Signal) error {
 		return syscall.Errno(e)
 	}
 	return nil
+}
+
+func processExecutable(pid int) (string, error) {
+	if procPidpath == nil {
+		return "", errors.New("process executable unavailable")
+	}
+	var b [4096]byte
+	n := procPidpath(int32(pid), &b[0], uint32(len(b)))
+	if n <= 0 {
+		return "", errors.New("process executable unavailable")
+	}
+	return filepath.EvalSymlinks(string(bytes.TrimRight(b[:n], "\x00")))
 }

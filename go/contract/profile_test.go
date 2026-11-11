@@ -10,12 +10,12 @@ import (
 // R1, R3; risk: role-specific exclusion or arbitrary host commands enter a named capability grant.
 func TestSerenaGrantAcrossHarnesses(t *testing.T) {
 	for _, fields := range []string{`"effort":"low"`, `"harness":"claude","instructionRole":"system","tools":["Read"]`, `"harness":"antigravity","instructionRole":"user"`} {
-		raw := `{"id":"pm-or-worker","model":"m","instructions":"x","mcpServers":[{"id":"serena","data":{"language":"go"}}],` + fields + `}`
+		raw := `{"id":"pm-or-worker","model":"m","instructions":"x","mcpServers":[{"id":"serena-go","data":{"tools":["initial_instructions","get_symbols_overview"]}}],` + fields + `}`
 		if _, err := ParseProfile([]byte(raw)); err != nil {
 			t.Fatal(raw, err)
 		}
 	}
-	for _, data := range []string{`{}`, `{"language":"go","command":"arbitrary"}`, `{"language":"python"}`} {
+	for _, data := range []string{`{}`, `{"tools":["read"],"command":"arbitrary"}`, `{"tools":[]}`, `{"tools":["read","read"]}`} {
 		if _, err := ParseProfile([]byte(`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[{"id":"serena","data":` + data + `}]}`)); err == nil {
 			t.Fatal("accepted", data)
 		}
@@ -60,6 +60,19 @@ func TestParseProfile(t *testing.T) {
 	} {
 		if _, err := ParseProfile([]byte(bad)); err == nil {
 			t.Error("accepted", bad)
+		}
+	}
+}
+
+// R1/R3; risk: the shared selection still accepts only one special server, or collides with privileged internal names.
+func TestMultipleNamedMCPSelections(t *testing.T) {
+	raw := `{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[{"id":"first","data":{"tools":["read"]}},{"id":"second","data":{"tools":["inspect"]}},{"id":"design-rules","data":{"rule":"legacy"}}]}`
+	if _, err := ParseProfile([]byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{strings.Replace(raw, `"second"`, `"first"`, 1), strings.Replace(raw, `"first"`, `"fleet"`, 1), strings.Replace(raw, `"tools":["read"]`, `"tools":["read"],"env":{"TOKEN":"forbidden"}`, 1)} {
+		if _, err := ParseProfile([]byte(bad)); err == nil {
+			t.Fatal("unsafe selection accepted", bad)
 		}
 	}
 }

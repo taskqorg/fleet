@@ -415,12 +415,17 @@ func mcpRun(args []string) error {
 		return errors.New("MCP server required")
 	}
 	server := args[0]
-	if server == "serena" {
-		if len(args) != 5 {
-			return errors.New("Serena root, harness, registry and account required")
+	if server == "stdio" {
+		if len(args) != 4 {
+			return errors.New("stdio MCP needs owner, trusted spec and root")
 		}
-		return serenaMCP(args[1], args[2], args[3], args[4])
+		spec, err := dec(args[2])
+		if err != nil {
+			return err
+		}
+		return mcpStdio(args[1], spec, os.Stdin, os.Stdout, args[3], jStr(spec, "pathPolicy"))
 	}
+
 	arg := func(i int, what string) (string, error) {
 		if i >= len(args) {
 			return "", errors.New(what + " required")

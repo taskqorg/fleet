@@ -108,12 +108,26 @@ func (p Profile) check() error {
 			return errors.New("duplicate MCP grant")
 		}
 		seenServers[server.Id] = true
-		if server.Id == "serena" {
-			if len(server.Data) != 1 || string(server.Data["language"]) != `"go"` {
-				return errors.New("Serena grant requires only language go; executable and environment are host-owned")
+		if server.Id != "design-rules" {
+			if !grantID.MatchString(server.Id) || server.Id == "fleet" || server.Id == "connection" || len(server.Data) != 1 {
+				return errors.New("MCP grant needs a unique named connection and explicit tools only")
+			}
+			var tools []string
+			if json.Unmarshal(server.Data["tools"], &tools) != nil || len(tools) == 0 {
+				return errors.New("MCP grant requires explicit tool names")
+			}
+			seen := map[string]bool{}
+			for _, name := range tools {
+				if name == "" || seen[name] || strings.IndexFunc(name, func(r rune) bool {
+					return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-')
+				}) >= 0 {
+					return errors.New("invalid or duplicate MCP tool name")
+				}
+				seen[name] = true
 			}
 			continue
 		}
+
 		var data bytes.Buffer
 		e := json.NewEncoder(&data)
 		e.SetEscapeHTML(false)
