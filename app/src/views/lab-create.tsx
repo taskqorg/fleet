@@ -81,7 +81,7 @@ export function LabCreate() {
         setExamples(e.examples.map(e => ({ id: String(e.artifactId), name: String(e.name) })));
       } catch (e: any) { if (live.current) setError(e.message); }
     })();
-    return () => { live.current = false; identity.current = ''; onClear.delete(cleared); }; 
+    return () => { live.current = false; identity.current = ''; onClear.delete(cleared); };
   }, []);
   useEffect(() => {
     const verify = async () => { try { const me = await op('me', {}); const next = PREFIX + me.email + ':' + me.grantsVersion;

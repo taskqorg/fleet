@@ -63,12 +63,17 @@ try {
   assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), 'Create only; retain the real experiment record');
   await p.getByRole('textbox', { name: 'Variant 1 label', exact: true }).fill('A');
   // A confirmed create plus failed GET is not an unknown creation or a reason to POST again.
-  await p.route('**/api/ops/lab_experiment_get', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{"message":"fixture read unavailable"}' }));
+  let releaseRead!: () => void;
+  const heldRead = new Promise<void>(resolve => { releaseRead = resolve; });
+  await p.route('**/api/ops/lab_experiment_get', async route => {
+    await heldRead; try { await route.abort('failed'); } catch { /* reload already closed the old request */ }
+  });
   await p.getByRole('button', { name: 'Create draft', exact: true }).click();
-  await p.getByRole('button', { name: 'Read details again', exact: true }).waitFor();
+  await p.waitForFunction(() => Object.keys(sessionStorage).some(k => { if (!k.startsWith('fleet-lab-create:')) return false; const x = JSON.parse(sessionStorage.getItem(k)!); return x.state === 'created' && x.id && !x.message; }));
+  const afterConfirmed = posts;
   await p.reload();
   await p.getByRole('button', { name: 'Read details again', exact: true }).waitFor();
-  const afterConfirmed = posts;
+  releaseRead();
   await p.unroute('**/api/ops/lab_experiment_get');
   await p.getByRole('button', { name: 'Read details again', exact: true }).click(); await p.waitForURL(/\/lab\/[a-f0-9-]+$/);
   assert.equal(posts, afterConfirmed);
