@@ -910,6 +910,10 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 		if l.UsageKey != nil {
 			// A finished job's charge (Meshy consumed_credits) counts once per (connection, job); later polls cost 0. A
 			// pipeline step's job is counted by recordJob instead.
+			// Concurrent ingests of two polls of one job serialize on the key.
+			if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "usageKey:"+*l.UsageKey); err != nil {
+				return false, err
+			}
 			var n int
 			if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM execution WHERE kind='tool_run' AND data->>'usageKey'=$1 AND id<>$2", *l.UsageKey, id).Scan(&n); err != nil {
 				return false, err
