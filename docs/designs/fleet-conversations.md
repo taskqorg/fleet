@@ -88,7 +88,7 @@ These are the existing presentation and membership defaults; this cleanup introd
 
 ### Ordering key
 
-Every row the thread needs already has one shared ordering number. `document.seq` is a `bigserial`, and the `execution`, `question` and `artifact` tables take their `seq` default from the same sequence (`go/coordinator/schema.sql`). Events and operator messages are documents. Here `seq` is the row's `seq` column, not the per-execution `data.seq` that host events also carry. So `seq` gives one total order across sessions and executions that overlap in time. The thread cursor is `seq`. No new ordering column is needed.
+Every row the thread needs already has one shared ordering number. `document.seq` is a `bigserial`, and the `execution`, `question` and `artifact` tables take their `seq` default from the same sequence (`go/coordinator/schema.sql`). Events and operator messages are documents. Here `seq` is the row's `seq` column, not the per-execution `data.seq` that host events also carry. So `seq` gives one total order across sessions and executions that overlap in time. Rows use `seq` for ordering; paging cursors use the block key `seq:index`. No new ordering column is needed.
 
 `seq` is taken at insert, not at commit, so two transactions can commit out of `seq` order. The operator app already solves this for its live feed: a read and the feed cursor come from one snapshot, and the feed (`change` table, ordered by `(xid, seq)` up to `pg_snapshot_xmin`) never skips a slow transaction ([fleet-operator-app.md](fleet-operator-app.md)). Thread reads copy that pattern:
 
@@ -103,7 +103,7 @@ A thread key is `{ task: id }` or `{ session: id }`; the routes are `/api/thread
 *   **Task thread**: all executions with `execution.task_id = <task>` (indexed by `execution_task_seq`). Their sessions are the set of `session_id` values. This includes a taskless session that got the task later, because its later executions carry the `task_id`; its earlier executions join through the session (see below).
 *   **Session thread**: one session that has no task. Once the session gets a task, its URL opens the task thread.
 
-Membership rule: an entry belongs to task T's thread if its execution has `task_id = T`, or if its execution has no `task_id` and T is the first task its session got (the session's lowest-`seq` execution with a `task_id`). This keeps a session's early taskless history in the task thread once the session joins the task (the thread membership rule), and nothing is copied. The two-task case is an open question.
+Membership rule: an entry belongs to task T's thread if its execution has `task_id = T`, or if its execution has no `task_id` and T is the first task its session got (the session's lowest-`seq` execution with a `task_id`). This keeps a session's early taskless history in the task thread once the session joins the task (the thread membership rule), and nothing is copied. The two-task case uses the first-task default described above; it does not duplicate the earlier history into both threads.
 
 As a query: the session set is `SELECT DISTINCT session_id FROM execution WHERE task_id = T`; entries are rows of those sessions whose execution has `task_id = T`, plus rows whose execution has no `task_id` when T is that session's first task.
 
@@ -124,7 +124,7 @@ thread_entries({ key, before?: BlockKey, after?: BlockKey, around?: BlockKey, li
 *   `before`: the `limit` highest-key entries with key lower than `before`, returned in ascending key order.
 *   `after`: the `limit` lowest-key entries with key higher than `after`.
 *   `around`: `floor(limit/2)` entries before `around`, and the rest from `around` onward, including it. A short side is not refilled from the other side; `hasBefore` and `hasAfter` say where more exists.
-*   `limit` counts entries (blocks) and is the page size the client asks for. There is no product page-size maximum. The existing JSON-number boundary rejects non-number, non-positive or non-integer values and values above `2^53`.
+*   `limit` counts entries (blocks) and is the page size the client asks for. There is no configurable product page-size cap. For JSON operations, `positiveLimit` accepts a positive integer JSON number counting blocks, at most `2^53` (`9007199254740992`); it rejects non-numbers and fractions. The HTTP query adapter parses an unsigned 53-bit integer, so its representable positive range ends at `2^53 - 1` (`9007199254740991`). These are the existing representation/validation bounds, not a new page cap.
 *   `total` is the entry count, for the "84 of 1,240" count (OR-11). It is returned only for the open read and for `around`; the client adds live entries to it. It is a count over the thread's index range; the browser check reports its time.
 
 The query finds the thread's member executions (the membership rule), then reads events and messages through `document_execution (kind, executionId, seq)`, questions through `question_execution` and artifacts through `artifacts.list({ executionId })`, which merges the `artifact` table and legacy `artifact` documents, merged by key. It joins `execution` (harness, model, effort) only for the page rows. It reads only the page, never the whole session. `session_get` stops returning `events` and `results`; it keeps the session header fields.
@@ -207,7 +207,7 @@ The thread renders `question` blocks with the existing `DecisionBlock` pattern. 
 
 ### Results and the artifact viewer
 
-Artifact storage provides `artifact` rows, artifact stores and placement exist, and `artifact_list` and `artifact_get` exist (`go/coordinator/artifact_routes.go`).
+Artifact storage provides stored artifact rows, stores and placement; `artifact_list` and `artifact_get` expose them (`go/coordinator/artifact_routes.go`).
 
 *   **Result block**: one per execution end that has artifacts or a delivery, at the key of the `execution.ended` event. A delivery or artifact that arrives later updates this block in place; it does not move (OR-23). It shows artifact names, the delivery-stage chip and links each artifact to its Results page entry.
 *   **Delivery stage**: the existing `stages` in `packages/ui/src/registry.ts`, rendered by `StageChip`. The coordinator maps the `delivery` record state to a stage key:
@@ -231,7 +231,7 @@ Artifacts live in the `artifact` table. The thread, the viewer and the Results p
 
 Stop, steer and answer are always visible. The rest are in one left-aligned menu with icons (OR-13), in reserved space (OR-23).
 
-*   **Composer target**: the newest running execution of the thread, named in the composer. When nothing runs, the composer sends a new message to the thread's newest session with `message_send`, which starts an execution, and steer is not shown. Each `boundary` row of a running execution has its own Stop (the thread membership rule).
+*   **Composer target**: the newest running execution of the thread, named in the composer. When nothing runs, the composer sends a new message to the thread's newest session with `message_send`, which starts an execution, and steer is not shown. Each `boundary` row of a running execution has its own Stop.
 *   **Stop**: `execution_stop` on that execution.
 *   **Steer**: `message_send` with `delivery: 'steer'` on the target execution's session; queued when the host cannot steer (`go/coordinator/agent.go`).
 
