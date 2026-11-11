@@ -88,7 +88,7 @@ func typedOp[Req, Rep any](h func(q *Request, r *Req) (Rep, error)) handler {
 	}
 }
 
-// exactKeys refuses a body key that names a request field only case-insensitively. encoding/json matches field names
+// exactKeys refuses a missing required field, and a body key that names a request field only case-insensitively. encoding/json matches field names
 // case-insensitively and the last key wins, so {"executionid": x} would override an executionId the agent tool path
 // bound (bound in agent.go) and act on another execution.
 func exactKeys(body json.RawMessage, t reflect.Type) error {
@@ -100,14 +100,41 @@ func exactKeys(body json.RawMessage, t reflect.Type) error {
 		return nil // not an object: decode reports it
 	}
 	for i := 0; i < t.NumField(); i++ {
-		tag, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		tag, opts, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
 		for k := range m {
 			if k != tag && strings.EqualFold(k, tag) {
 				return fail(400, "Unknown field "+k+": use "+tag)
 			}
 		}
+		// A field the schema requires has no omitempty: a missing one is 400, not its zero value (a limit of 0).
+		if _, ok := m[tag]; !ok && !strings.Contains(opts, "omitempty") {
+			return fail(400, "Expected "+tag)
+		}
 	}
 	return nil
+}
+
+// checkFirst: a role check before the body is read, so a caller without the role learns nothing from a 400.
+func checkFirst(check func(*Request) error, h handler) handler {
+	return func(q *Request) (any, error) {
+		if err := check(q); err != nil {
+			return nil, err
+		}
+		return h(q)
+	}
+}
+
+func operatorFirst(h handler) handler { return checkFirst(operatorOnly, h) }
+
+func ownerFirst(msg string, h handler) handler {
+	return checkFirst(func(q *Request) error { return ownerOnly(q, msg) }, h)
+}
+
+// docOf: a decoded request as the map a handler not yet on struct fields reads; only the request type's fields reach it.
+func docOf(v any) doc {
+	d := doc{}
+	json.Unmarshal(jsonBytes(v), &d)
+	return d
 }
 
 // asT: rows and records read as maps, as their contract type. For values whose map keys are fixed by the query or the
@@ -116,6 +143,25 @@ func asT[T any](v any) (T, error) {
 	var t T
 	err := json.Unmarshal(jsonBytes(v), &t)
 	return t, err
+}
+
+// shaped: a handler that still reads the body as a map, on its contract types: the body is decoded into Req and replaced
+// by Req's own encoding, so the handler sees only the fields the request type names; the reply is converted to Rep.
+func shaped[Req, Rep any](h handler) handler {
+	return typedOp(func(q *Request, r *Req) (Rep, error) {
+		q.body = jsonBytes(r)
+		out, err := h(q)
+		return replyAs[Rep](out, err)
+	})
+}
+
+// replyAs: a handler's map reply (keys fixed by the handler) as its contract type.
+func replyAs[T any](v any, err error) (T, error) {
+	if err != nil {
+		var t T
+		return t, err
+	}
+	return asT[T](v)
 }
 
 // recOf: an open record as the contract's map; never nil, so a required record is written as {}.

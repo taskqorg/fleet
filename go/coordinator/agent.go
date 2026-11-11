@@ -843,63 +843,69 @@ func agentReply(q *Request, b doc) (doc, error) {
 	return qu, put(q, "question", qu)
 }
 
-func workerDone(q *Request, b doc) (doc, error) {
-	eid, err := strArg(b, "executionId", "executionId", 0)
-	if err != nil {
-		return nil, err
+func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneReply, error) {
+	var none contract.WorkerDoneReply
+	eid := b.ExecutionId
+	if eid == "" {
+		return none, fail(400, "Expected executionId")
 	}
 	e, err := get(q, eid, "execution")
 	if err != nil {
-		return nil, err
+		return none, err
 	}
-	reject := func(code, reason string) (doc, error) {
-		r := doc{"id": newID(), "executionId": eid, "action": "rejected", "code": code, "reason": reason, "at": nowMs()}
-		return r, put(q, "worker-done", r)
+	record := func(r contract.WorkerDoneReply) (contract.WorkerDoneReply, error) {
+		return r, put(q, "worker-done", docOf(r))
 	}
-	if b["outcome"] != "succeeded" && b["outcome"] != "failed" {
+	reject := func(code, reason string) (contract.WorkerDoneReply, error) {
+		id, at := newID(), nowMs()
+		return record(contract.WorkerDoneReply{Id: &id, ExecutionId: eid, Action: "rejected", Code: &code, Reason: &reason, At: &at})
+	}
+	var outcome string
+	json.Unmarshal(b.Outcome, &outcome) // a non-string outcome is rejected below, as before
+	var summary *string
+	json.Unmarshal(b.Summary, &summary) // a non-string summary is stored as null
+	if outcome != "succeeded" && outcome != "failed" {
 		return reject("invalid_outcome", "worker_done requires outcome=succeeded or outcome=failed.")
 	}
 	es, err := sessionExecutions(q, astr(e["sessionId"]))
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	if latest := es[len(es)-1]; latest["id"] != eid {
 		return reject("stale_dispatch", fmt.Sprintf("Execution %s is superseded by %s.", eid, astr(latest["id"])))
 	}
-	summary := any(nil)
-	if s, ok := b["summary"].(string); ok {
-		summary = s
-	}
 	if r := mapOf(e["report"]); r != nil {
-		if r["outcome"] == b["outcome"] && r["summary"] == summary {
-			return doc{"action": "accepted", "executionId": eid, "report": r, "duplicate": true}, nil
+		if r["outcome"] == outcome && r["summary"] == optAny(summary) {
+			report, err := asT[contract.WorkerReport](r)
+			yes := true
+			return contract.WorkerDoneReply{Action: "accepted", ExecutionId: eid, Report: &report, Duplicate: &yes}, err
 		}
 		return reject("already_reported", "A different worker_done was already accepted for this execution.")
 	}
-	if n, _ := b["nativeSessionId"].(string); n != "" {
+	if n := deref(b.NativeSessionId); n != "" {
 		known, err := agentKnownNative(q, e)
 		if err != nil {
-			return nil, err
+			return none, err
 		}
 		if known != "" && known != n {
 			return reject("native_identity_conflict", "Reported native session differs from the captured one.")
 		}
 	}
-	report := doc{"outcome": b["outcome"], "summary": summary, "at": nowMs()}
-	e["report"] = report
+	report := contract.WorkerReport{Outcome: outcome, Summary: summary, At: nowMs()}
+	e["report"] = docOf(report)
 	if err := put(q, "execution", e); err != nil {
-		return nil, err
+		return none, err
 	}
 	if ds, err := all(q, "delegation", doc{"childExecutionId": eid}); err != nil {
-		return nil, err
+		return none, err
 	} else if len(ds) > 0 {
-		ds[0]["report"] = report
+		ds[0]["report"] = docOf(report)
 		if err := put(q, "delegation", ds[0]); err != nil {
-			return nil, err
+			return none, err
 		}
 	}
-	r := doc{"id": newID(), "executionId": eid, "action": "accepted", "report": report, "at": nowMs()}
-	return r, put(q, "worker-done", r)
+	id, at := newID(), nowMs()
+	return record(contract.WorkerDoneReply{Id: &id, ExecutionId: eid, Action: "accepted", Report: &report, At: &at})
 }
 
 // stopOutcome: proven only when a host receipt ended the execution; otherwise unknown.
@@ -1367,36 +1373,41 @@ func init() {
 	agentOp("session_transition", false, sessionTransition)
 	agentOp("session_fork", false, sessionFork)
 	agentOp("session_resume", false, sessionResume)
-	agentOp("session_handoffs", true, func(q *Request, b doc) (doc, error) {
-		sid, err := strArg(b, "sessionId", "sessionId", 0)
-		if err != nil {
-			return nil, err
+	agentTypedOp("session_handoffs", true, func(q *Request, b *contract.SessionHandoffsRequest) (contract.SessionHandoffsReply, error) {
+		if b.SessionId == "" {
+			return contract.SessionHandoffsReply{}, fail(400, "Expected sessionId")
 		}
-		hs, err := all(q, "handoff", doc{"sessionId": sid})
-		return doc{"handoffs": hs}, err
+		hs, err := all(q, "handoff", doc{"sessionId": b.SessionId})
+		return contract.SessionHandoffsReply{Handoffs: recsOf(hs)}, err
 	})
 	agentOp("message_send", false, submit)
-	agentOp("queue_list", true, func(q *Request, b doc) (doc, error) {
-		ms, err := all(q, "queued-message", doc{"sessionId": nilIf(astr(b["sessionId"]))})
+	agentTypedOp("queue_list", true, func(q *Request, b *contract.QueueListRequest) (contract.QueueListReply, error) {
+		ms, err := all(q, "queued-message", doc{"sessionId": nilIf(deref(b.SessionId))})
 		out := []doc{}
 		for _, m := range ms {
 			v, err := queueView(q, m)
 			if err != nil {
-				return nil, err
+				return contract.QueueListReply{}, err
 			}
 			out = append(out, v)
 		}
-		return doc{"queued": out}, err
+		return contract.QueueListReply{Queued: recsOf(out)}, err
 	})
 	agentOp("ask", false, agentAsk)
 	agentOp("reply", false, agentReply)
-	agentOp("questions", true, func(q *Request, b doc) (doc, error) {
-		qs, err := all(q, "question", doc{"sessionId": nilIf(astr(b["sessionId"])), "state": nilIf(astr(b["state"]))})
-		return doc{"questions": qs}, err
+	agentTypedOp("questions", true, func(q *Request, b *contract.QuestionsRequest) (contract.QuestionsReply, error) {
+		qs, err := all(q, "question", doc{"sessionId": nilIf(deref(b.SessionId)), "state": nilIf(deref(b.State))})
+		return contract.QuestionsReply{Questions: recsOf(qs)}, err
 	})
-	agentOp("worker_done", false, workerDone)
+	agentTypedOp("worker_done", false, workerDone)
 	agentTypedOp("execution_status", true, executionStatus)
-	agentOp("focus_set", false, focusSet)
+	agentTypedOp("focus_set", false, func(q *Request, b *contract.FocusSetRequest) (contract.FocusSetReply, error) {
+		out, err := focusSet(q, docOf(b))
+		if err != nil {
+			return contract.FocusSetReply{}, err
+		}
+		return asT[contract.FocusSetReply](out)
+	})
 	agentOp("reconcile", false, func(q *Request, _ doc) (doc, error) { return agentReconcile(q) })
 
 	// /api/hosts/agent-tools: an executor's agent calls a tool; every call is bound to the calling execution's session.

@@ -22,3 +22,15 @@ func TestTypedOpRefusesCaseVariantKeys(t *testing.T) {
 		t.Fatalf("exact body: err %v, saw %q", err, got)
 	}
 }
+
+// Requirement N5 (the request struct is the contract). Risk: a required number left out decodes as 0, so budget_set
+// without a limit created a stop budget of 0 that cancelled all of a person's work.
+func TestTypedOpRefusesMissingRequiredField(t *testing.T) {
+	h := typedOp(func(q *Request, r *contract.BudgetSetRequest) (string, error) { return "", nil })
+	if _, err := h(&Request{body: json.RawMessage(`{"scope":"person","scopeId":"a@b","unit":"wall_ms","action":"stop"}`)}); err == nil {
+		t.Fatal("missing limit accepted")
+	}
+	if _, err := h(&Request{body: json.RawMessage(`{"scope":"person","scopeId":"a@b","unit":"wall_ms","limit":0}`)}); err != nil {
+		t.Fatalf("limit 0 refused: %v", err)
+	}
+}

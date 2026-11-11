@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"fleet/contract"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -383,57 +385,59 @@ func expireWaiting(ctx context.Context, a *App) error {
 	return nil
 }
 
-func ruleArg(q *Request) (*string, artifactRule, error) {
-	var b struct {
-		ProjectID *string `json:"projectId"`
-		Rule      any     `json:"rule"`
-	}
-	decode(q.body, &b)
-	r, err := validRule(b.Rule, nil)
-	return b.ProjectID, r, err
+func ruleArg(projectID *string, rule json.RawMessage) (*string, artifactRule, error) {
+	var v any
+	json.Unmarshal(rule, &v)
+	r, err := validRule(v, nil)
+	return projectID, r, err
 }
 
 func init() {
 	// Retention rules: the operator previews the effect, then confirms; editing a rule changes its hash.
-	operation("artifact_rule_preview", true, func(q *Request) (any, error) {
+	operation("artifact_rule_preview", true, operatorFirst(typedOp(func(q *Request, b *contract.ArtifactRulePreviewRequest) (contract.ArtifactRulePreviewReply, error) {
+		var none contract.ArtifactRulePreviewReply
 		if err := operatorOnly(q); err != nil {
-			return nil, err
+			return none, err
 		}
-		p, r, err := ruleArg(q)
+		p, r, err := ruleArg(b.ProjectId, b.Rule)
 		if err != nil {
-			return nil, err
+			return none, err
 		}
 		rows, err := rowsCtx(withTx(q), conn(withTx(q), q.app), "SELECT id,name,size FROM artifact WHERE state='stored' AND project_id IS NOT DISTINCT FROM $1 AND scope=$2 AND created_at <= now() - ($3::text||' days')::interval ORDER BY seq", p, r.Scope, fmt.Sprint(r.OlderThanDays))
 		if err != nil {
-			return nil, err
+			return none, err
 		}
 		var bytes int64
 		for _, x := range rows {
 			bytes += int64(num(x["size"]))
 		}
-		return doc{"ruleHash": ruleHash(r), "count": len(rows), "bytes": bytes, "sample": rows[:min(10, len(rows))]}, nil
-	})
-	operation("artifact_rule_confirm", false, func(q *Request) (any, error) {
+		return contract.ArtifactRulePreviewReply{RuleHash: ruleHash(r), Count: int64(len(rows)), Bytes: bytes, Sample: recsOf(rows[:min(10, len(rows))])}, nil
+	})))
+	operation("artifact_rule_confirm", false, operatorFirst(typedOp(func(q *Request, b *contract.ArtifactRuleConfirmRequest) (contract.ArtifactRuleConfirmReply, error) {
+		var none contract.ArtifactRuleConfirmReply
 		if err := operatorOnly(q); err != nil {
-			return nil, err
+			return none, err
 		}
-		p, r, err := ruleArg(q)
+		p, r, err := ruleArg(b.ProjectId, b.Rule)
 		if err != nil {
-			return nil, err
+			return none, err
+		}
+		if b.RuleHash != nil && *b.RuleHash != ruleHash(r) {
+			return none, fail(409, "The rule changed since the preview")
 		}
 		ss, err := storeList(withTx(q), q.app)
 		if err != nil {
-			return nil, err
+			return none, err
 		}
 		hosts := map[string]bool{}
 		for _, s := range ss {
 			hosts[s.HostID] = true
 		}
 		var raw map[string]any
-		b, _ := json.Marshal(r)
-		json.Unmarshal(b, &raw)
+		rb, _ := json.Marshal(r)
+		json.Unmarshal(rb, &raw)
 		if _, err := validRule(raw, hosts); err != nil {
-			return nil, err
+			return none, err
 		}
 		found := false
 		for _, x := range projectRules(p) {
@@ -442,26 +446,24 @@ func init() {
 			}
 		}
 		if !found {
-			return nil, fail(404, "Rule is not in the project settings")
+			return none, fail(404, "Rule is not in the project settings")
 		}
 		_, err = q.tx.Exec(q.ctx(), "INSERT INTO artifact_rule_confirmation(project_id,rule_hash,confirmed_by) VALUES($1,$2,$3) ON CONFLICT(project_id,rule_hash) DO UPDATE SET confirmed_by=excluded.confirmed_by,confirmed_at=now()", projectKey(p), ruleHash(r), "operator:"+q.person.Email)
-		return doc{"ruleHash": ruleHash(r), "confirmed": true}, err
-	})
+		return contract.ArtifactRuleConfirmReply{RuleHash: ruleHash(r), Confirmed: true}, err
+	})))
 	// An operator retry of a failed copy: placement queues it on its next pass.
-	operation("artifact_copy_retry", false, func(q *Request) (any, error) {
+	operation("artifact_copy_retry", false, operatorFirst(typedOp(func(q *Request, b *contract.ArtifactCopyRetryRequest) (contract.ArtifactCopyRetryReply, error) {
 		if err := operatorOnly(q); err != nil {
-			return nil, err
+			return contract.ArtifactCopyRetryReply{}, err
 		}
-		var b struct{ ArtifactID, StoreID string }
-		decode(q.body, &b)
 		var id string
-		err := q.tx.QueryRow(q.ctx(), "UPDATE artifact_copy SET next_attempt_at=now(),attempts=0 WHERE artifact_id=$1 AND store_id=$2 AND state='failed' RETURNING artifact_id", truncate(b.ArtifactID, 200), truncate(b.StoreID, 200)).Scan(&id)
+		err := q.tx.QueryRow(q.ctx(), "UPDATE artifact_copy SET next_attempt_at=now(),attempts=0 WHERE artifact_id=$1 AND store_id=$2 AND state='failed' RETURNING artifact_id", truncate(b.ArtifactId, 200), truncate(b.StoreId, 200)).Scan(&id)
 		if err == pgx.ErrNoRows {
-			return nil, fail(409, "No failed copy for this artifact and store")
+			return contract.ArtifactCopyRetryReply{}, fail(409, "No failed copy for this artifact and store")
 		}
 		if err != nil {
-			return nil, err
+			return contract.ArtifactCopyRetryReply{}, err
 		}
-		return doc{"retrying": true}, nil
-	})
+		return contract.ArtifactCopyRetryReply{Retrying: true}, nil
+	})))
 }

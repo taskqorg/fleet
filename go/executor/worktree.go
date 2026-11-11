@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"fleet/contract"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -297,7 +298,7 @@ func removeTrial(top, w string) bool {
 }
 
 // projectScript runs a project script in the worktree and waits; event data with exit code and truncated output.
-func projectScript(name, cmd, top, w, session string) M {
+func projectScript(name, cmd, top, w, session string) contract.ProjectScriptResult {
 	c := cleanCmd("sh", "-c", cmd)
 	c.Dir = w
 	c.Env = append(c.Env, "FLEET_ROOT_PATH="+top, "FLEET_WORKTREE_PATH="+w, "FLEET_SESSION_ID="+session)
@@ -305,28 +306,31 @@ func projectScript(name, cmd, top, w, session string) M {
 	c.Stdout, c.Stderr = &so, &se
 	err := c.Run()
 	if err != nil && c.ProcessState == nil {
-		return M{"script": name, "exitCode": nil, "ok": false, "stderr": err.Error()}
+		msg := err.Error()
+		return contract.ProjectScriptResult{Script: name, Ok: false, Stderr: &msg}
 	}
-	var code any = c.ProcessState.ExitCode()
-	if code == -1 {
-		code = nil
+	var code *int64
+	if n := c.ProcessState.ExitCode(); n != -1 {
+		v := int64(n)
+		code = &v
 	}
-	return M{"script": name, "exitCode": code, "ok": c.ProcessState.Success(), "stdout": tail([]byte(so.String())), "stderr": tail([]byte(se.String()))}
+	stdout, stderr := tail([]byte(so.String())), tail([]byte(se.String()))
+	return contract.ProjectScriptResult{Script: name, ExitCode: code, Ok: c.ProcessState.Success(), Stdout: &stdout, Stderr: &stderr}
 }
 
 // teardown: teardown script, then remove the worktree unless dirty or the script failed; the branch is deleted only when
 // merged (-d).
-func teardown(dir, session, top string, project any) M {
+func teardown(dir, session, top string, project any) contract.Teardown {
 	w := filepath.Join(dir, "worktree")
 	if !exists(filepath.Join(w, ".git")) {
-		return M{"removed": false, "reason": "no-worktree"}
+		return refusedTeardown("no-worktree")
 	}
-	out := M{}
+	out := contract.Teardown{}
 	if jIsStr(project, "scripts", "teardown") {
 		t := projectScript("teardown", jStr(project, "scripts", "teardown"), top, w, session)
-		out["teardown"] = t
-		if t["ok"] != true {
-			out["removed"], out["reason"] = false, "teardown-failed"
+		out.Teardown = &t
+		if !t.Ok {
+			out.Reason = new("teardown-failed")
 			return out
 		}
 	}
@@ -347,22 +351,28 @@ func teardown(dir, session, top string, project any) M {
 	}
 	o, err := hardenedGit(args...).Output()
 	if err != nil || len(o) > 0 {
-		out["removed"], out["reason"] = false, "uncommitted"
+		out.Reason = new("uncommitted")
 		return out
 	}
 	for _, r := range links {
 		os.Remove(filepath.Join(w, r))
 	}
 	removed := hardenedGit("-C", top, "worktree", "remove", w).Run() == nil
-	out["removed"] = removed
+	out.Removed = removed
 	if !removed {
-		out["reason"] = "worktree-remove-failed"
+		out.Reason = new("worktree-remove-failed")
 		return out
 	}
 	prefix := "fleet"
 	if jIsStr(project, "worktree", "branchPrefix") {
 		prefix = jStr(project, "worktree", "branchPrefix")
 	}
-	out["branchDeleted"] = hardenedGit("-C", top, "branch", "-d", prefix+"/"+session).Run() == nil
+	deleted := hardenedGit("-C", top, "branch", "-d", prefix+"/"+session).Run() == nil
+	out.BranchDeleted = &deleted
 	return out
+}
+
+// refusedTeardown: a teardown that removed nothing, with its reason.
+func refusedTeardown(reason string) contract.Teardown {
+	return contract.Teardown{Removed: false, Reason: &reason}
 }

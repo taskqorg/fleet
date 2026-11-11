@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"fleet/contract"
 )
 
 var (
@@ -414,5 +416,11 @@ func viewLink(q *Request, b doc) (doc, error) {
 
 func init() {
 	agentDescriptions["view_link"] = "The operator-app link for a view ({view:{view:'tasks',state:['failed'],project:['fleet']}}), or the view of a link ({url}); returns {url, path} or {view}"
-	agentOp("view_link", true, viewLink)
+	agentTypedOp("view_link", true, func(q *Request, b *contract.ViewLinkRequest) (contract.ViewLinkReply, error) {
+		out, err := viewLink(q, docOf(b))
+		if err != nil {
+			return contract.ViewLinkReply{}, err
+		}
+		return asT[contract.ViewLinkReply](out)
+	})
 }

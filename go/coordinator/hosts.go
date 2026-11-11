@@ -22,10 +22,22 @@ var (
 )
 
 func init() {
-	operation("hosts_register", false, hostsRegister)
-	operation("hosts_update", false, hostsUpdate)
-	operation("hosts_rotate_secret", false, hostsRotateSecret)
-	operation("hosts_list", true, hostsList)
+	operation("hosts_register", false, ownerFirst("Only the owner manages hosts", typedOp(func(q *Request, b *contract.HostsRegisterRequest) (contract.HostWriteReply, error) {
+		out, err := hostsRegister(q, docOf(b))
+		return replyAs[contract.HostWriteReply](out, err)
+	})))
+	operation("hosts_update", false, typedOp(func(q *Request, b *contract.HostsUpdateRequest) (contract.HostsUpdateReply, error) {
+		out, err := hostsUpdate(q, docOf(b))
+		return replyAs[contract.HostsUpdateReply](out, err)
+	}))
+	operation("hosts_rotate_secret", false, ownerFirst("Only the owner manages hosts", typedOp(func(q *Request, b *contract.HostsRotateSecretRequest) (contract.HostWriteReply, error) {
+		out, err := hostsRotateSecret(q, docOf(b))
+		return replyAs[contract.HostWriteReply](out, err)
+	})))
+	operation("hosts_list", true, typedOp(func(q *Request, _ *contract.HostsListRequest) (contract.HostsListReply, error) {
+		out, err := hostsList(q)
+		return replyAs[contract.HostsListReply](out, err)
+	}))
 	operation("route_decisions", true, typedOp(routeDecisions))
 }
 
@@ -191,11 +203,10 @@ func secretOf(q *Request, b doc, self string) (hash, secret string, err error) {
 	return hash, secret, err
 }
 
-func hostsRegister(q *Request) (any, error) {
+func hostsRegister(q *Request, b doc) (any, error) {
 	if err := ownerOnly(q, "Only the owner manages hosts"); err != nil {
 		return nil, err
 	}
-	b := q.obj()
 	id := astr(b["id"])
 	if !hostID.MatchString(id) {
 		return nil, fail(400, "Expected host id")
@@ -258,8 +269,7 @@ func hostsRegister(q *Request) (any, error) {
 	return out, nil
 }
 
-func hostsUpdate(q *Request) (any, error) {
-	b := q.obj()
+func hostsUpdate(q *Request, b doc) (any, error) {
 	h, err := hostByID(q, b["id"])
 	if err != nil {
 		return nil, err
@@ -323,11 +333,10 @@ func hostsUpdate(q *Request) (any, error) {
 	return doc{"host": hostView(h)}, nil
 }
 
-func hostsRotateSecret(q *Request) (any, error) {
+func hostsRotateSecret(q *Request, b doc) (any, error) {
 	if err := ownerOnly(q, "Only the owner manages hosts"); err != nil {
 		return nil, err
 	}
-	b := q.obj()
 	h, err := hostByID(q, b["id"])
 	if err != nil {
 		return nil, err
