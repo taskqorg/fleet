@@ -605,6 +605,18 @@ func agreement(scores []doc) doc {
 	return doc{"compared": compared, "matched": matched, "percent": pct}
 }
 
+// scoreNumber: a one-trial score as a number (pass is 1, fail 0; metric and scale as given).
+func scoreNumber(s doc) float64 {
+	if s["form"] == "pass_fail" {
+		if s["value"] == true {
+			return 1
+		}
+		return 0
+	}
+	v, _ := numOK(s["value"])
+	return v
+}
+
 func summarize(scores []doc, trials []string) doc {
 	in := map[string]bool{}
 	for _, t := range trials {
@@ -632,20 +644,12 @@ func summarize(scores []doc, trials []string) doc {
 			order = append(order, k)
 		}
 		e.n++
-		switch s["form"] {
-		case "pick_best":
+		if s["form"] == "pick_best" {
 			if in[astr(s["value"])] {
 				e.values = append(e.values, 1)
 			}
-		case "pass_fail":
-			if s["value"] == true {
-				e.values = append(e.values, 1)
-			} else {
-				e.values = append(e.values, 0)
-			}
-		default:
-			v, _ := numOK(s["value"])
-			e.values = append(e.values, v)
+		} else {
+			e.values = append(e.values, scoreNumber(s))
 		}
 	}
 	out := doc{}
@@ -2077,6 +2081,7 @@ func expGet(q *Request, id string) (doc, error) {
 	}
 	out["notes"] = notes
 	out["variants"], out["spend"], out["trials"], out["cells"], out["scores"], out["agreement"], out["judges"] = variants, s, tv, cells, scores, agreement(cur), judges
+	out["comparison"] = expComparison(exp, trials, cur)
 	out["priority"] = doc{"value": "background", "note": "No effect until the scheduler exists"}
 	return out, nil
 }
@@ -2364,4 +2369,67 @@ func pipelineFinished(ctx context.Context, a *App, run doc) {
 	if run["pipelineId"] == "draft-examples" && run["state"] == "succeeded" {
 		importDrafts(ctx, a, run)
 	}
+}
+
+// expComparison: each non-baseline variant against the baseline (the first variant) on the primary evaluator, through
+// the one statistics function, over held_out examples when the suite has any (bands are tuned on tune), else over all.
+// Only the latest attempt of a cell counts, with its latest primary score, and only one evaluator version (the newest):
+// rows of different versions are never averaged.
+func expComparison(exp doc, trials []doc, cur []doc) []any {
+	primary, vs := astr(exp["primary_evaluator"]), anys(exp["variants"])
+	out := []any{}
+	if primary == "" || len(vs) < 2 {
+		return out
+	}
+	baseline := astr(mapOf(vs[0])["label"])
+	scope, split := "all", map[string]string{}
+	for _, p := range anys(exp["examples"]) {
+		m := mapOf(p)
+		split[astr(m["id"])] = astr(m["split"])
+		if m["split"] == "held_out" {
+			scope = "held_out"
+		}
+	}
+	reason := ""
+	if strings.HasSuffix(primary, ":pick_best") {
+		reason = "pick_best ranks trials together; it gives no per-trial value to pair"
+	}
+	byTrial, version := map[any]doc{}, ""
+	for _, sc := range cur { // newest last: the later score of a trial replaces the earlier
+		if sc["evaluator"] == primary && len(trialIDsOf(sc)) == 1 {
+			byTrial[firstTrial(sc)] = sc
+			version = astr(sc["evaluatorVersion"])
+		}
+	}
+	order, latest := expLatest(trials)
+	values, versions := map[string]map[string][]float64{}, map[string]bool{}
+	for _, k := range order {
+		t := latest[k]
+		cell := mapOf(t["cell"])
+		ex, v := astr(cell["example"]), astr(cell["variant"])
+		sc := byTrial[t["id"]]
+		if sc == nil || !comparable(t) || scope == "held_out" && split[ex] != "held_out" {
+			continue
+		}
+		versions[astr(sc["evaluatorVersion"])] = true
+		if astr(sc["evaluatorVersion"]) != version {
+			continue
+		}
+		if values[v] == nil {
+			values[v] = map[string][]float64{}
+		}
+		values[v][ex] = append(values[v][ex], scoreNumber(sc))
+	}
+	if len(versions) > 1 && reason == "" {
+		reason = "scores of older evaluator versions are left out"
+	}
+	if len(values[baseline]) == 0 && reason == "" {
+		reason = "the baseline has no scored trial"
+	}
+	for _, x := range vs[1:] {
+		label := astr(mapOf(x)["label"])
+		out = append(out, doc{"variant": label, "baseline": baseline, "evaluator": primary, "evaluatorVersion": version, "split": scope, "reason": nilIf(reason),
+			"result": compare(values[baseline], values[label])})
+	}
+	return out
 }

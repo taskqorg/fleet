@@ -99,7 +99,7 @@ The record turns an experiment into a decision. Columns on `experiment`: `goal`,
 
 ## Statistics
 
-One Go function computes every comparison: the experiment matrix, the Lab group comparison, `analytics_query` consumers and later gates. No second implementation.
+One Go function computes every comparison: the experiment matrix, the Lab group comparison, `analytics_query` consumers and later gates. No second implementation. It is `go/coordinator/statistics.go` (`compare`, `typedStats`, `bandAnswer`); `lab_experiment_get` returns `comparison`, each non-baseline variant against the first on the primary evaluator, over `held_out` examples when the suite has any. The interval is a t interval over the per-example differences; `FLEET_LAB_MIN_EXAMPLES` (default 2) is the "too few examples" threshold.
 
 - Input: two variants on one suite, one evaluator version. Output: per-example paired difference of the primary evaluator, its mean, a 95% interval clustered by example, and `n` (examples), always printed.
 - When `n` is too small for the interval to mean anything, the output says "too few examples" and no interval is drawn. The threshold is a setting with a permissive default.
