@@ -174,19 +174,21 @@ jobs:
           done
           if "$recover"; then
             for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com github.com; do
-              dig @1.1.1.1 "$host" A +short +time=3 +tries=1 | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
+              answer=$(dig @1.1.1.1 "$host" A +time=3 +tries=1 +noall +comments +answer)
+              grep -q 'status: NOERROR' <<< "$answer"
+              grep -Eq '[[:space:]]IN[[:space:]]+A[[:space:]]+[0-9]' <<< "$answer"
             done
             link=$(ip -4 route show default | awk '{print $5; exit}')
             test -n "$link"
             sudo resolvectl dns "$link" 1.1.1.1
             sudo resolvectl flush-caches
             resolvectl dns "$link"
+            curl --fail --head https://archive.ubuntu.com/ubuntu/dists/noble/InRelease
+            curl --fail --head https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease
           fi
           for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com github.com; do
             getent ahostsv4 "$host"
           done
-          curl --fail --head https://archive.ubuntu.com/ubuntu/dists/noble/InRelease
-          curl --fail --head https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease
       - if: steps.chromium.outputs.cache-hit != 'true'
         run: pnpm exec playwright install --with-deps chromium
       - if: steps.chromium.outputs.cache-hit == 'true'
