@@ -1,6 +1,6 @@
 # Fleet stack measurements
 
-Measured numbers that [`docs/designs/fleet-stack.md`](../docs/designs/fleet-stack.md) cites. Each section names its machine and commit. Records of what was observed; the rules are in the specification.
+Measured numbers that [`docs/designs/fleet-stack.md`](../docs/designs/fleet-stack.md), [`fleet-go-code.md`](../docs/designs/fleet-go-code.md) and [`fleet-stack-trial.md`](../docs/designs/fleet-stack-trial.md) cite. Each section names its machine and commit. Records of what was observed; the rules are in the specification.
 
 ## Toolchain measurements
 

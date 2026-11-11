@@ -204,7 +204,7 @@ Routine work advances automatically. People resolve substantive decisions and ex
 
 Fleet's services move to Go, one language for all of them: the coordinator first, then the executor and the gateway together; the executor probe showed it builds without a C compiler (pull request #115).
 
-The browser app stays TypeScript. Reason: one build from any machine for every platform, at equal speed for Fleet's workload; evidence, module table and migration order are in the [stack specification](docs/designs/fleet-stack.md).
+The browser app stays TypeScript. Reason: one build from any machine for every platform, at equal speed for Fleet's workload; evidence and migration order are in the [stack specification](docs/designs/fleet-stack.md), the module table in [Go code](docs/designs/fleet-go-code.md#third-party-go-modules).
 
 Go rules:
 

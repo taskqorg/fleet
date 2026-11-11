@@ -4,7 +4,7 @@
 *   **Status:** Proposed; storage decided by the owner
 *   **Owner decision (2026-11-11):** the coordinator store is the single source of truth, with append-only revisions. A git mirror is only a later, optional stage. The six rules in "Failure modes and their rules" are binding.
 *   **Date:** 2026-11-11 (main `23cc517`, redesign #153 merged)
-*   **Depends on:** [fleet-stack.md](fleet-stack.md) contracts and the quality round's wave 1 (one router, files by domain, `go/contract`, committed `schema.sql`) and wave 2 lane F (the `ops` contract and typed `op<'name'>` in the app). [fleet-people-access.md](fleet-people-access.md) roles, director and `people.json`. [fleet-lab.md](fleet-lab.md) experiments and Promote.
+*   **Depends on:** [fleet-contracts.md](fleet-contracts.md) and the quality round's wave 1 (one router, files by domain, `go/contract`, committed `schema.sql`) and wave 2 lane F (the `ops` contract and typed `op<'name'>` in the app). [fleet-people-access.md](fleet-people-access.md) roles, director and `people.json`. [fleet-lab.md](fleet-lab.md) experiments and Promote.
 *   **Screens:** [D20](../design-system/decisions.md), the [definition editor](../design-system/patterns/definition-editor.md) pattern, page specs [agents](../design-system/pages/agents.md), [pipelines](../design-system/pages/pipelines.md), [catalogue](../design-system/pages/catalogue.md), mockup routes `#/agents`, `#/pipelines`, `#/pipelines/render-props`, `#/catalogue` in `docs/design-system/pages/mockups.html`, and "what each screen answers" in [formats.md](../design-system/formats.md). UI choices are decided there and are not reopened here.
 
 --------------------------------------------------------------------------------
