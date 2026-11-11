@@ -1,0 +1,11 @@
+{
+  "id": "lang-script-only",
+  "steps": [
+    {
+      "command": "python3 -c \"import json,os,re,sys,unicodedata as u;P=sys.argv[1];loc=re.search(r'[(](en|el|ru)[)]',P).group(1);T=re.search(r'Text: .(.*). Question:',P,re.S).group(1);c={k:sum(1 for ch in T if ch.isalpha() and u.name(ch,'').startswith(k)) for k in ('GREEK','LATIN','CYRILLIC')};want={'en':'LATIN','el':'GREEK','ru':'CYRILLIC'}[loc];share=c[want]/(sum(c.values()) or 1);put=lambda o:json.dump(o,open(os.path.join(os.environ['FLEET_OUTPUT_DIR'],'output.json'),'w'));dec=lambda:json.load(open(os.path.join(os.environ['FLEET_INPUT_DIR'],'decide','output.json')));put({'answer':c,'p':1 if share>=0.5 else 0,'answered_by':'script','tokens':None})\" ${example.prompt}",
+      "id": "combine",
+      "kind": "script"
+    }
+  ],
+  "version": 2
+}
