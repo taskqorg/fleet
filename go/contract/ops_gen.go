@@ -810,14 +810,14 @@ const (
 
 // ExecutionStatusReply: next: the suggested operation (message, session_fork, execution_status or wait_or_steer). stop only after a stop request.
 type ExecutionStatusReply struct {
-	ExecutionId string                       `json:"executionId"`
-	Next        string                       `json:"next"`
-	Readiness   []map[string]json.RawMessage `json:"readiness,omitempty"`
-	Report      json.RawMessage              `json:"report"`
-	Resume      map[string]json.RawMessage   `json:"resume"`
-	SessionId   *string                      `json:"sessionId"`
-	State       string                       `json:"state"`
-	Stop        *StopOutcome                 `json:"stop,omitempty"`
+	ExecutionId string                     `json:"executionId"`
+	Next        string                     `json:"next"`
+	Readiness   []json.RawMessage          `json:"readiness,omitempty"`
+	Report      json.RawMessage            `json:"report"`
+	Resume      map[string]json.RawMessage `json:"resume"`
+	SessionId   *string                    `json:"sessionId"`
+	State       string                     `json:"state"`
+	Stop        *StopOutcome               `json:"stop,omitempty"`
 }
 
 type ExecutionStatusRequest struct {

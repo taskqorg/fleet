@@ -966,7 +966,7 @@ func executionStatus(q *Request, r *contract.ExecutionStatusRequest) (contract.E
 	}
 	rep.Resume = recOf(resume)
 	if len(readiness) > 0 {
-		rep.Readiness = recsOf(readiness)
+		rep.Readiness = rawList(readiness)
 	}
 	return rep, nil
 }
@@ -1348,13 +1348,14 @@ var agentOps = map[string]registeredOp{}
 
 // agentTypedOp: an agent tool on its generated request and reply types.
 func agentTypedOp[Req, Rep any](name string, read bool, h func(*Request, *Req) (Rep, error)) {
-	f := typedOp(h)
-	agentOps[name] = registeredOp{read, f}
-	gatedObjOp(name, read, f)
+	agentTool(name, read, typedOp(h))
 }
 
 func agentOp(name string, read bool, h func(*Request, doc) (doc, error)) {
-	f := func(q *Request) (any, error) { return h(q, body(q)) }
+	agentTool(name, read, func(q *Request) (any, error) { return h(q, body(q)) })
+}
+
+func agentTool(name string, read bool, f handler) {
 	agentOps[name] = registeredOp{read, f}
 	gatedObjOp(name, read, f)
 }
