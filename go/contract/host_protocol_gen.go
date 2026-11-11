@@ -38,7 +38,7 @@ type AccountObservation struct {
 	AccountId           string        `json:"accountId"`
 	Binding             string        `json:"binding"`
 	NativeLoginObserved *bool         `json:"nativeLoginObserved"`
-	Platform            string        `json:"platform"`
+	Platform            Platform      `json:"platform"`
 	Quota               string        `json:"quota"`
 	Readiness           string        `json:"readiness"`
 	Reason              string        `json:"reason"`
@@ -303,6 +303,14 @@ type OutboxFailed struct {
 	Status int64  `json:"status"`
 }
 
+type Platform string
+
+const (
+	PlatformDarwin Platform = "darwin"
+	PlatformWin32  Platform = "win32"
+	PlatformLinux  Platform = "linux"
+)
+
 type PollReply struct {
 	AutoUpdate *string   `json:"autoUpdate,omitempty"`
 	Commands   []Command `json:"commands"`
@@ -312,7 +320,7 @@ type PollReply struct {
 type PollRequest struct {
 	Capabilities []string          `json:"capabilities"`
 	HostId       string            `json:"hostId"`
-	Platform     string            `json:"platform"`
+	Platform     Platform          `json:"platform"`
 	Problems     []EdgeProblem     `json:"problems"`
 	ProjectRoots []string          `json:"projectRoots,omitempty"`
 	Stores       []json.RawMessage `json:"stores"`
