@@ -717,6 +717,3 @@ ALTER TABLE score ADD CONSTRAINT score_form_check CHECK (form IN ('metric', 'pas
 -- migration 30: executions pin the definitions they resolve (fleet-definition-editors.md, Resolve): a list of
 -- DefinitionRef {kind, id, revision, contentSha, draft?}. The draft and rerun columns come with the operations that use them.
 ALTER TABLE execution ADD COLUMN definitions jsonb NOT NULL DEFAULT '[]';
-
--- migration 31: a draft run keeps the draft content it ran, by <kind>/<id> (fleet-definition-editors.md, Resolve).
-ALTER TABLE execution ADD COLUMN draft_content jsonb NULL;

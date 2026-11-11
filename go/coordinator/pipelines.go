@@ -421,16 +421,12 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
+	if base, ok := o["draftBase"].(int64); ok { // a draft run: on its base, whatever content it has (data.definition holds it)
+		yes := true
+		ref.Revision, ref.Draft = base, &yes
+	}
 	run["definitions"] = []contract.DefinitionRef{ref}
-	if err := putRun(q, run); err != nil {
-		return nil, err
-	}
-	if o["draftDefinition"] != nil { // the draft's content, so the run can be shown and diffed later
-		if err := exec(q, "UPDATE execution SET draft_content=$2 WHERE id=$1", run["id"], jsonBytes(doc{"pipeline/" + astr(def["id"]): def})); err != nil {
-			return nil, err
-		}
-	}
-	return run, nil
+	return run, putRun(q, run)
 }
 
 // Runner state of this process: per-run serial chains and in-flight sync calls.
@@ -1226,6 +1222,14 @@ func init() {
 				b["overrides"] = rawAny(jsonBytes(r.Overrides))
 			}
 			var draft doc
+			var base int64
+			// A repeated requestId answers its run, even after the draft was saved or changed.
+			if old, err := runsWhere(q, "data->>'requestId'=$1 AND data->>'pipeline'=$2", r.RequestId, r.PipelineId+".json"); err != nil {
+				return err
+			} else if len(old) > 0 && r.Draft != nil && *r.Draft {
+				run = old[0]
+				return nil
+			}
 			if r.Draft != nil && *r.Draft {
 				if q.person != nil && !fullAccess(q.person) && !hasRole(q.person, "architect") {
 					return fail(403, "A draft run is the architect's")
@@ -1240,10 +1244,13 @@ func init() {
 				if ps := problems("pipeline", r.PipelineId, d.Content); len(ps) > 0 {
 					return fail(400, "The draft has problems: "+ps[0].Message)
 				}
-				json.Unmarshal([]byte(d.Content), &draft)
+				if err := json.Unmarshal([]byte(d.Content), &draft); err != nil {
+					return err
+				}
+				base = d.Base
 			}
 			var err error
-			run, err = pipelineRunFrom(q, r.PipelineId, b, draft)
+			run, err = pipelineRunFrom(q, r.PipelineId, b, draft, base)
 			return err
 		})
 		if err != nil {
@@ -1268,29 +1275,35 @@ func init() {
 }
 
 func pipelineRunCreate(q *Request) (doc, error) {
-	return pipelineRunFrom(q, q.r.PathValue("id"), body(q), nil)
+	return pipelineRunFrom(q, q.r.PathValue("id"), body(q), nil, 0)
 }
 
 // pipelineRunFrom: a generic run of pipeline id from body b (requestId, projectId, exampleArtifactId, example, overrides);
 // draft, when set, is the caller's draft content to run instead of the head.
-func pipelineRunFrom(q *Request, pipelineID string, b doc, draft doc) (doc, error) {
+func pipelineRunFrom(q *Request, pipelineID string, b doc, draft doc, draftBase int64) (doc, error) {
 	{
 		rid, ok := b["requestId"].(string)
 		if !ok || rid == "" || len(rid) > 200 || !keysOnly(b, "requestId", "projectId", "exampleArtifactId", "example", "overrides") {
 			return nil, fail(400, "Expected requestId and optional projectId, exampleArtifactId or example, overrides")
 		}
 		file := pipelineID + ".json"
-		if draft == nil {
-			if _, err := loadPipeline(q, file); err != nil {
-				return nil, err
-			}
+		// The live definition must exist (a draft of a retired or deleted pipeline does not run).
+		head, ok, err := headText(q, "pipeline", pipelineID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fail(404, "Unknown pipeline "+pipelineID)
 		}
 		sig := doc{}
 		for k, v := range b {
 			sig[k] = v
 		}
-		if draft != nil { // the identity of a draft run includes its content
-			sig["draftSha256"] = sha256hex([]byte(canonical(draft)))
+		// The request's identity includes the content it ran: the head's, or the draft's (fleet-definition-editors.md).
+		sig["contentSha"] = sha256Text(string(head))
+		if draft != nil {
+			t, _ := canonicalText(jsonBytes(draft))
+			sig["contentSha"], sig["draft"] = sha256Text(t), true
 		}
 		signature := sha256hex([]byte(canonical(sig)))
 		old, err := runsWhere(q, "data->>'requestId'=$1 AND data->>'pipeline'=$2", rid, file)
@@ -1331,7 +1344,7 @@ func pipelineRunFrom(q *Request, pipelineID string, b doc, draft doc) (doc, erro
 		}
 		start := doc{"file": file, "projectId": b["projectId"], "requestId": rid, "example": example, "overrides": overrides, "extra": doc{"signature": signature}}
 		if draft != nil {
-			start["draftDefinition"] = draft
+			start["draftDefinition"], start["draftBase"] = draft, draftBase
 		}
 		run, err := pipelineStart(q, start)
 		if err != nil {
