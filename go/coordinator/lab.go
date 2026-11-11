@@ -1224,6 +1224,11 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			if err != nil {
 				return err
 			}
+			// Script checks only (never a judge or an agent): the known-good result under references/, for comparison.
+			for _, x := range anys(full["references"]) {
+				f := mapOf(x)
+				files = append(files, labFile{"references/" + astr(f["path"]), []byte(astr(f["text"]))})
+			}
 			todo[astr(t["id"])] = pending{anys(full["checks"]), files}
 		}
 		return nil
