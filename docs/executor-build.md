@@ -20,6 +20,9 @@ Fleet stores command acceptance before spawn and preserves duplicate/conflicting
 ## ACP qualification (Antigravity, generic ACP)
 
 An ACP harness is qualified by its ACP `protocolVersion` (1), not by its runtime release. The 1.5.3 pin on `agentInfo.version` refused Antigravity 1.5.4, a patch release with the same protocol; a release pin breaks every vendor update while the protocol contract is what the executor depends on. The runtime version is retained in the `capabilities` event of each run (`native.result.agentInfo.version`), and missing capabilities are refused where they are used (resume, the requested model or mode). Account bindings record the transport as `acp-1`. Code: `go/executor/harness_acp.go`.
+## Restart after a crash
+
+The executor never reattaches a run it did not start in this process: the run's stdout and stdin pipes die with the executor that owned them, so a surviving harness can no longer be observed or steered. A launch row (execution, command, session, process group) is written to the journal before spawn, and each owned process (pid with its start-time identity, from `identity` in `native_linux.go` / `native_darwin.go`) as it is observed. At start, before the first poll, `reconcileProcesses` freezes and kills every recorded process that is still the same incarnation and every descendant still linked to one, removes run files (`runs/<execution>.env`) no recorded launch needs, emits `process.reconciled` (`ownedProcesses`, `survived`, `launchWindowUnresolved`, `resolved`) and finishes the open command `unknown`. A launch that crashed between spawn and the identity read cannot name its process (`launchWindowUnresolved`). A launch whose processes cannot be confirmed gone stays recorded: its session refuses new `start` commands until a later start resolves it. Check: `TestRestartKillsSurvivingProcesses` (runs on Linux in the CI `go` job and on macOS locally).
 
 ## Evidence and limits
 
