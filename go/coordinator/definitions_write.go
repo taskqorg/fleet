@@ -241,7 +241,7 @@ func definitionDraftGet(q *Request, r *contract.DefinitionDraftGetRequest) (cont
 		return out, err
 	}
 	c, err := definitionContent(string(r.Kind), []byte(d.Content))
-	return contract.DefinitionDraftGetReply{Draft: *draftInfo(d, head), Content: &c, Problems: problems(string(r.Kind), r.Id, d.Content)}, err
+	return contract.DefinitionDraftGetReply{Draft: *draftInfo(d, head), Content: &c, Text: d.Content, Problems: problems(string(r.Kind), r.Id, d.Content)}, err
 }
 
 func definitionDraftDiscard(q *Request, r *contract.DefinitionDraftDiscardRequest) (contract.DefinitionDraftDiscardReply, error) {

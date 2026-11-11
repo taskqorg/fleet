@@ -5,7 +5,7 @@ import {
   Choice, DraftBar, StepList, FlowStrip,
   Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, StatStrip,
   SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions,
-  Composer, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
+  Composer, CodeEditor, DiffText, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type ThreadBlock, type Family, type Stage,
 } from '../src/index.ts';
 import { NAV } from './nav.ts';
@@ -309,6 +309,7 @@ const SECTIONS: [string, string, string | undefined, () => ComponentChildren, Co
   ['result-viewer', 'Result viewer shell', 'result-viewer', () => <ResultDemo />],
   ['setting-field', 'Setting field', 'setting-field', () => <SettingsDemo />, <>Click a value to edit it inline.</>],
   ['composer', 'Composer', 'composer', () => <div class="pane"><Composer draftKey="book" onSend={() => {}} /></div>, <>Enter sends, Shift+Enter adds a line; the draft is kept per conversation.</>],
+  ['code-editor', 'Code editor and diff text', 'code-editor', () => <div class="pane"><CodeEditor label="config/pipelines/hello-search.json" value={'{\n  "id": "hello-search",\n  "steps": [],\n  "version": 2\n}\n'} onChange={() => {}} problems={[{ path: '', message: 'Invalid pipeline: steps' }]} /><DiffText label="Draft against revision 3" text={'@@ -1,4 +1,4 @@\n {\n-  "id": "hello"\n+  "id": "hello-search"\n }'} /></div>, <>A definition's text is edited in place and kept as a draft; problems come from the coordinator and do not block typing.</>],
   ['offline-marker', 'Offline marker', 'offline-marker', () => <div class="row"><OfflineMarker state="updating" since={NOW - 18 * hr} now={NOW} /><OfflineMarker state="offline" since={NOW - 18 * hr} now={NOW} /><OfflineMarker state="signed-out" now={NOW} /></div>, <>Stored data is never shown as current (D3).</>],
   ['problem-row', 'Problem row', 'problem-row', () => <ProblemDemo />],
   ['status-states', 'Loading, empty, error, stale', 'status-states', () => <StatesDemo />],

@@ -788,6 +788,24 @@ export function Composer({ onSend, disabledReason, placeholder = 'Message', draf
   );
 }
 
+/* ---------- Code editor: a definition's text, edited in place (controls/code-editor.md) ---------- */
+
+/** A monospace text area for a definition file; problems are listed under it. The caller keeps the text (a draft). */
+export function CodeEditor({ label, value, onChange, problems = [], disabledReason }: {
+  label: string; value: string; onChange: (text: string) => void; problems?: { path: string; message: string }[]; disabledReason?: string;
+}) {
+  return <div class="code-editor" data-ui="code-editor">
+    <textarea class="mono" spellcheck={false} aria-label={label} value={value} disabled={!!disabledReason}
+      onInput={e => onChange((e.target as HTMLTextAreaElement).value)} aria-invalid={problems.length > 0 || undefined} />
+    {problems.map(p => <div key={p.path + p.message} class="problem-line t-danger" role="alert"><Icon name="circle-alert" />{p.path && <span class="mono">{p.path}</span>}{p.message}</div>)}
+  </div>;
+}
+
+/** A unified diff, its added and removed lines tinted (controls/code-editor.md). */
+export const DiffText = ({ text, label }: { text: string; label: string }) =>
+  <pre class="diff block" data-ui="diff-text" aria-label={label}>{text === '' ? <span class="muted">No differences</span> : text.split('\n').map((l, i) =>
+    <span key={i} class={l.startsWith('+') && !l.startsWith('+++') ? 'add' : l.startsWith('-') && !l.startsWith('---') ? 'del' : undefined}>{l}{'\n'}</span>)}</pre>;
+
 /* ---------- Offline marker (controls/offline-marker.md) ---------- */
 
 /** Says whether shown data is current: offline, updating (stale but online) or signed out; hidden when current. */

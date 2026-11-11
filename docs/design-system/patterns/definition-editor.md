@@ -1,6 +1,6 @@
 # Definition editor
 
-**Code.** `DefinitionEditor`, with the [draft bar](../controls/draft-bar.md), [choice](../controls/choice.md) and [step list](../controls/step-list.md). Built in the book and the mockups; not in the app.
+**Code.** `DefinitionEditor`, with the [draft bar](../controls/draft-bar.md), [choice](../controls/choice.md) and [step list](../controls/step-list.md). Built in the book and the mockups, and in the app as Agents, Pipelines and Catalogue (`app/src/views/definitions.tsx`): the definition text in a [code editor](../controls/code-editor.md), kept as a draft while typing, the draft bar, Diff and History.
 
 **Job.** Read and change a definition that lives as a file in git: an agent configuration, a pipeline, a skill, a catalogue entry ([fleet.md, knowledge and rules](../../../fleet.md#knowledge-and-rules)). Saved definitions are revisions in the coordinator's store and apply to the next execution; every revision is mirrored to a private config repository; the file in the code repository is the seed ([fleet-definition-editors.md](../../designs/fleet-definition-editors.md)).
 
