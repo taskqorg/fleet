@@ -24,7 +24,7 @@
       "tool": "system_one"
     },
     {
-      "command": "python3 -c \"import json,os,re,sys,unicodedata as u;P=sys.argv[1];loc=re.search(r'[(](en|el|ru)[)]',P).group(1);T=re.search(r'Text: .(.*). Question:',P,re.S).group(1);c={k:sum(1 for ch in T if ch.isalpha() and u.name(ch,'').startswith(k)) for k in ('GREEK','LATIN','CYRILLIC')};want={'en':'LATIN','el':'GREEK','ru':'CYRILLIC'}[loc];share=c[want]/(sum(c.values()) or 1);put=lambda o:json.dump(o,open(os.path.join(os.environ['FLEET_OUTPUT_DIR'],'output.json'),'w'));dec=lambda:json.load(open(os.path.join(os.environ['FLEET_INPUT_DIR'],'decide','output.json')));a=dec();put({'answer':a['answer'],'p':a['p'] if share>=0.5 else 0,'answered_by':a['answered_by'],'tokens':a['tokens'],'rule':'0 when the alphabet is not the expected one, else the language question'})\" ${example.prompt}",
+      "command": "python3 -c \"import json,os,re,sys,unicodedata as u;P=sys.argv[1];loc=re.search(r'[(](en|el|ru)[)]',P).group(1);put=lambda o:json.dump(o,open(os.path.join(os.environ['FLEET_OUTPUT_DIR'],'output.json'),'w'));T=re.search(r'Text: .(.*). Question:',P,re.S).group(1);c={k:sum(1 for ch in T if ch.isalpha() and u.name(ch,'').startswith(k)) for k in ('GREEK','LATIN','CYRILLIC')};share=c[{'en':'LATIN','el':'GREEK','ru':'CYRILLIC'}[loc]]/(sum(c.values()) or 1);a=json.load(open(os.path.join(os.environ['FLEET_INPUT_DIR'],'decide','output.json')));put({'answer':a['answer'],'p':a['p'] if share>=0.5 else 0,'answered_by':a['answered_by'],'tokens':a['tokens'],'rule':'0 when the alphabet is not the expected one, else the language question'})\" ${example.prompt}",
       "id": "combine",
       "kind": "script"
     }

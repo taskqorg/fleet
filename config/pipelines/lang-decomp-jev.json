@@ -6,15 +6,15 @@
         "model": "jev-latest",
         "questions": {
           "lang": {
-            "instructions": "The state names an expected language and a text from an event listing. Is the text genuinely written in the expected language? The state names an expected language and a text from an event listing. Is the text genuinely written in the expected language? Judge by the ACTUAL LANGUAGE of the prose, NOT by the script/alphabet. A Latin script does not prove English: Greek words spelled in Latin letters (Greeklish, e.g. \"REBETIKO KAI LAIKES ZOGRAFIES apo ta Mousika Sxoleia\") and Russian transliterated into Latin are NOT English. Likewise Greek/Cyrillic letters do not prove Greek/Russian if the words are actually another language. Reject any payload whose real language is not the expected language, INCLUDING transliteration into the wrong alphabet, even when the script alone looks correct. A proper, brand or venue name correctly spelled as-is (e.g. \"Circus De Lumier\", \"Summer Jazz Nights\") does not make a payload wrong.",
+            "instructions": "The state names an expected language and a text from an event listing. Is the text genuinely written in the expected language? Judge by the ACTUAL LANGUAGE of the prose, NOT by the script/alphabet. A Latin script does not prove English: Greek words spelled in Latin letters (Greeklish, e.g. \"REBETIKO KAI LAIKES ZOGRAFIES apo ta Mousika Sxoleia\") and Russian transliterated into Latin are NOT English. Likewise Greek/Cyrillic letters do not prove Greek/Russian if the words are actually another language. Reject any payload whose real language is not the expected language, INCLUDING transliteration into the wrong alphabet, even when the script alone looks correct. A proper, brand or venue name correctly spelled as-is (e.g. \"Circus De Lumier\", \"Summer Jazz Nights\") does not make a payload wrong.",
             "type": "noul"
           },
           "script": {
             "criteria": {
-              "cyrillic": "Cyrillic letters",
-              "greek": "Greek letters",
-              "latin": "Latin letters",
-              "mixed": "a mix of alphabets"
+              "1greek": "Greek letters",
+              "2latin": "Latin letters",
+              "3cyrillic": "Cyrillic letters",
+              "4mixed": "a mix of alphabets"
             },
             "instructions": "Which alphabet are the letters of the text written in?",
             "type": "choice"
@@ -37,7 +37,7 @@
       "tool": "system_one"
     },
     {
-      "command": "python3 -c \"import json,os,re,sys,unicodedata as u;P=sys.argv[1];loc=re.search(r'[(](en|el|ru)[)]',P).group(1);T=re.search(r'Text: .(.*). Question:',P,re.S).group(1);c={k:sum(1 for ch in T if ch.isalpha() and u.name(ch,'').startswith(k)) for k in ('GREEK','LATIN','CYRILLIC')};want={'en':'LATIN','el':'GREEK','ru':'CYRILLIC'}[loc];share=c[want]/(sum(c.values()) or 1);put=lambda o:json.dump(o,open(os.path.join(os.environ['FLEET_OUTPUT_DIR'],'output.json'),'w'));dec=lambda:json.load(open(os.path.join(os.environ['FLEET_INPUT_DIR'],'decide','output.json')));a=dec();pr=a['answers']['script']['probabilities'];w={'en':'latin','el':'greek','ru':'cyrillic'}[loc];ok=pr.get(w,0)+pr.get('mixed',0);tr=a['answers']['translit']['noul'];lg=a['answers']['lang']['noul'];put({'answer':a['answers'],'p':round(min(ok,1-tr,lg),4),'answered_by':a['answered_by'],'tokens':a['tokens'],'rule':'min(P(expected or mixed alphabet), 1 - P(transliteration), P(language))'})\" ${example.prompt}",
+      "command": "python3 -c \"import json,os,re,sys,unicodedata as u;P=sys.argv[1];loc=re.search(r'[(](en|el|ru)[)]',P).group(1);put=lambda o:json.dump(o,open(os.path.join(os.environ['FLEET_OUTPUT_DIR'],'output.json'),'w'));a=json.load(open(os.path.join(os.environ['FLEET_INPUT_DIR'],'decide','output.json')));pr={k[1:]:v for k,v in a['answers']['script']['probabilities'].items()};w={'en':'latin','el':'greek','ru':'cyrillic'}[loc];ok=pr.get(w,0)+pr.get('mixed',0);tr=a['answers']['translit']['noul'];lg=a['answers']['lang']['noul'];put({'answer':a['answers'],'p':round(min(ok,1-tr,lg),4),'answered_by':a['answered_by'],'tokens':a['tokens'],'rule':'min(P(expected or mixed alphabet), 1 - P(transliteration), P(language))'})\" ${example.prompt}",
       "id": "combine",
       "kind": "script"
     }
