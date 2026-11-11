@@ -27,7 +27,7 @@ func TestHeartbeatShips(t *testing.T) {
 	os.MkdirAll(spanDir, 0o700)
 	obs.SetSink(appendSpan)
 	defer obs.SetSink(nil)
-	prev := map[string]float64{}
+	prev := map[int]float64{}
 	heartbeat(root, prev)
 	b, _ := os.ReadFile(filepath.Join(spanDir, "current.jsonl"))
 	var hb obs.Span

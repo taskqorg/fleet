@@ -42,7 +42,7 @@ func startTelemetry(root, url, token, host string) {
 	}
 	obs.SetSink(appendSpan)
 	go func() {
-		prev := map[string]float64{}
+		prev := map[int]float64{}
 		for t := time.Now(); ; t = time.Now() {
 			heartbeat(root, prev)
 			shipSpans(url, token)
@@ -141,8 +141,8 @@ func shipFile(url, token, file string) int {
 }
 
 // heartbeat writes host.heartbeat with host readings and, as its children, one process.reading per running Fleet
-// process. prev holds each process's CPU seconds at the previous beat.
-func heartbeat(root string, prev map[string]float64) {
+// process. prev holds each Fleet pid's CPU seconds at the previous beat.
+func heartbeat(root string, prev map[int]float64) {
 	ctx, hb := obs.Start(context.Background(), "host.heartbeat", obs.KindCheck)
 	if l, ok := load1(); ok {
 		hb.Load1 = &l
@@ -160,13 +160,18 @@ func heartbeat(root string, prev map[string]float64) {
 	if unix.Statfs(root, &st) == nil {
 		d := float64(st.Bavail) * float64(st.Bsize)
 		hb.DiskFree = &d
+	} else {
+		hb.Set("missing.disk_free", "unreadable")
 	}
 	if table, err := processes(); err == nil {
+		// CPU per beat is summed per pid (CPU now minus at the last beat, all of it for a pid started since), so a
+		// child that exited does not pull the total down; its last minute is lost.
 		type sum struct {
 			rss uint64
 			cpu float64
 		}
-		sums := map[string]*sum{}
+		sums, seen := map[string]*sum{}, map[int]float64{}
+		first := len(prev) == 0
 		for _, p := range table {
 			for name, comms := range fleetProcesses {
 				for _, c := range comms {
@@ -175,7 +180,8 @@ func heartbeat(root string, prev map[string]float64) {
 							sums[name] = &sum{}
 						}
 						sums[name].rss += p.rssKB * 1024
-						sums[name].cpu += p.cpu
+						sums[name].cpu += max(p.cpu-prev[p.pid], 0)
+						seen[p.pid] = p.cpu
 					}
 				}
 			}
@@ -185,15 +191,21 @@ func heartbeat(root string, prev map[string]float64) {
 			r.Set("fleet.process", name)
 			rss := s.rss
 			r.RSSBytes = &rss
-			if p, ok := prev[name]; ok && s.cpu >= p {
-				d := s.cpu - p
+			if !first {
+				d := s.cpu
 				r.CPUSeconds = &d
 			} else {
 				r.Set("missing.cpu_seconds", "first beat")
 			}
-			prev[name] = s.cpu
 			r.Set("missing.open_files", "not collected")
 			r.End(nil)
+		}
+		clear(prev)
+		for pid, c := range seen {
+			prev[pid] = c
+		}
+		if len(prev) == 0 {
+			prev[0] = 0 // a beat happened: the next one is not the first
 		}
 	}
 	hb.End(nil)
