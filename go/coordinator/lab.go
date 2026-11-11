@@ -2077,6 +2077,7 @@ func expGet(q *Request, id string) (doc, error) {
 	}
 	out["notes"] = notes
 	out["variants"], out["spend"], out["trials"], out["cells"], out["scores"], out["agreement"], out["judges"] = variants, s, tv, cells, scores, agreement(cur), judges
+	out["comparison"] = expComparison(exp, trials, cur)
 	out["priority"] = doc{"value": "background", "note": "No effect until the scheduler exists"}
 	return out, nil
 }
@@ -2364,4 +2365,60 @@ func pipelineFinished(ctx context.Context, a *App, run doc) {
 	if run["pipelineId"] == "draft-examples" && run["state"] == "succeeded" {
 		importDrafts(ctx, a, run)
 	}
+}
+
+// expComparison: each non-baseline variant against the baseline (the first variant) on the primary evaluator, through
+// the one statistics function, over held_out examples when the suite has any (bands are tuned on tune), else over all.
+func expComparison(exp doc, trials []doc, cur []doc) []any {
+	primary, vs := astr(exp["primary_evaluator"]), anys(exp["variants"])
+	out := []any{}
+	if primary == "" || len(vs) < 2 {
+		return out
+	}
+	split := map[string]string{}
+	heldOut := false
+	for _, p := range anys(exp["examples"]) {
+		m := mapOf(p)
+		split[astr(m["id"])] = astr(m["split"])
+		heldOut = heldOut || m["split"] == "held_out"
+	}
+	values := map[string]map[string][]float64{} // variant -> example -> values
+	for _, t := range trials {
+		if !comparable(t) {
+			continue
+		}
+		cell := mapOf(t["cell"])
+		ex, v := astr(cell["example"]), astr(cell["variant"])
+		if heldOut && split[ex] != "held_out" {
+			continue
+		}
+		for _, sc := range cur {
+			if sc["evaluator"] != primary || firstTrial(sc) != t["id"] || len(trialIDsOf(sc)) != 1 {
+				continue
+			}
+			x, ok := numOK(sc["value"])
+			if b, isBool := sc["value"].(bool); isBool {
+				x, ok = 0, true
+				if b {
+					x = 1
+				}
+			}
+			if ok {
+				if values[v] == nil {
+					values[v] = map[string][]float64{}
+				}
+				values[v][ex] = append(values[v][ex], x)
+			}
+		}
+	}
+	baseline := astr(mapOf(vs[0])["label"])
+	scope := "all"
+	if heldOut {
+		scope = "held_out"
+	}
+	for _, x := range vs[1:] {
+		label := astr(mapOf(x)["label"])
+		out = append(out, doc{"variant": label, "baseline": baseline, "evaluator": primary, "split": scope, "result": compare(values[baseline], values[label])})
+	}
+	return out
 }
