@@ -1831,8 +1831,8 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 
 var methodSlug = regexp.MustCompile(`[^a-z0-9]+`)
 
-// Promote: a catalogue method entry as a JSON patch for config/catalogue.json for the owner to commit; once a method with
-// this config_ref exists, the project recommendation is set to it (recommend: the recommendation_set operation).
+// Promote: the variant as a catalogue method, saved as a catalogue revision (source lab) unless a method with its
+// config_ref exists; then the project recommendation is set to it (recommend: the recommendation_set operation).
 func expPromote(q *Request, id, label string) (doc, error) {
 	exp, err := expRow(q, id)
 	if err != nil {
@@ -1854,22 +1854,72 @@ func expPromote(q *Request, id, label string) (doc, error) {
 	}
 	method := doc{"id": fmt.Sprintf("%v-%s", exp["pipeline_id"], slug), "name": fmt.Sprintf("%v %s", exp["pipeline_id"], label), "scope": exp["project_id"],
 		"pipeline": astr(exp["pipeline_id"]) + ".json", "overrides": overrides, "configRef": v["config_ref"], "sourceExperiment": id}
-	var existing doc
-	if c, err := catalogue(q, astr(exp["project_id"])); err == nil {
-		for _, m := range anys(c["methods"]) {
-			if mapOf(m)["configRef"] == v["config_ref"] {
-				existing = mapOf(m)
-			}
+	// A method's config ref is its configRef, else the hash Lab gives a variant (pipeline id and overrides).
+	refOf := func(m doc) string {
+		if r := astr(m["configRef"]); r != "" {
+			return r
 		}
+		o := mapOf(m["overrides"])
+		if o == nil {
+			o = doc{}
+		}
+		return sha256hex([]byte(canonical(doc{"pipeline": strings.TrimSuffix(astr(m["pipeline"]), ".json"), "overrides": o})))
 	}
-	if existing == nil {
-		return doc{"cataloguePatch": []any{doc{"op": "add", "path": "/methods/-", "value": method}}, "method": method, "recommendation": nil, "note": note}, nil
-	}
-	var rec any
-	if rec, err = recommend(q, astr(exp["project_id"]), astr(existing["id"])); err != nil {
+	var existing doc
+	c, err := catalogue(q, astr(exp["project_id"]))
+	if err != nil {
 		return nil, err
 	}
-	return doc{"cataloguePatch": nil, "method": existing, "recommendation": rec, "note": note}, nil
+	for _, m := range anys(c["methods"]) {
+		if refOf(mapOf(m)) == astr(v["config_ref"]) {
+			existing = mapOf(m)
+		}
+	}
+	// A new method is saved as a catalogue revision (source lab) in this transaction, so the recommendation below sees it
+	// (fleet-definition-editors.md, Promote); the repository file stays the seed.
+	var ref any
+	if existing == nil {
+		head, err := headOf(q, "catalogue", "catalogue", true)
+		if err != nil {
+			return nil, err
+		}
+		if head == nil {
+			return nil, fail(404, "No catalogue definition")
+		}
+		if st := head.state(); st == contract.DefinitionStateRepositoryChanged || st == contract.DefinitionStateRepositoryDeleted {
+			return nil, &HTTPError{Code: 409, Msg: "The catalogue's repository file changed: resolve it in the Catalogue editor, then promote", Extra: map[string]any{"reason": contract.ConflictReasonRepositoryChanged, "head": head.Head, "repoSha": head.RepoSha}}
+		}
+		c, _ := decodeNumbers(string(head.Content)).(map[string]any) // numbers keep their text
+		if c == nil {
+			return nil, fail(500, "Invalid catalogue definition")
+		}
+		ids := map[string]bool{}
+		for _, m := range anys(c["methods"]) {
+			ids[astr(mapOf(m)["id"])] = true
+		}
+		for base, n := astr(method["id"]), 2; ids[astr(method["id"])]; n++ { // an id already taken gets a number
+			method["id"] = fmt.Sprintf("%s-%d", base, n)
+		}
+		c["methods"] = append(anys(c["methods"]), method)
+		text, err := canonicalText(jsonBytes(c))
+		if err != nil {
+			return nil, err
+		}
+		if ps := problems("catalogue", "catalogue", text); len(ps) > 0 {
+			return nil, fail(400, "The promoted catalogue is invalid: "+ps[0].Message)
+		}
+		rev, err := appendRevision(q, "catalogue", "catalogue", head.Head, &text, head.RepoSha, "lab", fmt.Sprintf("Promote %s from %s", label, id))
+		if err != nil {
+			return nil, err
+		}
+		ref = contract.DefinitionRef{Kind: contract.DefinitionKindCatalogue, Id: "catalogue", Revision: rev.Revision, ContentSha: rev.ContentSha}
+		existing = method
+	}
+	rec, err := recommend(q, astr(exp["project_id"]), astr(existing["id"]))
+	if err != nil {
+		return nil, err
+	}
+	return doc{"cataloguePatch": nil, "method": existing, "catalogue": ref, "recommendation": rec, "note": note}, nil
 }
 
 func expRate(q *Request, b doc) (doc, error) {

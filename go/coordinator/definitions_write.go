@@ -361,7 +361,8 @@ func appendRevision(q *Request, kind, id string, head int64, text, repoBase *str
 	if err := exec(q, "UPDATE definition SET head=$3,retired_at=NULL,ever_shipped=ever_shipped AND repo_sha IS NOT NULL WHERE kind=$1 AND id=$2", kind, id, n); err != nil {
 		return contract.Revision{}, err
 	}
-	if err := exec(q, "DELETE FROM definition_draft WHERE kind=$1 AND id=$2 AND person=$3", kind, id, draftOwner(q)); err != nil {
+	if source == "lab" { // a Lab promote is not the saver's draft: leave their draft as it is
+	} else if err := exec(q, "DELETE FROM definition_draft WHERE kind=$1 AND id=$2 AND person=$3", kind, id, draftOwner(q)); err != nil {
 		return contract.Revision{}, err
 	}
 	if err := put(q, "setting-change", doc{"id": newID(), "target": "definition:" + kind + "/" + id, "field": "revision", "previous": head, "value": n, "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
