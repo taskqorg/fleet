@@ -10,8 +10,8 @@ import (
 	"syscall"
 )
 
-// identity is /proc/<pid>/stat field 22 (start time in clock ticks).
-func identity(pid int) (string, error) {
+// processIdentity is /proc/<pid>/stat field 22 (start time in clock ticks).
+func processIdentity(pid int) (string, error) {
 	s, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		return "", err
