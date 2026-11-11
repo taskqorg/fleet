@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// R1, R3; risk: retransmission duplicates a committed mutation or returns a foreign receipt.
 // Outside fixture supplies a real coordinator and proved host; this test drives the native handler and actual outbox.
 // A lost committed response must remain uncertain, replay once, and permit explicit attachment only after acknowledgment.
 func TestPMTransportAgainstCoordinator(t *testing.T) {

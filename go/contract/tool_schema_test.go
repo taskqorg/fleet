@@ -6,6 +6,7 @@ import (
 	"testing"
 )
 
+// R1; risk: misleading discovery makes a valid core operation unusable.
 // Native discovery must expose the same names, required fields and resolved definitions as core validation.
 func TestOperationToolSchema(t *testing.T) {
 	var s struct {

@@ -5,6 +5,7 @@ import {randomUUID} from 'node:crypto';
 import {spawn} from 'node:child_process';
 const base=process.env.FLEET_TRIAL_URL!,secret=process.env.FLEET_TRIAL_BROWSER_SECRET!,person='member@trial.test';
 async function op(name:string,args:object={},who=person){const r=await fetch(base+'/api/ops/'+name,{method:'POST',headers:{authorization:'Bearer '+secret,'x-fleet-person':who,'content-type':'application/json'},body:JSON.stringify(args)});assert.equal(r.status,200,await r.clone().text());return r.json() as Promise<any>;}
+// R1, R3; risk: an unknown committed create duplicates a task, leaks a cached acknowledgment, or loses its session link.
 test('PM transport: lost committed create, concurrent replay, native uncertainty readback and explicit Held attachment',{timeout:90_000},async()=>{
  const hostId='pm-transport-host',host=await op('hosts_register',{id:hostId,holder:person},'owner@trial.test');
  const poll=async()=>{const r=await fetch(base+'/api/hosts/poll',{method:'POST',headers:{authorization:'Bearer '+host.secret,'content-type':'application/json'},body:JSON.stringify({platform:'darwin',capabilities:[],stores:[],problems:[]})});assert.equal(r.status,200);return r.json() as Promise<any>;};

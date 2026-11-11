@@ -114,6 +114,7 @@ func TestProjectToolSchemas(t *testing.T) {
 	}
 }
 
+// R1; risk: an opaque rejection prevents correction of invalid model arguments.
 // A coordinator validation refusal must survive the actual outbox instead of becoming an opaque grant error.
 func TestAgentRejectionKeepsValidation(t *testing.T) {
 	db := journal(t)
