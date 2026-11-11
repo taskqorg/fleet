@@ -119,6 +119,16 @@ test('A9 an execution record has one state vocabulary and its real kind and harn
   assert.deepEqual([e.state, e.observation], ['running', 'unconfirmed']);
 });
 
+test('A10 host poll and events decode into the host-protocol types: a field of the wrong type is 400, not read as empty (requirement: contracts/host-protocol.schema.json PollRequest and HostEvents, C1; risk: a renamed or retyped field reaches the coordinator as a missing value)', {timeout: 30_000}, async () => {
+  const h = await host('trial-host');
+  ok(await h('/api/hosts/poll', poll));
+  { const r = await h('/api/hosts/poll', {...poll, capabilities: 'codex'}); assert.equal(r.status, 400, JSON.stringify(r)); }
+  assert.equal((await h('/api/hosts/poll', {...poll, version: 7})).status, 400);
+  const {executionId} = await queued();
+  ok(await h('/api/hosts/poll', poll));
+  assert.equal((await h('/api/hosts/events', {executionId, events: [{id: 'a', seq: 1.5, type: 'x', timestamp: 1, data: {}}]})).status, 400);
+});
+
 test('A13 every artifact, store, account and agent-tools host route decodes into its host-protocol type: a field of the wrong type is 400 (requirement: contracts/host-protocol.schema.json Artifact*Request, StoresRequest, AgentToolsRequest, C3; risk: the artifact transfer seam has no contract and a retyped field reads as empty)', {timeout: 30_000}, async () => {
   const h = await host('trial-host');
   ok(await h('/api/hosts/poll', poll));
