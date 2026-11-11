@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"fleet/contract"
 )
 
 var (
@@ -30,8 +32,8 @@ var (
 	ownOutput      = regexp.MustCompile(`^(output/)?output\.json$`)
 )
 
-func problemOf(outcome string, code any) string {
-	c, _ := code.(string)
+// problemOf: the execution problem for a failed call; code is the call's error code, "" when none.
+func problemOf(outcome, c string) string {
 	if outcome == "unknown" {
 		if c == "" {
 			c = "outcome"
@@ -722,8 +724,8 @@ func startScript(q *Request, run doc, stepExecutionID, command string, timeout a
 
 // connCallFor: one provider call with a token minted for the step row, revoked after the call; the gateway's spool line
 // becomes the step's tool_run (ingested here, so the row exists when the step moves on).
-func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, tool string, args any) doc {
-	unavailable := doc{"tool": tool, "outcome": "error", "error_code": "connection-unavailable", "usage": nil, "output": nil}
+func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, tool string, args any) contract.CallLine {
+	unavailable := contract.CallLine{Tool: tool, Connection: connection, Outcome: contract.CallOutcomeError, ErrorCode: ptr("connection-unavailable")}
 	if gatewayURL() == "" || !regexp.MustCompile(`^[a-z0-9-]+$`).MatchString(connection) {
 		return unavailable
 	}
@@ -862,11 +864,13 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			line := connCallFor(ctx, a, run, connection, row, tool, resolved)
 			job := def["mode"] == "job"
 			// A job submit without a clear answer: a task created since the call started is adopted; otherwise unknown, never resent.
-			if job && line["outcome"] != "ok" && (line["outcome"] == "unknown" || http5xx.MatchString(astr(line["error_code"]))) {
+			code := deref(line.ErrorCode)
+			if job && line.Outcome != contract.CallOutcomeOk && (line.Outcome == contract.CallOutcomeUnknown || http5xx.MatchString(code)) {
 				recent := connCallFor(ctx, a, run, connection, row, "recent_tasks", doc{})
-				tasks := anys(recent["output"])
+				listed := callOutput(recent)
+				tasks := anys(listed)
 				if tasks == nil {
-					tasks = anys(mapOf(recent["output"])["result"])
+					tasks = anys(mapOf(listed)["result"])
 				}
 				owned := map[string]bool{}
 				readTx(ctx, a, func(q *Request) error {
@@ -878,7 +882,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 				})
 				started, _ := numOK(s["startedAt"])
 				mine := []doc{}
-				if recent["outcome"] == "ok" {
+				if recent.Outcome == contract.CallOutcomeOk {
 					for _, x := range tasks {
 						t := mapOf(x)
 						id, ok := t["id"].(string)
@@ -889,21 +893,21 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 					}
 				}
 				if len(mine) == 1 {
-					line["outcome"], line["output"] = "ok", doc{"jobId": mine[0]["id"]}
-					s["adoptedAfter"] = line["error_code"]
+					line.Outcome, line.Output = contract.CallOutcomeOk, jsonBytes(doc{"jobId": mine[0]["id"]})
+					s["adoptedAfter"] = code
 				} else {
 					why := fmt.Sprintf("%d matching tasks", len(mine))
-					if recent["outcome"] != "ok" {
+					if recent.Outcome != contract.CallOutcomeOk {
 						why = "recent tasks unreadable"
 					}
-					return failNow("unknown:submit-unconfirmed", fmt.Sprintf("Job submit %v; %s; not sent again", line["error_code"], why))
+					return failNow("unknown:submit-unconfirmed", fmt.Sprintf("Job submit %s; %s; not sent again", code, why))
 				}
 			}
-			if line["outcome"] != "ok" {
-				return failNow(problemOf(astr(line["outcome"]), line["error_code"]), fmt.Sprintf("Connection call %v: %v", line["outcome"], strOr(line["error_code"])))
+			if line.Outcome != contract.CallOutcomeOk {
+				return failNow(problemOf(string(line.Outcome), code), fmt.Sprintf("Connection call %s: %s", line.Outcome, code))
 			}
 			if job {
-				out := mapOf(line["output"])
+				out := mapOf(callOutput(line))
 				if _, ok := out["jobId"].(string); !ok {
 					if r, ok := out["result"].(string); ok {
 						out = doc{"jobId": r}
@@ -921,7 +925,10 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 					return exec(q, "UPDATE execution SET data=data||jsonb_build_object('jobId',$2::text) WHERE id=$1", row, jobID)
 				})
 			}
-			return true, tx(func(q *Request) error { return completeStep(q, run, i, line["output"], doc{"usage": line["usage"]}) })
+			out := callOutput(line)
+			return true, tx(func(q *Request) error {
+				return completeStep(q, run, i, out, doc{"usage": mapOf(out)["usage"]})
+			})
 		}
 		var execID string
 		err = tx(func(q *Request) error {
@@ -976,13 +983,14 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 		line := connCallFor(ctx, a, run, connection, row, "job_status", doc{"jobId": s["jobId"]})
 		p, _ := numOK(s["polls"])
 		s["polls"] = p + 1
-		if line["outcome"] != "ok" {
-			if line["outcome"] == "unknown" {
+		if line.Outcome != contract.CallOutcomeOk {
+			if line.Outcome == contract.CallOutcomeUnknown {
 				return false, nil
 			}
-			return failNow(problemOf(astr(line["outcome"]), line["error_code"]), fmt.Sprintf("Job poll failed: %v", line["error_code"]))
+			code := deref(line.ErrorCode)
+			return failNow(problemOf(string(line.Outcome), code), "Job poll failed: "+code)
 		}
-		out := mapOf(line["output"])
+		out := mapOf(callOutput(line))
 		// Meshy's task shape: status SUCCEEDED | FAILED | CANCELED | EXPIRED | PENDING | IN_PROGRESS.
 		if st, ok := out["status"].(string); ok && out["state"] == nil {
 			state := "running"
@@ -1099,6 +1107,20 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 		}
 		return completeStep(q, run, i, output, doc{"usage": u})
 	})
+}
+
+// callOutput: the provider's reply body of an in-process call, decoded; nil when there is none.
+func callOutput(l contract.CallLine) any {
+	var v any
+	json.Unmarshal(l.Output, &v)
+	return v
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func strOr(v any) string {
