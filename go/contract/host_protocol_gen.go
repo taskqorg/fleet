@@ -746,7 +746,7 @@ func (v *PollReply) Validate() error {
 
 type PollRequest struct {
 	Capabilities   []string      `json:"capabilities"`
-	GitConnections []string      `json:"gitConnections,omitempty"`
+	GitConnections []string      `json:"gitConnections"`
 	HostId         string        `json:"hostId"`
 	Platform       Platform      `json:"platform"`
 	Problems       []EdgeProblem `json:"problems"`
