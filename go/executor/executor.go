@@ -605,12 +605,13 @@ func (e *executor) run(c M) error {
 		}
 		return nil
 	case "steer":
+		sp, perr := payloadOf[contract.SteerPayload](c)
 		sent := false
 		if l, ok := e.live[execution]; ok && l.wire != nil {
 			w := l.wire
 			w.mu.Lock()
-			if w.session != nil && w.stdin != nil && jIsStr(p, "text") {
-				if frame := w.session.Steer(jStr(p, "text"), cid); frame != nil {
+			if perr == nil && w.session != nil && w.stdin != nil && sp.Text != "" {
+				if frame := w.session.Steer(sp.Text, cid); frame != nil {
 					_, err := writeFrame(w.stdin, w.log, frame)
 					sent = err == nil
 				}
@@ -689,6 +690,24 @@ func (e *executor) run(c M) error {
 	return e.finish(c, "failed", "")
 }
 
+// payloadOf decodes a command payload into its per-kind contract type (an absent payload is the zero value).
+func payloadOf[T any](c M) (T, error) {
+	var v T
+	if raw, has := c["payload"]; has && raw != nil {
+		err := json.Unmarshal([]byte(enc(raw)), &v)
+		return v, err
+	}
+	return v, nil
+}
+
+// str0 is the value of an optional string field, "" when absent.
+func str0(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 func okStatus(ok bool) string {
 	if ok {
 		return "completed"
@@ -708,6 +727,13 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		}
 		return e.finish(c, "failed", "")
 	}
+	sp, err := payloadOf[contract.StartPayload](c)
+	if err != nil {
+		if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: "invalid start payload: " + err.Error()}); err != nil {
+			return err
+		}
+		return e.finish(c, "failed", "")
+	}
 	cfg, hasCfg := p["agentConfig"]
 	if hasCfg && profileValidate(cfg) != nil {
 		return e.finish(c, "failed", "")
@@ -720,7 +746,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	if !e.insideDirs(dir) {
 		return e.finish(c, "failed", "")
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".fleet-instructions.tmp"), []byte(jStr(p, "instructions")), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".fleet-instructions.tmp"), []byte(str0(sp.Instructions)), 0o644); err != nil {
 		return err
 	}
 	if err := os.Rename(filepath.Join(dir, ".fleet-instructions.tmp"), filepath.Join(dir, "AGENTS.md")); err != nil {
@@ -728,18 +754,18 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	if !hasCfg && name == "codex" {
 		shell := "workspace-write, network disabled, approvals denied"
-		if jIsTrue(p, "gitNetwork") {
+		if sp.GitNetwork != nil && *sp.GitNetwork {
 			shell = "workspace-write, git network enabled, checkout .git writable, approvals denied"
 		}
-		if err := e.event(c, 0, contract.FleetEventTypePreparation, M{"model": p["model"], "effort": p["effort"], "subscription": true, "instructionsSha256": sha([]byte(jStr(p, "instructions"))),
+		if err := e.event(c, 0, contract.FleetEventTypePreparation, M{"model": p["model"], "effort": p["effort"], "subscription": true, "instructionsSha256": sha([]byte(str0(sp.Instructions))),
 			"tools": M{"shell": shell, "mcp": []any{}, "collaborationTools": jBoolOr(true, p, "agentConfig", "collaborationTools")}, "skills": []any{}, "repairs": false,
 			"nativeConfig": "Fleet-owned HOME/CODEX_HOME required; config and execpolicy ignored; AGENTS discovery, skills, memories and hooks disabled; context observations pending"}); err != nil {
 			return err
 		}
 	}
 	// The coordinator owns the native id per harness:account continuation; no id means a new native session.
-	native := jStr(p, "nativeSessionId")
-	if native != "" && !safeNativeID(native) || jIsStr(p, "nativeSessionId") && native == "" {
+	native := str0(sp.NativeSessionId)
+	if sp.NativeSessionId != nil && !safeNativeID(native) {
 		if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: "invalid native session id"}); err != nil {
 			return err
 		}
@@ -799,7 +825,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	if hasW {
 		checkoutTop = top
-		if script := jStr(p, "project", "scripts", "setup"); created && jIsStr(p, "project", "scripts", "setup") && jStr(p, "setup") != "skip" {
+		if script := jStr(p, "project", "scripts", "setup"); created && jIsStr(p, "project", "scripts", "setup") && str0(sp.Setup) != "skip" {
 			r := projectScript("setup", script, top, w, session)
 			if err := e.event(c, 1, contract.FleetEventTypeSetup, r); err != nil {
 				return err
@@ -856,7 +882,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			if len(profiles) > 0 {
 				tools = append(tools, "request_child")
 			}
-			if jIsStr(p, "projectId") {
+			if sp.ProjectId != nil {
 				tools = append(tools, "project_context", "catalogue", "pipeline_run", "direct_search", "pipeline_history", "pipeline_get", "question_ask", "question_history", "account_list")
 			}
 			for _, o := range jArr(p, "fleetOperations") {
@@ -888,12 +914,12 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	granted := jArr(p, "connections")
 	if len(granted) > 0 {
 		gateway := os.Getenv("FLEET_GATEWAY_URL")
-		if gateway == "" || !jIsStr(p, "runToken") {
+		if gateway == "" || sp.RunToken == nil {
 			return fail(1, "connections granted but FLEET_GATEWAY_URL or the run token is missing")
 		}
 		// The run token, gateway URL and Access file path reach only the connection servers, through a private run file
 		// in the executor's data directory; the harness environment never carries them.
-		lines := "FLEET_RUN_TOKEN=" + jStr(p, "runToken") + "\nFLEET_GATEWAY_URL=" + gateway + "\n"
+		lines := "FLEET_RUN_TOKEN=" + str0(sp.RunToken) + "\nFLEET_GATEWAY_URL=" + gateway + "\n"
 		if f := accessFile(); f != "" && isFile(f) {
 			lines += "FLEET_CF_ACCESS_FILE=" + f + "\n"
 		}
@@ -921,8 +947,8 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		servers[conn] = M{"command": exe(), "args": []any{"mcp", "connection", conn, enc(spec), runFile}, "tools": tools, "env": []any{"HOME"}}
 	}
 	// Built-in web for pipeline agent steps: off unless the step's run sets webRoute builtin.
-	if name == "codex" && jIsStr(p, "webRoute") {
-		if jStr(p, "webRoute") == "builtin" {
+	if name == "codex" && sp.WebRoute != nil {
+		if str0(sp.WebRoute) == "builtin" {
 			cmd.Args = append(cmd.Args, "-c", `web_search="live"`)
 		} else {
 			cmd.Args = append(cmd.Args, "-c", `web_search="disabled"`)
@@ -930,7 +956,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	extra := connectionTools
 	if name == "claude" {
-		if jStr(p, "webRoute") == "builtin" {
+		if str0(sp.WebRoute) == "builtin" {
 			extra = append(extra, "WebSearch", "WebFetch")
 		}
 		if len(jArr(p, "skills")) > 0 {
@@ -942,13 +968,13 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	if hasW {
 		root = w
 	}
-	sp := p
-	if name == "codex" && jIsTrue(p, "gitNetwork") && checkoutTop != "" {
+	pp := p
+	if name == "codex" && sp.GitNetwork != nil && *sp.GitNetwork && checkoutTop != "" {
 		// gitNetwork: sandbox network on and the checkout's common .git writable.
-		sp = jObj(jClone(p))
-		sp["writableRoots"] = []any{filepath.Join(checkoutTop, ".git")}
+		pp = jObj(jClone(p))
+		pp["writableRoots"] = []any{filepath.Join(checkoutTop, ".git")}
 	}
-	cmd, sess := h.Protocol(cmd, root, native, sp, servers)
+	cmd, sess := h.Protocol(cmd, root, native, pp, servers)
 	protocol := sess != nil
 	var stdin io.WriteCloser
 	if nativeInput != nil || protocol {
@@ -1054,6 +1080,16 @@ func anyStrings(s []string) []any {
 	return out
 }
 
+// protocolFailed is the stdout line of a protocol.failed event (contract.ProtocolFailed).
+func protocolFailed(msg, reason string) string {
+	t := string(contract.FleetEventTypeProtocolFailed)
+	v := contract.ProtocolFailed{Type: &t, Error: msg}
+	if reason != "" {
+		v.Reason = &reason
+	}
+	return enc(v)
+}
+
 // readStdout journals every stdout line (raw log, fsync per line), then either passes it on or feeds the protocol.
 func readStdout(r *os.File, rawLog *os.File, w *wire, acpProtocol bool, out chan<- string) {
 	defer close(out)
@@ -1094,14 +1130,14 @@ func readStdout(r *os.File, rawLog *os.File, w *wire, acpProtocol bool, out chan
 		}
 		if derr != nil {
 			w.mu.Unlock()
-			out <- enc(M{"type": "protocol.failed", "error": "native protocol outcome unconfirmed; no replay", "reason": derr.Error()})
+			out <- protocolFailed("native protocol outcome unconfirmed; no replay", derr.Error())
 			return
 		}
 		for _, req := range requests {
 			meta, err := writeFrame(w.stdin, w.log, req)
 			if err != nil {
 				w.mu.Unlock()
-				out <- enc(M{"type": "protocol.failed", "error": "outbound delivery unknown; no replay"})
+				out <- protocolFailed("outbound delivery unknown; no replay", "")
 				return
 			}
 			out <- enc(meta)
@@ -1120,7 +1156,7 @@ func readStdout(r *os.File, rawLog *os.File, w *wire, acpProtocol bool, out chan
 		}
 	}
 	if acpProtocol && !acpComplete {
-		out <- enc(M{"type": "protocol.failed", "error": "ACP EOF before terminal outcome; no replay"})
+		out <- protocolFailed("ACP EOF before terminal outcome; no replay", "")
 	}
 }
 
@@ -1142,17 +1178,20 @@ func (e *executor) script(c M, execution, session string) error {
 		}
 		return e.finish(c, "failed", "")
 	}
-	command := jStr(p, "command")
+	sp, err := payloadOf[contract.ScriptPayload](c)
+	if err != nil {
+		return refuse("invalid script payload: " + err.Error())
+	}
+	command := sp.Command
 	if command == "" {
 		return refuse("script command missing")
 	}
 	var timeout time.Duration
-	if t, has := p["timeout_ms"]; has && t != nil {
-		ms, ok := jU64(t)
-		if !ok || ms == 0 {
+	if sp.TimeoutMs != nil {
+		if *sp.TimeoutMs <= 0 {
 			return refuse("timeout_ms must be a positive integer")
 		}
-		timeout = time.Duration(ms) * time.Millisecond
+		timeout = time.Duration(*sp.TimeoutMs) * time.Millisecond
 	}
 	output, input := filepath.Join(dir, "output"), filepath.Join(dir, "input")
 	if err := os.MkdirAll(output, 0o755); err != nil {
@@ -1178,13 +1217,13 @@ func (e *executor) script(c M, execution, session string) error {
 	work := dir
 	var trial *[2]string
 	switch {
-	case hasRepo && jIsStr(p, "commit"):
-		w, top, err := trialWorktree(dir, repo, jStr(p, "commit"), projectRoots(), e.forbidden())
+	case hasRepo && sp.Commit != nil:
+		w, top, err := trialWorktree(dir, repo, *sp.Commit, projectRoots(), e.forbidden())
 		if err != nil {
 			return refuse(err.Error())
 		}
 		work, trial = w, &[2]string{top, w}
-	case !hasRepo && !jIsStr(p, "commit"):
+	case !hasRepo && sp.Commit == nil:
 	default:
 		return refuse("script needs both a repository and a commit, or neither")
 	}
@@ -1387,7 +1426,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 					}
 				}
 			}
-			if jStr(event, "type") == "protocol.failed" && !l.stopped {
+			if jStr(event, "type") == string(contract.FleetEventTypeProtocolFailed) && !l.stopped {
 				l.cleanupUnknown, l.stopped = true, true
 			}
 			if projection["completed"] == true {

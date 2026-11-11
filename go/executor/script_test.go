@@ -213,3 +213,14 @@ func TestOutputCollectionSkipsLinks(t *testing.T) {
 		t.Fatal("linked output folder collected")
 	}
 }
+
+// Requirement: a command payload is read through its per-kind contract type; a field of the wrong type refuses the
+// command with its reason (C7). Risk: a drifted coordinator field silently becomes "" and a run starts with wrong input.
+func TestPayloadOfWrongTypeRefused(t *testing.T) {
+	e, _ := scriptExecutor(t)
+	e.run(M{"id": "c9", "executionId": "x9", "sessionId": "s9", "kind": "start", "payload": M{"instructions": 5}})
+	e.run(M{"id": "c10", "executionId": "x10", "sessionId": "s10", "kind": "script", "payload": M{"command": "true", "timeout_ms": 1.5}})
+	if lastReceipt(e, "c9") != "failed" || lastReceipt(e, "c10") != "failed" {
+		t.Fatal(lastReceipt(e, "c9"), lastReceipt(e, "c10"))
+	}
+}
