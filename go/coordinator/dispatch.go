@@ -102,7 +102,7 @@ func waitKindOf(cause string) string {
 	return "placement" // offline, paused, roots, placement, limits: Fleet retries
 }
 
-// strPtr: a string value as an optional contract field; nil for anything else or "".
+// strPtr: a string value as an optional contract field; nil for anything else or "" (strp keeps "").
 func strPtr(v any) *string {
 	if s, ok := v.(string); ok && s != "" {
 		return &s
@@ -110,7 +110,8 @@ func strPtr(v any) *string {
 	return nil
 }
 
-// rawMap and rawList: Fleet-built JSON values as the contract's open fields (nil stays absent).
+// rawMap and rawList: Fleet-built JSON values as the contract's open fields. nil and empty stay absent (omitempty);
+// a profile (agentConfig) is never empty, and the executor reads an absent list as empty.
 func rawMap(v any) map[string]json.RawMessage {
 	var m map[string]json.RawMessage
 	if v != nil {
@@ -585,7 +586,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	// fields, never a blind merge over the fields above (C7).
 	p := &contract.StartPayload{Harness: ptr(harnessOf(s)), Text: strPtr(d["input"]), Setup: strPtr(nonNil(s["setup"], "run")),
 		WorkingDirectory: strPtr(s["workingDirectory"]), Model: strPtr(e["model"]), Effort: strPtr(e["effort"]),
-		Instructions: ptr(defaultInstructions), NativeSessionId: strPtr(s["nativeSessionId"])}
+		Instructions: ptr(defaultInstructions), NativeSessionId: strp(s, "nativeSessionId")} // "" still reaches the executor's check
 	if s["account"] != nil || (binding != nil && s["nativeSessionId"] == nil) {
 		if binding != nil {
 			p.Account = strPtr(binding["binding"])
@@ -613,7 +614,9 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	}
 	extra := mapOf(d["payload"])
 	if v, ok := extra["inputs"]; ok {
-		json.Unmarshal(jsonBytes(v), &p.Inputs)
+		if err := json.Unmarshal(jsonBytes(v), &p.Inputs); err != nil {
+			return nil, fmt.Errorf("execution %v: pipeline inputs are not [{artifactId, path}]: %w", e["id"], err)
+		}
 	}
 	p.Skills, p.WebRoute = rawList(extra["skills"]), strPtr(extra["webRoute"])
 	command := doc{"id": newID(), "executionId": e["id"], "sessionId": s["id"], "hostId": host, "kind": string(contract.CommandKindStart), "payload": p, "status": "pending"}
