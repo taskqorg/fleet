@@ -105,11 +105,11 @@ func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemo
 }
 
 // purgeableHosts: removed hosts and whether anything still references them. The reference list is every table and
-// document field that names a host id; its stores go with it when no artifact copy names them.
+// document field that names a host id; its stores go with it when only deleted copies name them.
 func purgeableHosts(q *Request) (gone, kept []string, err error) {
 	rows, err := queryRows(q, `SELECT d.data->>'hostId' AS id, (
 	EXISTS (SELECT 1 FROM execution e WHERE e.host_id=d.data->>'hostId')
-	OR EXISTS (SELECT 1 FROM artifact_copy c JOIN store s ON s.id=c.store_id WHERE s.host_id=d.data->>'hostId')
+	OR EXISTS (SELECT 1 FROM artifact_copy c JOIN store s ON s.id=c.store_id WHERE s.host_id=d.data->>'hostId' AND c.state<>'deleted')
 	OR EXISTS (SELECT 1 FROM route_decision r WHERE r.host_id=d.data->>'hostId')
 	OR EXISTS (SELECT 1 FROM document x WHERE x.kind IN ('session','command') AND x.data->>'hostId'=d.data->>'hostId')) AS referenced
 	FROM document d WHERE d.kind='host' AND d.data->>'state'='removed' ORDER BY d.seq`)
@@ -143,7 +143,11 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 		return out, nil
 	}
 	for _, id := range gone {
-		if err := exec(q, "DELETE FROM store WHERE host_id=$1", id); err != nil { // no copy names these stores
+		// Only deleted copies (the ones hosts_remove dropped) still name these stores; they go with them.
+		if err := exec(q, "DELETE FROM artifact_copy WHERE state='deleted' AND store_id IN (SELECT id FROM store WHERE host_id=$1)", id); err != nil {
+			return out, err
+		}
+		if err := exec(q, "DELETE FROM store WHERE host_id=$1", id); err != nil {
 			return out, err
 		}
 		if err := exec(q, "DELETE FROM document WHERE (kind='host' AND id='host:'||$1) OR (kind='host-observation' AND id=$1)", id); err != nil {
