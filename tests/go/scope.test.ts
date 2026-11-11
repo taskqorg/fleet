@@ -142,7 +142,7 @@ test('S7 owner-only and director-only: people_set stays the owner\'s, its audit 
   ok(await op('focus_set', {sessionId: members, projectIds: [MINE]}, MEMBER));
 });
 
-test('S-SESS session routes: a member cannot message or re-profile a session of a project they cannot see (404), and may drive one in a granted project directed by someone else (risk: cross-project session change; a director-only rule the spec does not set)', async () => {
+test('S-SESS session routes: a member cannot message or re-profile a session of a project they cannot see (404), and may drive one in a granted project directed by someone else (requirement: fleet-people-access.md director and project scope; risk: cross-project session change; a director-only rule the spec does not set)', async () => {
   const theirs = ok(await start(OWNER, OTHER)).sessionId, shared = ok(await start(OWNER, MINE)).sessionId;
   assert.equal((await call('POST', `/api/sessions/${theirs}/messages`, {requestId: randomUUID(), text: 'x'}, as(MEMBER))).status, 404);
   assert.equal((await call('POST', `/api/sessions/${theirs}/profile`, {profileId: 'pm'}, as(MEMBER))).status, 404);
