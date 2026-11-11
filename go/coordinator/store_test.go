@@ -14,3 +14,21 @@ func TestCIntReadsSQLIntegers(t *testing.T) {
 		t.Fatal("a string is not a number")
 	}
 }
+
+// Requirement: one number reader (C12, S2): num reads every SQL integer width and numeric text from ->> reads.
+// Risk: an int64 count read as 0 (ff194c7, 39d6e35), a NaN reaching a LIMIT or a timer.
+func TestNumReadsEveryNumericType(t *testing.T) {
+	for _, v := range []any{int16(2), int32(2), int64(2), 2, 2.0, float32(2), "2"} {
+		if num(v) != 2 {
+			t.Fatalf("num(%T) = %v", v, num(v))
+		}
+	}
+	for _, v := range []any{"NaN", "Inf", "x", true, nil} {
+		if num(v) != 0 {
+			t.Fatalf("num(%v) = %v, want 0", v, num(v))
+		}
+	}
+	if msTime(int64(1000)) == nil || msTime(1000.0) == nil || msTime("1000") != nil {
+		t.Fatal("msTime reads JSON and SQL millisecond numbers only")
+	}
+}

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -16,19 +15,6 @@ func nilIf(v string) any {
 		return nil
 	}
 	return v
-}
-
-// ms: a millisecond time of a record field as a timestamp, or nil.
-func ms(v any) any {
-	switch n := v.(type) {
-	case float64:
-		return time.UnixMilli(int64(n))
-	case int64:
-		return time.UnixMilli(n)
-	case int:
-		return time.UnixMilli(int64(n))
-	}
-	return nil
 }
 
 func exec(q *Request, sql string, args ...any) error {
@@ -206,7 +192,7 @@ func putExecution(q *Request, e doc) error {
 	  experiment_id=excluded.experiment_id,variant=excluded.variant,parent_execution_id=excluded.parent_execution_id,session_id=excluded.session_id,account_id=excluded.account_id,host_id=excluded.host_id,
 	  harness=excluded.harness,model=excluded.model,config_ref=excluded.config_ref,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
 	  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-		id, kind, state, observation, nilIf(project), nilIf(task), e["experimentId"], variant, nilIf(parent), e["sessionId"], nilIf(account), e["hostId"], harness, e["model"], cfg, ms(e["startedAt"]), ms(e["finishedAt"]), js(data))
+		id, kind, state, observation, nilIf(project), nilIf(task), e["experimentId"], variant, nilIf(parent), e["sessionId"], nilIf(account), e["hostId"], harness, e["model"], cfg, msTime(e["startedAt"]), msTime(e["finishedAt"]), js(data))
 	if err != nil {
 		return err
 	}
@@ -268,7 +254,7 @@ func putLegacyQuestion(q *Request, v doc) error {
 		}
 		if answered {
 			by := firstString(v["answeredBy"], "operator")
-			return exec(q, "UPDATE question SET state='answered',answer=$2,answered_by=$3,answered_at=$4 WHERE id=$1", id, v["answer"], by, ms(v["answeredAt"]))
+			return exec(q, "UPDATE question SET state='answered',answer=$2,answered_by=$3,answered_at=$4 WHERE id=$1", id, v["answer"], by, msTime(v["answeredAt"]))
 		}
 		return nil
 	}

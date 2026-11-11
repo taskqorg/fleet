@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -30,19 +28,6 @@ func nonNil(v ...any) any {
 		}
 	}
 	return nil
-}
-
-func msTimestamp(v any) any {
-	f, ok := v.(float64)
-	if !ok {
-		if i, ok2 := v.(int64); ok2 {
-			f, ok = float64(i), true
-		}
-	}
-	if !ok || math.IsInf(f, 0) || math.IsNaN(f) {
-		return nil
-	}
-	return time.UnixMilli(int64(f)).UTC()
 }
 
 // createExecution inserts a typed row unless its id or request_id exists; true when this call inserted one.
@@ -265,7 +250,7 @@ func blockedConnections(q *Request) (map[string]bool, error) {
 		if err != nil {
 			return nil, err
 		}
-		if f, ok := v.(float64); ok && f >= anum(r["limit"]) {
+		if f, ok := v.(float64); ok && f >= num(r["limit"]) {
 			out[astr(r["scope_id"])] = true
 		}
 	}
