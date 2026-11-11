@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"errors"
+	"fleet/contract"
 	"fmt"
 	"io"
 	"net"
@@ -581,6 +582,15 @@ func transferWork(db *sql.DB, c *transferClient, lane string, after afterJob) {
 
 // settleJob records a job's outcome: done or failed with the command's final receipt (and, for an upload that can never
 // succeed, the artifact failure), or a retry with backoff.
+// transferReceipt: the final receipt of an artifact-copy or artifact-verify command.
+func transferReceipt(host string, cmd any, status contract.ReceiptStatus, failure string) contract.Receipt {
+	r := contract.Receipt{HostId: host, CommandId: jStr(cmd, "id"), ExecutionId: jStr(cmd, "executionId"), Status: status}
+	if failure != "" {
+		r.Error = &failure
+	}
+	return r
+}
+
 func settleJob(x execer, host, id, kind string, body M, attempts int64, v any, f *failure) error {
 	cmd, hasCmd := body["command"]
 	switch {
@@ -589,7 +599,7 @@ func settleJob(x execer, host, id, kind string, body M, attempts int64, v any, f
 			return err
 		}
 		if hasCmd {
-			return queue(x, "/api/hosts/receipts", M{"hostId": host, "commandId": jAt(cmd, "id"), "executionId": jAt(cmd, "executionId"), "status": "completed"})
+			return queue(x, "/api/hosts/receipts", transferReceipt(host, cmd, contract.ReceiptStatusCompleted, ""))
 		}
 	case f.retry:
 		_, err := x.Exec("UPDATE transfers SET attempts=attempts+1,next_at=?,response=? WHERE id=?", nowMs()+backoff(attempts), enc(M{"state": "retrying", "error": f.msg}), id)
@@ -599,7 +609,7 @@ func settleJob(x execer, host, id, kind string, body M, attempts int64, v any, f
 			return err
 		}
 		if hasCmd {
-			if err := queue(x, "/api/hosts/receipts", M{"hostId": host, "commandId": jAt(cmd, "id"), "executionId": jAt(cmd, "executionId"), "status": "failed", "error": f.msg}); err != nil {
+			if err := queue(x, "/api/hosts/receipts", transferReceipt(host, cmd, contract.ReceiptStatusFailed, f.msg)); err != nil {
 				return err
 			}
 		}

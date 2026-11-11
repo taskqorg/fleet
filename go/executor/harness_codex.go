@@ -6,6 +6,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os/exec"
 	"strings"
 )
@@ -41,7 +42,7 @@ func (h harness) Normalize(event map[string]any) map[string]any {
 	return event
 }
 
-// claudeLimitReading: Claude stream-json rate_limit_event to a limit_reading: status and reset time, never a percent.
+// claudeLimitReading: Claude stream-json rate_limit_event to a limit_reading: status, reset time and, when utilization is given, the percent.
 func claudeLimitReading(v M) M {
 	i := v["rate_limit_info"]
 	if !has(v, "rate_limit_info") {
@@ -54,7 +55,16 @@ func claudeLimitReading(v M) M {
 			period = t
 		}
 	}
-	return M{"type": "limit_reading", "harness": "claude", "readings": []any{M{"period": period, "status": jAt(i, "status"), "resetsAt": ms(jAt(i, "resetsAt"))}}, "native": v}
+	r := M{"period": period, "resetsAt": ms(jAt(i, "resetsAt"))}
+	if st, ok := str(jAt(i, "status")); ok {
+		r["status"] = st
+	}
+	// fleet-people-access.md section 8: utilization (0-1) gives the percent, to 0.01; without it the reading stays
+	// status only.
+	if u, ok := num(jAt(i, "utilization")); ok {
+		r["pct"] = math.Round(u*10000) / 100
+	}
+	return M{"type": "limit_reading", "harness": "claude", "readings": []any{r}, "native": v}
 }
 
 // codexLimitReading: one reading per rate-limit window, its period named from its duration.
