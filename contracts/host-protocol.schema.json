@@ -270,7 +270,8 @@
         "capabilities",
         "stores",
         "problems",
-        "projectRoots"
+        "projectRoots",
+        "gitConnections"
       ],
       "properties": {
         "hostId": {
@@ -310,6 +311,13 @@
         },
         "update": {
           "$ref": "#/$defs/UpdateResult"
+        },
+        "gitConnections": {
+          "$comment": "names of the git connections this host holds (a key under FLEET_CONNECTIONS_DIR); names only, never key bytes or paths. Absent: unknown, dispatch does not skip on it. Required so an empty list is sent; an older host omits it, which the coordinator reads as unknown",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
