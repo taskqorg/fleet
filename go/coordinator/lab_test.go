@@ -53,3 +53,12 @@ func TestVariantArgumentsMergeOverStep(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+func TestJudgeArtifactInputsReachSteps(t *testing.T) {
+	// Requirement: S5 stages binary trial artifacts; risk: dropping inputs without text example files.
+	run := doc{"example": doc{}, "exampleInputs": []any{doc{"artifactId": "render-artifact", "path": "example/trial/renders/front.png"}}, "steps": []any{}}
+	got, err := inputsFor(nil, run, 0)
+	if err != nil || len(got) != 1 || mapOf(got[0])["artifactId"] != "render-artifact" || mapOf(got[0])["path"] != "example/trial/renders/front.png" {
+		t.Fatalf("binary artifact inputs: %v, %v", got, err)
+	}
+}

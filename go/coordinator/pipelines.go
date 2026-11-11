@@ -804,8 +804,8 @@ func inputsFor(q *Request, run doc, i int) ([]any, error) {
 				return nil, err
 			}
 		}
-		out = append(out, anys(run["exampleInputs"])...)
 	}
+	out = append(out, anys(run["exampleInputs"])...)
 	fs, err := pipelineOutputs(q, run, i)
 	if err != nil {
 		return nil, err

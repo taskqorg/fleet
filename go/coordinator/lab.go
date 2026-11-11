@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/http"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -1428,12 +1429,18 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 				}
 				inputs := []any{}
 				for _, f := range files {
-					if len(f.bytes) < 1048576 {
-						inputs = append(inputs, doc{"path": "trial/" + f.path, "text": string(f.bytes)})
+					// Judges inspect renders and measurements, never the source GLB.
+					if strings.HasSuffix(strings.ToLower(f.path), ".glb") {
+						continue
 					}
+					id, err := saveArtifact(q, t, astr(t["id"]), "judge/"+f.path, f.bytes, http.DetectContentType(f.bytes))
+					if err != nil {
+						return false, err
+					}
+					inputs = append(inputs, doc{"artifactId": id, "path": "example/trial/" + f.path})
 				}
 				jid, err := expInsertRun(q, exp, "lab:"+sha256hex(jsonBytes([]any{exp["id"], "judge", name, t["id"]})), astr(e["ref"])+".json",
-					doc{"prompt": full["prompt"], "form": e["form"], "inputs": inputs}, nil, doc{"judge": doc{"evaluator": name, "trialId": t["id"]}})
+					doc{"prompt": full["prompt"], "form": e["form"]}, nil, doc{"exampleInputs": inputs, "judge": doc{"evaluator": name, "trialId": t["id"]}})
 				if err != nil {
 					return false, err
 				}
