@@ -24,7 +24,12 @@ design-report/
 # Generated from contracts/*.schema.json at build time (contracts/gen-ts.mjs).
 contracts/generated/
 go/bin/
+# go build output in a package directory
+go/coordinator/coordinator
 go/executor/executor
+go/gateway/gateway
+go/update/update
+go/gen/gen
 go/.cache/
 
 # Shared rules checked out by CI (ci.yml); untracked there, it marked CI builds dirty in /api/health.
