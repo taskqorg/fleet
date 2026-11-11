@@ -148,7 +148,6 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 	agent := slices.Contains(agentTools, name) || slices.ContainsFunc(operationsOf(ctx), func(o any) bool { return jStr(jAt(o, "name")) == name })
 	var key string
 	var body M
-	route := "/api/hosts/agent-tools" // one route per envelope (contracts/host-protocol.schema.json)
 	if agent {
 		cmd, err := need("commandId")
 		if err != nil {
@@ -159,7 +158,6 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 			"request": M{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": M{"name": name, "arguments": q}}}
 	} else {
 		child := name == "request_child"
-		route = map[bool]string{true: "/api/hosts/delegations", false: "/api/hosts/project-operations"}[child]
 		if !child && !(truth(jAt(ctx, "projectId")) && slices.Contains(projectTools, name)) {
 			return nil, errors.New("Unsupported method")
 		}
@@ -226,7 +224,7 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 	}
 	raw := enc(body)
 	// Acquire the writer before reading: a deferred WAL read cannot upgrade after a concurrent host reply.
-	if err := journalOnce(db, key, raw, route); err != nil {
+	if err := journalOnce(db, key, raw, map[bool]string{true: "/api/hosts/agent-tools", false: "/api/hosts/receipts"}[agent]); err != nil {
 		return nil, err
 	}
 	seconds := 8
