@@ -958,7 +958,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 		var err error
 		switch kind {
 		case "api":
-			resolved, err = resolveRefs(def["arguments"], run["example"], outputs, false)
+			resolved, err = resolveRefs(withArguments(def, mapOf(run["overrides"])), run["example"], outputs, false)
 		case "agent":
 			p := def["prompt"]
 			if o := mapOf(run["overrides"]); o != nil && o["prompt"] != nil {
@@ -1841,4 +1841,22 @@ func sameAgentStep(q *Request, executionID string, step, overrides doc) (bool, e
 	}
 	now, err := definitionRef(q, "agent", pid, profile)
 	return err == nil && now.ContentSha == pinned[0].ContentSha, err
+}
+
+// withArguments: a variant's arguments override for this api step, merged over the step's arguments before references
+// are resolved (fleet-asset-pipelines §4, Variant arguments).
+func withArguments(def, overrides doc) any {
+	extra := mapOf(mapOf(overrides["arguments"])[astr(def["id"])])
+	base := mapOf(def["arguments"])
+	if extra == nil {
+		return def["arguments"]
+	}
+	out := doc{}
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range extra {
+		out[k] = v
+	}
+	return out
 }

@@ -36,7 +36,7 @@ var (
 	labCommit    = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 	labLabel     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,59}$`)
 	draftExample = regexp.MustCompile(`/examples/[^/]+\.json$`)
-	labOverrides = []string{"profile", "model", "skills", "prompt", "web_route", "account", "host"}
+	labOverrides = []string{"profile", "model", "skills", "prompt", "web_route", "account", "host", "arguments"}
 	// labVariantKeys: a Lab variant's keys; bands steer its typed evaluator, never a run, so runs take labOverrides only.
 	labVariantKeys = append(append([]string{}, labOverrides...), "bands")
 )
@@ -1045,6 +1045,17 @@ func expCreate(q *Request, b doc) (doc, error) {
 		}
 		if w, has := o["web_route"]; has && w != "connections" && w != "builtin" {
 			return nil, fail(400, "web_route must be connections or builtin")
+		}
+		if args, has := o["arguments"]; has {
+			m := mapOf(args)
+			for _, step := range m {
+				if mapOf(step) == nil {
+					m = nil
+				}
+			}
+			if m == nil {
+				return nil, fail(400, "arguments must be {<step id>: {<argument>: value}}")
+			}
 		}
 		if bands, has := o["bands"]; has {
 			if _, _, err := bandsOf(bands); err != nil {

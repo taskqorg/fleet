@@ -191,7 +191,7 @@ One cut, no read-only period (R3.1).
     *   `blender/run.sh <script> [args]`: runs `"$FLEET_BLENDER" --background --python blender/<script>.py -- [args]`.
     *   `blender/fetch-measure.py`: downloads the GLB from the URL in `FLEET_INPUT_DIR/gen/output.json` (`model_urls.glb`) to `$FLEET_OUTPUT_DIR/model.glb`, imports it and writes `$FLEET_OUTPUT_DIR/stats.json` `{triangles, components, dimensions_m: [x, y, z], uv: bool, pbr: {base_color, normal, roughness, metallic}}`.
     *   `blender/render.py --views <list> --size <px>`: renders `FLEET_INPUT_DIR/measure/model.glb` to `$FLEET_OUTPUT_DIR/renders/<view>.png` with Eevee. Views and size are pipeline arguments; the first pipeline uses `front,side,top,three-quarter` and 1024.
-    *   `image-check.sh`: decodes the image, checks size, alpha and colour profile against the example.
+    *   `image-check.sh`: decodes the image and extracts size, alpha and colour profile from the image bytes. Execution receives inputs only; `script:example.checks` compares `image.json` with the example’s explicit requirements at the evaluator boundary. The separate `fleet-uc12-bitmap-pilot` synthetic fixture checks 1024×1024 opaque sRGB PNG output without provider calls; it qualifies the technical image path, not vector artwork or a product rubric.
     *   Output layout: everything a step writes under `$FLEET_OUTPUT_DIR` is a trial output; `script:example.checks` sees each step's files at the top level, later steps winning (fleet-lab, Ratings), so checks read `stats.json`, `model.glb` and `renders/*.png`.
 *   **`meshy-prop`** (UC2):
 

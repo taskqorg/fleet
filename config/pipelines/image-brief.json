@@ -1,0 +1,35 @@
+{
+  "id": "image-brief",
+  "steps": [
+    {
+      "arguments": {
+        "contents": [
+          {
+            "parts": [
+              {
+                "text": "${example.prompt}"
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "responseModalities": [
+            "IMAGE"
+          ]
+        },
+        "model": "gemini-3.1-flash-image-preview"
+      },
+      "connection": "google-ai",
+      "id": "gen",
+      "kind": "api",
+      "tool": "generate_content"
+    },
+    {
+      "command": "\"$FLEET_LAB_SCRIPTS\"/image-check.sh",
+      "host": "owner-mac",
+      "id": "check",
+      "kind": "script"
+    }
+  ],
+  "version": 2
+}

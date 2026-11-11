@@ -1315,7 +1315,12 @@ func (e *executor) script(c M, execution, session string) error {
 	cmd.Dir = work
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
-	cmd.Env = append(cmd.Env, "FLEET_INPUT_DIR="+input, "FLEET_OUTPUT_DIR="+output, "FLEET_SESSION_ID="+session)
+	cmd.Env = append(cmd.Env, "FLEET_INPUT_DIR="+input, "FLEET_OUTPUT_DIR="+output, "FLEET_SESSION_ID="+session,
+		// Lab scripts ship in the release next to the binary (fleet-asset-pipelines §4); Blender is a host setting.
+		"FLEET_LAB_SCRIPTS="+filepath.Join(filepath.Dir(exe()), "scripts", "lab"))
+	if v := os.Getenv("FLEET_BLENDER"); v != "" {
+		cmd.Env = append(cmd.Env, "FLEET_BLENDER="+v)
+	}
 	if err := e.launch(execution, jStr(c, "id"), session); err != nil {
 		dropTrial()
 		return err
