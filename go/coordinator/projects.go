@@ -89,8 +89,11 @@ func readTrustedProfile(id string) (doc, error) {
 		return nil, fail(400, "Invalid repository profile")
 	}
 	// One validator with the executor (contracts/profile.schema.json), so a profile listed here is never refused on a host.
-	if _, err := contract.ParseProfile(raw); err != nil || p["id"] != id {
-		return nil, fail(400, "Invalid repository profile")
+	if _, err := contract.ParseProfile(raw); err != nil {
+		return nil, fail(400, "Invalid repository profile: "+err.Error())
+	}
+	if p["id"] != id {
+		return nil, fail(400, "Invalid repository profile: id differs from the file name")
 	}
 	return p, nil
 }

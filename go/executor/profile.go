@@ -4,12 +4,9 @@ package main
 
 import (
 	"crypto/sha256"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 
 	"fleet/contract"
 )
@@ -32,13 +29,8 @@ func validateAntigravitySettings(settings any) error {
 	if settings == nil {
 		return nil
 	}
-	var s contract.AntigravitySettings
-	d := json.NewDecoder(strings.NewReader(enc(settings)))
-	d.DisallowUnknownFields()
-	if d.Decode(&s) != nil {
-		return errors.New("unmapped Antigravity setting")
-	}
-	return s.Check()
+	_, err := contract.ParseAntigravitySettings([]byte(enc(settings)))
+	return err
 }
 
 func exe() string { p, _ := os.Executable(); return p }

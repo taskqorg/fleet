@@ -38,6 +38,10 @@ func TestParseProfile(t *testing.T) {
 		`{"id":"p","harness":"claude","model":"m","instructionRole":"system","instructions":"x","mcpServers":[],"tools":["WebFetch"]}`,
 		`{"id":"p","harness":"antigravity","model":"m","instructionRole":"user","instructions":"x","mcpServers":[],"settings":{"mode":"yolo"}}`,
 		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[{"id":"other","data":{}}]}`,
+		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[{"id":"evil","data":{}}],"mcpservers":[]}`, // case variant
+		`{"id":"p","model":"m","effort":"low","mcpServers":[]}`,                                                           // no instructions
+		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"skills":["-rf"]}`,
+		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"delegationProfiles":null}`,
 	} {
 		if _, err := ParseProfile([]byte(bad)); err == nil {
 			t.Error("accepted", bad)

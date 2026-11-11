@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -14,25 +16,100 @@ import (
 // profile the coordinator dispatches is never refused on the host.
 func ParseProfile(raw []byte) (Profile, error) {
 	var p Profile
-	d := json.NewDecoder(bytes.NewReader(raw))
-	d.DisallowUnknownFields()
-	if err := d.Decode(&p); err != nil {
+	if err := strict(raw, &p); err != nil {
 		return p, fmt.Errorf("invalid profile: %w", err)
+	}
+	var top map[string]json.RawMessage
+	json.Unmarshal(raw, &top)
+	for _, k := range []string{"id", "model", "instructions", "mcpServers"} {
+		if _, ok := top[k]; !ok {
+			return p, fmt.Errorf("invalid profile: %s is missing", k)
+		}
 	}
 	return p, p.check()
 }
 
+// ParseAntigravitySettings decodes and checks a start command's Antigravity settings with the profile rules.
+func ParseAntigravitySettings(raw []byte) (AntigravitySettings, error) {
+	var s AntigravitySettings
+	if err := strict(raw, &s); err != nil {
+		return s, fmt.Errorf("unmapped Antigravity setting: %w", err)
+	}
+	return s, s.Check()
+}
+
+// strict decodes raw into v and refuses what encoding/json lets through: a key that is not exactly a field name
+// (encoding/json matches names case-insensitively, so "mcpservers" would be checked while a reader of the raw map uses
+// "mcpServers"), and null on anything but an optional string.
+func strict(raw []byte, v any) error {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if err := d.Decode(v); err != nil {
+		return err
+	}
+	return exact(raw, reflect.TypeOf(v).Elem())
+}
+
+func exact(raw json.RawMessage, t reflect.Type) error {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.Slice:
+		var items []json.RawMessage
+		json.Unmarshal(raw, &items)
+		for _, item := range items {
+			if err := exact(item, t.Elem()); err != nil {
+				return err
+			}
+		}
+	case reflect.Struct:
+		var fields map[string]json.RawMessage
+		json.Unmarshal(raw, &fields)
+		for k, value := range fields {
+			f, ok := fieldByTag(t, k)
+			if !ok {
+				return fmt.Errorf("unknown field %q", k)
+			}
+			if string(value) == "null" {
+				if f.Type != reflect.TypeOf((*string)(nil)) {
+					return fmt.Errorf("%s must not be null", k)
+				}
+				continue
+			}
+			if err := exact(value, f.Type); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func fieldByTag(t reflect.Type, name string) (reflect.StructField, bool) {
+	for i := range t.NumField() {
+		if tag, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ","); tag == name {
+			return t.Field(i), true
+		}
+	}
+	return reflect.StructField{}, false
+}
+
+var grantID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,79}$`)
+
 func badArg(s string) bool { return s == "" || s[0] == '-' }
 
 func (p Profile) check() error {
-	if p.Id == "" || len(p.Id) > 80 || badArg(p.Model) || len(p.Instructions) > 16384 {
+	if badArg(p.Id) || len(p.Id) > 80 || badArg(p.Model) || len(p.Instructions) > 16384 {
 		return errors.New("unsupported agent profile: id, model or instructions")
 	}
 	if len(p.McpServers) > 1 {
 		return errors.New("at most one design-rules grant")
 	}
 	for _, s := range p.McpServers {
-		if data, _ := json.Marshal(s.Data); s.Id != "design-rules" || s.Data == nil || len(data) > 16384 {
+		var data bytes.Buffer
+		e := json.NewEncoder(&data)
+		e.SetEscapeHTML(false) // measured as the executor passes it on
+		if s.Id != "design-rules" || s.Data == nil || e.Encode(s.Data) != nil || data.Len()-1 > 16384 {
 			return errors.New("unsupported MCP grant")
 		}
 	}
@@ -45,7 +122,7 @@ func (p Profile) check() error {
 			return errors.New("invalid " + l.what)
 		}
 		for i, id := range l.ids {
-			if id == "" || len(id) > 80 || strings.Trim(id, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" || slices.Contains(l.ids[:i], id) {
+			if !grantID.MatchString(id) || slices.Contains(l.ids[:i], id) {
 				return errors.New("invalid " + l.what)
 			}
 		}
