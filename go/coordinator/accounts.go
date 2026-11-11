@@ -449,8 +449,9 @@ func accountUpdateBody(q *Request, b doc) (any, error) {
 	}
 	// fleet-people-access.md section 8: planWeight (default 1) weights the pool; lowPct (default off) marks Low.
 	if v, ok := b["planWeight"]; ok {
-		if f, isNum := v.(float64); v != nil && !(isNum && f > 0) {
-			return nil, fail(400, "planWeight: a positive number or null (1)")
+		// Bounded so the weighted pool sums stay finite numbers; no plan is a trillion base plans.
+		if f, isNum := v.(float64); v != nil && !(isNum && f > 0 && f <= 1e12) {
+			return nil, fail(400, "planWeight: a positive number up to 1e12, or null (1)")
 		}
 		set("planWeight", v)
 	}

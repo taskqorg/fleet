@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fleet/contract"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -112,38 +113,45 @@ func limitBurn(obs []limitObs, o limitOptions) *float64 {
 
 // memberLine: left falls at burn from now to 0, returns to 100 at resetsAt, then falls at the same burn until it
 // reaches 0 or one period after the reset (the next reset is unknown, so the line ends there). Fleet never guesses a
-// reset time; without one the line ends at `to` or at 0.
+// reset time; without one the line runs to `to` or to 0. Nothing is drawn past `to`.
 func memberLine(left, burn float64, resetsAt *int64, plen int64, o limitOptions) []contract.LimitPoint {
 	pts := []contract.LimitPoint{{At: o.now, Left: left}}
-	fall := func(from int64, l float64, until int64) (int64, float64) {
-		if burn <= 0 {
-			return until, l
+	add := func(at int64, l float64) {
+		if last := pts[len(pts)-1]; last.At != at || last.Left != l {
+			pts = append(pts, contract.LimitPoint{At: at, Left: l})
 		}
-		empty := from + int64(l/burn*hourMs)
-		if empty < until {
-			pts = append(pts, contract.LimitPoint{At: empty, Left: 0})
-			return until, 0
-		}
-		return until, l - burn*float64(until-from)/hourMs
 	}
-	if resetsAt == nil || *resetsAt <= o.now {
-		end, l := fall(o.now, left, o.to)
-		if pts[len(pts)-1].At != end {
-			pts = append(pts, contract.LimitPoint{At: end, Left: l})
+	// fall from (from, l) until `until`; returns the left at `until`.
+	fall := func(from int64, l float64, until int64) float64 {
+		if burn <= 0 || until <= from {
+			add(until, l)
+			return l
 		}
+		if empty := from + int64(l/burn*hourMs); empty < until {
+			add(empty, 0)
+			add(until, 0)
+			return 0
+		}
+		v := l - burn*float64(until-from)/hourMs
+		add(until, v)
+		return v
+	}
+	if o.to <= o.now {
 		return pts
 	}
-	at, l := fall(o.now, left, *resetsAt)
-	if pts[len(pts)-1].At != at {
-		pts = append(pts, contract.LimitPoint{At: at, Left: l})
+	if resetsAt == nil || *resetsAt <= o.now || *resetsAt >= o.to {
+		fall(o.now, left, o.to)
+		return pts
 	}
+	fall(o.now, left, *resetsAt)
 	pts = append(pts, contract.LimitPoint{At: *resetsAt, Left: 100})
-	end := min(o.to, *resetsAt+max(plen, 1))
-	end2, l2 := fall(*resetsAt, 100, end)
-	if pts[len(pts)-1].At != end2 {
-		pts = append(pts, contract.LimitPoint{At: end2, Left: l2})
-	}
+	fall(*resetsAt, 100, min(o.to, *resetsAt+max(plen, 1)))
 	return pts
+}
+
+// flatLine: a member with a known left and no burn holds its left until `to`.
+func flatLine(left float64, o limitOptions) []contract.LimitPoint {
+	return []contract.LimitPoint{{At: o.now, Left: left}, {At: max(o.to, o.now), Left: left}}
 }
 
 // firstZero: the first point at 0 strictly before `before` (0: no bound) on a line.
@@ -163,7 +171,24 @@ func firstZero(line []contract.LimitPoint, before int64) contract.LimitEmpty {
 	return contract.LimitEmpty{State: contract.LimitEmptyStateNotBeforeEnd}
 }
 
-// valueAt: a line's value at t (linear between points; a step keeps the later point at the same time).
+// valueBefore: a line's value just before t (the left side of a step at t).
+func valueBefore(line []contract.LimitPoint, t int64) (float64, bool) {
+	if len(line) == 0 || t <= line[0].At || t > line[len(line)-1].At {
+		return valueAt(line, t)
+	}
+	for i := 1; i < len(line); i++ {
+		a, b := line[i-1], line[i]
+		if t <= b.At {
+			if b.At == a.At {
+				return a.Left, true
+			}
+			return a.Left + (b.Left-a.Left)*float64(t-a.At)/float64(b.At-a.At), true
+		}
+	}
+	return line[len(line)-1].Left, true
+}
+
+// valueAt: a line's value at t (linear between points; at a step, the later point).
 func valueAt(line []contract.LimitPoint, t int64) (float64, bool) {
 	if len(line) == 0 || t < line[0].At || t > line[len(line)-1].At {
 		return 0, false
@@ -201,7 +226,6 @@ type limitAccount struct {
 	id, harness string
 	weight      float64
 	lowPct      *float64
-	doc         map[string]any
 }
 
 // limitPeriods: the periods of one subscription with their history and projection.
@@ -253,6 +277,8 @@ func limitPools(accounts []limitAccount, periods map[string][]contract.LimitPeri
 	pools := map[key]*contract.LimitPool{}
 	lines := map[key][][]contract.LimitPoint{}
 	weights := map[key][]float64{}
+	firsts := map[key][]contract.LimitEmpty{}
+	noBurn := map[key]bool{}
 	var keys []key
 	for _, a := range accounts {
 		for _, p := range periods[a.id] {
@@ -271,21 +297,20 @@ func limitPools(accounts []limitAccount, periods map[string][]contract.LimitPeri
 			pl.Members = append(pl.Members, a.id)
 			pl.Capacity += a.weight * 100
 			pl.Left += a.weight * *p.Left
+			line := p.Projection
 			if p.Burn != nil {
 				b := a.weight * *p.Burn
 				if pl.Burn == nil {
 					pl.Burn = new(float64)
 				}
 				*pl.Burn += b
-				lines[k] = append(lines[k], p.Projection)
-				weights[k] = append(weights[k], a.weight)
+			} else {
+				line = flatLine(*p.Left, o) // no burn known: held at its current left
+				noBurn[k] = true
 			}
-			// first empty: the earliest member empty before its own reset
-			if p.FirstEmpty.State == contract.LimitEmptyStateAt && (pl.FirstEmpty.At == nil || *p.FirstEmpty.At < *pl.FirstEmpty.At) {
-				pl.FirstEmpty = p.FirstEmpty
-			} else if pl.FirstEmpty.State == contract.LimitEmptyStateUnknown && p.FirstEmpty.State == contract.LimitEmptyStateNotBeforeEnd {
-				pl.FirstEmpty = p.FirstEmpty
-			}
+			lines[k] = append(lines[k], line)
+			weights[k] = append(weights[k], a.weight)
+			firsts[k] = append(firsts[k], p.FirstEmpty)
 			if p.ResetsAt != nil && *p.ResetsAt > o.now && (pl.NextReset.At == nil || *p.ResetsAt < *pl.NextReset.At) {
 				at := *p.ResetsAt
 				left := *p.Left
@@ -300,14 +325,36 @@ func limitPools(accounts []limitAccount, periods map[string][]contract.LimitPeri
 	out := []contract.LimitPool{}
 	for _, k := range keys {
 		pl := pools[k]
+		// A subscription of this harness with no reading of this period is unknown too.
+		for _, a := range accounts {
+			if a.harness == k.harness && !slices.Contains(pl.Members, a.id) && !slices.Contains(pl.Unknown, a.id) {
+				pl.Unknown = append(pl.Unknown, a.id)
+			}
+		}
+		// first empty: the earliest member empty before its own reset; "not before the end" only when every member
+		// is known not to empty.
+		pl.FirstEmpty = contract.LimitEmpty{State: contract.LimitEmptyStateUnknown}
+		if len(firsts[k]) > 0 && len(pl.Unknown) == 0 {
+			all := true
+			for _, f := range firsts[k] {
+				if f.State == contract.LimitEmptyStateAt && (pl.FirstEmpty.At == nil || *f.At < *pl.FirstEmpty.At) {
+					pl.FirstEmpty = f
+				}
+				all = all && f.State == contract.LimitEmptyStateNotBeforeEnd
+			}
+			if pl.FirstEmpty.At == nil && all {
+				pl.FirstEmpty = contract.LimitEmpty{State: contract.LimitEmptyStateNotBeforeEnd}
+			}
+		}
 		if pl.Capacity > 0 {
 			pct := pl.Left / pl.Capacity * 100
 			pl.LeftPct = &pct
 		}
 		// The pool line: the weighted sum of member lines while every member line has a value; it ends where the first
-		// member line ends. Members without a burn are held at their current left.
+		// member line ends. Members without a burn are held at their current left. A member reset is a step: both sides
+		// are sampled.
 		ls := lines[k]
-		if len(ls) > 0 && len(ls) == len(pl.Members) {
+		if len(ls) > 0 {
 			end := int64(math.MaxInt64)
 			times := map[int64]bool{}
 			for _, l := range ls {
@@ -324,37 +371,35 @@ func limitPools(accounts []limitAccount, periods map[string][]contract.LimitPeri
 			}
 			sort.Slice(ts, func(i, j int) bool { return ts[i] < ts[j] })
 			for _, t := range ts {
-				sum := 0.0
+				before, at := 0.0, 0.0
 				for i, l := range ls {
+					b, _ := valueBefore(l, t)
 					v, _ := valueAt(l, t)
-					sum += weights[k][i] * v
+					before += weights[k][i] * b
+					at += weights[k][i] * v
 				}
-				pl.Projection = append(pl.Projection, contract.LimitPoint{At: t, Left: sum})
+				if before != at {
+					pl.Projection = append(pl.Projection, contract.LimitPoint{At: t, Left: before})
+				}
+				pl.Projection = append(pl.Projection, contract.LimitPoint{At: t, Left: at})
 			}
 			pl.PoolEmpty = firstZero(pl.Projection, 0)
+			if pl.PoolEmpty.State != contract.LimitEmptyStateAt && (noBurn[k] || len(pl.Unknown) > 0) {
+				pl.PoolEmpty = contract.LimitEmpty{State: contract.LimitEmptyStateUnknown}
+			}
 		}
 		out = append(out, *pl)
 	}
 	return out
 }
 
-func subscriptionLimits(q *Request) (any, error) {
-	var req struct {
-		WindowHours *float64 `json:"windowHours"`
-		From        *int64   `json:"from"`
-		To          *int64   `json:"to"`
-		PaceMargin  *float64 `json:"paceMargin"`
-	}
-	if b := q.body; len(b) > 0 {
-		if err := json.Unmarshal(b, &req); err != nil {
-			return nil, fail(400, "Invalid subscription_limits request")
-		}
-	}
+func subscriptionLimits(q *Request, req *contract.SubscriptionLimitsRequest) (contract.SubscriptionLimitsReply, error) {
+	var none contract.SubscriptionLimitsReply
 	now := nowMs()
 	o := limitOptions{now: now, from: now - 7*24*hourMs, to: now + 7*24*hourMs, windowHours: 3, margin: 5}
 	if req.WindowHours != nil {
-		if *req.WindowHours <= 0 {
-			return nil, fail(400, "windowHours: a positive number of hours")
+		if !(*req.WindowHours > 0 && *req.WindowHours*hourMs < float64(now)) {
+			return none, fail(400, "windowHours: a positive number of hours since the epoch at most")
 		}
 		o.windowHours = *req.WindowHours
 	}
@@ -364,28 +409,31 @@ func subscriptionLimits(q *Request) (any, error) {
 	if req.To != nil {
 		o.to = *req.To
 	}
+	if o.from > o.to {
+		return none, fail(400, "from must not be after to")
+	}
 	if req.PaceMargin != nil {
 		o.margin = *req.PaceMargin
 	}
 	ctx := withTx(q)
 	latest, err := latestReadings(ctx, q.app)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	hist, err := limitHistory(ctx, q.app, min(o.from, now-int64(o.windowHours*hourMs)))
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	rows, err := rowsCtx(ctx, conn(ctx, q.app), "SELECT data FROM document WHERE kind='managed-account' ORDER BY seq")
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	var accounts []limitAccount
 	periods := map[string][]contract.LimitPeriod{}
 	reply := contract.SubscriptionLimitsReply{ServerNow: now, WindowHours: o.windowHours, From: o.from, To: o.to, Subscriptions: []contract.LimitSubscription{}}
 	for _, r := range rows {
 		x, _ := r["data"].(map[string]any)
-		a := limitAccount{id: astr(x["id"]), harness: astr(x["harness"]), weight: 1, doc: x}
+		a := limitAccount{id: astr(x["id"]), harness: astr(x["harness"]), weight: 1}
 		if w, ok := x["planWeight"].(float64); ok && w > 0 {
 			a.weight = w
 		}
