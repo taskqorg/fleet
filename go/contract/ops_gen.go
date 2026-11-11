@@ -1473,7 +1473,7 @@ type QuestionRow struct {
 	Answer      *string         `json:"answer"`
 	AnsweredAt  *string         `json:"answeredAt"`
 	AnsweredBy  *string         `json:"answeredBy"`
-	ArtifactIds []string        `json:"artifactIds,omitempty"`
+	ArtifactIds json.RawMessage `json:"artifactIds,omitempty"`
 	AskedAt     string          `json:"askedAt"`
 	AskedBy     *string         `json:"askedBy"`
 	Cause       json.RawMessage `json:"cause,omitempty"`

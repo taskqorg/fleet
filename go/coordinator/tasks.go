@@ -694,7 +694,7 @@ func init() {
 	gatedObjOp("task_update", false, typedOp(func(q *Request, r *contract.TaskUpdateRequest) (contract.TaskDetail, error) {
 		var none contract.TaskDetail
 		id := r.TaskId
-		if id == "" || len(id) > 200 {
+		if !idOK(id) {
 			return none, fail(400, "Expected taskId")
 		}
 		if _, err := taskRow(q, id); err != nil {
@@ -736,7 +736,7 @@ func init() {
 	}))
 	for _, x := range []struct{ name, trig string }{{"task_hold", "hold"}, {"task_release", "release"}, {"task_cancel", "cancel"}} {
 		gatedObjOp(x.name, false, typedOp(func(q *Request, r *contract.TaskHoldRequest) (contract.TaskDetail, error) {
-			if r.TaskId == "" || len(r.TaskId) > 200 {
+			if !idOK(r.TaskId) {
 				return contract.TaskDetail{}, fail(400, "Expected taskId")
 			}
 			if _, err := taskTransition(q, r.TaskId, x.trig, ""); err != nil {
@@ -746,7 +746,7 @@ func init() {
 		}))
 	}
 	gatedObjOp("task_get", true, typedOp(func(q *Request, r *contract.TaskGetRequest) (contract.TaskDetail, error) {
-		if r.TaskId == "" || len(r.TaskId) > 200 {
+		if !idOK(r.TaskId) {
 			return contract.TaskDetail{}, fail(400, "Expected taskId")
 		}
 		return taskDetail(q, r.TaskId)
@@ -754,7 +754,7 @@ func init() {
 	gatedObjOp("task_request_acceptance", false, typedOp(func(q *Request, r *contract.TaskRequestAcceptanceRequest) (contract.QuestionRow, error) {
 		var none contract.QuestionRow
 		id := r.TaskId
-		if id == "" || len(id) > 200 {
+		if !idOK(id) {
 			return none, fail(400, "Expected taskId")
 		}
 		t, err := taskRow(q, id)
@@ -815,7 +815,7 @@ func init() {
 	gatedObjOp("task_take", false, typedOp(func(q *Request, r *contract.TaskTakeRequest) (contract.TaskDetail, error) {
 		var none contract.TaskDetail
 		id := r.TaskId
-		if id == "" || len(id) > 200 {
+		if !idOK(id) {
 			return none, fail(400, "Expected taskId")
 		}
 		t, err := taskRow(q, id)
@@ -847,7 +847,7 @@ func init() {
 	gatedObjOp("questions_answer", false, typedOp(func(q *Request, r *contract.QuestionsAnswerRequest) (contract.QuestionRow, error) {
 		var none contract.QuestionRow
 		id, answer := r.QuestionId, r.Answer
-		if id == "" || len(id) > 200 {
+		if !idOK(id) {
 			return none, fail(400, "Expected questionId")
 		}
 		if answer == "" || len([]rune(answer)) > 4000 {
@@ -868,6 +868,9 @@ func init() {
 			return questionRow(q, "", id)
 		}
 		var ids []any
+		if r.ArtifactIds != nil {
+			ids = []any{} // an explicit empty list accepts nothing; absent takes the question's own
+		}
 		for _, x := range r.ArtifactIds {
 			ids = append(ids, x)
 		}
@@ -915,17 +918,26 @@ func taskDetail(q *Request, id string) (contract.TaskDetail, error) {
 	return asT[contract.TaskDetail](t)
 }
 
-// questionRow: findQuestion as its contract type; a question the caller cannot see is 404.
+// questionRow: one question row as its contract type (404 when the row is not in the caller's scope); taskID, when set,
+// must be its task.
 func questionRow(q *Request, taskID, id string) (contract.QuestionRow, error) {
-	x, err := findQuestion(q, taskID, id)
+	x, err := first(q, "SELECT "+questionCols+" FROM question WHERE id=$1 AND ($2='' OR task_id=$2)", id, taskID)
 	if err != nil || x == nil {
 		if err == nil {
 			err = errNotFound
 		}
 		return contract.QuestionRow{}, err
 	}
+	for _, k := range []string{"artifactIds", "cause"} { // absent, not null, as in questionsList
+		if x[k] == nil {
+			delete(x, k)
+		}
+	}
 	return asT[contract.QuestionRow](x)
 }
+
+// idOK: a record id argument: non-empty, at most 200 characters (strArg's rule).
+func idOK(id string) bool { return id != "" && len([]rune(id)) <= 200 }
 
 // optAny and rawAny: optional request fields as the map values createTask reads (nil when absent).
 func optAny(s *string) any {
