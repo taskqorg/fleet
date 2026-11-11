@@ -69,20 +69,25 @@ var (
 	labMedia = regexp.MustCompile(`^[a-z]+/[A-Za-z0-9.+-]+$`)
 )
 
-// exampleFileBytes: a text file's text, or a binary file's stored bytes, found by its content hash among example files.
-func exampleFileBytes(q *Request, f doc) ([]byte, error) {
+// exampleFileBytes: a text file's text, or a binary file's stored bytes, found by its content hash among the example
+// files of the run's project or of no project.
+func exampleFileBytes(q *Request, projectID any, f doc) ([]byte, error) {
 	if f["sha256"] == nil {
 		return []byte(astr(f["text"])), nil
 	}
-	var id string
-	if err := q.tx.QueryRow(q.ctx(), "SELECT id FROM artifact WHERE role='example-file' AND scope='lab' AND state<>'deleted' AND content_hash=$1 ORDER BY created_at LIMIT 1", f["sha256"]).Scan(&id); err != nil {
+	rs, err := queryRows(q, "SELECT id FROM artifact WHERE role='example-file' AND scope='lab' AND state='stored' AND content_hash=$1 AND coalesce(project_id,'') IN ('', $2) ORDER BY created_at LIMIT 1", f["sha256"], strOr(projectID))
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
 		return nil, fail(409, "Example file "+astr(f["path"])+" is not stored; import the example again")
 	}
+	id := astr(rs[0]["id"])
 	return artifactBytes(withTx(q), q.app, id, 64<<20)
 }
 
-// storeExampleFiles saves each binary file of an example from the seed directory, after checking its hash.
-func storeExampleFiles(q *Request, projectID any, id string, ex orderedDoc) error {
+// storeExampleFiles checks each binary file of an example against the seed directory and, with write, stores it.
+func storeExampleFiles(q *Request, projectID any, id string, ex orderedDoc, write bool) error {
 	for _, kv := range ex {
 		if kv[0] != "inputs" && kv[0] != "references" {
 			continue
@@ -100,11 +105,17 @@ func storeExampleFiles(q *Request, projectID any, id string, ex orderedDoc) erro
 			if sha256hex(b) != sha {
 				return fail(400, "Example file "+path+" does not match its sha256")
 			}
+			if len(b) > 64<<20 {
+				return fail(400, "Example file "+path+" is over 64 MiB")
+			}
+			if !write {
+				continue
+			}
 			var n int
-			if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM artifact WHERE role='example-file' AND scope='lab' AND state<>'deleted' AND content_hash=$1", sha).Scan(&n); err != nil || n > 0 {
-				if err != nil {
-					return err
-				}
+			if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM artifact WHERE role='example-file' AND scope='lab' AND state='stored' AND content_hash=$1 AND coalesce(project_id,'')=$2", sha, strOr(projectID)).Scan(&n); err != nil {
+				return err
+			}
+			if n > 0 {
 				continue
 			}
 			h, storeID, err := artifactWriteObject(q, projectID, "lab", b, media)
@@ -318,6 +329,7 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 		name  string
 		hash  string
 		old   doc
+		ex    orderedDoc
 	}
 	existing := func(name string) (doc, error) {
 		rs, err := queryRows(q, "SELECT id,content_hash,approved_at FROM artifact WHERE role='example' AND state<>'deleted' AND name=$1 AND coalesce(project_id,'')=$2", name, strOr(projectID))
@@ -354,10 +366,10 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 		if old != nil && old["content_hash"] != hash {
 			return nil, fail(409, name+" exists with other content; raise version")
 		}
-		if err := storeExampleFiles(q, projectID, astr(meta["id"]), ex); err != nil {
+		if err := storeExampleFiles(q, projectID, astr(meta["id"]), ex, false); err != nil {
 			return nil, err
 		}
-		planned = append(planned, plan{meta, bytes, name, hash, old})
+		planned = append(planned, plan{meta, bytes, name, hash, old, ex})
 	}
 	approved := b["approved"] == true
 	// Fix: approval lets the coordinator run the example's check commands, so only the owner approves at import.
@@ -366,6 +378,10 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 	}
 	out := []any{}
 	for _, p := range planned {
+		// Binary files are written only once the whole batch passed, so a refused batch stores nothing.
+		if err := storeExampleFiles(q, projectID, astr(p.meta["id"]), p.ex, true); err != nil {
+			return nil, err
+		}
 		old := p.old
 		if old == nil {
 			h, storeID, err := artifactWriteObject(q, projectID, "lab", p.bytes, "application/json")
@@ -1230,7 +1246,7 @@ func trialFiles(q *Request, trial, example doc) ([]labFile, error) {
 	}
 	for _, x := range anys(example["inputs"]) {
 		f := mapOf(x)
-		b, err := exampleFileBytes(q, f)
+		b, err := exampleFileBytes(q, trial["projectId"], f)
 		if err != nil {
 			return nil, err
 		}
@@ -1463,7 +1479,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			// Script checks only (never a judge or an agent): the known-good result under references/, for comparison.
 			for _, x := range anys(full["references"]) {
 				f := mapOf(x)
-				b, err := exampleFileBytes(q, f)
+				b, err := exampleFileBytes(q, t["projectId"], f)
 				if err != nil {
 					return err
 				}

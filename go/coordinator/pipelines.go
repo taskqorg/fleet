@@ -704,7 +704,7 @@ func inputsFor(q *Request, run doc, i int) ([]any, error) {
 			list := []any{}
 			for _, x := range inputs {
 				f := mapOf(x)
-				b, err := exampleFileBytes(q, f)
+				b, err := exampleFileBytes(q, run["projectId"], f)
 				if err != nil {
 					return nil, err
 				}

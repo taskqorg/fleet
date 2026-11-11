@@ -26,8 +26,8 @@ export function readExamples(files:string[]):any[]{return files.flatMap(f=>{cons
 
 // Runs every check in a directory holding the given files; returns the IDs of failed checks with their last output line.
 // A binary file's bytes come from the seed directory and must match its sha256.
-export const fileBytes=(e:Example,f:ExampleFile,seedDir:string):string|Buffer=>{if('text' in f)return f.text;
- const b=readFileSync(join(seedDir,e.id,f.path.replace(/^references\//,'')));if(createHash('sha256').update(b).digest('hex')!==f.sha256)throw Error(`${f.path} does not match its sha256`);return b};
+export const fileBytes=(e:Example,f:ExampleFile&{seed?:string},seedDir:string):string|Buffer=>{if('text' in f)return f.text;
+ const b=readFileSync(join(seedDir,e.id,f.seed??f.path));if(createHash('sha256').update(b).digest('hex')!==f.sha256)throw Error(`${f.path} does not match its sha256`);return b};
 export function runChecks(e:Example,files:ExampleFile[],seedDir=join(dirname(fileURLToPath(import.meta.url)),'../config/lab/examples')){const dir=mkdtempSync(join(tmpdir(),'lab-example-'));
  try{for(const f of files){mkdirSync(dirname(join(dir,f.path)),{recursive:true});writeFileSync(join(dir,f.path),fileBytes(e,f,seedDir))}
   const failed:{id:string,output:string}[]=[];
@@ -39,7 +39,7 @@ export function runChecks(e:Example,files:ExampleFile[],seedDir=join(dirname(fil
 export function checkExample(raw:any,useCases:Set<string>):string[]{let e:Example;try{e=parseExample(raw,useCases)}catch(x:any){return [x.message]}
  if(!e.checks.length)return [];// rated by the owner or a judge only (assetq cases)
  // A trial's checks see the references under references/ (go/coordinator/lab.go trialFiles); here too, in both runs.
- const refs=e.references.map(f=>({...f,path:'references/'+f.path}));
+ const refs=e.references.map(f=>({...f,seed:f.path,path:'references/'+f.path}));
  const merged=new Map([...e.inputs,...e.references,...refs].map(f=>[f.path,f]));
  const problems=runChecks(e,[...merged.values()]).map(f=>`check ${f.id} fails on the reference: ${f.output}`);
  if(!runChecks(e,[...e.inputs,...refs]).length)problems.push('every check passes on the inputs alone');
