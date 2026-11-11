@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -75,8 +76,12 @@ func typedOp[Req, Rep any](h func(q *Request, r *Req) (Rep, error)) handler {
 			if err := exactKeys(q.body, reflect.TypeOf(r)); err != nil {
 				return nil, err
 			}
-			if err := decode(q.body, &r); err != nil {
-				return nil, err
+			if err := json.Unmarshal(q.body, &r); err != nil {
+				var te *json.UnmarshalTypeError
+				if errors.As(err, &te) && te.Field != "" {
+					return nil, fail(400, "Invalid "+te.Field+": expected "+te.Type.String())
+				}
+				return nil, fail(400, "Invalid body")
 			}
 		}
 		return h(q, &r)

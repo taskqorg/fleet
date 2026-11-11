@@ -11,7 +11,10 @@ import (
 // differs only in case ("executionid") overrides the bound executionId, since encoding/json matches names case-insensitively.
 func TestTypedOpRefusesCaseVariantKeys(t *testing.T) {
 	var got string
-	h := typedOp(func(q *Request, r *contract.ExecutionStatusRequest) (string, error) { got = r.ExecutionId; return "", nil })
+	h := typedOp(func(q *Request, r *contract.ExecutionStatusRequest) (string, error) {
+		got = r.ExecutionId
+		return "", nil
+	})
 	if _, err := h(&Request{body: json.RawMessage(`{"executionId":"mine","executionid":"other"}`)}); err == nil {
 		t.Fatalf("case variant accepted, handler saw %q", got)
 	}
