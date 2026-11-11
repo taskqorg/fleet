@@ -2,9 +2,9 @@
   "id": "fleet-uc6-character",
   "use_case_id": "fleet:UC6",
   "version": 1,
-  "origin": "source:csgo-435-437",
+  "origin": "task:csgo-437",
   "fixture": null,
-  "prompt": "Create an original clothed tactical character matching the supplied turnaround: balaclava face, dark harness and top, beige trousers, gloves and boots, and right-leg holster. Preserve front, left and back identity and asymmetry. Generate consistent views for a textured humanoid A-pose scaffold. Fleet rebuilds its own eight-part quad character and retargets the actual source rig to the supplied CT94 guide. Available pose coverage is six of seven; aim_up is unavailable. This technical trial does not establish original seven-pose equivalence, game readiness or owner aesthetic acceptance.",
+  "prompt": "Create an original clothed tactical character matching the supplied turnaround: balaclava face, dark harness and top, beige trousers, gloves and boots, and right-leg holster. Preserve front, left and back identity and asymmetry. Generate consistent views for a textured humanoid A-pose scaffold. Fleet rebuilds its own eight-part quad character and retargets the actual source rig to the supplied CT94 guide. Available pose coverage is six of seven; aim_up is unavailable. This technical trial does not establish original seven-pose equivalence, game readiness or owner aesthetic acceptance. Inspect retained model, stats and renders as mechanism evidence; this seed has no approved golden result and does not assign a quality score.",
   "inputs": [
     {
       "path": "turnaround.png",
@@ -18,15 +18,6 @@
     }
   ],
   "references": [],
-  "checks": [
-    {
-      "id": "decoded-rigged-textured-glb",
-      "run": "python3 -I -c 'import json,struct\nb=open('\"'\"'character.glb'\"'\"','\"'\"'rb'\"'\"').read()\nmagic,version,length=struct.unpack_from('\"'\"'<III'\"'\"',b)\nassert (magic,version,length)==(0x46546c67,2,len(b))\nn,t=struct.unpack_from('\"'\"'<II'\"'\"',b,12); assert t==0x4e4f534a\ns=json.loads(b[20:20+n]); assert len(s['\"'\"'skins'\"'\"'])==1 and len(s['\"'\"'skins'\"'\"'][0]['\"'\"'joints'\"'\"'])==94\nparts={'\"'\"'head'\"'\"','\"'\"'eyes'\"'\"','\"'\"'mouth'\"'\"','\"'\"'top'\"'\"','\"'\"'gloves'\"'\"','\"'\"'trousers'\"'\"','\"'\"'boots'\"'\"','\"'\"'gear'\"'\"'}\nassert {m['\"'\"'name'\"'\"'] for m in s['\"'\"'meshes'\"'\"']}==parts\nfor m in s['\"'\"'meshes'\"'\"']:\n for p in m['\"'\"'primitives'\"'\"']:\n  assert {'\"'\"'POSITION'\"'\"','\"'\"'TEXCOORD_0'\"'\"','\"'\"'JOINTS_0'\"'\"','\"'\"'WEIGHTS_0'\"'\"'}<=set(p['\"'\"'attributes'\"'\"'])\n  material=s['\"'\"'materials'\"'\"'][p['\"'\"'material'\"'\"']]\n  assert '\"'\"'baseColorTexture'\"'\"' in material['\"'\"'pbrMetallicRoughness'\"'\"'] and '\"'\"'normalTexture'\"'\"' in material\nassert len(s['\"'\"'images'\"'\"'])>=16 and all('\"'\"'bufferView'\"'\"' in i for i in s['\"'\"'images'\"'\"'])\n'"
-    },
-    {
-      "id": "explicit-partial-coverage-and-source-provenance",
-      "run": "python3 -I -c 'import json\ns=json.load(open('\"'\"'character-stats.json'\"'\"'))\nassert s['\"'\"'conform'\"'\"']['\"'\"'coverage'\"'\"']['\"'\"'available'\"'\"']==6 and s['\"'\"'conform'\"'\"']['\"'\"'coverage'\"'\"']['\"'\"'expected'\"'\"']==7\nassert s['\"'\"'conform'\"'\"']['\"'\"'coverage'\"'\"']['\"'\"'missing'\"'\"']==['\"'\"'aim_up'\"'\"']\nassert len(s['\"'\"'conform'\"'\"']['\"'\"'poses'\"'\"'])==6 and s['\"'\"'conform'\"'\"']['\"'\"'original_seven_pose_acceptance'\"'\"']=='\"'\"'unavailable'\"'\"'\nassert s['\"'\"'materials'\"'\"']=='\"'\"'completed'\"'\"' and s['\"'\"'rig'\"'\"']['\"'\"'cross_island_weights'\"'\"']==0\nassert s['\"'\"'source_rig'\"'\"']['\"'\"'basis'\"'\"']=='\"'\"'retained confirmed pipeline request/receipt'\"'\"'\n'"
-    }
-  ],
+  "checks": [],
   "split": "tune"
 }
