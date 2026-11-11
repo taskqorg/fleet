@@ -14,13 +14,13 @@ import (
 var accountName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,79}$`)
 
 func init() {
-	operation("account_list", true, accountList)
-	operation("account_create", false, accountCreate)
-	operation("account_hosts", true, accountHostsOp)
-	operation("account_discover", false, func(q *Request) (any, error) { return accountInspect(q, q.obj(), true) })
-	operation("account_connect", false, func(q *Request) (any, error) { return accountInspect(q, q.obj(), false) })
-	operation("account_login_handoff", true, accountLoginHandoff)
-	operation("account_update", false, accountUpdate)
+	operation("account_list", true, shaped[contract.AccountListRequest, contract.AccountListReply](accountList))
+	operation("account_create", false, shaped[contract.AccountCreateRequest, contract.AccountCreateReply](accountCreate))
+	operation("account_hosts", true, shaped[contract.AccountHostsRequest, contract.AccountHostsReply](accountHostsOp))
+	operation("account_discover", false, shaped[contract.AccountDiscoverRequest, contract.AccountInspection](func(q *Request) (any, error) { return accountInspect(q, q.obj(), true) }))
+	operation("account_connect", false, shaped[contract.AccountConnectRequest, contract.AccountInspection](func(q *Request) (any, error) { return accountInspect(q, q.obj(), false) }))
+	operation("account_login_handoff", true, shaped[contract.AccountLoginHandoffRequest, contract.AccountLoginHandoffReply](accountLoginHandoff))
+	operation("account_update", false, shaped[contract.AccountUpdateRequest, contract.AccountUpdateReply](accountUpdate))
 	route("POST /api/hosts/accounts", typed[contract.AccountObservation](func(q *Request) (any, error) {
 		if !q.app.hostMaySee(q.host, nil) {
 			return nil, fail(403, "Account observations need an owner-held host")

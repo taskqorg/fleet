@@ -145,11 +145,11 @@ func asT[T any](v any) (T, error) {
 	return t, err
 }
 
-// shaped: a handler that still reads the body as a map, on its contract types: the body is decoded into Req and replaced
-// by Req's own encoding, so the handler sees only the fields the request type names; the reply is converted to Rep.
+// shaped: a handler that still reads the body as a map, on its contract types: the body must decode into Req (required
+// fields, JSON types, no case-variant keys), then the handler reads the body as sent, so its own checks (unknown keys
+// refused, exact bytes kept) still apply; the reply is converted to Rep.
 func shaped[Req, Rep any](h handler) handler {
-	return typedOp(func(q *Request, r *Req) (Rep, error) {
-		q.body = jsonBytes(r)
+	return typedOp(func(q *Request, _ *Req) (Rep, error) {
 		out, err := h(q)
 		return replyAs[Rep](out, err)
 	})

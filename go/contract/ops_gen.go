@@ -6,72 +6,94 @@ import "encoding/json"
 
 var _ json.RawMessage
 
-type AccountConnectReply = map[string]json.RawMessage
+type AccountConnectReply = AccountInspection
 
+// AccountConnectRequest: Inspects one native login. hostId: default the caller's host; binding: the native login name.
 type AccountConnectRequest struct {
-	AccountId *string `json:"accountId,omitempty"`
-	Binding   *string `json:"binding,omitempty"`
+	AccountId string  `json:"accountId"`
+	Binding   string  `json:"binding"`
 	HostId    *string `json:"hostId,omitempty"`
 }
 
+// AccountCreateReply: A managed-account record: id, name, harness, holder, kind, plan, intake, take, switchPct, comment, bindings and times.
 type AccountCreateReply = map[string]json.RawMessage
 
+// AccountCreateRequest: harness codex, claude, antigravity or acp; holder: the owner may create one for another person.
 type AccountCreateRequest struct {
-	Harness json.RawMessage `json:"harness,omitempty"`
-	Holder  *string         `json:"holder,omitempty"`
-	Name    *string         `json:"name,omitempty"`
+	Comment *string `json:"comment,omitempty"`
+	Harness string  `json:"harness"`
+	Holder  *string `json:"holder,omitempty"`
+	Name    string  `json:"name"`
+	Plan    *string `json:"plan,omitempty"`
 }
 
-type AccountDiscoverReply = map[string]json.RawMessage
+type AccountDiscoverReply = AccountInspection
 
+// AccountDiscoverRequest: Reads the host's native account catalogue. hostId: default the caller's host.
 type AccountDiscoverRequest struct {
-	AccountId *string `json:"accountId,omitempty"`
-	Binding   *string `json:"binding,omitempty"`
+	AccountId string  `json:"accountId"`
 	HostId    *string `json:"hostId,omitempty"`
 }
 
 type AccountHostsReply struct {
-	Hosts json.RawMessage `json:"hosts,omitempty"`
+	Hosts []map[string]json.RawMessage `json:"hosts"`
 }
 
+// AccountHostsRequest: harness default codex; accountId takes the account's harness.
 type AccountHostsRequest struct {
-	AccountId *string         `json:"accountId,omitempty"`
-	Harness   json.RawMessage `json:"harness,omitempty"`
+	AccountId *string `json:"accountId,omitempty"`
+	Harness   *string `json:"harness,omitempty"`
+}
+
+// AccountInspection: A read-only native inspection queued on a host; an identical one still pending is answered instead of a new one.
+type AccountInspection struct {
+	AccountId   string  `json:"accountId"`
+	Binding     *string `json:"binding"`
+	CreatedAt   float64 `json:"createdAt"`
+	ExecutionId string  `json:"executionId"`
+	HostId      string  `json:"hostId"`
+	Id          string  `json:"id"`
+	LoginAction *string `json:"loginAction,omitempty"`
 }
 
 type AccountListReply struct {
-	Accounts   json.RawMessage `json:"accounts,omitempty"`
-	Catalogues json.RawMessage `json:"catalogues,omitempty"`
+	Accounts   []map[string]json.RawMessage `json:"accounts"`
+	Catalogues []map[string]json.RawMessage `json:"catalogues"`
 }
 
 type AccountListRequest = map[string]json.RawMessage
 
+// AccountLoginHandoffReply: What a person runs to log the binding in; Fleet changes no authentication itself.
 type AccountLoginHandoffReply struct {
-	AuthChanged             json.RawMessage `json:"authChanged,omitempty"`
-	BasedOnCheckAt          json.RawMessage `json:"basedOnCheckAt,omitempty"`
-	Binding                 json.RawMessage `json:"binding,omitempty"`
-	Command                 json.RawMessage `json:"command,omitempty"`
-	Environment             json.RawMessage `json:"environment,omitempty"`
-	Executable              json.RawMessage `json:"executable,omitempty"`
-	HostId                  json.RawMessage `json:"hostId,omitempty"`
-	ObservedAt              json.RawMessage `json:"observedAt,omitempty"`
-	Quota                   json.RawMessage `json:"quota,omitempty"`
-	RequiredUserInteraction json.RawMessage `json:"requiredUserInteraction,omitempty"`
-	Warning                 json.RawMessage `json:"warning,omitempty"`
+	AuthChanged             bool            `json:"authChanged"`
+	BasedOnCheckAt          json.RawMessage `json:"basedOnCheckAt"`
+	Binding                 json.RawMessage `json:"binding"`
+	Command                 json.RawMessage `json:"command"`
+	Environment             json.RawMessage `json:"environment"`
+	Executable              json.RawMessage `json:"executable"`
+	HostId                  string          `json:"hostId"`
+	ObservedAt              int64           `json:"observedAt"`
+	Quota                   string          `json:"quota"`
+	RequiredUserInteraction json.RawMessage `json:"requiredUserInteraction"`
+	Warning                 json.RawMessage `json:"warning"`
 }
 
 type AccountLoginHandoffRequest struct {
-	AccountId *string `json:"accountId,omitempty"`
+	AccountId string  `json:"accountId"`
 	Binding   *string `json:"binding,omitempty"`
-	HostId    *string `json:"hostId,omitempty"`
+	HostId    string  `json:"hostId"`
 }
 
+// AccountUpdateReply: A managed-account record: id, name, harness, holder, kind, plan, intake, take, switchPct, comment, bindings and times.
 type AccountUpdateReply = map[string]json.RawMessage
 
+// AccountUpdateRequest: Holder or owner; switchPct null clears it; take {projects}; holder: owner only.
 type AccountUpdateRequest struct {
-	AccountId *string         `json:"accountId,omitempty"`
+	AccountId string          `json:"accountId"`
+	Comment   *string         `json:"comment,omitempty"`
 	Holder    *string         `json:"holder,omitempty"`
-	Intake    json.RawMessage `json:"intake,omitempty"`
+	Intake    *string         `json:"intake,omitempty"`
+	Plan      *string         `json:"plan,omitempty"`
 	SwitchPct *float64        `json:"switchPct,omitempty"`
 	Take      json.RawMessage `json:"take,omitempty"`
 }
