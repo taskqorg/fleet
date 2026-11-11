@@ -194,7 +194,7 @@ Requirements SL1-SL11 are the slice's own. Each has one outside test in `tests/t
 | `POST /api/sessions`, `GET /api/sessions/:id` | SL3 | `queued`, `questions`, `handoffs`, `transitions`, `forks`, `delegations` may be empty or absent |
 | `POST /api/sessions/:id/messages` | SL4: no profile, no account, no project; harness `codex`; the execution waits for dispatch | queueing a second message while an execution is active; profiles, accounts, projects, delivery |
 | `POST /api/hosts/poll` | SL5, the `host-observation` write, and the dispatch claim (`go/coordinator/dispatch.go`) in its simplest case: no subscriptions, the default host polling | ranking over subscriptions and hosts, budgets, wait reasons and stall questions, delegation reconcile, problem detection, promotion, store observations, project trust |
-| `POST /api/hosts/receipts` | the status receipt (SL6) | account, delegation and project envelopes; the artifact gate on `completed`; native session capture; pipeline and delivery follow-ups |
+| `POST /api/hosts/receipts` | the status receipt (SL6) | until executors switch: the account, delegation and project envelopes, which also have their own routes (`/api/hosts/accounts/report`, `/api/hosts/delegations`, `/api/hosts/project-operations`); the artifact gate on `completed`; native session capture; pipeline and delivery follow-ups |
 | `POST /api/hosts/events` | SL7, SL11 | transport-conflict records and recovery; harness version, child agents and totals |
 | `GET /api/executions/:id/events` | SL7 | |
 | `GET /api/stream` | SL8, SL9 | ping, pruning, the `close` frame |

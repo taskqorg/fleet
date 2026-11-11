@@ -3,7 +3,8 @@
 JSON Schema contracts shared by the coordinator, the app, the executor and the gateway.
 
 * `host-protocol.schema.json`: the host protocol (`/api/hosts/poll` request and reply, `/api/hosts/receipts` status
-  receipts, `/api/hosts/events` batches) and event payloads. It is the source of the types on all three sides
+  receipts, one route per other receipt envelope: `/api/hosts/project-operations` `ProjectReceipt`,
+  `/api/hosts/delegations` `ChildReceipt`, `/api/hosts/accounts/report` `AccountReceipt`; `/api/hosts/events` batches) and event payloads. It is the source of the types on all three sides
   (docs/designs/fleet-stack.md, Contracts); `go/coordinator/schema.sql` stays the source of table rows only.
 * `gateway.schema.json`: the fleet-gateway seam (docs/designs/fleet-connections.md section 3): the snapshot the
   coordinator writes and the gateway reads, and the call line the gateway spools and the coordinator ingests.
