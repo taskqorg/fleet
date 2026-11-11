@@ -19,6 +19,8 @@ test('X1 every row of a version-1 project export becomes a Lab example whose che
   assert.throws(() => parseExport({...exported, schema: 2}), /not version 1/);
   assert.throws(() => parseExport({...exported, rows: [{...exported.rows[0], split: 'test'}]}), /split/);
   assert.throws(() => parseExport({...exported, rows: [exported.rows[0], exported.rows[0]]}), /duplicate rowId/);
+  assert.throws(() => parseExport({...exported, rows: [{...exported.rows[0], label: 'maybe'}]}), /yes or no/);
+  assert.throws(() => examplesFromExport({...exported, rows: [{...exported.rows[0], rowId: 'a b'}, {...exported.rows[1], rowId: 'a/b'}]}, 'fleet:UC5'), /same example id/);
 });
 
 test('X2 every seed example passes its checks with no agent (requirement: docs/designs/fleet-lab.md, examples; risk: a seed whose checks pass on nothing or fail on its own reference)', () => {

@@ -48,15 +48,16 @@ export async function importExamples(o:{url:string,token:string,origin?:string,p
 
 async function main(argv:string[]){const [cmd,...rest]=argv,root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
  const projectAt=rest.indexOf('--project'),projectId=projectAt>=0?rest[projectAt+1]:undefined,files=rest.filter((_,i)=>projectAt<0||i!==projectAt&&i!==projectAt+1);
+ if(cmd==='from-export'){const u=rest.indexOf('--use-case'),v=rest.indexOf('--version'),useCase=u>=0?rest[u+1]:undefined;
+  if(!useCase||!useCaseIds(join(root,'config/lab')).has(useCase))throw Error('from-export needs --use-case with a registry use case id');
+  const file=rest.filter((_,i)=>![u,u+1,v,v>=0?v+1:-1].includes(i))[0];if(!file)throw Error('from-export needs FILE');
+  console.log(JSON.stringify(examplesFromExport(JSON.parse(readFileSync(file,'utf8')),useCase,v>=0?Number(rest[v+1]):1),null,1));return}
  const examples=readExamples(files.length?files:['-']);
  if(cmd==='check'){const useCases=useCaseIds(join(root,'config/lab'));let bad=0;
   for(const x of examples){const p=checkExample(x,useCases);console.log(`${x?.id??'?'}: ${p.length?'FAIL\n  '+p.join('\n  '):Array.isArray(x?.checks)&&!x.checks.length?'no script checks (owner or judge rating)':'ok'}`);if(p.length)bad++}
   console.log(`${examples.length-bad} of ${examples.length} examples pass their checks with no agent`);if(bad)process.exitCode=1;return}
  if(cmd==='import'){const url=process.env.FLEET_URL,token=process.env.FLEET_TOKEN;if(!url||!token)throw Error('FLEET_URL and FLEET_TOKEN required');
   for(const x of (await importExamples({url,token,person:process.env.FLEET_PERSON,origin:process.env.FLEET_ORIGIN||process.env.FLEET_BROWSER_ORIGIN,examples,projectId})).examples)console.log(`${x.id}@${x.version}: ${x.created?'created':'already stored'} ${x.artifactId}`);return}
- if(cmd==='from-export'){const u=rest.indexOf('--use-case');if(u<0)throw Error('from-export needs --use-case ID');
-  const file=rest.filter((_,i)=>i!==u&&i!==u+1)[0];if(!file)throw Error('from-export needs FILE');
-  console.log(JSON.stringify(examplesFromExport(JSON.parse(readFileSync(file,'utf8')),rest[u+1]),null,1));return}
- throw Error('usage: lab-examples.ts check|import FILE… [--project ID] | from-export FILE --use-case ID')}
+ throw Error('usage: lab-examples.ts check|import FILE… [--project ID] | from-export FILE --use-case ID [--version N]')}
 
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))main(process.argv.slice(2)).catch(e=>{console.error(e.message);process.exitCode=1});

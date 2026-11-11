@@ -7,6 +7,7 @@ import type {Example} from './lab-example-format.ts';
 
 const fail=(m:string):never=>{throw Error(m)};
 const text=(v:unknown,what:string)=>typeof v==='string'&&v.length>0?v:fail(`export: ${what} must be non-empty text`);
+// ponytail: hand copies of the schema enums (the schema yields types only); a new schema version updates both.
 const SPLITS=new Set(['tune','held_out']),BASES=new Set(['measured','estimated','subscription','unavailable']);
 
 export function parseExport(v:any):LabExport{
@@ -17,8 +18,12 @@ export function parseExport(v:any):LabExport{
  if(!Array.isArray(v.rows))fail('export: rows must be a list');
  const seen=new Set<string>();
  for(const r of v.rows as LabExportRow[]){
+  if(!r||typeof r!=='object'||Array.isArray(r))fail('export: every row is an object');
   for(const k of Object.keys(r))if(!['rowId','input','label','tag','productionCost','split'].includes(k))fail(`export: row has unknown field ${k}`);
-  text(r.rowId,'rowId');text(r.input,'input');text(r.label,'label');if(r.tag!==undefined)text(r.tag,'tag');
+  text(r.rowId,'rowId');text(r.input,'input');if(r.tag!==undefined)text(r.tag,'tag');
+  if(r.label!=='yes'&&r.label!=='no')fail(`export: row ${r.rowId} label must be yes or no (a noul decision)`);
+  const c=r.productionCost;
+  if(c&&(typeof c!=='object'||!(c.value===null||typeof c.value==='number')||typeof c.currency!=='string'))fail(`export: row ${r.rowId} productionCost is {value, currency, basis}`);
   if(!SPLITS.has(r.split))fail(`export: row ${r.rowId} split must be tune or held_out`);
   if(r.productionCost&&!BASES.has(r.productionCost.basis))fail(`export: row ${r.rowId} productionCost basis is invalid`);
   if(seen.has(r.rowId))fail(`export: duplicate rowId ${r.rowId}`);seen.add(r.rowId);
@@ -28,9 +33,16 @@ export function parseExport(v:any):LabExport{
 // The check of every exported row: the trial's p (output.json) on the same side of 0.5 as the label.
 const AGREES="p=$(sed -n 's/.*\"p\": *\\([0-9.eE+-]*\\).*/\\1/p' output.json); want=$(sed -n 's/.*\"expected\": *\"\\([a-z]*\\)\".*/\\1/p' references/expected.json); [ -n \"$p\" ] && [ -n \"$want\" ] && [ \"$(awk -v p=\"$p\" 'BEGIN{print (p>=0.5)?\"yes\":\"no\"}')\" = \"$want\" ]";
 
+// Example ids keep the ASCII letters of project, step and row; an id that is not valid, or that two rows share, is refused
+// (rename the row in the export) rather than silently merged. A corrected re-export needs a new version.
 export function examplesFromExport(raw:any,useCaseId:string,version=1):Example[]{
- const e=parseExport(raw),slug=(s:string)=>s.replace(/[^A-Za-z0-9._-]+/g,'-').slice(0,40);
- return e.rows.map(r=>({id:`${slug(e.project)}-${slug(e.stepId)}-${slug(r.rowId)}`.slice(0,100),use_case_id:useCaseId,version,origin:`export:${slug(e.project)}`,fixture:null,prompt:r.input,inputs:[],
+ const e=parseExport(raw),slug=(s:string)=>s.replace(/[^A-Za-z0-9._-]+/g,'-').replace(/^[-.]+|[-.]+$/g,'');
+ if(!Number.isSafeInteger(version)||version<1)fail('export: version is a whole number >= 1');
+ const ids=new Map<string,string>();
+ for(const r of e.rows){const id=`${slug(e.project)}-${slug(e.stepId)}-${slug(r.rowId)}`;
+  if(id.length>100||!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(id))fail(`export: row ${r.rowId} gives no valid example id (${id})`);
+  if(ids.has(id))fail(`export: rows ${ids.get(id)} and ${r.rowId} give the same example id ${id}`);ids.set(id,r.rowId)}
+ return e.rows.map(r=>({id:`${slug(e.project)}-${slug(e.stepId)}-${slug(r.rowId)}`,use_case_id:useCaseId,version,origin:`export:${slug(e.project)}`,fixture:null,prompt:r.input,inputs:[],
   // The known-good result: a trial output certain of the label, so the checks pass on the references alone.
-  references:[{path:'output.json',text:JSON.stringify({answer:null,p:r.label.toLowerCase()==='yes'?1:0,answered_by:'label',tokens:null})+'\n'},{path:'expected.json',text:JSON.stringify({expected:r.label.toLowerCase(),tag:r.tag??null,productionCost:r.productionCost??null})+'\n'}],
+  references:[{path:'output.json',text:JSON.stringify({answer:null,p:r.label==='yes'?1:0,answered_by:'label',tokens:null})+'\n'},{path:'expected.json',text:JSON.stringify({expected:r.label,tag:r.tag??null,productionCost:r.productionCost??null})+'\n'}],
   checks:[{id:'agrees',run:AGREES}],split:r.split}))}

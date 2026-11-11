@@ -20,7 +20,7 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   `contract.ParseProfile` (`go/contract/profile.go`) is the one the coordinator and the executor run; a Go test checks every shipped profile.
 
 * `lab-export.schema.json`: a project's export to Lab, version 1 (docs/designs/fleet-lab.md, Project data in examples);
-  read by `scripts/lab-export.ts` (TypeScript types only).
+  read by `scripts/lab-export.ts`; no Go code reads it, so it has no `go generate` line (TypeScript types only).
 
 ## Generated types
 
