@@ -279,6 +279,10 @@ Routes (each also an operation `lab_*`, `go/coordinator/lab.go`): `POST|GET /api
 
 Promote saves the variant as a catalogue method (pipeline, overrides, `config_ref`, source experiment) in a new catalogue revision with source `lab` ([definition editors](fleet-definition-editors.md)), unless a method already carries the variant's `configRef`, and sets the project's recommendation to it, in one transaction. It returns `{method, catalogue, recommendation}` (`cataloguePatch` is null). Nothing promotes automatically.
 
+Catalogue method comparisons use `lab_compare_methods {projectId, capability, methods, baseline?, useCase?}`. The architect selects an approved use case explicitly where no structured mapping exists. Its registry checks supply explicit evaluator forms via `metric`; unsupported, missing or empty checks are refused before creating an experiment. Creation stores an unlaunched ordinary experiment, with baseline first and actual pipeline/overrides per variant. Legacy variants use the experiment pipeline. Catalogue linkage is separate from actual execution digests and pinned definition refs; local-suffix recovery never treats catalogue identity as runtime proof.
+
+The draft screen saves the person's goal and hypothesis through existing experiment amendments, then exposes explicit Launch after durable saves. No hypothesis is generated. Catalogue assessments show compatible observed partial means with eligible/expected population and exclusions, without pooling projects/configurations/evaluator versions. A banded source stripped by Promote remains a visible provenance link with a configuration-difference reason rather than incompatible headline quality.
+
 ## Claude on WSL (R3.8)
 
 Host setting `FLEET_CLAUDE_PLACEMENT` (`mac | windows-wsl`, [configuration.md](../configuration.md)) decides where Claude may run; readiness verifies it (WSL detected from the kernel release) and checks the login file under Fleet's config directory. The delivery worker (not built) applies the same rule.

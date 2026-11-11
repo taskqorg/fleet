@@ -496,6 +496,7 @@ func (v *LabScoreCorrectRequest) Validate() error {
 func init() {
 	for n, o := range map[string]Operation{
 		"lab_cell_action":       {Read: false, Long: true, Errors: []int{400, 404, 409}},
+		"lab_compare_methods":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
 		"lab_example_get":       {Read: true, Long: false, Errors: []int{400, 404, 409, 503}},
 		"lab_examples_add":      {Read: false, Long: false, Errors: []int{400, 403, 409}},
 		"lab_examples_list":     {Read: true, Long: false, Errors: []int{400}},

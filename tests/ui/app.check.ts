@@ -3,6 +3,7 @@
 // routes render their book parts, no console errors, click-to-detail latency, change-to-screen latency. Never fails the build.
 // Run: node tests/ui/app.check.ts [--shots dir]
 import { mkdirSync } from 'node:fs';
+import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { checkServer } from './seed.ts';
 import { layoutFindings } from './layout.check.ts';
@@ -10,7 +11,7 @@ import { layoutFindings } from './layout.check.ts';
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : 'design-report/app';
 mkdirSync(shots, { recursive: true });
 const out = { push: (l: string) => console.log('    ' + l) };
-const { origin, seed, close } = await checkServer();
+const { c, origin, seed, close } = await checkServer();
 
 // Fixtures: a few hundred tasks across projects, states and priorities; sessions with a transcript; hosts; open questions.
 let waiting = '', running = '';
@@ -44,7 +45,7 @@ try {
     ['/hosts/mac', ['detail', 'detail-section', 'fill-bar']],
     ['/lab', ['list-detail', 'state-badge']],
   ];
-  page.on('requestfailed', r => { if (!r.url().includes('/api/stream')) errors.push('request failed ' + r.url()); }); // navigation aborts the stream
+  page.on('requestfailed', r => { if (!r.url().includes('/api/stream') && !r.failure()?.errorText.includes('ERR_ABORTED')) errors.push('request failed ' + r.url()); }); // navigation aborts the stream
   page.on('response', r => { if (r.status() >= 400) errors.push(r.status() + ' ' + r.url()); });
   if (process.env.APP_DEBUG) { await page.goto(origin + '/overview'); await page.waitForTimeout(1500); console.log(errors); }
   for (const [n, [route, want]] of ROUTES.entries()) {
@@ -98,5 +99,29 @@ try {
   out.push(`pin menu: ${(await page.locator('.rail-menu [role=menuitem]').allInnerTexts()).join(', ') || 'MISSING'}`);
   await page.screenshot({ path: `${shots}/pins-dark.png`, clip: { x: 0, y: 0, width: 520, height: 520 } });
   await page.keyboard.press('Escape'); await page.emulateMedia({ colorScheme: 'light' });
+  // Requirement D20: scoped method evidence and a launchable explicit Lab draft; risk: hidden quality basis or unsaved generated record fields.
+  await page.goto(origin + '/catalogue/catalogue');
+  await page.getByRole('heading', {name: 'Methods', exact: true}).waitFor();
+  await page.getByRole('heading', {name: 'Compare methods in Lab', exact: true}).waitFor();
+  await page.getByRole('button', {name: 'hello-world', exact: true}).click();
+  await page.getByText('Basic source discovery · search-basic', {exact: true}).waitFor();
+  assert.ok(await page.getByText('Recommended for', {exact: true}).count());
+  for (const colorScheme of ['dark', 'light'] as const) { await page.emulateMedia({colorScheme}); await page.screenshot({path: `${shots}/catalogue-methods-${colorScheme}.png`}); }
+  c.sql(`INSERT INTO experiment(id,project_id,kind,pipeline_id) VALUES('catalogue-ui-draft','hello-world','single','typed-decision')`);
+  await page.goto(origin + '/lab/catalogue-ui-draft');
+  await page.getByRole('heading', {name: 'Experiment record', exact: true}).waitFor();
+  const launch = page.getByRole('button', {name: 'Launch', exact: true});
+  assert.equal(await launch.getAttribute('aria-disabled'), 'true');
+  for (const [label, value] of [['Goal', 'Inspect Catalogue comparison'], ['Hypothesis', 'The selected method improves the example outcome']]) {
+    const field = page.locator('[data-ui="setting-field"]').filter({has: page.locator('label', {hasText: label})});
+    await field.locator('button.value').click(); await field.locator('input').fill(value); await field.getByRole('button', {name:'Save',exact:true}).click();
+    await page.waitForFunction(async ({origin, label, value}) => { const r = await fetch(origin + '/api/ops/lab_experiment_get', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({experimentId:'catalogue-ui-draft'})}); const d = await r.json(); return d[label.toLowerCase()] === value; }, {origin,label,value});
+  }
+  await page.waitForFunction(el => el?.getAttribute('aria-disabled') !== 'true', await launch.elementHandle());
+  const saved = await (await fetch(origin + '/api/ops/lab_experiment_get', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({experimentId:'catalogue-ui-draft'})})).json();
+  assert.equal(saved.state, 'draft'); assert.equal(saved.trials.length, 0);
+  await page.screenshot({path:`${shots}/catalogue-draft-record.png`});
+  await launch.click();
+  out.push('catalogue: methods basis and recommendations rendered; user record durably saved before explicit Launch');
   out.push(errors.length ? `console errors: ${[...new Set(errors)].slice(0, 5).join(' | ')}` : 'console errors: none');
 } finally { await b.close(); await close(); }

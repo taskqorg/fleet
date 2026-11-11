@@ -2,7 +2,7 @@
 // the coordinator's store. The control column lists one kind; the work area edits one as a draft and saves revisions.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { ListDetail, DefinitionEditor, DraftBar, DetailSection, KvRow, StateBadge, Empty, SettingField, CodeEditor, DiffText, StepList, AgeChip, Choice, type StepItem } from '../../../packages/ui/src/index.ts';
+import { ListDetail, DefinitionEditor, DraftBar, DetailSection, KvRow, StateBadge, Empty, SettingField, CodeEditor, DiffText, StepList, AgeChip, Choice, Button, SearchField, type StepItem } from '../../../packages/ui/src/index.ts';
 import { op, OpError, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 
@@ -39,7 +39,7 @@ export function Definitions({ kind, id }: { kind: Kind; id?: string }) {
 }
 
 function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => void }) {
-  const [tab, setTab] = useState('Configuration');
+  const [tab, setTab] = useState(kind === 'catalogue' ? 'Methods' : 'Configuration');
   const [def, setDef] = useState<Get | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [text, setText] = useState('');
@@ -54,6 +54,7 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
       const g = await op('definition_get', { kind, id });
       setDef(g);
       try {
+        if (!g.draft) { setDraft(null); setText(g.text); setError(null); return; }
         const d = await op('definition_draft_get', { kind, id });
         setDraft({ base: d.draft.baseRevision, text: d.text, changes: d.draft.changes, stale: d.draft.stale, problems: d.problems ?? [] });
         setText(d.text); // the bytes the draft holds, not a re-encoding of its typed content
@@ -94,7 +95,7 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
   const discard = () => run(async () => { clearTimeout(timer.current); pending.current = null; await op('definition_draft_discard', { kind, id }); await load(); });
   const runDraft = () => run(async () => { await flush(); await op('pipeline_run_create', { pipelineId: id, requestId: crypto.randomUUID(), draft: true }); });
   if (!def) return <article class="detail" data-ui="detail" tabIndex={-1}>{error ? <div class="error" role="alert">{error}</div> : <Empty text="Loading…" />}</article>;
-  const tabs = kind === 'agent' ? ['Configuration', 'Effective', 'Diff', 'Compatibility', 'History'] : ['Configuration', 'Diff', 'History'];
+  const tabs = kind === 'agent' ? ['Configuration', 'Effective', 'Diff', 'Compatibility', 'History'] : kind === 'catalogue' ? ['Methods', 'Configuration', 'Diff', 'History'] : ['Configuration', 'Diff', 'History'];
   return <DefinitionEditor label={id} crumb={`shared · ${def.path} · r${def.head}${def.state !== 'synced' ? ` · ${def.state}` : ''}`} title={def.id}
     tabs={tabs} tab={tab} onTab={setTab} onClose={onClose}>
     {error && <div class="error" role="alert">{error}</div>}
@@ -113,6 +114,7 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
         <CodeEditor label={def.path} value={text} onChange={edit} problems={draft?.problems ?? []} />
       </DetailSection>
     </>}
+    {tab === 'Methods' && kind === 'catalogue' && <CatalogueMethods />}
     {tab === 'Diff' && <DiffTab kind={kind} id={id} hasDraft={!!draft} head={def.head} />}
     {tab === 'History' && <HistoryTab kind={kind} id={id} />}
     {tab === 'Effective' && <EffectiveTab id={id} draft={!!draft} version={draft?.text ?? ''} />}
@@ -207,4 +209,47 @@ function CompatibilityTab({ id }: { id: string }) {
         meta={<span class="mono">{r.state === 'unchecked' ? 'not checked' : r.state}{r.revision ? ` · r${r.revision}` : ''}{r.error ? ` · ${r.error}` : ''}</span>}
         value={r.evidence ? <AgeChip t={Date.parse(r.evidence.at)} now={now} /> : undefined} />)}
   </DetailSection>;
+}
+
+
+function CatalogueMethods() {
+  const [, go] = useLocation();
+  const [projects, setProjects] = useState<string[]>([]), [project, setProject] = useState('');
+  const [search, setSearch] = useState(''), [scopeSearch, setScopeSearch] = useState(''), [useSearch, setUseSearch] = useState('');
+  const [useCases, setUseCases] = useState<{id: string; goal: string}[]>([]), [useCase, setUseCase] = useState('');
+  const [selected, setSelected] = useState<string[]>([]), [baseline, setBaseline] = useState('');
+  const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+  const {data: c} = useDoc(`catalogue:${project}:${revision}`, () => project ? op('catalogue', {projectId: project}) : Promise.resolve(null), change => ['definition', 'experiment', 'score', 'execution', 'project-recommendation'].includes(change.kind));
+  useEffect(() => { op('project_list', {}).then(r => { const ids = (r.projects as any[]).map(p => String(p.id)); setProjects(ids); setProject(ids[0] ?? ''); }, x => setError(x.message)); op('lab_registry', {}).then(r => setUseCases(r.useCases as any), x => setError(x.message)); }, []);
+  const methods = c?.methods ?? [];
+  const choose = (id: string) => { const next = selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id]; setSelected(next); if (!next.includes(baseline)) setBaseline(next.includes(String(c?.recommendedMethod)) ? String(c?.recommendedMethod) : ''); };
+  const act = async (run: () => Promise<void>) => { setBusy(true); try { await run(); setError(null); } catch (x: any) {setError(x.message);} finally {setBusy(false);} };
+  return <>
+    <DetailSection title="Project"><SearchField label="Find project" value={scopeSearch} onInput={setScopeSearch} onSearch={() => {}} /><Choice label="Project" value={project} options={projects.filter(p => p.includes(scopeSearch)).map(p => ({id:p,label:p}))} onChange={p => {setProject(p);setSelected([]);setBaseline('');}} /></DetailSection>
+    {error && <div class="error" role="alert">{error}</div>}
+    <DetailSection title="Methods"><SearchField label="Find method" value={search} onInput={setSearch} onSearch={() => {}} />
+      {methods.filter(m => `${m.name} ${m.id}`.toLowerCase().includes(search.toLowerCase())).map(m => {
+        const a = m.assessment;
+        return <div key={m.id}>
+          <KvRow icon="circle-check" label={`${m.name} · ${m.id}`} meta={`${m.scope} · ${m.pipeline}`} value={<><Choice label={`Select ${m.name}`} value={selected} options={[{id:m.id,label:selected.includes(m.id) ? 'Selected' : 'Select'}]} onChange={choose} /><Button label="Recommend for project" icon="check" iconOnly busy={busy} onClick={() => act(async () => {await op('recommendation_set', {projectId:project,methodId:m.id});setRevision(r=>r+1);})} /></>} />
+          <KvRow icon="chart-no-axes-column" label={a.scoreForm === 'typed' ? 'Comparison score' : 'Quality'} meta={a.score == null ? 'Unavailable' : `${a.score.toFixed(3)}${a.partial ? ' · partial/incomplete' : ''}`} value={`${a.basis} · ${a.eligibleCells ?? 0}/${a.expectedCells ?? 0} cells · ${a.examples ?? 0} examples`} />
+          <KvRow icon="clock" label="Time / cost" meta={a.wallMsMedian == null ? 'Time unavailable' : `${a.wallMsMedian} ms · ${a.durationSamples == null ? 'pipeline usage window' : `${a.durationSamples} samples`}`} value={`${a.costUsd == null ? 'Cost unavailable' : `$${a.costUsd}`} · ${a.costBasis}`} />
+          <KvRow icon="folder-open" label="Recommended for" meta={m.recommendedFor.join(', ') || 'None'} />
+          {a.state && <p class="muted">{a.state} · {a.stopReason ?? ''} · {a.failedCells ?? 0} failed · {a.excludedCells ?? 0} excluded</p>}
+          {a.reason && <p>{a.reason}</p>}{a.exclusions && <p>{a.exclusions}</p>}
+          {a.evaluator && <p class="muted">{a.variant} · {a.split} · {a.evaluator} · {a.evaluatorVersion}</p>}
+          {a.experimentId && <a href={`/lab/${a.experimentId}`}>Assessment experiment</a>}
+          {a.sourceExperimentId && <a href={`/lab/${a.sourceExperimentId}`}>Source experiment</a>}
+          {a.ongoingExperimentId && <a href={`/lab/${a.ongoingExperimentId}`}>Current experiment · {a.ongoingState}</a>}
+        </div>;
+      })}
+    </DetailSection>
+    <DetailSection title="Compare methods in Lab">
+      <Choice label="Baseline" value={baseline} options={methods.filter(m=>selected.includes(m.id)).map(m=>({id:m.id,label:m.name}))} onChange={setBaseline} />
+      <SearchField label="Find use case" value={useSearch} onInput={setUseSearch} onSearch={() => {}} />
+      <Choice label="Use case" value={useCase} options={useCases.filter(u=>`${u.id} ${u.goal}`.toLowerCase().includes(useSearch.toLowerCase())).map(u=>({id:u.id,label:u.id}))} onChange={setUseCase} />
+      <Button label="Create comparison" icon="play" busy={busy} disabledReason={!project || selected.length<2 || !baseline || !useCase ? 'Select two methods, a baseline and use case' : undefined} onClick={() => act(async () => {const r = await op('lab_compare_methods', {projectId:project,capability:String(c?.capability),methods:selected,baseline,useCase});go(`/lab/${r.experimentId}`);})} />
+    </DetailSection>
+  </>;
 }

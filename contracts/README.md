@@ -64,3 +64,5 @@ An object without properties whose `additionalProperties` is a schema is a map (
   TypeScript names only the listed fields, so code reads a field only after the schema names it.
 * A property not in `required` is optional (`?` in TypeScript, a pointer with `omitempty` in Go). A required
   property with `"null"` in its type is always written, as `null` when absent.
+
+Catalogue method reads add scoped assessment and recommendation evidence without wrapping existing method fields. `lab_compare_methods` creates an unlaunched Lab experiment with per-variant pipeline snapshots and separate catalogue linkage; `config_ref` remains the actual pipeline/overrides digest. Missing numeric assessment values are explicit nulls; partial observed means retain populations and evaluator/version basis. See [definition editors](../docs/designs/fleet-definition-editors.md) for authority, selection and recovery rules.

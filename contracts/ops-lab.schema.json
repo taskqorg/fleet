@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Coordinator operations of the lab domain; the rules are in ops.schema.json $comment and contracts/README.md.",
   "operations": {
+    "lab_compare_methods": {"read": false, "errors": [400, 403, 404, 409]},
     "lab_cell_action": {"read": false, "long": true, "errors": [400, 404, 409]},
     "lab_example_get": {"read": true, "errors": [400, 404, 409, 503]},
     "lab_examples_add": {"read": false, "errors": [400, 403, 409]},
@@ -21,7 +22,6 @@
     "lab_score_correct": {"read": false, "errors": [400, 404, 409]}
   },
   "planned": {
-    "lab_compare_methods": {"read": false, "errors": [400, 403, 404, 409]},
     "lab_experiment_promote": {"read": false, "errors": [400, 403, 404, 409]}
   },
   "$defs": {
