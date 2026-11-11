@@ -13,14 +13,13 @@
     "hosts_update": {"read": false, "errors": [400, 403, 404, 409]},
     "pipeline_get": {"read": true, "errors": [400, 403]},
     "pipeline_history": {"read": true, "errors": [404]},
+    "pipeline_rerun": {"read": false, "errors": [400, 403, 404, 409], "long": true},
     "pipeline_run": {"read": false, "long": true, "errors": []},
     "pipeline_run_create": {"read": false, "errors": [400, 403, 404, 409], "long": true},
     "queue_list": {"read": true, "errors": []},
     "route_decisions": {"read": true, "errors": [400]}
   },
-  "planned": {
-    "pipeline_rerun": {"read": false, "errors": [400, 403, 404, 409]}
-  },
+  "planned": {},
   "$defs": {
     "DiffFile": {"type": "object", "required": ["path", "state"], "properties": {"path": {"type": "string"}, "state": {"type": "string"}, "textChange": {"$ref": "#/$defs/TextChange"}, "previous": {"$ref": "#/$defs/FileRef"}, "current": {"$ref": "#/$defs/FileRef"}}, "$comment": "state added, removed, unchanged or modified; textChange only for small html and css files."},
     "ExecutionDifferencesReply": {"type": "object", "required": ["sessionId", "previousExecutionId", "executionId", "files"], "properties": {"sessionId": {"type": ["string", "null"]}, "previousExecutionId": {"type": ["string", "null"]}, "executionId": {"type": "string"}, "files": {"type": "array", "items": {"$ref": "#/$defs/DiffFile"}}}},

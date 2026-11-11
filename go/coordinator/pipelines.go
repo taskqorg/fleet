@@ -405,6 +405,19 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 		}
 		return d
 	}
+	// A rerun: the reused prefix of the earlier run's steps comes over as it ended (state, output, usage, artifacts by id).
+	reused := []string{}
+	for i, x := range anys(o["reuse"]) {
+		if i < len(steps) {
+			e := doc{}
+			for k, v := range mapOf(x) {
+				e[k] = v
+			}
+			e["reusedFrom"] = o["rerunOf"]
+			steps[i] = e
+			reused = append(reused, astr(e["id"]))
+		}
+	}
 	run := doc{"id": id, "projectId": o["projectId"], "requestId": o["requestId"], "requestedBy": or("requestedBy", requester(q)), "definition": def,
 		"definitionSha256": sha256hex(jsonBytes(def)), "pipelineId": def["id"], "pipeline": o["file"], "example": or("example", doc{}), "overrides": or("overrides", doc{}),
 		"state": "running", "startedAt": nowMs(), "durationMs": nil, "usage": nil, "result": nil, "steps": steps}
@@ -416,6 +429,9 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 	}
 	for k, v := range mapOf(o["extra"]) {
 		run[k] = v
+	}
+	if o["rerunOf"] != nil {
+		run["rerunOf"], run["reused"] = o["rerunOf"], reused
 	}
 	ref, err := definitionRef(q, "pipeline", astr(def["id"]), def)
 	if err != nil {
@@ -1209,6 +1225,33 @@ func init() {
 		}
 		return out, err
 	})
+	// pipeline_rerun: a finished run again on the current definition (or the caller's draft); mode failed reuses the steps
+	// that succeeded and would run the same way.
+	longOp("pipeline_rerun", typedOp(func(q *Request, r *contract.PipelineRerunRequest) (contract.PipelineRerunReply, error) {
+		out := contract.PipelineRerunReply{Reused: []string{}, Definitions: []contract.DefinitionRef{}}
+		var run doc
+		err := q.app.store.Tx(q.ctx(), scopeOf(q.person), true, "", func(tx pgx.Tx) error {
+			q.tx = tx
+			defer func() { q.tx = nil }()
+			var err error
+			run, err = pipelineRerun(q, r)
+			return err
+		})
+		if err != nil {
+			return out, err
+		}
+		if run["state"] == "running" {
+			pipelineAdvance(q.app, astr(run["id"]))
+		}
+		out.RunId = astr(run["id"])
+		for _, x := range anys(run["reused"]) {
+			out.Reused = append(out.Reused, astr(x))
+		}
+		if d, err := asT[[]contract.DefinitionRef](run["definitions"]); err == nil && d != nil {
+			out.Definitions = d
+		}
+		return out, nil
+	}))
 	// pipeline_run_create: the route as an operation, plus draft (the caller's draft; architect only).
 	longOp("pipeline_run_create", typedOp(func(q *Request, r *contract.PipelineRunCreateRequest) (contract.PipelineRunCreateReply, error) {
 		var out contract.PipelineRunCreateReply
@@ -1239,23 +1282,10 @@ func init() {
 				return nil
 			}
 			if r.Draft != nil && *r.Draft {
-				if q.person != nil && !fullAccess(q.person) && !hasRole(q.person, "architect") {
-					return fail(403, "A draft run is the architect's")
-				}
-				d, err := draftOf(q, "pipeline", r.PipelineId)
-				if err != nil || d == nil {
-					if err == nil {
-						err = fail(404, "No draft of "+r.PipelineId)
-					}
+				var err error
+				if draft, base, err = draftPipeline(q, r.PipelineId); err != nil {
 					return err
 				}
-				if ps := problems("pipeline", r.PipelineId, d.Content); len(ps) > 0 {
-					return fail(400, "The draft has problems: "+ps[0].Message)
-				}
-				if err := json.Unmarshal([]byte(d.Content), &draft); err != nil {
-					return err
-				}
-				base = d.Base
 			}
 			var err error
 			run, err = pipelineRunFrom(q, r.PipelineId, b, draft, base)
@@ -1550,20 +1580,29 @@ func projectKnown(q *Request, id string) bool { _, err := catalogue(q, id); retu
 
 // Agent step: the step's trusted profile with the variant overrides, its skills, a session of the
 // run, and an ordinary queued execution.
-func startAgentStep(q *Request, run, step doc, stepExecutionID, prompt string, inputs []any, overrides doc) (string, error) {
+// stepProfile: the profile an agent step runs: its profile (or the override), with the variant's model and skills.
+func stepProfile(q *Request, step, overrides doc) (string, doc, error) {
 	pid := astr(step["profile"])
 	if overrides["profile"] != nil {
 		pid = astr(overrides["profile"])
 	}
 	profile, err := readTrustedProfile(q, pid)
 	if err != nil {
-		return "", err
+		return pid, nil, err
 	}
 	if v, ok := overrides["model"]; ok {
 		profile["model"] = v
 	}
 	if v, ok := overrides["skills"]; ok {
 		profile["skills"] = v
+	}
+	return pid, profile, nil
+}
+
+func startAgentStep(q *Request, run, step doc, stepExecutionID, prompt string, inputs []any, overrides doc) (string, error) {
+	_, profile, err := stepProfile(q, step, overrides)
+	if err != nil {
+		return "", err
 	}
 	web := "connections"
 	if v, ok := overrides["web_route"]; ok {
@@ -1608,4 +1647,132 @@ func jobTool(def doc, name string) string {
 		return "multi_" + name
 	}
 	return name
+}
+
+// draftPipeline: the caller's runnable draft of a live pipeline (architect only): content and base revision.
+func draftPipeline(q *Request, pid string) (doc, int64, error) {
+	if q.person != nil && !fullAccess(q.person) && !hasRole(q.person, "architect") {
+		return nil, 0, fail(403, "A draft run is the architect's")
+	}
+	if _, ok, err := headText(q, "pipeline", pid); err != nil || !ok {
+		if err == nil {
+			err = fail(404, "Unknown pipeline "+pid)
+		}
+		return nil, 0, err
+	}
+	d, err := draftOf(q, "pipeline", pid)
+	if err != nil || d == nil {
+		if err == nil {
+			err = fail(404, "No draft of "+pid)
+		}
+		return nil, 0, err
+	}
+	if ps := problems("pipeline", pid, d.Content); len(ps) > 0 {
+		return nil, 0, fail(400, "The draft has problems: "+ps[0].Message)
+	}
+	var def doc
+	return def, d.Base, json.Unmarshal([]byte(d.Content), &def)
+}
+
+// pipelineRerun: loads finished run R and starts R2 from the definition to use (R's pipeline head, or the caller's draft).
+// Mode all runs every step; mode failed reuses the longest prefix of R's steps where each succeeded, is the same step in
+// the new definition, and (agent steps) would run the same profile content.
+func pipelineRerun(q *Request, r *contract.PipelineRerunRequest) (doc, error) {
+	old, err := getRun(q, r.RunId)
+	if err != nil {
+		return nil, err
+	}
+	if old == nil {
+		return nil, fail(404, "Unknown run")
+	}
+	if st := astr(old["state"]); st == "running" || st == "preparing" || st == "waiting" {
+		return nil, &HTTPError{Code: 409, Msg: "The run has not finished", Extra: map[string]any{"reason": contract.ConflictReasonWrongState}}
+	}
+	if r.Mode != contract.RerunModeAll && r.Mode != contract.RerunModeFailed {
+		return nil, fail(400, "mode: failed or all")
+	}
+	draft := r.Draft != nil && *r.Draft
+	identity := string(r.Mode) + fmt.Sprint(draft)
+	rid := deref(r.RequestId)
+	if rid == "" {
+		rid = "rerun:" + newID()
+	}
+	// A repeated requestId answers its rerun (even after the draft changed); a different mode or draft is a conflict.
+	if prev, err := runsWhere(q, "data->>'requestId'=$1 AND data->>'rerunOf'=$2", rid, r.RunId); err != nil {
+		return nil, err
+	} else if len(prev) > 0 {
+		if astr(prev[0]["rerunIdentity"]) != identity {
+			return nil, fail(409, "Request identity conflict")
+		}
+		return prev[0], nil
+	}
+	// The overrides that pick machines and credentials stay the owner's, as on pipeline_run_create.
+	if ov := mapOf(old["overrides"]); q.person != nil && !fullAccess(q.person) && (ov["host"] != nil || ov["account"] != nil || ov["profile"] != nil) {
+		return nil, fail(403, "Only the owner reruns a run that overrides host, account or profile")
+	}
+	pid := astr(old["pipelineId"])
+	var def doc
+	var base int64
+	if draft {
+		if def, base, err = draftPipeline(q, pid); err != nil {
+			return nil, err
+		}
+	} else if def, err = loadPipeline(q, pid+".json"); err != nil {
+		return nil, err
+	}
+	reuse := []any{}
+	if r.Mode == contract.RerunModeFailed {
+		oldSteps, newSteps := anys(old["steps"]), anys(def["steps"])
+		oldDef := anys(mapOf(old["definition"])["steps"])
+		for i := 0; i < len(oldSteps) && i < len(newSteps) && i < len(oldDef); i++ {
+			e := mapOf(oldSteps[i])
+			if e["state"] != "succeeded" || canonical(oldDef[i]) != canonical(newSteps[i]) {
+				break
+			}
+			if astr(mapOf(newSteps[i])["kind"]) == "agent" {
+				same, err := sameAgentStep(q, astr(e["executionId"]), mapOf(newSteps[i]), mapOf(old["overrides"]))
+				if err != nil {
+					return nil, err
+				}
+				if !same {
+					break
+				}
+			}
+			// The step's work came from R: its output and execution stay, its spend is R's (not counted again here).
+			c := doc{}
+			for k, v := range e {
+				if k != "calls" && k != "usage" {
+					c[k] = v
+				}
+			}
+			reuse = append(reuse, c)
+		}
+	}
+	o := doc{"file": pid + ".json", "projectId": old["projectId"], "requestId": rid, "example": old["example"], "overrides": old["overrides"], "rerunOf": r.RunId, "reuse": reuse,
+		"extra": doc{"rerunIdentity": identity}}
+	if draft {
+		o["draftDefinition"], o["draftBase"] = def, base
+	}
+	return pipelineStart(q, o)
+}
+
+// sameAgentStep: the profile an agent step would run now has the content the earlier step's execution pinned.
+func sameAgentStep(q *Request, executionID string, step, overrides doc) (bool, error) {
+	var pinned []contract.DefinitionRef
+	var raw []byte
+	if err := q.tx.QueryRow(q.ctx(), "SELECT definitions FROM execution WHERE id=$1", executionID).Scan(&raw); err != nil {
+		if err == pgx.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := json.Unmarshal(raw, &pinned); err != nil || len(pinned) == 0 {
+		return false, err
+	}
+	pid, profile, err := stepProfile(q, step, overrides)
+	if err != nil {
+		return false, err
+	}
+	now, err := definitionRef(q, "agent", pid, profile)
+	return err == nil && now.ContentSha == pinned[0].ContentSha, err
 }

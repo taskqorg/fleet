@@ -616,6 +616,7 @@ func init() {
 		"hosts_update":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}},
 		"pipeline_get":          {Read: true, Long: false, Errors: []int{400, 403}},
 		"pipeline_history":      {Read: true, Long: false, Errors: []int{404}},
+		"pipeline_rerun":        {Read: false, Long: true, Errors: []int{400, 403, 404, 409}},
 		"pipeline_run":          {Read: false, Long: true, Errors: []int{}},
 		"pipeline_run_create":   {Read: false, Long: true, Errors: []int{400, 403, 404, 409}},
 		"queue_list":            {Read: true, Long: false, Errors: []int{}},

@@ -123,3 +123,17 @@ test('D8 pipeline_run_create runs the head or the caller\'s draft and lists what
   assert.equal((await op('pipeline_run_create', {pipelineId: 'judge-scale', requestId: 'd8-m', draft: true}, MEMBER)).status, 403);
   assert.equal((await op('pipeline_run_create', {pipelineId: 'no-such', requestId: 'd8-x'})).status, 404);
 });
+
+test('D9 pipeline_rerun starts a run of a finished run on the current definition and is idempotent by requestId (requirement: pipeline_rerun; risk: a rerun of a running run, or one retried twice)', async () => {
+  const first = ok(await op('pipeline_run_create', {pipelineId: 'hello-search', requestId: 'd9', example: {}}));
+  let state = '';
+  for (let i = 0; i < 50 && state !== 'failed'; i++) { state = ok(await op('pipeline_get', {runId: first.runId})).state; if (state !== 'failed') await new Promise(r => setTimeout(r, 100)); }
+  assert.equal(state, 'failed', 'a missing example reference fails step one');
+  const a = ok(await op('pipeline_rerun', {runId: first.runId, mode: 'failed', requestId: 'd9-r'}));
+  assert.notEqual(a.runId, first.runId);
+  assert.deepEqual(a.reused, [], 'the failed step reruns');
+  assert.equal(ok(await op('pipeline_rerun', {runId: first.runId, mode: 'failed', requestId: 'd9-r'})).runId, a.runId);
+  assert.equal(ok(await op('pipeline_get', {runId: a.runId})).rerunOf, first.runId);
+  assert.equal((await op('pipeline_rerun', {runId: first.runId, mode: 'some'})).status, 400);
+  assert.equal((await op('pipeline_rerun', {runId: 'no-such', mode: 'all'})).status, 404);
+});
