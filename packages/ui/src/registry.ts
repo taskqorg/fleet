@@ -56,10 +56,11 @@ export const states = {
     stopped: { label: 'Stopped', tone: 'neutral', icon: 'circle-slash' },
     done: { label: 'Done', tone: 'success', icon: 'circle-check' },
   },
-  /** A Lab trial (pipeline run): unknown is an outcome nobody can prove (never replayed). */
+  /** A Lab trial (pipeline run, execution states): unknown is a failed run whose outcome nobody can prove (observation unconfirmed, never replayed). */
   trial: {
+    preparing: { label: 'Preparing', tone: 'running', icon: 'rotate-cw' },
     running: { label: 'Running', tone: 'running', icon: 'activity' },
-    completed: { label: 'Completed', tone: 'success', icon: 'circle-check' },
+    succeeded: { label: 'Completed', tone: 'success', icon: 'circle-check' },
     failed: { label: 'Failed', tone: 'danger', icon: 'octagon-x' },
     unknown: { label: 'Unknown', tone: 'attention', icon: 'circle-question-mark' },
     cancelled: { label: 'Cancelled', tone: 'neutral', icon: 'circle-slash' },

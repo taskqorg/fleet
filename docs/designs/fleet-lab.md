@@ -188,7 +188,7 @@ Every provider call goes through fleet-gateway, from two entry points; the conne
 4.  For each needed cell, insert the trial with its `request_id` (`ON CONFLICT DO NOTHING`) in the reconcile transaction; only inserted rows launch, started by the pipeline runner after commit. Priority `background` (no effect until the scheduler exists; the screen says so).
 5.  Iteration complete = every cell's trial is final and every automatic evaluator has a score or a failed run for each completed trial.
 
-Final trial states: `completed`, `failed`, `unknown`, `cancelled`; only `completed` is comparable. Cancel cell ends the run `cancelled` and stops its running step. Retry cell inserts attempt + 1.
+Final trial states are execution states: `succeeded`, `failed`, `cancelled`; a trial whose outcome nobody can prove is `failed` with `observation = unconfirmed` (shown as Unknown). Only a confirmed `succeeded` trial is comparable. Cancel cell ends the run `cancelled` and stops its running step. Retry cell inserts attempt + 1.
 
 Not built: kind `loop` (refused with 400), stop rules `max_iterations`, `no_gain` and strategy `stop`, and the strategy step. Target below.
 

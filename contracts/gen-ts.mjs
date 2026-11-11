@@ -17,6 +17,7 @@ function type(s, at) {
   if (s.type === 'array') return `Array<${type(s.items ?? {}, at + '[]')}>`;
   if (s.type === 'object') {
     const props = Object.entries(s.properties ?? {});
+    if (!props.length && typeof s.additionalProperties === 'object') return `Record<string, ${type(s.additionalProperties, at + '.*')}>`;
     if (!props.length) return 'Record<string, unknown>';
     if (/[.[]/.test(at)) throw Error(`${at}: an object with properties must be a $defs entry (Go needs its name)`);
     const req = new Set(s.required ?? []);
