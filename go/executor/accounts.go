@@ -352,9 +352,11 @@ func claudeUsageReading(answer M, native any) M {
 		lw := contract.LimitWindow{Period: period, Pct: &u, Model: model}
 		if t, ok := str(jAt(w, "resets_at")); ok {
 			if at, err := time.Parse(time.RFC3339, t); err == nil {
-				ms := at.UnixMilli()
-				lw.ResetsAt = &ms
+				v := at.UnixMilli()
+				lw.ResetsAt = &v
 			}
+		} else {
+			lw.ResetsAt = ms(jAt(w, "resets_at")) // epoch seconds, as rate_limit_event sends
 		}
 		windows = append(windows, lw)
 	}
@@ -368,9 +370,9 @@ func claudeUsageReading(answer M, native any) M {
 		}
 	}
 	for _, m := range jArr(usage, "model_scoped") {
+		// One model name for both sources: the lower-case key form (seven_day_opus and a display name "Opus" agree).
 		if name := strings.ToLower(strings.ReplaceAll(jStr(m, "display_name"), " ", "-")); name != "" {
-			display := jStr(m, "display_name")
-			add("weekly-"+name, m, &display)
+			add("weekly-"+name, m, &name)
 		}
 	}
 	return limitReading("claude", windows, native)
