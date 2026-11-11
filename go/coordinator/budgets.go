@@ -21,20 +21,6 @@ var (
 	measuredUnit  = map[string]string{"wall_ms": "coalesce(t.wall_ms,0)", "tokens": "coalesce(t.tokens_input,0)+coalesce(t.tokens_output,0)"}
 )
 
-func anum(v any) float64 {
-	switch x := v.(type) {
-	case float64:
-		return x
-	case int64:
-		return float64(x)
-	case int32:
-		return float64(x)
-	}
-	var f float64
-	fmt.Sscan(fmt.Sprint(v), &f)
-	return f
-}
-
 func budgetView(r map[string]any) doc {
 	return doc{"id": r["id"], "scope": r["scope"], "scopeId": r["scope_id"], "unit": r["unit"], "limit": num(r["limit"]), "period": r["period"], "action": r["action"], "setBy": r["set_by"], "setAt": r["set_at"]}
 }

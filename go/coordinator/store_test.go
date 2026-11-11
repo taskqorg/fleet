@@ -14,3 +14,12 @@ func TestCIntReadsSQLIntegers(t *testing.T) {
 		t.Fatal("a string is not a number")
 	}
 }
+
+// One number reader (C12, S2): num reads every SQL integer width (int64 counts were 0) and numeric text from ->> reads.
+func TestNumReadsEveryNumericType(t *testing.T) {
+	for _, v := range []any{int16(2), int32(2), int64(2), 2, 2.0, float32(2), "2"} {
+		if num(v) != 2 {
+			t.Fatalf("num(%T) = %v", v, num(v))
+		}
+	}
+}

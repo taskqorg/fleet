@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"math"
 	"math/rand/v2"
 	"net/http"
 	"regexp"
@@ -228,6 +229,8 @@ func numOK(v any) (float64, bool) {
 	switch x := v.(type) {
 	case float64:
 		return x, true
+	case float32:
+		return float64(x), true
 	case int64:
 		return float64(x), true
 	case int32:
@@ -238,6 +241,25 @@ func numOK(v any) (float64, bool) {
 		return float64(x), true
 	}
 	return 0, false
+}
+
+// num: a number of any JSON or SQL numeric type, or a numeric text (a ->> read); 0 otherwise. numOK refuses text.
+func num(v any) float64 {
+	if s, ok := v.(string); ok {
+		f, _ := strconv.ParseFloat(s, 64)
+		return f
+	}
+	f, _ := numOK(v)
+	return f
+}
+
+// msTime: a millisecond time (JSON or SQL number) as a timestamp, or nil.
+func msTime(v any) any {
+	f, ok := numOK(v)
+	if !ok || math.IsInf(f, 0) || math.IsNaN(f) {
+		return nil
+	}
+	return time.UnixMilli(int64(f)).UTC()
 }
 
 func intOK(v any) (int64, bool) {

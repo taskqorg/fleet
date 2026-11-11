@@ -409,7 +409,7 @@ func init() {
 		}
 		var bytes int64
 		for _, x := range rows {
-			bytes += i64(x, "size")
+			bytes += int64(num(x["size"]))
 		}
 		return doc{"ruleHash": ruleHash(r), "count": len(rows), "bytes": bytes, "sample": rows[:min(10, len(rows))]}, nil
 	})
