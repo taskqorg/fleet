@@ -412,7 +412,7 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		os.Remove(tmp)
 		return out, f
 	case "get":
-		r, f := c.post("/api/hosts/artifacts/get", contract.ArtifactGetRequest{HostId: c.host, ExecutionId: jStr(body, "executionId"), ArtifactId: jStr(body, "artifactId")})
+		r, f := c.post("/api/hosts/artifacts/get", contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: jStr(body, "executionId"), ArtifactId: jStr(body, "artifactId")})
 		if f != nil {
 			return nil, f
 		}
@@ -478,9 +478,9 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		}
 		return M{"artifactId": jAt(r, "id"), "path": target, "mediaType": jAt(r, "mediaType"), "size": jAt(r, "size")}, nil
 	case "list":
-		req := contract.ArtifactListRequest{HostId: c.host, ExecutionId: jStr(body, "executionId")}
+		req := contract.HostArtifactListRequest{HostId: c.host, ExecutionId: jStr(body, "executionId")}
 		if f, ok := body["filter"].(map[string]any); ok {
-			req.Filter = &contract.ArtifactListFilter{ExecutionId: optStr(jStr(f, "executionId")), TaskId: optStr(jStr(f, "taskId")), MediaType: optStr(jStr(f, "mediaType"))}
+			req.Filter = &contract.HostArtifactListFilter{ExecutionId: optStr(jStr(f, "executionId")), TaskId: optStr(jStr(f, "taskId")), MediaType: optStr(jStr(f, "mediaType"))}
 		}
 		return c.post("/api/hosts/artifacts/list", req)
 	}

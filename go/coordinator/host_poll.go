@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"path/filepath"
 
 	"fleet/contract"
 )
@@ -110,17 +111,7 @@ func (a *App) poll(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	envs := map[string][]string{}
-	for _, p := range projectIDs() {
-		if st, err := projectSettingsByID(p); err == nil {
-			hs := []string{}
-			for _, x := range anys(st["environments"]) {
-				hs = append(hs, astr(mapOf(x)["hostId"]))
-			}
-			envs[p] = hs
-		}
-	}
-	if err := detectProblems(q, ids, envs); err != nil {
+	if err := detectProblems(q, ids, projectEnvironments()); err != nil {
 		return nil, err
 	}
 	if err := agentPromote(q); err != nil {
@@ -170,6 +161,28 @@ func (a *App) poll(q *Request) (any, error) {
 	}
 	reply := contract.PollReply{Target: healthyTarget(), AutoUpdate: ptr(autoUpdateOf(q.host))}
 	return doc{"commands": out, "target": reply.Target, "autoUpdate": reply.AutoUpdate}, nil
+}
+
+// projectEnvironments: the environment hosts of every project, from project.json alone (a poll runs every few seconds
+// per host; projectContext would read every context file).
+func projectEnvironments() map[string][]string {
+	envs := map[string][]string{}
+	for _, p := range projectIDs() {
+		d, err := readJSON(filepath.Join(configDir(), "projects", p, "project.json"))
+		if err != nil {
+			continue
+		}
+		st, _, err := projectSettings(d)
+		if err != nil {
+			continue
+		}
+		hs := []string{}
+		for _, x := range anys(st["environments"]) {
+			hs = append(hs, astr(mapOf(x)["hostId"]))
+		}
+		envs[p] = hs
+	}
+	return envs
 }
 
 func safeInt(v any) any {

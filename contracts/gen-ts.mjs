@@ -29,7 +29,13 @@ function type(s, at) {
 
 mkdirSync(new URL('generated/', dir), { recursive: true });
 for (const f of readdirSync(dir).filter((f) => f.endsWith('.schema.json'))) {
-  const defs = JSON.parse(readFileSync(new URL(f, dir), 'utf8')).$defs;
-  const out = Object.entries(defs).map(([name, s]) => `export type ${name} = ${type(s, name)};`);
+  const root = JSON.parse(readFileSync(new URL(f, dir), 'utf8'));
+  const out = Object.entries(root.$defs).map(([name, s]) => `export type ${name} = ${type(s, name)};`);
+  // operations: each name maps to its <Name>Request and <Name>Reply (contracts/README.md, Operations).
+  if (root.operations) out.push(`export type Ops = {\n${Object.keys(root.operations).map((n) => {
+    const t = n.split(/[_.-]/).filter(Boolean).map((p) => p[0].toUpperCase() + p.slice(1)).join('');
+    for (const d of [t + 'Request', t + 'Reply']) if (!root.$defs[d]) throw Error(`${f}: operation ${n} has no $defs ${d}`);
+    return `  ${JSON.stringify(n)}: { request: ${t}Request; reply: ${t}Reply };`;
+  }).join('\n')}\n};`);
   writeFileSync(new URL(`generated/${f.replace('.schema.json', '.ts')}`, dir), `// Generated from contracts/${f} by contracts/gen-ts.mjs. Do not edit.\n\n${out.join('\n\n')}\n`);
 }

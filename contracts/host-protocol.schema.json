@@ -1188,7 +1188,7 @@
       },
       "$comment": "POST /api/hosts/artifacts/declare: a required artifact the execution will upload."
     },
-    "ArtifactGetRequest": {
+    "HostArtifactGetRequest": {
       "type": "object",
       "required": [
         "hostId",
@@ -1208,7 +1208,7 @@
       },
       "$comment": "POST /api/hosts/artifacts/get and /read: one artifact the execution may read."
     },
-    "ArtifactListRequest": {
+    "HostArtifactListRequest": {
       "type": "object",
       "required": [
         "hostId",
@@ -1222,7 +1222,7 @@
           "type": "string"
         },
         "filter": {
-          "$ref": "#/$defs/ArtifactListFilter"
+          "$ref": "#/$defs/HostArtifactListFilter"
         }
       },
       "$comment": "POST /api/hosts/artifacts/list: the artifacts the execution may read."
@@ -1308,7 +1308,7 @@
       },
       "$comment": "POST /api/hosts/agent-tools: one MCP JSON-RPC request of a native agent (request stays the raw JSON-RPC frame)."
     },
-    "ArtifactListFilter": {
+    "HostArtifactListFilter": {
       "type": "object",
       "properties": {
         "executionId": {

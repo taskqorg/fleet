@@ -28,14 +28,14 @@ func init() {
 	longRoute("POST /api/hosts/artifacts/renew", hostOwned(false, typed[contract.ArtifactLeaseRequest](artifactRenew)))
 	longRoute("POST /api/hosts/artifacts/failed", hostOwned(false, typed[contract.ArtifactFailedRequest](artifactRefused)))
 	longRoute("POST /api/hosts/artifacts/declare", hostOwned(true, typed[contract.ArtifactDeclareRequest](artifactDeclare)))
-	longRoute("POST /api/hosts/artifacts/get", hostOwned(false, typed[contract.ArtifactGetRequest](func(q *Request) (any, error) {
+	longRoute("POST /api/hosts/artifacts/get", hostOwned(false, typed[contract.HostArtifactGetRequest](func(q *Request) (any, error) {
 		x, err := hostMayRead(q)
 		if err != nil {
 			return nil, err
 		}
 		return artifactGetView(q.ctx(), q.app, x.ID, q.hostID())
 	})))
-	longRoute("POST /api/hosts/artifacts/read", hostOwned(false, typed[contract.ArtifactGetRequest](func(q *Request) (any, error) {
+	longRoute("POST /api/hosts/artifacts/read", hostOwned(false, typed[contract.HostArtifactGetRequest](func(q *Request) (any, error) {
 		x, err := hostMayRead(q)
 		if err != nil {
 			return nil, err
@@ -46,7 +46,7 @@ func init() {
 		}
 		return streamed(open, x.MediaType, nil), nil
 	})))
-	longRoute("POST /api/hosts/artifacts/list", hostOwned(true, typed[contract.ArtifactListRequest](hostArtifactList)))
+	longRoute("POST /api/hosts/artifacts/list", hostOwned(true, typed[contract.HostArtifactListRequest](hostArtifactList)))
 	longRoute("POST /api/hosts/stores", hostOwned(false, typed[contract.StoresRequest](func(q *Request) (any, error) {
 		var b struct {
 			Store map[string]any `json:"store"`

@@ -1,6 +1,7 @@
 // Same-origin calls to coordinator operations (docs/designs/fleet-operator-app.md §3, §5). The browser holds no secret:
 // Cloudflare Access and the guard add the credential. A redirect, 401 or 403 means the Access session expired: "signed out".
 import { signal } from '@preact/signals';
+import type { Ops } from '../../contracts/generated/ops.ts';
 
 export const online = signal(typeof navigator === 'undefined' ? true : navigator.onLine);
 export const signedOut = signal(false);
@@ -11,7 +12,11 @@ if (typeof window !== 'undefined') {
 
 export class OpError extends Error { readonly status: number; constructor(message: string, status: number) { super(message); this.status = status; } }
 
-export async function op<T = any>(name: string, body: unknown = {}, opts: { signal?: AbortSignal } = {}): Promise<T> {
+export type { Ops };
+export type OpName = keyof Ops;
+
+// op calls one operation of contracts/ops.schema.json: the name picks the request and reply types.
+export async function op<K extends OpName>(name: K, body: Ops[K]['request'], opts: { signal?: AbortSignal } = {}): Promise<Ops[K]['reply']> {
   let r: Response;
   try {
     r = await fetch('/api/ops/' + name, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), credentials: 'same-origin', redirect: 'manual', signal: opts.signal });
@@ -24,5 +29,5 @@ export async function op<T = any>(name: string, body: unknown = {}, opts: { sign
   // An abort while the body is read is an abort, not an empty success.
   const data = await r.json().catch(() => { if (opts.signal?.aborted) throw new OpError('aborted', 0); return {}; });
   if (!r.ok) throw new OpError(data.message || r.statusText, r.status);
-  return data as T;
+  return data as Ops[K]['reply'];
 }

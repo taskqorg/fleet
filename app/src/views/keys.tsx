@@ -3,7 +3,7 @@
 import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import { ListDetail, StateBadge, DetailSection, KvRow, Empty, Button, SettingField, AgeChip } from '../../../packages/ui/src/index.ts';
-import { op } from '../api.ts';
+import { op, type OpName, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 
 const ids = (v: string) => v.split(',').map(x => x.trim()).filter(Boolean);
@@ -14,7 +14,7 @@ export function Keys({ id }: { id?: string }) {
   const { data } = useDoc<any>('api-keys', () => op('connections_list', {}), c => c.kind === 'api-connection' || c.kind === 'connection-key' || c.kind === 'setting-change');
   const now = Date.now();
   if (!data) return <><header class="page-h"><h1>API keys</h1></header><Empty text="Loading…" /></>;
-  const run = (name: string, body: any) => op(name, body).then(() => { setError(null); }, e => setError(String(e.message ?? e)));
+  const run = <K extends OpName>(name: K, body: Ops[K]['request']) => op(name, body).then(() => { setError(null); }, e => setError(String(e.message ?? e)));
   const sel = data.connections.find((c: any) => c.name === id);
   const list = <>
     <header class="page-h"><h1>API keys</h1></header>

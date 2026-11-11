@@ -1302,7 +1302,7 @@ func (e *executor) stageInputs(p M, input string, execution any) error {
 		if strings.HasPrefix(rel, "/") || anyPart(rel, func(x string) bool { return x == "" || x == "." || x == ".." }) {
 			return fmt.Errorf("invalid input path %s", rel)
 		}
-		r, f := c.post("/api/hosts/artifacts/get", contract.ArtifactGetRequest{HostId: e.host, ExecutionId: jStr(execution), ArtifactId: jStr(id)})
+		r, f := c.post("/api/hosts/artifacts/get", contract.HostArtifactGetRequest{HostId: e.host, ExecutionId: jStr(execution), ArtifactId: jStr(id)})
 		if f != nil {
 			return fmt.Errorf("input %s: %s", rel, f.msg)
 		}

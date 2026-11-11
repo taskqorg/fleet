@@ -5,6 +5,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const OWNER = 'owner@trial.test';
@@ -129,4 +130,15 @@ test('A13 every artifact, store, account and agent-tools host route decodes into
     ['/api/hosts/artifacts/list', {executionId, filter: {taskId: 5}}],
     ['/api/hosts/agent-tools', {executionId: 7, commandId: 'c', request: {}}]] as const)
     assert.equal((await h(route, body)).status, 400, route);
+});
+
+test('A11 the start command payload is the StartPayload contract: named fields only, no blind merge (requirement: contracts/host-protocol.schema.json StartPayload, C7 coordinator side; risk: a dead or overriding payload field reaches the executor)', {timeout: 30_000}, async () => {
+  const h = await host('trial-host');
+  ok(await h('/api/hosts/poll', poll));
+  const {executionId} = await queued();
+  const c = ok(await h('/api/hosts/poll', poll)).commands.find((x: any) => x.executionId === executionId);
+  const schema = JSON.parse(readFileSync(new URL('../../contracts/host-protocol.schema.json', import.meta.url), 'utf8'));
+  const allowed = Object.keys(schema.$defs.StartPayload.properties);
+  assert.deepEqual(Object.keys(c.payload).filter(k => !allowed.includes(k)), []);
+  assert.deepEqual([c.kind, c.payload.harness, c.payload.text], ['start', 'codex', 'hello']);
 });

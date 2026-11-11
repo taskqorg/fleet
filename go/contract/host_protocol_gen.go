@@ -93,32 +93,11 @@ type ArtifactFailedRequest struct {
 	StoreId    *string `json:"storeId,omitempty"`
 }
 
-// ArtifactGetRequest: POST /api/hosts/artifacts/get and /read: one artifact the execution may read.
-type ArtifactGetRequest struct {
-	ArtifactId  string `json:"artifactId"`
-	ExecutionId string `json:"executionId"`
-	HostId      string `json:"hostId"`
-}
-
 // ArtifactLeaseRequest: POST /api/hosts/artifacts/renew: the lease of a running transfer.
 type ArtifactLeaseRequest struct {
 	ArtifactId string  `json:"artifactId"`
 	HostId     string  `json:"hostId"`
 	StoreId    *string `json:"storeId,omitempty"`
-}
-
-// ArtifactListFilter: Optional narrowing of /api/hosts/artifacts/list.
-type ArtifactListFilter struct {
-	ExecutionId *string `json:"executionId,omitempty"`
-	MediaType   *string `json:"mediaType,omitempty"`
-	TaskId      *string `json:"taskId,omitempty"`
-}
-
-// ArtifactListRequest: POST /api/hosts/artifacts/list: the artifacts the execution may read.
-type ArtifactListRequest struct {
-	ExecutionId string              `json:"executionId"`
-	Filter      *ArtifactListFilter `json:"filter,omitempty"`
-	HostId      string              `json:"hostId"`
 }
 
 type ArtifactPart struct {
@@ -244,6 +223,27 @@ const (
 	FleetEventTypeOutboxFailed        FleetEventType = "outbox.failed"
 	FleetEventTypeUnparsed            FleetEventType = "unparsed"
 )
+
+// HostArtifactGetRequest: POST /api/hosts/artifacts/get and /read: one artifact the execution may read.
+type HostArtifactGetRequest struct {
+	ArtifactId  string `json:"artifactId"`
+	ExecutionId string `json:"executionId"`
+	HostId      string `json:"hostId"`
+}
+
+// HostArtifactListFilter: Optional narrowing of /api/hosts/artifacts/list.
+type HostArtifactListFilter struct {
+	ExecutionId *string `json:"executionId,omitempty"`
+	MediaType   *string `json:"mediaType,omitempty"`
+	TaskId      *string `json:"taskId,omitempty"`
+}
+
+// HostArtifactListRequest: POST /api/hosts/artifacts/list: the artifacts the execution may read.
+type HostArtifactListRequest struct {
+	ExecutionId string                  `json:"executionId"`
+	Filter      *HostArtifactListFilter `json:"filter,omitempty"`
+	HostId      string                  `json:"hostId"`
+}
 
 type HostEvent struct {
 	Data      json.RawMessage `json:"data"`
