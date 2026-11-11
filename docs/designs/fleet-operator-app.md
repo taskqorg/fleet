@@ -196,7 +196,7 @@ Browser windows (one origin)                          Coordinator (Go)
 * It takes `r := CASE TG_OP WHEN 'DELETE' THEN OLD ELSE NEW END` and inserts one change row.
 * It calls `pg_notify('fleet_change','')`. The payload is constant, so Postgres folds duplicate notifies within one transaction: one wake per commit, not per row.
 
-**Kind map.** Written by the trigger; maintained in one server-owned table that is covered by tests.
+**Kind map.** Written by the trigger. The kinds are `ChangeKind` in `contracts/ops.schema.json`; `go/coordinator/change_kind_test.go` fails when the triggers and that list differ, and the app's subscribers are typed by it.
 
 | Source | `kind` | `id` | Parent ids filled | Client effect |
 |---|---|---|---|---|
@@ -212,6 +212,7 @@ Browser windows (one origin)                          Coordinator (Go)
 | `document` kind `artifact` (legacy artifacts) | `artifact` | `id` | `session_id` from `data`, `task_id` from the execution | Results and task detail |
 | `artifact`, `artifact_copy` (migration 9, `fleet_artifact_change`) | `artifact` | artifact `id` | `task_id` (artifact or execution), `session_id`, `project_id` | Results and task detail. Copy updates that only move `lease_expires_at` or `updated_at` are skipped. |
 | `store` (migration 9) | `host` | `host_id` | `host_id` | Row `host` (stores). Updates that only move `observed_at` or `updated_at` are skipped. |
+| `document` kind `managed-account`, `api-connection`, `connection-key`, `setting-change` (migration 25) | the document kind | `id` | `project_id` and `holder` from the document; the holder sees the change, as they see the document | Subscription limits on `/hosts`; the Keys screen |
 | Other `document` kinds | — | — | — | No change row. A kind is added to this map when a view needs it, which keeps the log small. |
 
 **Visibility watermark.** This replaces any fixed overlap window. Execution-scope ingest commits in parallel with GLOBAL writers, so `seq` order is not commit order. Every read of the log therefore returns only rows whose transaction is older than the oldest transaction still running:
