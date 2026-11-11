@@ -32,7 +32,6 @@ var (
 	labCommit    = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 	labLabel     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,59}$`)
 	draftExample = regexp.MustCompile(`/examples/[^/]+\.json$`)
-	labFinal     = terminalTyped
 	labOverrides = []string{"profile", "model", "skills", "prompt", "web_route", "account", "host"}
 )
 
@@ -932,7 +931,7 @@ func expLatest(trials []doc) ([]string, map[string]doc) {
 	return order, m
 }
 
-func comparable(t doc) bool { return t["state"] == "succeeded" && t["observation"] != "unconfirmed" }
+func comparable(t doc) bool { return t["state"] == "succeeded" && !unconfirmed(t) }
 
 func expInsertRun(q *Request, exp doc, requestID, file string, example any, variant doc, extra doc) (string, error) {
 	id := newID()
@@ -1135,7 +1134,7 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 				complete = false
 				continue
 			}
-			if !labFinal[astr(run["state"])] {
+			if !terminal(run) {
 				complete = false
 				continue
 			}
@@ -1338,7 +1337,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		}
 		allFinal := true
 		for _, k := range order {
-			allFinal = allFinal && labFinal[astr(last[k]["state"])]
+			allFinal = allFinal && terminal(last[k])
 		}
 		if len(launched) == 0 && len(order) == total && allFinal && evaluated {
 			return exec(q, "UPDATE experiment SET state='done',stop_reason='complete' WHERE id=$1 AND state='running'", id)
@@ -1473,7 +1472,7 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 		return nil, fail(404, "Unknown cell")
 	}
 	if action == "cancel" {
-		if labFinal[astr(t["state"])] {
+		if terminal(t) {
 			return nil, fail(409, "Trial already finished")
 		}
 		own, err := pipelineCancel(q.ctx(), q.app, astr(t["id"]))
@@ -1484,7 +1483,7 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 			stopExecution(q.ctx(), q.app, own)
 		}
 	} else {
-		if !labFinal[astr(t["state"])] {
+		if !terminal(t) {
 			return nil, fail(409, "Trial still running; cancel it first")
 		}
 		if exp["state"] == "draft" || exp["state"] == "stopped" {

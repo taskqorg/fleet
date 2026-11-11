@@ -1,5 +1,5 @@
 // Pipeline format version 2 runner (docs/designs/fleet-lab.md "Pipeline format version 2").
-// A run is an ordered chain of api, agent and script steps: the pipeline_run execution (legacy record kind 'pipeline-run')
+// A run is an ordered chain of api, agent and script steps: the pipeline_run execution
 // with one pipeline_step row `<run>:step:<i>` per step; each provider call is a tool_run child of its step. Every step
 // leaves an output.json artifact. pipelineAdvance(runId) moves a run forward and is safe to call any time; a sync api call
 // interrupted by a restart is unknown and never replayed.
@@ -228,7 +228,10 @@ func putRun(q *Request, run doc) error {
 			rest[k] = v
 		}
 	}
-	state, obs := runState(run)
+	state, obs, err := runState(run)
+	if err != nil {
+		return err
+	}
 	cfg := doc{"method": run["selectedMethod"], "definitionSha256": run["definitionSha256"]}
 	if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,started_at,ended_at,data,config_ref,experiment_id,variant)
 	 VALUES($1,'pipeline_run',$2,$3,$4,$5,$6,$7,$8,$9,$10)
@@ -240,7 +243,10 @@ func putRun(q *Request, run doc) error {
 	}
 	for i, x := range anys(run["steps"]) {
 		s := mapOf(x)
-		st, sobs := runState(s)
+		st, sobs, err := runState(s)
+		if err != nil {
+			return err
+		}
 		data := doc{"index": i}
 		for k, v := range s {
 			if k != "state" && k != "observation" {
@@ -307,12 +313,15 @@ func runsWhere(q *Request, clause string, args ...any) ([]doc, error) {
 const runRows = "kind='pipeline_run' AND data ? 'pipelineId'"
 
 // runState: the typed state and observation of a run or step record; unconfirmed only when the record says so.
-func runState(r doc) (string, string) {
+func runState(r doc) (string, string, error) {
 	state, obs := firstString(r["state"], "preparing"), "confirmed"
-	if r["observation"] == "unconfirmed" {
+	if _, ok := stateOrder[state]; !ok {
+		return "", "", fmt.Errorf("pipeline record %v: unknown state %q", r["id"], state)
+	}
+	if unconfirmed(r) {
 		obs = "unconfirmed"
 	}
-	return state, obs
+	return state, obs, nil
 }
 
 func stepRow(run doc, i int) string { return fmt.Sprintf("%v:step:%d", run["id"], i) }
@@ -934,7 +943,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			if len(msg) > 500 {
 				msg = msg[:500]
 			}
-			// Re-read: the failed transaction left nothing; the step fails from its pending state.
+			// Re-read: the failed transaction left nothing; the step fails from its preparing state.
 			delete(s, "executionId")
 			return failNow(problem, msg)
 		}
@@ -1013,7 +1022,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	st := astr(e["state"])
 	if !terminal(e) {
-		return false, nil // an unconfirmed state is not final: the host may still report the real outcome
+		return false, nil // an unconfirmed running state is not final: the host may still report the real outcome
 	}
 	if st != "succeeded" {
 		problem := "step:cancelled"
@@ -1023,6 +1032,9 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 				code = "failed"
 			}
 			problem = fmt.Sprint("step:", code)
+			if unconfirmed(e) { // the host lost the step: its outcome is unknown
+				problem = fmt.Sprint("unknown:", code)
+			}
 		}
 		msg := astr(mapOf(e["error"])["message"])
 		if msg == "" {

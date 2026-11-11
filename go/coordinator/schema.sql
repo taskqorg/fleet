@@ -599,5 +599,7 @@ UPDATE execution SET data = data - 'state' - 'observation', legacy_kind = NULL, 
 -- migration 24: pipeline runs and steps keep their state only in the typed column too; an unknown outcome is failed and
 -- unconfirmed. No execution row has a legacy kind or id any more.
 UPDATE execution SET state = 'failed', observation = 'unconfirmed' WHERE legacy_kind IN ('pipeline-run', 'pipeline-step') AND data->>'state' = 'unknown';
+UPDATE execution SET data = data || jsonb_build_object('pipelineId', coalesce(data->'definition'->>'id', id)) WHERE legacy_kind = 'pipeline-run' AND NOT data ? 'pipelineId';
 UPDATE execution SET data = data - 'state' - 'observation' WHERE legacy_kind IN ('pipeline-run', 'pipeline-step');
+CREATE INDEX execution_kind ON execution(kind, seq);
 ALTER TABLE execution DROP COLUMN legacy_kind, DROP COLUMN legacy_id;
