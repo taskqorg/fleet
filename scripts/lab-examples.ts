@@ -19,6 +19,7 @@ import {tmpdir} from 'node:os';
 import {delimiter,dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {parseExample,useCaseIds,type Example,type ExampleFile} from './lab-example-format.ts';
+import {examplesFromExport} from './lab-export.ts';
 
 export function readExamples(files:string[]):any[]{return files.flatMap(f=>{const v=JSON.parse(f==='-'?readFileSync(0,'utf8'):readFileSync(f,'utf8'));return Array.isArray(v)?v:[v]})}
 
@@ -53,6 +54,9 @@ async function main(argv:string[]){const [cmd,...rest]=argv,root=resolve(dirname
   console.log(`${examples.length-bad} of ${examples.length} examples pass their checks with no agent`);if(bad)process.exitCode=1;return}
  if(cmd==='import'){const url=process.env.FLEET_URL,token=process.env.FLEET_TOKEN;if(!url||!token)throw Error('FLEET_URL and FLEET_TOKEN required');
   for(const x of (await importExamples({url,token,person:process.env.FLEET_PERSON,origin:process.env.FLEET_ORIGIN||process.env.FLEET_BROWSER_ORIGIN,examples,projectId})).examples)console.log(`${x.id}@${x.version}: ${x.created?'created':'already stored'} ${x.artifactId}`);return}
- throw Error('usage: lab-examples.ts check|import FILE… [--project ID]')}
+ if(cmd==='from-export'){const u=rest.indexOf('--use-case');if(u<0)throw Error('from-export needs --use-case ID');
+  const file=rest.filter((_,i)=>i!==u&&i!==u+1)[0];if(!file)throw Error('from-export needs FILE');
+  console.log(JSON.stringify(examplesFromExport(JSON.parse(readFileSync(file,'utf8')),rest[u+1]),null,1));return}
+ throw Error('usage: lab-examples.ts check|import FILE… [--project ID] | from-export FILE --use-case ID')}
 
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))main(process.argv.slice(2)).catch(e=>{console.error(e.message);process.exitCode=1});

@@ -19,6 +19,9 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
 * `profile.schema.json`: the agent profile (`config/agents/*.json`, the start command's `agentConfig`). Its validator
   `contract.ParseProfile` (`go/contract/profile.go`) is the one the coordinator and the executor run; a Go test checks every shipped profile.
 
+* `lab-export.schema.json`: a project's export to Lab, version 1 (docs/designs/fleet-lab.md, Project data in examples);
+  read by `scripts/lab-export.ts` (TypeScript types only).
+
 ## Generated types
 
 * TypeScript: `contracts/gen-ts.mjs` writes `contracts/generated/<name>.ts`. `pnpm run typecheck` and `pnpm run build`
