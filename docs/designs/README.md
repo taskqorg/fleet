@@ -24,5 +24,4 @@ Technical designs, briefs and their reviews. A design here is accepted direction
 * `fleet-telemetry.md`: one span per operation across all services in ClickHouse, trace context, process CPU and memory, the rules pass, telemetry operations and the System screen read panels.
 * `fleet-system-management.md`: host remove, archive, delete and purge with previews, worktree removal on delivery, problems as needs-you questions, Postgres backups and restore drill, the audit journal and the System screen.
 * `entity-ids-brief.md`: human entity codes such as `T-FLT-42`.
-* `web-stack-brief.md`: front-end stack choice.
-* `reviews/drift-2026-11-10.md` and `reviews/drift-2026-11-10-web-stack.md`: drift between these designs and the code, cited by the conversations and view-URL designs.
+* `reviews/drift-2026-11-10.md`: remaining mixed-topic findings to fold into the data and design-system specifications.
