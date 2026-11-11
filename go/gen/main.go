@@ -3,7 +3,8 @@
 //
 //	go run ./gen <schema.json> <package> <out.go>
 //
-// Mapping: object -> struct (an open object names only the listed fields, as in TypeScript); string enum -> named string
+// Mapping: object -> struct (an open object names only the listed fields, as in TypeScript); an object without
+// properties whose additionalProperties is a schema -> map[string]<that type>; string enum -> named string
 // type with constants; {} -> json.RawMessage; integer -> int64; a property outside required, or with "null" in its type,
 // is a pointer with omitempty (required nullable: pointer, always written).
 package main
@@ -99,6 +100,13 @@ func goType(s schema, where string) (string, bool) {
 	case "object":
 		if props, _ := s["properties"].(map[string]any); len(props) > 0 {
 			fail("%s: an object with properties must be a $defs entry", where)
+		}
+		if values, ok := s["additionalProperties"].(map[string]any); ok {
+			vt, null := goType(values, where+".*")
+			if null {
+				fail("%s: a map value cannot be null", where)
+			}
+			return "map[string]" + vt, null
 		}
 		return "map[string]json.RawMessage", null
 	}

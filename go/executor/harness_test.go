@@ -139,7 +139,7 @@ func TestCodexSession(t *testing.T) {
 		`[{"period":"weekly","pct":29,"resetsAt":1794330000000,"status":"allowed"}]`)
 }
 
-// Risk: ACP prompts without the qualified runtime, the requested model or mode, or answers client permission requests.
+// Risk: ACP prompts without the qualified protocol version (any runtime release of protocol 1 runs), the requested model or mode, or answers client permission requests.
 func TestACPSession(t *testing.T) {
 	profile := j(`{"model":"g","text":"task","agentConfig":{"instructions":"explicit user","settings":{"mode":"accept-edits"}}}`)
 	opened := `{"id":2,"result":{"sessionId":"s","models":{"availableModels":[{"modelId":"g"}]},"modes":{"availableModes":[{"id":"accept-edits"}]}}}`
@@ -167,8 +167,12 @@ func TestACPSession(t *testing.T) {
 		}
 	}
 	s := newACPSession("/w", "", profile, M{})
-	if _, _, _, err := s.Receive(j(`{"id":1,"result":{"protocolVersion":1,"agentInfo":{"version":"1.4.0"}}}`)); err == nil {
-		t.Fatal("unqualified runtime accepted")
+	if _, _, _, err := s.Receive(j(`{"id":1,"result":{"protocolVersion":2,"agentInfo":{"version":"1.5.3"}}}`)); err == nil {
+		t.Fatal("unqualified protocol accepted")
+	}
+	s = newACPSession("/w", "", profile, M{})
+	if _, ev, _, err := s.Receive(j(`{"id":1,"result":{"protocolVersion":1,"agentInfo":{"version":"1.5.4"}}}`)); err != nil || jAt(ev, "native", "result", "agentInfo", "version") != "1.5.4" {
+		t.Fatal("a patch release of protocol 1 refused, or its version not retained", err)
 	}
 	s = newACPSession("/w", "", profile, M{})
 	s.Receive(j(`{"id":1,"result":{"protocolVersion":1,"agentInfo":{"version":"1.5.3"}}}`))
