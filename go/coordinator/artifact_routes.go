@@ -4,6 +4,7 @@ package main
 // subscription limits, the built app, and the store/lease ticker.
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,22 +24,22 @@ import (
 
 func init() {
 	// Long routes: each takes short transactions around its store calls.
-	longRoute("POST /api/hosts/artifacts/reserve", hostOwned(true, typed[contract.ArtifactReserveRequest](artifactReserve)))
-	longRoute("POST /api/hosts/artifacts/parts", hostOwned(false, typed[contract.ArtifactPartsRequest](artifactParts)))
-	longRoute("POST /api/hosts/artifacts/commit", hostOwned(false, typed[contract.ArtifactCommitRequest](artifactCommit)))
-	longRoute("POST /api/hosts/artifacts/verified", hostOwned(false, typed[contract.ArtifactVerifiedRequest](artifactVerified)))
-	longRoute("POST /api/hosts/artifacts/renew", hostOwned(false, typed[contract.ArtifactLeaseRequest](artifactRenew)))
-	longRoute("POST /api/hosts/artifacts/failed", hostOwned(false, typed[contract.ArtifactFailedRequest](artifactRefused)))
-	longRoute("POST /api/hosts/artifacts/declare", hostOwned(true, typed[contract.ArtifactDeclareRequest](artifactDeclare)))
-	longRoute("POST /api/hosts/artifacts/get", hostOwned(false, typed[contract.HostArtifactGetRequest](func(q *Request) (any, error) {
-		x, err := hostMayRead(q)
+	longRoute("POST /api/hosts/artifacts/reserve", hostOwned(true, typed(artifactReserve)))
+	longRoute("POST /api/hosts/artifacts/parts", hostOwned(false, typed(artifactParts)))
+	longRoute("POST /api/hosts/artifacts/commit", hostOwned(false, typed(artifactCommit)))
+	longRoute("POST /api/hosts/artifacts/verified", hostOwned(false, typed(artifactVerified)))
+	longRoute("POST /api/hosts/artifacts/renew", hostOwned(false, typed(artifactRenew)))
+	longRoute("POST /api/hosts/artifacts/failed", hostOwned(false, typed(artifactRefused)))
+	longRoute("POST /api/hosts/artifacts/declare", hostOwned(true, typed(artifactDeclare)))
+	longRoute("POST /api/hosts/artifacts/get", hostOwned(false, typed(func(q *Request, b *contract.HostArtifactGetRequest) (any, error) {
+		x, err := hostMayRead(q, b)
 		if err != nil {
 			return nil, err
 		}
 		return artifactGetView(q.ctx(), q.app, x.ID, q.hostID())
 	})))
-	longRoute("POST /api/hosts/artifacts/read", hostOwned(false, typed[contract.HostArtifactGetRequest](func(q *Request) (any, error) {
-		x, err := hostMayRead(q)
+	longRoute("POST /api/hosts/artifacts/read", hostOwned(false, typed(func(q *Request, b *contract.HostArtifactGetRequest) (any, error) {
+		x, err := hostMayRead(q, b)
 		if err != nil {
 			return nil, err
 		}
@@ -47,14 +49,10 @@ func init() {
 		}
 		return streamed(open, x.MediaType, nil), nil
 	})))
-	longRoute("POST /api/hosts/artifacts/list", hostOwned(true, typed[contract.HostArtifactListRequest](hostArtifactList)))
-	longRoute("POST /api/hosts/stores", hostOwned(false, typed[contract.StoresRequest](func(q *Request) (any, error) {
-		var b struct {
-			Store map[string]any `json:"store"`
-		}
-		decode(q.body, &b)
+	longRoute("POST /api/hosts/artifacts/list", hostOwned(true, typed(hostArtifactList)))
+	longRoute("POST /api/hosts/stores", hostOwned(false, typed(func(q *Request, b *contract.StoresRequest) (any, error) {
 		holder, _ := q.host["holder"].(string)
-		return storeRegister(q, q.hostID(), b.Store, holder)
+		return storeRegister(q, q.hostID(), &b.Store, holder)
 	})))
 	route("GET /api/results/{id}", resultBytes)
 	route("GET /api/results/{id}/preview", resultPreview)
@@ -175,16 +173,48 @@ func init() {
 	})
 }
 
-// typed: the host route's body must decode into its contract type (contracts/host-protocol.schema.json) before h reads
-// it: a field of the wrong type is 400, not an empty value. Unknown fields pass while hosts update one at a time.
-func typed[T any](h handler) handler {
+// typed: the host route's body decodes into its contract type (contracts/host-protocol.schema.json), passes
+// decodeValid, and h reads the struct only: a field of the wrong type, a missing required field or an enum value outside
+// the schema is 400. Unknown fields pass while hosts update one at a time.
+func typed[T any, P interface {
+	*T
+	Validate() error
+}](h func(q *Request, t *T) (any, error)) handler {
 	return func(q *Request) (any, error) {
-		var t T
-		if err := decode(q.body, &t); err != nil {
+		t, err := decodeValid[T, P](q.body, false)
+		if err != nil {
 			return nil, err
 		}
-		return h(q)
+		return h(q, t)
 	}
+}
+
+// decodeValid: required keys at every depth (hostKeys), body into T, then T's generated Validate (enums, nested structs, required lists
+// not null); strict refuses unknown fields.
+func decodeValid[T any, P interface {
+	*T
+	Validate() error
+}](body []byte, strict bool) (*T, error) {
+	t := new(T)
+	// Required keys present, and none named only case-insensitively (HostID): readBody checks the exact hostId key.
+	if err := hostKeys(body, reflect.TypeOf(*t)); err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	if strict {
+		dec.DisallowUnknownFields()
+	}
+	if err := dec.Decode(t); err != nil {
+		var te *json.UnmarshalTypeError
+		if errors.As(err, &te) && te.Field != "" {
+			return nil, fail(400, "Invalid "+te.Field+": expected "+te.Type.String())
+		}
+		return nil, fail(400, "Invalid body")
+	}
+	if err := P(t).Validate(); err != nil {
+		return nil, fail(400, err.Error())
+	}
+	return t, nil
 }
 
 // hostOwned: the host routes' ownership check; a body hostId is the authenticated host (readBody), and with execution the
@@ -237,11 +267,9 @@ func mayAccessProject(p *Person, projectID *string) bool {
 
 // hostMayRead: a host reads an artifact for its own open command that names it (delivery files, copies, verify), or for
 // its own execution in the artifact's project, or a start/script input of that execution. Lab examples never.
-func hostMayRead(q *Request) (*Artifact, error) {
+func hostMayRead(q *Request, b *contract.HostArtifactGetRequest) (*Artifact, error) {
 	a, ctx := q.app, q.ctx()
-	var b struct{ ArtifactID, CommandID, ExecutionID string }
-	decode(q.body, &b)
-	x, err := artifactRow(ctx, a, truncate(b.ArtifactID, 200))
+	x, err := artifactRow(ctx, a, truncate(b.ArtifactId, 200))
 	if err != nil {
 		return nil, err
 	}
@@ -273,8 +301,8 @@ func hostMayRead(q *Request) (*Artifact, error) {
 		}
 		return false
 	}
-	if b.CommandID != "" {
-		if r, err := oneCtx(ctx, a, "SELECT data FROM document WHERE kind='command' AND id=$1", b.CommandID); err == nil && r != nil {
+	if deref(b.CommandId) != "" {
+		if r, err := oneCtx(ctx, a, "SELECT data FROM document WHERE kind='command' AND id=$1", deref(b.CommandId)); err == nil && r != nil {
 			c, _ := r["data"].(map[string]any)
 			st, _ := c["status"].(string)
 			if c["hostId"] == hostID && (st == "pending" || st == "accepted" || st == "started") && names(c, x) {
@@ -282,8 +310,8 @@ func hostMayRead(q *Request) (*Artifact, error) {
 			}
 		}
 	}
-	if b.ExecutionID != "" && x.Role != "example" {
-		e, err := execGet(ctx, a, b.ExecutionID)
+	if deref(b.ExecutionId) != "" && x.Role != "example" {
+		e, err := execGet(ctx, a, *b.ExecutionId)
 		if err != nil {
 			return nil, err
 		}
@@ -312,22 +340,21 @@ func hostMayRead(q *Request) (*Artifact, error) {
 }
 
 // hostArtifactList: artifact_list for an agent: its own project's artifacts, or its own execution's without a project.
-func hostArtifactList(q *Request) (any, error) {
+func hostArtifactList(q *Request, b *contract.HostArtifactListRequest) (any, error) {
 	a, ctx := q.app, q.ctx()
-	var b struct {
-		ExecutionID string
-		Filter      struct{ ExecutionID, TaskID, MediaType *string }
-	}
-	decode(q.body, &b)
-	e, err := execGet(ctx, a, truncate(b.ExecutionID, 200))
+	e, err := execGet(ctx, a, truncate(b.ExecutionId, 200))
 	if err != nil {
 		return nil, err
 	}
-	f := listFilter{TaskID: b.Filter.TaskID, MediaType: b.Filter.MediaType, ProjectID: e.ProjectID, NoExamples: true}
+	bf := contract.HostArtifactListFilter{}
+	if b.Filter != nil {
+		bf = *b.Filter
+	}
+	f := listFilter{TaskID: bf.TaskId, MediaType: bf.MediaType, ProjectID: e.ProjectID, NoExamples: true}
 	if e.ProjectID == nil {
 		f.ExecutionID = &e.ID
 	} else {
-		f.ExecutionID = b.Filter.ExecutionID
+		f.ExecutionID = bf.ExecutionId
 	}
 	l, err := artifactList(ctx, a, f)
 	return doc{"artifacts": l}, err

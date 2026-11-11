@@ -14,6 +14,24 @@ type Actor struct {
 	Person      *Person   `json:"person,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *Actor) Validate() error {
+	if v.DirectedBy != nil {
+		if err := Check(v.DirectedBy, "directedBy"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if v.Person != nil {
+		if err := Check(v.Person, "person"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type ActorKind string
 
 const (
@@ -25,12 +43,40 @@ const (
 // ActorKindValues lists every ActorKind in schema order.
 var ActorKindValues = []ActorKind{ActorKindPerson, ActorKindAgent, ActorKindSystem}
 
+// Valid: v is one of the schema's values.
+func (v ActorKind) Valid() bool {
+	for _, x := range ActorKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type AgentCompatibilityReply struct {
 	Rows []CompatibilityRow `json:"rows"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentCompatibilityReply) Validate() error {
+	if v.Rows == nil {
+		return Missing("rows")
+	}
+	for i := range v.Rows {
+		if err := Check(&v.Rows[i], "rows"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type AgentCompatibilityRequest struct {
 	Id string `json:"id"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentCompatibilityRequest) Validate() error {
+	return nil
 }
 
 // AgentDefinition: The agent profile (contracts/profile.schema.json); go/contract.ParseProfile is its validator.
@@ -41,10 +87,31 @@ type AgentEffectiveReply struct {
 	Result AgentDefinition  `json:"result"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentEffectiveReply) Validate() error {
+	if v.Layers == nil {
+		return Missing("layers")
+	}
+	for i := range v.Layers {
+		if err := Check(&v.Layers[i], "layers"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Result, "result"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type AgentEffectiveRequest struct {
 	Draft     *bool  `json:"draft,omitempty"`
 	Id        string `json:"id"`
 	ProjectId string `json:"projectId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentEffectiveRequest) Validate() error {
+	return nil
 }
 
 // AgentListFacts: harness defaults as at session start; roles: the project roles (project.json roles) that name this profile.
@@ -55,10 +122,26 @@ type AgentListFacts struct {
 	Roles   []string `json:"roles"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentListFacts) Validate() error {
+	if v.Roles == nil {
+		return Missing("roles")
+	}
+	return nil
+}
+
 type AgentTestReply struct {
 	Definition  DefinitionRef `json:"definition"`
 	ExecutionId string        `json:"executionId"`
 	SessionId   string        `json:"sessionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentTestReply) Validate() error {
+	if err := Check(&v.Definition, "definition"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // AgentTestRequest: draft true uses the caller's draft; false the head revision.
@@ -70,11 +153,29 @@ type AgentTestRequest struct {
 	Prompt    string  `json:"prompt"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentTestRequest) Validate() error {
+	return nil
+}
+
 // CatalogueDefinition: The whole config/catalogue.json as it is today (one capability).
 type CatalogueDefinition struct {
 	Capability    string            `json:"capability"`
 	Methods       []CatalogueMethod `json:"methods"`
 	SharedDefault *string           `json:"sharedDefault,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CatalogueDefinition) Validate() error {
+	if v.Methods == nil {
+		return Missing("methods")
+	}
+	for i := range v.Methods {
+		if err := Check(&v.Methods[i], "methods"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // CatalogueReply: The definition editors change methods to CatalogueMethodView items (docs/designs/fleet-definition-editors.md).
@@ -87,8 +188,33 @@ type CatalogueReply struct {
 	SharedDefault        json.RawMessage              `json:"sharedDefault"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *CatalogueReply) Validate() error {
+	if v.Capability == nil {
+		return Missing("capability")
+	}
+	if v.Methods == nil {
+		return Missing("methods")
+	}
+	if v.RecommendationSource == nil {
+		return Missing("recommendationSource")
+	}
+	if v.RecommendedMethod == nil {
+		return Missing("recommendedMethod")
+	}
+	if v.SharedDefault == nil {
+		return Missing("sharedDefault")
+	}
+	return nil
+}
+
 type CatalogueRequest struct {
 	ProjectId string `json:"projectId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CatalogueRequest) Validate() error {
+	return nil
 }
 
 type CompatibilityRow struct {
@@ -102,6 +228,19 @@ type CompatibilityRow struct {
 	State          CompatibilityState `json:"state"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *CompatibilityRow) Validate() error {
+	if v.Evidence != nil {
+		if err := Check(v.Evidence, "evidence"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type CompatibilityState string
 
 const (
@@ -113,6 +252,16 @@ const (
 // CompatibilityStateValues lists every CompatibilityState in schema order.
 var CompatibilityStateValues = []CompatibilityState{CompatibilityStateChecked, CompatibilityStateFailed, CompatibilityStateUnchecked}
 
+// Valid: v is one of the schema's values.
+func (v CompatibilityState) Valid() bool {
+	for _, x := range CompatibilityStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 // DefinitionContent: Exactly one property, matching the kind.
 type DefinitionContent struct {
 	Agent     *AgentDefinition     `json:"agent,omitempty"`
@@ -120,8 +269,36 @@ type DefinitionContent struct {
 	Pipeline  *PipelineDefinition  `json:"pipeline,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionContent) Validate() error {
+	if v.Agent != nil {
+		if err := Check(v.Agent, "agent"); err != nil {
+			return err
+		}
+	}
+	if v.Catalogue != nil {
+		if err := Check(v.Catalogue, "catalogue"); err != nil {
+			return err
+		}
+	}
+	if v.Pipeline != nil {
+		if err := Check(v.Pipeline, "pipeline"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type DefinitionCreateReply struct {
 	Revision Revision `json:"revision"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionCreateReply) Validate() error {
+	if err := Check(&v.Revision, "revision"); err != nil {
+		return err
+	}
+	return nil
 }
 
 type DefinitionCreateRequest struct {
@@ -131,9 +308,33 @@ type DefinitionCreateRequest struct {
 	Message string            `json:"message"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionCreateRequest) Validate() error {
+	if err := Check(&v.Content, "content"); err != nil {
+		return err
+	}
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type DefinitionDiffReply struct {
 	Fields  []FieldChange `json:"fields"`
 	Unified string        `json:"unified"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionDiffReply) Validate() error {
+	if v.Fields == nil {
+		return Missing("fields")
+	}
+	for i := range v.Fields {
+		if err := Check(&v.Fields[i], "fields"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type DefinitionDiffRequest struct {
@@ -143,13 +344,40 @@ type DefinitionDiffRequest struct {
 	To   DiffSide       `json:"to"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionDiffRequest) Validate() error {
+	if err := Check(&v.From, "from"); err != nil {
+		return err
+	}
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if err := Check(&v.To, "to"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type DefinitionDraftDiscardReply struct {
 	Discarded bool `json:"discarded"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionDraftDiscardReply) Validate() error {
+	return nil
 }
 
 type DefinitionDraftDiscardRequest struct {
 	Id   string         `json:"id"`
 	Kind DefinitionKind `json:"kind"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionDraftDiscardRequest) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // DefinitionDraftGetReply: No draft: 404.
@@ -159,14 +387,56 @@ type DefinitionDraftGetReply struct {
 	Problems []Problem          `json:"problems,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionDraftGetReply) Validate() error {
+	if v.Content != nil {
+		if err := Check(v.Content, "content"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Draft, "draft"); err != nil {
+		return err
+	}
+	for i := range v.Problems {
+		if err := Check(&v.Problems[i], "problems"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type DefinitionDraftGetRequest struct {
 	Id   string         `json:"id"`
 	Kind DefinitionKind `json:"kind"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionDraftGetRequest) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type DefinitionDraftPutReply struct {
 	Draft    DraftInfo `json:"draft"`
 	Problems []Problem `json:"problems"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionDraftPutReply) Validate() error {
+	if err := Check(&v.Draft, "draft"); err != nil {
+		return err
+	}
+	if v.Problems == nil {
+		return Missing("problems")
+	}
+	for i := range v.Problems {
+		if err := Check(&v.Problems[i], "problems"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type DefinitionDraftPutRequest struct {
@@ -176,15 +446,57 @@ type DefinitionDraftPutRequest struct {
 	Kind         DefinitionKind    `json:"kind"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionDraftPutRequest) Validate() error {
+	if err := Check(&v.Content, "content"); err != nil {
+		return err
+	}
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type DefinitionExportReply struct {
 	Covers []DefinitionRef `json:"covers"`
 	Files  []ExportFile    `json:"files"`
 	Patch  string          `json:"patch"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionExportReply) Validate() error {
+	if v.Covers == nil {
+		return Missing("covers")
+	}
+	for i := range v.Covers {
+		if err := Check(&v.Covers[i], "covers"); err != nil {
+			return err
+		}
+	}
+	if v.Files == nil {
+		return Missing("files")
+	}
+	for i := range v.Files {
+		if err := Check(&v.Files[i], "files"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // DefinitionExportRequest: No keys: every definition in state ahead or store-only. repository-changed and repository-deleted are never exported (named keys in those states: 409 repository-changed) until a save resolves them, so an export cannot revert a release.
 type DefinitionExportRequest struct {
 	Keys []DefinitionKey `json:"keys,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionExportRequest) Validate() error {
+	for i := range v.Keys {
+		if err := Check(&v.Keys[i], "keys"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type DefinitionGetReply struct {
@@ -203,15 +515,63 @@ type DefinitionGetReply struct {
 	Text     string            `json:"text"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionGetReply) Validate() error {
+	if err := Check(&v.Content, "content"); err != nil {
+		return err
+	}
+	if v.Draft != nil {
+		if err := Check(v.Draft, "draft"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if err := Check(&v.Meta, "meta"); err != nil {
+		return err
+	}
+	if v.Mirror != nil {
+		if err := Check(v.Mirror, "mirror"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type DefinitionGetRequest struct {
 	Id       string         `json:"id"`
 	Kind     DefinitionKind `json:"kind"`
 	Revision *int64         `json:"revision,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionGetRequest) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type DefinitionHistoryReply struct {
 	RepoSha   *string    `json:"repoSha"`
 	Revisions []Revision `json:"revisions"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionHistoryReply) Validate() error {
+	if v.Revisions == nil {
+		return Missing("revisions")
+	}
+	for i := range v.Revisions {
+		if err := Check(&v.Revisions[i], "revisions"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type DefinitionHistoryRequest struct {
@@ -221,9 +581,25 @@ type DefinitionHistoryRequest struct {
 	Limit  *int64         `json:"limit,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionHistoryRequest) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type DefinitionKey struct {
 	Id   string         `json:"id"`
 	Kind DefinitionKind `json:"kind"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionKey) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
 }
 
 type DefinitionListItem struct {
@@ -242,8 +618,60 @@ type DefinitionListItem struct {
 	State         DefinitionState     `json:"state"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionListItem) Validate() error {
+	if v.Agent != nil {
+		if err := Check(v.Agent, "agent"); err != nil {
+			return err
+		}
+	}
+	if v.Compatibility != nil {
+		if err := Check(v.Compatibility, "compatibility"); err != nil {
+			return err
+		}
+	}
+	if v.Draft != nil {
+		if err := Check(v.Draft, "draft"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if err := Check(&v.Last30, "last30"); err != nil {
+		return err
+	}
+	if v.LastRun != nil {
+		if err := Check(v.LastRun, "lastRun"); err != nil {
+			return err
+		}
+	}
+	if v.Mirror != nil {
+		if err := Check(v.Mirror, "mirror"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type DefinitionListReply struct {
 	Items []DefinitionListItem `json:"items"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionListReply) Validate() error {
+	if v.Items == nil {
+		return Missing("items")
+	}
+	for i := range v.Items {
+		if err := Check(&v.Items[i], "items"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type DefinitionListRequest struct {
@@ -252,9 +680,28 @@ type DefinitionListRequest struct {
 	ProjectId      *string        `json:"projectId,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionListRequest) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type DefinitionSaveReply struct {
 	Revision Revision        `json:"revision"`
 	State    DefinitionState `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionSaveReply) Validate() error {
+	if err := Check(&v.Revision, "revision"); err != nil {
+		return err
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
 }
 
 type DefinitionSaveRequest struct {
@@ -264,6 +711,17 @@ type DefinitionSaveRequest struct {
 	Kind         DefinitionKind    `json:"kind"`
 	Message      string            `json:"message"`
 	RepoSha      *string           `json:"repoSha,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionSaveRequest) Validate() error {
+	if err := Check(&v.Content, "content"); err != nil {
+		return err
+	}
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
 }
 
 type DefinitionState string
@@ -279,16 +737,58 @@ const (
 // DefinitionStateValues lists every DefinitionState in schema order.
 var DefinitionStateValues = []DefinitionState{DefinitionStateSynced, DefinitionStateAhead, DefinitionStateRepositoryChanged, DefinitionStateStoreOnly, DefinitionStateRepositoryDeleted}
 
+// Valid: v is one of the schema's values.
+func (v DefinitionState) Valid() bool {
+	for _, x := range DefinitionStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type DefinitionUsageReply struct {
 	ByRevision []RevisionWindow `json:"byRevision"`
 	Total      Window           `json:"total"`
 	UsedBy     []DefinitionKey  `json:"usedBy"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionUsageReply) Validate() error {
+	if v.ByRevision == nil {
+		return Missing("byRevision")
+	}
+	for i := range v.ByRevision {
+		if err := Check(&v.ByRevision[i], "byRevision"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Total, "total"); err != nil {
+		return err
+	}
+	if v.UsedBy == nil {
+		return Missing("usedBy")
+	}
+	for i := range v.UsedBy {
+		if err := Check(&v.UsedBy[i], "usedBy"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type DefinitionUsageRequest struct {
 	Days *int64         `json:"days,omitempty"`
 	Id   string         `json:"id"`
 	Kind DefinitionKind `json:"kind"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionUsageRequest) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // DiffSide: Exactly one of revision, draft (the caller's draft) or repository (the shipped file).
@@ -298,11 +798,21 @@ type DiffSide struct {
 	Revision   *int64 `json:"revision,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DiffSide) Validate() error {
+	return nil
+}
+
 type DraftInfo struct {
 	BaseRevision int64  `json:"baseRevision"`
 	Changes      int64  `json:"changes"`
 	Stale        bool   `json:"stale"`
 	UpdatedAt    string `json:"updatedAt"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DraftInfo) Validate() error {
+	return nil
 }
 
 // EffectiveLayer: source is a path or a URL; revision is the store revision, the specq commit or the project file sha; fields lists the setting paths this layer decides.
@@ -312,6 +822,17 @@ type EffectiveLayer struct {
 	Revision *string            `json:"revision,omitempty"`
 	Source   string             `json:"source"`
 	Text     *string            `json:"text,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *EffectiveLayer) Validate() error {
+	if v.Fields == nil {
+		return Missing("fields")
+	}
+	if err := Check(&v.Name, "name"); err != nil {
+		return err
+	}
+	return nil
 }
 
 type EffectiveLayerName string
@@ -326,10 +847,25 @@ const (
 // EffectiveLayerNameValues lists every EffectiveLayerName in schema order.
 var EffectiveLayerNameValues = []EffectiveLayerName{EffectiveLayerNameSharedRules, EffectiveLayerNameRole, EffectiveLayerNameDefinition, EffectiveLayerNameProject}
 
+// Valid: v is one of the schema's values.
+func (v EffectiveLayerName) Valid() bool {
+	for _, x := range EffectiveLayerNameValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type ExportFile struct {
 	BaseSha *string `json:"baseSha"`
 	Path    string  `json:"path"`
 	Text    string  `json:"text"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExportFile) Validate() error {
+	return nil
 }
 
 // FieldChange: fromText and toText are the canonical JSON text of the old and new values; the editor uses path to place the attention tick.
@@ -338,6 +874,14 @@ type FieldChange struct {
 	Op       FieldOp `json:"op"`
 	Path     string  `json:"path"`
 	ToText   *string `json:"toText,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *FieldChange) Validate() error {
+	if err := Check(&v.Op, "op"); err != nil {
+		return err
+	}
+	return nil
 }
 
 type FieldOp string
@@ -351,6 +895,16 @@ const (
 // FieldOpValues lists every FieldOp in schema order.
 var FieldOpValues = []FieldOp{FieldOpAdd, FieldOpRemove, FieldOpReplace}
 
+// Valid: v is one of the schema's values.
+func (v FieldOp) Valid() bool {
+	for _, x := range FieldOpValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type HarnessModel struct {
 	Efforts []string    `json:"efforts"`
 	Hosts   []string    `json:"hosts,omitempty"`
@@ -359,12 +913,41 @@ type HarnessModel struct {
 	Source  ModelSource `json:"source"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *HarnessModel) Validate() error {
+	if v.Efforts == nil {
+		return Missing("efforts")
+	}
+	if err := Check(&v.Source, "source"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type HarnessModelsReply struct {
 	Models []HarnessModel `json:"models"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *HarnessModelsReply) Validate() error {
+	if v.Models == nil {
+		return Missing("models")
+	}
+	for i := range v.Models {
+		if err := Check(&v.Models[i], "models"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type HarnessModelsRequest struct {
 	Harness string `json:"harness"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HarnessModelsRequest) Validate() error {
+	return nil
 }
 
 // MirrorState: Stage 2 only; the mirror and definition_mirror_reset fields and operation are added with it.
@@ -380,6 +963,16 @@ const (
 // MirrorStateValues lists every MirrorState in schema order.
 var MirrorStateValues = []MirrorState{MirrorStateMirrored, MirrorStatePending, MirrorStateFailed, MirrorStateOff}
 
+// Valid: v is one of the schema's values.
+func (v MirrorState) Valid() bool {
+	for _, x := range MirrorStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type ModelSource string
 
 const (
@@ -390,9 +983,24 @@ const (
 // ModelSourceValues lists every ModelSource in schema order.
 var ModelSourceValues = []ModelSource{ModelSourceShipped, ModelSourceReported}
 
+// Valid: v is one of the schema's values.
+func (v ModelSource) Valid() bool {
+	for _, x := range ModelSourceValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type Person struct {
 	Email string `json:"email"`
 	Name  string `json:"name"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *Person) Validate() error {
+	return nil
 }
 
 // PipelineDefinition: A pipeline file (config/pipelines/<id>.json); validatePipeline is its full check.
@@ -400,6 +1008,19 @@ type PipelineDefinition struct {
 	Id      string         `json:"id"`
 	Steps   []PipelineStep `json:"steps"`
 	Version int64          `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineDefinition) Validate() error {
+	if v.Steps == nil {
+		return Missing("steps")
+	}
+	for i := range v.Steps {
+		if err := Check(&v.Steps[i], "steps"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PipelineStep: kind api (connection, tool, arguments, mode, output), agent (profile, prompt) or script (command, timeout_ms, host); validatePipeline is the full check.
@@ -418,14 +1039,32 @@ type PipelineStep struct {
 	Tool       *string         `json:"tool,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineStep) Validate() error {
+	return nil
+}
+
 // Problem: Validation finding; path is a JSON pointer into the content. A draft is stored even when invalid; save refuses it.
 type Problem struct {
 	Message string `json:"message"`
 	Path    string `json:"path"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *Problem) Validate() error {
+	return nil
+}
+
 type ProfilesListReply struct {
 	Profiles []map[string]json.RawMessage `json:"profiles"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProfilesListReply) Validate() error {
+	if v.Profiles == nil {
+		return Missing("profiles")
+	}
+	return nil
 }
 
 type ProfilesListRequest = map[string]json.RawMessage
@@ -448,6 +1087,17 @@ type Revision struct {
 	Source       RevisionSource `json:"source"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *Revision) Validate() error {
+	if err := Check(&v.Actor, "actor"); err != nil {
+		return err
+	}
+	if err := Check(&v.Source, "source"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type RevisionSource string
 
 const (
@@ -460,9 +1110,27 @@ const (
 // RevisionSourceValues lists every RevisionSource in schema order.
 var RevisionSourceValues = []RevisionSource{RevisionSourceRepo, RevisionSourceEditor, RevisionSourceLab, RevisionSourceAgent}
 
+// Valid: v is one of the schema's values.
+func (v RevisionSource) Valid() bool {
+	for _, x := range RevisionSourceValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type RevisionWindow struct {
 	Revision int64  `json:"revision"`
 	Window   Window `json:"window"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *RevisionWindow) Validate() error {
+	if err := Check(&v.Window, "window"); err != nil {
+		return err
+	}
+	return nil
 }
 
 type RunSummary struct {
@@ -471,9 +1139,22 @@ type RunSummary struct {
 	State       string  `json:"state"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *RunSummary) Validate() error {
+	return nil
+}
+
 type SettingChangesReply struct {
 	Changes    []map[string]json.RawMessage `json:"changes"`
 	NextBefore *int64                       `json:"nextBefore"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SettingChangesReply) Validate() error {
+	if v.Changes == nil {
+		return Missing("changes")
+	}
+	return nil
 }
 
 // SettingChangesRequest: target: one setting target (host:<id>, connection:<name>, people, ...); before: the nextBefore of the previous page.
@@ -483,6 +1164,11 @@ type SettingChangesRequest struct {
 	Target *string `json:"target,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *SettingChangesRequest) Validate() error {
+	return nil
+}
+
 type Window struct {
 	CostBasis    *string  `json:"costBasis,omitempty"`
 	CostUsd      *float64 `json:"costUsd,omitempty"`
@@ -490,6 +1176,11 @@ type Window struct {
 	Succeeded    int64    `json:"succeeded"`
 	Tokens       int64    `json:"tokens"`
 	WallMsMedian *int64   `json:"wallMsMedian"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *Window) Validate() error {
+	return nil
 }
 
 func init() {

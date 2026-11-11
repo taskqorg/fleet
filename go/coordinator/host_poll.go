@@ -40,15 +40,6 @@ func hostProblems(list []contract.EdgeProblem) []any {
 	return out
 }
 
-// validPlatform: one of the schema's Platform values.
-func validPlatform(p string) bool {
-	switch contract.Platform(p) {
-	case contract.PlatformDarwin, contract.PlatformWin32, contract.PlatformLinux:
-		return true
-	}
-	return false
-}
-
 func (a *App) poll(q *Request) (any, error) {
 	var b contract.PollRequest
 	if err := decode(q.body, &b); err != nil {
@@ -60,7 +51,7 @@ func (a *App) poll(q *Request) (any, error) {
 		return nil, err
 	}
 	obs := doc{"id": host, "holder": q.host["holder"], "lastSeenAt": nowMs()}
-	if validPlatform(string(b.Platform)) {
+	if b.Platform.Valid() {
 		obs["platform"] = string(b.Platform)
 	}
 	if b.Capabilities != nil {

@@ -18,6 +18,11 @@ type HostReading struct {
 	Version  *string  `json:"version,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostReading) Validate() error {
+	return nil
+}
+
 type OperationStats struct {
 	BaselineP95Ms  *float64 `json:"baselineP95Ms,omitempty"`
 	Count          int64    `json:"count"`
@@ -31,6 +36,11 @@ type OperationStats struct {
 	Service        string   `json:"service"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *OperationStats) Validate() error {
+	return nil
+}
+
 // ProcessReading: The latest process.reading of one Fleet process on a host: CPU seconds since the previous beat, resident memory, open files. A value not collected is absent.
 type ProcessReading struct {
 	At         string   `json:"at"`
@@ -39,6 +49,11 @@ type ProcessReading struct {
 	OpenFiles  *int64   `json:"openFiles,omitempty"`
 	Process    string   `json:"process"`
 	RssBytes   *int64   `json:"rssBytes,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProcessReading) Validate() error {
+	return nil
 }
 
 // RunReading: One execution end span: CPU seconds and peak memory of the harness process tree, processes left alive.
@@ -53,6 +68,16 @@ type RunReading struct {
 	PeakRssBytes *int64       `json:"peakRssBytes,omitempty"`
 	ProjectId    *string      `json:"projectId,omitempty"`
 	TraceId      *string      `json:"traceId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *RunReading) Validate() error {
+	if v.Outcome != nil {
+		if err := Check(v.Outcome, "outcome"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type Span struct {
@@ -74,6 +99,17 @@ type Span struct {
 	TraceId      string            `json:"traceId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *Span) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if err := Check(&v.Outcome, "outcome"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type SpanKind string
 
 const (
@@ -87,6 +123,16 @@ const (
 // SpanKindValues lists every SpanKind in schema order.
 var SpanKindValues = []SpanKind{SpanKindServer, SpanKindClient, SpanKindInternal, SpanKindPass, SpanKindCheck}
 
+// Valid: v is one of the schema's values.
+func (v SpanKind) Valid() bool {
+	for _, x := range SpanKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type SpanOutcome string
 
 const (
@@ -98,6 +144,16 @@ const (
 
 // SpanOutcomeValues lists every SpanOutcome in schema order.
 var SpanOutcomeValues = []SpanOutcome{SpanOutcomeOk, SpanOutcomeError, SpanOutcomeRefused, SpanOutcomeCancelled}
+
+// Valid: v is one of the schema's values.
+func (v SpanOutcome) Valid() bool {
+	for _, x := range SpanOutcomeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
 
 // TelemetrySummaryReply: enabled false: no span store configured (FLEET_CLICKHOUSE_URL) or telemetry switched off; error: the store did not answer. hosts and processes need full access; runs are the latest 50 execution ends in the caller's projects.
 type TelemetrySummaryReply struct {
@@ -113,11 +169,61 @@ type TelemetrySummaryReply struct {
 	Window       TelemetryWindow  `json:"window"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelemetrySummaryReply) Validate() error {
+	if v.Hosts == nil {
+		return Missing("hosts")
+	}
+	for i := range v.Hosts {
+		if err := Check(&v.Hosts[i], "hosts"); err != nil {
+			return err
+		}
+	}
+	if v.Operations == nil {
+		return Missing("operations")
+	}
+	for i := range v.Operations {
+		if err := Check(&v.Operations[i], "operations"); err != nil {
+			return err
+		}
+	}
+	if v.Processes == nil {
+		return Missing("processes")
+	}
+	for i := range v.Processes {
+		if err := Check(&v.Processes[i], "processes"); err != nil {
+			return err
+		}
+	}
+	if v.Runs == nil {
+		return Missing("runs")
+	}
+	for i := range v.Runs {
+		if err := Check(&v.Runs[i], "runs"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Window, "window"); err != nil {
+		return err
+	}
+	return nil
+}
+
 // TelemetrySummaryRequest: window defaults to 1h.
 type TelemetrySummaryRequest struct {
 	ProjectId *string          `json:"projectId,omitempty"`
 	Service   *string          `json:"service,omitempty"`
 	Window    *TelemetryWindow `json:"window,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelemetrySummaryRequest) Validate() error {
+	if v.Window != nil {
+		if err := Check(v.Window, "window"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // TelemetryTraceReply: spans ordered by start; the app builds the tree by parentSpanId. hidden counts spans of the trace the caller may not see.
@@ -126,8 +232,26 @@ type TelemetryTraceReply struct {
 	Spans  []Span `json:"spans"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelemetryTraceReply) Validate() error {
+	if v.Spans == nil {
+		return Missing("spans")
+	}
+	for i := range v.Spans {
+		if err := Check(&v.Spans[i], "spans"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type TelemetryTraceRequest struct {
 	TraceId string `json:"traceId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelemetryTraceRequest) Validate() error {
+	return nil
 }
 
 type TelemetryWindow string
@@ -141,6 +265,16 @@ const (
 
 // TelemetryWindowValues lists every TelemetryWindow in schema order.
 var TelemetryWindowValues = []TelemetryWindow{TelemetryWindow5m, TelemetryWindow1h, TelemetryWindow24h, TelemetryWindow7d}
+
+// Valid: v is one of the schema's values.
+func (v TelemetryWindow) Valid() bool {
+	for _, x := range TelemetryWindowValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
 
 func init() {
 	for n, o := range map[string]Operation{

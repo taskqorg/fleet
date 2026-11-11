@@ -13,10 +13,31 @@ type AccountBinding struct {
 	Name             string             `json:"name"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountBinding) Validate() error {
+	if err := Check(&v.Environment, "environment"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type AccountCatalogue struct {
 	AccountId string           `json:"accountId"`
 	Binding   *string          `json:"binding,omitempty"`
 	Bindings  []AccountBinding `json:"bindings"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountCatalogue) Validate() error {
+	if v.Bindings == nil {
+		return Missing("bindings")
+	}
+	for i := range v.Bindings {
+		if err := Check(&v.Bindings[i], "bindings"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type AccountEnvironment struct {
@@ -26,12 +47,22 @@ type AccountEnvironment struct {
 	HOME            *string `json:"HOME,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountEnvironment) Validate() error {
+	return nil
+}
+
 type AccountInspectPayload struct {
 	AccountId    string  `json:"accountId"`
 	Binding      *string `json:"binding,omitempty"`
 	Harness      string  `json:"harness"`
 	Mode         *string `json:"mode,omitempty"`
 	NativeHostId *string `json:"nativeHostId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountInspectPayload) Validate() error {
+	return nil
 }
 
 type AccountObservation struct {
@@ -45,6 +76,19 @@ type AccountObservation struct {
 	Roots               *AccountRoots `json:"roots,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountObservation) Validate() error {
+	if err := Check(&v.Platform, "platform"); err != nil {
+		return err
+	}
+	if v.Roots != nil {
+		if err := Check(v.Roots, "roots"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type AccountReceipt struct {
 	AccountCatalogue   *AccountCatalogue   `json:"accountCatalogue,omitempty"`
 	AccountObservation *AccountObservation `json:"accountObservation,omitempty"`
@@ -53,12 +97,32 @@ type AccountReceipt struct {
 	HostId             string              `json:"hostId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountReceipt) Validate() error {
+	if v.AccountCatalogue != nil {
+		if err := Check(v.AccountCatalogue, "accountCatalogue"); err != nil {
+			return err
+		}
+	}
+	if v.AccountObservation != nil {
+		if err := Check(v.AccountObservation, "accountObservation"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type AccountRoots struct {
 	CredentialAuthority *string `json:"credentialAuthority,omitempty"`
 	CredentialHome      *string `json:"credentialHome,omitempty"`
 	Executable          *string `json:"executable,omitempty"`
 	Home                *string `json:"home,omitempty"`
 	NativeHome          *string `json:"nativeHome,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountRoots) Validate() error {
+	return nil
 }
 
 // AgentToolsRequest: POST /api/hosts/agent-tools: one MCP JSON-RPC request of a native agent (request stays the raw JSON-RPC frame).
@@ -70,6 +134,14 @@ type AgentToolsRequest struct {
 	Request      json.RawMessage `json:"request"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AgentToolsRequest) Validate() error {
+	if v.Request == nil {
+		return Missing("request")
+	}
+	return nil
+}
+
 // ArtifactCommitRequest: POST /api/hosts/artifacts/commit: the uploaded parts with their etags.
 type ArtifactCommitRequest struct {
 	ArtifactId string         `json:"artifactId"`
@@ -78,11 +150,29 @@ type ArtifactCommitRequest struct {
 	StoreId    *string        `json:"storeId,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactCommitRequest) Validate() error {
+	if v.Parts == nil {
+		return Missing("parts")
+	}
+	for i := range v.Parts {
+		if err := Check(&v.Parts[i], "parts"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ArtifactDeclareRequest: POST /api/hosts/artifacts/declare: a required artifact the execution will upload.
 type ArtifactDeclareRequest struct {
 	ExecutionId string `json:"executionId"`
 	HostId      string `json:"hostId"`
 	Name        string `json:"name"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactDeclareRequest) Validate() error {
+	return nil
 }
 
 // ArtifactFailedRequest: POST /api/hosts/artifacts/failed: a transfer that cannot finish.
@@ -93,6 +183,11 @@ type ArtifactFailedRequest struct {
 	StoreId    *string `json:"storeId,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactFailedRequest) Validate() error {
+	return nil
+}
+
 // ArtifactLeaseRequest: POST /api/hosts/artifacts/renew: the lease of a running transfer.
 type ArtifactLeaseRequest struct {
 	ArtifactId string  `json:"artifactId"`
@@ -100,9 +195,47 @@ type ArtifactLeaseRequest struct {
 	StoreId    *string `json:"storeId,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactLeaseRequest) Validate() error {
+	return nil
+}
+
 type ArtifactPart struct {
 	Etag       *string `json:"etag,omitempty"`
 	PartNumber int64   `json:"partNumber"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactPart) Validate() error {
+	return nil
+}
+
+type ArtifactPartUrl struct {
+	PartNumber int64  `json:"partNumber"`
+	Url        string `json:"url"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactPartUrl) Validate() error {
+	return nil
+}
+
+type ArtifactPartsReply struct {
+	Parts   []ArtifactPartUrl `json:"parts"`
+	StoreId string            `json:"storeId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactPartsReply) Validate() error {
+	if v.Parts == nil {
+		return Missing("parts")
+	}
+	for i := range v.Parts {
+		if err := Check(&v.Parts[i], "parts"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ArtifactPartsRequest: POST /api/hosts/artifacts/parts: presigned URLs for these part numbers.
@@ -111,6 +244,27 @@ type ArtifactPartsRequest struct {
 	HostId      string  `json:"hostId"`
 	PartNumbers []int64 `json:"partNumbers"`
 	StoreId     *string `json:"storeId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactPartsRequest) Validate() error {
+	if v.PartNumbers == nil {
+		return Missing("partNumbers")
+	}
+	return nil
+}
+
+// ArtifactReserveReply: state pending (upload the parts to storeId), stored (nothing to upload) or the state of an earlier reservation of the same id
+type ArtifactReserveReply struct {
+	ArtifactId string  `json:"artifactId"`
+	PartSize   *int64  `json:"partSize,omitempty"`
+	State      string  `json:"state"`
+	StoreId    *string `json:"storeId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactReserveReply) Validate() error {
+	return nil
 }
 
 // ArtifactReserveRequest: POST /api/hosts/artifacts/reserve: an upload's artifact row; the reply names its state and store.
@@ -128,10 +282,36 @@ type ArtifactReserveRequest struct {
 	Size               int64   `json:"size"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactReserveRequest) Validate() error {
+	return nil
+}
+
+// ArtifactStateReply: commit, verified, renew and failed: the artifact or copy state; commit answers verifying with verify when the writer is the store host
+type ArtifactStateReply struct {
+	State  string          `json:"state"`
+	Verify *ArtifactVerify `json:"verify,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactStateReply) Validate() error {
+	if v.Verify != nil {
+		if err := Check(v.Verify, "verify"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ArtifactTransferPayload: artifact-copy and artifact-verify; the transfer worker reads the rest
 type ArtifactTransferPayload struct {
 	ArtifactId *string `json:"artifactId,omitempty"`
 	StoreId    *string `json:"storeId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactTransferPayload) Validate() error {
+	return nil
 }
 
 // ArtifactVerifiedRequest: POST /api/hosts/artifacts/verified: the digest a store's host read back.
@@ -142,6 +322,23 @@ type ArtifactVerifiedRequest struct {
 	StoreId    string `json:"storeId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactVerifiedRequest) Validate() error {
+	return nil
+}
+
+// ArtifactVerify: a presigned read of the staged object for the store host to hash
+type ArtifactVerify struct {
+	ArtifactId string `json:"artifactId"`
+	StoreId    string `json:"storeId"`
+	Url        string `json:"url"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactVerify) Validate() error {
+	return nil
+}
+
 type ChildReceipt struct {
 	CommandId   string       `json:"commandId"`
 	Delegation  ChildRequest `json:"delegation"`
@@ -149,10 +346,23 @@ type ChildReceipt struct {
 	HostId      string       `json:"hostId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ChildReceipt) Validate() error {
+	if err := Check(&v.Delegation, "delegation"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type ChildRequest struct {
 	Input     string `json:"input"`
 	ProfileId string `json:"profileId"`
 	RequestId string `json:"requestId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ChildRequest) Validate() error {
+	return nil
 }
 
 // Command: Envelope. payload is decoded by kind: start and input StartPayload, steer SteerPayload, script ScriptPayload, readiness/base-updated/teardown ProjectPayload, artifact-copy/artifact-verify ArtifactTransferPayload, account-inspect AccountInspectPayload, stop none.
@@ -163,6 +373,14 @@ type Command struct {
 	Kind        CommandKind     `json:"kind"`
 	Payload     json.RawMessage `json:"payload,omitempty"`
 	SessionId   *string         `json:"sessionId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *Command) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
 }
 
 type CommandKind string
@@ -184,6 +402,16 @@ const (
 // CommandKindValues lists every CommandKind in schema order.
 var CommandKindValues = []CommandKind{CommandKindStart, CommandKindInput, CommandKindSteer, CommandKindStop, CommandKindScript, CommandKindReadiness, CommandKindBaseUpdated, CommandKindTeardown, CommandKindArtifactCopy, CommandKindArtifactVerify, CommandKindAccountInspect}
 
+// Valid: v is one of the schema's values.
+func (v CommandKind) Valid() bool {
+	for _, x := range CommandKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type EdgeProblem struct {
 	Detail   string      `json:"detail"`
 	Kind     ProblemKind `json:"kind"`
@@ -192,12 +420,35 @@ type EdgeProblem struct {
 	Status   int64       `json:"status"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *EdgeProblem) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
 // EventData: Harness events keep their native record and add fleetNormalized; item is set on item.completed. Other kinds carry their own fields (open).
 type EventData struct {
 	Children        []json.RawMessage `json:"children,omitempty"`
 	FleetNormalized *Normalized       `json:"fleetNormalized,omitempty"`
 	HarnessVersion  *string           `json:"harnessVersion,omitempty"`
 	Item            *Item             `json:"item,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *EventData) Validate() error {
+	if v.FleetNormalized != nil {
+		if err := Check(v.FleetNormalized, "fleetNormalized"); err != nil {
+			return err
+		}
+	}
+	if v.Item != nil {
+		if err := Check(v.Item, "item"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // FleetEventType: Event types the executor itself originates. Native harness records keep their own open type. Readers log an unknown type as a problem, never fail (hosts may run another release during self-update).
@@ -230,11 +481,27 @@ const (
 // FleetEventTypeValues lists every FleetEventType in schema order.
 var FleetEventTypeValues = []FleetEventType{FleetEventTypePreparation, FleetEventTypePreparationFailed, FleetEventTypeHarness, FleetEventTypeSetup, FleetEventTypeReadiness, FleetEventTypeReadinessFailed, FleetEventTypeCheckoutSynced, FleetEventTypeSyncFailed, FleetEventTypeTeardown, FleetEventTypeScriptStarted, FleetEventTypeScriptTimeout, FleetEventTypeTrialRemoved, FleetEventTypeProcessClosed, FleetEventTypeProcessReconciled, FleetEventTypeResourceObservation, FleetEventTypeProtocolWrite, FleetEventTypeProtocolFailed, FleetEventTypeSteerResult, FleetEventTypeLimitReading, FleetEventTypeOutboxFailed, FleetEventTypeUnparsed}
 
-// HostArtifactGetRequest: POST /api/hosts/artifacts/get and /read: one artifact the execution may read.
+// Valid: v is one of the schema's values.
+func (v FleetEventType) Valid() bool {
+	for _, x := range FleetEventTypeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// HostArtifactGetRequest: executionId (the reader's execution) or commandId (its open tool command) names why this host may read
 type HostArtifactGetRequest struct {
-	ArtifactId  string `json:"artifactId"`
-	ExecutionId string `json:"executionId"`
-	HostId      string `json:"hostId"`
+	ArtifactId  string  `json:"artifactId"`
+	CommandId   *string `json:"commandId,omitempty"`
+	ExecutionId *string `json:"executionId,omitempty"`
+	HostId      string  `json:"hostId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostArtifactGetRequest) Validate() error {
+	return nil
 }
 
 // HostArtifactListFilter: Optional narrowing of /api/hosts/artifacts/list.
@@ -244,11 +511,43 @@ type HostArtifactListFilter struct {
 	TaskId      *string `json:"taskId,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostArtifactListFilter) Validate() error {
+	return nil
+}
+
+type HostArtifactListReply struct {
+	Artifacts []ArtifactRow `json:"artifacts"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostArtifactListReply) Validate() error {
+	if v.Artifacts == nil {
+		return Missing("artifacts")
+	}
+	for i := range v.Artifacts {
+		if err := Check(&v.Artifacts[i], "artifacts"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // HostArtifactListRequest: POST /api/hosts/artifacts/list: the artifacts the execution may read.
 type HostArtifactListRequest struct {
 	ExecutionId string                  `json:"executionId"`
 	Filter      *HostArtifactListFilter `json:"filter,omitempty"`
 	HostId      string                  `json:"hostId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostArtifactListRequest) Validate() error {
+	if v.Filter != nil {
+		if err := Check(v.Filter, "filter"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type HostEvent struct {
@@ -259,15 +558,41 @@ type HostEvent struct {
 	Type      string          `json:"type"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostEvent) Validate() error {
+	if v.Data == nil {
+		return Missing("data")
+	}
+	return nil
+}
+
 type HostEvents struct {
 	Events      []HostEvent `json:"events"`
 	ExecutionId string      `json:"executionId"`
 	HostId      string      `json:"hostId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostEvents) Validate() error {
+	if v.Events == nil {
+		return Missing("events")
+	}
+	for i := range v.Events {
+		if err := Check(&v.Events[i], "events"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type InputArtifact struct {
 	ArtifactId string `json:"artifactId"`
 	Path       string `json:"path"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *InputArtifact) Validate() error {
+	return nil
 }
 
 // Item: A completed native item (codex), agentMessage renamed agent_message.
@@ -277,6 +602,11 @@ type Item struct {
 	Status  *string `json:"status,omitempty"`
 	Text    *string `json:"text,omitempty"`
 	Type    *string `json:"type,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *Item) Validate() error {
+	return nil
 }
 
 // LimitReading: fleet-people-access.md section 8: one reading per provider window
@@ -290,6 +620,24 @@ type LimitReading struct {
 	Type           *string         `json:"type,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *LimitReading) Validate() error {
+	if v.Readings == nil {
+		return Missing("readings")
+	}
+	for i := range v.Readings {
+		if err := Check(&v.Readings[i], "readings"); err != nil {
+			return err
+		}
+	}
+	if v.Source != nil {
+		if err := Check(v.Source, "source"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type LimitSource string
 
 const (
@@ -300,12 +648,27 @@ const (
 // LimitSourceValues lists every LimitSource in schema order.
 var LimitSourceValues = []LimitSource{LimitSourceExecution, LimitSourceProbe}
 
+// Valid: v is one of the schema's values.
+func (v LimitSource) Valid() bool {
+	for _, x := range LimitSourceValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type LimitWindow struct {
 	Model    *string  `json:"model,omitempty"`
 	Pct      *float64 `json:"pct,omitempty"`
 	Period   string   `json:"period"`
 	ResetsAt *int64   `json:"resetsAt,omitempty"`
 	Status   *string  `json:"status,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LimitWindow) Validate() error {
+	return nil
 }
 
 // Normalized: harness::project and Blocks::project output; only the fields the coordinator and app read are named.
@@ -315,11 +678,30 @@ type Normalized struct {
 	UsageScope *string         `json:"usageScope,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *Normalized) Validate() error {
+	return nil
+}
+
+type OkReply struct {
+	Ok bool `json:"ok"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *OkReply) Validate() error {
+	return nil
+}
+
 // OutboxFailed: data of an outbox.failed event.
 type OutboxFailed struct {
 	Reason string `json:"reason"`
 	Route  string `json:"route"`
 	Status int64  `json:"status"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *OutboxFailed) Validate() error {
+	return nil
 }
 
 type Platform string
@@ -333,10 +715,33 @@ const (
 // PlatformValues lists every Platform in schema order.
 var PlatformValues = []Platform{PlatformDarwin, PlatformWin32, PlatformLinux}
 
+// Valid: v is one of the schema's values.
+func (v Platform) Valid() bool {
+	for _, x := range PlatformValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type PollReply struct {
 	AutoUpdate *string   `json:"autoUpdate,omitempty"`
 	Commands   []Command `json:"commands"`
 	Target     *string   `json:"target,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PollReply) Validate() error {
+	if v.Commands == nil {
+		return Missing("commands")
+	}
+	for i := range v.Commands {
+		if err := Check(&v.Commands[i], "commands"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type PollRequest struct {
@@ -350,8 +755,48 @@ type PollRequest struct {
 	Version      *string       `json:"version,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *PollRequest) Validate() error {
+	if v.Capabilities == nil {
+		return Missing("capabilities")
+	}
+	if err := Check(&v.Platform, "platform"); err != nil {
+		return err
+	}
+	if v.Problems == nil {
+		return Missing("problems")
+	}
+	for i := range v.Problems {
+		if err := Check(&v.Problems[i], "problems"); err != nil {
+			return err
+		}
+	}
+	if v.ProjectRoots == nil {
+		return Missing("projectRoots")
+	}
+	if v.Stores == nil {
+		return Missing("stores")
+	}
+	for i := range v.Stores {
+		if err := Check(&v.Stores[i], "stores"); err != nil {
+			return err
+		}
+	}
+	if v.Update != nil {
+		if err := Check(v.Update, "update"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type PreparationFailed struct {
 	Reason string `json:"reason"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PreparationFailed) Validate() error {
+	return nil
 }
 
 type ProblemKind string
@@ -364,6 +809,16 @@ const (
 // ProblemKindValues lists every ProblemKind in schema order.
 var ProblemKindValues = []ProblemKind{ProblemKindEdgeRedirect, ProblemKindVersionBehind}
 
+// Valid: v is one of the schema's values.
+func (v ProblemKind) Valid() bool {
+	for _, x := range ProblemKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type ProcessClosed struct {
 	CleanupUnknown                  bool    `json:"cleanupUnknown"`
 	ExitCode                        *int64  `json:"exitCode"`
@@ -372,11 +827,21 @@ type ProcessClosed struct {
 	StdoutClosed                    bool    `json:"stdoutClosed"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProcessClosed) Validate() error {
+	return nil
+}
+
 type ProcessReconciled struct {
 	LaunchWindowUnresolved bool  `json:"launchWindowUnresolved"`
 	OwnedProcesses         int64 `json:"ownedProcesses"`
 	Resolved               bool  `json:"resolved"`
 	Survived               bool  `json:"survived"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProcessReconciled) Validate() error {
+	return nil
 }
 
 // ProjectArguments: Native tool arguments are forwarded unchanged to the owning project operation validator.
@@ -399,10 +864,25 @@ const (
 // ProjectOperationValues lists every ProjectOperation in schema order.
 var ProjectOperationValues = []ProjectOperation{ProjectOperationProjectContext, ProjectOperationCatalogue, ProjectOperationPipelineRun, ProjectOperationDirectSearch, ProjectOperationPipelineHistory, ProjectOperationPipelineGet, ProjectOperationQuestionAsk, ProjectOperationQuestionHistory, ProjectOperationAccountList}
 
+// Valid: v is one of the schema's values.
+func (v ProjectOperation) Valid() bool {
+	for _, x := range ProjectOperationValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 // ProjectPayload: readiness, base-updated and teardown: the project context plus kind-specific fields
 type ProjectPayload struct {
 	DeleteBranch *bool                      `json:"deleteBranch,omitempty"`
 	Project      map[string]json.RawMessage `json:"project,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectPayload) Validate() error {
+	return nil
 }
 
 type ProjectReceipt struct {
@@ -412,11 +892,30 @@ type ProjectReceipt struct {
 	HostId      string         `json:"hostId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectReceipt) Validate() error {
+	if err := Check(&v.Delegation, "delegation"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type ProjectRequest struct {
 	Arguments ProjectArguments `json:"arguments"`
 	Operation ProjectOperation `json:"operation"`
 	ProjectId string           `json:"projectId"`
 	RequestId string           `json:"requestId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectRequest) Validate() error {
+	if err := Check(&v.Arguments, "arguments"); err != nil {
+		return err
+	}
+	if err := Check(&v.Operation, "operation"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ProjectScriptResult: data of a setup event, and the teardown script inside Teardown; output is the last 4000 bytes
@@ -428,10 +927,20 @@ type ProjectScriptResult struct {
 	Stdout   *string `json:"stdout,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectScriptResult) Validate() error {
+	return nil
+}
+
 type ProtocolFailed struct {
 	Error  string  `json:"error"`
 	Reason *string `json:"reason,omitempty"`
 	Type   *string `json:"type,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProtocolFailed) Validate() error {
+	return nil
 }
 
 // Receipt: Execution status receipt; delegation and account envelopes have their own generated types.
@@ -443,6 +952,24 @@ type Receipt struct {
 	HostId          string        `json:"hostId"`
 	NativeSessionId *string       `json:"nativeSessionId,omitempty"`
 	Status          ReceiptStatus `json:"status"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *Receipt) Validate() error {
+	if err := Check(&v.Status, "status"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ReceiptReply: a status receipt; the account and project routes answer their operation's record
+type ReceiptReply struct {
+	Ok bool `json:"ok"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ReceiptReply) Validate() error {
+	return nil
 }
 
 type ReceiptStatus string
@@ -459,6 +986,16 @@ const (
 // ReceiptStatusValues lists every ReceiptStatus in schema order.
 var ReceiptStatusValues = []ReceiptStatus{ReceiptStatusAccepted, ReceiptStatusStarted, ReceiptStatusCompleted, ReceiptStatusFailed, ReceiptStatusStopped, ReceiptStatusUnknown}
 
+// Valid: v is one of the schema's values.
+func (v ReceiptStatus) Valid() bool {
+	for _, x := range ReceiptStatusValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type ScriptPayload struct {
 	Command   string                     `json:"command"`
 	Commit    *string                    `json:"commit,omitempty"`
@@ -468,14 +1005,34 @@ type ScriptPayload struct {
 	TimeoutMs *int64                     `json:"timeout_ms,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ScriptPayload) Validate() error {
+	for i := range v.Inputs {
+		if err := Check(&v.Inputs[i], "inputs"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type ScriptStarted struct {
 	Commit        *string `json:"commit"`
 	TimeoutMs     *int64  `json:"timeoutMs"`
 	TrialWorktree string  `json:"trialWorktree"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ScriptStarted) Validate() error {
+	return nil
+}
+
 type ScriptTimeout struct {
 	TimeoutMs *int64 `json:"timeoutMs"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ScriptTimeout) Validate() error {
+	return nil
 }
 
 type SpanBatchReply struct {
@@ -483,10 +1040,23 @@ type SpanBatchReply struct {
 	Skipped  int64 `json:"skipped"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *SpanBatchReply) Validate() error {
+	return nil
+}
+
 // SpanBatchRequest: POST /api/hosts/spans (docs/designs/fleet-telemetry.md section 4): spans of an executor or gateway. Each item is one span row with the ClickHouse column names (go/obs Span); a row naming another host_id, or an execution_id not on this host, is skipped. batchId makes a retried batch idempotent.
 type SpanBatchRequest struct {
 	BatchId string            `json:"batchId"`
 	Spans   []json.RawMessage `json:"spans"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SpanBatchRequest) Validate() error {
+	if v.Spans == nil {
+		return Missing("spans")
+	}
+	return nil
 }
 
 // StartPayload: start and input. Named fields; lane A replaces the coordinator's merge of a free payload over them.
@@ -514,8 +1084,23 @@ type StartPayload struct {
 	WorkingDirectory *string                    `json:"workingDirectory,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *StartPayload) Validate() error {
+	for i := range v.Inputs {
+		if err := Check(&v.Inputs[i], "inputs"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type SteerPayload struct {
 	Text string `json:"text"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SteerPayload) Validate() error {
+	return nil
 }
 
 // StoreRegistration: A store a host serves; the keys go to the coordinator's secret directory, never to rows.
@@ -532,6 +1117,11 @@ type StoreRegistration struct {
 	Zone            *string `json:"zone,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *StoreRegistration) Validate() error {
+	return nil
+}
+
 // StoreReport: one store's reachability and capacity, sent with each poll
 type StoreReport struct {
 	CapacityBytes *int64 `json:"capacityBytes,omitempty"`
@@ -540,10 +1130,33 @@ type StoreReport struct {
 	UsedBytes     *int64 `json:"usedBytes,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *StoreReport) Validate() error {
+	return nil
+}
+
+type StoresReply struct {
+	Ok      bool   `json:"ok"`
+	StoreId string `json:"storeId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *StoresReply) Validate() error {
+	return nil
+}
+
 // StoresRequest: POST /api/hosts/stores.
 type StoresRequest struct {
 	HostId string            `json:"hostId"`
 	Store  StoreRegistration `json:"store"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *StoresRequest) Validate() error {
+	if err := Check(&v.Store, "store"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Teardown: data of a teardown event
@@ -554,10 +1167,25 @@ type Teardown struct {
 	Teardown      *ProjectScriptResult `json:"teardown,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *Teardown) Validate() error {
+	if v.Teardown != nil {
+		if err := Check(v.Teardown, "teardown"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // TranscriptReasoning: a reasoning block of fleetNormalized.blocks (kind reasoning)
 type TranscriptReasoning struct {
 	Kind     string `json:"kind"`
 	Markdown string `json:"markdown"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TranscriptReasoning) Validate() error {
+	return nil
 }
 
 // TranscriptText: a text block of fleetNormalized.blocks (kind text); the app's Block (ops) adds key and the thread fields
@@ -565,6 +1193,11 @@ type TranscriptText struct {
 	Kind     string `json:"kind"`
 	Markdown string `json:"markdown"`
 	Role     string `json:"role"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TranscriptText) Validate() error {
+	return nil
 }
 
 // TranscriptTool: a tool block of fleetNormalized.blocks (kind tool); input and output are the native values
@@ -578,8 +1211,24 @@ type TranscriptTool struct {
 	State     string          `json:"state"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *TranscriptTool) Validate() error {
+	if v.Input == nil {
+		return Missing("input")
+	}
+	if v.Output == nil {
+		return Missing("output")
+	}
+	return nil
+}
+
 type TrialRemoved struct {
 	Removed bool `json:"removed"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TrialRemoved) Validate() error {
+	return nil
 }
 
 // UpdateResult: last of the host's update-state.json, written by fleet-update
@@ -588,6 +1237,14 @@ type UpdateResult struct {
 	Error   *string     `json:"error,omitempty"`
 	State   UpdateState `json:"state"`
 	Version string      `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *UpdateResult) Validate() error {
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
 }
 
 type UpdateState string
@@ -603,3 +1260,13 @@ const (
 
 // UpdateStateValues lists every UpdateState in schema order.
 var UpdateStateValues = []UpdateState{UpdateStateOk, UpdateStatePending, UpdateStateHeld, UpdateStateError, UpdateStateRefused, UpdateStateFailed}
+
+// Valid: v is one of the schema's values.
+func (v UpdateState) Valid() bool {
+	for _, x := range UpdateStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}

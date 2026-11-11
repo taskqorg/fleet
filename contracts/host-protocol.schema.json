@@ -1213,10 +1213,13 @@
       "type": "object",
       "required": [
         "hostId",
-        "executionId",
         "artifactId"
       ],
       "properties": {
+        "commandId": {
+          "type": "string",
+          "$comment": "a pending tool command (delivery-step, artifact-copy, artifact-verify) that names the artifact"
+        },
         "hostId": {
           "type": "string"
         },
@@ -1227,7 +1230,7 @@
           "type": "string"
         }
       },
-      "$comment": "POST /api/hosts/artifacts/get and /read: one artifact the execution may read."
+      "$comment": "executionId (the reader's execution) or commandId (its open tool command) names why this host may read"
     },
     "HostArtifactListRequest": {
       "type": "object",
@@ -1609,6 +1612,148 @@
           "type": "integer"
         }
       }
+    },
+    "ArtifactReserveReply": {
+      "type": "object",
+      "required": [
+        "artifactId",
+        "state"
+      ],
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "storeId": {
+          "type": "string"
+        },
+        "partSize": {
+          "type": "integer"
+        }
+      },
+      "$comment": "state pending (upload the parts to storeId), stored (nothing to upload) or the state of an earlier reservation of the same id"
+    },
+    "ArtifactPartUrl": {
+      "type": "object",
+      "required": [
+        "partNumber",
+        "url"
+      ],
+      "properties": {
+        "partNumber": {
+          "type": "integer"
+        },
+        "url": {
+          "type": "string"
+        }
+      }
+    },
+    "ArtifactPartsReply": {
+      "type": "object",
+      "required": [
+        "storeId",
+        "parts"
+      ],
+      "properties": {
+        "storeId": {
+          "type": "string"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArtifactPartUrl"
+          }
+        }
+      }
+    },
+    "ArtifactVerify": {
+      "type": "object",
+      "required": [
+        "artifactId",
+        "storeId",
+        "url"
+      ],
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "storeId": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "$comment": "a presigned read of the staged object for the store host to hash"
+    },
+    "ArtifactStateReply": {
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "type": "string"
+        },
+        "verify": {
+          "$ref": "#/$defs/ArtifactVerify"
+        }
+      },
+      "$comment": "commit, verified, renew and failed: the artifact or copy state; commit answers verifying with verify when the writer is the store host"
+    },
+    "OkReply": {
+      "type": "object",
+      "required": [
+        "ok"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      }
+    },
+    "StoresReply": {
+      "type": "object",
+      "required": [
+        "ok",
+        "storeId"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "storeId": {
+          "type": "string"
+        }
+      }
+    },
+    "HostArtifactListReply": {
+      "type": "object",
+      "required": [
+        "artifacts"
+      ],
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "ops-artifacts.schema.json#/$defs/ArtifactRow"
+          }
+        }
+      }
+    },
+    "ReceiptReply": {
+      "type": "object",
+      "required": [
+        "ok"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "$comment": "a status receipt; the account and project routes answer their operation's record"
     }
   }
 }

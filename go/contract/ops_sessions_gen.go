@@ -16,6 +16,11 @@ type AskRequest struct {
 	Resume      json.RawMessage `json:"resume,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *AskRequest) Validate() error {
+	return nil
+}
+
 // Block: One thread entry (docs/designs/fleet-conversations.md), told apart by kind. key is its position seq:part. Fleet's own projection: closed.
 type Block = json.RawMessage
 
@@ -33,6 +38,14 @@ type BoundaryBlock struct {
 	State       ExecutionState `json:"state"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *BoundaryBlock) Validate() error {
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Change: One committed change (the change table), as GET /api/stream and changes_since deliver it.
 type Change struct {
 	HostId    *string    `json:"hostId"`
@@ -44,9 +57,25 @@ type Change struct {
 	TaskId    *string    `json:"taskId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *Change) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type ChangeRef struct {
 	Id   string     `json:"id"`
 	Kind ChangeKind `json:"kind"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ChangeRef) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ChangesSinceReply: resync: the cursor fell out of retention, reload everything. held: a writer still holds older changes; read again.
@@ -57,10 +86,28 @@ type ChangesSinceReply struct {
 	Resync  *bool    `json:"resync,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ChangesSinceReply) Validate() error {
+	if v.Changes == nil {
+		return Missing("changes")
+	}
+	for i := range v.Changes {
+		if err := Check(&v.Changes[i], "changes"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ChangesSinceRequest: No cursor: the head, with no changes. limit is clamped to 1..1000 (default 500).
 type ChangesSinceRequest struct {
 	Cursor *int64 `json:"cursor,omitempty"`
 	Limit  *int64 `json:"limit,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ChangesSinceRequest) Validate() error {
+	return nil
 }
 
 // DirectSearchReply: A pipeline run with its steps, state and results (pipelineRun).
@@ -74,6 +121,11 @@ type DirectSearchRequest struct {
 	RequestId string  `json:"requestId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *DirectSearchRequest) Validate() error {
+	return nil
+}
+
 // MessageSendReply: The execution the message started, or the queued message with queued: true and its position.
 type MessageSendReply = map[string]json.RawMessage
 
@@ -84,6 +136,11 @@ type MessageSendRequest struct {
 	Setup     json.RawMessage `json:"setup,omitempty"`
 	Source    json.RawMessage `json:"source,omitempty"`
 	Text      *string         `json:"text,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *MessageSendRequest) Validate() error {
+	return nil
 }
 
 // QuestionBlock: options: the stored options as they are (a list of labels for agent questions).
@@ -101,6 +158,14 @@ type QuestionBlock struct {
 	Text        string          `json:"text"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *QuestionBlock) Validate() error {
+	if v.Options == nil {
+		return Missing("options")
+	}
+	return nil
+}
+
 type ReasoningBlock struct {
 	At          *int64  `json:"at,omitempty"`
 	ExecutionId *string `json:"executionId,omitempty"`
@@ -111,6 +176,11 @@ type ReasoningBlock struct {
 	Stream      *string `json:"stream,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ReasoningBlock) Validate() error {
+	return nil
+}
+
 type RecommendationSetReply struct {
 	Actor      string `json:"actor"`
 	Id         string `json:"id"`
@@ -119,9 +189,19 @@ type RecommendationSetReply struct {
 	SelectedAt int64  `json:"selectedAt"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *RecommendationSetReply) Validate() error {
+	return nil
+}
+
 type RecommendationSetRequest struct {
 	MethodId  string `json:"methodId"`
 	ProjectId string `json:"projectId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *RecommendationSetRequest) Validate() error {
+	return nil
 }
 
 // ReplyReply: The answered agent question record with its delivery.
@@ -132,11 +212,21 @@ type ReplyRequest struct {
 	QuestionId *string         `json:"questionId,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ReplyRequest) Validate() error {
+	return nil
+}
+
 type ResultArtifact struct {
 	Id        string `json:"id"`
 	MediaType string `json:"mediaType"`
 	Name      string `json:"name"`
 	Size      int64  `json:"size"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResultArtifact) Validate() error {
+	return nil
 }
 
 // ResultBlock: The stored artifacts of an ended execution.
@@ -148,9 +238,30 @@ type ResultBlock struct {
 	Kind        string           `json:"kind"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResultBlock) Validate() error {
+	if v.ArtifactIds == nil {
+		return Missing("artifactIds")
+	}
+	if v.Artifacts == nil {
+		return Missing("artifacts")
+	}
+	for i := range v.Artifacts {
+		if err := Check(&v.Artifacts[i], "artifacts"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type SearchHit struct {
 	Key     string `json:"key"`
 	Snippet string `json:"snippet"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SearchHit) Validate() error {
+	return nil
 }
 
 // SessionArchiveReply: {sessionId, archivedAt, teardown: null} when no execution is left to tear down, else the teardown command it queued (id, executionId, hostId, kind teardown, payload, status).
@@ -160,12 +271,22 @@ type SessionArchiveRequest struct {
 	SessionId string `json:"sessionId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionArchiveRequest) Validate() error {
+	return nil
+}
+
 // SessionCreateReply: The new session row, plus sessionId.
 type SessionCreateReply struct {
 	CreatedAt  int64           `json:"createdAt"`
 	DirectedBy json.RawMessage `json:"directedBy,omitempty"`
 	Id         string          `json:"id"`
 	SessionId  string          `json:"sessionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionCreateReply) Validate() error {
+	return nil
 }
 
 type SessionCreateRequest = map[string]json.RawMessage
@@ -181,12 +302,22 @@ type SessionForkReply struct {
 	Strategy        *string  `json:"strategy,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionForkReply) Validate() error {
+	return nil
+}
+
 type SessionForkRequest struct {
 	CallerSessionId *string `json:"callerSessionId,omitempty"`
 	RequestId       string  `json:"requestId"`
 	SessionId       *string `json:"sessionId,omitempty"`
 	Strategy        *string `json:"strategy,omitempty"`
 	Text            *string `json:"text,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionForkRequest) Validate() error {
+	return nil
 }
 
 // SessionGetReply: The session view: the session row with its executions, questions, focus and handoffs.
@@ -196,12 +327,30 @@ type SessionGetRequest struct {
 	SessionId string `json:"sessionId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionGetRequest) Validate() error {
+	return nil
+}
+
 type SessionHandoffsReply struct {
 	Handoffs []map[string]json.RawMessage `json:"handoffs"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionHandoffsReply) Validate() error {
+	if v.Handoffs == nil {
+		return Missing("handoffs")
+	}
+	return nil
+}
+
 type SessionHandoffsRequest struct {
 	SessionId string `json:"sessionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionHandoffsRequest) Validate() error {
+	return nil
 }
 
 // SessionProfileReply: transition, handoffId and nativeSessionId only when the session has a native session to move.
@@ -214,11 +363,21 @@ type SessionProfileReply struct {
 	Transition      *string `json:"transition,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionProfileReply) Validate() error {
+	return nil
+}
+
 type SessionProfileRequest struct {
 	Account          *string `json:"account,omitempty"`
 	ProfileId        string  `json:"profileId"`
 	SessionId        string  `json:"sessionId"`
 	WorkingDirectory *string `json:"workingDirectory,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionProfileRequest) Validate() error {
+	return nil
 }
 
 // SessionResumeReply: How the session continues: its harness, account and native session ids.
@@ -231,8 +390,33 @@ type SessionResumeReply struct {
 	SessionId      string          `json:"sessionId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionResumeReply) Validate() error {
+	if v.Account == nil {
+		return Missing("account")
+	}
+	if v.ForkOf == nil {
+		return Missing("forkOf")
+	}
+	if v.Harness == nil {
+		return Missing("harness")
+	}
+	if v.Native == nil {
+		return Missing("native")
+	}
+	if v.NativeSessions == nil {
+		return Missing("nativeSessions")
+	}
+	return nil
+}
+
 type SessionResumeRequest struct {
 	SessionId *string `json:"sessionId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionResumeRequest) Validate() error {
+	return nil
 }
 
 // SessionStartReply: existing: the requestId already started this session.
@@ -246,6 +430,11 @@ type SessionStartReply struct {
 	Role        json.RawMessage `json:"role,omitempty"`
 	SessionId   string          `json:"sessionId"`
 	TaskId      json.RawMessage `json:"taskId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionStartReply) Validate() error {
+	return nil
 }
 
 type SessionStartRequest struct {
@@ -262,16 +451,31 @@ type SessionStartRequest struct {
 	Text              *string         `json:"text,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionStartRequest) Validate() error {
+	return nil
+}
+
 type SessionTaskAttachReply struct {
 	Existing  *bool  `json:"existing,omitempty"`
 	SessionId string `json:"sessionId"`
 	TaskId    string `json:"taskId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionTaskAttachReply) Validate() error {
+	return nil
+}
+
 type SessionTaskAttachRequest struct {
 	BoundProject json.RawMessage `json:"boundProject,omitempty"`
 	SessionId    *string         `json:"sessionId,omitempty"`
 	TaskId       *string         `json:"taskId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionTaskAttachRequest) Validate() error {
+	return nil
 }
 
 type SessionTransitionReply struct {
@@ -283,10 +487,20 @@ type SessionTransitionReply struct {
 	Transition      string  `json:"transition"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionTransitionReply) Validate() error {
+	return nil
+}
+
 type SessionTransitionRequest struct {
 	Account   *string `json:"account,omitempty"`
 	ProfileId *string `json:"profileId,omitempty"`
 	SessionId *string `json:"sessionId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionTransitionRequest) Validate() error {
+	return nil
 }
 
 // SessionsListReply: nextAfter: null on the last page, else the sort key to pass as after.
@@ -297,12 +511,41 @@ type SessionsListReply struct {
 	Total     int64            `json:"total"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionsListReply) Validate() error {
+	if v.Counts == nil {
+		return Missing("counts")
+	}
+	if v.NextAfter == nil {
+		return Missing("nextAfter")
+	}
+	if v.Sessions == nil {
+		return Missing("sessions")
+	}
+	for i := range v.Sessions {
+		if err := Check(&v.Sessions[i], "sessions"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // SessionsListRequest: after: the nextAfter of the previous page.
 type SessionsListRequest struct {
 	After  []json.RawMessage `json:"after,omitempty"`
 	Filter *ListFilter       `json:"filter,omitempty"`
 	Group  *string           `json:"group,omitempty"`
 	Limit  *int64            `json:"limit,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionsListRequest) Validate() error {
+	if v.Filter != nil {
+		if err := Check(v.Filter, "filter"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // TextBlock: role agent or operator; by: the sender of an operator message; stream open or cut-off while a delta is the newest text; harness, model and effort mark agent text.
@@ -321,16 +564,53 @@ type TextBlock struct {
 	Stream      *string `json:"stream,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *TextBlock) Validate() error {
+	return nil
+}
+
 // ThreadBlocksReply: removed: block keys that no longer exist.
 type ThreadBlocksReply struct {
 	Entries []Block  `json:"entries"`
 	Removed []string `json:"removed"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ThreadBlocksReply) Validate() error {
+	if v.Entries == nil {
+		return Missing("entries")
+	}
+	for i := range v.Entries {
+		if err := Check(&v.Entries[i], "entries"); err != nil {
+			return err
+		}
+	}
+	if v.Removed == nil {
+		return Missing("removed")
+	}
+	return nil
+}
+
 // ThreadBlocksRequest: rows: changed records; the reply has their current blocks.
 type ThreadBlocksRequest struct {
 	Key  ThreadKey   `json:"key"`
 	Rows []ChangeRef `json:"rows"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ThreadBlocksRequest) Validate() error {
+	if err := Check(&v.Key, "key"); err != nil {
+		return err
+	}
+	if v.Rows == nil {
+		return Missing("rows")
+	}
+	for i := range v.Rows {
+		if err := Check(&v.Rows[i], "rows"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ThreadEntriesReply: total: only with around. feedCursor: the change cursor of this read, to catch up from.
@@ -346,6 +626,25 @@ type ThreadEntriesReply struct {
 	Total      *int64    `json:"total,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ThreadEntriesReply) Validate() error {
+	if v.Entries == nil {
+		return Missing("entries")
+	}
+	for i := range v.Entries {
+		if err := Check(&v.Entries[i], "entries"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Key, "key"); err != nil {
+		return err
+	}
+	if v.SessionIds == nil {
+		return Missing("sessionIds")
+	}
+	return nil
+}
+
 type ThreadEntriesRequest struct {
 	After   *string   `json:"after,omitempty"`
 	Around  *string   `json:"around,omitempty"`
@@ -355,8 +654,21 @@ type ThreadEntriesRequest struct {
 	Resolve *bool     `json:"resolve,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ThreadEntriesRequest) Validate() error {
+	if err := Check(&v.Key, "key"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type ThreadExportReply struct {
 	Markdown string `json:"markdown"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ThreadExportReply) Validate() error {
+	return nil
 }
 
 type ThreadExportRequest struct {
@@ -366,10 +678,33 @@ type ThreadExportRequest struct {
 	Tz   *string      `json:"tz,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ThreadExportRequest) Validate() error {
+	if v.From != nil {
+		if err := Check(v.From, "from"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Key, "key"); err != nil {
+		return err
+	}
+	if v.To != nil {
+		if err := Check(v.To, "to"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ThreadKey: Exactly one of task or session.
 type ThreadKey struct {
 	Session *string `json:"session,omitempty"`
 	Task    *string `json:"task,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ThreadKey) Validate() error {
+	return nil
 }
 
 type ThreadPoint struct {
@@ -377,9 +712,27 @@ type ThreadPoint struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ThreadPoint) Validate() error {
+	return nil
+}
+
 type ThreadSearchReply struct {
 	HasMore bool        `json:"hasMore"`
 	Hits    []SearchHit `json:"hits"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ThreadSearchReply) Validate() error {
+	if v.Hits == nil {
+		return Missing("hits")
+	}
+	for i := range v.Hits {
+		if err := Check(&v.Hits[i], "hits"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type ThreadSearchRequest struct {
@@ -387,6 +740,14 @@ type ThreadSearchRequest struct {
 	Key    ThreadKey `json:"key"`
 	Limit  *int64    `json:"limit,omitempty"`
 	Q      string    `json:"q"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ThreadSearchRequest) Validate() error {
+	if err := Check(&v.Key, "key"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ToolBlock: input and output are the harness's own values; times in ms.
@@ -403,13 +764,33 @@ type ToolBlock struct {
 	State       string          `json:"state"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ToolBlock) Validate() error {
+	return nil
+}
+
 // WatchGetReply: No watch: watch is absent.
 type WatchGetReply struct {
 	Watch *WatchRecord `json:"watch,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *WatchGetReply) Validate() error {
+	if v.Watch != nil {
+		if err := Check(v.Watch, "watch"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type WatchGetRequest struct {
 	SessionId string `json:"sessionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *WatchGetRequest) Validate() error {
+	return nil
 }
 
 // WatchRecord: A session's watch: kinds of foreign changes that wake it, an optional timer, and its wake count.
@@ -425,6 +806,14 @@ type WatchRecord struct {
 	Wakes      int64           `json:"wakes"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *WatchRecord) Validate() error {
+	if v.Kinds == nil {
+		return Missing("kinds")
+	}
+	return nil
+}
+
 type WatchSetReply = WatchRecord
 
 // WatchSetRequest: kinds: task, question, execution, host.
@@ -434,13 +823,31 @@ type WatchSetRequest struct {
 	TimerMs   *float64 `json:"timerMs,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *WatchSetRequest) Validate() error {
+	if v.Kinds == nil {
+		return Missing("kinds")
+	}
+	return nil
+}
+
 type WatchStopReply struct {
 	SessionId string `json:"sessionId"`
 	Stopped   bool   `json:"stopped"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *WatchStopReply) Validate() error {
+	return nil
+}
+
 type WatchStopRequest struct {
 	SessionId string `json:"sessionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *WatchStopRequest) Validate() error {
+	return nil
 }
 
 // WorkerDoneReply: action accepted (with the report) or rejected (with code: invalid_outcome, stale_dispatch, already_reported, native_identity_conflict, and reason).
@@ -455,6 +862,16 @@ type WorkerDoneReply struct {
 	Report      *WorkerReport `json:"report,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *WorkerDoneReply) Validate() error {
+	if v.Report != nil {
+		if err := Check(v.Report, "report"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // WorkerDoneRequest: outcome succeeded or failed; anything else is recorded as rejected (invalid_outcome). summary: a string; any other value is stored as null.
 type WorkerDoneRequest struct {
 	ExecutionId     string          `json:"executionId"`
@@ -463,10 +880,20 @@ type WorkerDoneRequest struct {
 	Summary         json.RawMessage `json:"summary,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *WorkerDoneRequest) Validate() error {
+	return nil
+}
+
 type WorkerReport struct {
 	At      int64   `json:"at"`
 	Outcome string  `json:"outcome"`
 	Summary *string `json:"summary"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *WorkerReport) Validate() error {
+	return nil
 }
 
 func init() {

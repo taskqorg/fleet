@@ -16,10 +16,30 @@ const (
 // AntigravityModeValues lists every AntigravityMode in schema order.
 var AntigravityModeValues = []AntigravityMode{AntigravityModePlan, AntigravityModeAcceptEdits}
 
+// Valid: v is one of the schema's values.
+func (v AntigravityMode) Valid() bool {
+	for _, x := range AntigravityModeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type AntigravitySettings struct {
 	IncludeDefaultCustomizations *bool            `json:"includeDefaultCustomizations,omitempty"`
 	Mode                         *AntigravityMode `json:"mode,omitempty"`
 	Sandbox                      *bool            `json:"sandbox,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AntigravitySettings) Validate() error {
+	if v.Mode != nil {
+		if err := Check(v.Mode, "mode"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type ClaudeTool string
@@ -35,6 +55,16 @@ const (
 
 // ClaudeToolValues lists every ClaudeTool in schema order.
 var ClaudeToolValues = []ClaudeTool{ClaudeToolRead, ClaudeToolEdit, ClaudeToolWrite, ClaudeToolBash, ClaudeToolGlob, ClaudeToolGrep}
+
+// Valid: v is one of the schema's values.
+func (v ClaudeTool) Valid() bool {
+	for _, x := range ClaudeToolValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
 
 type Profile struct {
 	CollaborationTools *bool                `json:"collaborationTools,omitempty"`
@@ -55,6 +85,34 @@ type Profile struct {
 	Tools              []ClaudeTool         `json:"tools,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *Profile) Validate() error {
+	if v.Harness != nil {
+		if err := Check(v.Harness, "harness"); err != nil {
+			return err
+		}
+	}
+	if v.McpServers == nil {
+		return Missing("mcpServers")
+	}
+	for i := range v.McpServers {
+		if err := Check(&v.McpServers[i], "mcpServers"); err != nil {
+			return err
+		}
+	}
+	if v.Settings != nil {
+		if err := Check(v.Settings, "settings"); err != nil {
+			return err
+		}
+	}
+	for i := range v.Tools {
+		if err := Check(&v.Tools[i], "tools"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type ProfileHarness string
 
 const (
@@ -67,7 +125,25 @@ const (
 // ProfileHarnessValues lists every ProfileHarness in schema order.
 var ProfileHarnessValues = []ProfileHarness{ProfileHarnessCodex, ProfileHarnessClaude, ProfileHarnessAntigravity, ProfileHarnessAcp}
 
+// Valid: v is one of the schema's values.
+func (v ProfileHarness) Valid() bool {
+	for _, x := range ProfileHarnessValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type ProfileMcpGrant struct {
 	Data map[string]json.RawMessage `json:"data"`
 	Id   string                     `json:"id"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProfileMcpGrant) Validate() error {
+	if v.Data == nil {
+		return Missing("data")
+	}
+	return nil
 }

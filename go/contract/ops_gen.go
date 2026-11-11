@@ -17,6 +17,16 @@ const (
 // AssessmentBasisValues lists every AssessmentBasis in schema order.
 var AssessmentBasisValues = []AssessmentBasis{AssessmentBasisLab, AssessmentBasisUsage, AssessmentBasisNone}
 
+// Valid: v is one of the schema's values.
+func (v AssessmentBasis) Valid() bool {
+	for _, x := range AssessmentBasisValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type CatalogueMethod struct {
 	AgentProfile     *string                    `json:"agentProfile,omitempty"`
 	ConfigRef        *string                    `json:"configRef,omitempty"`
@@ -28,10 +38,26 @@ type CatalogueMethod struct {
 	SourceExperiment *string                    `json:"sourceExperiment,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *CatalogueMethod) Validate() error {
+	return nil
+}
+
 type CatalogueMethodView struct {
 	Assessment     MethodAssessment `json:"assessment"`
 	Method         CatalogueMethod  `json:"method"`
 	RecommendedFor []string         `json:"recommendedFor,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CatalogueMethodView) Validate() error {
+	if err := Check(&v.Assessment, "assessment"); err != nil {
+		return err
+	}
+	if err := Check(&v.Method, "method"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ChangeKind: The kinds the change triggers write (fleet_change and fleet_artifact_change in go/coordinator/schema.sql); a go test checks the triggers against this list.
@@ -58,6 +84,16 @@ const (
 // ChangeKindValues lists every ChangeKind in schema order.
 var ChangeKindValues = []ChangeKind{ChangeKindApiConnection, ChangeKindArtifact, ChangeKindCommand, ChangeKindConnectionKey, ChangeKindDefinition, ChangeKindEvent, ChangeKindExecution, ChangeKindExperiment, ChangeKindHost, ChangeKindManagedAccount, ChangeKindQuestion, ChangeKindScore, ChangeKindSession, ChangeKindSettingChange, ChangeKindTask}
 
+// Valid: v is one of the schema's values.
+func (v ChangeKind) Valid() bool {
+	for _, x := range ChangeKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type ConflictReason string
 
 const (
@@ -71,11 +107,29 @@ const (
 // ConflictReasonValues lists every ConflictReason in schema order.
 var ConflictReasonValues = []ConflictReason{ConflictReasonBaseMoved, ConflictReasonRepositoryChanged, ConflictReasonNoChange, ConflictReasonWrongState, ConflictReasonInvalidDraft}
 
+// Valid: v is one of the schema's values.
+func (v ConflictReason) Valid() bool {
+	for _, x := range ConflictReasonValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 // DefinitionConflict: Body of a 409 from definition_save and definition_create.
 type DefinitionConflict struct {
 	Head    int64          `json:"head"`
 	Reason  ConflictReason `json:"reason"`
 	RepoSha *string        `json:"repoSha,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionConflict) Validate() error {
+	if err := Check(&v.Reason, "reason"); err != nil {
+		return err
+	}
+	return nil
 }
 
 type DefinitionKind string
@@ -89,13 +143,33 @@ const (
 // DefinitionKindValues lists every DefinitionKind in schema order.
 var DefinitionKindValues = []DefinitionKind{DefinitionKindAgent, DefinitionKindPipeline, DefinitionKindCatalogue}
 
+// Valid: v is one of the schema's values.
+func (v DefinitionKind) Valid() bool {
+	for _, x := range DefinitionKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type DefinitionMirrorResetReply struct {
 	Commits int64 `json:"commits"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionMirrorResetReply) Validate() error {
+	return nil
 }
 
 // DefinitionMirrorResetRequest: confirm must be the repository name; owner only. Rebuilds the mirror branch from store history and force-pushes.
 type DefinitionMirrorResetRequest struct {
 	Confirm string `json:"confirm"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionMirrorResetRequest) Validate() error {
+	return nil
 }
 
 // DefinitionRef: With draft true, revision is the base revision (0 for a new definition) and contentSha is the draft's.
@@ -105,6 +179,14 @@ type DefinitionRef struct {
 	Id         string         `json:"id"`
 	Kind       DefinitionKind `json:"kind"`
 	Revision   int64          `json:"revision"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionRef) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ExecutionRow: One execution row (executionCols in go/coordinator/tasks.go); times are RFC 3339.
@@ -133,6 +215,25 @@ type ExecutionRow struct {
 	Variant           *string         `json:"variant"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionRow) Validate() error {
+	if v.ConfigRef == nil {
+		return Missing("configRef")
+	}
+	if v.Definitions == nil {
+		return Missing("definitions")
+	}
+	for i := range v.Definitions {
+		if err := Check(&v.Definitions[i], "definitions"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
 // ExecutionState: execution_state in go/coordinator/schema.sql.
 type ExecutionState string
 
@@ -148,6 +249,16 @@ const (
 // ExecutionStateValues lists every ExecutionState in schema order.
 var ExecutionStateValues = []ExecutionState{ExecutionStatePreparing, ExecutionStateRunning, ExecutionStateWaiting, ExecutionStateSucceeded, ExecutionStateFailed, ExecutionStateCancelled}
 
+// Valid: v is one of the schema's values.
+func (v ExecutionState) Valid() bool {
+	for _, x := range ExecutionStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 // ExperimentNote: Append-only (fleet-lab.md, Experiment record): an amendment of a record field, or a note.
 type ExperimentNote struct {
 	At     json.RawMessage `json:"at"`
@@ -160,6 +271,14 @@ type ExperimentNote struct {
 	Text   string          `json:"text"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExperimentNote) Validate() error {
+	if v.At == nil {
+		return Missing("at")
+	}
+	return nil
+}
+
 // ListFilter: The list filter of packages/view-url toPageParams; a null projectId is work outside projects.
 type ListFilter struct {
 	Archived  *bool    `json:"archived,omitempty"`
@@ -168,16 +287,34 @@ type ListFilter struct {
 	State     []string `json:"state,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ListFilter) Validate() error {
+	return nil
+}
+
 type ListGroup struct {
 	Count int64  `json:"count"`
 	Key   string `json:"key"`
 	Label string `json:"label"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ListGroup) Validate() error {
+	return nil
+}
+
 // ListRow: A task or session row of a list page; sortKey positions it (strings and numbers).
 type ListRow struct {
 	Id      string            `json:"id"`
 	SortKey []json.RawMessage `json:"sortKey"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ListRow) Validate() error {
+	if v.SortKey == nil {
+		return Missing("sortKey")
+	}
+	return nil
 }
 
 type MethodAssessment struct {
@@ -192,6 +329,14 @@ type MethodAssessment struct {
 	WallMsMedian *int64          `json:"wallMsMedian,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *MethodAssessment) Validate() error {
+	if err := Check(&v.Basis, "basis"); err != nil {
+		return err
+	}
+	return nil
+}
+
 // OpError: Body of every failed operation (writeError in go/coordinator/main.go).
 type OpError struct {
 	Error      string `json:"error"`
@@ -199,9 +344,19 @@ type OpError struct {
 	StatusCode int64  `json:"statusCode"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *OpError) Validate() error {
+	return nil
+}
+
 // StreamCursor: Body of the GET /api/stream events ready (the cursor the stream starts after) and resync (reload everything, then continue after cursor).
 type StreamCursor struct {
 	Cursor int64 `json:"cursor"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *StreamCursor) Validate() error {
+	return nil
 }
 
 // VariantVsBaseline: Added to lab_experiment_get: one per non-baseline variant, over examples where both have a final score.
@@ -214,4 +369,9 @@ type VariantVsBaseline struct {
 	Variant      string   `json:"variant"`
 	WallMsDelta  *int64   `json:"wallMsDelta,omitempty"`
 	Wins         *int64   `json:"wins,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *VariantVsBaseline) Validate() error {
+	return nil
 }

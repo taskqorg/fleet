@@ -51,7 +51,7 @@ test('S1 lists: a member lists only granted projects and their sessions; an outs
 test('S2 dispatch: a member\'s message picks the owner-held host and a take-rule subscription, and the host claims it; readiness runs too (requirement: docs/designs/fleet-people-access.md grants; risk: knownHost, pickAccount or readiness rows run in the person\'s scope: 400 Unknown host, no account, 403)', async () => {
   const h = await host();
   const a = ok(await op('account_create', {name: 'scope-sub', harness: 'codex'}));
-  ok(await h('/api/hosts/accounts', {accountId: a.id, hostId: 'trial-host', binding: 'scope-bind', platform: 'darwin', readiness: 'ready'}));
+  ok(await h('/api/hosts/accounts', {accountId: a.id, hostId: 'trial-host', binding: 'scope-bind', platform: 'darwin', readiness: 'ready', nativeLoginObserved: null, quota: 'unknown', reason: 'ready'}));
   ok(await op('account_update', {accountId: a.id, take: {projects: [MINE]}}));
   const s = ok(await start(MEMBER, MINE, {hostId: 'trial-host'}));
   assert.equal(s.account, 'scope-sub', JSON.stringify(s));

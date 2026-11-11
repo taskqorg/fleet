@@ -8,9 +8,9 @@ import (
 	"context"
 	"net/http"
 	"regexp"
-	"sort"
-	"strings"
 	"sync"
+
+	"fleet/contract"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -23,18 +23,12 @@ var (
 const sourcesTooLarge = "Website text inputs unavailable or exceed 128000 characters"
 
 // delegationRequest: a child receipt from a running parent.
-func (a *App) delegationRequest(q *Request, b doc, c doc) (any, error) {
-	if sortedKeys(b) != "commandId,delegation,executionId,hostId" {
-		return nil, fail(400, "Invalid delegation envelope")
-	}
-	r := mapOf(b["delegation"])
-	rid, input := astr(r["requestId"]), astr(r["input"])
-	if r == nil || sortedKeys(r) != "input,profileId,requestId" || rid == "" || len([]rune(rid)) > 200 || input == "" || len([]rune(input)) > 32000 {
+func (a *App) delegationRequest(q *Request, req *contract.ChildRequest, c doc) (any, error) {
+	rid, input := req.RequestId, req.Input
+	if rid == "" || input == "" || len([]rune(rid)) > 200 || len([]rune(input)) > 32000 {
 		return nil, fail(400, "Invalid delegation request")
 	}
-	if _, ok := r["requestId"].(string); !ok {
-		return nil, fail(400, "Invalid delegation request")
-	}
+	r := doc{"input": input, "profileId": req.ProfileId, "requestId": rid}
 	parent, err := get(q, c["executionId"], "execution")
 	if err != nil {
 		return nil, err
@@ -55,13 +49,13 @@ func (a *App) delegationRequest(q *Request, b doc, c doc) (any, error) {
 		return nil, fail(403, "Delegation unavailable")
 	}
 	pcfg := mapOf(parent["agentConfig"])
-	if !inList(strs(pcfg["delegationProfiles"]), astr(r["profileId"])) {
+	if !inList(strs(pcfg["delegationProfiles"]), req.ProfileId) {
 		return nil, fail(403, "Child profile not granted")
 	}
 	if len(existing) > 0 {
 		return nil, fail(409, "One child per invocation")
 	}
-	profile, err := readTrustedProfile(q, astr(r["profileId"]))
+	profile, err := readTrustedProfile(q, req.ProfileId)
 	if err != nil {
 		return nil, err
 	}
@@ -370,13 +364,4 @@ func (a *App) delegationReconcile(q *Request) error {
 		}
 	}
 	return nil
-}
-
-func sortedKeys(m map[string]any) string {
-	ks := []string{}
-	for k := range m {
-		ks = append(ks, k)
-	}
-	sort.Strings(ks)
-	return strings.Join(ks, ",")
 }

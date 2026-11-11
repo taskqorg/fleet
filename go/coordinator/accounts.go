@@ -21,12 +21,11 @@ func init() {
 	operation("account_connect", false, shaped[contract.AccountConnectRequest, contract.AccountInspection](func(q *Request) (any, error) { return accountInspect(q, q.obj(), false) }))
 	operation("account_login_handoff", true, shaped[contract.AccountLoginHandoffRequest, contract.AccountLoginHandoffReply](accountLoginHandoff))
 	operation("account_update", false, shaped[contract.AccountUpdateRequest, contract.AccountUpdateReply](accountUpdate))
-	route("POST /api/hosts/accounts", typed[contract.AccountObservation](func(q *Request) (any, error) {
+	route("POST /api/hosts/accounts", typed(func(q *Request, b *contract.AccountObservation) (any, error) {
 		if !q.app.hostMaySee(q.host, nil) {
 			return nil, fail(403, "Account observations need an owner-held host")
 		}
-		b := q.obj()
-		return accountReport(q, b, astr(b["hostId"]))
+		return accountReport(q, b, q.hostID())
 	}))
 	route("GET /api/accounts", accountList)
 	route("POST /api/accounts", accountCreate)
@@ -527,8 +526,8 @@ func accountUpdateBody(q *Request, b doc) (any, error) {
 var checkReasons = []string{"ready", "login-absent", "executable-missing", "binding-unprovisioned", "binding-absent", "status-unknown", "catalogue-only", "configuration-error"}
 
 // accountReport: a host's observation of one binding of a subscription.
-func accountReport(q *Request, b doc, host string) (any, error) {
-	a, err := get(q, b["accountId"], "managed-account")
+func accountReport(q *Request, b *contract.AccountObservation, host string) (any, error) {
+	a, err := get(q, b.AccountId, "managed-account")
 	if err != nil {
 		return nil, err
 	}
@@ -545,7 +544,7 @@ func accountReport(q *Request, b doc, host string) (any, error) {
 		return nil, err
 	}
 	known := append([]string{defaultHostID(q), integ, pub}, exec...)
-	if host == "" || !inList(known, host) || !accountName.MatchString(astr(b["binding"])) || !validPlatform(astr(b["platform"])) || !inList([]string{"ready", "unavailable", "unknown"}, astr(b["readiness"])) {
+	if host == "" || !inList(known, host) || !accountName.MatchString(b.Binding) || !inList([]string{"ready", "unavailable", "unknown"}, b.Readiness) {
 		return nil, fail(400, "Invalid host account observation")
 	}
 	if ok, err := harnessAllowed(q, host, astr(a["harness"])); err != nil || !ok {
@@ -560,33 +559,33 @@ func accountReport(q *Request, b doc, host string) (any, error) {
 	}
 	for _, o := range others {
 		for _, x := range bindingsOf(o) {
-			if o["id"] != a["id"] && x["hostId"] == host && x["binding"] == b["binding"] {
+			if o["id"] != a["id"] && x["hostId"] == host && x["binding"] == b.Binding {
 				return nil, fail(409, "Host binding already belongs to another managed account")
 			}
 		}
 	}
 	var previous map[string]any
 	for _, x := range bindingsOf(a) {
-		if x["hostId"] == host && x["binding"] == b["binding"] {
+		if x["hostId"] == host && x["binding"] == b.Binding {
 			previous = x
 		}
 	}
 	observedAt := nowMs()
 	reason := "legacy-observation"
-	if inList(checkReasons, astr(b["reason"])) {
-		reason = astr(b["reason"])
+	if inList(checkReasons, b.Reason) {
+		reason = b.Reason
 	}
 	var native any
-	if v, ok := b["nativeLoginObserved"].(bool); ok {
-		native = v
+	if b.NativeLoginObserved != nil {
+		native = *b.NativeLoginObserved
 	}
 	details := doc{"reason": reason, "nativeLoginObserved": native, "quota": "unknown", "observedAt": observedAt}
 	var roots any
-	if r, ok := b["roots"].(map[string]any); ok {
+	if r := b.Roots; r != nil {
 		m := doc{}
-		for _, k := range []string{"home", "nativeHome", "credentialHome", "credentialAuthority", "executable"} {
-			if s, ok := r[k].(string); ok && len(s) < 2000 {
-				m[k] = s
+		for k, s := range map[string]*string{"home": r.Home, "nativeHome": r.NativeHome, "credentialHome": r.CredentialHome, "credentialAuthority": r.CredentialAuthority, "executable": r.Executable} {
+			if s != nil && len(*s) < 2000 {
+				m[k] = *s
 			}
 		}
 		roots = m
@@ -594,17 +593,17 @@ func accountReport(q *Request, b doc, host string) (any, error) {
 		roots = previous["roots"]
 	}
 	retained := reason == "catalogue-only" && previous != nil && previous["readiness"] == "ready"
-	readiness, basis := b["readiness"], "Latest host status and behavior approval"
+	readiness, basis := b.Readiness, "Latest host status and behavior approval"
 	if retained {
 		readiness, basis = "ready", "Prior qualified ready binding retained; catalogue is not new authentication proof"
 	}
-	last := doc{"readiness": b["readiness"]}
+	last := doc{"readiness": b.Readiness}
 	for k, v := range details {
 		last[k] = v
 	}
-	binding := doc{"hostId": host, "binding": b["binding"], "platform": b["platform"], "readiness": readiness, "observedAt": observedAt, "roots": roots,
+	binding := doc{"hostId": host, "binding": b.Binding, "platform": b.Platform, "readiness": readiness, "observedAt": observedAt, "roots": roots,
 		"lastCheck": last, "readinessBasis": basis, "authority": "host-owned native registry; no credentials transferred"}
-	check := doc{"id": newID(), "accountId": a["id"], "hostId": host, "binding": b["binding"], "readiness": b["readiness"], "roots": roots}
+	check := doc{"id": newID(), "accountId": a["id"], "hostId": host, "binding": b.Binding, "readiness": b.Readiness, "roots": roots}
 	for k, v := range details {
 		check[k] = v
 	}
@@ -617,7 +616,7 @@ func accountReport(q *Request, b doc, host string) (any, error) {
 			current = x
 		}
 	}
-	if current == nil || current["binding"] == b["binding"] || b["readiness"] == "ready" {
+	if current == nil || current["binding"] == b.Binding || b.Readiness == "ready" {
 		kept := []any{}
 		for _, x := range bindingsOf(a) {
 			if x["hostId"] != host {
@@ -630,31 +629,30 @@ func accountReport(q *Request, b doc, host string) (any, error) {
 }
 
 // accountCatalogue: the safe binding metadata the default host's inspector reports.
-func accountCatalogue(q *Request, b doc, host string) (any, error) {
-	a, err := get(q, b["accountId"], "managed-account")
+func accountCatalogue(q *Request, b *contract.AccountCatalogue, host string) (any, error) {
+	a, err := get(q, b.AccountId, "managed-account")
 	if err != nil {
 		return nil, err
 	}
-	list, ok := b["bindings"].([]any)
-	if host != defaultHostID(q) || !ok || len(list) > 100 {
+	if host != defaultHostID(q) || len(b.Bindings) > 100 {
 		return nil, fail(400, "Invalid host catalogue")
 	}
 	out := []any{}
-	for _, x := range list {
-		m, _ := x.(map[string]any)
-		env, isEnv := m["environment"].(map[string]any)
-		_, isExe := m["executable"].(string)
-		valid := accountName.MatchString(astr(m["name"])) && isExe && isEnv
-		for k, v := range env {
-			s, isStr := v.(string)
-			if !inList([]string{"HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "GEMINI_HOME"}, k) || !isStr || !strings.HasPrefix(s, "/") {
-				valid = false
+	for _, m := range b.Bindings {
+		env := doc{}
+		for k, v := range map[string]*string{"HOME": m.Environment.HOME, "CODEX_HOME": m.Environment.CODEXHOME, "CLAUDE_CONFIG_DIR": m.Environment.CLAUDECONFIGDIR, "GEMINI_HOME": m.Environment.GEMINIHOME} {
+			if v == nil {
+				continue
 			}
+			if !strings.HasPrefix(*v, "/") {
+				return nil, fail(400, "Invalid safe host binding metadata")
+			}
+			env[k] = *v
 		}
-		if !valid {
+		if !accountName.MatchString(m.Name) {
 			return nil, fail(400, "Invalid safe host binding metadata")
 		}
-		out = append(out, doc{"name": m["name"], "executable": m["executable"], "environment": env, "behaviorApproved": m["behaviorApproved"] == true})
+		out = append(out, doc{"name": m.Name, "executable": m.Executable, "environment": env, "behaviorApproved": m.BehaviorApproved})
 	}
 	err = put(q, "account-catalogue", doc{"id": "catalogue:" + host + ":" + astr(a["harness"]), "hostId": host, "harness": a["harness"], "observedAt": nowMs(), "bindings": out})
 	return doc{"ok": true}, err

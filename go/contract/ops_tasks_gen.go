@@ -13,8 +13,21 @@ type ProjectContextRequest struct {
 	ProjectId string `json:"projectId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectContextRequest) Validate() error {
+	return nil
+}
+
 type ProjectListReply struct {
 	Projects []map[string]json.RawMessage `json:"projects"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectListReply) Validate() error {
+	if v.Projects == nil {
+		return Missing("projects")
+	}
+	return nil
 }
 
 type ProjectListRequest = map[string]json.RawMessage
@@ -33,14 +46,32 @@ type ProjectQuestion struct {
 	Text       string  `json:"text"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectQuestion) Validate() error {
+	return nil
+}
+
 type ProjectReadinessReply struct {
 	Hosts     []map[string]json.RawMessage `json:"hosts"`
 	ProjectId string                       `json:"projectId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectReadinessReply) Validate() error {
+	if v.Hosts == nil {
+		return Missing("hosts")
+	}
+	return nil
+}
+
 type ProjectReadinessRequest struct {
 	CallerSessionId *string `json:"callerSessionId,omitempty"`
 	ProjectId       *string `json:"projectId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectReadinessRequest) Validate() error {
+	return nil
 }
 
 // QuestionAnswerReply: A project question (ProjectQuestion), or the answered question row for any other question.
@@ -53,6 +84,11 @@ type QuestionAnswerRequest struct {
 	QuestionId  string   `json:"questionId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *QuestionAnswerRequest) Validate() error {
+	return nil
+}
+
 type QuestionAskReply = ProjectQuestion
 
 type QuestionAskRequest struct {
@@ -61,12 +97,35 @@ type QuestionAskRequest struct {
 	Text      string `json:"text"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *QuestionAskRequest) Validate() error {
+	return nil
+}
+
 type QuestionHistoryReply struct {
 	Questions []ProjectQuestion `json:"questions"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *QuestionHistoryReply) Validate() error {
+	if v.Questions == nil {
+		return Missing("questions")
+	}
+	for i := range v.Questions {
+		if err := Check(&v.Questions[i], "questions"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type QuestionHistoryRequest struct {
 	ProjectId string `json:"projectId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *QuestionHistoryRequest) Validate() error {
+	return nil
 }
 
 type QuestionKind string
@@ -79,6 +138,16 @@ const (
 
 // QuestionKindValues lists every QuestionKind in schema order.
 var QuestionKindValues = []QuestionKind{QuestionKindOperatorDecision, QuestionKindAgentQuestion, QuestionKindAcceptance}
+
+// Valid: v is one of the schema's values.
+func (v QuestionKind) Valid() bool {
+	for _, x := range QuestionKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
 
 // QuestionRow: One question row (questionCols in go/coordinator/tasks.go); artifactIds and cause only when set.
 type QuestionRow struct {
@@ -100,6 +169,17 @@ type QuestionRow struct {
 	Text        string          `json:"text"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *QuestionRow) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if v.Options == nil {
+		return Missing("options")
+	}
+	return nil
+}
+
 type QuestionsAnswerReply = QuestionRow
 
 type QuestionsAnswerRequest struct {
@@ -108,8 +188,26 @@ type QuestionsAnswerRequest struct {
 	QuestionId  string   `json:"questionId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *QuestionsAnswerRequest) Validate() error {
+	return nil
+}
+
 type QuestionsListReply struct {
 	Questions []QuestionRow `json:"questions"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *QuestionsListReply) Validate() error {
+	if v.Questions == nil {
+		return Missing("questions")
+	}
+	for i := range v.Questions {
+		if err := Check(&v.Questions[i], "questions"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type QuestionsListRequest struct {
@@ -118,8 +216,21 @@ type QuestionsListRequest struct {
 	TaskId *string `json:"taskId,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *QuestionsListRequest) Validate() error {
+	return nil
+}
+
 type QuestionsReply struct {
 	Questions []map[string]json.RawMessage `json:"questions"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *QuestionsReply) Validate() error {
+	if v.Questions == nil {
+		return Missing("questions")
+	}
+	return nil
 }
 
 type QuestionsRequest struct {
@@ -127,10 +238,20 @@ type QuestionsRequest struct {
 	State     *string `json:"state,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *QuestionsRequest) Validate() error {
+	return nil
+}
+
 type TaskCancelReply = TaskDetail
 
 type TaskCancelRequest struct {
 	TaskId string `json:"taskId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskCancelRequest) Validate() error {
+	return nil
 }
 
 type TaskCreateReply = TaskDetail
@@ -147,15 +268,38 @@ type TaskCreateRequest struct {
 	Title                  string          `json:"title"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskCreateRequest) Validate() error {
+	return nil
+}
+
 // TaskDependency: kind blocks or revision_of.
 type TaskDependency struct {
 	Id   string `json:"id"`
 	Kind string `json:"kind"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskDependency) Validate() error {
+	return nil
+}
+
 type TaskDerivedCheckReply struct {
 	Checked int64              `json:"checked"`
 	Drifted []TaskDerivedDrift `json:"drifted"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskDerivedCheckReply) Validate() error {
+	if v.Drifted == nil {
+		return Missing("drifted")
+	}
+	for i := range v.Drifted {
+		if err := Check(&v.Drifted[i], "drifted"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type TaskDerivedCheckRequest = map[string]json.RawMessage
@@ -164,6 +308,17 @@ type TaskDerivedDrift struct {
 	Expected json.RawMessage `json:"expected"`
 	Stored   json.RawMessage `json:"stored"`
 	TaskId   string          `json:"taskId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskDerivedDrift) Validate() error {
+	if v.Expected == nil {
+		return Missing("expected")
+	}
+	if v.Stored == nil {
+		return Missing("stored")
+	}
+	return nil
 }
 
 // TaskDetail: A task with its progress, totals, executions, dependencies and questions (taskGet).
@@ -199,16 +354,76 @@ type TaskDetail struct {
 	WaitReason             *string          `json:"waitReason"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskDetail) Validate() error {
+	if v.CompletionRequirements == nil {
+		return Missing("completionRequirements")
+	}
+	if v.Cost == nil {
+		return Missing("cost")
+	}
+	if v.DeliveryMethod == nil {
+		return Missing("deliveryMethod")
+	}
+	if v.Dependencies == nil {
+		return Missing("dependencies")
+	}
+	for i := range v.Dependencies {
+		if err := Check(&v.Dependencies[i], "dependencies"); err != nil {
+			return err
+		}
+	}
+	if v.Executions == nil {
+		return Missing("executions")
+	}
+	for i := range v.Executions {
+		if err := Check(&v.Executions[i], "executions"); err != nil {
+			return err
+		}
+	}
+	if v.LatestResult == nil {
+		return Missing("latestResult")
+	}
+	if v.OpenQuestions == nil {
+		return Missing("openQuestions")
+	}
+	if err := Check(&v.Progress, "progress"); err != nil {
+		return err
+	}
+	if v.Questions == nil {
+		return Missing("questions")
+	}
+	for i := range v.Questions {
+		if err := Check(&v.Questions[i], "questions"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type TaskGetReply = TaskDetail
 
 type TaskGetRequest struct {
 	TaskId string `json:"taskId"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskGetRequest) Validate() error {
+	return nil
+}
+
 type TaskHoldReply = TaskDetail
 
 type TaskHoldRequest struct {
 	TaskId string `json:"taskId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskHoldRequest) Validate() error {
+	return nil
 }
 
 type TaskListItem struct {
@@ -238,13 +453,51 @@ type TaskListItem struct {
 	WaitReason             *string         `json:"waitReason"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskListItem) Validate() error {
+	if v.CompletionRequirements == nil {
+		return Missing("completionRequirements")
+	}
+	if v.DeliveryMethod == nil {
+		return Missing("deliveryMethod")
+	}
+	if v.OpenQuestions == nil {
+		return Missing("openQuestions")
+	}
+	if err := Check(&v.Progress, "progress"); err != nil {
+		return err
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type TaskListReply struct {
 	Tasks []TaskListItem `json:"tasks"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskListReply) Validate() error {
+	if v.Tasks == nil {
+		return Missing("tasks")
+	}
+	for i := range v.Tasks {
+		if err := Check(&v.Tasks[i], "tasks"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type TaskListRequest struct {
 	ProjectId *string `json:"projectId,omitempty"`
 	State     *string `json:"state,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskListRequest) Validate() error {
+	return nil
 }
 
 type TaskPageReply struct {
@@ -255,6 +508,33 @@ type TaskPageReply struct {
 	Total     int64            `json:"total"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskPageReply) Validate() error {
+	if v.Counts == nil {
+		return Missing("counts")
+	}
+	if v.Groups == nil {
+		return Missing("groups")
+	}
+	for i := range v.Groups {
+		if err := Check(&v.Groups[i], "groups"); err != nil {
+			return err
+		}
+	}
+	if v.NextAfter == nil {
+		return Missing("nextAfter")
+	}
+	if v.Tasks == nil {
+		return Missing("tasks")
+	}
+	for i := range v.Tasks {
+		if err := Check(&v.Tasks[i], "tasks"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type TaskPageRequest struct {
 	After       []json.RawMessage `json:"after,omitempty"`
 	Filter      *ListFilter       `json:"filter,omitempty"`
@@ -263,16 +543,42 @@ type TaskPageRequest struct {
 	Limit       *int64            `json:"limit,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskPageRequest) Validate() error {
+	if v.Filter != nil {
+		if err := Check(v.Filter, "filter"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // TaskProgress: executions: the count; byState: counts by execution state.
 type TaskProgress struct {
 	ByState    json.RawMessage `json:"byState"`
 	Executions json.RawMessage `json:"executions"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskProgress) Validate() error {
+	if v.ByState == nil {
+		return Missing("byState")
+	}
+	if v.Executions == nil {
+		return Missing("executions")
+	}
+	return nil
+}
+
 type TaskReleaseReply = TaskDetail
 
 type TaskReleaseRequest struct {
 	TaskId string `json:"taskId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskReleaseRequest) Validate() error {
+	return nil
 }
 
 type TaskRequestAcceptanceReply = QuestionRow
@@ -282,6 +588,11 @@ type TaskRequestAcceptanceRequest struct {
 	ArtifactIds []string `json:"artifactIds,omitempty"`
 	TaskId      string   `json:"taskId"`
 	Text        *string  `json:"text,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskRequestAcceptanceRequest) Validate() error {
+	return nil
 }
 
 // TaskState: task_state in go/coordinator/schema.sql.
@@ -300,10 +611,25 @@ const (
 // TaskStateValues lists every TaskState in schema order.
 var TaskStateValues = []TaskState{TaskStateQueued, TaskStateInProgress, TaskStateWaiting, TaskStatePaused, TaskStateCompleted, TaskStateFailed, TaskStateCancelled}
 
+// Valid: v is one of the schema's values.
+func (v TaskState) Valid() bool {
+	for _, x := range TaskStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type TaskTakeReply = TaskDetail
 
 type TaskTakeRequest struct {
 	TaskId string `json:"taskId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskTakeRequest) Validate() error {
+	return nil
 }
 
 type TaskUpdateReply = TaskDetail
@@ -316,6 +642,11 @@ type TaskUpdateRequest struct {
 	ResultDestination *string `json:"resultDestination,omitempty"`
 	TaskId            string  `json:"taskId"`
 	Title             *string `json:"title,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskUpdateRequest) Validate() error {
+	return nil
 }
 
 func init() {

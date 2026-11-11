@@ -259,10 +259,10 @@ func blockedConnections(q *Request) (map[string]bool, error) {
 }
 
 // declaredNames: the declared artifact names, each once, in declaration order; non-strings are not names.
-func declaredNames(declared []any) []string {
+func declaredNames(declared []string) []string {
 	out, seen := []string{}, map[string]bool{}
-	for _, d := range declared {
-		if s, ok := d.(string); ok && !seen[s] {
+	for _, s := range declared {
+		if !seen[s] {
 			seen[s] = true
 			out = append(out, s)
 		}
@@ -271,7 +271,7 @@ func declaredNames(declared []any) []string {
 }
 
 // artifactGate: a completed start waits for its required artifacts; a missing or failed one fails it.
-func artifactGate(q *Request, e doc, declared []any) (doc, error) {
+func artifactGate(q *Request, e doc, declared []string) (doc, error) {
 	names := declaredNames(declared)
 	r, err := artifactRequirement(q.ctx(), q.app, astr(e["id"]), names)
 	if err != nil {
@@ -300,7 +300,7 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 		if err != nil || e == nil || e["state"] != "waiting" || e["waitReason"] != "artifacts" {
 			return err
 		}
-		r, err := artifactRequirement(ctx, a, id, declaredNames(anys(e["declaredArtifacts"])))
+		r, err := artifactRequirement(ctx, a, id, declaredNames(strs(e["declaredArtifacts"])))
 		if err != nil {
 			return err
 		}

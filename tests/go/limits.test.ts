@@ -22,7 +22,7 @@ test('L1 subscription_limits_refresh sends account-inspect mode limits to an onl
   const h = (path: string, body: object) => call('POST', path, body, {authorization: 'Bearer ' + secret});
   ok(await h('/api/hosts/poll', poll));
   const a = ok(await op('account_create', {name: 'limits-sub', harness: 'codex'}));
-  ok(await h('/api/hosts/accounts', {accountId: a.id, hostId: 'trial-host', binding: 'limits-bind', platform: 'darwin', readiness: 'ready'}));
+  ok(await h('/api/hosts/accounts', {accountId: a.id, hostId: 'trial-host', binding: 'limits-bind', platform: 'darwin', readiness: 'ready', nativeLoginObserved: null, quota: 'unknown', reason: 'ready'}));
   assert.equal((await op('subscription_limits_refresh', {subscriptionId: a.id}, MEMBER)).status, 404, 'only the holder or the owner refreshes; another person\'s subscription is not found');
   const r = ok(await op('subscription_limits_refresh', {subscriptionId: a.id}));
   assert.equal(r.sent.length, 1, JSON.stringify(r));

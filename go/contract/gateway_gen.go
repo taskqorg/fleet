@@ -11,10 +11,20 @@ type CallKeyDisabled struct {
 	Status int64  `json:"status"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *CallKeyDisabled) Validate() error {
+	return nil
+}
+
 type CallKeyProblem struct {
 	Key     string `json:"key"`
 	Message string `json:"message"`
 	Status  int64  `json:"status"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CallKeyProblem) Validate() error {
+	return nil
 }
 
 // CallLine: One provider call: a spool line written by the gateway, and the result of contract.GatewayCall (coordinator api steps, executor connection MCP server), which adds output and leaves the spool-only fields (usage, key fields, startedAt, ms) empty; provider usage stays inside output.
@@ -36,6 +46,29 @@ type CallLine struct {
 	Usage          *CallUsage       `json:"usage,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *CallLine) Validate() error {
+	if v.Disabled != nil {
+		if err := Check(v.Disabled, "disabled"); err != nil {
+			return err
+		}
+	}
+	if v.KeyProblem != nil {
+		if err := Check(v.KeyProblem, "keyProblem"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Outcome, "outcome"); err != nil {
+		return err
+	}
+	if v.Usage != nil {
+		if err := Check(v.Usage, "usage"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type CallOutcome string
 
 const (
@@ -47,9 +80,24 @@ const (
 // CallOutcomeValues lists every CallOutcome in schema order.
 var CallOutcomeValues = []CallOutcome{CallOutcomeOk, CallOutcomeError, CallOutcomeUnknown}
 
+// Valid: v is one of the schema's values.
+func (v CallOutcome) Valid() bool {
+	for _, x := range CallOutcomeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type CallUsage struct {
 	Amount int64  `json:"amount"`
 	Unit   string `json:"unit"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CallUsage) Validate() error {
+	return nil
 }
 
 type GatewayConnection struct {
@@ -60,10 +108,34 @@ type GatewayConnection struct {
 	Tools    []string     `json:"tools"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *GatewayConnection) Validate() error {
+	if v.Blocked == nil {
+		return Missing("blocked")
+	}
+	if v.Keys == nil {
+		return Missing("keys")
+	}
+	for i := range v.Keys {
+		if err := Check(&v.Keys[i], "keys"); err != nil {
+			return err
+		}
+	}
+	if v.Tools == nil {
+		return Missing("tools")
+	}
+	return nil
+}
+
 type GatewayKey struct {
 	EnabledAt *int64 `json:"enabledAt,omitempty"`
 	Id        string `json:"id"`
 	State     string `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GatewayKey) Validate() error {
+	return nil
 }
 
 // GatewayProvider: A provider catalogue entry (go/coordinator/providers.go); the gateway reads only these fields.
@@ -72,6 +144,19 @@ type GatewayProvider struct {
 	KeyHeader *string                `json:"keyHeader,omitempty"`
 	Tools     map[string]GatewayTool `json:"tools"`
 	Usage     *GatewayUsageSource    `json:"usage,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GatewayProvider) Validate() error {
+	if v.Tools == nil {
+		return Missing("tools")
+	}
+	if v.Usage != nil {
+		if err := Check(v.Usage, "usage"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type GatewayRunToken struct {
@@ -83,6 +168,14 @@ type GatewayRunToken struct {
 	Sha256       string   `json:"sha256"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *GatewayRunToken) Validate() error {
+	if v.Connections == nil {
+		return Missing("connections")
+	}
+	return nil
+}
+
 type GatewaySnapshot struct {
 	Connections      map[string]GatewayConnection `json:"connections"`
 	GeneratedMs      int64                        `json:"generated_ms"`
@@ -90,6 +183,25 @@ type GatewaySnapshot struct {
 	Schema           int64                        `json:"schema"`
 	Tokens           []GatewayRunToken            `json:"tokens"`
 	UsageTokenSha256 string                       `json:"usageTokenSha256"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GatewaySnapshot) Validate() error {
+	if v.Connections == nil {
+		return Missing("connections")
+	}
+	if v.Providers == nil {
+		return Missing("providers")
+	}
+	if v.Tokens == nil {
+		return Missing("tokens")
+	}
+	for i := range v.Tokens {
+		if err := Check(&v.Tokens[i], "tokens"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type GatewayTool struct {
@@ -103,8 +215,18 @@ type GatewayTool struct {
 	UsageField   *string                    `json:"usageField,omitempty"`
 }
 
+// Validate: the schema's required fields and enums (see Check).
+func (v *GatewayTool) Validate() error {
+	return nil
+}
+
 // GatewayUsageSource: Per-key usage report (reconcile): GET path, and the dotted field holding the number.
 type GatewayUsageSource struct {
 	Field string `json:"field"`
 	Path  string `json:"path"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GatewayUsageSource) Validate() error {
+	return nil
 }

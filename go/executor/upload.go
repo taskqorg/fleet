@@ -412,7 +412,7 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		os.Remove(tmp)
 		return out, f
 	case "get":
-		r, f := c.post("/api/hosts/artifacts/get", contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: jStr(body, "executionId"), ArtifactId: jStr(body, "artifactId")})
+		r, f := c.post("/api/hosts/artifacts/get", contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: optStr(jStr(body, "executionId")), ArtifactId: jStr(body, "artifactId")})
 		if f != nil {
 			return nil, f
 		}

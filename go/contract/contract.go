@@ -33,3 +33,38 @@ func addOperation(name string, o Operation) {
 	}
 	Operations[name] = o
 }
+
+// FieldError: a body field the schema requires is missing (Missing) or holds a value outside its enum.
+type FieldError struct {
+	Path    string
+	Missing bool
+}
+
+func (e *FieldError) Error() string {
+	if e.Missing {
+		return "Expected " + e.Path
+	}
+	return "Invalid " + e.Path
+}
+
+// Missing: the required field name is absent or empty.
+func Missing(name string) error { return &FieldError{Path: name, Missing: true} }
+
+// Check validates a nested value: a generated struct (Validate) or enum (Valid); other values pass. The error names the
+// field path from the outer struct.
+func Check(v any, name string) error {
+	switch x := v.(type) {
+	case interface{ Validate() error }:
+		if err := x.Validate(); err != nil {
+			if fe, ok := err.(*FieldError); ok {
+				return &FieldError{Path: name + "." + fe.Path, Missing: fe.Missing}
+			}
+			return err
+		}
+	case interface{ Valid() bool }:
+		if !x.Valid() {
+			return &FieldError{Path: name}
+		}
+	}
+	return nil
+}
