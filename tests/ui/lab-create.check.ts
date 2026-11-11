@@ -1,7 +1,6 @@
 // Requirement: laboratory.md Create experiment. Risk: UI starts paid work, loses a draft, or repeats an uncertain POST.
 // CI only: the owner Mac must not launch Chromium, including through a wrapper.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 import { checkServer } from './seed.ts';
@@ -10,11 +9,12 @@ const { origin, seed, close } = await checkServer({ store: true });
 const bytes = readFileSync('config/lab/examples/fleet-typed-decision-smoke.json');
 seed.execution({ id: 'example-source', kind: 'tool_run', state: 'succeeded' });
 seed.artifact({ id: 'approved-example', executionId: 'example-source', name: 'UI approved example', mediaType: 'application/json', bytes });
-// Same fake store fixture, but an example lives in lab scope and carries an approval.
-const [{ endpoint }] = seed.rows('SELECT endpoint FROM store WHERE id=\'check-store\'');
-const hash = createHash('sha256').update(bytes).digest('hex');
-assert.ok((await fetch(`${endpoint}/fleet/_/lab/${hash}`, { method: 'PUT', body: bytes })).ok);
-seed.sql("UPDATE artifact SET scope='lab',role='example',approved_at=now() WHERE id='approved-example'");
+// Import the approved lab artifact through the real signed-S3 core route; the initial artifact registers the fake store.
+const imported = await fetch(origin + '/api/ops/lab_examples_add', { method: 'POST', headers: { 'content-type': 'application/json', origin },
+  body: JSON.stringify({ examples: [JSON.parse(bytes.toString())], approved: true }) });
+const importedBody = await imported.json() as { examples: { artifactId: string }[]; message?: string };
+assert.equal(imported.status, 200, JSON.stringify(importedBody));
+const exampleId = importedBody.examples[0].artifactId;
 const counts = () => seed.rows("SELECT (SELECT count(*) FROM execution) AS executions,(SELECT count(*) FROM document WHERE kind='command') AS commands,(SELECT count(*) FROM document WHERE kind='pipeline-run') AS runs")[0];
 const before = counts();
 const browser = await chromium.launch();
@@ -35,7 +35,7 @@ try {
     await pick(/^Project:/, 'Projects', 'hello-world');
     await pick(/^Pipeline:/, 'Pipelines', 'typed-decision');
     await p.getByRole('group', { name: 'Experiment kind', exact: true }).getByRole('button', { name: kind, exact: true }).click();
-    await pick(/^Approved examples:/, 'Approved examples', 'approved-example', true);
+    await pick(/^Approved examples:/, 'Approved examples', exampleId, true);
     await p.getByRole('textbox', { name: 'Goal', exact: true }).fill('Create only; retain the real experiment record');
     await p.getByRole('textbox', { name: 'Hypothesis', exact: true }).fill('Draft creation performs no execution or provider work');
     if (kind === 'ab') { await p.getByRole('button', { name: 'Add variant', exact: true }).click(); await p.getByRole('textbox', { name: 'Variant 2 label', exact: true }).fill('B'); }
