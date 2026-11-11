@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"fleet/contract"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -2101,6 +2103,26 @@ func labIDArg(v any, what string) (string, error) {
 
 // labOps: every Lab operation; the same names serve POST /api/ops/<name> and the /api/lab routes. Long operations run
 // their own transactions (q.tx nil); the rest run in the route's transaction.
+// labShapes: each Lab operation's contract types (contracts/ops.schema.json); registration fails without one.
+var labShapes = map[string]func(handler) handler{
+	"lab_cell_action":       shaped[contract.LabCellActionRequest, contract.LabCellActionReply],
+	"lab_example_get":       shaped[contract.LabExampleGetRequest, contract.LabExampleGetReply],
+	"lab_examples_add":      shaped[contract.LabExamplesAddRequest, contract.LabExamplesAddReply],
+	"lab_examples_list":     shaped[contract.LabExamplesListRequest, contract.LabExamplesListReply],
+	"lab_experiment_action": shaped[contract.LabExperimentActionRequest, contract.LabExperimentActionReply],
+	"lab_experiment_create": shaped[contract.LabExperimentCreateRequest, contract.LabExperimentCreateReply],
+	"lab_experiment_decide": shaped[contract.LabExperimentDecideRequest, contract.LabExperimentDecideReply],
+	"lab_experiment_get":    shaped[contract.LabExperimentGetRequest, contract.LabExperimentGetReply],
+	"lab_experiment_note":   shaped[contract.LabExperimentNoteRequest, contract.LabExperimentNoteReply],
+	"lab_experiments_list":  shaped[contract.LabExperimentsListRequest, contract.LabExperimentsListReply],
+	"lab_promote":           shaped[contract.LabPromoteRequest, contract.LabPromoteReply],
+	"lab_rating_create":     shaped[contract.LabRatingCreateRequest, contract.LabRatingCreateReply],
+	"lab_rating_get":        shaped[contract.LabRatingGetRequest, contract.LabRatingGetReply],
+	"lab_ratings_list":      shaped[contract.LabRatingsListRequest, contract.LabRatingsListReply],
+	"lab_registry":          shaped[contract.LabRegistryRequest, contract.LabRegistryReply],
+	"lab_score_correct":     shaped[contract.LabScoreCorrectRequest, contract.LabScoreCorrectReply],
+}
+
 var labOps = map[string]struct {
 	long, read bool
 	h          func(q *Request, b doc) (any, error)
@@ -2247,17 +2269,21 @@ func init() {
 	// /api/ops/lab_*: registered through the long dispatcher below, since an operation() always runs in a transaction.
 	for name, op := range labOps {
 		name, op := name, op
+		shape := labShapes[name]
+		if shape == nil {
+			panic("lab operation " + name + " has no contract types (labShapes)")
+		}
 		if op.long {
-			longOp(name, func(q *Request) (any, error) {
+			longOp(name, shape(func(q *Request) (any, error) {
 				b := body(q)
 				return runLabOp(name, q, b)
-			})
+			}))
 			continue
 		}
-		gatedOp(name, op.read, func(q *Request) (any, error) {
+		gatedOp(name, op.read, shape(func(q *Request) (any, error) {
 			b := body(q)
 			return op.h(q, b)
-		})
+		}))
 	}
 	r := func(pattern, name string, body func(q *Request) (doc, error)) {
 		gatedLongRoute(pattern, func(q *Request) (any, error) {

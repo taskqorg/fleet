@@ -1153,12 +1153,14 @@ type HostsUpdateRequest struct {
 	Intake     *string         `json:"intake,omitempty"`
 }
 
+// LabCellActionReply: An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability.
 type LabCellActionReply = map[string]json.RawMessage
 
+// LabCellActionRequest: action cancel or retry.
 type LabCellActionRequest struct {
-	Action       *string         `json:"action,omitempty"`
-	Cell         json.RawMessage `json:"cell,omitempty"`
-	ExperimentId *string         `json:"experimentId,omitempty"`
+	Action       string `json:"action"`
+	Cell         string `json:"cell"`
+	ExperimentId string `json:"experimentId"`
 }
 
 type LabCompareMethodsReply struct {
@@ -1174,85 +1176,65 @@ type LabCompareMethodsRequest struct {
 }
 
 type LabExampleGetReply struct {
-	ArtifactId json.RawMessage `json:"artifactId,omitempty"`
-	Example    json.RawMessage `json:"example,omitempty"`
-	State      json.RawMessage `json:"state,omitempty"`
+	ArtifactId string          `json:"artifactId"`
+	Example    json.RawMessage `json:"example"`
+	State      json.RawMessage `json:"state"`
 }
 
 type LabExampleGetRequest struct {
-	ArtifactId *string `json:"artifactId,omitempty"`
+	ArtifactId string `json:"artifactId"`
 }
 
 type LabExamplesAddReply struct {
-	Examples json.RawMessage `json:"examples,omitempty"`
+	Examples []map[string]json.RawMessage `json:"examples"`
 }
 
 type LabExamplesAddRequest struct {
 	Approved  *bool           `json:"approved,omitempty"`
-	Bytes     *float64        `json:"bytes,omitempty"`
-	Examples  json.RawMessage `json:"examples,omitempty"`
-	Hash      json.RawMessage `json:"hash,omitempty"`
-	Meta      json.RawMessage `json:"meta,omitempty"`
-	Name      *string         `json:"name,omitempty"`
-	Old       json.RawMessage `json:"old,omitempty"`
+	Examples  json.RawMessage `json:"examples"`
 	ProjectId *string         `json:"projectId,omitempty"`
 }
 
 type LabExamplesListReply struct {
-	Examples json.RawMessage `json:"examples,omitempty"`
+	Examples []map[string]json.RawMessage `json:"examples"`
 }
 
 type LabExamplesListRequest struct {
 	State *string `json:"state,omitempty"`
 }
 
+// LabExperimentActionReply: An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability.
 type LabExperimentActionReply = map[string]json.RawMessage
 
+// LabExperimentActionRequest: action launch, pause, resume or stop.
 type LabExperimentActionRequest struct {
-	Action       *string `json:"action,omitempty"`
-	ExperimentId *string `json:"experimentId,omitempty"`
+	Action       string `json:"action"`
+	ExperimentId string `json:"experimentId"`
 }
 
-type LabExperimentCreateReply struct {
-	Cell        json.RawMessage `json:"cell,omitempty"`
-	Comparable  json.RawMessage `json:"comparable,omitempty"`
-	Confounders json.RawMessage `json:"confounders,omitempty"`
-	DurationMs  json.RawMessage `json:"durationMs,omitempty"`
-	FinishedAt  json.RawMessage `json:"finishedAt,omitempty"`
-	Id          json.RawMessage `json:"id,omitempty"`
-	Observation json.RawMessage `json:"observation,omitempty"`
-	Problem     json.RawMessage `json:"problem,omitempty"`
-	Scores      json.RawMessage `json:"scores,omitempty"`
-	Spend       json.RawMessage `json:"spend,omitempty"`
-	StartedAt   json.RawMessage `json:"startedAt,omitempty"`
-	State       json.RawMessage `json:"state,omitempty"`
-}
+// LabExperimentCreateReply: An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability.
+type LabExperimentCreateReply = map[string]json.RawMessage
 
-// LabExperimentCreateRequest: goal and hypothesis are required at launch (fleet-lab.md, Experiment record).
+// LabExperimentCreateRequest: See fleet-lab.md, Experiment record.
 type LabExperimentCreateRequest struct {
 	Budgets          json.RawMessage `json:"budgets,omitempty"`
-	DecisionRule     *string         `json:"decisionRule,omitempty"`
+	DecisionRule     json.RawMessage `json:"decisionRule,omitempty"`
 	Evaluators       json.RawMessage `json:"evaluators,omitempty"`
 	Examples         json.RawMessage `json:"examples,omitempty"`
 	Goal             *string         `json:"goal,omitempty"`
 	Hypothesis       *string         `json:"hypothesis,omitempty"`
 	Kind             *string         `json:"kind,omitempty"`
-	LabGroup         *string         `json:"labGroup,omitempty"`
+	LabGroup         json.RawMessage `json:"labGroup,omitempty"`
 	PipelineId       *string         `json:"pipelineId,omitempty"`
 	PrimaryEvaluator json.RawMessage `json:"primaryEvaluator,omitempty"`
 	ProjectId        *string         `json:"projectId,omitempty"`
-	Repeats          *float64        `json:"repeats,omitempty"`
-	Strategy         *string         `json:"strategy,omitempty"`
+	Repeats          json.RawMessage `json:"repeats,omitempty"`
+	Strategy         json.RawMessage `json:"strategy,omitempty"`
 	Variants         json.RawMessage `json:"variants,omitempty"`
 }
 
-type LabExperimentDecideReply struct {
-	DecidedAt      json.RawMessage `json:"decidedAt,omitempty"`
-	DecidedBy      json.RawMessage `json:"decidedBy,omitempty"`
-	Decision       json.RawMessage `json:"decision,omitempty"`
-	DecisionReason json.RawMessage `json:"decisionReason,omitempty"`
-	Id             json.RawMessage `json:"id,omitempty"`
-}
+// LabExperimentDecideReply: An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability.
+type LabExperimentDecideReply = map[string]json.RawMessage
 
 type LabExperimentDecideRequest struct {
 	Decision     string  `json:"decision"`
@@ -1260,49 +1242,22 @@ type LabExperimentDecideRequest struct {
 	Reason       *string `json:"reason,omitempty"`
 }
 
-type LabExperimentGetReply struct {
-	Baseline       *string             `json:"baseline,omitempty"`
-	Cell           json.RawMessage     `json:"cell,omitempty"`
-	Comparable     json.RawMessage     `json:"comparable,omitempty"`
-	Confounders    json.RawMessage     `json:"confounders,omitempty"`
-	DecidedAt      json.RawMessage     `json:"decidedAt,omitempty"`
-	DecidedBy      json.RawMessage     `json:"decidedBy,omitempty"`
-	Decision       json.RawMessage     `json:"decision,omitempty"`
-	DecisionReason json.RawMessage     `json:"decisionReason,omitempty"`
-	DecisionRule   json.RawMessage     `json:"decisionRule,omitempty"`
-	DurationMs     json.RawMessage     `json:"durationMs,omitempty"`
-	FinishedAt     json.RawMessage     `json:"finishedAt,omitempty"`
-	Goal           json.RawMessage     `json:"goal,omitempty"`
-	Hypothesis     json.RawMessage     `json:"hypothesis,omitempty"`
-	Id             json.RawMessage     `json:"id,omitempty"`
-	LabGroup       json.RawMessage     `json:"labGroup,omitempty"`
-	LaunchedAt     json.RawMessage     `json:"launchedAt,omitempty"`
-	Notes          []ExperimentNote    `json:"notes,omitempty"`
-	Observation    json.RawMessage     `json:"observation,omitempty"`
-	Problem        json.RawMessage     `json:"problem,omitempty"`
-	Scores         json.RawMessage     `json:"scores,omitempty"`
-	Spend          json.RawMessage     `json:"spend,omitempty"`
-	StartedAt      json.RawMessage     `json:"startedAt,omitempty"`
-	State          json.RawMessage     `json:"state,omitempty"`
-	VsBaseline     []VariantVsBaseline `json:"vsBaseline,omitempty"`
-}
+// LabExperimentGetReply: An experiment view (expView). Planned with the definition editors: baseline and vsBaseline.
+type LabExperimentGetReply = map[string]json.RawMessage
 
 type LabExperimentGetRequest struct {
-	ExperimentId *string `json:"experimentId,omitempty"`
+	ExperimentId string `json:"experimentId"`
 }
 
-type LabExperimentNoteReply struct {
-	Id   *string `json:"id,omitempty"`
-	Kind *string `json:"kind,omitempty"`
-	Text *string `json:"text,omitempty"`
-}
+// LabExperimentNoteReply: An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability.
+type LabExperimentNoteReply = map[string]json.RawMessage
 
 type LabExperimentNoteRequest struct {
-	ExperimentId string  `json:"experimentId"`
-	Field        *string `json:"field,omitempty"`
-	Kind         string  `json:"kind"`
-	Text         string  `json:"text"`
-	Value        *string `json:"value,omitempty"`
+	ExperimentId string          `json:"experimentId"`
+	Field        *string         `json:"field,omitempty"`
+	Kind         *string         `json:"kind,omitempty"`
+	Text         *string         `json:"text,omitempty"`
+	Value        json.RawMessage `json:"value,omitempty"`
 }
 
 type LabExperimentPromoteReply struct {
@@ -1318,58 +1273,40 @@ type LabExperimentPromoteRequest struct {
 }
 
 type LabExperimentsListReply struct {
-	Experiments json.RawMessage `json:"experiments,omitempty"`
+	Experiments []map[string]json.RawMessage `json:"experiments"`
 }
 
 type LabExperimentsListRequest = map[string]json.RawMessage
 
 type LabPromoteReply struct {
-	CataloguePatch json.RawMessage `json:"cataloguePatch,omitempty"`
-	Method         json.RawMessage `json:"method,omitempty"`
-	Recommendation json.RawMessage `json:"recommendation,omitempty"`
+	CataloguePatch json.RawMessage `json:"cataloguePatch"`
+	Method         json.RawMessage `json:"method"`
+	Recommendation json.RawMessage `json:"recommendation"`
 }
 
 type LabPromoteRequest struct {
-	ExperimentId *string `json:"experimentId,omitempty"`
-	Variant      *string `json:"variant,omitempty"`
+	ExperimentId string `json:"experimentId"`
+	Variant      string `json:"variant"`
 }
 
-type LabRatingCreateReply struct {
-	Answer            json.RawMessage `json:"answer,omitempty"`
-	ExampleArtifactId json.RawMessage `json:"exampleArtifactId,omitempty"`
-	ExperimentId      json.RawMessage `json:"experimentId,omitempty"`
-	Form              json.RawMessage `json:"form,omitempty"`
-	Id                json.RawMessage `json:"id,omitempty"`
-	Items             json.RawMessage `json:"items,omitempty"`
-	Kind              json.RawMessage `json:"kind,omitempty"`
-	State             json.RawMessage `json:"state,omitempty"`
-	Text              json.RawMessage `json:"text,omitempty"`
-}
+// LabRatingCreateReply: A rating question for a person.
+type LabRatingCreateReply = map[string]json.RawMessage
 
 type LabRatingCreateRequest struct {
-	ExperimentId *string  `json:"experimentId,omitempty"`
-	Form         *string  `json:"form,omitempty"`
-	TrialIds     []string `json:"trialIds,omitempty"`
+	ExperimentId string   `json:"experimentId"`
+	Form         string   `json:"form"`
+	TrialIds     []string `json:"trialIds"`
 }
 
-type LabRatingGetReply struct {
-	Answer            json.RawMessage `json:"answer,omitempty"`
-	ExampleArtifactId json.RawMessage `json:"exampleArtifactId,omitempty"`
-	ExperimentId      json.RawMessage `json:"experimentId,omitempty"`
-	Form              json.RawMessage `json:"form,omitempty"`
-	Id                json.RawMessage `json:"id,omitempty"`
-	Items             json.RawMessage `json:"items,omitempty"`
-	Kind              json.RawMessage `json:"kind,omitempty"`
-	State             json.RawMessage `json:"state,omitempty"`
-	Text              json.RawMessage `json:"text,omitempty"`
-}
+// LabRatingGetReply: A rating question for a person.
+type LabRatingGetReply = map[string]json.RawMessage
 
 type LabRatingGetRequest struct {
-	QuestionId *string `json:"questionId,omitempty"`
+	QuestionId string `json:"questionId"`
 }
 
 type LabRatingsListReply struct {
-	Ratings json.RawMessage `json:"ratings,omitempty"`
+	Ratings []map[string]json.RawMessage `json:"ratings"`
 }
 
 type LabRatingsListRequest struct {
@@ -1378,30 +1315,18 @@ type LabRatingsListRequest struct {
 }
 
 type LabRegistryReply struct {
-	UseCases json.RawMessage `json:"useCases,omitempty"`
+	UseCases []map[string]json.RawMessage `json:"useCases"`
 }
 
 type LabRegistryRequest = map[string]json.RawMessage
 
-type LabScoreCorrectReply struct {
-	CreatedAt         json.RawMessage `json:"createdAt,omitempty"`
-	Evaluator         json.RawMessage `json:"evaluator,omitempty"`
-	EvaluatorVersion  json.RawMessage `json:"evaluatorVersion,omitempty"`
-	ExperimentId      json.RawMessage `json:"experimentId,omitempty"`
-	Form              json.RawMessage `json:"form,omitempty"`
-	Id                json.RawMessage `json:"id,omitempty"`
-	QuestionId        json.RawMessage `json:"questionId,omitempty"`
-	Rationale         json.RawMessage `json:"rationale,omitempty"`
-	ReplacesScoreId   json.RawMessage `json:"replacesScoreId,omitempty"`
-	SourceExecutionId json.RawMessage `json:"sourceExecutionId,omitempty"`
-	TrialIds          json.RawMessage `json:"trialIds,omitempty"`
-	Value             json.RawMessage `json:"value,omitempty"`
-}
+// LabScoreCorrectReply: The correcting score row.
+type LabScoreCorrectReply = map[string]json.RawMessage
 
 type LabScoreCorrectRequest struct {
-	Rationale *string `json:"rationale,omitempty"`
-	ScoreId   *string `json:"scoreId,omitempty"`
-	Value     *string `json:"value,omitempty"`
+	Rationale *string         `json:"rationale,omitempty"`
+	ScoreId   string          `json:"scoreId"`
+	Value     json.RawMessage `json:"value"`
 }
 
 // LimitEmpty: when a line reaches 0: at a time, not before the line ends, or unknown
