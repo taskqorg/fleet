@@ -1,9 +1,10 @@
-// Requirement: Conversations lists and membership stay scoped, complete and responsive under retained history.
+// Requirement: R2 shared core and R3 reliability/authority: Conversations lists and membership remain scoped and complete under retained history.
 // Risk: RLS prevents a JSON sessionId index condition, so correlated history scans multiply by every session.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {startCoordinator} from '../harness.ts';
 
+// R2, R3; risk: RLS turns per-session JSON history lookups into repeated scans and hides/leaks list membership.
 // Fixture watchdog owns cleanup; this is not a product latency threshold or a coordinator timeout change.
 test('sessions_list and membership with production-shaped RLS history retain title, activity, counts and actor secrecy', {timeout: 30_000}, async t => {
   const c = await startCoordinator({name: 'sesslist'}); t.after(() => c.stop());
