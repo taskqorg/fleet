@@ -1,5 +1,5 @@
 // Fleet controls. Specs: docs/design-system/controls/*.md. Styling: styles.css with tokens only.
-import type { ComponentChildren } from 'preact';
+import type { ComponentChildren, TargetedMouseEvent } from 'preact';
 import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages, stepKinds, type StepKind } from './registry.ts';
 import { type Measured, type Kind, measured, age, bytes, exact, stamp, percent, duration, agentLabel } from './format.ts';
@@ -20,7 +20,7 @@ export function Icon({ name, label }: { name: IconName; label?: string }) {
 
 type ButtonProps = {
   label: string; icon?: IconName; iconOnly?: boolean; kind?: 'primary' | 'default' | 'quiet' | 'danger';
-  kbd?: string; rowLink?: boolean; busy?: boolean; disabledReason?: string; pressed?: boolean; onClick?: () => void;
+  kbd?: string; rowLink?: boolean; busy?: boolean; disabledReason?: string; pressed?: boolean; onClick?: (event: TargetedMouseEvent<HTMLButtonElement>) => void;
 };
 export function Button(p: ButtonProps) {
   const disabled = p.busy || !!p.disabledReason;
