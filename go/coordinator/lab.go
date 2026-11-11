@@ -36,9 +36,9 @@ var (
 	labCommit    = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 	labLabel     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,59}$`)
 	draftExample = regexp.MustCompile(`/examples/[^/]+\.json$`)
-	labOverrides = []string{"profile", "model", "skills", "prompt", "web_route", "account", "host"}
+	labOverrides = []string{"profile", "model", "skills", "prompt", "web_route", "account", "host", "arguments"}
 	// labVariantKeys: a Lab variant's keys; bands steer its typed evaluator, never a run, so runs take labOverrides only.
-	labVariantKeys = append(append([]string{}, labOverrides...), "bands", "arguments")
+	labVariantKeys = append(append([]string{}, labOverrides...), "bands")
 )
 
 func labStr(v any, what string, max int) (string, error) {
