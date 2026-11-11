@@ -181,6 +181,27 @@ type live struct {
 	timeoutMs *int64 // the script payload's timeout_ms, for the script.timeout event
 	trial     *[2]string
 	blocks    Blocks
+	// Resources of the owned process tree (fleet-telemetry.md, Process readings): start, peak resident bytes, and each
+	// pid's last CPU seconds (a gone pid keeps its last reading).
+	started time.Time
+	peakRSS uint64
+	cpu     map[int]float64
+	spanned bool // the execution span is written
+}
+
+// account adds one snapshot of the owned tree to the run's peak memory and CPU.
+func (l *live) account(table []proc) {
+	if l.cpu == nil {
+		l.cpu = map[int]float64{}
+	}
+	var rss uint64
+	for _, p := range table {
+		if _, ok := l.owned[p.pid]; ok {
+			rss += p.rssKB * 1024
+			l.cpu[p.pid] = max(l.cpu[p.pid], p.cpu)
+		}
+	}
+	l.peakRSS = max(l.peakRSS, rss)
 }
 
 func (l *live) exitedNow() bool {
@@ -1073,7 +1094,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	pw.Close()
 	exited := make(chan struct{})
-	l := &live{cmd: cmd, exited: exited, command: c, native: native, seq: 2, owned: map[int]string{}, lastSample: time.Now()}
+	l := &live{cmd: cmd, exited: exited, command: c, native: native, seq: 2, owned: map[int]string{}, lastSample: time.Now(), started: time.Now()}
 	go func() { cmd.Wait(); l.state = cmd.ProcessState; close(exited) }()
 	kill := func() { cmd.Process.Kill(); <-exited; closeAll(); e.release(execution) }
 	if nativeInput != nil && !protocol {
@@ -1306,7 +1327,7 @@ func (e *executor) script(c M, execution, session string) error {
 	}
 	pid := cmd.Process.Pid
 	exited := make(chan struct{})
-	l := &live{cmd: cmd, exited: exited, command: c, seq: 2, completed: true, owned: map[int]string{}, lastSample: time.Now(), group: pid, trial: trial}
+	l := &live{cmd: cmd, exited: exited, command: c, seq: 2, completed: true, owned: map[int]string{}, lastSample: time.Now(), started: time.Now(), group: pid, trial: trial}
 	go func() { cmd.Wait(); l.state = cmd.ProcessState; close(exited) }()
 	ident, err := identity(pid)
 	if err != nil {
@@ -1538,6 +1559,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 		c := int64(l.state.ExitCode())
 		code = &c
 	}
+	executionSpan(execution, l)
 	l.seq++
 	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{ExitCode: code, StdoutClosed: l.eof, ObservedOwnedProcessesRemaining: new(bool), CleanupUnknown: l.cleanupUnknown, StderrTail: stderrTail(e.sessionDir(jStr(l.command, "sessionId")), execution, code)}); err != nil {
 		return false, err
@@ -1720,6 +1742,7 @@ func (l *live) observe() error {
 	if err != nil {
 		return err
 	}
+	defer l.account(table)
 	for added := true; added; {
 		added = false
 		for _, p := range table {
@@ -1979,6 +2002,7 @@ func runExecutor() error {
 		return err
 	}
 	spawnOutbox(odb, url, token, host)
+	startTelemetry(root, url, token, host)
 	if err := os.MkdirAll(sessions, 0o700); err != nil {
 		return err
 	}
