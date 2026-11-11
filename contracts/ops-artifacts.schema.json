@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Coordinator operations of the artifacts domain; the rules are in ops.schema.json $comment and contracts/README.md.",
+  "operations": {
+    "artifact_copy_retry": {"read": false, "errors": [400, 403, 409]},
+    "artifact_get": {"read": true, "errors": [400, 404]},
+    "artifact_list": {"read": true, "errors": [400]},
+    "artifact_purge": {"read": false, "errors": [400, 403]},
+    "artifact_rule_confirm": {"read": false, "errors": [400, 403, 404]},
+    "artifact_rule_preview": {"read": true, "errors": [400, 403]},
+    "store_set_free_space_warning": {"read": false, "errors": [400, 403, 404]},
+    "stores_list": {"read": true, "errors": []}
+  },
+  "$defs": {
+    "ArtifactCopyRetryReply": {"type": "object", "required": ["retrying"], "properties": {"retrying": {"type": "boolean"}}},
+    "ArtifactCopyRetryRequest": {"type": "object", "required": ["artifactId", "storeId"], "properties": {"artifactId": {"type": "string"}, "storeId": {"type": "string"}}, "additionalProperties": true, "$comment": "Operator only."},
+    "ArtifactCopyState": {"type": "object", "required": ["storeId", "state"], "properties": {"storeId": {"type": "string"}, "state": {"type": "string"}}},
+    "ArtifactGetReply": {"$ref": "#/$defs/ArtifactView"},
+    "ArtifactGetRequest": {"type": "object", "required": ["artifactId"], "properties": {"artifactId": {"type": "string"}}, "additionalProperties": true},
+    "ArtifactListReply": {"type": "object", "required": ["artifacts"], "properties": {"artifacts": {"type": "array", "items": {"$ref": "#/$defs/ArtifactRow"}}, "nextBefore": {"type": ["integer", "null"]}}, "$comment": "nextBefore: only with limit; null on the last page."},
+    "ArtifactListRequest": {"type": "object", "properties": {"executionId": {"type": "string"}, "taskId": {"type": "string"}, "mediaType": {"type": "string"}, "projectId": {"type": "string"}, "q": {"type": "string"}, "states": {"type": "array", "items": {"type": "string"}}, "since": {"type": "number"}, "projectIds": {"type": "array", "items": {"type": ["string", "null"]}}, "limit": {"type": "integer", "minimum": 1}, "before": {"type": "integer"}}},
+    "ArtifactPurgeReply": {"type": "object", "required": ["artifacts", "deleted", "pending"], "properties": {"artifacts": {"type": "integer"}, "deleted": {"type": "integer"}, "pending": {"type": "integer"}}},
+    "ArtifactPurgeRequest": {"type": "object", "required": ["contentHash", "reason"], "properties": {"contentHash": {"type": "string"}, "reason": {"type": "string"}, "projectId": {"type": ["string", "null"]}, "scope": {"type": ["string", "null"]}}, "additionalProperties": true, "$comment": "Operator only."},
+    "ArtifactRow": {"type": "object", "required": ["id", "name", "mediaType", "size", "state", "taskId", "executionId", "projectId", "createdAt", "seq"], "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "mediaType": {"type": "string"}, "size": {"type": "integer"}, "state": {"type": "string"}, "taskId": {"type": ["string", "null"]}, "executionId": {"type": ["string", "null"]}, "projectId": {"type": ["string", "null"]}, "createdAt": {"type": "number"}, "seq": {"type": "integer"}}, "additionalProperties": true},
+    "ArtifactRuleConfirmReply": {"type": "object", "required": ["ruleHash", "confirmed"], "properties": {"ruleHash": {"type": "string"}, "confirmed": {"type": "boolean"}}},
+    "ArtifactRuleConfirmRequest": {"type": "object", "required": ["rule"], "properties": {"projectId": {"type": ["string", "null"]}, "rule": {}, "ruleHash": {"type": "string"}}, "additionalProperties": true, "$comment": "Operator only. ruleHash: the preview's hash; a changed rule is 409."},
+    "ArtifactRulePreviewReply": {"type": "object", "required": ["ruleHash", "count", "bytes", "sample"], "properties": {"ruleHash": {"type": "string"}, "count": {"type": "integer"}, "bytes": {"type": "integer"}, "sample": {"type": "array", "items": {"type": "object", "additionalProperties": true}}}, "$comment": "sample: up to 10 matching artifacts (id, name, size)."},
+    "ArtifactRulePreviewRequest": {"type": "object", "required": ["rule"], "properties": {"projectId": {"type": ["string", "null"]}, "rule": {}}, "additionalProperties": true, "$comment": "Operator only. rule: a retention rule of the project settings."},
+    "ArtifactView": {"type": "object", "required": ["id", "legacyId", "projectId", "scope", "executionId", "taskId", "name", "mediaType", "size", "sha256", "required", "role", "derivedFromArtifactId", "previousArtifactId", "state", "error", "copies", "availability"], "properties": {"id": {"type": "string"}, "legacyId": {"type": ["string", "null"]}, "projectId": {"type": ["string", "null"]}, "scope": {"type": "string"}, "executionId": {"type": ["string", "null"]}, "taskId": {"type": ["string", "null"]}, "name": {"type": "string"}, "mediaType": {"type": "string"}, "size": {"type": "integer"}, "sha256": {"type": "string"}, "required": {"type": "boolean"}, "role": {"type": "string"}, "derivedFromArtifactId": {"type": ["string", "null"]}, "previousArtifactId": {"type": ["string", "null"]}, "state": {"type": "string"}, "error": {"type": ["string", "null"]}, "copies": {"type": "array", "items": {"$ref": "#/$defs/ArtifactCopyState"}}, "availability": {"type": "string"}, "url": {"type": "string"}}, "$comment": "One artifact with its copies; availability available (with a presigned url), unavailable, or the artifact state."},
+    "StoreSetFreeSpaceWarningReply": {"type": "object", "required": ["id", "state"], "properties": {"id": {"type": "string"}, "state": {"type": "string"}}},
+    "StoreSetFreeSpaceWarningRequest": {"type": "object", "required": ["storeId"], "properties": {"storeId": {"type": "string"}, "bytes": {"type": ["number", "null"]}}, "additionalProperties": true, "$comment": "Operator only. bytes: a whole number; null clears the warning."},
+    "StoreView": {"type": "object", "required": ["id", "host_id", "bucket", "endpoint", "local_endpoint", "state", "capacity_bytes", "used_bytes", "free_space_warning_bytes", "requires_logon", "zone", "holder"], "properties": {"id": {"type": "string"}, "host_id": {"type": "string"}, "bucket": {"type": "string"}, "endpoint": {"type": "string"}, "local_endpoint": {"type": ["string", "null"]}, "state": {"type": "string"}, "capacity_bytes": {"type": ["integer", "null"]}, "used_bytes": {"type": ["integer", "null"]}, "free_space_warning_bytes": {"type": ["integer", "null"]}, "requires_logon": {"type": "boolean"}, "zone": {"type": ["string", "null"]}, "holder": {"type": ["string", "null"]}}, "$comment": "One store row (StoreRow in go/coordinator/artifacts.go)."},
+    "StoresListReply": {"type": "object", "required": ["stores", "problems"], "properties": {"stores": {"type": "array", "items": {"$ref": "#/$defs/StoreView"}}, "problems": {"type": "array", "items": {"type": "object", "additionalProperties": true}}}, "$comment": "problems: full stores and placement problems the caller may see, each with its actions."},
+    "StoresListRequest": {"type": "object", "additionalProperties": true}
+  }
+}

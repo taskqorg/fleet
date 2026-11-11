@@ -87,7 +87,7 @@ func (b *Broadcast) close() {
 	b.cancel()
 }
 
-// change: one change row; the JSON is contract.Change (contracts/ops.schema.json), the other fields stay in the coordinator.
+// change: one change row; the JSON is contract.Change (contracts/ops-sessions.schema.json), the other fields stay in the coordinator.
 type change struct {
 	contract.Change
 	ProjectID *string `json:"-"` // watch only (fleet-pm-agent.md §5); not in the stream contract

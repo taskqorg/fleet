@@ -15,7 +15,7 @@ export class OpError extends Error { readonly status: number; constructor(messag
 export type { Ops };
 export type OpName = keyof Ops;
 
-// op calls one operation of contracts/ops.schema.json: the name picks the request and reply types.
+// op calls one operation of contracts/ops-<domain>.schema.json: the name picks the request and reply types.
 export async function op<K extends OpName>(name: K, body: Ops[K]['request'], opts: { signal?: AbortSignal } = {}): Promise<Ops[K]['reply']> {
   let r: Response;
   try {

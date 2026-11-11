@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Coordinator operations of the people domain; the rules are in ops.schema.json $comment and contracts/README.md.",
+  "operations": {
+    "focus_set": {"read": false, "errors": [400, 403, 404, 409]},
+    "list_membership": {"read": true, "errors": [400]},
+    "me": {"read": true, "errors": []},
+    "people_list": {"read": true, "errors": []},
+    "people_set": {"read": false, "long": true, "errors": [400, 403, 409]},
+    "person_settings_get": {"read": true, "errors": [403]},
+    "person_settings_set": {"read": false, "errors": [400, 403]},
+    "view_link": {"read": true, "errors": [400]}
+  },
+  "$defs": {
+    "DispatchOrder": {"$comment": "list: the section 6 order list; soonest_reset: ready candidates by earliest weekly reset among those with weekly left above 0 (fleet-people-access.md section 8)", "type": "string", "enum": ["list", "soonest_reset"]},
+    "Focus": {"type": "object", "required": ["projectIds"], "properties": {"projectIds": {}}},
+    "FocusSetReply": {"type": "object", "required": ["sessionId", "focus"], "properties": {"sessionId": {"type": "string"}, "focus": {"$ref": "#/$defs/Focus"}}},
+    "FocusSetRequest": {"type": "object", "required": ["sessionId", "projectIds"], "properties": {"sessionId": {"type": "string"}, "projectIds": {}}, "additionalProperties": true, "$comment": "projectIds: a list of project ids in the caller's grants, or \"*\"."},
+    "ListMembershipReply": {"type": "object", "required": ["lists"], "properties": {"lists": {"type": "array", "items": {"$ref": "#/$defs/MembershipAnswer"}}}},
+    "ListMembershipRequest": {"type": "object", "required": ["ids", "lists"], "properties": {"ids": {"type": "array", "items": {"type": "string"}}, "lists": {"type": "array", "items": {"$ref": "#/$defs/MembershipList"}}}, "$comment": "At most 1000 ids and one or two lists."},
+    "MeReply": {"type": "object", "required": ["email", "name", "roles", "owner", "grantsVersion", "changeLogRetentionDays"], "properties": {"email": {"type": ["string", "null"]}, "name": {"type": ["string", "null"]}, "roles": {"type": "array", "items": {"type": "string"}}, "owner": {"type": "boolean"}, "grantsVersion": {"type": ["string", "null"]}, "changeLogRetentionDays": {"type": "integer"}}, "$comment": "email, name and grantsVersion are null without a person (agent-only stand)."},
+    "MeRequest": {"type": "object", "additionalProperties": true},
+    "MembershipAnswer": {"type": "object", "required": ["name", "rows", "counts"], "properties": {"name": {"type": "string"}, "rows": {"type": "array", "items": {"$ref": "ops.schema.json#/$defs/ListRow"}}, "counts": {"type": "object", "additionalProperties": {"type": "integer"}}, "groups": {"type": "array", "items": {"$ref": "ops.schema.json#/$defs/ListGroup"}}}, "$comment": "rows: the ids that are members of the list now."},
+    "MembershipList": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}, "filter": {"$ref": "ops.schema.json#/$defs/ListFilter"}, "group": {"type": "string"}}, "additionalProperties": true, "$comment": "name: tasks or sessions."},
+    "PeopleListReply": {"type": "object", "required": ["people"], "properties": {"people": {"type": "array", "items": {"type": "object", "additionalProperties": true, "$comment": "One people.json entry (email, name, roles, owner, grants); never the service token's client ID."}}}, "$comment": "A non-owner sees only themself."},
+    "PeopleListRequest": {"type": "object", "additionalProperties": true},
+    "PeopleSetReply": {"type": "object", "required": ["people"], "properties": {"people": {"type": "integer"}}, "$comment": "people: how many people the list now has."},
+    "PeopleSetRequest": {"type": "object", "required": ["people"], "properties": {"people": {}}, "additionalProperties": true, "$comment": "Owner only: the whole people.json list, written atomically and reloaded."},
+    "PersonSettings": {"type": "object", "additionalProperties": false, "required": ["email", "order"], "properties": {"email": {"type": "string"}, "order": {"$ref": "#/$defs/DispatchOrder"}}},
+    "PersonSettingsGetReply": {"$ref": "#/$defs/PersonSettings"},
+    "PersonSettingsGetRequest": {"type": "object", "additionalProperties": false, "properties": {"email": {"$comment": "default: the caller; another person: the owner only", "type": "string"}}},
+    "PersonSettingsSetReply": {"$ref": "#/$defs/PersonSettings"},
+    "PersonSettingsSetRequest": {"type": "object", "additionalProperties": false, "required": ["order"], "properties": {"email": {"$comment": "default: the caller; another person: the owner only", "type": "string"}, "order": {"$ref": "#/$defs/DispatchOrder"}}},
+    "ViewLinkReply": {"type": "object", "properties": {"view": {}, "url": {"type": "string"}, "path": {"type": "string"}}, "$comment": "For view: url and path; for url: the parsed view."},
+    "ViewLinkRequest": {"type": "object", "properties": {"view": {}, "url": {}}, "additionalProperties": true, "$comment": "Exactly one of view (a view state to link) or url (a Fleet URL to read back)."}
+  }
+}
