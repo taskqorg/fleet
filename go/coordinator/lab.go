@@ -423,7 +423,7 @@ func checkValue(form string, v any, trials []any) error {
 	case "typed":
 		m := mapOf(v)
 		_, isP := numOK(m["p"])
-		ok = m != nil && isP && (m["answer"] == "yes" || m["answer"] == "no" || m["answer"] == "abstain") && (m["label"] == "yes" || m["label"] == "no")
+		ok = m != nil && (isP && (m["answer"] == "yes" || m["answer"] == "no" || m["answer"] == "abstain") && (m["label"] == "yes" || m["label"] == "no") || m["answer"] == "unscored" && m["reason"] != nil)
 	}
 	if !ok {
 		return fail(400, "Invalid "+form+" value")
@@ -927,8 +927,8 @@ func expCreate(q *Request, b doc) (doc, error) {
 		if w, has := o["web_route"]; has && w != "connections" && w != "builtin" {
 			return nil, fail(400, "web_route must be connections or builtin")
 		}
-		if b, has := o["bands"]; has {
-			if _, _, err := bandsOf(b); err != nil {
+		if bands, has := o["bands"]; has {
+			if _, _, err := bandsOf(bands); err != nil {
 				return nil, err
 			}
 		}
@@ -2401,7 +2401,7 @@ func pipelineFinished(ctx context.Context, a *App, run doc) {
 // expComparison: each non-baseline variant against the baseline (the first variant) on the primary evaluator, through
 // the one statistics function, over held_out examples when the suite has any (bands are tuned on tune), else over all.
 // Only the latest attempt of a cell counts, with its latest primary score, and only one evaluator version (the newest):
-// rows of different versions are never averaged.
+// rows of different versions are never averaged. An unscored typed trial is left out.
 func expComparison(exp doc, trials []doc, cur []doc) []any {
 	primary, vs := astr(exp["primary_evaluator"]), anys(exp["variants"])
 	out := []any{}
@@ -2409,43 +2409,33 @@ func expComparison(exp doc, trials []doc, cur []doc) []any {
 		return out
 	}
 	baseline := astr(mapOf(vs[0])["label"])
-	scope, split := "all", map[string]string{}
-	for _, p := range anys(exp["examples"]) {
-		m := mapOf(p)
-		split[astr(m["id"])] = astr(m["split"])
-		if m["split"] == "held_out" {
-			scope = "held_out"
-		}
+	scope := "all"
+	if hasHeldOut(exp) {
+		scope = "held_out"
 	}
 	reason := ""
 	if strings.HasSuffix(primary, ":pick_best") {
 		reason = "pick_best ranks trials together; it gives no per-trial value to pair"
 	}
-	byTrial, version := map[any]doc{}, ""
-	for _, sc := range cur { // newest last: the later score of a trial replaces the earlier
-		if sc["evaluator"] == primary && len(trialIDsOf(sc)) == 1 {
-			byTrial[firstTrial(sc)] = sc
+	version := ""
+	for _, sc := range cur {
+		if sc["evaluator"] == primary {
 			version = astr(sc["evaluatorVersion"])
 		}
 	}
-	order, latest := expLatest(trials)
 	values, versions := map[string]map[string][]float64{}, map[string]bool{}
-	for _, k := range order {
-		t := latest[k]
-		cell := mapOf(t["cell"])
-		ex, v := astr(cell["example"]), astr(cell["variant"])
-		sc := byTrial[t["id"]]
-		if sc == nil || !comparable(t) || scope == "held_out" && split[ex] != "held_out" {
+	for _, st := range scoredLatest(exp, trials, cur, func(sc doc) bool { return sc["evaluator"] == primary }) {
+		if scope == "held_out" && st.split != "held_out" || mapOf(st.score["value"])["answer"] == "unscored" {
 			continue
 		}
-		versions[astr(sc["evaluatorVersion"])] = true
-		if astr(sc["evaluatorVersion"]) != version {
+		versions[astr(st.score["evaluatorVersion"])] = true
+		if astr(st.score["evaluatorVersion"]) != version {
 			continue
 		}
-		if values[v] == nil {
-			values[v] = map[string][]float64{}
+		if values[st.variant] == nil {
+			values[st.variant] = map[string][]float64{}
 		}
-		values[v][ex] = append(values[v][ex], scoreNumber(sc))
+		values[st.variant][st.example] = append(values[st.variant][st.example], scoreNumber(st.score))
 	}
 	if len(versions) > 1 && reason == "" {
 		reason = "scores of older evaluator versions are left out"
@@ -2476,98 +2466,126 @@ func bandsOf(v any) (float64, float64, error) {
 	return yes, no, nil
 }
 
-// scoreTyped: the typed evaluator for one trial: its output's p through the variant's bands, against the example's label
-// (references/expected.json {expected, tag?}). A trial without a p or an example without a label gets no score (and
-// the reason in the log), never a guessed one.
+// scoreTyped: the typed evaluator for one trial: its output's p (the last step's output in the run record) through the
+// variant's bands, against the example's label (references/expected.json {expected, tag?}). A trial it cannot score is
+// recorded as {answer: unscored, reason} so the reason is visible and it is not tried again; it counts in no statistic.
 func scoreTyped(q *Request, exp, t, pin doc, name string) error {
 	full, _, err := exampleOf(q, pin)
 	if err != nil {
 		return err
 	}
-	var label, tag string
+	var label, tag, reason string
 	for _, x := range anys(full["references"]) {
 		if f := mapOf(x); f["path"] == "expected.json" {
 			var e struct {
 				Expected string `json:"expected"`
 				Tag      string `json:"tag"`
 			}
-			json.Unmarshal([]byte(astr(f["text"])), &e)
+			if err := json.Unmarshal([]byte(astr(f["text"])), &e); err != nil {
+				reason = "references/expected.json is not JSON"
+			}
 			label, tag = e.Expected, e.Tag
 		}
 	}
-	files, err := trialFiles(q, t, full)
-	if err != nil {
-		return err
+	steps := anys(t["steps"])
+	var out doc
+	if len(steps) > 0 {
+		out = mapOf(mapOf(steps[len(steps)-1])["output"])
 	}
-	var p *float64
-	for _, f := range files {
-		if f.path == "output.json" {
-			var o struct {
-				P *float64 `json:"p"`
+	p, isP := numOK(out["p"])
+	switch {
+	case reason != "":
+	case label != "yes" && label != "no":
+		reason = "the example has no yes/no label in references/expected.json"
+	case !isP:
+		reason = "the trial output has no number p"
+	case p < 0 || p > 1:
+		reason = fmt.Sprintf("the trial output p %v is outside 0..1", out["p"])
+	}
+	var value doc
+	rationale := ""
+	if reason != "" {
+		value, rationale = doc{"answer": "unscored", "reason": reason, "label": nilIf(label), "tag": nilIf(tag)}, "unscored: "+reason
+	} else {
+		var bands any
+		for _, v := range anys(exp["variants"]) {
+			if mapOf(v)["label"] == mapOf(t["cell"])["variant"] {
+				bands = mapOf(mapOf(v)["overrides"])["bands"]
 			}
-			json.Unmarshal(f.bytes, &o)
-			p = o.P
 		}
-	}
-	if p == nil || label != "yes" && label != "no" {
-		log.Printf("lab %v: trial %v has no typed score (p %v, label %q)", exp["id"], t["id"], p, label)
-		return nil
-	}
-	var bands any
-	for _, v := range anys(exp["variants"]) {
-		if mapOf(v)["label"] == mapOf(t["cell"])["variant"] {
-			bands = mapOf(mapOf(v)["overrides"])["bands"]
+		yes, no, err := bandsOf(bands)
+		if err != nil {
+			return err
 		}
+		answer := bandAnswer(p, yes, no)
+		value = doc{"answer": answer, "label": label, "p": p, "tag": nilIf(tag)}
+		rationale = fmt.Sprintf("%s at p %.3g (bands %.3g/%.3g), label %s", answer, p, yes, no, label)
 	}
-	yes, no, err := bandsOf(bands)
-	if err != nil {
-		return err
-	}
-	answer := bandAnswer(*p, yes, no)
-	value := doc{"answer": answer, "label": label, "p": *p, "tag": nilIf(tag)}
 	_, err = scoreAdd(q, doc{"experimentId": exp["id"], "projectId": exp["project_id"], "trialIds": []any{t["id"]}, "evaluator": name,
-		"evaluatorVersion": "labels-v1", "form": "typed", "value": value,
-		"rationale": fmt.Sprintf("%s at p %.3g (bands %.3g/%.3g), label %s", answer, *p, yes, no, label)})
+		"evaluatorVersion": "labels-v1", "form": "typed", "value": value, "rationale": rationale})
 	return err
 }
 
-// expTyped: per variant, the typed evaluator's coverage, selective accuracy and escalation share per example tag (the
-// language), over held_out examples when the suite has any; latest attempts only.
-func expTyped(exp doc, trials []doc, cur []doc) []any {
-	out := []any{}
-	scope, split := "all", map[string]string{}
+// scoredTrial: the latest attempt of one cell with its latest score of one evaluator.
+type scoredTrial struct {
+	trial, score   doc
+	example, split string
+	variant        string
+}
+
+// scoredLatest: the latest comparable attempt of every cell with its latest score that match accepts, and the split of
+// its example. Comparisons and typed statistics read trials only through it.
+func scoredLatest(exp doc, trials, cur []doc, match func(doc) bool) []scoredTrial {
+	split := map[string]string{}
 	for _, p := range anys(exp["examples"]) {
-		m := mapOf(p)
-		split[astr(m["id"])] = astr(m["split"])
-		if m["split"] == "held_out" {
-			scope = "held_out"
-		}
+		split[astr(mapOf(p)["id"])] = astr(mapOf(p)["split"])
 	}
 	byTrial := map[any]doc{}
-	for _, sc := range cur {
-		if sc["form"] == "typed" {
+	for _, sc := range cur { // in order: a later score of a trial replaces the earlier
+		if match(sc) && len(trialIDsOf(sc)) == 1 {
 			byTrial[firstTrial(sc)] = sc
 		}
 	}
-	if len(byTrial) == 0 {
-		return out
-	}
+	out := []scoredTrial{}
 	order, latest := expLatest(trials)
-	answers := map[string][]typedAnswer{}
 	for _, k := range order {
 		t := latest[k]
-		sc := byTrial[t["id"]]
 		cell := mapOf(t["cell"])
-		if sc == nil || !comparable(t) || scope == "held_out" && split[astr(cell["example"])] != "held_out" {
+		if sc := byTrial[t["id"]]; sc != nil && comparable(t) {
+			out = append(out, scoredTrial{t, sc, astr(cell["example"]), split[astr(cell["example"])], astr(cell["variant"])})
+		}
+	}
+	return out
+}
+
+func hasHeldOut(exp doc) bool {
+	for _, p := range anys(exp["examples"]) {
+		if mapOf(p)["split"] == "held_out" {
+			return true
+		}
+	}
+	return false
+}
+
+// expTyped: per variant and split, the typed evaluator's coverage, selective accuracy and escalation share per example
+// tag (the language). Bands are tuned on tune and reported on held_out, so both splits are shown, never mixed.
+func expTyped(exp doc, trials []doc, cur []doc) []any {
+	out := []any{}
+	answers := map[[2]string][]typedAnswer{}
+	for _, st := range scoredLatest(exp, trials, cur, func(sc doc) bool { return sc["form"] == "typed" }) {
+		v := mapOf(st.score["value"])
+		if v["answer"] == "unscored" {
 			continue
 		}
-		v := mapOf(sc["value"])
-		answers[astr(cell["variant"])] = append(answers[astr(cell["variant"])], typedAnswer{astr(v["tag"]), astr(v["answer"]), astr(v["label"])})
+		k := [2]string{st.variant, st.split}
+		answers[k] = append(answers[k], typedAnswer{astr(v["tag"]), astr(v["answer"]), astr(v["label"])})
 	}
 	for _, x := range anys(exp["variants"]) {
 		label := astr(mapOf(x)["label"])
-		if as := answers[label]; len(as) > 0 {
-			out = append(out, doc{"variant": label, "split": scope, "stats": typedStats(as)})
+		for _, sp := range []string{"tune", "held_out"} {
+			if as := answers[[2]string{label, sp}]; len(as) > 0 {
+				out = append(out, doc{"variant": label, "split": sp, "stats": typedStats(as)})
+			}
 		}
 	}
 	return out

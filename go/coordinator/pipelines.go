@@ -1234,6 +1234,9 @@ func pipelineRunCreate(q *Request) (doc, error) {
 		if !keysOnly(overrides, labOverrides...) {
 			return nil, fail(400, "overrides are "+strings.Join(labOverrides, ", "))
 		}
+		if overrides["bands"] != nil {
+			return nil, fail(400, "bands are a Lab variant setting; a direct run has no typed evaluator")
+		}
 		if q.person != nil && !fullAccess(q.person) && (overrides["host"] != nil || overrides["account"] != nil || overrides["profile"] != nil) {
 			return nil, fail(403, "Only the owner overrides host, account or profile")
 		}
