@@ -487,9 +487,9 @@ var ConflictReasonValues = []ConflictReason{ConflictReasonBaseMoved, ConflictRea
 
 // ConnectionAccess: Who besides the holder may use the API key: people (emails), projects and experiments.
 type ConnectionAccess struct {
-	Experiments []string `json:"experiments"`
-	People      []string `json:"people"`
-	Projects    []string `json:"projects"`
+	Experiments []string `json:"experiments,omitempty"`
+	People      []string `json:"people,omitempty"`
+	Projects    []string `json:"projects,omitempty"`
 }
 
 // ConnectionView: An API connection; keys, spend and history only in connections_list.
@@ -505,7 +505,7 @@ type ConnectionView struct {
 	Name      string                       `json:"name"`
 	Provider  string                       `json:"provider"`
 	Spend     map[string]json.RawMessage   `json:"spend,omitempty"`
-	Tools     []string                     `json:"tools"`
+	Tools     []string                     `json:"tools,omitempty"`
 	UpdatedAt *float64                     `json:"updatedAt,omitempty"`
 }
 
@@ -548,7 +548,7 @@ type ConnectionsSetAccessReply = ConnectionView
 
 // ConnectionsSetAccessRequest: access: {people, projects, experiments}, each a list of ids.
 type ConnectionsSetAccessRequest struct {
-	Access     json.RawMessage `json:"access,omitempty"`
+	Access     json.RawMessage `json:"access"`
 	Connection string          `json:"connection"`
 }
 
@@ -562,9 +562,9 @@ type ConnectionsSetIntakeRequest struct {
 
 // ConnectionsTokenCreateReply: token: the bearer value, shown once; refused: requested connections the owner cannot use.
 type ConnectionsTokenCreateReply struct {
-	Connections []map[string]json.RawMessage `json:"connections"`
+	Connections []map[string]json.RawMessage `json:"connections,omitempty"`
 	Name        string                       `json:"name"`
-	Refused     []string                     `json:"refused"`
+	Refused     []string                     `json:"refused,omitempty"`
 	Token       *string                      `json:"token"`
 }
 
@@ -1048,7 +1048,7 @@ type HostRecord struct {
 	Intake     string          `json:"intake"`
 	Name       *string         `json:"name,omitempty"`
 	Platform   *string         `json:"platform,omitempty"`
-	Roles      []string        `json:"roles"`
+	Roles      []string        `json:"roles,omitempty"`
 }
 
 // HostRow: One host as the Hosts screen shows it: configured, observed, or both; problems only while it polls.

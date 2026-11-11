@@ -22,8 +22,7 @@ var (
 )
 
 func init() {
-	ownerHosts := func(q *Request) error { return ownerOnly(q, "Only the owner manages hosts") }
-	operation("hosts_register", false, checkFirst(ownerHosts, typedOp(func(q *Request, b *contract.HostsRegisterRequest) (contract.HostWriteReply, error) {
+	operation("hosts_register", false, ownerFirst("Only the owner manages hosts", typedOp(func(q *Request, b *contract.HostsRegisterRequest) (contract.HostWriteReply, error) {
 		out, err := hostsRegister(q, docOf(b))
 		return replyAs[contract.HostWriteReply](out, err)
 	})))
@@ -31,7 +30,7 @@ func init() {
 		out, err := hostsUpdate(q, docOf(b))
 		return replyAs[contract.HostsUpdateReply](out, err)
 	}))
-	operation("hosts_rotate_secret", false, checkFirst(ownerHosts, typedOp(func(q *Request, b *contract.HostsRotateSecretRequest) (contract.HostWriteReply, error) {
+	operation("hosts_rotate_secret", false, ownerFirst("Only the owner manages hosts", typedOp(func(q *Request, b *contract.HostsRotateSecretRequest) (contract.HostWriteReply, error) {
 		out, err := hostsRotateSecret(q, docOf(b))
 		return replyAs[contract.HostWriteReply](out, err)
 	})))

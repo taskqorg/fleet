@@ -346,7 +346,12 @@ func init() {
 		}
 		return doc{"providers": providers, "connections": out}, nil
 	}))
-	gatedOp("connections_create", false, shaped[contract.ConnectionsCreateRequest, contract.ConnectionView](func(q *Request) (any, error) {
+	gatedOp("connections_create", false, checkFirst(func(q *Request) error {
+		if !keysOnly(q.obj(), "name", "provider", "holder", "comment") {
+			return fail(400, "Expected name and a known provider")
+		}
+		return nil
+	}, shaped[contract.ConnectionsCreateRequest, contract.ConnectionView](func(q *Request) (any, error) {
 		b := body(q)
 		name, provider := astr(b["name"]), astr(b["provider"])
 		if !connName.MatchString(name) || providers[provider] == nil || !keysOnly(b, "name", "provider", "holder", "comment") {
@@ -375,7 +380,7 @@ func init() {
 		}
 		publish(q)
 		return c, nil
-	}))
+	})))
 	// Owner only. Writes the value file and the row; answers with the fingerprint only.
 	gatedOp("connections_key_add", false, checkFirst(connOwner, shaped[contract.ConnectionsKeyAddRequest, contract.ConnectionsKeyAddReply](func(q *Request) (any, error) {
 		if err := connOwner(q); err != nil {
