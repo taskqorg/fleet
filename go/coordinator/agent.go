@@ -1361,18 +1361,23 @@ func agentOp(name string, read bool, h func(*Request, doc) (doc, error)) {
 	agentTool(name, read, func(q *Request) (any, error) { return h(q, body(q)) })
 }
 
+// agentShapedOp: an agent tool whose handler still reads a map, checked against its contract types (shaped).
+func agentShapedOp[Req, Rep any](name string, read bool, h func(*Request, doc) (doc, error)) {
+	agentTool(name, read, shaped[Req, Rep](func(q *Request) (any, error) { return h(q, body(q)) }))
+}
+
 func agentTool(name string, read bool, f handler) {
 	agentOps[name] = registeredOp{read, f}
 	gatedObjOp(name, read, f)
 }
 
 func init() {
-	agentOp("session_start", false, sessionStart)
-	agentOp("session_task_attach", false, sessionAttach)
-	agentOp("project_readiness", false, projectReadiness)
-	agentOp("session_transition", false, sessionTransition)
-	agentOp("session_fork", false, sessionFork)
-	agentOp("session_resume", false, sessionResume)
+	agentShapedOp[contract.SessionStartRequest, contract.SessionStartReply]("session_start", false, sessionStart)
+	agentShapedOp[contract.SessionTaskAttachRequest, contract.SessionTaskAttachReply]("session_task_attach", false, sessionAttach)
+	agentShapedOp[contract.ProjectReadinessRequest, contract.ProjectReadinessReply]("project_readiness", false, projectReadiness)
+	agentShapedOp[contract.SessionTransitionRequest, contract.SessionTransitionReply]("session_transition", false, sessionTransition)
+	agentShapedOp[contract.SessionForkRequest, contract.SessionForkReply]("session_fork", false, sessionFork)
+	agentShapedOp[contract.SessionResumeRequest, contract.SessionResumeReply]("session_resume", false, sessionResume)
 	agentTypedOp("session_handoffs", true, func(q *Request, b *contract.SessionHandoffsRequest) (contract.SessionHandoffsReply, error) {
 		if b.SessionId == "" {
 			return contract.SessionHandoffsReply{}, fail(400, "Expected sessionId")
@@ -1380,7 +1385,7 @@ func init() {
 		hs, err := all(q, "handoff", doc{"sessionId": b.SessionId})
 		return contract.SessionHandoffsReply{Handoffs: recsOf(hs)}, err
 	})
-	agentOp("message_send", false, submit)
+	agentShapedOp[contract.MessageSendRequest, contract.MessageSendReply]("message_send", false, submit)
 	agentTypedOp("queue_list", true, func(q *Request, b *contract.QueueListRequest) (contract.QueueListReply, error) {
 		ms, err := all(q, "queued-message", doc{"sessionId": nilIf(deref(b.SessionId))})
 		out := []doc{}
@@ -1393,8 +1398,8 @@ func init() {
 		}
 		return contract.QueueListReply{Queued: recsOf(out)}, err
 	})
-	agentOp("ask", false, agentAsk)
-	agentOp("reply", false, agentReply)
+	agentShapedOp[contract.AskRequest, contract.AskReply]("ask", false, agentAsk)
+	agentShapedOp[contract.ReplyRequest, contract.ReplyReply]("reply", false, agentReply)
 	agentTypedOp("questions", true, func(q *Request, b *contract.QuestionsRequest) (contract.QuestionsReply, error) {
 		qs, err := all(q, "question", doc{"sessionId": nilIf(deref(b.SessionId)), "state": nilIf(deref(b.State))})
 		return contract.QuestionsReply{Questions: recsOf(qs)}, err
@@ -1408,7 +1413,7 @@ func init() {
 		}
 		return asT[contract.FocusSetReply](out)
 	})
-	agentOp("reconcile", false, func(q *Request, _ doc) (doc, error) { return agentReconcile(q) })
+	agentShapedOp[contract.ReconcileRequest, contract.ReconcileReply]("reconcile", false, func(q *Request, _ doc) (doc, error) { return agentReconcile(q) })
 
 	// /api/hosts/agent-tools: an executor's agent calls a tool; every call is bound to the calling execution's session.
 	longRoute("POST /api/hosts/agent-tools", func(q *Request) (any, error) {

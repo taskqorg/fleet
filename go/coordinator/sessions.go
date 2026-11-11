@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"fleet/contract"
 )
 
 var sessionStates = []string{"idle", "preparing", "running", "waiting", "succeeded", "failed", "cancelled"}
@@ -311,15 +313,15 @@ func init() {
 		ds, err := delegationsWhere(q, "delegation->>'parentExecutionId'=$1 OR delegation->>'childExecutionId'=$1 OR delegation->>'continuationExecutionId'=$1", id)
 		return doc{"delegations": ds}, err
 	})
-	gatedObjOp("session_create", false, func(q *Request) (any, error) { return sessionCreate(q) })
-	gatedObjOp("session_get", true, func(q *Request) (any, error) {
+	gatedObjOp("session_create", false, shaped[contract.SessionCreateRequest, contract.SessionCreateReply](func(q *Request) (any, error) { return sessionCreate(q) }))
+	gatedObjOp("session_get", true, shaped[contract.SessionGetRequest, contract.SessionGetReply](func(q *Request) (any, error) {
 		sid, err := sessionArg(body(q))
 		if err != nil {
 			return nil, err
 		}
 		return sessionGet(q, sid)
-	})
-	gatedObjOp("session_profile", false, func(q *Request) (any, error) {
+	}))
+	gatedObjOp("session_profile", false, shaped[contract.SessionProfileRequest, contract.SessionTransitionReply](func(q *Request) (any, error) {
 		b := body(q)
 		sid, err := sessionArg(b)
 		if err != nil {
@@ -327,14 +329,14 @@ func init() {
 		}
 		delete(b, "sessionId")
 		return sessionProfile(q, sid, b)
-	})
-	gatedObjOp("session_archive", false, func(q *Request) (any, error) {
+	}))
+	gatedObjOp("session_archive", false, shaped[contract.SessionArchiveRequest, contract.SessionArchiveReply](func(q *Request) (any, error) {
 		sid, err := sessionArg(body(q))
 		if err != nil {
 			return nil, err
 		}
 		return sessionArchive(q, sid)
-	})
+	}))
 	gatedObjOp("sessions_list", true, func(q *Request) (any, error) { return sessionsPage(q, body(q)) })
 	gatedObjOp("list_membership", true, func(q *Request) (any, error) {
 		b := body(q)
