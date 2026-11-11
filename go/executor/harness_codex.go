@@ -153,7 +153,7 @@ func claudeMCP(c *exec.Cmd, profile any, servers M, extra []string) {
 		var ctx any
 		if args, _ := jAt(servers, "fleet", "args").([]any); len(args) > 0 {
 			if s, ok := args[len(args)-1].(string); ok {
-				ctx, _ = decode([]byte(s))
+				ctx, _ = dec(s)
 			}
 		}
 		if _, ok := str(jAt(ctx, "projectId")); ok {

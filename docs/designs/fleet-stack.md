@@ -87,7 +87,7 @@ The generators were checked against off-the-shelf output for the transcript even
 
 ## MCP servers as executor subcommands (L4)
 
-- The executor starts delegation, design-rules and connection servers as `fleet-executor mcp <name>` (`go/executor/mcp_*.go`); no Python process serves them. `tests/executor/mcp-replay.test.ts` replays the stdio exchanges captured from the former Python servers (`tests/executor/fixtures/mcp.json`) against the Go binary.
+- The executor starts delegation, design-rules and connection servers as `fleet-executor mcp <name>` (`go/executor/mcp_*.go`); no Python process serves them. `tests/executor/mcp-replay.test.ts` replays stdio exchanges (`tests/executor/fixtures/mcp.json`, first captured from the former Python servers) against the Go binary; a malformed line answers the JSON-RPC parse error `-32700 "Parse error"`.
 - The Access origin guard is the gateway's `guard` command (`go/gateway/guard.go`).
 
 ## Go code

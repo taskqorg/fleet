@@ -51,7 +51,7 @@ func mcpText(v any, isError *bool) M {
 var yes, no = true, false
 
 func mcpTools(ctx any) M {
-	all, _ := decode(mcpToolsJSON)
+	all, _ := dec(string(mcpToolsJSON))
 	out := []any{}
 	for _, t := range all.([]any) {
 		n := jStr(jAt(t, "name"))
@@ -99,7 +99,7 @@ func wait(db *sql.DB, table, key string, seconds int, artifact bool) (any, error
 			return nil, dbe(err)
 		}
 		if err == nil && raw.String != "" {
-			v, err := decode([]byte(raw.String))
+			v, err := dec(raw.String)
 			if err != nil {
 				return nil, err
 			}
@@ -270,8 +270,8 @@ func journalOnce(db *sql.DB, key, body, route string) error {
 	var old string
 	switch err := c.QueryRowContext(ctx, "SELECT body FROM delegation_requests WHERE id=?", key).Scan(&old); {
 	case err == nil:
-		o, _ := decode([]byte(old))
-		b, _ := decode([]byte(body))
+		o, _ := dec(old)
+		b, _ := dec(body)
 		if enc(o) != enc(b) {
 			return fail(errors.New("Request identity conflict"))
 		}
@@ -331,7 +331,7 @@ func mcpRun(args []string) error {
 		if err != nil {
 			return err
 		}
-		if ctx, err = decode([]byte(s)); err != nil {
+		if ctx, err = dec(s); err != nil {
 			return err
 		}
 	case "delegation":
@@ -348,7 +348,7 @@ func mcpRun(args []string) error {
 		if err != nil {
 			return err
 		}
-		if ctx, err = decode([]byte(s)); err != nil {
+		if ctx, err = dec(s); err != nil {
 			return err
 		}
 	case "connection":
@@ -360,7 +360,7 @@ func mcpRun(args []string) error {
 		if err != nil {
 			return err
 		}
-		spec, err := decode([]byte(s))
+		spec, err := dec(s)
 		if err != nil {
 			return err
 		}
@@ -385,16 +385,9 @@ func mcpRun(args []string) error {
 			}
 			return err
 		}
-		req, perr := decode([]byte(raw))
+		req, perr := dec(raw)
 		if perr != nil {
-			code, msg := -32602, pyJSONError(raw)
-			if server == "design-rules" {
-				code, msg = -32700, "Invalid request"
-			}
-			if msg == "" {
-				msg = "Expecting value: line 1 column 1 (char 0)"
-			}
-			fmt.Fprintln(out, enc(M{"jsonrpc": "2.0", "id": nil, "error": M{"code": code, "message": msg}}))
+			fmt.Fprintln(out, enc(M{"jsonrpc": "2.0", "id": nil, "error": M{"code": -32700, "message": "Parse error"}}))
 			out.Flush()
 			continue
 		}
