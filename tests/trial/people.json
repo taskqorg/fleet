@@ -1,5 +1,6 @@
 [
   {"email": "owner@trial.test", "name": "Owner", "roles": ["operator", "architect"], "owner": true},
   {"email": "outsider@trial.test", "name": "Outsider", "roles": ["operator"], "grants": []},
-  {"email": "member@trial.test", "name": "Member", "roles": ["operator"], "grants": [{"kind": "project", "id": "fleet-hello-world"}]}
+  {"email": "member@trial.test", "name": "Member", "roles": ["operator"], "grants": [{"kind": "project", "id": "fleet-hello-world"}]},
+  {"email": "agents@trial.test", "name": "Agents", "roles": ["operator", "architect"], "grants": [{"kind": "*"}]}
 ]
