@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -125,6 +126,11 @@ func tsMs(v any) any {
 
 func mark(e doc) doc { return doc{"harness": e["harness"], "model": e["model"], "effort": e["effort"]} }
 
+// markOf: mark as the contract's optional fields.
+func markOf(e doc) (harness, model, effort *string) {
+	return strPtr(e["harness"]), strPtr(e["model"]), strPtr(e["effort"])
+}
+
 // msPtr: tsMs as an optional contract time.
 func msPtr(v any) *int64 {
 	if n, ok := tsMs(v).(int64); ok {
@@ -133,24 +139,35 @@ func msPtr(v any) *int64 {
 	return nil
 }
 
-// blockDoc: a block built from its contract struct (contracts/ops.schema.json Block), as the doc the thread code sorts and merges.
+// blockDoc: a block built from its contract struct (contracts/ops.schema.json Block), as the doc the thread code sorts and
+// merges. Top-level integers stay int64, as in the executor blocks (tsMs), so every block carries one number type.
 func blockDoc(v any) doc {
+	dec := json.NewDecoder(bytes.NewReader(jsonBytes(v)))
+	dec.UseNumber()
 	var d doc
-	json.Unmarshal(jsonBytes(v), &d)
+	dec.Decode(&d)
+	for k, x := range d {
+		if n, ok := x.(json.Number); ok {
+			if i, err := n.Int64(); err == nil {
+				d[k] = i
+			}
+		}
+	}
 	return d
 }
 
 func boundary(e member) doc {
-	return blockDoc(contract.BoundaryBlock{Kind: "boundary", Key: bkey{e.seq, 0}.String(), SessionId: strPtr(e.doc["session_id"]), ExecutionId: astr(e.doc["id"]),
-		State: contract.ExecutionState(astr(e.doc["state"])), StartedAt: msPtr(e.doc["started_at"]), EndedAt: msPtr(e.doc["ended_at"]),
-		Harness: strPtr(e.doc["harness"]), Model: strPtr(e.doc["model"]), Effort: strPtr(e.doc["effort"])})
+	b := contract.BoundaryBlock{Kind: "boundary", Key: bkey{e.seq, 0}.String(), SessionId: strPtr(e.doc["session_id"]), ExecutionId: astr(e.doc["id"]),
+		State: contract.ExecutionState(astr(e.doc["state"])), StartedAt: msPtr(e.doc["started_at"]), EndedAt: msPtr(e.doc["ended_at"])}
+	b.Harness, b.Model, b.Effort = markOf(e.doc)
+	return blockDoc(b)
 }
 
 func questionBlock(qu doc, seq int64) doc {
 	b := contract.QuestionBlock{Kind: "question", Key: bkey{seq, 0}.String(), ExecutionId: strPtr(qu["execution_id"]), QuestionId: astr(qu["id"]), Text: astr(qu["text"]),
-		Options: strList(qu["options"]), State: astr(qu["state"]), AskedAt: msPtr(qu["asked_at"]), AnsweredAt: msPtr(qu["answered_at"]), AnsweredBy: strPtr(qu["answered_by"])}
-	if b.Options == nil {
-		b.Options = []string{}
+		Options: json.RawMessage("[]"), State: astr(qu["state"]), AskedAt: msPtr(qu["asked_at"]), AnsweredAt: msPtr(qu["answered_at"]), AnsweredBy: strPtr(qu["answered_by"])}
+	if qu["options"] != nil {
+		b.Options = jsonBytes(qu["options"])
 	}
 	if qu["answer"] != nil {
 		b.Answer = jsonBytes(qu["answer"])
@@ -235,8 +252,9 @@ func expand(q *Request, r trow, m map[string]member) ([]doc, error) {
 		if strings.HasPrefix(astr(v["deltaOf"]), "reasoning:") {
 			return []doc{blockDoc(contract.ReasoningBlock{Kind: "reasoning", Key: at(0), ExecutionId: strPtr(v["executionId"]), Markdown: text, Plain: &text, Stream: &stream, At: msPtr(v["at"])})}, nil
 		}
-		return []doc{blockDoc(contract.TextBlock{Kind: "text", Key: at(0), ExecutionId: strPtr(v["executionId"]), Role: "agent", Markdown: text, Plain: &text, Stream: &stream, At: msPtr(v["at"]),
-			Harness: strPtr(e.doc["harness"]), Model: strPtr(e.doc["model"]), Effort: strPtr(e.doc["effort"])})}, nil
+		b := contract.TextBlock{Kind: "text", Key: at(0), ExecutionId: strPtr(v["executionId"]), Role: "agent", Markdown: text, Plain: &text, Stream: &stream, At: msPtr(v["at"])}
+		b.Harness, b.Model, b.Effort = markOf(e.doc)
+		return []doc{blockDoc(b)}, nil
 	}
 	own := []doc{}
 	bs, _ := v["blocks"].([]any)

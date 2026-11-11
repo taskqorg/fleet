@@ -820,6 +820,7 @@ type QuestionAskRequest struct {
 	Text      *string `json:"text,omitempty"`
 }
 
+// QuestionBlock: options: the stored options as they are (a list of labels for agent questions).
 type QuestionBlock struct {
 	Answer      json.RawMessage `json:"answer,omitempty"`
 	AnsweredAt  *int64          `json:"answeredAt,omitempty"`
@@ -828,7 +829,7 @@ type QuestionBlock struct {
 	ExecutionId *string         `json:"executionId,omitempty"`
 	Key         string          `json:"key"`
 	Kind        string          `json:"kind"`
-	Options     []string        `json:"options"`
+	Options     json.RawMessage `json:"options"`
 	QuestionId  string          `json:"questionId"`
 	State       string          `json:"state"`
 	Text        string          `json:"text"`

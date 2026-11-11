@@ -11,11 +11,11 @@ function type(s, at) {
   for (const k of Object.keys(s)) if (!KEYS.has(k)) throw Error(`${at}: unsupported keyword ${k}`);
   if (s.$ref) return s.$ref.replace(/^#\/\$defs\//, '');
   if (s.oneOf) {
-    if (/[.[]/.test(at) || s.oneOf.some((x) => !x.$ref)) throw Error(`${at}: oneOf must be a $defs entry of $refs`);
+    if (/[.[]/.test(at) || s.oneOf.some((x) => !x.$ref || Object.keys(x).length !== 1)) throw Error(`${at}: oneOf must be a $defs entry of $refs`);
     return s.oneOf.map((x) => type(x, at)).join(' | ');
   }
   if (s.const !== undefined) {
-    if (typeof s.const !== 'string') throw Error(`${at}: const must be a string`);
+    if (typeof s.const !== 'string' || (s.type !== undefined && s.type !== 'string')) throw Error(`${at}: const must be a string, with no other type`);
     return JSON.stringify(s.const);
   }
   if (s.enum && /[.[]/.test(at)) throw Error(`${at}: an enum must be a $defs entry (Go needs its name)`);

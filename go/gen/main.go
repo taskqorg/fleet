@@ -79,7 +79,7 @@ func goType(s schema, where string) (string, bool) {
 		fail("%s: oneOf must be a $defs entry", where)
 	}
 	t, null := types(s, where)
-	if _, ok := s["const"].(string); ok && t == "" {
+	if _, ok := s["const"].(string); ok && (t == "" || t == "string") && !null {
 		t = "string"
 	} else if s["const"] != nil {
 		fail("%s: const must be a string", where)

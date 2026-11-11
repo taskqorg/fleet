@@ -472,16 +472,15 @@ export function ReasoningRow({ markdown, open, onToggle, onCopyFail }: { markdow
     head={<span class="th-line"><span>Reasoning</span><span class="svc ell">{markdown.split('\n')[0]}</span></span>} body={<Markdown text={markdown} onCopyFail={onCopyFail} />} />;
 }
 /** A question in the thread (DecisionBlock); answered, it collapses to one line with the answer and who gave it. */
-export function QuestionRow({ text, options, state, answer, answeredBy, askedAt, answeredAt, now, onAnswer }: { text: string; options: string[]; state: string; answer?: string; answeredBy?: string; askedAt?: number | null; answeredAt?: number | null; now: number; onAnswer?: (a: string) => void }) {
+export function QuestionRow({ text, options, state, answer, answeredBy, askedAt, answeredAt, now, onAnswer }: { text: string; options: unknown[]; state: string; answer?: string; answeredBy?: string; askedAt?: number | null; answeredAt?: number | null; now: number; onAnswer?: (a: string) => void }) {
   return <div class="th-row th-q" data-ui="thread-row"><DecisionBlock question={text} askedBy="agent" addressedTo="you" since={askedAt ?? now} now={now}
     options={options.map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
     answered={state === 'answered' && answer !== undefined ? { by: answeredBy ?? 'operator', answer, at: answeredAt ?? now, delivered: true } : undefined} onAnswer={onAnswer} /></div>;
 }
-/** Results of an execution end: artifact links (Stage 4 adds names, the delivery stage and the viewer). */
-/** Results of an execution end: artifact names linking to their Results page entry, and the delivery stage chip. */
-export function ResultRow({ artifacts, stage, onOpen }: { artifacts: ArtifactMeta[]; stage?: Stage; onOpen?: (id: string) => void }) {
+/** Results of an execution end: artifact names linking to their Results page entry. */
+export function ResultRow({ artifacts, onOpen }: { artifacts: ArtifactMeta[]; onOpen?: (id: string) => void }) {
   return <div class="th-row th-result" data-ui="thread-row"><Icon name="file-text" /><span class="th-line">{artifacts.map(a =>
-    <a key={a.id} href={`/results/${encodeURIComponent(a.id)}`} data-tip={`${a.mediaType} · ${bytes(a.size).text}`} onClick={e => { if (onOpen && !e.metaKey && !e.ctrlKey) { e.preventDefault(); onOpen(a.id); } }}>{a.name}</a>)}</span>{stage && stage in stages && <StageChip stage={stage} />}</div>;
+    <a key={a.id} href={`/results/${encodeURIComponent(a.id)}`} data-tip={`${a.mediaType} · ${bytes(a.size).text}`} onClick={e => { if (onOpen && !e.metaKey && !e.ctrlKey) { e.preventDefault(); onOpen(a.id); } }}>{a.name}</a>)}</span></div>;
 }
 /** An execution start: state, agent mark, duration chip, and Stop while it runs (CUJ 5). */
 export function BoundaryRow({ session, executionId, state, mark, startedAt, endedAt, now, onStop, stopReason }: { session?: string; executionId: string; state: StateOf<'execution'>; mark: Mark; startedAt?: number | null; endedAt?: number | null; now: number; onStop?: () => void; stopReason?: string }) {
@@ -495,8 +494,8 @@ export function SearchField({ label, value, onInput, onSearch }: { label: string
   return <label class="search"><Icon name={actions.search} /><input type="search" placeholder={label} aria-label={label} value={value}
     onInput={e => onInput((e.target as HTMLInputElement).value)} onKeyDown={e => { if (e.key === 'Enter') onSearch(); }} /></label>;
 }
-export type { Block as ThreadBlock } from '../../../contracts/generated/ops.ts';
 import type { Block as ThreadBlock } from '../../../contracts/generated/ops.ts';
+export type { ThreadBlock };
 /**
  * A thread: one row per block in a measured VirtualList that follows the bottom, loads older rows upward (onStart) and
  * newer ones downward (onEnd), and jumps through `handle`. Open tool and reasoning rows are kept by key across the window.
@@ -516,7 +515,7 @@ export function Thread({ blocks, label, now, marked, selected, onRowClick, showS
       case 'text': return <TextRow who={b.role === 'operator' ? 'operator' : 'agent'} markdown={b.markdown ?? ''} mark={markOf(b)} by={b.by} at={b.at} now={now} onCopyFail={onCopyFail} />;
       case 'tool': return <ToolRow name={b.name} input={b.input} output={b.output} state={b.state} startedAt={b.startedAt} endedAt={b.endedAt} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
-      case 'question': return <QuestionRow text={b.text} options={b.options ?? []} state={b.state} answer={b.answer === undefined || typeof b.answer === 'string' ? b.answer : JSON.stringify(b.answer)} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} />;
+      case 'question': return <QuestionRow text={b.text} options={Array.isArray(b.options) ? b.options : []} state={b.state} answer={b.answer === undefined || typeof b.answer === 'string' ? b.answer : JSON.stringify(b.answer)} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} />;
       case 'result': return <ResultRow artifacts={b.artifacts} onOpen={onOpenResult} />;
       case 'boundary': return <BoundaryRow session={showSession ? b.sessionId ?? undefined : undefined} executionId={b.executionId} state={b.state} mark={markOf(b)} startedAt={b.startedAt} endedAt={b.endedAt} now={now} stopReason={stopReason}
         onStop={onStop && ['preparing', 'running', 'waiting'].includes(b.state) ? () => onStop(b.executionId) : undefined} />;
