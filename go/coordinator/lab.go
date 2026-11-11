@@ -1831,8 +1831,8 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 
 var methodSlug = regexp.MustCompile(`[^a-z0-9]+`)
 
-// Promote: a catalogue method entry as a JSON patch for config/catalogue.json for the owner to commit; once a method with
-// this config_ref exists, the project recommendation is set to it (recommend: the recommendation_set operation).
+// Promote: the variant as a catalogue method, saved as a catalogue revision (source lab) unless a method with its
+// config_ref exists; then the project recommendation is set to it (recommend: the recommendation_set operation).
 func expPromote(q *Request, id, label string) (doc, error) {
 	exp, err := expRow(q, id)
 	if err != nil {
@@ -1862,14 +1862,38 @@ func expPromote(q *Request, id, label string) (doc, error) {
 			}
 		}
 	}
+	// A new method is saved as a catalogue revision (source lab) in this transaction, so the recommendation below sees it
+	// (fleet-definition-editors.md, Promote); the repository file stays the seed.
+	var ref any
 	if existing == nil {
-		return doc{"cataloguePatch": []any{doc{"op": "add", "path": "/methods/-", "value": method}}, "method": method, "recommendation": nil, "note": note}, nil
+		head, err := headOf(q, "catalogue", "catalogue", true)
+		if err != nil {
+			return nil, err
+		}
+		if head == nil {
+			return nil, fail(404, "No catalogue definition")
+		}
+		var c doc
+		if err := json.Unmarshal(head.Content, &c); err != nil {
+			return nil, err
+		}
+		c["methods"] = append(anys(c["methods"]), method)
+		text, err := canonicalText(jsonBytes(c))
+		if err != nil {
+			return nil, err
+		}
+		rev, err := appendRevision(q, "catalogue", "catalogue", head.Head, &text, head.RepoSha, "lab", fmt.Sprintf("Promote %s from %s", label, id))
+		if err != nil {
+			return nil, err
+		}
+		ref = contract.DefinitionRef{Kind: contract.DefinitionKindCatalogue, Id: "catalogue", Revision: rev.Revision, ContentSha: rev.ContentSha}
+		existing = method
 	}
-	var rec any
-	if rec, err = recommend(q, astr(exp["project_id"]), astr(existing["id"])); err != nil {
+	rec, err := recommend(q, astr(exp["project_id"]), astr(existing["id"]))
+	if err != nil {
 		return nil, err
 	}
-	return doc{"cataloguePatch": nil, "method": existing, "recommendation": rec, "note": note}, nil
+	return doc{"cataloguePatch": nil, "method": existing, "catalogue": ref, "recommendation": rec, "note": note}, nil
 }
 
 func expRate(q *Request, b doc) (doc, error) {

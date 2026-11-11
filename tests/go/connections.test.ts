@@ -551,3 +551,19 @@ test('L6 preflight never holds the write lock and revalidates lifecycle changes 
   assert.equal((await pending).status,409);
   const v=await f.view();assert.equal(v.trials.length,1);assert.notEqual(v.trials[0].state,'cancelled');
 });
+
+test('A3 Promote saves the method as a catalogue revision (source lab) and sets the recommendation (requirement: fleet-definition-editors.md, Promote; risk: a promote that only returns a patch, so the winner never reaches the catalogue)', async () => {
+  const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
+  example.version = 2000 + Math.floor(Math.random() * 1e6);
+  const {examples: [imported]} = ok(await call('POST', '/api/lab/examples', {examples: [example], approved: true}));
+  const e = ok(await call('POST', '/api/lab/experiments', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: [imported.artifactId], variants: [{label: 'promoted'}],
+    evaluators: [{kind: 'script', ref: 'example.checks', form: 'pass_fail'}]}));
+  const before = ok(await op('definition_get', {kind: 'catalogue', id: 'catalogue'})).head;
+  const p = ok(await op('lab_promote', {experimentId: e.id, variant: 'promoted'}));
+  assert.deepEqual([p.cataloguePatch, p.catalogue.revision, p.recommendation !== null], [null, before + 1, true]);
+  const g = ok(await op('definition_get', {kind: 'catalogue', id: 'catalogue'}));
+  assert.equal(g.meta.source, 'lab');
+  assert.ok(g.content.catalogue.methods.some((m: any) => m.id === p.method.id));
+  const again = ok(await op('lab_promote', {experimentId: e.id, variant: 'promoted'}));
+  assert.equal(again.catalogue ?? null, null, 'a second promote finds the method and saves nothing');
+});

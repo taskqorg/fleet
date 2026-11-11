@@ -416,7 +416,6 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .vl-row.static.lab-row{height:auto;min-height:var(--size-row);align-items:start;padding-top:var(--space-2);padding-bottom:var(--space-2);white-space:normal}
 .lab-cell{display:flex;flex-direction:column;gap:var(--space-1)}
 .lab-trial{display:flex;align-items:center;gap:var(--space-2);font-variant-numeric:tabular-nums}
-.lab-patch{margin:0;padding:var(--space-2) var(--space-4);font-family:var(--font-mono);font-size:var(--font-size-sm);overflow-x:auto}
 /* Conversation detail: the status line overlays the thread top, so it never moves the rows (OR-23) */
 .status-line{position:relative;height:0}
 .status-line>*{position:absolute;left:0;right:0;top:0;z-index:2}

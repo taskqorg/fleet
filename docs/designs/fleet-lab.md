@@ -274,7 +274,7 @@ Analytics view on the same screen, dark theme first: the experiment list in plai
 
 Routes (each also an operation `lab_*`, `go/coordinator/lab.go`): `POST|GET /api/lab/experiments`, `GET /api/lab/experiments/:id` (trials, scores, spend), `POST …/:id/{launch,stop,resume}`, `POST …/:id/cells/:cell/{cancel,retry,retry_suffix}`, `POST …/:id/promote {variant}`, `POST|GET /api/lab/ratings`, `GET /api/lab/ratings/:id`, `POST /api/lab/scores/:id/correct`, `GET /api/lab/registry`. Errors: 400 invalid body, 404 unknown ID, 409 wrong state.
 
-Promote returns `{cataloguePatch, method, recommendation}`: a catalogue method entry (pipeline, overrides, `config_ref`, source experiment) as a JSON patch for the owner to commit; the recommendation is set once a catalogue method carries the variant's `configRef`. Nothing promotes automatically.
+Promote saves the variant as a catalogue method (pipeline, overrides, `config_ref`, source experiment) in a new catalogue revision with source `lab` ([definition editors](fleet-definition-editors.md)), unless a method already carries the variant's `configRef`, and sets the project's recommendation to it, in one transaction. It returns `{method, catalogue, recommendation}` (`cataloguePatch` is null). Nothing promotes automatically.
 
 ## Claude on WSL (R3.8)
 

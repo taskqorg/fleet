@@ -253,7 +253,9 @@ func (v *LabExperimentsListReply) Validate() error {
 
 type LabExperimentsListRequest = map[string]json.RawMessage
 
+// LabPromoteReply: method: the promoted (or matching) catalogue method; catalogue: the catalogue revision a new method was saved as (source lab); cataloguePatch: null (a promote saves a revision); recommendation: the project's recommendation set to the method.
 type LabPromoteReply struct {
+	Catalogue      *DefinitionRef  `json:"catalogue,omitempty"`
 	CataloguePatch json.RawMessage `json:"cataloguePatch"`
 	Method         json.RawMessage `json:"method"`
 	Recommendation json.RawMessage `json:"recommendation"`
@@ -261,6 +263,11 @@ type LabPromoteReply struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabPromoteReply) Validate() error {
+	if v.Catalogue != nil {
+		if err := Check(v.Catalogue, "catalogue"); err != nil {
+			return err
+		}
+	}
 	if v.CataloguePatch == nil {
 		return Missing("cataloguePatch")
 	}
