@@ -201,7 +201,7 @@ func takeTask(q *Request, id, taker, from string) error {
 	return exec(q, "UPDATE execution SET directed_by=$2 WHERE task_id=$1 AND state IN ('preparing','running','waiting')", id, taker)
 }
 
-// askQuestion: v has kind, text and optional id, projectId, taskId, executionId, sessionId, options, askedBy, legacyKind, data, askedAt.
+// askQuestion: v has kind, text and optional id, projectId, taskId, executionId, sessionId, options, askedBy, requestId, data, askedAt.
 func askQuestion(q *Request, v doc) (string, error) {
 	taskID, projectID := astr(v["taskId"]), astr(v["projectId"])
 	if taskID == "" && astr(v["executionId"]) != "" {
@@ -225,8 +225,8 @@ func askQuestion(q *Request, v doc) (string, error) {
 	if data == nil {
 		data = doc{}
 	}
-	if err := exec(q, "INSERT INTO question(id,kind,project_id,task_id,execution_id,session_id,text,options,asked_by,asked_at,legacy_kind,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,coalesce($10::timestamptz,now()),$11,$12)",
-		id, v["kind"], nilIf(projectID), nilIf(taskID), v["executionId"], v["sessionId"], v["text"], options, v["askedBy"], msTime(v["askedAt"]), v["legacyKind"], js(data)); err != nil {
+	if err := exec(q, "INSERT INTO question(id,kind,project_id,task_id,execution_id,session_id,text,options,asked_by,asked_at,request_id,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,coalesce($10::timestamptz,now()),$11,$12)",
+		id, v["kind"], nilIf(projectID), nilIf(taskID), v["executionId"], v["sessionId"], v["text"], options, v["askedBy"], msTime(v["askedAt"]), v["requestId"], js(data)); err != nil {
 		return "", err
 	}
 	if taskID != "" && v["kind"] != "acceptance" {
@@ -384,7 +384,7 @@ func createTask(q *Request, v doc) (string, error) {
 
 const taskViewCols = `id,project_id AS "projectId",title,expected_outcome AS "expectedOutcome",state,wait_reason AS "waitReason",priority,completion_requirements AS "completionRequirements",
  result_destination AS "resultDestination",delivery_method AS "deliveryMethod",accepted_by AS "acceptedBy",accepted_at AS "acceptedAt",accepted_artifact_ids AS "acceptedArtifactIds",
- created_by AS "createdBy",directed_by AS "directedBy",requested_by AS "requestedBy",taken_from AS "takenFrom",created_at AS "createdAt",updated_at AS "updatedAt",legacy_kind AS "legacyKind",legacy_id AS "legacyId",pause_reason AS "pauseReason"`
+ created_by AS "createdBy",directed_by AS "directedBy",requested_by AS "requestedBy",taken_from AS "takenFrom",created_at AS "createdAt",updated_at AS "updatedAt",pause_reason AS "pauseReason"`
 
 const executionCols = `id,kind,state,observation,last_seen_at AS "lastSeenAt",project_id AS "projectId",task_id AS "taskId",experiment_id AS "experimentId",variant,parent_execution_id AS "parentExecutionId",
  session_id AS "sessionId",account_id AS "accountId",host_id AS "hostId",environment_id AS "environmentId",harness,harness_version AS "harnessVersion",model,config_ref AS "configRef",problem,
@@ -858,7 +858,7 @@ func init() {
 		}
 		// An agent's question is answered by delivering the reply to its session (agent tool reply); recording the
 		// answer alone left the asker without it.
-		if aq, err := first(q, "SELECT coalesce(q.project_id,s.data->>'projectId') AS project_id FROM question q LEFT JOIN document s ON s.kind='session' AND s.id=q.session_id WHERE q.id=$1 AND q.legacy_kind='question'", id); err != nil {
+		if aq, err := first(q, "SELECT coalesce(q.project_id,s.data->>'projectId') AS project_id FROM question q LEFT JOIN document s ON s.kind='session' AND s.id=q.session_id WHERE q.id=$1 AND q.kind='agent_question'", id); err != nil {
 			return none, err
 		} else if aq != nil {
 			// The reply reaches another session: the person must have that session's project, as for any project op.
@@ -906,7 +906,7 @@ func taskRecord(t doc) doc {
 	for col, key := range map[string]string{"id": "id", "project_id": "projectId", "title": "title", "expected_outcome": "expectedOutcome", "state": "state", "wait_reason": "waitReason", "priority": "priority",
 		"completion_requirements": "completionRequirements", "result_destination": "resultDestination", "delivery_method": "deliveryMethod", "accepted_by": "acceptedBy", "accepted_at": "acceptedAt",
 		"accepted_artifact_ids": "acceptedArtifactIds", "created_by": "createdBy", "directed_by": "directedBy", "requested_by": "requestedBy", "taken_from": "takenFrom", "created_at": "createdAt",
-		"updated_at": "updatedAt", "legacy_kind": "legacyKind", "legacy_id": "legacyId", "pause_reason": "pauseReason"} {
+		"updated_at": "updatedAt", "pause_reason": "pauseReason"} {
 		v[key] = t[col]
 	}
 	return v

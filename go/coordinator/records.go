@@ -56,7 +56,7 @@ func all(q *Request, kind string, filter doc) ([]doc, error) {
 	case "execution":
 		return rows(q, "SELECT "+execJSON+" FROM execution WHERE "+execKinds+" AND data @> $1 ORDER BY seq", js(f))
 	case "question":
-		return rows(q, "SELECT data FROM question WHERE legacy_kind='question' AND data @> $1 ORDER BY seq", js(f))
+		return agentQuestions(q, f)
 	case "delegation":
 		return rows(q, "SELECT delegation FROM execution WHERE delegation IS NOT NULL AND delegation @> $1 ORDER BY seq", js(f))
 	}
@@ -73,7 +73,7 @@ func get(q *Request, anyID any, kind string) (doc, error) {
 	case "execution":
 		return getExecution(q, id)
 	case "question":
-		return one(q, "SELECT data FROM question WHERE id=$1 AND legacy_kind='question'", id)
+		return one(q, "SELECT "+agentQuestionJSON+" FROM question WHERE id=$1 AND kind='agent_question'", id)
 	case "delegation":
 		return one(q, "SELECT delegation FROM execution WHERE delegation->>'id'=$1", id)
 	}
@@ -98,7 +98,7 @@ func put(q *Request, kind string, v doc) error {
 	case "execution":
 		return putExecution(q, v)
 	case "question":
-		return putLegacyQuestion(q, v)
+		return putQuestion(q, v)
 	case "delegation":
 		tag, err := q.tx.Exec(q.ctx(), "UPDATE execution SET delegation=$2,parent_execution_id=coalesce(parent_execution_id,$3) WHERE id=$1", v["childExecutionId"], js(v), v["parentExecutionId"])
 		if err == nil && tag.RowsAffected() == 0 {
@@ -240,8 +240,28 @@ func writeEnded(q *Request, id string) error {
 	 FROM execution WHERE id=$1 AND kind='agent_run' ON CONFLICT(id) DO NOTHING`, id)
 }
 
-// putLegacyQuestion: an agent question record ('question') kept in the question table.
-func putLegacyQuestion(q *Request, v doc) error {
+// agentQuestionJSON: an agent question record ('question') from its columns; data holds the open rest (delivery).
+const agentQuestionJSON = `data || jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'sessionId',session_id,'projectId',project_id,'requestId',request_id,
+ 'question',text,'state',state,'answer',answer,'answeredBy',answered_by,'answeredAt',(extract(epoch FROM answered_at)*1000)::bigint,'createdAt',(extract(epoch FROM asked_at)*1000)::bigint))`
+
+// agentQuestionColumns: the record fields all() filters on, by column.
+var agentQuestionColumns = map[string]string{"executionId": "execution_id", "sessionId": "session_id", "projectId": "project_id", "requestId": "request_id", "state": "state::text"}
+
+func agentQuestions(q *Request, f doc) ([]doc, error) {
+	where, args := "kind='agent_question'", []any{}
+	for _, k := range sortedKeysOf(f) {
+		col, ok := agentQuestionColumns[k]
+		if !ok {
+			return nil, fmt.Errorf("question filter on %s", k)
+		}
+		args = append(args, f[k])
+		where += fmt.Sprintf(" AND %s=$%d", col, len(args))
+	}
+	return rows(q, "SELECT "+agentQuestionJSON+" FROM question WHERE "+where+" ORDER BY seq", args...)
+}
+
+// putQuestion: an agent question record ('question'); its fields live in the question columns, data keeps the rest.
+func putQuestion(q *Request, v doc) error {
 	id := astr(v["id"])
 	found, err := has(q, "SELECT 1 FROM question WHERE id=$1", id)
 	if err != nil {
@@ -254,7 +274,7 @@ func putLegacyQuestion(q *Request, v doc) error {
 			askedBy = "execution:" + e
 		}
 		if _, err := askQuestion(q, doc{"id": id, "kind": "agent_question", "text": v["question"], "projectId": v["projectId"], "executionId": v["executionId"], "sessionId": v["sessionId"],
-			"askedBy": askedBy, "legacyKind": "question", "data": v, "askedAt": v["createdAt"]}); err != nil {
+			"askedBy": askedBy, "requestId": v["requestId"], "data": questionRest(v), "askedAt": v["createdAt"]}); err != nil {
 			return err
 		}
 		if answered {
@@ -268,7 +288,21 @@ func putLegacyQuestion(q *Request, v doc) error {
 			return err
 		}
 	}
-	return exec(q, "UPDATE question SET data=$2 WHERE id=$1", id, js(v))
+	return exec(q, "UPDATE question SET data=$2,project_id=coalesce(project_id,$3) WHERE id=$1", id, js(questionRest(v)), nilIf(astr(v["projectId"])))
+}
+
+// agentQuestionFields: the record fields agentQuestionJSON builds from columns (migration 32 strips the same from data).
+var agentQuestionFields = []string{"id", "executionId", "sessionId", "projectId", "requestId", "question", "state", "answer", "answeredBy", "answeredAt", "createdAt"}
+
+// questionRest: the agent question fields without a column.
+func questionRest(v doc) doc {
+	d := doc{}
+	for k, x := range v {
+		if !inList(agentQuestionFields, k) {
+			d[k] = x
+		}
+	}
+	return d
 }
 
 func strArg(b doc, k, name string, max int) (string, error) {

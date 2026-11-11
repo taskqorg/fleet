@@ -208,3 +208,16 @@ test('PM9 definitions: an architect\'s PM saves a definition and the revision na
   assert.ok(!(await member.list()).includes('definition_save'), 'an operator\'s PM has no definition tools');
   assert.notEqual((await member.tool('definition_get', {kind: 'pipeline', id: 'hello-search'})).status, 200);
 });
+
+test('W5 project question: ask is idempotent by requestId, answer and history read the question columns (requirement: fleet-data-foundation.md §1 typed rows; risk: a question read from a stale data blob, or a lost answer)', async () => {
+  const requestId = randomUUID();
+  const asked = ok(await op('question_ask', {projectId: PROJECT, requestId, text: 'Ship it?'}));
+  assert.equal(asked.state, 'waiting');
+  assert.equal(ok(await op('question_ask', {projectId: PROJECT, requestId, text: 'Ship it?'})).id, asked.id, 'same request, same question');
+  assert.equal((await op('question_ask', {projectId: PROJECT, requestId, text: 'Other'})).status, 409);
+  const answered = ok(await op('question_answer', {projectId: PROJECT, questionId: asked.id, answer: 'yes'}));
+  assert.deepEqual([answered.state, answered.answer, answered.answeredBy, typeof answered.answeredAt], ['answered', 'yes', OWNER, 'number']);
+  const h = ok(await op('question_history', {projectId: PROJECT})).questions.find((x: any) => x.id === asked.id);
+  assert.deepEqual([h.state, h.answer, h.requestId, h.text, h.createdAt], ['answered', 'yes', requestId, 'Ship it?', asked.createdAt]);
+  assert.equal((await op('question_answer', {projectId: PROJECT, questionId: asked.id, answer: 'no'})).status, 409);
+});
