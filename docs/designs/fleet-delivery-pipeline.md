@@ -131,9 +131,9 @@ Today `migrate-check` proves only "release N's migrations, then release N-1's co
 
 * **PDS18**: `fleet-update.timer` `OnUnitActiveSec` 1 minute (was 5). The fetch of `latest.json` sends `If-None-Match` with the last ETag, so an unchanged file is a 304 with no body.
 * **Executors**: the poll reply already carries `target` (`go/coordinator/host_poll.go`), and the executor rewrites `update.json` (temp file, then rename) only when a value changes. A new trigger starts `fleet-update executor` when that file changes:
-    * Linux and WSL: `deploy/hosts/linux/fleet-update.path`, `PathChanged=%h/.local/state/fleet/executor/update/update.json`, `Unit=fleet-update.service`, `[Install] WantedBy=default.target`; installed with `systemctl --user enable --now fleet-update.path`.
-    * Mac: `WatchPaths` on the directory `~/Library/Application Support/Fleet/executor/update` in `deploy/hosts/macos/fleet-update.plist` (a directory watch also sees a file replaced by rename).
-    * A host that overrides `FLEET_DATA_DIR` edits the watched path to match; the unit cannot read `executor.env`.
+    * Each `fleet-update executor` run writes the trigger for the real data dir (`FLEET_DATA_DIR` or the default) and reloads it only when its content changed (`go/update/trigger.go`); no host edits a path.
+    * Linux and WSL: `~/.config/systemd/user/fleet-update.path`, `PathChanged=<data dir>/update/update.json`, `Unit=fleet-update.service`, enabled with `systemctl --user enable --now`.
+    * Mac: `~/Library/LaunchAgents/com.ufobe.fleet-update-watch.plist`, `WatchPaths` on `<data dir>/update/update.json`, running `launchctl kickstart gui/<uid>/com.ufobe.fleet-update`. A separate job, so the update job never boots itself out.
     * Not on PDS18: its executor is updated by `fleet-update pds18`, not by an executor-mode run.
     * The 5-minute timer stays as the fallback.
 * No coordinator change and no new credential. The coordinator offers a target only after PDS18 marked it healthy, as today.
@@ -190,6 +190,6 @@ One pull request per item, in this order. Items 1 and 2 wait for #191: the rules
 3. **Hosts** (`fleet-update` code):
     * `go/update/update.go`: ETag fetch, `checkedWith` check and its needs-you question, dump retention, poll smoke step.
     * `deploy/infrastructure/fleet-update.timer`: 1 minute.
-    * `deploy/hosts/linux/fleet-update.path` (new) and `deploy/hosts/macos/fleet-update.plist` `WatchPaths`.
+    * `go/update/trigger.go`: the `.path` unit and the watch LaunchAgent, written by each executor-mode run.
     * `deploy/README.md` first-install steps: copy and enable the `.path` unit.
     * Check: a release reaches all hosts within 15 minutes; a release whose coordinator refuses the executor poll rolls back on PDS18 and opens the needs-you question.

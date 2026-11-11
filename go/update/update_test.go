@@ -323,3 +323,23 @@ func TestSmoke(t *testing.T) {
 		t.Fatal("guard not answering must be down")
 	}
 }
+
+// The trigger names the real data dir, is rewritten only on change, and is skipped where fleet-update is not installed.
+func TestTrigger(t *testing.T) {
+	home := t.TempDir()
+	if triggerFor(home, "linux", "/d/update/update.json", 501) != nil {
+		t.Fatal("no fleet-update.service: no trigger")
+	}
+	os.MkdirAll(filepath.Join(home, ".config", "systemd", "user"), 0o755)
+	os.WriteFile(filepath.Join(home, ".config", "systemd", "user", "fleet-update.service"), nil, 0o644)
+	tr := triggerFor(home, "linux", "/d/update/update.json", 501)
+	if tr == nil || !bytes.Contains(tr.body, []byte("PathChanged=/d/update/update.json\n")) {
+		t.Fatalf("linux trigger: %+v", tr)
+	}
+	os.MkdirAll(filepath.Join(home, "Library", "LaunchAgents"), 0o755)
+	os.WriteFile(filepath.Join(home, "Library", "LaunchAgents", "com.ufobe.fleet-update.plist"), nil, 0o644)
+	m := triggerFor(home, "darwin", "/Users/x/a&b/update/update.json", 501)
+	if m == nil || !bytes.Contains(m.body, []byte("<string>/Users/x/a&amp;b/update/update.json</string>")) || !bytes.Contains(m.body, []byte("gui/501/com.ufobe.fleet-update<")) {
+		t.Fatalf("darwin trigger: %s", m.body)
+	}
+}
