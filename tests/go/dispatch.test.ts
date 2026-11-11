@@ -56,7 +56,7 @@ test('A2 a reached stop budget stops queued work of its director at the next pol
     const {sessionId, executionId} = await queued();
     assert.ok(!ok(await h('/api/hosts/poll', poll)).commands.some((c: any) => c.executionId === executionId));
     const e = await execution(sessionId, executionId);
-    assert.equal(e.state, 'stopped'); assert.match(e.stopDetail, /budget reached/);
+    assert.equal(e.state, 'cancelled'); assert.match(e.stopDetail, /budget reached/);
   } finally { ok(await op('budget_delete', {id: b.id})); }
 });
 
@@ -70,7 +70,7 @@ test('A3 a start receipt binds the native session; another native id for it is 4
   assert.equal((await receipt('completed', {nativeSessionId: 'native-2'})).status, 409);
   ok(await receipt('completed', {nativeSessionId: 'native-1'}));
   const e = await execution(sessionId, executionId);
-  assert.equal(e.state, 'completed'); assert.equal(typeof e.finishedAt, 'number');
+  assert.equal(e.state, 'succeeded'); assert.equal(typeof e.finishedAt, 'number');
 });
 
 test('A4 an event whose seq another event holds is retained as a blocked transport conflict, visible to transport_inspect (requirement: docs/execution-contract.md event transport; risk: a host resend overwrites or silently drops an event)', {timeout: 30_000}, async () => {
@@ -90,7 +90,7 @@ test('A5 stopping work no host has taken settles it as stopped with its stop com
   const c = ok(await call('POST', `/api/executions/${executionId}/stop`, {}, owner));
   assert.equal(c.kind, 'stop'); assert.equal(c.status, 'stopped');
   const e = await execution(sessionId, executionId);
-  assert.equal(e.state, 'stopped'); assert.equal(e.stopDetail, 'stopped before dispatch');
+  assert.equal(e.state, 'cancelled'); assert.equal(e.stopDetail, 'stopped before dispatch');
 });
 
 test('A6 hosts: a duplicate id is 409, a host secret never shows, the list carries the last poll (requirement: docs/designs/fleet-people-access.md host secrets; risk: a second host shadows the first or a secret leaks)', {timeout: 30_000}, async () => {
@@ -101,4 +101,19 @@ test('A6 hosts: a duplicate id is 409, a host secret never shows, the list carri
   const x = l.hosts.find((y: any) => y.id === 'trial-host');
   assert.equal(x.platform, 'linux'); assert.deepEqual(x.capabilities, ['x']); assert.equal(typeof x.lastSeenAt, 'number');
   assert.ok(!JSON.stringify(l).includes('secretHash'));
+});
+
+test('A9 an execution record has one state vocabulary and its real kind and harness: a claude run stores harness claude, a receipt "unknown" keeps the state and marks it unconfirmed (requirement: docs/designs/fleet-data-foundation.md §7 one execution record, C9, C10; risk: every run reported as codex, two state vocabularies disagree)', {timeout: 30_000}, async () => {
+  const claude = ok(await call('POST', '/api/sessions', {}, owner)).sessionId;
+  ok(await call('POST', `/api/sessions/${claude}/profile`, {profileId: 'claude-worker'}, owner));
+  ok(await call('POST', `/api/sessions/${claude}/messages`, {requestId: randomUUID(), text: 'hello'}, owner));
+  const [row] = ok(await op('executions_list', {sessionId: claude})).executions;
+  assert.deepEqual([row.kind, row.harness, row.state], ['agent_run', 'claude', 'preparing']);
+  const h = await host('trial-host');
+  const {sessionId, executionId} = await queued();
+  const command = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === executionId);
+  ok(await h('/api/hosts/receipts', {commandId: command.id, executionId, status: 'started'}));
+  ok(await h('/api/hosts/receipts', {commandId: command.id, executionId, status: 'unknown'}));
+  const e = await execution(sessionId, executionId);
+  assert.deepEqual([e.state, e.observation], ['running', 'unconfirmed']);
 });

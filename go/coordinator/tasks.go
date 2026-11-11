@@ -382,11 +382,11 @@ const taskViewCols = `id,project_id AS "projectId",title,expected_outcome AS "ex
 
 const executionCols = `id,kind,state,observation,last_seen_at AS "lastSeenAt",project_id AS "projectId",task_id AS "taskId",experiment_id AS "experimentId",variant,parent_execution_id AS "parentExecutionId",
  session_id AS "sessionId",account_id AS "accountId",host_id AS "hostId",environment_id AS "environmentId",harness,harness_version AS "harnessVersion",model,config_ref AS "configRef",problem,
- started_at AS "startedAt",ended_at AS "endedAt",legacy_kind AS "legacyKind",legacy_id AS "legacyId"`
+ started_at AS "startedAt",ended_at AS "endedAt"`
 
 func executionsList(q *Request, f doc) ([]doc, error) {
 	c, p := []string{}, []any{}
-	for _, x := range [][2]string{{"taskId", "task_id"}, {"projectId", "project_id"}, {"parentExecutionId", "parent_execution_id"}} {
+	for _, x := range [][2]string{{"taskId", "task_id"}, {"projectId", "project_id"}, {"parentExecutionId", "parent_execution_id"}, {"sessionId", "session_id"}} {
 		if v := astr(f[x[0]]); v != "" {
 			p = append(p, v)
 			c = append(c, fmt.Sprintf("%s=$%d", x[1], len(p)))
