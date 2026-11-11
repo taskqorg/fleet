@@ -120,6 +120,13 @@ func operatorFirst(h handler) handler {
 	}
 }
 
+// docOf: a decoded request as the map a handler not yet on struct fields reads; only the request type's fields reach it.
+func docOf(v any) doc {
+	d := doc{}
+	json.Unmarshal(jsonBytes(v), &d)
+	return d
+}
+
 // asT: rows and records read as maps, as their contract type. For values whose map keys are fixed by the query or the
 // builder (a SELECT column list); a reply built field by field names its struct directly.
 func asT[T any](v any) (T, error) {
