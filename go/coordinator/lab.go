@@ -1728,7 +1728,7 @@ func expPromote(q *Request, id, label string) (doc, error) {
 	if rec, err = recommend(q, astr(exp["project_id"]), astr(existing["id"])); err != nil {
 		return nil, err
 	}
-	return doc{"cataloguePatch": nil, "method": existing, "recommendation": rec}, nil
+	return doc{"cataloguePatch": nil, "method": existing, "recommendation": rec, "note": note}, nil
 }
 
 func expRate(q *Request, b doc) (doc, error) {
@@ -2433,7 +2433,7 @@ func expComparison(exp doc, trials []doc, cur []doc) []any {
 	}
 	version := ""
 	for _, sc := range cur {
-		if sc["evaluator"] == primary {
+		if sc["evaluator"] == primary && len(trialIDsOf(sc)) == 1 {
 			version = astr(sc["evaluatorVersion"])
 		}
 	}
@@ -2495,7 +2495,7 @@ func scoreTyped(q *Request, exp, t, pin doc, name string, examples map[string]do
 	}
 	var label, tag, reason string
 	for _, x := range anys(full["references"]) {
-		if f := mapOf(x); f["path"] == "expected.json" {
+		if f := mapOf(x); f["path"] == "expected.json" && label == "" && reason == "" { // paths are unique; the first counts
 			var e map[string]any
 			if err := json.Unmarshal([]byte(astr(f["text"])), &e); err != nil {
 				reason = "references/expected.json is not a JSON object"
