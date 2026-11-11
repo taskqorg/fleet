@@ -804,8 +804,8 @@ func inputsFor(q *Request, run doc, i int) ([]any, error) {
 				return nil, err
 			}
 		}
-		out = append(out, anys(run["exampleInputs"])...)
 	}
+	out = append(out, anys(run["exampleInputs"])...)
 	fs, err := pipelineOutputs(q, run, i)
 	if err != nil {
 		return nil, err
@@ -1784,7 +1784,7 @@ func pipelineRerun(q *Request, r *contract.PipelineRerunRequest) (doc, error) {
 		}
 	}
 	o := doc{"file": pid + ".json", "projectId": old["projectId"], "requestId": rid, "example": old["example"], "overrides": old["overrides"], "rerunOf": r.RunId, "reuse": reuse,
-		"extra": doc{"rerunIdentity": identity}}
+		"extra": rerunInputs(old, identity)}
 	if draft {
 		o["draftDefinition"], o["draftBase"] = def, base
 	}
@@ -1859,4 +1859,9 @@ func withArguments(def, overrides doc) any {
 		out[k] = v
 	}
 	return out
+}
+
+// Reruns retain immutable staged inputs even when the example contains no text files.
+func rerunInputs(old doc, identity string) doc {
+	return doc{"rerunIdentity": identity, "exampleInputs": old["exampleInputs"]}
 }

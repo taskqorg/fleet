@@ -53,3 +53,76 @@ func TestVariantArgumentsMergeOverStep(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+func TestJudgeArtifactInputsReachSteps(t *testing.T) {
+	// Requirement: S5 stages binary trial artifacts; risk: dropping inputs without text example files.
+	run := doc{"example": doc{}, "exampleInputs": []any{doc{"artifactId": "render-artifact", "path": "example/trial/renders/front.png"}}, "steps": []any{}}
+	got, err := inputsFor(nil, run, 0)
+	if err != nil || len(got) != 1 || mapOf(got[0])["artifactId"] != "render-artifact" || mapOf(got[0])["path"] != "example/trial/renders/front.png" {
+		t.Fatalf("binary artifact inputs: %v, %v", got, err)
+	}
+}
+
+func TestJudgeRerunRetainsArtifactInputs(t *testing.T) {
+	// Requirement: judge reruns receive original renders; risk: a rerun silently judges no files.
+	original := doc{"exampleInputs": []any{doc{"artifactId": "immutable-png", "path": "example/trial/front.png"}}}
+	rerun := rerunInputs(original, "all")
+	rerun["example"], rerun["steps"] = doc{}, []any{}
+	got, err := inputsFor(nil, rerun, 0)
+	if err != nil || len(got) != 1 || mapOf(got[0])["artifactId"] != "immutable-png" {
+		t.Fatalf("rerun inputs: %v, %v", got, err)
+	}
+}
+
+func TestPairwiseOrderDependenceAndVersions(t *testing.T) {
+	// Requirement: S5 never scores position bias and separates rubrics; risk: false agreement across versions.
+	run := func(id, value string, order int) doc {
+		return doc{"id": id, "state": "succeeded", "judge": doc{"evaluator": "judge:pair:pick_best", "groupId": "g", "trialIds": []any{"a", "b"}, "order": order}, "steps": []any{doc{"output": doc{"value": value}}}}
+	}
+	view := pairwiseView([]doc{run("one", "a", 0), run("two", "b", 1)})
+	if len(view) != 1 || mapOf(view[0])["reason"] != "order-dependent" {
+		t.Fatalf("%v", view)
+	}
+	scores := []doc{
+		{"evaluator": "human:owner:pick_best", "form": "pick_best", "trialIds": []any{"b", "a"}, "value": "a"},
+		{"evaluator": "judge:pair:pick_best", "evaluatorVersion": "v1", "form": "pick_best", "trialIds": []any{"a", "b"}, "value": "a"},
+		{"evaluator": "judge:pair:pick_best", "evaluatorVersion": "v2", "form": "pick_best", "trialIds": []any{"a", "b"}, "value": "b"},
+	}
+	a := agreement(scores)
+	vs := anys(a["byVersion"])
+	if len(vs) != 2 || mapOf(vs[0])["matched"] != 1 || mapOf(vs[1])["matched"] != 0 {
+		t.Fatalf("%v", a)
+	}
+}
+
+func TestPairwiseWaitsForAllLatestCandidates(t *testing.T) {
+	// Requirement: compare complete groups of latest attempts; risk: scoring a candidate never shown to the judges.
+	exp := doc{"variants": []any{doc{}, doc{}, doc{}}}
+	trial := func(id, variant, state string, attempt int) doc {
+		return doc{"id": id, "state": state, "cell": doc{"iteration": 0, "example": "e", "repeat": 0, "variant": variant, "attempt": attempt}}
+	}
+	trials := []doc{trial("a", "a", "succeeded", 0), trial("b", "b", "succeeded", 0), trial("c", "c", "running", 0)}
+	if groups, complete := pairwiseGroups(exp, trials); complete || len(groups) != 0 {
+		t.Fatalf("premature group: %v", groups)
+	}
+	trials[2]["state"] = "succeeded"
+	trials = append(trials, trial("a-retry", "a", "running", 1))
+	if groups, complete := pairwiseGroups(exp, trials); complete || len(groups) != 0 {
+		t.Fatalf("stale retry group: %v", groups)
+	}
+	trials[3]["state"] = "succeeded"
+	groups, complete := pairwiseGroups(exp, trials)
+	if !complete || len(groups) != 1 {
+		t.Fatalf("missing complete group: %v", groups)
+	}
+	for _, g := range groups {
+		if len(g) != 3 {
+			t.Fatal(g)
+		}
+		for _, tr := range g {
+			if tr["id"] == "a" {
+				t.Fatal("old attempt included")
+			}
+		}
+	}
+}

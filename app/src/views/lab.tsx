@@ -172,6 +172,10 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
       </DetailSection>)}
       <DetailSection title="Decision gate">
         <KvRow icon="check-check" label="Judge agrees with you" meta={e.agreement.compared ? `${e.agreement.matched} of ${e.agreement.compared} (${e.agreement.percent}%)` : 'no trial rated by both yet'} />
+        {(e.agreement.byVersion ?? []).length > 0 && <VirtualList items={e.agreement.byVersion} getKey={(v: any) => v.version} rowHeight={ROW2} follow="top" label="Agreement by rubric version" columns="1.25rem minmax(0,1fr) auto"
+          render={(v: any) => <><span class="lead"><Icon name="check-check" /></span><span class="tt">{v.version}</span><span>{v.compared ? `${v.matched} of ${v.compared} (${v.percent}%)` : 'no shared rating'}</span></>} />}
+        {(e.pairwise ?? []).length > 0 && <VirtualList items={e.pairwise} getKey={(v: any) => v.group} rowHeight={ROW2} follow="top" label="Pairwise order checks" columns="1.25rem minmax(0,1fr) auto"
+          render={(v: any) => <><span class="lead"><Icon name={v.reason === 'agree' ? 'check-check' : 'circle-alert'} /></span><span class="tt">{v.group}</span><span>{v.reason}</span></>} />}
         <KvRow icon="clock" label="Priority background" meta={e.priority.note} />
       </DetailSection>
     </section>
