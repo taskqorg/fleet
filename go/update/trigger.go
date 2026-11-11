@@ -6,23 +6,36 @@ package main
 
 import (
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
+	"time"
 )
 
 // trigger is one host's unit file and the commands that load it after a change.
 type trigger struct {
 	file string
 	body []byte
-	load [][]string
+	load []step
+}
+
+// step is one load command; tolerate: its failure is expected and ignored (bootout of a job not loaded); retry: tries
+// with a second between (launchd finishes a bootout asynchronously).
+type step struct {
+	argv     []string
+	tolerate bool
+	retry    int
 }
 
 // runTrigger runs one load command; replaced in tests.
 var runTrigger = func(argv []string) error { return command(argv...)() }
+
+var triggerWait = time.Second
 
 func triggerFor(home, goos, signal string, uid int) *trigger {
 	switch goos {
@@ -32,8 +45,10 @@ func triggerFor(home, goos, signal string, uid int) *trigger {
 			return nil // not a systemd user install
 		}
 		return &trigger{file: filepath.Join(dir, "fleet-update.path"),
-			body: []byte(fmt.Sprintf("# Written by fleet-update executor; edits are overwritten.\n[Unit]\nDescription=Fleet self-update on a new target\n\n[Path]\nPathChanged=%s\nUnit=fleet-update.service\n\n[Install]\nWantedBy=default.target\n", signal)),
-			load: [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "--now", "fleet-update.path"}}}
+			body: []byte(fmt.Sprintf("# Written by fleet-update executor; edits are overwritten.\n[Unit]\nDescription=Fleet self-update on a new target\n\n[Path]\nPathChanged=%s\nUnit=fleet-update.service\n\n[Install]\nWantedBy=default.target\n", strings.ReplaceAll(signal, "%", "%%"))),
+			// restart, not enable --now: an active path unit keeps watching its old path until restarted.
+			load: []step{{argv: []string{"systemctl", "--user", "daemon-reload"}}, {argv: []string{"systemctl", "--user", "enable", "fleet-update.path"}},
+				{argv: []string{"systemctl", "--user", "restart", "fleet-update.path"}}}}
 	case "darwin":
 		dir := filepath.Join(home, "Library", "LaunchAgents")
 		if !exists(filepath.Join(dir, "com.ufobe.fleet-update.plist")) {
@@ -41,7 +56,10 @@ func triggerFor(home, goos, signal string, uid int) *trigger {
 		}
 		gui := "gui/" + strconv.Itoa(uid)
 		file := filepath.Join(dir, "com.ufobe.fleet-update-watch.plist")
+		var esc bytes.Buffer
+		xml.EscapeText(&esc, []byte(signal))
 		var b bytes.Buffer
+		// The file, not its directory: fleet-update writes update-state.json there, which would restart it in a loop.
 		fmt.Fprintf(&b, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Written by fleet-update executor; edits are overwritten. Starts com.ufobe.fleet-update when update.json changes. -->
@@ -55,34 +73,22 @@ func triggerFor(home, goos, signal string, uid int) *trigger {
   <key>ProcessType</key><string>Background</string>
 </dict>
 </plist>
-`, gui, xmlEscape(signal))
+`, gui, esc.String())
 		return &trigger{file: file, body: b.Bytes(),
-			load: [][]string{{"launchctl", "bootout", gui + "/com.ufobe.fleet-update-watch"}, {"launchctl", "bootstrap", gui, file}}}
+			load: []step{{argv: []string{"launchctl", "bootout", gui + "/com.ufobe.fleet-update-watch"}, tolerate: true},
+				{argv: []string{"launchctl", "bootstrap", gui, file}, retry: 5}}}
 	}
 	return nil
 }
 
-func xmlEscape(s string) string {
-	var b bytes.Buffer
-	for _, r := range s {
-		switch r {
-		case '&':
-			b.WriteString("&amp;")
-		case '<':
-			b.WriteString("&lt;")
-		case '>':
-			b.WriteString("&gt;")
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
 // ensureTrigger writes and loads the trigger when it is missing or differs; failures only log (the timer still runs).
+// A failed load removes the file, so the next run tries again.
 func ensureTrigger(signal string) {
 	home, _ := os.UserHomeDir()
-	t := triggerFor(home, runtime.GOOS, signal, os.Getuid())
+	loadTrigger(triggerFor(home, runtime.GOOS, signal, os.Getuid()))
+}
+
+func loadTrigger(t *trigger) {
 	if t == nil {
 		return
 	}
@@ -93,11 +99,17 @@ func ensureTrigger(signal string) {
 		log.Print("trigger: ", err)
 		return
 	}
-	for i, argv := range t.load {
-		if err := runTrigger(argv); err != nil && !(runtime.GOOS == "darwin" && i == 0) { // bootout of a job not loaded fails
+	for _, st := range t.load {
+		err := runTrigger(st.argv)
+		for n := 1; err != nil && n < st.retry; n++ {
+			time.Sleep(triggerWait)
+			err = runTrigger(st.argv)
+		}
+		if err != nil && !st.tolerate {
 			log.Print("trigger: ", err)
+			os.Remove(t.file)
 			return
 		}
 	}
-	log.Printf("trigger: %s watches %s", t.file, signal)
+	log.Printf("trigger: %s loaded", t.file)
 }
