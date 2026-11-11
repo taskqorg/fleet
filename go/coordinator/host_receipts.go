@@ -60,9 +60,7 @@ var receiptRank = map[string]int{"pending": 0, string(contract.ReceiptStatusAcce
 // projectReceiptOps: the project operations a native agent may call through a receipt.
 var projectReceiptOps = func() []string {
 	out := []string{}
-	for _, o := range []contract.ProjectOperation{contract.ProjectOperationProjectContext, contract.ProjectOperationCatalogue, contract.ProjectOperationPipelineRun,
-		contract.ProjectOperationDirectSearch, contract.ProjectOperationPipelineHistory, contract.ProjectOperationPipelineGet, contract.ProjectOperationQuestionAsk,
-		contract.ProjectOperationQuestionHistory, contract.ProjectOperationAccountList} {
+	for _, o := range contract.ProjectOperationValues {
 		out = append(out, string(o))
 	}
 	return out

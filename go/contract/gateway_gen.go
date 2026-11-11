@@ -44,6 +44,9 @@ const (
 	CallOutcomeUnknown CallOutcome = "unknown"
 )
 
+// CallOutcomeValues lists every CallOutcome in schema order.
+var CallOutcomeValues = []CallOutcome{CallOutcomeOk, CallOutcomeError, CallOutcomeUnknown}
+
 type CallUsage struct {
 	Amount int64  `json:"amount"`
 	Unit   string `json:"unit"`

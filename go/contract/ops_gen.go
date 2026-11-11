@@ -92,6 +92,9 @@ const (
 	ActorKindSystem ActorKind = "system"
 )
 
+// ActorKindValues lists every ActorKind in schema order.
+var ActorKindValues = []ActorKind{ActorKindPerson, ActorKindAgent, ActorKindSystem}
+
 type AgentCompatibilityReply struct {
 	Rows []CompatibilityRow `json:"rows"`
 }
@@ -237,6 +240,9 @@ const (
 	AssessmentBasisNone  AssessmentBasis = "none"
 )
 
+// AssessmentBasisValues lists every AssessmentBasis in schema order.
+var AssessmentBasisValues = []AssessmentBasis{AssessmentBasisLab, AssessmentBasisUsage, AssessmentBasisNone}
+
 // Block: One thread entry (docs/designs/fleet-conversations.md), told apart by kind. key is its position seq:part. Fleet's own projection: closed.
 type Block = json.RawMessage
 
@@ -370,6 +376,9 @@ const (
 	ChangeKindTask           ChangeKind = "task"
 )
 
+// ChangeKindValues lists every ChangeKind in schema order.
+var ChangeKindValues = []ChangeKind{ChangeKindApiConnection, ChangeKindArtifact, ChangeKindCommand, ChangeKindConnectionKey, ChangeKindEvent, ChangeKindExecution, ChangeKindExperiment, ChangeKindHost, ChangeKindManagedAccount, ChangeKindQuestion, ChangeKindScore, ChangeKindSession, ChangeKindSettingChange, ChangeKindTask}
+
 type ChangeRef struct {
 	Id   string     `json:"id"`
 	Kind ChangeKind `json:"kind"`
@@ -408,6 +417,9 @@ const (
 	CompatibilityStateUnchecked CompatibilityState = "unchecked"
 )
 
+// CompatibilityStateValues lists every CompatibilityState in schema order.
+var CompatibilityStateValues = []CompatibilityState{CompatibilityStateChecked, CompatibilityStateFailed, CompatibilityStateUnchecked}
+
 type ConflictReason string
 
 const (
@@ -417,6 +429,9 @@ const (
 	ConflictReasonWrongState        ConflictReason = "wrong-state"
 	ConflictReasonInvalidDraft      ConflictReason = "invalid-draft"
 )
+
+// ConflictReasonValues lists every ConflictReason in schema order.
+var ConflictReasonValues = []ConflictReason{ConflictReasonBaseMoved, ConflictReasonRepositoryChanged, ConflictReasonNoChange, ConflictReasonWrongState, ConflictReasonInvalidDraft}
 
 type ConnectionsCreateReply = map[string]json.RawMessage
 
@@ -612,6 +627,9 @@ const (
 	DefinitionKindCatalogue DefinitionKind = "catalogue"
 )
 
+// DefinitionKindValues lists every DefinitionKind in schema order.
+var DefinitionKindValues = []DefinitionKind{DefinitionKindAgent, DefinitionKindPipeline, DefinitionKindCatalogue}
+
 type DefinitionListItem struct {
 	Agent         *AgentListFacts     `json:"agent,omitempty"`
 	Compatibility *CompatibilityState `json:"compatibility,omitempty"`
@@ -680,6 +698,9 @@ const (
 	DefinitionStateRepositoryDeleted DefinitionState = "repository-deleted"
 )
 
+// DefinitionStateValues lists every DefinitionState in schema order.
+var DefinitionStateValues = []DefinitionState{DefinitionStateSynced, DefinitionStateAhead, DefinitionStateRepositoryChanged, DefinitionStateStoreOnly, DefinitionStateRepositoryDeleted}
+
 type DefinitionUsageReply struct {
 	ByRevision []RevisionWindow `json:"byRevision"`
 	Total      Window           `json:"total"`
@@ -735,6 +756,9 @@ const (
 	EffectiveLayerNameProject     EffectiveLayerName = "project"
 )
 
+// EffectiveLayerNameValues lists every EffectiveLayerName in schema order.
+var EffectiveLayerNameValues = []EffectiveLayerName{EffectiveLayerNameSharedRules, EffectiveLayerNameRole, EffectiveLayerNameDefinition, EffectiveLayerNameProject}
+
 type ExecutionDifferencesReply struct {
 	ExecutionId         json.RawMessage `json:"executionId,omitempty"`
 	Files               json.RawMessage `json:"files,omitempty"`
@@ -768,6 +792,9 @@ const (
 	ExecutionStateFailed    ExecutionState = "failed"
 	ExecutionStateCancelled ExecutionState = "cancelled"
 )
+
+// ExecutionStateValues lists every ExecutionState in schema order.
+var ExecutionStateValues = []ExecutionState{ExecutionStatePreparing, ExecutionStateRunning, ExecutionStateWaiting, ExecutionStateSucceeded, ExecutionStateFailed, ExecutionStateCancelled}
 
 type ExecutionStatusReply = map[string]json.RawMessage
 
@@ -810,6 +837,9 @@ const (
 	FieldOpRemove  FieldOp = "remove"
 	FieldOpReplace FieldOp = "replace"
 )
+
+// FieldOpValues lists every FieldOp in schema order.
+var FieldOpValues = []FieldOp{FieldOpAdd, FieldOpRemove, FieldOpReplace}
 
 type FocusSetReply struct {
 	Focus     json.RawMessage `json:"focus,omitempty"`
@@ -1173,12 +1203,18 @@ const (
 	MirrorStateOff      MirrorState = "off"
 )
 
+// MirrorStateValues lists every MirrorState in schema order.
+var MirrorStateValues = []MirrorState{MirrorStateMirrored, MirrorStatePending, MirrorStateFailed, MirrorStateOff}
+
 type ModelSource string
 
 const (
 	ModelSourceShipped  ModelSource = "shipped"
 	ModelSourceReported ModelSource = "reported"
 )
+
+// ModelSourceValues lists every ModelSource in schema order.
+var ModelSourceValues = []ModelSource{ModelSourceShipped, ModelSourceReported}
 
 // OpError: Body of every failed operation (writeError in go/coordinator/main.go).
 type OpError struct {
@@ -1425,6 +1461,9 @@ const (
 	RerunModeAll    RerunMode = "all"
 )
 
+// RerunModeValues lists every RerunMode in schema order.
+var RerunModeValues = []RerunMode{RerunModeFailed, RerunModeAll}
+
 type ResultArtifact struct {
 	Id        string `json:"id"`
 	MediaType string `json:"mediaType"`
@@ -1462,6 +1501,9 @@ const (
 	RevisionSourceLab    RevisionSource = "lab"
 	RevisionSourceAgent  RevisionSource = "agent"
 )
+
+// RevisionSourceValues lists every RevisionSource in schema order.
+var RevisionSourceValues = []RevisionSource{RevisionSourceRepo, RevisionSourceEditor, RevisionSourceLab, RevisionSourceAgent}
 
 type RevisionWindow struct {
 	Revision int64  `json:"revision"`
