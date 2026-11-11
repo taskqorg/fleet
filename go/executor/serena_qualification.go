@@ -43,7 +43,7 @@ func serenaSymbolWitness(text string) error {
 }
 
 // qualifySerena runs no model. It proves the actual selected local MCP tool boundary and retains only safe witnesses.
-func qualifySerena(args []string) error {
+func qualifySerena(args []string) (resultErr error) {
 	if len(args) != 5 {
 		return errors.New("qualify-serena requires profile file, temporary fixture root, receipt file, named host account and host registry path")
 	}
@@ -99,7 +99,19 @@ func qualifySerena(args []string) error {
 	if err = cmd.Start(); err != nil {
 		return err
 	}
-	defer func() { stdin.Close(); cmd.Wait() }()
+	stop, err := ownSerena(cmd)
+	if err != nil {
+		cmd.Process.Kill()
+		cmd.Wait()
+		return err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, stop())
+		stdin.Close()
+		cmd.Process.Kill()
+		stdout.Close()
+		cmd.Wait()
+	}()
 	encoder, decoder := json.NewEncoder(stdin), json.NewDecoder(stdout)
 	id := 0
 	calls := []string{}

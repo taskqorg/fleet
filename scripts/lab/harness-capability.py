@@ -2,8 +2,8 @@
 """Program-only Lab check: selected Serena capability, temporary Go fixture, retained safe receipt. No model."""
 import json, os, pathlib, subprocess, tempfile
 
-output = pathlib.Path('output')
-output.mkdir(exist_ok=True)
+output = pathlib.Path(os.environ['FLEET_OUTPUT_DIR'])
+output.mkdir(parents=True, exist_ok=True)
 profile = {
     'id': 'harness-capability-program', 'model': 'not-invoked', 'effort': 'low',
     'instructions': 'Program-only capability qualification; no model is invoked.',

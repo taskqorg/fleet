@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 )
 
 // The same server-side grant applies to every harness, independent of its client permission syntax.
@@ -58,15 +59,20 @@ func serenaDependencies(registry, account string) (M, error) {
 	return out, nil
 }
 
-func serenaPath(binding M) string {
-	dirs := []string{}
+// Private aliases preserve the validated identities and required command names, even after symlink resolution.
+func serenaPath(binding M) (string, func(), error) {
+	dir, err := os.MkdirTemp("", "fleet-serena-bin-")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { os.RemoveAll(dir) }
 	for _, name := range []string{"go", "gopls"} {
-		dir := filepath.Dir(jStr(binding, name))
-		if !slices.Contains(dirs, dir) {
-			dirs = append(dirs, dir)
+		if err := os.Symlink(jStr(binding, name), filepath.Join(dir, name)); err != nil {
+			cleanup()
+			return "", nil, err
 		}
 	}
-	return strings.Join(dirs, string(os.PathListSeparator)) + string(os.PathListSeparator) + os.Getenv("PATH")
+	return dir + string(os.PathListSeparator) + os.Getenv("PATH"), cleanup, nil
 }
 
 func serenaArguments(root, harness string) ([]string, error) {
@@ -105,8 +111,19 @@ func serenaAllowed(request M, root string) error {
 	return nil
 }
 
+// Reuse execution cleanup's incarnation-bound descendant handling; do not signal an unrelated process group.
+func ownSerena(cmd *exec.Cmd) (func() error, error) {
+	id, err := identity(cmd.Process.Pid)
+	if err != nil {
+		return nil, err
+	}
+	owned := &live{owned: map[int]string{cmd.Process.Pid: id}}
+	var once sync.Once
+	return func() error { once.Do(func() { err = owned.cleanup() }); return err }, nil
+}
+
 // serenaMCP is a narrow local stdio filter, not an arbitrary command or remote MCP proxy.
-func serenaMCP(root, harness, registry, account string) error {
+func serenaMCP(root, harness, registry, account string) (resultErr error) {
 	dependencies, err := serenaDependencies(registry, account)
 	if err != nil {
 		return err
@@ -122,7 +139,12 @@ func serenaMCP(root, harness, registry, account string) error {
 			cmd.Env = append(cmd.Env, key+"="+value)
 		}
 	}
-	cmd.Env = append(cmd.Env, "PATH="+serenaPath(dependencies))
+	path, cleanup, err := serenaPath(dependencies)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	cmd.Env = append(cmd.Env, "PATH="+path)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -135,8 +157,33 @@ func serenaMCP(root, harness, registry, account string) error {
 	if err = cmd.Start(); err != nil {
 		return errors.New("Serena executable could not start")
 	}
-	defer func() { stdin.Close(); cmd.Wait() }()
-	return filterSerena(os.Stdin, os.Stdout, stdin, stdout, root)
+	stop, err := ownSerena(cmd)
+	if err != nil {
+		cmd.Process.Kill()
+		cmd.Wait()
+		return err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, stop())
+		stdin.Close()
+		cmd.Process.Kill()
+		stdout.Close()
+		cmd.Wait()
+	}()
+	return serveSerena(stop, os.Stdin, os.Stdout, stdin, stdout, root)
+}
+
+// Observe downstream closure even while a server response is stalled; never replay an uncertain request.
+func serveSerena(stop func() error, input io.Reader, output io.Writer, upstream io.Writer, replies io.ReadCloser, root string) error {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	go func() {
+		_, err := io.Copy(writer, input)
+		writer.CloseWithError(err)
+		stop()
+		replies.Close()
+	}()
+	return filterSerena(reader, output, upstream, replies, root)
 }
 
 func filterSerena(input io.Reader, output io.Writer, upstream io.Writer, replies io.Reader, root string) error {

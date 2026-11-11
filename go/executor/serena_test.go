@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // R3; risk: another harness can call tools hidden only by Codex client flags, or switch project scope.
@@ -144,5 +148,98 @@ func TestSerenaNativeClientSelection(t *testing.T) {
 	}
 	if err := serenaAllowed(M{"method": "tools/call", "params": M{"name": "get_symbols_overview", "arguments": M{"relative_path": "fixture.go"}}}, root); err != nil {
 		t.Fatal("valid path rejected", err)
+	}
+}
+
+// R3/R5; risk: PATH discovers a different gopls than the receipt's validated binary.
+func TestSerenaChildPathUsesExactBindings(t *testing.T) {
+	root := t.TempDir()
+	goDir := filepath.Join(root, "go-bin")
+	os.Mkdir(goDir, 0700)
+	wrong := filepath.Join(goDir, "gopls")
+	os.WriteFile(wrong, []byte("#!/bin/sh\necho wrong\n"), 0700)
+	selected := filepath.Join(root, "renamed-language-server")
+	os.WriteFile(selected, []byte("#!/bin/sh\necho selected\n"), 0700)
+	path, cleanup, err := serenaPath(M{"go": filepath.Join(goDir, "go"), "gopls": selected})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	t.Setenv("PATH", path)
+	got, err := exec.Command("gopls", "version").Output()
+	if err != nil || strings.TrimSpace(string(got)) != "selected" {
+		t.Fatal(string(got), err)
+	}
+}
+
+// R3; risk: a hung MCP response keeps the owned server alive after the native client closes.
+func TestSerenaDownstreamCloseStopsHungServer(t *testing.T) {
+	cmd := exec.Command("/bin/sleep", "60")
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cmd.Process.Kill(); cmd.Wait() }()
+	client, writer := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		done <- serveSerena(func() error { return cmd.Process.Kill() }, client, io.Discard, in, out, t.TempDir())
+	}()
+	writer.Write([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}` + "\n"))
+	writer.Close()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "unknown") {
+			t.Fatal("lost response not explicit", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("closed client left server response blocked")
+	}
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("server was not terminated")
+	}
+}
+
+// R3; risk: killing the MCP leader leaves its language server running outside the completed probe.
+func TestSerenaShutdownReapsOwnedDescendants(t *testing.T) {
+	cmd := exec.Command("/bin/sh", "-c", "sleep 60 & echo $!; wait")
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	stop, err := ownSerena(cmd)
+	if err != nil {
+		cmd.Process.Kill()
+		cmd.Wait()
+		t.Fatal(err)
+	}
+	defer func() { stop(); cmd.Wait() }()
+	line, err := bufio.NewReader(out).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stop(); err != nil {
+		t.Fatal(err)
+	}
+	table, err := processes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running(table, pid) {
+		t.Fatal("owned language-server child survived shutdown", pid)
 	}
 }
