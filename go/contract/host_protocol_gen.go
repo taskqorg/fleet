@@ -360,15 +360,38 @@ func (v CheckStatus) Valid() bool {
 }
 
 type CheckoutResult struct {
-	CheckoutPath string  `json:"checkoutPath"`
-	Reason       *string `json:"reason,omitempty"`
-	Sha          *string `json:"sha,omitempty"`
-	Status       string  `json:"status"`
+	CheckoutPath string         `json:"checkoutPath"`
+	Reason       *string        `json:"reason,omitempty"`
+	Sha          *string        `json:"sha,omitempty"`
+	Status       CheckoutStatus `json:"status"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *CheckoutResult) Validate() error {
+	if err := Check(&v.Status, "status"); err != nil {
+		return err
+	}
 	return nil
+}
+
+type CheckoutStatus string
+
+const (
+	CheckoutStatusSynced CheckoutStatus = "synced"
+	CheckoutStatusFailed CheckoutStatus = "failed"
+)
+
+// CheckoutStatusValues lists every CheckoutStatus in schema order.
+var CheckoutStatusValues = []CheckoutStatus{CheckoutStatusSynced, CheckoutStatusFailed}
+
+// Valid: v is one of the schema's values.
+func (v CheckoutStatus) Valid() bool {
+	for _, x := range CheckoutStatusValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // CheckoutSync: data of a checkout.synced or sync-failed event
@@ -1027,6 +1050,16 @@ func (v *ReadinessCheck) Validate() error {
 	if err := Check(&v.Status, "status"); err != nil {
 		return err
 	}
+	return nil
+}
+
+// ReadinessFailed: data of a readiness.failed event
+type ReadinessFailed struct {
+	Reason string `json:"reason"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ReadinessFailed) Validate() error {
 	return nil
 }
 

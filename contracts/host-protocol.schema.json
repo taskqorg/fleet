@@ -1821,7 +1821,7 @@
           "type": "string"
         },
         "status": {
-          "type": "string"
+          "$ref": "#/$defs/CheckoutStatus"
         },
         "sha": {
           "type": "string"
@@ -1852,6 +1852,26 @@
           "items": {
             "$ref": "#/$defs/CheckoutResult"
           }
+        }
+      }
+    },
+    "CheckoutStatus": {
+      "type": "string",
+      "enum": [
+        "synced",
+        "failed"
+      ]
+    },
+    "ReadinessFailed": {
+      "$comment": "data of a readiness.failed event",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string"
         }
       }
     }

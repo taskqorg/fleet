@@ -658,7 +658,7 @@ func (e *executor) run(c M) error {
 			return err
 		}
 		if !ok {
-			if err := e.event(c, 1, contract.FleetEventTypeReadinessFailed, M{"reason": "readiness-check-failed"}); err != nil {
+			if err := e.event(c, 1, contract.FleetEventTypeReadinessFailed, contract.ReadinessFailed{Reason: "readiness-check-failed"}); err != nil {
 				return err
 			}
 		}

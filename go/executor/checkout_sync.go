@@ -105,11 +105,11 @@ func checkoutSync(p any, host string, roots, forbidden []string) (contract.Check
 			}
 		}
 		if err == nil {
-			results = append(results, contract.CheckoutResult{CheckoutPath: dir, Status: "synced", Sha: &sha})
+			results = append(results, contract.CheckoutResult{CheckoutPath: dir, Status: contract.CheckoutStatusSynced, Sha: &sha})
 		} else {
 			ok = false
 			reason := err.Error()
-			results = append(results, contract.CheckoutResult{CheckoutPath: dir, Status: "failed", Reason: &reason})
+			results = append(results, contract.CheckoutResult{CheckoutPath: dir, Status: contract.CheckoutStatusFailed, Reason: &reason})
 		}
 	}
 	return contract.CheckoutSync{HostId: host, Sha: sha, Checkouts: results}, ok

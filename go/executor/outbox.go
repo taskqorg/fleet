@@ -378,9 +378,12 @@ func flush(db *sql.DB, url, token, host string) error {
 					return err
 				}
 				own := false
-				for _, e := range jArr(value, "events") {
-					if jStr(e, "type") == string(contract.FleetEventTypeOutboxFailed) {
-						own = true
+				var batch contract.HostEvents
+				if json.Unmarshal([]byte(enc(value)), &batch) == nil {
+					for _, e := range batch.Events {
+						if e.Type == string(contract.FleetEventTypeOutboxFailed) {
+							own = true
+						}
 					}
 				}
 				if hasExec && !own {

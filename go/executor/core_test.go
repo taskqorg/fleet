@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fleet/contract"
 	"io"
 	"net/http"
@@ -249,10 +248,11 @@ func TestReadinessTyped(t *testing.T) {
 	if r.Ok || r.HostId != "h1" || len(r.Checks) == 0 || r.Checks[0].Check != "checkout" || enc(r.Checks[0].Reason) != `"checkout-missing"` {
 		t.Fatal(enc(r))
 	}
-	var back contract.Readiness
-	d := json.NewDecoder(strings.NewReader(enc(r)))
-	d.DisallowUnknownFields()
-	if err := d.Decode(&back); err != nil {
-		t.Fatal(err)
+	// The wire names the coordinator reads.
+	if b := enc(r.Checks[0]); b != `{"check":"checkout","reason":"checkout-missing","status":"failed","target":"`+r.Checks[0].Target+`"}` {
+		t.Fatal(b)
+	}
+	if b := enc(contract.CheckoutResult{CheckoutPath: "/c", Status: contract.CheckoutStatusSynced}); b != `{"checkoutPath":"/c","status":"synced"}` {
+		t.Fatal(b)
 	}
 }
