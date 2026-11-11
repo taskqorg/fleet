@@ -108,7 +108,7 @@ func connectionCall(connection, tool string, arguments any) M {
 		line["callId"] = id
 	}
 	ok := r.StatusCode >= 200 && r.StatusCode < 300
-	output, err := decode(body)
+	output, err := dec(string(body))
 	if err != nil {
 		output = M{"text": strings.ToValidUTF8(string(body[:min(len(body), 2000)]), "�")}
 		if ok {
@@ -144,7 +144,7 @@ func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error
 	sc := bufio.NewScanner(in)
 	sc.Buffer(nil, 64<<20)
 	for sc.Scan() {
-		m, err := decode(sc.Bytes())
+		m, err := dec(sc.Text())
 		if err != nil || !has(m, "id") {
 			continue
 		}

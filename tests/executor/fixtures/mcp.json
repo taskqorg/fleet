@@ -189,7 +189,7 @@
           "id": null,
           "error": {
             "code": -32700,
-            "message": "Invalid request"
+            "message": "Parse error"
           }
         },
         {
@@ -197,7 +197,7 @@
           "id": null,
           "error": {
             "code": -32700,
-            "message": "Invalid request"
+            "message": "Parse error"
           }
         },
         {
@@ -205,7 +205,7 @@
           "id": null,
           "error": {
             "code": -32700,
-            "message": "Invalid request"
+            "message": "Parse error"
           }
         },
         {
@@ -213,7 +213,7 @@
           "id": null,
           "error": {
             "code": -32700,
-            "message": "Invalid request"
+            "message": "Parse error"
           }
         },
         {
@@ -221,7 +221,7 @@
           "id": null,
           "error": {
             "code": -32700,
-            "message": "Invalid request"
+            "message": "Parse error"
           }
         },
         {
@@ -229,7 +229,7 @@
           "id": null,
           "error": {
             "code": -32700,
-            "message": "Invalid request"
+            "message": "Parse error"
           }
         },
         {
@@ -237,7 +237,7 @@
           "id": null,
           "error": {
             "code": -32700,
-            "message": "Invalid request"
+            "message": "Parse error"
           }
         },
         {
@@ -245,7 +245,7 @@
           "id": null,
           "error": {
             "code": -32700,
-            "message": "Invalid request"
+            "message": "Parse error"
           }
         },
         {
@@ -253,7 +253,7 @@
           "id": null,
           "error": {
             "code": -32700,
-            "message": "Invalid request"
+            "message": "Parse error"
           }
         },
         {
@@ -261,7 +261,7 @@
           "id": null,
           "error": {
             "code": -32700,
-            "message": "Invalid request"
+            "message": "Parse error"
           }
         },
         {
@@ -269,7 +269,7 @@
           "id": null,
           "error": {
             "code": -32700,
-            "message": "Invalid request"
+            "message": "Parse error"
           }
         },
         {
@@ -277,7 +277,7 @@
           "id": null,
           "error": {
             "code": -32700,
-            "message": "Invalid request"
+            "message": "Parse error"
           }
         }
       ],
@@ -661,88 +661,88 @@
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting property name enclosed in double quotes: line 2 column 1 (char 2)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting value: line 2 column 1 (char 2)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting value: line 1 column 7 (char 6)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting property name enclosed in double quotes: line 1 column 9 (char 8)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting ',' delimiter: line 1 column 9 (char 8)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting ':' delimiter: line 1 column 7 (char 6)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Extra data: line 1 column 9 (char 8)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Invalid control character at: line 1 column 12 (char 11)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Invalid \\escape: line 1 column 8 (char 7)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+            "code": -32700,
+            "message": "Parse error"
           }
         }
       ],
@@ -2833,8 +2833,8 @@
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting value: line 1 column 1 (char 0)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
@@ -2911,88 +2911,88 @@
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting property name enclosed in double quotes: line 2 column 1 (char 2)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting value: line 2 column 1 (char 2)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting value: line 1 column 7 (char 6)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting property name enclosed in double quotes: line 1 column 9 (char 8)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting ',' delimiter: line 1 column 9 (char 8)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting ':' delimiter: line 1 column 7 (char 6)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Extra data: line 1 column 9 (char 8)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Invalid control character at: line 1 column 12 (char 11)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Invalid \\escape: line 1 column 8 (char 7)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+            "code": -32700,
+            "message": "Parse error"
           }
         }
       ],
@@ -4451,88 +4451,88 @@
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting property name enclosed in double quotes: line 2 column 1 (char 2)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting value: line 2 column 1 (char 2)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting value: line 1 column 7 (char 6)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting property name enclosed in double quotes: line 1 column 9 (char 8)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting ',' delimiter: line 1 column 9 (char 8)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting ':' delimiter: line 1 column 7 (char 6)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Extra data: line 1 column 9 (char 8)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Invalid control character at: line 1 column 12 (char 11)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Invalid \\escape: line 1 column 8 (char 7)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+            "code": -32700,
+            "message": "Parse error"
           }
         },
         {
           "jsonrpc": "2.0",
           "id": null,
           "error": {
-            "code": -32602,
-            "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
+            "code": -32700,
+            "message": "Parse error"
           }
         }
       ],
