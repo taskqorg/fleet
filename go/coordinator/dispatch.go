@@ -92,6 +92,7 @@ func repoConnection(projectID any, cos []map[string]any, host string) string {
 	for _, co := range cos {
 		if co["hostId"] == host {
 			repo = co["repo"]
+			break
 		}
 	}
 	repos := anys(projectSetting(projectID, "repos"))
