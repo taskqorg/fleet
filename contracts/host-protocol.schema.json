@@ -1381,6 +1381,113 @@
         "execution",
         "probe"
       ]
+    },
+    "ProjectScriptResult": {
+      "$comment": "data of a setup event, and the teardown script inside Teardown; output is the last 4000 bytes",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "script",
+        "exitCode",
+        "ok"
+      ],
+      "properties": {
+        "script": {
+          "type": "string"
+        },
+        "exitCode": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "stdout": {
+          "type": "string"
+        },
+        "stderr": {
+          "type": "string"
+        }
+      }
+    },
+    "Teardown": {
+      "$comment": "data of a teardown event",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "removed"
+      ],
+      "properties": {
+        "removed": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "teardown": {
+          "$ref": "#/$defs/ProjectScriptResult"
+        },
+        "branchDeleted": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ScriptStarted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "timeoutMs",
+        "trialWorktree"
+      ],
+      "properties": {
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeoutMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "trialWorktree": {
+          "type": "string"
+        }
+      }
+    },
+    "ScriptTimeout": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeoutMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "timeoutMs"
+      ]
+    },
+    "TrialRemoved": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "removed"
+      ],
+      "properties": {
+        "removed": {
+          "type": "boolean"
+        }
+      }
     }
   }
 }
