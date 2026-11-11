@@ -99,33 +99,17 @@ Nothing blocks a merge.
 
 ## Delivery
 
-- The specq shared core is injected each attempt; the proposed shared rule is in `principles.md`, a core file, so every agent receives it.
+- The specq shared core is injected each attempt; the shared Project documents rule is in `principles.md`, a core file, so every agent receives it.
 - The attempt index lists every specification with its summary.
 - `AGENTS.md` carries the EGM artifact line and the `docs-order` line.
-- `fleet.md` R1 links this specification for Fleet's paths once step 0 lands.
+- `fleet.md` R1 links this specification for Fleet's paths.
 - The report reaches agents through the design-report comment and the `docs-order` issue.
 
 ## Shared rule (specq)
 
-Home: `engineering/principles.md`, new section `## Project documents` after `## Project docs cleanup`. Proposed text:
+The canonical shared home is [Project documents in principles.md](https://github.com/taskqorg/specq/blob/1fc3716cc0971f8ca11f313d383db09751ffc132/engineering/principles.md#project-documents), published in [specq PR140](https://github.com/taskqorg/specq/pull/140). Fleet adopts that exact revision through its agent entrypoint, contract references and CI checkout; it does not copy the shared rule here.
 
-> ## Project documents
->
-> Each project file has one kind, decided by its path. The project contract names or links the path rules.
->
-> - Contract: the one root file of decisions ([contracts](https://github.com/taskqorg/specq/blob/13772b779be68103d0581d61a5f8fe7af2b92dd1/engineering/contracts.md)).
-> - Index: one row per specification: topic, file, one-line summary. The attempt index lists the same files.
-> - Specification: the current target of one topic. One file per topic, rewritten in place; no history and no dated sections. A part not yet built says so in one line.
-> - Evidence record: a measurement that a specification or code cites for its exact numbers. Unchanged after merge except link fixes; deleted when nothing cites it.
-> - Working paper: brief, draft, review, drift report, handoff, screenshot, rejected option. Never committed; it lives in the pull request, the task or ignored local scratch. A finding that must survive goes into the specification it changes.
->
-> Before adding a file, find the topic's index row and edit that file. Add a specification only with its new row, and say in the pull request why no row fits. File names carry no dates.
->
-> A project check reports, without failing the build: specifications the index does not list, links and cited paths that do not resolve, working papers and uncited evidence in the tree, and the size and file change of each pull request. On the main branch the findings keep one open work item, updated on each run and closed when none remain.
-
-It names no project path, plugin or number. It goes through specq's change process ([improve shared rules](https://github.com/taskqorg/specq/blob/13772b779be68103d0581d61a5f8fe7af2b92dd1/engineering/spec-first.md#improve-shared-rules)); Fleet adopts it by moving its pinned commit.
-
-Fleet-only: the kind rules and paths above, the EGM line, the report and its IDs, the CI steps and the `docs-order` issue.
+Fleet-specific rules remain the document paths and kinds above, the EGM artifact directory, report IDs, CI steps and the single docs-order issue. The accepted-reference-picture exception in the shared rule preserves pictures used by a specification or check; it does not turn review screenshots into permanent records merely because they exist.
 
 ## Measurement
 
@@ -198,4 +182,3 @@ The existing EGM briefs and review reports are deleted in step 2 after their sur
 
 1. Review reports are not kept in the tree; the pull request description holds the verdict and blocking findings. Default: as written.
 2. Apply the contract budget (60 KiB cap, 70% target) to each specification as a `COMPACT:` signal. Default: no; `docs.size` measures only.
-3. The specq text goes to specq as a proposal, homed in `principles.md` (injected core). Default: as written.
