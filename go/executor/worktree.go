@@ -371,7 +371,9 @@ func teardown(dir, session, top string, project any, deleteBranch bool) contract
 		out.Reason = new("uncommitted")
 		return out
 	}
-	if keep["unpushed"] {
+	// Delivered work (deleteBranch: the task was accepted) is not unpushed even when its squash-merged remote branch
+	// was deleted and pruned; uncommitted changes still keep the worktree.
+	if keep["unpushed"] && !deleteBranch {
 		// Commits on no remote-tracking branch (session branches are created --no-track, so there is no @{u} to ask).
 		ahead, err := hardenedGit("-C", w, "rev-list", "-n", "1", "HEAD", "--not", "--remotes").Output()
 		if err != nil || len(strings.TrimSpace(string(ahead))) > 0 {

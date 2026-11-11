@@ -32,7 +32,7 @@ func TestTeardownUnpushedAndDelivered(t *testing.T) {
 	}
 	add()
 	git(w, "commit", "-q", "--allow-empty", "-m", "work")
-	if r := teardown(dir, "s1", top, M{}, true); r.Removed || str0(r.Reason) != "unpushed" {
+	if r := teardown(dir, "s1", top, M{}, false); r.Removed || str0(r.Reason) != "unpushed" {
 		t.Fatalf("local commit: kept: %+v", r)
 	}
 	os.WriteFile(filepath.Join(w, "x"), []byte("x"), 0o600)
@@ -45,6 +45,7 @@ func TestTeardownUnpushedAndDelivered(t *testing.T) {
 		t.Fatalf("not delivered: removed, -d keeps the unmerged branch: %+v", r)
 	}
 	git(top, "worktree", "add", "-q", w, "fleet/s1")
+	git(top, "update-ref", "-d", "refs/remotes/origin/fleet/s1") // the remote branch deleted on merge and pruned
 	if r := teardown(dir, "s1", top, M{}, true); !r.Removed || r.BranchDeleted == nil || !*r.BranchDeleted {
 		t.Fatalf("delivered: removed with its branch: %+v", r)
 	}
