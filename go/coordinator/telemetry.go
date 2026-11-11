@@ -60,8 +60,9 @@ func clickhouseFromEnv() *obs.ClickHouse {
 	return &obs.ClickHouse{URL: u, Database: db, User: vals["CLICKHOUSE_USER"], Password: vals["CLICKHOUSE_PASSWORD"]}
 }
 
-func init() {
-	onStart(func(ctx context.Context, a *App) {
+// startTelemetry: called by main before the other starters, so every loop's first span already has the identity and sink.
+func startTelemetry(ctx context.Context, a *App) {
+	{
 		obs.Service, obs.Version, obs.HostID = "coordinator", version, pds18Host()
 		if obs.HostID == "" {
 			obs.HostID, _ = os.Hostname()
@@ -89,7 +90,10 @@ func init() {
 				}
 			}
 		}()
-	})
+	}
+}
+
+func init() {
 	// Spans from executors and gateways (fleet-telemetry.md §4). Under /api/hosts/ for host-secret auth; rows naming
 	// another host, or an execution not on this host, are refused (counted in skipped).
 	longRoute("POST /api/hosts/spans", hostSpans)

@@ -82,6 +82,7 @@ func main() {
 		log.Fatal(err)
 	}
 	a.stream = listen(ctx, database)
+	startTelemetry(ctx, a)
 	startAll(ctx, a)
 	port := os.Getenv("PORT")
 	if port == "" {
