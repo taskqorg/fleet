@@ -102,6 +102,8 @@ type updater struct {
 	window, tick time.Duration
 	coordURL     string // coordinator health on PDS18
 	gatewayURL   string
+	smokeURL     string // POST with the PDS18 executor's host secret: host auth and the database end to end
+	smokeSecret  string // that secret's file; "" or missing skips the smoke (first install)
 	dumpCmd      func(ver, file string) error
 }
 
@@ -109,6 +111,7 @@ func newUpdater(key ed25519.PublicKey) *updater {
 	return &updater{base: releasesURL, key: key, target: runtime.GOOS + "-" + runtime.GOARCH,
 		client: &http.Client{Timeout: 10 * time.Minute}, now: time.Now, window: 30 * time.Second, tick: time.Second,
 		coordURL: "http://127.0.0.1:9470/api/health", gatewayURL: "http://127.0.0.1:8742/healthz",
+		smokeURL: "http://127.0.0.1:9470/api/hosts/whoami",
 		dumpCmd: pgDump}
 }
 
@@ -462,6 +465,33 @@ func (u *updater) coordinatorHealth(ver string) probe {
 	}
 	g.Body.Close()
 	if g.StatusCode != 200 {
+		return down
+	}
+	return u.smoke(c)
+}
+
+// smoke: the new coordinator authenticates the PDS18 executor's host secret and names its host (delivery pipeline §7).
+func (u *updater) smoke(c *http.Client) probe {
+	secret, err := os.ReadFile(u.smokeSecret)
+	if u.smokeSecret == "" || errors.Is(err, fs.ErrNotExist) {
+		return up
+	}
+	if err != nil {
+		log.Print("smoke: ", err)
+		return down
+	}
+	req, _ := http.NewRequest("POST", u.smokeURL, strings.NewReader("{}"))
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(secret)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.Do(req)
+	if err != nil {
+		return down
+	}
+	defer resp.Body.Close()
+	var w struct{ HostID string }
+	json.NewDecoder(resp.Body).Decode(&w)
+	if resp.StatusCode != 200 || w.HostID == "" {
+		log.Printf("smoke: %s %s", u.smokeURL, resp.Status)
 		return down
 	}
 	return up

@@ -130,6 +130,7 @@ func (u *updater) runPDS18() error {
 	st := pds18State{Coordinator: &State{}, Executor: &State{}}
 	readJSON(stateFile, &st)
 	const execSignal = "/home/fleet-agent/.local/state/fleet/executor/update/update.json"
+	u.smokeSecret = "/home/fleet-agent/.config/fleet/host-secret"
 	var sig signalFile
 	hostChanged := false
 	if readJSON(execSignal, &sig) && sig.HostID != "" && sig.HostID != st.HostID {

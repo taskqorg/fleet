@@ -1,10 +1,10 @@
-# Starts fleet-update.service every 5 minutes (docs/designs/fleet-self-update.md §3.5).
+# Starts fleet-update.service every minute on PDS18 (docs/designs/fleet-delivery-pipeline.md#6-faster-pickup-on-hosts).
 [Unit]
 Description=Fleet self-update timer
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=5min
+OnUnitActiveSec=1min
 
 [Install]
 WantedBy=timers.target
