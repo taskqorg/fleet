@@ -4,13 +4,16 @@
 // answered through questions_answer like every question; rating outputs show blind (A, B, …) in the seeded order.
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { StateBadge, Button, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, ROW2 } from '../../../packages/ui/src/index.ts';
+import { StateBadge, Button, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, ROW2, percent } from '../../../packages/ui/src/index.ts';
 import { op, type OpName, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 
 const LAB_KINDS = new Set(['experiment', 'score', 'question', 'execution']);
 const touches = (c: { kind: string }) => LAB_KINDS.has(c.kind);
 const ms = (t: any) => typeof t === 'number' ? t : Date.parse(t);
+
+// typedIcon: a typed score at a glance: right, wrong, escalated (middle band) or not scorable.
+const typedIcon = (v: any) => v.answer === 'unscored' ? 'circle-alert' : v.answer === 'abstain' ? 'circle-pause' : v.answer === v.label ? 'circle-check' : 'circle-x';
 
 export function Lab({ id }: { id?: string }) {
   const [, go] = useLocation();
@@ -130,7 +133,9 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
                   <Num m={{ value: t.durationMs === null || t.durationMs === undefined ? null : t.durationMs / 1000, basis: t.durationMs == null ? 'unavailable' : 'measured', reason: 'running' }} kind="duration" />
                   <Num m={{ value: t.spend.credits, basis: 'measured', partial: t.spend.basis === 'partial' ? 'some calls without usage' : undefined }} kind="count" />
                   {(t.cost ?? []).map((c: any, i: number) => <Num key={i} m={{ value: c.value, basis: c.basis, currency: c.currency ?? undefined, reason: c.value === null ? c.reason : `price ${c.prices.map((p: any) => p.id.slice(0, 8)).join(', ')}` }} kind="money" />)}
-                  {t.scores.filter((s: any) => s.trialIds.length === 1).map((s: any) => <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator)}${s.rationale ? ': ' + s.rationale : ''}`}><Icon name={s.form === 'pass_fail' ? (s.value ? 'circle-check' : 'circle-x') : 'sliders-horizontal'} label={`${evaluatorLabel(s.evaluator)} ${String(s.value)}`} />{s.form === 'pass_fail' ? '' : String(s.form === 'metric' ? Number(s.value).toFixed(2) : s.value)}</span>)}
+                  {t.scores.filter((s: any) => s.trialIds.length === 1).map((s: any) => s.form === 'typed'
+                    ? <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator)}${s.rationale ? ": " + s.rationale : ""}`}><Icon name={typedIcon(s.value)} label={`${evaluatorLabel(s.evaluator)} ${s.value.answer}, label ${s.value.label ?? 'none'}`} />{s.value.answer}</span>
+                    : <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator)}${s.rationale ? ': ' + s.rationale : ''}`}><Icon name={s.form === 'pass_fail' ? (s.value ? 'circle-check' : 'circle-x') : 'sliders-horizontal'} label={`${evaluatorLabel(s.evaluator)} ${String(s.value)}`} />{s.form === 'pass_fail' ? '' : String(s.form === 'metric' ? Number(s.value).toFixed(2) : s.value)}</span>)}
                   <a class="btn quiet icon-only" href={`/api/pipeline-runs/${t.id}`} target="_blank" rel="noopener" aria-label="Open the run" data-tip="Open the run"><Icon name="external-link" /></a>
                   {t.state === 'running' ? <Button label="Cancel cell" icon="x" iconOnly kind="quiet" onClick={() => act('lab_cell_action', { experimentId: id, cell: key, action: 'cancel' })} />
                     : <Button label="Retry cell" icon="rotate-ccw" iconOnly kind="quiet" onClick={() => act('lab_cell_action', { experimentId: id, cell: key, action: 'retry' })} />}
@@ -145,6 +150,17 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
         value={<Button label="Promote" icon="check-check" onClick={() => act('lab_promote', { experimentId: id, variant: v.label }).then(setPatch)} />} />)}</DetailSection>
       {patch && <DetailSection title="Promote">{patch.recommendation ? <KvRow icon="check" label={`Recommendation set to ${patch.method.id}`} />
         : <><KvRow icon="file-text" label="Commit this patch to config/catalogue.json, then promote again" /><pre class="lab-patch">{JSON.stringify(patch.cataloguePatch, null, 1)}</pre></>}</DetailSection>}
+      {(e.typed ?? []).map((t: any) => <DetailSection key={`${t.variant}/${t.split}`} title={`${t.variant} · typed answers · ${t.split === 'tune' ? 'tune (bands are set here)' : 'held out (reported)'}`}>
+        {t.stats.map((s: any) => { const cov = percent(s.confident, s.n), esc = percent(100 - parseInt(cov.text, 10), 100);
+          return <KvRow key={s.aggregate ? '\u0000all' : s.tag} icon={s.aggregate ? 'chart-no-axes-column' : 'file-text'} label={s.aggregate ? 'All languages' : s.tag}
+            meta={`n ${s.n} · coverage ${cov.text} · escalated ${esc.text}`}
+            value={s.selectiveAccuracy === null ? <span class="muted">no confident answer</span> : `accuracy ${percent(s.correct, s.confident).text}`} />; })}
+      </DetailSection>)}
+      {(e.comparison ?? []).map((c: any) => <DetailSection key={c.variant} title={`${c.variant} vs ${c.baseline} · ${c.split === 'held_out' ? 'held out' : 'all examples'}`}>
+        <KvRow icon="git-merge" label={c.result.mean === null ? 'No paired example' : `${c.evaluator.startsWith('typed:') ? 'Correct confident answers' : 'Mean'} difference ${c.result.mean >= 0 ? '+' : ''}${c.result.mean.toFixed(2)}`}
+          meta={`${c.result.tooFew ? `n ${c.result.n} · too few examples for an interval` : `n ${c.result.n} · 95% interval ${c.result.low.toFixed(2)} to ${c.result.high.toFixed(2)}`}${c.evaluator.startsWith('typed:') ? ' · an escalation counts as not correct; see coverage and accuracy above' : ''}`}
+          value={c.reason ? <span class="muted">{c.reason}</span> : undefined} />
+      </DetailSection>)}
       <DetailSection title="Decision gate">
         <KvRow icon="check-check" label="Judge agrees with you" meta={e.agreement.compared ? `${e.agreement.matched} of ${e.agreement.compared} (${e.agreement.percent}%)` : 'no trial rated by both yet'} />
         <KvRow icon="clock" label="Priority background" meta={e.priority.note} />

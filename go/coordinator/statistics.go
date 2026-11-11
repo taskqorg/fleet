@@ -156,6 +156,7 @@ type typedAnswer struct {
 
 type typedStat struct {
 	Tag               string   `json:"tag"`
+	Aggregate         bool     `json:"aggregate"`
 	N                 int      `json:"n"`
 	Confident         int      `json:"confident"`
 	Correct           int      `json:"correct"`
@@ -165,10 +166,10 @@ type typedStat struct {
 }
 
 // typedStats: coverage (confident / all), selective accuracy (correct confident / confident; null with no confident
-// answer) and escalation share (1 - coverage), per tag in tag order, then the aggregate (Tag "all", last). Used by
+// answer) and escalation share (1 - coverage), per tag in tag order, then the aggregate (Aggregate true, no tag, last; a tag may be any string, "all" included). Used by
 // lab_experiment_get's typed block (expTyped).
 func typedStats(as []typedAnswer) []typedStat {
-	by, total := map[string]*typedStat{}, &typedStat{Tag: "all"}
+	by, total := map[string]*typedStat{}, &typedStat{Aggregate: true}
 	add := func(tag string, a typedAnswer) {
 		s := total
 		if tag != "\x00all" {

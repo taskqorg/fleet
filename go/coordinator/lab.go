@@ -269,7 +269,7 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 		}
 		bytes, _ := json.MarshalIndent(ex, "", " ")
 		bytes = append(bytes, '\n')
-		name := fmt.Sprintf("examples/%v@%v.json", meta["id"], meta["version"])
+		name := "examples/" + exampleRef(meta["id"], meta["version"]) + ".json"
 		hash := sha256hex(bytes)
 		pid := strOr(projectID)
 		if pid == "" {
@@ -897,7 +897,7 @@ func expCreate(q *Request, b doc) (doc, error) {
 			return nil, err
 		}
 		e := mapOf(ex["example"])
-		pin := fmt.Sprintf("%v@%v", e["id"], e["version"])
+		pin := exampleRef(e["id"], e["version"])
 		if seen[pin] {
 			return nil, fail(400, "Duplicate example")
 		}
@@ -1948,7 +1948,7 @@ func importDrafts(ctx context.Context, a *App, run doc) {
 			for _, c := range anys(mapOf(got["example"])["checks"]) {
 				lines = append(lines, fmt.Sprintf("%v: %v", mapOf(c)["id"], mapOf(c)["run"]))
 			}
-			_, err = askRow(q, "rating", fmt.Sprintf("Approve drafted example %v@%v? Approving lets the coordinator run its checks:\n%s", st["id"], st["version"], strings.Join(lines, "\n")),
+			_, err = askRow(q, "rating", fmt.Sprintf("Approve drafted example %s? Approving lets the coordinator run its checks:\n%s", exampleRef(st["id"], st["version"]), strings.Join(lines, "\n")),
 				run["projectId"], doc{"form": "pass_fail", "example_artifact_id": aid, "seed": aid}, "lab", doc{"exampleArtifactId": aid})
 			return err
 		})
@@ -2609,4 +2609,13 @@ func expTyped(exp doc, trials []doc, cur []doc) []any {
 		}
 	}
 	return out
+}
+
+// exampleRef: <id>@<version>. A version read back from stored example JSON is a float64, which %v prints as 1e+06; a
+// whole number prints as one. Anything else keeps %v (the importer only stores whole versions).
+func exampleRef(id, version any) string {
+	if v, ok := intOK(version); ok {
+		return fmt.Sprintf("%v@%d", id, v)
+	}
+	return fmt.Sprintf("%v@%v", id, version)
 }
