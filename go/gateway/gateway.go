@@ -313,7 +313,7 @@ type gateway struct {
 	client   *http.Client
 	snapshot atomic.Pointer[snapshot]
 	seenLock sync.Mutex
-	seen     time.Time
+	seen     os.FileInfo // the snapshot file last read
 	reread   sync.Mutex
 	rejected atomic.Uint64
 	// Key values by fingerprint, read from <keys_dir>/<connection>/<fingerprint> when a snapshot names them.
@@ -360,7 +360,7 @@ func newGateway(c *config) (*gateway, error) {
 		logf("snapshot refused (%v); serving the retained copy", err)
 	}
 	if info, err := os.Stat(c.Snapshot); err == nil {
-		g.seen = info.ModTime()
+		g.seen = info
 	}
 	if g.spool, err = openSpool(c.StateDir); err != nil {
 		return nil, err
@@ -406,11 +406,12 @@ func (g *gateway) refresh(force bool) {
 		return
 	}
 	g.seenLock.Lock()
-	if !force && info.ModTime().Equal(g.seen) {
+	// The coordinator replaces the file by rename, so a new file is a new inode even within one mtime tick.
+	if !force && g.seen != nil && os.SameFile(info, g.seen) && info.ModTime().Equal(g.seen.ModTime()) && info.Size() == g.seen.Size() {
 		g.seenLock.Unlock()
 		return
 	}
-	g.seen = info.ModTime()
+	g.seen = info
 	g.seenLock.Unlock()
 	data, s, err := readSnapshot(g.config.Snapshot)
 	if err != nil {
