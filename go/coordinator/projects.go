@@ -412,7 +412,9 @@ func projectOp(name string, read bool, h handler) {
 
 func init() {
 	gatedRoute("GET /api/profiles", func(q *Request) (any, error) { return doc{"profiles": listProfiles()}, nil })
-	gatedObjOp("profiles_list", true, func(q *Request) (any, error) { return doc{"profiles": listProfiles()}, nil })
+	gatedObjOp("profiles_list", true, typedOp(func(q *Request, _ *contract.ProfilesListRequest) (contract.ProfilesListReply, error) {
+		return contract.ProfilesListReply{Profiles: recsOf(listProfiles())}, nil
+	}))
 	projectOp("project_list", true, func(q *Request) (any, error) {
 		out := []doc{}
 		for _, id := range projectIDs() {

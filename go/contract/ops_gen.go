@@ -1446,18 +1446,21 @@ type OpError struct {
 	StatusCode int64  `json:"statusCode"`
 }
 
+// PeopleListReply: A non-owner sees only themself.
 type PeopleListReply struct {
-	People json.RawMessage `json:"people,omitempty"`
+	People []map[string]json.RawMessage `json:"people"`
 }
 
 type PeopleListRequest = map[string]json.RawMessage
 
+// PeopleSetReply: people: how many people the list now has.
 type PeopleSetReply struct {
-	People json.RawMessage `json:"people,omitempty"`
+	People int64 `json:"people"`
 }
 
+// PeopleSetRequest: Owner only: the whole people.json list, written atomically and reloaded.
 type PeopleSetRequest struct {
-	People json.RawMessage `json:"people,omitempty"`
+	People json.RawMessage `json:"people"`
 }
 
 type Person struct {
@@ -1562,7 +1565,7 @@ type Problem struct {
 }
 
 type ProfilesListReply struct {
-	Profiles json.RawMessage `json:"profiles,omitempty"`
+	Profiles []map[string]json.RawMessage `json:"profiles"`
 }
 
 type ProfilesListRequest = map[string]json.RawMessage
@@ -1957,14 +1960,15 @@ type SessionsListRequest struct {
 }
 
 type SettingChangesReply struct {
-	Changes    json.RawMessage `json:"changes,omitempty"`
-	NextBefore json.RawMessage `json:"nextBefore,omitempty"`
+	Changes    []map[string]json.RawMessage `json:"changes"`
+	NextBefore *int64                       `json:"nextBefore"`
 }
 
+// SettingChangesRequest: target: one setting target (host:<id>, connection:<name>, people, ...); before: the nextBefore of the previous page.
 type SettingChangesRequest struct {
-	Before json.RawMessage `json:"before,omitempty"`
-	Limit  *float64        `json:"limit,omitempty"`
-	Target json.RawMessage `json:"target,omitempty"`
+	Before *int64  `json:"before,omitempty"`
+	Limit  *int64  `json:"limit,omitempty"`
+	Target *string `json:"target,omitempty"`
 }
 
 type StopCommandRef struct {
