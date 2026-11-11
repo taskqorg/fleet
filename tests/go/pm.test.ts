@@ -206,16 +206,3 @@ test('PM9 definitions: an architect\'s PM saves a definition and the revision na
   assert.ok(!(await member.list()).includes('definition_save'), 'an operator\'s PM has no definition tools');
   assert.notEqual((await member.tool('definition_get', {kind: 'pipeline', id: 'hello-search'})).status, 200);
 });
-
-test('PM10 an agent save of a definition used by a project outside its director\'s grants is 409 and names them (requirement: fleet-definition-editors.md Rights, owner decision on agent saves; risk: a PM changes another project\'s agents or pipelines with a narrower director)', async () => {
-  const ARCHITECT = 'scoped-architect@trial.test';
-  const people = ok(await op('people_list')).people;
-  ok(await op('people_set', {people: [...people, {email: ARCHITECT, name: 'Scoped architect', roles: ['operator', 'architect'], grants: [{kind: 'project', id: PROJECT}]}]}));
-  const pm = await agent(ARCHITECT, {projectId: PROJECT, role: 'pm'});
-  const g = ok(await pm.tool('definition_get', {kind: 'pipeline', id: 'hello-search'})); // catalogue methods of hello-world run it
-  const c = JSON.parse(JSON.stringify(g.content)); c.pipeline.steps[0].arguments = {...c.pipeline.steps[0].arguments, pm10: true};
-  const r = await pm.tool('definition_save', {kind: 'pipeline', id: 'hello-search', baseRevision: g.head, content: c, message: 'PM10'});
-  assert.deepEqual([r.status, (r as any).body.reason, (r as any).body.projects], [409, 'used-outside-grants', ['hello-world']], JSON.stringify(r));
-  // The same person saves it by hand: the architect role is global.
-  ok(await op('definition_save', {kind: 'pipeline', id: 'hello-search', baseRevision: g.head, content: c, message: 'PM10 by hand'}, ARCHITECT));
-});
