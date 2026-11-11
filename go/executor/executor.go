@@ -186,6 +186,7 @@ type live struct {
 	started time.Time
 	peakRSS uint64
 	cpu     map[int]float64
+	spanned bool // the execution span is written
 }
 
 // account adds one snapshot of the owned tree to the run's peak memory and CPU.

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -10,17 +11,17 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// load1: vm.loadavg is struct loadavg {fixpt_t ldavg[3]; long fscale} (uint32 x3, padding, int64 on arm64 and amd64).
 func load1() (float64, bool) {
-	out, err := exec.Command("/usr/sbin/sysctl", "-n", "vm.loadavg").Output() // "{ 1.23 1.10 1.05 }"
-	if err != nil {
+	b, err := unix.SysctlRaw("vm.loadavg")
+	if err != nil || len(b) < 24 {
 		return 0, false
 	}
-	f := strings.Fields(strings.Trim(strings.TrimSpace(string(out)), "{}"))
-	if len(f) == 0 {
+	scale := float64(binary.LittleEndian.Uint64(b[16:24]))
+	if scale == 0 {
 		return 0, false
 	}
-	v, err := strconv.ParseFloat(f[0], 64)
-	return v, err == nil
+	return float64(binary.LittleEndian.Uint32(b[0:4])) / scale, true
 }
 
 // memory: free + inactive + speculative pages of vm_stat (what macOS can hand out without paging), and hw.memsize.

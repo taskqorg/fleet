@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -69,7 +68,9 @@ func appendSpan(s *obs.Span) {
 }
 
 // shipSpans: current.jsonl becomes a pending file; each pending file goes in batches of up to 1000 with a stable batch
-// id (a retried batch is deduplicated by the coordinator), and is removed when every batch was accepted.
+// id (a retried batch is deduplicated by the coordinator), and is removed when every batch was accepted. A file the
+// coordinator refuses for good (a 4xx other than 401 and 429, or an unreadable line) becomes failed-*.jsonl: kept for a
+// look, never retried, so it does not hold back the files after it.
 func shipSpans(url, token string) {
 	spanMu.Lock()
 	cur := filepath.Join(spanDir, "current.jsonl")
@@ -80,17 +81,27 @@ func shipSpans(url, token string) {
 	files, _ := filepath.Glob(filepath.Join(spanDir, "pending-*.jsonl"))
 	sort.Strings(files)
 	for _, f := range files {
-		if !shipFile(url, token, f) {
+		switch shipFile(url, token, f) {
+		case shipRetry:
 			return // the coordinator or the store is down: retry next minute
+		case shipRefused:
+			os.Rename(f, filepath.Join(spanDir, "failed-"+strings.TrimPrefix(filepath.Base(f), "pending-")))
+		default:
+			os.Remove(f)
 		}
-		os.Remove(f)
 	}
 }
 
-func shipFile(url, token, file string) bool {
+const (
+	shipDone = iota
+	shipRetry
+	shipRefused
+)
+
+func shipFile(url, token, file string) int {
 	fh, err := os.Open(file)
 	if err != nil {
-		return false
+		return shipRetry
 	}
 	defer fh.Close()
 	sc := bufio.NewScanner(fh)
@@ -98,22 +109,33 @@ func shipFile(url, token, file string) bool {
 	base := strings.TrimSuffix(filepath.Base(file), ".jsonl")
 	var batch []json.RawMessage
 	n := 0
-	send := func() bool {
+	send := func() int {
 		if len(batch) == 0 {
-			return true
+			return shipDone
 		}
-		_, err := post(url, token, "/api/hosts/spans", contract.SpanBatchRequest{BatchId: base + "-" + strconv.Itoa(n), Spans: batch})
+		a := send(url, token, "/api/hosts/spans", contract.SpanBatchRequest{BatchId: base + "-" + strconv.Itoa(n), Spans: batch})
 		batch, n = nil, n+1
-		return err == nil
+		switch a.kind {
+		case answerOK:
+			return shipDone
+		case answerReject:
+			return shipRefused
+		}
+		return shipRetry
 	}
 	for sc.Scan() {
 		if !json.Valid(sc.Bytes()) {
 			continue // a torn line: skipped
 		}
 		batch = append(batch, append(json.RawMessage(nil), sc.Bytes()...))
-		if len(batch) == 1000 && !send() {
-			return false
+		if len(batch) == 1000 {
+			if r := send(); r != shipDone {
+				return r
+			}
 		}
+	}
+	if sc.Err() != nil {
+		return shipRefused // a line longer than the buffer: the file is kept as failed
 	}
 	return send()
 }
@@ -140,15 +162,6 @@ func heartbeat(root string, prev map[string]float64) {
 		hb.DiskFree = &d
 	}
 	if table, err := processes(); err == nil {
-		names := map[int]string{}
-		if out, err := exec.Command("/bin/ps", "-axo", "pid=,comm=").Output(); err == nil {
-			for _, l := range strings.Split(string(out), "\n") {
-				if f := strings.Fields(l); len(f) >= 2 {
-					pid, _ := strconv.Atoi(f[0])
-					names[pid] = filepath.Base(strings.Join(f[1:], " "))
-				}
-			}
-		}
 		type sum struct {
 			rss uint64
 			cpu float64
@@ -157,7 +170,7 @@ func heartbeat(root string, prev map[string]float64) {
 		for _, p := range table {
 			for name, comms := range fleetProcesses {
 				for _, c := range comms {
-					if names[p.pid] == c {
+					if p.name == c {
 						if sums[name] == nil {
 							sums[name] = &sum{}
 						}
@@ -188,9 +201,17 @@ func heartbeat(root string, prev map[string]float64) {
 
 // executionSpan: one execution span for a finished run, with the CPU seconds and peak resident memory of its owned process tree.
 func executionSpan(execution string, l *live) {
+	if l.spanned {
+		return // a later step of the finish failed and the run is finished again next tick
+	}
+	l.spanned = true
 	ctx := obs.WithRun(context.Background(), obs.Run{ExecutionID: execution})
 	_, s := obs.StartAt(ctx, "execution", obs.KindInternal, l.started)
-	s.Set("fleet.harness", harnessName(jAt(l.command, "payload")))
+	if jStr(l.command, "kind") == "script" {
+		s.Set("fleet.harness", "script")
+	} else {
+		s.Set("fleet.harness", harnessName(jAt(l.command, "payload")))
+	}
 	cpu := 0.0
 	for _, c := range l.cpu {
 		cpu += c
@@ -202,11 +223,13 @@ func executionSpan(execution string, l *live) {
 	} else {
 		s.Set("missing.cpu_seconds", "no sample")
 	}
-	if l.state != nil && !l.state.Success() {
-		s.Fail("internal")
-	}
-	if l.stopped {
+	switch {
+	case l.timedOut:
+		s.Fail("timeout")
+	case l.stopped:
 		s.Outcome = obs.Cancelled
+	case l.state == nil || !l.state.Success() || l.cleanupUnknown:
+		s.Fail("internal")
 	}
 	s.End(nil)
 }

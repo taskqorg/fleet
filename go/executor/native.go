@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -16,11 +17,12 @@ type proc struct {
 	stat      string
 	rssKB     uint64  // resident memory, KiB
 	cpu       float64 // CPU seconds used so far (ps time)
+	name      string  // base name of the program (the first word of args: comm is cut to 15 bytes on Linux)
 }
 
 // processes is one ps snapshot: pid, parent and state.
 func processes() ([]proc, error) {
-	out, err := exec.Command("/bin/ps", "-axo", "pid=,ppid=,stat=,rss=,time=").Output()
+	out, err := exec.Command("/bin/ps", "-ww", "-axo", "pid=,ppid=,stat=,rss=,time=,args=").Output()
 	if err != nil {
 		return nil, errors.New("process snapshot failed")
 	}
@@ -37,6 +39,9 @@ func processes() ([]proc, error) {
 			if len(f) >= 5 {
 				p.rssKB, _ = strconv.ParseUint(f[3], 10, 64)
 				p.cpu = psTime(f[4])
+			}
+			if len(f) >= 6 {
+				p.name = filepath.Base(f[5])
 			}
 			ps = append(ps, p)
 		}
