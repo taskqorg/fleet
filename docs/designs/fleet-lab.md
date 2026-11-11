@@ -239,7 +239,7 @@ Host setting `FLEET_CLAUDE_PLACEMENT` (`mac | windows-wsl`, [configuration.md](.
 
 The old lab (its pages, its `/api/lab/*` and `/api/experiments` routes and stored documents) is gone. Profile code lives in `go/contract/profile.go` (the one validator, used by coordinator and executor), `go/coordinator/projects.go` and `go/executor/profile.go`; profiles are listed by `GET /api/profiles`. Paired delegation is an `ab` experiment; delivery comparison is removed.
 
-Not built: deleting AssetQ (the rest of Pipe: service, database, route, repository) in one cut, keeping only the `fleet:UC2` crate seed ([asset pipelines §2](fleet-asset-pipelines.md#2-deleting-assetq-s2-after-s1)).
+AssetQ was deleted in one cut on 2026-11-11 (service, database, route, Access app, repository archived); only the `fleet:UC2` crate seed `fleet-uc2-crate` remains ([asset pipelines §2](fleet-asset-pipelines.md#2-deleting-assetq-s2-after-s1)).
 
 ## Work analysis
 

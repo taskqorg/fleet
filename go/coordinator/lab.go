@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -214,9 +215,41 @@ func useCases() ([]doc, error) {
 		if err := json.Unmarshal(b, &l); err != nil {
 			return nil, fmt.Errorf("%s: %w", n, err)
 		}
+		for _, e := range l {
+			if err := validUseCase(e); err != nil {
+				return nil, fmt.Errorf("%s: %v: %w", n, e["id"], err)
+			}
+		}
 		out = append(out, l...)
 	}
+	ids := map[string]bool{}
+	for _, e := range out {
+		ids[astr(e["id"])] = true
+	}
+	for _, e := range out {
+		for _, t := range anys(e["maps_to"]) {
+			if !fleetUC.MatchString(astr(t)) || !ids[astr(t)] {
+				return nil, fmt.Errorf("use case %v: maps_to %v is not an existing fleet:UCn entry", e["id"], t)
+			}
+		}
+	}
 	return out, nil
+}
+
+var fleetUC = regexp.MustCompile(`^fleet:UC[0-9]+$`)
+
+// validUseCase checks one registry entry against contracts/lab-registry.schema.json (UseCase).
+func validUseCase(e doc) error {
+	var u contract.UseCase
+	dec := json.NewDecoder(bytes.NewReader(jsonBytes(e)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&u); err != nil {
+		return err
+	}
+	if u.Id == "" {
+		return contract.Missing("id")
+	}
+	return u.Validate()
 }
 
 // parseExample validates one example into its canonical shape.
@@ -2223,7 +2256,14 @@ func labRegistry() ([]any, error) {
 	}
 	out := []any{}
 	for _, e := range ucs {
-		out = append(out, doc{"id": e["id"], "goal": e["goal"], "source": e["source"], "source_status": e["source_status"], "lab_fit": e["lab_fit"], "maturity": e["maturity"], "checks": e["checks"]})
+		status, mapsTo := e["status"], e["maps_to"]
+		if status == nil {
+			status = "current"
+		}
+		if mapsTo == nil {
+			mapsTo = []any{}
+		}
+		out = append(out, doc{"id": e["id"], "goal": e["goal"], "source": e["source"], "source_status": e["source_status"], "lab_fit": e["lab_fit"], "maturity": e["maturity"], "checks": e["checks"], "status": status, "maps_to": mapsTo})
 	}
 	return out, nil
 }

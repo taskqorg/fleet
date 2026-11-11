@@ -210,3 +210,19 @@ A persistent Linux server coordinates project and laboratory work. Mac and Windo
 Through a PM session or direct controls, an operator keeps general work off the Mac, caps Windows concurrency, redirects eligible work during a host problem and later restores it. Prefer Codex while reserving Claude for explicitly requiring tasks; reduce or prohibit Antigravity use as configured. Reevaluate queued work without silently changing requirements or moving active executions.
 
 Show the effective policy, resource and quota observations, selected placement and waiting reasons. Account for shared machine capacity and account quotas across project and laboratory work. An unreachable active executor remains unconfirmed; reconcile before any replacement execution.
+
+<a id="uc12"></a>
+
+## UC12. Generate a product visual to a brief
+
+Status: accepted. Source: this section, desiign hero and visual work (generation only) and taskq UC-16; Lab registry entry `fleet:UC12` in [`config/lab/use-cases/fleet.json`](../config/lab/use-cases/fleet.json).
+
+An operator gives a brief (subject, size, style, references) and receives one image that meets it: the stated size and alpha, the colour profile, and a look an owner or a judge accepts. The Lab pipeline `image-brief` compares an agent with an image tool against a direct Google AI call ([asset pipelines §4](designs/fleet-asset-pipelines.md#4-asset-pipelines-s4)).
+
+<a id="uc13"></a>
+
+## UC13. Telegram channel
+
+Status: to design. Source: this section and pilotq L01–L20; Lab registry entry `fleet:UC13`.
+
+A Telegram thread is a PM session with its own focus. The owner sends "look at this and do it"; agents act directly under agreed rules and answer in the thread.

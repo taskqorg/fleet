@@ -18,7 +18,11 @@
    "taskq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC8"
+  ]
  },
  {
   "id": "taskq:UC-02",
@@ -34,12 +38,16 @@
   "goal": "Manage a project through an agent",
   "expected_outcome": "each request is accounted for once through a task, task update or direct response.",
   "checks": [],
-  "lab_fit": "behavior",
+  "lab_fit": "none",
   "tags": [
    "taskq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC8"
+  ]
  },
  {
   "id": "taskq:UC-03",
@@ -55,12 +63,16 @@
   "goal": "Move from idea to implementation",
   "expected_outcome": "requirements, tasks and execution order agree. Completed planning is not a completed product.",
   "checks": [],
-  "lab_fit": "behavior",
+  "lab_fit": "none",
   "tags": [
    "taskq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC8"
+  ]
  },
  {
   "id": "taskq:UC-04",
@@ -81,7 +93,12 @@
    "taskq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC3",
+   "fleet:UC11"
+  ]
  },
  {
   "id": "taskq:UC-05",
@@ -97,12 +114,16 @@
   "goal": "Select work in natural language",
   "expected_outcome": "execution matches the confirmed intent; the owner can inspect the translation.",
   "checks": [],
-  "lab_fit": "behavior",
+  "lab_fit": "none",
   "tags": [
    "taskq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC8"
+  ]
  },
  {
   "id": "taskq:UC-06",
@@ -118,12 +139,16 @@
   "goal": "Complete work across five repositories",
   "expected_outcome": "reproducible work across the required repositories; preserved output and verifiable cleanup.",
   "checks": [],
-  "lab_fit": "work",
+  "lab_fit": "none",
   "tags": [
    "taskq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC7"
+  ]
  },
  {
   "id": "taskq:UC-07",
@@ -145,12 +170,16 @@
     "metric": "pass_fail"
    }
   ],
-  "lab_fit": "work",
+  "lab_fit": "none",
   "tags": [
    "taskq",
    "operator"
   ],
-  "maturity": "synthetic ready"
+  "maturity": "synthetic ready",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC8"
+  ]
  },
  {
   "id": "taskq:UC-08",
@@ -171,7 +200,8 @@
    "taskq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "obsolete"
  },
  {
   "id": "taskq:UC-09",
@@ -192,7 +222,8 @@
    "taskq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "obsolete"
  },
  {
   "id": "taskq:UC-10",
@@ -213,7 +244,8 @@
    "taskq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "obsolete"
  },
  {
   "id": "taskq:UC-11",
@@ -234,7 +266,8 @@
    "taskq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "obsolete"
  },
  {
   "id": "taskq:UC-12",
@@ -255,7 +288,12 @@
    "taskq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC3",
+   "fleet:UC11"
+  ]
  },
  {
   "id": "taskq:UC-13",
@@ -276,7 +314,12 @@
    "taskq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC3",
+   "fleet:UC11"
+  ]
  },
  {
   "id": "taskq:UC-14",
@@ -292,12 +335,16 @@
   "goal": "Review evidence and deliver",
   "expected_outcome": "the owner knows what is verified and delivered. D04/D10 and G4/G7 govern outstanding behavior.",
   "checks": [],
-  "lab_fit": "behavior",
+  "lab_fit": "none",
   "tags": [
    "taskq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC10"
+  ]
  },
  {
   "id": "taskq:UC-15",
@@ -318,7 +365,8 @@
    "taskq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "obsolete"
  },
  {
   "id": "taskq:UC-16",
@@ -340,12 +388,16 @@
     "metric": "pass_fail"
    }
   ],
-  "lab_fit": "work",
+  "lab_fit": "none",
   "tags": [
    "taskq",
    "operator"
   ],
-  "maturity": "synthetic ready"
+  "maturity": "synthetic ready",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC12"
+  ]
  },
  {
   "id": "taskq:UC-17",
@@ -361,11 +413,15 @@
   "goal": "Plan and supervise through a remote chat agent",
   "expected_outcome": "a replaceable remote PM provides planning and owner control while TaskQ executes independently. Covers UC-02/03/07/09/10/12/14 without a second queue.",
   "checks": [],
-  "lab_fit": "behavior",
+  "lab_fit": "none",
   "tags": [
    "taskq",
    "operator"
   ],
-  "maturity": "indexed"
+  "maturity": "indexed",
+  "status": "duplicate",
+  "maps_to": [
+   "fleet:UC8"
+  ]
  }
 ]

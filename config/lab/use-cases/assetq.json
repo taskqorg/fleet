@@ -19,11 +19,15 @@
     "metric": "pass_fail"
    }
   ],
-  "lab_fit": "work",
+  "lab_fit": "none",
   "tags": [
    "assetq",
    "pipe"
   ],
-  "maturity": "synthetic ready"
+  "maturity": "synthetic ready",
+  "status": "obsolete",
+  "maps_to": [
+   "fleet:UC2"
+  ]
  }
 ]
