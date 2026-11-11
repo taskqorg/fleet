@@ -1500,10 +1500,12 @@
       ],
       "properties": {
         "kind": {
-          "type": "string"
+          "type": "string",
+          "const": "text"
         },
         "role": {
-          "type": "string"
+          "type": "string",
+          "const": "agent"
         },
         "markdown": {
           "type": "string"
@@ -1520,7 +1522,8 @@
       ],
       "properties": {
         "kind": {
-          "type": "string"
+          "type": "string",
+          "const": "reasoning"
         },
         "markdown": {
           "type": "string"
@@ -1542,7 +1545,8 @@
       ],
       "properties": {
         "kind": {
-          "type": "string"
+          "type": "string",
+          "const": "tool"
         },
         "name": {
           "type": "string"

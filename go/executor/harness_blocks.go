@@ -217,10 +217,19 @@ func label(v any, def string) string {
 	return enc(v)
 }
 
-// msOf: a native or recorded time in ms; nil when not a whole number.
+// msOf: a native or recorded time in ms, exact for integers and rounded for fractions; nil when not a number.
 func msOf(v any) *int64 {
-	if f, ok := num(v); ok && f == math.Trunc(f) && math.Abs(f) < math.MaxInt64 {
-		t := int64(f)
+	if n, ok := v.(json.Number); ok {
+		if t, err := n.Int64(); err == nil {
+			return &t
+		}
+	}
+	if u, ok := v.(uint64); ok && u <= math.MaxInt64 {
+		t := int64(u)
+		return &t
+	}
+	if f, ok := num(v); ok && math.Abs(f) < math.MaxInt64 {
+		t := int64(math.Round(f))
 		return &t
 	}
 	return nil

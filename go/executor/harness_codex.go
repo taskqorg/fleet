@@ -20,10 +20,6 @@ func num(v any) (float64, bool) {
 		return x, true
 	case int:
 		return float64(x), true
-	case int64:
-		return float64(x), true
-	case uint64:
-		return float64(x), true
 	case interface{ Float64() (float64, error) }:
 		f, err := x.Float64()
 		return f, err == nil
