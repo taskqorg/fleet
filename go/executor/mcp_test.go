@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"fleet/contract"
 )
 
 // Risk: a provider charge is reported as a plain error (or the reverse), so an agent repeats a paid call
@@ -32,14 +34,20 @@ func TestConnectionCallOutcomes(t *testing.T) {
 	defer gw.Close()
 	t.Setenv("FLEET_GATEWAY_URL", gw.URL)
 	t.Setenv("FLEET_RUN_TOKEN", "tok")
-	for tool, want := range map[string][2]any{"ok": {"ok", nil}, "garbled": {"unknown", "invalid-response"}, "provider": {"error", "http-502"}, "timeout": {"unknown", "provider-timeout"}} {
+	code := func(r contract.CallLine) string {
+		if r.ErrorCode == nil {
+			return ""
+		}
+		return *r.ErrorCode
+	}
+	for tool, want := range map[string][2]string{"ok": {"ok", ""}, "garbled": {"unknown", "invalid-response"}, "provider": {"error", "http-502"}, "timeout": {"unknown", "provider-timeout"}} {
 		r := connectionCall("web", tool, M{})
-		if r["outcome"] != want[0] || r["error_code"] != want[1] || r["callId"] != "c1" {
+		if string(r.Outcome) != want[0] || code(r) != want[1] || r.CallId != "c1" {
 			t.Fatal(tool, r)
 		}
 	}
 	gw.Close()
-	if r := connectionCall("web", "ok", M{}); r["outcome"] != "error" || r["error_code"] != "unreachable" {
+	if r := connectionCall("web", "ok", M{}); r.Outcome != contract.CallOutcomeError || code(r) != "unreachable" {
 		t.Fatal("refused connection", r)
 	}
 }
