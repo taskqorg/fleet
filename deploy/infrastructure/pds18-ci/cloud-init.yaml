@@ -17,6 +17,8 @@ packages:
   - ca-certificates
   - curl
   - docker.io
+  - dnsutils
+  - gh
   - git
   - jq
   - libicu74
