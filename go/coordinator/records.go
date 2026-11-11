@@ -196,6 +196,11 @@ func putExecution(q *Request, e doc) error {
 	if err != nil {
 		return err
 	}
+	if e["definitions"] != nil {
+		if err := exec(q, "UPDATE execution SET definitions=$2 WHERE id=$1", id, jsonBytes(e["definitions"])); err != nil {
+			return err
+		}
+	}
 	if d := astr(e["directedBy"]); d != "" {
 		if err := exec(q, "UPDATE execution SET directed_by=$2 WHERE id=$1 AND directed_by IS DISTINCT FROM $2", id, d); err != nil {
 			return err

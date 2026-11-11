@@ -385,7 +385,7 @@ const taskViewCols = `id,project_id AS "projectId",title,expected_outcome AS "ex
 
 const executionCols = `id,kind,state,observation,last_seen_at AS "lastSeenAt",project_id AS "projectId",task_id AS "taskId",experiment_id AS "experimentId",variant,parent_execution_id AS "parentExecutionId",
  session_id AS "sessionId",account_id AS "accountId",host_id AS "hostId",environment_id AS "environmentId",harness,harness_version AS "harnessVersion",model,config_ref AS "configRef",problem,
- started_at AS "startedAt",ended_at AS "endedAt"`
+ started_at AS "startedAt",ended_at AS "endedAt",definitions`
 
 func executionsList(q *Request, f contract.ExecutionsListRequest) ([]contract.ExecutionRow, error) {
 	c, p := []string{}, []any{}

@@ -200,6 +200,8 @@ test('PM9 definitions: an architect\'s PM saves a definition and the revision na
   const c = JSON.parse(JSON.stringify(g.content)); c.pipeline.steps[0].arguments = {...c.pipeline.steps[0].arguments, pm9: true};
   const s = ok(await pm.tool('definition_save', {kind: 'pipeline', id: 'hello-search', baseRevision: g.head, content: c, message: 'PM9'}));
   assert.deepEqual([s.revision.source, s.revision.actor.kind, s.revision.actor.executionId, s.revision.actor.directedBy.email], ['agent', 'agent', pm.executionId, OWNER]);
+  const own = ok(await op('executions_list', {})).executions.find((e: any) => e.id === pm.executionId);
+  assert.deepEqual(own.definitions.map((d: any) => [d.kind, d.id]), [['agent', 'pm']], 'an agent run pins its profile revision');
   const h = ok(await op('definition_history', {kind: 'pipeline', id: 'hello-search'}));
   assert.equal(h.revisions[0].actor.executionId, pm.executionId, 'the history shows the agent as author');
   const member = await agent(MEMBER, {projectId: PROJECT, role: 'pm'});

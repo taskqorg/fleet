@@ -94,3 +94,19 @@ test('D6 runs read definitions from the store: a pipeline that exists only as a 
   assert.equal(r.status, 200, await r.text());
   assert.equal((await fetch(BASE + '/api/pipelines/no-such/runs', {method: 'POST', headers: {authorization: 'Bearer ' + SECRET, 'x-fleet-person': OWNER, 'content-type': 'application/json'}, body: JSON.stringify({requestId: 'd6x', example: {}})})).status, 404);
 });
+
+test('D7 an execution pins the revision it resolved; a later save does not move it (requirement: failure mode 2, pinned revisions; risk: a run reports or uses a definition it did not start with)', async () => {
+  const run = async (rid: string) => {
+    const r = await fetch(BASE + '/api/pipelines/typed-decision/runs', {method: 'POST', headers: {authorization: 'Bearer ' + SECRET, 'x-fleet-person': OWNER, 'content-type': 'application/json'}, body: JSON.stringify({requestId: rid, example: {}})});
+    assert.equal(r.status, 200); return (await r.json()).id as string;
+  };
+  const refOf = async (id: string) => ok(await op('executions_list', {})).executions.find((e: any) => e.id === id).definitions;
+  const g = ok(await op('definition_get', {kind: 'pipeline', id: 'typed-decision'}));
+  const a = await run('d7a');
+  assert.deepEqual((await refOf(a)).map((d: any) => [d.kind, d.id, d.revision, d.contentSha]), [['pipeline', 'typed-decision', g.head, g.meta.contentSha]]);
+  const c = content(g); c.pipeline.steps[0].arguments = {...c.pipeline.steps[0].arguments, d7: true};
+  ok(await op('definition_save', {kind: 'pipeline', id: 'typed-decision', baseRevision: g.head, content: c, message: 'D7'}));
+  const b = await run('d7b');
+  assert.equal((await refOf(a))[0].revision, g.head, 'the earlier run keeps its revision');
+  assert.equal((await refOf(b))[0].revision, g.head + 1);
+});

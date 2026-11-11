@@ -713,3 +713,7 @@ CREATE TRIGGER definition_change AFTER INSERT OR UPDATE OR DELETE ON definition 
 -- answer through its variant's bands, the example's label and tag, and p.
 ALTER TABLE score DROP CONSTRAINT IF EXISTS score_form_check;
 ALTER TABLE score ADD CONSTRAINT score_form_check CHECK (form IN ('metric', 'pass_fail', 'pick_best', 'scale', 'typed'));
+
+-- migration 30: executions pin the definitions they resolve (fleet-definition-editors.md, Resolve): a list of
+-- DefinitionRef {kind, id, revision, contentSha, draft?}. The draft and rerun columns come with the operations that use them.
+ALTER TABLE execution ADD COLUMN definitions jsonb NOT NULL DEFAULT '[]';

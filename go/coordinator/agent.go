@@ -109,6 +109,11 @@ func enqueue(q *Request, s doc, input, requestID string, payload, execution doc,
 		"dispatch": doc{"harness": harnessOf(s), "projectId": s["projectId"], "workingDirectory": s["workingDirectory"], "account": s["account"], "host": nilIf(host), "last": nilIf(last), "input": input, "payload": payload}}
 	if ac != nil {
 		e["agentConfig"], e["profileSha256"], e["model"], e["effort"] = ac, frameHash(ac), firstString(ac["model"], "gpt-6.1-sol"), ac["effort"]
+		ref, err := definitionRef(q, "agent", astr(ac["id"]), ac)
+		if err != nil {
+			return nil, err
+		}
+		e["definitions"] = []contract.DefinitionRef{ref}
 	}
 	for k, v := range execution {
 		e[k] = v
