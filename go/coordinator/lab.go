@@ -2101,8 +2101,6 @@ func labIDArg(v any, what string) (string, error) {
 	return s, nil
 }
 
-// labOps: every Lab operation; the same names serve POST /api/ops/<name> and the /api/lab routes. Long operations run
-// their own transactions (q.tx nil); the rest run in the route's transaction.
 // labShapes: each Lab operation's contract types (contracts/ops.schema.json); registration fails without one.
 var labShapes = map[string]func(handler) handler{
 	"lab_cell_action":       shaped[contract.LabCellActionRequest, contract.LabCellActionReply],
@@ -2123,6 +2121,8 @@ var labShapes = map[string]func(handler) handler{
 	"lab_score_correct":     shaped[contract.LabScoreCorrectRequest, contract.LabScoreCorrectReply],
 }
 
+// labOps: every Lab operation; the same names serve POST /api/ops/<name> and the /api/lab routes. Long operations run
+// their own transactions (q.tx nil); the rest run in the route's transaction.
 var labOps = map[string]struct {
 	long, read bool
 	h          func(q *Request, b doc) (any, error)

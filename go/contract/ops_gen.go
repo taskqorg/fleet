@@ -1206,7 +1206,7 @@ type LabExamplesListRequest struct {
 // LabExperimentActionReply: An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability.
 type LabExperimentActionReply = map[string]json.RawMessage
 
-// LabExperimentActionRequest: action launch, pause, resume or stop.
+// LabExperimentActionRequest: action launch, stop or resume.
 type LabExperimentActionRequest struct {
 	Action       string `json:"action"`
 	ExperimentId string `json:"experimentId"`
@@ -1249,15 +1249,18 @@ type LabExperimentGetRequest struct {
 	ExperimentId string `json:"experimentId"`
 }
 
-// LabExperimentNoteReply: An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability.
-type LabExperimentNoteReply = map[string]json.RawMessage
+type LabExperimentNoteReply struct {
+	Id   *string `json:"id,omitempty"`
+	Kind *string `json:"kind,omitempty"`
+	Text *string `json:"text,omitempty"`
+}
 
 type LabExperimentNoteRequest struct {
-	ExperimentId string          `json:"experimentId"`
-	Field        *string         `json:"field,omitempty"`
-	Kind         *string         `json:"kind,omitempty"`
-	Text         *string         `json:"text,omitempty"`
-	Value        json.RawMessage `json:"value,omitempty"`
+	ExperimentId string  `json:"experimentId"`
+	Field        *string `json:"field,omitempty"`
+	Kind         string  `json:"kind"`
+	Text         string  `json:"text"`
+	Value        *string `json:"value,omitempty"`
 }
 
 type LabExperimentPromoteReply struct {
