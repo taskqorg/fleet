@@ -746,6 +746,17 @@ type DirectSearchRequest struct {
 	Signature  *string `json:"signature,omitempty"`
 }
 
+// DispatchOrder: list: the section 6 order list; soonest_reset: ready candidates by earliest weekly reset among those with weekly left above 0 (fleet-people-access.md section 8)
+type DispatchOrder string
+
+const (
+	DispatchOrderList         DispatchOrder = "list"
+	DispatchOrderSoonestReset DispatchOrder = "soonest_reset"
+)
+
+// DispatchOrderValues lists every DispatchOrder in schema order.
+var DispatchOrderValues = []DispatchOrder{DispatchOrderList, DispatchOrderSoonestReset}
+
 type DraftInfo struct {
 	BaseRevision int64  `json:"baseRevision"`
 	Changes      int64  `json:"changes"`
@@ -1321,6 +1332,24 @@ type PeopleSetRequest struct {
 type Person struct {
 	Email string `json:"email"`
 	Name  string `json:"name"`
+}
+
+type PersonSettings struct {
+	Email string        `json:"email"`
+	Order DispatchOrder `json:"order"`
+}
+
+type PersonSettingsGetReply = PersonSettings
+
+type PersonSettingsGetRequest struct {
+	Email *string `json:"email,omitempty"`
+}
+
+type PersonSettingsSetReply = PersonSettings
+
+type PersonSettingsSetRequest struct {
+	Email *string       `json:"email,omitempty"`
+	Order DispatchOrder `json:"order"`
 }
 
 type PipelineDefinition struct {
@@ -2314,6 +2343,8 @@ var Operations = map[string]Operation{
 	"message_send":                 {Read: false, Long: false, Errors: []int{400, 409}},
 	"people_list":                  {Read: true, Long: false, Errors: []int{}},
 	"people_set":                   {Read: false, Long: true, Errors: []int{400, 403, 409}},
+	"person_settings_get":          {Read: true, Long: false, Errors: []int{403}},
+	"person_settings_set":          {Read: false, Long: false, Errors: []int{400, 403}},
 	"pipeline_get":                 {Read: true, Long: false, Errors: []int{400, 403}},
 	"pipeline_history":             {Read: true, Long: false, Errors: []int{404}},
 	"pipeline_run":                 {Read: false, Long: true, Errors: []int{}},
