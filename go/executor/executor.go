@@ -685,11 +685,11 @@ func (e *executor) run(c M) error {
 			case err != nil:
 				data = refusedTeardown(err.Error())
 			case ok && !created:
-				data = teardown(dir, session, top, jAt(p, "project"))
+				data = teardown(dir, session, top, jAt(p, "project"), jIsTrue(p, "deleteBranch"))
 			}
 		}
 		reason := str0(data.Reason)
-		ok := data.Removed || reason == "uncommitted" || reason == "no-worktree"
+		ok := data.Removed || reason == "uncommitted" || reason == "unpushed" || reason == "no-worktree"
 		// The teardown command reuses the last execution, whose seq 0.. are taken by its turn: use a fresh seq.
 		if err := e.event(c, uint64(nowMs()), contract.FleetEventTypeTeardown, data); err != nil {
 			return err

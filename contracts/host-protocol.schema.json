@@ -782,6 +782,10 @@
         "project": {
           "type": "object",
           "additionalProperties": true
+        },
+        "deleteBranch": {
+          "$comment": "teardown only: the work was delivered (its task accepted), so the local branch is deleted with git branch -D",
+          "type": "boolean"
         }
       },
       "$comment": "readiness, base-updated and teardown: the project context plus kind-specific fields"

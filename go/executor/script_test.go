@@ -280,7 +280,7 @@ func TestPayloadOfWrongTypeRefused(t *testing.T) {
 // script looks clean.
 func TestTeardownAndProjectScriptTyped(t *testing.T) {
 	dir := t.TempDir()
-	if r := teardown(dir, "s1", dir, M{}); r.Removed || str0(r.Reason) != "no-worktree" {
+	if r := teardown(dir, "s1", dir, M{}, false); r.Removed || str0(r.Reason) != "no-worktree" {
 		t.Fatal(enc(r))
 	}
 	r := projectScript("setup", "echo out; exit 3", dir, dir, "s1")

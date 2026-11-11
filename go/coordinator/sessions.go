@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -235,7 +236,8 @@ func sessionArchive(q *Request, sid string) (doc, error) {
 			last = e
 		}
 	}
-	if old, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown"}); err != nil || len(old) > 0 {
+	// A teardown still on its way is the answer; a finished one (kept, or sent on delivery) does not stop a new one.
+	if old, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown", "status": "pending"}); err != nil || len(old) > 0 {
 		if err != nil {
 			return nil, err
 		}
@@ -248,7 +250,18 @@ func sessionArchive(q *Request, sid string) (doc, error) {
 	if last == nil {
 		return doc{"sessionId": sid, "archivedAt": s["archivedAt"], "teardown": nil}, nil
 	}
+	return teardownCommand(q, s, last, false)
+}
+
+// teardownCommand: the teardown of a session's worktree on the host of its last execution. deleteBranch: the work was
+// delivered (its task accepted), so the local branch goes even when squash-merged (git branch -D); the executor still
+// keeps the worktree for any cleanup.keepWhen reason (uncommitted, unpushed, teardown-failed).
+func teardownCommand(q *Request, s, last doc, deleteBranch bool) (doc, error) {
+	sid := astr(s["id"])
 	payload := doc{}
+	if deleteBranch {
+		payload["deleteBranch"] = true
+	}
 	if p := astr(s["projectId"]); p != "" {
 		payload["projectId"], payload["project"] = p, projectSettingsOf(p)
 	}
@@ -257,6 +270,49 @@ func sessionArchive(q *Request, sid string) (doc, error) {
 	}
 	c := doc{"id": newID(), "executionId": last["id"], "sessionId": sid, "hostId": last["hostId"], "kind": "teardown", "payload": payload, "status": "pending"}
 	return c, put(q, "command", c)
+}
+
+// deliveredTeardown: an accepted task's sessions get their worktree teardown (fleet-system-management.md, Worktree on
+// delivery). A session with a live execution, or a teardown still pending, is left alone; archiving it later sends one.
+func deliveredTeardown(q *Request, taskID string) error {
+	sids, err := queryRows(q, "SELECT DISTINCT session_id FROM execution WHERE task_id=$1 AND session_id IS NOT NULL", taskID)
+	if err != nil {
+		return err
+	}
+	for _, r := range sids {
+		sid := astr(r["session_id"])
+		s, err := get(q, sid, "session")
+		if errors.Is(err, errNotFound) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		if old, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown", "status": "pending"}); err != nil || len(old) > 0 {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		es, err := sessionExecutions(q, sid)
+		if err != nil {
+			return err
+		}
+		var last doc
+		active := false
+		for _, e := range es {
+			active = active || (!terminal(e) && !unconfirmed(e))
+			if astr(e["hostId"]) != "" {
+				last = e
+			}
+		}
+		if active || last == nil {
+			continue
+		}
+		if _, err := teardownCommand(q, s, last, true); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func sessionCreate(q *Request) (doc, error) {

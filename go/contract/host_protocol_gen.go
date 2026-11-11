@@ -401,7 +401,8 @@ var ProjectOperationValues = []ProjectOperation{ProjectOperationProjectContext, 
 
 // ProjectPayload: readiness, base-updated and teardown: the project context plus kind-specific fields
 type ProjectPayload struct {
-	Project map[string]json.RawMessage `json:"project,omitempty"`
+	DeleteBranch *bool                      `json:"deleteBranch,omitempty"`
+	Project      map[string]json.RawMessage `json:"project,omitempty"`
 }
 
 type ProjectReceipt struct {
