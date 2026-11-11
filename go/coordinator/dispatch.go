@@ -360,6 +360,21 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 			}
 		}
 	}
+	// The director's order setting (section 8): soonest_reset uses limit about to reset first, with the terms warning.
+	if dir != "" {
+		order, err := dispatchOrder(q, dir)
+		if err != nil {
+			return nil, err
+		}
+		if order == contract.DispatchOrderSoonestReset {
+			soonestReset(out, k.readings)
+			for _, c := range out {
+				if c.Skipped == "" && c.Subscription != nil {
+					c.Warnings = append(c.Warnings, "order soonest_reset: round-robin across accounts may conflict with provider terms")
+				}
+			}
+		}
+	}
 	live := []*candidate{}
 	for _, c := range out {
 		if c.Subscription != nil && c.Skipped == "" {
