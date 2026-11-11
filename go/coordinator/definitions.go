@@ -348,10 +348,14 @@ func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.Def
 			}
 		}
 	}
+	windows, _, err := usageWindows(q, string(r.Kind), "", 30) // one grouped read for the whole list
+	if err != nil {
+		return out, err
+	}
 	for _, x := range xs {
-		last30, _, err := usageWindows(q, x.Kind, x.ID, 30)
-		if err != nil {
-			return out, err
+		last30 := windows[x.ID]
+		if last30.CostBasis == nil {
+			last30.CostBasis = ptr("tokens")
 		}
 		item := contract.DefinitionListItem{Kind: r.Kind, Id: x.ID, Name: definitionName(x), Scope: "shared", Path: x.Path, Revision: x.Head, State: x.state(),
 			Last30: last30}

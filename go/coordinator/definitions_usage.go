@@ -4,39 +4,53 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sort"
 
 	"fleet/contract"
 )
 
-// usageWindows: runs, successes, median wall time and tokens of the executions that pinned kind/id in the last days,
-// overall and per revision; rows outside the caller's scope are not counted (row security).
-func usageWindows(q *Request, kind, id string, days int64) (contract.Window, []contract.RevisionWindow, error) {
-	pin := jsonBytes([]map[string]string{{"kind": kind, "id": id}})
-	total, byRev := contract.Window{CostBasis: ptr("tokens")}, []contract.RevisionWindow{}
-	rows, err := q.tx.Query(q.ctx(), `SELECT (d->>'revision')::int AS rev, count(*), count(*) FILTER (WHERE e.state='succeeded'),
-	   (percentile_disc(0.5) WITHIN GROUP (ORDER BY t.wall_ms))::bigint, coalesce(sum(coalesce(t.tokens_input,0)+coalesce(t.tokens_output,0)),0)::bigint
-	 FROM execution e CROSS JOIN LATERAL jsonb_array_elements(e.definitions) d LEFT JOIN execution_totals t ON t.execution_id=e.id
-	 WHERE e.definitions @> $1 AND d->>'kind'=$2 AND d->>'id'=$3 AND coalesce(e.started_at, e.updated_at) >= now() - make_interval(days => $4)
-	 GROUP BY ROLLUP ((d->>'revision')::int) ORDER BY 1 DESC NULLS FIRST`, pin, kind, id, days)
+const usageSQL = `SELECT d->>'id' AS id, (d->>'revision')::int AS rev, GROUPING((d->>'revision')::int) AS total, count(*), count(*) FILTER (WHERE e.state='succeeded'),
+   (percentile_disc(0.5) WITHIN GROUP (ORDER BY t.wall_ms))::bigint, coalesce(sum(coalesce(t.tokens_input,0)+coalesce(t.tokens_output,0)),0)::bigint
+ FROM execution e CROSS JOIN LATERAL jsonb_array_elements(e.definitions) d LEFT JOIN execution_totals t ON t.execution_id=e.id
+ WHERE e.definitions @> $1 AND d->>'kind'=$2 AND ($3='' OR d->>'id'=$3) AND coalesce((d->>'draft')::boolean,false)=false
+   AND coalesce(e.started_at, e.updated_at) >= now() - make_interval(days => $4::int)
+ GROUP BY d->>'id', ROLLUP ((d->>'revision')::int)`
+
+// usageWindows: runs, successes, median wall time and tokens of the executions that pinned a saved revision of kind/id
+// (id "" for every definition of the kind) in the last days, per definition and per revision; draft runs are not a
+// revision's runs; rows outside the caller's scope are not counted (row security).
+func usageWindows(q *Request, kind, id string, days int64) (map[string]contract.Window, map[string][]contract.RevisionWindow, error) {
+	pin := map[string]string{"kind": kind}
+	if id != "" {
+		pin["id"] = id
+	}
+	totals, byRev := map[string]contract.Window{}, map[string][]contract.RevisionWindow{}
+	rows, err := q.tx.Query(q.ctx(), usageSQL, jsonBytes([]map[string]string{pin}), kind, id, days)
 	if err != nil {
-		return total, byRev, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
+		var did string
 		var rev, median *int64
-		var w contract.Window
-		if err := rows.Scan(&rev, &w.Runs, &w.Succeeded, &median, &w.Tokens); err != nil {
-			return total, byRev, err
+		var grouping int
+		w := contract.Window{CostBasis: ptr("tokens")}
+		if err := rows.Scan(&did, &rev, &grouping, &w.Runs, &w.Succeeded, &median, &w.Tokens); err != nil {
+			return nil, nil, err
 		}
-		w.WallMsMedian, w.CostBasis = median, ptr("tokens")
-		if rev == nil {
-			total = w
-		} else {
-			byRev = append(byRev, contract.RevisionWindow{Revision: *rev, Window: w})
+		w.WallMsMedian = median
+		if grouping == 1 {
+			totals[did] = w
+		} else if rev != nil {
+			byRev[did] = append(byRev[did], contract.RevisionWindow{Revision: *rev, Window: w})
 		}
 	}
-	return total, byRev, rows.Err()
+	for k := range byRev {
+		sort.Slice(byRev[k], func(i, j int) bool { return byRev[k][i].Revision > byRev[k][j].Revision })
+	}
+	return totals, byRev, rows.Err()
 }
 
 // usedByDefinitions: the definitions that name kind/id: pipelines whose agent steps run the profile, the catalogue when one
@@ -46,11 +60,11 @@ func usedByDefinitions(q *Request, kind, id string) ([]contract.DefinitionKey, e
 	if kind == "catalogue" {
 		return out, nil
 	}
-	pipes, err := headTexts(q, "pipeline")
-	if err != nil {
-		return nil, err
-	}
 	if kind == "agent" {
+		pipes, err := headTexts(q, "pipeline")
+		if err != nil {
+			return nil, err
+		}
 		for _, h := range pipes {
 			var d doc
 			json.Unmarshal(h.text, &d)
@@ -62,7 +76,14 @@ func usedByDefinitions(q *Request, kind, id string) ([]contract.DefinitionKey, e
 			}
 		}
 	}
-	if cat, err := catalogueHead(q); err == nil {
+	cat, err := catalogueHead(q)
+	var he *HTTPError
+	if errors.As(err, &he) && he.Code == 404 {
+		return out, nil // no catalogue
+	} else if err != nil {
+		return nil, err
+	}
+	{
 		for _, m := range anys(cat["methods"]) {
 			mm := mapOf(m)
 			if kind == "pipeline" && astr(mm["pipeline"]) == id+".json" || kind == "agent" && astr(mm["agentProfile"]) == id {
@@ -87,14 +108,21 @@ func definitionUsage(q *Request, r *contract.DefinitionUsageRequest) (contract.D
 	}
 	days := int64(30)
 	if r.Days != nil {
-		if *r.Days < 1 {
-			return out, fail(400, "days: 1 or more")
+		if *r.Days < 1 || *r.Days > 36500 {
+			return out, fail(400, "days: 1 to 36500")
 		}
 		days = *r.Days
 	}
-	var err error
-	if out.Total, out.ByRevision, err = usageWindows(q, string(r.Kind), r.Id, days); err != nil {
+	totals, byRev, err := usageWindows(q, string(r.Kind), r.Id, days)
+	if err != nil {
 		return out, fmt.Errorf("usage: %w", err)
+	}
+	out.Total, out.ByRevision = totals[r.Id], byRev[r.Id]
+	if out.Total.CostBasis == nil {
+		out.Total.CostBasis = ptr("tokens")
+	}
+	if out.ByRevision == nil {
+		out.ByRevision = []contract.RevisionWindow{}
 	}
 	out.UsedBy, err = usedByDefinitions(q, string(r.Kind), r.Id)
 	return out, err

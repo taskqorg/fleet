@@ -145,7 +145,14 @@ test('D10 definition_usage counts the runs that pinned a definition, per revisio
   assert.equal(u.total.runs, before.total.runs + 1);
   assert.ok(u.byRevision.some((r: any) => r.revision === 1 && r.window.runs >= 1), JSON.stringify(u.byRevision));
   assert.ok(ok(await op('definition_list', {kind: 'pipeline'})).items.find((x: any) => x.id === 'web-research').last30.runs >= 1);
-  const agentUse = ok(await op('definition_usage', {kind: 'agent', id: ok(await op('definition_get', {kind: 'pipeline', id: 'web-research'})).content.pipeline.steps.find((s: any) => s.kind === 'agent')?.profile ?? 'pm'}));
-  assert.ok(Array.isArray(agentUse.usedBy));
+  // hello-search is a catalogue method's pipeline; design-rules a method's agentProfile.
+  assert.deepEqual(ok(await op('definition_usage', {kind: 'pipeline', id: 'hello-search'})).usedBy, [{kind: 'catalogue', id: 'catalogue'}]);
+  assert.ok(ok(await op('definition_usage', {kind: 'agent', id: 'design-rules'})).usedBy.some((k: any) => k.kind === 'catalogue'));
+  // A draft run is not a run of its base revision.
+  const g = ok(await op('definition_get', {kind: 'pipeline', id: 'web-research'}));
+  const c = content(g); c.pipeline.steps[0].id = c.pipeline.steps[0].id + '-d10';
+  ok(await op('definition_draft_put', {kind: 'pipeline', id: 'web-research', baseRevision: g.head, content: c}));
+  ok(await op('pipeline_run_create', {pipelineId: 'web-research', requestId: 'd10-draft', draft: true, example: {}}));
+  assert.equal(ok(await op('definition_usage', {kind: 'pipeline', id: 'web-research'})).total.runs, u.total.runs);
   assert.equal((await op('definition_usage', {kind: 'pipeline', id: 'no-such'})).status, 404);
 });
