@@ -2,7 +2,7 @@
   {
     "server": "design-rules",
     "context": {
-      "z": "Unicode: \u0416",
+      "z": "Unicode: Ж",
       "a": [
         1,
         true,
@@ -86,13 +86,13 @@
     "expected": {
       "replies": [
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
+            "capabilities": {
+              "tools": {}
+            },
             "protocolVersion": "2024-11-05",
-            "capabilities": {
-              "tools": {}
-            },
             "serverInfo": {
               "name": "fleet-design-rules",
               "version": "1.0.0"
@@ -100,13 +100,13 @@
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
-            "protocolVersion": "custom",
             "capabilities": {
               "tools": {}
             },
+            "protocolVersion": "custom",
             "serverInfo": {
               "name": "fleet-design-rules",
               "version": "1.0.0"
@@ -114,171 +114,171 @@
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {}
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "tools": [
               {
-                "name": "get_design_rules",
+                "annotations": {
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "readOnlyHint": true
+                },
                 "description": "Read project website design rules.",
                 "inputSchema": {
-                  "type": "object",
+                  "additionalProperties": false,
                   "properties": {},
-                  "additionalProperties": false
+                  "type": "object"
                 },
-                "annotations": {
-                  "readOnlyHint": true,
-                  "destructiveHint": false,
-                  "idempotentHint": true
-                }
+                "name": "get_design_rules"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32601,
             "message": "Unsupported method, tool or arguments"
-          }
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32601,
             "message": "Unsupported method, tool or arguments"
-          }
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "a": [
                     1,
                     true,
                     null
                   ],
-                  "z": "Unicode: \u0416"
-                }
+                  "z": "Unicode: Ж"
+                },
+                "type": "text"
               }
             ],
             "isError": false
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32601,
             "message": "Unsupported method, tool or arguments"
-          }
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32700,
             "message": "Invalid request"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32700,
             "message": "Invalid request"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32700,
             "message": "Invalid request"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32700,
             "message": "Invalid request"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32700,
             "message": "Invalid request"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32700,
             "message": "Invalid request"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32700,
             "message": "Invalid request"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32700,
             "message": "Invalid request"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32700,
             "message": "Invalid request"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32700,
             "message": "Invalid request"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32700,
             "message": "Invalid request"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32700,
             "message": "Invalid request"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         }
       ],
       "effects": {
@@ -352,13 +352,13 @@
     "expected": {
       "replies": [
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
+            "capabilities": {
+              "tools": {}
+            },
             "protocolVersion": "2024-11-05",
-            "capabilities": {
-              "tools": {}
-            },
             "serverInfo": {
               "name": "fleet-delegation",
               "version": "1"
@@ -366,13 +366,13 @@
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
-            "protocolVersion": "custom",
             "capabilities": {
               "tools": {}
             },
+            "protocolVersion": "custom",
             "serverInfo": {
               "name": "fleet-delegation",
               "version": "1"
@@ -380,21 +380,28 @@
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {}
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "tools": [
               {
-                "name": "session_start",
                 "description": "Start a new Fleet session in your project: requestId, role (pm|worker|reviewer from the project roles) or profileId, optional text (first turn), setup run|skip. You are woken with a message when it finishes.",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
+                    "account": {
+                      "type": "string"
+                    },
+                    "hostId": {
+                      "type": "string"
+                    },
+                    "profileId": {
+                      "type": "string"
+                    },
                     "projectId": {
                       "type": "string"
                     },
@@ -404,162 +411,153 @@
                     "role": {
                       "type": "string"
                     },
-                    "profileId": {
-                      "type": "string"
-                    },
-                    "account": {
-                      "type": "string"
-                    },
-                    "hostId": {
+                    "setup": {
                       "type": "string"
                     },
                     "text": {
-                      "type": "string"
-                    },
-                    "setup": {
                       "type": "string"
                     }
                   },
                   "required": [
                     "requestId"
-                  ]
-                }
+                  ],
+                  "type": "object"
+                },
+                "name": "session_start"
               },
               {
-                "name": "session_deliver",
                 "description": "Ask Fleet to open a PR from a project session branch (fleet/<sessionId>, already pushed) and merge it after checks. Call again with the same sessionId to read the state.",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
-                    "sessionId": {
+                    "requestId": {
                       "type": "string"
                     },
-                    "requestId": {
+                    "sessionId": {
                       "type": "string"
                     }
                   },
-                  "required": []
-                }
+                  "required": [],
+                  "type": "object"
+                },
+                "name": "session_deliver"
               },
               {
-                "name": "session_transition",
                 "description": "Fleet agent session tool session_transition (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
-                    "sessionId": {
+                    "account": {
                       "type": "string"
                     },
                     "profileId": {
                       "type": "string"
                     },
-                    "account": {
+                    "sessionId": {
                       "type": "string"
                     }
                   },
                   "required": [
                     "profileId"
-                  ]
-                }
+                  ],
+                  "type": "object"
+                },
+                "name": "session_transition"
               },
               {
-                "name": "session_fork",
                 "description": "Fleet agent session tool session_fork (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
-                    "sessionId": {
-                      "type": "string"
-                    },
                     "requestId": {
                       "type": "string"
                     },
-                    "text": {
+                    "sessionId": {
                       "type": "string"
                     },
                     "strategy": {
+                      "type": "string"
+                    },
+                    "text": {
                       "type": "string"
                     }
                   },
                   "required": [
                     "requestId"
-                  ]
-                }
+                  ],
+                  "type": "object"
+                },
+                "name": "session_fork"
               },
               {
-                "name": "session_resume",
                 "description": "Fleet agent session tool session_resume (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
                     "sessionId": {
                       "type": "string"
                     }
                   },
-                  "required": []
-                }
+                  "required": [],
+                  "type": "object"
+                },
+                "name": "session_resume"
               },
               {
-                "name": "session_handoffs",
                 "description": "Fleet agent session tool session_handoffs (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
                     "sessionId": {
                       "type": "string"
                     }
                   },
-                  "required": []
-                }
+                  "required": [],
+                  "type": "object"
+                },
+                "name": "session_handoffs"
               },
               {
-                "name": "message_send",
                 "description": "Fleet agent session tool message_send (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
-                    "sessionId": {
+                    "delivery": {
                       "type": "string"
                     },
                     "requestId": {
                       "type": "string"
                     },
-                    "text": {
+                    "sessionId": {
                       "type": "string"
                     },
-                    "delivery": {
+                    "text": {
                       "type": "string"
                     }
                   },
                   "required": [
                     "requestId",
                     "text"
-                  ]
-                }
+                  ],
+                  "type": "object"
+                },
+                "name": "message_send"
               },
               {
-                "name": "queue_list",
                 "description": "Fleet agent session tool queue_list (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
                     "sessionId": {
                       "type": "string"
                     }
                   },
-                  "required": []
-                }
+                  "required": [],
+                  "type": "object"
+                },
+                "name": "queue_list"
               },
               {
-                "name": "ask",
                 "description": "Fleet agent session tool ask (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
-                    "requestId": {
+                    "question": {
                       "type": "string"
                     },
-                    "question": {
+                    "requestId": {
                       "type": "string"
                     },
                     "resume": {
@@ -569,33 +567,33 @@
                   "required": [
                     "requestId",
                     "question"
-                  ]
-                }
+                  ],
+                  "type": "object"
+                },
+                "name": "ask"
               },
               {
-                "name": "reply",
                 "description": "Fleet agent session tool reply (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
-                    "questionId": {
+                    "answer": {
                       "type": "string"
                     },
-                    "answer": {
+                    "questionId": {
                       "type": "string"
                     }
                   },
                   "required": [
                     "questionId",
                     "answer"
-                  ]
-                }
+                  ],
+                  "type": "object"
+                },
+                "name": "reply"
               },
               {
-                "name": "questions",
                 "description": "Fleet agent session tool questions (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
                     "sessionId": {
                       "type": "string"
@@ -604,14 +602,14 @@
                       "type": "string"
                     }
                   },
-                  "required": []
-                }
+                  "required": [],
+                  "type": "object"
+                },
+                "name": "questions"
               },
               {
-                "name": "worker_done",
                 "description": "Fleet agent session tool worker_done (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
                     "outcome": {
                       "type": "string"
@@ -622,128 +620,130 @@
                   },
                   "required": [
                     "outcome"
-                  ]
-                }
+                  ],
+                  "type": "object"
+                },
+                "name": "worker_done"
               },
               {
-                "name": "execution_status",
                 "description": "State of your execution, or with sessionId the latest execution of a session you started",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
                     "sessionId": {
                       "type": "string"
                     }
                   },
-                  "required": []
-                }
+                  "required": [],
+                  "type": "object"
+                },
+                "name": "execution_status"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
             "message": "Unsupported method"
-          }
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
             "message": "Unsupported method"
-          }
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting property name enclosed in double quotes: line 2 column 1 (char 2)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting value: line 2 column 1 (char 2)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting value: line 1 column 7 (char 6)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting property name enclosed in double quotes: line 1 column 9 (char 8)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting ',' delimiter: line 1 column 9 (char 8)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting ':' delimiter: line 1 column 7 (char 6)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Extra data: line 1 column 9 (char 8)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Invalid control character at: line 1 column 12 (char 11)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Invalid \\escape: line 1 column 8 (char 7)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         }
       ],
       "effects": {
@@ -875,9 +875,7 @@
         "method": "tools/call",
         "params": {
           "name": "project_context",
-          "arguments": {
-            "requestId": "project_context"
-          }
+          "arguments": {}
         }
       },
       {
@@ -897,9 +895,7 @@
         "method": "tools/call",
         "params": {
           "name": "catalogue",
-          "arguments": {
-            "requestId": "catalogue"
-          }
+          "arguments": {}
         }
       },
       {
@@ -920,7 +916,8 @@
         "params": {
           "name": "pipeline_run",
           "arguments": {
-            "requestId": "pipeline_run"
+            "requestId": "pipeline_run",
+            "query": "q"
           }
         }
       },
@@ -942,7 +939,8 @@
         "params": {
           "name": "direct_search",
           "arguments": {
-            "requestId": "direct_search"
+            "requestId": "direct_search",
+            "query": "q"
           }
         }
       },
@@ -963,9 +961,7 @@
         "method": "tools/call",
         "params": {
           "name": "pipeline_history",
-          "arguments": {
-            "requestId": "pipeline_history"
-          }
+          "arguments": {}
         }
       },
       {
@@ -986,7 +982,7 @@
         "params": {
           "name": "pipeline_get",
           "arguments": {
-            "requestId": "pipeline_get"
+            "runId": "r1"
           }
         }
       },
@@ -1008,7 +1004,8 @@
         "params": {
           "name": "question_ask",
           "arguments": {
-            "requestId": "question_ask"
+            "requestId": "question_ask",
+            "text": "t"
           }
         }
       },
@@ -1029,9 +1026,7 @@
         "method": "tools/call",
         "params": {
           "name": "question_history",
-          "arguments": {
-            "requestId": "question_history"
-          }
+          "arguments": {}
         }
       },
       {
@@ -1051,9 +1046,7 @@
         "method": "tools/call",
         "params": {
           "name": "account_list",
-          "arguments": {
-            "requestId": "account_list"
-          }
+          "arguments": {}
         }
       },
       {
@@ -1418,13 +1411,13 @@
     "expected": {
       "replies": [
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
+            "capabilities": {
+              "tools": {}
+            },
             "protocolVersion": "2024-11-05",
-            "capabilities": {
-              "tools": {}
-            },
             "serverInfo": {
               "name": "fleet-delegation",
               "version": "1"
@@ -1432,13 +1425,13 @@
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
-            "protocolVersion": "custom",
             "capabilities": {
               "tools": {}
             },
+            "protocolVersion": "custom",
             "serverInfo": {
               "name": "fleet-delegation",
               "version": "1"
@@ -1446,350 +1439,267 @@
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {}
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "tools": [
               {
-                "name": "request_child",
                 "annotations": {
-                  "readOnlyHint": false,
                   "destructiveHint": false,
                   "idempotentHint": true,
-                  "openWorldHint": true
+                  "openWorldHint": true,
+                  "readOnlyHint": false
                 },
                 "description": "Submit separate Fleet work. Reuse requestId on retry. After acceptance finish your turn so the child can run; do not wait or claim completion.",
                 "inputSchema": {
-                  "type": "object",
                   "additionalProperties": false,
+                  "properties": {
+                    "input": {
+                      "maxLength": 32000,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "profileId": {
+                      "enum": [
+                        "reviewer"
+                      ],
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "maxLength": 200,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
                   "required": [
                     "requestId",
                     "profileId",
                     "input"
                   ],
+                  "type": "object"
+                },
+                "name": "request_child"
+              },
+              {
+                "annotations": {
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false,
+                  "readOnlyHint": true
+                },
+                "description": "The project's settings and context. The host supplies the project; no arguments.",
+                "inputSchema": {
+                  "additionalProperties": false,
+                  "properties": {},
+                  "type": "object"
+                },
+                "name": "project_context"
+              },
+              {
+                "annotations": {
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false,
+                  "readOnlyHint": true
+                },
+                "description": "The project's search methods and pipelines. No arguments.",
+                "inputSchema": {
+                  "additionalProperties": false,
+                  "properties": {},
+                  "type": "object"
+                },
+                "name": "catalogue"
+              },
+              {
+                "annotations": {
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": true,
+                  "readOnlyHint": false
+                },
+                "description": "Start a pipeline search for query. Reuse requestId on retry: the same requestId returns the same run. A search may return a durable running run; read it with pipeline_get by runId, never redispatch after an uncertain response.",
+                "inputSchema": {
+                  "additionalProperties": false,
                   "properties": {
-                    "requestId": {
-                      "type": "string",
+                    "methodId": {
+                      "description": "A method id from catalogue; omitted, Fleet recommends one.",
+                      "type": "string"
+                    },
+                    "query": {
+                      "maxLength": 2000,
                       "minLength": 1,
-                      "maxLength": 200
+                      "type": "string"
                     },
-                    "profileId": {
-                      "type": "string",
-                      "enum": [
-                        "reviewer"
-                      ]
-                    },
-                    "input": {
-                      "type": "string",
+                    "requestId": {
+                      "maxLength": 200,
                       "minLength": 1,
-                      "maxLength": 32000
+                      "type": "string"
                     }
-                  }
-                }
+                  },
+                  "required": [
+                    "requestId",
+                    "query"
+                  ],
+                  "type": "object"
+                },
+                "name": "pipeline_run"
               },
               {
-                "name": "project_context",
                 "annotations": {
-                  "readOnlyHint": true,
                   "destructiveHint": false,
                   "idempotentHint": true,
-                  "openWorldHint": false
+                  "openWorldHint": true,
+                  "readOnlyHint": false
                 },
-                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+                "description": "Run a direct search for query, as pipeline_run. Reuse requestId on retry; read a running run with pipeline_get by runId.",
                 "inputSchema": {
-                  "type": "object",
                   "additionalProperties": false,
                   "properties": {
-                    "requestId": {
+                    "methodId": {
+                      "description": "A method id from catalogue; omitted, Fleet recommends one.",
                       "type": "string"
                     },
                     "query": {
+                      "maxLength": 2000,
+                      "minLength": 1,
                       "type": "string"
                     },
-                    "methodId": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "runId": {
+                    "requestId": {
+                      "maxLength": 200,
+                      "minLength": 1,
                       "type": "string"
                     }
-                  }
-                }
+                  },
+                  "required": [
+                    "requestId",
+                    "query"
+                  ],
+                  "type": "object"
+                },
+                "name": "direct_search"
               },
               {
-                "name": "catalogue",
                 "annotations": {
-                  "readOnlyHint": true,
                   "destructiveHint": false,
                   "idempotentHint": true,
-                  "openWorldHint": false
+                  "openWorldHint": false,
+                  "readOnlyHint": true
                 },
-                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+                "description": "The project's pipeline runs. No arguments.",
                 "inputSchema": {
-                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {},
+                  "type": "object"
+                },
+                "name": "pipeline_history"
+              },
+              {
+                "annotations": {
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false,
+                  "readOnlyHint": true
+                },
+                "description": "One pipeline run of this project by runId.",
+                "inputSchema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "runId": {
+                      "maxLength": 200,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "runId"
+                  ],
+                  "type": "object"
+                },
+                "name": "pipeline_get"
+              },
+              {
+                "annotations": {
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false,
+                  "readOnlyHint": false
+                },
+                "description": "Ask the project's people a question. Reuse requestId on retry; the answer appears in question_history.",
+                "inputSchema": {
                   "additionalProperties": false,
                   "properties": {
                     "requestId": {
-                      "type": "string"
-                    },
-                    "query": {
-                      "type": "string"
-                    },
-                    "methodId": {
+                      "maxLength": 200,
+                      "minLength": 1,
                       "type": "string"
                     },
                     "text": {
-                      "type": "string"
-                    },
-                    "runId": {
+                      "maxLength": 2000,
+                      "minLength": 1,
                       "type": "string"
                     }
-                  }
-                }
+                  },
+                  "required": [
+                    "requestId",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                "name": "question_ask"
               },
               {
-                "name": "pipeline_run",
                 "annotations": {
-                  "readOnlyHint": false,
                   "destructiveHint": false,
                   "idempotentHint": true,
-                  "openWorldHint": true
+                  "openWorldHint": false,
+                  "readOnlyHint": true
                 },
-                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+                "description": "The project's questions and their answers. No arguments.",
                 "inputSchema": {
-                  "type": "object",
                   "additionalProperties": false,
-                  "properties": {
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "query": {
-                      "type": "string"
-                    },
-                    "methodId": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "runId": {
-                      "type": "string"
-                    }
-                  }
-                }
+                  "properties": {},
+                  "type": "object"
+                },
+                "name": "question_history"
               },
               {
-                "name": "direct_search",
                 "annotations": {
-                  "readOnlyHint": false,
                   "destructiveHint": false,
                   "idempotentHint": true,
-                  "openWorldHint": true
+                  "openWorldHint": false,
+                  "readOnlyHint": true
                 },
-                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
+                "description": "The subscriptions this work may use (the director's, or taken for this project). No arguments.",
                 "inputSchema": {
-                  "type": "object",
                   "additionalProperties": false,
-                  "properties": {
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "query": {
-                      "type": "string"
-                    },
-                    "methodId": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "runId": {
-                      "type": "string"
-                    }
-                  }
-                }
+                  "properties": {},
+                  "type": "object"
+                },
+                "name": "account_list"
               },
               {
-                "name": "pipeline_history",
                 "annotations": {
-                  "readOnlyHint": true,
-                  "destructiveHint": false,
-                  "idempotentHint": true,
-                  "openWorldHint": false
-                },
-                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
-                "inputSchema": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "query": {
-                      "type": "string"
-                    },
-                    "methodId": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "runId": {
-                      "type": "string"
-                    }
-                  }
-                }
-              },
-              {
-                "name": "pipeline_get",
-                "annotations": {
-                  "readOnlyHint": true,
-                  "destructiveHint": false,
-                  "idempotentHint": true,
-                  "openWorldHint": false
-                },
-                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
-                "inputSchema": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "query": {
-                      "type": "string"
-                    },
-                    "methodId": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "runId": {
-                      "type": "string"
-                    }
-                  }
-                }
-              },
-              {
-                "name": "question_ask",
-                "annotations": {
-                  "readOnlyHint": false,
-                  "destructiveHint": false,
-                  "idempotentHint": true,
-                  "openWorldHint": false
-                },
-                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
-                "inputSchema": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "query": {
-                      "type": "string"
-                    },
-                    "methodId": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "runId": {
-                      "type": "string"
-                    }
-                  }
-                }
-              },
-              {
-                "name": "question_history",
-                "annotations": {
-                  "readOnlyHint": true,
-                  "destructiveHint": false,
-                  "idempotentHint": true,
-                  "openWorldHint": false
-                },
-                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
-                "inputSchema": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "query": {
-                      "type": "string"
-                    },
-                    "methodId": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "runId": {
-                      "type": "string"
-                    }
-                  }
-                }
-              },
-              {
-                "name": "account_list",
-                "annotations": {
-                  "readOnlyHint": true,
-                  "destructiveHint": false,
-                  "idempotentHint": true,
-                  "openWorldHint": false
-                },
-                "description": "Fleet scoped project operation; host supplies project identity. Effect calls require a stable requestId. A search may return a durable running run; read pipeline_get by runId, never redispatch after an uncertain response.",
-                "inputSchema": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "query": {
-                      "type": "string"
-                    },
-                    "methodId": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "runId": {
-                      "type": "string"
-                    }
-                  }
-                }
-              },
-              {
-                "name": "artifact_save",
-                "description": "Store a file of your working area as an artifact of this execution now (otherwise FLEET_OUTPUT_DIR is collected when the run ends). required=true makes this run wait for it.",
-                "annotations": {
-                  "readOnlyHint": false,
                   "destructiveHint": false,
                   "idempotentHint": false,
-                  "openWorldHint": false
+                  "openWorldHint": false,
+                  "readOnlyHint": false
                 },
+                "description": "Store a file of your working area as an artifact of this execution now (otherwise FLEET_OUTPUT_DIR is collected when the run ends). required=true makes this run wait for it.",
                 "inputSchema": {
-                  "type": "object",
+                  "additionalProperties": false,
                   "properties": {
-                    "path": {
+                    "media_type": {
                       "type": "string"
                     },
                     "name": {
                       "type": "string"
                     },
-                    "media_type": {
+                    "path": {
                       "type": "string"
                     },
                     "required": {
@@ -1799,46 +1709,46 @@
                   "required": [
                     "path"
                   ],
-                  "additionalProperties": false
-                }
+                  "type": "object"
+                },
+                "name": "artifact_save"
               },
               {
-                "name": "artifact_list",
-                "description": "List artifact metadata of this project (or of an execution or task). Never returns content.",
                 "annotations": {
-                  "readOnlyHint": true,
                   "destructiveHint": false,
                   "idempotentHint": true,
-                  "openWorldHint": false
+                  "openWorldHint": false,
+                  "readOnlyHint": true
                 },
+                "description": "List artifact metadata of this project (or of an execution or task). Never returns content.",
                 "inputSchema": {
-                  "type": "object",
+                  "additionalProperties": false,
                   "properties": {
                     "execution_id": {
                       "type": "string"
                     },
-                    "task_id": {
+                    "media_type": {
                       "type": "string"
                     },
-                    "media_type": {
+                    "task_id": {
                       "type": "string"
                     }
                   },
                   "required": [],
-                  "additionalProperties": false
-                }
+                  "type": "object"
+                },
+                "name": "artifact_list"
               },
               {
-                "name": "artifact_get",
-                "description": "Download an artifact into FLEET_INPUT_DIR and return its local path and metadata.",
                 "annotations": {
-                  "readOnlyHint": true,
                   "destructiveHint": false,
                   "idempotentHint": true,
-                  "openWorldHint": false
+                  "openWorldHint": false,
+                  "readOnlyHint": true
                 },
+                "description": "Download an artifact into FLEET_INPUT_DIR and return its local path and metadata.",
                 "inputSchema": {
-                  "type": "object",
+                  "additionalProperties": false,
                   "properties": {
                     "artifact_id": {
                       "type": "string"
@@ -1847,15 +1757,23 @@
                   "required": [
                     "artifact_id"
                   ],
-                  "additionalProperties": false
-                }
+                  "type": "object"
+                },
+                "name": "artifact_get"
               },
               {
-                "name": "session_start",
                 "description": "Start a new Fleet session in your project: requestId, role (pm|worker|reviewer from the project roles) or profileId, optional text (first turn), setup run|skip. You are woken with a message when it finishes.",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
+                    "account": {
+                      "type": "string"
+                    },
+                    "hostId": {
+                      "type": "string"
+                    },
+                    "profileId": {
+                      "type": "string"
+                    },
                     "projectId": {
                       "type": "string"
                     },
@@ -1865,162 +1783,153 @@
                     "role": {
                       "type": "string"
                     },
-                    "profileId": {
-                      "type": "string"
-                    },
-                    "account": {
-                      "type": "string"
-                    },
-                    "hostId": {
+                    "setup": {
                       "type": "string"
                     },
                     "text": {
-                      "type": "string"
-                    },
-                    "setup": {
                       "type": "string"
                     }
                   },
                   "required": [
                     "requestId"
-                  ]
-                }
+                  ],
+                  "type": "object"
+                },
+                "name": "session_start"
               },
               {
-                "name": "session_deliver",
                 "description": "Ask Fleet to open a PR from a project session branch (fleet/<sessionId>, already pushed) and merge it after checks. Call again with the same sessionId to read the state.",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
-                    "sessionId": {
+                    "requestId": {
                       "type": "string"
                     },
-                    "requestId": {
+                    "sessionId": {
                       "type": "string"
                     }
                   },
-                  "required": []
-                }
+                  "required": [],
+                  "type": "object"
+                },
+                "name": "session_deliver"
               },
               {
-                "name": "session_transition",
                 "description": "Fleet agent session tool session_transition (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
-                    "sessionId": {
+                    "account": {
                       "type": "string"
                     },
                     "profileId": {
                       "type": "string"
                     },
-                    "account": {
+                    "sessionId": {
                       "type": "string"
                     }
                   },
                   "required": [
                     "profileId"
-                  ]
-                }
+                  ],
+                  "type": "object"
+                },
+                "name": "session_transition"
               },
               {
-                "name": "session_fork",
                 "description": "Fleet agent session tool session_fork (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
-                    "sessionId": {
-                      "type": "string"
-                    },
                     "requestId": {
                       "type": "string"
                     },
-                    "text": {
+                    "sessionId": {
                       "type": "string"
                     },
                     "strategy": {
+                      "type": "string"
+                    },
+                    "text": {
                       "type": "string"
                     }
                   },
                   "required": [
                     "requestId"
-                  ]
-                }
+                  ],
+                  "type": "object"
+                },
+                "name": "session_fork"
               },
               {
-                "name": "session_resume",
                 "description": "Fleet agent session tool session_resume (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
                     "sessionId": {
                       "type": "string"
                     }
                   },
-                  "required": []
-                }
+                  "required": [],
+                  "type": "object"
+                },
+                "name": "session_resume"
               },
               {
-                "name": "session_handoffs",
                 "description": "Fleet agent session tool session_handoffs (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
                     "sessionId": {
                       "type": "string"
                     }
                   },
-                  "required": []
-                }
+                  "required": [],
+                  "type": "object"
+                },
+                "name": "session_handoffs"
               },
               {
-                "name": "message_send",
                 "description": "Fleet agent session tool message_send (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
-                    "sessionId": {
+                    "delivery": {
                       "type": "string"
                     },
                     "requestId": {
                       "type": "string"
                     },
-                    "text": {
+                    "sessionId": {
                       "type": "string"
                     },
-                    "delivery": {
+                    "text": {
                       "type": "string"
                     }
                   },
                   "required": [
                     "requestId",
                     "text"
-                  ]
-                }
+                  ],
+                  "type": "object"
+                },
+                "name": "message_send"
               },
               {
-                "name": "queue_list",
                 "description": "Fleet agent session tool queue_list (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
                     "sessionId": {
                       "type": "string"
                     }
                   },
-                  "required": []
-                }
+                  "required": [],
+                  "type": "object"
+                },
+                "name": "queue_list"
               },
               {
-                "name": "ask",
                 "description": "Fleet agent session tool ask (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
-                    "requestId": {
+                    "question": {
                       "type": "string"
                     },
-                    "question": {
+                    "requestId": {
                       "type": "string"
                     },
                     "resume": {
@@ -2030,33 +1939,33 @@
                   "required": [
                     "requestId",
                     "question"
-                  ]
-                }
+                  ],
+                  "type": "object"
+                },
+                "name": "ask"
               },
               {
-                "name": "reply",
                 "description": "Fleet agent session tool reply (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
-                    "questionId": {
+                    "answer": {
                       "type": "string"
                     },
-                    "answer": {
+                    "questionId": {
                       "type": "string"
                     }
                   },
                   "required": [
                     "questionId",
                     "answer"
-                  ]
-                }
+                  ],
+                  "type": "object"
+                },
+                "name": "reply"
               },
               {
-                "name": "questions",
                 "description": "Fleet agent session tool questions (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
                     "sessionId": {
                       "type": "string"
@@ -2065,14 +1974,14 @@
                       "type": "string"
                     }
                   },
-                  "required": []
-                }
+                  "required": [],
+                  "type": "object"
+                },
+                "name": "questions"
               },
               {
-                "name": "worker_done",
                 "description": "Fleet agent session tool worker_done (bound to this session by the host)",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
                     "outcome": {
                       "type": "string"
@@ -2083,917 +1992,904 @@
                   },
                   "required": [
                     "outcome"
-                  ]
-                }
+                  ],
+                  "type": "object"
+                },
+                "name": "worker_done"
               },
               {
-                "name": "execution_status",
                 "description": "State of your execution, or with sessionId the latest execution of a session you started",
                 "inputSchema": {
-                  "type": "object",
                   "properties": {
                     "sessionId": {
                       "type": "string"
                     }
                   },
-                  "required": []
-                }
+                  "required": [],
+                  "type": "object"
+                },
+                "name": "execution_status"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
             "message": "Unsupported method"
-          }
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
             "message": "Unsupported method"
-          }
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
-                  "status": "accepted",
+                  "instruction": "Finish this turn. Child work runs after your completed receipt. Retry only with the same requestId; submission is not completion.",
                   "response": {
                     "childExecutionId": "child",
                     "result": {
                       "content": [
                         {
-                          "type": "text",
-                          "text": "reply"
+                          "text": "reply",
+                          "type": "text"
                         }
                       ]
                     }
                   },
-                  "instruction": "Finish this turn. Child work runs after your completed receipt. Retry only with the same requestId; submission is not completion."
-                }
+                  "status": "accepted"
+                },
+                "type": "text"
               }
             ],
             "isError": false
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
-                  "status": "accepted",
+                  "instruction": "Finish this turn. Child work runs after your completed receipt. Retry only with the same requestId; submission is not completion.",
                   "response": {
                     "childExecutionId": "child",
                     "result": {
                       "content": [
                         {
-                          "type": "text",
-                          "text": "reply"
+                          "text": "reply",
+                          "type": "text"
                         }
                       ]
                     }
                   },
-                  "instruction": "Finish this turn. Child work runs after your completed receipt. Retry only with the same requestId; submission is not completion."
-                }
+                  "status": "accepted"
+                },
+                "type": "text"
               }
             ],
             "isError": false
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
             "message": "Request identity conflict"
-          }
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
             "message": "Invalid child request"
-          }
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
             "message": "Invalid child request"
-          }
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "childExecutionId": "child",
                   "result": {
                     "content": [
                       {
-                        "type": "text",
-                        "text": "reply"
+                        "text": "reply",
+                        "type": "text"
                       }
                     ]
                   }
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": false
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
-            "message": "Invalid project request"
-          }
+            "message": "Invalid project request: project_context takes no invalid"
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "childExecutionId": "child",
                   "result": {
                     "content": [
                       {
-                        "type": "text",
-                        "text": "reply"
+                        "text": "reply",
+                        "type": "text"
                       }
                     ]
                   }
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": false
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
-            "message": "Invalid project request"
-          }
+            "message": "Invalid project request: catalogue takes no invalid"
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "childExecutionId": "child",
                   "result": {
                     "content": [
                       {
-                        "type": "text",
-                        "text": "reply"
+                        "text": "reply",
+                        "type": "text"
                       }
                     ]
                   }
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": false
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
-            "message": "Invalid project request"
-          }
+            "message": "Invalid project request: pipeline_run takes no invalid"
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "childExecutionId": "child",
                   "result": {
                     "content": [
                       {
-                        "type": "text",
-                        "text": "reply"
+                        "text": "reply",
+                        "type": "text"
                       }
                     ]
                   }
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": false
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
-            "message": "Invalid project request"
-          }
+            "message": "Invalid project request: direct_search takes no invalid"
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "childExecutionId": "child",
                   "result": {
                     "content": [
                       {
-                        "type": "text",
-                        "text": "reply"
+                        "text": "reply",
+                        "type": "text"
                       }
                     ]
                   }
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": false
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
-            "message": "Invalid project request"
-          }
+            "message": "Invalid project request: pipeline_history takes no invalid"
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "childExecutionId": "child",
                   "result": {
                     "content": [
                       {
-                        "type": "text",
-                        "text": "reply"
+                        "text": "reply",
+                        "type": "text"
                       }
                     ]
                   }
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": false
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
-            "message": "Invalid project request"
-          }
+            "message": "Invalid project request: pipeline_get takes no invalid"
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "childExecutionId": "child",
                   "result": {
                     "content": [
                       {
-                        "type": "text",
-                        "text": "reply"
+                        "text": "reply",
+                        "type": "text"
                       }
                     ]
                   }
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": false
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
-            "message": "Invalid project request"
-          }
+            "message": "Invalid project request: question_ask takes no invalid"
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "childExecutionId": "child",
                   "result": {
                     "content": [
                       {
-                        "type": "text",
-                        "text": "reply"
+                        "text": "reply",
+                        "type": "text"
                       }
                     ]
                   }
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": false
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
-            "message": "Invalid project request"
-          }
+            "message": "Invalid project request: question_history takes no invalid"
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "childExecutionId": "child",
                   "result": {
                     "content": [
                       {
-                        "type": "text",
-                        "text": "reply"
+                        "text": "reply",
+                        "type": "text"
                       }
                     ]
                   }
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": false
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
-            "message": "Invalid project request"
-          }
+            "message": "Invalid project request: account_list takes no invalid"
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
-                "text": "reply"
+                "text": "reply",
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
-                "text": "reply"
+                "text": "reply",
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
-                "text": "reply"
+                "text": "reply",
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
-                "text": "reply"
+                "text": "reply",
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
-                "text": "reply"
+                "text": "reply",
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
-                "text": "reply"
+                "text": "reply",
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
-                "text": "reply"
+                "text": "reply",
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
-                "text": "reply"
+                "text": "reply",
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
-                "text": "reply"
+                "text": "reply",
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
-                "text": "reply"
+                "text": "reply",
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
-                "text": "reply"
+                "text": "reply",
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
-                "text": "reply"
+                "text": "reply",
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
-                "text": "reply"
+                "text": "reply",
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "artifact tool refused: path must be a file inside your working area"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "artifact tool refused: path must be a regular file inside your working area, not a link"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "artifact tool refused: path must be a regular file with one link"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "artifact tool refused: path must be a regular file inside your working area, not a link"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "artifactId": "artifact",
                   "state": "done"
-                }
+                },
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "artifactId": "artifact",
                   "state": "done"
-                }
+                },
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "artifactId": "artifact",
                   "state": "done"
-                }
+                },
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "artifactId": "artifact",
                   "state": "done"
-                }
+                },
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "artifactId": "artifact",
                   "state": "done"
-                }
+                },
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "artifactId": "artifact",
                   "state": "done"
-                }
+                },
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
             "message": "Invalid artifact tool arguments"
-          }
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
             "message": "Invalid artifact tool arguments"
-          }
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "artifactId": "artifact",
                   "state": "done",
                   "transferId": "<uuid>"
-                }
+                },
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "artifactId": "artifact",
                   "state": "done",
                   "transferId": "<uuid>"
-                }
+                },
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting value: line 1 column 1 (char 0)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
-          "result": {
-            "content": [
-              {
-                "type": "text",
-                "text": {
-                  "childExecutionId": "child",
-                  "result": {
-                    "content": [
-                      {
-                        "type": "text",
-                        "text": "reply"
-                      }
-                    ]
-                  }
-                }
-              }
-            ],
-            "isError": false
-          }
-        },
-        {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
-            "message": "A stable requestId is required for effects"
-          }
+            "message": "Invalid project request: query must be a non-empty string"
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
+          "error": {
+            "code": -32602,
+            "message": "Invalid project request: pipeline_run needs requestId"
+          },
           "id": 1,
+          "jsonrpc": "2.0"
+        },
+        {
           "error": {
             "code": -32602,
             "message": "Invalid artifact tool arguments"
-          }
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
             "message": "Invalid artifact tool arguments"
-          }
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "artifact tool refused: path must be a file inside your working area"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": 1,
           "error": {
             "code": -32602,
             "message": "Invalid child request"
-          }
+          },
+          "id": 1,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting property name enclosed in double quotes: line 2 column 1 (char 2)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting value: line 2 column 1 (char 2)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting value: line 1 column 7 (char 6)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting property name enclosed in double quotes: line 1 column 9 (char 8)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting ',' delimiter: line 1 column 9 (char 8)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting ':' delimiter: line 1 column 7 (char 6)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Extra data: line 1 column 9 (char 8)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Invalid control character at: line 1 column 12 (char 11)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Invalid \\escape: line 1 column 8 (char 7)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         }
       ],
       "effects": {
@@ -3011,9 +2907,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "project_context"
-              },
+              "arguments": {},
               "operation": "project_context",
               "projectId": "project",
               "requestId": "project_context-<uuid>"
@@ -3024,9 +2918,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "catalogue"
-              },
+              "arguments": {},
               "operation": "catalogue",
               "projectId": "project",
               "requestId": "catalogue-<uuid>"
@@ -3038,6 +2930,7 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
+                "query": "q",
                 "requestId": "pipeline_run"
               },
               "operation": "pipeline_run",
@@ -3051,6 +2944,7 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
+                "query": "q",
                 "requestId": "direct_search"
               },
               "operation": "direct_search",
@@ -3063,9 +2957,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "pipeline_history"
-              },
+              "arguments": {},
               "operation": "pipeline_history",
               "projectId": "project",
               "requestId": "pipeline_history-<uuid>"
@@ -3077,7 +2969,7 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
-                "requestId": "pipeline_get"
+                "runId": "r1"
               },
               "operation": "pipeline_get",
               "projectId": "project",
@@ -3090,7 +2982,8 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
-                "requestId": "question_ask"
+                "requestId": "question_ask",
+                "text": "t"
               },
               "operation": "question_ask",
               "projectId": "project",
@@ -3102,9 +2995,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "question_history"
-              },
+              "arguments": {},
               "operation": "question_history",
               "projectId": "project",
               "requestId": "question_history-<uuid>"
@@ -3115,9 +3006,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "account_list"
-              },
+              "arguments": {},
               "operation": "account_list",
               "projectId": "project",
               "requestId": "account_list-<uuid>"
@@ -3321,25 +3210,9 @@
             }
           },
           {
+            "executionId": "execution",
             "hostId": "host",
-            "executionId": "execution",
             "name": "sub/a.txt"
-          },
-          {
-            "commandId": "command",
-            "delegation": {
-              "arguments": {
-                "query": {
-                  "native": "argument"
-                },
-                "requestId": "pass-through"
-              },
-              "operation": "pipeline_run",
-              "projectId": "project",
-              "requestId": "pass-through"
-            },
-            "executionId": "execution",
-            "hostId": "host"
           }
         ],
         "delegation_requests": [
@@ -3356,9 +3229,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "project_context"
-              },
+              "arguments": {},
               "operation": "project_context",
               "projectId": "project",
               "requestId": "project_context-<uuid>"
@@ -3369,9 +3240,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "catalogue"
-              },
+              "arguments": {},
               "operation": "catalogue",
               "projectId": "project",
               "requestId": "catalogue-<uuid>"
@@ -3383,6 +3252,7 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
+                "query": "q",
                 "requestId": "pipeline_run"
               },
               "operation": "pipeline_run",
@@ -3396,6 +3266,7 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
+                "query": "q",
                 "requestId": "direct_search"
               },
               "operation": "direct_search",
@@ -3408,9 +3279,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "pipeline_history"
-              },
+              "arguments": {},
               "operation": "pipeline_history",
               "projectId": "project",
               "requestId": "pipeline_history-<uuid>"
@@ -3422,7 +3291,7 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
-                "requestId": "pipeline_get"
+                "runId": "r1"
               },
               "operation": "pipeline_get",
               "projectId": "project",
@@ -3435,7 +3304,8 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
-                "requestId": "question_ask"
+                "requestId": "question_ask",
+                "text": "t"
               },
               "operation": "question_ask",
               "projectId": "project",
@@ -3447,9 +3317,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "question_history"
-              },
+              "arguments": {},
               "operation": "question_history",
               "projectId": "project",
               "requestId": "question_history-<uuid>"
@@ -3460,9 +3328,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "account_list"
-              },
+              "arguments": {},
               "operation": "account_list",
               "projectId": "project",
               "requestId": "account_list-<uuid>"
@@ -3664,90 +3530,74 @@
                 "name": "execution_status"
               }
             }
-          },
-          {
-            "commandId": "command",
-            "delegation": {
-              "arguments": {
-                "query": {
-                  "native": "argument"
-                },
-                "requestId": "pass-through"
-              },
-              "operation": "pipeline_run",
-              "projectId": "project",
-              "requestId": "pass-through"
-            },
-            "executionId": "execution",
-            "hostId": "host"
           }
         ],
         "transfers": [
           {
-            "path": "<root>/spool/<uuid>",
-            "spool": true,
-            "previews": true,
-            "name": "sub/a.txt",
-            "mediaType": "text/plain",
             "executionId": "execution",
-            "required": false
+            "mediaType": "text/plain",
+            "name": "sub/a.txt",
+            "path": "<root>/spool/<uuid>",
+            "previews": true,
+            "required": false,
+            "spool": true
           },
           {
-            "path": "<root>/spool/<uuid>",
-            "spool": true,
-            "previews": true,
+            "executionId": "execution",
+            "mediaType": "application/octet-stream",
             "name": ".txt",
-            "mediaType": "application/octet-stream",
-            "executionId": "execution",
-            "required": false
+            "path": "<root>/spool/<uuid>",
+            "previews": true,
+            "required": false,
+            "spool": true
           },
           {
-            "path": "<root>/spool/<uuid>",
-            "spool": true,
-            "previews": true,
+            "executionId": "execution",
+            "mediaType": "application/octet-stream",
             "name": "note.MD",
-            "mediaType": "application/octet-stream",
-            "executionId": "execution",
-            "required": false
+            "path": "<root>/spool/<uuid>",
+            "previews": true,
+            "required": false,
+            "spool": true
           },
           {
-            "path": "<root>/spool/<uuid>",
-            "spool": true,
-            "previews": true,
-            "name": "archive.tgz",
+            "executionId": "execution",
             "mediaType": "application/x-tar",
-            "executionId": "execution",
-            "required": false
+            "name": "archive.tgz",
+            "path": "<root>/spool/<uuid>",
+            "previews": true,
+            "required": false,
+            "spool": true
           },
           {
-            "path": "<root>/spool/<uuid>",
-            "spool": true,
-            "previews": true,
-            "name": "blob.unknown",
+            "executionId": "execution",
             "mediaType": "application/octet-stream",
-            "executionId": "execution",
-            "required": false
+            "name": "blob.unknown",
+            "path": "<root>/spool/<uuid>",
+            "previews": true,
+            "required": false,
+            "spool": true
           },
           {
-            "path": "<root>/spool/<uuid>",
-            "spool": true,
-            "previews": true,
-            "name": "sub/a.txt",
-            "mediaType": "text/plain",
             "executionId": "execution",
-            "required": true
+            "mediaType": "text/plain",
+            "name": "sub/a.txt",
+            "path": "<root>/spool/<uuid>",
+            "previews": true,
+            "required": true,
+            "spool": true
           },
           {
             "executionId": "execution",
             "filter": {
               "executionId": null,
-              "taskId": null,
-              "mediaType": null
+              "mediaType": null,
+              "taskId": null
             }
           },
           {
-            "executionId": "execution",
             "artifactId": "artifact",
+            "executionId": "execution",
             "inputDir": "<root>/in"
           }
         ]
@@ -3796,9 +3646,7 @@
         "method": "tools/call",
         "params": {
           "name": "project_context",
-          "arguments": {
-            "requestId": "project_context"
-          }
+          "arguments": {}
         }
       },
       {
@@ -3807,9 +3655,7 @@
         "method": "tools/call",
         "params": {
           "name": "catalogue",
-          "arguments": {
-            "requestId": "catalogue"
-          }
+          "arguments": {}
         }
       },
       {
@@ -3819,7 +3665,8 @@
         "params": {
           "name": "pipeline_run",
           "arguments": {
-            "requestId": "pipeline_run"
+            "requestId": "pipeline_run",
+            "query": "q"
           }
         }
       },
@@ -3830,7 +3677,8 @@
         "params": {
           "name": "direct_search",
           "arguments": {
-            "requestId": "direct_search"
+            "requestId": "direct_search",
+            "query": "q"
           }
         }
       },
@@ -3840,9 +3688,7 @@
         "method": "tools/call",
         "params": {
           "name": "pipeline_history",
-          "arguments": {
-            "requestId": "pipeline_history"
-          }
+          "arguments": {}
         }
       },
       {
@@ -3852,7 +3698,7 @@
         "params": {
           "name": "pipeline_get",
           "arguments": {
-            "requestId": "pipeline_get"
+            "runId": "r1"
           }
         }
       },
@@ -3863,7 +3709,8 @@
         "params": {
           "name": "question_ask",
           "arguments": {
-            "requestId": "question_ask"
+            "requestId": "question_ask",
+            "text": "t"
           }
         }
       },
@@ -3873,9 +3720,7 @@
         "method": "tools/call",
         "params": {
           "name": "question_history",
-          "arguments": {
-            "requestId": "question_history"
-          }
+          "arguments": {}
         }
       },
       {
@@ -3884,9 +3729,7 @@
         "method": "tools/call",
         "params": {
           "name": "account_list",
-          "arguments": {
-            "requestId": "account_list"
-          }
+          "arguments": {}
         }
       },
       {
@@ -4052,488 +3895,488 @@
     "expected": {
       "replies": [
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
-                  "status": "pending-or-rejected",
+                  "instruction": "Finish this turn. Child work runs after your completed receipt. Retry only with the same requestId; submission is not completion.",
                   "response": {
                     "error": "rejected"
                   },
-                  "instruction": "Finish this turn. Child work runs after your completed receipt. Retry only with the same requestId; submission is not completion."
-                }
+                  "status": "pending-or-rejected"
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected"
-                }
+                },
+                "type": "text"
               }
             ],
             "isError": true
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected",
                   "state": "failed"
-                }
+                },
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected",
                   "state": "failed",
                   "transferId": "<uuid>"
-                }
+                },
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
           "id": 1,
+          "jsonrpc": "2.0",
           "result": {
             "content": [
               {
-                "type": "text",
                 "text": {
                   "error": "rejected",
                   "state": "failed",
                   "transferId": "<uuid>"
-                }
+                },
+                "type": "text"
               }
             ]
           }
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting property name enclosed in double quotes: line 2 column 1 (char 2)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting value: line 2 column 1 (char 2)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting value: line 1 column 7 (char 6)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting property name enclosed in double quotes: line 1 column 9 (char 8)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting ',' delimiter: line 1 column 9 (char 8)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting ':' delimiter: line 1 column 7 (char 6)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Extra data: line 1 column 9 (char 8)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Invalid control character at: line 1 column 12 (char 11)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Invalid \\escape: line 1 column 8 (char 7)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         },
         {
-          "jsonrpc": "2.0",
-          "id": null,
           "error": {
             "code": -32602,
             "message": "Expecting ',' delimiter: line 1 column 8 (char 7)"
-          }
+          },
+          "id": null,
+          "jsonrpc": "2.0"
         }
       ],
       "effects": {
@@ -4551,9 +4394,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "project_context"
-              },
+              "arguments": {},
               "operation": "project_context",
               "projectId": "project",
               "requestId": "project_context-<uuid>"
@@ -4564,9 +4405,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "catalogue"
-              },
+              "arguments": {},
               "operation": "catalogue",
               "projectId": "project",
               "requestId": "catalogue-<uuid>"
@@ -4578,6 +4417,7 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
+                "query": "q",
                 "requestId": "pipeline_run"
               },
               "operation": "pipeline_run",
@@ -4591,6 +4431,7 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
+                "query": "q",
                 "requestId": "direct_search"
               },
               "operation": "direct_search",
@@ -4603,9 +4444,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "pipeline_history"
-              },
+              "arguments": {},
               "operation": "pipeline_history",
               "projectId": "project",
               "requestId": "pipeline_history-<uuid>"
@@ -4617,7 +4456,7 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
-                "requestId": "pipeline_get"
+                "runId": "r1"
               },
               "operation": "pipeline_get",
               "projectId": "project",
@@ -4630,7 +4469,8 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
-                "requestId": "question_ask"
+                "requestId": "question_ask",
+                "text": "t"
               },
               "operation": "question_ask",
               "projectId": "project",
@@ -4642,9 +4482,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "question_history"
-              },
+              "arguments": {},
               "operation": "question_history",
               "projectId": "project",
               "requestId": "question_history-<uuid>"
@@ -4655,9 +4493,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "account_list"
-              },
+              "arguments": {},
               "operation": "account_list",
               "projectId": "project",
               "requestId": "account_list-<uuid>"
@@ -4875,9 +4711,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "project_context"
-              },
+              "arguments": {},
               "operation": "project_context",
               "projectId": "project",
               "requestId": "project_context-<uuid>"
@@ -4888,9 +4722,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "catalogue"
-              },
+              "arguments": {},
               "operation": "catalogue",
               "projectId": "project",
               "requestId": "catalogue-<uuid>"
@@ -4902,6 +4734,7 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
+                "query": "q",
                 "requestId": "pipeline_run"
               },
               "operation": "pipeline_run",
@@ -4915,6 +4748,7 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
+                "query": "q",
                 "requestId": "direct_search"
               },
               "operation": "direct_search",
@@ -4927,9 +4761,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "pipeline_history"
-              },
+              "arguments": {},
               "operation": "pipeline_history",
               "projectId": "project",
               "requestId": "pipeline_history-<uuid>"
@@ -4941,7 +4773,7 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
-                "requestId": "pipeline_get"
+                "runId": "r1"
               },
               "operation": "pipeline_get",
               "projectId": "project",
@@ -4954,7 +4786,8 @@
             "commandId": "command",
             "delegation": {
               "arguments": {
-                "requestId": "question_ask"
+                "requestId": "question_ask",
+                "text": "t"
               },
               "operation": "question_ask",
               "projectId": "project",
@@ -4966,9 +4799,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "question_history"
-              },
+              "arguments": {},
               "operation": "question_history",
               "projectId": "project",
               "requestId": "question_history-<uuid>"
@@ -4979,9 +4810,7 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {
-                "requestId": "account_list"
-              },
+              "arguments": {},
               "operation": "account_list",
               "projectId": "project",
               "requestId": "account_list-<uuid>"
@@ -5187,25 +5016,25 @@
         ],
         "transfers": [
           {
-            "path": "<root>/spool/<uuid>",
-            "spool": true,
-            "previews": true,
-            "name": "sub/a.txt",
-            "mediaType": "text/plain",
             "executionId": "execution",
-            "required": false
+            "mediaType": "text/plain",
+            "name": "sub/a.txt",
+            "path": "<root>/spool/<uuid>",
+            "previews": true,
+            "required": false,
+            "spool": true
           },
           {
             "executionId": "execution",
             "filter": {
               "executionId": null,
-              "taskId": null,
-              "mediaType": null
+              "mediaType": null,
+              "taskId": null
             }
           },
           {
-            "executionId": "execution",
             "artifactId": "failed",
+            "executionId": "execution",
             "inputDir": "<root>/in"
           }
         ]

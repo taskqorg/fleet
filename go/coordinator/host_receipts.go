@@ -4,6 +4,8 @@ package main
 // agent, a child (delegation) request, and the status receipt that moves a command and its execution forward only.
 
 import (
+	"slices"
+
 	"github.com/jackc/pgx/v5"
 
 	"fleet/contract"
@@ -14,14 +16,6 @@ func init() {
 }
 
 var receiptRank = map[string]int{"pending": 0, "accepted": 1, "started": 2, "unknown": 2, "completed": 3, "failed": 3, "stopped": 3}
-
-// projectReceiptOps: the project operations a native agent may call through a receipt (the contract's ProjectOperation).
-var projectReceiptOps = func() (out []string) {
-	for _, o := range contract.ProjectOperationValues {
-		out = append(out, string(o))
-	}
-	return out
-}()
 
 // projectReceipt runs one project operation for a native agent (projects area: the operation, its native-agent actor
 // and the early return of a started pipeline run). Otherwise the registered operation runs in this transaction.
@@ -123,7 +117,7 @@ func (a *App) receiptIn(q *Request, b doc) (any, string, error) {
 		if err != nil {
 			return nil, "", err
 		}
-		if c["executionId"] != b["executionId"] || c["hostId"] != b["hostId"] || s["projectId"] == nil || d["projectId"] != s["projectId"] || !inList(projectReceiptOps, astr(d["operation"])) {
+		if c["executionId"] != b["executionId"] || c["hostId"] != b["hostId"] || s["projectId"] == nil || d["projectId"] != s["projectId"] || !slices.Contains(contract.ProjectOperationValues, contract.ProjectOperation(astr(d["operation"]))) {
 			return nil, "", fail(403, "Project grant rejected")
 		}
 		args := doc{}

@@ -88,8 +88,14 @@ func TestProjectToolSchemas(t *testing.T) {
 			}
 		}
 	}
-	if len(listed) != len(contract.ProjectOperationValues) {
-		t.Fatalf("project tools %v, contract %v", listed, contract.ProjectOperationValues)
+	want := []string{}
+	for _, o := range contract.ProjectOperationValues {
+		want = append(want, string(o))
+	}
+	slices.Sort(listed)
+	slices.Sort(want)
+	if !slices.Equal(listed, want) {
+		t.Fatalf("project tools %v, contract %v", listed, want)
 	}
 	for _, bad := range []M{
 		{"name": "pipeline_get", "arguments": M{"text": "x", "runId": "r"}}, // not an argument of pipeline_get

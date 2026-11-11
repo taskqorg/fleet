@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -1275,7 +1276,7 @@ func runPipeline(q *Request, invocation string) (any, error) {
 	rid, _ := b["requestId"].(string)
 	query, isStr := b["query"].(string)
 	_, methodOK := b["methodId"].(string)
-	if !keysOnly(b, "projectId", "requestId", "query", "methodId", "invocation") || rid == "" || len(rid) > 200 || !isStr || strings.TrimSpace(query) == "" || len(query) > 2000 || b["methodId"] != nil && !methodOK {
+	if !keysOnly(b, "projectId", "requestId", "query", "methodId", "invocation") || rid == "" || len(rid) > 200 || !isStr || strings.TrimSpace(query) == "" || utf8.RuneCountInString(query) > 2000 || b["methodId"] != nil && !methodOK {
 		return nil, fail(400, "Expected projectId, requestId, query and optional methodId")
 	}
 	inv := astr(b["invocation"])

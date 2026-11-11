@@ -38,12 +38,37 @@ var (
 
 func init() { runMCP = mcpRun }
 
-// toolSchema: the inputSchema of one tool in mcp-tools.json, nil when there is none.
-func toolSchema(name string) any {
+// toolSchemas: the inputSchema of every tool in mcp-tools.json, by name.
+var toolSchemas = func() map[string]any {
 	all, _ := decode(mcpToolsJSON)
+	out := map[string]any{}
 	for _, t := range jArr(all) {
-		if jStr(t, "name") == name {
-			return jAt(t, "inputSchema")
+		out[jStr(t, "name")] = jAt(t, "inputSchema")
+	}
+	return out
+}()
+
+// argumentsFit checks a project tool call against the tool's own inputSchema: only its properties, each a string within
+// minLength and maxLength (characters), the required ones present and not blank.
+func argumentsFit(name string, args M) error {
+	schema := toolSchemas[name]
+	for k, v := range args {
+		p, ok := jAt(schema, "properties", k).(M)
+		if !ok {
+			return fmt.Errorf("Invalid project request: %s takes no %s", name, k)
+		}
+		s, isStr := v.(string)
+		n := float64(utf8.RuneCountInString(s))
+		if min, ok := p["minLength"].(float64); !isStr || ok && n < min {
+			return fmt.Errorf("Invalid project request: %s must be a non-empty string", k)
+		}
+		if max, ok := p["maxLength"].(float64); ok && n > max {
+			return fmt.Errorf("Invalid project request: %s is longer than %d characters", k, int(max))
+		}
+	}
+	for _, k := range jArr(schema, "required") {
+		if s, _ := str(args[jStr(k)]); strings.TrimSpace(s) == "" {
+			return fmt.Errorf("Invalid project request: %s needs %s", name, jStr(k))
 		}
 	}
 	return nil
@@ -197,24 +222,12 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 			if !isObj {
 				return nil, errors.New("Invalid project request")
 			}
-			// The tool's own inputSchema (mcp-tools.json) is the check: only its properties, its required ones present.
-			schema := toolSchema(name)
-			for k := range qo {
-				if !has(jAt(schema, "properties"), k) {
-					return nil, fmt.Errorf("Invalid project request: %s takes no %s", name, k)
-				}
+			if err := argumentsFit(name, qo); err != nil {
+				return nil, err
 			}
-			for _, k := range jArr(schema, "required") {
-				if s, ok := str(qo[jStr(k)]); !ok || s == "" {
-					return nil, fmt.Errorf("Invalid project request: %s needs %s", name, jStr(k))
-				}
-			}
-			effect := slices.Contains([]string{"pipeline_run", "direct_search", "question_ask"}, name)
+			// An effect (its schema requires requestId) keeps the caller's requestId, so a retry is the same request.
 			rid := any(name + "-" + newID())
-			if effect {
-				if _, ok := str(qo["requestId"]); !ok {
-					return nil, errors.New("A stable requestId is required for effects")
-				}
+			if slices.Contains(jArr(toolSchemas[name], "required"), any("requestId")) {
 				rid = qo["requestId"]
 			}
 			d = M{"operation": name, "arguments": q, "requestId": rid, "projectId": jAt(ctx, "projectId")}
