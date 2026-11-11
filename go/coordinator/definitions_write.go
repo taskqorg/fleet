@@ -23,23 +23,25 @@ func conflict(reason contract.ConflictReason, head int64, repoSha *string, msg s
 	return &HTTPError{Code: 409, Msg: msg, Extra: map[string]any{"reason": reason, "head": head, "repoSha": repoSha}}
 }
 
-// contentText: request content of the definition's kind as canonical text, or 400 when the wrong property is set.
-func contentText(kind contract.DefinitionKind, c contract.DefinitionContent) (string, error) {
-	var v any
+// contentText: the request's content of the definition's kind as canonical text, from the bytes sent (the typed struct
+// would drop a misspelled key the kind's strict validator must see), or 400 when the wrong property is set.
+func contentText(q *Request, kind contract.DefinitionKind, c contract.DefinitionContent) (string, error) {
 	n := 0
-	if c.Agent != nil {
-		n, v = n+1, c.Agent
-	}
-	if c.Pipeline != nil {
-		n, v = n+1, c.Pipeline
-	}
-	if c.Catalogue != nil {
-		n, v = n+1, c.Catalogue
+	for _, set := range []bool{c.Agent != nil, c.Pipeline != nil, c.Catalogue != nil} {
+		if set {
+			n++
+		}
 	}
 	if n != 1 || (kind == "agent") != (c.Agent != nil) || (kind == "pipeline") != (c.Pipeline != nil) || (kind == "catalogue") != (c.Catalogue != nil) {
 		return "", fail(400, "content: exactly the property of the kind ("+string(kind)+")")
 	}
-	return canonicalText(jsonBytes(v))
+	var b struct {
+		Content map[string]json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(q.body, &b); err != nil || b.Content[string(kind)] == nil {
+		return "", fail(400, "content: exactly the property of the kind ("+string(kind)+")")
+	}
+	return canonicalText([]byte(b.Content[string(kind)]))
 }
 
 // problems: the kind's validator on content; a draft is stored even when it has some, a save refuses it.
@@ -101,8 +103,8 @@ func fieldChanges(a, b string) []contract.FieldChange {
 				m := map[string]any{}
 				for _, e := range xs {
 					id := astr(mapOf(e)["id"])
-					if id == "" {
-						return nil
+					if _, dup := m[id]; id == "" || dup {
+						return nil // no id or a repeated one: compare by index
 					}
 					m[id] = e
 				}
@@ -121,7 +123,7 @@ func fieldChanges(a, b string) []contract.FieldChange {
 				for _, id := range ids {
 					vx, hx := ix[id]
 					vy, hy := iy[id]
-					walk(path+"/"+id, vx, vy, hx, hy)
+					walk(path+"/"+strings.ReplaceAll(strings.ReplaceAll(id, "~", "~0"), "/", "~1"), vx, vy, hx, hy)
 				}
 				return
 			}
@@ -151,9 +153,17 @@ type draftRow struct {
 	At      time.Time
 }
 
+// draftOwner: drafts are per person; an agent has its own (execution:<id>), never its director's.
+func draftOwner(q *Request) string {
+	if q.agent != "" {
+		return q.agent
+	}
+	return director(q)
+}
+
 func draftOf(q *Request, kind, id string) (*draftRow, error) {
 	var d draftRow
-	err := q.tx.QueryRow(q.ctx(), "SELECT base,content,updated_at FROM definition_draft WHERE kind=$1 AND id=$2 AND person=$3", kind, id, director(q)).Scan(&d.Base, &d.Content, &d.At)
+	err := q.tx.QueryRow(q.ctx(), "SELECT base,content,updated_at FROM definition_draft WHERE kind=$1 AND id=$2 AND person=$3", kind, id, draftOwner(q)).Scan(&d.Base, &d.Content, &d.At)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -195,7 +205,7 @@ func definitionDraftPut(q *Request, r *contract.DefinitionDraftPutRequest) (cont
 	if !idPattern.MatchString(r.Id) && r.Id != "catalogue" {
 		return out, fail(400, "id: a file stem (lower case, digits, -)")
 	}
-	text, err := contentText(r.Kind, r.Content)
+	text, err := contentText(q, r.Kind, r.Content)
 	if err != nil {
 		return out, err
 	}
@@ -207,7 +217,7 @@ func definitionDraftPut(q *Request, r *contract.DefinitionDraftPutRequest) (cont
 		return out, fail(400, "baseRevision: 0 for a new definition, else a revision of it")
 	}
 	if err := exec(q, `INSERT INTO definition_draft(kind,id,person,base,content) VALUES($1,$2,$3,$4,$5)
-	  ON CONFLICT(kind,id,person) DO UPDATE SET base=excluded.base,content=excluded.content,updated_at=now()`, r.Kind, r.Id, director(q), r.BaseRevision, text); err != nil {
+	  ON CONFLICT(kind,id,person) DO UPDATE SET base=excluded.base,content=excluded.content,updated_at=now()`, r.Kind, r.Id, draftOwner(q), r.BaseRevision, text); err != nil {
 		return out, err
 	}
 	d, err := draftOf(q, string(r.Kind), r.Id)
@@ -235,7 +245,7 @@ func definitionDraftGet(q *Request, r *contract.DefinitionDraftGetRequest) (cont
 }
 
 func definitionDraftDiscard(q *Request, r *contract.DefinitionDraftDiscardRequest) (contract.DefinitionDraftDiscardReply, error) {
-	tag, err := q.tx.Exec(q.ctx(), "DELETE FROM definition_draft WHERE kind=$1 AND id=$2 AND person=$3", r.Kind, r.Id, director(q))
+	tag, err := q.tx.Exec(q.ctx(), "DELETE FROM definition_draft WHERE kind=$1 AND id=$2 AND person=$3", r.Kind, r.Id, draftOwner(q))
 	if err != nil {
 		return contract.DefinitionDraftDiscardReply{}, err
 	}
@@ -255,6 +265,9 @@ func sideText(q *Request, kind, id string, s contract.DiffSide) (string, bool, e
 	}
 	switch {
 	case s.Revision != nil:
+		if *s.Revision < 1 {
+			return "", false, fail(400, "revision: 1 or more")
+		}
 		xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2", *s.Revision, kind, id)
 		if err != nil || len(xs) == 0 {
 			if err == nil {
@@ -263,7 +276,7 @@ func sideText(q *Request, kind, id string, s contract.DiffSide) (string, bool, e
 			return "", false, err
 		}
 		return string(xs[0].Content), true, nil
-	case s.Draft != nil:
+	case s.Draft != nil && *s.Draft:
 		d, err := draftOf(q, kind, id)
 		if err != nil || d == nil {
 			if err == nil {
@@ -300,6 +313,17 @@ func definitionDiff(q *Request, r *contract.DefinitionDiffRequest) (contract.Def
 	return contract.DefinitionDiffReply{Unified: unifiedDiff(path, a, b, ha, hb), Fields: fieldChanges(a, b)}, nil
 }
 
+// shippedPath: where the running release keeps the definition's file (the directories reconcile reads).
+func shippedPath(kind, id string) string {
+	switch kind {
+	case "agent":
+		return filepath.Join(profilesDir(), id+".json")
+	case "pipeline":
+		return filepath.Join(configDir(), "pipelines", id+".json")
+	}
+	return filepath.Join(configDir(), "catalogue.json")
+}
+
 func definitionPath(kind, id string) string {
 	switch kind {
 	case "agent":
@@ -332,10 +356,12 @@ func appendRevision(q *Request, kind, id string, head int64, text, repoBase *str
 	if err != nil {
 		return contract.Revision{}, err
 	}
-	if err := exec(q, "UPDATE definition SET head=$3 WHERE kind=$1 AND id=$2", kind, id, n); err != nil {
+	// A save decides a definition whose file is gone: it is the store's own from now (store-only, exportable), and a
+	// retired one is back.
+	if err := exec(q, "UPDATE definition SET head=$3,retired_at=NULL,ever_shipped=ever_shipped AND repo_sha IS NOT NULL WHERE kind=$1 AND id=$2", kind, id, n); err != nil {
 		return contract.Revision{}, err
 	}
-	if err := exec(q, "DELETE FROM definition_draft WHERE kind=$1 AND id=$2 AND person=$3", kind, id, director(q)); err != nil {
+	if err := exec(q, "DELETE FROM definition_draft WHERE kind=$1 AND id=$2 AND person=$3", kind, id, draftOwner(q)); err != nil {
 		return contract.Revision{}, err
 	}
 	if err := put(q, "setting-change", doc{"id": newID(), "target": "definition:" + kind + "/" + id, "field": "revision", "previous": head, "value": n, "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
@@ -353,7 +379,7 @@ func definitionSave(q *Request, r *contract.DefinitionSaveRequest) (contract.Def
 	if err := definitionKind(r.Kind); err != nil {
 		return out, err
 	}
-	text, err := contentText(r.Kind, r.Content)
+	text, err := contentText(q, r.Kind, r.Content)
 	if err != nil {
 		return out, err
 	}
@@ -398,7 +424,7 @@ func definitionCreate(q *Request, r *contract.DefinitionCreateRequest) (contract
 	if r.Kind == "catalogue" || !idPattern.MatchString(r.Id) {
 		return out, fail(400, "id: a file stem (lower case, digits, -); the catalogue exists once")
 	}
-	text, err := contentText(r.Kind, r.Content)
+	text, err := contentText(q, r.Kind, r.Content)
 	if err != nil {
 		return out, err
 	}
@@ -431,22 +457,22 @@ func definitionHistory(q *Request, r *contract.DefinitionHistoryRequest) (contra
 	out.RepoSha = head.RepoSha
 	limit := int64(50)
 	if r.Limit != nil {
-		limit = min(*r.Limit, 500)
+		limit = max(1, min(*r.Limit, 500))
 	}
 	before := head.Head + 1
 	if r.Before != nil {
-		before = *r.Before
+		before = min(*r.Before, head.Head+1)
 	}
-	for n := before - 1; n >= 1 && int64(len(out.Revisions)) < limit; n-- {
-		xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2", n, string(r.Kind), r.Id)
-		if err != nil {
-			return out, err
-		}
-		if len(xs) > 0 {
-			out.Revisions = append(out.Revisions, xs[0].revisionView(q))
-		}
+	rs, err := q.tx.Query(q.ctx(), "SELECT "+definitionCols+` FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id
+	  WHERE d.kind=$1 AND d.id=$2 AND r.revision<$3 ORDER BY r.revision DESC LIMIT $4`, string(r.Kind), r.Id, before, limit)
+	if err != nil {
+		return out, err
 	}
-	return out, nil
+	xs, err := pgx.CollectRows(rs, scanDefinition)
+	for _, x := range xs {
+		out.Revisions = append(out.Revisions, x.revisionView(q))
+	}
+	return out, err
 }
 
 // definitionExport: one patch against the running release's config/ for every ahead or store-only definition (or the
@@ -479,7 +505,7 @@ func definitionExport(q *Request, r *contract.DefinitionExportRequest) (contract
 		}
 		var shipped string
 		exists := false
-		if b, err := os.ReadFile(filepath.Join(repoRoot(), x.Path)); err == nil {
+		if b, err := os.ReadFile(shippedPath(x.Kind, x.ID)); err == nil {
 			shipped, exists = string(b), true
 		}
 		patch.WriteString(unifiedDiff(x.Path, shipped, string(x.Content), exists, true))

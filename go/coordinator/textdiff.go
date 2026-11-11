@@ -7,18 +7,23 @@ import (
 
 // unifiedDiff: a unified diff (three lines of context) from a to b, with --- a/<path> and +++ b/<path> headers ("/dev/null"
 // for a side that does not exist), so `git apply` takes it. Empty when the texts are equal.
-// ponytail: LCS table, O(n·m) memory; definitions are a few hundred lines. Myers when a file grows past that.
 func unifiedDiff(path string, a, b string, aExists, bExists bool) string {
 	if a == b && aExists == bExists {
 		return ""
 	}
 	al, bl := splitLines(a), splitLines(b)
 	n, m := len(al), len(bl)
+	// ponytail: LCS table up to 4M cells; past that the hunk replaces every line (still applies). Myers if files grow so big.
+	small := n*m <= 4_000_000
 	lcs := make([][]int, n+1)
 	for i := range lcs {
-		lcs[i] = make([]int, m+1)
+		if small {
+			lcs[i] = make([]int, m+1)
+		} else {
+			lcs[i] = make([]int, 1)
+		}
 	}
-	for i := n - 1; i >= 0; i-- {
+	for i := n - 1; i >= 0 && small; i-- {
 		for j := m - 1; j >= 0; j-- {
 			if al[i] == bl[j] {
 				lcs[i][j] = lcs[i+1][j+1] + 1
@@ -37,10 +42,10 @@ func unifiedDiff(path string, a, b string, aExists, bExists bool) string {
 	i, j := 0, 0
 	for i < n || j < m {
 		switch {
-		case i < n && j < m && al[i] == bl[j]:
+		case small && i < n && j < m && al[i] == bl[j]:
 			i, j = i+1, j+1
 			ops = append(ops, line{' ', al[i-1], i, j})
-		case j < m && (i == n || lcs[i][j+1] >= lcs[i+1][j]):
+		case j < m && (i == n || small && lcs[i][j+1] >= lcs[i+1][j]):
 			j++
 			ops = append(ops, line{'+', bl[j-1], i, j})
 		default:

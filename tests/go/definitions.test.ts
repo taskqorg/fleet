@@ -56,6 +56,11 @@ test('D3 a save from the head is revision n+1; a second save from the same base 
 test('D4 two concurrent saves from one base: one revision, one 409, no 500 (requirement: Save and conflicts, the row lock; risk: two heads or a server error)', async () => {
   const g = ok(await op('definition_get', {kind: 'agent', id: 'claude-reviewer'}));
   const edit = (n: string) => { const c = content(g); c.agent.instructions = (c.agent.instructions ?? '') + '\n' + n; return op('definition_save', {kind: 'agent', id: 'claude-reviewer', baseRevision: g.head, content: c, message: n}); };
+  // The bytes sent are what the validator sees (risk: a misspelled key dropped by a typed decode and saved as missing).
+  const typo = content(g); typo.agent.intructions = 'x';
+  const p = ok(await op('definition_draft_put', {kind: 'agent', id: 'claude-reviewer', baseRevision: g.head, content: typo}));
+  assert.ok(p.problems.length === 1 && p.problems[0].message.includes('intructions'), JSON.stringify(p.problems));
+  ok(await op('definition_draft_discard', {kind: 'agent', id: 'claude-reviewer'}));
   const rs = await Promise.all([edit('one'), edit('two')]);
   assert.deepEqual(rs.map(r => r.status).sort(), [200, 409], JSON.stringify(rs.map(r => r.body)));
   assert.equal(ok(await op('definition_get', {kind: 'agent', id: 'claude-reviewer'})).head, g.head + 1);
