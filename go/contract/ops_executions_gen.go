@@ -187,6 +187,36 @@ func (v *ExecutionsListRequest) Validate() error {
 	return nil
 }
 
+// ExecutionsRunnersReply: The Runners screen: executions active or ended in the last 24 hours (newest first, at most 500; pipeline runs and steps left out, their agent and tool runs are listed), and spend since the start of the UTC day and month.
+type ExecutionsRunnersReply struct {
+	Runs      []RunnerRun   `json:"runs"`
+	ServerNow int64         `json:"serverNow"`
+	Spend     []RunnerSpend `json:"spend"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionsRunnersReply) Validate() error {
+	if v.Runs == nil {
+		return Missing("runs")
+	}
+	for i := range v.Runs {
+		if err := Check(&v.Runs[i], "runs"); err != nil {
+			return err
+		}
+	}
+	if v.Spend == nil {
+		return Missing("spend")
+	}
+	for i := range v.Spend {
+		if err := Check(&v.Spend[i], "spend"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ExecutionsRunnersRequest = map[string]json.RawMessage
+
 type FileRef struct {
 	Id     string  `json:"id"`
 	Sha256 *string `json:"sha256"`
@@ -629,6 +659,59 @@ func (v *RouteDecisionsRequest) Validate() error {
 	return nil
 }
 
+// RunnerRun: Times in ms since epoch; resource fields null when not measured. tokens: input + output + cache. cost: estimateCost figures (prices table), empty when nothing was used.
+type RunnerRun struct {
+	Cost            []json.RawMessage `json:"cost"`
+	CpuMs           *float64          `json:"cpuMs"`
+	EndedAt         *float64          `json:"endedAt"`
+	Harness         *string           `json:"harness"`
+	HostId          *string           `json:"hostId"`
+	Id              string            `json:"id"`
+	Kind            string            `json:"kind"`
+	LastSeenAt      *float64          `json:"lastSeenAt"`
+	Model           *string           `json:"model"`
+	PeakMemoryBytes *float64          `json:"peakMemoryBytes"`
+	Problem         *string           `json:"problem"`
+	SessionId       *string           `json:"sessionId"`
+	StartedAt       *float64          `json:"startedAt"`
+	State           ExecutionState    `json:"state"`
+	TaskId          *string           `json:"taskId"`
+	TaskTitle       *string           `json:"taskTitle"`
+	Tokens          *float64          `json:"tokens"`
+	WallMs          *float64          `json:"wallMs"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *RunnerRun) Validate() error {
+	if v.Cost == nil {
+		return Missing("cost")
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// RunnerSpend: One host and execution kind over a UTC period: today or month (month includes today).
+type RunnerSpend struct {
+	Cost   []json.RawMessage `json:"cost"`
+	CpuMs  *float64          `json:"cpuMs"`
+	HostId *string           `json:"hostId"`
+	Kind   string            `json:"kind"`
+	Period string            `json:"period"`
+	Runs   int64             `json:"runs"`
+	Tokens *float64          `json:"tokens"`
+	WallMs *float64          `json:"wallMs"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *RunnerSpend) Validate() error {
+	if v.Cost == nil {
+		return Missing("cost")
+	}
+	return nil
+}
+
 type StopCommandRef struct {
 	Id     string `json:"id"`
 	Status string `json:"status"`
@@ -722,6 +805,7 @@ func init() {
 		"execution_status":      {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
 		"execution_stop":        {Read: false, Long: false, Errors: []int{409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
 		"executions_list":       {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"Filters; problem true keeps executions with a problem.\",\"additionalProperties\":true,\"properties\":{\"parentExecutionId\":{\"type\":\"string\"},\"problem\":{\"type\":\"boolean\"},\"projectId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"executions_runners":    {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
 		"hosts_list":            {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"includeRemoved: also hosts removed by hosts_remove (state removed).\",\"additionalProperties\":true,\"properties\":{\"includeRemoved\":{\"type\":\"boolean\"}},\"type\":\"object\"}")},
 		"hosts_register":        {Read: false, Long: false, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only. secretSha256: the sha256 of a secret the host already holds; absent: Fleet mints one.\",\"additionalProperties\":true,\"properties\":{\"harnesses\":{},\"holder\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"platform\":{\"type\":\"string\"},\"roles\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"secretSha256\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"id\"],\"type\":\"object\"}")},
 		"hosts_remove":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner, or the holder for their own host (fleet-system-management.md, Hosts). preview true changes nothing and returns the counts; false removes: running work is cancelled, the secret and settings are dropped, the host record stays as a tombstone (state removed) for history.\",\"properties\":{\"id\":{\"type\":\"string\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"id\",\"preview\"],\"type\":\"object\"}")},

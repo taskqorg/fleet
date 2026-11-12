@@ -12,6 +12,7 @@ import { Overview } from './views/overview.tsx';
 import { Tasks } from './views/tasks.tsx';
 import { Conversations } from './views/conversations.tsx';
 import { Hosts } from './views/hosts.tsx';
+import { Runners } from './views/runners.tsx';
 import { Lab } from './views/lab.tsx';
 import { Keys } from './views/keys.tsx';
 import { Results } from './views/results.tsx';
@@ -26,6 +27,7 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
   conversations: { focus: true, view: p => <Conversations id={p.id} /> },
   results: { focus: true, view: p => <Results id={p.id} /> },
   hosts: { focus: true, view: p => <Hosts id={p.id} /> },
+  runners: { focus: false, view: () => <Runners /> },
   lab: { focus: true, view: p => <Lab id={p.id} /> },
   keys: { focus: true, view: p => <Keys id={p.id} /> },
   agents: { focus: true, view: p => <Definitions kind="agent" id={p.id} /> },

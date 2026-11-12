@@ -124,6 +124,7 @@ export const workspaces = [
   { id: 'pipelines', label: 'Pipelines', icon: 'network', group: 'Architect', app: true },
   { id: 'catalogue', label: 'Catalogue', icon: 'rows-3', group: 'Architect', app: true },
   { id: 'hosts', label: 'Hosts', icon: 'panels-top-left', group: 'Architect', app: true },
+  { id: 'runners', label: 'Runners', icon: 'play', group: 'Architect', app: true },
   { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', group: 'Architect', app: true },
   { id: 'keys', label: 'API keys', icon: 'shield', group: 'Architect', app: true },
   { id: 'access', label: 'Access', icon: 'shield', group: 'Architect', app: false },

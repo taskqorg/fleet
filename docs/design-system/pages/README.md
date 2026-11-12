@@ -8,6 +8,7 @@ Page specs map [inventory](../inventory.md) items to patterns and controls. The 
 | Tasks (list and detail) | Operator | [tasks.md](tasks.md) |
 | Results | Operator | [results.md](results.md) |
 | Hosts, environments and stores | Architect | [hosts.md](hosts.md) |
+| Runners | Architect | [runners.md](runners.md) (app only) |
 | Conversations | Operator | [conversations.md](conversations.md) (app only) |
 | Laboratory | Architect | [laboratory.md](laboratory.md) |
 | Agents | Architect | [agents.md](agents.md) (mockup only) |

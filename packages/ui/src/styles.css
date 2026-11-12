@@ -546,7 +546,8 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .ac-axis{display:flex;font-size:var(--font-size-xs);color:var(--fg-muted)}
 
 /* Limits page (pages/hosts.md "Limits") */
-.limits{display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-4);min-width:0;min-height:0;overflow-y:auto}
+.limits,.runners{display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-4);min-width:0;min-height:0;overflow-y:auto}
+.runners>.panel{flex:none}
 .limits-note{margin:0;min-height:var(--font-line)}
 .limit-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(calc(var(--size-control) * 12),1fr));gap:var(--space-4)}
 .limit-card{display:flex;flex-direction:column;gap:var(--space-3);padding-bottom:var(--space-3)}
@@ -578,3 +579,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 @media (pointer:coarse) {
   .text-field input,.text-field textarea { min-height: var(--size-hit-phone); }
 }
+/* Time strip (Runners) */
+.tstrip{position:relative;display:block;width:100%;min-width:var(--size-fill);height:var(--space-3);background:var(--neutral-bg);border-radius:var(--radius-md);overflow:hidden}
+.tstrip i{position:absolute;top:0;bottom:0;background:var(--tone-fg);border-radius:var(--radius-md)}
+.tstrip i.live{opacity:.85;box-shadow:inset -2px 0 var(--fg)}
