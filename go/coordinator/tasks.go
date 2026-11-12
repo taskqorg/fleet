@@ -281,7 +281,7 @@ func requestAcceptance(q *Request, t doc, artifactIDs []string, text *string, as
 	}
 	if open != nil {
 		qid := astr(open["id"])
-		return qid, exec(q, "UPDATE question SET text=$2,data=coalesce(data,'{}'::jsonb)||jsonb_build_object('artifactIds',$3::jsonb) WHERE id=$1", qid, body, js(ids))
+		return qid, exec(q, "UPDATE question SET text=$2,asked_by=$4,asked_at=now(),data=coalesce(data,'{}'::jsonb)||jsonb_build_object('artifactIds',$3::jsonb) WHERE id=$1", qid, body, js(ids), askedBy)
 	}
 	return askQuestion(q, doc{"kind": "acceptance", "taskId": id, "projectId": t["project_id"], "text": body, "options": []string{"accepted", "rejected"}, "askedBy": askedBy, "data": doc{"artifactIds": ids}})
 }
