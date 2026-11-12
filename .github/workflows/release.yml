@@ -130,10 +130,10 @@ jobs:
       # The persistent runner must keep its user's IPC across SSH logins, or the migration check's PostgreSQL loses its
       # shared memory (deploy/infrastructure/pds18-ci/README.md). Checked first, before any build work.
       - name: Runner keeps IPC across logins
-        if: runner.environment != 'github-hosted'
+        if: runner.environment != 'github-hosted' && needs.gate.outputs.recent != '' && needs.gate.outputs.ui != 'true'
         run: |
-          out=$(busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager RemoveIPC 2>&1) \
-            || { echo "::error::cannot read logind RemoveIPC: $out"; exit 1; }
+          out=$(busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager RemoveIPC 2>"$RUNNER_TEMP/busctl.err") \
+            || { echo "::error::cannot read logind RemoveIPC: $(cat "$RUNNER_TEMP/busctl.err")"; exit 1; }
           [ "$out" = "b false" ] || { echo "::error::logind RemoveIPC is on ($out): set RemoveIPC=no on the runner guest"; exit 1; }
       - uses: actions/checkout@v4
         with:
@@ -185,6 +185,8 @@ jobs:
           stale pkill || true
           i=0; while stale pgrep >/dev/null && [ $i -lt 10 ]; do i=$((i+1)); sleep 1; done
           stale pkill -KILL || true
+          # A killed postmaster leaves its dynamic shared memory; logind no longer removes it (RemoveIPC=no).
+          find /dev/shm -maxdepth 1 -user "$(id -u)" -name 'PostgreSQL.*' -delete 2>/dev/null || true
           stop() { kill "$1" || return 0; for _ in 1 2 3 4 5; do kill -0 "$1" || return 0; sleep 1; done; kill -KILL "$1"; wait "$1"; }
           pid=; trap '{ [ -z "$pid" ] || stop $pid; pg_ctl -D "$pg" -m immediate -w stop; } >/dev/null 2>&1 || true' EXIT
           initdb -D "$pg" -U postgres -A trust -E UTF8 --no-instructions --no-sync >/dev/null
