@@ -16,6 +16,11 @@ on:
   push:
     branches: [main]
 permissions: {}
+# A newer push or description edit of a pull request supersedes its running check; queue and main runs are never cancelled.
+concurrency:
+  # A description edit (edited) gets its own group: it never cancels a push's run, which previousGreen reads.
+  group: ci-${{ github.event_name == 'pull_request' && github.event.action != 'edited' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
 jobs:
   selection:
     runs-on: ubuntu-24.04
@@ -85,6 +90,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -99,6 +105,7 @@ jobs:
           path: ${{ runner.temp }}/qualification
       - name: Validate actual full execution
         env:
+          GH_TOKEN: ${{ github.token }}
           RESULTS: ${{ toJSON(needs) }}
         run: |
           node -e 'const fs=require("node:fs"),r=JSON.parse(process.env.RESULTS);for(const f of ["app","go","browser"]){r[f]=r[f+"-tests"];delete r[f+"-tests"];}fs.writeFileSync(process.env.RUNNER_TEMP+"/qualification/test-results.json",JSON.stringify(r))'
@@ -179,7 +186,7 @@ jobs:
           echo 'Qualified by app; test-qualification records executed and omitted families.'
   # Go (docs/designs/fleet-go-code.md), split into parallel parts so the family is never the critical path:
   # vet: generated-code drift, vet, a Windows compile of the coordinator; unit: the unit tests with -race;
-  # mcp: the executor's MCP adapter tests; outside-N: the outside tests against a -race coordinator on the runner's
+  # vet also runs the executor's MCP adapter tests; outside-N: the outside tests against a -race coordinator on the runner's
   # PostgreSQL, sharded by file (tests/go/run.sh). The go wrapper sees the matrix as one result.
   # Node only as the test runner: the outside tests import node: builtins, so no pnpm install here.
   go-tests:
@@ -195,15 +202,13 @@ jobs:
         include:
           - {part: vet, clickhouse: false}
           - {part: unit, clickhouse: true}
-          - {part: mcp, clickhouse: false}
           - {part: outside-0, clickhouse: true}
-          - {part: outside-1, clickhouse: true}
-          - {part: outside-2, clickhouse: true}
-          - {part: outside-3, clickhouse: true}
     env:
       GOFLAGS: -mod=readonly
-      # Matrix entries outside-0..3 are the shards; run.sh fails on an index outside the total or an empty shard.
-      OUTSIDE_SHARDS: 4
+      # Matrix entries outside-0..N-1 are the shards; run.sh fails on an index outside the total or an empty shard.
+      # One shard: each shard pays ~80 s of containers, toolchain and -race build for ~15 s of tests, and the hosted
+      # runner pool (20 concurrent jobs per org) is the merge queue's bottleneck, not one run's wall time.
+      OUTSIDE_SHARDS: 1
       # The span store for go/obs and tests/go/telemetry.test.ts live tests (docs/designs/fleet-telemetry.md); same LTS as deploy/infrastructure/fleet-clickhouse.container.
       FLEET_TEST_CLICKHOUSE_URL: http://127.0.0.1:8123
     services:
@@ -247,7 +252,7 @@ jobs:
       - if: matrix.part == 'unit'
         run: cd go && CGO_ENABLED=1 go test -race -count=1 ./...
       # The executor's MCP adapter from Node against the Go binary: replayed stdio exchanges and artifact path confinement.
-      - if: matrix.part == 'mcp'
+      - if: matrix.part == 'vet'
         run: |
           cd go && CGO_ENABLED=0 go build -o bin/fleet-executor ./executor && cd ..
           FLEET_EXECUTOR_BIN="$PWD/go/bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts
@@ -375,7 +380,9 @@ jobs:
       - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/filter.check.ts --assert
       - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/conversations.check.ts
       - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/lab-create.check.ts
+  # Diagnostics only: pull requests (comment) and main pushes (docs-order); never a merge queue run's runner slot.
   reports:
+    if: github.event_name != 'merge_group'
     runs-on: ubuntu-24.04
     permissions:
       contents: read

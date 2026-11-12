@@ -86,7 +86,7 @@ test('actual Git comparison accepts a qualified plan and rejects a corrupted omi
       {cwd: root, env: {...process.env, GITHUB_SHA: after}, stdio: 'pipe'});
     writeFileSync(path, JSON.stringify(plan)); assert.match(verify().toString(), /PASS/);
     const tools = join(root, 'tools'); mkdirSync(tools);
-    writeFileSync(join(tools, 'gh'), `#!${process.execPath}\nconsole.log(JSON.stringify([{databaseId:1,status:process.argv.includes('--commit')?'in_progress':'completed',conclusion:process.argv.includes('--commit')?'':'success'}]));\n`, {mode: 0o755});
+    writeFileSync(join(tools, 'gh'), `#!${process.execPath}\nconsole.log(JSON.stringify(process.argv.includes('--status')?[]:[{databaseId:1,status:process.argv.includes('--commit')?'in_progress':'completed',conclusion:process.argv.includes('--commit')?'':'success'}]));\n`, {mode: 0o755});
     const eventPath = join(root, 'event.json'); writeFileSync(eventPath, JSON.stringify({before, after}));
     const observed = JSON.parse(execFileSync(process.execPath, [fileURLToPath(new URL('../../scripts/test-selection.ts', import.meta.url))],
       {cwd: root, encoding: 'utf8', env: {...process.env, PATH: tools + ':' + process.env.PATH, GITHUB_SHA: after,
@@ -121,4 +121,15 @@ test('pull request runs the thin check only and defers its heavy families to the
   const full = Object.fromEntries(['selection', ...families].map(f => [f, {result: 'success'}]));
   assert.doesNotThrow(() => verifyEvidence(group, head, {...full, thin: {result: 'skipped'}}));
   assert.throws(() => verifyEvidence(group, head, {...full, thin: {result: 'success'}}));
+});
+
+test('a push its merge queue run qualified executes nothing; queued is push-only', () => {
+  const git = (args: string[]) => args[0] === 'rev-parse' ? head : args[0] === 'diff' ? 'M\0go/coordinator/access.go\0' : '';
+  const plan = makePlan('push', {before: base, after: head}, head, git, false, false, true);
+  assert.deepEqual(plan.executed, []);
+  const jobs = {selection: {result: 'success'}, thin: {result: 'skipped'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))};
+  assert.doesNotThrow(() => verifyEvidence(plan, head, jobs));
+  assert.throws(() => verifyEvidence({...plan, queued: false}, head, jobs));
+  assert.equal(makePlan('push', {before: base, after: head}, head, git, false, true, true).executed.length, families.length, 'FLEET_TEST_FULL forces a full push');
+  assert.equal(makePlan('merge_group', {merge_group: {base_sha: base, head_sha: head}}, head, git, false, false, true).executed.length, families.length);
 });
