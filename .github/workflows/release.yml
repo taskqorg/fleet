@@ -140,12 +140,6 @@ jobs:
           else
             deploy/build-release.sh "$SHA" out "$VERSION" "$PREVIOUS" linux/amd64 darwin/arm64
           fi
-      # Uploaded before the migration check so selftest-macos overlaps it; publish still needs this job green.
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release
-          path: out/
-          if-no-files-found: error
       - name: Selftest linux binaries
         if: needs.gate.outputs.ui != 'true'
         run: |
@@ -155,7 +149,7 @@ jobs:
       # the last 5 releases' coordinators must still serve on the database the new one migrated, so a rollback on PDS18
       # from up to 5 releases behind returns to a checked pair (fleet-delivery-pipeline.md section 5). Same job as the
       # build: the runner's disk is capped at 20 MB/s, so no artifact round trip, the recent coordinators stay extracted
-      # under ~/fleet-releases/v between runs (one download per new release) and the throwaway PostgreSQL skips fsync.
+      # under ~/fleet-releases between runs (one download per new release) and the throwaway PostgreSQL skips fsync.
       - name: New coordinator migrates, each recent one still serves
         if: needs.gate.outputs.recent != '' && needs.gate.outputs.ui != 'true'
         env:
@@ -171,14 +165,20 @@ jobs:
           initdb -D "$pg" -U postgres -A trust -E UTF8 --no-instructions --no-sync >/dev/null
           pg_ctl -D "$pg" -l "$pg/log" -w -o "-k $pg -p 54329 -c listen_addresses= -c fsync=off -c synchronous_commit=off -c full_page_writes=off" start
           psql -h "$pg" -p 54329 -U postgres -v ON_ERROR_STOP=1 -q -d postgres -f deploy/infrastructure/fleet-postgres.sql
-          # Two levels: a coordinator looks for config/ two directories above its binary (repoRoot), which must not be $HOME.
-          cache=${HOME:?}/fleet-releases/v; mkdir -p "$cache"
-          for d in "$cache"/*/; do d=${d%/}; case " $RECENT " in *" ${d##*/} "*) ;; *) rm -rf "$d";; esac; done
+          # Each entry holds the release's fleet-coordinator and config/ and the sha256 digest of the asset it came from;
+          # a replaced asset (new digest) is fetched again, and the download is checked against that digest.
+          cache=${HOME:?}/fleet-releases; mkdir -p "$cache"
+          for d in "$cache"/*/; do d=${d%/}; [ -d "$d" ] || continue; case " $RECENT " in *" ${d##*/} "*) ;; *) rm -rf "$d";; esac; done
           for v in $RECENT; do
-            [ -x "$cache/$v/fleet-coordinator" ] && continue
+            file=fleet-$v-linux-amd64.tgz
+            digest=$(gh api "repos/$GH_REPO/releases/tags/v$v" --jq ".assets[] | select(.name == \"$file\") | .digest")
+            [ -n "$digest" ] || { echo "::error::v$v: no digest for $file"; exit 1; }
+            [ "$(cat "$cache/$v/.digest" 2>/dev/null)" = "$digest" ] && continue
             rm -rf "$cache/$v.tmp"; mkdir "$cache/$v.tmp"
-            gh release download "v$v" -p "fleet-$v-linux-amd64.tgz" -O - | tar -xzf - -C "$cache/$v.tmp" ./fleet-coordinator ./config \
-              || { echo "::error::v$v: download or extraction failed (gh ${PIPESTATUS[0]}, tar ${PIPESTATUS[1]})"; exit 1; }
+            gh release download "v$v" -p "$file" -D "$RUNNER_TEMP" --clobber || { echo "::error::v$v: download failed"; exit 1; }
+            echo "${digest#sha256:}  $RUNNER_TEMP/$file" | sha256sum -c --quiet || { echo "::error::v$v: $file does not match its digest"; exit 1; }
+            tar -xzf "$RUNNER_TEMP/$file" -C "$cache/$v.tmp" ./fleet-coordinator ./config || { echo "::error::v$v: extraction failed"; exit 1; }
+            rm -f "$RUNNER_TEMP/$file"; echo "$digest" > "$cache/$v.tmp/.digest"
             rm -rf "${cache:?}/$v"; mv "$cache/$v.tmp" "$cache/$v"
           done
           url() { echo "postgresql://$1@/fleet?host=$pg&port=54329"; }
@@ -189,11 +189,16 @@ jobs:
           # migrations on top (a fresh database alone hides a migration that depends on an edited released one).
           for v in "${RECENT%% *}" "$VERSION" $RECENT; do
             dir=$cache/$v; [ "$v" = "$VERSION" ] && dir=$PWD/new
-            (cd "$dir" && exec ./fleet-coordinator) & pid=$!
-            i=0; until curl -fsS -m 3 http://127.0.0.1:9470/api/health | grep -q "\"version\":\"$v\""; do
+            (cd "$dir" && FLEET_PROJECT_CONFIG_DIRECTORY=$dir/config FLEET_PROFILES_DIRECTORY=$dir/config/agents FLEET_LAB_DIRECTORY=$dir/config/lab exec ./fleet-coordinator) & pid=$!
+            i=0; until curl -fsS -m 3 -o "$RUNNER_TEMP/health" http://127.0.0.1:9470/api/health && grep -q "\"version\":\"$v\"" "$RUNNER_TEMP/health"; do
               i=$((i+1)); [ $i -lt 60 ] || { echo "::error::$dir coordinator not healthy"; exit 1; }; sleep 1; done
             echo; kill $pid; wait $pid || true; pid=
           done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: out/
+          if-no-files-found: error
   selftest-macos:
     needs: [gate, build]
     if: needs.gate.outputs.ui != 'true'

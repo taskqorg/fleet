@@ -120,7 +120,7 @@ Target: replaced by a merge that releases by itself ([delivery pipeline](fleet-d
 
 ### 1. Release workflow
 
-Trigger, gate and version are replaced by the [delivery pipeline](fleet-delivery-pipeline.md#4-automatic-release) (push to `main`, computed version, no tag); build, selftest, `migrate-check` and publish stay as below. Originally: `.github/workflows/release.yml`, `on: push: tags: ['v*']`. Permissions per job, only what each writes (COREQ-R7).
+Trigger, gate and version are replaced by the [delivery pipeline](fleet-delivery-pipeline.md#4-automatic-release) (push to `main`, computed version, no tag); build, selftest and publish stay as below; `migrate-check` is now a step of `build` over the last 5 releases ([section 5](fleet-delivery-pipeline.md#5-compatibility-across-skipped-versions)). Originally: `.github/workflows/release.yml`, `on: push: tags: ['v*']`. Permissions per job, only what each writes (COREQ-R7).
 
 *   **Job `gate`** (`contents: read`, `actions: read`, checkout with `fetch-depth: 0`):
     *   Refuse a tag whose name is not `v<N>.<yymmdd>.<M>` (strict regex `^v[1-9][0-9]*\.[0-9]{6}\.(0|[1-9][0-9]*)$`) with `yymmdd` the UTC date of the annotated tag's tagger date (lightweight tag: the commit date), or whose commit is not an ancestor of `origin/main`, or whose version is not newer than the current latest release.
