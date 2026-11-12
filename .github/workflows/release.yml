@@ -45,6 +45,7 @@ jobs:
       - id: check
         name: Pause, commit, version
         run: |
+          set -o pipefail
           [ -z "$PAUSE" ] || { echo "paused (FLEET_RELEASE_PAUSE)" | tee -a "$GITHUB_STEP_SUMMARY"; echo release=false >> "$GITHUB_OUTPUT"; exit 0; }
           git fetch --force --tags origin main
           sha=$(git rev-parse "${INPUT_SHA:-origin/main}^{commit}")
@@ -167,7 +168,8 @@ jobs:
           export PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pg=$RUNNER_TEMP/pg
           # The runner is persistent: a failed step must not leave a coordinator on the port or a PostgreSQL behind, and a
           # cancelled one (killed before the trap) is cleared here.
-          pkill -x fleet-coordinator || true; pkill -f 'postgres .*-p 54329' || true
+          pkill -f '(^|/)fleet-coordinator$' || true; pkill -QUIT -f 'postgres .*-p 54329' || true
+          i=0; while pgrep -f '(^|/)fleet-coordinator$|postgres .*-p 54329' >/dev/null && [ $i -lt 10 ]; do i=$((i+1)); sleep 1; done
           pid=; trap '{ [ -z "$pid" ] || { kill $pid; wait $pid; }; pg_ctl -D "$pg" -m immediate -w stop; } >/dev/null 2>&1 || true' EXIT
           initdb -D "$pg" -U postgres -A trust -E UTF8 --no-instructions --no-sync >/dev/null
           pg_ctl -D "$pg" -l "$pg/log" -w -o "-k $pg -p 54329 -c listen_addresses= -c fsync=off -c synchronous_commit=off -c full_page_writes=off" start
