@@ -160,3 +160,15 @@ test('S9 a director with grant * takes the owner\'s subscription without a take 
   const e = ok(await call('GET', '/api/sessions/' + s.sessionId, undefined, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
   assert.equal(e.takenFrom, AGENTS, 'the real director stays on the execution');
 });
+
+test('S10 a director with grant * and no subscription or host of its own is placed on an owner-held subscription without naming one (requirement: development owner rule 2026-11-11 in dispatch placement; risk: a site-agents PM session stays preparing forever, live 2026-11-12)', async () => {
+  const AGENTS = 'agents@trial.test';
+  const h = await host();
+  const a = ok(await op('account_create', {name: 'star-any', harness: 'codex'}));
+  ok(await h('/api/hosts/accounts', {accountId: a.id, hostId: 'trial-host', binding: 'star-any-bind', platform: 'darwin', readiness: 'ready', nativeLoginObserved: null, quota: 'unknown', reason: 'ready'}));
+  const s = ok(await op('session_start', {requestId: randomUUID(), text: 'star turn', projectId: OTHER, profileId: 'pm'}, AGENTS));
+  const {commands} = ok(await h('/api/hosts/poll', poll));
+  assert.ok(commands.some((c: any) => c.executionId === s.executionId && c.kind === 'start'), 'placement takes an owner subscription for grant *');
+  const e = ok(await call('GET', '/api/sessions/' + s.sessionId, undefined, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
+  assert.equal(e.takenFrom, AGENTS);
+});

@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -490,6 +491,62 @@ func init() {
 		_, err = askQuestion(q, ask)
 		return v, err
 	}))
+	// Delete (§1): owner or full-access person, once every key is retired (no value file left), so a test connection can
+	// go. Run tokens drop the name (a new connection with it is not granted to them), open key requests are withdrawn,
+	// the history moves to an audit row that a new connection of the same name does not inherit.
+	gatedOp("connections_delete", false, checkFirst(connOwner, shaped[contract.ConnectionsDeleteRequest, contract.ConnectionsDeleteReply](func(q *Request) (any, error) {
+		c, err := connByName(q, body(q)["connection"])
+		if err != nil {
+			return nil, err
+		}
+		name := astr(c["name"])
+		if err := exec(q, "SELECT 1 FROM document WHERE id=$1 AND kind='api-connection' FOR UPDATE", c["id"]); err != nil {
+			return nil, err
+		}
+		keys, err := connKeys(q, name)
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range keys {
+			if k["state"] != "retired" {
+				return nil, fail(409, "Retire every key of "+name+" first")
+			}
+		}
+		toks, err := all(q, "run-token", nil)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range toks {
+			if names := strs(t["connections"]); slices.Contains(names, name) {
+				t["connections"] = slices.DeleteFunc(names, func(n string) bool { return n == name })
+				if err := put(q, "run-token", t); err != nil {
+					return nil, err
+				}
+			}
+		}
+		for _, x := range []string{
+			"DELETE FROM document WHERE (kind='api-connection' AND id=$1) OR (kind='connection-key' AND data->>'connectionId'=$2) OR (kind='setting-change' AND data->>'target'=$1)",
+			"UPDATE question SET state='withdrawn' WHERE kind='secret' AND state='open' AND options->>'connection'=$2 AND $1<>''",
+		} {
+			if err := exec(q, x, c["id"], name); err != nil {
+				return nil, err
+			}
+		}
+		if err := put(q, "setting-change", doc{"id": newID(), "target": "deleted-connection:" + name, "field": "connection", "value": "deleted", "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
+			return nil, err
+		}
+		if dir, err := connDir(name); err == nil {
+			onEnd(q.tx, func(committed bool) {
+				if committed { // every key is retired: only stale stages can remain, and connSync must not re-register them
+					if err := os.RemoveAll(dir); err != nil {
+						log.Printf("connection %s: %v", name, err)
+					}
+				}
+			})
+		}
+		publish(q)
+		return contract.ConnectionsDeleteReply{Name: name, Deleted: true}, nil
+	})))
 	// Rotation (§2): active <-> draining, any -> retired (the value file is deleted; the row stays); disabled -> active is the owner's.
 	gatedOp("connections_key_state", false, shaped[contract.ConnectionsKeyStateRequest, contract.ConnectionsKeyStateReply](func(q *Request) (any, error) {
 		b := body(q)
