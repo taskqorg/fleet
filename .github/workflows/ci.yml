@@ -384,11 +384,8 @@ jobs:
           done
       - if: steps.chromium.outputs.cache-hit != 'true'
         run: pnpm exec playwright install --with-deps chromium
-      # The runner image already carries Chromium's shared libraries: apt runs only when one is missing.
       - if: steps.chromium.outputs.cache-hit == 'true'
-        run: |
-          missing=$(find ~/.cache/ms-playwright -type f \( -name headless_shell -o -name chrome \) -exec ldd {} + | grep 'not found' || true)
-          if [ -n "$missing" ]; then echo "$missing"; pnpm exec playwright install-deps chromium; else echo 'Chromium libraries present'; fi
+        uses: ./.github/actions/chromium-deps
       - if: matrix.shard == 0
         run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/filter.check.ts --assert --sizes 20000
       - if: matrix.shard == 1
@@ -415,6 +412,14 @@ jobs:
           node-version: 22
           cache: pnpm
       - uses: ./.github/actions/go
+      # Shares app-tests' release build cache (restore only; app-tests saves it).
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-release-${{ hashFiles('go/**') }}
+          restore-keys: go-release-
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - id: playwright
@@ -454,11 +459,8 @@ jobs:
           done
       - if: steps.chromium.outputs.cache-hit != 'true'
         run: pnpm exec playwright install --with-deps chromium
-      # The runner image already carries Chromium's shared libraries: apt runs only when one is missing.
       - if: steps.chromium.outputs.cache-hit == 'true'
-        run: |
-          missing=$(find ~/.cache/ms-playwright -type f \( -name headless_shell -o -name chrome \) -exec ldd {} + | grep 'not found' || true)
-          if [ -n "$missing" ]; then echo "$missing"; pnpm exec playwright install-deps chromium; else echo 'Chromium libraries present'; fi
+        uses: ./.github/actions/chromium-deps
       - name: Docs report (warning only)
         if: always()
         continue-on-error: true

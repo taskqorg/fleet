@@ -1,0 +1,14 @@
+# Chromium's system packages for cached Playwright browsers. The hosted image already carries most of them: apt runs
+# only when a package Playwright's own install-deps would install (libraries and fonts) is missing, or when its
+# list cannot be read.
+name: Chromium dependencies
+description: playwright install-deps chromium, skipped when every package is installed
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        pkgs=$(pnpm exec playwright install-deps --dry-run chromium | sed -n 's/.*--no-install-recommends \([^"]*\).*/\1/p')
+        installed=$(dpkg-query -W -f='${db:Status-Status}\n' $pkgs 2>/dev/null | grep -cx installed || true)
+        if [ -n "$pkgs" ] && [ "$installed" -eq "$(wc -w <<< "$pkgs")" ]; then echo "all $installed Chromium packages installed"
+        else pnpm exec playwright install-deps chromium; fi
