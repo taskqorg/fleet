@@ -217,8 +217,8 @@ func githubPublic(ctx context.Context, path string) ([]byte, error) {
 // and revoking per call (connCallFor) took about 12 s a read on PDS18 (two write transactions, a snapshot rewrite and a
 // spool ingest); the delivery history makes hundreds. The calls become tool_runs when the token is revoked.
 type githubToken struct {
-	token, executionID string
-	until              time.Time
+	token string
+	until time.Time
 }
 
 const githubTokenTTL = 5 * time.Minute
@@ -280,7 +280,7 @@ func githubTokenFor(ctx context.Context, a *App, connection, project string) (st
 		return "", err
 	}
 	githubTokMu.Lock()
-	githubToks[key] = githubToken{token, exec, time.Now().Add(githubTokenTTL)}
+	githubToks[key] = githubToken{token, time.Now().Add(githubTokenTTL)}
 	githubTokMu.Unlock()
 	// Revoked at its end whatever happens next (a restart revokes it too: revokeSteps); its calls are ingested then.
 	// ponytail: an access or intake change reaches a cached token within githubTokenTTL, not at the next read.
