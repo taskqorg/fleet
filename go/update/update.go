@@ -564,6 +564,7 @@ func (u *updater) executorHealth(signal string) func(string) probe {
 func (u *updater) latest() string {
 	var l struct{ Version string }
 	c, err := u.getCached(u.base+"/latest/download/latest.json", func(b []byte) error {
+		l.Version = "" // a fresh parse per body: nothing carries over from a rejected one
 		if err := json.Unmarshal(b, &l); err != nil {
 			return err
 		}

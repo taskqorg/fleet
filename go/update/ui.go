@@ -42,7 +42,7 @@ func validateUI(dir, version, backend string) error {
 // hour that counts 304 answers too. The release workflow creates the tag when it publishes the release with its
 // assets, so a tag is a published release. A deleted release must delete its tag too (gh release delete
 // --cleanup-tag): otherwise it stays the candidate and every run reports its 404, retried like any HTTP error
-// (fleet-self-update.md, failure table). Native latest.json is untouched.
+// (fleet-self-update.md, section 3: GitHub down is transient, runs retry). Native latest.json is untouched.
 func (u *updater) latestUI(backend string) (string, error) {
 	prefix := "refs/tags/ui-" + backend + "-v"
 	body := pkt("command=ls-refs\n") + "0001" + pkt("ref-prefix "+prefix+"\n") + "0000"
