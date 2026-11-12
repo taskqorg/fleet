@@ -16,19 +16,22 @@ wait_step() { [ "$(date +%s)" -lt "$deadline" ] || { echo "timeout at: $1"; exit
 
 q='query($n:Int!){repository(owner:"taskqorg",name:"fleet"){pullRequest(number:$n){state mergeStateStatus mergeable headRefOid potentialMergeCommit{parents(first:2){nodes{oid}}} mergeCommit{oid} autoMergeRequest{enabledAt} mergeQueueEntry{state}
   commits(last:1){nodes{commit{statusCheckRollup{contexts(last:100){nodes{... on CheckRun{name conclusion at:startedAt isRequired(pullRequestNumber:$n)} ... on StatusContext{name:context state at:createdAt isRequired(pullRequestNumber:$n)}}}}}}}
-  timelineItems(last:1,itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT,AUTO_MERGE_DISABLED_EVENT]){nodes{__typename ... on RemovedFromMergeQueueEvent{reason} ... on AutoMergeDisabledEvent{reasonCode}}}}}}'
+  timelineItems(last:1,itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT,AUTO_MERGE_DISABLED_EVENT]){nodes{__typename ... on RemovedFromMergeQueueEvent{reason} ... on AutoMergeDisabledEvent{reasonCode actor{__typename}}}}}}}'
 dirty_head=
 while :; do
   # A failed gh call (network, rate limit) is retried, never read as "not merged".
   line=$(gh api graphql -f query="$q" -F n="$pr" -q '.data.repository.pullRequest | .headRefOid as $head | [.state, .mergeStateStatus, (.mergeCommit.oid // "-"),
     (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (.mergeQueueEntry.state // "-"), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired)] | group_by(.name) | map(max_by(.at // (if .conclusion == null then "~" else "" end)) | (.conclusion // .state)) | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "STARTUP_FAILURE" or . == "CANCELLED" or . == "STALE" or . == "ACTION_REQUIRED") then "red" else "-" end),
     (.headRefOid // "-"),
-    # fresh: GitHub has computed mergeability for this head (not UNKNOWN, and a test merge, when there is one, is of this head).
+    # fresh: GitHub has computed mergeability for this head: not UNKNOWN (GitHub resets it on a push), and a test merge,
+    # when there is one, is of this head. A conflicting head has no test merge, so then only the reset tells.
     (if .mergeable != "UNKNOWN" and (.potentialMergeCommit == null or ([.potentialMergeCommit.parents.nodes[].oid] | index($head))) then "fresh" else "stale" end),
-    # The newest of a queue removal (its reason) and an auto-merge disable: by a person (manually_disabled) it is the
-    # orchestrator'"'"'s veto, "auto-merge off"; any other code is GitHub'"'"'s own and named with it.
-    (.timelineItems.nodes[0] | if .__typename == "RemovedFromMergeQueueEvent" then (.reason // "unknown")
-      elif .__typename == "AutoMergeDisabledEvent" and .reasonCode != null and .reasonCode != "manually_disabled" then "auto-merge disabled by GitHub (" + .reasonCode + ")"
+    # The newest of a queue removal (its reason) and an auto-merge disable. A disable by a person (a User actor, or the code
+    # manually_disabled) is the orchestrator'"'"'s veto, "auto-merge off", as is one with nothing to tell it apart; a disable
+    # by GitHub itself (another actor and another code) is named with its code. Only an open pull request can be GitHub'"'"'s.
+    (.state as $state | .timelineItems.nodes[0] | if .__typename == "RemovedFromMergeQueueEvent" then (.reason // "unknown")
+      elif $state == "OPEN" and .__typename == "AutoMergeDisabledEvent" and .reasonCode != null and (.reasonCode | ascii_downcase) != "manually_disabled" and .actor.__typename != "User"
+        then "auto-merge disabled by GitHub (" + .reasonCode + ")"
       else "auto-merge off" end)] | join(" ")') \
     || { wait_step "queue (gh failed)"; continue; }  # observes nothing: the DIRTY count stays
   read -r state merge_state sha waiting queue_state checks head fresh reason <<<"$line"
@@ -40,9 +43,10 @@ while :; do
   if [ "$state" = OPEN ] && [ "$merge_state" = DIRTY ] && [ "$waiting" = waiting ] && [ "$queue_state" = "-" ]; then
     if [ "$fresh" = fresh ]; then
       [ "$dirty_head" = "$head" ] && { echo "not merged: $state, merge_conflict"; exit 1; }
-      dirty_head=$head
+      dirty_head=$head; wait_step "queue"; continue
     fi
-    wait_step "queue"; continue
+    # Not computed for this head yet (GitHub resets mergeable to UNKNOWN on a push): wait, and name it at a timeout.
+    wait_step "queue (DIRTY not computed for head ${head:0:12})"; continue
   fi
   dirty_head=
   # Out of the queue: the newest of "removed from the queue" (its reason) and "auto-merge disabled" (a veto) names why.

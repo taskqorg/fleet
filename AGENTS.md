@@ -26,7 +26,7 @@ Rules: [delivery pipeline, section 8](docs/designs/fleet-delivery-pipeline.md#8-
     * a conflict in `go/contract/*_gen.go`: take either side, `cd go && go generate ./contract`, `git add`, continue the rebase.
     * `not merged: ..., failed_checks`: read the failed test. The first time, run it once more (`gh pr merge <n> --auto` after a queue removal; for `failed_checks (head)`, a red required check before the queue, auto-merge is still on: `gh run rerun <run>` with the `/actions/runs/<run>` id from `gh pr checks <n>`, then wait until `gh pr checks <n>` shows it pending), then step 4 again; if that run is green, add the test and both run links to the open `flaky` issue (section 3). A second failure is yours to fix.
     * `not merged: ..., auto-merge off` or `CLOSED`: the orchestrator used its veto or closed it; ask it before doing anything.
-    * `not merged: ..., auto-merge disabled by GitHub (<code>)`: GitHub turned auto-merge off itself, not the orchestrator. Fix the cause the code names (for a conflict, as `merge_conflict` above), then step 2 and step 3 again.
+    * `not merged: OPEN, auto-merge disabled by GitHub (<code>)`: GitHub turned auto-merge off itself, not the orchestrator. Fix the cause the code names (for a conflict, as `merge_conflict` above), then step 2 and step 3 again; a code with nothing to fix goes to the orchestrator.
     * `no site access` (exit 3): check `hosts_list` in the app yourself.
     * `on hosts v<version>` or `on site <tag>`: run the live check your task names, then report done.
     * `timeout at: <stage>`: report the stage to the orchestrator. At `release`, include `gh run list -R taskqorg/fleet --workflow release -L 3`.
