@@ -23,7 +23,8 @@ func watchSet(q *Request, b doc) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	if s, err := get(q, sid, "session"); err != nil {
+	s, err := get(q, sid, "session")
+	if err != nil {
 		return nil, err
 	} else if err := directs(q, s); err != nil {
 		return nil, err
@@ -41,7 +42,7 @@ func watchSet(q *Request, b doc) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := doc{"id": "watch:" + sid, "sessionId": sid, "kinds": kinds, "wakes": 0}
+	w := doc{"id": "watch:" + sid, "sessionId": sid, "projectId": s["projectId"], "kinds": kinds, "wakes": 0}
 	if old != nil {
 		w["wakes"], w["lastWakeAt"], w["cursor"] = old["wakes"], old["lastWakeAt"], old["cursor"]
 	}
@@ -216,7 +217,7 @@ func watchOne(q *Request, wid string) error {
 	}
 	w["cursor"] = cursor
 	send := func(rid, text string) error {
-		if _, err := submit(q, doc{"sessionId": id, "requestId": rid, "text": text}); err != nil {
+		if _, err := submitMessage(q, doc{"sessionId": id, "requestId": rid, "text": text}, "watch"); err != nil {
 			return err
 		}
 		w["wakes"], w["lastWakeAt"] = num(w["wakes"])+1, nowMs

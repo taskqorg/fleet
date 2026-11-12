@@ -56,7 +56,7 @@ func knownHost(q *Request, id string) (bool, error) {
 }
 
 // enqueue: a queued execution and its message. Late choice: host and subscription are picked at dispatch.
-func enqueue(q *Request, s doc, input, requestID string, payload, execution doc, host string) (doc, error) {
+func enqueue(q *Request, s doc, input, requestID string, payload, execution doc, host string, provenance ...doc) (doc, error) {
 	if astr(s["directedBy"]) == "" {
 		d := ""
 		for _, src := range [][2]string{{"createdByExecutionId", "execution"}, {"parentExecutionId", "execution"}} {
@@ -146,7 +146,15 @@ func enqueue(q *Request, s doc, input, requestID string, payload, execution doc,
 	if err := put(q, "execution", e); err != nil {
 		return nil, err
 	}
-	return e, put(q, "message", doc{"id": newID(), "sessionId": s["id"], "executionId": id, "requestId": requestID, "text": input, "projectId": s["projectId"], "sentBy": director(q)})
+	m := doc{"id": newID(), "sessionId": s["id"], "executionId": id, "requestId": requestID, "text": input, "projectId": s["projectId"], "sentBy": director(q)}
+	if len(provenance) > 0 {
+		for _, k := range []string{"sentBy", "source"} {
+			if v := provenance[0][k]; v != nil {
+				m[k] = v
+			}
+		}
+	}
+	return e, put(q, "message", m)
 }
 
 func refreshProfile(q *Request, s doc) error {
@@ -179,6 +187,11 @@ func queueView(q *Request, m doc) (doc, error) {
 
 // submit: a message starts a turn, or is queued (or steered) behind an active execution; nothing is refused for being busy.
 func submit(q *Request, b doc) (doc, error) {
+	return submitMessage(q, b, "")
+}
+
+// source is internal provenance, never taken from the caller's arguments.
+func submitMessage(q *Request, b doc, source string) (doc, error) {
 	sid, err := strArg(b, "sessionId", "sessionId", 0)
 	if err != nil {
 		return nil, err
@@ -228,15 +241,23 @@ func submit(q *Request, b doc) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
+	sender := director(q)
+	if source == "watch" || source == "wake" {
+		sender = "Fleet"
+	}
+	provenance := doc{"sentBy": sender}
+	if source != "" {
+		provenance["source"] = source
+	}
 	if active == nil && len(waiting) == 0 {
 		if err := refreshProfile(q, s); err != nil {
 			return nil, err
 		}
-		return enqueue(q, s, text, requestID, nil, nil, "")
+		return enqueue(q, s, text, requestID, nil, nil, "", provenance)
 	}
 	m := doc{"id": newID(), "sessionId": sid, "projectId": s["projectId"], "requestId": requestID, "text": text, "state": "queued", "createdAt": nowMs()}
-	if b["source"] != nil {
-		m["source"] = b["source"]
+	for k, v := range provenance {
+		m[k] = v
 	}
 	if b["delivery"] == "steer" && active != nil && astr(active["state"]) == "running" {
 		ok, err := capable(q, "steer")
@@ -290,7 +311,7 @@ func agentPromote(q *Request) error {
 			if err := refreshProfile(q, s); err != nil {
 				return nil, err
 			}
-			return enqueue(q, s, astr(m["text"]), astr(m["requestId"]), nil, nil, "")
+			return enqueue(q, s, astr(m["text"]), astr(m["requestId"]), nil, nil, "", m)
 		}()
 		if err != nil {
 			if pgCode(err) != "" {
@@ -380,8 +401,8 @@ func wake(q *Request, e doc, status string) error {
 	if r := mapOf(fresh["report"]); r != nil {
 		report = fmt.Sprintf(" worker_done %s: %s", astr(r["outcome"]), astr(r["summary"]))
 	}
-	_, err = submit(q, doc{"sessionId": s["createdBySessionId"], "requestId": "wake:" + astr(e["id"]), "source": "wake",
-		"text": fmt.Sprintf(`Fleet: your session %s%s finished execution %s: %s.%s Read it with execution_status {sessionId:"%s"}.`, astr(s["id"]), role, astr(e["id"]), status, report, astr(s["id"]))})
+	_, err = submitMessage(q, doc{"sessionId": s["createdBySessionId"], "requestId": "wake:" + astr(e["id"]),
+		"text": fmt.Sprintf(`Fleet: your session %s%s finished execution %s: %s.%s Read it with execution_status {sessionId:"%s"}.`, astr(s["id"]), role, astr(e["id"]), status, report, astr(s["id"]))}, "wake")
 	if pgCode(err) != "" {
 		return err
 	}

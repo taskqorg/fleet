@@ -51,7 +51,7 @@ async function agent(person: string, start: object) {
     return r.status === 200 ? {status: 200, body: JSON.parse(r.body.result.content[0].text)} : r;
   };
   const list = async () => ok(await rpc({method: 'tools/list'})).result.tools.map((t: any) => t.name) as string[];
-  return {sessionId: s.sessionId as string, executionId: s.executionId as string, tool, list};
+  return {sessionId: s.sessionId as string, executionId: s.executionId as string, commandId: c.id as string, tool, list};
 }
 
 test('PM1 rights: an agent call reads and writes with its director\'s grants, never the coordinator\'s * (requirement: docs/designs/fleet-pm-agent.md; risk: a member\'s PM sees or changes other projects)', {timeout: 30_000}, async () => {
@@ -273,4 +273,68 @@ test('PM11 an agent call without projectId gets its session project, for any ope
   const star = await agent(OWNER, {projectId: PROJECT, role: 'pm'});
   ok(await star.tool('focus_set', {sessionId: star.sessionId, projectIds: '*'}));
   assert.equal((await star.tool('connections_key_request', {requestId: randomUUID(), connection: conn})).status, 400, 'a "*" focus names no default project');
+});
+
+
+test('PM provenance: internal timer/change/wake inputs keep Fleet sender through idle and queued delivery (requirement: fleet.md R5 and people authority; risk: system notifications impersonate the owner or queued inputs borrow authority)', {timeout: 60_000}, async () => {
+  const view = async (sid: string) => ok(await call('GET', '/api/sessions/' + sid, undefined, as(MEMBER)));
+  const eventually = async (read: () => Promise<any>) => {
+    for (let i = 0; i < 100; i++) { const result = await read(); if (result) return result; await sleep(50); }
+    assert.fail('provenance observation did not arrive');
+  };
+  const finish = async (executionId: string, commandId: string) => {
+    ok(await hostCall(MEMBER, '/api/hosts/receipts', {executionId, commandId, status: 'started'}));
+    ok(await hostCall(MEMBER, '/api/hosts/receipts', {executionId, commandId, status: 'completed'}));
+  };
+  for (const kind of ['timer', 'change', 'wake']) for (const idle of [false, true]) {
+    console.log('provenance case', kind, idle ? 'idle' : 'queued');
+    const pm = await agent(MEMBER, {projectId: PROJECT, role: 'pm'});
+    assert.equal((await view(pm.sessionId)).messages[0].sentBy, MEMBER, 'ordinary immediate input retains its human sender');
+    assert.equal((await pm.tool('task_get', {taskId: ok(await op('task_create', {projectId: OTHER, title: 'private provenance control'})).id})).status, 404, 'original director grants still apply');
+    let child: any;
+    if (kind === 'wake') {
+      child = ok(await pm.tool('session_start', {projectId: PROJECT, role: 'worker', profileId: 'pm', requestId: randomUUID(), text: 'child provenance control'}));
+    } else {
+      ok(await pm.tool('focus_set', {projectIds: [PROJECT]}));
+      ok(await pm.tool('watch_set', {kinds: kind === 'change' ? ['task'] : ['question'], ...(kind === 'timer' ? {timerMs: 800} : {})}));
+    }
+    if (idle) await finish(pm.executionId, pm.commandId);
+    if (kind === 'change') ok(await op('task_create', {projectId: PROJECT, title: 'foreign provenance change ' + randomUUID()}));
+    if (kind === 'wake') {
+      const command = await eventually(async () => ok(await hostCall(MEMBER, '/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === child.executionId && c.kind === 'start'));
+      await finish(child.executionId, command.id);
+    }
+    const matches = (text: string) => kind === 'timer' ? text.startsWith('Fleet: watch timer') : kind === 'change' ? text.startsWith('Fleet:') && text.includes('changes in your focus') : text.startsWith('Fleet: your session');
+    if (!idle) {
+      const queued = await eventually(async () => (await view(pm.sessionId)).queued.find((m: any) => m.state === 'queued' && matches(m.text)));
+      assert.equal(queued.sentBy, 'Fleet'); assert.equal(queued.source, kind === 'wake' ? 'wake' : 'watch');
+    }
+    if (!idle && kind !== 'wake') ok(await op('watch_stop', {sessionId: pm.sessionId}, MEMBER));
+    if (!idle) await finish(pm.executionId, pm.commandId);
+    const message = await eventually(async () => (await view(pm.sessionId)).messages.find((m: any) => matches(m.text)));
+    if (idle && kind !== 'wake') ok(await op('watch_stop', {sessionId: pm.sessionId}, MEMBER));
+    assert.equal(message.sentBy, 'Fleet'); assert.equal(message.source, kind === 'wake' ? 'wake' : 'watch');
+    const session = await view(pm.sessionId);
+    assert.equal(session.executions.find((e: any) => e.id === message.executionId).directedBy, MEMBER, 'system sender never replaces execution director');
+    const thread = ok(await call('GET', `/api/threads/session/${pm.sessionId}/entries?limit=100`, undefined, as(MEMBER)));
+    assert.equal(thread.entries.find((b: any) => b.markdown === message.text)?.by, 'Fleet', 'thread projection displays Fleet');
+    const command = await eventually(async () => ok(await hostCall(MEMBER, '/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === message.executionId && c.kind === 'start'));
+    const forbidden = await hostCall(MEMBER, '/api/hosts/agent-tools', {hostId: hosts.get(MEMBER)!.id, executionId: message.executionId, commandId: command.id, request: {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name: 'people_set', arguments: {people: []}}}});
+    assert.equal(forbidden.status, 403, 'continued tool call cannot acquire owner operations');
+    await finish(message.executionId, command.id);
+  }
+  const pm = await agent(MEMBER, {projectId: PROJECT, role: 'pm'});
+  const requestId = randomUUID();
+  const queued = ok(await op('message_send', {sessionId: pm.sessionId, requestId, text: 'ordinary queued input', source: 'watch', sentBy: 'Fleet'}, MEMBER));
+  assert.equal(queued.sentBy, MEMBER); assert.equal(queued.source, undefined, 'external provenance cannot impersonate system');
+  const agentRequestId = randomUUID();
+  const agentQueued = ok(await pm.tool('message_send', {requestId: agentRequestId, text: 'ordinary agent input', source: 'wake', sentBy: 'Fleet'}));
+  assert.equal(agentQueued.sentBy, MEMBER); assert.equal(agentQueued.source, undefined, 'agent arguments cannot establish system identity');
+  await finish(pm.executionId, pm.commandId);
+  const message = await eventually(async () => (await view(pm.sessionId)).messages.find((m: any) => m.requestId === requestId));
+  assert.equal(message.sentBy, MEMBER); assert.equal(message.source, undefined, 'queue drain retains ordinary sender instead of background owner');
+  const command = await eventually(async () => ok(await hostCall(MEMBER, '/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === message.executionId && c.kind === 'start'));
+  await finish(message.executionId, command.id);
+  const agentMessage = await eventually(async () => (await view(pm.sessionId)).messages.find((m: any) => m.requestId === agentRequestId));
+  assert.equal(agentMessage.sentBy, MEMBER); assert.equal(agentMessage.source, undefined);
 });
