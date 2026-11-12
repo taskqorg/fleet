@@ -1243,11 +1243,42 @@ func TestMCPGuardianEarlyDiagnostic(t *testing.T) {
 	}
 }
 
+// R3/R5; risk: ownership refusal becomes an opaque handshake failure or falsely establishes exit.
+func TestMCPGuardianRetainsOwnershipRefusal(t *testing.T) {
+	o, e := testMCPOwner(t)
+	if _, err := e.db.Exec("UPDATE launches SET mcp_fenced=1 WHERE execution=?", o.execution); err != nil {
+		t.Fatal(err)
+	}
+	input, writer, _ := os.Pipe()
+	defer input.Close()
+	defer writer.Close()
+	done := make(chan error, 1)
+	output, err := os.CreateTemp(t.TempDir(), "output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	go func() { done <- mcpStdio(o.socket, fixtureSpec("read"), input, output, t.TempDir(), "") }()
+	writer.Write([]byte(`{"id":1,"method":"initialize"}` + "\n"))
+	select {
+	case err := <-done:
+		var life *mcpLifecycleError
+		if !errors.As(err, &life) || jStr(life.status, "refusalReason") != "MCP execution launch is not open" || jStr(life.status, "registration") != "refused" || jStr(life.status, "outcome") != "unknown" {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("ownership refusal diagnostic lost")
+	}
+}
+
 // R5; risk: opaque payload/status values leak into retained diagnostics or a diagnostic write masks the primary failure.
 func TestMCPDiagnosticProjectionAndRetentionFailure(t *testing.T) {
 	sentinel := "SECRET_SENTINEL_DO_NOT_RETAIN"
-	raw := M{"stage": sentinel, "registration": sentinel, "outcome": "exited", "exitCode": float64(9999), "signal": float64(-2), "guardianPid": float64(1.5), "guardianIdentity": sentinel, "executionId": sentinel, "stderr": sentinel, "params": M{"token": sentinel}}
+	raw := M{"stage": sentinel, "registration": sentinel, "outcome": "exited", "exitCode": float64(9999), "signal": float64(-2), "guardianPid": float64(1.5), "guardianIdentity": sentinel, "executionId": sentinel, "refusalReason": sentinel, "stderr": sentinel, "params": M{"token": sentinel}}
 	safe := safeMCPStatus(raw)
+	if got := safeMCPStatus(M{"registration": "refused", "refusalReason": "MCP guardian executable differs"}); jStr(got, "refusalReason") != "MCP guardian executable differs" || jStr(got, "outcome") != "unknown" {
+		t.Fatal(got)
+	}
 	if strings.Contains(enc(safe), sentinel) || jStr(safe, "outcome") != "unknown" || has(safe, "exitCode") || has(safe, "signal") || has(safe, "guardianPid") {
 		t.Fatal(safe)
 	}

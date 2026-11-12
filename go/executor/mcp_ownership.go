@@ -287,6 +287,7 @@ func mcpGuardian(args []string) error {
 	}
 	if !jBoolOr(false, answer, "registered") {
 		report["registration"] = "refused"
+		report["refusalReason"] = jStr(answer, "error")
 		return errors.New("MCP ownership refused: " + jStr(answer, "error"))
 	}
 	report["registration"] = "acknowledged"
@@ -732,7 +733,7 @@ func (e *mcpLifecycleError) Error() string {
 }
 func safeMCPStatus(raw M) M {
 	out := M{"stage": "unknown", "registration": "unknown", "outcome": "unknown", "provenance": "status-unavailable"}
-	for key, values := range map[string][]string{"stage": {"ownership", "binding", "spawn", "server-exit"}, "registration": {"unknown", "refused", "acknowledged"}, "outcome": {"unknown", "exited", "signaled"}, "provenance": {"guardian-private-status"}} {
+	for key, values := range map[string][]string{"stage": {"ownership", "binding", "spawn", "server-exit"}, "registration": {"unknown", "refused", "acknowledged"}, "outcome": {"unknown", "exited", "signaled"}, "provenance": {"guardian-private-status"}, "refusalReason": {"MCP peer owner differs", "MCP execution launch is not open", "MCP guardian identity differs", "MCP guardian belongs to another execution", "MCP guardian is not its group leader", "MCP guardian executable differs", "MCP execution is fenced", "MCP peer belongs to another execution", "MCP peer executable differs", "MCP generation is stale or unknown", "MCP dependency generation lost its parent", "dependency was not selected by the binding", "MCP dependency target changed", "MCP fixed dependency identity differs", "MCP generation preparer changed", "MCP generation already has a guardian"}} {
 		for _, allowed := range values {
 			if jStr(raw, key) == allowed {
 				out[key] = allowed
