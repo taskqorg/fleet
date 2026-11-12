@@ -30,6 +30,7 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       previous: ${{ steps.check.outputs.previous }}
       recent: ${{ steps.check.outputs.recent }}
+      digests: ${{ steps.check.outputs.digests }}
       ui: ${{ steps.check.outputs.ui }}
     env:
       GH_TOKEN: ${{ github.token }}
@@ -69,8 +70,11 @@ jobs:
           m=$(git tag -l "v1.$day.*" "ui-*-v1.$day.*" | sed "s/^.*v1\.$day\.//" | sort -n | tail -1)
           version=1.$day.$(( ${m:--1} + 1 ))
           # migrate-check pairs the new coordinator with each of these (fleet-delivery-pipeline.md section 5).
-          recent=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' | awk '/^v1\.[0-9][0-9][0-9][0-9][0-9][0-9]\.[0-9]+$/ { if (n++ < 5) { printf "%s%s", sep, substr($0,2); sep=" " } } END { print "" }')
-          { echo release=true; echo "sha=$sha"; echo "version=$version"; echo "previous=${latest#v}"; echo "recent=$recent"; } >> "$GITHUB_OUTPUT"
+          # digests: "<version>=sha256:<hex>" of each one's linux tarball, so build verifies and caches them without more lookups.
+          releases=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name as $t | "\($t) \([.assets[] | select(.name == "fleet-\($t | ltrimstr("v"))-linux-amd64.tgz") | .digest // empty] | first // "")"' | awk '$1 ~ /^v1\.[0-9][0-9][0-9][0-9][0-9][0-9]\.[0-9]+$/ && n++ < 5 { print substr($1,2), $2 }')
+          recent=$(awk '{ printf "%s%s", sep, $1; sep=" " } END { print "" }' <<< "$releases")
+          digests=$(awk '{ printf "%s%s=%s", sep, $1, $2; sep=" " } END { print "" }' <<< "$releases")
+          { echo release=true; echo "sha=$sha"; echo "version=$version"; echo "previous=${latest#v}"; echo "recent=$recent"; echo "digests=$digests"; } >> "$GITHUB_OUTPUT"
           echo "release $version from $sha, checked with: ${recent:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v4
         with:
@@ -157,6 +161,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.gate.outputs.version }}
           RECENT: ${{ needs.gate.outputs.recent }}
+          DIGESTS: ${{ needs.gate.outputs.digests }}
         run: |
           set -o pipefail
           export PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pg=$RUNNER_TEMP/pg
@@ -171,9 +176,9 @@ jobs:
           for d in "$cache"/*/; do d=${d%/}; [ -d "$d" ] || continue; case " $RECENT " in *" ${d##*/} "*) ;; *) rm -rf "$d";; esac; done
           for v in $RECENT; do
             file=fleet-$v-linux-amd64.tgz
-            digest=$(gh api "repos/$GH_REPO/releases/tags/v$v" --jq ".assets[] | select(.name == \"$file\") | .digest")
+            digest=$(printf '%s\n' $DIGESTS | sed -n "s/^$v=//p")
             [ -n "$digest" ] || { echo "::error::v$v: no digest for $file"; exit 1; }
-            [ "$(cat "$cache/$v/.digest" 2>/dev/null)" = "$digest" ] && continue
+            [ -x "$cache/$v/fleet-coordinator" ] && [ "$(cat "$cache/$v/.digest" 2>/dev/null)" = "$digest" ] && continue
             rm -rf "$cache/$v.tmp"; mkdir "$cache/$v.tmp"
             gh release download "v$v" -p "$file" -D "$RUNNER_TEMP" --clobber || { echo "::error::v$v: download failed"; exit 1; }
             echo "${digest#sha256:}  $RUNNER_TEMP/$file" | sha256sum -c --quiet || { echo "::error::v$v: $file does not match its digest"; exit 1; }
@@ -191,6 +196,7 @@ jobs:
             dir=$cache/$v; [ "$v" = "$VERSION" ] && dir=$PWD/new
             (cd "$dir" && FLEET_PROJECT_CONFIG_DIRECTORY=$dir/config FLEET_PROFILES_DIRECTORY=$dir/config/agents FLEET_LAB_DIRECTORY=$dir/config/lab exec ./fleet-coordinator) & pid=$!
             i=0; until curl -fsS -m 3 -o "$RUNNER_TEMP/health" http://127.0.0.1:9470/api/health && grep -q "\"version\":\"$v\"" "$RUNNER_TEMP/health"; do
+              kill -0 $pid 2>/dev/null || { echo "::error::$dir coordinator exited"; exit 1; }
               i=$((i+1)); [ $i -lt 60 ] || { echo "::error::$dir coordinator not healthy"; exit 1; }; sleep 1; done
             echo; kill $pid; wait $pid || true; pid=
           done
