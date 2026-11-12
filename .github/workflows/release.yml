@@ -72,8 +72,8 @@ jobs:
           # migrate-check pairs the new coordinator with each of these (fleet-delivery-pipeline.md section 5).
           # digests: "<version>=sha256:<hex>" of each one's linux tarball, so build verifies and caches them without more lookups.
           releases=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name as $t | "\($t) \([.assets[] | select(.name == "fleet-\($t | ltrimstr("v"))-linux-amd64.tgz") | .digest // empty] | first // "")"' | awk '$1 ~ /^v1\.[0-9][0-9][0-9][0-9][0-9][0-9]\.[0-9]+$/ && n++ < 5 { print substr($1,2), $2 }')
-          recent=$(awk '{ printf "%s%s", sep, $1; sep=" " } END { print "" }' <<< "$releases")
-          digests=$(awk '{ printf "%s%s=%s", sep, $1, $2; sep=" " } END { print "" }' <<< "$releases")
+          recent=$(awk 'NF { printf "%s%s", sep, $1; sep=" " } END { print "" }' <<< "$releases")
+          digests=$(awk 'NF { printf "%s%s=%s", sep, $1, $2; sep=" " } END { print "" }' <<< "$releases")
           { echo release=true; echo "sha=$sha"; echo "version=$version"; echo "previous=${latest#v}"; echo "recent=$recent"; echo "digests=$digests"; } >> "$GITHUB_OUTPUT"
           echo "release $version from $sha, checked with: ${recent:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v4
@@ -170,32 +170,32 @@ jobs:
           initdb -D "$pg" -U postgres -A trust -E UTF8 --no-instructions --no-sync >/dev/null
           pg_ctl -D "$pg" -l "$pg/log" -w -o "-k $pg -p 54329 -c listen_addresses= -c fsync=off -c synchronous_commit=off -c full_page_writes=off" start
           psql -h "$pg" -p 54329 -U postgres -v ON_ERROR_STOP=1 -q -d postgres -f deploy/infrastructure/fleet-postgres.sql
-          # Each entry holds the release's fleet-coordinator and config/ and the sha256 digest of the asset it came from;
-          # a replaced asset (new digest) is fetched again, and the download is checked against that digest.
+          # Each entry holds the release's fleet-coordinator, config/ and release.json and the sha256 digest of the asset it
+          # came from; a replaced asset (new digest) is fetched again, and the download is checked against that digest.
+          # An asset GitHub reports no digest for is fetched every run, unchecked, as before the cache.
           cache=${HOME:?}/fleet-releases; mkdir -p "$cache"
           for d in "$cache"/*/; do d=${d%/}; [ -d "$d" ] || continue; case " $RECENT " in *" ${d##*/} "*) ;; *) rm -rf "$d";; esac; done
           for v in $RECENT; do
             file=fleet-$v-linux-amd64.tgz
             digest=$(printf '%s\n' $DIGESTS | sed -n "s/^$v=//p")
-            [ -n "$digest" ] || { echo "::error::v$v: no digest for $file"; exit 1; }
-            [ -x "$cache/$v/fleet-coordinator" ] && [ "$(cat "$cache/$v/.digest" 2>/dev/null)" = "$digest" ] && continue
+            [ -n "$digest" ] && [ -x "$cache/$v/fleet-coordinator" ] && [ "$(cat "$cache/$v/.digest" 2>/dev/null)" = "$digest" ] && continue
             rm -rf "$cache/$v.tmp"; mkdir "$cache/$v.tmp"
             gh release download "v$v" -p "$file" -D "$RUNNER_TEMP" --clobber || { echo "::error::v$v: download failed"; exit 1; }
-            echo "${digest#sha256:}  $RUNNER_TEMP/$file" | sha256sum -c --quiet || { echo "::error::v$v: $file does not match its digest"; exit 1; }
-            tar -xzf "$RUNNER_TEMP/$file" -C "$cache/$v.tmp" ./fleet-coordinator ./config || { echo "::error::v$v: extraction failed"; exit 1; }
+            [ -z "$digest" ] || echo "${digest#sha256:}  $RUNNER_TEMP/$file" | sha256sum -c --quiet || { echo "::error::v$v: $file does not match its digest"; exit 1; }
+            tar -xzf "$RUNNER_TEMP/$file" -C "$cache/$v.tmp" ./fleet-coordinator ./config ./release.json || { echo "::error::v$v: extraction failed"; exit 1; }
             rm -f "$RUNNER_TEMP/$file"; echo "$digest" > "$cache/$v.tmp/.digest"
             rm -rf "${cache:?}/$v"; mv "$cache/$v.tmp" "$cache/$v"
           done
           url() { echo "postgresql://$1@/fleet?host=$pg&port=54329"; }
           export PORT=9470 FLEET_DATABASE_URL=$(url fleet_app) FLEET_MIGRATION_DATABASE_URL=$(url fleet) \
             FLEET_PEOPLE_FILE=$PWD/tests/trial/people.json FLEET_BROWSER_SECRET=migrate-check FLEET_HOST_ID=pds18
-          # exec: kill stops the coordinator itself; the version check catches a leftover one still on the port.
+          # exec: kill stops the coordinator itself; a leftover one on the port shows as the fresh process exiting.
           # The latest release builds the database first, as PDS18's is: the new coordinator then applies only its new
           # migrations on top (a fresh database alone hides a migration that depends on an edited released one).
           for v in "${RECENT%% *}" "$VERSION" $RECENT; do
             dir=$cache/$v; [ "$v" = "$VERSION" ] && dir=$PWD/new
             (cd "$dir" && FLEET_PROJECT_CONFIG_DIRECTORY=$dir/config FLEET_PROFILES_DIRECTORY=$dir/config/agents FLEET_LAB_DIRECTORY=$dir/config/lab exec ./fleet-coordinator) & pid=$!
-            i=0; until curl -fsS -m 3 -o "$RUNNER_TEMP/health" http://127.0.0.1:9470/api/health && grep -q "\"version\":\"$v\"" "$RUNNER_TEMP/health"; do
+            i=0; until kill -0 $pid 2>/dev/null && curl -fsS -m 3 -o "$RUNNER_TEMP/health" http://127.0.0.1:9470/api/health && grep -q "\"version\":\"$v\"" "$RUNNER_TEMP/health"; do
               kill -0 $pid 2>/dev/null || { echo "::error::$dir coordinator exited"; exit 1; }
               i=$((i+1)); [ $i -lt 60 ] || { echo "::error::$dir coordinator not healthy"; exit 1; }; sleep 1; done
             echo; kill $pid; wait $pid || true; pid=
