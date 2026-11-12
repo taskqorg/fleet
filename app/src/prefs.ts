@@ -10,11 +10,14 @@ type Settings = Ops['person_settings_get']['reply'];
 type Patch = Omit<Ops['person_settings_set']['request'], 'email'>;
 const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], widths: {}, rowPins: {} };
 export const prefs = signal<Settings>(empty);
-/** The first read has finished (or failed): lists wait for it, so a focused person never loads an unfocused list first. */
+/**
+ * The person's preferences are known: read (or the read failed, so lists still load). Focus-dependent loads (useList, the
+ * Overview and Delivery docs) wait for it, so a focused person does not load an unfocused list first. A store clear resets it.
+ */
 export const prefsRead = signal(false);
 
 // A cleared store (signed out, another person, new grants) forgets the previous person's preferences too.
-onClear.add(() => { seq++; epoch++; pending = 0; prefs.value = empty; loadPrefs(); });
+onClear.add(() => { seq++; epoch++; pending = 0; prefs.value = empty; prefsRead.value = false; loadPrefs(); });
 
 // ponytail: last write wins; seq drops a stale reply. Each save sends only what changed: one item (viewPut, viewDelete,
 // rowPin, focusPresetPut, focusPresetDelete), one width, or a value the person set whole (focus, section pins in their
@@ -22,7 +25,9 @@ onClear.add(() => { seq++; epoch++; pending = 0; prefs.value = empty; loadPrefs(
 // Saves from this tab still run in order. A failed save shows the server copy again (or the state before it, when unreachable).
 // epoch: a store clear drops saves still queued for the previous person; pending: a read never overwrites a save in flight.
 let seq = 0, epoch = 0, pending = 0, chain: Promise<unknown> = Promise.resolve();
-export function loadPrefs() { const n = seq; return op('person_settings_get', {}).then(s => { if (seq === n && !pending) prefs.value = s; }).catch(() => {}).finally(() => { prefsRead.value = true; }); }
+// Any answer of the current person's read opens the gate (one held back by a save keeps the shown copy, the server's plus
+// that save); an answer for a person cleared meanwhile (epoch) does not.
+export function loadPrefs() { const n = seq, e = epoch; const done = () => { if (e === epoch) prefsRead.value = true; }; return op('person_settings_get', {}).then(s => { if (seq === n && !pending) prefs.value = s; done(); }, done); }
 /** Show the change at once and send its patch. */
 export function savePrefs(change: (s: Settings) => Partial<Settings>, patch: Patch) {
   const n = ++seq, e = epoch, before = prefs.value;

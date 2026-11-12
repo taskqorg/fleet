@@ -3,9 +3,9 @@ import { Projects } from './views/projects.tsx';
 import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation } from 'wouter-preact';
-import { AppShell, Empty, Button, Skeleton, workspaces, type NavItem, type AppScreen, type SpotlightProvider } from '../../packages/ui/src/index.ts';
+import { AppShell, Empty, Button, workspaces, type NavItem, type AppScreen, type SpotlightProvider } from '../../packages/ui/src/index.ts';
 import { op, signedOut, type Ops } from './api.ts';
-import { prefs, prefsRead, loadPrefs, savePrefs } from './prefs.ts';
+import { prefs, loadPrefs, savePrefs } from './prefs.ts';
 import { startFeed } from './feed.ts';
 import { startStore } from './store.ts';
 import { checkGrants, clearAll } from './offline.ts';
@@ -80,11 +80,11 @@ function App() {
   return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={pins} onPins={savePins} search={search}>
     {update && <div class="problem warning" role="status"><b>Update available</b><span class="facts">A new version of the app is ready.</span><span class="acts"><Button label="Reload" onClick={() => location.reload()} /></span></div>}
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
-    {!prefsRead.value ? <Skeleton rows={8} /> : <Switch>
+    <Switch>
       <Route path="/"><Redirect to="/overview" /></Route>
       {BUILT.map(s => <Route key={s.id} path={s.focus ? `/${s.id}/:id?` : `/${s.id}`}>{(p: { id?: string }) => s.view(p)}</Route>)}
       <Route><Empty text="This page does not exist." action={<Button label="Overview" icon="house" onClick={() => go('/overview')} />} /></Route>
-    </Switch>}
+    </Switch>
   </AppShell>;
 }
 
