@@ -91,7 +91,7 @@ test('Pinned context descriptors round-trip and freeze at real session enqueue a
  const foreign=structuredClone(content);foreign.settings.contextSources[0].repo='unknown';assert.equal((await op('project_update',{projectId:id,requestId:randomUUID(),baseRevision:2,content:foreign})).status,400);
  assert.equal((await op('project_context',{projectId:id},'outsider@trial.test')).status,404);
 });
-// Owner decision 2026-11-12: archived repositories leave Fleet; risk: a dropped project keeps running work or stays listed.
+// R2, R7; owner decision 2026-11-12, archived repositories leave Fleet; risk: a dropped project keeps running work or stays listed.
 test('Owner archives a project only after its open work is closed; it leaves every list',async()=>{
  const owner='owner@trial.test',id='project-'+randomUUID();
  ok(await op('project_create',{id,requestId:randomUUID(),content:bundle(id)}));
