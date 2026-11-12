@@ -38,9 +38,10 @@ async function until<T>(fn: () => Promise<T | undefined> | T | undefined, what: 
 const seen: string[] = [];
 let gateway: Server;
 let trialHostSecret = '';
+let typedReplyBarrier: {reached: () => void; release: Promise<void>} | undefined;
 let assetJob: {connection: string; mode: 'exact'|'missing'|'ambiguous'|'wrong-tool'|'ungranted'; jobId: string; kind?: 'rigging'; args: any; calls: string[]} | undefined;
 before(async () => {
-  gateway = createServer((req, res) => {
+  gateway = createServer(async (req, res) => {
     seen.push(String(req.headers.authorization));
     if (assetJob && req.url?.startsWith('/v1/call/' + assetJob.connection + '/')) {
       const fixture = assetJob, tool = req.url.split('/').at(-1)!;
@@ -62,6 +63,8 @@ before(async () => {
     }
 
     if (req.url === '/v1/call/typesafe/system_one') {
+      const barrier = typedReplyBarrier;
+      if (barrier) { barrier.reached(); await barrier.release; }
       // Plays TypeSafe's reply (shape seen live: answers.<id>.noul, model, usage) and spools the call line as fleet-gateway does.
       const callId = randomUUID(), token = String(req.headers.authorization).replace(/^Bearer /, '');
       const dir = join(GATEWAY_DIR, 'state', 'spool'); mkdirSync(dir, {recursive: true});
@@ -305,11 +308,18 @@ test('A2 analytics stage 2: the experiment record is required at launch, amended
   const refused = await call('POST', `/api/lab/experiments/${bare.id}/launch`, {});
   assert.equal(refused.status, 400); assert.match(refused.body.message ?? refused.body.error, /goal and hypothesis/);
   const e = ok(await create({goal: 'Decide yes/no questions cheaply', hypothesis: 'Jev answers the smoke question with p >= 0.5', decisionRule: 'adopt when the check passes'}));
-  ok(await call('POST', `/api/lab/experiments/${e.id}/launch`, {}));
-  const amended = ok(await op('lab_experiment_note', {experimentId: e.id, kind: 'amendment', field: 'hypothesis', value: 'Jev answers with p >= 0.8', text: 'tighter after the first trial'}));
-  assert.equal(amended.kind, 'amendment');
-  assert.equal((await op('lab_experiment_note', {experimentId: e.id, kind: 'amendment', field: 'variants', value: 'x', text: 'no'})).status, 400);
-  ok(await call('POST', `/api/lab/experiments/${e.id}/stop`, {}));
+  let reached = false, release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  // Keep the trial in flight until the owner stop commits, regardless of runner speed.
+  typedReplyBarrier = {reached: () => { reached = true; }, release: gate};
+  try {
+    ok(await call('POST', `/api/lab/experiments/${e.id}/launch`, {}));
+    const amended = ok(await op('lab_experiment_note', {experimentId: e.id, kind: 'amendment', field: 'hypothesis', value: 'Jev answers with p >= 0.8', text: 'tighter after the first trial'}));
+    assert.equal(amended.kind, 'amendment');
+    assert.equal((await op('lab_experiment_note', {experimentId: e.id, kind: 'amendment', field: 'variants', value: 'x', text: 'no'})).status, 400);
+    await until(() => reached || undefined, 'A2 gateway reply held');
+    ok(await call('POST', `/api/lab/experiments/${e.id}/stop`, {}));
+  } finally { typedReplyBarrier = undefined; release(); }
   const got = ok(await call('GET', `/api/lab/experiments/${e.id}`));
   assert.deepEqual([got.state, got.decision, got.hypothesis, got.notes.map((n: any) => [n.kind, n.field, n.old, n.new])],
     ['stopped', 'pending', 'Jev answers with p >= 0.8', [['amendment', 'hypothesis', 'Jev answers the smoke question with p >= 0.5', 'Jev answers with p >= 0.8']]]);
