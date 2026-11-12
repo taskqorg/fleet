@@ -20,7 +20,7 @@ q='query($n:Int!){repository(owner:"taskqorg",name:"fleet"){pullRequest(number:$
 while :; do
   # A failed gh call (network, rate limit) is retried, never read as "not merged".
   line=$(gh api graphql -f query="$q" -F n="$pr" -q '.data.repository.pullRequest | [.state, .mergeStateStatus, (.mergeCommit.oid // "-"),
-    (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (if .mergeQueueEntry then "queued" else "-" end), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired)] | group_by(.name) | map(max_by(.at // "~") | (.conclusion // .state)) | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "STARTUP_FAILURE" or . == "CANCELLED" or . == "STALE" or . == "ACTION_REQUIRED") then "red" else "-" end),
+    (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (if .mergeQueueEntry then "queued" else "-" end), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired)] | group_by(.name) | map(max_by(.at // (if .conclusion == null then "~" else "" end)) | (.conclusion // .state)) | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "STARTUP_FAILURE" or . == "CANCELLED" or . == "STALE" or . == "ACTION_REQUIRED") then "red" else "-" end),
     (if .timelineItems.nodes[0].__typename == "RemovedFromMergeQueueEvent" then (.timelineItems.nodes[0].reason // "unknown") else "auto-merge off" end)] | join(" ")') \
     || { wait_step "queue (gh failed)"; continue; }
   read -r state merge_state sha waiting queued checks reason <<<"$line"
@@ -31,7 +31,8 @@ while :; do
   [ "$state" = OPEN ] && [ "$waiting" = waiting ] || { echo "not merged: $state, $reason"; exit 1; }
   # A required check red on the head while auto-merge waits for the queue: GitHub never creates the entry and names nothing.
   # Only the newest run of each required check counts, as GitHub judges it: a rerun after a red run starts green (queued, no
-  # start time yet, sorts newest). A cancelled run does not pass either: naming it beats a silent 45-minute wait.
+  # start time yet, sorts newest; a run that ended without starting sorts oldest). A cancelled run does not pass either:
+  # naming it beats a silent 45-minute wait.
   # Inside the queue the queue's own run decides (a removal above); a late red pull_request rerun does not.
   [ "$checks" = red ] && [ "$queued" = "-" ] && { echo "not merged: $state, failed_checks (head)"; exit 1; }
   wait_step "queue"

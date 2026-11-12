@@ -37,7 +37,7 @@ if [ "$(hostname -s 2>/dev/null)" = pds18 ]; then sh -c "$journal" >"$tmp/journa
 else ssh -o BatchMode=yes -o ConnectTimeout=5 pds18 "$journal" >"$tmp/journal.txt" 2>/dev/null || echo "journal unavailable (ssh pds18): on PDS18 column from hosts_list only" >&2; fi
 
 D="$tmp" python3 -I - <<'PY'
-import json, os, re
+import json, os, re, sys
 from datetime import datetime
 d = os.environ["D"]
 load = lambda f: json.load(open(os.path.join(d, f)))
@@ -50,7 +50,8 @@ published = dict(tsv("releases.tsv")); tag_of = dict(tsv("tags.tsv"))
 # journalctl short-iso prints +0000 on older systemd; fromisoformat before 3.11 wants +00:00.
 jts = lambda s: datetime.fromisoformat(re.sub(r"([+-]\d\d)(\d\d)$", r"\1:\2", s)).timestamp()
 # First successful ci run of an event on a commit (a red run adds nothing; an "edited" rerun after green adds nothing either).
-# ponytail: a re-run attempt of an already green run moves its updatedAt; rare, accepted.
+# ponytail: a re-run attempt of an already green run moves its updatedAt, and a run green on the required jobs but red on an
+# optional one counts as no run; both rare, accepted (job-level data would need one more call per run).
 def ci(sha, event):
     done = [ts(r["updatedAt"]) for r in runs if r["headSha"] == sha and r["event"] == event and r["conclusion"] == "success"]
     return min(done) if done else None
@@ -65,9 +66,9 @@ for h in hosts:
     u = ((h.get("update") or {}).get("parts") or {}).get("coordinator") or {}
     if u.get("state") == "ok" and u.get("version") and u.get("at"): installed["coordinator", u["version"]] = ts(u["at"])
 part = {}  # version -> part named by its arrow line
-for line in open(os.path.join(d, "journal.txt")):
-    m = re.match(r"(\S+) \S+ fleet-update\[\d+\]: ((\S+): \S* -> (\S+)|(\S+) ok:)", line)
-    if not m: continue
+lines = [m for m in map(re.compile(r"(\S+) \S+ fleet-update\[\d+\]: ((\S+): \S* -> (\S+)|(\S+) ok:)").match, open(os.path.join(d, "journal.txt"))) if m]
+if not lines: print("journal: no update lines (not readable, or no updates in 60 days)", file=sys.stderr)
+for m in lines:
     if m.group(3): part.setdefault(m.group(4), m.group(3))
     else: installed.setdefault((part.get(m.group(5), "ui"), m.group(5)), jts(m.group(1)))
 stages = ["pr_ci", "mq_ci", "merged", "released", "on_host"]

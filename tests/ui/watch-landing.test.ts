@@ -83,6 +83,7 @@ test('landing observations retain authoritative publication, optional site evide
       pr({}, [red, check('go', 'SUCCESS', '2026-11-12T10:10:00Z')]),
       pr({}, [red, check('go', null, '2026-11-12T10:10:00Z')]),
       pr({}, [red, check('go', null, null)]),
+      pr({}, [check('go', 'CANCELLED', null), check('go', 'SUCCESS', '2026-11-12T10:10:00Z')]),
       pr({mergeQueueEntry: {state: 'QUEUED'}}, [red]),
     ]) { const r = run({WATCH_FIXTURE_GRAPHQL: graphql}, false, '0'); assert.equal(r.status, 2, r.stderr); assert.equal(r.stdout, 'timeout at: queue\n'); }
   } finally { rmSync(dir, {recursive: true, force: true}); }
