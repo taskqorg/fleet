@@ -20,7 +20,7 @@ q='query($n:Int!){repository(owner:"taskqorg",name:"fleet"){pullRequest(number:$
 while :; do
   # A failed gh call (network, rate limit) is retried, never read as "not merged".
   line=$(gh api graphql -f query="$q" -F n="$pr" -q '.data.repository.pullRequest | [.state, .mergeStateStatus, (.mergeCommit.oid // "-"),
-    (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (if .mergeQueueEntry then "queued" else "-" end), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired)] | group_by(.name) | map(max_by(.at) | (.conclusion // .state)) | any(. != null and . != "SUCCESS" and . != "NEUTRAL" and . != "SKIPPED" and . != "PENDING" and . != "EXPECTED") then "red" else "-" end),
+    (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (if .mergeQueueEntry then "queued" else "-" end), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired)] | group_by(.name) | map(max_by(.at // "~") | (.conclusion // .state)) | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "STARTUP_FAILURE") then "red" else "-" end),
     (if .timelineItems.nodes[0].__typename == "RemovedFromMergeQueueEvent" then ((.timelineItems.nodes[0].reason // "unknown") | if . == "CI_FAILURE" then "failed_checks" else ascii_downcase end) else "auto-merge off" end)] | join(" ")') \
     || { wait_step "queue (gh failed)"; continue; }
   read -r state merge_state sha waiting queued checks reason <<<"$line"
@@ -30,7 +30,8 @@ while :; do
   # Out of the queue: the newest of "removed from the queue" (its reason) and "auto-merge disabled" (a veto) names why.
   [ "$state" = OPEN ] && [ "$waiting" = waiting ] || { echo "not merged: $state, $reason"; exit 1; }
   # A required check red on the head while auto-merge waits for the queue: GitHub never creates the entry and names nothing.
-  # Only the newest run of each required check counts, as GitHub judges it: a rerun after a red run starts green (pending).
+  # Only the newest run of each required check counts, as GitHub judges it: a rerun after a red run starts green (queued, no
+  # start time yet, sorts newest). A cancelled run is somebody's choice, not a failure.
   # Inside the queue the queue's own run decides (a removal above); a late red pull_request rerun does not.
   [ "$checks" = red ] && [ "$queued" = "-" ] && { echo "not merged: $state, failed_checks"; exit 1; }
   wait_step "queue"

@@ -4,7 +4,7 @@
 # Usage: scripts/delivery-latency.sh [N, default 20]
 # Sources: gh (pull requests, workflow runs, releases matched by target commit); hosts_list through the deployed app as
 # site-agents (AGENTS.md, update.at of a healthy "ok" update, only the release each host runs now); journalctl -u fleet-update
-# on PDS18 ("coordinator: X -> Y" then "Y ok:", or "ui: X -> Y" for a ui-*-v* release, read locally on pds18 or over
+# on PDS18 ("coordinator: X -> Y" then "Y ok:"; a ui-*-v* release logs only its "Y ok:", read locally on pds18 or over
 # `ssh pds18`) for earlier releases. A stage without data prints "-".
 set -euo pipefail
 n=${1:-20}
@@ -53,7 +53,7 @@ def ci(sha, event):
     return min(done) if done else None
 # PDS18 install time per (part, version): hosts_list for the version the coordinator's host runs now (a healthy "ok" update
 # only), else the journal's "Y ok:" line after "<part>: X -> Y" (the update start; a refused, errored or rolled-back candidate
-# never gets its "ok").
+# never gets its "ok"). The UI part logs no arrow line: an "ok" that follows no arrow is a UI install.
 installed = {}
 for h in hosts:
     u = h.get("update") or {}
@@ -65,6 +65,7 @@ for line in open(os.path.join(d, "journal.txt")):
     if not m: continue
     if m.group(3): pending = (m.group(3), m.group(4))
     elif pending and m.group(5) == pending[1]: installed.setdefault(pending, jts(m.group(1))); pending = None
+    elif m.group(5): installed.setdefault(("ui", m.group(5)), jts(m.group(1)))
 stages = ["pr_ci", "mq_ci", "merged", "released", "on_host"]
 rows = []
 for p in prs:
@@ -79,7 +80,7 @@ print("|---|---|---|---|---|---|---|")
 for num, tag, m in rows: print(f"| #{num} | {tag} | " + " | ".join(fmt(m[s]) for s in stages) + " |")
 def pct(vals, q):
     v = sorted(x for x in vals if x is not None)
-    return v[min(len(v) - 1, int(round(q * (len(v) - 1))))] if v else None
+    return v[min(len(v) - 1, int(q * (len(v) - 1) + 0.5))] if v else None  # nearest rank, half up
 for name, q in (("P50", .5), ("P90", .9)): print(f"| {name} | | " + " | ".join(fmt(pct([m[s] for _, _, m in rows], q)) for s in stages) + " |")
 print("\nminutes from pull request opened; P50/P90 over pull requests with data for that stage")
 PY
