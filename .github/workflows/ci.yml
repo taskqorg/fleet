@@ -232,8 +232,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # Commands per part: scripts/ci-part.sh, shared with cache-warm.
-      - run: scripts/ci-part.sh "$PART" build
+      # Commands per part: scripts/ci-part.sh, shared with cache-warm. The outside parts build their coordinator while
+      # ClickHouse comes up (test then finds it built).
+      - if: startsWith(matrix.part, 'outside-')
+        run: scripts/ci-part.sh "$PART" build
         env:
           PART: ${{ matrix.part }}
       - if: matrix.clickhouse
