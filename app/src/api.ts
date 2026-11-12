@@ -34,4 +34,5 @@ export async function op<K extends OpName>(name: K, body: Ops[K]['request'], opt
 
 // A key request (connections_key_request): the owner's value goes straight to connections_key_add, which answers the
 // question with the fingerprint only; the value never reaches questions_answer or the asking agent.
-export const addRequestedKey = (questionId: string, connection: string, value: string) => op('connections_key_add', { connection, value, questionId });
+export const addRequestedKey = (questionId: string, connection: string, value: string) =>
+  online.value ? op('connections_key_add', { connection, value, questionId }) : Promise.reject(Error('Offline: the key was not sent'));

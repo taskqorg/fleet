@@ -398,6 +398,12 @@ func init() {
 		if old, err := maybe(q, "key:"+fp, "connection-key"); err != nil {
 			return nil, err
 		} else if old != nil {
+			if qid != "" && old["connectionId"] == c["name"] && old["state"] == "active" { // Fleet already holds it: answer with it
+				if _, err := answerQuestion(q, qid, keyAnswer(astr(c["name"]), fp, "active"), actor(q, "operator"), nil); err != nil {
+					return nil, err
+				}
+				return old, nil
+			}
 			return nil, fail(409, "Key already added")
 		}
 		dir, err := connDir(astr(c["name"]))
@@ -457,7 +463,7 @@ func init() {
 		if reason != "" {
 			text += ": " + reason
 		}
-		d, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE "+projectQuestion+" AND project_id=$1 AND request_id=$2", b["projectId"], rid)
+		d, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE kind='secret' AND project_id=$1 AND request_id=$2", b["projectId"], rid)
 		if err != nil {
 			return nil, err
 		}
@@ -471,7 +477,15 @@ func init() {
 		ask := doc{"id": v["id"], "kind": "secret", "text": text, "projectId": b["projectId"], "askedBy": v["actor"], "requestId": rid, "askedAt": v["createdAt"],
 			"options": doc{"connection": c["name"]}}
 		if strings.HasPrefix(q.agent, "execution:") { // a host agent: the question shows in its conversation
-			ask["executionId"] = strings.TrimPrefix(q.agent, "execution:")
+			eid := strings.TrimPrefix(q.agent, "execution:")
+			e, err := first(q, "SELECT session_id FROM execution WHERE id=$1", eid)
+			if err != nil {
+				return nil, err
+			}
+			ask["executionId"] = eid
+			if e != nil {
+				ask["sessionId"] = e["session_id"]
+			}
 		}
 		_, err = askQuestion(q, ask)
 		return v, err
@@ -1251,7 +1265,7 @@ func keyAnswerCheck(q *Request, qn doc, answer string) error {
 	if qn["kind"] != "secret" {
 		return nil
 	}
-	if q.person != nil && !fullAccess(q.person) {
+	if q.agent != "" || q.person == nil || !fullAccess(q.person) { // never the asking agent, even with the owner's rights
 		return fail(403, "Only the owner answers a key request")
 	}
 	if answer == "decline" {
@@ -1266,7 +1280,7 @@ func keyAnswerCheck(q *Request, qn doc, answer string) error {
 	if err != nil {
 		return err
 	}
-	if k == nil || k["connectionId"] != conn {
+	if k == nil || k["connectionId"] != conn || a.State != "active" || k["state"] != "active" {
 		return fail(400, "Answer decline, or add the key in its field")
 	}
 	return nil

@@ -485,7 +485,7 @@ func init() {
 		if rid == "" || text == "" || len([]rune(text)) > 2000 {
 			return nil, fail(400, "Expected question text and requestId")
 		}
-		d, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE "+projectQuestion+" AND project_id=$1 AND request_id=$2", b["projectId"], rid)
+		d, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE kind='operator_decision' AND project_id=$1 AND request_id=$2", b["projectId"], rid)
 		if err != nil {
 			return nil, err
 		}

@@ -249,8 +249,8 @@ export function DecisionBlock(p: DecisionProps) {
       <span>{p.question} <b>{a.answer}</b> · {a.by} · {age(a.at, p.now).text}{a.delivered ? '' : ' · delivery pending'}</span></div>;
   }
   const send = (s: string) => s.trim() && p.onAnswer?.(s.trim());
-  // The field clears at once, so the value lives only in this request; a refusal shows its reason, never the value.
-  const secret = () => { const v = text.trim(); if (!v || !p.onSecret) return; setText(''); setFailed(null); p.onSecret(v).catch(e => setFailed(String(e?.message ?? e))); };
+  // The field clears once the key is stored; a refusal shows its reason, never the value.
+  const secret = () => { const v = text.trim(); if (!v || !p.onSecret) return; setFailed(null); p.onSecret(v).then(() => setText(''), e => setFailed(String(e?.message ?? e))); };
   return (
     <div class="decision" data-ui="decision-block" role="group" aria-label={p.question}
       onKeyDown={e => { if ((e.target as HTMLElement).tagName === 'INPUT') return; const o = p.options.find(o => o.kbd === e.key); if (o) send(o.label); }}>
