@@ -61,12 +61,14 @@ func init() {
 	operation("delivery_status", true, typedOp(deliveryStatus))
 }
 
-func deliveryStatus(q *Request, _ *contract.DeliveryStatusRequest) (contract.DeliveryStatusReply, error) {
+func deliveryStatus(q *Request, r *contract.DeliveryStatusRequest) (contract.DeliveryStatusReply, error) {
 	deliveryMu.Lock()
 	last := deliveryLast
 	deliveryMu.Unlock()
 	full := fullAccess(q.person)
-	return deliveryReply(last, func(p string) bool { return full || mayAccessProjectID(q.person, p) }), nil
+	return deliveryReply(last, func(p string) bool {
+		return (full || mayAccessProjectID(q.person, p)) && (len(r.ProjectIds) == 0 || slices.Contains(r.ProjectIds, p) || p == "" && slices.Contains(r.ProjectIds, "-"))
+	}), nil
 }
 
 // deliveryReply: the part of the last pass a caller may see. A repository (its items, landing count, error and

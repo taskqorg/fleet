@@ -14,27 +14,27 @@ export const prefs = signal<Settings>(empty);
 // A cleared store (signed out, another person, new grants) forgets the previous person's preferences too.
 onClear.add(() => { seq++; epoch++; pending = 0; prefs.value = empty; loadPrefs(); });
 
-// ponytail: last write wins; seq drops a stale reply. A save re-reads the server copy first and builds whole lists (views,
-// pins, focus presets) from it, so changes made meanwhile by an agent or another device survive; the gap between that read
-// and the write is one round trip. Saves from this tab run one after another, so two quick changes never overwrite each other.
-// A failed save shows the server copy again (or the state before it, when unreachable).
+// ponytail: last write wins; seq drops a stale reply. Each save sends only what changed: one item (viewPut, viewDelete,
+// rowPin, focusPresetPut, focusPresetDelete), one width, or a value the person set whole (focus, section pins in their
+// order). The server applies it to the stored copy under the person lock, so saves from other devices and agents survive.
+// Saves from this tab still run in order. A failed save shows the server copy again (or the state before it, when unreachable).
 // epoch: a store clear drops saves still queued for the previous person; pending: a read never overwrites a save in flight.
 let seq = 0, epoch = 0, pending = 0, chain: Promise<unknown> = Promise.resolve();
 export function loadPrefs() { const n = seq; return op('person_settings_get', {}).then(s => { if (seq === n && !pending) prefs.value = s; }).catch(() => {}); }
-/** Show the change at once, then send it built from a fresh server copy. */
-export function savePrefs(change: (s: Settings) => Partial<Settings>, patch: (s: Settings) => Patch = s => change(s) as Patch) {
+/** Show the change at once and send its patch. */
+export function savePrefs(change: (s: Settings) => Partial<Settings>, patch: Patch) {
   const n = ++seq, e = epoch, before = prefs.value;
   prefs.value = { ...before, ...change(before) };
   pending++;
-  chain = chain.then(() => e !== epoch ? null : op('person_settings_get', {}).then(fresh => e !== epoch ? null : op('person_settings_set', patch(fresh))))
+  chain = chain.then(() => e !== epoch ? null : op('person_settings_set', patch))
     .then(s => { if (e !== epoch) return; pending--; if (s && seq === n) prefs.value = s; }, () => { if (e !== epoch) return; pending--; if (seq === n) { prefs.value = before; loadPrefs(); } });
 }
 
 export function usePins(list: string) {
   const ids = prefs.value.rowPins[list] ?? [], set = new Set(ids);
   return { has: (id: string) => set.has(id), toggle: (id: string) => {
-    const next = (s: Settings) => { const xs = s.rowPins[list] ?? []; return xs.includes(id) ? xs.filter(x => x !== id) : [...xs, id]; };
-    savePrefs(s => ({ rowPins: { ...s.rowPins, [list]: next(s) } }), s => ({ rowPins: { [list]: next(s) } }));
+    const pinned = !set.has(id);
+    savePrefs(s => { const xs = (s.rowPins[list] ?? []).filter(x => x !== id); return { rowPins: { ...s.rowPins, [list]: pinned ? [...xs, id] : xs } }; }, { rowPin: { list, id, pinned } });
   } };
 }
 
@@ -43,32 +43,38 @@ export type SavedView = { name: string; view: View; system?: boolean };
 /** System presets (fixed, from the app) come first, then the person's own views of this list. */
 export function useViews(list: string, system: SavedView[]) {
   const mine: SavedView[] = prefs.value.views.filter(v => v.list === list).map(v => ({ name: v.name, view: v.view as unknown as View }));
-  type Stored = Settings['views'][number];
-  const keep = (edit: (own: Stored[]) => Stored[]) => savePrefs(s => ({ views: [...s.views.filter(x => x.list !== list), ...edit(s.views.filter(x => x.list === list))] }));
   const isSystem = (n: string) => system.some(s => s.name === n);
   return {
     list: [...system.map(s => ({ ...s, system: true })), ...mine.filter(v => !isSystem(v.name))],
-    save: (v: SavedView) => { if (!isSystem(v.name)) keep(own => [...own.filter(x => x.name !== v.name), { list, name: v.name, view: v.view as unknown as Record<string, unknown> }]); },
-    remove: (n: string) => keep(own => own.filter(x => x.name !== n)),
+    save: (v: SavedView) => {
+      if (isSystem(v.name)) return;
+      const item = { list, name: v.name, view: v.view as unknown as Record<string, unknown> };
+      savePrefs(s => { const i = s.views.findIndex(x => x.list === list && x.name === v.name); const vs = [...s.views]; if (i < 0) vs.push(item); else vs[i] = item; return { views: vs }; }, { viewPut: item });
+    },
+    remove: (n: string) => savePrefs(s => ({ views: s.views.filter(x => !(x.list === list && x.name === n)) }), { viewDelete: { list, name: n } }),
   };
 }
 
 /** The focused projects ('-' is no project); empty: every project. */
-export const setFocus = (projects: string[]) => savePrefs(() => ({ focus: projects }));
+export const setFocus = (projects: string[]) => savePrefs(() => ({ focus: projects }), { focus: projects });
+/** The focus as the projectIds filter of an operation (questions_list, executions_list, delivery_status); undefined: all. */
+export const focusIds = () => prefs.value.focus.length ? prefs.value.focus : undefined;
 // Views whose URL codec has a project key, so the focus is part of the list key (store and IndexedDB identity).
-const FOCUSED = ['tasks', 'results'];
+const FOCUSED = ['tasks', 'results', 'conversations'];
 /** A view with the focus as its project filter when the view names no project itself. */
 export function withFocus(v: View): View {
   const f = prefs.value.focus;
   return v.project?.length || !f.length || !FOCUSED.includes(v.view) ? v : { ...v, project: f.map(p => p === '-' ? null : p) };
 }
-export const saveFocusPreset = (name: string, projects?: string[]) =>
-  savePrefs(s => ({ focusPresets: [...s.focusPresets.filter(p => p.name !== name), { name, projects: projects ?? s.focus }] }));
-export const removeFocusPreset = (name: string) => savePrefs(s => ({ focusPresets: s.focusPresets.filter(p => p.name !== name) }));
+export function saveFocusPreset(name: string, projects = prefs.value.focus) {
+  const item = { name, projects };
+  savePrefs(s => { const i = s.focusPresets.findIndex(p => p.name === name); const ps = [...s.focusPresets]; if (i < 0) ps.push(item); else ps[i] = item; return { focusPresets: ps }; }, { focusPresetPut: item });
+}
+export const removeFocusPreset = (name: string) => savePrefs(s => ({ focusPresets: s.focusPresets.filter(p => p.name !== name) }), { focusPresetDelete: name });
 
 /** A column width in px by key (nav, control); 0 resets to the default. */
 export function useWidth(key: string, fallback: number): [number, (px: number) => void] {
   return [prefs.value.widths[key] || fallback, px => {
-    savePrefs(s => { const w = { ...s.widths }; if (px) w[key] = Math.round(px); else delete w[key]; return { widths: w }; }, () => ({ widths: { [key]: Math.round(px) } }));
+    savePrefs(s => { const w = { ...s.widths }; if (px) w[key] = Math.round(px); else delete w[key]; return { widths: w }; }, { widths: { [key]: Math.round(px) } });
   }];
 }

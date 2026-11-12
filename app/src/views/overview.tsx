@@ -3,20 +3,24 @@ import { useLocation } from 'wouter-preact';
 import { OpsSummary, NeedsYou, Latest, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, keyConnection, actor } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useDoc } from '../store.ts';
+import { focusIds } from '../prefs.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 
 type Overview = { questions: any[]; problems: any[]; counts: Record<string, number>; hosts: null; projects: { id: string; project: string | null; counts: Record<string, number> }[] };
-async function fetchOverview(): Promise<Overview> {
-  const [q, p, page] = await Promise.all([op('questions_list', { state: 'open' }), op('executions_list', { needsYou: true }), op('task_page', { group: 'project', groupCounts: true, limit: 1 })]);
+// The focus (OR-34) narrows every part: questions, problems, counts and project rows.
+async function fetchOverview(projectIds?: string[]): Promise<Overview> {
+  const [q, p, page] = await Promise.all([op('questions_list', { state: 'open', projectIds }), op('executions_list', { needsYou: true, projectIds }),
+    op('task_page', { group: 'project', groupCounts: true, limit: 1, filter: projectIds ? { projectId: projectIds.map(x => x === '-' ? null : x) } : {} })]);
   // One grouped call: each project's per-state counts (groupCounts); tasks without a project are their own group.
   const projects = (page.groups as any[]).map(g => ({ id: g.label ?? 'no project', project: g.label ?? null, counts: g.counts }));
   return { questions: q.questions, problems: p.executions, counts: page.counts, hosts: null, projects };
 }
 
 export function Overview() {
+  const focus = focusIds();
   const alive = useAlive();
   const [, go] = useLocation();
-  const { data, state, error } = useDoc<Overview>('overview', fetchOverview, c => ['task', 'question', 'execution'].includes(c.kind));
+  const { data, state, error } = useDoc<Overview>('overview:' + (focus ?? []).join(','), () => fetchOverview(focus), c => ['task', 'question', 'execution'].includes(c.kind));
   const hostsRec = useDoc<any>('overview-hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
   const now = Date.now();
   const hosts = hostsRec.data, hostNow = hosts ? hosts.serverNow + (now - hosts.fetchedAt) : now;

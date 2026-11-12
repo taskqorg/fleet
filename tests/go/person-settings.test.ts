@@ -42,3 +42,28 @@ test('P2 preferences (saved views, focus, focus presets, widths, row pins) are s
     assert.equal(b.status, 400, JSON.stringify(bad));
   }
 });
+
+test('P3 per-item changes (viewPut, viewDelete, rowPin, focusPresetPut, focusPresetDelete) apply to the stored lists, so concurrent saves keep each other (requirement: OR-33, OR-34 stored per person; risk: two devices saving views at once lose one)', async () => {
+  const v = (name: string) => ({list: 'tasks', name, view: {view: 'tasks', state: ['failed']}});
+  await Promise.all([op('person_settings_set', {viewPut: v('A')}), op('person_settings_set', {viewPut: v('B')}), op('person_settings_set', {rowPin: {list: 'tasks', id: 'x', pinned: true}}), op('person_settings_set', {rowPin: {list: 'tasks', id: 'y', pinned: true}})]);
+  let s = await op('person_settings_get');
+  assert.deepEqual(s.views.map((x: any) => x.name).filter((n: string) => n !== 'Mine').sort(), ['A', 'B']);
+  assert.deepEqual([...s.rowPins.tasks].sort(), ['x', 'y']);
+  s = await op('person_settings_set', {viewPut: {...v('A'), view: {view: 'tasks', state: ['queued']}}});
+  assert.deepEqual(s.views.find((x: any) => x.name === 'A').view.state, ['queued']);
+  s = await op('person_settings_set', {viewDelete: {list: 'tasks', name: 'A'}, rowPin: {list: 'tasks', id: 'x', pinned: false}, focusPresetPut: {name: 'P', projects: ['fleet']}});
+  assert.equal(s.views.some((x: any) => x.name === 'A'), false); assert.deepEqual(s.rowPins.tasks, ['y']); assert.ok(s.focusPresets.some((p: any) => p.name === 'P'));
+  s = await op('person_settings_set', {focusPresetDelete: 'P'});
+  assert.equal(s.focusPresets.some((p: any) => p.name === 'P'), false);
+});
+
+test('P4 questions_list, executions_list and delivery_status keep only projectIds when given (requirement: OR-34 focus applies app-wide; risk: Overview and Delivery ignore the focus)', async () => {
+  for (const [name, body, key] of [['questions_list', {}, 'questions'], ['executions_list', {}, 'executions']] as const) {
+    const all = (await op(name, body))[key], none = (await op(name, {...body, projectIds: ['no-such']}))[key];
+    assert.equal(none.length, 0, name); assert.ok(Array.isArray(all));
+    const free = (await op(name, {...body, projectIds: ['-']}))[key];
+    assert.ok(free.every((r: any) => !r.projectId), name);
+  }
+  const d = await op('delivery_status', {projectIds: ['no-such']});
+  assert.deepEqual([d.items.length, d.samples.length], [0, 0]);
+});

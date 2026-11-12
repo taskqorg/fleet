@@ -63,7 +63,7 @@ const TABLE: Record<ViewName, Record<string, Key>> = {
   },
   conversations: {
     archived: { parse: (v, raw) => { if (raw === '1') v.archived = true; }, format: v => v.archived ? '1' : undefined, list: true },
-    preset: text('preset', false), q: text('q', true), sel: listKey_('sel'), state: listKey_('state', SESSION_STATES),
+    preset: text('preset', false), project, q: text('q', true), sel: listKey_('sel'), state: listKey_('state', SESSION_STATES),
   },
   // Results (docs/designs/fleet-conversations.md Stage 4): task, execution, media and since ride in extra.
   results: { project, q: text('q', true), state: listKey_('state', ARTIFACT_STATES) },

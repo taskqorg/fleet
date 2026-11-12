@@ -3,26 +3,35 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { prefs, savePrefs, withFocus, useViews, useWidth } from '../../app/src/prefs.ts';
+import { prefs, savePrefs, withFocus, useViews, useWidth, usePins, saveFocusPreset, removeFocusPreset, focusIds } from '../../app/src/prefs.ts';
 
-const sent: any[] = [];
-let stored = { email: 'o@x', order: 'list', pins: [], views: [{ list: 'hosts', name: 'Mine', view: { view: 'hosts' } }], focus: [], focusPresets: [], widths: {}, rowPins: {} };
+const sent: [string, any][] = [];
+// The server applies the patch; the mock answers with what the tab shows, which is enough to test what is sent.
 (globalThis as any).fetch = async (url: string, init: any) => {
-  const body = JSON.parse(init.body); if (url.endsWith('_set')) { sent.push([url, body]); stored = { ...stored, ...body }; }
-  await new Promise(r => setTimeout(r, 5)); return { type: 'basic', status: 200, ok: true, json: async () => stored };
+  if (url.endsWith('_set')) sent.push([url, JSON.parse(init.body)]);
+  await new Promise(r => setTimeout(r, 5)); const reply = prefs.value; return { type: 'basic', status: 200, ok: true, json: async () => reply };
 };
+const settle = () => new Promise(r => setTimeout(r, 30));
 
-test('a save builds whole lists from a fresh server copy, so views stored elsewhere (an agent, another device) survive', async () => {
+test('a save sends one item, never a whole list, so items saved elsewhere (an agent, another device) survive', async () => {
   useViews('tasks', []).save({ name: 'Early', view: { view: 'tasks' } });
   assert.deepEqual(prefs.value.views.map(v => v.name), ['Early']); // shown at once
-  await new Promise(r => setTimeout(r, 30));
-  assert.deepEqual(sent[0][1].views.map((v: any) => v.list + ':' + v.name), ['hosts:Mine', 'tasks:Early']);
+  await settle();
+  assert.deepEqual(sent, [['/api/ops/person_settings_set', { viewPut: { list: 'tasks', name: 'Early', view: { view: 'tasks' } } }]]);
+  useViews('tasks', []).remove('Early'); usePins('tasks').toggle('t1'); saveFocusPreset('Core', ['fleet']); removeFocusPreset('Core');
+  await settle();
+  assert.deepEqual(sent.slice(1).map(x => x[1]), [{ viewDelete: { list: 'tasks', name: 'Early' } }, { rowPin: { list: 'tasks', id: 't1', pinned: true } },
+    { focusPresetPut: { name: 'Core', projects: ['fleet'] } }, { focusPresetDelete: 'Core' }]);
+  assert.equal(sent.some((x: any) => x[0].endsWith('_get')), false);
 });
 
-test('OR-34 focus applies only to lists whose list key carries the project (tasks, results)', () => {
+test('OR-34 focus applies to every list keyed by project (tasks, results, conversations) and becomes projectIds of feeds', () => {
   prefs.value = { ...prefs.value, focus: ['fleet'] };
-  assert.equal(withFocus({ view: 'conversations' }).project, undefined);
+  for (const v of ['tasks', 'results', 'conversations'] as const) assert.deepEqual(withFocus({ view: v }).project, ['fleet']);
+  assert.equal(withFocus({ view: 'hosts' }).project, undefined);
+  assert.deepEqual(focusIds(), ['fleet']);
   prefs.value = { ...prefs.value, focus: [] };
+  assert.equal(focusIds(), undefined);
 });
 
 test('OR-34 focus is the project filter of a view that names no project; an explicit project wins', () => {
@@ -39,19 +48,19 @@ test('OR-33 system presets come first and cannot be overwritten; personal views 
   v.save({ name: 'Running', view: { view: 'tasks' } });
   assert.equal(sent.length, 0);
   v.save({ name: 'Mine', view: { view: 'tasks', state: ['failed'] } });
-  await new Promise(r => setTimeout(r, 30));
-  assert.deepEqual(sent[0][1].views.at(-1), { list: 'tasks', name: 'Mine', view: { view: 'tasks', state: ['failed'] } });
-  assert.deepEqual(useViews('tasks', [{ name: 'Running', view: { view: 'tasks' } }]).list.map(x => x.name), ['Running', 'Early', 'Mine']);
+  await settle();
+  assert.deepEqual(sent[0][1], { viewPut: { list: 'tasks', name: 'Mine', view: { view: 'tasks', state: ['failed'] } } });
+  assert.deepEqual(useViews('tasks', [{ name: 'Running', view: { view: 'tasks' } }]).list.map(x => x.name), ['Running', 'Mine']);
 });
 
 test('OR-41 a width is sent by key only; 0 resets it', async () => {
   sent.length = 0;
-  savePrefs(() => ({ widths: { nav: 200 } }));
+  savePrefs(() => ({ widths: { nav: 200 } }), { widths: { nav: 200 } });
   const [w, set] = useWidth('nav', 240); assert.equal(w, 200);
   await new Promise(r => setTimeout(r, 30));
   set(0); assert.equal(useWidth('nav', 240)[0], 240);
   await new Promise(r => setTimeout(r, 30));
-  assert.deepEqual(sent.at(-1)[1], { widths: { nav: 0 } });
+  assert.deepEqual(sent.at(-1)?.[1], { widths: { nav: 0 } });
 });
 
 test('OR-33 OR-34 OR-41 preferences never use browser storage', () => {

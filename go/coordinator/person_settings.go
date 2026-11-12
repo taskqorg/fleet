@@ -160,6 +160,42 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	if r.FocusPresets != nil {
 		next.FocusPresets = r.FocusPresets
 	}
+	// Per-item changes apply to the stored lists under the person lock, so concurrent saves from several devices or agents
+	// never drop each other's items.
+	if r.ViewPut != nil || r.ViewDelete != nil {
+		vs := []contract.SavedView{}
+		put := false
+		for _, v := range next.Views {
+			switch {
+			case r.ViewDelete != nil && v.List == r.ViewDelete.List && v.Name == r.ViewDelete.Name:
+			case r.ViewPut != nil && v.List == r.ViewPut.List && v.Name == r.ViewPut.Name:
+				vs, put = append(vs, *r.ViewPut), true
+			default:
+				vs = append(vs, v)
+			}
+		}
+		if r.ViewPut != nil && !put {
+			vs = append(vs, *r.ViewPut)
+		}
+		next.Views = vs
+	}
+	if r.FocusPresetPut != nil || r.FocusPresetDelete != nil {
+		ps := []contract.FocusPreset{}
+		put := false
+		for _, p := range next.FocusPresets {
+			switch {
+			case r.FocusPresetDelete != nil && p.Name == *r.FocusPresetDelete:
+			case r.FocusPresetPut != nil && p.Name == r.FocusPresetPut.Name:
+				ps, put = append(ps, contract.FocusPreset{Name: p.Name, Projects: unique(r.FocusPresetPut.Projects)}), true
+			default:
+				ps = append(ps, p)
+			}
+		}
+		if r.FocusPresetPut != nil && !put {
+			ps = append(ps, contract.FocusPreset{Name: r.FocusPresetPut.Name, Projects: unique(r.FocusPresetPut.Projects)})
+		}
+		next.FocusPresets = ps
+	}
 	if r.Widths != nil {
 		next.Widths = maps.Clone(prev.Widths)
 		for k, w := range r.Widths {
@@ -178,6 +214,18 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 			} else {
 				next.RowPins[k] = unique(ids)
 			}
+		}
+	}
+	if r.RowPin != nil {
+		next.RowPins = maps.Clone(next.RowPins)
+		ids := slices.DeleteFunc(slices.Clone(next.RowPins[r.RowPin.List]), func(x string) bool { return x == r.RowPin.Id })
+		if r.RowPin.Pinned {
+			ids = append(ids, r.RowPin.Id)
+		}
+		if len(ids) == 0 {
+			delete(next.RowPins, r.RowPin.List)
+		} else {
+			next.RowPins[r.RowPin.List] = ids
 		}
 	}
 	by := actor(q, "operator")
@@ -212,22 +260,42 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	return next, err
 }
 
+// checkView: a saved view has a list and a name and is a valid view of that list (viewProblem, the view_link check).
+func checkView(v contract.SavedView) error {
+	if strings.TrimSpace(v.List) == "" || strings.TrimSpace(v.Name) == "" {
+		return fail(400, "views: list and name are required")
+	}
+	var view any
+	raw, _ := json.Marshal(v.View)
+	_ = json.Unmarshal(raw, &view)
+	if p := viewProblem(view); p != "" {
+		return fail(400, "views: "+v.Name+": "+p)
+	}
+	if name, _ := view.(map[string]any)["view"].(string); name != v.List {
+		return fail(400, "views: "+v.Name+": view.view must equal list "+v.List)
+	}
+	return nil
+}
+
 // checkPrefs: names are present and unique (views per list), each view is a valid view of its list (viewProblem, the
 // view_link check), widths are not negative.
 func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
+	views := r.Views
+	if r.ViewPut != nil {
+		if err := checkView(*r.ViewPut); err != nil {
+			return err
+		}
+	}
+	if r.FocusPresetPut != nil && strings.TrimSpace(r.FocusPresetPut.Name) == "" {
+		return fail(400, "focusPresetPut: name is required")
+	}
+	if r.RowPin != nil && (r.RowPin.List == "" || r.RowPin.Id == "") {
+		return fail(400, "rowPin: list and id are required")
+	}
 	seen := map[string]bool{}
-	for _, v := range r.Views {
-		if strings.TrimSpace(v.List) == "" || strings.TrimSpace(v.Name) == "" {
-			return fail(400, "views: list and name are required")
-		}
-		var view any
-		raw, _ := json.Marshal(v.View)
-		_ = json.Unmarshal(raw, &view)
-		if p := viewProblem(view); p != "" {
-			return fail(400, "views: "+v.Name+": "+p)
-		}
-		if name, _ := view.(map[string]any)["view"].(string); name != v.List {
-			return fail(400, "views: "+v.Name+": view.view must equal list "+v.List)
+	for _, v := range views {
+		if err := checkView(v); err != nil {
+			return err
 		}
 		if seen[v.List+"\x00"+v.Name] {
 			return fail(400, "views: duplicate name "+v.Name+" in list "+v.List)

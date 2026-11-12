@@ -446,8 +446,8 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 const questionCols = `id,code,kind,project_id AS "projectId",task_id AS "taskId",execution_id AS "executionId",session_id AS "sessionId",text,options,asked_by AS "askedBy",asked_at AS "askedAt",
  answer,answered_by AS "answeredBy",answered_at AS "answeredAt",state,data->'artifactIds' AS "artifactIds",data->'cause' AS cause`
 
-func questionsList(q *Request, taskID, state, kind string) ([]doc, error) {
-	c, p := []string{}, []any{}
+func questionsList(q *Request, taskID, state, kind string, projects ...string) ([]doc, error) {
+	c, p := projectIn(nil, nil, projects)
 	for _, f := range [][2]string{{taskID, "task_id"}, {state, "state::text"}, {kind, "kind::text"}} {
 		if f[0] != "" {
 			p = append(p, f[0])
@@ -463,6 +463,24 @@ func questionsList(q *Request, taskID, state, kind string) ([]doc, error) {
 		}
 	}
 	return rs, err
+}
+
+// projectIn: the condition "project in ids" ('-' is no project) appended to c and p; none when ids is empty.
+func projectIn(c []string, p []any, ids []string) ([]string, []any) {
+	if c == nil {
+		c, p = []string{}, []any{}
+	}
+	if len(ids) == 0 {
+		return c, p
+	}
+	norm := make([]string, len(ids))
+	for i, id := range ids {
+		if id != "-" {
+			norm[i] = id
+		}
+	}
+	p = append(p, norm)
+	return append(c, fmt.Sprintf("coalesce(project_id,'')=ANY($%d)", len(p))), p
 }
 
 func where(c []string) string {
@@ -553,6 +571,7 @@ func executionsList(q *Request, f contract.ExecutionsListRequest) ([]contract.Ex
 		AND NOT (kind='pipeline_step' AND EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.problem IS NOT NULL AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1))))
 		AND (project_id IS NULL OR EXISTS (SELECT 1 FROM definition d WHERE d.kind='project' AND d.id=execution.project_id))`)
 	}
+	c, p = projectIn(c, p, f.ProjectIds)
 	rs, err := rowsOf(q, "SELECT "+executionCols+" FROM execution"+where(c)+" ORDER BY seq", p...)
 	if err != nil {
 		return nil, err
@@ -1013,7 +1032,7 @@ func init() {
 		return taskDetail(q, id)
 	}))
 	gatedObjOp("questions_list", true, typedOp(func(q *Request, r *contract.QuestionsListRequest) (contract.QuestionsListReply, error) {
-		qs, err := questionsList(q, deref(r.TaskId), deref(r.State), deref(r.Kind))
+		qs, err := questionsList(q, deref(r.TaskId), deref(r.State), deref(r.Kind), r.ProjectIds...)
 		if err != nil {
 			return contract.QuestionsListReply{}, err
 		}

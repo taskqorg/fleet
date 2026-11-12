@@ -65,7 +65,7 @@ function App() {
   const search = useRef((['task', 'project', 'host'] as const).map(k => found(k, go))).current;
   // Pinned sections and the other preferences are person settings (prefs.ts), so they follow the person to every device.
   useEffect(() => { loadPrefs(); }, []); // and again on window focus (below): agents and other devices change them too
-  const pins = prefs.value.pins, savePins = (ids: string[]) => savePrefs(() => ({ pins: ids }));
+  const pins = prefs.value.pins, savePins = (ids: string[]) => savePrefs(() => ({ pins: ids }), { pins: ids });
   useEffect(() => {
     // Identity and grants (D3): a changed grants version clears stored data. Re-read on focus too.
     const me = () => op('me', {}).then(m => checkGrants(m.grantsVersion ?? '')) // no person: '' still clears another person's data.catch(() => {});
