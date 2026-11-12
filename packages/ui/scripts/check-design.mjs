@@ -82,7 +82,7 @@ console.log(`- formatter tests: ${tests}`);
 console.log(`- scroll anchor on insert (book list): ${scroll}`);
 console.log(`- page specs against mockups:\n    ${trace}`);
 console.log(ux);
-console.log(`- layout checks against injected breaches (OR-24 to OR-27): ${breaks}`);
+console.log(`- layout checks against injected breaches (OR-24 to OR-27, OR-41, OR-42): ${breaks}`);
 console.log(`- operator app (dist/app, coordinator on PGlite):\n${appCheck}`);
 console.log(warn.length ? `- ${warn.length} source warnings:\n  ${warn.join('\n  ')}` : '- source checks: no warnings');
 console.log('Rules: docs/design-system/owner-rules.md. This report never fails the build.');

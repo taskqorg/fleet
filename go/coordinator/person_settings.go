@@ -218,6 +218,9 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 			}
 		}
 	}
+	if r.NavCollapsed != nil {
+		next.NavCollapsed = *r.NavCollapsed
+	}
 	if r.RowPins != nil {
 		next.RowPins = maps.Clone(prev.RowPins)
 		for k, ids := range r.RowPins {
@@ -245,7 +248,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	by := actor(q, "operator")
 	_, err = unscoped(q, func() (struct{}, error) {
 		if err := put(q, "person-setting", doc{"id": "person-setting:" + email, "email": email, "order": string(next.Order), "pins": next.Pins,
-			"views": next.Views, "focus": next.Focus, "focusPresets": next.FocusPresets, "widths": next.Widths, "rowPins": next.RowPins}); err != nil {
+			"views": next.Views, "focus": next.Focus, "focusPresets": next.FocusPresets, "widths": next.Widths, "rowPins": next.RowPins, "navCollapsed": next.NavCollapsed}); err != nil {
 			return struct{}{}, err
 		}
 		change := func(field string, previous, value any) error {
@@ -260,7 +263,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 			name            string
 			previous, value any
 		}{{"pins", prev.Pins, next.Pins}, {"views", prev.Views, next.Views}, {"focus", prev.Focus, next.Focus},
-			{"focusPresets", prev.FocusPresets, next.FocusPresets}, {"widths", prev.Widths, next.Widths}, {"rowPins", prev.RowPins, next.RowPins}} {
+			{"focusPresets", prev.FocusPresets, next.FocusPresets}, {"widths", prev.Widths, next.Widths}, {"rowPins", prev.RowPins, next.RowPins}, {"navCollapsed", prev.NavCollapsed, next.NavCollapsed}} {
 			a, _ := json.Marshal(f.previous)
 			b, _ := json.Marshal(f.value)
 			if string(a) != string(b) {

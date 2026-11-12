@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { prefs, savePrefs, withFocus, useViews, useWidth, usePins, saveFocusPreset, removeFocusPreset, focusIds } from '../../app/src/prefs.ts';
+import { prefs, savePrefs, withFocus, useViews, setWidth, usePins, saveFocusPreset, removeFocusPreset, focusIds } from '../../app/src/prefs.ts';
 
 const sent: [string, any][] = [];
 // The server applies the patch; the mock answers with what the tab shows, which is enough to test what is sent.
@@ -56,9 +56,9 @@ test('OR-33 system presets come first and cannot be overwritten; personal views 
 test('OR-41 a width is sent by key only; 0 resets it', async () => {
   sent.length = 0;
   savePrefs(() => ({ widths: { nav: 200 } }), { widths: { nav: 200 } });
-  const [w, set] = useWidth('nav', 240); assert.equal(w, 200);
+  assert.equal(prefs.value.widths.nav, 200);
   await new Promise(r => setTimeout(r, 30));
-  set(0); assert.equal(useWidth('nav', 240)[0], 240);
+  setWidth('nav', 0); assert.equal(prefs.value.widths.nav, undefined);
   await new Promise(r => setTimeout(r, 30));
   assert.deepEqual(sent.at(-1)?.[1], { widths: { nav: 0 } });
 });

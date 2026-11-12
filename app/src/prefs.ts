@@ -1,6 +1,6 @@
 // Per-person preferences, stored server-side in the person's settings (person_settings_get / person_settings_set,
 // docs/designs/fleet-people-access.md section 8 "Preferences"): section pins, row pins, saved views, focus and focus
-// presets, column widths. Agents read and write the same fields through the same operations.
+// presets, column widths, the collapsed navigation. Agents read and write the same fields through the same operations.
 import { signal } from '@preact/signals';
 import { op, type Ops } from './api.ts';
 import { onClear } from './offline.ts';
@@ -8,7 +8,7 @@ import type { View } from '../../packages/view-url/view-url.ts';
 
 type Settings = Ops['person_settings_get']['reply'];
 type Patch = Omit<Ops['person_settings_set']['request'], 'email'>;
-const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], widths: {}, rowPins: {} };
+const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], widths: {}, rowPins: {}, navCollapsed: false };
 export const prefs = signal<Settings>(empty);
 /**
  * The person's preferences are known: read (or the read failed, so lists still load). Focus-dependent loads (useList, the
@@ -80,8 +80,5 @@ export function saveFocusPreset(name: string, projects = prefs.value.focus) {
 export const removeFocusPreset = (name: string) => savePrefs(s => ({ focusPresets: s.focusPresets.filter(p => p.name !== name) }), { focusPresetDelete: name });
 
 /** A column width in px by key (nav, control); 0 resets to the default. */
-export function useWidth(key: string, fallback: number): [number, (px: number) => void] {
-  return [prefs.value.widths[key] || fallback, px => {
-    savePrefs(s => { const w = { ...s.widths }; if (px) w[key] = Math.round(px); else delete w[key]; return { widths: w }; }, { widths: { [key]: Math.round(px) } });
-  }];
-}
+export const setWidth = (key: string, px: number) =>
+  savePrefs(s => { const w = { ...s.widths }; if (px) w[key] = Math.round(px); else delete w[key]; return { widths: w }; }, { widths: { [key]: Math.round(px) } });

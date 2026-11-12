@@ -80,10 +80,11 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     const el = scroller.current;
     if (!el) return;
     // ponytail: O(n) key diff per update; switch to a server-provided "new since" count if lists reach millions client-side.
-    // New rows counted for the pill are the ones after the last row already shown; rows loaded above are not new.
+    // New rows counted for the pill: for 'bottom' (threads) the rows after the last row already shown; for 'top' (newest-first
+    // lists, possibly grouped) the rows placed before the last old row. Rows paged in on the far side (older history) are not new.
     let added = 0, lastOld = -1;
     p.items.forEach((it, i) => { if (prev.current.keys.has(p.getKey(it))) lastOld = i; });
-    p.items.forEach((it, i) => { if (i > lastOld && !prev.current.keys.has(p.getKey(it))) added++; });
+    p.items.forEach((it, i) => { if ((p.follow === 'top' ? i < lastOld : i > lastOld) && !prev.current.keys.has(p.getKey(it))) added++; });
     // A window replaced as a whole (a jump, a reload) has no row in common with the last one: nothing in it is "new".
     const replaced = lastOld < 0 && prev.current.keys.size > 0;
     if (replaced) { added = 0; setUnseen(0); }

@@ -1,7 +1,7 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
-import type { ComponentChildren } from 'preact';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Button, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, NavRail, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, type SpotlightProvider, type Chip, type FilterField, type NavItem } from './controls.tsx';
+import { createContext, type ComponentChildren } from 'preact';
+import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { Button, Icon, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, NavRail, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, type SpotlightProvider, type Chip, type FilterField, type NavItem } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
@@ -120,21 +120,29 @@ function TaskCells({ t, now, onPin, onOpen, showPriority, two }: { t: TaskRow; n
 
 /* ---------- App shell (patterns/app-shell.md) ---------- */
 
-export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, search = [] }: {
+export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, search = [], user, widths: stored, onWidth, collapsed, onCollapsed }: {
   nav: NavItem[]; current: string; onGo: (id: string) => void; waiting: number; children: ComponentChildren;
   /** Spotlight providers after the built-in sections one (OR-32): codes, tasks, projects, hosts in the app. */ search?: SpotlightProvider[];
   /** The person's pinned sections (person settings); without them the shell keeps its own demo pins. */ pins?: string[]; onPins?: (ids: string[]) => void;
+  /** The signed-in person, shown at the bottom of the navigation with a Logout menu. */ user?: { name: string; onLogout: () => void };
+  /** Column widths in px by key (`nav`, `control`) and the collapsed navigation: person settings (OR-41, OR-42). onWidth(key, 0) resets.
+   *  Without them the shell keeps its own (book and mockups). */
+  widths?: Record<string, number>; onWidth?: (key: string, px: number) => void; collapsed?: boolean; onCollapsed?: (on: boolean) => void;
 }) {
   const [own, setOwn] = useState<string[]>(['tasks', 'hosts']);
   const pinned = pins ?? own, setPinned = onPins ?? setOwn;
-  // The collapsed rail is a per-device convenience; storage may be unavailable.
-  const [mini, setMini] = useState(() => { try { return localStorage.getItem('fleet.nav.mini') === '1'; } catch { return false; } });
+  const [ownMini, setOwnMini] = useState(false), [ownWidths, setOwnWidths] = useState<Record<string, number>>({});
+  const mini = collapsed ?? ownMini, widths = stored ?? ownWidths;
+  const ownSet = useRef((k: string, px: number) => setOwnWidths(w => { const n = { ...w }; if (px) n[k] = px; else delete n[k]; return n; })).current;
+  const setWidth = onWidth ?? ownSet;
   const [spot, setSpot] = useState(false);
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && !e.repeat && (e.key.toLowerCase() === 'k' || (e.code === 'KeyK' && !/^[a-z]$/i.test(e.key)))) { e.preventDefault(); setSpot(s => !s); } };
     addEventListener('keydown', k); return () => removeEventListener('keydown', k);
   }, []);
-  const toggle = () => { setMini(!mini); try { localStorage.setItem('fleet.nav.mini', mini ? '0' : '1'); } catch { /* not remembered */ } };
+  const toggle = () => (onCollapsed ?? setOwnMini)(!mini);
+  // Stored widths are clamped on the way in, so a value an agent or another device wrote never breaks the layout.
+  const vars = Object.fromEntries(Object.entries(COLS).filter(([, c]) => typeof widths[c.key] === 'number' && widths[c.key] > 0).map(([n, c]) => [`--size-${n}`, Math.max(c.lo, Math.min(c.hi, widths[c.key])) + 'px']));
   // OR-26: a click anywhere on a row follows the row's link. Controls in the row keep their own action; a text selection is not a click.
   const openRow = (e: MouseEvent) => {
     const t = e.target as HTMLElement, link = t.closest?.('.vl-row, .kv li')?.querySelector<HTMLElement>('.row-link');
@@ -142,17 +150,79 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
     link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }));
   };
   return (
-    <div class="shell" data-ui="app-shell" onClick={openRow}>
+    <Widths.Provider value={setWidth}><div class="shell" data-ui="app-shell" onClick={openRow} style={vars}>
       <a class="skip" href="#main" onClick={e => { e.preventDefault(); document.getElementById('main')?.focus(); }}>Skip to content</a>
       <NavRail items={nav} pinned={pinned} current={current} onGo={onGo} mini={mini} onPins={setPinned} onSearch={() => setSpot(true)}
         head={<><span class="brand-mark" role="img" aria-label="Fleet" /><b class="brand">Fleet</b><span class="grow" />
-          {waiting > 0 && current !== 'overview' && <a class="nav-count t-attention waiting" href="#/overview" onClick={e => { e.preventDefault(); onGo('overview'); }}>{waiting} need you</a>}
-          <Button label={mini ? 'Expand navigation' : 'Collapse navigation'} icon="panel-left-close" iconOnly pressed={mini} onClick={toggle} /></>} />
-      <main class="shell-main" id="main" tabIndex={-1}>{children}</main>
+          {waiting > 0 && current !== 'overview' && <a class="nav-count t-attention waiting" href="#/overview" onClick={e => { e.preventDefault(); onGo('overview'); }}>{waiting} need you</a>}</>}
+        foot={user && <UserBlock {...user} />} />
+      <div class="shell-col">
+        {!mini && <Divider name="rail" />}
+        {/* OR-42: the toggle sits at the top of the column right after the navigation. */}
+        <span class="nav-toggle"><Button label={mini ? 'Expand navigation' : 'Collapse navigation'} icon="panel-left-close" iconOnly pressed={mini} onClick={toggle} /></span>
+        <main class="shell-main" id="main" tabIndex={-1}>{children}</main>
+      </div>
       {spot && <Spotlight providers={[sectionProvider(nav, onGo), ...search]} onClose={() => setSpot(false)} />}
       <TooltipLayer />
-    </div>
+    </div></Widths.Provider>
   );
+}
+
+/** The resizable columns: CSS variable name, person-setting key and limits in px. */
+const COLS: Record<'rail' | 'ctl', { key: string; lo: number; hi: number }> = { rail: { key: 'nav', lo: 160, hi: 400 }, ctl: { key: 'control', lo: 280, hi: 720 } };
+const Widths = createContext<(key: string, px: number) => void>(() => {});
+/** A column's drag divider (OR-41): drag or arrow keys resize the column on its left, double-click resets it. */
+function Divider({ name }: { name: 'rail' | 'ctl' }) {
+  const prop = `--size-${name}`, { key, lo, hi } = COLS[name], save = useContext(Widths);
+  // The upper limit is also what CSS shows (min(width, 25vw) for the rail, half the split for the list), so nothing unseen is saved.
+  const clamp = (el: HTMLElement, w: number) => Math.round(Math.max(lo, Math.min(hi, name === 'rail' ? innerWidth / 4 : el.parentElement!.getBoundingClientRect().width / 2, w)));
+  const width = (el: HTMLElement) => (el.previousElementSibling ?? el.parentElement!.previousElementSibling)!.getBoundingClientRect().width;
+  const live = (el: HTMLElement, w: number) => el.closest<HTMLElement>('.shell')?.style.setProperty(prop, w + 'px');
+  return <div class={`divider divider-${name}`} role="separator" aria-orientation="vertical" aria-label={name === 'rail' ? 'Resize navigation' : 'Resize list'} tabIndex={0}
+    onPointerDown={e => {
+      if (e.button !== 0) return;
+      const el = e.currentTarget as HTMLElement, x0 = e.clientX, w0 = width(el), start = clamp(el, w0);
+      let w = start;
+      el.setPointerCapture(e.pointerId); e.preventDefault();
+      // The drag moves the column live; only its end is saved.
+      el.onpointermove = m => { w = clamp(el, w0 + m.clientX - x0); live(el, w); };
+      // A press without a move keeps the default width; a cancelled drag keeps where it got to.
+      el.onpointerup = el.onpointercancel = () => { el.onpointermove = el.onpointerup = el.onpointercancel = null; if (w !== start) save(key, w); };
+    }}
+    onDblClick={e => { (e.currentTarget as HTMLElement).closest<HTMLElement>('.shell')?.style.removeProperty(prop); save(key, 0); }}
+    // Arrow keys move it live; the release saves, so a held key writes once.
+    onKeyDown={e => { if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return; e.preventDefault(); const el = e.currentTarget as HTMLElement; live(el, clamp(el, width(el) + (e.key === 'ArrowLeft' ? -16 : 16))); }}
+    onKeyUp={e => { if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return; const el = e.currentTarget as HTMLElement; save(key, clamp(el, width(el))); }} />;
+}
+
+/** The signed-in person at the bottom of the navigation: avatar and name (avatar only when collapsed); a click opens Logout. */
+function UserBlock({ name, onLogout }: { name: string; onLogout: () => void }) {
+  const [open, setOpen] = useState<{ left: number; bottom: number } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    ref.current?.querySelector<HTMLElement>('[role=menuitem]')?.focus();
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent) { if (e.key !== 'Escape') return; ref.current?.querySelector<HTMLElement>('.rail-user-b')?.focus(); }
+      else if (ref.current?.contains(e.target as Node)) return;
+      setOpen(null);
+    };
+    // The menu is fixed where it opened, so a rail scroll or a resize closes it.
+    // Only the rail's own scroll moves the button; lists scrolling elsewhere (a live feed keeping its anchor) leave it open.
+    const gone = () => setOpen(null), rail = ref.current?.closest('.rail');
+    document.addEventListener('pointerdown', close); document.addEventListener('keydown', close); rail?.addEventListener('scroll', gone); addEventListener('resize', gone);
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close); rail?.removeEventListener('scroll', gone); removeEventListener('resize', gone); };
+  }, [!!open]);
+  // Fixed, so the scrolling rail never clips it (the collapsed rail is narrower than the menu).
+  const toggle = (e: Event) => { e.preventDefault(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setOpen(open ? null : { left: r.left, bottom: innerHeight - r.top + 4 }); };
+  return <div class="rail-user" ref={ref}>
+    <button type="button" class="rail-user-b" aria-label={name} aria-haspopup="menu" aria-expanded={!!open} onClick={toggle} onContextMenu={toggle}>
+      <span class="avatar" aria-hidden="true" data-tip={name} data-tip-narrow>{name.slice(0, 1).toUpperCase()}</span><span class="nm">{name}</span>
+    </button>
+    {open && <span class="menu rail-menu up" role="menu" aria-label={name} style={{ left: open.left + 'px', bottom: open.bottom + 'px' }}>
+      <button type="button" role="menuitem" onClick={() => { setOpen(null); onLogout(); }}><Icon name="log-out" />Logout</button>
+    </span>}
+  </div>;
 }
 
 /* ---------- Layout patterns used by pages ---------- */
@@ -165,7 +235,7 @@ export function ListDetail({ list, detail, detailKey, idle }: {
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => { if (detailKey !== undefined) ref.current?.querySelector<HTMLElement>('[data-ui=detail]')?.focus({ preventScroll: true }); }, [detailKey]);
-  return <div ref={ref} data-ui="list-detail" class={`split-view${detail ? ' has-detail' : ''}`}><div class="split-list">{list}</div>{detail ?? <div class={`work-idle${idle ? '' : ' work-empty'}`}>{idle ?? <Empty text="Pick a row to open it here." />}</div>}</div>;
+  return <div ref={ref} data-ui="list-detail" class={`split-view${detail ? ' has-detail' : ''}`}><div class="split-list">{list}</div><Divider name="ctl" />{detail ?? <div class={`work-idle${idle ? '' : ' work-empty'}`}>{idle ?? <Empty text="Pick a row to open it here." />}</div>}</div>;
 }
 /** Everything waiting for a person, answered in place (patterns/needs-you.md). */
 export const NeedsYou = ({ children }: { children: ComponentChildren }) => (

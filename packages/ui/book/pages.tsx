@@ -530,7 +530,7 @@ function Catalogue() {
 function App() {
   const [loc, go] = useLocation();
   const cur = loc.split('/')[1] || 'overview';
-  return <AppShell nav={NAV} current={cur} onGo={id => go(`/${id}`)} waiting={3}>
+  return <AppShell nav={NAV} current={cur} onGo={id => go(`/${id}`)} waiting={3} user={{ name: 'Alex Kirs', onLogout: () => go('/overview') }}>
     <Switch>
       <Route path="/tasks/:id">{(p: { id: string }) => <Tasks id={p.id} />}</Route>
       <Route path="/tasks"><Tasks /></Route>

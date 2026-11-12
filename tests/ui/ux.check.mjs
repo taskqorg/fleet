@@ -76,7 +76,7 @@ try {
     // The owner works in the dark theme: every route is also shot in it.
     await p.emulateMedia({ colorScheme: 'dark' });
     await p.screenshot({ path: new URL(`${r.slice(1).replace('/', '-')}-1440-dark.png`, shots).pathname });
-    // Layout rules (OR-24 to OR-27); last, because the row click navigates.
+    // Layout rules (OR-24 to OR-27, OR-41, OR-42); last, because the row click navigates.
     (await layoutFindings(p)).forEach(f => warn.push(`#${r}  ${f}`));
     await p.close();
   }

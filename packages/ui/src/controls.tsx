@@ -685,10 +685,10 @@ export function Presets({ presets, active, onPick, onSave, onUnpin }: {
 /* ---------- Navigation rail with pinned sections (nav-rail.md) ---------- */
 
 export type NavItem = { id: string; label: string; icon: IconName; group: string; count?: { n: number; tone: Tone; label: string } };
-export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, head, onSearch }: {
+export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, head, onSearch, foot }: {
   items: NavItem[]; current: string; onGo: (id: string) => void;
   /** The person's pinned ids in their order; onPins gets the whole new list (pin, unpin, reorder). */ pinned: string[]; onPins: (ids: string[]) => void;
-  /** Collapsed to icons. */ mini?: boolean; /** Product name, need-you chip and the collapse button (app shell). */ head?: ComponentChildren;
+  /** Collapsed to icons. */ mini?: boolean; /** Product name and need-you chip (app shell). */ head?: ComponentChildren; /** The current user block, at the bottom. */ foot?: ComponentChildren;
   /** Opens the Spotlight palette (OR-31, OR-32); the rail has no search field of its own. */ onSearch?: () => void;
 }) {
   // Ids of sections that no longer exist are dropped here, so they never take a position and leave on the next save.
@@ -754,6 +754,7 @@ export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, he
       {onSearch && <ul class="rail-g"><li class="nav-i"><a href="#search" aria-keyshortcuts="Meta+K Control+K" onClick={e => { e.preventDefault(); onSearch(); }}>
         <span data-tip="Search  ⌘K" data-tip-narrow class="nav-ic"><Icon name={actions.search} /></span><span class="nm">Search</span></a></li></ul>}
       {groups.map(g => <ul key={g} class="rail-g" aria-label={g}><li class="rail-h">{g}</li>{items.filter(i => i.group === g).map(i => item(i, false))}</ul>)}
+      {foot && <div class="rail-foot">{foot}</div>}
     </nav>
   );
 }

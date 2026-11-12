@@ -12,6 +12,11 @@ const cases = { // case: [expected rule, breach]
   nested: ['OR-25', () => { const d = document.querySelector('[data-ui=detail]') || document.querySelector('.split-list'); const x = document.createElement('div'); x.style.cssText = 'overflow:auto;height:100px'; x.innerHTML = '<div style="height:500px"></div>'; d.append(x); }],
   sticky: ['OR-27', () => { const d = document.querySelector('[data-ui=detail]'); d.style.cssText += ';position:sticky;top:0'; }],
   absOverlay: ['OR-27', () => { const d = document.querySelector('[data-ui=detail]'); d.style.cssText += ';position:absolute;inset:0;z-index:9'; }],
+  toggleInRail: ['OR-42', () => document.querySelector('[data-ui=nav-rail]').prepend(document.querySelector('.nav-toggle'))],
+  railJump: ['OR-42', () => document.head.append(Object.assign(document.createElement('style'), { textContent: '.rail.mini .rail-h{display:none}' }))],
+  toggleCovers: ['OR-42', () => document.head.append(Object.assign(document.createElement('style'), { textContent: '.split-list>.page-h:first-child{padding-left:0 !important}' }))],
+  noUser: ['OR-42', () => document.querySelector('.rail-foot').remove()],
+  noDivider: ['OR-41', () => document.querySelectorAll('[role=separator]').forEach(d => d.remove())],
   rowDead: ['OR-26', () => document.querySelectorAll('.row-link').forEach(a => a.classList.remove('row-link'))],
 };
 const bad = [];
