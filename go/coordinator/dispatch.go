@@ -263,8 +263,12 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 			}
 			return 100000
 		}
+		// A full-access director (the owner, or a grant on *, as site-agents has) may take any subscription, as in
+		// resolveAccount (people-access §5, development rule); without it such a director with no logins of its own
+		// never placed (live 2026-11-12: a site-agents PM stayed preparing).
+		full := q.peopleSnapshot().person(dir) != nil && fullAccess(q.peopleSnapshot().person(dir))
 		mine := func(s doc) bool {
-			return s["holder"] == director || inList(strs(mapOf(s["take"])["projects"]), astr(projectID)) && projectID != nil
+			return s["holder"] == director || full || inList(strs(mapOf(s["take"])["projects"]), astr(projectID)) && projectID != nil
 		}
 		weight := func(s doc) int {
 			w := pos(s)

@@ -830,3 +830,17 @@ test('P5 source rig job preserves exact request and confirmed result (requiremen
     }
   } finally {assetJob=undefined;}
 });
+
+test('C8 connections_delete: owner only, refused while a key is in use, then the connection, its key rows and its value directory go (requirement: docs/designs/fleet-connections.md §1 delete; risk: test connections pile up, or a delete drops a live key)', async () => {
+  const c = name('tavily');
+  ok(await op('connections_create', {name: c, provider: 'tavily', holder: OUTSIDER}));
+  const k = ok(await op('connections_key_add', {connection: c, value: 'tvly-' + randomUUID()}));
+  assert.equal((await op('connections_delete', {connection: c}, OUTSIDER)).status, 403);
+  assert.equal((await op('connections_delete', {connection: c})).status, 409, 'an active key blocks the delete');
+  ok(await op('connections_key_state', {keyId: k.fingerprint, state: 'retired'}));
+  assert.deepEqual(ok(await op('connections_delete', {connection: c})), {name: c, deleted: true});
+  assert.ok(!ok(await op('connections_list')).connections.some((x: any) => x.name === c));
+  assert.equal(existsSync(join(SECRET_DIR, 'connections', c)), false);
+  assert.equal((await op('connections_delete', {connection: c})).status, 404);
+  ok(await op('connections_create', {name: c, provider: 'tavily'}));
+});

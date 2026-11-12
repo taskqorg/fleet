@@ -1680,7 +1680,7 @@ func focusSet(q *Request, b doc) (doc, error) {
 // Secrets never enter a model's context: the host secret and gateway token operations return one.
 var agentDenied = map[string]bool{"task_take": true, "hosts_register": true, "hosts_rotate_secret": true, "connections_token_create": true,
 	// a key value comes only from the owner's field (connections_key_request asks for one).
-	"connections_key_add": true,
+	"connections_key_add": true, "connections_delete": true,
 	// section 8: a PM agent may propose order soonest_reset, never set it.
 	"person_settings_set": true}
 

@@ -356,6 +356,26 @@ func (v *ConnectionsCreateRequest) Validate() error {
 	return nil
 }
 
+type ConnectionsDeleteReply struct {
+	Deleted bool   `json:"deleted"`
+	Name    string `json:"name"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsDeleteReply) Validate() error {
+	return nil
+}
+
+// ConnectionsDeleteRequest: Owner only. Deletes a connection whose keys are all retired: the connection, its key rows and its empty value directory.
+type ConnectionsDeleteRequest struct {
+	Connection string `json:"connection"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsDeleteRequest) Validate() error {
+	return nil
+}
+
 // ConnectionsKeyAddReply: The new key row (fingerprint, state, addedAt, addedBy); never the value.
 type ConnectionsKeyAddReply = map[string]json.RawMessage
 
@@ -1025,6 +1045,7 @@ func init() {
 		"budget_set":                  {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only. No id: a new budget. action defaults to warn.\",\"additionalProperties\":true,\"properties\":{\"action\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"limit\":{\"type\":\"number\"},\"period\":{\"type\":[\"string\",\"null\"]},\"scope\":{\"type\":\"string\"},\"scopeId\":{\"type\":\"string\"},\"unit\":{\"type\":\"string\"}},\"required\":[\"scope\",\"scopeId\",\"unit\",\"limit\"],\"type\":\"object\"}")},
 		"budgets_list":                {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"connections_create":          {Read: false, Long: false, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"$comment\":\"holder: the owner may create a key for another person.\",\"additionalProperties\":true,\"properties\":{\"comment\":{\"type\":\"string\"},\"holder\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"provider\":{\"type\":\"string\"}},\"required\":[\"name\",\"provider\"],\"type\":\"object\"}")},
+		"connections_delete":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only. Deletes a connection whose keys are all retired: the connection, its key rows and its empty value directory.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"}},\"required\":[\"connection\"],\"type\":\"object\"}")},
 		"connections_key_add":         {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only. The value goes to the secret file; the reply has its fingerprint only. questionId: the open key request (connections_key_request) this value answers with {connection, fingerprint, state}.\",\"additionalProperties\":true,\"properties\":{\"connection\":{\"type\":\"string\"},\"questionId\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"connection\",\"value\"],\"type\":\"object\"}")},
 		"connections_key_request":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"An agent asks the owner for a key value of connection. No argument carries a value; the owner answers through connections_key_add with questionId.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"connection\"],\"type\":\"object\"}")},
 		"connections_key_state":       {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"state active, draining or retired.\",\"additionalProperties\":true,\"properties\":{\"keyId\":{\"type\":\"string\"},\"state\":{\"type\":\"string\"}},\"required\":[\"keyId\",\"state\"],\"type\":\"object\"}")},

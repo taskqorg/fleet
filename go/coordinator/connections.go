@@ -490,6 +490,38 @@ func init() {
 		_, err = askQuestion(q, ask)
 		return v, err
 	}))
+	// Delete (§1): owner only, once every key is retired (no value file left), so a test connection can go.
+	gatedOp("connections_delete", false, checkFirst(connOwner, shaped[contract.ConnectionsDeleteRequest, contract.ConnectionsDeleteReply](func(q *Request) (any, error) {
+		if err := connOwner(q); err != nil {
+			return nil, err
+		}
+		c, err := connByName(q, body(q)["connection"])
+		if err != nil {
+			return nil, err
+		}
+		name := astr(c["name"])
+		keys, err := all(q, "connection-key", nil)
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range keys {
+			if k["connectionId"] == name && k["state"] != "retired" {
+				return nil, fail(409, "Retire every key of "+name+" first")
+			}
+		}
+		if err := exec(q, "DELETE FROM document WHERE (kind='api-connection' AND id=$1) OR (kind='connection-key' AND data->>'connectionId'=$2)", c["id"], name); err != nil {
+			return nil, err
+		}
+		if dir, err := connDir(name); err == nil {
+			onEnd(q.tx, func(committed bool) {
+				if committed {
+					os.Remove(dir) // empty once every key is retired; a stray file keeps it, and connSync registers it again
+				}
+			})
+		}
+		publish(q)
+		return contract.ConnectionsDeleteReply{Name: name, Deleted: true}, nil
+	})))
 	// Rotation (§2): active <-> draining, any -> retired (the value file is deleted; the row stays); disabled -> active is the owner's.
 	gatedOp("connections_key_state", false, shaped[contract.ConnectionsKeyStateRequest, contract.ConnectionsKeyStateReply](func(q *Request) (any, error) {
 		b := body(q)
