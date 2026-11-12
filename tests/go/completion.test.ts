@@ -131,3 +131,18 @@ test('G4 a task whose run fails asks the operator, a new run withdraws it, fail 
     assert.equal(state(), 'failed');
   } finally { await c.stop(); }
 });
+
+test('G5 a task left idle before the guard settles when the coordinator starts (requirement: no task in progress without an open execution or question; risk: tasks stuck before the fix stay in progress for days)', async () => {
+  const c = await startCoordinator({name: 'completion-start'});
+  try {
+    const ids = {ok: randomUUID(), bad: randomUUID(), live: randomUUID()};
+    for (const [k, id] of Object.entries(ids)) c.sql(`INSERT INTO task(id,project_id,title,state,delivery_method) VALUES('${id}','hello-world','stuck ${k}','in_progress','{"methodId":"legacy"}')`);
+    c.sql(`INSERT INTO execution(id,kind,state,project_id,task_id) VALUES('${randomUUID()}','agent_run','succeeded','hello-world','${ids.ok}'),('${randomUUID()}','agent_run','failed','hello-world','${ids.bad}'),('${randomUUID()}','agent_run','running','hello-world','${ids.live}')`);
+    await c.restart();
+    const open = (id: string) => c.sql(`SELECT coalesce(string_agg(kind::text, ','), '') FROM question WHERE task_id='${id}' AND state='open'`).trim();
+    assert.equal(open(ids.ok), 'acceptance');
+    assert.equal(open(ids.bad), 'operator_decision');
+    assert.equal(open(ids.live), '', 'a task with a live run is left alone');
+    assert.equal(c.sql(`SELECT state::text FROM task WHERE id='${ids.bad}'`).trim(), 'waiting');
+  } finally { await c.stop(); }
+});

@@ -3,9 +3,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"slices"
 	"strconv"
@@ -242,14 +244,14 @@ func askQuestion(q *Request, v doc) (string, error) {
 // acceptance; otherwise the operator gets a decision that blocks the task, so it shows in Needs you: fail the task, or
 // (when an earlier run succeeded) accept that result. A retry is a new run, which withdraws the decision
 // (withdrawIdleDecision). Task 2273393d: its only run failed before it started and the task sat in progress with nothing
-// to show it. Data foundation §3 task states. Delivery tasks are skipped: their pipeline moves them. Child agent rows do
+// to show it. Data foundation §3 task states. Legacy delivery tasks are included: nothing moves them any more. Child agent rows do
 // not count: no writer ends them.
 func settleIdleTask(q *Request, id string) error {
 	t, err := first(q, `SELECT t.*, l.id AS latest_id, l.state::text AS latest, l.session_id AS latest_session,
 		EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.state='succeeded') AS succeeded
 		FROM task t JOIN LATERAL (SELECT x.id, x.state, x.session_id FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent'
 		  ORDER BY x.ended_at DESC NULLS LAST, x.seq DESC LIMIT 1) l ON true
-		WHERE t.id=$1 AND t.state='in_progress' AND t.delivery_method IS NULL
+		WHERE t.id=$1 AND t.state='in_progress'
 		AND NOT EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent' AND x.state NOT IN ('succeeded','failed','cancelled'))
 		AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')`, id)
 	if err != nil || t == nil {
@@ -267,6 +269,35 @@ func settleIdleTask(q *Request, id string) error {
 		"askedBy": "fleet", "options": options, "data": doc{"idle": true},
 		"text": "The last run of " + astr(t["title"]) + " " + astr(t["latest"]) + ". Retry it with a new message in its session, or answer."})
 	return err
+}
+
+// settleIdleTasks: settleIdleTask for every task in progress, once at coordinator start. It settles tasks that were
+// left idle before the guard existed, or by a transition that does not settle (the guard runs on execution ends).
+func settleIdleTasks(q *Request) (int, error) {
+	ids, err := rowsOf(q, "SELECT id FROM task WHERE state='in_progress' ORDER BY created_at")
+	if err != nil {
+		return 0, err
+	}
+	for _, r := range ids {
+		if err := settleIdleTask(q, astr(r["id"])); err != nil {
+			return 0, err
+		}
+	}
+	// One transaction, so now() is one instant: the questions asked here.
+	n := 0
+	err = q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM question WHERE asked_by='fleet' AND asked_at=now()").Scan(&n)
+	return n, err
+}
+
+func init() {
+	onStart(func(ctx context.Context, a *App) {
+		n := 0
+		if err := runTx(ctx, a, nil, true, "", func(q *Request) (err error) { n, err = settleIdleTasks(q); return }); err != nil {
+			log.Printf("settle idle tasks: %v", err)
+		} else if n > 0 {
+			log.Printf("settle idle tasks: %d tasks settled", n)
+		}
+	})
 }
 
 const idleFail, idleAccept = "fail task", "accept earlier result"
