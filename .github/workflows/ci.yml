@@ -278,15 +278,6 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - uses: ./.github/actions/go
-      # The release binaries' build cache: a new entry when Go sources change, the newest entry restored otherwise.
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-release-${{ hashFiles('go/**') }}
-          restore-keys: go-release-
       - run: pnpm install --frozen-lockfile
       - run: pnpm run app:build
       - run: node --test tests/ui/*.test.ts
@@ -408,10 +399,15 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/go
+      # The release binaries' build cache: a new entry when Go sources change, the newest entry restored otherwise.
+      - uses: actions/cache@v4
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-release-${{ hashFiles('go/**') }}
+          restore-keys: go-release-
       - name: Version, window, build
         run: |
           set -o pipefail
@@ -432,7 +428,7 @@ jobs:
           deploy/selftest-release.sh new
           # The darwin binaries run nowhere here: static is what this run can check (each Mac selftests on install).
           mkdir darwin && tar -xzf out/fleet-*-darwin-arm64.tgz -C darwin
-          for b in darwin/fleet-*; do go version -m "$b" | grep -q 'CGO_ENABLED=0' || { echo "$b: cgo enabled"; exit 1; }; done
+          deploy/static-release.sh darwin
       - name: New coordinator migrates, each recent one still serves
         if: env.RECENT != ''
         run: deploy/migrate-check.sh new out
@@ -525,7 +521,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - uses: ./.github/actions/go
-      # Shares app-tests' release build cache (restore only; app-tests saves it).
+      # Shares release-build's release build cache (restore only; release-build saves it).
       - uses: actions/cache/restore@v4
         with:
           path: |

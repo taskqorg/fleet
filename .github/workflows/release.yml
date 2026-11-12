@@ -216,6 +216,7 @@ jobs:
         run: |
           mkdir new && tar -xzf out/fleet-*-linux-amd64.tgz -C new
           .release/deploy/selftest-release.sh new
+          mkdir darwin && tar -xzf out/fleet-*-darwin-arm64.tgz -C darwin && .release/deploy/static-release.sh darwin
       # Section 5 of fleet-delivery-pipeline.md. Same job as the build: the runner's disk is capped at 20 MB/s, so no
       # artifact round trip, and the recent coordinators stay extracted under ~/fleet-releases/v between runs.
       - name: New coordinator migrates, each recent one still serves
@@ -294,6 +295,12 @@ jobs:
       SPEC_RUN: ${{ needs.gate.outputs.spec_run }}
       SUMS: ${{ needs.gate.outputs.sums }}
     steps:
+      # deploy/ of this workflow's commit: the supersede check.
+      - uses: actions/checkout@v4
+        with:
+          path: .release
+          sparse-checkout: deploy
+          persist-credentials: false
       # GitHub refuses the workflow token (it cannot hold the workflows permission) a new tag on a commit whose
       # .github/workflows differ from the head of main: HTTP 403 "Resource not accessible by integration" (run
       # 43237511138, 2026-11-12: main had moved on to a merge that changed workflows). That head contains this commit
@@ -305,7 +312,7 @@ jobs:
           set -o pipefail
           [ "$GITHUB_EVENT_NAME" = push ] || exit 0
           # An API error here publishes as before; a 403 then is caught below.
-          moved=$(gh api "repos/$GH_REPO/compare/$SHA...main" --jq '[.files[]?.filename] | if length >= 300 then 300 else map(select(startswith(".github/workflows/"))) | length end') || moved=0
+          moved=$(.release/deploy/workflows-moved.sh "$SHA") || moved=0
           if [ "$moved" != 0 ]; then
             echo "superseded: main changed workflows since $SHA; the next release run publishes it" | tee -a "$GITHUB_STEP_SUMMARY"
             echo skip=true >> "$GITHUB_OUTPUT"
@@ -366,13 +373,17 @@ jobs:
       - if: steps.target.outputs.skip != 'true'
         run: |
           cp "${{ steps.attest.outputs.bundle-path }}" provenance.sigstore.jsonl
-          # The 403 above when main moved on with workflow changes after that check: superseded the same way.
-          moved() { gh api "repos/$GH_REPO/compare/$SHA...main" --jq '[.files[]?.filename] | if length >= 300 then 300 else map(select(startswith(".github/workflows/"))) | length end'; }
-          trap 'code=$?; [ $code = 0 ] || [ "$GITHUB_EVENT_NAME" != push ] || ! n=$(moved) || [ -z "$n" ] || [ "$n" = 0 ] || { echo "superseded: main changed workflows since $SHA; the next release run publishes it" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; }' EXIT
           if [ "$UI" = true ]; then
-            gh release create "ui-$BACKEND-v$VERSION" --target "$SHA" --latest=false --title "Fleet UI $VERSION" --notes "UI $VERSION for backend $BACKEND; source $SHA" \
+            set -- "ui-$BACKEND-v$VERSION" --latest=false --title "Fleet UI $VERSION" --notes "UI $VERSION for backend $BACKEND; source $SHA" \
               fleet-ui-*.tgz SHA256SUMS SHA256SUMS.sig provenance.sigstore.jsonl
           else
-            gh release create "v$VERSION" --target "$SHA" --latest --title "v$VERSION" --notes "Fleet $VERSION" \
+            set -- "v$VERSION" --latest --title "v$VERSION" --notes "Fleet $VERSION" \
               fleet-*.tgz SHA256SUMS SHA256SUMS.sig latest.json provenance.sigstore.jsonl
           fi
+          # Only that 403, on a push run, and only when main did move on with workflow changes after the check above:
+          # superseded the same way. Any other failure fails the job.
+          gh release create "$1" --target "$SHA" "${@:2}" 2> "$RUNNER_TEMP/create.err" && exit 0
+          code=$?; cat "$RUNNER_TEMP/create.err" >&2
+          grep -q 'HTTP 403: Resource not accessible by integration' "$RUNNER_TEMP/create.err" && [ "$GITHUB_EVENT_NAME" = push ] \
+            && n=$(.release/deploy/workflows-moved.sh "$SHA") && [ -n "$n" ] && [ "$n" != 0 ] || exit "$code"
+          echo "superseded: main changed workflows since $SHA; the next release run publishes it" | tee -a "$GITHUB_STEP_SUMMARY"
