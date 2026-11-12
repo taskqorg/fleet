@@ -8,7 +8,7 @@ import {pathToFileURL} from 'node:url';
 export const families = ['go', 'app', 'browser'] as const;
 type Family = typeof families[number];
 type Event = {pull_request?: {base: {sha: string}}; merge_group?: {base_sha: string; head_sha: string}; before?: string; after?: string};
-export type Plan = {version: 1; mode: 'selected'; paths: string[] | null; previousGreen: boolean; forced: boolean; policy: string; candidate: string; base: string | null; event: string; selected: Family[]; executed: readonly Family[]; deferred: readonly Family[]; reasons: string[]};
+export type Plan = {version: 1; mode: 'selected'; paths: string[] | null; previousGreen: boolean; forced: boolean; queued: boolean; policy: string; candidate: string; base: string | null; event: string; selected: Family[]; executed: readonly Family[]; deferred: readonly Family[]; reasons: string[]};
 const policy = () => createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
 const prose = (path: string) => /^docs\/.*\.md$/.test(path) || path === 'README.md';
 const sha = (s: unknown): s is string => typeof s === 'string' && /^[a-f0-9]{40}$/.test(s) && !/^0+$/.test(s);
@@ -75,7 +75,7 @@ export function execution(paths: string[] | null, previousGreen: boolean, forced
   return families.filter(f => chosen.has(f));
 }
 
-export function makePlan(event: string, payload: Event, candidate: string, git: (args: string[]) => string, previousGreen = false, forced = false): Plan {
+export function makePlan(event: string, payload: Event, candidate: string, git: (args: string[]) => string, previousGreen = false, forced = false, queued = false): Plan {
   let base: string | null = null, paths: string[] | null = null;
   let decision: ReturnType<typeof select>;
   try {
@@ -88,12 +88,14 @@ export function makePlan(event: string, payload: Event, candidate: string, git: 
     decision = {selected: [...families], reasons: [`full fallback: ${String(error)}`]};
   }
   return {version: 1, mode: 'selected', policy: policy(), candidate, base, event, paths, previousGreen, forced,
-    ...decision, ...run(event, execution(paths, previousGreen, forced))};
+    queued: event === 'push' && queued, ...decision, ...run(event, execution(paths, previousGreen, forced), event === 'push' && queued)};
 }
 
 // A pull request runs only the thin check; its heavy families are deferred to the merge queue, which qualifies the candidate.
-export function run(event: string, families: readonly Family[]): {executed: readonly Family[]; deferred: readonly Family[]} {
-  return event === 'pull_request' ? {executed: [], deferred: families} : {executed: families, deferred: []};
+// A push of a commit its merge queue run already qualified (main fast-forwards to the group commit) repeats nothing:
+// the release gate reads that merge_group run first, so a full push run would only double the runner load per merge.
+export function run(event: string, families: readonly Family[], queued = false): {executed: readonly Family[]; deferred: readonly Family[]} {
+  return event === 'pull_request' || (event === 'push' && queued) ? {executed: [], deferred: families} : {executed: families, deferred: []};
 }
 
 type Run = {databaseId: number; status: string; conclusion: string};
@@ -120,6 +122,15 @@ function previousGreen(event: string, payload: Event, candidate: string): boolea
   } catch { return false; }
 }
 
+function queueQualified(event: string, candidate: string): boolean {
+  if (event !== 'push') return false;
+  try {
+    const runs = JSON.parse(execFileSync('gh', ['run', 'list', '--workflow', 'ci', '--commit', candidate, '--event', 'merge_group',
+      '--status', 'success', '--json', 'databaseId', '--limit', '1'], {encoding: 'utf8'})) as unknown[];
+    return runs.length > 0;
+  } catch { return false; }
+}
+
 export function verifyEvidence(plan: Plan, candidate: string, jobs: Record<string, {result: string}>): void {
   assert.equal(plan.version, 1);
   assert.equal(plan.mode, 'selected');
@@ -132,9 +143,11 @@ export function verifyEvidence(plan: Plan, candidate: string, jobs: Record<strin
   assert.ok(Array.isArray(plan.selected) && plan.selected.every(f => families.includes(f)));
   assert.equal(typeof plan.previousGreen, 'boolean');
   assert.equal(typeof plan.forced, 'boolean');
+  assert.equal(typeof plan.queued, 'boolean');
+  assert.ok(!plan.queued || plan.event === 'push');
   assert.ok(plan.paths === null || (Array.isArray(plan.paths) && plan.paths.length > 0 && plan.paths.every(p => typeof p === 'string' && p.length > 0)));
   assert.deepEqual(plan.selected, plan.paths ? select(plan.paths).selected : [...families]);
-  const expected = run(plan.event, execution(plan.paths, plan.previousGreen, plan.forced));
+  const expected = run(plan.event, execution(plan.paths, plan.previousGreen, plan.forced), plan.queued);
   assert.deepEqual(plan.executed, expected.executed);
   assert.deepEqual(plan.deferred, expected.deferred);
   assert.equal(jobs.selection?.result, 'success', 'selection: failed or missing');
@@ -157,7 +170,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const event = process.env.GITHUB_EVENT_NAME || 'unknown';
     const payload = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH!, 'utf8')) as Event;
     const plan = makePlan(event, payload, process.env.GITHUB_SHA!, args => execFileSync('git', args, {encoding: 'utf8'}),
-      previousGreen(event, payload, process.env.GITHUB_SHA!), Boolean(process.env.FLEET_TEST_FULL));
+      previousGreen(event, payload, process.env.GITHUB_SHA!), Boolean(process.env.FLEET_TEST_FULL), queueQualified(event, process.env.GITHUB_SHA!));
     console.log(JSON.stringify(plan, null, 2));
   }
 }
