@@ -199,6 +199,8 @@ jobs:
       fail-fast: false
       matrix:
         # ClickHouse only where a test talks to it: go/obs unit tests and tests/go/telemetry.test.ts (some outside shard).
+        # Started with docker in the background, not as a service: its pull overlaps setup and build instead of
+        # delaying the job's start (about 18 s).
         include:
           - {part: vet, clickhouse: false}
           - {part: unit, clickhouse: true}
@@ -211,55 +213,32 @@ jobs:
       OUTSIDE_SHARDS: 1
       # The span store for go/obs and tests/go/telemetry.test.ts live tests (docs/designs/fleet-telemetry.md); same LTS as deploy/infrastructure/fleet-clickhouse.container.
       FLEET_TEST_CLICKHOUSE_URL: http://127.0.0.1:8123
-    services:
-      clickhouse:
-        # An empty image skips the service.
-        image: ${{ matrix.clickhouse && 'clickhouse/clickhouse-server:26.8' || '' }}
-        env:
-          CLICKHOUSE_DB: fleet
-          CLICKHOUSE_USER: t
-          CLICKHOUSE_PASSWORD: t
-        ports: ["127.0.0.1:8123:8123"]
-        options: >-
-          --health-cmd "clickhouse client --user t --password t -q 'SELECT 1'"
-          --health-interval 2s --health-retries 30
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - if: matrix.clickhouse
+        run: scripts/ci-part.sh clickhouse start
       - uses: ./.github/actions/go
-      # One build cache per part (vet, -race unit tests, the executor, each -race coordinator shard): a new entry when
-      # Go sources change, restored from the newest same-part entry otherwise, so -race artifacts are reused, not rebuilt.
+      # One build cache per part (vet, -race unit tests, the -race coordinator that every outside shard shares): a new
+      # entry when Go sources change, restored from the newest same-part entry otherwise, so -race artifacts are reused.
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-${{ matrix.part }}-${{ hashFiles('go/**') }}
-          restore-keys: go-${{ matrix.part }}-
+          key: go-${{ startsWith(matrix.part, 'outside-') && 'outside' || matrix.part }}-${{ hashFiles('go/**') }}
+          restore-keys: go-${{ startsWith(matrix.part, 'outside-') && 'outside' || matrix.part }}-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # Generated code is committed (go/contract): regenerating must not change it.
-      - if: matrix.part == 'vet'
-        run: cd go && go generate ./... && { test -z "$(git status --porcelain)" || { git status --porcelain; git diff; exit 1; }; }
-      - if: matrix.part == 'vet'
-        run: cd go && go vet ./... && GOOS=windows GOARCH=amd64 go vet ./coordinator
-      # -race needs cgo on Linux; release binaries stay CGO_ENABLED=0 (deploy/build-release.sh, app job).
-      - if: matrix.part == 'unit'
-        run: cd go && CGO_ENABLED=1 go test -race -count=1 ./...
-      # The executor's MCP adapter from Node against the Go binary: replayed stdio exchanges and artifact path confinement.
-      - if: matrix.part == 'vet'
-        run: |
-          cd go && CGO_ENABLED=0 go build -o bin/fleet-executor ./executor && cd ..
-          FLEET_EXECUTOR_BIN="$PWD/go/bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts
-      # The outside tests run a -race coordinator; GORACE halts it at the first race, so the test of that moment fails.
-      # /api/health reports vcs.modified as dirty; a build from the CI checkout must be clean (untracked files count).
-      - if: startsWith(matrix.part, 'outside-')
-        run: |
-          cd go && CGO_ENABLED=1 go build -race -o bin/fleet-coordinator ./coordinator && cd ..
-          go version -m go/bin/fleet-coordinator | grep -q 'vcs.modified=false' || { git status --porcelain; exit 1; }
-          PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" GORACE=halt_on_error=1 tests/go/run.sh "${PART#outside-}" "$OUTSIDE_SHARDS"
+      # Commands per part: scripts/ci-part.sh, shared with cache-warm.
+      - run: scripts/ci-part.sh "$PART" build
+        env:
+          PART: ${{ matrix.part }}
+      - if: matrix.clickhouse
+        run: scripts/ci-part.sh clickhouse wait
+      - run: scripts/ci-part.sh "$PART" test
         env:
           PART: ${{ matrix.part }}
   # App: bundle and UI unit tests. The release tarballs are release-build's.
@@ -316,7 +295,7 @@ jobs:
           restore-keys: go-browser-
       - run: pnpm install --frozen-lockfile
       # Only what the checks serve: the UI bundle and the coordinator (typecheck runs in app-tests).
-      - run: pnpm run app:bundle && cd go && CGO_ENABLED=0 go build -trimpath -o bin/fleet-coordinator ./coordinator
+      - run: scripts/ci-part.sh browser build
       # The UI tree these browser checks serve: a UI-only release signs and publishes it (release.yml publish). Only
       # merge queue and push runs can qualify a release.
       - uses: actions/upload-artifact@v4
@@ -460,38 +439,34 @@ jobs:
       - uses: ./.github/actions/go
       - run: pnpm install --frozen-lockfile
       # The parts' own jobs key on go/** before they build; outputs here go to $RUNNER_TEMP so the key stays theirs.
-      # The commands mirror those jobs' builds (go-tests, browser-tests, deploy/build-release.sh); keep them in step.
+      # The same scripts/ci-part.sh builds as the parts' jobs.
       - id: go
         run: echo "hash=${{ hashFiles('go/**') }}" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/warm
         with:
           part: vet
           hash: ${{ steps.go.outputs.hash }}
-          run: cd go && go vet ./... && GOOS=windows GOARCH=amd64 go vet ./coordinator && CGO_ENABLED=0 go build -o "$RUNNER_TEMP/fleet-executor" ./executor
+          run: BIN=$RUNNER_TEMP scripts/ci-part.sh vet build
       - uses: ./.github/actions/warm
         with:
           part: unit
           hash: ${{ steps.go.outputs.hash }}
-          run: cd go && CGO_ENABLED=1 go test -race -count=1 -run '^$' ./...
+          run: BIN=$RUNNER_TEMP scripts/ci-part.sh unit build
       - uses: ./.github/actions/warm
         with:
-          part: outside-0
+          part: outside
           hash: ${{ steps.go.outputs.hash }}
-          run: cd go && CGO_ENABLED=1 go build -race -o "$RUNNER_TEMP/fleet-coordinator" ./coordinator
+          run: BIN=$RUNNER_TEMP scripts/ci-part.sh outside-0 build
       - uses: ./.github/actions/warm
         with:
           part: browser
           hash: ${{ steps.go.outputs.hash }}
-          run: cd go && CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/fleet-coordinator" ./coordinator
+          run: BIN=$RUNNER_TEMP scripts/ci-part.sh browser build
       - uses: ./.github/actions/warm
         with:
           part: release
           hash: ${{ steps.go.outputs.hash }}
-          run: |
-            cd go
-            for t in linux/amd64 darwin/arm64; do for c in coordinator gateway executor update; do
-              CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -trimpath -ldflags "-X main.version=0.0.0" -o "$RUNNER_TEMP/rel/$t/fleet-$c" "./$c"
-            done; done
+          run: BIN=$RUNNER_TEMP scripts/ci-part.sh release build
       - id: playwright
         run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
