@@ -20,8 +20,8 @@ q='query($n:Int!){repository(owner:"taskqorg",name:"fleet"){pullRequest(number:$
 while :; do
   # A failed gh call (network, rate limit) is retried, never read as "not merged".
   line=$(gh api graphql -f query="$q" -F n="$pr" -q '.data.repository.pullRequest | [.state, .mergeStateStatus, (.mergeCommit.oid // "-"),
-    (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (if .mergeQueueEntry then "queued" else "-" end), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired) | (.conclusion // .state)] | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "CANCELLED") then "red" else "-" end),
-    (if .timelineItems.nodes[0].__typename == "RemovedFromMergeQueueEvent" then (if .timelineItems.nodes[0].reason == "CI_FAILURE" then "failed_checks" else .timelineItems.nodes[0].reason end) else "auto-merge off" end)] | join(" ")') \
+    (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (if .mergeQueueEntry then "queued" else "-" end), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired) | (.conclusion // .state)] | any(. != null and . != "SUCCESS" and . != "NEUTRAL" and . != "SKIPPED" and . != "PENDING" and . != "EXPECTED") then "red" else "-" end),
+    (if .timelineItems.nodes[0].__typename == "RemovedFromMergeQueueEvent" then (.timelineItems.nodes[0].reason | if . == "CI_FAILURE" then "failed_checks" else ascii_downcase end) else "auto-merge off" end)] | join(" ")') \
     || { wait_step "queue (gh failed)"; continue; }
   read -r state merge_state sha waiting queued checks reason <<<"$line"
   [ "$state" = MERGED ] && break

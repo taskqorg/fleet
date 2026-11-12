@@ -10,8 +10,14 @@ set -euo pipefail
 n=${1:-20}
 repo=taskqorg/fleet
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-gh pr list -R "$repo" -s merged -L "$n" --json number,createdAt,mergedAt,headRefOid,mergeCommit >"$tmp/prs.json"
-gh api --paginate "repos/$repo/releases?per_page=100" -q '.[]|[.tag_name,.target_commitish,.published_at]|@tsv' >"$tmp/releases.tsv"
+# gh orders by creation; fetch more and keep the n most recently merged below.
+gh pr list -R "$repo" -s merged -L $(( n * 3 )) --json number,createdAt,mergedAt,headRefOid,mergeCommit >"$tmp/prs.json"
+gh api --paginate "repos/$repo/releases?per_page=100" -q '.[]|[.tag_name,.published_at]|@tsv' >"$tmp/releases.tsv"
+# A release carries every merge since the previous one: match by the first release tag containing the merge commit (as watch-landing.sh).
+git fetch -q origin main --tags
+for sha in $(python3 -I -c 'import json,sys; print(" ".join((p["mergeCommit"] or {}).get("oid","") for p in json.load(sys.stdin)))' <"$tmp/prs.json"); do
+  printf '%s\t%s\n' "$sha" "$(git tag --contains "$sha" 'v1.*' 'ui-*-v1.*' | awk '{ n=$0; sub(/^.*v/,"",n); print n, $0 }' | sort -k1,1V | cut -d' ' -f2- | head -1)"
+done >"$tmp/tags.tsv"
 # Workflow runs of the ci workflow: one query, matched by commit and event below.
 gh run list -R "$repo" --workflow ci -L $(( n * 20 )) --json headSha,event,updatedAt,status,conclusion >"$tmp/runs.json"
 # Host evidence. hosts_list: every host's current update time. Journal: every coordinator update on PDS18 with its time.
@@ -21,12 +27,11 @@ if [ -f "$env_file" ]; then
   curl -sf --max-time 10 -H @"$hdr" -H 'Content-Type: application/json' -H 'Origin: https://fleet.ufobe.com' \
     https://fleet.ufobe.com/api/ops/hosts_list -d '{}' >"$tmp/hosts.json" || echo '{"hosts":[]}' >"$tmp/hosts.json"
 else echo '{"hosts":[]}' >"$tmp/hosts.json"; fi
-journal=(journalctl -u fleet-update --no-pager -o short-iso --since '60 days ago')
-if [ "$(hostname -s 2>/dev/null)" = pds18 ]; then "${journal[@]}" >"$tmp/journal.txt" 2>/dev/null || :
-else ssh -o BatchMode=yes -o ConnectTimeout=5 pds18 "${journal[*]@Q}" >"$tmp/journal.txt" 2>/dev/null || :; fi
-touch "$tmp/journal.txt"
+journal="journalctl -u fleet-update --no-pager -o short-iso --since '60 days ago'"
+if [ "$(hostname -s 2>/dev/null)" = pds18 ]; then sh -c "$journal" >"$tmp/journal.txt" 2>/dev/null || :
+else ssh -o BatchMode=yes -o ConnectTimeout=5 pds18 "$journal" >"$tmp/journal.txt" 2>/dev/null || :; fi
 
-D="$tmp" python3 -I - <<'PY'
+D="$tmp" N="$n" python3 -I - <<'PY'
 import json, os, re
 from datetime import datetime
 d = os.environ["D"]
@@ -35,7 +40,10 @@ ts = lambda s: datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
 prs, runs = load("prs.json"), load("runs.json")
 try: hosts = load("hosts.json")["hosts"]
 except (ValueError, KeyError, TypeError): hosts = []  # an Access redirect or a changed shape: no host column, not no report
-releases = {t.split("\t")[1]: (t.split("\t")[0], t.split("\t")[2]) for t in open(os.path.join(d, "releases.tsv")).read().splitlines() if t}
+tsv = lambda f: [l.split("\t") for l in open(os.path.join(d, f)).read().splitlines() if l]
+published = dict(tsv("releases.tsv")); tag_of = dict(tsv("tags.tsv"))
+# journalctl short-iso prints +0000 on older systemd; fromisoformat before 3.11 wants +00:00.
+jts = lambda s: datetime.fromisoformat(re.sub(r"([+-]\d\d)(\d\d)$", r"\1:\2", s)).timestamp()
 # Last successful ci run of an event on a commit (a rerun after a red check counts from its own end).
 def ci(sha, event):
     done = [ts(r["updatedAt"]) for r in runs if r["headSha"] == sha and r["event"] == event and r["conclusion"] == "success"]
@@ -51,12 +59,12 @@ for line in open(os.path.join(d, "journal.txt")):
     m = re.match(r"(\S+) \S+ fleet-update\[\d+\]: (coordinator: \S+ -> (\S+)|(\S+) ok:)", line)
     if not m: continue
     if m.group(3): pending = m.group(3)
-    elif m.group(4) == pending: installed.setdefault(pending, datetime.fromisoformat(m.group(1)).timestamp()); pending = None
+    elif m.group(4) == pending: installed.setdefault(pending, jts(m.group(1))); pending = None
 stages = ["pr_ci", "mq_ci", "merged", "released", "on_host"]
 rows = []
-for p in sorted(prs, key=lambda p: p["mergedAt"]):
+for p in sorted(prs, key=lambda p: p["mergedAt"])[-int(os.environ["N"]):]:
     t0 = ts(p["createdAt"]); merge = (p["mergeCommit"] or {}).get("oid")
-    tag, pub = releases.get(merge, (None, None))
+    tag = tag_of.get(merge) or None; pub = published.get(tag) if tag else None
     t = {"pr_ci": ci(p["headRefOid"], "pull_request"), "mq_ci": ci(merge, "merge_group"), "merged": ts(p["mergedAt"]),
          "released": ts(pub) if pub else None, "on_host": installed.get(tag.rsplit("-v", 1)[-1].removeprefix("v")) if tag else None}
     rows.append((p["number"], tag or "-", {k: (v - t0) / 60 if v else None for k, v in t.items()}))
