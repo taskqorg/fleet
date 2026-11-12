@@ -143,7 +143,16 @@ func deliveryPass(ctx context.Context, a *App) error {
 		if err != nil {
 			return err
 		}
+		conn, err := maybe(q, "connection:github", "api-connection")
+		if err != nil {
+			return err
+		}
 		for _, id := range ids {
+			// A keyed read is shown only to projects the github connection is granted to: a project that merely lists a
+			// private repository must not see what another project's grant read.
+			if keyed && (conn == nil || !connAllowed(conn, doc{"projectId": id})) {
+				continue
+			}
 			for _, r := range anys(projectSettingsOf(q, id)["repos"]) {
 				m := githubRemote.FindStringSubmatch(astr(mapOf(r)["remote"]))
 				if m == nil || !keyed && !strings.EqualFold(m[1]+"/"+m[2], githubPublicRepo) {
