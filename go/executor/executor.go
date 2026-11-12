@@ -759,6 +759,12 @@ func (e *executor) run(c M) error {
 		return err
 	case "account-inspect":
 		return e.accountInspect(c)
+	case "connection-remove":
+		pl, err := payloadOf[contract.ConnectionRemovePayload](c)
+		if err != nil || !removeConnection(connectionsDir(), pl.Connection) {
+			return e.finish(c, "failed", "")
+		}
+		return e.finish(c, "completed", "")
 	case "script":
 		return e.script(c, execution, session)
 	case "start", "input":

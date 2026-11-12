@@ -34,6 +34,11 @@ func projectWrite(q *Request, create bool) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cs, err := headConnections(jsonBytes(bundle)); err != nil {
+		return nil, err
+	} else if err := withdrawConnectionRemovals(q, cs); err != nil {
+		return nil, err
+	}
 	text, err := canonicalText(bundle)
 	if err != nil {
 		return nil, err
@@ -213,14 +218,28 @@ func projectArchive(q *Request) (any, error) {
 		}
 		return nil, fail(409, "Close first: "+strings.Join(open, ", "))
 	}
-	tag, err := q.tx.Exec(q.ctx(), "UPDATE definition SET retired_at=now() WHERE kind='project' AND id=$1 AND retired_at IS NULL", id)
+	// The head stays readable after retirement, so archiving again (idempotent) cleans keys a first run left behind.
+	var raw []byte
+	err = q.tx.QueryRow(q.ctx(), `SELECT r.content FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
+	  WHERE d.kind='project' AND d.id=$1`, id).Scan(&raw)
+	if err == pgx.ErrNoRows {
+		return nil, fail(404, "Unknown project")
+	}
 	if err != nil {
 		return nil, err
 	}
-	if tag.RowsAffected() == 0 {
-		return nil, fail(404, "Unknown project")
+	conns, err := headConnections(raw)
+	if err != nil {
+		return nil, err
 	}
-	return doc{"projectId": id, "archived": true}, nil
+	if err := exec(q, "UPDATE definition SET retired_at=coalesce(retired_at,now()) WHERE kind='project' AND id=$1", id); err != nil {
+		return nil, err
+	}
+	removed, err := removeUnusedConnections(q, conns)
+	if err != nil {
+		return nil, err
+	}
+	return doc{"projectId": id, "archived": true, "connectionRemovals": removed}, nil
 }
 
 // projectRetired: the id belongs to an archived project (its definition row stays, so the id is never reused).
@@ -312,4 +331,120 @@ func projectIDs(q *Request) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// headConnections: the distinct git connections a project head (bundle JSON) names in settings.repos.
+func headConnections(raw []byte) ([]string, error) {
+	var b struct {
+		Settings struct {
+			Repos []struct {
+				Connection string `json:"connection"`
+			} `json:"repos"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(raw, &b); err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, r := range b.Settings.Repos {
+		if r.Connection != "" && !slices.Contains(out, r.Connection) {
+			out = append(out, r.Connection)
+		}
+	}
+	return out, nil
+}
+
+// removeUnusedConnections: a git connection no live project names any more leaves every host that holds it
+// (connection-remove deletes the deploy key directory). Every live head counts, whoever asks; a head that does not
+// parse stops the removal (fail closed). A removal already pending is not queued twice; project_create and
+// project_update withdraw pending removals of a connection they name again. Returns "host/connection" queued.
+func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
+	out := []string{}
+	if len(conns) == 0 {
+		return out, nil
+	}
+	heads, err := queryRows(q, `SELECT d.id,r.content FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
+	  WHERE d.kind='project' AND d.retired_at IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	used := map[string]bool{}
+	for _, h := range heads {
+		raw, isText := h["content"].(string)
+		if !isText {
+			raw = js(h["content"])
+		}
+		cs, err := headConnections([]byte(raw))
+		if err != nil {
+			return nil, fail(409, "Project "+astr(h["id"])+" does not parse; no deploy key is removed")
+		}
+		for _, c := range cs {
+			used[c] = true
+		}
+	}
+	obs, err := all(q, "host-observation", nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range conns {
+		if used[c] {
+			continue
+		}
+		for _, o := range obs {
+			host := astr(o["id"])
+			if !slices.Contains(strs(o["gitConnections"]), c) {
+				continue
+			}
+			if dup, err := has(q, "SELECT 1 FROM document WHERE kind='command' AND data->>'hostId'=$1 AND data->>'kind'='connection-remove' AND data->>'status'='pending' AND data->'payload'->>'connection'=$2", host, c); err != nil || dup {
+				if err != nil {
+					return nil, err
+				}
+				continue
+			}
+			sid, xid := newID(), newID()
+			if err := put(q, "session", doc{"id": sid, "createdAt": nowMs(), "actor": "program-worker"}); err != nil {
+				return nil, err
+			}
+			if err := put(q, "execution", doc{"id": xid, "executionId": xid, "sessionId": sid, "hostId": host, "state": "preparing", "createdAt": nowMs(), "actor": "program-worker"}); err != nil {
+				return nil, err
+			}
+			if err := put(q, "command", doc{"id": newID(), "executionId": xid, "sessionId": sid, "hostId": host, "kind": string(contract.CommandKindConnectionRemove), "status": "pending",
+				"payload": contract.ConnectionRemovePayload{Connection: c}}); err != nil {
+				return nil, err
+			}
+			out = append(out, host+"/"+c)
+		}
+	}
+	return out, nil
+}
+
+// withdrawConnectionRemovals: a project names connections again, so their pending removals must not run; their
+// executions end cancelled. ponytail: a host that already fetched the command still runs it (commands stay pending
+// until the receipt); the key then has to be put back by hand. A host-side use check would close that.
+func withdrawConnectionRemovals(q *Request, conns []string) error {
+	if len(conns) == 0 {
+		return nil
+	}
+	cmds, err := queryRows(q, `SELECT data FROM document WHERE kind='command' AND data->>'kind'='connection-remove' AND data->>'status'='pending' AND data->'payload'->>'connection'=ANY($1)`, conns)
+	if err != nil {
+		return err
+	}
+	for _, r := range cmds {
+		c := mapOf(r["data"])
+		c["status"], c["stopDetail"] = "stopped", "connection in use again"
+		if err := put(q, "command", c); err != nil {
+			return err
+		}
+		e, err := get(q, c["executionId"], "execution")
+		if err != nil {
+			return err
+		}
+		if !terminal(e) {
+			e["state"], e["stopDetail"], e["finishedAt"] = "cancelled", "connection in use again", nowMs()
+			if err := put(q, "execution", e); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

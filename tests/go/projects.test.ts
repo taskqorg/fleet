@@ -102,7 +102,8 @@ test('Owner archives a project only after its open work is closed; it leaves eve
  ok(await op('project_archive',{projectId:id},owner));
  assert.ok(!ok(await op('project_list',{},owner)).projects.some((p:any)=>p.id===id));
  assert.equal((await op('project_context',{projectId:id},owner)).status,404);
- assert.equal((await op('project_archive',{projectId:id},owner)).status,404);
+ ok(await op('project_archive',{projectId:id},owner)); // idempotent
+ assert.equal((await op('project_archive',{projectId:'no-such-'+randomUUID()},owner)).status,404);
  assert.equal((await op('task_create',{projectId:id,title:'late work'},owner)).status,404);
  assert.equal((await op('session_start',{requestId:randomUUID(),text:'late',projectId:id,profileId:'pm'},owner)).status,404);
  assert.equal((await op('project_update',{projectId:id,requestId:randomUUID(),baseRevision:1,content:bundle(id,'back')},owner)).status,404);
@@ -119,4 +120,23 @@ test('Unreached steps of a finished pipeline run do not block project_archive; a
  assert.equal((await call('project_archive',{projectId:id})).status,409);
  c.sql(`UPDATE execution SET state='failed' WHERE id='run-a'`);
  ok(await call('project_archive',{projectId:id}));
+});
+// R2, R3; risk: an archived project's deploy key stays on every host that held it.
+test('Archiving the last project that names a git connection queues connection-remove on each host that holds it',async t=>{
+ const {startCoordinator}=await import('../harness.ts');
+ const c=await startCoordinator({name:'archkeys'});t.after(()=>c.stop());
+ const call=async(name:string,body:object)=>{const r=await fetch(c.base+'/api/ops/'+name,{method:'POST',headers:{authorization:'Bearer '+c.secret,'x-fleet-person':'owner@trial.test','content-type':'application/json'},body:JSON.stringify(body)});return {status:r.status,body:await r.json() as any}};
+ const withConn=(id:string,conn:string)=>({settings:{id,name:'Keyed',contextFiles:[],repos:[{id:'main',remote:'git@github.com:taskqorg/x.git',forge:'github',defaultBranch:'main',connection:conn}]},contextFiles:[]});
+ const a='project-'+randomUUID(),b='project-'+randomUUID();
+ ok(await call('project_create',{id:a,requestId:randomUUID(),content:withConn(a,'k-shared')}));
+ ok(await call('project_create',{id:b,requestId:randomUUID(),content:withConn(b,'k-shared')}));
+ c.sql(`INSERT INTO document(kind,id,data) VALUES ('host-observation','h-keys','{"id":"h-keys","gitConnections":["k-shared","k-other"]}')`);
+ assert.deepEqual(ok(await call('project_archive',{projectId:a})).connectionRemovals,[],'another live project still uses it');
+ assert.deepEqual(ok(await call('project_archive',{projectId:b})).connectionRemovals,['h-keys/k-shared']);
+ assert.deepEqual(ok(await call('project_archive',{projectId:b})).connectionRemovals,[],'a pending removal is not queued twice');
+ const pending=()=>c.sql(`SELECT count(*) FROM document WHERE kind='command' AND data->>'kind'='connection-remove' AND data->>'status'='pending'`);
+ const d='project-'+randomUUID();
+ ok(await call('project_create',{id:d,requestId:randomUUID(),content:withConn(d,'k-shared')}));
+ assert.match(String(pending()),/\b0\b/,'a project naming the connection again withdraws the removal');
+ assert.match(String(c.sql(`SELECT count(*) FROM execution WHERE state='preparing' AND kind='host_job'`)),/\b0\b/,'its execution ends too');
 });

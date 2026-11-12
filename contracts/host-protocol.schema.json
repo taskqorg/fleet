@@ -642,7 +642,8 @@
         "teardown",
         "artifact-copy",
         "artifact-verify",
-        "account-inspect"
+        "account-inspect",
+        "connection-remove"
       ]
     },
     "StartPayload": {
@@ -1880,6 +1881,19 @@
       ],
       "properties": {
         "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "ConnectionRemovePayload": {
+      "type": "object",
+      "$comment": "Delete <FLEET_CONNECTIONS_DIR>/<connection> (its deploy key) on the host; sent when the last live project using the connection is archived.",
+      "required": [
+        "connection"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "connection": {
           "type": "string"
         }
       }

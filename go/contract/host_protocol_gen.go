@@ -461,21 +461,22 @@ func (v *Command) Validate() error {
 type CommandKind string
 
 const (
-	CommandKindStart          CommandKind = "start"
-	CommandKindInput          CommandKind = "input"
-	CommandKindSteer          CommandKind = "steer"
-	CommandKindStop           CommandKind = "stop"
-	CommandKindScript         CommandKind = "script"
-	CommandKindReadiness      CommandKind = "readiness"
-	CommandKindBaseUpdated    CommandKind = "base-updated"
-	CommandKindTeardown       CommandKind = "teardown"
-	CommandKindArtifactCopy   CommandKind = "artifact-copy"
-	CommandKindArtifactVerify CommandKind = "artifact-verify"
-	CommandKindAccountInspect CommandKind = "account-inspect"
+	CommandKindStart            CommandKind = "start"
+	CommandKindInput            CommandKind = "input"
+	CommandKindSteer            CommandKind = "steer"
+	CommandKindStop             CommandKind = "stop"
+	CommandKindScript           CommandKind = "script"
+	CommandKindReadiness        CommandKind = "readiness"
+	CommandKindBaseUpdated      CommandKind = "base-updated"
+	CommandKindTeardown         CommandKind = "teardown"
+	CommandKindArtifactCopy     CommandKind = "artifact-copy"
+	CommandKindArtifactVerify   CommandKind = "artifact-verify"
+	CommandKindAccountInspect   CommandKind = "account-inspect"
+	CommandKindConnectionRemove CommandKind = "connection-remove"
 )
 
 // CommandKindValues lists every CommandKind in schema order.
-var CommandKindValues = []CommandKind{CommandKindStart, CommandKindInput, CommandKindSteer, CommandKindStop, CommandKindScript, CommandKindReadiness, CommandKindBaseUpdated, CommandKindTeardown, CommandKindArtifactCopy, CommandKindArtifactVerify, CommandKindAccountInspect}
+var CommandKindValues = []CommandKind{CommandKindStart, CommandKindInput, CommandKindSteer, CommandKindStop, CommandKindScript, CommandKindReadiness, CommandKindBaseUpdated, CommandKindTeardown, CommandKindArtifactCopy, CommandKindArtifactVerify, CommandKindAccountInspect, CommandKindConnectionRemove}
 
 // Valid: v is one of the schema's values.
 func (v CommandKind) Valid() bool {
@@ -485,6 +486,16 @@ func (v CommandKind) Valid() bool {
 		}
 	}
 	return false
+}
+
+// ConnectionRemovePayload: Delete <FLEET_CONNECTIONS_DIR>/<connection> (its deploy key) on the host; sent when the last live project using the connection is archived.
+type ConnectionRemovePayload struct {
+	Connection string `json:"connection"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionRemovePayload) Validate() error {
+	return nil
 }
 
 type EdgeProblem struct {
