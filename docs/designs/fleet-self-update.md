@@ -131,7 +131,7 @@ Trigger, gate and version are replaced by the [delivery pipeline](fleet-delivery
 *   **Migration check** (originally a job `migrate-check` with `needs: build`; now a step of `build`, see above): on the runner's PostgreSQL, the newest published release's coordinator builds the database, the new coordinator migrates it, and each of the last 5 published releases' coordinators then starts on it and must answer `/api/health` 200 ([delivery pipeline, section 5](fleet-delivery-pipeline.md#5-compatibility-across-skipped-versions)). Skipped when there is no published release. This enforces "expand in N, contract in N+1": a migration that breaks a checked release's coordinator never publishes.
 *   **Job `publish`** (`needs: build`; a UI release needs only the gate and signs the `fleet-ui` tree of the qualifying ci run; environment `release`, `contents: write`, `id-token: write`, `attestations: write`): signs `SHA256SUMS` (written by the build) into `SHA256SUMS.sig` with `openssl pkeyutl -sign -rawin` and the secret `FLEET_RELEASE_KEY`, writes `latest.json` `{"version", "files": {"linux-amd64": "<file>", "darwin-arm64": "<file>"}}`; `actions/attest-build-provenance` over both tarballs, its bundle saved as `provenance.sigstore.jsonl`; `gh release create v<ver> --latest` with the six files.
 
-`ci.yml` job `app` packs the same tarballs with the same script (version `0.0.0-<sha>`, unsigned) as the artifact `fleet-release-<sha>` (kept 1 day), so pull request trials carry every binary.
+`ci.yml` job `release-build` builds these tarballs in the merge queue with the release's own version, and the release signs those bytes ([delivery pipeline, section 4](fleet-delivery-pipeline.md#4-automatic-release)).
 
 ### 2. Versions in binaries
 

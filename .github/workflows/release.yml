@@ -297,12 +297,15 @@ jobs:
       # GitHub refuses the workflow token (it cannot hold the workflows permission) a new tag on a commit whose
       # .github/workflows differ from the head of main: HTTP 403 "Resource not accessible by integration" (run
       # 43237511138, 2026-11-12: main had moved on to a merge that changed workflows). That head contains this commit
-      # and its push started the next release run, which publishes both; this run stops here, green.
+      # and its push started the next release run, which publishes a release containing it; this run stops here, green.
+      # Push runs only: a dispatched older commit (rollback drill) is meant to be released as it is.
       - name: Main has not moved on with workflow changes
         id: target
         run: |
           set -o pipefail
-          moved=$(gh api "repos/$GH_REPO/compare/$SHA...main" --jq '[.files[]?.filename] | if length >= 300 then 300 else map(select(startswith(".github/workflows/"))) | length end')
+          [ "$GITHUB_EVENT_NAME" = push ] || exit 0
+          # An API error here publishes as before; a 403 then is caught below.
+          moved=$(gh api "repos/$GH_REPO/compare/$SHA...main" --jq '[.files[]?.filename] | if length >= 300 then 300 else map(select(startswith(".github/workflows/"))) | length end') || moved=0
           if [ "$moved" != 0 ]; then
             echo "superseded: main changed workflows since $SHA; the next release run publishes it" | tee -a "$GITHUB_STEP_SUMMARY"
             echo skip=true >> "$GITHUB_OUTPUT"
@@ -365,7 +368,7 @@ jobs:
           cp "${{ steps.attest.outputs.bundle-path }}" provenance.sigstore.jsonl
           # The 403 above when main moved on with workflow changes after that check: superseded the same way.
           moved() { gh api "repos/$GH_REPO/compare/$SHA...main" --jq '[.files[]?.filename] | if length >= 300 then 300 else map(select(startswith(".github/workflows/"))) | length end'; }
-          trap '[ $? = 0 ] || [ "$(moved)" = 0 ] || { echo "superseded: main changed workflows since $SHA; the next release run publishes it" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; }' EXIT
+          trap 'code=$?; [ $code = 0 ] || [ "$GITHUB_EVENT_NAME" != push ] || ! n=$(moved) || [ -z "$n" ] || [ "$n" = 0 ] || { echo "superseded: main changed workflows since $SHA; the next release run publishes it" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; }' EXIT
           if [ "$UI" = true ]; then
             gh release create "ui-$BACKEND-v$VERSION" --target "$SHA" --latest=false --title "Fleet UI $VERSION" --notes "UI $VERSION for backend $BACKEND; source $SHA" \
               fleet-ui-*.tgz SHA256SUMS SHA256SUMS.sig provenance.sigstore.jsonl
