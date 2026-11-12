@@ -88,12 +88,13 @@ export function makePlan(event: string, payload: Event, candidate: string, git: 
     decision = {selected: [...families], reasons: [`full fallback: ${String(error)}`]};
   }
   return {version: 1, mode: 'selected', policy: policy(), candidate, base, event, paths, previousGreen, forced,
-    queued: event === 'push' && queued, ...decision, ...run(event, execution(paths, previousGreen, forced), event === 'push' && queued)};
+    queued: event === 'push' && queued && !forced, ...decision, ...run(event, execution(paths, previousGreen, forced), event === 'push' && queued && !forced)};
 }
 
 // A pull request runs only the thin check; its heavy families are deferred to the merge queue, which qualifies the candidate.
 // A push of a commit its merge queue run already qualified (main fast-forwards to the group commit) repeats nothing:
 // the release gate reads that merge_group run first, so a full push run would only double the runner load per merge.
+// FLEET_TEST_FULL still forces a full push run, which also refreshes main's build caches.
 export function run(event: string, families: readonly Family[], queued = false): {executed: readonly Family[]; deferred: readonly Family[]} {
   return event === 'pull_request' || (event === 'push' && queued) ? {executed: [], deferred: families} : {executed: families, deferred: []};
 }
@@ -122,7 +123,7 @@ function previousGreen(event: string, payload: Event, candidate: string): boolea
   } catch { return false; }
 }
 
-function queueQualified(event: string, candidate: string): boolean {
+export function queueQualified(event: string, candidate: string): boolean {
   if (event !== 'push') return false;
   try {
     const runs = JSON.parse(execFileSync('gh', ['run', 'list', '--workflow', 'ci', '--commit', candidate, '--event', 'merge_group',
@@ -160,6 +161,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const plan = JSON.parse(readFileSync(process.argv[3], 'utf8')) as Plan;
     const jobs = JSON.parse(readFileSync(process.argv[4], 'utf8')) as Record<string, {result: string}>;
     verifyEvidence(plan, process.env.GITHUB_SHA!, jobs);
+    // A push that executed nothing is qualified only by a green merge_group run of the same commit.
+    assert.ok(!plan.queued || queueQualified('push', plan.candidate), 'queued: no successful merge_group run for the candidate');
     if (plan.paths) {
       assert.ok(sha(plan.base));
       execFileSync('git', ['merge-base', '--is-ancestor', plan.base, plan.candidate]);

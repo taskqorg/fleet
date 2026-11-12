@@ -18,7 +18,8 @@ on:
 permissions: {}
 # A newer push or description edit of a pull request supersedes its running check; queue and main runs are never cancelled.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  # A description edit (edited) gets its own group: it never cancels a push's run, which previousGreen reads.
+  group: ci-${{ github.event_name == 'pull_request' && github.event.action != 'edited' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: true
 jobs:
   selection:
@@ -89,6 +90,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -103,6 +105,7 @@ jobs:
           path: ${{ runner.temp }}/qualification
       - name: Validate actual full execution
         env:
+          GH_TOKEN: ${{ github.token }}
           RESULTS: ${{ toJSON(needs) }}
         run: |
           node -e 'const fs=require("node:fs"),r=JSON.parse(process.env.RESULTS);for(const f of ["app","go","browser"]){r[f]=r[f+"-tests"];delete r[f+"-tests"];}fs.writeFileSync(process.env.RUNNER_TEMP+"/qualification/test-results.json",JSON.stringify(r))'

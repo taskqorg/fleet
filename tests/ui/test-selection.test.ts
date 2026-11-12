@@ -130,5 +130,6 @@ test('a push its merge queue run qualified executes nothing; queued is push-only
   const jobs = {selection: {result: 'success'}, thin: {result: 'skipped'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))};
   assert.doesNotThrow(() => verifyEvidence(plan, head, jobs));
   assert.throws(() => verifyEvidence({...plan, queued: false}, head, jobs));
+  assert.equal(makePlan('push', {before: base, after: head}, head, git, false, true, true).executed.length, families.length, 'FLEET_TEST_FULL forces a full push');
   assert.equal(makePlan('merge_group', {merge_group: {base_sha: base, head_sha: head}}, head, git, false, false, true).executed.length, families.length);
 });
