@@ -269,5 +269,8 @@ test('PM11 an agent call without projectId gets its session project, for any ope
   assert.ok(ok(await pm.tool('question_history', {})).questions.some((x: any) => x.id === asked.id), 'question_history defaults too');
   ok(await op('questions_answer', {questionId: asked.id, answer: 'decline'}));
   const member = await agent(MEMBER, {projectId: PROJECT, role: 'pm'});
-  assert.notEqual((await member.tool('question_history', {projectId: OTHER})).status, 200, 'another project stays refused');
+  assert.equal((await member.tool('question_history', {projectId: OTHER})).status, 404, 'another project stays refused (hidden)');
+  const star = await agent(OWNER, {projectId: PROJECT, role: 'pm'});
+  ok(await star.tool('focus_set', {sessionId: star.sessionId, projectIds: '*'}));
+  assert.equal((await star.tool('connections_key_request', {requestId: randomUUID(), connection: conn})).status, 400, 'a "*" focus names no default project');
 });
