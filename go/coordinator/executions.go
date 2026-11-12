@@ -681,6 +681,10 @@ func executionAbandon(q *Request, id, reason, by string) (string, error) {
 	if err := exec(q, "UPDATE execution SET problem='unknown:abandoned' WHERE id=$1", id); err != nil {
 		return "", err
 	}
+	// Its end is when it was given up, not when it stopped running: the run's time is unknown, never start-to-abandon.
+	if err := exec(q, "UPDATE execution_totals SET wall_ms=NULL,wall_ms_basis='unavailable' WHERE execution_id=$1", id); err != nil {
+		return "", err
+	}
 	if err := put(q, "setting-change", doc{"id": newID(), "target": "execution:" + id, "projectId": e["projectId"], "field": "state", "previous": prev, "value": "failed", "reason": reason, "actor": by, "at": now}); err != nil {
 		return "", err
 	}
