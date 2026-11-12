@@ -648,7 +648,9 @@ func (v *ExecutionSkipped) Validate() error {
 type ExecutionStatusReply struct {
 	ExecutionId string                     `json:"executionId"`
 	Next        string                     `json:"next"`
+	Observation string                     `json:"observation"`
 	Readiness   []json.RawMessage          `json:"readiness,omitempty"`
+	Reason      *string                    `json:"reason"`
 	Report      json.RawMessage            `json:"report"`
 	Resume      map[string]json.RawMessage `json:"resume"`
 	SessionId   *string                    `json:"sessionId"`

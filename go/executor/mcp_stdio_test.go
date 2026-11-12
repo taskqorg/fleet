@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"modernc.org/sqlite"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -1271,10 +1274,95 @@ func TestMCPGuardianRetainsOwnershipRefusal(t *testing.T) {
 	}
 }
 
+// R3; risk: a concurrent journal writer invalidates the ownership read snapshot before registration.
+func TestMCPGuardianRegistrationSerializesWriter(t *testing.T) {
+	o, _ := testMCPOwner(t)
+	var seq int
+	var name, path string
+	if err := o.db.QueryRow("PRAGMA database_list").Scan(&seq, &name, &path); err != nil {
+		t.Fatal(err)
+	}
+	other, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(0)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	original := identity
+	defer func() { identity = original }()
+	var once sync.Once
+	identity = func(pid int) (string, error) {
+		once.Do(func() {
+			_, err := other.Exec("INSERT INTO sessions(id,native) VALUES('concurrent-writer','fixture')")
+			var busy *sqlite.Error
+			if !errors.As(err, &busy) || busy.Code() != 5 {
+				t.Errorf("registration did not reserve writer: %v", err)
+			}
+		})
+		return original(pid)
+	}
+	input, writer, _ := os.Pipe()
+	defer input.Close()
+	defer writer.Close()
+	reader, output, _ := os.Pipe()
+	defer reader.Close()
+	defer output.Close()
+	done := make(chan error, 1)
+	go func() { done <- mcpStdio(o.socket, fixtureSpec("read"), input, output, t.TempDir(), "") }()
+	writer.Write([]byte(`{"id":1,"method":"initialize"}` + "\n"))
+	reader.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var reply M
+	if err := json.NewDecoder(reader).Decode(&reply); err != nil {
+		t.Fatal(err)
+	}
+	if jAt(reply, "result") == nil {
+		t.Fatal(reply)
+	}
+	writer.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("registered server did not finish")
+	}
+	if _, err := other.Exec("INSERT INTO sessions(id,native) VALUES('after-registration','fixture')"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// R5; risk: a database refusal loses its actionable code or retains arbitrary error text.
+func TestMCPGuardianRetainsSQLiteRefusalCode(t *testing.T) {
+	o, _ := testMCPOwner(t)
+	if _, err := o.db.Exec(`CREATE TRIGGER refuse_registration BEFORE INSERT ON mcp_groups BEGIN SELECT RAISE(ABORT,'SECRET_SENTINEL_DO_NOT_RETAIN'); END`); err != nil {
+		t.Fatal(err)
+	}
+	input, writer, _ := os.Pipe()
+	defer input.Close()
+	defer writer.Close()
+	output, err := os.CreateTemp(t.TempDir(), "output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	done := make(chan error, 1)
+	go func() { done <- mcpStdio(o.socket, fixtureSpec("read"), input, output, t.TempDir(), "") }()
+	writer.Write([]byte(`{"id":1,"method":"initialize"}` + "\n"))
+	select {
+	case err := <-done:
+		var life *mcpLifecycleError
+		if !errors.As(err, &life) || jStr(life.status, "errorKind") != "sqlite" || jAt(life.status, "errorCode") != float64(1811) || jStr(life.status, "outcome") != "unknown" || strings.Contains(err.Error(), "SECRET_SENTINEL_DO_NOT_RETAIN") {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("SQLite refusal diagnostic lost")
+	}
+}
+
 // R5; risk: opaque payload/status values leak into retained diagnostics or a diagnostic write masks the primary failure.
 func TestMCPDiagnosticProjectionAndRetentionFailure(t *testing.T) {
 	sentinel := "SECRET_SENTINEL_DO_NOT_RETAIN"
-	raw := M{"stage": sentinel, "registration": sentinel, "outcome": "exited", "exitCode": float64(9999), "signal": float64(-2), "guardianPid": float64(1.5), "guardianIdentity": sentinel, "executionId": sentinel, "refusalReason": sentinel, "stderr": sentinel, "params": M{"token": sentinel}}
+	raw := M{"stage": sentinel, "registration": sentinel, "outcome": "exited", "exitCode": float64(9999), "signal": float64(-2), "guardianPid": float64(1.5), "guardianIdentity": sentinel, "executionId": sentinel, "refusalReason": sentinel, "errorKind": sentinel, "errorCode": sentinel, "stderr": sentinel, "params": M{"token": sentinel}}
 	safe := safeMCPStatus(raw)
 	if got := safeMCPStatus(M{"registration": "refused", "refusalReason": "MCP guardian executable differs"}); jStr(got, "refusalReason") != "MCP guardian executable differs" || jStr(got, "outcome") != "unknown" {
 		t.Fatal(got)

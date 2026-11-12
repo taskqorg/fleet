@@ -229,13 +229,15 @@ test('A14 control acknowledgement does not confirm an uncertain execution; only 
     assert.deepEqual([e.state, e.observation, e.finishedAt ?? null], ['running', 'unconfirmed', null]);
     const status = ok(await op('execution_status', {executionId}));
     assert.equal(status.stop.outcome, 'unknown'); assert.equal(status.next, 'session_fork');
+    assert.equal(status.observation, 'unconfirmed'); assert.ok(status.reason); assert.equal(status.state, 'running');
     const other = await queued();
     assert.equal((await receipt(stop.id, 'stopped', other.executionId)).status, 403, 'another execution cannot use this command');
     assert.equal((await foreign('/api/hosts/receipts', {commandId: stop.id, executionId, status: 'stopped'})).status, 403, 'another host cannot confirm cleanup');
     ok(await receipt(stop.id, 'stopped'));
     const ended = await execution(sessionId, executionId);
     assert.deepEqual([ended.state, ended.observation], ['cancelled', 'confirmed']);
-    assert.equal(ok(await op('execution_status', {executionId})).stop.outcome, 'proven');
+    const confirmed = ok(await op('execution_status', {executionId}));
+    assert.equal(confirmed.stop.outcome, 'proven'); assert.equal(confirmed.observation, 'confirmed'); assert.equal(confirmed.reason, null);
     ok(await receipt(stop.id, 'stopped'));
     assert.equal((await receipt(stop.id, 'unknown')).status, 409);
     assert.equal((await receipt(stop.id, 'accepted')).status, 409);
