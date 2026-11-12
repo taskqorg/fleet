@@ -342,11 +342,11 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
     | `queued` | an open question of kind `operator_decision` blocks the task before its first execution, or a dependency is not `completed` | `waiting`, with `wait_reason` |
     | `in_progress` | an open question of kind `operator_decision` or `agent_question` blocks the task, or a dependency is not `completed` | `waiting`, with `wait_reason` |
     | `waiting` | the blocking question is answered, or the dependency completes | `in_progress` |
-    | `in_progress` | its last open execution ends, its latest run succeeded, it has no delivery method and no open question | `in_progress`; Fleet asks one `acceptance` question, so a finished task waits on the operator, not silently |
+    | `in_progress` | its last open execution ends, the run that ended last succeeded, it has no delivery method and no open question | `in_progress`; Fleet asks one `acceptance` question, so a finished task waits on the operator, not silently |
     | `in_progress` | the completion requirements are met and an `acceptance` question is answered `accepted` | `completed` |
     | `in_progress` | an `acceptance` question is answered `rejected` | `in_progress`, with a new execution expected |
     | `in_progress` or `waiting` | the operator stops the task, or its last execution fails and the operator marks it failed | `failed` |
-    | `in_progress` | its last open execution ends, its latest run did not succeed, it has no delivery method and no open question | `waiting`: Fleet asks one `operator_decision` (`fail task` or `keep open`); a new run withdraws it, `fail task` makes the task `failed`. No task sits in progress with nothing that can move it |
+    | `in_progress` | its last open execution ends, the run that ended last did not succeed, it has no delivery method and no open question | `waiting`: Fleet asks one `operator_decision` (`fail task`, plus `accept earlier result` when an earlier run succeeded); a new run withdraws it (the retry), `fail task` makes the task `failed`, `accept earlier result` asks acceptance. No task sits in progress with nothing that can move it |
     | any open state | the operator pauses or resumes it | `paused`, or back to the state before |
     | any open state | the operator cancels it | `cancelled` |
 
