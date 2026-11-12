@@ -25,7 +25,7 @@ Facts from 2026-11-11:
 * Deleting the base branch of a stacked pull request closed the child once.
 * Flaky gateway tests failed at least 4 runs.
 * A release needs a person to push an annotated tag `v1.YYMMDD.N` whose date is the UTC date. One tag was rejected for a local date.
-* Hosts poll on 5-minute timers. A worker waits on the host version, then runs the agent smoke test by hand.
+* Hosts polled on 5-minute timers (PDS18 now every minute, section 6). A worker waits on the host version, then runs the agent smoke test by hand.
 
 ## Goals
 
