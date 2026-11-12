@@ -137,7 +137,7 @@ func accountHosts(q *Request, harness string) ([]doc, error) {
 			insp = inspector
 		}
 		out = append(out, doc{"id": id, "inspector": insp, "platform": platform, "lastSeenAt": seen, "connectivity": connectivity, "eligible": allowed,
-			"onboardingSupported": inspector != "" && platform == "darwin", "reason": reason})
+			"onboardingSupported": inList(exec, id) || (inspector != "" && platform == "darwin"), "reason": reason})
 	}
 	return out, nil
 }
@@ -245,7 +245,7 @@ func integrationHost(q *Request) (string, error) {
 	return hostWithRole(q, "inspector-for:"+defaultHostID(q))
 }
 
-// accountInspect: a read-only inspection command to the inspector of the default host.
+// accountInspect: a read-only inspection command to the selected host or its inspector.
 func accountInspect(q *Request, b doc, catalogue bool) (any, error) {
 	allowedKeys := []string{"accountId", "hostId", "binding"}
 	if catalogue {
@@ -261,12 +261,12 @@ func accountInspect(q *Request, b doc, catalogue bool) (any, error) {
 		return nil, err
 	}
 	host := astr(nonNil(b["hostId"], defaultHostID(q)))
-	integ, err := integrationHost(q)
+	integ, err := hostWithRole(q, "inspector-for:"+host)
 	if err != nil {
 		return nil, err
 	}
-	if host != defaultHostID(q) || integ == "" {
-		return nil, fail(409, "Selected host has no supported local Mac inspector")
+	if integ == "" {
+		integ = host
 	}
 	hs, err := accountHosts(q, astr(a["harness"]))
 	if err != nil {
