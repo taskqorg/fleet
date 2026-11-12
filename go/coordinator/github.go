@@ -184,6 +184,9 @@ func githubReadKeyed(ctx context.Context, a *App, project, tool string, args map
 		pairs = append(pairs, "{"+k+"}", v)
 	}
 	path = strings.NewReplacer(pairs...).Replace(path)
+	if strings.Contains(path, "{") {
+		return nil, fmt.Errorf("github %s: a path field is missing", tool)
+	}
 	return githubOnce("key "+connection+" "+project+" "+path, 30*time.Second, func() ([]byte, error) { return githubGateway(ctx, a, connection, project, tool, args) }, func(err error) bool { return err == nil })
 }
 

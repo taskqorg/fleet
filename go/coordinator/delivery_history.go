@@ -187,6 +187,10 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		}
 		return err
 	}
+	// A refused read (the tool not granted, the key gone) says nothing about the item: stop instead of giving it up.
+	refused := func(err error) bool {
+		return strings.Contains(err.Error(), "unknown-tool") || strings.Contains(err.Error(), "no github key")
+	}
 	backfill := !st.Backfilled
 	// Pull requests: the most recently updated first; after the backfill, until a page older than the last pass.
 	var pulls []dhPull
@@ -320,6 +324,9 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			Jobs []ciJob `json:"jobs"`
 		}
 		if err := read(&js, "run_jobs", "run_id", strconv.FormatInt(r.ID, 10)); err != nil {
+			if refused(err) {
+				return fail(err)
+			}
 			skipped = append(skipped, err.Error())
 			st.RetryRuns = append(st.RetryRuns, dhRetry{r, tries[r.ID] + 1}) // read again next pass, outside the window too
 			continue
@@ -336,6 +343,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	for i := range prs {
 		byNum[prs[i].Number] = &prs[i]
 	}
+	pullsUpdated := st.PullsUpdated
 	for _, p := range pulls {
 		if p.MergedAt == nil {
 			continue
@@ -354,8 +362,8 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		if p.User.Login != "" {
 			r.Author = ptr(p.User.Login)
 		}
-		if p.UpdatedAt > st.PullsUpdated {
-			st.PullsUpdated = p.UpdatedAt
+		if p.UpdatedAt > pullsUpdated {
+			pullsUpdated = p.UpdatedAt // stored at the end: a flush mid-pass must not skip these pages next time
 		}
 	}
 	// PR CI done: the first green pull_request run of the ci workflow on the merged head, read once per pull request
@@ -363,7 +371,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	recent, hour := now.Add(-48*time.Hour).Format(time.RFC3339), now.Add(-time.Hour).Format(time.RFC3339)
 	tried := map[string]string{}
 	for k, v := range st.CiTried {
-		if v >= recent {
+		if v >= recent || backfill { // a resumed backfill keeps every marker
 			tried[k] = v
 		}
 	}
@@ -387,12 +395,16 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			Runs []dhRun `json:"workflow_runs"`
 		}
 		if err := read(&r, "workflow_runs_sha", "workflow", deliveryWorkflow, "event", "pull_request", "sha", p.HeadSha); err != nil {
+			if refused(err) {
+				return fail(err)
+			}
 			skipped = append(skipped, err.Error())
 			if st.CiRetry == nil {
 				st.CiRetry = map[string]int{}
 			}
 			if st.CiRetry[num]++; st.CiRetry[num] >= dhRetries {
 				delete(st.CiRetry, num) // given up: the pull request keeps no PR CI time
+				tried[num] = now.Format(time.RFC3339)
 			}
 			continue
 		}
@@ -446,7 +458,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	if backfill {
 		st.Backfilled, st.BackfilledFrom = true, deliveryRepoStart
 	}
-	st.Through, st.RefreshedAt, st.Problem = now.Format("2006-01-02"), now.Format(time.RFC3339), ""
+	st.Through, st.RefreshedAt, st.Problem, st.PullsUpdated = now.Format("2006-01-02"), now.Format(time.RFC3339), "", pullsUpdated
 	if len(skipped) > 0 {
 		st.Problem = fmt.Sprintf("%d reads failed, first: %s", len(skipped), skipped[0])
 	}
