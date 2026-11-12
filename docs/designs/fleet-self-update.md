@@ -71,7 +71,7 @@ Target: replaced by a merge that releases by itself ([delivery pipeline](fleet-d
 
 *   **Given**: commit C on `main`; its `ci` run may still be running. Every host has `autoUpdate: "on"`.
 *   **When**: the owner runs `git tag v1.261111.0 C && git push origin v1.261111.0`.
-*   **Then**: the release workflow waits for C's `go`, `app` and `browser` jobs, builds, publishes. Within about 2 minutes PDS18's run installs the coordinator, gateway, guard and the PDS18 executor. Each other executor installs on its next run after the coordinator is healthy. `hosts_list` shows `version: 1.261111.0`, `update.state: ok` for every host.
+*   **Then**: the release workflow waits for C's `app` job (it also posts the `go` and `browser` statuses), builds, publishes. Within about 2 minutes PDS18's run installs the coordinator, gateway, guard and the PDS18 executor. Each other executor installs on its next run after the coordinator is healthy. `hosts_list` shows `version: 1.261111.0`, `update.state: ok` for every host.
 
 ### CUJ 2: Bad release on PDS18
 
@@ -124,7 +124,7 @@ Trigger, gate and version are replaced by the [delivery pipeline](fleet-delivery
 
 *   **Job `gate`** (`contents: read`, `actions: read`, checkout with `fetch-depth: 0`):
     *   Refuse a tag whose name is not `v<N>.<yymmdd>.<M>` (strict regex `^v[1-9][0-9]*\.[0-9]{6}\.(0|[1-9][0-9]*)$`) with `yymmdd` the UTC date of the annotated tag's tagger date (lightweight tag: the commit date), or whose commit is not an ancestor of `origin/main`, or whose version is not newer than the current latest release.
-    *   Find the `ci` run with `gh run list --workflow ci --commit <sha> --event push --branch main --json databaseId,status`. No run yet: poll every 30 s. Then `gh run watch <id>` until it completes. Both waits end at the gate job's `timeout-minutes` (GitHub's default 360). Proceed only when jobs `go`, `app` and `browser` concluded `success`; the report jobs do not gate. A timeout fails the release; the owner re-runs the workflow, no new tag needed.
+    *   Find the `ci` run with `gh run list --workflow ci --commit <sha> --event push --branch main --json databaseId,status`. No run yet: poll every 30 s. Then `gh run watch <id>` until it completes. Both waits end at the gate job's `timeout-minutes` (GitHub's default 360). Proceed only when job `app` concluded `success` (its validation posts the required `go` and `browser` statuses); the report jobs do not gate. A timeout fails the release; the owner re-runs the workflow, no new tag needed.
     *   Output `previous`: the version of the latest published release (empty for the first release); a tag whose release never published is skipped.
 *   **Job `build`** (`needs: gate`, `contents: read`): `deploy/build-release.sh <commit> out <version> <previous> linux/amd64 darwin/arm64`, the one build script for releases and local trials. Each tarball `fleet-<ver>-<os>-<arch>.tgz` holds `fleet-coordinator`, `fleet-gateway`, `fleet-executor`, `fleet-update`, `dist/app/`, `config/`, `deploy/` (unit files, `install-release.sh`, `status.sh`) and `release.json` `{version, previous, commit, target, builtAt}`. Runs every linux binary's `selftest`. Uploads the tarballs with `actions/upload-artifact`.
 *   **No macOS job** (removed 2026-11-12, [delivery pipeline, section 4](fleet-delivery-pipeline.md#4-automatic-release)): the darwin tarball is a `CGO_ENABLED=0` cross-build checked static in CI; each Mac's `fleet-update` runs the `selftest` of every binary it runs before switching (step 7 below, COREQ-R25).

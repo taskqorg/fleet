@@ -170,6 +170,8 @@ jobs:
       # a maintainer posts them as with code-review.
       - name: Post go and browser statuses
         if: always()
+        # A fork's read-only token gets 403 here; that must not fail the required app check.
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -177,7 +179,7 @@ jobs:
           URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           for c in go browser; do
-            gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state="$STATE" -f context="$c" -f target_url="$URL" -f description="qualified by app: $STATE" > /dev/null
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state="$STATE" -f context="$c" -f target_url="$URL" -f description="app validation: $STATE" > /dev/null
           done
   # Thin pull request check: generated-code drift and vet; typecheck and the UI unit tests (sw.test.ts skips without a build).
 # The full families repeat both in the merge queue.
