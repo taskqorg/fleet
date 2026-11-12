@@ -1,9 +1,13 @@
 # Liveness of the PDS18 runner pool for ci.yml routing (scripts/pds18-route.ts): the time of the newest successful run of
 # this workflow, and a beat that waits for a runner, which routes hosted at once, whether the pool is dead or full.
 name: pds18-heartbeat
+# Every push to main beats too: GitHub ran none of the 5-minute schedules in this workflow's first hour on main
+# (2026-11-12), so a busy queue keeps the pool alive by its merges and the schedule covers quiet hours.
 on:
   schedule:
     - cron: '*/5 * * * *'
+  push:
+    branches: [main]
   workflow_dispatch:
 permissions: {}
 # One pending beat at a time: a down pool collects no backlog.
