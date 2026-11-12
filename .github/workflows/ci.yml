@@ -435,7 +435,7 @@ jobs:
           { echo "VERSION=$version"; echo "RECENT=$recent"; echo "DIGESTS=$digests"; } >> "$GITHUB_ENV"
           mkdir out
           deploy/build-release.sh "$GITHUB_SHA" out "$version" "${previous#v}" linux/amd64 darwin/arm64
-          jq -nc --arg v "$version" --arg c "$GITHUB_SHA" '{version:$v,commit:$c,checkedWith:$ARGS.positional}' --args $recent > out/speculative.json
+          jq -nc --arg v "$version" --arg c "$GITHUB_SHA" --arg d "$digests" '{version:$v,commit:$c,digests:$d,checkedWith:$ARGS.positional}' --args $recent > out/speculative.json
           echo "built $version, checked with: ${recent:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
           # The gate takes the artifact only with these SHA256SUMS: no other job can write this job's annotations.
           echo "::notice title=release SHA256SUMS::$(sha256sum < out/SHA256SUMS | cut -d' ' -f1)"

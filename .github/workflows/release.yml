@@ -1,6 +1,7 @@
 # Release (docs/designs/fleet-delivery-pipeline.md#4-automatic-release, docs/designs/fleet-self-update.md section 1): every
 # green main batch publishes one tarball per target, SHA256SUMS signed with the release key (Ed25519, checked by
-# fleet-update), latest.json and GitHub build provenance. The version 1.<UTC yymmdd>.<M> is computed here; nobody tags.
+# fleet-update), latest.json and GitHub build provenance. The version 1.<UTC yymmdd>.<M> comes from the commit
+# (deploy/release-version.sh), so the merge queue run already built it; nobody tags.
 # Every host's fleet-update installs it by itself. Least privilege: each job gets only what it writes.
 name: release
 on:
@@ -98,6 +99,7 @@ jobs:
           UI: ${{ steps.check.outputs.ui }}
           VERSION: ${{ steps.check.outputs.version }}
           RECENT: ${{ steps.check.outputs.recent }}
+          DIGESTS: ${{ steps.check.outputs.digests }}
         run: |
           # The merge queue run tested this exact commit; the push run covers an admin bypass.
           id=$(gh run list --workflow ci --commit "$SHA" --event merge_group --json databaseId -q '.[0].databaseId')
@@ -151,11 +153,11 @@ jobs:
           announced=
           if [ "$b/$m" = success/success ]; then
             job=$(jq -r '[.jobs[] | select(.name == "release-build")][0].databaseId' <<< "$jobs")
-            announced=$(gh api "repos/$GH_REPO/check-runs/$job/annotations" --jq '[.[] | select(.title == "release SHA256SUMS") | .message] | first // ""')
+            announced=$(gh api --paginate "repos/$GH_REPO/check-runs/$job/annotations" --jq '.[] | select(.title == "release SHA256SUMS") | .message' | head -1)
           fi
           if [ -n "$RECENT" ] && [ "$b/$m" = success/success ] && [ -f "$spec" ] && [ -n "$announced" ] \
             && [ "$(sha256sum < "$RUNNER_TEMP/spec/SHA256SUMS" | cut -d' ' -f1)" = "$announced" ] && jq -e --arg v "$VERSION" --arg c "$SHA" '.version == $v and .commit == $c' "$spec" >/dev/null; then
-            stale=false; [ "$(jq -r '.checkedWith | join(" ")' "$spec")" = "$RECENT" ] || stale=true
+            stale=false; [ "$(jq -r '.checkedWith | join(" ")' "$spec")" = "$RECENT" ] && [ "$(jq -r .digests "$spec")" = "$DIGESTS" ] || stale=true
             (cd "$RUNNER_TEMP/spec" && sha256sum -c --quiet SHA256SUMS) || { echo "::error::ci run $id: tarballs do not match SHA256SUMS"; exit 1; }
             # migrate and publish download the artifact again and take it only with these exact SHA256SUMS.
             { echo "spec_run=$id"; echo "stale=$stale"; echo "sums=$(sha256sum < "$RUNNER_TEMP/spec/SHA256SUMS" | cut -d' ' -f1)"; } >> "$GITHUB_OUTPUT"
@@ -237,7 +239,7 @@ jobs:
   # the persistent PDS18 runner runs only what it built itself.
   migrate:
     needs: gate
-    if: needs.gate.outputs.spec_run != '' && needs.gate.outputs.stale == 'true' && needs.gate.outputs.recent != ''
+    if: needs.gate.outputs.spec_run != '' && needs.gate.outputs.stale == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -266,6 +268,7 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: read
+    # Inline, not deploy/selftest-release.sh: a rollback drill's tarball can predate that script.
     steps:
       - uses: actions/download-artifact@v4
         with:
