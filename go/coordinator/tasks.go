@@ -465,7 +465,8 @@ func questionsList(q *Request, taskID, state, kind string, projects ...string) (
 	return rs, err
 }
 
-// projectIn: the condition "project in ids" ('-' is no project) appended to c and p; none when ids is empty.
+// projectIn: the condition "project in ids" ('-' is no project) appended to c and p; none when ids is empty. The bare
+// column keeps the project_id indexes usable.
 func projectIn(c []string, p []any, ids []string) ([]string, []any) {
 	if c == nil {
 		c, p = []string{}, []any{}
@@ -473,14 +474,13 @@ func projectIn(c []string, p []any, ids []string) ([]string, []any) {
 	if len(ids) == 0 {
 		return c, p
 	}
-	norm := make([]string, len(ids))
-	for i, id := range ids {
-		if id != "-" {
-			norm[i] = id
-		}
+	named := slices.DeleteFunc(slices.Clone(ids), func(x string) bool { return x == "-" })
+	p = append(p, named)
+	cond := fmt.Sprintf("project_id=ANY($%d)", len(p))
+	if len(named) < len(ids) {
+		cond = "(" + cond + " OR project_id IS NULL)"
 	}
-	p = append(p, norm)
-	return append(c, fmt.Sprintf("coalesce(project_id,'')=ANY($%d)", len(p))), p
+	return append(c, cond), p
 }
 
 func where(c []string) string {

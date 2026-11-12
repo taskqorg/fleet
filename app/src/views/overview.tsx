@@ -36,7 +36,7 @@ export function Overview() {
       {ops.length > 0 && <StatStrip label="Operations" stats={ops} />}
       <div class="cols">
         <NeedsYou>
-          {!data.questions.length && !data.problems.length && <Empty text="Nothing is waiting for you." />}
+          {!data.questions.length && !data.problems.length && <Empty text={focus ? 'Nothing is waiting for you in the focused projects.' : 'Nothing is waiting for you.'} />}
           <Latest items={needsYou(data, now).map(x => x.q ? <DecisionBlock key={x.q.id} question={x.q.text} askedBy={actor(x.q.askedBy) || x.q.kind} addressedTo="you" since={x.at} now={now}
             waits={x.q.taskId ? <a class="row-link" href={`/tasks/${encodeURIComponent(x.q.taskId)}`} aria-label="Open task" data-tip="Open task" onClick={ev => { ev.preventDefault(); go(`/tasks/${encodeURIComponent(x.q.taskId)}`); }}><Icon name="external-link" /></a> : undefined}
             options={(Array.isArray(x.q.options) ? x.q.options : x.q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(x.q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}

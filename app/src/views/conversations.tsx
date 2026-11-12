@@ -12,6 +12,7 @@ import tokens from '../../../packages/ui/tokens.json';
 import { op, online, addRequestedKey, writeOnce, sendingId, OpError, useAlive } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
+import { focusIds } from '../prefs.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, inside, range, type Selection } from '../selection.ts';
 
@@ -44,7 +45,7 @@ export function Conversations({ id }: { id?: string }) {
           onToggle={s => set({ state: states.includes(s) ? states.filter(x => x !== s) : [...states, s] })} />} />}>
         {list.error && !rows.length ? <ErrorBanner text={`Conversations did not load: ${list.error}`} onRetry={list.reload} />
           : list.shownKey === null || (!rows.length && list.pending) ? <Skeleton rows={8} />
-          : !rows.length ? <Empty text="No conversations yet." action={<Button label="New conversation" onClick={create} />} />
+          : !rows.length ? <Empty text={focusIds() && !view.project?.length ? 'No conversations in the focused projects.' : 'No conversations yet.'} action={<Button label="New conversation" onClick={create} />} />
           : <VirtualList items={rows} getKey={r => r.id} rowHeight={ROW} follow="top" label="Conversations" onEnd={list.more}
             columns="1.25rem minmax(0,1fr) 2rem 1.25rem" rowClass={r => r.id === id ? 'sel' : ''}
             render={r => <>
