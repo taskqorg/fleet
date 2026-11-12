@@ -15,12 +15,12 @@ observed "watch_start pr=$pr"
 wait_step() { [ "$(date +%s)" -lt "$deadline" ] || { echo "timeout at: $1"; exit 2; }; sleep 30; }
 
 q='query($n:Int!){repository(owner:"taskqorg",name:"fleet"){pullRequest(number:$n){state mergeStateStatus mergeCommit{oid} autoMergeRequest{enabledAt} mergeQueueEntry{state}
-  commits(last:1){nodes{commit{statusCheckRollup{contexts(last:100){nodes{... on CheckRun{conclusion isRequired(pullRequestNumber:$n)} ... on StatusContext{state isRequired(pullRequestNumber:$n)}}}}}}}
+  commits(last:1){nodes{commit{statusCheckRollup{contexts(last:100){nodes{... on CheckRun{name conclusion at:startedAt isRequired(pullRequestNumber:$n)} ... on StatusContext{name:context state at:createdAt isRequired(pullRequestNumber:$n)}}}}}}}
   timelineItems(last:1,itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT,AUTO_MERGE_DISABLED_EVENT]){nodes{__typename ... on RemovedFromMergeQueueEvent{reason}}}}}}'
 while :; do
   # A failed gh call (network, rate limit) is retried, never read as "not merged".
   line=$(gh api graphql -f query="$q" -F n="$pr" -q '.data.repository.pullRequest | [.state, .mergeStateStatus, (.mergeCommit.oid // "-"),
-    (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (if .mergeQueueEntry then "queued" else "-" end), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired) | (.conclusion // .state)] | any(. != null and . != "SUCCESS" and . != "NEUTRAL" and . != "SKIPPED" and . != "PENDING" and . != "EXPECTED") then "red" else "-" end),
+    (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (if .mergeQueueEntry then "queued" else "-" end), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired)] | group_by(.name) | map(max_by(.at) | (.conclusion // .state)) | any(. != null and . != "SUCCESS" and . != "NEUTRAL" and . != "SKIPPED" and . != "PENDING" and . != "EXPECTED") then "red" else "-" end),
     (if .timelineItems.nodes[0].__typename == "RemovedFromMergeQueueEvent" then ((.timelineItems.nodes[0].reason // "unknown") | if . == "CI_FAILURE" then "failed_checks" else ascii_downcase end) else "auto-merge off" end)] | join(" ")') \
     || { wait_step "queue (gh failed)"; continue; }
   read -r state merge_state sha waiting queued checks reason <<<"$line"
@@ -30,6 +30,7 @@ while :; do
   # Out of the queue: the newest of "removed from the queue" (its reason) and "auto-merge disabled" (a veto) names why.
   [ "$state" = OPEN ] && [ "$waiting" = waiting ] || { echo "not merged: $state, $reason"; exit 1; }
   # A required check red on the head while auto-merge waits for the queue: GitHub never creates the entry and names nothing.
+  # Only the newest run of each required check counts, as GitHub judges it: a rerun after a red run starts green (pending).
   # Inside the queue the queue's own run decides (a removal above); a late red pull_request rerun does not.
   [ "$checks" = red ] && [ "$queued" = "-" ] && { echo "not merged: $state, failed_checks"; exit 1; }
   wait_step "queue"
