@@ -14,13 +14,59 @@ import (
 // qualifyMCP uses declared fixture calls, the shared stdio boundary and existing execution ownership; no model.
 func qualifyMCP(args []string) (resultErr error) {
 	totalStarted := time.Now()
+
+	evidence := []any{}
+	diagnostic := M{"phase": "arguments", "requestOrdinal": 0, "method": "none"}
+	var setupMs, workMs int64
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		target := ""
+		if dir := os.Getenv("FLEET_OUTPUT_DIR"); dir != "" {
+			target = filepath.Join(dir, "capability-receipt.json")
+		} else if len(args) == 6 {
+			target = args[2]
+		}
+		if target == "" {
+			return
+		}
+		completed := []any{}
+		for _, value := range evidence {
+			row := M{}
+			for _, key := range []string{"server", "tool", "resultSha256", "advertisedToolsSha256", "executableHashes", "passed", "oracle", "phase", "durationMs"} {
+				if v := jAt(value, key); v != nil {
+					row[key] = v
+				}
+			}
+			completed = append(completed, row)
+		}
+		diagnostic["lifecycle"] = safeMCPStatus(nil)
+		var lifecycle *mcpLifecycleError
+		if errors.As(resultErr, &lifecycle) {
+			diagnostic["lifecycle"] = lifecycle.status
+		}
+		receipt := M{"kind": "mcp-program-qualification", "status": "failed", "diagnostic": diagnostic, "sessionId": os.Getenv("FLEET_SESSION_ID"), "executionId": os.Getenv("FLEET_EXECUTION_ID"), "calls": completed, "setupStartupMs": setupMs, "workMs": workMs, "totalMs": time.Since(totalStarted).Milliseconds(), "timingBasis": "partial measurements only; no inferred completion or cleanup duration", "modelInvoked": false, "costUsd": nil, "platform": platform()}
+		if hash, err := mcpFileHash(exe()); err == nil {
+			receipt["executorSha256"] = hash
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			resultErr = errors.Join(resultErr, errors.New("qualification diagnostic retention failed"))
+			return
+		}
+		if err := os.WriteFile(target, []byte(enc(receipt)+"\n"), 0600); err != nil {
+			resultErr = errors.Join(resultErr, errors.New("qualification diagnostic retention failed"))
+		}
+	}()
 	if len(args) != 6 {
 		return errors.New("qualify-mcp requires profile, fixture root, receipt, host account, host registry and checks")
 	}
+	diagnostic["phase"] = "ownership"
 	socket := os.Getenv("FLEET_MCP_OWNER")
 	if err := privateSocket(socket); err != nil {
 		return fmt.Errorf("execution MCP ownership unavailable: %w", err)
 	}
+	diagnostic["phase"] = "profile"
 	raw, err := os.ReadFile(args[0])
 	if err != nil {
 		return err
@@ -32,6 +78,9 @@ func qualifyMCP(args []string) (resultErr error) {
 	if err = profileValidate(profile); err != nil {
 		return err
 	}
+	diagnostic["profileSha256"] = profileHash(profile)
+	diagnostic["instructionsSha256"] = sha([]byte(jStr(profile, "instructions")))
+	diagnostic["phase"] = "checks"
 	root, err := filepath.Abs(args[1])
 	if err != nil {
 		return err
@@ -44,6 +93,8 @@ func qualifyMCP(args []string) (resultErr error) {
 	if err != nil {
 		return err
 	}
+	diagnostic["checksSha256"] = sha(raw)
+	diagnostic["phase"] = "sources"
 	sources := M{}
 	for _, value := range jArr(checks, "sources") {
 		path := jStr(value)
@@ -69,6 +120,8 @@ func qualifyMCP(args []string) (resultErr error) {
 		sources[path] = sha(source)
 	}
 
+	diagnostic["sourceSha256"] = profileHash(sources)
+	diagnostic["phase"] = "home"
 	home, err := os.MkdirTemp("", "fleet-mcp-home-")
 	if err != nil {
 		return err
@@ -84,10 +137,10 @@ func qualifyMCP(args []string) (resultErr error) {
 		}
 	}()
 	os.Setenv("HOME", home)
-	evidence := []any{}
-	var setupMs, workMs int64
 	for _, grant := range jArr(profile, "mcpServers") {
 		name := jStr(grant, "id")
+		diagnostic["phase"] = "binding"
+		diagnostic["server"] = name
 		bindingStarted := time.Now()
 		binding, err := namedMCPBinding(args[4], args[3], name, root)
 		if err != nil {
@@ -107,6 +160,7 @@ func qualifyMCP(args []string) (resultErr error) {
 			hashes[name] = hash
 		}
 		binding["observedExecutableHashes"] = hashes
+		diagnostic["bindingSha256"] = profileHash(binding)
 		setupMs += time.Since(bindingStarted).Milliseconds()
 		binding["tools"] = jAt(grant, "data", "tools")
 		calls := jArr(checks, "servers", name)
@@ -129,14 +183,17 @@ func qualifyMCP(args []string) (resultErr error) {
 			outWriter.Close()
 			done <- err
 		}()
-		err = qualifyMCPServer(name, binding, calls, inWriter, outReader, &evidence, &setupMs, &workMs)
+		err = qualifyMCPServer(name, binding, calls, inWriter, outReader, &evidence, &setupMs, &workMs, diagnostic)
+		cleanupStarted := time.Now()
 		inWriter.Close()
 		outReader.Close()
 		serverErr := <-done
+		diagnostic["stdioCloseMs"] = time.Since(cleanupStarted).Milliseconds()
 		if err != nil || serverErr != nil {
 			return errors.Join(err, serverErr)
 		}
 	}
+	diagnostic["phase"] = "receipt"
 	if len(evidence) == 0 {
 		return errors.New("no selected MCP qualification")
 	}
@@ -150,12 +207,15 @@ func qualifyMCP(args []string) (resultErr error) {
 	}
 	return os.WriteFile(args[2], []byte(enc(receipt)+"\n"), 0600)
 }
-func qualifyMCPServer(name string, binding M, calls []any, input io.Writer, output io.Reader, evidence *[]any, setupMs, workMs *int64) error {
+func qualifyMCPServer(name string, binding M, calls []any, input io.Writer, output io.Reader, evidence *[]any, setupMs, workMs *int64, diagnostic M) error {
 	encoder, decoder := json.NewEncoder(input), json.NewDecoder(output)
 	id := 0
 	started := time.Now()
 	rpc := func(method string, params M) (M, error) {
+		requestStarted := time.Now()
+		defer func() { diagnostic["requestDurationMs"] = time.Since(requestStarted).Milliseconds() }()
 		id++
+		diagnostic["phase"], diagnostic["requestOrdinal"], diagnostic["method"] = "rpc", id, method
 		if err := encoder.Encode(M{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
 			return nil, err
 		}
@@ -187,6 +247,7 @@ func qualifyMCPServer(name string, binding M, calls []any, input io.Writer, outp
 		if err != nil {
 			return err
 		}
+		diagnostic["phase"] = "oracle"
 		text, err := mcpResultText(result)
 		if err != nil {
 			return err

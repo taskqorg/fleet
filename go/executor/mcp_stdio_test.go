@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -37,6 +38,25 @@ func TestMain(m *testing.M) {
 }
 func mcpFixture() {
 	tool := os.Args[2]
+	if strings.HasPrefix(tool, "diagnostic-") {
+		f, err := os.OpenFile(os.Args[3], os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			os.Exit(2)
+		}
+		fmt.Fprintln(f, os.Getpid())
+		f.Close()
+		fmt.Fprintln(os.Stderr, "SECRET_SENTINEL_DO_NOT_RETAIN")
+		if tool == "diagnostic-exit" || tool == "diagnostic-signal" {
+			var request M
+			json.NewDecoder(os.Stdin).Decode(&request)
+			if tool == "diagnostic-signal" {
+				syscall.Kill(os.Getpid(), syscall.SIGTERM)
+				select {}
+			}
+			os.Exit(23)
+		}
+	}
+
 	if tool == "version" {
 		os.WriteFile(os.Args[3], []byte("observed"), 0600)
 		fmt.Fprintln(os.Stdout, "gopls-fixture v1")
@@ -132,6 +152,7 @@ func mcpFixture() {
 	}
 	scanner := bufio.NewScanner(os.Stdin)
 	out := json.NewEncoder(os.Stdout)
+	callCount := 0
 	for scanner.Scan() {
 		var req M
 		json.Unmarshal(scanner.Bytes(), &req)
@@ -145,7 +166,19 @@ func mcpFixture() {
 		case "tools/list":
 			result = M{"tools": []any{M{"name": tool, "inputSchema": M{"type": "object"}}, M{"name": "forbidden", "inputSchema": M{"type": "object"}}}}
 		case "tools/call":
+			callCount++
+			if tool == "diagnostic-call-exit" && callCount == 2 {
+				os.Exit(24)
+			}
 			result = M{"content": []any{M{"type": "text", "text": tool + "-observed"}}}
+		}
+		if tool == "diagnostic-call-exit" {
+			if jStr(req, "method") == "initialize" {
+				result["serverInfo"] = M{"name": "SECRET_SENTINEL_DO_NOT_RETAIN", "version": "SECRET_SENTINEL_DO_NOT_RETAIN"}
+			}
+			if jStr(req, "method") == "tools/call" {
+				result = M{"content": []any{M{"type": "text", "text": "SECRET_SENTINEL_DO_NOT_RETAIN"}}}
+			}
 		}
 		out.Encode(M{"jsonrpc": "2.0", "id": req["id"], "result": result})
 	}
@@ -1044,5 +1077,163 @@ func TestMCPServerExitInterruptsBlockedOutput(t *testing.T) {
 	table, err := processes()
 	if err != nil || running(table, pid) {
 		t.Fatal("server survived", pid, err)
+	}
+}
+
+// R3; risk: in-process checker tests miss the real script -> checker -> guardian boundary.
+func TestScriptMCPQualification(t *testing.T) {
+	e, root := scriptExecutor(t)
+	fixture := filepath.Join(root, "fixture")
+	os.MkdirAll(fixture, 0700)
+	profile := M{"id": "program-fixture", "model": "not-invoked", "effort": "low", "instructions": "Program-only fixture", "mcpServers": []any{M{"id": "fixture", "data": M{"tools": []any{"witness"}}}}}
+	registry := M{"fixture-account": M{"mcpServers": M{"fixture": M{"transport": "stdio", "command": exe(), "args": []any{"mcp-fixture", "witness"}}}}}
+	checks := M{"sources": []any{"fixture.go"}, "servers": M{"fixture": []any{M{"tool": "witness", "arguments": M{}, "oracle": "text-contains", "expected": "witness-observed", "phase": "work"}}}}
+	for name, v := range map[string]any{"profile.json": profile, "registry.json": registry, "checks.json": checks} {
+		os.WriteFile(filepath.Join(fixture, name), []byte(enc(v)), 0600)
+	}
+	os.WriteFile(filepath.Join(fixture, "fixture.go"), []byte("package fixture\n"), 0600)
+	command := fmt.Sprintf("%q qualify-mcp %q %q \"$FLEET_OUTPUT_DIR/receipt.json\" fixture-account %q %q", exe(), filepath.Join(fixture, "profile.json"), fixture, filepath.Join(fixture, "registry.json"), filepath.Join(fixture, "checks.json"))
+	if err := e.run(M{"id": "program-command", "executionId": "program-execution", "sessionId": "program-session", "kind": "script", "payload": M{"command": command}}); err != nil {
+		t.Fatal(err)
+	}
+	settle(t, e, "program-execution")
+	if lastReceipt(e, "program-command") != "completed" {
+		b, _ := os.ReadFile(filepath.Join(root, "sessions/program-session/output/script.stderr"))
+		t.Fatalf("qualification failed: %s", b)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "sessions/program-session/output/receipt.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipt M
+	if json.Unmarshal(raw, &receipt) != nil || jAt(receipt, "modelInvoked") != false || len(jArr(receipt, "calls")) != 1 {
+		t.Fatal(string(raw))
+	}
+}
+
+// R3/R5; risk: the native script loses the failure phase or retains credentials while an unknown call is replayed.
+func TestScriptMCPQualificationRetainsSafeFailure(t *testing.T) {
+	for _, tc := range []struct {
+		tool, method             string
+		ordinal, exit, completed int
+	}{{"diagnostic-exit", "initialize", 1, 23, 0}, {"diagnostic-call-exit", "tools/call", 4, 24, 1}, {"diagnostic-signal", "initialize", 1, -1, 0}} {
+		t.Run(tc.tool, func(t *testing.T) {
+			e, root := scriptExecutor(t)
+			fixture := filepath.Join(root, "fixture")
+			os.MkdirAll(fixture, 0700)
+			marker := filepath.Join(root, "starts")
+			profile := M{"id": "program-fixture", "model": "not-invoked", "effort": "low", "instructions": "SECRET_SENTINEL_DO_NOT_RETAIN", "mcpServers": []any{M{"id": "fixture", "data": M{"tools": []any{tc.tool}}}}}
+			registry := M{"fixture-account": M{"privateValue": "SECRET_SENTINEL_DO_NOT_RETAIN", "mcpServers": M{"fixture": M{"transport": "stdio", "command": exe(), "args": []any{"mcp-fixture", tc.tool, marker}}}}}
+			call := M{"tool": tc.tool, "arguments": M{"token": "SECRET_SENTINEL_DO_NOT_RETAIN"}, "oracle": "text-contains", "expected": "SECRET_SENTINEL_DO_NOT_RETAIN", "phase": "work"}
+			checks := M{"sources": []any{"fixture.go"}, "servers": M{"fixture": []any{call, call}}}
+			for name, value := range map[string]any{"profile.json": profile, "registry.json": registry, "checks.json": checks} {
+				os.WriteFile(filepath.Join(fixture, name), []byte(enc(value)), 0600)
+			}
+			os.WriteFile(filepath.Join(fixture, "fixture.go"), []byte("package fixture\n"), 0600)
+			command := fmt.Sprintf("%q qualify-mcp %q %q \"$FLEET_OUTPUT_DIR/receipt.json\" fixture-account %q %q", exe(), filepath.Join(fixture, "profile.json"), fixture, filepath.Join(fixture, "registry.json"), filepath.Join(fixture, "checks.json"))
+			execution := "11111111-1111-4111-8111-111111111111"
+			if err := e.run(M{"id": "failure-command", "executionId": execution, "sessionId": "failure-session", "kind": "script", "payload": M{"command": command}}); err != nil {
+				t.Fatal(err)
+			}
+			settle(t, e, execution)
+			if lastReceipt(e, "failure-command") != "failed" {
+				t.Fatal("failed qualification reported success")
+			}
+			output := filepath.Join(root, "sessions/failure-session/output")
+			raw, err := os.ReadFile(filepath.Join(output, "capability-receipt.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw), "SECRET_SENTINEL_DO_NOT_RETAIN") {
+				t.Fatal("secret retained", string(raw))
+			}
+			var receipt M
+			if json.Unmarshal(raw, &receipt) != nil {
+				t.Fatal(string(raw))
+			}
+			d := jObj(receipt, "diagnostic")
+			life := jObj(d, "lifecycle")
+			if jStr(receipt, "status") != "failed" || jStr(receipt, "executionId") != execution || jStr(d, "method") != tc.method || jAt(d, "requestOrdinal") != float64(tc.ordinal) || jStr(life, "stage") != "server-exit" || (tc.exit >= 0 && jAt(life, "exitCode") != float64(tc.exit) || tc.exit < 0 && (jAt(life, "signal") != float64(syscall.SIGTERM) || jStr(life, "outcome") != "signaled")) || jStr(life, "registration") != "acknowledged" || jStr(life, "guardianIdentity") == "" || jStr(life, "executionId") != execution || len(jArr(receipt, "calls")) != tc.completed {
+				t.Fatal(string(raw))
+			}
+			starts, _ := os.ReadFile(marker)
+			if len(strings.Fields(string(starts))) != 1 {
+				t.Fatal("duplicate server start", string(starts))
+			}
+			var groups, launches int
+			e.db.QueryRow("SELECT count(*) FROM mcp_groups WHERE execution=?", execution).Scan(&groups)
+			e.db.QueryRow("SELECT count(*) FROM launches WHERE execution=?", execution).Scan(&launches)
+			if groups != 0 || launches != 0 {
+				t.Fatal("owned cleanup incomplete", groups, launches)
+			}
+			stderr, _ := os.ReadFile(filepath.Join(output, "script.stderr"))
+			if !strings.Contains(string(stderr), "MCP response unavailable") || strings.Contains(string(stderr), "SECRET_SENTINEL_DO_NOT_RETAIN") {
+				t.Fatal("primary error lost or stderr leaked", string(stderr))
+			}
+		})
+	}
+}
+
+// R3/R5; risk: an early guardian rejection is lost, or missing/untrusted status is mistaken for a server exit.
+func TestMCPGuardianEarlyDiagnostic(t *testing.T) {
+	o, _ := testMCPOwner(t)
+	input, writer, _ := os.Pipe()
+	defer writer.Close()
+	reader, output, _ := os.Pipe()
+	defer reader.Close()
+	defer output.Close()
+	done := make(chan error, 1)
+	go func() {
+		done <- mcpStdio(o.socket, M{"command": "/absent-fleet-fixture-server", "args": []any{}, "tools": []any{"read"}}, input, output, t.TempDir(), "")
+	}()
+	writer.Write([]byte(`{"id":1,"method":"initialize"}` + "\n"))
+	select {
+	case err := <-done:
+		var life *mcpLifecycleError
+		if !errors.As(err, &life) || jStr(life.status, "stage") != "binding" || jStr(life.status, "registration") != "acknowledged" || jStr(life.status, "outcome") != "unknown" || has(life.status, "exitCode") {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("early guardian error lost")
+	}
+	if err := cleanupMCPGroups(o.db, o.execution); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// R5; risk: opaque payload/status values leak into retained diagnostics or a diagnostic write masks the primary failure.
+func TestMCPDiagnosticProjectionAndRetentionFailure(t *testing.T) {
+	sentinel := "SECRET_SENTINEL_DO_NOT_RETAIN"
+	raw := M{"stage": sentinel, "registration": sentinel, "outcome": "exited", "exitCode": float64(9999), "signal": float64(-2), "guardianPid": float64(1.5), "guardianIdentity": sentinel, "executionId": sentinel, "stderr": sentinel, "params": M{"token": sentinel}}
+	safe := safeMCPStatus(raw)
+	if strings.Contains(enc(safe), sentinel) || jStr(safe, "outcome") != "unknown" || has(safe, "exitCode") || has(safe, "signal") || has(safe, "guardianPid") {
+		t.Fatal(safe)
+	}
+	if jStr(readMCPStatus(strings.NewReader(`{"outcome":"exited","exitCode":0`)), "outcome") != "unknown" {
+		t.Fatal("truncated status inferred exit")
+	}
+	if jStr(safeMCPStatus(nil), "outcome") != "unknown" {
+		t.Fatal("missing status inferred exit")
+	}
+	output := filepath.Join(t.TempDir(), "blocked")
+	os.WriteFile(output, []byte("file"), 0600)
+	t.Setenv("FLEET_OUTPUT_DIR", output)
+	err := qualifyMCP(nil)
+	if err == nil || !strings.Contains(err.Error(), "requires profile") || !strings.Contains(err.Error(), "diagnostic retention failed") {
+		t.Fatal(err)
+	}
+	t.Setenv("FLEET_OUTPUT_DIR", t.TempDir())
+	err = qualifyMCP([]string{sentinel})
+	if err == nil {
+		t.Fatal("invalid invocation accepted")
+	}
+	receipt, e := os.ReadFile(filepath.Join(os.Getenv("FLEET_OUTPUT_DIR"), "capability-receipt.json"))
+	if e != nil || strings.Contains(string(receipt), sentinel) {
+		t.Fatal(e, string(receipt))
+	}
+	var actual M
+	json.Unmarshal(receipt, &actual)
+	if jStr(actual, "diagnostic", "phase") != "arguments" {
+		t.Fatal(string(receipt))
 	}
 }
