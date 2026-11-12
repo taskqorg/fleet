@@ -692,16 +692,17 @@ func (v *RunnerRun) Validate() error {
 	return nil
 }
 
-// RunnerSpend: One host and execution kind over a UTC period: today or month (month includes today).
+// RunnerSpend: One host and execution kind over a UTC period: today or month (month includes today), by when each run ran (end, else start). measured: runs with recorded totals; sums cover only those.
 type RunnerSpend struct {
-	Cost   []json.RawMessage `json:"cost"`
-	CpuMs  *float64          `json:"cpuMs"`
-	HostId *string           `json:"hostId"`
-	Kind   string            `json:"kind"`
-	Period string            `json:"period"`
-	Runs   int64             `json:"runs"`
-	Tokens *float64          `json:"tokens"`
-	WallMs *float64          `json:"wallMs"`
+	Cost     []json.RawMessage `json:"cost"`
+	CpuMs    *float64          `json:"cpuMs"`
+	HostId   *string           `json:"hostId"`
+	Kind     string            `json:"kind"`
+	Measured int64             `json:"measured"`
+	Period   string            `json:"period"`
+	Runs     int64             `json:"runs"`
+	Tokens   *float64          `json:"tokens"`
+	WallMs   *float64          `json:"wallMs"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
