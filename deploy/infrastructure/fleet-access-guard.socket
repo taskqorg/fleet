@@ -1,0 +1,12 @@
+# fleet Access guard socket, a user unit of fleet: held open across guard restarts, so a release queues requests
+# instead of refusing them (the next process takes them).
+[Unit]
+Description=Fleet Access guard socket, held open across restarts
+
+[Socket]
+ListenStream=127.0.0.1:9471
+NoDelay=true
+Backlog=4096
+
+[Install]
+WantedBy=sockets.target

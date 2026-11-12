@@ -1,0 +1,12 @@
+# fleet coordinator socket, a user unit of fleet: held open across coordinator restarts, so a release queues requests
+# instead of refusing them (the next process takes them from the backlog).
+[Unit]
+Description=Fleet coordinator socket, held open across restarts
+
+[Socket]
+ListenStream=127.0.0.1:9470
+NoDelay=true
+Backlog=4096
+
+[Install]
+WantedBy=sockets.target

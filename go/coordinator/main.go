@@ -11,10 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -91,19 +93,27 @@ func main() {
 		port = "8787"
 	}
 	srv := &http.Server{Addr: "127.0.0.1:" + port, Handler: obs.Handler(a.routes(), spanName)}
+	drained := make(chan struct{})
 	go func() {
+		defer close(drained)
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGTERM, os.Interrupt)
 		<-ch
 		a.stream.close()
 		stopTelemetry() // the queued spans get their last flush
-		c, cancel := context.WithTimeout(ctx, 2*time.Second)
+		// In-flight requests finish; with socket activation new ones wait in the held socket for the next process.
+		c, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 		srv.Shutdown(c)
 	}()
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	ln, err := activatedListener(srv.Addr)
+	if err != nil {
 		log.Fatal(err)
 	}
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
+	}
+	<-drained // Serve returns when Shutdown starts; in-flight requests finish first
 }
 
 // loadPeople loads people.json at start (docs/designs/fleet-people-access.md); refreshPeople (browser_checks.go) re-reads it
@@ -424,3 +434,21 @@ func pgCode(err error) string {
 }
 
 var _ = fmt.Sprint
+
+// activatedListener takes the systemd socket (fleet.socket, held open across restarts so a release is no refused
+// connection) or binds addr for tests and manual runs.
+func activatedListener(addr string) (net.Listener, error) {
+	if os.Getenv("LISTEN_PID") == strconv.Itoa(os.Getpid()) && os.Getenv("LISTEN_FDS") == "1" {
+		ln, err := net.FileListener(os.NewFile(3, "systemd-socket"))
+		if err != nil {
+			return nil, err
+		}
+		if tcp, ok := ln.Addr().(*net.TCPAddr); !ok || !tcp.IP.IsLoopback() {
+			ln.Close()
+			return nil, fmt.Errorf("the coordinator binds only to loopback, not %s", ln.Addr())
+		}
+		log.Printf("serving on activated socket %s", ln.Addr())
+		return ln, nil
+	}
+	return net.Listen("tcp", addr)
+}
