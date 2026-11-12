@@ -76,3 +76,18 @@ test('New binding authority is checked atomically and scoped architect does not 
  assert.equal((await op('project_initial_access_revoke',{projectId:id,baseAccessVersion:0},'owner@trial.test')).status,409);
  assert.equal((await op('project_context',{projectId:id})).status,200);
 });
+
+// R1, R2, R3; risk: a source pin is dropped by project projection or replaced in an already queued execution.
+test('Pinned context descriptors round-trip and freeze at real session enqueue across project saves',async()=>{
+ const id='sources-'+randomUUID();const content:any=bundle(id);content.settings.roles.worker='baseline';content.settings.repos=[{id:'main',remote:'https://github.com/taskqorg/fleet.git'},{id:'specq',remote:'https://github.com/taskqorg/specq.git'}];
+ const source={repo:'specq',revision:'1'.repeat(40),core:[{path:'engineering/principles.md',sha256:'a'.repeat(64)}]};content.settings.contextSources=[source];
+ ok(await op('project_create',{id,requestId:randomUUID(),content}));const first=ok(await op('project_context',{projectId:id}));assert.deepEqual(first.settings.contextSources,[source]);
+ const started=ok(await op('session_start',{projectId:id,role:'worker',requestId:randomUUID(),text:'Fixture only: no executor is polled or provider launched.'}));
+ const frozen=ok(await op('session_get',{sessionId:started.sessionId}));assert.equal(frozen.executions.length,1);assert.deepEqual(frozen.executions[0].projectSnapshot.settings.contextSources,[source]);
+ content.settings.contextSources=[{...source,revision:'2'.repeat(40)}];ok(await op('project_update',{projectId:id,requestId:randomUUID(),baseRevision:1,content}));
+ const old=ok(await op('session_get',{sessionId:started.sessionId}));assert.deepEqual(old.executions[0].projectSnapshot.settings.contextSources,[source]);assert.equal(old.executions[0].projectSnapshot.revision,1);
+ const next=ok(await op('session_start',{projectId:id,role:'worker',requestId:randomUUID(),text:'Fixture only; no model.'}));const current=ok(await op('session_get',{sessionId:next.sessionId}));assert.equal(current.executions[0].projectSnapshot.revision,2);assert.equal(current.executions[0].projectSnapshot.settings.contextSources[0].revision,'2'.repeat(40));
+ const invalid=structuredClone(content);invalid.settings.contextSources[0].command='unexpected';assert.equal((await op('project_update',{projectId:id,requestId:randomUUID(),baseRevision:2,content:invalid})).status,400);
+ const foreign=structuredClone(content);foreign.settings.contextSources[0].repo='unknown';assert.equal((await op('project_update',{projectId:id,requestId:randomUUID(),baseRevision:2,content:foreign})).status,400);
+ assert.equal((await op('project_context',{projectId:id},'outsider@trial.test')).status,404);
+});

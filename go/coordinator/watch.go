@@ -143,7 +143,7 @@ func watchOne(q *Request, wid string) error {
 	if busy, err := has(q, "SELECT 1 FROM document WHERE kind='queued-message' AND data->>'sessionId'=$1 AND data->>'state'='queued' AND (data->>'requestId' LIKE 'watch:%' OR data->>'requestId' LIKE 'timer:%')", id); err != nil || busy {
 		return err
 	}
-	dir := q.app.people[firstString(s["directedBy"], ownerEmail(q))]
+	dir := q.peopleSnapshot().person(firstString(s["directedBy"], ownerEmail(q)))
 	if dir == nil {
 		return fail(403, "Director of the watching session is not a person of this Fleet")
 	}

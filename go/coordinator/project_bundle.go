@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fleet/contract"
 	"path"
 	"strings"
 )
@@ -16,6 +17,23 @@ func projectBundle(id string, v doc) (doc, error) {
 	}
 	if _, _, err := projectSettings(s); err != nil {
 		return nil, err
+	}
+	if value, present := s["contextSources"]; present {
+		sources, err := contract.ContextSources(value)
+		if err != nil {
+			return nil, fail(400, "Invalid contextSources")
+		}
+		for _, source := range sources {
+			found := 0
+			for _, r := range anys(s["repos"]) {
+				if mapOf(r)["id"] == source.Repo {
+					found++
+				}
+			}
+			if found != 1 {
+				return nil, fail(400, "Unknown contextSources repo")
+			}
+		}
 	}
 	names, ok := s["contextFiles"].([]any)
 	if !ok {

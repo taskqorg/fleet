@@ -81,7 +81,7 @@ func (a *App) refreshPeople(ctx context.Context) error {
 		}
 	}
 	if problem != "" {
-		if a.people == nil {
+		if a.people.Load() == nil {
 			if err := a.peopleFromRows(ctx); err != nil {
 				return err
 			}
@@ -139,7 +139,7 @@ func (a *App) peopleFromRows(ctx context.Context) error {
 		if err := grants.Err(); err != nil {
 			return err
 		}
-		a.people = people
+		a.publishPeople(people)
 		return nil
 	})
 }

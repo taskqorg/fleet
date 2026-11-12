@@ -24,6 +24,16 @@ Tasks expose their inputs and results; pipelines expose their definitions and se
 
 Ordinary sessions run one-off work and experiments without a pipeline. Formalise a method when repetition warrants it; repeated work uses accessible definitions, not conversation history. Execution history does not make an experiment a project standard: changing project rules or recommended methods is an explicit action. Validate this baseline on real projects before adding material catalogues or a prescribed project directory layout.
 
+### Pinned instruction sources
+
+A project may declare `contextSources` in its versioned settings. Each entry names one declared `repos[].id`, an exact full commit, required `core` files and optional `linked` files with SHA256 digests. Paths are relative regular Git blobs; commands, credentials, checkout paths and unknown fields are not accepted in the descriptor. This is a project reference to source ownership, not another rules registry.
+
+The host must already have a matching repository-labelled environment, the declared origin identity, the commit and its blobs under its permitted project roots. Source Git metadata and object storage must be host-user owned within permitted roots; symlinked object layouts and alternates are unsupported and rejected, while ordinary linked worktrees retain their eligible common directory. Fleet resolves the declared Git objects offline: no clone, fetch, lazy fetch, replacement objects, working-tree file reads or content filters. Readiness and agent start reject unavailable, invalid or mismatched sources before native consumption with an `instruction-source-*` reason. Readiness does not download or repair the dependency. Existing checkout and connection authority still applies to every source binding; a source environment does not replace the primary repository checkout.
+
+The existing `projectSnapshot` freezes these references for an execution. The executor stages verified files under `FLEET_INPUT_DIR/context-sources/<repo>/<revision>/<path>`, inserts core bodies in declared order into its resolved instructions, and lists linked paths/digests for reading when relevant. The descriptor should name only required core and relevant area files, not an entire repository. Explicit source pins take precedence over ambient/latest discovery; project rules take precedence on shared-rule conflicts, and conflicting declarations remain visible. No automatic pin update occurs.
+
+The preparation receipt retains source identities/digests and the exact assembled instruction hash. Strict profile-definition text limits remain separate from trusted resolved source text. See [runtime instruction delivery](runtime-integration.md#resolved-instruction-delivery) for harness mapping and resume limitations. Projects without this setting and program-only execution do not acquire a new source dependency.
+
 ## Project settings
 
 Every setting is per project; absent key means the default below. The coordinator seeds every `config/projects/<id>/project.json` into the definition owner (no fixed list); `projectSettings` in `go/coordinator/projects.go` validates it: a wrong type or enum value fails the project (500 `Invalid project setting <key>`); an unknown key is kept out and listed in `unknownKeys`, never dropped silently.
@@ -33,6 +43,7 @@ Every setting is per project; absent key means the default below. The coordinato
 | `id`, `name`, `contextFiles` | required | `contextFiles` are paths inside the project directory, served by `project_context`. |
 | `capability`, `recommendedMethod` | none | Project recommendation for the catalogue. |
 | `repos[]` | `[]` | `{id, remote, forge: github\|gitlab = github, defaultBranch = main, connection, path}`. `remote` required. |
+| `contextSources[]` | `[]` | Optional pinned instruction sources: `{repo, revision, core:[{path,sha256}], linked?:[{path,sha256}]}`. Full 40-character commit and SHA256 digests; repository and host environment must already be declared. See [pinned sources](#pinned-instruction-sources). |
 | `environments[]` | `[]` | `{hostId, checkoutPath, repo?}`: hosts allowed to run the project and their checkout. `checkoutPath` must sit under the host's `FLEET_PROJECT_ROOTS`. |
 | `roles` | `{}` | Role name to profile id (`pm`, `worker`, `reviewer`, ...). `session_start` takes a role or a profile id. |
 | `worktree.envMode` | `worktree` | `worktree` \| `local`. Not built: `local`; a session in a git checkout always gets a worktree. |

@@ -276,7 +276,7 @@ func hostMayRead(q *Request, b *contract.HostArtifactGetRequest) (*Artifact, err
 	hostID := q.hostID()
 	if x.ProjectID != nil {
 		holder, _ := q.host["holder"].(string)
-		if !mayAccessProject(a.people[holder], x.ProjectID) {
+		if !mayAccessProject(q.peopleSnapshot().person(holder), x.ProjectID) {
 			return nil, fail(403, "Artifact not readable by this host")
 		}
 	}

@@ -85,8 +85,9 @@ func repoPath(p any, host string) (string, bool) {
 	if jIsStr(p, "workingDirectory") {
 		return jStr(p, "workingDirectory"), true
 	}
+	primary := jAt(gitRepo(jAt(p, "project"), nil), "id")
 	for _, e := range jArr(p, "project", "environments") {
-		if jStr(e, "hostId") == host && jIsStr(e, "checkoutPath") {
+		if jStr(e, "hostId") == host && jIsStr(e, "checkoutPath") && (jAt(e, "repo") == nil || jEq(jAt(e, "repo"), primary)) {
 			return jStr(e, "checkoutPath"), true
 		}
 	}

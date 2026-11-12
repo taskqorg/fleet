@@ -227,7 +227,7 @@ func hostsRegister(q *Request, b doc) (any, error) {
 	if s, ok := b["holder"].(string); ok {
 		holder = strings.ToLower(s)
 	}
-	if q.app.people[holder] == nil {
+	if q.peopleSnapshot().person(holder) == nil {
 		return nil, fail(400, "Holder is not a person")
 	}
 	if v, ok := b["secretSha256"]; ok && v != nil && !hexHash.MatchString(astr(v)) {

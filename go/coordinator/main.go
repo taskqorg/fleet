@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -40,7 +41,7 @@ type Person struct {
 
 type App struct {
 	store         *Store
-	people        map[string]*Person
+	people        atomic.Pointer[peopleSnapshot]
 	peopleFile    string
 	browserSecret string
 	hostID        string
@@ -225,7 +226,7 @@ func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped [
 		return err
 	})
 	if err == nil {
-		a.people = people
+		a.publishPeople(people)
 	}
 	return skipped, err
 }
@@ -254,13 +255,14 @@ func secretHash(s string) string { h := sha256.Sum256([]byte(s)); return hex.Enc
 
 // Request: the credential check's outcome and the route's transaction.
 type Request struct {
-	app    *App
-	r      *http.Request
-	person *Person
-	host   map[string]any
-	agent  string // execution:<id> when a host agent calls on behalf of person (its director)
-	body   json.RawMessage
-	tx     pgx.Tx
+	app        *App
+	r          *http.Request
+	person     *Person
+	peopleView *peopleSnapshot
+	host       map[string]any
+	agent      string // execution:<id> when a host agent calls on behalf of person (its director)
+	body       json.RawMessage
+	tx         pgx.Tx
 }
 
 func (q *Request) ctx() context.Context { return q.r.Context() }
@@ -364,8 +366,8 @@ func (a *App) authorize(q *Request) error {
 	if email == "" {
 		return fail(401, "Person required")
 	}
-	p := a.people[strings.ToLower(email)]
-	for _, c := range a.people { // ponytail: linear scan, fewer than 10 people
+	p := q.peopleSnapshot().person(strings.ToLower(email))
+	for _, c := range q.peopleSnapshot().list() { // ponytail: linear scan, fewer than 10 people
 		if p == nil && c.AccessCommonName != "" && strings.EqualFold(c.AccessCommonName, email) {
 			p = c
 			break
@@ -407,7 +409,7 @@ func (a *App) hostFromSecret(ctx context.Context, secret string) (map[string]any
 	}
 	var host map[string]any
 	json.Unmarshal(data, &host)
-	if holder, _ := host["holder"].(string); a.people[holder] == nil {
+	if holder, _ := host["holder"].(string); a.peopleSnapshot().person(holder) == nil {
 		return nil, nil
 	}
 	return host, nil
