@@ -10,6 +10,8 @@ type Settings = Ops['person_settings_get']['reply'];
 type Patch = Omit<Ops['person_settings_set']['request'], 'email'>;
 const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], widths: {}, rowPins: {} };
 export const prefs = signal<Settings>(empty);
+/** The first read has finished (or failed): lists wait for it, so a focused person never loads an unfocused list first. */
+export const prefsRead = signal(false);
 
 // A cleared store (signed out, another person, new grants) forgets the previous person's preferences too.
 onClear.add(() => { seq++; epoch++; pending = 0; prefs.value = empty; loadPrefs(); });
@@ -20,7 +22,7 @@ onClear.add(() => { seq++; epoch++; pending = 0; prefs.value = empty; loadPrefs(
 // Saves from this tab still run in order. A failed save shows the server copy again (or the state before it, when unreachable).
 // epoch: a store clear drops saves still queued for the previous person; pending: a read never overwrites a save in flight.
 let seq = 0, epoch = 0, pending = 0, chain: Promise<unknown> = Promise.resolve();
-export function loadPrefs() { const n = seq; return op('person_settings_get', {}).then(s => { if (seq === n && !pending) prefs.value = s; }).catch(() => {}); }
+export function loadPrefs() { const n = seq; return op('person_settings_get', {}).then(s => { if (seq === n && !pending) prefs.value = s; }).catch(() => {}).finally(() => { prefsRead.value = true; }); }
 /** Show the change at once and send its patch. */
 export function savePrefs(change: (s: Settings) => Partial<Settings>, patch: Patch) {
   const n = ++seq, e = epoch, before = prefs.value;
