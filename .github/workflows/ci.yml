@@ -26,6 +26,15 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       executed: ${{ steps.plan.outputs.executed }}
+      # Matrix entries per heavy family on the PDS18 pool or hosted (scripts/pds18-route.ts).
+      go_hosted: ${{ steps.route.outputs.go_hosted }}
+      go_pds18: ${{ steps.route.outputs.go_pds18 }}
+      app_hosted: ${{ steps.route.outputs.app_hosted }}
+      app_pds18: ${{ steps.route.outputs.app_pds18 }}
+      browser_hosted: ${{ steps.route.outputs.browser_hosted }}
+      browser_pds18: ${{ steps.route.outputs.browser_pds18 }}
+      release_hosted: ${{ steps.route.outputs.release_hosted }}
+      release_pds18: ${{ steps.route.outputs.release_pds18 }}
     permissions:
       contents: read
       actions: read
@@ -72,6 +81,13 @@ jobs:
           node -e 'const fs=require("node:fs"),p=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+"/test-selection.json","utf8"));fs.appendFileSync(process.env.GITHUB_OUTPUT,"executed="+JSON.stringify(p.executed)+"\n")'
       - if: contains(fromJSON(steps.plan.outputs.executed), 'app')
         run: node --test tests/ui/view-url.test.ts
+      - name: Route heavy jobs to the PDS18 pool or hosted
+        id: route
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/pds18-route.ts --self-check
+          node scripts/pds18-route.ts
       - name: Documentation checks
         run: |
           node scripts/docs-report.ts --self-check
@@ -83,9 +99,32 @@ jobs:
           retention-days: 7
           overwrite: true
           if-no-files-found: error
+  # Jobs routed to the PDS18 pool have no hosted fallback once queued: if the pool dies after routing, cancel the run, so
+  # the queue drops the group now instead of at its timeout, and the next run routes hosted (scripts/pds18-route.ts).
+  pds18-watch:
+    needs: selection
+    if: >-
+      needs.selection.outputs.go_pds18 != '[]' || needs.selection.outputs.app_pds18 != '[]'
+      || needs.selection.outputs.browser_pds18 != '[]' || needs.selection.outputs.release_pds18 != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN: ${{ toJSON(needs.selection.outputs) }}
+        run: node scripts/pds18-route.ts --watch "$(node -p 'const o=JSON.parse(process.env.PLAN);["go","app","browser","release"].reduce((n,f)=>n+JSON.parse(o[f+"_pds18"]).length,0)')"
   # Keep the required app status as the exact-candidate qualification boundary.
   app:
-    needs: [selection, thin, go-tests, app-tests, browser-tests, release-build]
+    needs: [selection, thin, go-tests, go-tests-pds18, app-tests, app-tests-pds18, browser-tests, browser-tests-pds18, release-build, release-build-pds18]
     if: always()
     runs-on: ubuntu-24.04
     permissions:
@@ -108,10 +147,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RESULTS: ${{ toJSON(needs) }}
           RELEASE_BUILD: ${{ needs.release-build.result }}
+          RELEASE_BUILD_PDS18: ${{ needs.release-build-pds18.result }}
         run: |
           # A merge queue commit merges only when its release builds, selftests and passes the migration check.
-          [ "$GITHUB_EVENT_NAME" != merge_group ] || [ "$RELEASE_BUILD" = success ] || { echo "::error::release-build: $RELEASE_BUILD"; exit 1; }
-          node -e 'const fs=require("node:fs"),r=JSON.parse(process.env.RESULTS);for(const f of ["app","go","browser"]){r[f]=r[f+"-tests"];delete r[f+"-tests"];}fs.writeFileSync(process.env.RUNNER_TEMP+"/qualification/test-results.json",JSON.stringify(r))'
+          [ "$GITHUB_EVENT_NAME" != merge_group ] || [ "$RELEASE_BUILD" = success ] || [ "$RELEASE_BUILD_PDS18" = success ] || { echo "::error::release-build: $RELEASE_BUILD, release-build-pds18: $RELEASE_BUILD_PDS18"; exit 1; }
+          # A family split between hosted and PDS18 is one result: a failure or cancel of either, else success of either.
+          node -e 'const fs=require("node:fs"),r=JSON.parse(process.env.RESULTS);for(const f of ["app","go","browser"]){const a=[r[f+"-tests"],r[f+"-tests-pds18"]];r[f]=a.find(x=>x.result==="failure"||x.result==="cancelled")||a.find(x=>x.result==="success")||a[0];delete r[f+"-tests"];delete r[f+"-tests-pds18"];}fs.writeFileSync(process.env.RUNNER_TEMP+"/qualification/test-results.json",JSON.stringify(r))'
           node scripts/test-selection.ts --verify "$RUNNER_TEMP/qualification/test-selection.json" "$RUNNER_TEMP/qualification/test-results.json"
       - uses: actions/upload-artifact@v4
         with:
@@ -191,20 +232,17 @@ jobs:
   # Node only as the test runner: the outside tests import node: builtins, so no pnpm install here.
   go-tests:
     needs: selection
-    if: contains(fromJSON(needs.selection.outputs.executed), 'go')
+    if: contains(fromJSON(needs.selection.outputs.executed), 'go') && needs.selection.outputs.go_hosted != '[]'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        # ClickHouse only where a test talks to it: go/obs unit tests and tests/go/telemetry.test.ts (some outside shard).
-        # Started with docker in the background, not as a service: its pull overlaps setup and build instead of
-        # delaying the job's start (about 18 s).
-        include:
-          - {part: vet, clickhouse: false}
-          - {part: unit, clickhouse: true}
-          - {part: outside-0, clickhouse: true}
+        # The parts not on the PDS18 pool; all of them: scripts/pds18-route.ts FAMILIES.go. ClickHouse only where a test
+        # talks to it: go/obs unit tests and tests/go/telemetry.test.ts (some outside shard). Started with docker in the
+        # background, not as a service: its pull overlaps setup and build instead of delaying the job's start (about 18 s).
+        include: ${{ fromJSON(needs.selection.outputs.go_hosted) }}
     env:
       GOFLAGS: -mod=readonly
       # Matrix entries outside-0..N-1 are the shards; run.sh fails on an index outside the total or an empty shard.
@@ -243,10 +281,27 @@ jobs:
       - run: scripts/ci-part.sh "$PART" test
         env:
           PART: ${{ matrix.part }}
+  # The same parts on the warm PDS18 pool (.github/workflows/pds18.yml at main: the pool admits only main's workflows).
+  go-tests-pds18:
+    needs: selection
+    if: contains(fromJSON(needs.selection.outputs.executed), 'go') && needs.selection.outputs.go_pds18 != '[]'
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.selection.outputs.go_pds18) }}
+    uses: taskqorg/fleet/.github/workflows/pds18.yml@main
+    with:
+      go: true
+      clickhouse: ${{ matrix.clickhouse }}
+      # The service's per-job port is in FLEET_TEST_CLICKHOUSE_URL (ci-part.sh clickhouse uses a fixed port and name).
+      env: GOFLAGS=-mod=readonly
+      script: scripts/ci-part.sh ${{ matrix.part }} test
   # App: bundle and UI unit tests. The release tarballs are release-build's.
   app-tests:
     needs: selection
-    if: contains(fromJSON(needs.selection.outputs.executed), 'app')
+    if: contains(fromJSON(needs.selection.outputs.executed), 'app') && needs.selection.outputs.app_hosted != '[]'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -259,15 +314,22 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run app:build
-      - run: node --test tests/ui/*.test.ts
+      - run: scripts/ci-job.sh app
+  app-tests-pds18:
+    needs: selection
+    if: contains(fromJSON(needs.selection.outputs.executed), 'app') && needs.selection.outputs.app_pds18 != '[]'
+    permissions:
+      contents: read
+    uses: taskqorg/fleet/.github/workflows/pds18.yml@main
+    with:
+      pnpm: true
+      script: scripts/ci-job.sh app
   # Browser: per shard, the UI bundle and the coordinator, Chromium from a cache keyed on the Playwright version, then
   # that shard's checks: filter path (fleet-view-urls-and-list-path.md §4), Conversations (fleet-conversations.md
   # "Browser check"), Lab-create. The design book and report run in reports and warn only (D6, D14).
   browser-tests:
     needs: selection
-    if: contains(fromJSON(needs.selection.outputs.executed), 'browser')
+    if: contains(fromJSON(needs.selection.outputs.executed), 'browser') && needs.selection.outputs.browser_hosted != '[]'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -276,7 +338,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1]
+        # The shards not on the PDS18 pool; all of them: scripts/pds18-route.ts FAMILIES.browser.
+        include: ${{ fromJSON(needs.selection.outputs.browser_hosted) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -345,25 +408,38 @@ jobs:
           for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com github.com; do
             getent ahostsv4 "$host"
           done
-      - if: steps.chromium.outputs.cache-hit != 'true'
-        run: pnpm exec playwright install chromium
-      - if: matrix.shard == 0
-        run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/filter.check.ts --assert --sizes 20000
-      - if: matrix.shard == 1
-        run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/filter.check.ts --assert --sizes 3000
-      - if: matrix.shard == 1
-        run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/conversations.check.ts
-      - if: matrix.shard == 1
-        run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/lab-create.check.ts
+      # scripts/ci-job.sh installs Chromium; a cache hit makes that a version check.
+      - run: scripts/ci-job.sh "browser-$SHARD"
+        env:
+          SHARD: ${{ matrix.shard }}
+  browser-tests-pds18:
+    needs: selection
+    if: contains(fromJSON(needs.selection.outputs.executed), 'browser') && needs.selection.outputs.browser_pds18 != '[]'
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.selection.outputs.browser_pds18) }}
+    uses: taskqorg/fleet/.github/workflows/pds18.yml@main
+    with:
+      go: true
+      pnpm: true
+      script: pnpm install --frozen-lockfile && scripts/ci-part.sh browser build && scripts/ci-job.sh browser-${{ matrix.shard }}
+      # The UI tree a UI-only release signs (release.yml publish): shard 0 of a merge queue or push run.
+      artifact-name: ${{ matrix.shard == 0 && 'fleet-ui' || '' }}
+      artifact-path: dist/app/
+      artifact-retention: 30
   # Speculative release build (docs/designs/fleet-delivery-pipeline.md#4-automatic-release): the merge queue commit is
   # the commit main moves to, and its version is a function of it (deploy/release-version.sh), so this run builds the
   # release tarballs, selftests them and runs the migration check against the current window, in parallel with the
   # tests. The release workflow then only verifies, signs and publishes these bytes. The required app check fails with
-  # it, so main never holds a commit whose release does not build. Hosted: the PDS18 runner admits only refs/heads/main jobs.
+  # it, so main never holds a commit whose release does not build. On the PDS18 pool when it has a free slot (release-build-pds18).
   # No macOS job: the darwin binaries are CGO_ENABLED=0 cross-builds, and each Mac's fleet-update selftests the ones it
   # runs before switching (refused: selftest), so a macOS runner only adds its queue to every release.
   release-build:
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' && needs.selection.outputs.release_hosted != '[]'
+    needs: selection
     runs-on: ubuntu-24.04
     # On the queue's critical path (app waits for it): a hung check must not hold the queue.
     timeout-minutes: 20
@@ -391,26 +467,7 @@ jobs:
             ~/go/pkg/mod
           key: go-release-${{ hashFiles('go/**') }}
           restore-keys: go-release-
-      - name: Version, window, build
-        run: |
-          set -o pipefail
-          version=$(deploy/release-version.sh "$GITHUB_SHA")
-          previous=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
-          deploy/release-recent.sh > "$RUNNER_TEMP/window"
-          . "$RUNNER_TEMP/window"
-          { echo "VERSION=$version"; echo "RECENT=$recent"; echo "DIGESTS=$digests"; } >> "$GITHUB_ENV"
-          mkdir out
-          deploy/build-release.sh "$GITHUB_SHA" out "$version" "${previous#v}" linux/amd64 darwin/arm64
-          jq -nc --arg v "$version" --arg c "$GITHUB_SHA" --arg d "$digests" '{version:$v,commit:$c,digests:$d,checkedWith:$ARGS.positional}' --args $recent > out/speculative.json
-          echo "built $version, checked with: ${recent:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
-          # The gate takes the artifact only with these SHA256SUMS: no other job can write this job's annotations.
-          echo "::notice title=release SHA256SUMS::$(sha256sum < out/SHA256SUMS | cut -d' ' -f1)"
-      - name: Selftest linux binaries, darwin binaries static
-        run: |
-          deploy/verify-release.sh out new
-      - name: New coordinator migrates, each recent one still serves
-        if: env.RECENT != ''
-        run: deploy/migrate-check.sh new out
+      - run: scripts/ci-job.sh release
       - uses: actions/upload-artifact@v4
         with:
           name: release
@@ -418,6 +475,25 @@ jobs:
           retention-days: 7
           overwrite: true
           if-no-files-found: error
+  # The same on the PDS18 pool, where the recent releases' coordinators stay extracted (deploy/migrate-check.sh).
+  # release.yml's gate reads whichever of the two ran.
+  release-build-pds18:
+    if: github.event_name == 'merge_group' && needs.selection.outputs.release_pds18 != '[]'
+    needs: selection
+    permissions:
+      contents: read
+    uses: taskqorg/fleet/.github/workflows/pds18.yml@main
+    with:
+      fetch-depth: 0
+      go: true
+      pnpm: true
+      gh-token: true
+      # As the hosted job: on the queue's critical path (app waits for it).
+      timeout-minutes: 20
+      script: scripts/ci-job.sh release
+      artifact-name: release
+      artifact-path: out/
+      artifact-retention: 7
   # Caches saved on pull request and merge queue refs are invisible to other merge queue runs; only main's are shared,
   # and main's push run skips the heavy families. This job saves every part's cache from main when its key is new,
   # so each merge queue run starts warm. One job, parts in sequence: no runner slot of a queue run.

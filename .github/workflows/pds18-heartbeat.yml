@@ -1,5 +1,5 @@
-# Liveness of the PDS18 runner pool for ci.yml routing: the time of the newest successful run of this workflow. While the
-# pool is down these runs only queue and the time goes stale; a busy pool shows as alive by its running jobs instead.
+# Liveness of the PDS18 runner pool for ci.yml routing (scripts/pds18-route.ts): the time of the newest successful run of
+# this workflow, and a beat that waits for a runner, which routes hosted at once, whether the pool is dead or full.
 name: pds18-heartbeat
 on:
   schedule:
