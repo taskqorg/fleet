@@ -1,7 +1,7 @@
 // Outside tests of connections, the pipeline runner and Lab (one file: they share the fake gateway). HTTP only, plus the two file seams the
 // coordinator shares with fleet-gateway: <FLEET_GATEWAY_DIR>/snapshot.json and <FLEET_GATEWAY_DIR>/state/spool/*.jsonl,
 // and the key files in FLEET_SECRET_DIR. This file plays the gateway on FLEET_GATEWAY_URL. Run:
-//   d=$(mktemp -d); FLEET_SECRET_DIR=$d/secret FLEET_GATEWAY_DIR=$d/gateway FLEET_GATEWAY_URL=http://127.0.0.1:47811 \
+//   d=$(mktemp -d); FLEET_SECRET_DIR=$d/secret FLEET_GATEWAY_DIR=$d/gateway FLEET_GATEWAY_URL=http://127.0.0.1:<free port> \
 //   FLEET_CONNECTION_TICK_MS=200 FLEET_PIPELINE_TICK_MS=200 FLEET_TRIAL_TESTS=tests/go/connections.test.ts \
 //   [FLEET_TRIAL_SERVER=...] node tests/trial/run.ts
 // Each test names its requirement (docs/designs/fleet-connections.md, fleet-lab.md) and the risk it guards.
@@ -76,7 +76,8 @@ before(async () => {
     }
     res.writeHead(502, {'content-type': 'application/json', 'x-fleet-error': 'provider-timeout', 'x-fleet-call-id': randomUUID()}).end('{"error":"timeout"}');
   });
-  await new Promise<void>(r => gateway.listen(Number(new URL(GATEWAY_URL).port), '127.0.0.1', r));
+  // A taken port (another run on the host) fails the file instead of leaving it waiting.
+  await new Promise<void>((r, j) => gateway.once('error', j).listen(Number(new URL(GATEWAY_URL).port), '127.0.0.1', r));
 });
 after(() => gateway.close());
 

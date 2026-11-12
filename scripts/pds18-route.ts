@@ -1,7 +1,8 @@
 // Which heavy ci.yml jobs run on the warm PDS18 pool (deploy/infrastructure/pds18-ci/README.md) and which stay hosted.
 // Only a merge queue group of main or a push to main may use the pool; .github/workflows/pds18.yml enforces the same.
-// Release-build goes to a free slot; the rest only when the hosted pool is busy (HOSTED_BUSY of this repository's jobs
-// queued or running on hosted runners, of 20 per organization): on PDS18's 2014 Xeon (E5-2620 v3) the CPU-bound jobs run
+// Release-build goes to a free slot; the rest only when hosted is busy: HOSTED_BUSY of this repository's jobs running on
+// hosted runners (of 20 per organization), or a hosted job of another run waiting more than QUEUED_S for a runner (the
+// organization's limit reached through other repositories too): on PDS18's 2014 Xeon (E5-2620 v3) the CPU-bound jobs run
 // slower than hosted, so the pool pays only where its warm caches win or hosted would make them wait.
 // Free slots are the pool size less the pool's jobs queued or running in this repository. The pool counts as down when
 // the newest successful heartbeat (pds18-heartbeat.yml, every 5 minutes on the pool) is older than BEAT_S, or when any
@@ -21,7 +22,7 @@ import {appendFileSync, readFileSync} from 'node:fs';
 
 // ponytail: the pool size is pool.sh's slot count, written twice; read it from the runners API if a token for it appears.
 // BEAT_S is generous: GitHub delays scheduled runs under load; a dead pool shows sooner by its waiting beat (STUCK_S).
-const POOL = 4, STUCK_S = 120, BEAT_S = 40 * 60, WATCH_S = 300, HOSTED_BUSY = 14;
+const POOL = 4, STUCK_S = 120, BEAT_S = 40 * 60, WATCH_S = 300, HOSTED_BUSY = 14, QUEUED_S = 30;
 const {GH_TOKEN, GITHUB_REPOSITORY: repo} = process.env;
 const api = async (path: string, method = 'GET') => {
   const r = await fetch(`https://api.github.com/repos/${repo}/${path}`, {method, headers: {authorization: `Bearer ${GH_TOKEN}`, accept: 'application/vnd.github+json'}});
@@ -43,15 +44,19 @@ type Family = keyof typeof FAMILIES;
 // TestMCPOwnedDependencyJournalRecovery: "owned dependency did not start"); route it once they pass there.
 const PREFER: [Family, number][] = [['release', 0]];
 const OVERFLOW: [Family, number][] = [['app', 0], ['go', 2], ['browser', 1], ['browser', 0], ['go', 1]];
-export type Job = {status: string, labels: string[], created_at: string, started_at?: string | null};
+export type Job = {status: string, labels: string[], created_at: string, started_at?: string | null, run_id?: number};
 
-export function plan(o: {trusted: boolean, now: number, beat: string | null, jobs: Job[], run: string[]}) {
+export function plan(o: {trusted: boolean, now: number, beat: string | null, jobs: Job[], run: string[], self?: number}) {
   const pool = o.jobs.filter(j => j.labels.includes('fleet-pds18') && j.status !== 'completed');
-  const stuck = pool.some(j => j.status === 'queued' && o.now - Date.parse(j.created_at) > STUCK_S * 1000);
+  // A job waits for a runner while none of the pool's runs: a full pool runs jobs (and leaves no free slot anyway).
+  const stuck = !pool.some(j => j.status === 'in_progress') && pool.some(j => j.status === 'queued' && o.now - Date.parse(j.created_at) > STUCK_S * 1000);
   const alive = o.beat !== null && o.now - Date.parse(o.beat) < BEAT_S * 1000;
   const free = o.trusted && alive && !stuck ? Math.max(0, POOL - pool.length) : 0;
-  const hosted = o.jobs.filter(j => !j.labels.includes('self-hosted') && j.status !== 'completed').length;
-  const order = hosted >= HOSTED_BUSY ? [...PREFER, ...OVERFLOW] : PREFER;
+  const onHosted = o.jobs.filter(j => !j.labels.includes('self-hosted'));
+  // Not this run's own jobs: those not yet started wait for its needs, not for a runner.
+  const hosted = onHosted.filter(j => j.status === 'in_progress').length;
+  const waiting = onHosted.some(j => j.status === 'queued' && j.run_id !== o.self && o.now - Date.parse(j.created_at) > QUEUED_S * 1000);
+  const order = hosted >= HOSTED_BUSY || waiting ? [...PREFER, ...OVERFLOW] : PREFER;
   const chosen = new Set(order.filter(([f]) => o.run.includes(f)).slice(0, free).map(([f, i]) => `${f}/${i}`));
   const out: Record<string, string> = {};
   for (const f of Object.keys(FAMILIES) as Family[]) {
@@ -59,13 +64,14 @@ export function plan(o: {trusted: boolean, now: number, beat: string | null, job
     out[`${f}_hosted`] = JSON.stringify(all.filter(x => !x.p).map(x => x.e));
     out[`${f}_pds18`] = JSON.stringify(all.filter(x => x.p).map(x => x.e));
   }
-  return {out, free, alive, stuck, busy: pool.length, hosted};
+  return {out, free, alive, stuck, busy: pool.length, hosted, waiting};
 }
 
-// The jobs of this repository's active runs: pool jobs, and hosted ones (pull requests included) for HOSTED_BUSY.
-async function activeJobs(): Promise<Job[]> {
+// The jobs of this repository's active runs: pool jobs, and with pullRequests the hosted ones of pull request runs too.
+async function activeJobs(pullRequests: boolean): Promise<Job[]> {
   // ponytail: one jobs call per active run, first 100 runs per status; page them if more run at once.
-  const runs = [...(await api('actions/runs?status=in_progress&per_page=100')).workflow_runs, ...(await api('actions/runs?status=queued&per_page=100')).workflow_runs];
+  const runs = [...(await api('actions/runs?status=in_progress&per_page=100')).workflow_runs, ...(await api('actions/runs?status=queued&per_page=100')).workflow_runs]
+    .filter((r: any) => pullRequests || r.event !== 'pull_request');
   return (await Promise.all(runs.map((r: any) => api(`actions/runs/${r.id}/jobs?per_page=100`)))).flatMap((j: any) => j.jobs);
 }
 
@@ -82,7 +88,7 @@ async function watch(n: number) {
       const started = own.filter(j => j.status !== 'queued').length;
       console.log(`${started}/${n} pool jobs started`);
       if (started >= n) return;
-      if (waited(own, Date.now()) && dead(own, await activeJobs(), Date.now())) {
+      if (waited(own, Date.now()) && dead(own, await activeJobs(false), Date.now())) {
         await api(`actions/runs/${id}/cancel`, 'POST');
         throw Object.assign(new Error(`a pool job waited ${WATCH_S} s while no pool job runs: run cancelled; the waiting heartbeat routes the next runs hosted`), {final: true});
       }
@@ -101,10 +107,10 @@ async function main() {
   try {
     if (!trusted) throw new Error(`untrusted event ${event} ${ref}`);
     const beat = (await api('actions/workflows/pds18-heartbeat.yml/runs?status=success&per_page=1')).workflow_runs[0]?.updated_at ?? null;
-    const jobs = await activeJobs();
+    const jobs = await activeJobs(true);
     // The families this run executes (test-selection.json, the selection step's plan); release-build runs only in the queue.
     const run = [...JSON.parse(readFileSync(`${RUNNER_TEMP}/test-selection.json`, 'utf8')).executed, ...(event === 'merge_group' ? ['release'] : [])];
-    result = plan({trusted, now: Date.now(), beat, jobs, run});
+    result = plan({trusted, now: Date.now(), beat, jobs, run, self: Number(process.env.GITHUB_RUN_ID)});
   } catch (e) {
     // Any doubt is hosted.
     console.log(`hosted: ${(e as Error).message}`);
@@ -118,15 +124,20 @@ if (process.argv.includes('--self-check')) {
   const now = Date.parse('2026-11-12T12:00:00Z'), ago = (s: number) => new Date(now - s * 1000).toISOString();
   const job = (status: string, s = 10): Job => ({status, labels: ['self-hosted', 'fleet-pds18'], created_at: ago(s)});
   const p = (o: Partial<Parameters<typeof plan>[0]>) => plan({trusted: true, now, beat: ago(60), jobs: [], run: ['go', 'app', 'browser', 'release'], ...o});
-  const hostedJob = (status: string): Job => ({status, labels: ['ubuntu-24.04'], created_at: ago(10)});
+  const hostedJob = (status: string, s = 10, run_id = 1): Job => ({status, labels: ['ubuntu-24.04'], created_at: ago(s), run_id});
   // Hosted not busy: release-build only.
   assert.deepEqual(p({}).out, {go_hosted: '[{"part":"unit","clickhouse":true},{"part":"outside-0","clickhouse":true},{"part":"vet","clickhouse":false}]', go_pds18: '[]',
     app_hosted: '[{"part":"app"}]', app_pds18: '[]', browser_hosted: '[{"shard":0},{"shard":1}]', browser_pds18: '[]', release_hosted: '[]', release_pds18: '[{"part":"release"}]'});
   // Hosted busy: four slots in PREFER, OVERFLOW order; go unit never.
-  const busy = Array.from({length: HOSTED_BUSY}, () => hostedJob('queued'));
+  const busy = Array.from({length: HOSTED_BUSY}, () => hostedJob('in_progress'));
   assert.deepEqual(p({jobs: busy}).out, {go_hosted: '[{"part":"unit","clickhouse":true},{"part":"outside-0","clickhouse":true}]', go_pds18: '[{"part":"vet","clickhouse":false}]',
     app_hosted: '[]', app_pds18: '[{"part":"app"}]', browser_hosted: '[{"shard":0}]', browser_pds18: '[{"shard":1}]', release_hosted: '[]', release_pds18: '[{"part":"release"}]'});
   assert.equal(p({jobs: [...busy, ...Array.from({length: 6}, () => hostedJob('completed'))]}).hosted, HOSTED_BUSY);
+  // Waiting for a hosted runner: another run's job queued past QUEUED_S overflows; this run's own pending jobs do not.
+  assert.equal(p({jobs: [hostedJob('queued', QUEUED_S + 1, 2)], self: 1}).out.app_pds18, '[{"part":"app"}]');
+  assert.equal(p({jobs: Array.from({length: 20}, () => hostedJob('queued', QUEUED_S + 1, 1)), self: 1}).out.app_pds18, '[]');
+  // A full pool runs jobs: its queued ones are not stuck (free is 0 then anyway).
+  assert.equal(p({jobs: [job('in_progress'), job('queued', STUCK_S + 1)]}).stuck, false);
   assert.equal(p({jobs: [job('in_progress'), job('queued')]}).free, 2);
   assert.equal(p({jobs: [job('completed'), {...job('queued'), labels: ['ubuntu-24.04']}]}).free, 4);
   // Down, stuck, untrusted: all hosted.

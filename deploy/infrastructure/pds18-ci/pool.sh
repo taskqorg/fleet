@@ -19,6 +19,8 @@ install -d -o root -g cipool -m 2775 "$cache" "$cache"/{go-build,gomod,ms-playwr
 # hardening) refuse group-writable files and directories of their own.
 command -v setfacl >/dev/null || NEEDRESTART_MODE=l apt-get install -y -q acl
 setfacl -R -m g:cipool:rwX -m d:g:cipool:rwX -m d:m::rwx "$cache"
+# The pnpm store was shared once; each slot keeps its own now (below).
+rm -rf "$cache/pnpm-store"
 token= new=
 for n in $(seq 1 "$slots"); do
   user=ci; [ "$n" = 1 ] || user=ci$n
