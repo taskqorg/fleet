@@ -202,7 +202,7 @@ One run does all three starts (COREQ-R16 counts starts; Fleet has no launcher, s
 *   **Executor**: within 30 s, the unit is active and the executor's `update.json` shows `running` = candidate with `pollOk: true` (written after its first poll answered 200). The executor sets `pollError` instead when a poll fails: `network` (connection error, timeout, 3xx from the Access edge) or `http-<status>` for 5xx. Those two do not count as an unhealthy start: the run leaves the new version current, records `state: pending`, and the next run checks again. Unit not active, or a 401/403/4xx answer to the new executor, counts.
 *   **Healthy**: write `R/<ver>/healthy` (on PDS18 root writes it into `/home/fleet/releases/<ver>/`, readable by `fleet`).
 *   **Unhealthy**: increment `starts`, restart. At the third, `current` back to `previous`, restart, refuse the version. No `previous`: keep `current`, `state: failed`. systemd `Restart=on-failure` restarts inside one start window do not count separately.
-*   Migrations run when the coordinator starts. A rollback runs the previous coordinator on the migrated database; the release `migrate-check` job proves that works. The dump is for manual recovery only.
+*   Migrations run when the coordinator starts. A rollback runs the previous coordinator on the migrated database; the migration check step of the release `build` job proves that works. The dump is for manual recovery only.
 
 #### 3.5 Units
 
@@ -313,7 +313,7 @@ The three current hosts do this once: their env files are reduced to `FLEET_HOST
 *   **Disk full**: `pg_dump` or unpack fails as `error`; dumps and releases are pruned to `current` and `previous`.
 *   **Coordinator down while an executor updates**: the start does not count; no refusal.
 *   **Host clock skew**: only affects when a hold ends.
-*   **Migration that breaks the previous coordinator**: stopped by `migrate-check` before publish.
+*   **Migration that breaks the previous coordinator**: stopped by the migration check in `build` before publish.
 *   **`fleet-update` itself broken in a release**: its selftest stops it before install; if it passes selftest but fails later, the previous `fleet-update` stays in `/opt/fleet/update` on PDS18; elsewhere the holder runs `install-release.sh --rollback`.
 
 --------------------------------------------------------------------------------

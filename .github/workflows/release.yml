@@ -165,7 +165,9 @@ jobs:
         run: |
           set -o pipefail
           export PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pg=$RUNNER_TEMP/pg
-          # The runner is persistent: a failed step must not leave a coordinator on the port or a PostgreSQL behind.
+          # The runner is persistent: a failed step must not leave a coordinator on the port or a PostgreSQL behind, and a
+          # cancelled one (killed before the trap) is cleared here.
+          pkill -x fleet-coordinator || true; pkill -f 'postgres .*-p 54329' || true
           pid=; trap '{ [ -z "$pid" ] || { kill $pid; wait $pid; }; pg_ctl -D "$pg" -m immediate -w stop; } >/dev/null 2>&1 || true' EXIT
           initdb -D "$pg" -U postgres -A trust -E UTF8 --no-instructions --no-sync >/dev/null
           pg_ctl -D "$pg" -l "$pg/log" -w -o "-k $pg -p 54329 -c listen_addresses= -c fsync=off -c synchronous_commit=off -c full_page_writes=off" start
@@ -178,12 +180,13 @@ jobs:
           for v in $RECENT; do
             file=fleet-$v-linux-amd64.tgz
             digest=$(printf '%s\n' $DIGESTS | sed -n "s/^$v=//p")
-            [ -n "$digest" ] && [ -x "$cache/$v/fleet-coordinator" ] && [ "$(cat "$cache/$v/.digest" 2>/dev/null)" = "$digest" ] && continue
+            members="./fleet-coordinator ./config ./release.json"
+            [ -n "$digest" ] && [ -x "$cache/$v/fleet-coordinator" ] && [ "$(cat "$cache/$v/.digest" 2>/dev/null)" = "$digest $members" ] && continue
             rm -rf "$cache/$v.tmp"; mkdir "$cache/$v.tmp"
             gh release download "v$v" -p "$file" -D "$RUNNER_TEMP" --clobber || { echo "::error::v$v: download failed"; exit 1; }
             [ -z "$digest" ] || echo "${digest#sha256:}  $RUNNER_TEMP/$file" | sha256sum -c --quiet || { echo "::error::v$v: $file does not match its digest"; exit 1; }
-            tar -xzf "$RUNNER_TEMP/$file" -C "$cache/$v.tmp" ./fleet-coordinator ./config ./release.json || { echo "::error::v$v: extraction failed"; exit 1; }
-            rm -f "$RUNNER_TEMP/$file"; echo "$digest" > "$cache/$v.tmp/.digest"
+            tar -xzf "$RUNNER_TEMP/$file" -C "$cache/$v.tmp" $members || { echo "::error::v$v: extraction failed"; exit 1; }
+            rm -f "$RUNNER_TEMP/$file"; echo "$digest $members" > "$cache/$v.tmp/.digest"
             rm -rf "${cache:?}/$v"; mv "$cache/$v.tmp" "$cache/$v"
           done
           url() { echo "postgresql://$1@/fleet?host=$pg&port=54329"; }
@@ -198,7 +201,7 @@ jobs:
             i=0; until kill -0 $pid 2>/dev/null && curl -fsS -m 3 -o "$RUNNER_TEMP/health" http://127.0.0.1:9470/api/health && grep -q "\"version\":\"$v\"" "$RUNNER_TEMP/health"; do
               kill -0 $pid 2>/dev/null || { echo "::error::$dir coordinator exited"; exit 1; }
               i=$((i+1)); [ $i -lt 60 ] || { echo "::error::$dir coordinator not healthy"; exit 1; }; sleep 1; done
-            echo; kill $pid; wait $pid || true; pid=
+            echo; kill $pid || { echo "::error::$dir coordinator exited after health"; exit 1; }; wait $pid || true; pid=
           done
       - uses: actions/upload-artifact@v4
         with:
