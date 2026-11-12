@@ -503,8 +503,17 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 	if !ok {
 		return errors.New("MCP input must be owned and closable")
 	}
+	destination, ok := output.(*os.File)
+	if !ok {
+		return errors.New("MCP output requires an owned file descriptor")
+	}
+	ownedOutput, err := mcpPollableFile(destination)
+	if err != nil {
+		return err
+	}
+	defer ownedOutput.Close()
 	var closing, unexpectedExit atomic.Bool
-	queued, err := newMCPInput(source, func() { closing.Store(true); child.control.Close(); child.out.Close() })
+	queued, err := newMCPInput(source, func() { closing.Store(true); child.control.Close(); child.out.Close(); ownedOutput.Close() })
 	if err != nil {
 		return err
 	}
@@ -520,10 +529,11 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 			child.in.Close()
 			child.out.Close()
 			queued.source.Close()
+			ownedOutput.Close()
 		}
 	}()
 	defer func() { closing.Store(true); child.status.Close(); <-statusDone }()
-	err = filterMCP(queued, output, child.in, child.out, root, jArr(spec, "tools"), policy)
+	err = filterMCP(queued, ownedOutput, child.in, child.out, root, jArr(spec, "tools"), policy)
 	if unexpectedExit.Load() {
 		return errors.Join(err, errors.New("MCP server exited or status was lost; outcome unknown; no replay"))
 	}
@@ -563,17 +573,10 @@ func newMCPInput(source io.ReadCloser, closed func()) (*mcpInput, error) {
 	if !ok {
 		return nil, errors.New("MCP input requires an owned file descriptor")
 	}
-	// Inherited stdin may be blocking: duplicate it as a pollable Go file so Close interrupts a pending read.
-	fd, err := unix.Dup(int(file.Fd()))
+	owned, err := mcpPollableFile(file)
 	if err != nil {
 		return nil, err
 	}
-	unix.CloseOnExec(fd)
-	if err = unix.SetNonblock(fd, true); err != nil {
-		unix.Close(fd)
-		return nil, err
-	}
-	owned := os.NewFile(uintptr(fd), "mcp-input")
 	q := &mcpInput{source: owned, original: source, done: make(chan struct{})}
 	q.cond = sync.NewCond(&q.mu)
 
@@ -609,3 +612,17 @@ func (q *mcpInput) Read(p []byte) (int, error) {
 	return 0, q.err
 }
 func (q *mcpInput) close() { q.source.Close(); q.original.Close(); <-q.done }
+
+// Inherited pipes may be blocking; an owned pollable duplicate makes Close interrupt pending I/O.
+func mcpPollableFile(file *os.File) (*os.File, error) {
+	fd, err := unix.Dup(int(file.Fd()))
+	if err != nil {
+		return nil, err
+	}
+	unix.CloseOnExec(fd)
+	if err = unix.SetNonblock(fd, true); err != nil {
+		unix.Close(fd)
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), "mcp-io"), nil
+}

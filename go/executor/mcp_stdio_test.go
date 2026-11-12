@@ -93,6 +93,16 @@ func mcpFixture() {
 		return
 	}
 
+	if tool == "large-response" {
+		var req M
+		json.NewDecoder(os.Stdin).Decode(&req)
+		json.NewEncoder(os.Stdout).Encode(M{"id": req["id"], "result": M{"text": strings.Repeat("x", 2*1024*1024)}})
+		os.WriteFile(os.Args[3], []byte(strconv.Itoa(os.Getpid())), 0600)
+		for !exists(os.Args[3] + "-exit") {
+			time.Sleep(10 * time.Millisecond)
+		}
+		return
+	}
 	if tool == "orphan" || tool == "orphan-stdout" {
 		cmd := exec.Command("/bin/sleep", "60")
 		if tool == "orphan-stdout" {
@@ -963,7 +973,11 @@ func TestMCPServerExitWithInheritedStdoutInterruptsResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer writer.Close()
-	output := &strings.Builder{}
+	output, err := os.CreateTemp(t.TempDir(), "output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
 	done := make(chan error, 1)
 	go func() {
 		done <- mcpStdio(o.socket, fixtureSpec("orphan-stdout", marker), input, output, t.TempDir(), "")
@@ -985,5 +999,50 @@ func TestMCPServerExitWithInheritedStdoutInterruptsResponse(t *testing.T) {
 	table, err := processes()
 	if err != nil || running(table, pid) {
 		t.Fatal("stdout orphan survived", pid, err)
+	}
+}
+
+// R3; risk: an unread native output pipe hides server exit while input stays open.
+func TestMCPServerExitInterruptsBlockedOutput(t *testing.T) {
+	o, _ := testMCPOwner(t)
+	marker := filepath.Join(t.TempDir(), "server-exited")
+	input, writer, _ := os.Pipe()
+	defer writer.Close()
+	reader, output, _ := os.Pipe()
+	defer reader.Close()
+	defer output.Close()
+	done := make(chan error, 1)
+	go func() {
+		done <- mcpStdio(o.socket, fixtureSpec("large-response", marker), input, output, t.TempDir(), "")
+	}()
+	writer.Write([]byte(`{"id":1,"method":"initialize"}` + "\n"))
+	pid := awaitFile(t, marker)
+	// One byte proves the filter reached its downstream write; leave the rest of the large response unread.
+	started := make(chan error, 1)
+	go func() { var b [1]byte; _, err := reader.Read(b[:]); started <- err }()
+	select {
+	case err := <-started:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("response write did not start")
+	}
+	os.WriteFile(marker+"-exit", []byte("exit"), 0600)
+	// Keep input open: only the private exit signal can unblock the pending write.
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "unknown") {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("unread output hid server exit")
+	}
+	if err := cleanupMCPGroups(o.db, o.execution); err != nil {
+		t.Fatal(err)
+	}
+	table, err := processes()
+	if err != nil || running(table, pid) {
+		t.Fatal("server survived", pid, err)
 	}
 }
