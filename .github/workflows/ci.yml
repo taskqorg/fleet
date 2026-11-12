@@ -302,9 +302,9 @@ jobs:
           retention-days: 1
           overwrite: true
           if-no-files-found: error
-  # Browser: one build, Chromium from a cache keyed on the Playwright version, then every browser check in sequence:
-  # filter path (fleet-view-urls-and-list-path.md §4), Conversations (fleet-conversations.md "Browser check"), the
-  # design book and report. The docs and design reports warn only (D6, D14).
+  # Browser: per shard, the UI bundle and the coordinator, Chromium from a cache keyed on the Playwright version, then
+  # that shard's checks: filter path (fleet-view-urls-and-list-path.md §4), Conversations (fleet-conversations.md
+  # "Browser check"), Lab-create. The design book and report run in reports and warn only (D6, D14).
   browser-tests:
     needs: selection
     if: contains(fromJSON(needs.selection.outputs.executed), 'browser')
@@ -330,7 +330,7 @@ jobs:
         with:
           go-version-file: go/go.mod
           cache: false
-      # The coordinator's build cache, as go-tests: rebuilt only when Go sources change.
+      # The coordinator's build cache: rebuilt only when Go sources change (both shards share one key; one save wins).
       - uses: actions/cache@v4
         with:
           path: |
@@ -340,7 +340,7 @@ jobs:
           restore-keys: go-browser-
       - run: pnpm install --frozen-lockfile
       # Only what the checks serve: the UI bundle and the coordinator (typecheck runs in app-tests).
-      - run: node contracts/gen-ts.mjs && node app/build.mjs && cd go && CGO_ENABLED=0 go build -trimpath -o bin/fleet-coordinator ./coordinator
+      - run: pnpm run app:bundle && cd go && CGO_ENABLED=0 go build -trimpath -o bin/fleet-coordinator ./coordinator
       # The UI tree these browser checks serve: a UI-only release signs and publishes it (release.yml publish). Only
       # merge queue and push runs can qualify a release.
       - uses: actions/upload-artifact@v4
