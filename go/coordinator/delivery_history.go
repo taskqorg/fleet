@@ -171,10 +171,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		for i := 0; i+1 < len(kv); i += 2 {
 			args[kv[i]] = kv[i+1]
 		}
-		b, keyed, err := githubRead(ctx, a, ciProject, tool, args)
-		if err == nil && !keyed {
-			err = fmt.Errorf("the github connection did not serve it (is the tool granted? connections_set_tools)")
-		}
+		b, err := githubReadKeyed(ctx, a, ciProject, tool, args)
 		if err == nil {
 			err = json.Unmarshal(b, into)
 		}
@@ -331,7 +328,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		have[r.ID] = dr
 		if changedRuns = append(changedRuns, dr); len(changedRuns) >= 25 {
 			if err := flush(); err != nil {
-				return err
+				return fail(err)
 			}
 		}
 	}
@@ -376,9 +373,15 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		p := &prs[i]
 		num := strconv.FormatInt(p.Number, 10)
 		// Read once in the backfill, then at most hourly for two days: a head without a green run stays without one.
+		// A backfill resumed after a restart skips what it already looked up.
 		retry := st.CiRetry[num] > 0
-		if p.PrCiDone != nil || p.HeadSha == "" || !backfill && !retry && (p.Merged < recent || tried[num] >= hour) {
+		if p.PrCiDone != nil || p.HeadSha == "" || backfill && tried[num] != "" && !retry || !backfill && !retry && (p.Merged < recent || tried[num] >= hour) {
 			continue
+		}
+		if looked++; looked%25 == 0 {
+			if err := flush(); err != nil {
+				return fail(err)
+			}
 		}
 		var r struct {
 			Runs []dhRun `json:"workflow_runs"`
@@ -395,11 +398,6 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		}
 		delete(st.CiRetry, num)
 		tried[num] = now.Format(time.RFC3339)
-		if looked++; looked%25 == 0 {
-			if err := flush(); err != nil {
-				return err
-			}
-		}
 		for _, x := range r.Runs {
 			if x.Conclusion != nil && *x.Conclusion == "success" && (p.PrCiDone == nil || x.UpdatedAt < *p.PrCiDone) {
 				p.PrCiDone = ptr(x.UpdatedAt)
