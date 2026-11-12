@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -223,15 +224,29 @@ type githubToken struct {
 const githubTokenTTL = 5 * time.Minute
 
 var (
-	githubTokMu sync.Mutex // held across a mint, so concurrent reads share one token
-	githubToks  = map[string]githubToken{}
+	githubTokMu    sync.Mutex // guards the two maps, never held across a mint
+	githubToks     = map[string]githubToken{}
+	githubTokLocks = map[string]*sync.Mutex{} // per connection and project, held across its mint
 )
 
 func githubTokenFor(ctx context.Context, a *App, connection, project string) (string, error) {
-	githubTokMu.Lock()
-	defer githubTokMu.Unlock()
+	if !regexp.MustCompile(`^[a-z0-9-]+$`).MatchString(connection) {
+		return "", fmt.Errorf("github %s: connection-unavailable", connection)
+	}
 	key := connection + " " + project
-	if t, ok := githubToks[key]; ok && time.Now().Before(t.until) {
+	githubTokMu.Lock()
+	l := githubTokLocks[key]
+	if l == nil {
+		l = &sync.Mutex{}
+		githubTokLocks[key] = l
+	}
+	githubTokMu.Unlock()
+	l.Lock() // concurrent reads of one key share its mint; other keys never wait
+	defer l.Unlock()
+	githubTokMu.Lock()
+	t, ok := githubToks[key]
+	githubTokMu.Unlock()
+	if ok && time.Now().Before(t.until) {
 		return t.token, nil
 	}
 	exec := "github-read:" + newID()
@@ -242,15 +257,13 @@ func githubTokenFor(ctx context.Context, a *App, connection, project string) (st
 			token, _ = m["token"].(string)
 		}
 		return err
-	}); err != nil || token == "" {
-		return "", fmt.Errorf("github token for %s: %v", connection, err)
+	}); err != nil {
+		return "", fmt.Errorf("github token for %s: %w", connection, err)
 	}
-	if err := writeSnapshot(ctx, a); err != nil { // the gateway must see the token before the call
-		return "", err
+	if token == "" {
+		return "", fmt.Errorf("github %s: connection-unavailable (not granted to %s, or intake closed)", connection, project)
 	}
-	githubToks[key] = githubToken{token, exec, time.Now().Add(githubTokenTTL)}
-	// Revoked at its end whatever happens next (a restart revokes it too: revokeSteps); its calls are ingested then.
-	time.AfterFunc(githubTokenTTL+5*time.Second, func() {
+	revoke := func() {
 		if err := runTx(context.Background(), a, nil, true, "", func(q *Request) error {
 			if err := revokeTokens(q, exec); err != nil {
 				return err
@@ -260,7 +273,18 @@ func githubTokenFor(ctx context.Context, a *App, connection, project string) (st
 		}); err != nil {
 			log.Printf("revoke %s: %v", exec, err)
 		}
-	})
+	}
+	// The gateway must see the token before the call; a failed snapshot revokes it at once.
+	if err := writeSnapshot(context.WithoutCancel(ctx), a); err != nil {
+		revoke()
+		return "", err
+	}
+	githubTokMu.Lock()
+	githubToks[key] = githubToken{token, exec, time.Now().Add(githubTokenTTL)}
+	githubTokMu.Unlock()
+	// Revoked at its end whatever happens next (a restart revokes it too: revokeSteps); its calls are ingested then.
+	// ponytail: an access or intake change reaches a cached token within githubTokenTTL, not at the next read.
+	time.AfterFunc(githubTokenTTL+5*time.Second, revoke)
 	return token, nil
 }
 
