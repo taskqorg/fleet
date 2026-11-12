@@ -450,8 +450,11 @@ export const copyText = (text: string) => navigator.clipboard.writeText(text);
  *  it is the tooltip, and a click or Enter copies it without opening the row (OR-26). No code yet: nothing is shown. */
 export function EntityCode({ code, id, cls }: { code?: string | null; id: string; cls?: string }) {
   const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(() => setCopied(false), [id]);
   if (!code) return null;
-  const copy = (e: Event) => { e.preventDefault(); e.stopPropagation(); copyText(id).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {}); };
+  const copy = (e: Event) => { e.preventDefault(); e.stopPropagation(); copyText(id).then(() => { setCopied(true); clearTimeout(timer.current); timer.current = setTimeout(() => setCopied(false), 1500); }).catch(() => {}); };
   return <span class={`id code${cls ? ' ' + cls : ''}`} data-ui="entity-code" role="button" tabIndex={0} aria-label={`${code}, copy UUID`} data-tip={copied ? 'UUID copied' : `${id} · click to copy`}
     onClick={copy} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') copy(e); }}>{code}</span>;
 }

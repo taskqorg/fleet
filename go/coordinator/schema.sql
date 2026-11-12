@@ -819,7 +819,8 @@ CREATE TABLE entity_code(
 CREATE INDEX entity_code_entity ON entity_code(entity_id);
 ALTER TABLE entity_code ENABLE ROW LEVEL SECURITY;
 ALTER TABLE entity_code FORCE ROW LEVEL SECURITY;
-CREATE POLICY project_scope ON entity_code USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')));
+CREATE POLICY project_scope ON entity_code USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ','))
+ OR (type = 'Q' AND EXISTS(SELECT 1 FROM question x WHERE x.id = entity_id AND x.addressed_to = current_setting('fleet.person', true))));
 ALTER TABLE task ADD COLUMN code text UNIQUE;
 ALTER TABLE question ADD COLUMN code text UNIQUE;
 
@@ -832,7 +833,7 @@ BEGIN
  SELECT code INTO c FROM project_code WHERE project_id=p_project AND current;
  IF c IS NOT NULL THEN RETURN c; END IF;
  -- ponytail: one lock for every derivation (rare: a project's first coded row), per-project locks if that ever contends
- PERFORM pg_advisory_xact_lock(hashtext('fleet_project_code'));
+ PERFORM pg_advisory_xact_lock(hashtext('fleet_project_code_derive'));
  SELECT code INTO c FROM project_code WHERE project_id=p_project AND current;
  IF c IS NOT NULL THEN RETURN c; END IF;
  base := regexp_replace(upper(p_project), '[^A-Z0-9]', '', 'g');
@@ -845,7 +846,7 @@ BEGIN
    INSERT INTO project_code(code, project_id) VALUES(cand, p_project); RETURN cand;
   END IF;
  END LOOP;
- FOR n IN 2..9999 LOOP
+ FOR n IN 2..99 LOOP
   cand := substr(base, 1, 5 - length(n::text)) || n;
   IF cand !~ '^[A-F0-9]+$' AND NOT EXISTS(SELECT 1 FROM project_code WHERE code=cand) THEN
    INSERT INTO project_code(code, project_id) VALUES(cand, p_project); RETURN cand;
@@ -862,8 +863,11 @@ END $$;
 
 -- fleet_issue_code: the next code of a type in the project's scope, recorded in entity_code.
 CREATE FUNCTION fleet_issue_code(p_type text, p_project text, p_entity text) RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
-DECLARE s text := fleet_project_code(p_project); n bigint; c text;
+DECLARE s text; n bigint; c text;
 BEGIN
+ -- shared: issues run together; a project code change (fleet_project_code_set) waits for them and they for it
+ PERFORM pg_advisory_xact_lock_shared(hashtext('fleet_project_code'));
+ s := fleet_project_code(p_project);
  INSERT INTO code_counter(scope, type, next) VALUES(s, p_type, 2) ON CONFLICT(scope, type, section) DO UPDATE SET next=code_counter.next+1 RETURNING next-1 INTO n;
  c := p_type || '-' || s || '-' || n;
  INSERT INTO entity_code(code, entity_id, type, project_id) VALUES(c, p_entity, p_type, nullif(p_project, ''));
@@ -879,6 +883,7 @@ BEGIN
  ELSIF NEW.code IS NOT NULL AND NEW.code IS DISTINCT FROM OLD.code THEN
   RAISE EXCEPTION 'codes are issued, never written (set code to NULL to reissue)';
  ELSIF NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.code IS NULL THEN
+  IF NEW.project_id IS NOT DISTINCT FROM OLD.project_id THEN NEW.updated_at := OLD.updated_at; END IF; -- a reissue is not a change of the row
   NEW.code := fleet_issue_code(t, NEW.project_id, NEW.id);
   prev := current_setting('fleet.project_ids', true);
   PERFORM set_config('fleet.project_ids', '*', true);
@@ -893,6 +898,7 @@ END $$;
 CREATE FUNCTION fleet_project_code_set(p_project text, p_code text) RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
 DECLARE r record; prev text := current_setting('fleet.project_ids', true);
 BEGIN
+ PERFORM pg_advisory_xact_lock(hashtext('fleet_project_code'));
  IF EXISTS(SELECT 1 FROM project_code WHERE code=p_code AND project_id=p_project AND current) THEN RETURN p_code; END IF;
  IF EXISTS(SELECT 1 FROM project_code WHERE code=p_code) THEN RAISE EXCEPTION 'project code % was used', p_code USING ERRCODE='23505'; END IF;
  UPDATE project_code SET current=false WHERE project_id=p_project AND current;
@@ -904,14 +910,20 @@ BEGIN
  RETURN p_code;
 END $$;
 
-CREATE TRIGGER task_code BEFORE INSERT OR UPDATE OF project_id, code ON task FOR EACH ROW EXECUTE FUNCTION fleet_entity_code();
-CREATE TRIGGER question_code BEFORE INSERT OR UPDATE OF project_id, code ON question FOR EACH ROW EXECUTE FUNCTION fleet_entity_code();
+-- Named to run after task_touch and question_touch (BEFORE triggers run by name), so a reissue keeps updated_at.
+CREATE TRIGGER task_zcode BEFORE INSERT OR UPDATE OF project_id, code ON task FOR EACH ROW EXECUTE FUNCTION fleet_entity_code();
+CREATE TRIGGER question_zcode BEFORE INSERT OR UPDATE OF project_id, code ON question FOR EACH ROW EXECUTE FUNCTION fleet_entity_code();
 -- Fleet's own project keeps the code the D17 examples use.
 INSERT INTO project_code(code, project_id) VALUES('FLT', 'fleet');
 -- Backfill in created_at order, filling only empty values. Generated delivery titles carried a session UUID; it goes.
+-- No change row per backfilled row (as migration 10): clients load codes with the rows.
+ALTER TABLE task DISABLE TRIGGER task_change;
+ALTER TABLE question DISABLE TRIGGER question_change;
 DO $$ DECLARE r record; BEGIN
  PERFORM set_config('fleet.project_ids', '*', true);
  FOR r IN SELECT id FROM task WHERE code IS NULL ORDER BY created_at, seq LOOP UPDATE task SET code=NULL WHERE id=r.id; END LOOP;
  FOR r IN SELECT id FROM question WHERE code IS NULL ORDER BY asked_at, seq LOOP UPDATE question SET code=NULL WHERE id=r.id; END LOOP;
 END $$;
+ALTER TABLE task ENABLE TRIGGER task_change;
+ALTER TABLE question ENABLE TRIGGER question_change;
 UPDATE task SET title='Deliver session' WHERE title ~* '^Deliver session [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';

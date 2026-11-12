@@ -14,7 +14,7 @@
     "questions_withdraw": {"read": false, "errors": [400, 403]},
     "task_cancel": {"read": false, "errors": []},
     "entity_resolve": {"read": true, "errors": [400, 404]},
-    "entity_resolve_many": {"read": true, "errors": [400]},
+    "entity_resolve_many": {"read": true, "errors": []},
     "project_code_set": {"read": false, "errors": [400, 403, 404, 409]},
     "task_create": {"read": false, "errors": [400]},
     "task_derived_check": {"read": true, "errors": []},

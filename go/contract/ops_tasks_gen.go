@@ -773,7 +773,7 @@ func (v *TaskUpdateRequest) Validate() error {
 func init() {
 	for n, o := range map[string]Operation{
 		"entity_resolve":          {Read: true, Long: false, Errors: []int{400, 404}, InputSchema: json.RawMessage("{\"$comment\":\"Case-insensitive; unknown and forbidden codes both answer 404.\",\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"}},\"required\":[\"code\"],\"type\":\"object\"}")},
-		"entity_resolve_many":     {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}")},
+		"entity_resolve_many":     {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}")},
 		"project_code_set":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"2 to 5 characters, a letter first, not hex-only, no I, O, S, Z or B, never used before. The project's tasks and questions get new codes; old codes stay aliases.\",\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"code\"],\"type\":\"object\"}")},
 		"project_context":         {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_list":            {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},

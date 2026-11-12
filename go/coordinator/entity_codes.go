@@ -78,6 +78,9 @@ func init() {
 			return contract.ProjectCodeSetReply{}, err
 		}
 		if err := exec(q, "SELECT fleet_project_code_set($1,$2)", r.ProjectId, code); err != nil {
+			if pgCode(err) == "23505" { // taken by a concurrent change after the check above
+				err = fail(409, "Project code "+code+" is or was used; codes are never reused")
+			}
 			return contract.ProjectCodeSetReply{}, err
 		}
 		return contract.ProjectCodeSetReply{ProjectId: r.ProjectId, Code: code}, nil

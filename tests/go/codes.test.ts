@@ -41,6 +41,7 @@ test('K1 tasks and questions carry T-/Q- codes per project; codes resolve, a ren
     assert.deepEqual(await op('project_code_set', {projectId: 'hello-world', code: 'hwx'}), {projectId: 'hello-world', code: 'HWX'});
     const renamed = await op('task_get', {taskId: a.id});
     assert.match(renamed.code, /^T-HWX-[12]$/);
+    assert.equal(renamed.updatedAt, a.updatedAt, 'a reissue is not a change of the task');
     assert.deepEqual(await op('entity_resolve', {code: a.code}), {code: a.code, id: a.id, type: 'T', currentCode: renamed.code, superseded: true});
     assert.equal((await op('task_create', {projectId: 'hello-world', title: 'third'})).code, 'T-HWX-3');
     assert.equal((await raw('project_code_set', {projectId: 'hello-world', code: scope})).status, 409, 'an old code is never reused');
