@@ -93,8 +93,11 @@ func mcpFixture() {
 		return
 	}
 
-	if tool == "orphan" {
+	if tool == "orphan" || tool == "orphan-stdout" {
 		cmd := exec.Command("/bin/sleep", "60")
+		if tool == "orphan-stdout" {
+			cmd.Stdout = os.Stdout
+		}
 		if cmd.Start() != nil {
 			os.Exit(2)
 		}
@@ -948,5 +951,39 @@ func TestMCPAdvertisesOnlySupportedToolProtocol(t *testing.T) {
 	json.Unmarshal([]byte(output.String()), &actual)
 	if enc(jAt(actual, "result", "capabilities")) != `{"tools":{}}` || jStr(actual, "result", "serverInfo", "name") != "fixture" {
 		t.Fatal(actual)
+	}
+}
+
+// R3; risk: an in-group orphan holds stdout after server exit while an open native input leaves a response blocked.
+func TestMCPServerExitWithInheritedStdoutInterruptsResponse(t *testing.T) {
+	o, _ := testMCPOwner(t)
+	marker := filepath.Join(t.TempDir(), "orphan")
+	input, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	output := &strings.Builder{}
+	done := make(chan error, 1)
+	go func() {
+		done <- mcpStdio(o.socket, fixtureSpec("orphan-stdout", marker), input, output, t.TempDir(), "")
+	}()
+	writer.Write([]byte(`{"id":1,"method":"initialize"}` + "\n"))
+	pid := awaitFile(t, marker)
+	// Deliberately keep downstream input open: server status, not client EOF, must interrupt the blocked read.
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "unknown") {
+			t.Fatal("server exit reported success", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("inherited stdout hid server exit")
+	}
+	if err := cleanupMCPGroups(o.db, o.execution); err != nil {
+		t.Fatal(err)
+	}
+	table, err := processes()
+	if err != nil || running(table, pid) {
+		t.Fatal("stdout orphan survived", pid, err)
 	}
 }

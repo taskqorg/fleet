@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -502,12 +503,31 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 	if !ok {
 		return errors.New("MCP input must be owned and closable")
 	}
-	queued, err := newMCPInput(source, func() { child.control.Close(); child.out.Close() })
+	var closing, unexpectedExit atomic.Bool
+	queued, err := newMCPInput(source, func() { closing.Store(true); child.control.Close(); child.out.Close() })
 	if err != nil {
 		return err
 	}
 	defer queued.close()
-	return filterMCP(queued, output, child.in, child.out, root, jArr(spec, "tools"), policy)
+	statusDone := make(chan struct{})
+	go func() {
+		defer close(statusDone)
+		var status M
+		json.NewDecoder(child.status).Decode(&status)
+		if !closing.Load() {
+			unexpectedExit.Store(true)
+			child.control.Close()
+			child.in.Close()
+			child.out.Close()
+			queued.source.Close()
+		}
+	}()
+	defer func() { closing.Store(true); child.status.Close(); <-statusDone }()
+	err = filterMCP(queued, output, child.in, child.out, root, jArr(spec, "tools"), policy)
+	if unexpectedExit.Load() {
+		return errors.Join(err, errors.New("MCP server exited or status was lost; outcome unknown; no replay"))
+	}
+	return err
 }
 
 // A directory name alone is insufficient authority to remove a path from the journal.
