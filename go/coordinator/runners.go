@@ -20,7 +20,21 @@ const runnerTokens = `CASE WHEN coalesce(x.tokens_input,x.tokens_output,x.tokens
 // priced at the run's start (fleet-analytics.md, price table). A run on a subscription login (account_id) adds no money.
 const runnerUsage = `coalesce(e.data->>'connection','')||'/'||coalesce(e.data->>'tool','') AS subject,x.connection_cost->>'unit' AS unit,
  coalesce(x.connection_cost->>'amount',x.connection_cost->>(x.connection_cost->>'unit'))::float8 AS amount,
- e.model,e.account_id,x.tokens_input,x.tokens_output,x.tokens_cache_read,x.tokens_cache_write,coalesce(e.started_at,` + runnerAt + `) AS at`
+ coalesce(x.model,e.model) AS model,e.account_id,x.tokens_input,x.tokens_output,x.tokens_cache_read,x.tokens_cache_write,coalesce(e.started_at,` + runnerAt + `) AS at`
+
+// runnerCost: the cost of one run's usages. A run on a subscription login (account_id) costs no metered money: its
+// figures say basis "subscription", the list-price equivalent of what it used (fleet-analytics.md bases).
+func runnerCost(prices []doc, subscription bool, us []usage) []any {
+	out := estimateCost(prices, us)
+	if subscription {
+		for _, x := range out {
+			if d, ok := x.(doc); ok { // unpriced too: a subscription run adds nothing to the metered side
+				d["basis"], d["note"] = "subscription", "subscription (list-price equivalent)"
+			}
+		}
+	}
+	return out
+}
 
 func runnerUsages(r doc) []usage {
 	if us, ok := r["usages"].([]usage); ok {
@@ -38,9 +52,6 @@ func runnerUsages(r doc) []usage {
 		return []usage{{astr(r["subject"]), astr(r["unit"]), a, at}}
 	}
 	out := []usage{}
-	if r["account_id"] != nil {
-		return out // subscription: shown as tokens, never as money
-	}
 	for _, u := range []string{"input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"} {
 		col := map[string]string{"input_tokens": "tokens_input", "output_tokens": "tokens_output", "cache_read_tokens": "tokens_cache_read", "cache_write_tokens": "tokens_cache_write"}[u]
 		if v, ok := numOK(r[col]); ok && v > 0 {
@@ -129,7 +140,7 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 		out["runs"] = append(out["runs"].([]any), doc{"id": r["id"], "kind": r["kind"], "state": r["state"], "hostId": r["host_id"], "harness": r["harness"], "model": r["model"],
 			"taskId": r["task_id"], "taskTitle": r["title"], "sessionId": r["session_id"], "problem": r["problem"], "startedAt": r["started"], "endedAt": r["ended"], "lastSeenAt": r["seen"],
 			"wallMs": r["wall_ms"], "cpuMs": r["cpu_ms"], "peakMemoryBytes": r["peak_memory_bytes"], "tokens": r["tokens"], "calls": r["calls"], "failedCalls": r["failed_calls"],
-			"parentExecutionId": r["parent_execution_id"], "cost": estimateCost(prices, runnerUsages(r))})
+			"parentExecutionId": r["parent_execution_id"], "cost": runnerCost(prices, r["account_id"] != nil, runnerUsages(r))})
 	}
 	// Spend: every execution this UTC month, by when it ran (end, else start), summed per host, kind and period in Go so
 	// costs are priced per usage. ponytail: a full-month scan per call; aggregate closed days in SQL when months grow large.
@@ -144,7 +155,7 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 	type acc struct {
 		runs, measured    int
 		wall, cpu, tokens *float64
-		us                []usage
+		us, subUs         []usage // metered, and on a subscription login
 	}
 	sums, order := map[key]*acc{}, []key{}
 	add := func(p **float64, v any) {
@@ -174,7 +185,11 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 			add(&a.wall, r["wall_ms"])
 			add(&a.cpu, r["cpu_ms"])
 			add(&a.tokens, r["tokens"])
-			a.us = append(a.us, runnerUsages(r)...)
+			if r["account_id"] != nil {
+				a.subUs = append(a.subUs, runnerUsages(r)...)
+			} else {
+				a.us = append(a.us, runnerUsages(r)...)
+			}
 		}
 	}
 	for _, k := range order {
@@ -183,7 +198,7 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 		if k.host != "" {
 			host = k.host
 		}
-		out["spend"] = append(out["spend"].([]any), doc{"hostId": host, "kind": k.kind, "period": k.period, "runs": a.runs, "measured": a.measured, "wallMs": a.wall, "cpuMs": a.cpu, "tokens": a.tokens, "cost": estimateCost(prices, a.us)})
+		out["spend"] = append(out["spend"].([]any), doc{"hostId": host, "kind": k.kind, "period": k.period, "runs": a.runs, "measured": a.measured, "wallMs": a.wall, "cpuMs": a.cpu, "tokens": a.tokens, "cost": append(runnerCost(prices, false, a.us), runnerCost(prices, true, a.subUs)...)})
 	}
 	return replyAs[contract.ExecutionsRunnersReply](out, nil)
 }

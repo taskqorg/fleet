@@ -54,7 +54,9 @@ export async function startCoordinator(o: {name?: string, env?: Record<string, s
       // Never the host's own span store (~/.config/fleet/clickhouse.env): a test names its ClickHouse.
       FLEET_CLICKHOUSE_URL: 'off', FLEET_CLICKHOUSE_ENV: '/nonexistent',
       // Never GitHub from tests: the Runners CI pass would spend the runner's keyless 60 requests an hour.
-      FLEET_RUNNERS_CI_TICK_MS: '0', ...o.env}});
+      FLEET_RUNNERS_CI_TICK_MS: '0',
+    // The lost sweep at test speed (tests/go/run.sh used to set it; a file run alone must behave the same).
+    FLEET_LOST_AFTER_MS: process.env.FLEET_LOST_AFTER_MS ?? '6000', ...o.env}});
     // Each process reports only its own exit: a late exit of the previous one never marks this one exited.
     gone = new Promise(r => child.on('exit', () => { if (server === child) exited = true; r(); }));
     for (let i = 0; ; i++) {

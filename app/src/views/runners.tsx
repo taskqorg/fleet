@@ -12,7 +12,9 @@ const KINDS: Record<string, string> = { agent_run: 'Agent runs', child_agent: 'C
 const m = (v: number | null | undefined, basis: Measured['basis'] = 'measured'): Measured => ({ value: v ?? null, basis: v == null ? 'unavailable' : basis });
 /** The money of an estimateCost list (USD first, else the first priced currency): estimated when priced, unavailable when no
  * usage has a price, none when nothing was used. ponytail: a second currency is not shown; split the column when one appears. */
-const costOf = (cost: any[]): Measured | null => {
+const costOf = (all: any[], subscription = false): Measured | null => {
+  // Money and subscription figures stay apart: a subscription figure is the list-price equivalent, never spend.
+  const cost = all.filter(c => (c.basis === 'subscription') === subscription);
   if (!cost.length) return null;
   const priced = cost.find(c => c.currency === 'USD' && c.value != null) ?? cost.find(c => c.value != null), unknown = cost.some(c => c.value == null);
   return priced ? { value: priced.value, basis: 'estimated', currency: priced.currency, partial: unknown ? 'some usage has no price' : undefined } : { value: null, basis: 'unavailable', reason: 'no price entry' };
@@ -29,7 +31,8 @@ export function Runners() {
   const hosts = [...new Set<string | null>([...data.runs.map((r: any) => r.hostId), ...data.spend.map((s: any) => s.hostId)])]
     .sort((a, b) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b)));
   const cell = (s: any | undefined, k: Kind, v: (s: any) => number | null) => <td class="num">{s ? <Num m={v === runsOf ? m(v(s)) : sum(s, v(s))} kind={k} /> : <span class="muted">—</span>}</td>;
-  const money = (s: any | undefined) => { const c = s && costOf(s.cost); return <td class="num">{c ? <Num m={c} kind="money" /> : <span class="muted">—</span>}</td>; };
+  const money = (s: any | undefined) => { const c = s && costOf(s.cost), sub = s && costOf(s.cost, true);
+    return <td class="num">{c ? <Num m={c} kind="money" /> : <span class="muted">—</span>}{sub?.value != null && <SubCost m={sub} />}</td>; };
   const open = (r: any) => r.taskId ? `/tasks/${r.taskId}` : r.sessionId ? `/conversations/${r.sessionId}` : null;
   return <section class="runners" aria-label="Runners">
     <header class="page-h"><h1>Runners</h1><span class="grow" /><OfflineMarker state={state} now={now} /></header>
@@ -56,7 +59,7 @@ export function Runners() {
           {live > 0 && <span class="hc" data-tip="Running"><Icon name="activity" label="Running" /><Num m={m(live)} kind="count" /></span>}<span class="grow" /><span class="muted">24h</span></header>
         <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) minmax(6rem,14rem) auto' }}>
           {runs.map((r: any) => {
-            const href = open(r), start = r.startedAt ?? r.endedAt ?? now, cost = costOf(r.cost), title = r.taskTitle ?? KINDS[r.kind] ?? r.kind;
+            const href = open(r), start = r.startedAt ?? r.endedAt ?? now, cost = costOf(r.cost), sub = costOf(r.cost, true), title = r.taskTitle ?? KINDS[r.kind] ?? r.kind;
             // A finished run with no recorded end (a gateway call) ends at start plus its wall time, else at its start.
             const active = isActive(r), end = active ? null : r.endedAt ?? start + (r.wallMs ?? 0);
             // An abandoned run ended when given up: its length is unknown (the core leaves its wall time unavailable).
@@ -71,7 +74,7 @@ export function Runners() {
                 {r.tokens != null && <span class="hc" data-tip="Tokens"><Num m={m(r.tokens)} kind="count" /></span>}
                 {r.cpuMs != null && <span class="hc" data-tip="CPU"><Icon name="gauge" label="CPU" /><Num m={m(r.cpuMs / 1000)} kind="duration" /></span>}
                 {r.peakMemoryBytes != null && <span class="hc" data-tip="Peak memory"><Num m={m(r.peakMemoryBytes)} kind="bytes" /></span>}
-                {cost?.value != null && <span class="hc"><Num m={cost} kind="money" /></span>}</span>
+                {cost?.value != null && <span class="hc"><Num m={cost} kind="money" /></span>}{sub?.value != null && <SubCost m={sub} />}</span>
               <TimeStrip from={from} to={now} start={start} end={end} now={now} state={r.state} label={`${r.state}, started ${new Date(start).toISOString()}`} />
               <span data-tip={active ? 'Running for' : 'Duration'}>{!active ? <Num m={m(secs)} kind="duration" /> : <AgeChip t={start} now={now} alertAfter={2 * 3600} tone="attention" alertLabel="running long" />}</span>
             </div>;
@@ -121,3 +124,6 @@ function Ci({ now }: { now: number }) {
     {!data.jobs.length && !data.minutesToday.length && <Empty text="No CI jobs today." />}
   </section>;
 }
+
+/** A subscription run's list-price equivalent: shown beside spend, never added to it. */
+const SubCost = ({ m: v }: { m: Measured }) => <span class="hc muted" data-tip="subscription (list-price equivalent), not spend"><Icon name="rotate-cw" label="Subscription" /><Num m={v} kind="money" /></span>;

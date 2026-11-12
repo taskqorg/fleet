@@ -240,6 +240,9 @@ func writeTotals(q *Request, id string) error {
 	 ON CONFLICT(execution_id) DO UPDATE SET project_id=excluded.project_id,wall_ms=excluded.wall_ms,wall_ms_basis=excluded.wall_ms_basis,computed_at=excluded.computed_at`, id); err != nil {
 		return err
 	}
+	if err := exec(q, "SELECT fleet_write_model($1)", id); err != nil { // the model the harness reports (migration 45)
+		return err
+	}
 	if err := exec(q, "SELECT fleet_write_tokens($1)", id); err != nil { // tokens from the harness's usage report (migration 40)
 		return err
 	}

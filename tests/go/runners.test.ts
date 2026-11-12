@@ -88,3 +88,27 @@ test('R4 agent-run tokens come from the harness usage report: the last result of
     assert.equal(row('t-bad'), 'unavailable', 'a malformed count is unknown and never blocks the end');
   } finally { await c.stop(); }
 });
+
+test('R5 runs are priced by the model their harness reports; a run on a subscription login shows its list-price equivalent as subscription, never as spend (requirement: Runners USD per host and month; risk: subscription work reads as money spent, or aliases stay unpriced)', async () => {
+  const c = await startCoordinator({name: 'runners5'});
+  try {
+    const call = async (op: string, body: unknown) => (await fetch(c.base + '/api/ops/' + op, {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json'}, body: JSON.stringify(body)})).json() as any;
+    const from = Date.now() - 864e5;
+    for (const [unit, price] of [['input_tokens', 0.000004], ['output_tokens', 0.00002]] as const)
+      await call('price_add', {subject: 'claude-opus-5-5', unit, price, currency: 'USD', source: 'vendor', sourceRef: 'https://platform.claude.com/docs/en/about-claude/pricing', effectiveFrom: from});
+    c.sql(`INSERT INTO execution(id,kind,state,host_id,model,account_id,started_at,ended_at) VALUES
+      ('p-api','agent_run','succeeded','h1','opus',NULL,now()-interval '2 minutes',now()-interval '1 minute'),
+      ('p-sub','agent_run','succeeded','h1','opus','acct-1',now()-interval '2 minutes',now()-interval '1 minute');
+      INSERT INTO execution_totals(execution_id,tokens_input,tokens_output) VALUES ('p-api',1000000,100000),('p-sub',1000000,100000);
+      INSERT INTO document(kind,id,data) VALUES
+      ('event','m1',jsonb_build_object('id','m1','executionId','p-api','seq',1,'data',jsonb_build_object('model','claude-opus-5-5'))),
+      ('event','m2',jsonb_build_object('id','m2','executionId','p-sub','seq',1,'data',jsonb_build_object('model','claude-opus-5-5')));
+      SELECT fleet_write_model(id) FROM execution WHERE id LIKE 'p-%';`);
+    const b = await call('executions_runners', {});
+    const cost = (id: string) => b.runs.find((r: any) => r.id === id).cost[0];
+    assert.deepEqual([cost('p-api').value, cost('p-api').basis], [6, 'estimated'], 'opus resolves to claude-opus-5-5: 1M x $4 + 100k x $20');
+    assert.deepEqual([cost('p-sub').value, cost('p-sub').basis, cost('p-sub').note], [6, 'subscription', 'subscription (list-price equivalent)']);
+    const month = b.spend.find((s: any) => s.hostId === 'h1' && s.kind === 'agent_run' && s.period === 'month');
+    assert.deepEqual(month.cost.map((x: any) => [x.value, x.basis]), [[6, 'estimated'], [6, 'subscription']], 'spend keeps money and subscription apart');
+  } finally { await c.stop(); }
+});

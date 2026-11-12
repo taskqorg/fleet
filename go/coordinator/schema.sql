@@ -1106,3 +1106,13 @@ CREATE OR REPLACE FUNCTION fleet_write_tokens(eid text) RETURNS void LANGUAGE sq
 $$;
 SELECT set_config('fleet.project_ids', '*', true);
 SELECT fleet_write_tokens(execution_id) FROM execution_totals t JOIN execution e ON e.id=t.execution_id WHERE e.kind='agent_run';
+
+-- migration 45: the model a run actually used, from its harness's own events (the last event whose data names a
+-- model: Claude's system event says claude-opus-5-5 where the execution row says opus). Prices are per resolved model.
+ALTER TABLE execution_totals ADD COLUMN model text NULL;
+CREATE FUNCTION fleet_write_model(eid text) RETURNS void LANGUAGE sql AS $$
+ UPDATE execution_totals SET model=(SELECT data->'data'->>'model' FROM document WHERE kind='event' AND data->>'executionId'=eid
+  AND jsonb_typeof(data->'data'->'model')='string' ORDER BY seq DESC LIMIT 1) WHERE execution_id=eid
+$$;
+SELECT set_config('fleet.project_ids', '*', true);
+SELECT fleet_write_model(execution_id) FROM execution_totals t JOIN execution e ON e.id=t.execution_id WHERE e.kind='agent_run';
