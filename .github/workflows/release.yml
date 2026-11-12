@@ -215,8 +215,11 @@ jobs:
       - name: Selftest linux binaries
         run: |
           mkdir new && tar -xzf out/fleet-*-linux-amd64.tgz -C new
+          .release/deploy/static-release.sh new
           .release/deploy/selftest-release.sh new
-          mkdir darwin && tar -xzf out/fleet-*-darwin-arm64.tgz -C darwin && .release/deploy/static-release.sh darwin
+          mkdir darwin
+          tar -xzf out/fleet-*-darwin-arm64.tgz -C darwin
+          .release/deploy/static-release.sh darwin
       # Section 5 of fleet-delivery-pipeline.md. Same job as the build: the runner's disk is capped at 20 MB/s, so no
       # artifact round trip, and the recent coordinators stay extracted under ~/fleet-releases/v between runs.
       - name: New coordinator migrates, each recent one still serves
@@ -270,10 +273,40 @@ jobs:
           (cd out && sha256sum -c --quiet SHA256SUMS)
           mkdir new && tar -xzf out/fleet-*-linux-amd64.tgz -C new
           .release/deploy/migrate-check.sh new out
-  publish:
+  # GitHub refuses the workflow token (it cannot hold the workflows permission) a new tag on a commit whose
+  # .github/workflows differ from the head of main: HTTP 403 "Resource not accessible by integration" (run 43237511138,
+  # 2026-11-12: main had moved on to a merge that changed workflows). That head contains this commit and its push started
+  # the next release run, which publishes a release containing it; this run then publishes nothing and ends green.
+  # Push runs only: a dispatched older commit (rollback drill) is meant to be released as it is.
+  supersede:
     needs: [gate, build, migrate]
+    if: always() && github.event_name == 'push' && needs.gate.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      skip: ${{ steps.moved.outputs.skip }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SHA: ${{ needs.gate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: deploy
+          persist-credentials: false
+      - id: moved
+        run: |
+          # An API error here publishes as before; publish catches the 403 itself.
+          moved=$(deploy/workflows-moved.sh "$SHA") || moved=0
+          if [ "$moved" != 0 ]; then
+            echo "superseded: main changed workflows since $SHA; the next release run publishes it" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo skip=true >> "$GITHUB_OUTPUT"
+          fi
+  publish:
+    needs: [gate, build, migrate, supersede]
     if: >-
-      always() && needs.gate.result == 'success' && needs.gate.outputs.release == 'true' && (needs.gate.outputs.ui == 'true'
+      always() && needs.gate.result == 'success' && needs.supersede.outputs.skip != 'true' && needs.gate.outputs.release == 'true' && (needs.gate.outputs.ui == 'true'
       || (needs.gate.outputs.spec_run != '' && (needs.migrate.result == 'success' || needs.migrate.result == 'skipped' && needs.gate.outputs.stale != 'true'))
       || needs.build.result == 'success')
     runs-on: ubuntu-24.04
@@ -301,29 +334,13 @@ jobs:
           path: .release
           sparse-checkout: deploy
           persist-credentials: false
-      # GitHub refuses the workflow token (it cannot hold the workflows permission) a new tag on a commit whose
-      # .github/workflows differ from the head of main: HTTP 403 "Resource not accessible by integration" (run
-      # 43237511138, 2026-11-12: main had moved on to a merge that changed workflows). That head contains this commit
-      # and its push started the next release run, which publishes a release containing it; this run stops here, green.
-      # Push runs only: a dispatched older commit (rollback drill) is meant to be released as it is.
-      - name: Main has not moved on with workflow changes
-        id: target
-        run: |
-          set -o pipefail
-          [ "$GITHUB_EVENT_NAME" = push ] || exit 0
-          # An API error here publishes as before; a 403 then is caught below.
-          moved=$(.release/deploy/workflows-moved.sh "$SHA") || moved=0
-          if [ "$moved" != 0 ]; then
-            echo "superseded: main changed workflows since $SHA; the next release run publishes it" | tee -a "$GITHUB_STEP_SUMMARY"
-            echo skip=true >> "$GITHUB_OUTPUT"
-          fi
       - uses: actions/download-artifact@v4
-        if: steps.target.outputs.skip != 'true' && env.UI != 'true' && env.SPEC_RUN == ''
+        if: env.UI != 'true' && env.SPEC_RUN == ''
         with:
           name: release
       # The bytes the merge queue run built, selftested and migration-checked (gate); signing covers exactly these.
       - name: Speculative build
-        if: steps.target.outputs.skip != 'true' && env.UI != 'true' && env.SPEC_RUN != ''
+        if: env.UI != 'true' && env.SPEC_RUN != ''
         run: |
           gh run download "$SPEC_RUN" --name release --dir .
           rm speculative.json
@@ -331,7 +348,7 @@ jobs:
           sha256sum -c SHA256SUMS
       # The tree the qualifying ci run browser-checked (gate); release.json binds it to version, backend and source.
       - name: UI archive
-        if: steps.target.outputs.skip != 'true' && env.UI == 'true'
+        if: env.UI == 'true'
         run: |
           gh run download "$UI_RUN" --name fleet-ui --dir "$RUNNER_TEMP/ui"
           test -f "$RUNNER_TEMP/ui/index.html"
@@ -341,7 +358,6 @@ jobs:
           sha256sum "$file" > SHA256SUMS
       # A re-run after a later release published must not reuse its version or move latest backwards.
       - name: Version still free and newest
-        if: steps.target.outputs.skip != 'true'
         run: |
           tag="v$VERSION"
           [ "$UI" != true ] || tag="ui-$BACKEND-v$VERSION"
@@ -352,7 +368,6 @@ jobs:
           [ -z "$latest" ] || [ "$(printf '%s\n%s\n' "${latest#v}" "$VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" = "$VERSION" ] \
             || { echo "::error::$VERSION is not newer than $latest; start a new run"; exit 1; }
       - name: Sign SHA256SUMS, write latest.json
-        if: steps.target.outputs.skip != 'true'
         env:
           FLEET_RELEASE_KEY: ${{ secrets.FLEET_RELEASE_KEY }}
         run: |
@@ -366,12 +381,10 @@ jobs:
           printf '{"version":"%s","files":{"linux-amd64":"fleet-%s-linux-amd64.tgz","darwin-arm64":"fleet-%s-darwin-arm64.tgz"},"checkedWith":%s}\n' \
             "$VERSION" "$VERSION" "$VERSION" "$checked" > latest.json
       - id: attest
-        if: steps.target.outputs.skip != 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: fleet-*.tgz
-      - if: steps.target.outputs.skip != 'true'
-        run: |
+      - run: |
           cp "${{ steps.attest.outputs.bundle-path }}" provenance.sigstore.jsonl
           if [ "$UI" = true ]; then
             set -- "ui-$BACKEND-v$VERSION" --latest=false --title "Fleet UI $VERSION" --notes "UI $VERSION for backend $BACKEND; source $SHA" \
@@ -386,4 +399,6 @@ jobs:
           code=$?; cat "$RUNNER_TEMP/create.err" >&2
           grep -q 'HTTP 403: Resource not accessible by integration' "$RUNNER_TEMP/create.err" && [ "$GITHUB_EVENT_NAME" = push ] \
             && n=$(.release/deploy/workflows-moved.sh "$SHA") && [ -n "$n" ] && [ "$n" != 0 ] || exit "$code"
+          # gh uploads the assets to a draft and publishes it last; the refused publish leaves that draft, without a tag.
+          gh release delete "$1" --yes || true
           echo "superseded: main changed workflows since $SHA; the next release run publishes it" | tee -a "$GITHUB_STEP_SUMMARY"
