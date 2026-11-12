@@ -43,16 +43,16 @@ for v in $RECENT; do
   rm -rf "${cache:?}/$v"; mv "$cache/$v.tmp" "$cache/$v"
 done
 url() { echo "postgresql://$1@/fleet?host=$pg&port=54329"; }
-# A free port: the PDS18 pool runs jobs side by side on one guest. ponytail: probed, then bound by each coordinator in
-# turn; another job may take it in between (a failed health check), pass the listener if that shows up.
-port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
-export PORT=$port FLEET_DATABASE_URL=$(url fleet_app) FLEET_MIGRATION_DATABASE_URL=$(url fleet) \
+export FLEET_DATABASE_URL=$(url fleet_app) FLEET_MIGRATION_DATABASE_URL=$(url fleet) \
   FLEET_PEOPLE_FILE=$PWD/tests/trial/people.json FLEET_BROWSER_SECRET=migrate-check FLEET_HOST_ID=pds18
 # exec: kill stops the coordinator itself; a leftover one on the port shows as the fresh process exiting.
 # The latest release builds the database first, as PDS18's is: the new coordinator then applies only its new
 # migrations on top (a fresh database alone hides a migration that depends on an edited released one).
 for v in "${RECENT%% *}" "$VERSION" $RECENT; do
   dir=$cache/$v; [ "$v" = "$VERSION" ] && dir=$new
+  # A free port per start: the PDS18 pool runs jobs side by side on one guest.
+  port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+  export PORT=$port
   (cd "$dir" && FLEET_PROJECT_CONFIG_DIRECTORY=$dir/config FLEET_PROFILES_DIRECTORY=$dir/config/agents FLEET_LAB_DIRECTORY=$dir/config/lab exec ./fleet-coordinator) & pid=$!
   t=$SECONDS; until kill -0 $pid 2>/dev/null && curl -fsS -m 3 -o "$RUNNER_TEMP/health" http://127.0.0.1:$port/api/health && grep -q "\"version\":\"$v\"" "$RUNNER_TEMP/health"; do
     kill -0 $pid 2>/dev/null || { echo "::error::$dir coordinator exited"; exit 1; }

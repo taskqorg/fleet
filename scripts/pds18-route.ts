@@ -8,15 +8,17 @@
 //   node scripts/pds18-route.ts            GH_TOKEN, GITHUB_REPOSITORY, GITHUB_EVENT_NAME, GITHUB_REF, RUNNER_TEMP
 //                                          (test-selection.json); appends to GITHUB_OUTPUT
 //   node scripts/pds18-route.ts --watch <n>  this run (GITHUB_RUN_ID) routed n jobs to the pool: exits once all n started;
-//                                          cancels the run when one has waited WATCH_S and no pool job started in that
-//                                          time (the pool died after routing; an overbooked pool keeps starting jobs),
+//                                          cancels the run when one has waited WATCH_S while no pool job runs (the pool
+//                                          died after routing; an overbooked pool is running jobs; a lost runner's job
+//                                          shows as running until GitHub fails it),
 //                                          so the merge queue drops the group now instead of at its timeout
 //   node scripts/pds18-route.ts --self-check
 import assert from 'node:assert/strict';
 import {appendFileSync, readFileSync} from 'node:fs';
 
 // ponytail: the pool size is pool.sh's slot count, written twice; read it from the runners API if a token for it appears.
-const POOL = 4, STUCK_S = 120, BEAT_S = 20 * 60, WATCH_S = 300;
+// BEAT_S is generous: GitHub delays scheduled runs under load; a dead pool shows sooner by its waiting beat (STUCK_S).
+const POOL = 4, STUCK_S = 120, BEAT_S = 40 * 60, WATCH_S = 300;
 const {GH_TOKEN, GITHUB_REPOSITORY: repo} = process.env;
 const api = async (path: string, method = 'GET') => {
   const r = await fetch(`https://api.github.com/repos/${repo}/${path}`, {method, headers: {authorization: `Bearer ${GH_TOKEN}`, accept: 'application/vnd.github+json'}});
@@ -59,25 +61,29 @@ async function activeJobs(): Promise<Job[]> {
   return (await Promise.all(runs.map((r: any) => api(`actions/runs/${r.id}/jobs?per_page=100`)))).flatMap((j: any) => j.jobs);
 }
 
-export function dead(own: Job[], all: Job[], now: number) {
-  const pool = all.filter(j => j.labels.includes('fleet-pds18'));
-  return own.some(j => j.status === 'queued' && now - Date.parse(j.created_at) > WATCH_S * 1000)
-    && !pool.some(j => j.started_at && now - Date.parse(j.started_at) < WATCH_S * 1000);
-}
+const waited = (own: Job[], now: number) => own.some(j => j.status === 'queued' && now - Date.parse(j.created_at) > WATCH_S * 1000);
+export const dead = (own: Job[], all: Job[], now: number) =>
+  waited(own, now) && !all.some(j => j.labels.includes('fleet-pds18') && j.status === 'in_progress');
 
 async function watch(n: number) {
   const id = process.env.GITHUB_RUN_ID;
-  for (const end = Date.now() + 15 * 60_000; Date.now() < end; await new Promise(r => setTimeout(r, 15_000))) {
-    const own: Job[] = (await api(`actions/runs/${id}/jobs?per_page=100`)).jobs.filter((j: Job) => j.labels.includes('fleet-pds18'));
-    const started = own.filter(j => j.status !== 'queued').length;
-    console.log(`${started}/${n} pool jobs started`);
-    if (started >= n) return;
-    if (dead(own, await activeJobs(), Date.now())) {
-      await api(`actions/runs/${id}/cancel`, 'POST');
-      throw new Error(`a pool job waited ${WATCH_S} s and the pool started nothing: run cancelled; the waiting heartbeat routes the next runs hosted`);
+  // Every 30 s; the repository-wide jobs only once one of ours has waited WATCH_S (the token's hourly quota is shared).
+  for (const end = Date.now() + 25 * 60_000; Date.now() < end; await new Promise(r => setTimeout(r, 30_000))) {
+    try {
+      const own: Job[] = (await api(`actions/runs/${id}/jobs?per_page=100`)).jobs.filter((j: Job) => j.labels.includes('fleet-pds18'));
+      const started = own.filter(j => j.status !== 'queued').length;
+      console.log(`${started}/${n} pool jobs started`);
+      if (started >= n) return;
+      if (waited(own, Date.now()) && dead(own, await activeJobs(), Date.now())) {
+        await api(`actions/runs/${id}/cancel`, 'POST');
+        throw Object.assign(new Error(`a pool job waited ${WATCH_S} s while no pool job runs: run cancelled; the waiting heartbeat routes the next runs hosted`), {final: true});
+      }
+    } catch (e) {
+      if ((e as any).final) throw e;
+      console.log(`retrying: ${(e as Error).message}`);
     }
   }
-  throw new Error('pool jobs not started in 15 minutes');
+  throw new Error('pool jobs not started in 25 minutes');
 }
 
 async function main() {
@@ -121,8 +127,8 @@ if (process.argv.includes('--self-check')) {
   assert.equal(p({beat: ago(BEAT_S - 60), jobs: [job('queued', STUCK_S + 1)]}).free, 0);
   // Watch: overbooked (the pool started a job lately) waits; dead (nothing started for WATCH_S) cancels.
   const own = [job('queued', WATCH_S + 1)];
-  assert.equal(dead(own, [...own, {...job('in_progress', 400), started_at: ago(30)}], now), false);
-  assert.equal(dead(own, [...own, {...job('in_progress', 900), started_at: ago(WATCH_S + 60)}], now), true);
+  assert.equal(dead(own, [...own, {...job('in_progress', 900), started_at: ago(WATCH_S + 60)}], now), false);
+  assert.equal(dead(own, [...own, job('completed', 900)], now), true);
   assert.equal(dead([job('queued', 60)], [], now), false);
   console.log('pds18-route self-check ok');
 } else if (process.argv[2] === '--watch') await watch(Number(process.argv[3]));
