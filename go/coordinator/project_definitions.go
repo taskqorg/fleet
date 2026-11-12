@@ -180,7 +180,8 @@ func projectInitialRevoke(q *Request) (any, error) {
 	return doc{"projectId": id, "accessVersion": version, "revoked": true}, nil
 }
 // projectArchive: retire a project definition (owner decision to drop a project). Its tasks and sessions must be closed
-// first through task_cancel and session_archive, so nothing keeps running under a project no list shows.
+// first through task_cancel and session_archive, so nothing keeps running under a project no list shows. The GLOBAL
+// write lock of every operation serializes this check with task_create and session_start.
 func projectArchive(q *Request) (any, error) {
 	if err := ownerOnly(q, "Only the owner archives projects"); err != nil {
 		return nil, err
@@ -193,8 +194,8 @@ func projectArchive(q *Request) (any, error) {
 	if tag.RowsAffected() == 0 {
 		return nil, fail(404, "Unknown project")
 	}
-	rows, err := queryRows(q, `SELECT 'task' AS kind,id FROM task WHERE project_id=$1 AND state IN ('queued','in_progress','waiting','paused')
-	  UNION ALL SELECT 'session',id FROM document WHERE project_id=$1 AND kind='session' AND NOT data ? 'archivedAt' ORDER BY 1,2`, id)
+	rows, err := queryRows(q, `SELECT 'task' AS kind,id FROM task WHERE project_id=$1 AND state::text=ANY($2)
+	  UNION ALL SELECT 'session',id FROM document WHERE project_id=$1 AND kind='session' AND NOT data ? 'archivedAt' ORDER BY 1,2`, id, taskTransitions["cancel"].from)
 	if err != nil {
 		return nil, err
 	}
