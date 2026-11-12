@@ -37,3 +37,18 @@ export async function op<K extends OpName>(name: K, body: Ops[K]['request'], opt
 // question with the fingerprint only; the value never reaches questions_answer or the asking agent.
 export const addRequestedKey = (questionId: string, connection: string, value: string) =>
   online.value ? op('connections_key_add', { connection, value, questionId }) : Promise.reject(Error('Offline: the key was not sent'));
+
+/** The outcome of a write is unknown: its reply was cut, or the connection dropped before it. */
+export const unknownOutcome = (e: unknown) => e instanceof OpError && (e.message === 'incomplete reply' || e.message === 'offline');
+/**
+ * A write whose outcome is unknown, sent again with the same body (so the same requestId) until a reply reads whole: the
+ * coordinator returns the first write's result for a known requestId, so the retry never duplicates it. onUnknown runs
+ * before each wait. A definite error (4xx/5xx, signed out, abort) stops it.
+ */
+// ponytail: fixed 1 s wait and no cap; the caller stops waiting by unmounting (abort) once that matters.
+export async function writeOnce<K extends OpName>(name: K, body: Ops[K]['request'], onUnknown: () => void, wait = 1000): Promise<Ops[K]['reply']> {
+  for (;;) {
+    try { return await op(name, body); }
+    catch (e) { if (!unknownOutcome(e)) throw e; onUnknown(); await new Promise(r => setTimeout(r, wait)); }
+  }
+}

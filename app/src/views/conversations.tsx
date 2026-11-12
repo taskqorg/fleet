@@ -9,7 +9,7 @@ import {
   keyConnection,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
-import { op, online, addRequestedKey } from '../api.ts';
+import { op, online, addRequestedKey, writeOnce } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
@@ -91,6 +91,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
     addEventListener('keydown', on); return () => removeEventListener('keydown', on);
   }, []);
   const [failure, setFailure] = useState<{ text: string; retry?: () => void } | null>(null);
+  const sending = useRef<{ text: string; requestId: string } | null>(null);
   const [panel, setPanel] = useState<'switch' | 'handoff' | null>(null);
   const [q, setQ] = useState(''), [hits, setHits] = useState<{ key: string; snippet: string }[] | null>(null), [hit, setHit] = useState(0), [marked, setMarked] = useState<string | null>(null);
   const handle = useRef<VirtualListHandle | null>(null);
@@ -146,7 +147,12 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
         {active && <Button label="Stop" icon="pause" disabledReason={off ? 'offline' : undefined} onClick={() => run(() => op('execution_stop', { executionId: active.id }))} />}
       </div>
       <Composer draftKey={id} disabledReason={off ? 'offline' : undefined} placeholder={active ? 'Steer' : 'Message'}
-        onSend={async text => { setFailure(null); try { await op('message_send', { sessionId: id, requestId: reqId(), text, ...(active ? { delivery: 'steer' } : {}) }); } catch (e: any) { setFailure({ text: e.message }); throw e; } }} /></div>
+        onSend={async text => {
+          // One requestId per text until it is sent: a resend after a failure is the same write, never a second one.
+          if (sending.current?.text !== text) sending.current = { text, requestId: reqId() };
+          setFailure(null);
+          try { await writeOnce('message_send', { sessionId: id, requestId: sending.current.requestId, text, ...(active ? { delivery: 'steer' } : {}) }, () => setFailure({ text: 'unknown, retrying' })); sending.current = null; setFailure(null); }
+          catch (e: any) { setFailure({ text: e.message }); throw e; } }} /></div>
   </article>;
 }
 
