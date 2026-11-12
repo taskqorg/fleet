@@ -212,9 +212,68 @@ func githubPublic(ctx context.Context, path string) ([]byte, error) {
 	return b, err
 }
 
-// githubGateway: one call with a token minted for it and revoked after (connCallFor), recorded as a tool_run.
+// githubTokens: one minted token per connection and project, reused for githubTokenTTL and then revoked. Minting
+// and revoking per call (connCallFor) took about 12 s a read on PDS18 (two write transactions, a snapshot rewrite and a
+// spool ingest); the delivery history makes hundreds. The calls become tool_runs when the token is revoked.
+type githubToken struct {
+	token, executionID string
+	until              time.Time
+}
+
+const githubTokenTTL = 5 * time.Minute
+
+var (
+	githubTokMu sync.Mutex // held across a mint, so concurrent reads share one token
+	githubToks  = map[string]githubToken{}
+)
+
+func githubTokenFor(ctx context.Context, a *App, connection, project string) (string, error) {
+	githubTokMu.Lock()
+	defer githubTokMu.Unlock()
+	key := connection + " " + project
+	if t, ok := githubToks[key]; ok && time.Now().Before(t.until) {
+		return t.token, nil
+	}
+	exec := "github-read:" + newID()
+	var token string
+	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+		m, err := mint(q, doc{"executionId": exec, "projectId": project, "step": true}, []string{connection})
+		if err == nil {
+			token, _ = m["token"].(string)
+		}
+		return err
+	}); err != nil || token == "" {
+		return "", fmt.Errorf("github token for %s: %v", connection, err)
+	}
+	if err := writeSnapshot(ctx, a); err != nil { // the gateway must see the token before the call
+		return "", err
+	}
+	githubToks[key] = githubToken{token, exec, time.Now().Add(githubTokenTTL)}
+	// Revoked at its end whatever happens next (a restart revokes it too: revokeSteps); its calls are ingested then.
+	time.AfterFunc(githubTokenTTL+5*time.Second, func() {
+		if err := runTx(context.Background(), a, nil, true, "", func(q *Request) error {
+			if err := revokeTokens(q, exec); err != nil {
+				return err
+			}
+			_, err := connIngest(q)
+			return err
+		}); err != nil {
+			log.Printf("revoke %s: %v", exec, err)
+		}
+	})
+	return token, nil
+}
+
+// githubGateway: one call through the gateway with the connection's shared read token, recorded as a tool_run.
 func githubGateway(ctx context.Context, a *App, connection, project, tool string, args map[string]string) ([]byte, error) {
-	line := connCallFor(ctx, a, doc{"projectId": project}, connection, "github-read:"+newID(), tool, args)
+	if gatewayURL() == "" {
+		return nil, fmt.Errorf("github %s: connection-unavailable", tool)
+	}
+	token, err := githubTokenFor(ctx, a, connection, project)
+	if err != nil {
+		return nil, err
+	}
+	line := gatewayCall(ctx, token, connection, tool, args)
 	if line.Outcome != contract.CallOutcomeOk {
 		return nil, fmt.Errorf("github %s: %s %d", tool, deref(line.ErrorCode), line.Status)
 	}
