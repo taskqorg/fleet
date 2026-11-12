@@ -191,6 +191,7 @@ func projectInitialRevoke(q *Request) (any, error) {
 
 // projectArchive: retire a project definition (owner decision to drop a project). Its tasks, sessions and executions
 // must be closed first (task_cancel, session_archive, execution_stop), so nothing runs under a project no list shows.
+// Step rows count through their run: a finished run leaves unreached steps 'preparing', which is not open work.
 // The GLOBAL write lock of every operation serializes this check with task_create and session_start; afterwards
 // task_create, project_update and project_create refuse the id.
 func projectArchive(q *Request) (any, error) {
@@ -201,7 +202,7 @@ func projectArchive(q *Request) (any, error) {
 	rows, err := queryRows(q, `SELECT kind,count(*) AS n,min(id) AS example FROM (
 	  SELECT 'task' AS kind,id FROM task WHERE project_id=$1 AND state::text=ANY($2)
 	  UNION ALL SELECT 'session',id FROM document WHERE project_id=$1 AND kind='session' AND NOT data ? 'archivedAt'
-	  UNION ALL SELECT 'execution',id FROM execution WHERE project_id=$1 AND state IN ('preparing','running','waiting')) o GROUP BY kind ORDER BY kind`, id, slices.Collect(maps.Keys(openTask)))
+	  UNION ALL SELECT 'execution',id FROM execution WHERE project_id=$1 AND kind::text<>'pipeline_step' AND state IN ('preparing','running','waiting')) o GROUP BY kind ORDER BY kind`, id, slices.Collect(maps.Keys(openTask)))
 	if err != nil {
 		return nil, err
 	}
