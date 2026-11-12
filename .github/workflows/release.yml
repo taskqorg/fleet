@@ -172,7 +172,8 @@ jobs:
           stale pkill || true
           i=0; while stale pgrep >/dev/null && [ $i -lt 10 ]; do i=$((i+1)); sleep 1; done
           stale pkill -KILL || true
-          pid=; trap '{ [ -z "$pid" ] || { kill $pid; wait $pid; }; pg_ctl -D "$pg" -m immediate -w stop; } >/dev/null 2>&1 || true' EXIT
+          stop() { kill "$1" || return 0; for _ in 1 2 3 4 5; do kill -0 "$1" || return 0; sleep 1; done; kill -KILL "$1"; wait "$1"; }
+          pid=; trap '{ [ -z "$pid" ] || stop $pid; pg_ctl -D "$pg" -m immediate -w stop; } >/dev/null 2>&1 || true' EXIT
           initdb -D "$pg" -U postgres -A trust -E UTF8 --no-instructions --no-sync >/dev/null
           pg_ctl -D "$pg" -l "$pg/log" -w -o "-k $pg -p 54329 -c listen_addresses= -c fsync=off -c synchronous_commit=off -c full_page_writes=off" start
           psql -h "$pg" -p 54329 -U postgres -v ON_ERROR_STOP=1 -q -d postgres -f deploy/infrastructure/fleet-postgres.sql
@@ -208,6 +209,7 @@ jobs:
               [ $((SECONDS - t)) -lt 60 ] || { echo "::error::$dir coordinator not healthy after 60 s"; exit 1; }; sleep 1; done
             echo; kill $pid || { echo "::error::$dir coordinator exited after health"; exit 1; }; wait $pid || true; pid=
           done
+          rm -rf "$cache"/*/var # anything a cached coordinator wrote beside its release files
           # Seed the cache with this release (GitHub's asset digest is the sha256 of the uploaded bytes), so the next run
           # downloads nothing; an entry for a version that never publishes is pruned by the sweep above.
           file=fleet-$VERSION-linux-amd64.tgz
