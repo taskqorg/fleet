@@ -104,7 +104,9 @@ Needs seen in the owner's repositories with no setting yet: submodules (pilotq);
 
 Credentials stay on the environment where the native tool reads them; Fleet records only which connection a repo uses. The executor gives each execution only the project's credential: the SSH key `<FLEET_CONNECTIONS_DIR>/<connection>/id_ed25519` with `<FLEET_CONNECTIONS_DIR>/known_hosts` (`go/executor/git_access.go`); the ambient SSH agent and `~/.ssh` config are not used for project git. Agent and delivery git runs non-interactive, with hooks off and cleared environment. Projects on one OS user can still read each other's files through a shell; full separation needs a separate environment.
 
-Not built: GitHub App tokens, fine-grained PAT helpers, `gh` keyring bindings, package registry and cloud credentials per connection, and interactive secret requests.
+An agent that needs an API key asks the owner with `connections_key_request` instead of handling a value; the owner pastes the value into Fleet ([key requests](designs/fleet-connections.md#2-keys)).
+
+Not built: GitHub App tokens, fine-grained PAT helpers, `gh` keyring bindings, and package registry and cloud credentials per connection.
 
 ### Readiness
 

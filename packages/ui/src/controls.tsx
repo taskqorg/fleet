@@ -237,15 +237,20 @@ type DecisionProps = {
   context?: ComponentChildren; options: { label: string; kbd?: string; primary?: boolean }[];
   answered?: { by: string; answer: string; at: number; delivered: boolean };
   onAnswer?: (answer: string) => void;
+  /** A key request: a write-only password field replaces the typed answer; the value goes to onSecret only, never to onAnswer. */
+  onSecret?: (value: string) => Promise<unknown>;
 };
 export function DecisionBlock(p: DecisionProps) {
   const [text, setText] = useState('');
+  const [failed, setFailed] = useState<string | null>(null);
   if (p.answered) {
     const a = p.answered;
     return <div class="decision answered" data-ui="decision-block" role="status"><Icon name={a.delivered ? 'check-check' : 'history'} />
       <span>{p.question} <b>{a.answer}</b> · {a.by} · {age(a.at, p.now).text}{a.delivered ? '' : ' · delivery pending'}</span></div>;
   }
   const send = (s: string) => s.trim() && p.onAnswer?.(s.trim());
+  // The field clears at once, so the value lives only in this request; a refusal shows its reason, never the value.
+  const secret = () => { const v = text.trim(); if (!v || !p.onSecret) return; setText(''); setFailed(null); p.onSecret(v).catch(e => setFailed(String(e?.message ?? e))); };
   return (
     <div class="decision" data-ui="decision-block" role="group" aria-label={p.question}
       onKeyDown={e => { if ((e.target as HTMLElement).tagName === 'INPUT') return; const o = p.options.find(o => o.kbd === e.key); if (o) send(o.label); }}>
@@ -254,9 +259,14 @@ export function DecisionBlock(p: DecisionProps) {
       {p.context && <div class="ctx">{p.context}</div>}
       <div class="answers">
         {p.options.map(o => <Button key={o.label} label={o.label} kbd={o.kbd} kind={o.primary ? 'primary' : 'default'} onClick={() => send(o.label)} />)}
-        <input value={text} placeholder="Answer" aria-label="Typed answer" onInput={e => setText((e.target as HTMLInputElement).value)}
-          onKeyDown={e => { if (e.key === 'Enter') send(text); }} />
+        {p.onSecret ? <>
+          <input type="password" autocomplete="off" spellcheck={false} value={text} placeholder="Paste key" aria-label="Key value"
+            onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={e => { if (e.key === 'Enter') secret(); }} />
+          <Button label="Add key" icon="shield" kind="primary" disabledReason={text.trim() ? undefined : 'paste the key first'} onClick={secret} />
+        </> : <input value={text} placeholder="Answer" aria-label="Typed answer" onInput={e => setText((e.target as HTMLInputElement).value)}
+          onKeyDown={e => { if (e.key === 'Enter') send(text); }} />}
       </div>
+      {failed && <div class="error" role="alert">{failed}</div>}
     </div>
   );
 }
@@ -486,11 +496,16 @@ export function ReasoningRow({ markdown, open, onToggle, onCopyFail }: { markdow
     head={<span class="th-line"><span>Reasoning</span><span class="svc ell">{markdown.split('\n')[0]}</span></span>} body={<Markdown text={markdown} onCopyFail={onCopyFail} />} />;
 }
 /** A question in the thread (DecisionBlock); answered, it collapses to one line with the answer and who gave it. */
-export function QuestionRow({ text, options, state, answer, answeredBy, askedAt, answeredAt, now, onAnswer }: { text: string; options: unknown[]; state: string; answer?: string; answeredBy?: string; askedAt?: number | null; answeredAt?: number | null; now: number; onAnswer?: (a: string) => void }) {
+export function QuestionRow({ text, options, state, answer, answeredBy, askedAt, answeredAt, now, onAnswer, onSecret }: { text: string; options: unknown[]; state: string; answer?: string; answeredBy?: string; askedAt?: number | null; answeredAt?: number | null; now: number; onAnswer?: (a: string) => void; onSecret?: (value: string) => Promise<unknown> }) {
   return <div class="th-row th-q" data-ui="thread-row"><DecisionBlock question={text} askedBy="agent" addressedTo="you" since={askedAt ?? now} now={now}
     options={options.map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
-    answered={state === 'answered' && answer !== undefined ? { by: answeredBy ?? 'operator', answer, at: answeredAt ?? now, delivered: true } : undefined} onAnswer={onAnswer} /></div>;
+    answered={state === 'answered' && answer !== undefined ? { by: answeredBy ?? 'operator', answer, at: answeredAt ?? now, delivered: true } : undefined} onAnswer={onAnswer} onSecret={onSecret} /></div>;
 }
+/** The connection a key request (a secret question) asks a key for: its options are {connection}. */
+export const keyConnection = (options: unknown): string | undefined => {
+  const c = options && !Array.isArray(options) && typeof options === 'object' ? (options as { connection?: unknown }).connection : undefined;
+  return typeof c === 'string' ? c : undefined;
+};
 /** Results of an execution end: artifact names linking to their Results page entry. */
 export function ResultRow({ artifacts, onOpen }: { artifacts: ArtifactMeta[]; onOpen?: (id: string) => void }) {
   return <div class="th-row th-result" data-ui="thread-row"><Icon name="file-text" /><span class="th-line">{artifacts.map(a =>
@@ -514,12 +529,14 @@ export type { ThreadBlock };
  * A thread: one row per block in a measured VirtualList that follows the bottom, loads older rows upward (onStart) and
  * newer ones downward (onEnd), and jumps through `handle`. Open tool and reasoning rows are kept by key across the window.
  */
-export function Thread({ blocks, label, now, marked, selected, onRowClick, showSession, onOpenResult, handle, pending, onStart, onEnd, onStop, stopReason, onAnswer, onCopyFail }: {
+export function Thread({ blocks, label, now, marked, selected, onRowClick, showSession, onOpenResult, handle, pending, onStart, onEnd, onStop, stopReason, onAnswer, onCopyFail, onSecret }: {
   blocks: ThreadBlock[]; label: string; now: number; marked?: string | null;
   /** Cross-message selection: rows in it are tinted; a click on a row (Shift extends) selects it, buttons and links excepted. */
   selected?: (key: string) => boolean; onRowClick?: (key: string, shift: boolean) => void; showSession?: boolean; onOpenResult?: (id: string) => void; handle?: { current: VirtualListHandle | null }; pending?: { count: number; onJump: () => void };
   onStart?: () => void; onEnd?: () => void; onStop?: (executionId: string) => void; stopReason?: string;
   onAnswer?: (questionId: string, answer: string) => void; onCopyFail?: (e: unknown) => void;
+  /** A key request row (its options name a connection): the owner's value goes here, never to onAnswer. */
+  onSecret?: (questionId: string, connection: string, value: string) => Promise<unknown>;
 }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const toggle = (k: string) => setOpen(o => { const n = new Set(o); n.has(k) ? n.delete(k) : n.add(k); return n; });
@@ -529,7 +546,7 @@ export function Thread({ blocks, label, now, marked, selected, onRowClick, showS
       case 'text': return <TextRow who={b.role === 'operator' ? 'operator' : 'agent'} markdown={b.markdown ?? ''} mark={markOf(b)} by={b.by} at={b.at} now={now} onCopyFail={onCopyFail} />;
       case 'tool': return <ToolRow name={b.name} input={b.input} output={b.output} state={b.state} startedAt={b.startedAt} endedAt={b.endedAt} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
-      case 'question': return <QuestionRow text={b.text} options={Array.isArray(b.options) ? b.options : []} state={b.state} answer={b.answer === undefined || typeof b.answer === 'string' ? b.answer : JSON.stringify(b.answer)} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} />;
+      case 'question': { const conn = keyConnection(b.options); return <QuestionRow text={b.text} options={Array.isArray(b.options) ? b.options : conn ? ['decline'] : []} state={b.state} answer={b.answer === undefined || typeof b.answer === 'string' ? b.answer : JSON.stringify(b.answer)} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} onSecret={conn && onSecret ? v => onSecret(b.questionId, conn, v) : undefined} />; }
       case 'result': return <ResultRow artifacts={b.artifacts} onOpen={onOpenResult} />;
       case 'boundary': return <BoundaryRow session={showSession ? b.sessionId ?? undefined : undefined} executionId={b.executionId} state={b.state} mark={markOf(b)} startedAt={b.startedAt} endedAt={b.endedAt} now={now} stopReason={stopReason}
         onStop={onStop && ['preparing', 'running', 'waiting'].includes(b.state) ? () => onStop(b.executionId) : undefined} />;

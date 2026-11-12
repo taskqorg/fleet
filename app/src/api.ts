@@ -31,3 +31,7 @@ export async function op<K extends OpName>(name: K, body: Ops[K]['request'], opt
   if (!r.ok) throw new OpError(data.message || r.statusText, r.status);
   return data as Ops[K]['reply'];
 }
+
+// A key request (connections_key_request): the owner's value goes straight to connections_key_add, which answers the
+// question with the fingerprint only; the value never reaches questions_answer or the asking agent.
+export const addRequestedKey = (questionId: string, connection: string, value: string) => op('connections_key_add', { connection, value, questionId });

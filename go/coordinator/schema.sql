@@ -797,3 +797,6 @@ CREATE TABLE agent_tool_receipt(
 
 -- migration 37: Lab retains its authenticated requester; legacy provenance remains unknown.
 ALTER TABLE experiment ADD COLUMN requested_by text, ADD COLUMN requester_removed_at timestamptz;
+
+-- migration 38: an agent's key request is a secret question; the owner answers it only through connections_key_add.
+ALTER TYPE question_kind ADD VALUE 'secret';

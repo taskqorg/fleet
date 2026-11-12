@@ -55,7 +55,8 @@
         "pipeline_get",
         "question_ask",
         "question_history",
-        "account_list"
+        "account_list",
+        "connections_key_request"
       ]
     },
     "ProjectArguments": {

@@ -43,6 +43,8 @@ A question requires an answer and may block continuation. A notification reports
 
 Agents use available requirements and decide within their assignment and authority. Route unresolved questions to a configured agent or person; technical versus product subject alone does not determine authority. Agent assistance may retrieve context, propose options or answer within delegated authority.
 
+A question for a secret (an API key) collects the value in a field the answer path never sees; the asking agent receives only a reference to the stored secret ([key requests](designs/fleet-connections.md#2-keys)).
+
 Keep one question and answer across session, task and attention views. Wait only on affected work. Routing and continuation do not require an open conversation window or a continuously running PM.
 
 Retain messages, questions, answers and results with their associated work where applicable. Make them available after reconnection under the same access rules as the underlying data.

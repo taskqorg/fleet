@@ -739,8 +739,9 @@ func catalogueHead(q *Request) (doc, error) {
 	return c, nil
 }
 
-// projectQuestion: a project question (question_ask) is an operator decision with the asker's request id.
-const projectQuestion = "kind='operator_decision' AND request_id IS NOT NULL"
+// projectQuestion: a project question (question_ask, or a key request) is an operator decision or secret question with
+// the asker's request id.
+const projectQuestion = "kind IN ('operator_decision','secret') AND request_id IS NOT NULL"
 
 // projectQuestionJSON: a project question (contract.ProjectQuestion) from its columns.
 const projectQuestionJSON = `jsonb_build_object('id',id,'projectId',project_id,'requestId',request_id,'text',text,'state',CASE WHEN state='open' THEN 'waiting' ELSE state::text END,

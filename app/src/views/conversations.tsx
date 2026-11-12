@@ -8,7 +8,7 @@ import {
   writeClip, zone,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
-import { op, online } from '../api.ts';
+import { op, online, addRequestedKey } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
@@ -133,7 +133,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
     <div class="pane">
       {!w ? <Skeleton rows={6} /> : <Thread blocks={w.blocks} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k)} onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? sel?.start.key ?? k, false), k, true)); pickFrom.current ??= k; }} showSession={!!key && 'task' in key} onOpenResult={r => go('/results/' + encodeURIComponent(r))} handle={handle} onStart={thread.older} onEnd={thread.newer}
         stopReason={off ? 'offline' : undefined} onStop={x => run(() => op('execution_stop', { executionId: x }))}
-        onAnswer={(questionId, answer) => run(() => op('questions_answer', { questionId, answer }))} onCopyFail={copyFail}
+        onAnswer={(questionId, answer) => run(() => op('questions_answer', { questionId, answer }))} onCopyFail={copyFail} onSecret={addRequestedKey}
         pending={{ count: w.fresh, onJump: () => { setMarked(null); setHits(null); thread.newest(); } }} />}
       {/* D3: steer goes to the execution and does not answer; the open question stays in sight above the composer. */}
       {openQs.map((q: any) => <DecisionBlock key={q.id} question={q.question ?? q.text} askedBy="agent" addressedTo="you" since={q.askedAt ? Date.parse(q.askedAt) || now : now} now={now}

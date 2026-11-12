@@ -388,6 +388,12 @@ func init() {
 		if !ok || len(value) < 8 || len(value) > 4096 || !keyValue.MatchString(value) {
 			return nil, fail(400, "Expected one key value without spaces")
 		}
+		qid := astr(b["questionId"])
+		if qid != "" {
+			if _, err := keyRequestOf(q, qid, astr(c["name"])); err != nil {
+				return nil, err
+			}
+		}
 		fp := fingerprint(value)
 		if old, err := maybe(q, "key:"+fp, "connection-key"); err != nil {
 			return nil, err
@@ -419,9 +425,57 @@ func init() {
 				log.Printf("key %s: %v", fp, err)
 			}
 		})
+		if qid != "" { // the agent's question gets the fingerprint only, never the value
+			if _, err := answerQuestion(q, qid, keyAnswer(astr(c["name"]), fp, "active"), actor(q, "operator"), nil); err != nil {
+				return nil, err
+			}
+		}
 		publish(q)
 		return k, nil
 	})))
+	// An agent (or a person) asks the owner for a key value (docs/designs/fleet-connections.md §1, key requests): a
+	// secret question the owner answers through connections_key_add with questionId. No argument carries a value.
+	projectOp("connections_key_request", false, shaped[contract.ConnectionsKeyRequestRequest, contract.ConnectionsKeyRequestReply](func(q *Request) (any, error) {
+		b := body(q)
+		for k := range b {
+			if !inList([]string{"projectId", "requestId", "connection", "reason"}, k) {
+				return nil, fail(400, "Unexpected argument "+k+"; a key value goes only into the owner's field")
+			}
+		}
+		if _, err := projectContext(q, astr(b["projectId"])); err != nil {
+			return nil, err
+		}
+		c, err := connByName(q, b["connection"])
+		if err != nil {
+			return nil, err
+		}
+		rid, reason := astr(b["requestId"]), astr(b["reason"])
+		if rid == "" || len(rid) > 200 || len([]rune(reason)) > 500 {
+			return nil, fail(400, "Expected requestId and a reason of at most 500 characters")
+		}
+		text := fmt.Sprintf("Add a %s key for connection %s", c["provider"], c["name"])
+		if reason != "" {
+			text += ": " + reason
+		}
+		d, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE "+projectQuestion+" AND project_id=$1 AND request_id=$2", b["projectId"], rid)
+		if err != nil {
+			return nil, err
+		}
+		if d != nil {
+			if d = mapOf(d["v"]); astr(d["text"]) != text {
+				return nil, fail(409, "Question identity conflict")
+			}
+			return d, nil
+		}
+		v := doc{"id": newID(), "projectId": b["projectId"], "requestId": rid, "text": text, "state": "waiting", "createdAt": nowMs(), "actor": actor(q, "operator")}
+		ask := doc{"id": v["id"], "kind": "secret", "text": text, "projectId": b["projectId"], "askedBy": v["actor"], "requestId": rid, "askedAt": v["createdAt"],
+			"options": doc{"connection": c["name"]}}
+		if strings.HasPrefix(q.agent, "execution:") { // a host agent: the question shows in its conversation
+			ask["executionId"] = strings.TrimPrefix(q.agent, "execution:")
+		}
+		_, err = askQuestion(q, ask)
+		return v, err
+	}))
 	// Rotation (§2): active <-> draining, any -> retired (the value file is deleted; the row stays); disabled -> active is the owner's.
 	gatedOp("connections_key_state", false, shaped[contract.ConnectionsKeyStateRequest, contract.ConnectionsKeyStateReply](func(q *Request) (any, error) {
 		b := body(q)
@@ -1166,4 +1220,58 @@ func cfAccessHeaders() map[string]string {
 		out["CF-Access-Client-Secret"] = v
 	}
 	return out
+}
+
+// keyAnswer: the only answer a key request records besides decline: the JSON text {connection, fingerprint, state}.
+func keyAnswer(connection, fp, state string) string {
+	return js(doc{"connection": connection, "fingerprint": fp, "state": state})
+}
+
+// keyRequestOf: the open key request qid for connection.
+func keyRequestOf(q *Request, qid, connection string) (doc, error) {
+	qn, err := first(q, "SELECT * FROM question WHERE id=$1 AND kind='secret'", qid)
+	if err != nil {
+		return nil, err
+	}
+	if qn == nil {
+		return nil, fail(404, "Unknown key request")
+	}
+	if astr(qn["state"]) != "open" {
+		return nil, fail(409, "Key request already settled")
+	}
+	if astr(mapOf(qn["options"])["connection"]) != connection {
+		return nil, fail(400, "The key request names another connection")
+	}
+	return qn, nil
+}
+
+// keyAnswerCheck: the answer hook of a key request (tasks area calls it). Only the owner settles it, with decline or
+// with the fingerprint answer of a key added to its connection, so no answer path carries a value.
+func keyAnswerCheck(q *Request, qn doc, answer string) error {
+	if qn["kind"] != "secret" {
+		return nil
+	}
+	if q.person != nil && !fullAccess(q.person) {
+		return fail(403, "Only the owner answers a key request")
+	}
+	if answer == "decline" {
+		return nil
+	}
+	var a struct{ Connection, Fingerprint, State string }
+	conn := astr(mapOf(qn["options"])["connection"])
+	if json.Unmarshal([]byte(answer), &a) != nil || a.Connection != conn || keyAnswer(a.Connection, a.Fingerprint, a.State) != answer {
+		return fail(400, "Answer decline, or add the key in its field")
+	}
+	k, err := maybe(q, "key:"+a.Fingerprint, "connection-key")
+	if err != nil {
+		return err
+	}
+	if k == nil || k["connectionId"] != conn {
+		return fail(400, "Answer decline, or add the key in its field")
+	}
+	return nil
+}
+
+func init() {
+	agentDescriptions["connections_key_request"] = "Ask the owner to add an API key: projectId, requestId, connection, reason. Never pass a key value; the owner pastes it into Fleet and the answer (question_history) is only {connection, fingerprint, state} or decline"
 }

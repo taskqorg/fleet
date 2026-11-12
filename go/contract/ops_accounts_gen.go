@@ -359,14 +359,31 @@ func (v *ConnectionsCreateRequest) Validate() error {
 // ConnectionsKeyAddReply: The new key row (fingerprint, state, addedAt, addedBy); never the value.
 type ConnectionsKeyAddReply = map[string]json.RawMessage
 
-// ConnectionsKeyAddRequest: Owner only. The value goes to the secret file; the reply has its fingerprint only.
+// ConnectionsKeyAddRequest: Owner only. The value goes to the secret file; the reply has its fingerprint only. questionId: the open key request (connections_key_request) this value answers with {connection, fingerprint, state}.
 type ConnectionsKeyAddRequest struct {
-	Connection string `json:"connection"`
-	Value      string `json:"value"`
+	Connection string  `json:"connection"`
+	QuestionId *string `json:"questionId,omitempty"`
+	Value      string  `json:"value"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ConnectionsKeyAddRequest) Validate() error {
+	return nil
+}
+
+// ConnectionsKeyRequestReply: The key request question; once answered, answer is the JSON text {connection, fingerprint, state}.
+type ConnectionsKeyRequestReply = ProjectQuestion
+
+// ConnectionsKeyRequestRequest: An agent asks the owner for a key value of connection. No argument carries a value; the owner answers through connections_key_add with questionId.
+type ConnectionsKeyRequestRequest struct {
+	Connection string  `json:"connection"`
+	ProjectId  string  `json:"projectId"`
+	Reason     *string `json:"reason,omitempty"`
+	RequestId  string  `json:"requestId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsKeyRequestRequest) Validate() error {
 	return nil
 }
 
@@ -1008,7 +1025,8 @@ func init() {
 		"budget_set":                  {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only. No id: a new budget. action defaults to warn.\",\"additionalProperties\":true,\"properties\":{\"action\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"limit\":{\"type\":\"number\"},\"period\":{\"type\":[\"string\",\"null\"]},\"scope\":{\"type\":\"string\"},\"scopeId\":{\"type\":\"string\"},\"unit\":{\"type\":\"string\"}},\"required\":[\"scope\",\"scopeId\",\"unit\",\"limit\"],\"type\":\"object\"}")},
 		"budgets_list":                {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"connections_create":          {Read: false, Long: false, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"$comment\":\"holder: the owner may create a key for another person.\",\"additionalProperties\":true,\"properties\":{\"comment\":{\"type\":\"string\"},\"holder\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"provider\":{\"type\":\"string\"}},\"required\":[\"name\",\"provider\"],\"type\":\"object\"}")},
-		"connections_key_add":         {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only. The value goes to the secret file; the reply has its fingerprint only.\",\"additionalProperties\":true,\"properties\":{\"connection\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"connection\",\"value\"],\"type\":\"object\"}")},
+		"connections_key_add":         {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only. The value goes to the secret file; the reply has its fingerprint only. questionId: the open key request (connections_key_request) this value answers with {connection, fingerprint, state}.\",\"additionalProperties\":true,\"properties\":{\"connection\":{\"type\":\"string\"},\"questionId\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"connection\",\"value\"],\"type\":\"object\"}")},
+		"connections_key_request":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"An agent asks the owner for a key value of connection. No argument carries a value; the owner answers through connections_key_add with questionId.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"connection\"],\"type\":\"object\"}")},
 		"connections_key_state":       {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"state active, draining or retired.\",\"additionalProperties\":true,\"properties\":{\"keyId\":{\"type\":\"string\"},\"state\":{\"type\":\"string\"}},\"required\":[\"keyId\",\"state\"],\"type\":\"object\"}")},
 		"connections_list":            {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"connections_set_access":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"access: {people, projects, experiments}, each a list of ids.\",\"additionalProperties\":true,\"properties\":{\"access\":{},\"connection\":{\"type\":\"string\"}},\"required\":[\"connection\",\"access\"],\"type\":\"object\"}")},

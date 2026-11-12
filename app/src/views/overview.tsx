@@ -1,7 +1,7 @@
 // Overview (docs/design-system/pages/overview.md): what needs the operator, operational counts, workers per host, projects.
 import { useLocation } from 'wouter-preact';
-import { OpsSummary, NeedsYou, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton } from '../../../packages/ui/src/index.ts';
-import { op, online } from '../api.ts';
+import { OpsSummary, NeedsYou, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, keyConnection } from '../../../packages/ui/src/index.ts';
+import { op, online, addRequestedKey } from '../api.ts';
 import { useDoc } from '../store.ts';
 
 type Overview = { questions: any[]; problems: any[]; counts: Record<string, number>; hosts: null; projects: { id: string; counts: Record<string, number> }[] };
@@ -32,8 +32,9 @@ export function Overview() {
           {!data.questions.length && !data.problems.length && <Empty text="Nothing is waiting for you." />}
           {data.questions.map(q => <DecisionBlock key={q.id} question={q.text} askedBy={q.askedBy ?? q.kind} addressedTo="you" since={Date.parse(q.askedAt) || now} now={now}
             waits={q.taskId ? `task ${String(q.taskId).slice(0, 8)}` : undefined}
-            options={(Array.isArray(q.options) ? q.options : q.kind === 'acceptance' ? ['accepted', 'rejected'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
-            onAnswer={a => { if (online.value) op('questions_answer', { questionId: q.id, answer: a }); }} />)}
+            options={(Array.isArray(q.options) ? q.options : q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
+            onAnswer={a => { if (online.value) op('questions_answer', { questionId: q.id, answer: a }); }}
+            onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v) : undefined} />)}
           {data.problems.map(e => <ProblemRow key={e.id} severity="warning" title={e.problem} facts={`execution ${String(e.id).slice(0, 8)}${e.taskId ? ` · task ${String(e.taskId).slice(0, 8)}` : ''}`}
             actions={e.taskId ? [{ label: 'Open task' }] : []} />)}
         </NeedsYou>
