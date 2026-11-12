@@ -134,10 +134,12 @@ const (
 	QuestionKindOperatorDecision QuestionKind = "operator_decision"
 	QuestionKindAgentQuestion    QuestionKind = "agent_question"
 	QuestionKindAcceptance       QuestionKind = "acceptance"
+	QuestionKindRating           QuestionKind = "rating"
+	QuestionKindSecret           QuestionKind = "secret"
 )
 
 // QuestionKindValues lists every QuestionKind in schema order.
-var QuestionKindValues = []QuestionKind{QuestionKindOperatorDecision, QuestionKindAgentQuestion, QuestionKindAcceptance}
+var QuestionKindValues = []QuestionKind{QuestionKindOperatorDecision, QuestionKindAgentQuestion, QuestionKindAcceptance, QuestionKindRating, QuestionKindSecret}
 
 // Valid: v is one of the schema's values.
 func (v QuestionKind) Valid() bool {

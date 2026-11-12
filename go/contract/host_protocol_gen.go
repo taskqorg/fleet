@@ -929,19 +929,20 @@ type ProjectArguments = map[string]json.RawMessage
 type ProjectOperation string
 
 const (
-	ProjectOperationProjectContext  ProjectOperation = "project_context"
-	ProjectOperationCatalogue       ProjectOperation = "catalogue"
-	ProjectOperationPipelineRun     ProjectOperation = "pipeline_run"
-	ProjectOperationDirectSearch    ProjectOperation = "direct_search"
-	ProjectOperationPipelineHistory ProjectOperation = "pipeline_history"
-	ProjectOperationPipelineGet     ProjectOperation = "pipeline_get"
-	ProjectOperationQuestionAsk     ProjectOperation = "question_ask"
-	ProjectOperationQuestionHistory ProjectOperation = "question_history"
-	ProjectOperationAccountList     ProjectOperation = "account_list"
+	ProjectOperationProjectContext        ProjectOperation = "project_context"
+	ProjectOperationCatalogue             ProjectOperation = "catalogue"
+	ProjectOperationPipelineRun           ProjectOperation = "pipeline_run"
+	ProjectOperationDirectSearch          ProjectOperation = "direct_search"
+	ProjectOperationPipelineHistory       ProjectOperation = "pipeline_history"
+	ProjectOperationPipelineGet           ProjectOperation = "pipeline_get"
+	ProjectOperationQuestionAsk           ProjectOperation = "question_ask"
+	ProjectOperationQuestionHistory       ProjectOperation = "question_history"
+	ProjectOperationAccountList           ProjectOperation = "account_list"
+	ProjectOperationConnectionsKeyRequest ProjectOperation = "connections_key_request"
 )
 
 // ProjectOperationValues lists every ProjectOperation in schema order.
-var ProjectOperationValues = []ProjectOperation{ProjectOperationProjectContext, ProjectOperationCatalogue, ProjectOperationPipelineRun, ProjectOperationDirectSearch, ProjectOperationPipelineHistory, ProjectOperationPipelineGet, ProjectOperationQuestionAsk, ProjectOperationQuestionHistory, ProjectOperationAccountList}
+var ProjectOperationValues = []ProjectOperation{ProjectOperationProjectContext, ProjectOperationCatalogue, ProjectOperationPipelineRun, ProjectOperationDirectSearch, ProjectOperationPipelineHistory, ProjectOperationPipelineGet, ProjectOperationQuestionAsk, ProjectOperationQuestionHistory, ProjectOperationAccountList, ProjectOperationConnectionsKeyRequest}
 
 // Valid: v is one of the schema's values.
 func (v ProjectOperation) Valid() bool {

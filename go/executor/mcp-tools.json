@@ -234,6 +234,42 @@
     }
   },
   {
+    "name": "connections_key_request",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "Ask the owner to add an API key to a Fleet connection. Never pass a key value: the owner pastes it into a field Fleet shows them, and the answer in question_history is only {connection, fingerprint, state} or decline. Reuse requestId on retry.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "connection"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "connection": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "The connection name, as in the API keys screen."
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Why the work needs the key."
+        }
+      }
+    }
+  },
+  {
     "name": "artifact_save",
     "description": "Store a file of your working area as an artifact of this execution now (otherwise FLEET_OUTPUT_DIR is collected when the run ends). required=true makes this run wait for it.",
     "annotations": {

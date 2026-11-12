@@ -5,9 +5,10 @@ import {
   ListDetail, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, VirtualList, StateBadge, HarnessMark, AgeChip, Button,
   SplitButton, RowCheck, Totals, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   type TreeNode, type Harness, type StateOf,
+  keyConnection,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
-import { op, online } from '../api.ts';
+import { op, online, addRequestedKey } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { listKey, type View } from '../../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
@@ -136,8 +137,9 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
       { label: 'Cost', m: { value: null, basis: 'unavailable', reason: 'no cost meter yet' }, kind: 'money', note: 'no cost meter yet' },
     ]} />
     {open.map((q: any) => <DecisionBlock key={q.id} question={q.text} askedBy={q.askedBy ?? q.kind} addressedTo="you" since={ms(q.askedAt) ?? now} now={now}
-      options={(Array.isArray(q.options) ? q.options : q.kind === 'acceptance' ? ['accepted', 'rejected'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
-      onAnswer={a => { if (!off) op('questions_answer', { questionId: q.id, answer: a }).catch(e => setFailure(e.message)); }} />)}
+      options={(Array.isArray(q.options) ? q.options : q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
+      onAnswer={a => { if (!off) op('questions_answer', { questionId: q.id, answer: a }).catch(e => setFailure(e.message)); }}
+      onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v) : undefined} />)}
     <h3 class="sub-h">Executions</h3>
     {nodes.length ? <ExecTree nodes={nodes} now={now} label="Executions" /> : <Empty text="No executions yet." />}
   </article>;

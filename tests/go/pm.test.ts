@@ -221,3 +221,35 @@ test('W5 project question: ask is idempotent by requestId, answer and history re
   assert.deepEqual([h.state, h.answer, h.requestId, h.text, h.createdAt], ['answered', 'yes', requestId, 'Ship it?', asked.createdAt]);
   assert.equal((await op('question_answer', {projectId: PROJECT, questionId: asked.id, answer: 'no'})).status, 409);
 });
+
+test('PM10 key request: an agent asks for a key and gets only its fingerprint; no answer path carries a value (requirement: docs/designs/fleet-connections.md key requests; risk: a key value passing through the agent, its transcript or a typed answer)', {timeout: 30_000}, async () => {
+  const conn = 'kr-' + randomUUID().slice(0, 8), value = 'tvly-' + randomUUID();
+  ok(await op('connections_create', {name: conn, provider: 'tavily'}));
+  const pm = await agent(OWNER, {projectId: PROJECT, role: 'pm'});
+  assert.ok((await pm.list()).includes('connections_key_request'));
+  assert.ok(!(await pm.list()).includes('connections_key_add'), 'an agent never handles a key value');
+  assert.equal((await pm.tool('connections_key_add', {connection: conn, value})).status, 403);
+  const requestId = randomUUID();
+  assert.equal((await pm.tool('connections_key_request', {projectId: PROJECT, requestId, connection: conn, value})).status, 400, 'a value argument is refused');
+  const asked = ok(await pm.tool('connections_key_request', {projectId: PROJECT, requestId, connection: conn, reason: 'search'}));
+  assert.equal(ok(await pm.tool('connections_key_request', {projectId: PROJECT, requestId, connection: conn, reason: 'search'})).id, asked.id, 'same request, same question');
+  const open = ok(await op('questions_list', {state: 'open'})).questions.find((x: any) => x.id === asked.id);
+  assert.deepEqual([open.kind, open.options, open.executionId, open.sessionId], ['secret', {connection: conn}, pm.executionId, pm.sessionId], 'a secret question in the PM conversation');
+  assert.equal((await pm.tool('question_answer', {projectId: PROJECT, questionId: asked.id, answer: 'decline'})).status, 403, 'the agent never settles its own request');
+  assert.equal(ok(await pm.tool('question_ask', {projectId: PROJECT, requestId, text: 'Same id?'})).text, 'Same id?', 'question_ask has its own requestId space');
+  assert.equal((await op('questions_answer', {questionId: asked.id, answer: value})).status, 400, 'a typed answer cannot carry the value');
+  assert.equal((await op('questions_answer', {questionId: asked.id, answer: 'decline'}, MEMBER)).status, 403);
+  assert.equal((await op('connections_key_add', {connection: 'no-such', value, questionId: asked.id})).status, 404);
+  const k = ok(await op('connections_key_add', {connection: conn, value, questionId: asked.id}));
+  const h = ok(await pm.tool('question_history', {projectId: PROJECT})).questions.find((x: any) => x.id === asked.id);
+  assert.deepEqual([h.state, JSON.parse(h.answer), h.answeredBy], ['answered', {connection: conn, fingerprint: k.fingerprint, state: 'active'}, OWNER]);
+  assert.equal(k.addedBy, OWNER, 'who added it is recorded');
+  for (const r of [await pm.tool('question_history', {projectId: PROJECT}), await op('questions_list', {}), await op('connections_list')]) assert.ok(!JSON.stringify(r.body).includes(value));
+  // A second request answered with a key Fleet already holds; a retired key is never a valid answer.
+  const again = ok(await pm.tool('connections_key_request', {projectId: PROJECT, requestId: randomUUID(), connection: conn}));
+  ok(await op('connections_key_add', {connection: conn, value, questionId: again.id}));
+  ok(await op('connections_key_state', {keyId: k.fingerprint, state: 'retired'}));
+  const third = ok(await pm.tool('connections_key_request', {projectId: PROJECT, requestId: randomUUID(), connection: conn}));
+  assert.equal((await op('questions_answer', {questionId: third.id, answer: JSON.stringify({connection: conn, fingerprint: k.fingerprint, state: 'active'})})).status, 400);
+  ok(await op('questions_answer', {questionId: third.id, answer: 'decline'}));
+});

@@ -77,6 +77,9 @@ func projectReceipt(q *Request, operation string, args doc, agent doc) (any, err
 		return nil, fail(404, "Unknown operation")
 	}
 	sub := &Request{app: q.app, r: q.r, tx: q.tx, host: q.host, body: []byte(js(args))}
+	if operation == "connections_key_request" { // its question shows in the asking agent's conversation
+		sub.agent = "execution:" + astr(agent["executionId"])
+	}
 	return op.h(sub)
 }
 

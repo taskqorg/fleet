@@ -485,7 +485,7 @@ func init() {
 		if rid == "" || text == "" || len([]rune(text)) > 2000 {
 			return nil, fail(400, "Expected question text and requestId")
 		}
-		d, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE "+projectQuestion+" AND project_id=$1 AND request_id=$2", b["projectId"], rid)
+		d, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE kind='operator_decision' AND project_id=$1 AND request_id=$2", b["projectId"], rid)
 		if err != nil {
 			return nil, err
 		}
@@ -739,8 +739,9 @@ func catalogueHead(q *Request) (doc, error) {
 	return c, nil
 }
 
-// projectQuestion: a project question (question_ask) is an operator decision with the asker's request id.
-const projectQuestion = "kind='operator_decision' AND request_id IS NOT NULL"
+// projectQuestion: a project question (question_ask, or a key request) is an operator decision or secret question with
+// the asker's request id.
+const projectQuestion = "kind IN ('operator_decision','secret') AND request_id IS NOT NULL"
 
 // projectQuestionJSON: a project question (contract.ProjectQuestion) from its columns.
 const projectQuestionJSON = `jsonb_build_object('id',id,'projectId',project_id,'requestId',request_id,'text',text,'state',CASE WHEN state='open' THEN 'waiting' ELSE state::text END,

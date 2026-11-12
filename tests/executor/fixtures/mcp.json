@@ -1701,6 +1701,42 @@
               {
                 "annotations": {
                   "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false,
+                  "readOnlyHint": false
+                },
+                "description": "Ask the owner to add an API key to a Fleet connection. Never pass a key value: the owner pastes it into a field Fleet shows them, and the answer in question_history is only {connection, fingerprint, state} or decline. Reuse requestId on retry.",
+                "inputSchema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "connection": {
+                      "description": "The connection name, as in the API keys screen.",
+                      "maxLength": 100,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "reason": {
+                      "description": "Why the work needs the key.",
+                      "maxLength": 500,
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "maxLength": 200,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "requestId",
+                    "connection"
+                  ],
+                  "type": "object"
+                },
+                "name": "connections_key_request"
+              },
+              {
+                "annotations": {
+                  "destructiveHint": false,
                   "idempotentHint": false,
                   "openWorldHint": false,
                   "readOnlyHint": false

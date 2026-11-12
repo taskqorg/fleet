@@ -60,7 +60,7 @@ func taskRow(q *Request, id string) (doc, error) {
 }
 
 func waitReason(q *Request, id string) (string, error) {
-	if ok, err := has(q, "SELECT 1 FROM question WHERE task_id=$1 AND state='open' AND kind IN ('operator_decision','agent_question')", id); err != nil || ok {
+	if ok, err := has(q, "SELECT 1 FROM question WHERE task_id=$1 AND state='open' AND kind IN ('operator_decision','agent_question','secret')", id); err != nil || ok {
 		return "question", err
 	}
 	if ok, err := openDependency(q, id); err != nil || ok {

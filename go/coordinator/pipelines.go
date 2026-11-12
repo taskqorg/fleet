@@ -1501,6 +1501,9 @@ func runAnswerChecks(q *Request, question doc, answer string) error {
 	if err := labAnswerCheck(q, question, answer); err != nil {
 		return err
 	}
+	if err := keyAnswerCheck(q, question, answer); err != nil {
+		return err
+	}
 	return budgetAnswerCheck(question, answer, q.person)
 }
 
