@@ -50,3 +50,28 @@ test('Account inspections retain legacy host work without widening actor/project
     }
   } finally {await c.stop();}
 });
+
+test('Selected execution hosts inspect their own account through authenticated commands (requirement: fleet.md host-owned accounts; risk: Mac-only routing blocks Windows/Linux or accepts another host receipt)', {timeout:30000}, async()=>{
+ const c=await startCoordinator({name:'account-remote'});
+ const call=async(path:string,body:object,secret=c.secret,person='owner@trial.test')=>{
+  const r=await fetch(c.base+path,{method:'POST',headers:{authorization:'Bearer '+secret,...(secret===c.secret?{'x-fleet-person':person}:{}),'content-type':'application/json'},body:JSON.stringify(body)});
+  return {status:r.status,body:await r.json()};
+ };
+ const op=(name:string,b:object)=>call('/api/ops/'+name,b);
+ const ok=(r:any)=>{assert.equal(r.status,200,JSON.stringify(r.body));return r.body;};
+ try {
+  const a=ok(await op('account_create',{name:'remote',harness:'codex'}));
+  for(const platform of ['win32','linux']){
+   const id='account-'+platform,secret=ok(await op('hosts_register',{id})).secret;
+   const poll={platform,capabilities:['codex'],stores:[],problems:[]};
+   ok(await call('/api/hosts/poll',poll,secret));
+   const inspection=ok(await op('account_connect',{accountId:a.id,hostId:id,binding:'fixture-codex'}));
+   const commands=ok(await call('/api/hosts/poll',poll,secret)).commands;
+   const cmd=commands.find((x:any)=>x.executionId===inspection.executionId);
+   assert.equal(cmd.kind,'account-inspect');assert.equal(cmd.payload.nativeHostId,id);
+   const receipt={hostId:id,executionId:inspection.executionId,commandId:cmd.id,accountObservation:{accountId:a.id,binding:'fixture-codex',platform,readiness:'ready',reason:'ready',nativeLoginObserved:true,quota:'unknown'}};
+   assert.equal((await call('/api/hosts/accounts/report',receipt)).status,401,'browser cannot forge host receipt');
+   ok(await call('/api/hosts/accounts/report',receipt,secret));
+  }
+ }finally{await c.stop();}
+});
