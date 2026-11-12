@@ -2,7 +2,7 @@
 import {useEffect,useRef,useState} from 'preact/hooks';
 import {useLocation} from 'wouter-preact';
 import {ListDetail,DetailSection,SettingField,CodeEditor,VirtualList,SearchField,Button,Empty,Icon,KvRow,ErrorBanner} from '../../../packages/ui/src/index.ts';
-import {op} from '../api.ts';
+import {op,writeOnce} from '../api.ts';
 import {useDoc} from '../store.ts';
 
 type Bundle={settings:Record<string,any>,contextFiles:{path:string,text:string}[]};
@@ -25,7 +25,7 @@ function ProjectEditor({id,onSaved}:{id?:string,onSaved:(id:string)=>void}){
  const setting=(key:string,value:any)=>setBundle(b=>({...b,settings:{...b.settings,[key]:value}}));
  const field=(label:string,value:string,save:(s:string)=>void)=><SettingField help="Edit this project field; Save project applies the complete version." label={label} value={value} status={{kind:'pending'}} now={Date.now()} onSave={save}/>;
  const save=async()=>{setBusy(true);try{
-  const p:any=id?await op('project_update',{projectId:id,requestId:requestId.current,baseRevision:revision,content:bundle,repoSha}):await op('project_create',{id:bundle.settings.id,requestId:requestId.current,content:bundle});
+  const unknown=()=>setError('unknown, retrying');const p:any=id?await writeOnce('project_update',{projectId:id,requestId:requestId.current,baseRevision:revision,content:bundle,repoSha},unknown):await writeOnce('project_create',{id:bundle.settings.id,requestId:requestId.current,content:bundle},unknown);
   const check:any=await op('project_context',{projectId:p.projectId});if(check.revision!==p.revision||check.contentSha!==p.contentSha)throw Error('Saved version changed; reload before editing.');
   setBundle(check.content);setRevision(check.revision);setAccess(check.initialAccess);setRepoSha(check.repoSha??null);setSourceState(check.sourceState??'');requestId.current=crypto.randomUUID();setError('');onSaved(p.projectId);
  }catch(e:any){setError(e.message);}finally{setBusy(false);}};

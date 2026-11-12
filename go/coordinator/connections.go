@@ -388,13 +388,20 @@ func init() {
 		if !ok || len(value) < 8 || len(value) > 4096 || !keyValue.MatchString(value) {
 			return nil, fail(400, "Expected one key value without spaces")
 		}
-		qid := astr(b["questionId"])
+		qid, fp := astr(b["questionId"]), fingerprint(value)
 		if qid != "" {
+			// A retry of an add that already answered this request (its reply was lost) is that add: the held key, no error.
+			if done, err := first(q, "SELECT 1 FROM question WHERE id=$1 AND kind='secret' AND state='answered' AND answer=$2", qid, keyAnswer(astr(c["name"]), fp, "active")); err != nil {
+				return nil, err
+			} else if done != nil {
+				if old, err := maybe(q, "key:"+fp, "connection-key"); err != nil || (old != nil && old["state"] == "active") {
+					return old, err
+				}
+			}
 			if _, err := keyRequestOf(q, qid, astr(c["name"])); err != nil {
 				return nil, err
 			}
 		}
-		fp := fingerprint(value)
 		if old, err := maybe(q, "key:"+fp, "connection-key"); err != nil {
 			return nil, err
 		} else if old != nil {

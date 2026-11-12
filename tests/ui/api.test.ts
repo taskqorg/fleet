@@ -66,3 +66,26 @@ test('a draft keeps its requestId across attempts and reloads until sent or defi
     assert.notEqual(sendingId('s', 'hi'), b, 'after a send the same text is a new write');
   } finally { (globalThis as any).localStorage = saved; }
 });
+
+// One per write family the app retries (sessions, projects, pipelines, questions, keys): a cut 2xx reply, then the same
+// body again; the coordinator side of each replay is covered in tests/go (B2, pm-transport, D8, PM10).
+for (const [name, body] of [
+  ['session_start', { projectId: 'p', role: 'pm', requestId: 'r', text: 't' }],
+  ['session_fork', { sessionId: 's', requestId: 'r' }],
+  ['project_create', { id: 'p', requestId: 'r', content: {} }],
+  ['project_update', { projectId: 'p', requestId: 'r', baseRevision: 1, content: {} }],
+  ['pipeline_run_create', { pipelineId: 'x', requestId: 'r', draft: true }],
+  ['questions_answer', { questionId: 'q', answer: 'yes' }],
+  ['connections_key_add', { connection: 'c', value: 'v', questionId: 'q' }],
+] as const) test(`${name}: a cut reply is retried with the same body and stored once`, async () => {
+  const saved = (globalThis as any).fetch; const bodies: string[] = []; const stored = new Set<string>(); let calls = 0;
+  (globalThis as any).fetch = async (url: string, init: any) => {
+    assert.ok(url.endsWith('/' + name)); bodies.push(init.body); stored.add(init.body);
+    const cut = calls++ === 0;
+    return { type: 'basic', status: 200, ok: true, statusText: 'OK', json: () => cut ? Promise.reject(new TypeError('network error')) : Promise.resolve({ ok: 1 }) };
+  };
+  try {
+    assert.deepEqual(await writeOnce(name as any, body as any, () => {}, { wait: 0 }), { ok: 1 });
+    assert.equal(bodies.length, 2); assert.equal(stored.size, 1, 'the retry is the same write');
+  } finally { (globalThis as any).fetch = saved; }
+});

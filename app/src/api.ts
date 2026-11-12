@@ -36,7 +36,7 @@ export async function op<K extends OpName>(name: K, body: Ops[K]['request'], opt
 // A key request (connections_key_request): the owner's value goes straight to connections_key_add, which answers the
 // question with the fingerprint only; the value never reaches questions_answer or the asking agent.
 export const addRequestedKey = (questionId: string, connection: string, value: string) =>
-  online.value ? op('connections_key_add', { connection, value, questionId }) : Promise.reject(Error('Offline: the key was not sent'));
+  online.value ? writeOnce('connections_key_add', { connection, value, questionId }, () => {}) : Promise.reject(Error('Offline: the key was not sent'));
 
 /**
  * The outcome of a write is unknown: its reply was cut, the connection dropped before it, or a gateway in front of the
@@ -45,7 +45,9 @@ export const addRequestedKey = (questionId: string, connection: string, value: s
 export const unknownOutcome = (e: unknown) => e instanceof OpError && (e.message === 'incomplete reply' || e.message === 'offline' || [502, 503, 504, 520, 521, 522, 523, 524].includes(e.status));
 /**
  * A write that carries a requestId, sent again with the same body until its outcome is known: the coordinator returns the
- * first write's result for a known requestId (message_send, session_fork), so a retry never duplicates it. onUnknown runs
+ * first write's result for a known requestId (message_send, session_fork, session_start, project_create/update,
+ * pipeline_run_create), and questions_answer and connections_key_add with a questionId answer a repeat of the same answer as
+ * done, so a retry never duplicates a write (tests/go: B2, D8, PM10, pm-transport). onUnknown runs
  * before each wait. A definite error stops it, and so does `signal` (the caller unmounting): that rejects as aborted.
  */
 // ponytail: fixed wait and no attempt cap; the caller ends it with the signal.
