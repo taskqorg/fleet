@@ -156,7 +156,7 @@ func searchQuestions(q *Request, s searchQuery, limit int) ([]contract.Found, er
 // or terms is left to the task and question providers, which apply every term.
 func searchCodes(q *Request, s searchQuery, limit int) ([]contract.Found, error) {
 	codes := []string{}
-	for _, m := range codePattern.FindAllString(s.text, 50) {
+	for _, m := range codePattern.FindAllString(s.text, limit) {
 		codes = append(codes, strings.ToUpper(m))
 	}
 	if len(codes) == 0 || len(s.fields) > 0 || strings.TrimSpace(codePattern.ReplaceAllString(s.text, "")) != "" {
