@@ -51,6 +51,7 @@ type dhState struct {
 	CheckedAt      string            `json:"checkedAt,omitempty"` // the pass's last check; the reply is document delivery-check
 	RetryRuns      []dhRetry         `json:"retryRuns,omitempty"` // runs whose jobs read failed, read again each pass
 	CiTried        map[string]string `json:"ciTried,omitempty"`   // pull request number to its last PR CI lookup while none was found
+	CiRetry        map[string]int    `json:"ciRetry,omitempty"`   // pull request number to failed PR CI lookups, read again up to dhRetries
 }
 
 var coordinatorStarted = time.Now().UTC()
@@ -181,7 +182,9 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	}
 	fail := func(err error) error {
 		st.Problem = err.Error()
-		save(nil)
+		if serr := save(nil); serr != nil {
+			return fmt.Errorf("%w; saving the problem: %v", err, serr)
+		}
 		return err
 	}
 	backfill := !st.Backfilled
@@ -230,6 +233,8 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			}
 		}
 	}
+	// ponytail: every pass loads and re-derives the whole history (hundreds of rows a week); load only the last weeks
+	// once it is thousands.
 	var prs []contract.DeliveryPr
 	var stored []contract.DeliveryRun
 	var releases []contract.DeliveryRelease
@@ -331,17 +336,23 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		p := &prs[i]
 		num := strconv.FormatInt(p.Number, 10)
 		// Read once in the backfill, then at most hourly for two days: a head without a green run stays without one.
-		if p.PrCiDone != nil || p.HeadSha == "" || !backfill && (p.Merged < recent || tried[num] >= hour) {
+		retry := st.CiRetry[num] > 0 && st.CiRetry[num] < dhRetries
+		if p.PrCiDone != nil || p.HeadSha == "" || !backfill && !retry && (p.Merged < recent || tried[num] >= hour) {
 			continue
 		}
-		tried[num] = now.Format(time.RFC3339)
 		var r struct {
 			Runs []dhRun `json:"workflow_runs"`
 		}
 		if err := read(&r, "workflow_runs_sha", "workflow", deliveryWorkflow, "event", "pull_request", "sha", p.HeadSha); err != nil {
 			skipped = append(skipped, err.Error())
+			if st.CiRetry == nil {
+				st.CiRetry = map[string]int{}
+			}
+			st.CiRetry[num]++ // read again next pass, past the two days too
 			continue
 		}
+		delete(st.CiRetry, num)
+		tried[num] = now.Format(time.RFC3339)
 		for _, x := range r.Runs {
 			if x.Conclusion != nil && *x.Conclusion == "success" && (p.PrCiDone == nil || x.UpdatedAt < *p.PrCiDone) {
 				p.PrCiDone = ptr(x.UpdatedAt)
@@ -416,18 +427,18 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 				return err
 			}
 		}
-		if check {
-			st.CheckedRelease, st.CheckedAt = newest, now.Format(time.RFC3339)
-		}
 		return nil
 	})
 	if err != nil || !check {
 		return err
 	}
-	// Its own transaction: a failed check must not undo the records just read.
+	// Its own transaction: a failed check must not undo the records just read; it counts as done only when it ran.
 	return runTx(ctx, a, nil, true, "", func(q *Request) error {
-		_, err := deliveryCheck(q, prs, runList, now, st.InstallsFrom)
-		return err
+		if _, err := deliveryCheck(q, prs, runList, now, st.InstallsFrom); err != nil {
+			return err
+		}
+		st.CheckedRelease, st.CheckedAt = newest, now.Format(time.RFC3339)
+		return dhPut(q, "delivery-history", "delivery-history", st)
 	})
 }
 
@@ -851,6 +862,7 @@ func deliveryCheck(q *Request, prs []contract.DeliveryPr, runs []contract.Delive
 	cur := deliveryValues(prs, runs, f, u)
 	deliveryPending(cur, prs, f, u, installsFrom)
 	current := deliveryWindow(prs, runs, day, now)
+	current.Stats = cur.stats() // with the pending waits the comparison uses
 	regs := deliveryCompare(prs, cur, base, s)
 	var ps []Problem
 	for _, r := range regs {
@@ -874,6 +886,12 @@ func deliveryCheck(q *Request, prs []contract.DeliveryPr, runs []contract.Delive
 	}
 	if err := problemsSync(q, "delivery", ps); err != nil {
 		return contract.DeliveryRegressionsReply{}, err
+	}
+	// A held question shows the latest numbers and range, not those of the check that opened it.
+	for _, p := range ps {
+		if err := exec(q, "UPDATE question SET text=$2,data=data||$3::jsonb WHERE cause=$1 AND state='open' AND text<>$2", p.Cause, p.Text, jsonBytes(p.Data)); err != nil {
+			return contract.DeliveryRegressionsReply{}, err
+		}
 	}
 	out := contract.DeliveryRegressionsReply{CheckedAt: ptr(u), Baseline: &base, Current: &current, Regressions: regs, Settings: s}
 	return out, dhPut(q, "delivery-check", "delivery-check", out)

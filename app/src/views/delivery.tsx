@@ -43,6 +43,7 @@ function Trend({ now }: { now: number }) {
   // The baseline the last check compared with (the 7 days before it, or the named snapshot), else the rolling one.
   const base = new Map<string, any>((data.r.baseline ?? data.b.rolling).stats.map((s: any) => [s.key, s]));
   const regs: any[] = data.r.regressions;
+  // Keys without a card (enqueue, merge, ui, total, run, job:<name>, wait:<name>) show as the record names them.
   const label = (k: string) => TREND.find(t => t.key === k)?.label ?? k;
   return <section class="panel delivery-trend" aria-label="Delivery trend">
     {head}
@@ -56,7 +57,7 @@ function Trend({ now }: { now: number }) {
     </ul>}
     <div class="limit-cards">
       {TREND.map(t => {
-        const pts = (q: 'p50Ms' | 'p90Ms') => { const xs = days.flatMap(d => { const s = d.stats.find((x: any) => x.key === t.key); return s ? [{ at: Date.parse(d.day + 'T00:00:00Z'), v: s[q] / 6e4 }] : []; }); return xs.length ? [...xs, { at: now, v: xs[xs.length - 1].v }] : xs; };
+        const pts = (q: 'p50Ms' | 'p90Ms') => { const xs = days.flatMap(d => { const s = d.stats.find((x: any) => x.key === t.key); return s ? [{ at: Date.parse(d.day + 'T00:00:00Z'), v: s[q] / 6e4 }] : []; }); const today = days.length ? Date.parse(days[days.length - 1].day + 'T00:00:00Z') : 0; return xs.length && xs[xs.length - 1].at === today ? [...xs, { at: now, v: xs[xs.length - 1].v }] : xs; };
         // A day without values is left out, never drawn as 0.
         const b = base.get(t.key);
         const last = [...days].reverse().map(d => d.stats.find((s: any) => s.key === t.key)).find(Boolean);
