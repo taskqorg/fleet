@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"log"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,15 +24,20 @@ import (
 	"fleet/contract"
 )
 
-// deliveryState: the last pass, kept per project so a reply holds only the caller's projects.
+// deliveryState: the last pass, per repository (lower-case owner/name). A repository listed by several projects is read
+// once; a caller sees it when it may see any of those projects.
 type deliveryState struct {
 	refreshedAt *string
 	source      contract.DeliverySource
-	items       []contract.DeliveryItem
+	repos       map[string]*deliveryRepo
 	samples     []contract.DeliverySample
-	landing     map[string]int64 // per project
-	repoLanding map[string]int64 // per "<project> <owner/repo>", to keep a failed repository's count
-	problems    map[string][]string
+}
+
+type deliveryRepo struct {
+	projects []string
+	items    []contract.DeliveryItem
+	landing  int64
+	problem  string
 }
 
 var (
@@ -60,27 +66,28 @@ func deliveryStatus(q *Request, _ *contract.DeliveryStatusRequest) (contract.Del
 	last := deliveryLast
 	deliveryMu.Unlock()
 	full := fullAccess(q.person)
-	ok := func(p string) bool { return full || mayAccessProjectID(q.person, p) }
+	visible := func(projects ...string) bool {
+		for _, p := range projects {
+			if full || mayAccessProjectID(q.person, p) {
+				return true
+			}
+		}
+		return false
+	}
 	out := contract.DeliveryStatusReply{Source: last.source, RefreshedAt: last.refreshedAt, Items: []contract.DeliveryItem{}, Samples: []contract.DeliverySample{}}
-	for _, it := range last.items {
-		if ok(it.ProjectId) {
-			out.Items = append(out.Items, it)
+	var problems []string
+	for _, r := range last.repos {
+		if visible(r.projects...) {
+			out.Items = append(out.Items, r.items...)
+			out.Landing += r.landing
+			if r.problem != "" {
+				problems = append(problems, r.problem)
+			}
 		}
 	}
 	for _, s := range last.samples {
-		if ok(s.ProjectId) {
+		if r := last.repos[strings.ToLower(deref(s.Repo))]; r != nil && visible(r.projects...) || s.Repo == nil && visible(s.ProjectId) {
 			out.Samples = append(out.Samples, s)
-		}
-	}
-	var problems []string
-	for p, n := range last.landing {
-		if ok(p) {
-			out.Landing += n
-		}
-	}
-	for p, ps := range last.problems {
-		if ok(p) {
-			problems = append(problems, ps...)
 		}
 	}
 	if len(problems) > 0 {
@@ -123,8 +130,12 @@ type ghRepo struct {
 }
 
 func deliveryPass(ctx context.Context, a *App) error {
-	type target struct{ project, owner, repo string }
-	var targets []target
+	type target struct {
+		projects    []string
+		owner, repo string
+	}
+	var targets []string // keys of byKey in project order
+	byKey := map[string]*target{}
 	keyed := githubKeyed(ctx, a)
 	var versions []string
 	err := runTx(ctx, a, nil, false, "", func(q *Request) error {
@@ -133,14 +144,20 @@ func deliveryPass(ctx context.Context, a *App) error {
 			return err
 		}
 		for _, id := range ids {
-			seen := map[string]bool{} // per project: each project's items carry its own id for the access check
 			for _, r := range anys(projectSettingsOf(q, id)["repos"]) {
 				m := githubRemote.FindStringSubmatch(astr(mapOf(r)["remote"]))
-				if m == nil || seen[m[1]+"/"+m[2]] || !keyed && !strings.EqualFold(m[1]+"/"+m[2], githubPublicRepo) {
+				if m == nil || !keyed && !strings.EqualFold(m[1]+"/"+m[2], githubPublicRepo) {
 					continue
 				}
-				seen[m[1]+"/"+m[2]] = true
-				targets = append(targets, target{id, m[1], m[2]})
+				key := strings.ToLower(m[1] + "/" + m[2])
+				if t := byKey[key]; t != nil {
+					if !slices.Contains(t.projects, id) {
+						t.projects = append(t.projects, id)
+					}
+					continue
+				}
+				byKey[key] = &target{[]string{id}, m[1], m[2]}
+				targets = append(targets, key)
 			}
 		}
 		obs, err := all(q, "host-observation", nil)
@@ -158,10 +175,9 @@ func deliveryPass(ctx context.Context, a *App) error {
 	deliveryMu.Lock()
 	prev := deliveryLast
 	deliveryMu.Unlock()
-	items, problems, landing, repoLanding := []contract.DeliveryItem{}, map[string][]string{}, map[string]int64{}, map[string]int64{}
-	counts := map[string]map[string]int64{}
-	failed := map[string]bool{}
-	for _, t := range targets {
+	repos, counts, failed := map[string]*deliveryRepo{}, map[string]map[string]int64{}, 0
+	for _, key := range targets {
+		t := byKey[key]
 		var g ghRepo
 		var active, queued struct {
 			Runs []ghRun `json:"workflow_runs"`
@@ -172,7 +188,8 @@ func deliveryPass(ctx context.Context, a *App) error {
 			into any
 		}{{"pulls_open", &g.open}, {"pulls_closed", &g.closed}, {"runs_in_progress", &active}, {"runs_queued", &queued}, {"releases", &g.releases}} {
 			var body []byte
-			if body, _, err = githubRead(ctx, a, t.project, r.tool, map[string]string{"owner": t.owner, "repo": t.repo}); err == nil {
+			// The read is made for the first project listing the repository (its token's access check).
+			if body, _, err = githubRead(ctx, a, t.projects[0], r.tool, map[string]string{"owner": t.owner, "repo": t.repo}); err == nil {
 				err = json.Unmarshal(body, r.into)
 			}
 			if err != nil {
@@ -181,23 +198,18 @@ func deliveryPass(ctx context.Context, a *App) error {
 		}
 		name := t.owner + "/" + t.repo
 		if err != nil {
-			problems[t.project] = append(problems[t.project], name+": "+err.Error())
-			failed[t.project+" "+name] = true
-			// The last good items of this repository stand; its project records no sample this pass.
-			for _, it := range prev.items {
-				if it.ProjectId == t.project && it.Repo == name {
-					items = append(items, it)
-				}
+			failed++
+			// The last good items of this repository stand; it records no sample this pass (a gap, not a dip).
+			r := &deliveryRepo{projects: t.projects, problem: name + ": " + err.Error()}
+			if p := prev.repos[key]; p != nil {
+				r.items, r.landing = p.items, p.landing
 			}
-			landing[t.project] += prev.repoLanding[t.project+" "+name]
-			repoLanding[t.project+" "+name] = prev.repoLanding[t.project+" "+name]
+			repos[key] = r
 			continue
 		}
 		g.runs = append(active.Runs, queued.Runs...)
-		its, l := deliveryStages(t.project, name, g, versions, now)
-		landing[t.project] += l
-		repoLanding[t.project+" "+name] = l
-		items = append(items, its...)
+		its, l := deliveryStages(t.projects[0], name, g, versions, now)
+		repos[key] = &deliveryRepo{projects: t.projects, items: its, landing: l}
 		c := map[string]int64{}
 		for _, s := range contract.DeliveryStageValues {
 			c[string(s)] = 0
@@ -205,17 +217,17 @@ func deliveryPass(ctx context.Context, a *App) error {
 		for _, it := range its {
 			c[string(it.Stage)]++
 		}
-		counts[t.project+" "+name] = c
+		counts[t.projects[0]+" "+name] = c
 	}
 	samples, err := deliverySamples(ctx, a, counts, now)
 	if err != nil {
 		log.Printf("delivery samples: %v", err)
 	}
-	next := deliveryState{source: contract.DeliverySourcePublic, items: items, samples: samples, landing: landing, repoLanding: repoLanding, problems: problems, refreshedAt: ptr(now.Format(time.RFC3339))}
+	next := deliveryState{source: contract.DeliverySourcePublic, repos: repos, samples: samples, refreshedAt: ptr(now.Format(time.RFC3339))}
 	if keyed {
 		next.source = contract.DeliverySourceKey
 	}
-	if len(failed) == len(targets) && len(targets) > 0 && prev.refreshedAt != nil {
+	if failed == len(targets) && len(targets) > 0 && prev.refreshedAt != nil {
 		next.refreshedAt = prev.refreshedAt // nothing new was read: the age shows how old the items are
 	}
 	deliveryMu.Lock()
@@ -349,13 +361,13 @@ func versionLess(a, b string) bool {
 	return len(x) < len(y)
 }
 
-// deliverySamples appends this read's counts to the day's sample document of each project and returns the last 24
+// deliverySamples appends this read's counts to the day's sample document of each repository and returns the last 24
 // hours. Written without a change row: nobody watches samples live, the page reads them with the status.
 func deliverySamples(ctx context.Context, a *App, counts map[string]map[string]int64, now time.Time) ([]contract.DeliverySample, error) {
 	out := []contract.DeliverySample{}
 	at, from := now.Format(time.RFC3339), now.Add(-24*time.Hour).Format(time.RFC3339)
 	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-		for k, c := range counts { // per "<project> <owner/repo>": a repository in two projects is counted once on the page
+		for k, c := range counts { // per "<first project> <owner/repo>": one sample per repository
 			p, repo, _ := strings.Cut(k, " ")
 			id := "delivery-samples:" + p + ":" + repo + ":" + now.Format("2006-01-02")
 			if err := exec(q, `INSERT INTO document(kind,id,project_id,data) VALUES('delivery-samples',$1,$2,jsonb_build_object('samples',jsonb_build_array($3::jsonb)))

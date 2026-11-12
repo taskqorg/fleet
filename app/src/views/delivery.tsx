@@ -29,8 +29,8 @@ export function Delivery() {
     {data?.refreshedAt && <AgeChip t={Date.parse(data.refreshedAt)} now={now} alertAfter={900} alertLabel="GitHub read is stale" />}
   </header>;
   if (!data) return <>{head}{error ? <ErrorBanner text={`Delivery did not load: ${error}`} /> : <Empty text="Loading…" />}</>;
-  // A repository listed by several projects comes once per project: show each pull request and sample once.
-  const items: any[] = [...new Map(data.items.map((i: any) => [`${i.repo}#${i.number}`, i])).values()];
+  const items: any[] = data.items;
+  // Samples recorded before per-repository samples (no repo) came once per project: one per read and key.
   const samples: any[] = [...new Map(data.samples.map((s: any) => [`${s.at} ${s.repo ?? s.projectId}`, s])).values()];
   const used = STAGES.filter(s => s.id !== 'merged' || items.some(i => i.stage === 'merged'));
   const of = (id: string) => items.filter(i => i.stage === id).sort((a, b) => a.since.localeCompare(b.since));
