@@ -167,7 +167,7 @@ function HistoryTab({ kind, id }: { kind: Kind; id: string }) {
   const now = Date.now();
   return <DetailSection title="Revisions">
     {!h ? <Empty text="Loading…" /> : h.revisions.map(r => <KvRow key={r.revision} icon={r.source === 'agent' ? 'bot' : r.source === 'repo' ? 'git-merge' : 'file-plus-2'} label={`r${r.revision} · ${r.message}`}
-      meta={<span class="mono">{r.actor.person?.name ?? r.actor.executionId ?? 'Fleet'}{r.actor.kind === 'agent' && r.actor.directedBy ? ` for ${r.actor.directedBy.name}` : ''} · {r.contentSha.slice(0, 7)}</span>}
+      meta={<span class="mono">{r.actor.person?.name ?? (r.actor.executionId ? 'agent' : 'Fleet')}{r.actor.kind === 'agent' && r.actor.directedBy ? ` for ${r.actor.directedBy.name}` : ''} · {r.contentSha.slice(0, 7)}</span>}
       value={<AgeChip t={Date.parse(r.at)} now={now} />} />)}
   </DetailSection>;
 }

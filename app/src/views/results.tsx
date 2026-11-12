@@ -56,7 +56,7 @@ export function Results({ id }: { id?: string }) {
             header={<><span /><span>Result</span><span class="r">Size</span><span class="r">Age</span></>}
             render={r => <>
               <span class="lead"><StateBadge family="artifact" state={r.state} compact /></span>
-              <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.name}</a><span class="id" data-tip={r.taskId ? 'Task' : 'Result'}>{(r.taskId ?? r.id).slice(0, 8)}</span>{r.projectId && <span class="id">{r.projectId}</span>}</span>
+              <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.name}</a>{r.projectId && <span class="id">{r.projectId}</span>}</span>
               <span class="r svc">{bytes(r.size).text}</span><span class="r"><AgeChip t={r.createdAt} now={now} /></span>
             </>} />}
       </ListFrame>
@@ -74,7 +74,7 @@ function Result({ id, onClose, onFilter }: { id: string; onClose: () => void; on
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={a.name}>
     <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><span class="grow" />
       {a.taskId && <Button label="Results of this task" icon="list-filter" iconOnly onClick={() => onFilter('task', a.taskId)} />}</header>
-    <ResultViewer name={a.name} type={a.mediaType} size={meta.size} source={a.executionId ? a.executionId.slice(0, 8) : 'no execution'} href={a.state === 'stored' ? src : undefined}
+    <ResultViewer name={a.name} type={a.mediaType} size={meta.size} source={a.executionId ? 'agent run' : 'no run'} href={a.state === 'stored' ? src : undefined}
       copies={(a.copies ?? []).map((c: any) => ({ where: c.storeId, state: c.state === 'verified' ? 'stored' : ['failed', 'deleted', 'purge_pending'].includes(c.state) ? 'unavailable' : 'pending' }))} tabs={['View']} tab={tab} onTab={setTab}>
       {a.state === 'stored' ? <ArtifactView a={meta} src={src} /> : <Empty text={`This result is ${a.state}.`} />}
     </ResultViewer>

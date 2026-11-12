@@ -56,14 +56,13 @@ export function Runners() {
           {live > 0 && <span class="hc" data-tip="Running"><Icon name="activity" label="Running" /><Num m={m(live)} kind="count" /></span>}<span class="grow" /><span class="muted">24h</span></header>
         <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) minmax(6rem,14rem) auto' }}>
           {runs.map((r: any) => {
-            const href = open(r), start = r.startedAt ?? r.endedAt ?? now, cost = costOf(r.cost), title = r.taskTitle ?? KINDS[r.kind] ?? r.kind, idText = r.calls != null ? (r.parentExecutionId ?? r.sessionId ?? '').slice(0, 12) : r.id.slice(0, 12);
+            const href = open(r), start = r.startedAt ?? r.endedAt ?? now, cost = costOf(r.cost), title = r.taskTitle ?? KINDS[r.kind] ?? r.kind;
             // A finished run with no recorded end (a gateway call) ends at start plus its wall time, else at its start.
             const active = isActive(r), end = active ? null : r.endedAt ?? start + (r.wallMs ?? 0);
             const secs = r.wallMs != null ? r.wallMs / 1000 : r.endedAt != null ? (r.endedAt - start) / 1000 : null;
             return <div key={r.id} role="row" class="vl-row static">
               <span class="lead"><StateBadge family="execution" state={r.state} compact /></span>
               <span class="tt">{href ? <a class="title row-link" href={href} onClick={e => { e.preventDefault(); go(href); }}>{title}</a> : <span class="title">{title}</span>}
-                {idText && <span class="id">{idText}</span>}
                 {r.harness && r.harness in harnesses && <HarnessMark h={r.harness as Harness} />}
                 {r.calls != null && <span class="hc" data-tip="Tool calls"><Num m={m(r.calls)} kind="count" /></span>}
                 {r.failedCalls > 0 && <span class="chip t-danger" data-tip="Failed calls"><Icon name="octagon-x" label="Failed calls" /><Num m={m(r.failedCalls)} kind="count" /></span>}

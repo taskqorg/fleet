@@ -155,14 +155,14 @@ try {
   // Stop one of two running executions from its boundary row.
   await vl.evaluate(e => { e.scrollTop = 0; }); await p.waitForTimeout(300);
   for (let i = 0; i < 20 && !(await p.locator('.th-boundary').count()); i++) { await vl.evaluate(e => { e.scrollTop = 0; }); await p.waitForTimeout(300); }
-  const x2 = p.locator('.th-boundary', { hasText: 'x2' });
+  const x2 = p.locator('.th-boundary', { has: p.locator('[data-tip*="Run x2 "]') });
   await x2.getByRole('button', { name: 'Stop' }).click();
   check(await until(async () => seed.rows("SELECT 1 FROM document WHERE kind='command' AND data->>'executionId'='x2' AND data->>'kind'='stop'").length === 1), 'Stop on one boundary sends a stop for that execution');
   check(seed.rows("SELECT 1 FROM document WHERE kind='command' AND data->>'executionId'='x1' AND data->>'kind'='stop'").length === 0, 'the other execution gets no stop');
   // Task thread: a session of a task shows the whole task; Shift+click selects across rows and Cmd+C copies their markdown.
   await p.goto(`${origin}/conversations/task-a`);
   check(await until(async () => await visible(p, 'Alpha reply') && await visible(p, 'Bravo reply')), 'a task session shows both sessions of the task');
-  check(await p.locator('.th-boundary .id', { hasText: 'task-b' }).count() === 1, 'boundary rows name their session');
+  check(await p.locator('.th-boundary [data-tip^="Conversation task-b "]').count() === 1, 'boundary rows name their session');
   await pds18('/api/hosts/events', { executionId: 'tb1', events: [{ id: 'tb-live', seq: 1, type: 'item.completed', timestamp: Date.now(), data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: 'Bravo live' }] } } }] });
   check(await until(() => visible(p, 'Bravo live')), 'a task thread follows another session of the task live');
   await p.locator('.th-text', { hasText: 'Alpha question' }).click();

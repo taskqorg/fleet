@@ -128,3 +128,6 @@ export function agentLabel(model: string | null | undefined, effort?: string | n
 
 /** The reader's IANA time zone, for times the server writes into copied text (formats.md "Copy"). */
 export const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+/** An actor as people read it (OR-38): an agent run (`execution:<uuid>`) is "agent", a person is their email. */
+export const actor = (a: string | null | undefined): string => !a ? '' : a.startsWith('execution:') ? 'agent' : a;
