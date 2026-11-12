@@ -22,6 +22,10 @@ Use the supported GitHub organization runner registration endpoint, only after t
 
 As guest user `ci`, configure URL `https://github.com/taskqorg`, group `fleet-pds18-trusted-main`, name `fleet-pds18-kvm-1`, custom label `fleet-pds18`, work directory `_work`. Feed the short-lived registration token over stdin into `ACTIONS_RUNNER_INPUT_TOKEN` for unattended configuration; no token in argv, repo, seed image, shell history or retained guest provisioning. Do not install a broad GitHub administrative credential. The runner's own scoped registration credentials are necessary runtime state. Install/start the runner service as `ci` using official `svc.sh` inside the guest. Read back exactly one runner, its group/labels/online state. Do not create a second registration on uncertain completion.
 
+## Logins on the guest
+
+logind keeps users' IPC (`RemoveIPC=no` in `/etc/systemd/logind.conf.d/50-fleet-keep-ipc.conf`, from cloud-init; set by hand on the running guest on 2026-11-12). With the default, the runner service, which is no login session, loses its shared memory when the last SSH session of `ci` ends: a release job's PostgreSQL failed that way. Read it back with `busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager RemoveIPC` (expected `b false`) after provisioning and when qualifying a restored guest.
+
 ## Guest state the release job keeps
 
 `~/fleet-releases/v/<version>` under the runner user holds the last 5 releases' `fleet-coordinator`, `config/` and `release.json` for the migration check ([delivery pipeline, section 5](../../../docs/designs/fleet-delivery-pipeline.md#5-compatibility-across-skipped-versions)). The release job fills and prunes it; deleting it is safe, the next run downloads again.
