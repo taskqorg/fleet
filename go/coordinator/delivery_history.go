@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -210,7 +211,11 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	}
 	// A refused read (the tool not granted, the key gone) says nothing about the item: stop instead of giving it up.
 	// GitHub's own replies arrive as http-<status> codes; any other failure is the connection's or the gateway's.
-	refused := func(err error) bool { return !strings.Contains(err.Error(), ": http-") }
+	// GitHub's rate limits (403, 429) say nothing about the item either: the pass stops and the next one goes on.
+	refused := func(err error) bool {
+		m := err.Error()
+		return !strings.Contains(m, ": http-") || strings.Contains(m, ": http-403") || strings.Contains(m, ": http-429")
+	}
 	backfill := !st.Backfilled
 	// Pull requests: the most recently updated first; after the backfill, until a page older than the last pass.
 	var pulls []dhPull
@@ -334,10 +339,12 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	}
 	retryNext := keep // st.RetryRuns stays whole until the loop ends, so a flush keeps the runs still to retry
 	var todo []dhRun
+	queued := map[int64]bool{} // a run on two pages (the list moved between reads) is read once
 	for _, r := range runs {
-		if o, ok := have[r.ID]; r.Status != "completed" || ok && o.Attempt == r.Attempt || tries[r.ID] >= dhRetries {
+		if o, ok := have[r.ID]; r.Status != "completed" || ok && o.Attempt == r.Attempt || tries[r.ID] >= dhRetries || queued[r.ID] {
 			continue
 		}
+		queued[r.ID] = true
 		todo = append(todo, r)
 	}
 	for c := range slices.Chunk(todo, dhBatch) {
@@ -351,7 +358,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		for i, r := range c {
 			if err := errs[i]; err != nil {
 				if refused(err) {
-					return fail(err)
+					return fail(errors.Join(err, flush())) // what this batch read before it stays stored
 				}
 				skipped = append(skipped, err.Error())
 				retryNext = append(retryNext, dhRetry{r, tries[r.ID] + 1}) // read again next pass, outside the window too
@@ -428,7 +435,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			num := strconv.FormatInt(p.Number, 10)
 			if err := errs[k]; err != nil {
 				if refused(err) {
-					return fail(err)
+					return fail(errors.Join(err, flush())) // what this batch read before it stays stored
 				}
 				skipped = append(skipped, err.Error())
 				if st.CiRetry == nil {
