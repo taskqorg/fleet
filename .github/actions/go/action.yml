@@ -1,0 +1,18 @@
+# Go from go/go.mod, its toolchain restored from the Actions cache: hosted runners do not ship the pinned version and
+# setup-go would download and extract it in every job. No build cache here; each job keys its own.
+name: Go toolchain
+description: setup-go with a cached toolchain
+runs:
+  using: composite
+  steps:
+    - id: version
+      shell: bash
+      run: echo "go=$(sed -n 's/^go //p' go/go.mod)" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v4
+      with:
+        path: ${{ runner.tool_cache }}/go/${{ steps.version.outputs.go }}
+        key: go-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.go }}
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go/go.mod
+        cache: false
