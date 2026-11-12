@@ -1,0 +1,11 @@
+{
+  "id": "harness-capability",
+  "steps": [
+    {
+      "command": "python3 \"$FLEET_LAB_SCRIPTS\"/harness-capability.py",
+      "id": "qualify",
+      "kind": "script"
+    }
+  ],
+  "version": 2
+}

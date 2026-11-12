@@ -140,14 +140,18 @@ func migrateJournal(db *sql.DB) (err error) {
 
 // subcommands: argv[1] -> handler. No argument runs the executor loop.
 var subcommands = map[string]func(args []string) error{
-	"mcp":       func(args []string) error { return runMCP(args) }, // part E2
-	"reproject": func([]string) error { return reproject() },
-	"selftest":  selftest,
+	"mcp":          func(args []string) error { return runMCP(args) }, // part E2
+	"qualify-mcp":  qualifyMCP,
+	"mcp-guardian": mcpGuardian,
+	"reproject":    func([]string) error { return reproject() },
+	"selftest":     selftest,
 }
 
 func main() {
 	run := runExecutor
-	if len(os.Args) > 1 {
+	if mcpDependencyInvocation() {
+		run = mcpOwnedCommand
+	} else if len(os.Args) > 1 {
 		h, ok := subcommands[os.Args[1]]
 		if !ok {
 			fmt.Fprintf(os.Stderr, "executor: unknown subcommand %q\n", os.Args[1])

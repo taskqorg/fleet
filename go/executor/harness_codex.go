@@ -153,6 +153,16 @@ func claudeMCP(c *exec.Cmd, profile any, servers M, extra []string) {
 	if has(servers, "design-rules") {
 		allowed = append(allowed, "mcp__design-rules__get_design_rules")
 	}
+	for name, server := range servers {
+		for _, tool := range jArr(server, "tools") {
+			allowed = append(allowed, "mcp__"+name+"__"+jStr(tool))
+		}
+		if tools, ok := jAt(server, "tools").([]string); ok {
+			for _, tool := range tools {
+				allowed = append(allowed, "mcp__"+name+"__"+tool)
+			}
+		}
+	}
 	config := M{}
 	for name, s := range servers {
 		config[name] = M{"command": jAt(s, "command"), "args": jAt(s, "args")}
