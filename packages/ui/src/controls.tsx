@@ -446,6 +446,19 @@ export const Stale = ({ at, now, onRefresh }: { at: number; now: number; onRefre
 /** Writes text to the clipboard; the caller shows a failure (status line with retry). */
 export const copyText = (text: string) => navigator.clipboard.writeText(text);
 
+/** The one formatter of a human entity code (D17, OR-38): `T-FLT-42` in mono after the name. The UUID is never shown:
+ *  it is the tooltip, and a click or Enter copies it without opening the row (OR-26). No code yet: nothing is shown. */
+export function EntityCode({ code, id, cls }: { code?: string | null; id: string; cls?: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(() => setCopied(false), [id]);
+  if (!code) return null;
+  const copy = (e: Event) => { e.preventDefault(); e.stopPropagation(); copyText(id).then(() => { setCopied(true); clearTimeout(timer.current); timer.current = setTimeout(() => setCopied(false), 1500); }).catch(() => {}); };
+  return <span class={`id code${cls ? ' ' + cls : ''}`} data-ui="entity-code" role="button" tabIndex={0} aria-label={`${code}, copy UUID`} data-tip={copied ? 'UUID copied' : `${id} · click to copy`}
+    onClick={copy} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') copy(e); }}>{code}</span>;
+}
+
 /** Markdown (markdown.tsx): built as nodes, never as HTML; each fenced code block has its own copy button. */
 export function Markdown({ text, onCopyFail }: { text: string; onCopyFail?: (e: unknown) => void }) {
   return <div class="md">{renderBlocks(parse(text), (code, _lang, k) => <div class="code" key={k}><pre><code>{code}</code></pre><span class="code-copy"><Button label="Copy code" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(code).catch(e => onCopyFail?.(e))} /></span></div>)}</div>;

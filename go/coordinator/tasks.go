@@ -364,7 +364,7 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 	return first(q, "SELECT * FROM question WHERE id=$1", id)
 }
 
-const questionCols = `id,kind,project_id AS "projectId",task_id AS "taskId",execution_id AS "executionId",session_id AS "sessionId",text,options,asked_by AS "askedBy",asked_at AS "askedAt",
+const questionCols = `id,code,kind,project_id AS "projectId",task_id AS "taskId",execution_id AS "executionId",session_id AS "sessionId",text,options,asked_by AS "askedBy",asked_at AS "askedAt",
  answer,answered_by AS "answeredBy",answered_at AS "answeredAt",state,data->'artifactIds' AS "artifactIds",data->'cause' AS cause`
 
 func questionsList(q *Request, taskID, state, kind string) ([]doc, error) {
@@ -443,7 +443,7 @@ func createTask(q *Request, v doc) (string, error) {
 	return id, nil
 }
 
-const taskViewCols = `id,project_id AS "projectId",title,expected_outcome AS "expectedOutcome",state,wait_reason AS "waitReason",priority,completion_requirements AS "completionRequirements",
+const taskViewCols = `id,code,project_id AS "projectId",title,expected_outcome AS "expectedOutcome",state,wait_reason AS "waitReason",priority,completion_requirements AS "completionRequirements",
  result_destination AS "resultDestination",delivery_method AS "deliveryMethod",accepted_by AS "acceptedBy",accepted_at AS "acceptedAt",accepted_artifact_ids AS "acceptedArtifactIds",
  created_by AS "createdBy",directed_by AS "directedBy",requested_by AS "requestedBy",taken_from AS "takenFrom",created_at AS "createdAt",updated_at AS "updatedAt",pause_reason AS "pauseReason"`
 
@@ -498,7 +498,7 @@ func taskGet(q *Request, id string) (doc, error) {
 	if t["executions"], err = executionsList(q, contract.ExecutionsListRequest{TaskId: &id}); err != nil {
 		return nil, err
 	}
-	if t["dependencies"], err = rowsOf(q, "SELECT depends_on_task_id AS id,kind FROM task_dependency WHERE task_id=$1", id); err != nil {
+	if t["dependencies"], err = rowsOf(q, "SELECT d.depends_on_task_id AS id,d.kind,t.code FROM task_dependency d LEFT JOIN task t ON t.id=d.depends_on_task_id WHERE d.task_id=$1", id); err != nil {
 		return nil, err
 	}
 	t["questions"], err = questionsList(q, id, "", "")
@@ -586,7 +586,7 @@ func taskWhere(f doc, p *[]any, withState bool) ([]string, error) {
 	}
 	if s, ok := f["search"].(string); ok && strings.TrimSpace(s) != "" {
 		*p = append(*p, likePattern(s))
-		c = append(c, fmt.Sprintf("(lower(t.title) LIKE $%d OR lower(t.id) LIKE $%d)", len(*p), len(*p)))
+		c = append(c, fmt.Sprintf("(lower(t.title) LIKE $%d OR lower(t.id) LIKE $%d OR lower(coalesce(t.code,'')) LIKE $%d)", len(*p), len(*p), len(*p)))
 	}
 	return c, nil
 }
@@ -620,10 +620,10 @@ func projectWhere(f doc, p *[]any, col string, c []string) ([]string, error) {
 	return c, nil
 }
 
-const taskListCols = "t.id,t.project_id,t.title,t.state,t.pause_reason,t.wait_reason,t.priority,t.created_at,t.updated_at,t.seq,d.agent,d.host,d.started_at,coalesce(d.open_questions,0) AS open_questions"
+const taskListCols = "t.id,t.code,t.project_id,t.title,t.state,t.pause_reason,t.wait_reason,t.priority,t.created_at,t.updated_at,t.seq,d.agent,d.host,d.started_at,coalesce(d.open_questions,0) AS open_questions"
 
 func taskListRow(x doc) doc {
-	return doc{"id": x["id"], "projectId": x["project_id"], "title": x["title"], "state": x["state"], "pauseReason": x["pause_reason"], "waitReason": x["wait_reason"], "priority": x["priority"], "agent": x["agent"], "host": x["host"],
+	return doc{"id": x["id"], "code": x["code"], "projectId": x["project_id"], "title": x["title"], "state": x["state"], "pauseReason": x["pause_reason"], "waitReason": x["wait_reason"], "priority": x["priority"], "agent": x["agent"], "host": x["host"],
 		"startedAt": x["started_at"], "createdAt": x["created_at"], "updatedAt": x["updated_at"], "openQuestions": x["open_questions"], "sortKey": []any{x["g"], -num(x["seq"]), x["id"]}}
 }
 
@@ -1030,7 +1030,7 @@ func init() {
 
 func taskRecord(t doc) doc {
 	v := doc{}
-	for col, key := range map[string]string{"id": "id", "project_id": "projectId", "title": "title", "expected_outcome": "expectedOutcome", "state": "state", "wait_reason": "waitReason", "priority": "priority",
+	for col, key := range map[string]string{"id": "id", "code": "code", "project_id": "projectId", "title": "title", "expected_outcome": "expectedOutcome", "state": "state", "wait_reason": "waitReason", "priority": "priority",
 		"completion_requirements": "completionRequirements", "result_destination": "resultDestination", "delivery_method": "deliveryMethod", "accepted_by": "acceptedBy", "accepted_at": "acceptedAt",
 		"accepted_artifact_ids": "acceptedArtifactIds", "created_by": "createdBy", "directed_by": "directedBy", "requested_by": "requestedBy", "taken_from": "takenFrom", "created_at": "createdAt",
 		"updated_at": "updatedAt", "pause_reason": "pauseReason"} {

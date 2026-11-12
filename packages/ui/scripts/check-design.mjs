@@ -29,6 +29,7 @@ const RULES = [
   { id: 'OR-25', re: /100d?vh/g, where: () => true, skip: line => /^\.shell\{/.test(line), say: 'viewport height outside the shell; only .shell takes it (patterns/app-shell.md)' },
   { id: 'OR-7', re: /[↑↓▲▼⬆⬇]/g, where: f => /\.(tsx|html)$/.test(f), say: 'direction arrow; show change with the value tint' },
   { id: 'OR-9', re: /<select\b/g, where: f => /\.tsx$/.test(f), say: 'select; long collections use VirtualList or a searchable scope control' },
+  { id: 'OR-38', re: /\b\w*[iI]d\)?\.slice\(0, ?\d+\)|>T-\{/g, where: f => /\.tsx$/.test(f), say: 'short UUID or hand-made code shown; render <EntityCode> (D17)' },
   { id: 'OR-15', re: /Back to /g, where: f => /\.(tsx|html)$/.test(f), say: 'text back link; use an icon, or rely on browser Back' },
 ];
 const warn = [];

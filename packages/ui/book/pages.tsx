@@ -6,7 +6,7 @@ import { Router, Route, Switch, useLocation } from 'wouter-preact';
 import { useHashLocation } from 'wouter-preact/use-hash-location';
 import {
   AppShell, TaskListView, ROW2, StatStrip, AreaChart, DecisionBlock, ProblemRow, FillBar, StateBadge, Num, Totals, AgeChip, ExecTree, Thread,
-  ResultViewer, SettingField, SplitButton, Button, Empty, VirtualList, Icon, Stale, StateCounters, FilterBar,
+  ResultViewer, EntityCode, SettingField, SplitButton, Button, Empty, VirtualList, Icon, Stale, StateCounters, FilterBar,
   ListDetail, DefinitionEditor, Choice, DraftBar, StepList, FlowStrip, HarnessMark, type StepItem, type FlowNode, type Harness, type StateOf, NeedsYou, OpsSummary, ListFrame, OutcomeBlock, DetailSection, KvRow, HarnessCounts, type TaskRow,
 } from '../src/index.ts';
 import { NAV } from './nav.ts';
@@ -157,7 +157,7 @@ function Results() {
           header={<><span /><span>Result</span><span>Project</span><span class="r">Size</span><span class="r">Age</span></>}
           render={r => <>
             <span class="lead"><StateBadge family="copy" state={r.copy} compact /></span>
-            <span class="tt"><a class="title row-link" href={`#/results/${r.id}`} onClick={e => { e.preventDefault(); setSel(r); }}>{r.name}</a><span class="id">T-{r.task}</span></span>
+            <span class="tt"><a class="title row-link" href={`#/results/${r.id}`} onClick={e => { e.preventDefault(); setSel(r); }}>{r.name}</a><EntityCode code={`T-FLT-${r.task}`} id={`00000000-0000-4000-8000-${String(r.task).padStart(12, '0')}`} /></span>
             <span class="svc">{r.project}</span>
             <span class="r"><Num m={{ value: r.size, basis: 'measured' }} kind="bytes" /></span>
             <span class="r"><AgeChip t={r.at} now={NOW} /></span>
