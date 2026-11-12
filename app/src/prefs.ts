@@ -12,18 +12,19 @@ const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: 
 export const prefs = signal<Settings>(empty);
 
 // A cleared store (signed out, another person, new grants) forgets the previous person's preferences too.
-onClear.add(() => { seq++; prefs.value = empty; });
+onClear.add(() => { seq++; prefs.value = empty; loadPrefs(); });
 
 // ponytail: last write wins; seq drops a stale reply. A save re-reads the server copy first and builds whole lists (views,
 // pins, focus presets) from it, so changes made meanwhile by an agent or another device survive; the gap between that read
-// and the write is one round trip. A failed save shows the server copy again (or the state before it, when unreachable).
-let seq = 0;
+// and the write is one round trip. Saves from this tab run one after another, so two quick changes never overwrite each other.
+// A failed save shows the server copy again (or the state before it, when unreachable).
+let seq = 0, chain: Promise<unknown> = Promise.resolve();
 export function loadPrefs() { const n = seq; return op('person_settings_get', {}).then(s => { if (seq === n) prefs.value = s; }).catch(() => {}); }
 /** Show the change at once, then send it built from a fresh server copy. */
 export function savePrefs(change: (s: Settings) => Partial<Settings>, patch: (s: Settings) => Patch = s => change(s) as Patch) {
   const n = ++seq, before = prefs.value;
   prefs.value = { ...before, ...change(before) };
-  op('person_settings_get', {}).then(fresh => op('person_settings_set', patch(fresh)))
+  chain = chain.then(() => op('person_settings_get', {}).then(fresh => op('person_settings_set', patch(fresh))))
     .then(s => { if (seq === n) prefs.value = s; }, () => { if (seq === n) { prefs.value = before; loadPrefs(); } });
 }
 

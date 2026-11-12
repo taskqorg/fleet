@@ -54,9 +54,9 @@ func personSettings(q *Request, email string) (contract.PersonSettings, error) {
 	if d != nil {
 		// ponytail: the document holds the settings fields as written; a JSON round trip reads them back typed.
 		raw, _ := json.Marshal(d)
-		if err := json.Unmarshal(raw, &ps); err != nil { // a partly read document would be written back without its fields
-			return ps, err
-		}
+		// ponytail: only person_settings_set writes this document, through checked typed fields; a field that does not
+		// read (a hand edit) stays at its default instead of locking the person out of get, set and dispatch.
+		_ = json.Unmarshal(raw, &ps)
 		ps.Email = email
 		if !slices.Contains(contract.DispatchOrderValues, ps.Order) {
 			ps.Order = contract.DispatchOrderList
@@ -120,7 +120,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	if r.Order != nil && !slices.Contains(contract.DispatchOrderValues, *r.Order) {
 		return contract.PersonSettings{}, fail(400, "order: list or soonest_reset")
 	}
-	if err := checkPrefs(r); err != nil {
+	if err := checkPrefs(q, r); err != nil {
 		return contract.PersonSettings{}, err
 	}
 	// One writer per person: a set reads the document and writes it whole, so concurrent sets of different fields keep both.
@@ -203,12 +203,22 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	return next, err
 }
 
-// checkPrefs: names are present and unique (views per list), widths are not negative.
-func checkPrefs(r *contract.PersonSettingsSetRequest) error {
+// checkPrefs: names are present and unique (views per list), each view is a valid view of its list (viewProblem, the
+// view_link check), focus names projects the caller may see, widths are not negative.
+func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
 	seen := map[string]bool{}
 	for _, v := range r.Views {
 		if strings.TrimSpace(v.List) == "" || strings.TrimSpace(v.Name) == "" {
 			return fail(400, "views: list and name are required")
+		}
+		var view any
+		raw, _ := json.Marshal(v.View)
+		_ = json.Unmarshal(raw, &view)
+		if p := viewProblem(view); p != "" {
+			return fail(400, "views: "+v.Name+": "+p)
+		}
+		if name, _ := view.(map[string]any)["view"].(string); name != v.List {
+			return fail(400, "views: "+v.Name+": view.view must equal list "+v.List)
 		}
 		if seen[v.List+"\x00"+v.Name] {
 			return fail(400, "views: duplicate name "+v.Name+" in list "+v.List)
@@ -221,6 +231,16 @@ func checkPrefs(r *contract.PersonSettingsSetRequest) error {
 			return fail(400, "focusPresets: names are required and unique")
 		}
 		names[p.Name] = true
+	}
+	for _, id := range r.Focus {
+		if id != "-" && (projectSettingsOf(q, id) == nil || (q.person != nil && !mayAccessProjectID(q.person, id))) {
+			return fail(400, "focus: unknown project "+id)
+		}
+	}
+	for _, id := range r.Focus {
+		if id != "-" && (projectSettingsOf(q, id) == nil || (q.person != nil && !mayAccessProjectID(q.person, id))) {
+			return fail(400, "focus: unknown project "+id)
+		}
 	}
 	for k, w := range r.Widths {
 		if w < 0 {

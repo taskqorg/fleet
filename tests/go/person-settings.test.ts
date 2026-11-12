@@ -26,6 +26,7 @@ test('P2 preferences (saved views, focus, focus presets, widths, row pins) are s
   const base = await op('person_settings_set', {pins: ['tasks']});
   assert.deepEqual([base.views, base.focus, base.focusPresets, base.widths, base.rowPins], [[], [], [], {}, {}]);
   const view = {list: 'tasks', name: 'Mine', view: {view: 'tasks', state: ['failed'], group: 'agent'}};
+  await op('project_create', {id: 'fleet', requestId: 'prefs-project', content: {settings: {id: 'fleet', name: 'Fleet', contextFiles: ['rules.md'], roles: {pm: 'pm'}}, contextFiles: [{path: 'rules.md', text: 'x'}]}});
   let s = await op('person_settings_set', {views: [view], focus: ['fleet', 'fleet', '-'], focusPresets: [{name: 'Core', projects: ['fleet']}]});
   assert.deepEqual(s.views, [view]); assert.deepEqual(s.focus, ['fleet', '-']); assert.deepEqual(s.pins, ['tasks']);
   s = await op('person_settings_set', {widths: {nav: 240, control: 320}, rowPins: {tasks: ['t1', 't2', 't1']}});
@@ -36,4 +37,8 @@ test('P2 preferences (saved views, focus, focus presets, widths, row pins) are s
   assert.deepEqual(await op('person_settings_get'), s);
   const r = await fetch(BASE + '/api/ops/person_settings_set', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'owner@trial.test'}, body: JSON.stringify({views: [view, view]})});
   assert.equal(r.status, 400);
+  for (const bad of [{views: [{list: 'tasks', name: 'X', view: {view: 'hosts'}}]}, {views: [{list: 'tasks', name: 'X', view: {view: 'tasks', state: 5}}]}, {focus: ['no-such-project']}]) {
+    const b = await fetch(BASE + '/api/ops/person_settings_set', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'owner@trial.test'}, body: JSON.stringify(bad)});
+    assert.equal(b.status, 400, JSON.stringify(bad));
+  }
 });
