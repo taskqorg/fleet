@@ -40,8 +40,9 @@ func validateUI(dir, version, backend string) error {
 // latestUI discovers the newest UI release for backend with git protocol v2 ls-refs, which returns only the
 // ui-<backend>-v* tags (about 100 bytes), unauthenticated and outside the api.github.com limit of 60 requests per
 // hour that counts 304 answers too. The release workflow creates the tag when it publishes the release with its
-// assets, so a tag is a published release; a deleted release must delete its tag too (gh release delete
-// --cleanup-tag), or it stays the candidate. Native latest.json is untouched.
+// assets, so a tag is a published release. A deleted release must delete its tag too (gh release delete
+// --cleanup-tag): otherwise it stays the candidate and every run reports its 404, retried like any HTTP error
+// (fleet-self-update.md, failure table). Native latest.json is untouched.
 func (u *updater) latestUI(backend string) (string, error) {
 	prefix := "refs/tags/ui-" + backend + "-v"
 	body := pkt("command=ls-refs\n") + "0001" + pkt("ref-prefix "+prefix+"\n") + "0000"
@@ -56,7 +57,7 @@ func (u *updater) latestUI(backend string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	b, err := readOK(req.URL.String(), resp)
+	b, err := readOK("POST", req.URL.String(), resp)
 	if err != nil {
 		return "", err
 	}
@@ -126,16 +127,19 @@ func (u *updater) cycleUI(backend, autoUpdate, root, stage, stateFile string) er
 			return nil
 		}
 	}
+	if u.held(autoUpdate) {
+		return nil
+	}
 	candidate, err := u.latestUI(backend)
 	if err != nil {
 		return fmt.Errorf("UI discovery: %w", err)
 	}
-	if u.held(autoUpdate) || !newer(candidate, rootVersion(r, "current")) || st.Refused[candidate] != "" {
+	if !newer(candidate, rootVersion(r, "current")) || st.Refused[candidate] != "" {
 		return nil
 	}
 	dir, err := u.fetch(p, candidate)
-	ref := refusal("missing")                                // the tag of a deleted release stays in the advertisement; GitHub publishes all assets at once
-	if errors.As(err, &ref) || errors.Is(err, errNotFound) { // recorded, so the next run does not fetch it again
+	var ref refusal
+	if errors.As(err, &ref) { // recorded, so the next run does not download and refuse it again
 		st.Last = u.refuse(p, candidate, string(ref), err.Error())
 		return writeJSON(stateFile, st, 0600)
 	}

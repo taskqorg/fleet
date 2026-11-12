@@ -264,28 +264,22 @@ func (u *updater) get(url string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return readOK(url, resp)
+	return readOK("GET", url, resp)
 }
 
-func readOK(url string, resp *http.Response) ([]byte, error) {
-	if err := okStatus(url, resp); err != nil {
+func readOK(method, url string, resp *http.Response) ([]byte, error) {
+	if err := okStatus(method, url, resp); err != nil {
 		return nil, err
 	}
 	return io.ReadAll(resp.Body)
 }
 
-// okStatus is nil for a 200; a 404 is errNotFound (cycleUI refuses the release then: a deleted release keeps its tag).
-func okStatus(url string, resp *http.Response) error {
-	switch resp.StatusCode {
-	case 200:
-		return nil
-	case 404:
-		return fmt.Errorf("%w: %s %s", errNotFound, resp.Request.Method, url)
+func okStatus(method, url string, resp *http.Response) error {
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("%s %s: %s", method, url, resp.Status)
 	}
-	return fmt.Errorf("%s %s: %s", resp.Request.Method, url, resp.Status)
+	return nil
 }
-
-var errNotFound = errors.New("404 Not Found")
 
 // download streams url to file and returns its hex SHA-256.
 func (u *updater) download(url, file string) (string, error) {
@@ -294,7 +288,7 @@ func (u *updater) download(url, file string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if err := okStatus(url, resp); err != nil {
+	if err := okStatus("GET", url, resp); err != nil {
 		return "", err
 	}
 	f, err := os.OpenFile(file, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
@@ -633,7 +627,7 @@ func (u *updater) getConditional(url, file string, c cached, check func([]byte) 
 		return u.getConditional(url, file, c, check, false)
 	}
 	c = cached{ETag: resp.Header.Get("ETag")}
-	if c.Body, err = readOK(url, resp); err != nil {
+	if c.Body, err = readOK("GET", url, resp); err != nil {
 		return cached{}, err
 	}
 	c.LastModified, _ = http.ParseTime(resp.Header.Get("Last-Modified"))

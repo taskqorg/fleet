@@ -135,8 +135,8 @@ func TestUIFailedFirstInstallResume(t *testing.T) {
 	}
 }
 
-// Requirement: a UI release that fetch refuses (missing assets, bad signature) is recorded in ui-state.json and not
-// fetched again by the next run; the tag of a deleted release stays in the advertisement.
+// Requirement: a UI release that fetch refuses (bad signature) is recorded in ui-state.json and not downloaded again
+// by the next run; a 404 (a deleted release whose tag stays) is an error retried next run, nothing refused.
 func TestUIFetchRefusalRecorded(t *testing.T) {
 	f := newFixture(t)
 	f.u.window = 0
@@ -154,21 +154,18 @@ func TestUIFetchRefusalRecorded(t *testing.T) {
 		default:
 			code = 404
 		}
-		return &http.Response{StatusCode: code, Status: http.StatusText(code), Request: r, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+		return &http.Response{StatusCode: code, Status: http.StatusText(code), Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
 	root, stage, stateFile := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "state.json")
-	if err := f.u.cycleUI(backend, "on", root, stage, stateFile); err != nil {
-		t.Fatal(err)
-	}
 	st := &State{}
-	if !readJSON(stateFile, st) || st.Refused[ver] != "missing" || st.Last == nil || st.Last.State != "refused" {
-		t.Fatalf("missing assets not refused: %+v", st)
+	if err := f.u.cycleUI(backend, "on", root, stage, stateFile); err == nil || !strings.Contains(err.Error(), "Not Found") || readJSON(stateFile, st) {
+		t.Fatalf("404 not a transient error: %v %+v", err, st)
 	}
-	sums, ver = []byte("00 fleet-ui-1.261112.2.tgz\n"), "1.261112.2"
+	sums = []byte("00 fleet-ui-" + ver + ".tgz\n")
 	if err := f.u.cycleUI(backend, "on", root, stage, stateFile); err != nil {
 		t.Fatal(err)
 	}
-	if !readJSON(stateFile, st) || st.Refused[ver] != "provenance" {
+	if !readJSON(stateFile, st) || st.Refused[ver] != "provenance" || st.Last == nil || st.Last.State != "refused" {
 		t.Fatalf("bad signature not refused: %+v", st)
 	}
 	f.u.client.Transport = uiTransport(func(r *http.Request) (*http.Response, error) {
@@ -176,9 +173,16 @@ func TestUIFetchRefusalRecorded(t *testing.T) {
 			t.Fatal("refused release fetched again:", r.URL)
 		}
 		body := pkt(strings.Repeat("a", 40)+" refs/tags/ui-"+backend+"-v"+ver+"\n") + "0000"
-		return &http.Response{StatusCode: 200, Request: r, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})
 	if err := f.u.cycleUI(backend, "on", root, stage, stateFile); err != nil {
+		t.Fatal(err)
+	}
+	f.u.client.Transport = uiTransport(func(r *http.Request) (*http.Response, error) {
+		t.Fatal("held host still discovers:", r.URL)
+		return nil, nil
+	})
+	if err := f.u.cycleUI(backend, "off", root, stage, stateFile); err != nil {
 		t.Fatal(err)
 	}
 }
