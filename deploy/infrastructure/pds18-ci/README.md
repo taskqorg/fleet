@@ -39,12 +39,12 @@ Before registering, read back `busctl get-property org.freedesktop.login1 /org/f
 
 Download official `actions/runner` Linux x64 v2.338.2 and verify SHA256 `baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40` (the release asset digest the GitHub API returns); `pool.sh` does both. Run `pool.sh <slots>` as root inside the guest after the group readback and network checks above, with one short-lived registration token on stdin (`gh api -X POST orgs/taskqorg/actions/runners/registration-token -q .token`); no token in argv, repo, seed image or shell history. It is idempotent and registers only missing slots:
 
-* slot 1 is user `ci` (`fleet-pds18-kvm-1`), slot n user `ci<n>` (`fleet-pds18-kvm-<n>`); group `fleet-pds18-trusted-main`, label `fleet-pds18`, work directory `_work`, service via the official `svc.sh` with a `UMask=0002` drop-in;
-* every slot's runner `.env` points `GOCACHE`, `GOMODCACHE`, the pnpm store and `PLAYWRIGHT_BROWSERS_PATH` into `/srv/ci-cache`, setgid group `cipool`, group-writable; toolchains (`actions/setup-*`) stay in each slot's `_work/_tool`, since the tool cache replaces a version's directory without a lock;
+* slot 1 is user `ci` (`fleet-pds18-kvm-1`), slot n user `ci<n>` (`fleet-pds18-kvm-<n>`); group `fleet-pds18-trusted-main`, label `fleet-pds18`, work directory `_work`, service via the official `svc.sh`;
+* every slot's runner `.env` points `GOCACHE`, `GOMODCACHE`, the pnpm store and `PLAYWRIGHT_BROWSERS_PATH` into `/srv/ci-cache`, setgid group `cipool`, group-writable through a default ACL (jobs keep umask 022: the executor's tests refuse group-writable paths of their own, and a `UMask=0002` runner hung them); toolchains (`actions/setup-*`) stay in each slot's `_work/_tool`, since the tool cache replaces a version's directory without a lock;
 * only new slots are started; restart an idle existing slot's service to apply a changed `.env`;
 * each job checks out into its slot's clean `_work`, starts its PostgreSQL in `$RUNNER_TEMP/pg` (stopped at job end, `FLEET_TRIAL_PGDATA`) and its ClickHouse as a service container on a per-job host port; the runner removes the containers and kills leftover processes at job end.
 
-Chromium's system packages are installed once as root (`npx playwright@<version> install-deps chromium`); jobs only fetch the browser into the shared path when its version changes. Read back four runners online in the group (`gh api orgs/taskqorg/actions/runners`). Do not create a second registration of a slot on uncertain completion.
+Git comes from `ppa:git-core/ppa`, as on the hosted image (Ubuntu's 2.43 lacks `--no-lazy-fetch`, which the executor uses). Chromium's system packages are installed once as root (`npx playwright@<version> install-deps chromium`); jobs only fetch the browser into the shared path when its version changes. Read back four runners online in the group (`gh api orgs/taskqorg/actions/runners`). Do not create a second registration of a slot on uncertain completion.
 
 ## Logins on the guest
 
