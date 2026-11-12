@@ -15,6 +15,7 @@ test('search resolves codes and aliases, finds questions; task_page and sessions
   const a = await op('task_create', {projectId: 'hello-world', title: 'Deploy pipeline flaky'});
   const b = await op('task_create', {projectId: 'hello-world', title: 'Deploy docs'});
   c.sql(`INSERT INTO question(id,kind,project_id,task_id,text) VALUES('q-search','operator_decision','hello-world','${a.id}','Which colour for the deploy badge?');
+    INSERT INTO execution(id,kind,state,task_id,harness,data) VALUES('e-a','agent_run','succeeded','${a.id}','claude','{}');
     UPDATE task_derived SET agent='claude',host='mac-mini' WHERE task_id='${a.id}';`);
   const hits = async (query: string, who?: string) => (await op('search', {query}, who)).hits;
   // Code jump: the task first, with its code; the task provider does not repeat it.
@@ -36,6 +37,8 @@ test('search resolves codes and aliases, finds questions; task_page and sessions
   assert.equal(old[0].id, a.id); assert.match(old[0].code, /^T-HWX-/);
   // One syntax: task_page and sessions_list apply field terms and every word.
   const page = async (search: string) => (await op('task_page', {filter: {search}})).tasks.map((x: any) => x.id).sort();
+  c.sql(`INSERT INTO execution(id,kind,state,task_id,harness,data) VALUES('e-done','agent_run','succeeded','${b.id}','codex','{}')`);
+  assert.deepEqual(await page('agent:codex'), [b.id], 'agent: is the latest execution harness, finished runs too');
   assert.deepEqual(await page('deploy agent:claude'), [a.id]);
   assert.deepEqual(await page('deploy host:mac'), [a.id]);
   assert.deepEqual(await page('docs deploy'), [b.id]);

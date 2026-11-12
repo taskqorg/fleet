@@ -16,6 +16,7 @@ test('search finds tasks by title and id prefix, applies field terms, keeps gran
       ('abc12345-flaky','hello-world','Fix flaky deploy', now() - interval '1 hour'),
       ('ffff0000-other','hello-world','Write abc12345 notes', now()),
       ('hidden-0001','hidden-project','Fix flaky hidden', now());
+    INSERT INTO execution(id,kind,state,task_id,harness,data) VALUES('e-flaky','agent_run','succeeded','abc12345-flaky','claude','{}');
     UPDATE task_derived SET agent='claude',host='mac-mini' WHERE task_id='abc12345-flaky';`);
   const people = (await op0('people_list', {})).people;
   assert.equal((await op0('people_set', {people: [...people.filter((p: any) => p.email !== 'scoped@trial.test'), {email: 'scoped@trial.test', name: 'Scoped', roles: ['operator'], grants: [{kind: 'project', id: 'hello-world'}]}]})).status, 200);
