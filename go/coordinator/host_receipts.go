@@ -211,12 +211,18 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 	wasFinal := terminal(e)
 	kind := c["kind"]
 	lost := false
+	confirmed := false
 	if !wasFinal && kind != "steer" && (kind != "stop" || status == "stopped") {
 		if s, ok := receiptState[status]; ok {
 			e["state"], e["observation"] = s, "confirmed"
+			confirmed = true
 		} else { // 'unknown': the host lost track; the state stays, unconfirmed
 			e["observation"], lost = "unconfirmed", true
 		}
+	}
+	// A control acknowledgement is not execution evidence; an unknown stop cannot clear uncertainty.
+	if !wasFinal && kind == "stop" && status == "unknown" {
+		e["observation"], lost = "unconfirmed", true
 	}
 	e["updatedAt"] = nowMs()
 	if status == "started" && e["startedAt"] == nil {
@@ -241,7 +247,7 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 	if err := put(q, "execution", e); err != nil {
 		return nil, "", err
 	}
-	if status != "unknown" {
+	if confirmed {
 		if err := markObservation(q, e["id"], "confirmed"); err != nil {
 			return nil, "", err
 		}
