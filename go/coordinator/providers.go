@@ -697,6 +697,36 @@ const providersJSON = `
   "baseUrl": "https://api.github.com",
   "instructions": "Read-only GitHub REST reads of a repository (pull requests, workflow runs, releases). The key is a read-only fine-grained token.",
   "tools": {
+   "runs_recent": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/actions/runs?created=%3E%3D{date}&per_page=100",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "Workflow runs created on or after a date (YYYY-MM-DD), 100 newest.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo", "date"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "date": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "date": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+   },
+   "run_jobs": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/actions/runs/{run_id}/jobs?per_page=100",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "Jobs of one workflow run, with runner name, labels and times.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo", "run_id"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "run_id": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "run_id": "^[0-9]+$"}
+   },
+   "org_runners": {
+    "method": "GET",
+    "path": "/orgs/{owner}/actions/runners?per_page=100",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "Self-hosted runners of an organization with their online and busy state (needs organization self-hosted runners read).",
+    "inputSchema": {"type": "object", "required": ["owner"], "properties": {"owner": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$"}
+   },
    "pulls_open": {
     "method": "GET",
     "path": "/repos/{owner}/{repo}/pulls?state=open&per_page=100",

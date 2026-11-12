@@ -8,4 +8,6 @@
 
 **Data.** `executions_runners` (newest 500 runs; pipeline runs and steps left out, their agent and tool runs are listed; totals from `execution_totals`). It reloads on execution changes and every 15 s.
 
-**Open.** CI runners (GitHub-hosted jobs, the self-hosted `fleet-pds18-kvm-1`) and CI minutes join from the GitHub source.
+* **CI** (`executions_ci`, GitHub Actions of taskqorg/fleet read on the coordinator through `githubRead`): one row per runner type with jobs and wall minutes since 00:00 UTC (a lower bound while some of today's runs are not read yet). A self-hosted runner shows its online and busy state, or "state unknown" without a GitHub key. Below these rows are the jobs in progress and queued, each with a time strip and an age chip, and each opens on GitHub. A "public" chip marks keyless reads (refreshed every 5 minutes); a problem chip lists failed reads.
+
+**Open.** CI minutes for the month need the billing API or a stored job history.
