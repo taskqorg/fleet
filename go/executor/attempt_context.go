@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fleet/contract"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"os/exec"
@@ -114,6 +115,58 @@ func resolveAttemptContext(project any, host string, roots, forbidden []string, 
 		}
 		if !allowed {
 			return fail("source Git metadata outside allowed roots")
+		}
+		for _, metadata := range []string{configDir, filepath.Join(configDir, "config")} {
+			st, e := os.Lstat(metadata)
+			if e != nil || st.Mode()&os.ModeSymlink != 0 || owner(st) != os.Getuid() {
+				return fail("source Git metadata must be host-user owned and not symlinked")
+			}
+		}
+		// The supported layout is local owned objects, not recursive alternates or symlinked storage.
+		for _, query := range [][]string{{"rev-parse", "--absolute-git-dir"}, {"rev-parse", "--git-path", "objects"}} {
+			value, e := git(query...)
+			if e != nil {
+				return fail("source Git storage unavailable")
+			}
+			storage := strings.TrimSpace(string(value))
+			if !filepath.IsAbs(storage) {
+				storage = filepath.Join(root, storage)
+			}
+			resolved, e := canon(storage)
+			eligible := false
+			for _, base := range roots {
+				if under(resolved, base) {
+					eligible = true
+				}
+			}
+			if e != nil || !eligible || overlaps(resolved, forbidden) || resolved != filepath.Clean(storage) {
+				return fail("source Git storage outside supported authority")
+			}
+			st, e := os.Stat(resolved)
+			if e != nil || !st.IsDir() || owner(st) != os.Getuid() {
+				return fail("source Git storage must be host-user owned")
+			}
+			if query[len(query)-1] != "objects" {
+				continue
+			}
+			if e := filepath.WalkDir(resolved, func(path string, entry fs.DirEntry, e error) error {
+				if e != nil {
+					return e
+				}
+				info, e := entry.Info()
+				if e != nil {
+					return e
+				}
+				if info.Mode()&os.ModeSymlink != 0 || owner(info) != os.Getuid() || (!info.IsDir() && !info.Mode().IsRegular()) {
+					return errors.New("unsupported object storage")
+				}
+				if path == filepath.Join(resolved, "info", "alternates") || path == filepath.Join(resolved, "info", "http-alternates") {
+					return errors.New("alternate object storage unsupported")
+				}
+				return nil
+			}); e != nil {
+				return fail("source Git object symlinks, alternates or foreign ownership unsupported")
+			}
 		}
 		origin, err := git("config", "--no-includes", "--file", filepath.Join(configDir, "config"), "--get", "remote.origin.url")
 		if err != nil || sourceRemoteIdentity(strings.TrimSpace(string(origin))) != sourceRemoteIdentity(jStr(repo, "remote")) {

@@ -191,6 +191,11 @@ func TestAttemptMissingSourceStopsActualStart(t *testing.T) {
 	p, source, _ := contextFixture(t)
 	jObj(jArr(p, "contextSources")[0])["revision"] = strings.Repeat("f", 40)
 	jObj(jArr(p, "environments")[1])["checkoutPath"] = source
+	assertAttemptSourceStartBlocked(t, p, source)
+}
+
+func assertAttemptSourceStartBlocked(t *testing.T, p M, source string) {
+	t.Helper()
 	p["worktree"] = M{"envMode": "checkout", "startFromOrigin": false}
 	e, _ := scriptExecutor(t)
 	e.host = "h"
@@ -319,4 +324,62 @@ func TestAttemptContextDeclaredTenCoreAndLinkedSelection(t *testing.T) {
 	if exists(filepath.Join(input, "context-sources/specq", source["revision"].(string), "unselected.md")) {
 		t.Fatal("unselected source staged")
 	}
+}
+
+// R3; risk: Git storage or ambient Git variables redirect immutable blob reads outside source authority.
+func TestAttemptContextGitStorageAuthority(t *testing.T) {
+	for _, layout := range []string{"symlink", "alternates"} {
+		t.Run(layout, func(t *testing.T) {
+			p, root, _ := contextFixture(t)
+			external, _ := filepath.EvalSymlinks(t.TempDir())
+			outside := filepath.Join(external, "objects")
+			objects := filepath.Join(root, ".git", "objects")
+			if err := os.Rename(objects, outside); err != nil {
+				t.Fatal(err)
+			}
+			if layout == "symlink" {
+				if err := os.Symlink(outside, objects); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				os.MkdirAll(filepath.Join(objects, "info"), 0700)
+				os.WriteFile(filepath.Join(objects, "info", "alternates"), []byte(outside+"\n"), 0600)
+			}
+			input := t.TempDir()
+			if _, err := resolveAttemptContext(p, "h", []string{root}, nil, input); err == nil {
+				t.Fatal("foreign object storage accepted")
+			}
+			entries, _ := os.ReadDir(input)
+			if len(entries) != 0 {
+				t.Fatal("external content staged before rejection")
+			}
+			jObj(jArr(p, "environments")[1])["checkoutPath"] = root
+			assertAttemptSourceStartBlocked(t, p, root)
+		})
+	}
+	t.Run("ambient-object-config-ignored", func(t *testing.T) {
+		p, root, _ := contextFixture(t)
+		t.Setenv("GIT_OBJECT_DIRECTORY", t.TempDir())
+		t.Setenv("GIT_ALTERNATE_OBJECT_DIRECTORIES", t.TempDir())
+		t.Setenv("GIT_DIR", t.TempDir())
+		t.Setenv("GIT_CONFIG_COUNT", "1")
+		t.Setenv("GIT_CONFIG_KEY_0", "remote.origin.url")
+		t.Setenv("GIT_CONFIG_VALUE_0", "https://foreign.invalid/repo")
+		got, err := resolveAttemptContext(p, "h", []string{root}, nil, t.TempDir())
+		if err != nil || !strings.Contains(got.Core, "required-core") {
+			t.Fatal(got, err)
+		}
+	})
+	t.Run("ordinary-linked-worktree", func(t *testing.T) {
+		p, root, _ := contextFixture(t)
+		parent, _ := filepath.EvalSymlinks(t.TempDir())
+		work := filepath.Join(parent, "linked")
+		if b, e := exec.Command("git", "-C", root, "worktree", "add", "--detach", work, "HEAD").CombinedOutput(); e != nil {
+			t.Fatal(e, string(b))
+		}
+		jObj(jArr(p, "environments")[0])["checkoutPath"] = work
+		if _, e := resolveAttemptContext(p, "h", []string{root, parent}, nil, t.TempDir()); e != nil {
+			t.Fatal(e)
+		}
+	})
 }
