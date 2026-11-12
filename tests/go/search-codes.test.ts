@@ -39,6 +39,7 @@ test('search resolves codes and aliases, finds questions; task_page and sessions
   const page = async (search: string) => (await op('task_page', {filter: {search}})).tasks.map((x: any) => x.id).sort();
   c.sql(`INSERT INTO execution(id,kind,state,task_id,harness,data) VALUES('e-done','agent_run','succeeded','${b.id}','codex','{}')`);
   assert.deepEqual(await page('agent:codex'), [b.id], 'agent: is the latest execution harness, finished runs too');
+  assert.equal((await hits('agent:codex')).find((h: any) => h.id === b.id)?.agent, 'codex', 'a hit shows the agent it matched on');
   assert.deepEqual(await page('deploy agent:claude'), [a.id]);
   assert.deepEqual(await page('deploy host:mac'), [a.id]);
   assert.deepEqual(await page('docs deploy'), [b.id]);
