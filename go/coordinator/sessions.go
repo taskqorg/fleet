@@ -55,9 +55,8 @@ func sessionWhere(f doc, p *[]any, withState bool) ([]string, error) {
 		*p = append(*p, ss)
 		c = append(c, fmt.Sprintf("x.state=ANY($%d)", len(*p)))
 	}
-	if s, ok := f["search"].(string); ok && strings.TrimSpace(s) != "" {
-		*p = append(*p, likePattern(s))
-		c = append(c, fmt.Sprintf("(lower(coalesce(x.first_message,'')) LIKE $%d OR lower(x.id) LIKE $%d OR lower(coalesce(x.code,'')) LIKE $%d)", len(*p), len(*p), len(*p)))
+	if s, ok := f["search"].(string); ok { // the list search syntax (search.go searchWhere)
+		c = append(c, searchWhere(s, p, []string{"x.first_message", "x.id", "x.code"}, map[string]string{"agent": "coalesce(x.harness,x.data->'agentConfig'->>'harness')", "host": "coalesce((SELECT e.host_id FROM execution e WHERE e.session_id=x.id ORDER BY e.seq DESC LIMIT 1),x.data->>'hostId')", "project": "x.project_id", "state": "x.state"}, withState)...)
 	}
 	return c, nil
 }

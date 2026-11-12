@@ -14,6 +14,7 @@ import (
 // by appending a provider. A provider that cannot apply a term of the query finds nothing, so `agent:claude` lists tasks only.
 
 type searchQuery struct {
+	raw    string
 	text   string
 	fields map[string]string
 }
@@ -22,7 +23,7 @@ type searchQuery struct {
 var searchFields = []string{"agent", "host", "state", "project"}
 
 func parseSearchQuery(s string) searchQuery {
-	q := searchQuery{fields: map[string]string{}}
+	q := searchQuery{raw: s, fields: map[string]string{}}
 	words := []string{}
 	for _, w := range strings.Fields(s) {
 		if k, v, ok := strings.Cut(w, ":"); ok && v != "" && slices.Contains(searchFields, strings.ToLower(k)) {
@@ -47,7 +48,7 @@ func (s searchQuery) only(allowed ...string) bool {
 
 type searchProvider func(q *Request, s searchQuery, limit int) ([]contract.Found, error)
 
-var searchProviders = []searchProvider{searchTasks, searchProjects, searchHosts}
+var searchProviders = []searchProvider{searchCodes, searchTasks, searchQuestions, searchProjects, searchHosts}
 
 // hasText: every word of needle is in hay (case-insensitive); an empty needle matches.
 func hasText(hay, needle string) bool {
@@ -66,39 +67,146 @@ func optStr(s string) *string {
 	return &s
 }
 
-// searchTasks: title or id; an id that starts with the text comes first (jump by code), then recently changed.
-func searchTasks(q *Request, s searchQuery, limit int) ([]contract.Found, error) {
-	p, c := []any{}, []string{}
-	if s.text != "" {
-		// $1: the whole text as an id prefix (jump by code); then each word narrows by title or id.
-		p = append(p, strings.TrimSuffix(likePattern(s.text)[1:], "%")+"%")
-		for _, w := range strings.Fields(s.text) {
-			p = append(p, likePattern(w))
-			c = append(c, fmt.Sprintf("(lower(t.title) LIKE $%d OR lower(t.id) LIKE $%d)", len(p), len(p)))
+// searchWhere: the list search syntax (parseSearchQuery) as SQL conditions, one syntax for Spotlight and every list
+// (OR-36): each word must be in one of the text columns; each field term in its column (state exact, the others contain).
+// A field the list has no column for matches nothing, never everything.
+func searchWhere(raw string, p *[]any, text []string, fields map[string]string, withState bool) []string {
+	s, c := parseSearchQuery(raw), []string{}
+	for _, w := range strings.Fields(s.text) {
+		*p = append(*p, likePattern(w))
+		o := []string{}
+		for _, col := range text {
+			o = append(o, fmt.Sprintf("lower(coalesce(%s,'')) LIKE $%d", col, len(*p)))
+		}
+		c = append(c, "("+strings.Join(o, " OR ")+")")
+	}
+	for _, k := range searchFields {
+		v, ok := s.fields[k]
+		if !ok {
+			continue
+		}
+		col, has := fields[k]
+		switch {
+		case !has:
+			c = append(c, "false")
+		case k == "state" && !withState: // per-state counts: every state, like the state filter
+		case k == "state":
+			*p = append(*p, strings.ToLower(v))
+			c = append(c, fmt.Sprintf("%s=$%d", col, len(*p)))
+		default:
+			*p = append(*p, likePattern(v))
+			c = append(c, fmt.Sprintf("lower(coalesce(%s,'')) LIKE $%d", col, len(*p)))
 		}
 	}
-	for _, f := range [][2]string{{"agent", "d.agent"}, {"host", "d.host"}, {"project", "t.project_id"}} {
-		if v, ok := s.fields[f[0]]; ok {
-			p = append(p, likePattern(v))
-			c = append(c, fmt.Sprintf("lower(coalesce(%s,'')) LIKE $%d", f[1], len(p)))
-		}
-	}
-	if v, ok := s.fields["state"]; ok {
-		p = append(p, strings.ToLower(v))
-		c = append(c, fmt.Sprintf(stateSQL+"=$%d", len(p)))
-	}
-	first := "t.id IS NULL"
-	if s.text != "" {
-		first = "lower(t.id) LIKE $1"
-	}
-	rs, err := rowsOf(q, "SELECT t.id,t.title,"+stateSQL+" AS state,t.project_id,d.agent,d.host FROM task t LEFT JOIN task_derived d ON d.task_id=t.id"+
-		where(c)+" ORDER BY "+first+" DESC,t.updated_at DESC,t.id LIMIT "+fmt.Sprint(limit), p...)
+	return c
+}
+
+// Task columns of the search syntax; agent and host are subqueries, so every task query can use them without a join.
+var taskSearchText = []string{"t.title", "t.id", "t.code"}
+var taskSearchFields = map[string]string{"agent": "(SELECT agent FROM task_derived WHERE task_id=t.id)", "host": "(SELECT host FROM task_derived WHERE task_id=t.id)",
+	"project": "t.project_id", "state": stateSQL}
+
+const taskHitCols = "SELECT t.id,t.code,t.title," + stateSQL + " AS state,t.project_id,d.agent,d.host FROM task t LEFT JOIN task_derived d ON d.task_id=t.id"
+
+func taskHits(rs []doc) []contract.Found {
 	out := []contract.Found{}
 	for _, r := range rs {
-		out = append(out, contract.Found{Kind: contract.FoundKindTask, Id: astr(r["id"]), Title: astr(r["title"]), State: optStr(astr(r["state"])),
+		out = append(out, contract.Found{Kind: contract.FoundKindTask, Id: astr(r["id"]), Code: optStr(astr(r["code"])), Title: astr(r["title"]), State: optStr(astr(r["state"])),
 			ProjectId: optStr(astr(r["project_id"])), Agent: optStr(astr(r["agent"])), Host: optStr(astr(r["host"]))})
 	}
-	return out, err
+	return out
+}
+
+// searchTasks: an id or code that starts with the text comes first, then recently changed.
+func searchTasks(q *Request, s searchQuery, limit int) ([]contract.Found, error) {
+	p, first := []any{}, "t.id IS NULL"
+	if s.text != "" {
+		p, first = append(p, strings.TrimSuffix(likePattern(s.text)[1:], "%")+"%"), "(lower(t.id) LIKE $1 OR lower(coalesce(t.code,'')) LIKE $1)"
+	}
+	c := searchWhere(s.raw, &p, taskSearchText, taskSearchFields, true)
+	rs, err := rowsOf(q, taskHitCols+where(c)+" ORDER BY "+first+" DESC,t.updated_at DESC,t.id LIMIT "+fmt.Sprint(limit), p...)
+	return taskHits(rs), err
+}
+
+const questionHitCols = "SELECT x.id,x.code,x.text,x.state::text AS state,x.project_id,x.task_id,x.session_id FROM question x"
+
+func questionHits(rs []doc) []contract.Found {
+	out := []contract.Found{}
+	for _, r := range rs {
+		t := []rune(astr(r["text"]))
+		out = append(out, contract.Found{Kind: contract.FoundKindQuestion, Id: astr(r["id"]), Code: optStr(astr(r["code"])), Title: string(t[:min(200, len(t))]),
+			State: optStr(astr(r["state"])), ProjectId: optStr(astr(r["project_id"])), TaskId: optStr(astr(r["task_id"])), SessionId: optStr(astr(r["session_id"]))})
+	}
+	return out
+}
+
+// searchQuestions: questions by text or code; open ones first, then recently asked. Only project and state terms apply.
+func searchQuestions(q *Request, s searchQuery, limit int) ([]contract.Found, error) {
+	if !s.only("project", "state") {
+		return nil, nil
+	}
+	p := []any{}
+	c := searchWhere(s.raw, &p, []string{"x.text", "x.code"}, map[string]string{"project": "x.project_id", "state": "x.state::text"}, true)
+	rs, err := rowsOf(q, questionHitCols+where(c)+" ORDER BY x.state='open' DESC,x.seq DESC LIMIT "+fmt.Sprint(limit), p...)
+	return questionHits(rs), err
+}
+
+// searchCodes: a query of D17 codes only (tasks T-, questions Q-, conversations C-) (no field terms, no other words) jumps to those entities, resolved with their
+// aliases (an old code after a project rename still resolves); hits carry the current code. A code among other words
+// or terms is left to the task and question providers, which apply every term.
+func searchCodes(q *Request, s searchQuery, limit int) ([]contract.Found, error) {
+	codes := []string{}
+	for _, m := range codePattern.FindAllString(s.text, 50) {
+		codes = append(codes, strings.ToUpper(m))
+	}
+	if len(codes) == 0 || len(s.fields) > 0 || strings.TrimSpace(codePattern.ReplaceAllString(s.text, "")) != "" {
+		return nil, nil
+	}
+	found, err := resolveCodes(q, codes)
+	if err != nil {
+		return nil, err
+	}
+	tasks, questions, sessions := []string{}, []string{}, []string{}
+	for _, code := range codes {
+		if e, ok := found[code]; ok && e.Type == "T" {
+			tasks = append(tasks, e.Id)
+		} else if ok && e.Type == "Q" {
+			questions = append(questions, e.Id)
+		} else if ok && e.Type == "C" {
+			sessions = append(sessions, e.Id)
+		}
+	}
+	ts, err := rowsOf(q, taskHitCols+" WHERE t.id=ANY($1)", tasks)
+	if err != nil {
+		return nil, err
+	}
+	qs, err := rowsOf(q, questionHitCols+" WHERE x.id=ANY($1)", questions)
+	if err != nil {
+		return nil, err
+	}
+	cs, err := rowsOf(q, sessionBase+" SELECT x.id,x.code,x.first_message,x.state,x.project_id FROM x WHERE x.id=ANY($1)", sessions)
+	if err != nil {
+		return nil, err
+	}
+	hits := append(taskHits(ts), questionHits(qs)...)
+	for _, r := range cs {
+		t := []rune(firstString(astr(r["first_message"]), astr(r["code"])))
+		hits = append(hits, contract.Found{Kind: contract.FoundKindConversation, Id: astr(r["id"]), Code: optStr(astr(r["code"])), Title: string(t[:min(200, len(t))]),
+			State: optStr(astr(r["state"])), ProjectId: optStr(astr(r["project_id"]))})
+	}
+	byID := map[string]contract.Found{}
+	for _, h := range hits {
+		byID[string(h.Kind)+":"+h.Id] = h
+	}
+	kinds := map[string]string{"T": "task", "Q": "question", "C": "conversation"}
+	out := []contract.Found{}
+	for _, code := range codes { // in query order
+		e := found[code]
+		if h, ok := byID[kinds[e.Type]+":"+e.Id]; ok && !slices.ContainsFunc(out, func(y contract.Found) bool { return y.Kind == h.Kind && y.Id == h.Id }) {
+			out = append(out, h)
+		}
+	}
+	return out, nil
 }
 
 func searchProjects(q *Request, s searchQuery, limit int) ([]contract.Found, error) {
@@ -166,7 +274,11 @@ func init() {
 			if err != nil {
 				return contract.SearchReply{}, err
 			}
-			hits = append(hits, h...)
+			for _, x := range h { // a code hit is not repeated by the task or question provider
+				if !slices.ContainsFunc(hits, func(y contract.Found) bool { return y.Kind == x.Kind && y.Id == x.Id }) {
+					hits = append(hits, x)
+				}
+			}
 		}
 		return contract.SearchReply{Hits: hits}, nil
 	}))

@@ -1364,7 +1364,7 @@ func sessionStart(q *Request, b doc) (doc, error) {
 }
 
 var agentDescriptions = map[string]string{
-	"search":              "Find tasks, projects and hosts by text or id; field:value terms agent, host, state, project (e.g. `agent:claude host:mac flaky`). Hits list ids; tasks recently changed first",
+	"search":              "Find tasks, questions, projects and hosts by text, id or code (T-FLT-42, old codes too); field:value terms agent, host, state, project (e.g. `agent:claude host:mac flaky`). Hits list ids; tasks recently changed first",
 	"session_transition":  "Switch profile/harness/account/model; returns reuse|switch_model_in_session|restart_and_resume|create_with_handoff and hands context to a new native session",
 	"session_fork":        "Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown",
 	"session_resume":      "Native resume/fork argv and captured native sessions for a session",

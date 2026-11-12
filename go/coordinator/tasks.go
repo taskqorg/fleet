@@ -682,9 +682,8 @@ func taskWhere(f doc, p *[]any, withState bool) ([]string, error) {
 		*p = append(*p, ss)
 		c = append(c, fmt.Sprintf(stateSQL+"=ANY($%d)", len(*p)))
 	}
-	if s, ok := f["search"].(string); ok && strings.TrimSpace(s) != "" {
-		*p = append(*p, likePattern(s))
-		c = append(c, fmt.Sprintf("(lower(t.title) LIKE $%d OR lower(t.id) LIKE $%d OR lower(coalesce(t.code,'')) LIKE $%d)", len(*p), len(*p), len(*p)))
+	if s, ok := f["search"].(string); ok {
+		c = append(c, searchWhere(s, p, taskSearchText, taskSearchFields, withState)...)
 	}
 	return c, nil
 }

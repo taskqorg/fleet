@@ -1,7 +1,7 @@
 // One project definition and the same operations used by the PM.
 import {useEffect,useRef,useState} from 'preact/hooks';
 import {useLocation} from 'wouter-preact';
-import {ListDetail,DetailSection,SettingField,CodeEditor,VirtualList,SearchField,Button,Empty,Icon,KvRow,ErrorBanner} from '../../../packages/ui/src/index.ts';
+import {ListDetail,DetailSection,SettingField,CodeEditor,VirtualList,SearchField,Button,Empty,Icon,KvRow,ErrorBanner,matchSearch} from '../../../packages/ui/src/index.ts';
 import {op,writeOnce,useAlive} from '../api.ts';
 import {useDoc} from '../store.ts';
 
@@ -10,7 +10,7 @@ const fresh=():Bundle=>({settings:{id:'',name:'',contextFiles:['rules.md'],roles
 export function Projects({id}:{id?:string}){
  const [,go]=useLocation();const [creating,setCreating]=useState(false),[query,setQuery]=useState('');
  const list=useDoc<any>('projects',()=>op('project_list',{}),c=>c.kind==='definition');
- const rows=(list.data?.projects??[]).filter((p:any)=>`${p.name} ${p.id}`.toLowerCase().includes(query.toLowerCase()));
+ const rows=(list.data?.projects??[]).filter((p:any)=>matchSearch(query,`${p.name} ${p.id}`,{project:p.id}));
  const pane=<><header class="page-h"><h1>Projects</h1><span class="grow"/><Button label="Create project" icon="plus" onClick={()=>setCreating(true)}/></header>
  <SearchField label="Find project" value={query} onInput={setQuery} onSearch={()=>{}}/>
  {list.error?<div role="alert">{list.error}</div>:!list.data?<Empty text="Loading…"/>:<VirtualList items={rows} getKey={(p:any)=>p.id} rowHeight={52} follow="top" label="Projects" render={(p:any)=><><Icon name="folder-open"/><a class="title row-link" href={'/projects/'+p.id} onClick={e=>{e.preventDefault();setCreating(false);go('/projects/'+p.id);}}>{p.name}<span class="id">{p.id}</span></a></>}/>}

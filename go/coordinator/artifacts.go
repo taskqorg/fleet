@@ -1187,8 +1187,8 @@ func artifactList(ctx context.Context, a *App, f listFilter) ([]doc, error) {
 	if f.Since != nil {
 		add("created_at>=$?", time.UnixMilli(int64(*f.Since)))
 	}
-	if f.Q != nil && *f.Q != "" {
-		add("name ILIKE $?", "%"+like.Replace(*f.Q)+"%")
+	if f.Q != nil && *f.Q != "" { // the list search syntax (search.go searchWhere); results have no agent or host column
+		c = append(c, searchWhere(*f.Q, &p, []string{"name"}, map[string]string{"project": "project_id", "state": "state::text"}, true)...)
 	}
 	if f.NoExamples {
 		c = append(c, "role<>'example'")

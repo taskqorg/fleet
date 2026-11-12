@@ -8,7 +8,7 @@
 
 **States.** Empty, typing, searching (old results dimmed, no spinner under 300 ms), results, no results ("No tasks match 'hero'. Search everywhere"), error.
 
-**Behaviour.** Local filtering on each keystroke for loaded rows; server query debounced 150 ms. Matches are highlighted in titles. Exact ID match (for example `T-1042`) jumps to that item. The query is part of the filter state in the URL.
+**Behaviour.** Local filtering on each keystroke for loaded rows; server query debounced 150 ms. Matches are highlighted in titles. A code (for example `T-FLT-42`) matches its item. The query takes the search syntax: words plus `agent:`, `host:`, `state:`, `project:` terms ([Spotlight](spotlight.md)). The query is part of the filter state in the URL.
 
 **Keyboard.** `/` focuses; `Esc` clears, second `Esc` leaves; `↓` moves into results.
 
