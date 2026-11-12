@@ -7,10 +7,12 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -371,5 +373,110 @@ func TestLoadTrigger(t *testing.T) {
 	loadTrigger(tr)
 	if !exists(tr.file) || ran != 2 {
 		t.Fatalf("load then unchanged: %d runs, want 2", ran)
+	}
+}
+
+// Requirement: latest.json is a conditional GET (delivery pipeline, section 6): the ETag persists on disk across
+// runs, an unchanged file is answered from the cache on 304, and a changed ETag replaces it.
+func TestLatestConditionalGet(t *testing.T) {
+	etag, body, served, matched := `"one"`, `{"version":"1.261112.1"}`, 0, 0
+	asset := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		served++
+		if etag != "" && r.Header.Get("If-None-Match") == etag {
+			matched++
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		if etag != "" {
+			w.Header().Set("ETag", etag)
+		}
+		w.Header().Set("Last-Modified", "Thu, 12 Nov 2026 09:28:29 GMT")
+		w.Write([]byte(body))
+	}))
+	defer asset.Close()
+	// As on GitHub: latest.json is a redirect to another host, which holds the ETag and answers the conditional GET.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, asset.URL+"/asset", http.StatusFound)
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	fresh := func() *updater {
+		u := newUpdater(nil)
+		u.base, u.cacheDir = srv.URL, dir
+		return u
+	}
+	u := fresh()
+	if v := u.latest(); v != "1.261112.1" || served != 1 || matched != 0 {
+		t.Fatalf("first: %q served=%d matched=%d", v, served, matched)
+	}
+	if u.published["1.261112.1"].IsZero() {
+		t.Fatal("publish time not kept")
+	}
+	u = fresh() // a later run: the ETag comes from disk
+	if v := u.latest(); v != "1.261112.1" || served != 2 || matched != 1 {
+		t.Fatalf("cached: %q served=%d matched=%d", v, served, matched)
+	}
+	if u.published["1.261112.1"].IsZero() {
+		t.Fatal("publish time lost on 304")
+	}
+	etag, body = `"two"`, `{"version":"1.261112.2"}`
+	if v := u.latest(); v != "1.261112.2" || matched != 1 {
+		t.Fatalf("changed: %q matched=%d", v, matched)
+	}
+	if v := u.latest(); v != "1.261112.2" || matched != 2 {
+		t.Fatalf("recached: %q matched=%d", v, matched)
+	}
+	// A bad body (an error page with an ETag) is neither used nor cached; the good entry stays for the next run.
+	etag, body = `"three"`, `<html>oops</html>`
+	if v := u.latest(); v != "" {
+		t.Fatalf("bad body used: %q", v)
+	}
+	etag, body = `"two"`, `{"version":"1.261112.2"}`
+	if v := u.latest(); v != "1.261112.2" || matched != 3 {
+		t.Fatalf("good entry lost after bad body: %q matched=%d", v, matched)
+	}
+	etag, body = `"four"`, `{"version":"1.261112.4"}`
+	if v := u.latest(); v != "1.261112.4" || matched != 3 {
+		t.Fatalf("after bad body: %q matched=%d", v, matched)
+	}
+	// A corrupt cache file is replaced within the same run: one conditional request, one full one.
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("cache files: %d", len(entries))
+	}
+	os.WriteFile(filepath.Join(dir, entries[0].Name()), []byte(`{"etag":"\"four\"","body":"bm9wZQ=="}`), 0o600)
+	if v := u.latest(); v != "1.261112.4" || matched != 4 || served != 9 {
+		t.Fatalf("corrupt cache: %q matched=%d served=%d", v, matched, served)
+	}
+	// Without an ETag nothing is cached, the stale entry goes and the next request is unconditional.
+	etag, body = "", `{"version":"1.261112.5"}`
+	u.latest()
+	if v := u.latest(); v != "1.261112.5" || matched != 4 {
+		t.Fatalf("no etag: %q matched=%d", v, matched)
+	}
+	if after, _ := os.ReadDir(dir); len(after) != 0 {
+		t.Fatalf("stale cache kept: %v", after)
+	}
+}
+
+// Requirement: one install line per first healthy marker, with the publish delta when known and never negative.
+func TestInstallLogLine(t *testing.T) {
+	f := newFixture(t)
+	f.release("1.261111.0", 0)
+	f.release("1.261111.1", 0)
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	defer log.SetOutput(os.Stderr)
+	f.u.published = map[string]time.Time{"1.261111.0": f.u.now().Add(-90 * time.Second), "1.261111.1": f.u.now().Add(time.Hour)}
+	f.run("1.261111.0")
+	f.run("1.261111.1")
+	want := []string{"executor 1.261111.0: installed 1m30s after publish\n", "executor 1.261111.1: installed\n"}
+	for _, w := range want {
+		if !strings.Contains(logs.String(), w) {
+			t.Fatalf("missing %q in\n%s", w, logs.String())
+		}
+	}
+	if strings.Count(logs.String(), "installed") != 2 {
+		t.Fatalf("install lines:\n%s", logs.String())
 	}
 }

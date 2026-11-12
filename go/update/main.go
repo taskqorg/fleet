@@ -27,6 +27,8 @@ const releaseKey = "eT+0MVUmjUvvItJGhR3rUqW5PBzvE8QbD9Uq/wjAHlQ="
 
 const releasesURL = "https://github.com/taskqorg/fleet/releases"
 
+const repoURL = "https://github.com/taskqorg/fleet.git"
+
 func main() {
 	log.SetFlags(0)
 	if err := run(os.Args[1:]); err != nil {
@@ -127,6 +129,7 @@ func (u *updater) runPDS18() error {
 		return err
 	}
 	defer unlock()
+	u.cacheDir = s
 	stateFile := filepath.Join(s, "pds18-state.json")
 	st := pds18State{Coordinator: &State{}, Executor: &State{}}
 	readJSON(stateFile, &st)
