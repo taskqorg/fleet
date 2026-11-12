@@ -23,9 +23,9 @@ while :; do
   line=$(gh api graphql -f query="$q" -F n="$pr" -q '.data.repository.pullRequest | .headRefOid as $head | [.state, .mergeStateStatus, (.mergeCommit.oid // "-"),
     (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (.mergeQueueEntry.state // "-"), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired)] | group_by(.name) | map(max_by(.at // (if .conclusion == null then "~" else "" end)) | (.conclusion // .state)) | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "STARTUP_FAILURE" or . == "CANCELLED" or . == "STALE" or . == "ACTION_REQUIRED") then "red" else "-" end),
     (.headRefOid // "-"),
-    # fresh: GitHub has computed mergeability for this head: not UNKNOWN (GitHub resets it on a push), and a test merge,
-    # when there is one, is of this head. A conflicting head has no test merge, so then only the reset tells.
-    (if .mergeable != "UNKNOWN" and (.potentialMergeCommit == null or ([.potentialMergeCommit.parents.nodes[].oid] | index($head))) then "fresh" else "stale" end),
+    # fresh: GitHub has computed a conflict for this head: mergeable CONFLICTING (it is reset to UNKNOWN on a push, and a
+    # DIRTY next to MERGEABLE is the stale field), and a test merge, when there is one, is of this head.
+    (if .mergeable == "CONFLICTING" and (.potentialMergeCommit == null or ([.potentialMergeCommit.parents.nodes[].oid] | index($head))) then "fresh" else "stale" end),
     # The newest of a queue removal (its reason) and an auto-merge disable. A disable by a person (a User actor, or the code
     # manually_disabled) is the orchestrator'"'"'s veto, "auto-merge off", as is one with nothing to tell it apart; a disable
     # by GitHub itself (another actor and another code) is named with its code. Only an open pull request can be GitHub'"'"'s.

@@ -67,7 +67,7 @@ test('landing observations retain authoritative publication, optional site evide
     // The queue line's exit cases (AGENTS.md step 4), each GraphQL answer through the script's own jq filter (the stub's last argument).
     const check = (name: string, conclusion: string | null, at: string | null, isRequired = true) => ({name, conclusion, at, isRequired});
     const pr = (o: Record<string, unknown>, checks: object[] = [], events: object[] = []) => JSON.stringify({data: {repository: {pullRequest: {
-      state: 'OPEN', mergeStateStatus: 'BLOCKED', mergeCommit: null, autoMergeRequest: {enabledAt: 'x'}, mergeQueueEntry: null, ...o,
+      state: 'OPEN', mergeStateStatus: 'BLOCKED', mergeable: 'CONFLICTING', mergeCommit: null, autoMergeRequest: {enabledAt: 'x'}, mergeQueueEntry: null, ...o,
       commits: {nodes: [{commit: {statusCheckRollup: {contexts: {nodes: checks}}}}]}, timelineItems: {nodes: events}}}}});
     const red = check('go', 'FAILURE', '2026-11-12T10:00:00Z');
     for (const [graphql, out] of [
@@ -85,6 +85,7 @@ test('landing observations retain authoritative publication, optional site evide
       [pr({autoMergeRequest: null}, [], [{__typename: 'AutoMergeDisabledEvent', reasonCode: 'merge_conflict', actor: {__typename: 'Bot'}}]), 'not merged: OPEN, auto-merge disabled by GitHub (merge_conflict)'],
       // A DIRTY computed for the current head on two polls is a conflict (the test merge, when present, is of this head).
       [pr({mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', headRefOid: 'h2'}), 'not merged: OPEN, merge_conflict'],
+      [pr({mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', headRefOid: 'h2', potentialMergeCommit: {parents: {nodes: [{oid: 'main'}, {oid: 'h2'}]}}}), 'not merged: OPEN, merge_conflict'],
       [pr({autoMergeRequest: null}, [], [{__typename: 'AutoMergeDisabledEvent', reasonCode: 'MANUALLY_DISABLED'}]), 'not merged: OPEN, auto-merge off'],
       [pr({autoMergeRequest: null}, [], [{__typename: 'AutoMergeDisabledEvent', reasonCode: 'merge_conflict', actor: {__typename: 'User'}}]), 'not merged: OPEN, auto-merge off'],
       [pr({state: 'CLOSED', autoMergeRequest: null}, [], [{__typename: 'AutoMergeDisabledEvent', reasonCode: 'pull_request_closed', actor: {__typename: 'Bot'}}]), 'not merged: CLOSED, auto-merge off'],
@@ -111,7 +112,7 @@ test('landing observations retain authoritative publication, optional site evide
     }
     // A DIRTY not computed for the current head is never a conflict, on any number of polls: mergeability still UNKNOWN, or a
     // test merge of a superseded head. Three such polls, then merged; and at the deadline the timeout names it.
-    for (const [i, stale] of [pr({mergeStateStatus: 'DIRTY', mergeable: 'UNKNOWN', headRefOid: 'h2'}),
+    for (const [i, stale] of [pr({mergeStateStatus: 'DIRTY', mergeable: 'UNKNOWN', headRefOid: 'h2'}), pr({mergeStateStatus: 'DIRTY', mergeable: 'MERGEABLE', headRefOid: 'h2'}),
       pr({mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', headRefOid: 'h2', potentialMergeCommit: {parents: {nodes: [{oid: 'main'}, {oid: 'h1'}]}}})].entries()) {
       const r = run({WATCH_FIXTURE_GRAPHQL_STEPS: [stale, stale, stale].join('\n'), WATCH_FIXTURE_COUNT: join(dir, 'count-stale-' + i), WATCH_FIXTURE_GRAPHQL: merged});
       assert.equal(r.status, 0, r.stdout); assert.doesNotMatch(r.stdout, /merge_conflict/);
