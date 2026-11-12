@@ -959,3 +959,8 @@ CREATE FUNCTION fleet_write_tokens(eid text) RETURNS void LANGUAGE sql AS $$
  FROM n WHERE execution_id=eid
 $$;
 SELECT fleet_write_tokens(execution_id) FROM execution_totals t JOIN execution e ON e.id=t.execution_id WHERE e.kind='agent_run';
+
+-- migration 41: migration 40's backfill ran under FORCE ROW LEVEL SECURITY without a project scope, so it saw no rows;
+-- run it again with every project in scope (this transaction only).
+SELECT set_config('fleet.project_ids', '*', true);
+SELECT fleet_write_tokens(execution_id) FROM execution_totals t JOIN execution e ON e.id=t.execution_id WHERE e.kind='agent_run';

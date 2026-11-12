@@ -3,6 +3,7 @@
 package main
 
 import (
+	"strings"
 	"time"
 
 	"fleet/contract"
@@ -49,13 +50,15 @@ func runnerUsages(r doc) []usage {
 	return out
 }
 
-// toolCallGroups: the tool calls of one caller (parent execution, else session, else host) as one row: calls and
+// toolCallGroups: the tool calls of one caller (parent execution, else task, else connection) as one row: calls and
 // failed calls, first start, last end, summed wall time, all usages priced together; failed when any call failed,
 // running while any runs.
 func toolCallGroups(calls []doc) []doc {
 	groups, order := map[string]doc{}, []string{}
 	for _, c := range calls {
-		key := astr(c["host_id"]) + "/" + firstString(c["parent_execution_id"], c["session_id"], "host") // per host: the screen lists runs by host
+		// Per host (the screen lists runs by host), then the caller: its parent run, else its task, else the connection
+		// (the coordinator's own reads, e.g. GitHub, carry a fresh session per call, so a session is no caller).
+		key := astr(c["host_id"]) + "/" + firstString(c["parent_execution_id"], c["task_id"], "conn:"+strings.SplitN(astr(c["subject"]), "/", 2)[0])
 		g := groups[key]
 		if g == nil {
 			g = doc{"id": "calls:" + key, "kind": "tool_run", "state": "succeeded", "host_id": c["host_id"], "session_id": c["session_id"], "task_id": c["task_id"], "title": c["title"],
