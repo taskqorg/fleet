@@ -90,7 +90,7 @@ func profilePrepare(v any, account string, skills any) (M, M, error) {
 			continue
 		}
 		binding := jObj(value)
-		capabilityEvidence[name] = M{"command": binding["command"], "dependencyPaths": binding["dependencies"], "selectedTools": binding["tools"], "transport": "stdio", "ownedDependencies": binding["ownedDependencies"], "bindingSha256": profileHash(binding), "nativeToolCalls": "unqualified until observed"}
+		capabilityEvidence[name] = M{"command": binding["command"], "dependencyPaths": binding["dependencies"], "selectedTools": binding["tools"], "transport": "stdio", "ownedDependencies": binding["ownedDependencies"], "bindingSha256": profileHash(binding), "nativeToolCalls": "unqualified until observed", "childHomePolicy": "fresh execution-owned MCP home; harness credential home unchanged"}
 	}
 
 	o := jObj(v)

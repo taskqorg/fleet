@@ -1697,6 +1697,16 @@ func stepProfile(q *Request, step, overrides doc) (string, doc, error) {
 }
 
 func startAgentStep(q *Request, run, step doc, stepExecutionID, prompt string, inputs []any, overrides doc) (string, error) {
+	if id := astr(run["experimentId"]); id != "" {
+		requester, err := labRequester(q, id)
+		if err != nil {
+			return "", err
+		}
+		if astr(mapOf(run["requestedBy"])["email"]) != requester.Email {
+			return "", failCode(409, "Lab run requester provenance differs", "requester:conflict")
+		}
+	}
+
 	_, profile, err := stepProfile(q, step, overrides)
 	if err != nil {
 		return "", err

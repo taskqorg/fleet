@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +40,16 @@ func TestMain(m *testing.M) {
 }
 func mcpFixture() {
 	tool := os.Args[2]
+	if tool == "home" {
+		h := os.Getenv("HOME")
+		st, err := os.Stat(h)
+		if err != nil {
+			os.Exit(4)
+		}
+		os.WriteFile(filepath.Join(h, "cache-proof"), []byte("owned"), 0600)
+		os.WriteFile(os.Args[3], []byte(enc(M{"home": h, "mode": int(st.Mode().Perm()), "ambientConfig": exists(filepath.Join(h, ".serena", "serena_config.yml")), "serenaHomeEnv": os.Getenv("SERENA_HOME") != ""})), 0600)
+	}
+
 	if strings.HasPrefix(tool, "diagnostic-") {
 		f, err := os.OpenFile(os.Args[3], os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 		if err != nil {
@@ -58,12 +70,12 @@ func mcpFixture() {
 	}
 
 	if tool == "version" {
-		os.WriteFile(os.Args[3], []byte("observed"), 0600)
+		os.WriteFile(os.Args[3], []byte(enc(M{"home": os.Getenv("HOME")})), 0600)
 		fmt.Fprintln(os.Stdout, "gopls-fixture v1")
 		return
 	}
 	if tool == "dependency" {
-		payload := M{"pid": os.Getpid(), "argv": os.Args[4:]}
+		payload := M{"pid": os.Getpid(), "argv": os.Args[4:], "home": os.Getenv("HOME")}
 		os.WriteFile(os.Args[3], []byte(enc(payload)), 0600)
 		io.Copy(io.Discard, os.Stdin)
 		time.Sleep(60 * time.Second)
@@ -537,7 +549,9 @@ func TestMCPLostRegistrationAck(t *testing.T) {
 
 // R3; risk: a stale group record signals an unrelated current incarnation, or disappears despite uncertainty.
 func TestMCPUnknownGroupRetainsFence(t *testing.T) {
-	o, _ := testMCPOwner(t)
+	o, e := testMCPOwner(t)
+	home, _ := os.MkdirTemp(o.dir, "mcp-home-")
+	os.WriteFile(filepath.Join(home, "cache-proof"), []byte("retain"), 0600)
 	cmd := newCmd("/bin/sleep", t.TempDir())
 	cmd.Args = append(cmd.Args, "60")
 	if err := cmd.Start(); err != nil {
@@ -545,8 +559,11 @@ func TestMCPUnknownGroupRetainsFence(t *testing.T) {
 	}
 	defer func() { cmd.Process.Kill(); cmd.Wait() }()
 	o.db.Exec("INSERT INTO mcp_groups(execution,pid,identity) VALUES(?,?,?)", o.execution, cmd.Process.Pid, "wrong-incarnation")
-	if err := cleanupMCPGroups(o.db, o.execution); err == nil {
+	if err := e.release(o.execution); err == nil {
 		t.Fatal("unknown group was discarded")
+	}
+	if !exists(filepath.Join(home, "cache-proof")) {
+		t.Fatal("unknown cleanup discarded MCP HOME")
 	}
 	var count int
 	o.db.QueryRow("SELECT count(*) FROM mcp_groups WHERE execution=?", o.execution).Scan(&count)
@@ -731,6 +748,10 @@ func TestMCPOwnedDependencyNewSession(t *testing.T) {
 			}
 			if receipt == nil {
 				t.Fatal("owned dependency did not start after successful version probe")
+			}
+			versionRaw, _ := os.ReadFile(version)
+			if jStr(decM(string(versionRaw)), "home") != jStr(receipt, "home") || filepath.Dir(jStr(receipt, "home")) != o.dir {
+				t.Fatal("owned dependency HOME differs", receipt)
 			}
 			if !exists(version) || enc(jAt(receipt, "argv")) != `["literal spaces","$(must-not-execute)"]` {
 				t.Fatal(receipt)
@@ -1044,6 +1065,7 @@ func TestMCPServerExitInterruptsBlockedOutput(t *testing.T) {
 	reader, output, _ := os.Pipe()
 	defer reader.Close()
 	defer output.Close()
+	defer writer.Close()
 	done := make(chan error, 1)
 	go func() {
 		done <- mcpStdio(o.socket, fixtureSpec("large-response", marker), input, output, t.TempDir(), "")
@@ -1182,6 +1204,7 @@ func TestMCPGuardianEarlyDiagnostic(t *testing.T) {
 	reader, output, _ := os.Pipe()
 	defer reader.Close()
 	defer output.Close()
+	defer writer.Close()
 	done := make(chan error, 1)
 	go func() {
 		done <- mcpStdio(o.socket, M{"command": "/absent-fleet-fixture-server", "args": []any{}, "tools": []any{"read"}}, input, output, t.TempDir(), "")
@@ -1235,5 +1258,92 @@ func TestMCPDiagnosticProjectionAndRetentionFailure(t *testing.T) {
 	json.Unmarshal(receipt, &actual)
 	if jStr(actual, "diagnostic", "phase") != "arguments" {
 		t.Fatal(string(receipt))
+	}
+}
+
+func mcpFixtureExchange(t *testing.T, o *mcpOwner, spec M, tool string) M {
+	t.Helper()
+	input, writer, _ := os.Pipe()
+	reader, output, _ := os.Pipe()
+	defer reader.Close()
+	defer output.Close()
+	defer writer.Close()
+	done := make(chan error, 1)
+	go func() { done <- mcpStdio(o.socket, spec, input, output, t.TempDir(), "") }()
+	encoder, decoder := json.NewEncoder(writer), json.NewDecoder(reader)
+	var answer M
+	for i, request := range []M{{"method": "initialize"}, {"method": "tools/list"}, {"method": "tools/call", "params": M{"name": tool, "arguments": M{}}}} {
+		request["id"] = i + 1
+		if err := encoder.Encode(request); err != nil {
+			t.Fatal(err)
+		}
+		if err := decoder.Decode(&answer); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writer.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	return answer
+}
+
+// R3; risk: selected MCPs read shared account guidance/cache or change the harness credential HOME.
+func TestMCPFreshChildHomes(t *testing.T) {
+	o, e := testMCPOwner(t)
+	ambient := t.TempDir()
+	os.MkdirAll(filepath.Join(ambient, ".serena"), 0700)
+	config := filepath.Join(ambient, ".serena/serena_config.yml")
+	os.WriteFile(config, []byte("SECRET_AMBIENT_GUIDANCE"), 0600)
+	t.Setenv("HOME", ambient)
+	t.Setenv("SERENA_HOME", ambient)
+	homes := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		marker := filepath.Join(t.TempDir(), "home.json")
+		mcpFixtureExchange(t, o, fixtureSpec("home", marker), "home")
+		raw, _ := os.ReadFile(marker)
+		actual := decM(string(raw))
+		h := jStr(actual, "home")
+		if filepath.Dir(h) != o.dir || homes[h] || jAt(actual, "mode") != json.Number("448") || jAt(actual, "ambientConfig") != false || jAt(actual, "serenaHomeEnv") != false || !exists(filepath.Join(h, "cache-proof")) {
+			t.Fatal(actual)
+		}
+		homes[h] = true
+	}
+	raw, _ := os.ReadFile(config)
+	if os.Getenv("HOME") != ambient || string(raw) != "SECRET_AMBIENT_GUIDANCE" {
+		t.Fatal("harness/shared home changed")
+	}
+	if err := e.release(o.execution); err != nil {
+		t.Fatal(err)
+	}
+	for h := range homes {
+		if exists(h) {
+			t.Fatal("resolved cleanup retained child home", h)
+		}
+	}
+}
+
+// R3; risk: child HOME isolation breaks internal design-rules or gateway authority supplied explicitly in args/run-file.
+func TestMCPFreshHomePreservesInternalAdapters(t *testing.T) {
+	o, _ := testMCPOwner(t)
+	rules := M{"heading": "explicit-rules"}
+	result := mcpFixtureExchange(t, o, M{"command": exe(), "args": []any{"mcp", "design-rules", enc(rules)}, "tools": []any{"get_design_rules"}}, "get_design_rules")
+	if !strings.Contains(enc(result), "explicit-rules") {
+		t.Fatal(result)
+	}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer fixture-run-token" {
+			w.WriteHeader(403)
+			return
+		}
+		w.Write([]byte(`{"answer":"explicit-gateway"}`))
+	}))
+	defer gateway.Close()
+	file := filepath.Join(t.TempDir(), "run.env")
+	os.WriteFile(file, []byte("FLEET_RUN_TOKEN=fixture-run-token\nFLEET_GATEWAY_URL="+gateway.URL+"\n"), 0600)
+	spec := M{"tools": []any{M{"name": "read", "inputSchema": M{"type": "object"}}}}
+	result = mcpFixtureExchange(t, o, M{"command": exe(), "args": []any{"mcp", "connection", "web", enc(spec), file}, "tools": []any{"read"}}, "read")
+	if jAt(result, "result", "isError") != false || !strings.Contains(enc(result), "explicit-gateway") {
+		t.Fatal(result)
 	}
 }

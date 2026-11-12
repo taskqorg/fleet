@@ -113,7 +113,7 @@ Prepare the selected agent definition and skill content from canonical files on 
 
 Fleet owns the execution configuration. Personal harness configuration, instructions, memory, skills, MCP servers and hooks never enter implicitly. Record selected sources and effective settings, separating supplied settings from observed application (`preparation` event: requested and effective). Built-in harness behaviour is version-specific and is not shown as Fleet-authored.
 
-An installed harness executable may be reused. Account access is supplied separately from personal behavioural configuration; credentials never appear in profiles or history. Configuration independence is not an OS filesystem boundary.
+An installed harness executable may be reused. Account access is supplied separately from personal behavioural configuration; credentials never appear in profiles or history. Configuration independence is not an OS filesystem boundary. Selected local stdio MCP servers use a fresh execution-owned mode-0700 HOME, inherited by owned dependencies, rather than the harness credential HOME. No existing guidance or cache is copied; unknown cleanup retains the execution state. See [runtime readiness](runtime-integration.md#named-mcp-readiness).
 
 Later launches use current definitions unless a version or draft is selected; edits are not injected into a running session. Supplying an instruction does not prove it was followed: assess adherence from run history, tool calls, results and checks.
 
