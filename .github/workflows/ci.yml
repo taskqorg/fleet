@@ -311,11 +311,15 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+    # Two shards of about 30 s of checks each (the 20000-task filter fixture alone is about 30 s); the browser wrapper
+    # sees the matrix as one result. Shard 0 alone uploads the UI tree a UI-only release signs.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
     steps:
-      # Full history: the docs report diffs against the merge base or HEAD^.
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -325,13 +329,22 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          cache: false
+      # The coordinator's build cache, as go-tests: rebuilt only when Go sources change.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-browser-${{ hashFiles('go/**') }}
+          restore-keys: go-browser-
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run build
+      # Only what the checks serve: the UI bundle and the coordinator (typecheck runs in app-tests).
+      - run: node contracts/gen-ts.mjs && node app/build.mjs && cd go && CGO_ENABLED=0 go build -trimpath -o bin/fleet-coordinator ./coordinator
       # The UI tree these browser checks serve: a UI-only release signs and publishes it (release.yml publish). Only
       # merge queue and push runs can qualify a release.
       - uses: actions/upload-artifact@v4
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && matrix.shard == 0
         with:
           name: fleet-ui
           path: dist/app/
@@ -377,9 +390,14 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - if: steps.chromium.outputs.cache-hit == 'true'
         run: pnpm exec playwright install-deps chromium
-      - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/filter.check.ts --assert
-      - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/conversations.check.ts
-      - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/lab-create.check.ts
+      - if: matrix.shard == 0
+        run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/filter.check.ts --assert --sizes 20000
+      - if: matrix.shard == 1
+        run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/filter.check.ts --assert --sizes 3000
+      - if: matrix.shard == 1
+        run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/conversations.check.ts
+      - if: matrix.shard == 1
+        run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/lab-create.check.ts
   # Diagnostics only: pull requests (comment) and main pushes (docs-order); never a merge queue run's runner slot.
   reports:
     if: github.event_name != 'merge_group'
