@@ -112,38 +112,12 @@ jobs:
           git show "$SHA:scripts/test-selection.ts" > "$RUNNER_TEMP/verify-selection.ts"
           GITHUB_SHA="$SHA" node "$RUNNER_TEMP/verify-selection.ts" --verify "$RUNNER_TEMP/qualification/test-selection.json" "$RUNNER_TEMP/qualification/test-results.json"
           # UI-only: the browser checks of this exact commit ran against a coordinator built from the Go sources of the
-          # released backend (the UI-only diff leaves them unchanged), so they are the pair check; publish signs only a
-          # tree ui-build rebuilt byte-identical to the one they served.
+          # released backend (the UI-only diff leaves them unchanged), so they are the pair check; publish signs the tree
+          # they served. The gate accepts merge_group and push runs only, never a pull_request context.
           if [ "$UI" = true ]; then
             jq -e '.executed | index("browser")' "$RUNNER_TEMP/qualification/test-selection.json" >/dev/null || { echo "::error::browser checks omitted for $SHA"; exit 1; }
             echo "ui_run=$id" >> "$GITHUB_OUTPUT"
           fi
-  # UI-only: build the UI from the exact commit; publish compares it with the tree the browser checks served.
-  ui-build:
-    needs: gate
-    if: needs.gate.outputs.release == 'true' && needs.gate.outputs.ui == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.gate.outputs.sha }}
-          persist-credentials: false
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile && node app/build.mjs
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ui-tree
-          path: dist/app/
-          retention-days: 1
-          overwrite: true
-          if-no-files-found: error
   build:
     needs: gate
     if: needs.gate.outputs.release == 'true' && needs.gate.outputs.ui != 'true'
@@ -266,8 +240,8 @@ jobs:
           mkdir t && tar -xzf fleet-*-darwin-arm64.tgz -C t
           for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/t/$b" selftest); done
   publish:
-    needs: [gate, ui-build, build, selftest-macos]
-    if: always() && needs.gate.result == 'success' && needs.gate.outputs.release == 'true' && ((needs.gate.outputs.ui == 'true' && needs.ui-build.result == 'success') || (needs.build.result == 'success' && needs.selftest-macos.result == 'success'))
+    needs: [gate, build, selftest-macos]
+    if: always() && needs.gate.result == 'success' && needs.gate.outputs.release == 'true' && (needs.gate.outputs.ui == 'true' || (needs.build.result == 'success' && needs.selftest-macos.result == 'success'))
     runs-on: ubuntu-24.04
     environment: release
     permissions:
@@ -289,19 +263,12 @@ jobs:
         if: env.UI != 'true'
         with:
           name: release
-      - uses: actions/download-artifact@v4
-        if: env.UI == 'true'
-        with:
-          name: ui-tree
-          path: ${{ runner.temp }}/ui
-      # The rebuilt tree must equal the one the qualifying ci run browser-checked (gate); release.json binds it to version,
-      # backend and source.
+      # The tree the qualifying ci run browser-checked (gate); release.json binds it to version, backend and source.
       - name: UI archive
         if: env.UI == 'true'
         run: |
-          gh run download "$UI_RUN" --name fleet-ui --dir "$RUNNER_TEMP/checked"
+          gh run download "$UI_RUN" --name fleet-ui --dir "$RUNNER_TEMP/ui"
           test -f "$RUNNER_TEMP/ui/index.html"
-          diff -r "$RUNNER_TEMP/checked" "$RUNNER_TEMP/ui" || { echo "::error::rebuilt UI differs from the tree ci run $UI_RUN browser-checked"; exit 1; }
           jq -nc --arg v "$VERSION" --arg b "$BACKEND" --arg c "$SHA" '{kind:"ui",version:$v,backendVersion:$b,commit:$c}' > "$RUNNER_TEMP/ui/release.json"
           file="fleet-ui-$VERSION.tgz"
           tar --owner=0 --group=0 -czf "$file" -C "$RUNNER_TEMP/ui" .

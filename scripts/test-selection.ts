@@ -113,6 +113,8 @@ function previousGreen(event: string, payload: Event, candidate: string): boolea
     // A green branch must not authorize omissions on an unqualified newer main base. A main commit is qualified by its
     // merge queue run (main fast-forwards to the group commit), which ends minutes before its push run.
     const base = comparison(event, payload, candidate);
+    // A group based on an earlier queued group is not on main yet: only its push run, if any, counts.
+    execFileSync('git', ['merge-base', '--is-ancestor', base, 'origin/main']);
     return ['merge_group', 'push'].some(e => previousResult(list(['--commit', base, '--event', e, '--limit', '1']),
       Number(process.env.GITHUB_RUN_ID)) === true);
   } catch { return false; }
