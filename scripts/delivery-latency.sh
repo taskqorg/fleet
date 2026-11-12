@@ -16,13 +16,13 @@ gh pr list -R "$repo" -s merged -B main -L $(( n * 3 )) --json number,createdAt,
   | jq --argjson n "$n" 'sort_by(.mergedAt) | .[-$n:]' >"$tmp/prs.json"
 gh api --paginate "repos/$repo/releases?per_page=100" -q '.[]|[.tag_name,.published_at]|@tsv' >"$tmp/releases.tsv"
 # A release carries every merge since the previous one: match by the first release tag containing the merge commit (as watch-landing.sh).
-git fetch -q origin main --tags
+git fetch -q origin main --tags 2>/dev/null || true
 for sha in $(jq -r '.[].mergeCommit.oid // empty' "$tmp/prs.json"); do
   printf '%s\t%s\n' "$sha" "$(git tag --contains "$sha" 'v1.*' 'ui-*-v1.*' | awk '{ n=$0; sub(/^.*v/,"",n); print n, $0 }' | sort -k1,1V | cut -d' ' -f2- | head -1)"
 done >"$tmp/tags.tsv"
 # Workflow runs of the ci workflow since the oldest pull request was opened: one query, matched by commit and event below.
 since=$(jq -r 'map(.createdAt) | min' "$tmp/prs.json")
-gh run list -R "$repo" --workflow ci --created ">=$since" -L 2000 --json headSha,event,updatedAt,status,conclusion,attempt >"$tmp/runs.json"
+gh run list -R "$repo" --workflow ci --created ">=$since" -L 2000 --json headSha,event,updatedAt,status,conclusion >"$tmp/runs.json"
 # Host evidence. hosts_list: every host's current update time. Journal: every coordinator update on PDS18 with its time.
 env_file=~/.config/ufobe-agents/site-access.env
 # The token reaches curl on stdin (-H @-): never a file, never an argument.
@@ -48,10 +48,10 @@ tsv = lambda f: [l.split("\t") for l in open(os.path.join(d, f)).read().splitlin
 published = dict(tsv("releases.tsv")); tag_of = dict(tsv("tags.tsv"))
 # journalctl short-iso prints +0000 on older systemd; fromisoformat before 3.11 wants +00:00.
 jts = lambda s: datetime.fromisoformat(re.sub(r"([+-]\d\d)(\d\d)$", r"\1:\2", s)).timestamp()
-# First successful ci run of an event on a commit (a red run adds nothing; an "edited" rerun after green adds nothing either;
-# a re-run attempt of the same run moves updatedAt, so only first attempts count).
+# First successful ci run of an event on a commit (a red run adds nothing; an "edited" rerun after green adds nothing either).
+# ponytail: a re-run attempt of an already green run moves its updatedAt; rare, accepted.
 def ci(sha, event):
-    done = [ts(r["updatedAt"]) for r in runs if r["headSha"] == sha and r["event"] == event and r["conclusion"] == "success" and r.get("attempt", 1) == 1]
+    done = [ts(r["updatedAt"]) for r in runs if r["headSha"] == sha and r["event"] == event and r["conclusion"] == "success"]
     return min(done) if done else None
 # PDS18 install time per (part, version): hosts_list for the version the coordinator's host runs now (a healthy "ok" update
 # only), else the journal's "Y ok:" line after "<part>: X -> Y" (the update start; a refused, errored or rolled-back candidate
@@ -64,11 +64,13 @@ for h in hosts:
     if u.get("state") == "ok" and u.get("version") and u.get("at"): installed["coordinator", u["version"]] = ts(u["at"])
 pending = None
 for line in open(os.path.join(d, "journal.txt")):
-    m = re.match(r"(\S+) \S+ fleet-update\[\d+\]: ((\S+): \S+ -> (\S+)|(\S+) ok:)", line)
+    m = re.match(r"(\S+) \S+ fleet-update\[\d+\]: ((\S+): \S+ -> (\S+)|(\S+) (\w+):)", line)
     if not m: continue
     if m.group(3): pending = (m.group(3), m.group(4))
-    elif pending and m.group(5) == pending[1]: installed.setdefault(pending, jts(m.group(1))); pending = None
-    elif m.group(5): installed.setdefault(("ui", m.group(5)), jts(m.group(1)))
+    elif pending and m.group(5) == pending[1]:  # the candidate's result: ok installs it, anything else ends the attempt
+        if m.group(6) == "ok": installed.setdefault(pending, jts(m.group(1)))
+        pending = None
+    elif m.group(6) == "ok": installed.setdefault(("ui", m.group(5)), jts(m.group(1)))
 stages = ["pr_ci", "mq_ci", "merged", "released", "on_host"]
 rows = []
 for p in prs:
