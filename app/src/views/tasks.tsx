@@ -100,6 +100,12 @@ function groupLabel(group: string, label: string | null) {
 const EXEC_STATE: Record<string, StateOf<'execution'>> = { completed: 'succeeded', stopped: 'cancelled', unknown: 'running', started: 'running', accepted: 'preparing', pending: 'preparing' };
 const execState = (s: string): StateOf<'execution'> => (EXEC_STATE[s] ?? (['preparing', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'].includes(s) ? s : 'running')) as StateOf<'execution'>;
 
+/** Dependencies by code (OR-38); ones the viewer cannot see are only counted. */
+function dependsOn(ds: { code?: string | null }[]) {
+  const codes = ds.flatMap(d => d.code ? [d.code] : []), hidden = ds.length - codes.length;
+  return `Depends on ${[...codes, ...(hidden ? [`${hidden} other task${hidden > 1 ? 's' : ''}`] : [])].join(', ')}`;
+}
+
 function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const [, go] = useLocation();
   const { data: t, error, state } = useDoc<any>(`task:${id}`, () => op('task_get', { taskId: id }), c => c.taskId === id || c.id === id);
@@ -141,7 +147,7 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
     {failure && <ErrorBanner text={failure} />}
     <h2 class="detail-title">{t.title}<EntityCode code={t.code} id={t.id} /></h2>
     <div class="state-line"><StateBadge family="task" state={t.pauseReason === 'held' ? 'held' : t.state} reason={t.waitReason ?? undefined} />{t.createdBy && <span class="muted mono">by {t.createdBy}</span>}{ms(t.createdAt) && <AgeChip t={ms(t.createdAt)!} now={now} />}</div>
-    {t.expectedOutcome && <OutcomeBlock outcome={t.expectedOutcome} requirements={req} inputs={[]} depends={t.dependencies?.length ? `Depends on ${t.dependencies.map((d: any) => d.code ?? 'a task without a code').join(', ')}` : undefined} />}
+    {t.expectedOutcome && <OutcomeBlock outcome={t.expectedOutcome} requirements={req} inputs={[]} depends={t.dependencies?.length ? dependsOn(t.dependencies) : undefined} />}
     {totals.length > 0 && <Totals items={totals} />}
     {t.latestResult?.id && <p class="state-line"><Icon name="file-text" /><a class="row-link" href={`/results/${encodeURIComponent(t.latestResult.id)}`} onClick={ev => { ev.preventDefault(); go(`/results/${encodeURIComponent(t.latestResult.id)}`); }}>{t.latestResult.path ?? 'Result'}</a></p>}
     {decided.map((q: any) => <p key={q.id} class="state-line"><Icon name={q.answer === 'accepted' ? 'circle-check' : q.answer === 'rejected' ? 'circle-x' : 'message-circle-question'} />

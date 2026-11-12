@@ -4,6 +4,7 @@ package main
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 
 	"fleet/contract"
@@ -14,18 +15,18 @@ var codePattern = regexp.MustCompile(`(?i)\b(?:([TQE])-([A-Z][A-Z0-9]{1,4})-([1-
 
 var projectCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9]{1,4}$`)
 
-// resolveCode: the entity a code names in the caller's scope (row-level security on entity_code and the entity's
-// table); nil when unknown or forbidden, which callers report alike.
-func resolveCode(q *Request, code string) (*contract.EntityCode, error) {
-	code = strings.ToUpper(code)
-	r, err := first(q, `SELECT e.code,e.entity_id,e.type,coalesce(t.code,x.code) AS current FROM entity_code e
+// resolveCodes: the entities the codes name in the caller's scope (row-level security on entity_code and the entity's
+// table), by code; an unknown or forbidden code is absent, and callers report both alike.
+func resolveCodes(q *Request, codes []string) (map[string]contract.EntityCode, error) {
+	rs, err := rowsOf(q, `SELECT e.code,e.entity_id,e.type,coalesce(t.code,x.code) AS current FROM entity_code e
 	 LEFT JOIN task t ON e.type='T' AND t.id=e.entity_id LEFT JOIN question x ON e.type='Q' AND x.id=e.entity_id
-	 WHERE e.code=$1 AND coalesce(t.code,x.code) IS NOT NULL`, code)
-	if err != nil || r == nil {
-		return nil, err
+	 WHERE e.code=ANY($1) AND coalesce(t.code,x.code) IS NOT NULL`, codes)
+	out := map[string]contract.EntityCode{}
+	for _, r := range rs {
+		c, cur := astr(r["code"]), astr(r["current"])
+		out[c] = contract.EntityCode{Code: c, Id: astr(r["entity_id"]), Type: astr(r["type"]), CurrentCode: cur, Superseded: cur != c}
 	}
-	cur := astr(r["current"])
-	return &contract.EntityCode{Code: code, Id: astr(r["entity_id"]), Type: astr(r["type"]), CurrentCode: cur, Superseded: cur != code}, nil
+	return out, err
 }
 
 func init() {
@@ -33,32 +34,28 @@ func init() {
 		if !codePattern.MatchString(r.Code) || len(codePattern.FindString(r.Code)) != len(strings.TrimSpace(r.Code)) {
 			return contract.EntityCode{}, fail(400, "Expected a code such as T-FLT-42")
 		}
-		c, err := resolveCode(q, strings.TrimSpace(r.Code))
-		if err == nil && c == nil {
-			err = errNotFound
+		code := strings.ToUpper(strings.TrimSpace(r.Code))
+		found, err := resolveCodes(q, []string{code})
+		if c, ok := found[code]; ok || err != nil {
+			return c, err
 		}
-		if err != nil {
-			return contract.EntityCode{}, err
-		}
-		return *c, nil
+		return contract.EntityCode{}, errNotFound
 	}))
 	gatedObjOp("entity_resolve_many", true, typedOp(func(q *Request, r *contract.EntityResolveManyRequest) (contract.EntityResolveManyReply, error) {
-		out, seen := []contract.EntityCode{}, map[string]bool{}
-		for _, m := range codePattern.FindAllString(r.Text, 200) { // ponytail: first 200 codes of a text; raise if a real text holds more
-			m = strings.ToUpper(m)
-			if seen[m] {
-				continue
-			}
-			seen[m] = true
-			c, err := resolveCode(q, m)
-			if err != nil {
-				return contract.EntityResolveManyReply{}, err
-			}
-			if c != nil {
-				out = append(out, *c)
+		codes := []string{}
+		for _, m := range codePattern.FindAllString(r.Text, 1000) { // ponytail: first 1000 codes of a text; raise if a real text holds more
+			if m = strings.ToUpper(m); !slices.Contains(codes, m) {
+				codes = append(codes, m)
 			}
 		}
-		return contract.EntityResolveManyReply{Codes: out}, nil
+		found, err := resolveCodes(q, codes)
+		out := []contract.EntityCode{}
+		for _, c := range codes {
+			if x, ok := found[c]; ok {
+				out = append(out, x)
+			}
+		}
+		return contract.EntityResolveManyReply{Codes: out}, err
 	}))
 	gatedObjOp("project_code_set", false, typedOp(func(q *Request, r *contract.ProjectCodeSetRequest) (contract.ProjectCodeSetReply, error) {
 		if q.person == nil || (!fullAccess(q.person) && !hasRole(q.person, "operator")) { // projectWrite's gate

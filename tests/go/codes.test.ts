@@ -34,6 +34,7 @@ test('K1 tasks and questions carry T-/Q- codes per project; codes resolve, a ren
     assert.deepEqual(await op('entity_resolve', {code: a.code.toLowerCase()}), {code: a.code, id: a.id, type: 'T', currentCode: a.code, superseded: false});
     assert.equal((await raw('entity_resolve', {code: `T-${scope}-99`})).status, 404);
     assert.equal((await raw('entity_resolve', {code: a.id})).status, 400);
+    assert.throws(() => c.sql(`UPDATE task SET code='T-ZZZ-9' WHERE id='${a.id}'`), /never written/, 'a written code is refused');
 
     assert.equal((await raw('project_code_set', {projectId: 'hello-world', code: 'ABC'})).status, 400, 'B is not allowed');
     assert.equal((await raw('project_code_set', {projectId: 'hello-world', code: other.code.split('-')[1]})).status, 409, 'another project holds it');
@@ -47,7 +48,9 @@ test('K1 tasks and questions carry T-/Q- codes per project; codes resolve, a ren
     const many = await op('entity_resolve_many', {text: `see ${a.code}, ${renamed.code} and ${other.code}; not T-QQQ-7 or #12`});
     assert.deepEqual(many.codes.map((x: any) => x.id), [a.id, a.id, other.id]);
 
+    assert.deepEqual(c.sql(`SELECT fleet_project_code('fleet'), fleet_project_code('a1b2c3'), fleet_project_code('added'), fleet_project_code('fleet')`).trim().split('|'), ['FLT', 'P2', 'P3', 'FLT'], 'derived codes, hex-like ids included');
+
     const outsider = await raw('entity_resolve', {code: other.code}, 'outsider@trial.test');
-    assert.notEqual(outsider.status, 200, JSON.stringify(outsider.body));
+    assert.equal(outsider.status, 404, JSON.stringify(outsider.body));
   } finally { await c.stop(); }
 });

@@ -831,6 +831,10 @@ BEGIN
  IF p_project IS NULL OR p_project = '' THEN RETURN 'ALL'; END IF;
  SELECT code INTO c FROM project_code WHERE project_id=p_project AND current;
  IF c IS NOT NULL THEN RETURN c; END IF;
+ -- ponytail: one lock for every derivation (rare: a project's first coded row), per-project locks if that ever contends
+ PERFORM pg_advisory_xact_lock(hashtext('fleet_project_code'));
+ SELECT code INTO c FROM project_code WHERE project_id=p_project AND current;
+ IF c IS NOT NULL THEN RETURN c; END IF;
  base := regexp_replace(upper(p_project), '[^A-Z0-9]', '', 'g');
  base := regexp_replace(coalesce(substr(regexp_replace(base, '^[^A-Z]+', ''), 1, 1), ''), '[IOSZB]', 'X') || regexp_replace(substr(regexp_replace(base, '^[^A-Z]+', ''), 2), '[AEIOUSZB]', '', 'g');
  IF length(base) < 1 THEN base := 'P'; END IF;
@@ -841,9 +845,15 @@ BEGIN
    INSERT INTO project_code(code, project_id) VALUES(cand, p_project); RETURN cand;
   END IF;
  END LOOP;
- FOR n IN 2..99999 LOOP
+ FOR n IN 2..9999 LOOP
   cand := substr(base, 1, 5 - length(n::text)) || n;
   IF cand !~ '^[A-F0-9]+$' AND NOT EXISTS(SELECT 1 FROM project_code WHERE code=cand) THEN
+   INSERT INTO project_code(code, project_id) VALUES(cand, p_project); RETURN cand;
+  END IF;
+ END LOOP;
+ FOR n IN 2..9999 LOOP -- a hex-like id (a1b2c3, added): P is not a hex digit
+  cand := 'P' || n;
+  IF NOT EXISTS(SELECT 1 FROM project_code WHERE code=cand) THEN
    INSERT INTO project_code(code, project_id) VALUES(cand, p_project); RETURN cand;
   END IF;
  END LOOP;
@@ -865,7 +875,9 @@ CREATE FUNCTION fleet_entity_code() RETURNS trigger LANGUAGE plpgsql SECURITY DE
 DECLARE t text := CASE TG_TABLE_NAME WHEN 'task' THEN 'T' ELSE 'Q' END; prev text;
 BEGIN
  IF TG_OP = 'INSERT' THEN
-  IF NEW.code IS NULL THEN NEW.code := fleet_issue_code(t, NEW.project_id, NEW.id); END IF;
+  NEW.code := fleet_issue_code(t, NEW.project_id, NEW.id);
+ ELSIF NEW.code IS NOT NULL AND NEW.code IS DISTINCT FROM OLD.code THEN
+  RAISE EXCEPTION 'codes are issued, never written (set code to NULL to reissue)';
  ELSIF NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.code IS NULL THEN
   NEW.code := fleet_issue_code(t, NEW.project_id, NEW.id);
   prev := current_setting('fleet.project_ids', true);
@@ -879,24 +891,27 @@ END $$;
 -- fleet_project_code_set: a new current code for a project; every task and question of the project gets a new code and
 -- its old codes resolve to it.
 CREATE FUNCTION fleet_project_code_set(p_project text, p_code text) RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
-DECLARE r record;
+DECLARE r record; prev text := current_setting('fleet.project_ids', true);
 BEGIN
  IF EXISTS(SELECT 1 FROM project_code WHERE code=p_code AND project_id=p_project AND current) THEN RETURN p_code; END IF;
  IF EXISTS(SELECT 1 FROM project_code WHERE code=p_code) THEN RAISE EXCEPTION 'project code % was used', p_code USING ERRCODE='23505'; END IF;
  UPDATE project_code SET current=false WHERE project_id=p_project AND current;
  INSERT INTO project_code(code, project_id) VALUES(p_code, p_project);
+ PERFORM set_config('fleet.project_ids', '*', true); -- every row of the project, whatever the caller's scope (the op checked the project)
  FOR r IN SELECT id FROM task WHERE project_id=p_project ORDER BY created_at, id LOOP UPDATE task SET code=NULL WHERE id=r.id; END LOOP;
  FOR r IN SELECT id FROM question WHERE project_id=p_project ORDER BY asked_at, id LOOP UPDATE question SET code=NULL WHERE id=r.id; END LOOP;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
  RETURN p_code;
 END $$;
 
 CREATE TRIGGER task_code BEFORE INSERT OR UPDATE OF project_id, code ON task FOR EACH ROW EXECUTE FUNCTION fleet_entity_code();
 CREATE TRIGGER question_code BEFORE INSERT OR UPDATE OF project_id, code ON question FOR EACH ROW EXECUTE FUNCTION fleet_entity_code();
+-- Fleet's own project keeps the code the D17 examples use.
+INSERT INTO project_code(code, project_id) VALUES('FLT', 'fleet');
 -- Backfill in created_at order, filling only empty values. Generated delivery titles carried a session UUID; it goes.
 DO $$ DECLARE r record; BEGIN
  PERFORM set_config('fleet.project_ids', '*', true);
  FOR r IN SELECT id FROM task WHERE code IS NULL ORDER BY created_at, seq LOOP UPDATE task SET code=NULL WHERE id=r.id; END LOOP;
  FOR r IN SELECT id FROM question WHERE code IS NULL ORDER BY asked_at, seq LOOP UPDATE question SET code=NULL WHERE id=r.id; END LOOP;
 END $$;
-UPDATE task SET title=btrim(regexp_replace(title, '\s*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', '', 'gi'))
- WHERE title ~* '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' AND btrim(regexp_replace(title, '\s*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', '', 'gi')) <> '';
+UPDATE task SET title='Deliver session' WHERE title ~* '^Deliver session [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
