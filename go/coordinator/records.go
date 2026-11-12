@@ -231,9 +231,12 @@ func putExecution(q *Request, e doc) error {
 	return err
 }
 
+// wallKnown: a run's wall time is measured when it has both ends, unless it was abandoned (it ended when given up).
+const wallKnown = `started_at IS NOT NULL AND ended_at IS NOT NULL AND problem IS DISTINCT FROM 'unknown:abandoned'`
+
 func writeTotals(q *Request, id string) error {
 	if err := exec(q, `INSERT INTO execution_totals(execution_id,project_id,wall_ms,wall_ms_basis,computed_at)
-	 SELECT id,project_id,CASE WHEN started_at IS NOT NULL AND ended_at IS NOT NULL THEN (extract(epoch FROM ended_at-started_at)*1000)::bigint END,CASE WHEN started_at IS NOT NULL AND ended_at IS NOT NULL THEN 'measured' ELSE 'unavailable' END,now() FROM execution WHERE id=$1
+	 SELECT id,project_id,CASE WHEN `+wallKnown+` THEN (extract(epoch FROM ended_at-started_at)*1000)::bigint END,CASE WHEN `+wallKnown+` THEN 'measured' ELSE 'unavailable' END,now() FROM execution WHERE id=$1
 	 ON CONFLICT(execution_id) DO UPDATE SET project_id=excluded.project_id,wall_ms=excluded.wall_ms,wall_ms_basis=excluded.wall_ms_basis,computed_at=excluded.computed_at`, id); err != nil {
 		return err
 	}

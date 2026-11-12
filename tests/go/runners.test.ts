@@ -61,6 +61,7 @@ test('R3 the lost sweep ends a host job its host stopped reporting while the hos
     const state = (id: string) => c.sql(`SELECT state||' '||coalesce(problem,'') FROM execution WHERE id='${id}'`).trim();
     for (let i = 0; i < 50 && state('j-lost') !== 'failed unknown:abandoned'; i++) { await poll(); await new Promise(r => setTimeout(r, 200)); }
     assert.equal(state('j-lost'), 'failed unknown:abandoned', c.sql(`SELECT state,observation,data::text FROM execution WHERE id='j-lost'`));
+    assert.equal(c.sql(`SELECT wall_ms_basis FROM execution_totals WHERE execution_id='j-lost'`).trim(), 'unavailable', 'abandoned: its time is unknown, not start-to-abandon');
     assert.match(state('j-silent'), /^running/, 'a host that stopped polling may still finish its job');
   } finally { await c.stop(); }
 });

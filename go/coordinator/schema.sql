@@ -1074,3 +1074,7 @@ DO $$ DECLARE r record; BEGIN
  FOR r IN SELECT id FROM document WHERE kind='session' AND code IS NULL ORDER BY seq LOOP UPDATE document SET code=NULL WHERE id=r.id; END LOOP;
 END $$;
 ALTER TABLE document ENABLE TRIGGER document_change;
+
+-- migration 43: an abandoned run's wall time is unknown (it ended when given up, often days after it stopped).
+SELECT set_config('fleet.project_ids', '*', true);
+UPDATE execution_totals t SET wall_ms=NULL, wall_ms_basis='unavailable' FROM execution e WHERE e.id=t.execution_id AND e.problem='unknown:abandoned';
