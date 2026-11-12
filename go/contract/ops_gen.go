@@ -288,7 +288,7 @@ func (v *ExperimentNote) Validate() error {
 	return nil
 }
 
-// ListFilter: The list filter of packages/view-url toPageParams; a null projectId is work outside projects.
+// ListFilter: The list filter of packages/view-url toPageParams; a null projectId is work outside projects; an empty projectId list is refused; archived applies to sessions only. A field a list does not implement is a 400.
 type ListFilter struct {
 	Archived  *bool    `json:"archived,omitempty"`
 	ProjectId []string `json:"projectId,omitempty"`

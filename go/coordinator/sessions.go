@@ -32,9 +32,16 @@ const sessionBase = `WITH session_messages AS MATERIALIZED (
  WHERE d.kind='session')`
 
 func sessionWhere(f doc, p *[]any, withState bool) ([]string, error) {
+	if err := filterFields(f, "projectId", "state", "search", "archived"); err != nil {
+		return nil, err
+	}
 	c := []string{"NOT (x.data ? 'archivedAt')"}
 	if f["archived"] == true {
 		c[0] = "x.data ? 'archivedAt'"
+	}
+	c, err := projectWhere(f, p, "x.project_id", c)
+	if err != nil {
+		return nil, err
 	}
 	if st, ok := f["state"].([]any); withState && ok && len(st) > 0 {
 		ss := []string{}
@@ -94,7 +101,10 @@ func sessionsPage(q *Request, b doc) (doc, error) {
 		return nil, err
 	}
 	cp := []any{}
-	cc, _ := sessionWhere(f, &cp, false)
+	cc, err := sessionWhere(f, &cp, false)
+	if err != nil {
+		return nil, err
+	}
 	counts := zeroCounts(sessionStates)
 	cr, err := rowsOf(q, sessionBase+" SELECT x.state,count(*) AS n FROM x WHERE "+strings.Join(cc, " AND ")+" GROUP BY 1", cp...)
 	if err != nil {
@@ -256,6 +266,9 @@ func sessionArchive(q *Request, sid string) (doc, error) {
 	if err := put(q, "session", s); err != nil {
 		return nil, err
 	}
+	if err := put(q, "setting-change", doc{"id": newID(), "target": "session:" + sid, "field": "archivedAt", "previous": nil, "value": s["archivedAt"], "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
+		return nil, err
+	}
 	if last == nil {
 		return doc{"sessionId": sid, "archivedAt": s["archivedAt"], "teardown": nil}, nil
 	}
@@ -411,6 +424,7 @@ func init() {
 		}
 		return sessionArchive(q, sid)
 	}))
+	gatedObjOp("session_unarchive", false, shaped[contract.SessionUnarchiveRequest, contract.SessionUnarchiveReply](sessionUnarchive))
 	gatedObjOp("sessions_list", true, func(q *Request) (any, error) { return sessionsPage(q, body(q)) })
 	gatedObjOp("list_membership", true, func(q *Request) (any, error) {
 		b := body(q)
@@ -470,4 +484,48 @@ func init() {
 	})
 	// /api/tools: the operation table as MCP tools, each call in its own transaction.
 	gatedLongRoute("POST /api/tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet", operations, agentDescriptions) })
+}
+
+// sessionUnarchive: undo session_archive (owner or full access). The teardown already sent is not undone: a removed
+// worktree is prepared again at the next start.
+func sessionUnarchive(q *Request) (any, error) {
+	if err := ownerOnly(q, "Only the owner restores archived sessions"); err != nil {
+		return nil, err
+	}
+	b := body(q)
+	sid, reason := astr(b["sessionId"]), strings.TrimSpace(astr(b["reason"]))
+	if reason == "" {
+		return nil, fail(400, "Expected reason")
+	}
+	s, err := get(q, sid, "session")
+	if err != nil {
+		return nil, err
+	}
+	if s == nil {
+		return nil, fail(404, "Unknown session")
+	}
+	at, archived := s["archivedAt"]
+	if !archived {
+		return nil, fail(409, "Session is not archived")
+	}
+	delete(s, "archivedAt")
+	s["id"] = sid
+	if err := put(q, "session", s); err != nil {
+		return nil, err
+	}
+	// A teardown no host has fetched yet would remove the worktree of a live session again.
+	pending, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown", "status": "pending"})
+	if err != nil {
+		return nil, err
+	}
+	for _, x := range pending {
+		x["status"] = "stopped"
+		if err := put(q, "command", x); err != nil {
+			return nil, err
+		}
+	}
+	if err := put(q, "setting-change", doc{"id": newID(), "target": "session:" + sid, "field": "archivedAt", "previous": at, "value": nil, "reason": reason, "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
+		return nil, err
+	}
+	return doc{"sessionId": sid, "teardownsWithdrawn": len(pending)}, nil
 }
