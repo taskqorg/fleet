@@ -31,7 +31,9 @@ export function Conversations({ id }: { id?: string }) {
   const rows = list.rows as SessionRow[];
   const sel = view.sel ?? [], toggleSel = (x: string) => set({ sel: sel.includes(x) ? sel.filter(i => i !== x) : [...sel, x] });
   const now = Date.now();
-  const [newConversation,setNewConversation]=useState(!!new URLSearchParams(location.search).get('new'));
+  // ?new=<project> opens the form once; the key leaves the URL so a reload does not open it again.
+  const [newConversation,setNewConversation]=useState(()=>!!new URLSearchParams(location.search).get('new'));
+  useEffect(()=>{const u=new URL(location.href);if(u.searchParams.has('new')){u.searchParams.delete('new');history.replaceState(history.state,'',u.pathname+u.search);}},[]);
   const create=()=>setNewConversation(true);
   const pane = <>
     <header class="page-h"><h1>Conversations</h1><OfflineMarker state={list.state} now={now} /><span class="grow" />

@@ -138,10 +138,22 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	if r.Order != nil && *r.Order != prev.Order && q.agent != "" {
 		return contract.PersonSettings{}, fail(403, "Only a person may change the dispatch order")
 	}
-	// A newly focused project must exist and be visible to the caller; one kept from before may since be gone and stays.
-	for _, id := range r.Focus {
-		if id != "-" && !slices.Contains(prev.Focus, id) && (projectSettingsOf(q, id) == nil || (q.person != nil && !mayAccessProjectID(q.person, id))) {
-			return contract.PersonSettings{}, fail(400, "focus: unknown project "+id)
+	// A newly named project (focus or a focus preset) must exist and be visible to the caller; one already stored may since
+	// be gone and stays.
+	known := slices.Clone(prev.Focus)
+	for _, p := range prev.FocusPresets {
+		known = append(known, p.Projects...)
+	}
+	named := slices.Clone(r.Focus)
+	if r.FocusPresetPut != nil {
+		named = append(named, r.FocusPresetPut.Projects...)
+	}
+	for _, p := range r.FocusPresets {
+		named = append(named, p.Projects...)
+	}
+	for _, id := range named {
+		if id != "-" && !slices.Contains(known, id) && (projectSettingsOf(q, id) == nil || (q.person != nil && !mayAccessProjectID(q.person, id))) {
+			return contract.PersonSettings{}, fail(400, "unknown project "+id)
 		}
 	}
 	next := prev
@@ -282,7 +294,6 @@ func checkView(v contract.SavedView) error {
 // checkPrefs: names are present and unique (views per list), each view is a valid view of its list (viewProblem, the
 // view_link check), widths are not negative.
 func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
-	views := r.Views
 	if r.ViewPut != nil {
 		if err := checkView(*r.ViewPut); err != nil {
 			return err
@@ -301,7 +312,7 @@ func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
 		return fail(400, "focusPresetPut and focusPresetDelete name the same preset")
 	}
 	seen := map[string]bool{}
-	for _, v := range views {
+	for _, v := range r.Views {
 		if err := checkView(v); err != nil {
 			return err
 		}
