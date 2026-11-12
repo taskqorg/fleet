@@ -1,10 +1,11 @@
 // Fleet operator app entry (docs/designs/fleet-operator-app.md): shell, routes, identity check, feed start, service worker.
 import { Projects } from './views/projects.tsx';
 import { render } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation } from 'wouter-preact';
 import { AppShell, Empty, Button, workspaces, type NavItem, type AppScreen } from '../../packages/ui/src/index.ts';
 import { op, signedOut } from './api.ts';
+import { prefs, loadPrefs, savePrefs } from './prefs.ts';
 import { startFeed } from './feed.ts';
 import { startStore } from './store.ts';
 import { checkGrants, clearAll } from './offline.ts';
@@ -43,21 +44,18 @@ function App() {
   const [loc, go] = useLocation();
   const [update, setUpdate] = useState(false);
   const current = loc.split('/')[1] || 'overview';
-  // Pinned sections are a person setting (person_settings_*), so they follow the person to every device.
-  const [pins, setPins] = useState<string[]>([]);
-  // ponytail: last write wins; seq drops a stale get reply or a rollback after a newer change.
-  const seq = useRef(0);
-  useEffect(() => { const n = seq.current; op('person_settings_get', {}).then(s => { if (seq.current === n) setPins(s.pins); }).catch(() => {}); }, []);
-  const savePins = (ids: string[]) => { const prev = pins, n = ++seq.current; setPins(ids); op('person_settings_set', { pins: ids }).catch(() => { if (seq.current === n) setPins(prev); }); };
+  // Pinned sections and the other preferences are person settings (prefs.ts), so they follow the person to every device.
+  useEffect(() => { loadPrefs(); }, []); // and again on window focus (below): agents and other devices change them too
+  const pins = prefs.value.pins, savePins = (ids: string[]) => savePrefs(() => ({ pins: ids }));
   useEffect(() => {
     // Identity and grants (D3): a changed grants version clears stored data. Re-read on focus too.
     const me = () => op('me', {}).then(m => checkGrants(m.grantsVersion ?? '')) // no person: '' still clears another person's data.catch(() => {});
-    me(); addEventListener('focus', me);
+    me(); addEventListener('focus', me); addEventListener('focus', loadPrefs);
     // The feed starts at the server head: every mounted list loads a fresh page (restored rows only fill the first frame),
     // and lists shown from storage or after a failed load reload when the feed comes back (store.ts).
     startStore(); startFeed(null);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').then(r => r.addEventListener('updatefound', () => { if (navigator.serviceWorker.controller) setUpdate(true); })).catch(() => {});
-    return () => removeEventListener('focus', me);
+    return () => { removeEventListener('focus', me); removeEventListener('focus', loadPrefs); };
   }, []);
   useEffect(() => { if (signedOut.value) clearAll(true); }, [signedOut.value]);
   return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={pins} onPins={savePins}>

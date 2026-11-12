@@ -13,6 +13,7 @@ import { subscribe, currentCursor, feedState, type Change } from './feed.ts';
 import { applyMembership, chunks, touched, type Row, type SortKey } from './lists.ts';
 import { save, load, onClear, pruneKeys } from './offline.ts';
 import { listKey, toPageParams, type View } from '../../packages/view-url/view-url.ts';
+import { withFocus } from './prefs.ts';
 
 export type Freshness = 'current' | 'updating' | 'offline' | 'signed-out';
 export const freshness = (restored: boolean): Freshness => signedOut.value ? 'signed-out' : !online.value ? 'offline' : restored ? 'updating' : 'current';
@@ -174,8 +175,8 @@ export function startStore() {
  * yet the previous list stays on screen and `pending` is true. `shownView` is the view those rows belong to (headers use it).
  * The skeleton is only for a view that never showed anything.
  */
-export function useList(kind: Kind, view: View) {
-  const key = listKey(view), e = entry(kind, key, view);
+export function useList(kind: Kind, urlView: View) {
+  const view = withFocus(urlView), key = listKey(view), e = entry(kind, key, view);
   const [last, setLast] = useState<string | null>(() => e.state.value ? key : null);
   const ctrl = useRef<AbortController | null>(null);
   const shown = e.state.value ? key : last; // derived during render: no stale frame when the wanted list is in memory
