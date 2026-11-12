@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -38,16 +39,16 @@ var deliveryDefaults = contract.DeliverySettings{Ratio: 1.5, MinSamples: 5, MinD
 
 // dhState: the pass's own record (document delivery-history).
 type dhState struct {
-	BackfilledFrom string                             `json:"backfilledFrom,omitempty"`
-	Backfilled     bool                               `json:"backfilled,omitempty"`
-	Through        string                             `json:"through,omitempty"` // the last UTC day whose runs were read
-	PullsUpdated   string                             `json:"pullsUpdated,omitempty"`
-	InstallsFrom   string                             `json:"installsFrom,omitempty"`
-	UISeen         map[string]string                  `json:"uiSeen,omitempty"` // UI version to when the site first served it
-	RefreshedAt    string                             `json:"refreshedAt,omitempty"`
-	Problem        string                             `json:"problem,omitempty"`
-	CheckedRelease string                             `json:"checkedRelease,omitempty"`
-	Check          *contract.DeliveryRegressionsReply `json:"check,omitempty"`
+	BackfilledFrom string            `json:"backfilledFrom,omitempty"`
+	Backfilled     bool              `json:"backfilled,omitempty"`
+	Through        string            `json:"through,omitempty"` // the last UTC day whose runs were read
+	PullsUpdated   string            `json:"pullsUpdated,omitempty"`
+	InstallsFrom   string            `json:"installsFrom,omitempty"`
+	UISeen         map[string]string `json:"uiSeen,omitempty"` // UI version to when the site first served it
+	RefreshedAt    string            `json:"refreshedAt,omitempty"`
+	Problem        string            `json:"problem,omitempty"`
+	CheckedRelease string            `json:"checkedRelease,omitempty"`
+	CheckedAt      string            `json:"checkedAt,omitempty"` // the pass's last check; the reply is document delivery-check
 }
 
 var coordinatorStarted = time.Now().UTC()
@@ -234,6 +235,15 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	}); err != nil {
 		return err
 	}
+	// What was stored, so the save writes only records that changed.
+	before := map[string]string{}
+	for _, p := range prs {
+		before["delivery-pr:"+strconv.FormatInt(p.Number, 10)] = string(jsonBytes(p))
+	}
+	for _, r := range releases {
+		before["delivery-release:"+r.Tag] = string(jsonBytes(r))
+	}
+	changed := func(id string, v any) bool { return before[id] != string(jsonBytes(v)) }
 	// Jobs of each finished run not stored yet (or re-run since).
 	have := map[int64]contract.DeliveryRun{}
 	for _, r := range stored {
@@ -339,13 +349,13 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		runList = append(runList, r)
 	}
 	deliveryDerive(prs, runList, releases)
-	newest := ""
+	newest, newestAt := "", ""
 	for _, r := range releases {
-		if strings.HasPrefix(r.Tag, "v") && r.Published > newest {
-			newest = r.Published + " " + r.Tag
+		if strings.HasPrefix(r.Tag, "v") && r.Published > newestAt {
+			newest, newestAt = r.Tag, r.Published
 		}
 	}
-	if backfill {
+	if backfill && len(skipped) == 0 { // a failed read outside yesterday and today is read again only by another backfill
 		st.Backfilled, st.BackfilledFrom = true, deliveryRepoStart
 	}
 	st.Through, st.RefreshedAt, st.Problem = now.Format("2006-01-02"), now.Format(time.RFC3339), ""
@@ -353,11 +363,13 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		st.Problem = fmt.Sprintf("%d reads failed, first: %s", len(skipped), skipped[0])
 	}
 	// The check: after each new release and at least daily.
-	check := newest != st.CheckedRelease || st.Check == nil || st.Check.CheckedAt == nil || deref(st.Check.CheckedAt) < now.Add(-24*time.Hour).Format(time.RFC3339)
+	check := newest != st.CheckedRelease || st.CheckedAt < now.Add(-24*time.Hour).Format(time.RFC3339)
 	return save(func(q *Request) error {
 		for _, p := range prs {
-			if err := dhPut(q, "delivery-pr", "delivery-pr:"+strconv.FormatInt(p.Number, 10), p); err != nil {
-				return err
+			if id := "delivery-pr:" + strconv.FormatInt(p.Number, 10); changed(id, p) {
+				if err := dhPut(q, "delivery-pr", id, p); err != nil {
+					return err
+				}
 			}
 		}
 		for _, r := range changedRuns {
@@ -366,16 +378,17 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			}
 		}
 		for _, r := range releases {
-			if err := dhPut(q, "delivery-release", "delivery-release:"+r.Tag, r); err != nil {
+			if id := "delivery-release:" + r.Tag; !changed(id, r) {
+				continue
+			} else if err := dhPut(q, "delivery-release", id, r); err != nil {
 				return err
 			}
 		}
 		if !check {
 			return nil
 		}
-		st.CheckedRelease = newest
-		c, err := deliveryCheck(q, prs, runList, now)
-		st.Check = &c
+		st.CheckedRelease, st.CheckedAt = newest, now.Format(time.RFC3339)
+		_, err := deliveryCheck(q, prs, runList, now)
 		return err
 	})
 }
@@ -489,10 +502,10 @@ func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]
 	}
 }
 
-// releaseVersionOf: v1.2.3 is 1.2.3; ui-1.2.3-v1.2.5 is its UI version 1.2.3.
+// releaseVersionOf: v1.2.5 is 1.2.5; ui-1.2.3-v1.2.5 (ui-<backend>-v<UI version>, release.yml) is its UI version 1.2.5.
 func releaseVersionOf(tag string) string {
-	if strings.HasPrefix(tag, "ui-") {
-		return strings.SplitN(strings.TrimPrefix(tag, "ui-"), "-v", 2)[0]
+	if i := strings.LastIndex(tag, "-v"); strings.HasPrefix(tag, "ui-") && i >= 0 {
+		return tag[i+2:]
 	}
 	return strings.TrimPrefix(tag, "v")
 }
@@ -550,13 +563,11 @@ func deliveryDerive(prs []contract.DeliveryPr, runs []contract.DeliveryRun, rele
 		if p.MqCiDone == nil {
 			p.MqCiDone = lastGreen
 		}
-		p.Release, p.Released, p.UiOnSite = nil, nil, nil
-		if p.Installed == nil {
-			p.Installed = map[string]string{}
-		}
+		p.Release, p.Released, p.UiOnSite, p.Installed = nil, nil, nil, map[string]string{}
 		for _, v := range vs {
 			if v.covers >= p.Merged {
-				p.Release, p.Released, p.Installed, p.UiOnSite = ptr(v.r.Tag), ptr(v.r.Published), v.r.Installed, v.r.UiOnSite
+				p.Release, p.Released, p.UiOnSite = ptr(v.r.Tag), ptr(v.r.Published), v.r.UiOnSite
+				maps.Copy(p.Installed, v.r.Installed)
 				break
 			}
 		}
@@ -793,7 +804,8 @@ func deliveryCheck(q *Request, prs []contract.DeliveryPr, runs []contract.Delive
 	if err := problemsSync(q, "delivery", ps); err != nil {
 		return contract.DeliveryRegressionsReply{}, err
 	}
-	return contract.DeliveryRegressionsReply{CheckedAt: ptr(u), Baseline: &base, Current: &current, Regressions: regs, Settings: s}, nil
+	out := contract.DeliveryRegressionsReply{CheckedAt: ptr(u), Baseline: &base, Current: &current, Regressions: regs, Settings: s}
+	return out, dhPut(q, "delivery-check", "delivery-check", out)
 }
 
 // ---- operations ----
@@ -885,7 +897,7 @@ func deliveryBaselineReply(q *Request, days int64) (contract.DeliveryBaselineRep
 		return out, err
 	}
 	now := time.Now().UTC()
-	out.Rolling = deliveryWindow(prs, runs, now.AddDate(0, 0, -int(days)), now)
+	out.Rolling = deliveryWindow(prs, runs, now.AddDate(0, 0, -7), now) // the baseline is 7 days whatever the trend's length
 	if out.Snapshots, err = dhLoad[contract.DeliveryBaseline](q, "delivery-baseline"); err != nil {
 		return out, err
 	}
@@ -937,11 +949,22 @@ func deliveryBaselineSet(q *Request, r *contract.DeliveryBaselineSetRequest) (co
 		}
 	}
 	if r.Remove != nil {
-		if err := exec(q, "DELETE FROM document WHERE kind='delivery-baseline' AND id=$1", "delivery-baseline:"+*r.Remove); err != nil {
+		name := strings.TrimSpace(*r.Remove)
+		if err := exec(q, "DELETE FROM document WHERE kind='delivery-baseline' AND id=$1", "delivery-baseline:"+name); err != nil {
 			return contract.DeliveryBaselineReply{}, err
+		}
+		// The check must not compare with a snapshot that is gone while the settings still name it.
+		if s, err := deliverySettingsOf(q); err != nil {
+			return contract.DeliveryBaselineReply{}, err
+		} else if s.Baseline == name {
+			s.Baseline = ""
+			if err := dhPut(q, "delivery-settings", "delivery-settings", s); err != nil {
+				return contract.DeliveryBaselineReply{}, err
+			}
 		}
 	}
 	if s := r.Settings; s != nil {
+		s.Baseline = strings.TrimSpace(s.Baseline)
 		if s.Ratio <= 1 || s.MinSamples < 1 || s.MinDeltaMs < 0 {
 			return contract.DeliveryBaselineReply{}, fail(400, "settings: ratio above 1, minSamples at least 1, minDeltaMs not negative")
 		}
@@ -965,10 +988,6 @@ func deliveryRegressionsOp(q *Request, r *contract.DeliveryRegressionsRequest) (
 	if err := deliveryMay(q); err != nil {
 		return contract.DeliveryRegressionsReply{}, err
 	}
-	st, err := dhStateOf(q)
-	if err != nil {
-		return contract.DeliveryRegressionsReply{}, err
-	}
 	if r.Check != nil && *r.Check {
 		if !fullAccess(q.person) {
 			return contract.DeliveryRegressionsReply{}, fail(403, "Only the owner or full access runs the check")
@@ -984,16 +1003,20 @@ func deliveryRegressionsOp(q *Request, r *contract.DeliveryRegressionsRequest) (
 			if err != nil {
 				return err
 			}
-			if c, err = deliveryCheck(w, prs, runs, time.Now().UTC()); err != nil {
-				return err
-			}
-			st.Check = &c
-			return dhPut(w, "delivery-history", "delivery-history", st)
+			c, err = deliveryCheck(w, prs, runs, time.Now().UTC())
+			return err
 		})
 		return c, err
 	}
-	if st.Check != nil {
-		return *st.Check, nil
+	d, err := first(q, "SELECT data FROM document WHERE id='delivery-check'")
+	if err != nil {
+		return contract.DeliveryRegressionsReply{}, err
+	}
+	if d != nil {
+		var c contract.DeliveryRegressionsReply
+		if json.Unmarshal(jsonBytes(d["data"]), &c) == nil {
+			return c, nil
+		}
 	}
 	s, err := deliverySettingsOf(q)
 	return contract.DeliveryRegressionsReply{Regressions: []contract.DeliveryRegression{}, Settings: s}, err

@@ -55,7 +55,8 @@ function Trend({ now }: { now: number }) {
     </ul>}
     <div class="limit-cards">
       {TREND.map(t => {
-        const pts = (q: 'p50Ms' | 'p90Ms') => { const xs = days.map(d => ({ at: Date.parse(d.day + 'T00:00:00Z'), v: (d.stats.find((s: any) => s.key === t.key)?.[q] ?? 0) / 6e4 })); return xs.length ? [...xs, { at: now, v: xs[xs.length - 1].v }] : xs; };
+        const pts = (q: 'p50Ms' | 'p90Ms') => { const xs = days.flatMap(d => { const s = d.stats.find((x: any) => x.key === t.key); return s ? [{ at: Date.parse(d.day + 'T00:00:00Z'), v: s[q] / 6e4 }] : []; }); return xs.length ? [...xs, { at: now, v: xs[xs.length - 1].v }] : xs; };
+        // A day without values is left out, never drawn as 0.
         const b = base.get(t.key);
         const last = [...days].reverse().map(d => d.stats.find((s: any) => s.key === t.key)).find(Boolean);
         const p50 = pts('p50Ms'), p90 = pts('p90Ms');
