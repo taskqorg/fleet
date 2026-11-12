@@ -21,7 +21,8 @@ func resolveCodes(q *Request, codes []string) (map[string]contract.EntityCode, e
 	rs, err := rowsOf(q, `SELECT e.code,e.entity_id,e.type,coalesce(t.code,x.code,d.code) AS current FROM entity_code e
 	 LEFT JOIN task t ON e.type='T' AND t.id=e.entity_id LEFT JOIN question x ON e.type='Q' AND x.id=e.entity_id
 	 LEFT JOIN document d ON e.type='C' AND d.kind='session' AND d.id=e.entity_id
-	 WHERE e.code=ANY($1) AND coalesce(t.code,x.code,d.code) IS NOT NULL`, codes)
+	 WHERE e.code=ANY($1) AND coalesce(t.code,x.code,d.code) IS NOT NULL
+	 AND (e.code=coalesce(t.code,x.code,d.code) OR e.superseded_by IS NOT NULL)`, codes)
 	out := map[string]contract.EntityCode{}
 	for _, r := range rs {
 		c, cur := astr(r["code"]), astr(r["current"])

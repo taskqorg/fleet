@@ -970,6 +970,11 @@ SELECT fleet_write_tokens(execution_id) FROM execution_totals t JOIN execution e
 ALTER TABLE project_code DROP CONSTRAINT project_code_code_check;
 ALTER TABLE project_code ADD CONSTRAINT project_code_code_check CHECK (code ~ '^[A-Z][A-Z0-9]{1,4}$' AND code !~ '^[A-F0-9]+$' AND code !~ '[IO]' AND code <> 'ALL');
 ALTER TABLE document ADD COLUMN code text UNIQUE;
+-- A person reads the code of their own conversation without a project, as they read the conversation.
+DROP POLICY project_scope ON entity_code;
+CREATE POLICY project_scope ON entity_code USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ','))
+ OR (type = 'Q' AND EXISTS(SELECT 1 FROM question x WHERE x.id = entity_id AND x.addressed_to = current_setting('fleet.person', true)))
+ OR (type = 'C' AND project_id IS NULL AND fleet_own_projectless_session(entity_id)));
 
 -- fleet_project_code: the project's current code; derives one when it has none. Several words: their initials
 -- (hello-world-alt -> HWA), then letters of the last word; one word: its first letter and the consonants after it,
@@ -995,10 +1000,14 @@ BEGIN
  END IF;
  IF cands[1] ~ '^[0-9]' THEN cands := ARRAY['P' || left(cands[1], 4)]; END IF;
  FOR n IN 2..9 LOOP cands := cands || (left(cands[1], 4) || n); END LOOP;
- FOR n IN 2..9999 LOOP cands := cands || ('P' || n); END LOOP;
  FOREACH cand IN ARRAY cands LOOP
   IF cand ~ '^[A-Z][A-Z0-9]{1,4}$' AND cand !~ '^[A-F0-9]+$' AND cand <> 'ALL' AND NOT EXISTS(SELECT 1 FROM project_code WHERE code=cand) THEN
    INSERT INTO project_code(code, project_id) VALUES(cand, p_project); RETURN cand;
+  END IF;
+ END LOOP;
+ FOR n IN 2..9999 LOOP -- a hex-like or crowded name: P and a number
+  IF NOT EXISTS(SELECT 1 FROM project_code WHERE code='P' || n) THEN
+   INSERT INTO project_code(code, project_id) VALUES('P' || n, p_project); RETURN 'P' || n;
   END IF;
  END LOOP;
  RAISE EXCEPTION 'no free project code for %', p_project;
@@ -1039,6 +1048,8 @@ BEGIN
  RETURN c;
 END $$;
 -- A session document is written by upsert: a conflicting insert of an existing row issues nothing (it becomes an update).
+-- ponytail: two concurrent first upserts of one new session both issue; the loser's code is an orphan entity_code row
+-- (superseded_by null, not the current code) that resolve ignores; lock the id if that ever matters.
 CREATE TRIGGER document_zcode BEFORE INSERT OR UPDATE OF project_id, code ON document FOR EACH ROW WHEN (NEW.kind = 'session') EXECUTE FUNCTION fleet_entity_code();
 
 CREATE OR REPLACE FUNCTION fleet_project_code_set(p_project text, p_code text) RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$

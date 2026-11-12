@@ -58,6 +58,11 @@ test('K1 tasks and questions carry T-/Q- codes per project; codes resolve, a ren
     assert.equal((await op('entity_resolve', {code: 'c-fhw-1'})).id, 'sess-codes');
     assert.equal((await op('session_get', {sessionId: 'sess-codes'})).code, 'C-FHW-1');
 
+    const own = (await raw('session_create', {}, 'member@trial.test')).body.sessionId;
+    const ownCode = (await raw('session_get', {sessionId: own}, 'member@trial.test')).body.code;
+    assert.match(ownCode, /^C-ALL-[1-9][0-9]*$/);
+    assert.equal((await raw('entity_resolve', {code: ownCode}, 'member@trial.test')).body.id, own, 'a member resolves their own projectless conversation');
+    assert.equal((await raw('entity_resolve', {code: ownCode}, 'outsider@trial.test')).status, 404);
     for (const [who, projectId] of [['member@trial.test', 'hello-world'], ['outsider@trial.test', 'desiign']]) {
       assert.equal((await raw('project_code_set', {projectId, code: 'QQX'}, who)).status, 404, `${who} may not recode ${projectId}`);
     }

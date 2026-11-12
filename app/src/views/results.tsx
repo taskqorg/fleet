@@ -37,7 +37,7 @@ export function Results({ id }: { id?: string }) {
       setRows(x => before && x ? [...x, ...(r.artifacts as Row[]).filter(a => !x.some(y => y.id === a.id))] : r.artifacts as Row[]); setNext(r.nextBefore ?? null); setError(null); }
     catch (e: any) { setError(e.message); } finally { setBusy(false); }
   };
-  useEffect(() => { load(); return subscribe({ resync: () => load(), changes: cs => { if (cs.some(c => c.kind === 'artifact') && pages.current <= 1) load(); } }); }, [fkey]);
+  useEffect(() => { load(); return subscribe({ resync: () => load(), changes: cs => { if (cs.some(c => c.kind === 'artifact' || c.kind === 'task') && pages.current <= 1) load(); } }); }, [fkey]);
   const chips: Chip[] = Object.entries(extra).filter(([k]) => ['media', 'since', 'task', 'execution'].includes(k)).map(([field, value]) => ({ field, value }));
   const now = Date.now();
   const list = <>
