@@ -73,3 +73,5 @@ func Check(v any, name string) error {
 	}
 	return nil
 }
+
+// Disposable delivery timing path control; never merge.
