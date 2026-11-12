@@ -54,4 +54,8 @@ func TestDeliveryHistoryDeriveAndCompare(t *testing.T) {
 	if len(pending["release"]) != 1 || pending["release"][0].ms != 3600e3 {
 		t.Fatalf("a pull request waiting for its release counts its wait so far: %+v", pending)
 	}
+	got, errs := dhParallel(40, func(i int) (int, error) { return i * 2, nil })
+	if len(got) != 40 || got[39] != 78 || errs[0] != nil {
+		t.Fatalf("parallel reads keep their index: %v", got)
+	}
 }
