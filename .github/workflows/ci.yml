@@ -248,7 +248,7 @@ jobs:
       # The executor's MCP adapter from Node against the Go binary: replayed stdio exchanges and artifact path confinement.
       - if: matrix.part == 'vet'
         run: |
-          cd go && CGO_ENABLED=0 go build -o "$RUNNER_TEMP/fleet-executor" ./executor && cd ..
+          cd go && CGO_ENABLED=0 go build -o bin/fleet-executor ./executor && cd ..
           FLEET_EXECUTOR_BIN="$PWD/go/bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts
       # The outside tests run a -race coordinator; GORACE halts it at the first race, so the test of that moment fails.
       # /api/health reports vcs.modified as dirty; a build from the CI checkout must be clean (untracked files count).
@@ -490,7 +490,7 @@ jobs:
         with:
           part: vet
           hash: ${{ steps.go.outputs.hash }}
-          run: cd go && go vet ./... && GOOS=windows GOARCH=amd64 go vet ./coordinator && CGO_ENABLED=0 go build -o bin/fleet-executor ./executor
+          run: cd go && go vet ./... && GOOS=windows GOARCH=amd64 go vet ./coordinator && CGO_ENABLED=0 go build -o "$RUNNER_TEMP/fleet-executor" ./executor
       - uses: ./.github/actions/warm
         with:
           part: unit
