@@ -128,8 +128,10 @@ jobs:
         run: |
           [ "$RESULT" = success ] || exit 1
           echo 'Qualified by app; test-qualification records executed and omitted families.'
-  # Go (docs/designs/fleet-go-code.md): generated-code drift, vet, unit tests with -race, the executor's MCP adapter tests,
-  # the outside tests against a -race coordinator on the runner's PostgreSQL, a Windows compile of the coordinator.
+  # Go (docs/designs/fleet-go-code.md), split into parallel parts so the family is never the critical path:
+  # vet: generated-code drift, vet, a Windows compile of the coordinator; unit: the unit tests with -race;
+  # mcp: the executor's MCP adapter tests; outside-N: the outside tests against a -race coordinator on the runner's
+  # PostgreSQL, sharded by file (tests/go/run.sh). The go wrapper sees the matrix as one result.
   # Node only as the test runner: the outside tests import node: builtins, so no pnpm install here.
   go-tests:
     needs: selection
@@ -137,13 +139,28 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # ClickHouse only where a test talks to it: go/obs unit tests and tests/go/telemetry.test.ts (some outside shard).
+        include:
+          - {part: vet, clickhouse: false}
+          - {part: unit, clickhouse: true}
+          - {part: mcp, clickhouse: false}
+          - {part: outside-0, clickhouse: true}
+          - {part: outside-1, clickhouse: true}
+          - {part: outside-2, clickhouse: true}
+          - {part: outside-3, clickhouse: true}
     env:
       GOFLAGS: -mod=readonly
+      # Matrix entries outside-0..3 are the shards; run.sh fails on an index outside the total or an empty shard.
+      OUTSIDE_SHARDS: 4
       # The span store for go/obs and tests/go/telemetry.test.ts live tests (docs/designs/fleet-telemetry.md); same LTS as deploy/infrastructure/fleet-clickhouse.container.
       FLEET_TEST_CLICKHOUSE_URL: http://127.0.0.1:8123
     services:
       clickhouse:
-        image: clickhouse/clickhouse-server:26.8
+        # An empty image skips the service.
+        image: ${{ matrix.clickhouse && 'clickhouse/clickhouse-server:26.8' || '' }}
         env:
           CLICKHOUSE_DB: fleet
           CLICKHOUSE_USER: t
@@ -159,30 +176,41 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
-          # Keep race/Windows-vet build artifacts separate from faster app/browser archive builders.
-          # setup-go hashes both inputs; dependency invalidation still includes go.sum.
-          cache-dependency-path: |
-            go/go.sum
-            .github/workflows/ci.yml
+          cache: false
+      # One build cache per part (vet, -race unit tests, the executor, each -race coordinator shard): a new entry when
+      # Go sources change, restored from the newest same-part entry otherwise, so -race artifacts are reused, not rebuilt.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ matrix.part }}-${{ hashFiles('go/**') }}
+          restore-keys: go-${{ matrix.part }}-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       # Generated code is committed (go/contract): regenerating must not change it.
-      - run: cd go && go generate ./... && { test -z "$(git status --porcelain)" || { git status --porcelain; git diff; exit 1; }; }
-      - run: cd go && go vet ./... && GOOS=windows GOARCH=amd64 go vet ./coordinator
+      - if: matrix.part == 'vet'
+        run: cd go && go generate ./... && { test -z "$(git status --porcelain)" || { git status --porcelain; git diff; exit 1; }; }
+      - if: matrix.part == 'vet'
+        run: cd go && go vet ./... && GOOS=windows GOARCH=amd64 go vet ./coordinator
       # -race needs cgo on Linux; release binaries stay CGO_ENABLED=0 (deploy/build-release.sh, app job).
-      - run: cd go && CGO_ENABLED=1 go test -race -count=1 ./...
-      # The outside tests run a -race coordinator; GORACE halts it at the first race, so the test of that moment fails.
-      - name: Build the test binaries
-        run: |
-          cd go
-          CGO_ENABLED=1 go build -race -o bin/fleet-coordinator ./coordinator
-          CGO_ENABLED=0 go build -o bin/fleet-executor ./executor
-      # /api/health reports vcs.modified as dirty; a build from the CI checkout must be clean (untracked files count).
-      - run: go version -m go/bin/fleet-coordinator | grep -q 'vcs.modified=false' || { git status --porcelain; exit 1; }
+      - if: matrix.part == 'unit'
+        run: cd go && CGO_ENABLED=1 go test -race -count=1 ./...
       # The executor's MCP adapter from Node against the Go binary: replayed stdio exchanges and artifact path confinement.
-      - run: FLEET_EXECUTOR_BIN="$PWD/go/bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts
-      - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" GORACE=halt_on_error=1 tests/go/run.sh
+      - if: matrix.part == 'mcp'
+        run: |
+          cd go && CGO_ENABLED=0 go build -o bin/fleet-executor ./executor && cd ..
+          FLEET_EXECUTOR_BIN="$PWD/go/bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts
+      # The outside tests run a -race coordinator; GORACE halts it at the first race, so the test of that moment fails.
+      # /api/health reports vcs.modified as dirty; a build from the CI checkout must be clean (untracked files count).
+      - if: startsWith(matrix.part, 'outside-')
+        run: |
+          cd go && CGO_ENABLED=1 go build -race -o bin/fleet-coordinator ./coordinator && cd ..
+          go version -m go/bin/fleet-coordinator | grep -q 'vcs.modified=false' || { git status --porcelain; exit 1; }
+          PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" GORACE=halt_on_error=1 tests/go/run.sh "${PART#outside-}" "$OUTSIDE_SHARDS"
+        env:
+          PART: ${{ matrix.part }}
   # App and release: contract lint, test-rule report, typecheck and bundle, UI unit tests, then the release tarballs of
   # every target from deploy/build-release.sh, the same script and flags the release workflow uses.
   app-tests:
