@@ -171,7 +171,10 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		for i := 0; i+1 < len(kv); i += 2 {
 			args[kv[i]] = kv[i+1]
 		}
-		b, _, err := githubRead(ctx, a, ciProject, tool, args)
+		b, keyed, err := githubRead(ctx, a, ciProject, tool, args)
+		if err == nil && !keyed {
+			err = fmt.Errorf("the github connection did not serve it (is the tool granted? connections_set_tools)")
+		}
 		if err == nil {
 			err = json.Unmarshal(b, into)
 		}
@@ -259,12 +262,38 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		before["delivery-release:"+r.Tag] = string(jsonBytes(r))
 	}
 	changed := func(id string, v any) bool { return before[id] != string(jsonBytes(v)) }
+	var changedRuns []contract.DeliveryRun
+	// flush stores what was read so far: a deploy restarts the coordinator every few minutes, and the backfill's
+	// hundreds of reads must survive it (stored runs and PR CI times are not read again).
+	flush := func() error {
+		err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+			for _, r := range changedRuns {
+				if err := dhPut(q, "delivery-run", "delivery-run:"+strconv.FormatInt(r.Id, 10), r); err != nil {
+					return err
+				}
+			}
+			for _, p := range prs {
+				if id := "delivery-pr:" + strconv.FormatInt(p.Number, 10); changed(id, p) {
+					if err := dhPut(q, "delivery-pr", id, p); err != nil {
+						return err
+					}
+				}
+			}
+			return dhPut(q, "delivery-history", "delivery-history", st)
+		})
+		if err == nil {
+			changedRuns = nil
+			for _, p := range prs {
+				before["delivery-pr:"+strconv.FormatInt(p.Number, 10)] = string(jsonBytes(p))
+			}
+		}
+		return err
+	}
 	// Jobs of each finished run not stored yet (or re-run since).
 	have := map[int64]contract.DeliveryRun{}
 	for _, r := range stored {
 		have[r.Id] = r
 	}
-	var changedRuns []contract.DeliveryRun
 	var skipped []string // single reads that failed; the pass keeps the rest
 	// A run listed while still in progress is listed again: the window holds yesterday, so at least 24 hours.
 	tries := map[int64]int{}
@@ -300,7 +329,11 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		}
 		dr := deliveryRunOf(r, js.Jobs)
 		have[r.ID] = dr
-		changedRuns = append(changedRuns, dr)
+		if changedRuns = append(changedRuns, dr); len(changedRuns) >= 25 {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
 	}
 	byNum := map[int64]*contract.DeliveryPr{}
 	for i := range prs {
@@ -338,6 +371,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		}
 	}
 	st.CiTried = tried
+	looked := 0
 	for i := range prs {
 		p := &prs[i]
 		num := strconv.FormatInt(p.Number, 10)
@@ -361,6 +395,11 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		}
 		delete(st.CiRetry, num)
 		tried[num] = now.Format(time.RFC3339)
+		if looked++; looked%25 == 0 {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
 		for _, x := range r.Runs {
 			if x.Conclusion != nil && *x.Conclusion == "success" && (p.PrCiDone == nil || x.UpdatedAt < *p.PrCiDone) {
 				p.PrCiDone = ptr(x.UpdatedAt)
