@@ -56,9 +56,9 @@ func runnerUsages(r doc) []usage {
 func toolCallGroups(calls []doc) []doc {
 	groups, order := map[string]doc{}, []string{}
 	for _, c := range calls {
-		// Per host (the screen lists runs by host), then the caller: its parent run, else its task, else the connection
-		// (the coordinator's own reads, e.g. GitHub, carry a fresh session per call, so a session is no caller).
-		key := astr(c["host_id"]) + "/" + firstString(c["parent_execution_id"], c["task_id"], "conn:"+strings.SplitN(astr(c["subject"]), "/", 2)[0])
+		// Per host (the screen lists runs by host), then the caller: its parent run when that run exists, else its task,
+		// else the connection (the coordinator's own reads, e.g. GitHub, carry a fresh session and parent id per call).
+		key := astr(c["host_id"]) + "/" + firstString(c["caller_run"], c["task_id"], "conn:"+strings.SplitN(astr(c["subject"]), "/", 2)[0])
 		g := groups[key]
 		if g == nil {
 			g = doc{"id": "calls:" + key, "kind": "tool_run", "state": "succeeded", "host_id": c["host_id"], "session_id": c["session_id"], "task_id": c["task_id"], "title": c["title"],
@@ -119,7 +119,7 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 		return contract.ExecutionsRunnersReply{}, err
 	}
 	// ponytail: the newest 20000 calls of the day; a busier gateway needs the sums in SQL.
-	calls, err := queryRows(q, `SELECT `+cols+` e.kind='tool_run' ORDER BY e.seq DESC LIMIT 20000`)
+	calls, err := queryRows(q, `SELECT (SELECT p.id FROM execution p WHERE p.id=e.parent_execution_id) AS caller_run,`+cols+` e.kind='tool_run' ORDER BY e.seq DESC LIMIT 20000`)
 	if err != nil {
 		return contract.ExecutionsRunnersReply{}, err
 	}
