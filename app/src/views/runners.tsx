@@ -14,7 +14,7 @@ const m = (v: number | null | undefined, basis: Measured['basis'] = 'measured'):
  * usage has a price, none when nothing was used. ponytail: a second currency is not shown; split the column when one appears. */
 const costOf = (all: any[], subscription = false): Measured | null => {
   // Money and subscription figures stay apart: a subscription figure is the list-price equivalent, never spend.
-  const cost = all.filter(c => (c.basis === 'subscription') === subscription || (c.value == null && !subscription));
+  const cost = all.filter(c => (c.basis === 'subscription') === subscription);
   if (!cost.length) return null;
   const priced = cost.find(c => c.currency === 'USD' && c.value != null) ?? cost.find(c => c.value != null), unknown = cost.some(c => c.value == null);
   return priced ? { value: priced.value, basis: 'estimated', currency: priced.currency, partial: unknown ? 'some usage has no price' : undefined } : { value: null, basis: 'unavailable', reason: 'no price entry' };

@@ -28,7 +28,7 @@ func runnerCost(prices []doc, subscription bool, us []usage) []any {
 	out := estimateCost(prices, us)
 	if subscription {
 		for _, x := range out {
-			if d, ok := x.(doc); ok && d["value"] != nil {
+			if d, ok := x.(doc); ok { // unpriced too: a subscription run adds nothing to the metered side
 				d["basis"], d["note"] = "subscription", "subscription (list-price equivalent)"
 			}
 		}
