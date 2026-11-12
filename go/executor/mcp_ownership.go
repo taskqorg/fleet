@@ -110,6 +110,7 @@ func (o *mcpOwner) accept() {
 				answer = M{}
 			}
 			answer["registered"] = err == nil
+			answer["executionId"] = o.execution
 			if err != nil {
 				answer["error"] = err.Error()
 			}
@@ -242,6 +243,16 @@ func mcpGuardian(args []string) error {
 	syscall.CloseOnExec(4)
 	defer status.Close()
 	defer control.Close()
+	report := M{"stage": "ownership", "registration": "unknown", "guardianPid": os.Getpid(), "provenance": "guardian-private-status", "outcome": "unknown"}
+	reported := false
+	publish := func() {
+		if !reported {
+			json.NewEncoder(status).Encode(report)
+			status.Close()
+			reported = true
+		}
+	}
+	defer publish()
 	kill := func() { syscall.Kill(-os.Getpid(), syscall.SIGKILL) }
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGUSR1)
@@ -256,12 +267,13 @@ func mcpGuardian(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+	defer func() { publish(); c.Close() }()
 	c.SetDeadline(time.Now().Add(probeWait))
 	id, err := identity(os.Getpid())
 	if err != nil {
 		return err
 	}
+	report["guardianIdentity"] = id
 	spec, err := dec(args[1])
 	if err != nil {
 		return err
@@ -274,8 +286,12 @@ func mcpGuardian(args []string) error {
 		return errors.New("MCP ownership acknowledgement unknown; no server start")
 	}
 	if !jBoolOr(false, answer, "registered") {
+		report["registration"] = "refused"
 		return errors.New("MCP ownership refused: " + jStr(answer, "error"))
 	}
+	report["registration"] = "acknowledged"
+	report["executionId"] = answer["executionId"]
+	report["stage"] = "binding"
 	c.SetDeadline(time.Time{})
 	go func() { io.Copy(io.Discard, c); kill() }()
 	cmd, cleanup, err := mcpBoundCommand(spec)
@@ -299,13 +315,17 @@ func mcpGuardian(args []string) error {
 	defer discard.Close()
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, discard
 	// ExtraFiles is empty: the private lifetime descriptor cannot keep itself alive in server descendants.
-	exitCode := -1
+	report["stage"] = "spawn"
 	if err = cmd.Start(); err == nil {
 		cmd.Wait()
-		exitCode = cmd.ProcessState.ExitCode()
+		report["stage"] = "server-exit"
+		if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			report["signal"], report["outcome"] = int(ws.Signal()), "signaled"
+		} else {
+			report["exitCode"], report["outcome"] = cmd.ProcessState.ExitCode(), "exited"
+		}
 	}
-	json.NewEncoder(status).Encode(M{"exitCode": exitCode})
-	status.Close()
+	publish()
 	os.Stdout.Close() // downstream sees server exit, while this guardian still owns orphaned descendants
 	<-ended
 	return err
@@ -459,7 +479,7 @@ func (c *mcpChild) close() {
 	c.status.Close()
 	<-c.done
 }
-func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, policy string, parentLease ...io.ReadCloser) error {
+func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, policy string, parentLease ...io.ReadCloser) (resultErr error) {
 	if err := privateSocket(socket); err != nil {
 		return err
 	}
@@ -493,9 +513,9 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 		lease := parentLease[0]
 		defer lease.Close()
 		go func() { io.Copy(io.Discard, lease); child.control.Close() }()
-		var status M
-		if json.NewDecoder(child.status).Decode(&status) != nil || jAt(status, "exitCode") != float64(0) {
-			return errors.New("owned dependency result unknown or failed; no replay")
+		status := readMCPStatus(child.status)
+		if jStr(status, "outcome") != "exited" || jAt(status, "exitCode") != float64(0) {
+			return errors.Join(errors.New("owned dependency result unknown or failed; no replay"), &mcpLifecycleError{status})
 		}
 		return nil
 	}
@@ -513,6 +533,7 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 	}
 	defer ownedOutput.Close()
 	var closing, unexpectedExit atomic.Bool
+	var observedStatus atomic.Value
 	queued, err := newMCPInput(source, func() { closing.Store(true); child.control.Close(); child.out.Close(); ownedOutput.Close() })
 	if err != nil {
 		return err
@@ -521,8 +542,8 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 	statusDone := make(chan struct{})
 	go func() {
 		defer close(statusDone)
-		var status M
-		json.NewDecoder(child.status).Decode(&status)
+		status := readMCPStatus(child.status)
+		observedStatus.Store(status)
 		if !closing.Load() {
 			unexpectedExit.Store(true)
 			child.control.Close()
@@ -532,7 +553,15 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 			ownedOutput.Close()
 		}
 	}()
-	defer func() { closing.Store(true); child.status.Close(); <-statusDone }()
+	defer func() {
+		closing.Store(true)
+		child.control.Close() // The sole private status writer exits with its guardian; descendants never inherit it.
+		<-statusDone
+		child.status.Close()
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, &mcpLifecycleError{observedStatus.Load().(M)})
+		}
+	}()
 	err = filterMCP(queued, ownedOutput, child.in, child.out, root, jArr(spec, "tools"), policy)
 	if unexpectedExit.Load() {
 		return errors.Join(err, errors.New("MCP server exited or status was lost; outcome unknown; no replay"))
@@ -625,4 +654,50 @@ func mcpPollableFile(file *os.File) (*os.File, error) {
 		return nil, err
 	}
 	return os.NewFile(uintptr(fd), "mcp-io"), nil
+}
+
+// Project the private status explicitly; missing status never establishes exit.
+type mcpLifecycleError struct{ status M }
+
+func (e *mcpLifecycleError) Error() string {
+	return "MCP lifecycle interrupted; outcome unknown; no replay: " + enc(e.status)
+}
+func safeMCPStatus(raw M) M {
+	out := M{"stage": "unknown", "registration": "unknown", "outcome": "unknown", "provenance": "status-unavailable"}
+	for key, values := range map[string][]string{"stage": {"ownership", "binding", "spawn", "server-exit"}, "registration": {"unknown", "refused", "acknowledged"}, "outcome": {"unknown", "exited", "signaled"}, "provenance": {"guardian-private-status"}} {
+		for _, allowed := range values {
+			if jStr(raw, key) == allowed {
+				out[key] = allowed
+			}
+		}
+	}
+	identity := jStr(raw, "guardianIdentity")
+	if len(identity) > 0 && len(identity) <= 80 && onlyBytes(identity, func(b byte) bool { return b >= '0' && b <= '9' || b == '-' }) {
+		out["guardianIdentity"] = identity
+	}
+	execution := jStr(raw, "executionId")
+	if len(execution) == 36 && execution[8] == '-' && execution[13] == '-' && execution[18] == '-' && execution[23] == '-' {
+		hex := strings.ReplaceAll(execution, "-", "")
+		if len(hex) == 32 && onlyBytes(hex, func(b byte) bool { return b >= '0' && b <= '9' || b >= 'a' && b <= 'f' || b >= 'A' && b <= 'F' }) {
+			out["executionId"] = execution
+		}
+	}
+
+	for key, max := range map[string]float64{"guardianPid": 2147483647, "exitCode": 255, "signal": 127} {
+		if n, ok := jAt(raw, key).(float64); ok && n >= 0 && n <= max && n == float64(int64(n)) {
+			out[key] = n
+		}
+	}
+	if out["outcome"] == "exited" && !has(out, "exitCode") || out["outcome"] == "signaled" && !has(out, "signal") {
+		out["outcome"] = "unknown"
+	}
+	return out
+}
+
+func readMCPStatus(input io.Reader) M {
+	var raw M
+	if json.NewDecoder(input).Decode(&raw) != nil {
+		return safeMCPStatus(nil)
+	}
+	return safeMCPStatus(raw)
 }
