@@ -36,6 +36,20 @@ If an owner rule conflicts with common practice, the owner rule wins. Two except
 | **OR-26 The whole row opens** | A click anywhere on a list row opens the item. Controls inside the row (pin, checkbox, menu) act on their own. Never make the person aim at the title. |
 | **OR-27 Open in the work area** | A task, conversation, result, host or any other opened item fills the work area. It is never a floating, sticky or overlaid panel, at any width. |
 | **OR-28 One format per value** | Each kind of value (code, time, duration, count, money, score, state, person, agent, path, hash) has one look everywhere, listed in [formats](formats.md). Mono is for codes and numbers, never for sentences. Each screen shows first what the owner comes to it for ([what each screen answers](formats.md#what-each-screen-answers)). |
+| **OR-29 Sum first, no zeros** | A counter block starts with the bold total (`Σ 12`), then the breakdown. A zero chip is hidden, and a block whose values are all zero is hidden. A status quick-filter chip with 0 shows only its icon, never `0`. |
+| **OR-30 Latest N, then +K** | A long feed shows its N latest items and a `+K` expander. A block never grows past the page; it never pushes the rest of the column out of view. |
+| **OR-31 Search is an icon** | Search in lists and in the navigation is an icon. The field shows only while focused or not empty. |
+| **OR-32 One palette** | The navigation search is a Spotlight palette on Cmd+K. It is the only floating working tool, an exception to OR-14. It jumps by entity code, tasks by title, sections, projects and hosts; each kind is one provider, so new kinds plug in. Its query syntax (`agent:claude host:mac`) is the same as list search. |
+| **OR-33 Saved views** | Every list uses one shared saved-views control: system presets (Tasks "Running" is every non-terminal state) and personal views. Views are stored on the server per person, and agents read and write them through MCP. |
+| **OR-34 Focus** | One global project multi-select applies across the whole app and changes in one or two clicks. Focus presets are system or saved custom ones, stored on the server per person. |
+| **OR-35 Group and sort are shared** | Group and Sort (field and direction) are shared list controls and part of a saved view. Group is a registry icon with a tooltip, not a word. Tasks sort by most recently changed first by default. |
+| **OR-36 Filters live in the query** | There is no separate Filter button. Filters are typed in search with the query syntax (OR-32). |
+| **OR-37 Affordances on hover, facts in the space** | Row affordances (pin, checkbox) show only on hover or when set. The freed space shows live row facts in short form: time since taken into work, number of executions, time in the current state, agent icon, host icon. Row facts are one shared pattern that other lists reuse. |
+| **OR-38 Human codes, never UUIDs** | Entities show their human code (`T-FLT-42`, [D17](decisions.md#2026-11-10-d17-human-entity-codes)) everywhere. A UUID or hash is never shown; it is a tooltip with click-to-copy only. A project abbreviation can change at any time and old codes still resolve. Generated titles never contain a UUID. |
+| **OR-39 Detail shows the story** | A detail page shows the statement, lifecycle, result and decision. Technical ids appear only where truly needed, as an icon with tooltip and click-to-copy. No large empty fields. |
+| **OR-40 Needs you first** | Overview "Needs you" sorts by urgency, then recency, and shows the latest 3 plus `+K` (OR-30). Project and host rows follow OR-29. |
+| **OR-41 Resizable columns** | The navigation and the control column resize by dragging their divider. Widths are stored on the server per person; a double-click on the divider resets the width. |
+| **OR-42 Collapse without a jump** | The navigation collapse toggle sits at the top of the column right after the navigation (the control column, or the work area on Overview). Collapsed and expanded navigation map 1:1: same icons, same heights, only labels change (OR-23). The navigation ends with the current user block (avatar and name, avatar only when collapsed); a click opens a context menu with Logout (Cloudflare Access logout). |
 
 ## How each rule is checked
 
@@ -46,6 +60,6 @@ A rule without a check is kept only by reading it, so each rule names its check.
 | Rendered page (mockups and the built app) | OR-24 (no top bar, name in the navigation, all columns present), OR-25, OR-26, OR-27, OR-28 (prose in mono, wrapped column headers) | `tests/ui/layout.check.ts`. It reads each route as it loads and does not open tabs. `tests/ui/layout-break.check.mjs` injects a breach of each layout rule and fails if its check stays quiet. |
 | Rendered page (mockups) | OR-17, OR-18, OR-19, OR-22 | `tests/ui/ux.check.mjs`, `tests/ui/trace.check.mjs` |
 | Source text | OR-2, OR-7, OR-8, OR-9, OR-14 (dialog markup), OR-15, OR-25 (viewport height outside the shell) | `RULES` in `packages/ui/scripts/check-design.mjs` |
-| Reading only | OR-1, OR-3 to OR-6, OR-10 to OR-13, OR-16, OR-20, OR-21, OR-23, the rest of OR-28 | The reviewer and the owner. |
+| Reading only | OR-1, OR-3 to OR-6, OR-10 to OR-13, OR-16, OR-20, OR-21, OR-23, the rest of OR-28, OR-29 to OR-42 (until each gets its check) | The reviewer and the owner. |
 
 A new rule is added together with its check, or with a row in "Reading only".
