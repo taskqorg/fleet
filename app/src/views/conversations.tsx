@@ -30,7 +30,7 @@ export function Conversations({ id }: { id?: string }) {
   const rows = list.rows as SessionRow[];
   const sel = view.sel ?? [], toggleSel = (x: string) => set({ sel: sel.includes(x) ? sel.filter(i => i !== x) : [...sel, x] });
   const now = Date.now();
-  const [newConversation,setNewConversation]=useState(!!new URLSearchParams(location.search).get('project'));
+  const [newConversation,setNewConversation]=useState(!!new URLSearchParams(location.search).get('new'));
   const create=()=>setNewConversation(true);
   const pane = <>
     <header class="page-h"><h1>Conversations</h1><OfflineMarker state={list.state} now={now} /><span class="grow" />
@@ -180,7 +180,7 @@ function SwitchPanel({ sessionId, handoff, current, onDone, run }: { sessionId: 
 function NewConversation({onDone}:{onDone:(sessionId:string)=>void}){
  const alive=useAlive();
  const projects=useDoc<any>('conversation-projects',()=>op('project_list',{}),c=>c.kind==='definition');
- const [project,setProject]=useState(new URLSearchParams(location.search).get('project')??''),[role,setRole]=useState('pm'),[error,setError]=useState('');
+ const [project,setProject]=useState(new URLSearchParams(location.search).get('new')??''),[role,setRole]=useState('pm'),[error,setError]=useState('');
  const selected=(projects.data?.projects??[]).find((p:any)=>p.id===project);
  const roles=Object.entries(selected?.roles??{}).map(([id,profile])=>({id,label:`${id} · ${String(profile)}`}));
  return <DetailSection title="New conversation"><Choice label="Project" value={project} onChange={p=>{setProject(p);setRole('pm');}} options={(projects.data?.projects??[]).map((p:any)=>({id:p.id,label:p.name}))}/>

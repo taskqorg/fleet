@@ -218,9 +218,11 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	}
 	if r.RowPin != nil {
 		next.RowPins = maps.Clone(next.RowPins)
-		ids := slices.DeleteFunc(slices.Clone(next.RowPins[r.RowPin.List]), func(x string) bool { return x == r.RowPin.Id })
-		if r.RowPin.Pinned {
+		ids := slices.Clone(next.RowPins[r.RowPin.List])
+		if had := slices.Contains(ids, r.RowPin.Id); r.RowPin.Pinned && !had { // pinning a pinned row keeps its place
 			ids = append(ids, r.RowPin.Id)
+		} else if !r.RowPin.Pinned {
+			ids = slices.DeleteFunc(ids, func(x string) bool { return x == r.RowPin.Id })
 		}
 		if len(ids) == 0 {
 			delete(next.RowPins, r.RowPin.List)
@@ -291,6 +293,12 @@ func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
 	}
 	if r.RowPin != nil && (r.RowPin.List == "" || r.RowPin.Id == "") {
 		return fail(400, "rowPin: list and id are required")
+	}
+	if r.ViewPut != nil && r.ViewDelete != nil && r.ViewPut.List == r.ViewDelete.List && r.ViewPut.Name == r.ViewDelete.Name {
+		return fail(400, "viewPut and viewDelete name the same view")
+	}
+	if r.FocusPresetPut != nil && r.FocusPresetDelete != nil && r.FocusPresetPut.Name == *r.FocusPresetDelete {
+		return fail(400, "focusPresetPut and focusPresetDelete name the same preset")
 	}
 	seen := map[string]bool{}
 	for _, v := range views {

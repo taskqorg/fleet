@@ -66,9 +66,15 @@ func deliveryStatus(q *Request, r *contract.DeliveryStatusRequest) (contract.Del
 	last := deliveryLast
 	deliveryMu.Unlock()
 	full := fullAccess(q.person)
-	return deliveryReply(last, func(p string) bool {
-		return (full || mayAccessProjectID(q.person, p)) && (len(r.ProjectIds) == 0 || slices.Contains(r.ProjectIds, p) || p == "" && slices.Contains(r.ProjectIds, "-"))
-	}), nil
+	in := func(p string) bool {
+		return len(r.ProjectIds) == 0 || slices.Contains(r.ProjectIds, p) || p == "" && slices.Contains(r.ProjectIds, "-")
+	}
+	out := deliveryReply(last, func(p string) bool { return (full || mayAccessProjectID(q.person, p)) && in(p) })
+	// The focus keeps items and samples of the focused projects only, also in a repository other projects list too.
+	// ponytail: landing stays the repository count of a visible repository.
+	out.Items = slices.DeleteFunc(out.Items, func(i contract.DeliveryItem) bool { return !in(i.ProjectId) })
+	out.Samples = slices.DeleteFunc(out.Samples, func(x contract.DeliverySample) bool { return !in(x.ProjectId) })
+	return out, nil
 }
 
 // deliveryReply: the part of the last pass a caller may see. A repository (its items, landing count, error and
