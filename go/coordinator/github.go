@@ -64,7 +64,7 @@ func githubRead(ctx context.Context, a *App, project, tool string, args map[stri
 			return nil, false, fmt.Errorf("no github key: only %s is read", githubPublicRepo)
 		}
 	}
-	cacheKey := fmt.Sprint(keyed, " ", path)
+	cacheKey := fmt.Sprint(keyed, " ", project, " ", path) // a keyed reply is served only to the project its token was minted for
 	githubMu.Lock()
 	c, ok := githubCache[cacheKey]
 	githubMu.Unlock()
