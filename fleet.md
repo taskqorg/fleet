@@ -230,7 +230,9 @@ The full fallback merge-gate command is `pnpm install --frozen-lockfile && pnpm 
 
 CI records an exact-candidate impact plan from `scripts/test-selection.ts`. The core runs contract lint, test metadata/self-checks, selector fixtures and documentation checks; candidates that execute app tests also run the pure view-URL check. Required `go`, `app` and `browser` statuses validate the plan and actual results before release.
 
-Only prose under `docs/`, root README and isolated `app/src/views/lab-create.tsx` changes may omit unrelated families after successful previous CI. Lab-create retains app and all browser checks. Unknown history, impact, paths or comparisons run the full fallback, as do shared/runtime/config, new tests and selector changes. Nonempty `FLEET_TEST_FULL` restores full execution.
+After successful exact-base CI, prose uses the core; app/src and packages/ui use app and all browser checks; executor, gateway and updater changes use go and app, preserving clean native archive builds/selftests.
+
+Coordinator, shared Go/runtime/contracts/config, new tests, selector changes and unknown history, impact, paths or comparisons run the full fallback. Mixed known changes use their union. Nonempty `FLEET_TEST_FULL` restores full execution.
 
 [Selected-gate qualification](docs/designs/fleet-delivery-pipeline.md#selected-gate-qualification) defines the narrow rollout and rollback. Native archives, migrations, provenance and signing remain checked before publication.
 
