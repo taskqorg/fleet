@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 since=$(date -u -v-"${1:-60}"M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "-${1:-60} min" +%Y-%m-%dT%H:%M:%SZ)
 prs=$( { gh pr list -R taskqorg/fleet --state open --json number,autoMergeRequest -q '.[] | select(.autoMergeRequest) | .number'
          gh api graphql -f query='{repository(owner:"taskqorg",name:"fleet"){mergeQueue(branch:"main"){entries(first:100){nodes{pullRequest{number}}}}}}' \
-           -q '.data.repository.mergeQueue.entries.nodes[].pullRequest.number'
+           -q '.data.repository.mergeQueue.entries.nodes[]?.pullRequest.number'
          gh pr list -R taskqorg/fleet --state merged --search "merged:>=$since" --json number -q '.[].number'; } | sort -un)
 [ -n "$prs" ] || { echo "no pull request to watch"; exit 0; }
 out=$(mktemp -d); trap 'rm -rf "$out"' EXIT
