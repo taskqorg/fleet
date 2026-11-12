@@ -7,13 +7,14 @@
 # on PDS18 ("coordinator: X -> Y" then "Y ok:"; a ui-*-v* release logs only its "Y ok:", read locally on pds18 or over
 # `ssh pds18`) for earlier releases. A stage without data prints "-".
 set -euo pipefail
-n=${1:-20}
+n=${1:-20}; [ "$n" -gt 0 ] 2>/dev/null || { echo "usage: delivery-latency.sh [N>0]" >&2; exit 64; }
 repo=taskqorg/fleet
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 # gh orders by creation (search cannot sort by merge time; "updated" moves with labels): take 3n and keep the n most recently
 # merged. ponytail: a branch older than 3n newer pull requests is missed; page further if that ever matters.
 gh pr list -R "$repo" -s merged -B main -L $(( n * 3 )) --json number,createdAt,mergedAt,headRefOid,mergeCommit \
   | jq --argjson n "$n" 'sort_by(.mergedAt) | .[-$n:]' >"$tmp/prs.json"
+[ "$(jq length "$tmp/prs.json")" -gt 0 ] || { echo "no merged pull request"; exit 0; }
 gh api --paginate "repos/$repo/releases?per_page=100" -q '.[]|[.tag_name,.published_at]|@tsv' >"$tmp/releases.tsv"
 # A release carries every merge since the previous one: match by the first release tag containing the merge commit (as watch-landing.sh).
 git fetch -q origin main --tags 2>/dev/null || true
@@ -54,23 +55,21 @@ def ci(sha, event):
     done = [ts(r["updatedAt"]) for r in runs if r["headSha"] == sha and r["event"] == event and r["conclusion"] == "success"]
     return min(done) if done else None
 # PDS18 install time per (part, version): hosts_list for the version the coordinator's host runs now (a healthy "ok" update
-# only), else the journal's "Y ok:" line after "<part>: X -> Y" (the update start; a refused, errored or rolled-back candidate
-# never gets its "ok"). The UI part logs no arrow line: an "ok" that follows no arrow is a UI install.
+# only), else the journal's "Y ok:" line (the first after the "<part>: X -> Y" start line, whichever run logs it; a refused,
+# errored or rolled-back candidate never gets its "ok"). The UI part logs no arrow line: an "ok" of a version no arrow named
+# is a UI install.
 installed = {}
 for h in hosts:
     # The coordinator's own host is the one row whose update carries the parts; its coordinator part is the install, whatever
     # the executor or the merged row says.
     u = ((h.get("update") or {}).get("parts") or {}).get("coordinator") or {}
     if u.get("state") == "ok" and u.get("version") and u.get("at"): installed["coordinator", u["version"]] = ts(u["at"])
-pending = None
+part = {}  # version -> part named by its arrow line
 for line in open(os.path.join(d, "journal.txt")):
-    m = re.match(r"(\S+) \S+ fleet-update\[\d+\]: ((\S+): \S+ -> (\S+)|(\S+) (\w+):)", line)
+    m = re.match(r"(\S+) \S+ fleet-update\[\d+\]: ((\S+): \S+ -> (\S+)|(\S+) ok:)", line)
     if not m: continue
-    if m.group(3): pending = (m.group(3), m.group(4))
-    elif pending and m.group(5) == pending[1]:  # the candidate's result: ok installs it, anything else ends the attempt
-        if m.group(6) == "ok": installed.setdefault(pending, jts(m.group(1)))
-        pending = None
-    elif m.group(6) == "ok": installed.setdefault(("ui", m.group(5)), jts(m.group(1)))
+    if m.group(3): part.setdefault(m.group(4), m.group(3))
+    else: installed.setdefault((part.get(m.group(5), "ui"), m.group(5)), jts(m.group(1)))
 stages = ["pr_ci", "mq_ci", "merged", "released", "on_host"]
 rows = []
 for p in prs:

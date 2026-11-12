@@ -69,20 +69,20 @@ test('landing observations retain authoritative publication, optional site evide
     for (const [graphql, out] of [
       [pr({}, [red, check('app', 'SUCCESS', '2026-11-12T10:00:00Z')]), 'not merged: OPEN, failed_checks (head)'],
       [pr({}, [red, check('go', 'FAILURE', '2026-11-12T10:10:00Z')]), 'not merged: OPEN, failed_checks (head)'],
+      [pr({}, [check('go', 'CANCELLED', '2026-11-12T10:00:00Z')]), 'not merged: OPEN, failed_checks (head)'],
       [pr({autoMergeRequest: null}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: 'failed_checks'}]), 'not merged: OPEN, failed_checks'],
       [pr({autoMergeRequest: null}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: null}]), 'not merged: OPEN, unknown'],
       [pr({mergeStateStatus: 'DIRTY'}), 'not merged: OPEN, merge_conflict'],
       [pr({autoMergeRequest: null}, [red], [{__typename: 'AutoMergeDisabledEvent'}]), 'not merged: OPEN, auto-merge off'],
       [pr({state: 'CLOSED', autoMergeRequest: null}, [red]), 'not merged: CLOSED, auto-merge off'],
     ]) { const r = run({WATCH_FIXTURE_GRAPHQL: graphql}); assert.equal(r.status, 1, r.stderr); assert.equal(r.stdout, out + '\n'); }
-    // Still waiting: a non-required red, a rerun after red (newer success, running, or queued without a start time), a cancelled
-    // run, and a red head already in the queue (the queue decides).
+    // Still waiting: a non-required red, a rerun after red (newer success, running, or queued without a start time) and a red
+    // head already in the queue (the queue decides).
     for (const graphql of [
       pr({}, [check('reports', 'FAILURE', '2026-11-12T10:00:00Z', false), check('go', 'SUCCESS', '2026-11-12T10:00:00Z')]),
       pr({}, [red, check('go', 'SUCCESS', '2026-11-12T10:10:00Z')]),
       pr({}, [red, check('go', null, '2026-11-12T10:10:00Z')]),
       pr({}, [red, check('go', null, null)]),
-      pr({}, [check('go', 'CANCELLED', '2026-11-12T10:00:00Z')]),
       pr({mergeQueueEntry: {state: 'QUEUED'}}, [red]),
     ]) { const r = run({WATCH_FIXTURE_GRAPHQL: graphql}, false, '0'); assert.equal(r.status, 2, r.stderr); assert.equal(r.stdout, 'timeout at: queue\n'); }
   } finally { rmSync(dir, {recursive: true, force: true}); }
