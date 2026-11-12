@@ -225,7 +225,7 @@ func putExecution(q *Request, e doc) error {
 			}
 		}
 		if _, err = settleTask(q, *t, ""); err == nil && terminalTyped[state] && !terminalTyped[prev] {
-			err = settleIdleTask(q, *t)
+			_, err = settleIdleTask(q, *t)
 		}
 	}
 	return err
