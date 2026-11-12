@@ -30,6 +30,7 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       previous: ${{ steps.check.outputs.previous }}
       recent: ${{ steps.check.outputs.recent }}
+      ui: ${{ steps.check.outputs.ui }}
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -51,11 +52,24 @@ jobs:
           if [ -n "$latest" ] && git merge-base --is-ancestor "$sha" "$latest^{commit}"; then
             echo "$sha is already in $latest" | tee -a "$GITHUB_STEP_SUMMARY"; echo release=false >> "$GITHUB_OUTPUT"; exit 0
           fi
+          ui=false
+          if [ -n "$latest" ]; then
+            paths=$(git diff --name-only "$latest^{commit}" "$sha")
+            if [ -n "$paths" ] && ! printf '%s\n' "$paths" | grep -Ev '^(app/src/|packages/ui/src/|packages/ui/icons.json$)'; then ui=true; fi
+          fi
+          if [ "$ui" = true ]; then
+            for tag in $(git tag -l "ui-${latest#v}-v*"); do
+              if [ "$(git rev-parse "$tag^{commit}")" = "$sha" ]; then
+                echo "already published UI $sha as $tag"; echo release=false >> "$GITHUB_OUTPUT"; exit 0
+              fi
+            done
+          fi
+          echo "ui=$ui" >> "$GITHUB_OUTPUT"
           day=$(date -u +%y%m%d)
-          m=$(git tag -l "v1.$day.*" | sed "s/^v1\.$day\.//" | sort -n | tail -1)
+          m=$(git tag -l "v1.$day.*" "ui-*-v1.$day.*" | sed "s/^.*v1\.$day\.//" | sort -n | tail -1)
           version=1.$day.$(( ${m:--1} + 1 ))
           # migrate-check pairs the new coordinator with each of these (fleet-delivery-pipeline.md section 5).
-          recent=$(gh release list --exclude-drafts --exclude-pre-releases --limit 5 --json tagName -q '[.[].tagName | ltrimstr("v")] | join(" ")')
+          recent=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' | awk '/^v1\.[0-9][0-9][0-9][0-9][0-9][0-9]\.[0-9]+$/ { if (n++ < 5) { printf "%s%s", sep, substr($0,2); sep=" " } } END { print "" }')
           { echo release=true; echo "sha=$sha"; echo "version=$version"; echo "previous=${latest#v}"; echo "recent=$recent"; } >> "$GITHUB_OUTPUT"
           echo "release $version from $sha, checked with: ${recent:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v4
@@ -116,8 +130,15 @@ jobs:
           VERSION: ${{ needs.gate.outputs.version }}
           PREVIOUS: ${{ needs.gate.outputs.previous }}
           SHA: ${{ needs.gate.outputs.sha }}
-        run: mkdir out && deploy/build-release.sh "$SHA" out "$VERSION" "$PREVIOUS" linux/amd64 darwin/arm64
+        run: |
+          mkdir out
+          if [ "${{ needs.gate.outputs.ui }}" = true ]; then
+            deploy/build-ui-release.sh "$SHA" out "$VERSION" "$PREVIOUS"
+          else
+            deploy/build-release.sh "$SHA" out "$VERSION" "$PREVIOUS" linux/amd64 darwin/arm64
+          fi
       - name: Selftest linux binaries
+        if: needs.gate.outputs.ui != 'true'
         run: |
           mkdir t && tar -xzf out/fleet-*-linux-amd64.tgz -C t
           for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/t/$b" selftest); done
@@ -127,7 +148,8 @@ jobs:
           path: out/
           if-no-files-found: error
   selftest-macos:
-    needs: build
+    needs: [gate, build]
+    if: needs.gate.outputs.ui != 'true'
     runs-on: macos-latest
     permissions:
       contents: read
@@ -143,7 +165,7 @@ jobs:
   # so a rollback on PDS18 from up to 5 releases behind returns to a checked pair (fleet-delivery-pipeline.md section 5).
   migrate-check:
     needs: [gate, build]
-    if: needs.gate.outputs.recent != ''
+    if: needs.gate.outputs.recent != '' && needs.gate.outputs.ui != 'true'
     # Signing/publishing and native qualification remain on GitHub-hosted runners.
     runs-on: ${{ github.ref == 'refs/heads/main' && fromJSON('["self-hosted","linux","x64","fleet-pds18"]') || 'ubuntu-24.04' }}
     permissions:
@@ -186,9 +208,47 @@ jobs:
               i=$((i+1)); [ $i -lt 60 ] || { echo "::error::$dir coordinator not healthy"; exit 1; }; sleep 1; done
             echo; kill $pid; wait $pid || true
           done
+  ui-check:
+    needs: [gate, build]
+    if: needs.gate.outputs.ui == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.gate.outputs.version }}
+      PREVIOUS: ${{ needs.gate.outputs.previous }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: out
+      - name: Exact UI archive with released backend
+        run: |
+          mkdir -p dist/app "$RUNNER_TEMP/previous"
+          tar -xzf "out/fleet-ui-$VERSION.tgz" -C dist/app
+          gh release download "v$PREVIOUS" -p "fleet-$PREVIOUS-linux-amd64.tgz" -D "$RUNNER_TEMP/previous"
+          tar -xzf "$RUNNER_TEMP/previous/fleet-$PREVIOUS-linux-amd64.tgz" -C "$RUNNER_TEMP/previous"
+          export CI=true FLEET_TRIAL_SERVER="$RUNNER_TEMP/previous/fleet-coordinator" FLEET_APP_DIR="$PWD/dist/app" FLEET_TRIAL_PGDATA="$RUNNER_TEMP/ui-pg"
+          export PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH"
+          node tests/ui/filter.check.ts --assert
+          node tests/ui/conversations.check.ts
+          node tests/ui/lab-create.check.ts
   publish:
-    needs: [gate, selftest-macos, migrate-check]
-    if: always() && needs.gate.outputs.release == 'true' && needs.selftest-macos.result == 'success' && (needs.migrate-check.result == 'success' || needs.migrate-check.result == 'skipped')
+    needs: [gate, build, selftest-macos, migrate-check, ui-check]
+    if: always() && needs.build.result == 'success' && (needs.gate.outputs.ui != 'true' || needs.ui-check.result == 'success') && needs.gate.outputs.release == 'true' && (needs.selftest-macos.result == 'success' || (needs.gate.outputs.ui == 'true' && needs.selftest-macos.result == 'skipped')) && (needs.migrate-check.result == 'success' || needs.migrate-check.result == 'skipped')
     runs-on: ubuntu-24.04
     environment: release
     permissions:
@@ -201,6 +261,8 @@ jobs:
       VERSION: ${{ needs.gate.outputs.version }}
       SHA: ${{ needs.gate.outputs.sha }}
       RECENT: ${{ needs.gate.outputs.recent }}
+      UI: ${{ needs.gate.outputs.ui }}
+      BACKEND: ${{ needs.gate.outputs.previous }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -208,7 +270,11 @@ jobs:
       # A re-run after a later release published must not reuse its version or move latest backwards.
       - name: Version still free and newest
         run: |
-          ! gh release view "v$VERSION" >/dev/null 2>&1 || { echo "::error::v$VERSION already exists"; exit 1; }
+          tag="v$VERSION"
+          [ "$UI" != true ] || tag="ui-$BACKEND-v$VERSION"
+          git ls-remote --tags "https://github.com/$GH_REPO.git" > "$RUNNER_TEMP/release-tags"
+          ! awk -v version="$VERSION" '{ tag=$2; sub(/^refs\/tags\//,"",tag); sub(/^.*v/,"",tag); if (tag==version) found=1 } END { exit !found }' "$RUNNER_TEMP/release-tags" || { echo "::error::version already allocated"; exit 1; }
+          ! gh release view "$tag" >/dev/null 2>&1 || { echo "::error::v$VERSION already exists"; exit 1; }
           latest=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
           [ -z "$latest" ] || [ "$(printf '%s\n%s\n' "${latest#v}" "$VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" = "$VERSION" ] \
             || { echo "::error::$VERSION is not newer than $latest; start a new run"; exit 1; }
@@ -231,5 +297,10 @@ jobs:
           subject-path: fleet-*.tgz
       - run: |
           cp "${{ steps.attest.outputs.bundle-path }}" provenance.sigstore.jsonl
-          gh release create "v$VERSION" --target "$SHA" --latest --title "v$VERSION" --notes "Fleet $VERSION" \
-            fleet-*.tgz SHA256SUMS SHA256SUMS.sig latest.json provenance.sigstore.jsonl
+          if [ "$UI" = true ]; then
+            gh release create "ui-$BACKEND-v$VERSION" --target "$SHA" --latest=false --title "Fleet UI $VERSION" --notes "UI $VERSION for backend $BACKEND; source $SHA" \
+              fleet-ui-*.tgz SHA256SUMS SHA256SUMS.sig provenance.sigstore.jsonl
+          else
+            gh release create "v$VERSION" --target "$SHA" --latest --title "v$VERSION" --notes "Fleet $VERSION" \
+              fleet-*.tgz SHA256SUMS SHA256SUMS.sig latest.json provenance.sigstore.jsonl
+          fi

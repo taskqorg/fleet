@@ -658,11 +658,27 @@ func readingOverSwitch(account map[string]any, list []Reading) string {
 
 // ---- the built app (FLEET_APP_DIR, default dist/app): hashed assets immutable, entry files revalidated ----
 
+var appScreen func(http.ResponseWriter, *http.Request) bool
+
 func appRoutes() {
 	dir, _ := filepath.Abs(envOr("FLEET_APP_DIR", "dist/app"))
+	// An incompatible independently installed UI never survives a backend rollback.
+	appDir := func() string {
+		if root := os.Getenv("FLEET_UI_ROOT"); root != "" {
+			var m struct{ Kind, BackendVersion string }
+			current, resolveErr := filepath.EvalSymlinks(filepath.Join(root, "current"))
+			if resolveErr != nil {
+				return dir
+			}
+			if b, err := os.ReadFile(filepath.Join(current, "release.json")); err == nil && json.Unmarshal(b, &m) == nil && m.Kind == "ui" && m.BackendVersion == version {
+				return current
+			}
+		}
+		return dir
+	}
 	file := func(name, media string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			b, err := os.ReadFile(filepath.Join(dir, name))
+			b, err := os.ReadFile(filepath.Join(appDir(), name))
 			if err != nil {
 				writeError(w, fail(404, "App not built"))
 				return
@@ -676,9 +692,19 @@ func appRoutes() {
 	assets := http.StripPrefix("/assets/", http.FileServer(noDirs{http.Dir(filepath.Join(dir, "assets"))}))
 	publicRoute("GET /assets/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		if root := os.Getenv("FLEET_UI_ROOT"); root != "" {
+			name := strings.TrimPrefix(r.URL.Path, "/assets/")
+			if name != "" && filepath.Base(name) == name {
+				if b, err := os.ReadFile(filepath.Join(root, "assets", name)); err == nil {
+					http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(b))
+					return
+				}
+			}
+		}
 		assets.ServeHTTP(w, r)
 	})
 	publicRoute("GET /sw.js", file("sw.js", "text/javascript"))
+	publicRoute("GET /ui-release.json", file("release.json", "application/json"))
 	manifest, icon := regexp.MustCompile(`^[a-z]+\.webmanifest$`), regexp.MustCompile(`^[a-z0-9-]+\.svg$`)
 	publicRoute("GET /manifests/{name}", func(w http.ResponseWriter, r *http.Request) {
 		if n := r.PathValue("name"); manifest.MatchString(n) {
@@ -694,20 +720,35 @@ func appRoutes() {
 		}
 		writeError(w, fail(404, "Unknown icon"))
 	})
-	// App screens come from the build (screens.json); /lab is always one.
-	var screens []string
-	if b, err := os.ReadFile(filepath.Join(dir, "screens.json")); err == nil {
-		json.Unmarshal(b, &screens)
-	}
-	seen := map[string]bool{}
-	for _, s := range append(screens, "lab") {
-		if !regexp.MustCompile(`^[a-z]+$`).MatchString(s) || seen[s] {
-			continue
+	appScreen = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != "GET" && r.Method != "HEAD" {
+			return false
 		}
-		seen[s] = true
-		publicRoute("GET /"+s, file("index.html", "text/html"))
-		publicRoute("GET /"+s+"/{id}", file("index.html", "text/html"))
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+		if len(parts) > 2 || parts[0] == "api" {
+			return false
+		}
+		selected := appDir()
+		var screens []string
+		b, err := os.ReadFile(filepath.Join(selected, "screens.json"))
+		if err == nil {
+			json.Unmarshal(b, &screens)
+		}
+		for _, screen := range append(screens, "lab") {
+			if screen == parts[0] {
+				b, err := os.ReadFile(filepath.Join(selected, "index.html"))
+				if err != nil {
+					return false
+				}
+				w.Header().Set("Cache-Control", "no-cache")
+				w.Header().Set("Content-Type", "text/html")
+				w.Write(b)
+				return true
+			}
+		}
+		return false
 	}
+
 }
 
 // noDirs: no directory listings under /assets/.

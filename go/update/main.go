@@ -176,6 +176,11 @@ func (u *updater) runPDS18() error {
 			}
 		}
 	}
+	// UI state is independent; native rollout and discovery retain their own versions.
+	backend, uiAuto := u.coordinatorSelf()
+	if err := u.cycleUI(backend, uiAuto, "/home/fleet/ui", stage, filepath.Join(s, "ui-state.json")); err != nil {
+		log.Print(err)
+	}
 	// The PDS18 executor follows the coordinator side in the same run, to its healthy version only.
 	healthy := func() string {
 		v := rootVersion(coordR, "current")

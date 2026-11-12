@@ -4,6 +4,7 @@ After=network.target
 [Service]
 WorkingDirectory=/home/fleet/releases/current
 EnvironmentFile=/home/fleet/.config/fleet/coordinator.env
+Environment=FLEET_UI_ROOT=/home/fleet/ui
 ExecStart=/home/fleet/releases/current/fleet-coordinator
 Restart=on-failure
 RestartSec=3

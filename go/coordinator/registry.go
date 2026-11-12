@@ -288,6 +288,9 @@ func (a *App) routes() http.Handler {
 			mux.ServeHTTP(w, hr)
 			return
 		}
+		if !strings.HasPrefix(hr.URL.Path, "/api/") && appScreen != nil && appScreen(w, hr) {
+			return
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		q := &Request{r: hr, app: a}
