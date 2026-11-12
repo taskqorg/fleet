@@ -33,10 +33,17 @@ type ciJob struct {
 }
 
 // ciDone: jobs of completed runs, which never change, so each run's jobs are read once per coordinator process.
+// Keyed by run id and attempt (a re-run keeps the id); entries of runs no longer listed today are dropped.
+type ciRunKey struct{ id, attempt int64 }
+
 var (
-	ciMu   sync.Mutex
-	ciDone = map[int64][]ciJob{}
+	ciMu       sync.Mutex
+	ciDone     = map[ciRunKey][]ciJob{}
+	ciLastFill time.Time // keyless: when new completed runs were last read
 )
+
+// ciGeneric: labels that do not name a runner.
+var ciGeneric = map[string]bool{"self-hosted": true, "linux": true, "windows": true, "macos": true, "x64": true, "arm64": true, "ARM64": true, "X64": true}
 
 // ciRunner: a job's runner type: the runner's name for a self-hosted one, else its first label (ubuntu-latest).
 func ciRunner(j ciJob) (string, bool) {
@@ -45,8 +52,13 @@ func ciRunner(j ciJob) (string, bool) {
 		return *j.RunnerName, false
 	}
 	for _, l := range j.Labels {
-		if l == "self-hosted" { // queued for a self-hosted runner: name it by its routing label (fleet-pds18)
-			return j.Labels[len(j.Labels)-1], false
+		if l == "self-hosted" { // queued for a self-hosted runner: name it by its first routing label (fleet-pds18)
+			for _, x := range j.Labels {
+				if !ciGeneric[x] {
+					return x, false
+				}
+			}
+			return l, false
 		}
 	}
 	if len(j.Labels) > 0 {
@@ -64,6 +76,10 @@ func ciMs(s string) any {
 }
 
 func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.ExecutionsCiReply, error) {
+	// Keyed reads are made for ciProject: only a caller who may see that project gets them.
+	if !mayAccessProjectID(q.person, ciProject) && q.person != nil {
+		return contract.ExecutionsCiReply{}, fail(404, "Unknown project")
+	}
 	ctx, a := q.ctx(), q.app
 	args := func(kv ...string) map[string]string {
 		m := map[string]string{"owner": ciOwner, "repo": ciRepo}
@@ -110,6 +126,7 @@ func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.Executi
 		}
 		return out
 	}
+	num := func(v any) int64 { f, _ := v.(float64); return int64(f) }
 	active := append(runIDs(runsOf("runs_in_progress")), runIDs(runsOf("runs_queued"))...)
 	recent := runsOf("runs_recent", "date", today)
 	jobs := []any{}
@@ -120,6 +137,9 @@ func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.Executi
 	}
 	minutes := map[string]*acc{}
 	count := func(j ciJob) {
+		if j.Status != "in_progress" && j.Status != "completed" {
+			return // queued: waiting is not runner time
+		}
 		start, _ := time.Parse(time.RFC3339, j.StartedAt)
 		if start.IsZero() || start.Before(now.Truncate(24*time.Hour)) {
 			return
@@ -158,19 +178,29 @@ func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.Executi
 				"runner": name, "hosted": hosted, "runnerName": j.RunnerName, "createdAt": ciMs(j.CreatedAt), "startedAt": ciMs(j.StartedAt)})
 		}
 	}
-	// Completed runs of today: their jobs count toward minutes. ponytail: at most 20 new runs read per call, so a
-	// keyless coordinator stays inside 60 requests an hour; the rest fill in on later calls (partial until then).
-	fresh, missing := 0, 0
-	for _, id := range runIDs(recent) {
-		if seen[id] {
-			continue
+	// Completed runs of today: their jobs count toward minutes, read once each. Without a key at most 20 new runs per
+	// 5 minutes; the rest fill in later and runsUncounted marks the minutes partial. ponytail: a day with many runs can
+	// still exhaust GitHub's 60 keyless requests an hour; the github key lifts it to 5000.
+	ciMu.Lock()
+	budget := 20
+	if !keyed && time.Since(ciLastFill) < 5*time.Minute {
+		budget = 0
+	}
+	ciMu.Unlock()
+	fresh, missing, listed := 0, 0, map[ciRunKey]bool{}
+	for _, run := range recent {
+		id := num(run["id"])
+		k := ciRunKey{id, num(run["run_attempt"])}
+		listed[k] = true
+		if seen[id] || run["status"] != "completed" {
+			continue // active runs were counted above; a requested or pending run has no jobs yet
 		}
 		seen[id] = true
 		ciMu.Lock()
-		js, ok := ciDone[id]
+		js, ok := ciDone[k]
 		ciMu.Unlock()
 		if !ok {
-			if fresh >= 20 {
+			if fresh >= budget {
 				missing++
 				continue
 			}
@@ -180,20 +210,24 @@ func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.Executi
 				missing++
 				continue
 			}
-			done := true
-			for _, j := range js {
-				done = done && j.Status == "completed"
-			}
-			if done {
-				ciMu.Lock()
-				ciDone[id] = js
-				ciMu.Unlock()
-			}
+			ciMu.Lock()
+			ciDone[k] = js
+			ciMu.Unlock()
 		}
 		for _, j := range js {
 			count(j)
 		}
 	}
+	ciMu.Lock()
+	if fresh > 0 {
+		ciLastFill = time.Now()
+	}
+	for k := range ciDone {
+		if len(recent) > 0 && !listed[k] {
+			delete(ciDone, k)
+		}
+	}
+	ciMu.Unlock()
 	mins := []any{}
 	names := make([]string, 0, len(minutes))
 	for n := range minutes {
@@ -223,7 +257,9 @@ func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.Executi
 					} `json:"labels"`
 				} `json:"runners"`
 			}
-			if json.Unmarshal(b, &r) == nil {
+			if err := json.Unmarshal(b, &r); err != nil {
+				out["problems"] = append(problems, fmt.Sprintf("runners: %v", err))
+			} else {
 				rs := []any{}
 				for _, x := range r.Runners {
 					ls := []string{}
