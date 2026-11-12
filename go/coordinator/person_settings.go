@@ -30,6 +30,10 @@ func settingsEmail(q *Request, email *string) (string, error) {
 		}
 		return me, nil
 	}
+	// An agent acts for its director only, never on another person's settings, even with the owner's rights.
+	if q.agent != "" {
+		return "", fail(403, "An agent reads and sets only its director's settings")
+	}
 	if q.person != nil && !q.person.Owner {
 		return "", fail(403, "Only the owner reads or sets another person's settings")
 	}
