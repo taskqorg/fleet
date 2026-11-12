@@ -120,9 +120,9 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
     time: e.startedAt && (e.endedAt ?? e.finishedAt) ? { value: (ms(e.endedAt ?? e.finishedAt)! - ms(e.startedAt)!) / 1000, basis: 'measured' } : { value: null, basis: 'unavailable', reason: 'not finished' } }));
   const disabled = off ? 'offline' : undefined;
   // OR-39: statement, lifecycle, result, decision; a total is shown only when it is known (no empty token or cost fields).
+  // The execution count is the tree below (OR-17: no second 'Executions').
   const wall = t.cost?.wall_ms === null || t.cost?.wall_ms === undefined ? null : Number(t.cost.wall_ms) / 1000;
   const totals = [
-    ...(t.progress?.executions ? [{ label: 'Executions', m: { value: t.progress.executions, basis: 'measured' as const }, kind: 'count' as const }] : []),
     ...(wall !== null ? [{ label: 'Time', m: { value: wall, basis: 'measured' as const, partial: Number(t.cost.measured_wall) < Number(t.cost.executions_with_totals) ? 'some runs not measured' : undefined }, kind: 'duration' as const }] : []),
     ...(tok !== null ? [{ label: 'Tokens', m: { value: tok, basis: 'measured' as const }, kind: 'count' as const }] : []),
   ];
