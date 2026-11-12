@@ -692,6 +692,57 @@ const providersJSON = `
     }
    }
   }
+ },
+ "github": {
+  "baseUrl": "https://api.github.com",
+  "instructions": "Read-only GitHub REST reads of a repository (pull requests, workflow runs, releases). The key is a read-only fine-grained token.",
+  "tools": {
+   "pulls_open": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/pulls?state=open&per_page=100",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "Open pull requests of a repository (100 newest).",
+    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}}
+   },
+   "pulls_closed": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/pulls?state=closed&sort=updated&direction=desc&per_page=50",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "Recently closed pull requests of a repository, with merged_at.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}}
+   },
+   "runs_in_progress": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/actions/runs?status=in_progress&per_page=100",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "Workflow runs in progress.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}}
+   },
+   "runs_queued": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/actions/runs?status=queued&per_page=100",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "Workflow runs waiting for a runner.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}}
+   },
+   "releases": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/releases?per_page=30",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "The 30 newest releases.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}}
+   }
+  }
  }
 }
 `
