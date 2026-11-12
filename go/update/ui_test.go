@@ -61,22 +61,20 @@ type uiTransport func(*http.Request) (*http.Response, error)
 
 func (f uiTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// Requirement: UI discovery reads the repository tag advertisement, never api.github.com (60 unauthenticated
-// requests per hour, 304 included, which a 1 minute timer alone exhausts), and keeps the newest tag of this backend.
+// Requirement: UI discovery asks git protocol v2 ls-refs for this backend's tags only, never api.github.com
+// (60 unauthenticated requests per hour, 304 included, which a 1 minute timer alone exhausts), and keeps the newest.
 func TestUIDiscoveryTags(t *testing.T) {
 	u := newUpdater(nil)
 	u.client = &http.Client{Transport: uiTransport(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Host != "github.com" || r.URL.Path != "/taskqorg/fleet.git/info/refs" || r.URL.RawQuery != "service=git-upload-pack" {
-			t.Fatal("wrong discovery URL", r.URL)
+		if r.Method != "POST" || r.URL.String() != "https://github.com/taskqorg/fleet.git/git-upload-pack" || r.Header.Get("Git-Protocol") != "version=2" {
+			t.Fatal("wrong discovery request", r.Method, r.URL)
 		}
-		body := "001e# service=git-upload-pack\n0000" +
-			"0158aaaa HEAD\x00multi_ack symref=HEAD:refs/heads/main agent=git/github\n" +
-			"003daaaa refs/heads/main\n" +
-			"003faaaa refs/tags/ui-1.261112.0-v1.261112.1\n" +
-			"003faaaa refs/tags/ui-1.261112.0-v1.261112.1^{}\n" +
-			"003faaaa refs/tags/ui-1.261112.0-v1.261112.3\n" +
-			"003faaaa refs/tags/ui-1.261111.9-v1.261112.4\n" +
-			"003faaaa refs/tags/v1.261112.5\n0000"
+		req, _ := io.ReadAll(r.Body)
+		if want := "0014command=ls-refs\n00010029ref-prefix refs/tags/ui-1.261112.0-v\n0000"; string(req) != want {
+			t.Fatalf("request body %q", req)
+		}
+		body := pkt("aaaa refs/tags/ui-1.261112.0-v1.261112.1\n") + pkt("aaaa refs/tags/ui-1.261112.0-v1.261112.3\n") +
+			pkt("aaaa refs/tags/ui-1.261112.0-v1.261112.2\n") + "0000"
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
 	got, err := u.latestUI("1.261112.0")

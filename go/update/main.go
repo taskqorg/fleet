@@ -27,7 +27,7 @@ const releaseKey = "eT+0MVUmjUvvItJGhR3rUqW5PBzvE8QbD9Uq/wjAHlQ="
 
 const releasesURL = "https://github.com/taskqorg/fleet/releases"
 
-const refsURL = "https://github.com/taskqorg/fleet.git/info/refs?service=git-upload-pack"
+const repoURL = "https://github.com/taskqorg/fleet.git"
 
 func main() {
 	log.SetFlags(0)

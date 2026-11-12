@@ -385,7 +385,9 @@ func TestLatestConditionalGet(t *testing.T) {
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}
-		w.Header().Set("ETag", etag)
+		if etag != "" {
+			w.Header().Set("ETag", etag)
+		}
 		w.Header().Set("Last-Modified", "Thu, 12 Nov 2026 09:28:29 GMT")
 		w.Write([]byte(body))
 	}))
@@ -416,5 +418,24 @@ func TestLatestConditionalGet(t *testing.T) {
 	}
 	if v := u.latest(); v != "1.261112.2" || matched != 2 {
 		t.Fatalf("recached: %q matched=%d", v, matched)
+	}
+	// A bad body (an error page with an ETag) is neither used nor cached: the next run fetches it again in full.
+	etag, body = `"three"`, `<html>oops</html>`
+	if v := u.latest(); v != "" {
+		t.Fatalf("bad body used: %q", v)
+	}
+	etag, body = `"four"`, `{"version":"1.261112.4"}`
+	if v := u.latest(); v != "1.261112.4" || matched != 2 {
+		t.Fatalf("after bad body: %q matched=%d", v, matched)
+	}
+	// Without an ETag nothing is cached and the next request is unconditional.
+	etag, body = "", `{"version":"1.261112.5"}`
+	entries, _ := os.ReadDir(dir)
+	u.latest()
+	if v := u.latest(); v != "1.261112.5" || matched != 2 {
+		t.Fatalf("no etag: %q matched=%d", v, matched)
+	}
+	if after, _ := os.ReadDir(dir); len(after) != len(entries) {
+		t.Fatalf("cache written without an ETag: %d -> %d files", len(entries), len(after))
 	}
 }

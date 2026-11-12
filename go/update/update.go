@@ -96,7 +96,7 @@ type part struct {
 
 type updater struct {
 	base         string // releases URL: <base>/download/v<ver>/<file>, <base>/latest/download/latest.json
-	refsURL      string // the repository's git smart HTTP ref advertisement, read by latestUI
+	repoURL      string // git smart HTTP URL of the repository, for latestUI
 	key          ed25519.PublicKey
 	target       string // <os>-<arch>
 	client       *http.Client
@@ -111,7 +111,7 @@ type updater struct {
 }
 
 func newUpdater(key ed25519.PublicKey) *updater {
-	return &updater{base: releasesURL, refsURL: refsURL, key: key, target: runtime.GOOS + "-" + runtime.GOARCH,
+	return &updater{base: releasesURL, repoURL: repoURL, key: key, target: runtime.GOOS + "-" + runtime.GOARCH,
 		client: &http.Client{Timeout: 10 * time.Minute}, now: time.Now, window: 30 * time.Second, tick: time.Second,
 		coordURL: "http://127.0.0.1:9470/api/health", gatewayURL: "http://127.0.0.1:8742/healthz",
 		guardURL: "http://127.0.0.1:9471/verify",
@@ -264,6 +264,10 @@ func (u *updater) get(url string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	return readOK(url, resp)
+}
+
+func readOK(url string, resp *http.Response) ([]byte, error) {
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
 	}
@@ -551,14 +555,24 @@ func (u *updater) executorHealth(signal string) func(string) probe {
 }
 
 func (u *updater) latest() string {
-	c, err := u.getCached(u.base + "/latest/download/latest.json")
+	var l struct{ Version string }
+	c, err := u.getCached(u.base+"/latest/download/latest.json", func(b []byte) error {
+		if err := json.Unmarshal(b, &l); err != nil {
+			return err
+		}
+		if !verRe.MatchString(l.Version) {
+			return fmt.Errorf("version %q", l.Version)
+		}
+		return nil
+	})
 	if err != nil {
 		log.Print("latest.json: ", err)
 		return ""
 	}
-	var l struct{ Version string }
-	json.Unmarshal(c.Body, &l)
 	if !c.LastModified.IsZero() { // the asset upload time: cheap publish time for the install log line
+		if u.published == nil {
+			u.published = map[string]time.Time{}
+		}
 		u.published[l.Version] = c.LastModified
 	}
 	return l.Version
@@ -567,13 +581,14 @@ func (u *updater) latest() string {
 // cached is one entry of the conditional GET cache: <cacheDir>/etag-<sha256(url) prefix>.json.
 type cached struct {
 	ETag         string    `json:"etag"`
-	LastModified time.Time `json:"lastModified,omitempty"`
+	LastModified time.Time `json:"lastModified"`
 	Body         []byte    `json:"body"`
 }
 
 // getCached is a conditional GET (delivery pipeline, section 6): it sends If-None-Match with the ETag seen last and
-// answers a 304 from the cache, so an unchanged file costs one request without a body. Without cacheDir it is get.
-func (u *updater) getCached(url string) (cached, error) {
+// answers a 304 from the cache, so an unchanged file costs one request without a body. check validates every body
+// before it is returned or cached, so a bad body is never replayed. Without cacheDir or an ETag it is get.
+func (u *updater) getCached(url string, check func([]byte) error) (cached, error) {
 	var c cached
 	file := ""
 	if u.cacheDir != "" {
@@ -593,18 +608,20 @@ func (u *updater) getCached(url string) (cached, error) {
 		return cached{}, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotModified && c.ETag != "" {
-		return c, nil
+	if resp.StatusCode != http.StatusNotModified || c.ETag == "" {
+		c = cached{ETag: resp.Header.Get("ETag")}
+		if c.Body, err = readOK(url, resp); err != nil {
+			return cached{}, err
+		}
+		c.LastModified, _ = http.ParseTime(resp.Header.Get("Last-Modified"))
 	}
-	if resp.StatusCode != 200 {
-		return cached{}, fmt.Errorf("GET %s: %s", url, resp.Status)
+	if err := check(c.Body); err != nil {
+		if file != "" {
+			os.Remove(file)
+		}
+		return cached{}, fmt.Errorf("GET %s: %w", url, err)
 	}
-	c = cached{ETag: resp.Header.Get("ETag")}
-	if c.Body, err = io.ReadAll(resp.Body); err != nil {
-		return cached{}, err
-	}
-	c.LastModified, _ = http.ParseTime(resp.Header.Get("Last-Modified"))
-	if c.ETag != "" && file != "" {
+	if resp.StatusCode != http.StatusNotModified && c.ETag != "" && file != "" {
 		if err := writeJSON(file, c, 0o600); err != nil {
 			log.Print("etag cache: ", err)
 		}
