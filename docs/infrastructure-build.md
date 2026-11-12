@@ -70,6 +70,8 @@ Install order. Each step passes its readback before the next starts.
 
 Coordinator wiring (`fleet.service` After/Wants, `coordinator.env` URLs) is Phase 0 item 5 and not in this candidate.
 
+Held sockets (2026-11-12): `fleet.socket` (127.0.0.1:9470) and `fleet-access-guard.socket` (127.0.0.1:9471) keep the ports open across coordinator and guard restarts, so a release queues requests instead of refusing them. Install only once the running release reads activated sockets (an older binary cannot bind a held port): copy both sockets and both services to `~/.config/systemd/user/` of `fleet`, `systemctl --user daemon-reload`, `systemctl --user stop fleet fleet-access-guard`, `systemctl --user enable --now fleet.socket fleet-access-guard.socket`, `systemctl --user start fleet fleet-access-guard`. Readback: `journalctl --user -u fleet` shows `serving on activated socket 127.0.0.1:9470`. Rollback: disable and stop both sockets, restore the services without `Requires=`, restart.
+
 ## Phase 0 installed on PDS18, 2026-11-09
 
 Observed by readback after each step. Secret values stay in host files under `/home/fleet/.config/fleet/`, mode 0600.

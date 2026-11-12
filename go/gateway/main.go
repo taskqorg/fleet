@@ -61,15 +61,18 @@ func run(args []string) error {
 			return err
 		}
 		server := &http.Server{Handler: newGuard(secret, accessIssuer+"/cdn-cgi/access/certs"), ReadHeaderTimeout: 10 * time.Second}
+		drained := make(chan struct{})
 		go func() {
+			defer close(drained)
 			<-terminated()
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second) // a stream outlasting this reconnects
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second) // in-flight checks finish
 			defer cancel()
 			server.Shutdown(ctx)
 		}()
 		if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
+		<-drained
 		return nil
 	}
 	return errors.New("usage: fleet-gateway selftest | serve <config.json> | guard [127.0.0.1:9471]")

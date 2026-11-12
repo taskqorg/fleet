@@ -93,7 +93,9 @@ func main() {
 		port = "8787"
 	}
 	srv := &http.Server{Addr: "127.0.0.1:" + port, Handler: obs.Handler(a.routes(), spanName)}
+	drained := make(chan struct{})
 	go func() {
+		defer close(drained)
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGTERM, os.Interrupt)
 		<-ch
@@ -111,6 +113,7 @@ func main() {
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+	<-drained // Serve returns when Shutdown starts; in-flight requests finish first
 }
 
 // loadPeople loads people.json at start (docs/designs/fleet-people-access.md); refreshPeople (browser_checks.go) re-reads it
@@ -436,7 +439,16 @@ var _ = fmt.Sprint
 // connection) or binds addr for tests and manual runs.
 func activatedListener(addr string) (net.Listener, error) {
 	if os.Getenv("LISTEN_PID") == strconv.Itoa(os.Getpid()) && os.Getenv("LISTEN_FDS") == "1" {
-		return net.FileListener(os.NewFile(3, "systemd-socket"))
+		ln, err := net.FileListener(os.NewFile(3, "systemd-socket"))
+		if err != nil {
+			return nil, err
+		}
+		if tcp, ok := ln.Addr().(*net.TCPAddr); !ok || !tcp.IP.IsLoopback() {
+			ln.Close()
+			return nil, fmt.Errorf("the coordinator binds only to loopback, not %s", ln.Addr())
+		}
+		log.Printf("serving on activated socket %s", ln.Addr())
+		return ln, nil
 	}
 	return net.Listen("tcp", addr)
 }

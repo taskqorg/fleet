@@ -1,9 +1,9 @@
 # Cloudflare Access origin verifier for Caddy's forward_auth (fleet.caddy.candidate), a user unit of fleet:
 # `fleet-gateway guard` from the current release. access-guard.env holds FLEET_BROWSER_SECRET only.
 [Unit]
+Description=Fleet Cloudflare Access origin verifier
 Requires=fleet-access-guard.socket
 After=fleet-access-guard.socket
-Description=Fleet Cloudflare Access origin verifier
 [Service]
 TimeoutStopSec=30
 EnvironmentFile=/home/fleet/.config/fleet/access-guard.env

@@ -2113,6 +2113,7 @@ func runExecutor() error {
 					status("error", "")
 				}
 			} else {
+				failingSince = time.Time{}
 				status("blocked", "auth") // edge login page or host token not accepted
 			}
 		} else {

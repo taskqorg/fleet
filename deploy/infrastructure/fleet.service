@@ -1,8 +1,7 @@
 [Unit]
-Requires=fleet.socket
-After=fleet.socket
 Description=Fleet coordinator
-After=network.target
+Requires=fleet.socket
+After=network.target fleet.socket
 [Service]
 TimeoutStopSec=30
 WorkingDirectory=/home/fleet/releases/current
