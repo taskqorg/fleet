@@ -89,6 +89,17 @@ func githubRead(ctx context.Context, a *App, project, tool string, args map[stri
 	}
 	if keyed {
 		body, err = githubGateway(ctx, a, project, tool, args)
+		if err != nil && strings.EqualFold(args["owner"]+"/"+args["repo"], githubPublicRepo) {
+			// A refused key (expired, wrong lifetime for the org) must not blank the public repository.
+			log.Printf("github %s keyed: %v; read public", tool, err)
+			keyed = false
+			if pc, ok := githubCache["public "+path]; ok && time.Since(pc.at) < 5*time.Minute {
+				return pc.body, false, pc.err
+			}
+			body, err = githubPublic(ctx, path)
+			githubCache["public "+path] = githubCached{time.Now(), body, err}
+			return body, false, err
+		}
 	} else {
 		body, err = githubPublic(ctx, path)
 	}
