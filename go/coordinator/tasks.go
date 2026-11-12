@@ -362,6 +362,14 @@ func createTask(q *Request, v doc) (string, error) {
 	if cr == nil {
 		cr = doc{}
 	}
+	if pid := astr(v["projectId"]); pid != "" {
+		if retired, err := projectRetired(q, pid); err != nil || retired {
+			if err == nil {
+				err = fail(404, "Unknown project")
+			}
+			return "", err
+		}
+	}
 	held := v["held"] == true // a Held task: paused before its first queue (fleet-pm-agent.md §4)
 	if err := exec(q, "INSERT INTO task(id,project_id,title,expected_outcome,completion_requirements,result_destination,created_by,data,state,state_before_pause,pause_reason) VALUES($1,$2,$3,$4,$5,$6,$7,'{}',CASE WHEN $8 THEN 'paused' ELSE 'queued' END::task_state,CASE WHEN $8 THEN 'queued' END::task_state,CASE WHEN $8 THEN 'held' END)",
 		id, v["projectId"], title, v["expectedOutcome"], js(cr), v["resultDestination"], v["createdBy"], held); err != nil {

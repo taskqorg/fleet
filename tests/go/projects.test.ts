@@ -103,4 +103,7 @@ test('Owner archives a project only after its open work is closed; it leaves eve
  assert.ok(!ok(await op('project_list',{},owner)).projects.some((p:any)=>p.id===id));
  assert.equal((await op('project_context',{projectId:id},owner)).status,404);
  assert.equal((await op('project_archive',{projectId:id},owner)).status,404);
+ assert.equal((await op('task_create',{projectId:id,title:'late work'},owner)).status,404);
+ assert.equal((await op('project_update',{projectId:id,requestId:randomUUID(),baseRevision:1,content:bundle(id,'back')},owner)).status,404);
+ assert.equal((await op('project_create',{id,requestId:randomUUID(),content:bundle(id)},owner)).status,409);
 });
