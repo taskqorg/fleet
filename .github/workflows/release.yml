@@ -117,13 +117,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@v4
+      # The self-hosted runner keeps the pnpm store and the Go caches on its disk (20 MB/s); restoring GitHub's copies
+      # over them only costs writes. The hosted fallback has nothing on disk and uses them.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
+          cache: ${{ github.ref != 'refs/heads/main' && 'pnpm' || '' }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
+          cache: ${{ github.ref != 'refs/heads/main' }}
           cache-dependency-path: go/go.sum
       - name: Build
         env:
@@ -140,8 +143,49 @@ jobs:
       - name: Selftest linux binaries
         if: needs.gate.outputs.ui != 'true'
         run: |
-          mkdir t && tar -xzf out/fleet-*-linux-amd64.tgz -C t
-          for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/t/$b" selftest); done
+          mkdir new && tar -xzf out/fleet-*-linux-amd64.tgz -C new
+          for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/new/$b" selftest); done
+      # Upgrade, then expand and contract: the new coordinator migrates a database the latest release built, and each of
+      # the last 5 releases' coordinators must still serve on the database the new one migrated, so a rollback on PDS18
+      # from up to 5 releases behind returns to a checked pair (fleet-delivery-pipeline.md section 5). Same job as the
+      # build: the runner's disk is capped at 20 MB/s, so no artifact round trip, the recent coordinators stay extracted
+      # under ~/fleet-releases between runs (one download per new release) and the throwaway PostgreSQL skips fsync.
+      - name: New coordinator migrates, each recent one still serves
+        if: needs.gate.outputs.recent != '' && needs.gate.outputs.ui != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.gate.outputs.version }}
+          RECENT: ${{ needs.gate.outputs.recent }}
+        run: |
+          set -o pipefail
+          export PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pg=$RUNNER_TEMP/pg
+          initdb -D "$pg" -U postgres -A trust -E UTF8 --no-instructions --no-sync >/dev/null
+          pg_ctl -D "$pg" -l "$pg/log" -w -o "-k $pg -p 54329 -c listen_addresses= -c fsync=off -c synchronous_commit=off -c full_page_writes=off" start
+          psql -h "$pg" -p 54329 -U postgres -v ON_ERROR_STOP=1 -q -d postgres -f deploy/infrastructure/fleet-postgres.sql
+          cache=$HOME/fleet-releases; mkdir -p "$cache"
+          for d in "$cache"/*/; do d=${d%/}; case " $RECENT " in *" ${d##*/} "*) ;; *) rm -rf "$d";; esac; done
+          for v in $RECENT; do
+            [ -x "$cache/$v/fleet-coordinator" ] && continue
+            rm -rf "$cache/$v.tmp"; mkdir "$cache/$v.tmp"
+            gh release download "v$v" -p "fleet-$v-linux-amd64.tgz" -O - | tar -xzf - -C "$cache/$v.tmp" ./fleet-coordinator ./config ./deploy \
+              || { echo "::error::download v$v failed"; exit 1; }
+            mv "$cache/$v.tmp" "$cache/$v"
+          done
+          url() { echo "postgresql://$1@/fleet?host=$pg&port=54329"; }
+          export PORT=9470 FLEET_DATABASE_URL=$(url fleet_app) FLEET_MIGRATION_DATABASE_URL=$(url fleet) \
+            FLEET_PEOPLE_FILE=$PWD/tests/trial/people.json FLEET_BROWSER_SECRET=migrate-check FLEET_HOST_ID=pds18
+          # exec: kill stops the coordinator itself; the version check catches a leftover one still on the port.
+          # The latest release builds the database first, as PDS18's is: the new coordinator then applies only its new
+          # migrations on top (a fresh database alone hides a migration that depends on an edited released one).
+          for v in "${RECENT%% *}" "$VERSION" $RECENT; do
+            dir=$cache/$v; [ "$v" = "$VERSION" ] && dir=$PWD/new
+            (cd "$dir" && exec ./fleet-coordinator) & pid=$!
+            i=0; until curl -fsS -m 3 http://127.0.0.1:9470/api/health | grep -q "\"version\":\"$v\""; do
+              i=$((i+1)); [ $i -lt 60 ] || { echo "::error::$dir coordinator not healthy"; exit 1; }; sleep 1; done
+            echo; kill $pid; wait $pid || true
+          done
+          pg_ctl -D "$pg" -w stop >/dev/null
       - uses: actions/upload-artifact@v4
         with:
           name: release
@@ -160,54 +204,6 @@ jobs:
       - run: |
           mkdir t && tar -xzf fleet-*-darwin-arm64.tgz -C t
           for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/t/$b" selftest); done
-  # Upgrade, then expand and contract: the new coordinator migrates a database the latest release built, and each of the
-  # last 5 releases' coordinators must still serve on the database the new one migrated,
-  # so a rollback on PDS18 from up to 5 releases behind returns to a checked pair (fleet-delivery-pipeline.md section 5).
-  migrate-check:
-    needs: [gate, build]
-    if: needs.gate.outputs.recent != '' && needs.gate.outputs.ui != 'true'
-    # Signing/publishing and native qualification remain on GitHub-hosted runners.
-    runs-on: ${{ github.ref == 'refs/heads/main' && fromJSON('["self-hosted","linux","x64","fleet-pds18"]') || 'ubuntu-24.04' }}
-    permissions:
-      contents: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      VERSION: ${{ needs.gate.outputs.version }}
-      RECENT: ${{ needs.gate.outputs.recent }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.gate.outputs.sha }}
-          persist-credentials: false
-      - uses: actions/download-artifact@v4
-        with:
-          name: release
-          path: out
-      - name: New coordinator migrates, each recent one still serves
-        run: |
-          export PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pg=$RUNNER_TEMP/pg
-          initdb -D "$pg" -U postgres -A trust -E UTF8 --no-instructions >/dev/null
-          pg_ctl -D "$pg" -l "$pg/log" -w -o "-k $pg -p 54329 -c listen_addresses=" start
-          psql -h "$pg" -p 54329 -U postgres -v ON_ERROR_STOP=1 -q -d postgres -f deploy/infrastructure/fleet-postgres.sql
-          mkdir new && tar -xzf "out/fleet-$VERSION-linux-amd64.tgz" -C new
-          for v in $RECENT; do
-            gh release download "v$v" -p "fleet-$v-linux-amd64.tgz" -D "prev-$v" || { echo "::error::download v$v failed"; exit 1; }
-            mkdir "old-$v"; tar -xzf "prev-$v/fleet-$v-linux-amd64.tgz" -C "old-$v"
-          done
-          url() { echo "postgresql://$1@/fleet?host=$pg&port=54329"; }
-          export PORT=9470 FLEET_DATABASE_URL=$(url fleet_app) FLEET_MIGRATION_DATABASE_URL=$(url fleet) \
-            FLEET_PEOPLE_FILE=$PWD/tests/trial/people.json FLEET_BROWSER_SECRET=migrate-check FLEET_HOST_ID=pds18
-          # exec: kill stops the coordinator itself; the version check catches a leftover one still on the port.
-          # The latest release builds the database first, as PDS18's is: the new coordinator then applies only its new
-          # migrations on top (a fresh database alone hides a migration that depends on an edited released one).
-          for v in "${RECENT%% *}" "$VERSION" $RECENT; do
-            dir=old-$v; [ "$v" = "$VERSION" ] && dir=new
-            (cd "$dir" && exec ./fleet-coordinator) & pid=$!
-            i=0; until curl -fsS -m 3 http://127.0.0.1:9470/api/health | grep -q "\"version\":\"$v\""; do
-              i=$((i+1)); [ $i -lt 60 ] || { echo "::error::$dir coordinator not healthy"; exit 1; }; sleep 1; done
-            echo; kill $pid; wait $pid || true
-          done
   ui-check:
     needs: [gate, build]
     if: needs.gate.outputs.ui == 'true'
@@ -247,8 +243,8 @@ jobs:
           node tests/ui/conversations.check.ts
           node tests/ui/lab-create.check.ts
   publish:
-    needs: [gate, build, selftest-macos, migrate-check, ui-check]
-    if: always() && needs.build.result == 'success' && (needs.gate.outputs.ui != 'true' || needs.ui-check.result == 'success') && needs.gate.outputs.release == 'true' && (needs.selftest-macos.result == 'success' || (needs.gate.outputs.ui == 'true' && needs.selftest-macos.result == 'skipped')) && (needs.migrate-check.result == 'success' || needs.migrate-check.result == 'skipped')
+    needs: [gate, build, selftest-macos, ui-check]
+    if: always() && needs.build.result == 'success' && (needs.gate.outputs.ui != 'true' || needs.ui-check.result == 'success') && needs.gate.outputs.release == 'true' && (needs.selftest-macos.result == 'success' || (needs.gate.outputs.ui == 'true' && needs.selftest-macos.result == 'skipped'))
     runs-on: ubuntu-24.04
     environment: release
     permissions:
