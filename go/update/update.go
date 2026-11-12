@@ -268,11 +268,24 @@ func (u *updater) get(url string) ([]byte, error) {
 }
 
 func readOK(url string, resp *http.Response) ([]byte, error) {
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
+	if err := okStatus(url, resp); err != nil {
+		return nil, err
 	}
 	return io.ReadAll(resp.Body)
 }
+
+// okStatus is nil for a 200; a 404 is errNotFound (cycleUI refuses the release then: a deleted release keeps its tag).
+func okStatus(url string, resp *http.Response) error {
+	switch resp.StatusCode {
+	case 200:
+		return nil
+	case 404:
+		return fmt.Errorf("%w: %s %s", errNotFound, resp.Request.Method, url)
+	}
+	return fmt.Errorf("%s %s: %s", resp.Request.Method, url, resp.Status)
+}
+
+var errNotFound = errors.New("404 Not Found")
 
 // download streams url to file and returns its hex SHA-256.
 func (u *updater) download(url, file string) (string, error) {
@@ -281,8 +294,8 @@ func (u *updater) download(url, file string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("GET %s: %s", url, resp.Status)
+	if err := okStatus(url, resp); err != nil {
+		return "", err
 	}
 	f, err := os.OpenFile(file, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -593,11 +606,18 @@ func (u *updater) getCached(url string, check func([]byte) error) (cached, error
 		file = filepath.Join(u.cacheDir, "etag-"+hex.EncodeToString(sum[:8])+".json")
 		readJSON(file, &c)
 	}
+	return u.getConditional(url, file, c, check, true)
+}
+
+// getConditional sends the request once with If-None-Match (when conditional and c has an ETag) and once more in
+// full if the cached body turns out bad.
+func (u *updater) getConditional(url, file string, c cached, check func([]byte) error, conditional bool) (cached, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return cached{}, err
 	}
-	if c.ETag != "" {
+	conditional = conditional && c.ETag != ""
+	if conditional {
 		req.Header.Set("If-None-Match", c.ETag)
 	}
 	resp, err := u.client.Do(req)
@@ -605,12 +625,12 @@ func (u *updater) getCached(url string, check func([]byte) error) (cached, error
 		return cached{}, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotModified && c.ETag != "" {
+	if resp.StatusCode == http.StatusNotModified && conditional {
 		if err := check(c.Body); err == nil {
 			return c, nil
 		}
 		os.Remove(file) // a bad cache file: fetch in full now
-		return u.getCached(url, check)
+		return u.getConditional(url, file, c, check, false)
 	}
 	c = cached{ETag: resp.Header.Get("ETag")}
 	if c.Body, err = readOK(url, resp); err != nil {

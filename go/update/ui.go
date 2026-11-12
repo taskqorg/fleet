@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -67,7 +68,8 @@ func (u *updater) latestUI(backend string) (string, error) {
 	latest := ""
 	for _, line := range lines[:len(lines)-1] {
 		f := strings.Fields(line)
-		if len(f) != 2 || len(f[0]) != 44 || !strings.HasPrefix(f[1], prefix) {
+		n, err := strconv.ParseUint(line[:min(4, len(line))], 16, 16)
+		if err != nil || int(n) != len(line)+1 || len(f) != 2 || len(f[0]) != 44 || !strings.HasPrefix(f[1], prefix) {
 			return "", fmt.Errorf("ls-refs: unexpected line %q", line)
 		}
 		if v := strings.TrimPrefix(f[1], prefix); newer(v, latest) {
@@ -132,8 +134,8 @@ func (u *updater) cycleUI(backend, autoUpdate, root, stage, stateFile string) er
 		return nil
 	}
 	dir, err := u.fetch(p, candidate)
-	var ref refusal
-	if errors.As(err, &ref) { // recorded, so the next run does not download and refuse it again
+	ref := refusal("missing")                                // the tag of a deleted release stays in the advertisement; GitHub publishes all assets at once
+	if errors.As(err, &ref) || errors.Is(err, errNotFound) { // recorded, so the next run does not fetch it again
 		st.Last = u.refuse(p, candidate, string(ref), err.Error())
 		return writeJSON(stateFile, st, 0600)
 	}

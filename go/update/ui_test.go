@@ -87,7 +87,8 @@ func TestUIDiscoveryTags(t *testing.T) {
 	if got, err := u.latestUI("1.261112.0"); err != nil || got != "" {
 		t.Fatalf("%q %v", got, err)
 	}
-	for _, body = range []string{pkt("ERR upload-pack: nope\n") + "0000", "<html>", pkt(sha+" refs/tags/v1.261112.9\n") + "0000"} {
+	for _, body = range []string{pkt("ERR upload-pack: nope\n") + "0000", "<html>", pkt(sha+" refs/tags/v1.261112.9\n") + "0000",
+		"0050" + sha + " refs/tags/ui-1.261112.0-v1.261112.9\n0000"} { // the last: a length that does not frame its line
 		if got, err := u.latestUI("1.261112.0"); err == nil {
 			t.Fatalf("%q accepted as %q", body, got)
 		}
@@ -131,5 +132,53 @@ func TestUIFailedFirstInstallResume(t *testing.T) {
 	}
 	if st.Last == nil || st.Last.State != "refused" {
 		t.Fatalf("missing restored status: %+v", st.Last)
+	}
+}
+
+// Requirement: a UI release that fetch refuses (missing assets, bad signature) is recorded in ui-state.json and not
+// fetched again by the next run; the tag of a deleted release stays in the advertisement.
+func TestUIFetchRefusalRecorded(t *testing.T) {
+	f := newFixture(t)
+	f.u.window = 0
+	backend, ver := "1.261112.0", "1.261112.1"
+	var sums []byte
+	f.u.client = &http.Client{Transport: uiTransport(func(r *http.Request) (*http.Response, error) {
+		body, code := "", 200
+		switch {
+		case r.URL.Path == "/taskqorg/fleet.git/git-upload-pack":
+			body = pkt(strings.Repeat("a", 40)+" refs/tags/ui-"+backend+"-v"+ver+"\n") + "0000"
+		case strings.HasSuffix(r.URL.Path, "/SHA256SUMS") && sums != nil:
+			body = string(sums)
+		case strings.HasSuffix(r.URL.Path, "/SHA256SUMS.sig") && sums != nil:
+			body = "not a signature"
+		default:
+			code = 404
+		}
+		return &http.Response{StatusCode: code, Status: http.StatusText(code), Request: r, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	root, stage, stateFile := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "state.json")
+	if err := f.u.cycleUI(backend, "on", root, stage, stateFile); err != nil {
+		t.Fatal(err)
+	}
+	st := &State{}
+	if !readJSON(stateFile, st) || st.Refused[ver] != "missing" || st.Last == nil || st.Last.State != "refused" {
+		t.Fatalf("missing assets not refused: %+v", st)
+	}
+	sums, ver = []byte("00 fleet-ui-1.261112.2.tgz\n"), "1.261112.2"
+	if err := f.u.cycleUI(backend, "on", root, stage, stateFile); err != nil {
+		t.Fatal(err)
+	}
+	if !readJSON(stateFile, st) || st.Refused[ver] != "provenance" {
+		t.Fatalf("bad signature not refused: %+v", st)
+	}
+	f.u.client.Transport = uiTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/taskqorg/fleet.git/git-upload-pack" {
+			t.Fatal("refused release fetched again:", r.URL)
+		}
+		body := pkt(strings.Repeat("a", 40)+" refs/tags/ui-"+backend+"-v"+ver+"\n") + "0000"
+		return &http.Response{StatusCode: 200, Request: r, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})
+	if err := f.u.cycleUI(backend, "on", root, stage, stateFile); err != nil {
+		t.Fatal(err)
 	}
 }
