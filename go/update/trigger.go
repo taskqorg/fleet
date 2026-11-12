@@ -113,3 +113,5 @@ func loadTrigger(t *trigger) {
 	}
 	log.Printf("trigger: %s loaded", t.file)
 }
+
+// Disposable delivery timing path control; never merge.
