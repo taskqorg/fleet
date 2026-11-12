@@ -214,12 +214,7 @@ jobs:
           deploy/build-release.sh "$SHA" out "$VERSION" "$PREVIOUS" linux/amd64 darwin/arm64
       - name: Selftest linux binaries
         run: |
-          mkdir new && tar -xzf out/fleet-*-linux-amd64.tgz -C new
-          .release/deploy/static-release.sh new
-          .release/deploy/selftest-release.sh new
-          mkdir darwin
-          tar -xzf out/fleet-*-darwin-arm64.tgz -C darwin
-          .release/deploy/static-release.sh darwin
+          .release/deploy/verify-release.sh out new
       # Section 5 of fleet-delivery-pipeline.md. Same job as the build: the runner's disk is capped at 20 MB/s, so no
       # artifact round trip, and the recent coordinators stay extracted under ~/fleet-releases/v between runs.
       - name: New coordinator migrates, each recent one still serves
@@ -280,7 +275,7 @@ jobs:
   # Push runs only: a dispatched older commit (rollback drill) is meant to be released as it is.
   supersede:
     needs: [gate, build, migrate]
-    if: always() && github.event_name == 'push' && needs.gate.outputs.release == 'true'
+    if: always() && github.event_name == 'push' && needs.gate.result == 'success' && needs.gate.outputs.release == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -400,5 +395,5 @@ jobs:
           grep -q 'HTTP 403: Resource not accessible by integration' "$RUNNER_TEMP/create.err" && [ "$GITHUB_EVENT_NAME" = push ] \
             && n=$(.release/deploy/workflows-moved.sh "$SHA") && [ -n "$n" ] && [ "$n" != 0 ] || exit "$code"
           # gh uploads the assets to a draft and publishes it last; the refused publish leaves that draft, without a tag.
-          gh release delete "$1" --yes || true
+          gh release delete "$1" --yes
           echo "superseded: main changed workflows since $SHA; the next release run publishes it" | tee -a "$GITHUB_STEP_SUMMARY"

@@ -262,7 +262,7 @@ jobs:
           PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" GORACE=halt_on_error=1 tests/go/run.sh "${PART#outside-}" "$OUTSIDE_SHARDS"
         env:
           PART: ${{ matrix.part }}
-  # App: contract lint, test-rule report, typecheck and bundle, UI unit tests. The release tarballs are release-build's.
+  # App: bundle and UI unit tests. The release tarballs are release-build's.
   app-tests:
     needs: selection
     if: contains(fromJSON(needs.selection.outputs.executed), 'app')
@@ -384,6 +384,8 @@ jobs:
   release-build:
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
+    # On the queue's critical path (app waits for it): a hung check must not hold the queue.
+    timeout-minutes: 20
     permissions:
       contents: read
     env:
@@ -424,13 +426,7 @@ jobs:
           echo "::notice title=release SHA256SUMS::$(sha256sum < out/SHA256SUMS | cut -d' ' -f1)"
       - name: Selftest linux binaries, darwin binaries static
         run: |
-          mkdir new && tar -xzf out/fleet-*-linux-amd64.tgz -C new
-          deploy/static-release.sh new
-          deploy/selftest-release.sh new
-          # The darwin binaries run nowhere here: static is what this run can check (each Mac selftests on install).
-          mkdir darwin
-          tar -xzf out/fleet-*-darwin-arm64.tgz -C darwin
-          deploy/static-release.sh darwin
+          deploy/verify-release.sh out new
       - name: New coordinator migrates, each recent one still serves
         if: env.RECENT != ''
         run: deploy/migrate-check.sh new out
