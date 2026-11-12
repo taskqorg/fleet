@@ -402,7 +402,7 @@ test('A4 analytics stage 4: a typed evaluator scores each trial through its vari
 });
 
 // One domain fixture extends the counted gateway/S3 above. It speaks the real host protocol; no DB repairs or provider calls.
-async function suffixFixture(projectId = 'fleet-hello-world', differentOuter = false) {
+async function suffixFixture(projectId = 'cs', differentOuter = false) {
   const secret = trialHostSecret;
   assert.ok(secret, 'shared store host registered');
   const host = async (path: string, body: object, auth = secret) => {
@@ -467,7 +467,7 @@ async function suffixFixture(projectId = 'fleet-hello-world', differentOuter = f
 
 test('L2 local-suffix retry: real stored bytes, normal scoring and atomic replay without another provider call (requirement: fleet-lab local-suffix retry; risk: double charge, lost cell lineage or replay dispatch)', async () => {
   const people = ok(await op('people_list')).people;
-  ok(await op('people_set', {people: [...people, {email: 'architect@trial.test', name: 'Scoped architect', roles: ['operator', 'architect'], grants: [{kind: 'project', id: 'fleet-hello-world'}]}]}));
+  ok(await op('people_set', {people: [...people, {email: 'architect@trial.test', name: 'Scoped architect', roles: ['operator', 'architect'], grants: [{kind: 'project', id: 'cs'}]}]}));
   const f = await suffixFixture();
   assert.equal((await op('lab_cell_action', f.request)).status, 409, 'no command-bound proof');
   await f.prove();
@@ -516,7 +516,7 @@ test('L4 content checks fail before mutation (requirement: fleet-lab frozen inpu
   const f=await suffixFixture(); await f.prove(); await f.receipt(f.command,'unknown'); const before=seen.length;
   const store=await s3;
   const original=JSON.stringify(f.run.steps[0].output);
-  const entry=[...store.objects.entries()].find(([key,bytes])=>key.includes('/fleet-hello-world/lab/') && bytes.toString()===original); assert.ok(entry);
+  const entry=[...store.objects.entries()].find(([key,bytes])=>key.includes('/cs/lab/') && bytes.toString()===original); assert.ok(entry);
   const [key,bytes]=entry;
   try {
     store.objects.set(key,Buffer.alloc(bytes.length,120));
@@ -536,9 +536,9 @@ test('L4 content checks fail before mutation (requirement: fleet-lab frozen inpu
 // R3; risk: local reuse accepts an old project context after a saved effective project change.
 test('Project revision drift rejects suffix reuse before cancellation or new provider work', async () => {
   const f=await suffixFixture(); await f.prove(); await f.receipt(f.command,'unknown'); const before=seen.length;
-  const project=ok(await op('project_context',{projectId:'fleet-hello-world'}));
+  const project=ok(await op('project_context',{projectId:'cs'}));
   const content=structuredClone(project.content);content.contextFiles[0].text+='\nNew context requires a fresh run.';
-  ok(await op('project_update',{projectId:'fleet-hello-world',requestId:randomUUID(),baseRevision:project.revision,content}));
+  ok(await op('project_update',{projectId:'cs',requestId:randomUUID(),baseRevision:project.revision,content}));
   const result=await op('lab_cell_action',f.request);assert.equal(result.status,409);assert.match(result.body.message,/frozen project revision/);
   assert.equal((await f.view()).trials.length,1);assert.equal(seen.length,before);
 });
@@ -602,7 +602,7 @@ test('L8 transitive Lab suffix retains immediate source and original artifact (r
 });
 
 test('Lab suffix recovery uses variant pipeline when outer pipeline differs (requirement: Compare lifecycle and local-suffix provenance; risk: resolver bypasses pinned source definition or repeats provider work)', async () => {
-  const f = await suffixFixture('fleet-hello-world', true);
+  const f = await suffixFixture('cs', true);
   await f.prove(); await f.receipt(f.command, 'unknown');
   const before = seen.length;
   const recovered = ok(await op('lab_cell_action', f.request)).recovery.runId;
@@ -625,7 +625,7 @@ test('L6 preflight never holds the write lock and revalidates lifecycle changes 
     await Promise.race([hit,new Promise((_,reject)=>setTimeout(()=>reject(Error('store read was not reached')),5000))]);
     const write=op('lab_experiment_note',{experimentId:f.exp.id,kind:'note',text:'unrelated write while store read is blocked'});
     ok(await Promise.race([write,new Promise<never>((_,reject)=>setTimeout(()=>reject(Error('write lock held during byte read')),5000))]));
-    ok(await op('artifact_purge',{contentHash:hash,projectId:'fleet-hello-world',scope:'lab',reason:'isolated preflight lifecycle race'}));
+    ok(await op('artifact_purge',{contentHash:hash,projectId:'cs',scope:'lab',reason:'isolated preflight lifecycle race'}));
   } finally {artifactReadBarrier=undefined;release();}
   assert.equal((await pending).status,409);
   const v=await f.view();assert.equal(v.trials.length,1);assert.notEqual(v.trials[0].state,'cancelled');
@@ -759,7 +759,7 @@ test('Catalogue reports a compatible observed partial mean and keeps banded sour
   assert.notEqual(a.ongoingExperimentId, older.id, 'older paused work is not a newer follow-up');
   assert.equal(a.variant, 'partial-evidence'); assert.ok(a.evaluatorVersion); assert.equal(a.experimentId, e.id);
   assert.ok(methods.find((m: any) => m.id === promoted.method.id).recommendedFor.includes('hello-world'));
-  const foreign = ok(await op('catalogue', {projectId: 'fleet-hello-world'}));
+  const foreign = ok(await op('catalogue', {projectId: 'cs'}));
   assert.ok(!JSON.stringify(foreign).includes(e.id), 'same system catalogue must not leak project experiment links');
   const newer = await active('newer-paused');
   const refreshed = ok(await op('catalogue', {projectId:'hello-world'})).methods.find((m: any) => m.id === promoted.method.id).assessment;

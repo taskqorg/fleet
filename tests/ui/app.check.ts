@@ -17,7 +17,7 @@ const { c, origin, seed, close } = await checkServer();
 let waiting = '', running = '';
 seed.bulk(() => {
   for (let i = 0; i < 240; i++) {
-    const p = ['dashq', 'game', 'fleet'][i % 3];
+    const p = ['cs', 'game', 'fleet'][i % 3];
     const id = seed.task({ title: ['Render prop batch', 'Fix CI cache key', 'Rework hero copy', 'Write release notes', 'Compare 3D methods'][i % 5] + ' ' + i, projectId: p, priority: ['urgent', 'normal', 'background'][i % 3], expectedOutcome: 'A reviewed result linked from the changelog.', ...(i % 7 === 0 ? { state: 'in_progress' } : i === 3 ? { state: 'waiting', waitReason: 'acceptance' } : {}) });
     if (i % 7 === 0) { seed.execution({ id: 'run-' + i, kind: 'agent_run', taskId: id, projectId: p, hostId: ['pds18', 'mac', 'windows'][i % 3], harness: ['codex', 'claude', 'antigravity'][i % 3], state: 'running' }); if (!running) running = id; }
     if (i === 3) { waiting = id; seed.question({ kind: 'acceptance', taskId: id, text: 'Accept this result?', options: ['accepted', 'rejected'] }); }

@@ -172,7 +172,7 @@ From [project setup and access](configuration.md#project-setup). Real environmen
 
 ## 8. Project settings tests (added)
 
-From [project settings matrix](configuration.md#project-settings). Real repos `taskqorg/fleet-hello-world*`, real executors, settings only from `project.json`.
+From [project settings matrix](configuration.md#project-settings). Real test repositories, real executors, settings only from `project.json`.
 
 ### T12. Worktree setup script runs a build (B1 B13)
 - Setup: repo with `scripts.setup` = install + build that writes `dist/marker`; `setupStart: wait-for-setup`; `startFromOrigin: true`.
@@ -187,7 +187,7 @@ From [project settings matrix](configuration.md#project-settings). Real repos `t
 - Turns: ~2.
 
 ### T14. Per-project merge policy (B1 B4 B13)
-- Setup: `fleet-hello-world` with `integration.mode: pr`, `mergeMethod: squash`; `fleet-hello-world-alt` with `mode: direct`.
+- Setup: one project with `integration.mode: pr`, `mergeMethod: squash`; another with `mode: direct`.
 - Steps: same small task delivered in both projects.
 - Pass: first: branch pushed, PR opened, merged by squash (one commit on main); second: commit pushed to default branch, no PR; both with project identity.
 - Turns: ~2.

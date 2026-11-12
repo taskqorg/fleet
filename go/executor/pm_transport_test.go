@@ -81,7 +81,7 @@ func TestPMTransportAgainstCoordinator(t *testing.T) {
 	// Hold the first mutation's answer until the native timeout exposes its journal identity.
 	done := make(chan M, 1)
 	go func() {
-		done <- call("task_create", M{"projectId": "fleet-hello-world", "title": os.Getenv("FLEET_PM_TEST_TITLE"), "expectedOutcome": "Read-only receipt"})
+		done <- call("task_create", M{"projectId": "desiign", "title": os.Getenv("FLEET_PM_TEST_TITLE"), "expectedOutcome": "Read-only receipt"})
 	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for count(db, "outbox") == 0 && time.Now().Before(deadline) {

@@ -9,7 +9,7 @@ import {fakeS3} from '../s3-fake.ts';
 
 // Requirement: fleet-people-access §5 Lab creator inheritance; risk: background runs escalate to owner authority.
 test('Lab retains authenticated requester through background enqueue, revocation, deletion and recovery without owner escalation', {timeout:60_000}, async t=>{
- const owner='owner@trial.test',creator='architect@trial.test',project='fleet-hello-world';
+ const owner='owner@trial.test',creator='architect@trial.test',project='desiign';
  const dir=mkdtempSync(tmpdir()+'/fleet-lab-director-');
  const people=JSON.parse(readFileSync('tests/trial/people.json','utf8'));people.push({email:creator,name:'Architect',roles:['operator','architect'],grants:[{kind:'project',id:project}]});writeFileSync(dir+'/people.json',JSON.stringify(people));
  const store=await fakeS3();

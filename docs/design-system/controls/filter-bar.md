@@ -4,7 +4,7 @@
 
 **Purpose.** Narrows a list by project, task, experiment, host, account, agent or harness, state, kind, time range and cost. Remembers, saves and shares the view.
 
-**Anatomy.** One line above the list: [search](search.md) field; second line: saved views, state counters and grouping (see Views below); active filter chips ("Project: dashq ×"); "Filter" button; "Clear" (quiet button, only when a filter is active); result count "84 of 1,240", shown only while a filter narrows the list; otherwise the Σ counter already gives the total (OR-17, D14) in `font-mono`, right aligned. Wraps to two lines below 900 px; on phone the chips collapse into "Filters (2)".
+**Anatomy.** One line above the list: [search](search.md) field; second line: saved views, state counters and grouping (see Views below); active filter chips ("Project: cs ×"); "Filter" button; "Clear" (quiet button, only when a filter is active); result count "84 of 1,240", shown only while a filter narrows the list; otherwise the Σ counter already gives the total (OR-17, D14) in `font-mono`, right aligned. Wraps to two lines below 900 px; on phone the chips collapse into "Filters (2)".
 
 **Views (presets).** The second line holds the person's saved views, which are pinned chips with an unpin `×`. A view stores filters, state selection and grouping.
 * "Save view" opens an inline name field (OR-14). Picking a view applies it.
@@ -24,7 +24,7 @@ The same line holds the [state counters](state-counters.md) and a "Group by" seg
 
 **Keyboard.** `f` opens the inline filter row; `Backspace` in an empty search removes the last chip; `Esc` closes the row.
 
-**Accessibility.** Chips are buttons named "Remove filter Project: dashq". The count is in a polite live region.
+**Accessibility.** Chips are buttons named "Remove filter Project: cs". The count is in a polite live region.
 
 **Do.** Show every active filter as a chip. **Don't.** Hide filters in a side panel; reset filters when navigating away.
 

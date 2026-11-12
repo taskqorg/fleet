@@ -27,6 +27,14 @@
         404,
         409
       ]
+    },
+    "project_archive": {
+      "read": false,
+      "errors": [
+        403,
+        404,
+        409
+      ]
     }
   },
   "$defs": {
@@ -138,6 +146,23 @@
           "type": "string"
         }
       }
+    },
+    "ProjectArchiveRequest": {
+      "type": "object",
+      "$comment": "Owner or full-access person. Retires a project for good: it leaves project_list and every project view. Refused (409) while the project has open tasks or unarchived sessions; cancel or archive them first. A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.",
+      "required": [
+        "projectId"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "projectId": {
+          "type": "string"
+        }
+      }
+    },
+    "ProjectArchiveReply": {
+      "type": "object",
+      "additionalProperties": true
     }
   }
 }

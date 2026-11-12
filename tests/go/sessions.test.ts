@@ -95,7 +95,7 @@ test('B6c project readiness: a member with the project grant starts it and reads
   const member = 'member@trial.test';
   const secret = ok(await op('hosts_register', {id: 'owner-mac'})).secret;
   assert.equal((await fetch(BASE + '/api/hosts/poll', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + secret}, body: JSON.stringify({platform: 'darwin', capabilities: [], stores: [], problems: []})})).status, 200);
-  const r = ok(await op('project_readiness', {projectId: 'fleet-hello-world'}, member));
+  const r = ok(await op('project_readiness', {projectId: 'desiign'}, member));
   const h = r.hosts.find((x: any) => x.hostId === 'owner-mac');
   assert.ok(h?.executionId, JSON.stringify(r));
   const hp = (path: string, body: object) => fetch(BASE + path, {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + secret}, body: JSON.stringify(body)});

@@ -122,7 +122,7 @@ function TimeStripDemo() {
 function FillDemo() {
   const G = 1e9;
   return <div class="col">
-    <FillBar total={1000 * G} segments={[{ label: 'dashq', bytes: 400 * G }, { label: 'fleet', bytes: 220 * G }]} warnAt={50 * G} />
+    <FillBar total={1000 * G} segments={[{ label: 'cs', bytes: 400 * G }, { label: 'fleet', bytes: 220 * G }]} warnAt={50 * G} />
     <FillBar total={200 * G} segments={[{ label: 'game', bytes: 156 * G }, { label: 'design', bytes: 26 * G }]} warnAt={25 * G} />
     <FillBar total={100 * G} segments={[{ label: 'game', bytes: 100 * G }]} />
     <FillBar total={500 * G} segments={[{ label: 'design', bytes: 150 * G }]} stale={NOW - 2 * hr} now={NOW} />

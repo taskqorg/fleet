@@ -64,12 +64,12 @@ Every setting is per project; absent key means the default below. The coordinato
 
 Not built: `integration.mode: direct` for agent sessions (`session_deliver` always opens a pull request; `direct` applies to artifact delivery only); `integration.mode: pr` on GitLab (the program worker uses `gh`); a merge method read from the repository default.
 
-Example (`config/projects/fleet-hello-world/project.json`, shortened):
+Example `project.json` (shortened):
 
 ```json
-{"id":"fleet-hello-world","name":"Fleet Hello World","contextFiles":["rules.md"],
- "repos":[{"id":"main","remote":"git@github.com:taskqorg/fleet-hello-world.git","forge":"github","defaultBranch":"main","connection":"fleet-hello-world"}],
- "environments":[{"hostId":"owner-mac","checkoutPath":"/Users/kirs/Projects/fleet-hello-world"}],
+{"id":"example","name":"Example","contextFiles":["rules.md"],
+ "repos":[{"id":"main","remote":"git@github.com:taskqorg/example.git","forge":"github","defaultBranch":"main","connection":"example"}],
+ "environments":[{"hostId":"owner-mac","checkoutPath":"/Users/kirs/Projects/example"}],
  "roles":{"pm":"pm","worker":"claude-worker","reviewer":"website-reviewer"},
  "worktree":{"branchPrefix":"fleet","linkPaths":[".env.local"],"sharedDirectories":["node_modules"]},
  "scripts":{"setup":"mkdir -p dist"},

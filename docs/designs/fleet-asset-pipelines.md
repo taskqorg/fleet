@@ -36,7 +36,7 @@ Lab terms (pipeline, example, experiment, variant, trial, evaluator, Promote) ar
 
 *   **Keys outside Fleet.** `csgo.meshy.api`, `csgo.hf.token` and `gemini` are Mac Keychain items. csgo's Blender MCP reads the Meshy key from `BLENDERMCP_MESHY_API_KEY`. Fleet cannot list, budget or account for these calls; a Meshy charge from csgo is invisible.
 *   **A dead service still runs.** AssetQ listens on `127.0.0.1:9460` behind `pipe.ufobe.com`, holds 4 project tokens and 20 MB of objects, and has no caller (checked on PDS18 2026-11-11). A leftover `connections/pipe-read` file is a C4 miss. fleet-lab.md still lists "removal of Pipe's method evaluation" as not built.
-*   **The registry treats replaced prototypes as live.** `config/lab/use-cases/` indexes agentq, dashq, pilotq, taskq and assetq as current projects; nothing says which Fleet use case replaces each entry. csgo and desiign, where the asset work happens, are not sources.
+*   **The registry treats replaced prototypes as live.** `config/lab/use-cases/` indexes agentq, pilotq, taskq and assetq as current projects; nothing says which Fleet use case replaces each entry. csgo and desiign, where the asset work happens, are not sources.
 *   **No asset pipeline.** UC2 (compare 3D methods) and UC6 (character) have no pipeline, no example and no step that can measure a mesh. Script steps run on the coordinator's default host (PDS18), which has no Blender.
 *   **Evaluation stops at generic judges.** `judge-pass-fail` and `judge-scale` have no per-use-case rubric; the order-swapped `pick_best` judge is not built; `loop` is refused with 400.
 
@@ -155,15 +155,13 @@ One cut, no read-only period (R3.1).
 
     `UseCaseCheck` is the evaluator reference the current files carry (`{kind, ref, metric}`, for example `script`, `example.checks`, `pass_fail`); S3 adds any other field found in them. Loader rules: a `maps_to` target must be an existing `fleet:UCn` ID without `#`; `status` absent means current.
 *   **`maps_to`, one meaning:** the Fleet use cases this entry belongs to or is covered by. For an obsolete or duplicate entry it names the successor; for a per-source entry (below) it names its parent.
-*   **Marks.** Marking an entry `obsolete`, `duplicate` or `to-design` also sets its `lab_fit` to `none` in the same edit (today 8 taskq entries and `assetq:datasets` are `work`, one dashq entry is `behavior`).
+*   **Marks.** Marking an entry `obsolete`, `duplicate` or `to-design` also sets its `lab_fit` to `none` in the same edit (today 8 taskq entries and `assetq:datasets` are `work`).
 
     | Source | Entries | Status | `maps_to` |
     |---|---|---|---|
     | assetq | `assetq:datasets` | obsolete | `fleet:UC2` |
     | agentq | A1–A5 | obsolete | `fleet:UC5` |
     | agentq | A6, A7 (runtime failures) | duplicate | `fleet:UC3` |
-    | dashq | DQ-01..05, DQ-07..10 | duplicate | `fleet:UC10` |
-    | dashq | DQ-06 | duplicate | `fleet:UC8` |
     | pilotq | L01–L20 | to-design | `fleet:UC13` |
     | taskq | UC-01, 02, 03, 05, 07, 17 | duplicate | `fleet:UC8` |
     | taskq | UC-06 | duplicate | `fleet:UC7` |

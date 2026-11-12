@@ -31,7 +31,7 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
   const [views, setViews] = useState<View[]>([
     { name: 'Needs me', chips: [], states: ['waiting', 'failed'], group: 'priority' },
     { name: 'Running', chips: [], states: ['in_progress', 'queued'], group: 'agent' },
-    { name: 'dashq', chips: [{ field: 'Project', value: 'dashq' }], states: [], group: 'state' },
+    { name: 'cs', chips: [{ field: 'Project', value: 'cs' }], states: [], group: 'state' },
   ]);
   const [view, setView] = useState<View>({ name: '', chips: [], states: [], group: 'priority' });
   const [active, setActive] = useState<string | null>(null);

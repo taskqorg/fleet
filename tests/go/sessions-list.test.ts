@@ -17,15 +17,15 @@ test('sessions_list and membership with production-shaped RLS history retain tit
   const theirs = (await op('session_create', {}, outsider)).sessionId;
   // Similar fanout to the incident (1658 sessions, 9495 events); no native work is launched.
   c.sql(`INSERT INTO document(kind,id,project_id,data)
-    SELECT 'session','list-'||i,'fleet-hello-world',jsonb_build_object('createdAt',i,'agentConfig',jsonb_build_object('harness','codex')) || CASE WHEN i=1599 THEN '{"archivedAt":1}'::jsonb ELSE '{}'::jsonb END FROM generate_series(0,1599) i;
+    SELECT 'session','list-'||i,'desiign',jsonb_build_object('createdAt',i,'agentConfig',jsonb_build_object('harness','codex')) || CASE WHEN i=1599 THEN '{"archivedAt":1}'::jsonb ELSE '{}'::jsonb END FROM generate_series(0,1599) i;
     INSERT INTO document(kind,id,project_id,data) VALUES
       ('session','list-foreign','hidden-project','{}'),
       ('message','list-foreign-message','hidden-project','{"sessionId":"list-0","text":"Foreign title canary"}'),
-      ('message','list-first','fleet-hello-world','{"sessionId":"list-0","text":"Needle first title"}'),
-      ('message','list-second','fleet-hello-world','{"sessionId":"list-0","text":"Later message is not the title"}');
+      ('message','list-first','desiign','{"sessionId":"list-0","text":"Needle first title"}'),
+      ('message','list-second','desiign','{"sessionId":"list-0","text":"Later message is not the title"}');
     INSERT INTO document(kind,id,project_id,data)
-    SELECT 'event','list-event-'||i,'fleet-hello-world',jsonb_build_object('sessionId','list-'||(i%1600),'payload',repeat(md5(i::text),32)) FROM generate_series(1,9500) i;
-    INSERT INTO document(kind,id,project_id,data) VALUES ('event','list-last','fleet-hello-world','{"sessionId":"list-0"}');
+    SELECT 'event','list-event-'||i,'desiign',jsonb_build_object('sessionId','list-'||(i%1600),'payload',repeat(md5(i::text),32)) FROM generate_series(1,9500) i;
+    INSERT INTO document(kind,id,project_id,data) VALUES ('event','list-last','desiign','{"sessionId":"list-0"}');
     ANALYZE document;`);
   const title = await op('sessions_list', {filter: {search: 'Needle'}});
   assert.equal(title.total, 1); assert.equal(title.sessions[0].id, 'list-0'); assert.equal(title.sessions[0].title, 'Needle first title');

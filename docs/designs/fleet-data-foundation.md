@@ -207,7 +207,7 @@ Open questions come first; answered ones follow with their evidence.
 
 ### CUJ 1: Operator sees what a task cost and where it stands
 
-*   **Given**: A task in project `dashq` has had three executions: a worker run on Codex, a reviewer run on Claude, and a merge step.
+*   **Given**: A task in project `cs` has had three executions: a worker run on Codex, a reviewer run on Claude, and a merge step.
 *   **When**: The operator opens the task.
 *   **Then**: The operator sees:
     *   the task state and its waiting reason, if any;
