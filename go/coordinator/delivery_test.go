@@ -15,7 +15,9 @@ func TestDeliveryStages(t *testing.T) {
 	g := ghRepo{
 		open: []ghPull{
 			{Number: 1, CreatedAt: "2026-11-12T10:00:00Z"},
-			{Number: 2, CreatedAt: "2026-11-12T10:00:00Z", Head: struct{ SHA string `json:"sha"` }{"h2"}},
+			{Number: 2, CreatedAt: "2026-11-12T10:00:00Z", Head: struct {
+				SHA string `json:"sha"`
+			}{"h2"}},
 			{Number: 3, CreatedAt: "2026-11-12T10:00:00Z"},
 			{Number: 4, CreatedAt: "2026-11-12T10:00:00Z"},
 			{Number: 5, CreatedAt: "2026-11-12T10:00:00Z", AutoMerge: map[string]any{}},

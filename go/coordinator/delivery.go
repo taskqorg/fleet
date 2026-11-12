@@ -23,16 +23,29 @@ import (
 	"fleet/contract"
 )
 
+// deliveryState: the last pass, kept per project so a reply holds only the caller's projects.
+type deliveryState struct {
+	refreshedAt *string
+	source      contract.DeliverySource
+	items       []contract.DeliveryItem
+	samples     []contract.DeliverySample
+	landing     map[string]int64 // per project
+	repoLanding map[string]int64 // per "<project> <owner/repo>", to keep a failed repository's count
+	problems    map[string][]string
+}
+
 var (
 	deliveryMu   sync.Mutex
-	deliveryLast contract.DeliveryStatusReply = contract.DeliveryStatusReply{Source: contract.DeliverySourceNone, Items: []contract.DeliveryItem{}, Samples: []contract.DeliverySample{}}
-	queueBranch                               = regexp.MustCompile(`^gh-readonly-queue/[^/]+/pr-(\d+)-`)
-	githubRemote                              = regexp.MustCompile(`github\.com[:/]([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+?)(\.git)?$`)
+	deliveryLast = deliveryState{source: contract.DeliverySourceNone}
+	queueBranch  = regexp.MustCompile(`^gh-readonly-queue/[^/]+/pr-(\d+)-`)
+	githubRemote = regexp.MustCompile(`github\.com[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(\.git)?/?$`)
 )
 
 func init() {
 	onStart(func(ctx context.Context, a *App) {
 		// Keyless the five reads each pass use 50 of the 60 an hour; with a key the period can be much shorter.
+		// ponytail: the cache is in memory, so each start reads once more; keep the last pass in a row if deploys
+		// exhaust the keyless budget.
 		d := envMs("FLEET_DELIVERY_TICK_MS", 6*60*1000)
 		if d > 0 {
 			go deliveryPass(ctx, a) // the first read at start: a deploy every few minutes must not blank the page
@@ -48,17 +61,31 @@ func deliveryStatus(q *Request, _ *contract.DeliveryStatusRequest) (contract.Del
 	deliveryMu.Unlock()
 	full := fullAccess(q.person)
 	ok := func(p string) bool { return full || mayAccessProjectID(q.person, p) }
-	out := last
-	out.Items, out.Samples = []contract.DeliveryItem{}, []contract.DeliverySample{}
-	for _, it := range last.Items {
+	out := contract.DeliveryStatusReply{Source: last.source, RefreshedAt: last.refreshedAt, Items: []contract.DeliveryItem{}, Samples: []contract.DeliverySample{}}
+	for _, it := range last.items {
 		if ok(it.ProjectId) {
 			out.Items = append(out.Items, it)
 		}
 	}
-	for _, s := range last.Samples {
+	for _, s := range last.samples {
 		if ok(s.ProjectId) {
 			out.Samples = append(out.Samples, s)
 		}
+	}
+	var problems []string
+	for p, n := range last.landing {
+		if ok(p) {
+			out.Landing += n
+		}
+	}
+	for p, ps := range last.problems {
+		if ok(p) {
+			problems = append(problems, ps...)
+		}
+	}
+	if len(problems) > 0 {
+		sort.Strings(problems)
+		out.Error = ptr(strings.Join(problems, "; "))
 	}
 	return out, nil
 }
@@ -105,11 +132,11 @@ func deliveryPass(ctx context.Context, a *App) error {
 		if err != nil {
 			return err
 		}
-		seen := map[string]bool{}
 		for _, id := range ids {
+			seen := map[string]bool{} // per project: each project's items carry its own id for the access check
 			for _, r := range anys(projectSettingsOf(q, id)["repos"]) {
 				m := githubRemote.FindStringSubmatch(astr(mapOf(r)["remote"]))
-				if m == nil || seen[m[1]+"/"+m[2]] || !keyed && m[1]+"/"+m[2] != githubPublicRepo {
+				if m == nil || seen[m[1]+"/"+m[2]] || !keyed && !strings.EqualFold(m[1]+"/"+m[2], githubPublicRepo) {
 					continue
 				}
 				seen[m[1]+"/"+m[2]] = true
@@ -128,29 +155,48 @@ func deliveryPass(ctx context.Context, a *App) error {
 		return err
 	}
 	now := time.Now().UTC()
-	items, problems := []contract.DeliveryItem{}, []string{}
+	deliveryMu.Lock()
+	prev := deliveryLast
+	deliveryMu.Unlock()
+	items, problems, landing, repoLanding := []contract.DeliveryItem{}, map[string][]string{}, map[string]int64{}, map[string]int64{}
 	counts := map[string]map[string]int64{}
-	var landing int64
+	failed := map[string]bool{}
 	for _, t := range targets {
 		var g ghRepo
-		get := func(tool string, into any) error {
-			body, _, err := githubRead(ctx, a, t.project, tool, map[string]string{"owner": t.owner, "repo": t.repo})
-			if err == nil {
-				err = json.Unmarshal(body, into)
-			}
-			return err
-		}
 		var active, queued struct {
 			Runs []ghRun `json:"workflow_runs"`
 		}
-		err := firstErr(get("pulls_open", &g.open), get("pulls_closed", &g.closed), get("runs_in_progress", &active), get("runs_queued", &queued), get("releases", &g.releases))
+		var err error
+		for _, r := range []struct {
+			tool string
+			into any
+		}{{"pulls_open", &g.open}, {"pulls_closed", &g.closed}, {"runs_in_progress", &active}, {"runs_queued", &queued}, {"releases", &g.releases}} {
+			var body []byte
+			if body, _, err = githubRead(ctx, a, t.project, r.tool, map[string]string{"owner": t.owner, "repo": t.repo}); err == nil {
+				err = json.Unmarshal(body, r.into)
+			}
+			if err != nil {
+				break // the rest would be thrown away, and a rate limit only grows with more reads
+			}
+		}
+		name := t.owner + "/" + t.repo
 		if err != nil {
-			problems = append(problems, t.owner+"/"+t.repo+": "+err.Error())
+			problems[t.project] = append(problems[t.project], name+": "+err.Error())
+			failed[t.project+" "+name] = true
+			// The last good items of this repository stand; its project records no sample this pass.
+			for _, it := range prev.items {
+				if it.ProjectId == t.project && it.Repo == name {
+					items = append(items, it)
+				}
+			}
+			landing[t.project] += prev.repoLanding[t.project+" "+name]
+			repoLanding[t.project+" "+name] = prev.repoLanding[t.project+" "+name]
 			continue
 		}
 		g.runs = append(active.Runs, queued.Runs...)
-		its, l := deliveryStages(t.project, t.owner+"/"+t.repo, g, versions, now)
-		landing += l
+		its, l := deliveryStages(t.project, name, g, versions, now)
+		landing[t.project] += l
+		repoLanding[t.project+" "+name] = l
 		items = append(items, its...)
 		c := map[string]int64{}
 		for _, s := range contract.DeliveryStageValues {
@@ -161,33 +207,23 @@ func deliveryPass(ctx context.Context, a *App) error {
 		}
 		counts[t.project] = sumCounts(counts[t.project], c)
 	}
+	for k := range failed {
+		delete(counts, strings.SplitN(k, " ", 2)[0])
+	}
 	samples, err := deliverySamples(ctx, a, counts, now)
 	if err != nil {
 		log.Printf("delivery samples: %v", err)
 	}
-	reply := contract.DeliveryStatusReply{Source: contract.DeliverySourcePublic, Items: items, Samples: samples, Landing: landing, RefreshedAt: ptr(now.Format(time.RFC3339))}
+	next := deliveryState{source: contract.DeliverySourcePublic, items: items, samples: samples, landing: landing, repoLanding: repoLanding, problems: problems, refreshedAt: ptr(now.Format(time.RFC3339))}
 	if keyed {
-		reply.Source = contract.DeliverySourceKey
+		next.source = contract.DeliverySourceKey
 	}
-	if len(problems) > 0 {
-		reply.Error = ptr(strings.Join(problems, "; "))
+	if len(failed) == len(targets) && len(targets) > 0 && prev.refreshedAt != nil {
+		next.refreshedAt = prev.refreshedAt // nothing new was read: the age shows how old the items are
 	}
 	deliveryMu.Lock()
-	if len(problems) > 0 && len(items) == 0 && deliveryLast.RefreshedAt != nil {
-		// Every read failed (a rate limit, GitHub down): the last good items stand, marked with the error and their time.
-		reply.Items, reply.RefreshedAt, reply.Landing = deliveryLast.Items, deliveryLast.RefreshedAt, deliveryLast.Landing
-	}
-	deliveryLast = reply
+	deliveryLast = next
 	deliveryMu.Unlock()
-	return nil
-}
-
-func firstErr(errs ...error) error {
-	for _, e := range errs {
-		if e != nil {
-			return e
-		}
-	}
 	return nil
 }
 
@@ -249,7 +285,7 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, now time.
 		}
 	}
 	// Releases: v<version> tags only (ui-* releases ship the web app on their own), oldest first, each with the merge
-	// time of its target commit; a target outside the merged list falls back to the publish time.
+	// time of its target commit; a release whose target is not among the merged pull requests read is left out.
 	mergedAt := map[string]string{}
 	for _, p := range g.closed {
 		if p.MergedAt != nil {
@@ -264,7 +300,7 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, now time.
 		}
 		c := mergedAt[r.Target]
 		if c == "" {
-			c = r.Published
+			continue // the target's merge time is unknown: guessing it could claim merges the release lacks
 		}
 		rels = append(rels, rel{r.Tag, strings.TrimPrefix(r.Tag, "v"), c, r.Published})
 	}

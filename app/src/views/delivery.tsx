@@ -22,7 +22,7 @@ const SHOWN = 6;
 
 export function Delivery() {
   // GitHub reads run every few minutes on the coordinator, not on change rows: re-read every 60 s.
-  const { data, error } = useDoc<any>('delivery', async () => ({ ...(await op('delivery_status', {})), fetchedAt: Date.now() }), () => false, 60000);
+  const { data, error } = useDoc<any>('delivery', () => op('delivery_status', {}), () => false, 60000);
   const now = Date.now();
   const head = <header class="page-h"><h1><Icon name="git-merge" /> Delivery</h1><span class="grow" />
     {data?.source === 'public' && <span class="chip-age t-attention" data-tip="No github key in API keys: unauthenticated reads, the fleet repository only">public GitHub</span>}
@@ -33,9 +33,11 @@ export function Delivery() {
   const used = STAGES.filter(s => s.id !== 'merged' || items.some(i => i.stage === 'merged'));
   const of = (id: string) => items.filter(i => i.stage === id).sort((a, b) => a.since.localeCompare(b.since));
   // One line per stage: the sum over projects at each read.
-  const at = [...new Set<string>(data.samples.map((s: any) => s.at))].sort();
-  const line = (id: string) => at.map(t => ({ at: Date.parse(t), v: data.samples.filter((s: any) => s.at === t).reduce((n: number, s: any) => n + (s.counts[id] ?? 0), 0) }));
-  const max = Math.max(1, ...used.flatMap(s => line(s.id).map(p => p.v)));
+  const sums = new Map<string, Record<string, number>>();
+  for (const s of data.samples) { const m = sums.get(s.at) ?? {}; for (const k in s.counts) m[k] = (m[k] ?? 0) + s.counts[k]; sums.set(s.at, m); }
+  const at = [...sums.keys()].sort();
+  const lines = Object.fromEntries(used.map(s => [s.id, at.map(t => ({ at: Date.parse(t), v: sums.get(t)![s.id] ?? 0 }))]));
+  const max = Math.max(1, ...Object.values(lines).flat().map(p => p.v));
   const late = (s: typeof STAGES[number]) => { const o = of(s.id)[0]; return !!(s.alert && o && now - Date.parse(o.since) >= s.alert * 1000); };
   const first = used.find(late);
   return <section class="delivery" aria-label="Delivery">
@@ -51,7 +53,7 @@ export function Delivery() {
         <header class="panel-h"><h2><Icon name={s.icon} /> {s.label}</h2><span class="grow" />
           {list[0] && s.alert && <AgeChip t={Date.parse(list[0].since)} now={now} alertAfter={s.alert} alertLabel="waits too long" />}
           <Num m={{ value: list.length, basis: 'measured' }} kind="count" /></header>
-        <AreaChart label={`${s.label} over 24 hours`} series={[{ label: s.label, points: line(s.id), tone: 'd1', step: true }]} from={now - 24 * HOUR} to={now} now={now} max={max} value={v => String(Math.round(v))} />
+        <AreaChart label={`${s.label} over 24 hours`} series={[{ label: s.label, points: lines[s.id], tone: 'd1', step: true }]} from={now - 24 * HOUR} to={now} now={now} max={max} value={v => String(Math.round(v))} />
         {list.length === 0 ? <Empty text="None." /> : <ul class="kv">
           {list.slice(0, SHOWN).map(i => <li key={i.repo + i.number}>
             <Icon name={s.icon} label={s.label} />
