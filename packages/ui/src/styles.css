@@ -204,7 +204,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 
 /* Tooltip (OR-20): small, contextual, distinct floating surface (OR-16) */
-.tooltip{position:fixed;z-index:10;max-width:var(--size-tip);transform:translate(-50%,calc(-100% - var(--space-2)));padding:var(--space-1) var(--space-2);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--float);color:var(--fg);box-shadow:var(--elevation-popover);font-size:var(--font-size-sm);line-height:var(--font-line);pointer-events:none}
+.tooltip{position:fixed;z-index:10;max-width:var(--size-tip);transform:translate(-50%,calc(-100% - var(--space-2)));padding:var(--space-1) var(--space-2);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--float);color:var(--fg);box-shadow:var(--elevation-popover);font-size:var(--font-size-sm);line-height:var(--font-line);pointer-events:none;overflow-wrap:anywhere}
 .tooltip.below{transform:translate(-50%,var(--space-2))}
 .vl-row .id{margin-left:0}
 /* formats.md: descriptive facts on a row's second line are sans; .id is only for codes. */
