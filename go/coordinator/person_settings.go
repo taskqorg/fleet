@@ -135,6 +135,12 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	if r.Order != nil && *r.Order != prev.Order && q.agent != "" {
 		return contract.PersonSettings{}, fail(403, "Only a person may change the dispatch order")
 	}
+	// A newly focused project must exist and be visible to the caller; one kept from before may since be gone and stays.
+	for _, id := range r.Focus {
+		if id != "-" && !slices.Contains(prev.Focus, id) && (projectSettingsOf(q, id) == nil || (q.person != nil && !mayAccessProjectID(q.person, id))) {
+			return contract.PersonSettings{}, fail(400, "focus: unknown project "+id)
+		}
+	}
 	next := prev
 	if r.Order != nil {
 		next.Order = *r.Order
@@ -204,7 +210,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 }
 
 // checkPrefs: names are present and unique (views per list), each view is a valid view of its list (viewProblem, the
-// view_link check), focus names projects the caller may see, widths are not negative.
+// view_link check), widths are not negative.
 func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
 	seen := map[string]bool{}
 	for _, v := range r.Views {
@@ -231,16 +237,6 @@ func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
 			return fail(400, "focusPresets: names are required and unique")
 		}
 		names[p.Name] = true
-	}
-	for _, id := range r.Focus {
-		if id != "-" && (projectSettingsOf(q, id) == nil || (q.person != nil && !mayAccessProjectID(q.person, id))) {
-			return fail(400, "focus: unknown project "+id)
-		}
-	}
-	for _, id := range r.Focus {
-		if id != "-" && (projectSettingsOf(q, id) == nil || (q.person != nil && !mayAccessProjectID(q.person, id))) {
-			return fail(400, "focus: unknown project "+id)
-		}
 	}
 	for k, w := range r.Widths {
 		if w < 0 {
