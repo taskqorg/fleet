@@ -2,7 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -98,9 +98,13 @@ test('actual Git comparison accepts a qualified plan and rejects a corrupted omi
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
 
-test('known module execution retains native archives, HTTP consumers and shared fallback', () => {
-  for (const module of ['executor','gateway','update']) assert.deepEqual(execution([`go/${module}/main.go`],true,false),['go','app']);
+test('known module execution retains HTTP consumers and shared fallback; archives are release-build\'s', () => {
+  for (const module of ['executor','gateway','update']) assert.deepEqual(execution([`go/${module}/main.go`],true,false),['go']);
   assert.deepEqual(execution(['go/coordinator/main.go'],true,false),[...families]);
+  // The archives' replacement guard: a merge group's app check requires release-build.
+  const ci = readFileSync('.github/workflows/ci.yml', 'utf8');
+  assert.match(ci, /\n  app:\n    needs: \[[^\]]*\brelease-build\b/);
+  assert.match(ci, /\[ "\$GITHUB_EVENT_NAME" != merge_group \] \|\| \[ "\$RELEASE_BUILD" = success \]/);
   for (const path of ['app/src/views/hosts.tsx','packages/ui/src/button.tsx']) assert.deepEqual(execution([path],true,false),['app','browser']);
   for (const path of ['go/obs/obs.go','go/contract/base.go','go/go.mod','tests/ui/new.test.ts']) assert.deepEqual(execution([path],true,false),[...families]);
   assert.deepEqual(execution(['go/executor/main.go','app/src/views/hosts.tsx'],true,false),[...families]);
