@@ -179,6 +179,7 @@ func projectInitialRevoke(q *Request) (any, error) {
 	}
 	return doc{"projectId": id, "accessVersion": version, "revoked": true}, nil
 }
+
 // projectArchive: retire a project definition (owner decision to drop a project). Its tasks and sessions must be closed
 // first through task_cancel and session_archive, so nothing keeps running under a project no list shows. The GLOBAL
 // write lock of every operation serializes this check with task_create and session_start.
