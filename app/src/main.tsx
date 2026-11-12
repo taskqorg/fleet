@@ -1,10 +1,10 @@
 // Fleet operator app entry (docs/designs/fleet-operator-app.md): shell, routes, identity check, feed start, service worker.
 import { Projects } from './views/projects.tsx';
 import { render } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation } from 'wouter-preact';
-import { AppShell, Empty, Button, workspaces, type NavItem, type AppScreen } from '../../packages/ui/src/index.ts';
-import { op, signedOut } from './api.ts';
+import { AppShell, Empty, Button, workspaces, type NavItem, type AppScreen, type SpotlightProvider } from '../../packages/ui/src/index.ts';
+import { op, signedOut, type Ops } from './api.ts';
 import { prefs, loadPrefs, savePrefs } from './prefs.ts';
 import { startFeed } from './feed.ts';
 import { startStore } from './store.ts';
@@ -39,11 +39,30 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
 };
 const BUILT = workspaces.filter(w => w.app).map(w => ({ ...w, ...SCREENS[w.id as AppScreen] }));
 const NAV: NavItem[] = BUILT;
+const ICON = { task: 'tasks', project: 'projects', host: 'hosts' } as const;
+
+// Spotlight (OR-32): one provider per kind the server's `search` operation finds (agents call the same tool). The kinds of
+// one query share one request, sent 150 ms after the last key and reused while pending (up to 10 s) and for 2 s after; a failed one is not reused.
+let last: { query: string; at: number; hits: Promise<Ops['search']['reply']['hits']> } | null = null;
+const found = (kind: keyof typeof ICON, go: (to: string) => void): SpotlightProvider => {
+  const w = workspaces.find(x => x.id === ICON[kind])!;
+  const fresh = (query: string) => last?.query === query && Date.now() - last.at < 2000;
+  return { id: kind, label: w.label, find: async (query, signal) => {
+    if (!fresh(query)) {
+      await new Promise(r => setTimeout(r, 150));
+      if (signal.aborted) return [];
+      if (!fresh(query)) { const hits = op('search', { query }).then(r => r.hits); const l = last = { query, at: Date.now() + 8000, hits }; hits.then(() => { l.at = Date.now(); }, () => { if (last === l) last = null; }); }
+    }
+    return (await last!.hits).filter(h => h.kind === kind).map(h => ({ key: kind + ':' + h.id, icon: w.icon, label: h.title,
+      sub: h.projectId ?? undefined, run: () => go(`/${ICON[kind]}/${encodeURIComponent(h.id)}`) }));
+  } };
+};
 
 function App() {
   const [loc, go] = useLocation();
   const [update, setUpdate] = useState(false);
   const current = loc.split('/')[1] || 'overview';
+  const search = useRef((['task', 'project', 'host'] as const).map(k => found(k, go))).current;
   // Pinned sections and the other preferences are person settings (prefs.ts), so they follow the person to every device.
   useEffect(() => { loadPrefs(); }, []); // and again on window focus (below): agents and other devices change them too
   const pins = prefs.value.pins, savePins = (ids: string[]) => savePrefs(() => ({ pins: ids }));
@@ -58,7 +77,7 @@ function App() {
     return () => { removeEventListener('focus', me); removeEventListener('focus', loadPrefs); };
   }, []);
   useEffect(() => { if (signedOut.value) clearAll(true); }, [signedOut.value]);
-  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={pins} onPins={savePins}>
+  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={pins} onPins={savePins} search={search}>
     {update && <div class="problem warning" role="status"><b>Update available</b><span class="facts">A new version of the app is ready.</span><span class="acts"><Button label="Reload" onClick={() => location.reload()} /></span></div>}
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
     <Switch>

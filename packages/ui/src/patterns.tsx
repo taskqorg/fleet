@@ -1,7 +1,7 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Button, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, NavRail, TooltipLayer, HarnessMark, StageChip, type Chip, type FilterField, type NavItem } from './controls.tsx';
+import { Button, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, NavRail, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, type SpotlightProvider, type Chip, type FilterField, type NavItem } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
 import tokens from '../tokens.json';
@@ -120,14 +120,20 @@ function TaskCells({ t, now, onPin, onOpen, showPriority, two }: { t: TaskRow; n
 
 /* ---------- App shell (patterns/app-shell.md) ---------- */
 
-export function AppShell({ nav, current, onGo, waiting, children, pins, onPins }: {
+export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, search = [] }: {
   nav: NavItem[]; current: string; onGo: (id: string) => void; waiting: number; children: ComponentChildren;
+  /** Spotlight providers after the built-in sections one (OR-32): codes, tasks, projects, hosts in the app. */ search?: SpotlightProvider[];
   /** The person's pinned sections (person settings); without them the shell keeps its own demo pins. */ pins?: string[]; onPins?: (ids: string[]) => void;
 }) {
   const [own, setOwn] = useState<string[]>(['tasks', 'hosts']);
   const pinned = pins ?? own, setPinned = onPins ?? setOwn;
   // The collapsed rail is a per-device convenience; storage may be unavailable.
   const [mini, setMini] = useState(() => { try { return localStorage.getItem('fleet.nav.mini') === '1'; } catch { return false; } });
+  const [spot, setSpot] = useState(false);
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && !e.repeat && (e.key.toLowerCase() === 'k' || (e.code === 'KeyK' && !/^[a-z]$/i.test(e.key)))) { e.preventDefault(); setSpot(s => !s); } };
+    addEventListener('keydown', k); return () => removeEventListener('keydown', k);
+  }, []);
   const toggle = () => { setMini(!mini); try { localStorage.setItem('fleet.nav.mini', mini ? '0' : '1'); } catch { /* not remembered */ } };
   // OR-26: a click anywhere on a row follows the row's link. Controls in the row keep their own action; a text selection is not a click.
   const openRow = (e: MouseEvent) => {
@@ -138,11 +144,12 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins }
   return (
     <div class="shell" data-ui="app-shell" onClick={openRow}>
       <a class="skip" href="#main" onClick={e => { e.preventDefault(); document.getElementById('main')?.focus(); }}>Skip to content</a>
-      <NavRail items={nav} pinned={pinned} current={current} onGo={onGo} mini={mini} onPins={setPinned}
+      <NavRail items={nav} pinned={pinned} current={current} onGo={onGo} mini={mini} onPins={setPinned} onSearch={() => setSpot(true)}
         head={<><span class="brand-mark" role="img" aria-label="Fleet" /><b class="brand">Fleet</b><span class="grow" />
           {waiting > 0 && current !== 'overview' && <a class="nav-count t-attention waiting" href="#/overview" onClick={e => { e.preventDefault(); onGo('overview'); }}>{waiting} need you</a>}
           <Button label={mini ? 'Expand navigation' : 'Collapse navigation'} icon="panel-left-close" iconOnly pressed={mini} onClick={toggle} /></>} />
       <main class="shell-main" id="main" tabIndex={-1}>{children}</main>
+      {spot && <Spotlight providers={[sectionProvider(nav, onGo), ...search]} onClose={() => setSpot(false)} />}
       <TooltipLayer />
     </div>
   );

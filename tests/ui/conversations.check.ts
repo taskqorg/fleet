@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { chromium, type Page } from 'playwright';
 import { checkServer } from './seed.ts';
 import { checkProjects } from './projects.check.ts';
+import { checkSpotlight } from './spotlight.check.ts';
 
 const failures: string[] = [], timings: string[] = [];
 const check = (ok: boolean, what: string) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) failures.push(what); };
@@ -228,6 +229,7 @@ try {
   check(!errors.length, `no page errors${errors.length ? ': ' + errors.join('; ') : ''}`);
   if (rtt.length) time('thread_entries page round trip (median)', [...rtt].sort((x, y) => x - y)[rtt.length >> 1]);
   await checkProjects(b, origin, host);
+  await checkSpotlight(b, origin);
 } finally { await b.close(); await close(); }
 
 console.log('\nTimings (reported, not asserted):'); for (const l of timings) console.log('  ' + l);

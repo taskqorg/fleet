@@ -21,7 +21,7 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   | `ops-definitions` | `definition`, `agent`, `harness`, `profiles`, `catalogue`, `setting`, `reconcile` |
   | `ops-executions` | `execution`, `executions`, `pipeline`, `queue`, `route`, `hosts`, `system` |
   | `ops-lab` | `lab` |
-  | `ops-people` | `me`, `people`, `person`, `focus`, `view`, `list` |
+  | `ops-people` | `me`, `people`, `person`, `focus`, `view`, `list`, `search` |
   | `ops-sessions` | `session`, `sessions`, `thread`, `message`, `reply`, `ask`, `direct`, `watch`, `worker`, `changes`, `recommendation` |
   | `ops-projects` | `project_create`, `project_update`, `project_initial_access_revoke` (shared versioned writes) |
   | `ops-tasks` | `task`, `question`, `questions`, remaining `project` reads |

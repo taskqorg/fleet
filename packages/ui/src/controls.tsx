@@ -1,5 +1,5 @@
 // Fleet controls. Specs: docs/design-system/controls/*.md. Styling: styles.css with tokens only.
-import type { ComponentChildren, TargetedMouseEvent } from 'preact';
+import { Fragment, type ComponentChildren, type TargetedMouseEvent } from 'preact';
 import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages, stepKinds, type StepKind } from './registry.ts';
 import { type Measured, type Kind, measured, age, bytes, exact, stamp, percent, duration, agentLabel } from './format.ts';
@@ -677,12 +677,12 @@ export function Presets({ presets, active, onPick, onSave, onUnpin }: {
 /* ---------- Navigation rail with pinned sections (nav-rail.md) ---------- */
 
 export type NavItem = { id: string; label: string; icon: IconName; group: string; count?: { n: number; tone: Tone; label: string } };
-export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, head }: {
+export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, head, onSearch }: {
   items: NavItem[]; current: string; onGo: (id: string) => void;
   /** The person's pinned ids in their order; onPins gets the whole new list (pin, unpin, reorder). */ pinned: string[]; onPins: (ids: string[]) => void;
   /** Collapsed to icons. */ mini?: boolean; /** Product name, need-you chip and the collapse button (app shell). */ head?: ComponentChildren;
+  /** Opens the Spotlight palette (OR-31, OR-32); the rail has no search field of its own. */ onSearch?: () => void;
 }) {
-  const [q, setQ] = useState('');
   // Ids of sections that no longer exist are dropped here, so they never take a position and leave on the next save.
   const pinned = stored.filter(id => items.some(i => i.id === id));
   const [menu, setMenu] = useState<string | null>(null);
@@ -736,19 +736,89 @@ export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, he
       </span>}
     </li>;
   };
-  const found = items.filter(i => i.label.toLowerCase().includes(q.toLowerCase()));
-  const groups = [...new Set(found.map(i => i.group))];
+  const groups = [...new Set(items.map(i => i.group))];
   const pins = pinned.map(id => items.find(i => i.id === id)).filter(Boolean) as NavItem[];
   const act = (f: () => void) => () => { setMenu(null); f(); };
   return (
     <nav class={`rail${mini ? ' mini' : ''}`} data-ui="nav-rail" aria-label="Sections" ref={navRef}>
       {head && <div class="rail-head">{head}</div>}
       {pins.length > 0 && <ul class="rail-g pinned" aria-label="Pinned">{pins.map(i => item(i, true))}</ul>}
-      <label class="search rail-search"><Icon name="search" /><input type="search" placeholder="Sections" aria-label="Find section" value={q} onInput={e => setQ((e.target as HTMLInputElement).value)} /></label>
-      {groups.map(g => <ul key={g} class="rail-g" aria-label={g}><li class="rail-h">{g}</li>{found.filter(i => i.group === g).map(i => item(i, false))}</ul>)}
+      {onSearch && <ul class="rail-g"><li class="nav-i"><a href="#search" aria-keyshortcuts="Meta+K Control+K" onClick={e => { e.preventDefault(); onSearch(); }}>
+        <span data-tip="Search  ⌘K" data-tip-narrow class="nav-ic"><Icon name={actions.search} /></span><span class="nm">Search</span></a></li></ul>}
+      {groups.map(g => <ul key={g} class="rail-g" aria-label={g}><li class="rail-h">{g}</li>{items.filter(i => i.group === g).map(i => item(i, false))}</ul>)}
     </nav>
   );
 }
+
+/* ---------- Spotlight palette (OR-32, controls/spotlight.md) ---------- */
+
+/** One found item: run opens it. code is the human entity code (D17), shown mono after the label. */
+export type SpotlightItem = { key: string; icon: IconName; label: string; code?: string; sub?: string; run: () => void };
+/** One kind of thing the palette finds. A new kind is one more provider; providers answer in their order. */
+export type SpotlightProvider = { id: string; label: string; find: (q: string, signal: AbortSignal) => SpotlightItem[] | Promise<SpotlightItem[]> };
+
+/** The palette: the only floating working tool (OR-32). Arrow keys move, Enter opens, Escape or a click outside closes. */
+export function Spotlight({ providers, onClose }: { providers: SpotlightProvider[]; onClose: () => void }) {
+  const [q, setQ] = useState('');
+  const [found, setFound] = useState<{ p: SpotlightProvider; items: SpotlightItem[] }[]>([]);
+  const [at, setAt] = useState(0);
+  // waiting: providers not answered yet; failed: one of them failed, so "nothing found" would be a guess.
+  const [waiting, setWaiting] = useState(0), [failed, setFailed] = useState(false);
+  // Focus returns to where it was only when the palette closes without opening an item.
+  const back = useRef<Element | null>(document.activeElement), opened = useRef(false);
+  useEffect(() => () => { if (!opened.current) (back.current as HTMLElement | null)?.focus?.(); }, []);
+  useEffect(() => {
+    // Each provider's results show as they arrive, in provider order; local ones are not held back by the server.
+    const c = new AbortController(), text = q.trim(), got: (SpotlightItem[] | undefined)[] = providers.map(() => undefined);
+    const show = () => { if (!c.signal.aborted) setFound(providers.map((p, i) => ({ p, items: got[i] ?? [] })).filter(g => g.items.length)); };
+    setFailed(false); setAt(0); setEnter(false);
+    if (!text) { setFound([]); setWaiting(0); return; }
+    let left = 0;
+    providers.forEach((p, i) => {
+      const r = p.find(text, c.signal);
+      if (Array.isArray(r)) { got[i] = r; return; }
+      left++;
+      r.then(x => { got[i] = x; }, () => { if (!c.signal.aborted) setFailed(true); }).then(() => { if (!c.signal.aborted) { setWaiting(--left); show(); } });
+    });
+    setWaiting(left); show();
+    return () => c.abort();
+  }, [q]);
+  const flat = found.flatMap(g => g.items);
+  const open = (i: SpotlightItem | undefined) => { if (i) { opened.current = true; onClose(); i.run(); } };
+  // Enter before every provider answered opens the first result once they have, not a section that happened to answer first.
+  const [enter, setEnter] = useState(false);
+  useEffect(() => { if (enter && !waiting) { setEnter(false); open(flat[at]); } }, [enter, waiting]);
+  const key = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); }
+    else if (e.key === 'Tab') e.preventDefault(); // aria-modal: focus stays on the field
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (flat.length) setAt((at + (e.key === 'ArrowDown' ? 1 : -1) + flat.length) % flat.length); }
+    else if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (waiting) setEnter(true); else open(flat[at]); }
+  };
+  const list = useId();
+  let n = -1;
+  return <div class="spot-back" onPointerDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div class="spotlight" data-ui="spotlight" role="dialog" aria-modal="true" aria-label="Search" onKeyDown={key}>
+      <label class="search"><Icon name={actions.search} /><input type="search" autoFocus placeholder="Code, task, section, project, host · agent:claude host:mac" aria-label="Search"
+        role="combobox" list={undefined} aria-expanded={flat.length > 0} aria-controls={list} aria-activedescendant={flat[at] ? `${list}-${at}` : undefined}
+        value={q} onInput={e => setQ((e.target as HTMLInputElement).value)} /></label>
+      {flat.length > 0 && <ul class="spot-list" id={list} role="listbox" aria-label="Results">{found.map(g => <Fragment key={g.p.id}>
+        <li key={g.p.id} class="rail-h" role="presentation">{g.p.label}</li>
+        {g.items.map(i => { const k = ++n; return <li key={i.key} id={`${list}-${k}`} role="option" aria-selected={k === at} class={k === at ? 'cur' : ''}
+          onPointerMove={() => k !== at && setAt(k)} onClick={() => open(i)}>
+          <Icon name={i.icon} /><span class="title">{i.label}</span>{i.code && <span class="id">{i.code}</span>}{i.sub && <span class="muted">{i.sub}</span>}</li>; })}
+      </Fragment>)}</ul>}
+      {q.trim() && !flat.length && !waiting && <p class="muted spot-none" role="status">{failed ? 'Search failed; try again' : 'Nothing found'}</p>}
+    </div>
+  </div>;
+}
+
+/** A field:value term of the search syntax (go/coordinator/search.go searchFields); keep the two lists equal. */
+export const searchTerm = /(^|\s)(agent|host|state|project):\S/i;
+/** Sections as a palette provider: the navigation items whose label holds the text. A field term (agent:x) finds none. */
+export const sectionProvider = (items: NavItem[], onGo: (id: string) => void): SpotlightProvider => ({
+  id: 'sections', label: 'Sections',
+  find: q => searchTerm.test(q) ? [] : items.filter(i => i.label.toLowerCase().includes(q.toLowerCase())).map(i => ({ key: 's:' + i.id, icon: i.icon, label: i.label, run: () => onGo(i.id) })),
+});
 
 /* ---------- Stat strip: operational counts (stat-strip.md) ---------- */
 
