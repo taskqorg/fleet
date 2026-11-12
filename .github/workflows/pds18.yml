@@ -1,0 +1,106 @@
+# One CI job on the warm PDS18 runner pool (deploy/infrastructure/pds18-ci/README.md). ci.yml calls this file at
+# @main: the runner group admits only jobs defined in workflows at refs/heads/main, and a merge queue ref never is one.
+# Callers pass the job's commands; the definition here (where it runs, what it may reach) stays main's.
+# Admission is the event, which no caller can change: a merge queue group of main or a push to main. Any other caller,
+# a fork's pull request included, gets a skipped job, never a PDS18 runner.
+# The runners keep the Go build and module caches, the toolchains, the pnpm store and the Playwright browsers on the
+# guest (shared by the pool), so there is no Actions cache here; every job starts in a clean checkout.
+name: pds18
+on:
+  workflow_call:
+    inputs:
+      script:
+        description: bash commands, run from the checkout root with -eo pipefail
+        type: string
+        required: true
+      fetch-depth:
+        type: number
+        default: 1
+      pnpm:
+        description: set up pnpm (the script runs pnpm install)
+        type: boolean
+        default: false
+      go:
+        description: set up Go from go/go.mod
+        type: boolean
+        default: false
+      clickhouse:
+        description: a ClickHouse service for this job; FLEET_TEST_CLICKHOUSE_URL points at it
+        type: boolean
+        default: false
+      gh-token:
+        description: GH_TOKEN and GH_REPO for the script (the caller's token permissions)
+        type: boolean
+        default: false
+      artifact-name:
+        type: string
+        default: ''
+      artifact-path:
+        type: string
+        default: ''
+      artifact-retention:
+        type: number
+        default: 1
+permissions: {}
+jobs:
+  run:
+    if: >-
+      (github.event_name == 'merge_group' && startsWith(github.ref, 'refs/heads/gh-readonly-queue/main/'))
+      || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: [self-hosted, linux, x64, fleet-pds18]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    services:
+      clickhouse:
+        # An empty image skips the service. The host port is chosen per job: the pool's runners share one guest.
+        image: ${{ inputs.clickhouse && 'clickhouse/clickhouse-server:26.8' || '' }}
+        env:
+          CLICKHOUSE_DB: fleet
+          CLICKHOUSE_USER: t
+          CLICKHOUSE_PASSWORD: t
+        ports: ["127.0.0.1::8123"]
+        options: >-
+          --health-cmd "clickhouse client --user t --password t -q 'SELECT 1'"
+          --health-interval 2s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+          persist-credentials: false
+      - if: inputs.pnpm
+        uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - if: inputs.go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache: false
+      # Per-job PostgreSQL (tests/harness.ts) and ClickHouse: nothing is shared with another runner of the pool.
+      - name: Job-local services
+        env:
+          CLICKHOUSE_PORT: ${{ job.services.clickhouse.ports['8123'] }}
+        run: |
+          echo "FLEET_TRIAL_PGDATA=$RUNNER_TEMP/pg" >> "$GITHUB_ENV"
+          [ -z "$CLICKHOUSE_PORT" ] || echo "FLEET_TEST_CLICKHOUSE_URL=http://127.0.0.1:$CLICKHOUSE_PORT" >> "$GITHUB_ENV"
+      - name: Run
+        env:
+          SCRIPT: ${{ inputs.script }}
+          GH_TOKEN: ${{ inputs.gh-token && github.token || '' }}
+          GH_REPO: ${{ inputs.gh-token && github.repository || '' }}
+        run: bash -eo pipefail -c "$SCRIPT"
+      - if: inputs.artifact-name != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.artifact-path }}
+          retention-days: ${{ inputs.artifact-retention }}
+          overwrite: true
+          if-no-files-found: error
+      # The runner kills the job's leftover processes; stopping PostgreSQL first frees its shared memory cleanly.
+      - name: Stop job-local PostgreSQL
+        if: always()
+        run: |
+          [ ! -f "$FLEET_TRIAL_PGDATA/postmaster.pid" ] || "$(ls -d /usr/lib/postgresql/*/bin | tail -1)/pg_ctl" -D "$FLEET_TRIAL_PGDATA" -m immediate -w stop || true

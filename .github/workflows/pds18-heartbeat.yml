@@ -1,0 +1,18 @@
+# Liveness of the PDS18 runner pool for ci.yml routing (scripts/pds18-route.ts): the time of the newest successful run
+# of this workflow. While the pool is down these runs only queue, the time goes stale and ci.yml routes to hosted.
+name: pds18-heartbeat
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+permissions: {}
+# One pending beat at a time: a down pool collects no backlog.
+concurrency:
+  group: pds18-heartbeat
+  cancel-in-progress: false
+jobs:
+  beat:
+    runs-on: [self-hosted, linux, x64, fleet-pds18]
+    timeout-minutes: 5
+    steps:
+      - run: echo "runner $RUNNER_NAME alive"
