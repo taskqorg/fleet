@@ -923,11 +923,16 @@ export function FlowStrip({ nodes, label }: { nodes: FlowNode[]; label: string }
 /* ---------- Area chart (controls/area-chart.md): recorded and projected lines over a time range, CSS only (OR-8) ---------- */
 
 export type ChartPoint = { at: number; v: number };
-export type ChartSeries = { label: string; points: ChartPoint[]; tone: 'd1' | 'd2' | 'd3' | 'd4'; projected?: boolean; step?: boolean };
+/** pattern: stripes over the tone, for a fifth and later series (tokens.md: never new hues). */
+export type ChartSeries = { label: string; points: ChartPoint[]; tone: 'd1' | 'd2' | 'd3' | 'd4'; projected?: boolean; step?: boolean; pattern?: boolean };
 type AreaChartProps = { label: string; series: ChartSeries[]; from: number; to: number; now: number; max: number;
+  /** Layers on top of each other, first series at the bottom (points share their times); with a legend of last values. */
+  stacked?: boolean;
   /** Text of a value for the summary and the axis, e.g. `40%` or `12/h`. */
   value: (v: number) => string };
 export function AreaChart(p: AreaChartProps) {
+  // Stacked: each layer is drawn as the sum of itself and the layers under it, top layer first, all opaque.
+  const drawn = p.stacked ? p.series.map((s, i) => ({ ...s, points: s.points.map((q, j) => ({ at: q.at, v: p.series.slice(0, i + 1).reduce((n, t) => n + (t.points[j]?.v ?? 0), 0) })) })).reverse() : p.series;
   const span = Math.max(1, p.to - p.from);
   const x = (t: number) => Math.min(100, Math.max(0, (t - p.from) / span * 100));
   const y = (v: number) => 100 - Math.min(100, Math.max(0, v / (p.max || 1) * 100));
@@ -946,12 +951,13 @@ export function AreaChart(p: AreaChartProps) {
   const days = (from: number, to: number) => { const out: number[] = []; const d = new Date(from); d.setHours(24, 0, 0, 0); for (let t = d.getTime(); t < to && out.length < 31; t += 864e5) out.push(t); return out; };
   return <div data-ui="area-chart" class="area-chart" role="img" aria-label={`${p.label}: ${summary}`}>
     <div class="ac-plot">
-      {p.series.filter(s => shape(s)).map(s => <i key={s.label + (s.projected ? '-p' : '')} class={`ac-area ${s.tone}${s.projected ? ' projected' : ''}`} style={{ clipPath: shape(s) }} />)}
+      {drawn.filter(s => shape(s)).map(s => <i key={s.label + (s.projected ? '-p' : '')} class={`ac-area ${s.tone}${s.projected ? ' projected' : ''}${p.stacked ? ' stacked' : ''}${s.pattern ? ' pattern' : ''}`} style={{ clipPath: shape(s) }} />)}
       {days(p.from, p.to).map(t => <b key={t} class="ac-day" style={{ left: `${x(t)}%` }} />)}
       {p.now >= p.from && p.now <= p.to && <b class="ac-now" style={{ left: `${x(p.now)}%` }} data-tip={exact(p.now)} />}
       <span class="ac-max">{p.value(p.max)}</span>
     </div>
     <div class="ac-axis"><time>{stamp(p.from, p.now)}</time><span class="grow" /><time>{stamp(p.to, p.now)}</time></div>
+    {p.stacked && <ul class="ac-legend" aria-hidden="true">{p.series.map(s => <li key={s.label}><i class={`ac-key ${s.tone}${s.pattern ? ' pattern' : ''}`} />{s.label} <span class="num">{last(s)}</span></li>)}</ul>}
   </div>;
 }
 

@@ -539,7 +539,13 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .ac-plot{position:relative;height:calc(var(--size-control) * 4);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--bg);overflow:hidden}
 .ac-area{position:absolute;inset:0;opacity:.55}
 .ac-area.projected{opacity:.25}
-.ac-area.d1{background:var(--data-1)}.ac-area.d2{background:var(--data-2)}.ac-area.d3{background:var(--data-3)}.ac-area.d4{background:var(--data-4)}
+.ac-area.stacked{opacity:1}
+.ac-area.pattern,.ac-key.pattern{background-image:repeating-linear-gradient(45deg,transparent 0 3px,var(--bg) 3px 5px)}
+.ac-legend{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-4);list-style:none;margin:var(--space-2) 0 0;padding:0}
+.ac-legend li{display:flex;align-items:center;gap:var(--space-2)}
+.ac-key{display:inline-block;width:10px;height:10px;border-radius:2px}
+.ac-key.d1{background-color:var(--data-1)}.ac-key.d2{background-color:var(--data-2)}.ac-key.d3{background-color:var(--data-3)}.ac-key.d4{background-color:var(--data-4)}
+.ac-area.d1{background-color:var(--data-1)}.ac-area.d2{background-color:var(--data-2)}.ac-area.d3{background-color:var(--data-3)}.ac-area.d4{background-color:var(--data-4)}
 .ac-day{position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
 .ac-now{position:absolute;top:0;bottom:0;width:1px;background:var(--accent)}
 .ac-max{position:absolute;top:var(--space-1);left:var(--space-2);font-family:var(--font-mono);font-size:var(--font-size-xs);color:var(--fg-muted)}
@@ -583,3 +589,4 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .tstrip{position:relative;display:block;width:100%;min-width:var(--size-fill);height:var(--space-3);background:var(--neutral-bg);border-radius:var(--radius-md);overflow:hidden}
 .tstrip i{position:absolute;top:0;bottom:0;background:var(--tone-fg);border-radius:var(--radius-md)}
 .tstrip i.live{opacity:.85;box-shadow:inset -2px 0 var(--fg)}
+.delivery-flow{padding-bottom:var(--space-3);margin-bottom:var(--space-4)}.delivery-flow .area-chart{padding:0 var(--space-4)}

@@ -57,3 +57,28 @@ func TestDeliveryStages(t *testing.T) {
 		t.Error("versionLess")
 	}
 }
+
+// Requirement: a person sees only the delivery data of repositories listed by projects they may see.
+// Risk: pull requests, landing counts, errors or samples of another project's private repository reach the page.
+func TestDeliveryReplyScoped(t *testing.T) {
+	s := func(v string) *string { return &v }
+	last := deliveryState{source: contract.DeliverySourceKey, repos: map[string]*deliveryRepo{
+		"o/a": {projects: []string{"p1"}, items: []contract.DeliveryItem{{ProjectId: "p1", Repo: "o/a", Number: 1}}, landing: 1, problem: "o/a: slow"},
+		"o/b": {projects: []string{"p2", "p3"}, items: []contract.DeliveryItem{{ProjectId: "p2", Repo: "o/b", Number: 2}}, landing: 5, problem: "o/b: 404"},
+	}, samples: []contract.DeliverySample{{ProjectId: "p1", Repo: s("o/a")}, {ProjectId: "p2", Repo: s("o/b")}, {ProjectId: "p1"}, {ProjectId: "p2"}}}
+	r := deliveryReply(last, func(p string) bool { return p == "p1" })
+	if len(r.Items) != 1 || r.Items[0].Number != 1 || r.Landing != 1 || r.Error == nil || *r.Error != "o/a: slow" || len(r.Samples) != 2 {
+		t.Fatalf("p1 sees %+v", r)
+	}
+	for _, x := range r.Samples {
+		if x.ProjectId != "p1" {
+			t.Fatalf("p1 sees sample %+v", x)
+		}
+	}
+	if r := deliveryReply(last, func(p string) bool { return p == "p3" }); len(r.Items) != 1 || r.Items[0].Number != 2 || r.Landing != 5 {
+		t.Fatalf("p3 (lists o/b) sees %+v", r)
+	}
+	if r := deliveryReply(last, func(string) bool { return false }); len(r.Items)+len(r.Samples) != 0 || r.Landing != 0 || r.Error != nil {
+		t.Fatalf("no access sees %+v", r)
+	}
+}

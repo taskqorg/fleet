@@ -2,7 +2,7 @@
 // open to installed on hosts. One card per stage in pipeline order: the count now, the oldest age (red past the stage's
 // limit), the count over the last 24 hours, and the pull requests in it. Data: delivery_status (cached GitHub reads and
 // recorded counts in the coordinator). A project focus later filters items and samples by projectId.
-import { AreaChart, AgeChip, Empty, ErrorBanner, Icon, Num, StatStrip, type IconName, type Tone } from '../../../packages/ui/src/index.ts';
+import { AreaChart, type ChartSeries, AgeChip, Empty, ErrorBanner, Icon, Num, StatStrip, type IconName, type Tone } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useDoc } from '../store.ts';
 
@@ -19,6 +19,12 @@ const STAGES: { id: string; label: string; icon: IconName; alert?: number }[] = 
   { id: 'merged', label: 'Merged 24h', icon: 'check-check' },
 ];
 const SHOWN = 6;
+// The stacked chart's layers, bottom up in pipeline order: PR stages in the two greys, the merge queue in amber, the
+// release tail in green; the queue's and the tail's second stage striped (tokens.md: four data hues, never new ones).
+const LAYERS: Record<string, Pick<ChartSeries, 'tone' | 'pattern'>> = {
+  pr_open: { tone: 'd2' }, pr_ci: { tone: 'd1' }, mq_wait: { tone: 'd4' }, mq_ci: { tone: 'd4', pattern: true },
+  releasing: { tone: 'd3' }, installing: { tone: 'd3', pattern: true },
+};
 
 export function Delivery() {
   // GitHub reads run every few minutes on the coordinator, not on change rows: re-read every 60 s.
@@ -53,6 +59,12 @@ export function Delivery() {
       { label: 'workers waiting to land', icon: 'clock', value: { value: data.landing, basis: 'measured' as const } },
     ]} />
     <p class="muted" aria-live="polite">{first ? `Waiting starts at ${first.label}.` : 'Nothing waits past its limit.'}</p>
+    <section class="panel delivery-flow" aria-label="Pull requests in flight over 24 hours">
+      <header class="panel-h"><h2>In flight, 24 hours</h2></header>
+      <AreaChart label="Pull requests in flight by stage over 24 hours" stacked from={now - 24 * HOUR} to={now} now={now} value={v => String(Math.round(v))}
+        max={Math.max(1, ...at.map((_, j) => used.filter(s => LAYERS[s.id]).reduce((n, s) => n + lines[s.id][j].v, 0)))}
+        series={used.filter(s => LAYERS[s.id]).map(s => ({ label: s.label, points: lines[s.id], step: true, ...LAYERS[s.id] }))} />
+    </section>
     <div class="limit-cards">
       {used.map(s => { const list = of(s.id); return <article key={s.id} class="panel limit-card" aria-label={s.label}>
         <header class="panel-h"><h2><Icon name={s.icon} /> {s.label}</h2><span class="grow" />

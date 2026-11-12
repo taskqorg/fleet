@@ -66,9 +66,16 @@ func deliveryStatus(q *Request, _ *contract.DeliveryStatusRequest) (contract.Del
 	last := deliveryLast
 	deliveryMu.Unlock()
 	full := fullAccess(q.person)
+	return deliveryReply(last, func(p string) bool { return full || mayAccessProjectID(q.person, p) }), nil
+}
+
+// deliveryReply: the part of the last pass a caller may see. A repository (its items, landing count, error and
+// samples) is visible when the caller may see a project listing it; a sample recorded before samples carried their
+// repository, when the caller may see its project.
+func deliveryReply(last deliveryState, may func(project string) bool) contract.DeliveryStatusReply {
 	visible := func(projects ...string) bool {
 		for _, p := range projects {
-			if full || mayAccessProjectID(q.person, p) {
+			if may(p) {
 				return true
 			}
 		}
@@ -94,7 +101,7 @@ func deliveryStatus(q *Request, _ *contract.DeliveryStatusRequest) (contract.Del
 		sort.Strings(problems)
 		out.Error = ptr(strings.Join(problems, "; "))
 	}
-	return out, nil
+	return out
 }
 
 // ghPull, ghRun and ghRelease: the fields of the GitHub REST replies the stages need.
@@ -136,28 +143,29 @@ func deliveryPass(ctx context.Context, a *App) error {
 	}
 	var targets []string // keys of byKey in project order
 	byKey := map[string]*target{}
-	keyed := githubKeyed(ctx, a)
+	keyed := false // any repository read with a key
 	var versions []string
 	err := runTx(ctx, a, nil, false, "", func(q *Request) error {
 		ids, err := projectIDs(q)
 		if err != nil {
 			return err
 		}
-		conn, err := maybe(q, "connection:github", "api-connection")
-		if err != nil {
-			return err
-		}
 		for _, id := range ids {
-			// A keyed read is shown only to projects the github connection is granted to: a project that merely lists a
-			// private repository must not see what another project's grant read.
-			if keyed && (conn == nil || !connAllowed(conn, doc{"projectId": id})) {
-				continue
-			}
 			for _, r := range anys(projectSettingsOf(q, id)["repos"]) {
 				m := githubRemote.FindStringSubmatch(astr(mapOf(r)["remote"]))
-				if m == nil || !keyed && !strings.EqualFold(m[1]+"/"+m[2], githubPublicRepo) {
+				if m == nil {
 					continue
 				}
+				_, conn, k, err := githubConnectionOf(q, m[1])
+				if err != nil {
+					return err
+				}
+				// A keyed read is shown only to projects its connection is granted to: a project that merely lists a
+				// private repository must not see what another project's grant read. Keyless, only the public repository.
+				if k && !connAllowed(conn, doc{"projectId": id}) || !k && !strings.EqualFold(m[1]+"/"+m[2], githubPublicRepo) {
+					continue
+				}
+				keyed = keyed || k
 				key := strings.ToLower(m[1] + "/" + m[2])
 				if t := byKey[key]; t != nil {
 					if !slices.Contains(t.projects, id) {
