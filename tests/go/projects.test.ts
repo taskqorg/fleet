@@ -138,4 +138,5 @@ test('Archiving the last project that names a git connection queues connection-r
  const d='project-'+randomUUID();
  ok(await call('project_create',{id:d,requestId:randomUUID(),content:withConn(d,'k-shared')}));
  assert.match(String(pending()),/\b0\b/,'a project naming the connection again withdraws the removal');
+ assert.match(String(c.sql(`SELECT count(*) FROM execution WHERE state='preparing' AND kind='host_job'`)),/\b0\b/,'its execution ends too');
 });

@@ -418,11 +418,33 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 	return out, nil
 }
 
-// withdrawConnectionRemovals: a project names connections again, so their pending removals must not run.
+// withdrawConnectionRemovals: a project names connections again, so their pending removals must not run; their
+// executions end cancelled. ponytail: a host that already fetched the command still runs it (commands stay pending
+// until the receipt); the key then has to be put back by hand. A host-side use check would close that.
 func withdrawConnectionRemovals(q *Request, conns []string) error {
 	if len(conns) == 0 {
 		return nil
 	}
-	return exec(q, `UPDATE document SET data=data||'{"status":"stopped","stopDetail":"connection in use again"}',updated_at=now()
-	  WHERE kind='command' AND data->>'kind'='connection-remove' AND data->>'status'='pending' AND data->'payload'->>'connection'=ANY($1)`, conns)
+	cmds, err := queryRows(q, `SELECT data FROM document WHERE kind='command' AND data->>'kind'='connection-remove' AND data->>'status'='pending' AND data->'payload'->>'connection'=ANY($1)`, conns)
+	if err != nil {
+		return err
+	}
+	for _, r := range cmds {
+		c := mapOf(r["data"])
+		c["status"], c["stopDetail"] = "stopped", "connection in use again"
+		if err := put(q, "command", c); err != nil {
+			return err
+		}
+		e, err := get(q, c["executionId"], "execution")
+		if err != nil {
+			return err
+		}
+		if !terminal(e) {
+			e["state"], e["stopDetail"], e["finishedAt"] = "cancelled", "connection in use again", nowMs()
+			if err := put(q, "execution", e); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
