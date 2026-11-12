@@ -65,8 +65,9 @@ const pds18 = await host('pds18');
 const ingest = (id: string, seq: number, markdown: string) => pds18('/api/hosts/events', { executionId: 'x1', events: [{ id, seq, type: 'item.completed', timestamp: Date.now(), data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown }] } } }] });
 
 // The first row whose top is inside the list viewport, and its top; rows are found again by their text.
-const anchor = (p: Page) => p.locator('.tr-body .vl').evaluate(e => { const top = e.getBoundingClientRect().top; const r = [...e.querySelectorAll('.vl-row')].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top).find(x => x.getBoundingClientRect().top >= top); return r ? { text: r.textContent!, top: r.getBoundingClientRect().top } : null; });
-const topOf = (p: Page, text: string) => p.locator('.tr-body .vl').evaluate((e, t) => [...e.querySelectorAll('.vl-row')].find(x => x.textContent === t)?.getBoundingClientRect().top ?? null, text);
+// Rows by their list key, not their text: a row's text carries a live relative time ("9s") that ticks between reads.
+const anchor = (p: Page) => p.locator('.tr-body .vl').evaluate(e => { const top = e.getBoundingClientRect().top; const r = [...e.querySelectorAll<HTMLElement>('.vl-row')].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top).find(x => x.getBoundingClientRect().top >= top); return r ? { key: r.dataset.key!, top: r.getBoundingClientRect().top } : null; });
+const topOf = (p: Page, key: string) => p.locator('.tr-body .vl').evaluate((e, k) => [...e.querySelectorAll<HTMLElement>('.vl-row')].find(x => x.dataset.key === k)?.getBoundingClientRect().top ?? null, key);
 const visible = (p: Page, text: string) => p.locator('.tr-body .vl').evaluate((e, t) => { const b = e.getBoundingClientRect(); return [...e.querySelectorAll('.vl-row')].some(x => x.textContent!.includes(t) && x.getBoundingClientRect().bottom > b.top && x.getBoundingClientRect().top < b.bottom); }, text);
 const until = async (f: () => Promise<boolean>, ms = 5000) => { const s = Date.now(); while (Date.now() - s < ms) { if (await f()) return true; await new Promise(r => setTimeout(r, 50)); } return false; };
 
@@ -109,7 +110,7 @@ try {
     const a = await anchor(p);
     if (!await until(async () => await loaded() > n, 4000)) { console.log(`  loaded ${n}, requests ${rtt.length}, scrollTop ${await vl.evaluate(e => e.scrollTop)}, first ${await p.locator('.tr-body .vl-row').first().getAttribute('data-index')}`); break; }
     await p.waitForTimeout(150); pages++;
-    const after = a ? await topOf(p, a.text) : null;
+    const after = a ? await topOf(p, a.key) : null;
     if (a && after !== null) drift = Math.max(drift, Math.abs(after - a.top));
   }
   check(pages >= 2, `scroll up loads older pages (${pages})`);
@@ -137,7 +138,7 @@ try {
   const a2 = await anchor(p);
   await ingest('live-2', N + 1, 'Live reply two');
   check(await until(async () => /^\d+ new$/.test((await p.locator('.pill').first().textContent().catch(() => '')) ?? '')), 'scrolled up: the pill counts the new entry');
-  check(a2 !== null && Math.abs((await topOf(p, a2.text))! - a2.top) <= 1, 'scrolled up: the row being read does not move on append');
+  check(a2 !== null && Math.abs((await topOf(p, a2.key))! - a2.top) <= 1, 'scrolled up: the row being read does not move on append');
 
   // Copy one reply.
   await vl.evaluate(e => { e.scrollTop = e.scrollHeight; }); await p.waitForTimeout(200);

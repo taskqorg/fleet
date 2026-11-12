@@ -107,11 +107,12 @@ jobs:
             id=$(gh run list --workflow ci --commit "$SHA" --event push --json databaseId -q '.[0].databaseId')
             [ -n "$id" ] || { echo "no ci run for $SHA yet"; sleep 30; }
           done
-          # Diagnostic jobs may still be running; only required behavioral conclusions authorize release.
+          # Diagnostic jobs may still be running; only required behavioral conclusions authorize release. The required go
+          # and browser checks are statuses the app job posts from its own validation, so app's conclusion carries them.
           while :; do
             jobs=$(gh run view "$id" --json jobs)
             pending=false
-            for job in go app browser; do
+            for job in app; do
               result=$(jq -r --arg name "$job" '[.jobs[] | select(.name == $name)] | if length == 1 then .[0].conclusion // "" else "missing" end' <<< "$jobs")
               if [ -z "$result" ] || [ "$result" = missing ]; then pending=true
               elif [ "$result" != success ]; then
