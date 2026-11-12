@@ -164,3 +164,5 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// Disposable delivery timing path control; never merge.
