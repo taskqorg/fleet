@@ -135,10 +135,7 @@ jobs:
         with:
           persist-credentials: false
       - if: matrix.part == 'go'
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go/go.mod
-          cache: false
+        uses: ./.github/actions/go
       - if: matrix.part == 'go'
         uses: actions/cache@v4
         with:
@@ -227,10 +224,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go/go.mod
-          cache: false
+      - uses: ./.github/actions/go
       # One build cache per part (vet, -race unit tests, the executor, each -race coordinator shard): a new entry when
       # Go sources change, restored from the newest same-part entry otherwise, so -race artifacts are reused, not rebuilt.
       - uses: actions/cache@v4
@@ -282,10 +276,15 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/go
+      # The release binaries' build cache: a new entry when Go sources change, the newest entry restored otherwise.
+      - uses: actions/cache@v4
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-release-${{ hashFiles('go/**') }}
+          restore-keys: go-release-
       - run: pnpm install --frozen-lockfile
       - run: pnpm run app:build
       - run: node --test tests/ui/*.test.ts
@@ -326,10 +325,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go/go.mod
-          cache: false
+      - uses: ./.github/actions/go
       # The coordinator's build cache: rebuilt only when Go sources change (both shards share one key; one save wins).
       - uses: actions/cache@v4
         with:
@@ -389,7 +385,7 @@ jobs:
       - if: steps.chromium.outputs.cache-hit != 'true'
         run: pnpm exec playwright install --with-deps chromium
       - if: steps.chromium.outputs.cache-hit == 'true'
-        run: pnpm exec playwright install-deps chromium
+        uses: ./.github/actions/chromium-deps
       - if: matrix.shard == 0
         run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/filter.check.ts --assert --sizes 20000
       - if: matrix.shard == 1
@@ -481,10 +477,15 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/go
+      # Shares app-tests' release build cache (restore only; app-tests saves it).
+      - uses: actions/cache/restore@v4
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-release-${{ hashFiles('go/**') }}
+          restore-keys: go-release-
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - id: playwright
@@ -525,7 +526,7 @@ jobs:
       - if: steps.chromium.outputs.cache-hit != 'true'
         run: pnpm exec playwright install --with-deps chromium
       - if: steps.chromium.outputs.cache-hit == 'true'
-        run: pnpm exec playwright install-deps chromium
+        uses: ./.github/actions/chromium-deps
       - name: Docs report (warning only)
         if: always()
         continue-on-error: true
