@@ -120,7 +120,7 @@ function TaskCells({ t, now, onPin, onOpen, showPriority, two }: { t: TaskRow; n
 
 /* ---------- App shell (patterns/app-shell.md) ---------- */
 
-export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, search = [], user, widths: stored, onWidth, collapsed, onCollapsed }: {
+export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, search = [], user, widths: stored, onWidth, collapsed, onCollapsed, ready = true }: {
   nav: NavItem[]; current: string; onGo: (id: string) => void; waiting: number; children: ComponentChildren;
   /** Spotlight providers after the built-in sections one (OR-32): codes, tasks, projects, hosts in the app. */ search?: SpotlightProvider[];
   /** The person's pinned sections (person settings); without them the shell keeps its own demo pins. */ pins?: string[]; onPins?: (ids: string[]) => void;
@@ -128,6 +128,7 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
   /** Column widths in px by key (`nav`, `control`) and the collapsed navigation: person settings (OR-41, OR-42). onWidth(key, 0) resets.
    *  Without them the shell keeps its own (book and mockups). */
   widths?: Record<string, number>; onWidth?: (key: string, px: number) => void; collapsed?: boolean; onCollapsed?: (on: boolean) => void;
+  /** False until those settings are read: the shell stays hidden, so nothing jumps when they arrive (OR-23). */ ready?: boolean;
 }) {
   const [own, setOwn] = useState<string[]>(['tasks', 'hosts']);
   const pinned = pins ?? own, setPinned = onPins ?? setOwn;
@@ -150,7 +151,7 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
     link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }));
   };
   return (
-    <Widths.Provider value={setWidth}><div class="shell" data-ui="app-shell" onClick={openRow} style={vars}>
+    <Widths.Provider value={setWidth}><div class={`shell${ready ? '' : ' pending'}`} data-ui="app-shell" onClick={openRow} style={vars}>
       <a class="skip" href="#main" onClick={e => { e.preventDefault(); document.getElementById('main')?.focus(); }}>Skip to content</a>
       <NavRail items={nav} pinned={pinned} current={current} onGo={onGo} mini={mini} onPins={setPinned} onSearch={() => setSpot(true)}
         head={<><span class="brand-mark" role="img" aria-label="Fleet" /><b class="brand">Fleet</b><span class="grow" />

@@ -17,6 +17,7 @@ const cases = { // case: [expected rule, breach]
   toggleCovers: ['OR-42', () => document.head.append(Object.assign(document.createElement('style'), { textContent: '.split-list>.page-h:first-child{padding-left:0 !important}' }))],
   noUser: ['OR-42', () => document.querySelector('.rail-foot').remove()],
   noDivider: ['OR-41', () => document.querySelectorAll('[role=separator]').forEach(d => d.remove())],
+  thinDivider: ['OR-41', () => document.head.append(Object.assign(document.createElement('style'), { textContent: '.divider{width:4px !important}' }))],
   rowDead: ['OR-26', () => document.querySelectorAll('.row-link').forEach(a => a.classList.remove('row-link'))],
 };
 const bad = [];
