@@ -189,6 +189,30 @@ try {
   check(await until(async () => await p.locator('[role=group][aria-label=Profile] button').count() > 0), 'Switch opens an inline panel with profiles');
   await p.getByRole('button', { name: 'Actions' }).click(); await p.getByRole('menuitem', { name: 'Fork' }).click();
   check(await until(async () => !p.url().endsWith('/task-a') && /\/conversations\/[0-9a-f-]{36}/.test(p.url())), 'Fork opens the new session');
+  // Requirement: handoff uses managed intake/harness fields. Risk: enabled is absent on real accounts, hiding valid bindings.
+  await p.route('**/api/ops/profiles_list', route => route.fulfill({ json: { profiles: [{ id: 'handoff-codex', harness: 'codex' }, { id: 'handoff-claude', harness: 'claude' }] } }));
+  await p.route('**/api/ops/account_list', route => route.fulfill({ json: { accounts: [
+    { id: 'pds', name: 'pds-ready', harness: 'codex', intake: 'all' },
+    { id: 'windows', name: 'windows-ready', harness: 'codex', intake: 'all' },
+    { id: 'paused', name: 'paused-account', harness: 'codex', intake: 'paused' },
+    { id: 'unknown', name: 'unknown-intake', harness: 'codex' },
+    { id: 'claude', name: 'claude-ready', harness: 'claude', intake: 'all' },
+  ] } }));
+  let handoffBody: any;
+  await p.route('**/api/ops/session_transition', route => { handoffBody = route.request().postDataJSON(); return route.fulfill({ json: { transition: 'reuse' } }); });
+  await p.getByRole('button', { name: 'Actions' }).click(); await p.getByRole('menuitem', { name: 'Hand off to another agent' }).click();
+  await p.getByRole('button', { name: 'handoff-codex · codex', exact: true }).click();
+  const accountGroup = p.getByRole('group', { name: 'Account', exact: true });
+  check(await until(async () => await accountGroup.getByRole('button').count() === 2), 'handoff exposes active PDS and Windows accounts without enabled, excludes paused/unknown intake and other harness');
+  await accountGroup.getByRole('button', { name: 'pds-ready · codex', exact: true }).click();
+  await p.getByRole('button', { name: 'handoff-claude · claude', exact: true }).click();
+  check(await until(async () => await accountGroup.getByRole('button').count() === 1 && await accountGroup.getByRole('button', { name: 'claude-ready · claude', exact: true }).count() === 1), 'changing profile filters accounts by harness');
+  await p.getByRole('button', { name: 'Hand off', exact: true }).click();
+  check(await until(async () => handoffBody?.profileId === 'handoff-claude' && !('account' in handoffBody)), 'changing profile clears the incompatible account selection');
+  await accountGroup.getByRole('button', { name: 'claude-ready · claude', exact: true }).click();
+  await p.getByRole('button', { name: 'Hand off', exact: true }).click();
+  check(await until(async () => handoffBody?.account === 'claude-ready' && handoffBody?.profileId === 'handoff-claude'), 'handoff submits selected managed account name through session_transition');
+  await p.unroute('**/api/ops/profiles_list'); await p.unroute('**/api/ops/account_list'); await p.unroute('**/api/ops/session_transition');
   // Results page: state first, filters, and the viewer for an image, a long text read in pages, and HTML without scripts.
   await p.goto(`${origin}/results`);
   check(await until(async () => await p.locator('.vl-row', { hasText: 'result-0.png' }).count() === 1), 'results page lists results');
