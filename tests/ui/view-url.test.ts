@@ -76,7 +76,7 @@ test('list key ignores focus, sel and preset; equal views give equal keys', () =
 });
 
 test('page params map onto task_page and sessions_list inputs', () => {
-  assert.deepEqual(toPageParams(p('/tasks?q=hero&project=-&state=failed')), { filter: { state: ['failed'], search: 'hero', projectId: [null] }, group: 'priority' });
+  assert.deepEqual(toPageParams(p('/tasks?q=hero&project=-&state=failed')), { filter: { state: ['failed'], search: 'hero', projectId: [null] }, group: 'priority', sort: '-changed' });
   assert.deepEqual(toPageParams(p('/conversations?state=running')), { filter: { state: ['running'], archived: false } });
 });
 

@@ -158,49 +158,50 @@ export function FillBar(p: FillProps) {
   );
 }
 
-/* ---------- Filter bar with inline filters, saved filters and search (§4, OR-12, OR-14) ---------- */
+/* ---------- Filter bar: search with query syntax, applied-filter chips and the list's controls (§4, OR-31, OR-36) ---------- */
 
 export type Chip = { field: string; value: string };
-export type FilterField = { field: string; values: { value: string; count: number }[] };
 type FilterBarProps = {
   query: string; onQuery: (q: string) => void; placeholder: string;
-  chips: Chip[]; onRemove: (c: Chip) => void; onAdd: (c: Chip) => void; onClear: () => void;
-  fields: FilterField[];
-  /** Second line: presets, state counters, grouping. */
+  /** Filters applied from outside the query (a link from another screen); each removes on its own. */
+  chips?: Chip[]; onRemove?: (c: Chip) => void; onClear?: () => void;
+  /** After the search, on the same wrapping line: views, state counters, group and sort. */
   extra?: ComponentChildren;
   shown: number; total: number;
 };
 export function FilterBar(p: FilterBarProps) {
-  const [open, setOpen] = useState<string | null>(null); // inline filter row, never a popup (OR-14)
-  const field = p.fields.find(f => f.field === open);
+  const chips = p.chips ?? [];
   return (
     <div class="fbar" data-ui="filter-bar">
       <div class="fbar-line">
-        <label class="search" data-ui="search"><Icon name={actions.search} /><input type="search" value={p.query} placeholder={p.placeholder} aria-label={p.placeholder}
-          onInput={e => p.onQuery((e.target as HTMLInputElement).value)} /></label>
-        <Button label="Filter" icon={actions.filter} kind="quiet" kbd="f" pressed={open !== null} onClick={() => setOpen(open === null ? p.fields[0]?.field ?? null : null)} />
-        {p.chips.map(c => (
+        <SearchBox label={p.placeholder} value={p.query} onInput={p.onQuery} />
+        {p.extra}
+        {chips.map(c => (
           <span class="chip" key={c.field + c.value}>{c.field}: {c.value}
-            <button type="button" aria-label={`Remove filter ${c.field}: ${c.value}`} onClick={() => p.onRemove(c)}><Icon name={actions.clear} /></button></span>
+            <button type="button" aria-label={`Remove filter ${c.field}: ${c.value}`} onClick={() => p.onRemove?.(c)}><Icon name={actions.clear} /></button></span>
         ))}
-        {p.chips.length > 0 && <Button label="Clear" kind="quiet" onClick={p.onClear} />}
+        {chips.length > 0 && p.onClear && <Button label="Clear" kind="quiet" onClick={p.onClear} />}
         <span class="count" aria-live="polite">{p.shown < p.total ? `${p.shown.toLocaleString('en')} of ${p.total.toLocaleString('en')}` : ''}</span>
       </div>
-      {p.extra && <div class="fbar-line">{p.extra}</div>}
-      {open !== null && (
-        <div class="fbar-line inline-filter" role="group" aria-label="Add filter">
-          {p.fields.map(f => <button type="button" key={f.field} class={`seg${f.field === open ? ' on' : ''}`} aria-pressed={f.field === open} onClick={() => setOpen(f.field)}>{f.field}</button>)}
-          <span class="sep" />
-          {field?.values.map(v => {
-            const on = p.chips.some(c => c.field === field.field && c.value === v.value);
-            return <button type="button" key={v.value} class={`seg${on ? ' on' : ''}`} aria-pressed={on}
-              onClick={() => on ? p.onRemove({ field: field.field, value: v.value }) : p.onAdd({ field: field.field, value: v.value })}>
-              {v.value} <span class="muted">{v.count}</span></button>;
-          })}
-        </div>
-      )}
     </div>
   );
+}
+
+/**
+ * Search as an icon (OR-31): the field shows only while focused or not empty. Filters are typed in it (OR-36), e.g.
+ * `agent:claude host:mac`; the list's server reads the terms.
+ */
+export function SearchBox({ label, value, onInput, onEnter, always }: { label: string; value: string; onInput: (v: string) => void; onEnter?: () => void;
+  /** A picker whose job is typing keeps the field shown. */ always?: boolean }) {
+  const [focused, setOpen] = useState(false), open = focused || !!always;
+  // grab: focus the field once, right after the icon was clicked; closing waits for the click that moved focus (OR-23).
+  const grab = useRef(false), closing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  if (!open && !value) return <Button label={label} icon={actions.search} iconOnly kind="quiet" onClick={() => { grab.current = true; setOpen(true); }} />;
+  return <label class="search" data-ui="search"><Icon name={actions.search} /><input type="search" value={value} placeholder={label} aria-label={label}
+    ref={e => { if (grab.current && e) { grab.current = false; e.focus(); } }}
+    onFocus={() => { clearTimeout(closing.current); setOpen(true); }} onBlur={() => { closing.current = setTimeout(() => setOpen(false), 250); }}
+    onKeyDown={e => { if (e.key === 'Enter') onEnter?.(); if (e.key === 'Escape') { onInput(''); (e.target as HTMLInputElement).blur(); } }}
+    onInput={e => onInput((e.target as HTMLInputElement).value)} /></label>;
 }
 
 /* ---------- Execution tree (§ execution-tree.md) ---------- */
@@ -539,11 +540,9 @@ export function BoundaryRow({ session, executionId, state, mark, startedAt, ende
     <span class="th-svc"><AgentMark {...mark} />{secs !== null && <span class="chip-age">{duration(secs).text}</span>}{onStop && <Button label="Stop" icon="pause" iconOnly disabledReason={stopReason} onClick={onStop} />}</span></div>;
 }
 
-/** A search field for one scope (a thread): Enter searches. */
-export function SearchField({ label, value, onInput, onSearch }: { label: string; value: string; onInput: (v: string) => void; onSearch: () => void }) {
-  return <label class="search"><Icon name={actions.search} /><input type="search" placeholder={label} aria-label={label} value={value}
-    onInput={e => onInput((e.target as HTMLInputElement).value)} onKeyDown={e => { if (e.key === 'Enter') onSearch(); }} /></label>;
-}
+/** A search field for one scope (a thread): Enter searches; an icon until used (OR-31). */
+export const SearchField = ({ label, value, onInput, onSearch, always }: { label: string; value: string; onInput: (v: string) => void; onSearch: () => void; always?: boolean }) =>
+  <SearchBox label={label} value={value} onInput={onInput} onEnter={onSearch} always={always} />;
 import type { Block as ThreadBlock } from '../../../contracts/generated/ops.ts';
 export type { ThreadBlock };
 /**
@@ -643,6 +642,7 @@ export function StateCounters<F extends Family>({ family, counts, active, onTogg
     <div class={`counters${pending ? ' pending' : ''}`} data-ui="state-counters" role="group" aria-label={label} aria-busy={pending || undefined}>
       {onAll && <button type="button" class={`counter t-neutral sigma${active.length === 0 ? ' on' : ''}`} aria-pressed={active.length === 0}
         aria-label={`All: ${total === null ? 'unknown' : total}`} onClick={onAll}><span class="sig" aria-hidden="true">Σ</span><span class="num">{total === null ? '?' : total.toLocaleString('en')}</span></button>}
+      {/* OR-29: a chip with 0 shows only its icon; its accessible name still says 0. */}
       {all.map(s => {
         const d = states[family][s] as StateDef, n = counts[s];
         if (n === undefined || (hideZero && n === 0)) return null;
@@ -662,19 +662,23 @@ export function GroupHeader({ icon, label, count, open, onToggle, tone = 'neutra
     <span class={open ? 'chev open' : 'chev'}><Icon name="chevron-down" /></span><Icon name={icon} /><b>{label}</b><span class="num">{count.toLocaleString('en')}</span></button>;
 }
 
-/* ---------- Presets: saved views per person (filter-bar.md) ---------- */
+/* ---------- Saved views: system presets and the person's own (OR-33) ---------- */
 
-export function Presets({ presets, active, onPick, onSave, onUnpin }: {
+export function Presets({ system = [], presets, active, onPick, onSave, onUnpin }: {
+  /** Views every person has (Tasks "Running"); they cannot be removed. */
+  system?: string[];
   presets: string[]; active: string | null; onPick: (name: string) => void; onSave: (name: string) => void; onUnpin: (name: string) => void;
 }) {
   const [naming, setNaming] = useState<string | null>(null);
   return (
-    <div class="presets" data-ui="filter-bar" role="group" aria-label="Views">
+    <div class="presets" data-ui="saved-views" role="group" aria-label="Views">
+      {system.map(n => <span key={'s:' + n} class={`preset${n === active ? ' on' : ''}`}>
+        <button type="button" aria-pressed={n === active} onClick={() => onPick(n)}>{n}</button></span>)}
       {presets.map(n => <span key={n} class={`preset${n === active ? ' on' : ''}`}>
         <button type="button" aria-pressed={n === active} onClick={() => onPick(n)}><Icon name="pin" />{n}</button>
-        <button type="button" class="x" aria-label={`Unpin view ${n}`} data-tip="Unpin" onClick={() => onUnpin(n)}><Icon name="x" /></button></span>)}
+        <button type="button" class="x" aria-label={`Remove view ${n}`} data-tip="Remove" onClick={() => onUnpin(n)}><Icon name="x" /></button></span>)}
       {naming === null
-        ? <Button label="Save view" icon="save" kind="quiet" onClick={() => setNaming('')} />
+        ? <Button label="Save view" icon="save" iconOnly kind="quiet" onClick={() => setNaming('')} />
         : <span class="naming"><input value={naming} placeholder="View name" aria-label="View name" ref={e => e?.focus()} onInput={e => setNaming((e.target as HTMLInputElement).value)}
             onKeyDown={e => { if (e.key === 'Enter' && naming.trim()) { onSave(naming.trim()); setNaming(null); } if (e.key === 'Escape') setNaming(null); }} />
           <Button label="Save" kind="primary" onClick={() => { if (naming.trim()) onSave(naming.trim()); setNaming(null); }} /></span>}
@@ -682,14 +686,83 @@ export function Presets({ presets, active, onPick, onSave, onUnpin }: {
   );
 }
 
+/* ---------- Group and sort: shared list controls, part of a saved view (OR-35) ---------- */
+
+/** Group by: the registry icon and the current choice; a click opens the choices inline (OR-14), a pick closes them. */
+export function GroupControl<G extends string>({ value, options, onChange }: { value: G; options: readonly (readonly [G, string])[]; onChange: (g: G) => void }) {
+  const [open, setOpen] = useState(false), cur = options.find(([g]) => g === value)?.[1] ?? value;
+  return <span class="seg-group" role="group" aria-label="Group by" data-ui="group-control">
+    <button type="button" class={`seg${open ? ' on' : ''}`} aria-expanded={open} aria-label={`Group by ${cur}`} data-tip="Group by" onClick={() => setOpen(!open)}><Icon name={actions.group} />{!open && cur}</button>
+    {open && options.map(([g, l]) => <button type="button" key={g} class={`seg${value === g ? ' on' : ''}`} aria-pressed={value === g} onClick={() => { setOpen(false); onChange(g); }}>{l}</button>)}</span>;
+}
+
+/** Sort: a direction toggle (icon) and the field, which steps to the next field on click; the value is the field, "-" before it for descending. */
+export function SortControl({ value, fields, onChange }: { value: string; fields: readonly (readonly [string, string])[]; onChange: (v: string) => void }) {
+  const desc = value.startsWith('-'), field = desc ? value.slice(1) : value, i = Math.max(0, fields.findIndex(([f]) => f === field)), next = fields[(i + 1) % fields.length];
+  return <span class="seg-group" role="group" aria-label="Sort" data-ui="sort-control">
+    <button type="button" class="seg" aria-label={desc ? 'Descending' : 'Ascending'} data-tip={desc ? 'Newest first' : 'Oldest first'} onClick={() => onChange(desc ? field : '-' + field)}><Icon name={desc ? actions.sortDesc : actions.sortAsc} /></button>
+    <button type="button" class="seg" aria-label={`Sort by ${fields[i][1]}`} data-tip={`Sort by ${next[1].toLowerCase()}`} onClick={() => onChange((desc ? '-' : '') + next[0])}>{fields[i][1]}</button></span>;
+}
+
+/* ---------- Row facts and row affordances (OR-37) ---------- */
+
+/** Live facts of a row in short form, in the row's right zone (OR-21). Each fact is icon + compact value with a tooltip. */
+export const RowFacts = ({ children }: { children: ComponentChildren }) => <span class="row-facts" data-ui="row-facts">{children}</span>;
+export const Fact = ({ icon, text, tip, label, children }: { icon?: IconName; text?: string; tip: string; label?: string; children?: ComponentChildren }) =>
+  <span class="fact" data-tip={tip} aria-label={children ? undefined : label ?? tip}>{icon && <Icon name={icon} />}{text}{children}</span>;
+/** Pin and checkbox of a row: shown on hover, keyboard focus or when set; they overlay the facts, so nothing moves (OR-23). */
+export const RowActs = ({ set, children }: { set: boolean; children: ComponentChildren }) => <span class={`row-acts${set ? ' set' : ''}`} data-ui="row-acts">{children}</span>;
+
+/* ---------- Focus: one project multi-select for the whole app, with presets (OR-34) ---------- */
+
+export type FocusProject = { id: string; name: string };
+/**
+ * The focus sits at the top of the navigation and opens inline below its button (a working tool never floats, OR-14).
+ * One click picks a preset or toggles a project; an empty selection is every project. "All projects" is the system preset.
+ */
+export function FocusControl({ projects, value, presets, onChange, onSavePreset, onRemovePreset, mini }: {
+  projects: FocusProject[]; value: string[]; presets: { name: string; projects: string[] }[];
+  onChange: (ids: string[]) => void; onSavePreset: (name: string) => void; onRemovePreset: (name: string) => void; mini?: boolean;
+}) {
+  const [open, setOpen] = useState(false), [q, setQ] = useState(''), [naming, setNaming] = useState<string | null>(null);
+  // '-' is work outside projects; it is listed when the focus or a preset holds it.
+  const name = (id: string) => id === '-' ? 'No project' : projects.find(p => p.id === id)?.name ?? id;
+  if (value.includes('-') || presets.some(p => p.projects.includes('-'))) projects = [{ id: '-', name: 'No project' }, ...projects.filter(p => p.id !== '-')];
+  const summary = value.length === 0 ? 'All projects' : value.length === 1 ? name(value[0]) : `${value.length} projects`;
+  const same = (a: string[], b: string[]) => a.length === b.length && a.every(x => b.includes(x));
+  const shown = projects.filter(p => `${p.name} ${p.id}`.toLowerCase().includes(q.toLowerCase()));
+  const toggle = (id: string) => onChange(value.includes(id) ? value.filter(x => x !== id) : [...value, id]);
+  return <div class={`focus-ctl${open ? ' open' : ''}${value.length ? ' set' : ''}`} data-ui="focus-control">
+    <button type="button" class="focus-btn" aria-expanded={mini ? undefined : open} aria-label={`Focus: ${summary}`} data-tip={mini ? `Focus: ${summary}; expand the navigation to change it` : undefined} data-tip-narrow onClick={() => { if (!mini) setOpen(!open); }}>
+      <Icon name="focus" /><span class="nm">{summary}</span></button>
+    {open && !mini && <div class="focus-panel" role="group" aria-label="Focus projects">
+      <div class="presets">
+        <span class={`preset${value.length === 0 ? ' on' : ''}`}><button type="button" aria-pressed={value.length === 0} onClick={() => onChange([])}>All projects</button></span>
+        {presets.map(p => <span key={p.name} class={`preset${same(p.projects, value) && value.length ? ' on' : ''}`}>
+          <button type="button" aria-pressed={same(p.projects, value)} onClick={() => onChange(p.projects)}>{p.name}</button>
+          <button type="button" class="x" aria-label={`Remove focus preset ${p.name}`} data-tip="Remove" onClick={() => onRemovePreset(p.name)}><Icon name="x" /></button></span>)}
+        {value.length > 0 && (naming === null
+          ? <Button label="Save focus preset" icon="save" iconOnly kind="quiet" onClick={() => setNaming('')} />
+          : <span class="naming"><input value={naming} placeholder="Preset name" aria-label="Preset name" autoFocus onInput={e => setNaming((e.target as HTMLInputElement).value)}
+              onKeyDown={e => { if (e.key === 'Enter' && naming.trim()) { onSavePreset(naming.trim()); setNaming(null); } if (e.key === 'Escape') setNaming(null); }} />
+              <Button label="Save" kind="primary" onClick={() => { if (naming.trim()) onSavePreset(naming.trim()); setNaming(null); }} /></span>)}
+      </div>
+      {projects.length > 8 && <SearchBox label="Find project" value={q} onInput={setQ} always />}
+      <ul class="focus-list">{shown.map(p => <li key={p.id}><label><input type="checkbox" class="row-check" checked={value.includes(p.id)} onChange={() => toggle(p.id)} />
+        <span class="nm">{p.name}</span></label></li>)}</ul>
+    </div>}
+  </div>;
+}
+
 /* ---------- Navigation rail with pinned sections (nav-rail.md) ---------- */
 
 export type NavItem = { id: string; label: string; icon: IconName; group: string; count?: { n: number; tone: Tone; label: string } };
-export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, head, onSearch, foot }: {
+export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, head, onSearch, foot, tools }: {
   items: NavItem[]; current: string; onGo: (id: string) => void;
   /** The person's pinned ids in their order; onPins gets the whole new list (pin, unpin, reorder). */ pinned: string[]; onPins: (ids: string[]) => void;
   /** Collapsed to icons. */ mini?: boolean; /** Product name and need-you chip (app shell). */ head?: ComponentChildren; /** The current user block, at the bottom. */ foot?: ComponentChildren;
   /** Opens the Spotlight palette (OR-31, OR-32); the rail has no search field of its own. */ onSearch?: () => void;
+  /** Global tools under the head: the project focus (OR-34). */ tools?: ComponentChildren;
 }) {
   // Ids of sections that no longer exist are dropped here, so they never take a position and leave on the next save.
   const pinned = stored.filter(id => items.some(i => i.id === id));
@@ -750,6 +823,7 @@ export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, he
   return (
     <nav class={`rail${mini ? ' mini' : ''}`} data-ui="nav-rail" aria-label="Sections" ref={navRef}>
       {head && <div class="rail-head">{head}</div>}
+      {tools}
       {pins.length > 0 && <ul class="rail-g pinned" aria-label="Pinned">{pins.map(i => item(i, true))}</ul>}
       {onSearch && <ul class="rail-g"><li class="nav-i"><a href="#search" aria-keyshortcuts="Meta+K Control+K" onClick={e => { e.preventDefault(); onSearch(); }}>
         <span data-tip="Search  ⌘K" data-tip-narrow class="nav-ic"><Icon name={actions.search} /></span><span class="nm">Search</span></a></li></ul>}

@@ -3,21 +3,23 @@
 import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  ListDetail, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, VirtualList, StateBadge, HarnessMark, AgeChip, Button,
-  SplitButton, RowCheck, Totals, Icon, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
-  type TreeNode, type Harness, type StateOf,
+  ListDetail, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, SortControl, RowFacts, Fact, RowActs, VirtualList, StateBadge, HarnessMark, AgeChip, Button,
+  SplitButton, RowCheck, Totals, Icon, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
+  type TreeNode, type Harness, type StateOf, states as states_,
   keyConnection, EntityCode, actor, fileLabel, viewOf,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
-import { listKey, type View } from '../../../packages/view-url/view-url.ts';
+import { listKey, DEFAULT_TASK_SORT, type View } from '../../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
-import { usePins, useViews, withFocus } from '../prefs.ts';
+import { usePins, useViews, withFocus, setFocus } from '../prefs.ts';
 
 const ROW = parseInt(tokens.size['row-2']); // two-line catalogue row
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
-type TaskRow = { id: string; code?: string | null; title: string; state: StateOf<'task'>; pauseReason?: string | null; waitReason: string | null; priority: 'urgent' | 'normal' | 'background'; agent: string | null; host: string | null; startedAt: string | null; createdAt: string; projectId: string | null; openQuestions: number; sortKey: (string | number)[] };
+const SORTS = [['changed', 'Changed'], ['created', 'Created']] as const;
+type TaskRow = { id: string; code?: string | null; title: string; state: StateOf<'task'>; pauseReason?: string | null; waitReason: string | null; priority: 'urgent' | 'normal' | 'background'; agent: string | null; host: string | null; startedAt: string | null; createdAt: string; projectId: string | null; openQuestions: number;
+  stateAt?: string; executions?: number; lastAgent?: string | null; sortKey: (string | number)[] };
 type Item = { kind: 'group'; key: string; label: string; count: number } | { kind: 'task'; t: TaskRow };
 const ms = (v: string | number | null | undefined) => (v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v));
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
@@ -52,39 +54,55 @@ export function Tasks({ id }: { id?: string }) {
   const filtered = !!(states.length || view.q || view.project?.length), focused = !view.project?.length && !!withFocus(view).project?.length;
   const presetKey = (v: View) => listKey({ ...v, view: 'tasks' });
   const activePreset = views.list.find(v => presetKey(v.view) === listKey(view))?.name ?? null;
+  const pick = (n: string) => { const p = views.list.find(x => x.name === n)!; set({ state: p.view.state ?? [], group: p.view.group, sort: p.view.sort, project: p.view.project ?? [], q: p.view.q, preset: n }); };
   const listPane = <>
     <header class="page-h"><h1>Tasks</h1><OfflineMarker state={list.state} since={list.at || undefined} now={now} /></header>
     <section class="panel">
-      <ListFrame pending={list.pending} bar={<FilterBar query={query} placeholder="Search tasks" onQuery={setQuery} chips={[]} fields={[]} onAdd={() => {}} onRemove={() => {}} onClear={() => { setQuery(''); set({ state: [], q: undefined, project: [], preset: undefined }); }}
-        shown={shown} total={list.total}
+      <ListFrame pending={list.pending} bar={<FilterBar query={query} placeholder="Search tasks, agent:claude host:mac" onQuery={setQuery} shown={shown} total={list.total}
         extra={<>
-          <Presets presets={views.list.map(v => v.name)} active={activePreset}
-            onPick={n => { const p = views.list.find(x => x.name === n)!; set({ state: p.view.state ?? [], group: p.view.group, project: p.view.project ?? [], q: p.view.q, preset: n }); }}
-            onSave={n => views.save({ name: n, view: { view: 'tasks', state: view.state, group: view.group, project: view.project, q: view.q } })} onUnpin={views.remove} />
-          <span class="grow" />
+          <Presets system={views.list.filter(v => v.system).map(v => v.name)} presets={views.list.filter(v => !v.system).map(v => v.name)} active={activePreset} onPick={pick}
+            onSave={n => views.save({ name: n, view: { view: 'tasks', state: view.state, group: view.group, sort: view.sort, project: view.project, q: view.q } })} onUnpin={views.remove} />
           <StateCounters family="task" label="Tasks by state" pending={list.pending} counts={list.counts as any} active={states} onAll={() => set({ state: [], preset: undefined })}
             onToggle={s => set({ state: states.includes(s) ? states.filter(x => x !== s) : [...states, s], preset: undefined })} />
-          <span class="seg-group" role="group" aria-label="Group by"><span class="seg-label">Group</span>
-            {GROUPS.map(([g, l]) => <button type="button" key={g} class={`seg${group === g ? ' on' : ''}`} aria-pressed={group === g} onClick={() => set({ group: g, preset: undefined })}>{l}</button>)}</span>
+          <GroupControl value={group as typeof GROUPS[number][0]} options={GROUPS} onChange={g => set({ group: g, preset: undefined })} />
+          <SortControl value={view.sort ?? DEFAULT_TASK_SORT} fields={SORTS} onChange={v => set({ sort: v, preset: undefined })} />
         </>} />}>
         {list.error && !rows.length ? <ErrorBanner text={`Tasks did not load: ${list.error}`} onRetry={list.reload} />
           : list.shownKey === null ? <Skeleton rows={8} />
-          : !rows.length ? (list.pending ? <Skeleton rows={8} /> : <Empty text={filtered ? 'No tasks match these filters.' : focused ? 'No tasks in the focused projects.' : 'No tasks yet.'} action={filtered ? <Button label="Clear filters" onClick={() => { setQuery(''); set({ state: [], q: undefined, project: [] }); }} /> : undefined} />)
+          : !rows.length ? (list.pending ? <Skeleton rows={8} /> : <Empty text={filtered ? 'No tasks match these filters.' : focused ? 'No tasks in the focused projects.' : 'No tasks yet.'} action={filtered ? <Button label="Clear filters" onClick={() => { setQuery(''); set({ state: [], q: undefined, project: [] }); }} /> : focused ? <Button label="Show all projects" onClick={() => setFocus([])} /> : undefined} />)
           : <VirtualList items={items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.t.id} rowHeight={ROW} follow="top" label="Tasks" onEnd={list.more}
-            columns="1.25rem minmax(0,1fr) 2.75rem 1.75rem 1.25rem" rowClass={i => i.kind === 'group' ? 'grp' : i.t.id === id ? 'sel' : ''}
+            columns="1.25rem minmax(0,1fr) 13rem" rowClass={i => i.kind === 'group' ? 'grp' : i.t.id === id ? 'sel' : ''}
             render={i => i.kind === 'group'
               ? <GroupHeader icon={rowsGroup === 'priority' ? 'list-ordered' : 'folder-open'} label={i.label} count={i.count} open={!closed.includes(i.key)} onToggle={() => setClosed(c => c.includes(i.key) ? c.filter(x => x !== i.key) : [...c, i.key])} />
               : <>
                 <span class="lead"><StateBadge family="task" state={i.t.pauseReason === 'held' ? 'held' : i.t.state} reason={i.t.waitReason ?? undefined} compact /></span>
-                <span class="tt">{rowsGroup !== 'priority' && <PriorityChip p={i.t.priority} />}<a class="title row-link" href={href({ focus: i.t.id })} onClick={e => { e.preventDefault(); set({ focus: i.t.id }); }}>{i.t.title}</a><EntityCode code={i.t.code} id={i.t.id} />{i.t.state === 'in_progress' && isHarness(i.t.agent) && <HarnessMark h={i.t.agent} />}</span>
-                <span class="r">{ms(i.t.startedAt ?? i.t.createdAt) && <AgeChip t={ms(i.t.startedAt ?? i.t.createdAt)!} now={now} alertAfter={i.t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" />}</span>
-                <Button label={pins.has(i.t.id) ? 'Unpin' : 'Pin'} icon={pins.has(i.t.id) ? 'pin-off' : 'pin'} iconOnly pressed={pins.has(i.t.id)} onClick={() => pins.toggle(i.t.id)} />
-                <RowCheck checked={sel.includes(i.t.id)} label={'Select ' + i.t.title} onToggle={() => toggleSel(i.t.id)} />
+                <span class="tt">{rowsGroup !== 'priority' && <PriorityChip p={i.t.priority} />}<a class="title row-link" href={href({ focus: i.t.id })} onClick={e => { e.preventDefault(); set({ focus: i.t.id }); }}>{i.t.title}</a><EntityCode code={i.t.code} id={i.t.id} /></span>
+                <span class="rz">
+                  <TaskFacts t={i.t} now={now} />
+                  <RowActs set={pins.has(i.t.id) || sel.includes(i.t.id)}>
+                    <Button label={pins.has(i.t.id) ? 'Unpin' : 'Pin'} icon={pins.has(i.t.id) ? 'pin-off' : 'pin'} iconOnly pressed={pins.has(i.t.id)} onClick={() => pins.toggle(i.t.id)} />
+                    <RowCheck checked={sel.includes(i.t.id)} label={'Select ' + i.t.title} onToggle={() => toggleSel(i.t.id)} />
+                  </RowActs>
+                </span>
               </>} />}
       </ListFrame>
     </section>
   </>;
   return <ListDetail list={listPane} detail={id ? <TaskDetail id={id} onClose={() => set({ focus: undefined })} /> : undefined} detailKey={id} />;
+}
+
+const TERMINAL = ['completed', 'failed', 'cancelled'];
+/** Row facts of a task (OR-37): time since taken into work, executions, time in the current state, agent, host. */
+function TaskFacts({ t, now }: { t: TaskRow; now: number }) {
+  const taken = ms(t.startedAt), since = ms(t.stateAt), agent = t.lastAgent ?? t.agent, n = t.executions ?? 0;
+  const label = states_.task[t.pauseReason === 'held' ? 'held' : t.state].label;
+  return <RowFacts>
+    {taken !== null && !TERMINAL.includes(t.state) && <Fact icon="clock" tip="Since taken into work"><AgeChip t={taken} now={now} alertAfter={t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" /></Fact>}
+    {n > 0 && <Fact icon={actions.runs} text={String(n)} tip={n === 1 ? '1 execution' : `${n} executions`} />}
+    {since !== null && <Fact tip={`${label} for`}><AgeChip t={since} now={now} /></Fact>}
+    {isHarness(agent) && <HarnessMark h={agent} />}
+    {t.host && <Fact icon="panels-top-left" tip={`Host ${t.host}`} />}
+  </RowFacts>;
 }
 
 /** Priority class chip (owner decision): urgent red, background grey, normal none (OR-17). */

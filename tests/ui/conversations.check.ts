@@ -126,6 +126,7 @@ try {
 
   // Search jumps to a hit from the start of the thread.
   t = performance.now();
+  await p.click('button[aria-label="Search thread"]'); // an icon until used (OR-31)
   await p.fill('input[aria-label="Search thread"]', 'migration 6'); await p.press('input[aria-label="Search thread"]', 'Enter');
   check(await until(() => visible(p, 'The migration 6 backfill finished.')), 'search hit is in view after the jump');
   time('search and jump', performance.now() - t);

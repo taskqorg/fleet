@@ -3,9 +3,10 @@ import { Projects } from './views/projects.tsx';
 import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation } from 'wouter-preact';
-import { AppShell, Empty, Button, workspaces, type NavItem, type AppScreen, type SpotlightProvider, type IconName } from '../../packages/ui/src/index.ts';
+import { AppShell, Empty, Button, workspaces, FocusControl, type NavItem, type AppScreen, type SpotlightProvider, type IconName } from '../../packages/ui/src/index.ts';
 import { op, signedOut, type Ops } from './api.ts';
-import { prefs, prefsRead, loadPrefs, savePrefs, setWidth } from './prefs.ts';
+import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, saveFocusPreset, removeFocusPreset } from './prefs.ts';
+import { useDoc } from './store.ts';
 import { startFeed } from './feed.ts';
 import { startStore } from './store.ts';
 import { checkGrants, clearAll } from './offline.ts';
@@ -91,7 +92,10 @@ function App() {
     return () => { removeEventListener('focus', me); removeEventListener('focus', loadPrefs); };
   }, []);
   useEffect(() => { if (signedOut.value) clearAll(true); }, [signedOut.value]);
-  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={pins} onPins={savePins} search={search} ready={shown}
+  // The project focus (OR-34) is a person setting; lists apply it where their view names no projects.
+  const focus = prefs.value.focus, presets = prefs.value.focusPresets;
+  const focusCtl = (mini: boolean) => <Focus mini={mini} value={focus} presets={presets} />;
+  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={pins} onPins={savePins} search={search} ready={shown} focus={focusCtl}
     widths={prefs.value.widths} onWidth={setWidth} collapsed={prefs.value.navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
     user={user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); } } : undefined}>
@@ -103,6 +107,13 @@ function App() {
       <Route><Empty text="This page does not exist." action={<Button label="Overview" icon="house" onClick={() => go('/overview')} />} /></Route>
     </Switch>
   </AppShell>;
+}
+
+/** The focus control with its own project list, so a definition change re-renders only the control. */
+function Focus({ mini, value, presets }: { mini: boolean; value: string[]; presets: { name: string; projects: string[] }[] }) {
+  const projects = useDoc<any>('projects', () => op('project_list', {}), c => c.kind === 'definition');
+  return <FocusControl mini={mini} projects={(projects.data?.projects ?? []).map((p: any) => ({ id: p.id, name: p.name ?? p.id }))}
+    value={value} presets={presets} onChange={setFocus} onSavePreset={n => saveFocusPreset(n)} onRemovePreset={removeFocusPreset} />;
 }
 
 render(<Router><App /></Router>, document.getElementById('app')!);

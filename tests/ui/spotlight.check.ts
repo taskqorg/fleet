@@ -19,7 +19,9 @@ export async function checkSpotlight(browser: Browser, origin: string) {
     await input.press('Enter'); await p.waitForURL('**/tasks/' + task);
     // Code jump (D17): the code finds the task, shown with its code; Enter opens it.
     await p.goto(origin + '/overview'); await p.getByRole('link', {name: 'Search'}).waitFor();
-    await p.keyboard.press('ControlOrMeta+k'); await input.fill(created.code.toLowerCase());
+    // The shortcut listener mounts after the first paint; press again until the palette shows (a race in the check, not the app).
+    for (let i = 0; i < 10 && !await dialog.isVisible(); i++) { await p.keyboard.press('ControlOrMeta+k'); await dialog.waitFor({timeout: 1000}).catch(() => {}); }
+    await input.fill(created.code.toLowerCase());
     await dialog.getByRole('option', {name: new RegExp(created.code)}).waitFor();
     await input.press('Enter'); await p.waitForURL('**/tasks/' + task);
     await p.keyboard.press('ControlOrMeta+k'); await input.fill('agent:nobody needle');

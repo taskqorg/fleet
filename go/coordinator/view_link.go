@@ -21,7 +21,14 @@ var (
 	viewNames     = []string{"tasks", "conversations", "hosts", "overview", "results"}
 	artifactState = []string{"stored", "pending", "failed", "deleted"}
 	viewGroups    = slices.Sorted(maps.Keys(taskGroups)) // task_page's groups
-	viewKeys      = map[string][]string{"tasks": {"group", "preset", "project", "q", "sel", "state"},
+	viewSorts     = func() []string {                    // task_page's sorts, each also descending
+		out := []string{}
+		for k := range taskSorts {
+			out = append(out, k, "-"+k)
+		}
+		return slices.Sorted(slices.Values(out))
+	}()
+	viewKeys = map[string][]string{"tasks": {"group", "preset", "project", "q", "sel", "sort", "state"},
 		"conversations": {"archived", "preset", "project", "q", "sel", "state"}, "results": {"project", "q", "state"}}
 	schemeURL = regexp.MustCompile(`(?i)^[a-z][a-z0-9+.-]*://`)
 )
@@ -35,6 +42,7 @@ type view struct {
 	Project  []*string         `json:"project,omitempty"`
 	Q        string            `json:"q,omitempty"`
 	Sel      []string          `json:"sel,omitempty"`
+	Sort     string            `json:"sort,omitempty"`
 	State    []string          `json:"state,omitempty"`
 	Archived bool              `json:"archived,omitempty"`
 	Extra    map[string]string `json:"extra,omitempty"`
@@ -153,6 +161,10 @@ func viewProblem(v any) string {
 			if s, _ := x.(string); !slices.Contains(viewGroups, s) {
 				return "group must be one of " + strings.Join(viewGroups, ", ")
 			}
+		case k == "sort":
+			if s, _ := x.(string); !slices.Contains(viewSorts, s) {
+				return "sort must be one of " + strings.Join(viewSorts, ", ")
+			}
 		case k == "project":
 			xs, ok := x.([]any)
 			for _, i := range xs {
@@ -182,7 +194,7 @@ func viewProblem(v any) string {
 
 // viewOf converts a view object that passed viewProblem.
 func viewOf(o map[string]any) view {
-	v := view{View: astr(o["view"]), Focus: astr(o["focus"]), Group: astr(o["group"]), Preset: astr(o["preset"]), Q: astr(o["q"]), Sel: strs(o["sel"]), State: strs(o["state"])}
+	v := view{View: astr(o["view"]), Focus: astr(o["focus"]), Group: astr(o["group"]), Preset: astr(o["preset"]), Q: astr(o["q"]), Sel: strs(o["sel"]), Sort: astr(o["sort"]), State: strs(o["state"])}
 	v.Archived, _ = o["archived"].(bool)
 	for _, p := range anys(o["project"]) {
 		if s, ok := p.(string); ok {
@@ -256,6 +268,10 @@ func parseView(input, origin string) (view, bool) {
 		case "group":
 			if g := viewDec(raw, true); slices.Contains(viewGroups, g) {
 				v.Group = g
+			}
+		case "sort":
+			if x := viewDec(raw, true); slices.Contains(viewSorts, x) {
+				v.Sort = x
 			}
 		case "preset":
 			if x := viewDec(raw, true); x != "" {
@@ -333,6 +349,9 @@ func formatView(v view) string {
 	}
 	if has("group") && v.Group != "" && v.Group != "priority" {
 		ps["group"] = v.Group
+	}
+	if has("sort") && v.Sort != "" && v.Sort != defaultTaskSort {
+		ps["sort"] = viewEnc(v.Sort)
 	}
 	if has("preset") && v.Preset != "" {
 		ps["preset"] = viewEnc(v.Preset)

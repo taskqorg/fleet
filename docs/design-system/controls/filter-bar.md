@@ -4,28 +4,22 @@
 
 **Purpose.** Narrows a list by project, task, experiment, host, account, agent or harness, state, kind, time range and cost. Remembers, saves and shares the view.
 
-**Anatomy.** One line above the list: [search](search.md) field; second line: saved views, state counters and grouping (see Views below); active filter chips ("Project: cs ×"); "Filter" button; "Clear" (quiet button, only when a filter is active); result count "84 of 1,240", shown only while a filter narrows the list; otherwise the Σ counter already gives the total (OR-17, D14) in `font-mono`, right aligned. Wraps to two lines below 900 px; on phone the chips collapse into "Filters (2)".
+**Anatomy.** First line: [search](search.md) as an icon (OR-31); chips of filters that came with a link ("task: 3f…  ×"); "Clear" (quiet, only with chips); the count "84 of 1,240" in `font-mono`, right aligned, shown only while a filter narrows the list (the Σ counter already gives the total, OR-17). Second line: saved views, [state counters](state-counters.md), Group and Sort.
 
-**Views (presets).** The second line holds the person's saved views, which are pinned chips with an unpin `×`. A view stores filters, state selection and grouping.
-* "Save view" opens an inline name field (OR-14). Picking a view applies it.
-* Changing anything after picking a view clears the active mark, and "Save view" stores the change under a name.
+**Filters are typed (OR-36).** There is no Filter button. A filter is a `key:value` word in the search: `agent:claude host:mac state:failed project:fleet` on Tasks, `media:image since:7d` on Results; the rest is free text. The server reads the same syntax (`task_page` filter.search), so an agent's search and a person's give the same list. A key the list does not know stays text.
 
-The same line holds the [state counters](state-counters.md) and a "Group by" segment: by state, by project, or no groups.
+**Views (OR-33).** `Presets` shows the system presets first (not removable; Tasks "Running" is every state that is not terminal), then the person's own views with a remove `×`, then "Save view" (an icon; it opens an inline name field, OR-14). A view stores state selection, search, project, grouping and sort. Views are stored on the server per person (`person_settings_set` `views`), so they follow the person and agents read and write them.
 
-**States.** No filter; filters active; saved filter applied (its name shows in the menu); modified saved filter ("My waiting •" plus "Save" and "Save as"); loading (count dims, list keeps old rows dimmed); error (count replaced by "Filter failed. Retry").
+**Group and Sort (OR-35).** `GroupControl`: the Group registry icon with a tooltip, then the choices. `SortControl`: a direction toggle (sort icons) and the fields; the value is the field, with `-` for descending.
 
 **Behaviour.**
-* "Filter" expands an inline row under the bar, never a popup (OR-14): field buttons, then value buttons for the chosen field. Values show counts. Multi-value fields use checkboxes; time uses presets (last hour, today, 7 days) plus a range; cost uses a min and max.
-* Applying a filter updates the list within 100 ms for loaded data; server queries debounce 150 ms ([principles §4](../principles.md#4-filters-and-search)).
-* The full state (filters, search, sort, grouping) is written to the URL query on every change, with `replaceState`.
-* The last state per list is remembered per person and restored when the list opens without a URL query.
-* Saved filters are named per person; the operator can share one by copying its link.
-* Group by: a menu next to "+ Filter" groups rows by one field; group headers show the count.
+* The full state (filters, search, sort, grouping) is in the URL query; searching replaces the history entry while typing.
+* Saved views can be shared by copying the link.
 
-**Keyboard.** `f` opens the inline filter row; `Backspace` in an empty search removes the last chip; `Esc` closes the row.
+**Keyboard.** `Esc` in the search clears it and leaves the field.
 
-**Accessibility.** Chips are buttons named "Remove filter Project: cs". The count is in a polite live region.
+**Accessibility.** Chip buttons are named "Remove filter task: …". The count is in a polite live region.
 
-**Do.** Show every active filter as a chip. **Don't.** Hide filters in a side panel; reset filters when navigating away.
+**Do.** Show the filters in the query text, so they can be read and edited in one place. **Don't.** Hide filters in a side panel; reset filters when navigating away.
 
 **Used in.** Every list page.
