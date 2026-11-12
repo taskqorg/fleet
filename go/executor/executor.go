@@ -698,7 +698,7 @@ func (e *executor) run(c M) error {
 		}
 		return e.finish(c, "failed", "")
 	case "readiness":
-		data := readiness(jAt(p, "project"), e.host, os.Getenv("FLEET_NATIVE_ACCOUNTS"))
+		data := readiness(jAt(p, "project"), e.host, os.Getenv("FLEET_NATIVE_ACCOUNTS"), e.forbidden())
 		ok := data.Ok
 		if err := e.event(c, 0, contract.FleetEventTypeReadiness, data); err != nil {
 			return err
@@ -835,17 +835,6 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	if err := os.Rename(filepath.Join(dir, ".fleet-instructions.tmp"), filepath.Join(dir, "AGENTS.md")); err != nil {
 		return err
 	}
-	if !hasCfg && name == "codex" {
-		shell := "workspace-write, network disabled, approvals denied"
-		if sp.GitNetwork != nil && *sp.GitNetwork {
-			shell = "workspace-write, git network enabled, checkout .git writable, approvals denied"
-		}
-		if err := e.event(c, 0, contract.FleetEventTypePreparation, M{"model": p["model"], "effort": p["effort"], "subscription": true, "instructionsSha256": sha([]byte(str0(sp.Instructions))),
-			"tools": M{"shell": shell, "mcp": []any{}, "collaborationTools": jBoolOr(true, p, "agentConfig", "collaborationTools")}, "skills": []any{}, "repairs": false,
-			"nativeConfig": "Fleet-owned HOME/CODEX_HOME required; config and execpolicy ignored; AGENTS discovery, skills, memories and hooks disabled; context observations pending"}); err != nil {
-			return err
-		}
-	}
 	// The coordinator owns the native id per harness:account continuation; no id means a new native session.
 	native := str0(sp.NativeSessionId)
 	if sp.NativeSessionId != nil && !safeNativeID(native) {
@@ -881,25 +870,6 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	cmd, nativeInput, err := h.Command(dir, native, p)
 	if err != nil {
 		return fail(1, err.Error())
-	}
-	if name != "codex" && evidence == nil {
-		role := "user"
-		if name == "claude" {
-			role = "system"
-		}
-		if err := e.event(c, 0, contract.FleetEventTypePreparation, M{"requested": p, "effective": M{"harness": name, "account": p["account"], "model": p["model"], "instructionRole": role,
-			"nativePermissions": "native; no sandbox parity claimed", "authentication": "host-provisioned; readiness unknown"}}); err != nil {
-			return err
-		}
-	}
-	if evidence != nil {
-		evidence["selection"] = M{"harness": name, "account": p["account"], "authority": "trusted host account reference; native observation follows"}
-		if name == "codex" {
-			profileApply(cmd, withSkills(cfg, p["skills"]))
-		}
-		if err := e.event(c, 0, contract.FleetEventTypePreparation, evidence); err != nil {
-			return err
-		}
 	}
 	fleetTools := jBoolOr(true, p, "agentConfig", "fleetTools")
 	collaboration := jBoolOr(true, p, "agentConfig", "collaborationTools")
@@ -937,6 +907,14 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	setEnvKV(cmd, "FLEET_OUTPUT_DIR="+outputDir, "FLEET_INPUT_DIR="+inputDir)
 	if err := e.stageInputs(p, inputDir, c["executionId"]); err != nil {
 		return fail(1, err.Error())
+	}
+	resolved, err := resolveAttemptContext(jAt(p, "project"), e.host, projectRoots(), e.forbidden(), inputDir)
+	if err != nil {
+		return fail(1, err.Error())
+	}
+	p, evidence = prepareInstructions(cmd, name, p, str0(sp.Instructions), resolved, evidence)
+	if err := e.event(c, 0, contract.FleetEventTypePreparation, evidence); err != nil {
+		return err
 	}
 	if jObj(p, "project") != nil {
 		// Repo of this host's environment (env.repo), else the project's single/first repo.

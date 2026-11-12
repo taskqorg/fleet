@@ -114,13 +114,13 @@ func listProfiles(q *Request) ([]doc, error) {
 }
 
 // Project settings (docs/configuration.md): defaults for absent keys, unknown keys reported.
-var settingsDefaults = map[string]any{"repos": []any{}, "environments": []any{}, "roles": doc{},
+var settingsDefaults = map[string]any{"contextSources": []any{}, "repos": []any{}, "environments": []any{}, "roles": doc{},
 	"worktree": doc{"envMode": "worktree", "baseRef": nil, "startFromOrigin": true, "branchPrefix": "fleet", "linkPaths": []any{}, "sharedDirectories": []any{}},
 	"scripts":  doc{"setup": nil, "teardown": nil}, "setupStart": "wait",
 	"integration": doc{"mode": "pr", "mergeMethod": "squash", "autoMerge": true, "syncCheckoutAfterMerge": true},
 	"cleanup":     doc{"keepWhen": []any{"uncommitted", "unpushed", "teardown-failed"}}, "identity": nil, "subscriptions": []any{}}
 
-var settingsOrder = []string{"repos", "environments", "roles", "worktree", "scripts", "setupStart", "integration", "cleanup", "identity", "subscriptions"}
+var settingsOrder = []string{"contextSources", "repos", "environments", "roles", "worktree", "scripts", "setupStart", "integration", "cleanup", "identity", "subscriptions"}
 var itemKeys = map[string][]string{"repos": {"id", "remote", "forge", "defaultBranch", "connection", "path"}, "environments": {"hostId", "checkoutPath", "repo"}, "identity": {"name", "email"}}
 var settingEnums = map[string][]any{"worktree.envMode": {"worktree", "local"}, "setupStart": {"wait", "background"}, "integration.mode": {"pr", "direct"}, "integration.mergeMethod": {"squash", "merge", "rebase"}, "repos.forge": {"github", "gitlab"}}
 
@@ -168,6 +168,11 @@ func projectSettings(p doc) (doc, []string, error) {
 			continue
 		}
 		switch {
+		case k == "contextSources":
+			if _, err := contract.ContextSources(v); err != nil {
+				return nil, nil, fail(400, "Invalid contextSources: "+err.Error())
+			}
+			out[k] = v
 		case k == "subscriptions":
 			xs, ok := v.([]any)
 			for _, x := range xs {

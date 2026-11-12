@@ -49,6 +49,19 @@ test('Lab retains authenticated requester through background enqueue, revocation
    assert.equal(revoked.status,404,'native bound request refreshes revoked authority');
    await op('people_set',{people});
   });
+  // R1, R2, R3; risk: a background pipeline drops or refreshes frozen source pins after project Save.
+  await t.test('background Lab enqueue retains the pipeline frozen project source descriptor',async()=>{
+   const id='lab-pinned-context';
+   const source={repo:'specq',revision:'1'.repeat(40),core:[{path:'engineering/core.md',sha256:'a'.repeat(64)}]};
+   const content={settings:{id,name:'Pinned context fixture',contextFiles:['rules.md'],roles:{worker:'baseline'},repos:[{id:'main',remote:'https://github.com/taskqorg/fleet.git'},{id:'specq',remote:'https://github.com/taskqorg/specq.git'}],contextSources:[source]},contextFiles:[{path:'rules.md',text:'Fixture only; never run a model.'}]};
+   await op('project_create',{id,requestId:'lab-pinned-create',content});
+   const e=await op('lab_experiment_create',{...body,projectId:id},owner);await launch(e.id);
+   const row=await until(async()=>agentRows(e.id)[0]);assert.deepEqual(row.projectSnapshot.settings.contextSources,[source]);
+   const next=structuredClone(content);next.settings.contextSources[0].revision='2'.repeat(40);
+   await op('project_update',{projectId:id,requestId:'lab-pinned-update',baseRevision:1,content:next});
+   assert.deepEqual(agentRows(e.id)[0].projectSnapshot.settings.contextSources,[source]);
+   const run=ok(await request('/api/pipeline-runs/'+row.pipelineRunId,undefined));assert.deepEqual(run.projectSnapshot.settings.contextSources,[source]);
+  });
   await t.test('project or architect-role revocation pauses; regrant permits explicit resume as the same person',async()=>{
    for(const field of ['grants','roles']){
     const e=await create();await op('people_set',{people:people.map((p:any)=>p.email===creator?{...p,[field]:field==='roles'?['operator']:[]}:p)});

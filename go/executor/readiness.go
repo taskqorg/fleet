@@ -79,8 +79,18 @@ func claudePlacementHere() (string, error) {
 	return claudePlacement(os.Getenv("FLEET_CLAUDE_PLACEMENT"), runtime.GOOS, string(r))
 }
 
-func readiness(project any, host, registry string) contract.Readiness {
+func readiness(project any, host, registry string, forbidden ...[]string) contract.Readiness {
 	checks := []contract.ReadinessCheck{}
+	var denied []string
+	if len(forbidden) > 0 {
+		denied = forbidden[0]
+	}
+	if _, err := resolveAttemptContext(project, host, projectRoots(), denied, ""); err != nil {
+		return contract.Readiness{HostId: host, Ok: false, Checks: []contract.ReadinessCheck{check("instruction-sources", host, err.Error())}}
+	}
+	if jAt(project, "contextSources") != nil {
+		checks = append(checks, check("instruction-sources", host, ""))
+	}
 	repos := jArr(project, "repos")
 	for _, env := range jArr(project, "environments") {
 		if jStr(env, "hostId") != host {

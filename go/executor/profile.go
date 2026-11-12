@@ -116,3 +116,17 @@ func profilePrepare(v any, account string, skills any) (M, M, error) {
 			"resumeCompatibility": "requested overrides supplied per invocation; actual changed settings unqualified; prior conversation context persists",
 			"mcpServerSha256":     sha(bin)}}, selected, nil
 }
+
+// Apply the same executor-resolved text used by the native protocol and preparation receipt.
+func applyResolvedInstructions(cmd *exec.Cmd, harness, text string) {
+	if harness == "codex" {
+		profileApply(cmd, M{"instructions": text})
+	}
+	if harness == "claude" {
+		for i := 1; i+1 < len(cmd.Args); i++ {
+			if cmd.Args[i] == "--system-prompt" {
+				cmd.Args[i+1] = text
+			}
+		}
+	}
+}
