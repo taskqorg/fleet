@@ -34,6 +34,11 @@ func projectWrite(q *Request, create bool) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cs, err := headConnections(jsonBytes(bundle)); err != nil {
+		return nil, err
+	} else if err := withdrawConnectionRemovals(q, cs); err != nil {
+		return nil, err
+	}
 	text, err := canonicalText(bundle)
 	if err != nil {
 		return nil, err
@@ -223,19 +228,9 @@ func projectArchive(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var bundle struct {
-		Settings struct {
-			Repos []struct {
-				Connection string `json:"connection"`
-			} `json:"repos"`
-		} `json:"settings"`
-	}
-	_ = json.Unmarshal(raw, &bundle) // a head without repos names no connection
-	conns := []string{}
-	for _, r := range bundle.Settings.Repos {
-		if r.Connection != "" {
-			conns = append(conns, r.Connection)
-		}
+	conns, err := headConnections(raw)
+	if err != nil {
+		return nil, err
 	}
 	if err := exec(q, "UPDATE definition SET retired_at=coalesce(retired_at,now()) WHERE kind='project' AND id=$1", id); err != nil {
 		return nil, err
@@ -338,21 +333,53 @@ func projectIDs(q *Request) ([]string, error) {
 	return out, nil
 }
 
+// headConnections: the distinct git connections a project head (bundle JSON) names in settings.repos.
+func headConnections(raw []byte) ([]string, error) {
+	var b struct {
+		Settings struct {
+			Repos []struct {
+				Connection string `json:"connection"`
+			} `json:"repos"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(raw, &b); err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, r := range b.Settings.Repos {
+		if r.Connection != "" && !slices.Contains(out, r.Connection) {
+			out = append(out, r.Connection)
+		}
+	}
+	return out, nil
+}
+
 // removeUnusedConnections: a git connection no live project names any more leaves every host that holds it
-// (connection-remove deletes the deploy key directory). Returns "host/connection" for each command queued.
+// (connection-remove deletes the deploy key directory). Every live head counts, whoever asks; a head that does not
+// parse stops the removal (fail closed). A removal already pending is not queued twice; project_create and
+// project_update withdraw pending removals of a connection they name again. Returns "host/connection" queued.
 func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 	out := []string{}
 	if len(conns) == 0 {
 		return out, nil
 	}
-	ids, err := projectIDs(q)
+	heads, err := queryRows(q, `SELECT d.id,r.content FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
+	  WHERE d.kind='project' AND d.retired_at IS NULL`)
 	if err != nil {
 		return nil, err
 	}
 	used := map[string]bool{}
-	for _, p := range ids {
-		for _, r := range anys(projectSettingsOf(q, p)["repos"]) {
-			used[astr(mapOf(r)["connection"])] = true
+	for _, h := range heads {
+		raw, isText := h["content"].(string)
+		if !isText {
+			raw = js(h["content"])
+		}
+		cs, err := headConnections([]byte(raw))
+		if err != nil {
+			return nil, fail(409, "Project "+astr(h["id"])+" does not parse; no deploy key is removed")
+		}
+		for _, c := range cs {
+			used[c] = true
 		}
 	}
 	obs, err := all(q, "host-observation", nil)
@@ -366,6 +393,12 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 		for _, o := range obs {
 			host := astr(o["id"])
 			if !slices.Contains(strs(o["gitConnections"]), c) {
+				continue
+			}
+			if dup, err := has(q, "SELECT 1 FROM document WHERE kind='command' AND data->>'hostId'=$1 AND data->>'kind'='connection-remove' AND data->>'status'='pending' AND data->'payload'->>'connection'=$2", host, c); err != nil || dup {
+				if err != nil {
+					return nil, err
+				}
 				continue
 			}
 			sid, xid := newID(), newID()
@@ -383,4 +416,13 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// withdrawConnectionRemovals: a project names connections again, so their pending removals must not run.
+func withdrawConnectionRemovals(q *Request, conns []string) error {
+	if len(conns) == 0 {
+		return nil
+	}
+	return exec(q, `UPDATE document SET data=data||'{"status":"stopped","stopDetail":"connection in use again"}',updated_at=now()
+	  WHERE kind='command' AND data->>'kind'='connection-remove' AND data->>'status'='pending' AND data->'payload'->>'connection'=ANY($1)`, conns)
 }

@@ -6,9 +6,21 @@ import "encoding/json"
 
 var _ json.RawMessage
 
-type ProjectArchiveReply = map[string]json.RawMessage
+type ProjectArchiveReply struct {
+	Archived           bool     `json:"archived"`
+	ConnectionRemovals []string `json:"connectionRemovals"`
+	ProjectId          string   `json:"projectId"`
+}
 
-// ProjectArchiveRequest: Owner or full-access person. Retires a project for good: it leaves project_list and every project view. Refused (409) while the project has open tasks or unarchived sessions; cancel or archive them first. A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectArchiveReply) Validate() error {
+	if v.ConnectionRemovals == nil {
+		return Missing("connectionRemovals")
+	}
+	return nil
+}
+
+// ProjectArchiveRequest: Owner or full-access person. Retires a project for good: it leaves project_list and every project view; task_create, session_start, project_update and project_create refuse its id afterwards. Refused (409) while the project has open tasks, unarchived sessions or running executions. Idempotent: archiving again repeats only the key cleanup. Each git connection that no live project names any more gets a connection-remove command on every host that reports it; the reply lists them as connectionRemovals (host/connection). A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.
 type ProjectArchiveRequest struct {
 	ProjectId string `json:"projectId"`
 }
@@ -97,7 +109,7 @@ func (v *ProjectUpdateRequest) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
-		"project_archive":               {Read: false, Long: false, Errors: []int{403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person. Retires a project for good: it leaves project_list and every project view. Refused (409) while the project has open tasks or unarchived sessions; cancel or archive them first. A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.\",\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
+		"project_archive":               {Read: false, Long: false, Errors: []int{403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person. Retires a project for good: it leaves project_list and every project view; task_create, session_start, project_update and project_create refuse its id afterwards. Refused (409) while the project has open tasks, unarchived sessions or running executions. Idempotent: archiving again repeats only the key cleanup. Each git connection that no live project names any more gets a connection-remove command on every host that reports it; the reply lists them as connectionRemovals (host/connection). A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.\",\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_create":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"properties\":{\"content\":{\"properties\":{\"contextFiles\":{\"items\":{\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\"},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\"},\"id\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"id\",\"content\"],\"type\":\"object\"}")},
 		"project_initial_access_revoke": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"properties\":{\"baseAccessVersion\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"baseAccessVersion\"],\"type\":\"object\"}")},
 		"project_update":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"content\":{\"properties\":{\"contextFiles\":{\"items\":{\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\"},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\"},\"projectId\":{\"type\":\"string\"},\"repoSha\":{\"type\":[\"string\",\"null\"]},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"projectId\",\"baseRevision\",\"content\"],\"type\":\"object\"}")},

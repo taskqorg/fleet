@@ -133,4 +133,9 @@ test('Archiving the last project that names a git connection queues connection-r
  c.sql(`INSERT INTO document(kind,id,data) VALUES ('host-observation','h-keys','{"id":"h-keys","gitConnections":["k-shared","k-other"]}')`);
  assert.deepEqual(ok(await call('project_archive',{projectId:a})).connectionRemovals,[],'another live project still uses it');
  assert.deepEqual(ok(await call('project_archive',{projectId:b})).connectionRemovals,['h-keys/k-shared']);
+ assert.deepEqual(ok(await call('project_archive',{projectId:b})).connectionRemovals,[],'a pending removal is not queued twice');
+ const pending=()=>c.sql(`SELECT count(*) FROM document WHERE kind='command' AND data->>'kind'='connection-remove' AND data->>'status'='pending'`);
+ const d='project-'+randomUUID();
+ ok(await call('project_create',{id:d,requestId:randomUUID(),content:withConn(d,'k-shared')}));
+ assert.match(String(pending()),/\b0\b/,'a project naming the connection again withdraws the removal');
 });

@@ -149,7 +149,7 @@
     },
     "ProjectArchiveRequest": {
       "type": "object",
-      "$comment": "Owner or full-access person. Retires a project for good: it leaves project_list and every project view. Refused (409) while the project has open tasks or unarchived sessions; cancel or archive them first. A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.",
+      "$comment": "Owner or full-access person. Retires a project for good: it leaves project_list and every project view; task_create, session_start, project_update and project_create refuse its id afterwards. Refused (409) while the project has open tasks, unarchived sessions or running executions. Idempotent: archiving again repeats only the key cleanup. Each git connection that no live project names any more gets a connection-remove command on every host that reports it; the reply lists them as connectionRemovals (host/connection). A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.",
       "required": [
         "projectId"
       ],
@@ -162,7 +162,26 @@
     },
     "ProjectArchiveReply": {
       "type": "object",
-      "additionalProperties": true
+      "required": [
+        "projectId",
+        "archived",
+        "connectionRemovals"
+      ],
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "archived": {
+          "type": "boolean"
+        },
+        "connectionRemovals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

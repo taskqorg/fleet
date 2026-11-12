@@ -764,7 +764,7 @@ func (e *executor) run(c M) error {
 		if err != nil || !removeConnection(connectionsDir(), pl.Connection) {
 			return e.finish(c, "failed", "")
 		}
-		return e.finish(c, "succeeded", "")
+		return e.finish(c, "completed", "")
 	case "script":
 		return e.script(c, execution, session)
 	case "start", "input":
