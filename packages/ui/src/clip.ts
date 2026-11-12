@@ -42,3 +42,5 @@ export function writeClip(text: string | Promise<string>): Promise<void> {
     'text/html': t.then(s => new Blob([clipHtml(s)], { type: 'text/html' })),
   })]);
 }
+
+// Disposable delivery timing path control; never merge.
