@@ -16,11 +16,17 @@ After reviewing `/etc/fleet-ci-network.nft` and `systemctl cat fleet-ci-vm`, sta
 
 Run `check-network.py` inside the guest before registration. Check the host nft reject counter increased for actual probes to the known listening host SSH port; connection failure alone could mean an unused port. Verify public GitHub/artifact HTTPS and DNS. Also check the VM process UID, cgroup limits and absence of guest production mounts/host sockets. No browser launch is part of provisioning.
 
+Before registering, read back `busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager RemoveIPC`: it must print `b false` ([logins on the guest](#logins-on-the-guest)).
+
 ## Register once
 
 Use the supported GitHub organization runner registration endpoint, only after the group readback and network checks above. Download official `actions/runner` Linux x64 v2.338.2 into the guest and verify SHA256 `baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40` before extracting. This digest is the release asset digest returned by GitHub API. Run its dependency installer inside the guest if required, not on PDS18.
 
 As guest user `ci`, configure URL `https://github.com/taskqorg`, group `fleet-pds18-trusted-main`, name `fleet-pds18-kvm-1`, custom label `fleet-pds18`, work directory `_work`. Feed the short-lived registration token over stdin into `ACTIONS_RUNNER_INPUT_TOKEN` for unattended configuration; no token in argv, repo, seed image, shell history or retained guest provisioning. Do not install a broad GitHub administrative credential. The runner's own scoped registration credentials are necessary runtime state. Install/start the runner service as `ci` using official `svc.sh` inside the guest. Read back exactly one runner, its group/labels/online state. Do not create a second registration on uncertain completion.
+
+## Logins on the guest
+
+logind keeps users' IPC: `RemoveIPC=no` in `/etc/systemd/logind.conf.d/50-fleet-keep-ipc.conf`, written by cloud-init. With the default, the runner service, which is no login session, loses its shared memory when the last SSH session of `ci` ends, and the release job's PostgreSQL fails. It is host-wide rather than linger for `ci` because the guest exists only for this runner. On an existing guest, write the same drop-in and run `systemctl restart systemd-logind`. The release `build` job fails first thing when the readback is not `b false`.
 
 ## Guest state the release job keeps
 

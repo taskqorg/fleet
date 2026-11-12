@@ -26,6 +26,14 @@ packages:
   - python3
   - unzip
   - zstd
+write_files:
+  # The runner service is no login session: with logind's default RemoveIPC=yes, the ci user's shared memory (a release
+  # job's PostgreSQL) is deleted when its last SSH session ends. logind reads this at start, hence the restart below.
+  - path: /etc/systemd/logind.conf.d/50-fleet-keep-ipc.conf
+    content: |
+      [Login]
+      RemoveIPC=no
 runcmd:
   - [systemctl, enable, --now, docker]
   - [usermod, -aG, docker, ci]
+  - [systemctl, restart, systemd-logind]
