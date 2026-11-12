@@ -5,8 +5,11 @@ description: restore, build, save one part's Go build cache, then clear it for t
 inputs:
   part:
     required: true
+  hash:
+    description: hashFiles('go/**') taken before any part built (a build output under go/ would change it)
+    required: true
   run:
-    description: commands that compile what the part compiles
+    description: commands that compile what the part compiles; outputs go outside go/
     required: true
 runs:
   using: composite
@@ -17,7 +20,7 @@ runs:
         path: |
           ~/.cache/go-build
           ~/go/pkg/mod
-        key: go-${{ inputs.part }}-${{ hashFiles('go/**') }}
+        key: go-${{ inputs.part }}-${{ inputs.hash }}
         lookup-only: true
     - if: steps.exact.outputs.cache-hit != 'true'
       uses: actions/cache/restore@v4
@@ -25,7 +28,7 @@ runs:
         path: |
           ~/.cache/go-build
           ~/go/pkg/mod
-        key: go-${{ inputs.part }}-${{ hashFiles('go/**') }}
+        key: go-${{ inputs.part }}-${{ inputs.hash }}
         restore-keys: go-${{ inputs.part }}-
     - if: steps.exact.outputs.cache-hit != 'true'
       shell: bash
@@ -36,6 +39,7 @@ runs:
         path: |
           ~/.cache/go-build
           ~/go/pkg/mod
-        key: go-${{ inputs.part }}-${{ hashFiles('go/**') }}
-    - shell: bash
+        key: go-${{ inputs.part }}-${{ inputs.hash }}
+    - if: steps.exact.outputs.cache-hit != 'true'
+      shell: bash
       run: go clean -cache -modcache

@@ -248,7 +248,7 @@ jobs:
       # The executor's MCP adapter from Node against the Go binary: replayed stdio exchanges and artifact path confinement.
       - if: matrix.part == 'vet'
         run: |
-          cd go && CGO_ENABLED=0 go build -o bin/fleet-executor ./executor && cd ..
+          cd go && CGO_ENABLED=0 go build -o "$RUNNER_TEMP/fleet-executor" ./executor && cd ..
           FLEET_EXECUTOR_BIN="$PWD/go/bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts
       # The outside tests run a -race coordinator; GORACE halts it at the first race, so the test of that moment fails.
       # /api/health reports vcs.modified as dirty; a build from the CI checkout must be clean (untracked files count).
@@ -460,14 +460,13 @@ jobs:
       - run: |
           mkdir t && tar -xzf fleet-*-darwin-arm64.tgz -C t
           t/deploy/selftest-release.sh t
-  # Diagnostics only: pull requests (comment) and main pushes (docs-order); never a merge queue run's runner slot.
   # Caches saved on pull request and merge queue refs are invisible to other merge queue runs; only main's are shared,
   # and main's push run skips the heavy families. This job saves every part's cache from main when its key is new,
   # so each merge queue run starts warm. One job, parts in sequence: no runner slot of a queue run.
   cache-warm:
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
     env:
@@ -483,26 +482,39 @@ jobs:
           cache: pnpm
       - uses: ./.github/actions/go
       - run: pnpm install --frozen-lockfile
+      # The parts' own jobs key on go/** before they build; outputs here go to $RUNNER_TEMP so the key stays theirs.
+      # The commands mirror those jobs' builds (go-tests, browser-tests, deploy/build-release.sh); keep them in step.
+      - id: go
+        run: echo "hash=${{ hashFiles('go/**') }}" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/warm
         with:
           part: vet
+          hash: ${{ steps.go.outputs.hash }}
           run: cd go && go vet ./... && GOOS=windows GOARCH=amd64 go vet ./coordinator && CGO_ENABLED=0 go build -o bin/fleet-executor ./executor
       - uses: ./.github/actions/warm
         with:
           part: unit
-          run: cd go && CGO_ENABLED=1 go test -race -count=1 -run '^$' ./... > /dev/null
+          hash: ${{ steps.go.outputs.hash }}
+          run: cd go && CGO_ENABLED=1 go test -race -count=1 -run '^$' ./...
       - uses: ./.github/actions/warm
         with:
           part: outside-0
-          run: cd go && CGO_ENABLED=1 go build -race -o bin/fleet-coordinator ./coordinator
+          hash: ${{ steps.go.outputs.hash }}
+          run: cd go && CGO_ENABLED=1 go build -race -o "$RUNNER_TEMP/fleet-coordinator" ./coordinator
       - uses: ./.github/actions/warm
         with:
           part: browser
-          run: cd go && CGO_ENABLED=0 go build -trimpath -o bin/fleet-coordinator ./coordinator
+          hash: ${{ steps.go.outputs.hash }}
+          run: cd go && CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/fleet-coordinator" ./coordinator
       - uses: ./.github/actions/warm
         with:
           part: release
-          run: mkdir -p "$RUNNER_TEMP/release" && deploy/build-release.sh HEAD "$RUNNER_TEMP/release" "0.0.0-${GITHUB_SHA::12}" "" linux/amd64 darwin/arm64
+          hash: ${{ steps.go.outputs.hash }}
+          run: |
+            cd go
+            for t in linux/amd64 darwin/arm64; do for c in coordinator gateway executor update; do
+              CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -trimpath -ldflags "-X main.version=0.0.0" -o "$RUNNER_TEMP/rel/$t/fleet-$c" "./$c"
+            done; done
       - id: playwright
         run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
@@ -512,6 +524,7 @@ jobs:
           key: playwright-${{ steps.playwright.outputs.version }}-chromium
       - if: steps.chromium.outputs.cache-hit != 'true'
         run: pnpm exec playwright install chromium
+  # Diagnostics only: pull requests (comment) and main pushes (docs-order); never a merge queue run's runner slot.
   reports:
     if: github.event_name != 'merge_group'
     runs-on: ubuntu-24.04
