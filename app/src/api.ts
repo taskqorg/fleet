@@ -1,6 +1,7 @@
 // Same-origin calls to coordinator operations (docs/designs/fleet-operator-app.md §3, §5). The browser holds no secret:
 // Cloudflare Access and the guard add the credential. A redirect, 401 or 403 means the Access session expired: "signed out".
 import { signal } from '@preact/signals';
+import { useEffect, useRef } from 'preact/hooks';
 import type { Ops } from '../../contracts/generated/ops.ts';
 
 export const online = signal(typeof navigator === 'undefined' ? true : navigator.onLine);
@@ -35,8 +36,8 @@ export async function op<K extends OpName>(name: K, body: Ops[K]['request'], opt
 
 // A key request (connections_key_request): the owner's value goes straight to connections_key_add, which answers the
 // question with the fingerprint only; the value never reaches questions_answer or the asking agent.
-export const addRequestedKey = (questionId: string, connection: string, value: string) =>
-  online.value ? writeOnce('connections_key_add', { connection, value, questionId }, () => {}) : Promise.reject(Error('Offline: the key was not sent'));
+export const addRequestedKey = (questionId: string, connection: string, value: string, signal?: AbortSignal) =>
+  online.value ? writeOnce('connections_key_add', { connection, value, questionId }, () => {}, { signal }) : Promise.reject(Error('Offline: the key was not sent'));
 
 /**
  * The outcome of a write is unknown: its reply was cut, the connection dropped before it, or a gateway in front of the
@@ -68,4 +69,11 @@ export function sendingId(session: string, text: string | null): string {
     if (p?.text === text) return p.requestId;
     const requestId = crypto.randomUUID(); localStorage.setItem(k, JSON.stringify({ text, requestId })); return requestId;
   } catch { return text === null ? '' : crypto.randomUUID(); /* storage unavailable: one id per attempt */ }
+}
+
+/** A signal that aborts when the component unmounts: pass it to writeOnce so a retry loop ends with its view. */
+export function useAlive(): AbortSignal {
+  const c = useRef<AbortController | null>(null); c.current ??= new AbortController();
+  useEffect(() => () => c.current!.abort(), []);
+  return c.current.signal;
 }

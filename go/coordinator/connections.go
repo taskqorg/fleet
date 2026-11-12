@@ -390,15 +390,8 @@ func init() {
 		}
 		qid, fp := astr(b["questionId"]), fingerprint(value)
 		if qid != "" {
-			// A retry of an add that already answered this request (its reply was lost) is that add: the held key, no error.
-			if done, err := first(q, "SELECT 1 FROM question WHERE id=$1 AND kind='secret' AND state='answered' AND answer=$2", qid, keyAnswer(astr(c["name"]), fp, "active")); err != nil {
-				return nil, err
-			} else if done != nil {
-				if old, err := maybe(q, "key:"+fp, "connection-key"); err != nil || (old != nil && old["state"] == "active") {
-					return old, err
-				}
-			}
-			if _, err := keyRequestOf(q, qid, astr(c["name"])); err != nil {
+			// A retry of an add that already answered this request (its reply was lost) passes here and replays below.
+			if _, err := keyRequestOf(q, qid, astr(c["name"]), keyAnswer(astr(c["name"]), fp, "active")); err != nil {
 				return nil, err
 			}
 		}
@@ -1248,8 +1241,8 @@ func keyAnswer(connection, fp, state string) string {
 	return js(doc{"connection": connection, "fingerprint": fp, "state": state})
 }
 
-// keyRequestOf: the open key request qid for connection.
-func keyRequestOf(q *Request, qid, connection string) (doc, error) {
+// keyRequestOf: the open key request qid for connection, or one already answered with replay (a retried add).
+func keyRequestOf(q *Request, qid, connection, replay string) (doc, error) {
 	qn, err := first(q, "SELECT * FROM question WHERE id=$1 AND kind='secret'", qid)
 	if err != nil {
 		return nil, err
@@ -1257,7 +1250,7 @@ func keyRequestOf(q *Request, qid, connection string) (doc, error) {
 	if qn == nil {
 		return nil, fail(404, "Unknown key request")
 	}
-	if astr(qn["state"]) != "open" {
+	if astr(qn["state"]) != "open" && (replay == "" || astr(qn["state"]) != "answered" || astr(qn["answer"]) != replay) {
 		return nil, fail(409, "Key request already settled")
 	}
 	if astr(mapOf(qn["options"])["connection"]) != connection {

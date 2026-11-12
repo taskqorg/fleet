@@ -2,7 +2,7 @@
 import {useEffect,useRef,useState} from 'preact/hooks';
 import {useLocation} from 'wouter-preact';
 import {ListDetail,DetailSection,SettingField,CodeEditor,VirtualList,SearchField,Button,Empty,Icon,KvRow,ErrorBanner} from '../../../packages/ui/src/index.ts';
-import {op,writeOnce} from '../api.ts';
+import {op,writeOnce,useAlive} from '../api.ts';
 import {useDoc} from '../store.ts';
 
 type Bundle={settings:Record<string,any>,contextFiles:{path:string,text:string}[]};
@@ -19,13 +19,13 @@ export function Projects({id}:{id?:string}){
 }
 function ProjectEditor({id,onSaved}:{id?:string,onSaved:(id:string)=>void}){
  const [bundle,setBundle]=useState<Bundle>(fresh),[revision,setRevision]=useState(0),[error,setError]=useState(''),[busy,setBusy]=useState(false),[ready,setReady]=useState<any>(null),[access,setAccess]=useState<any>(null),[repoSha,setRepoSha]=useState<string|null>(null),[sourceState,setSourceState]=useState('');
- const requestId=useRef(crypto.randomUUID());const [loaded,setLoaded]=useState(!id);
+ const requestId=useRef(crypto.randomUUID()),alive=useAlive();const [loaded,setLoaded]=useState(!id);
  const load=async()=>{if(!id)return;try{const p:any=await op('project_context',{projectId:id});setBundle(p.content);setRevision(p.revision);setAccess(p.initialAccess);setRepoSha(p.repoSha??null);setSourceState(p.sourceState??'');requestId.current=crypto.randomUUID();setReady(null);setError('');setLoaded(true);}catch(e:any){setError(e.message);}};
  useEffect(()=>{void load();},[id]);
  const setting=(key:string,value:any)=>setBundle(b=>({...b,settings:{...b.settings,[key]:value}}));
  const field=(label:string,value:string,save:(s:string)=>void)=><SettingField help="Edit this project field; Save project applies the complete version." label={label} value={value} status={{kind:'pending'}} now={Date.now()} onSave={save}/>;
  const save=async()=>{setBusy(true);try{
-  const unknown=()=>setError('unknown, retrying');const p:any=id?await writeOnce('project_update',{projectId:id,requestId:requestId.current,baseRevision:revision,content:bundle,repoSha},unknown):await writeOnce('project_create',{id:bundle.settings.id,requestId:requestId.current,content:bundle},unknown);
+  const unknown=()=>setError('unknown, retrying');const p:any=id?await writeOnce('project_update',{projectId:id,requestId:requestId.current,baseRevision:revision,content:bundle,repoSha},unknown,{signal:alive}):await writeOnce('project_create',{id:bundle.settings.id,requestId:requestId.current,content:bundle},unknown,{signal:alive});
   const check:any=await op('project_context',{projectId:p.projectId});if(check.revision!==p.revision||check.contentSha!==p.contentSha)throw Error('Saved version changed; reload before editing.');
   setBundle(check.content);setRevision(check.revision);setAccess(check.initialAccess);setRepoSha(check.repoSha??null);setSourceState(check.sourceState??'');requestId.current=crypto.randomUUID();setError('');onSaved(p.projectId);
  }catch(e:any){setError(e.message);}finally{setBusy(false);}};

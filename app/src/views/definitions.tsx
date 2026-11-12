@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import { ListDetail, DefinitionEditor, DraftBar, DetailSection, KvRow, StateBadge, Empty, SettingField, CodeEditor, DiffText, StepList, AgeChip, Choice, Button, SearchField, type StepItem } from '../../../packages/ui/src/index.ts';
-import { op, OpError, writeOnce, type Ops } from '../api.ts';
+import { op, OpError, writeOnce, useAlive, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 
 type Kind = 'agent' | 'pipeline' | 'catalogue';
@@ -93,7 +93,8 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
     setMessage(''); await load();
   });
   const discard = () => run(async () => { clearTimeout(timer.current); pending.current = null; await op('definition_draft_discard', { kind, id }); await load(); });
-  const runDraft = () => run(async () => { await flush(); const requestId = crypto.randomUUID(); await writeOnce('pipeline_run_create', { pipelineId: id, requestId, draft: true }, () => setError('unknown, retrying')); });
+  const alive = useAlive();
+  const runDraft = () => run(async () => { await flush(); const requestId = crypto.randomUUID(); await writeOnce('pipeline_run_create', { pipelineId: id, requestId, draft: true }, () => setError('unknown, retrying'), { signal: alive }); });
   if (!def) return <article class="detail" data-ui="detail" tabIndex={-1}>{error ? <div class="error" role="alert">{error}</div> : <Empty text="Loading…" />}</article>;
   const tabs = kind === 'agent' ? ['Configuration', 'Effective', 'Diff', 'Compatibility', 'History'] : kind === 'catalogue' ? ['Methods', 'Configuration', 'Diff', 'History'] : ['Configuration', 'Diff', 'History'];
   return <DefinitionEditor label={id} crumb={`shared · ${def.path} · r${def.head}${def.state !== 'synced' ? ` · ${def.state}` : ''}`} title={def.id}

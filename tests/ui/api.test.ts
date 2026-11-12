@@ -78,14 +78,14 @@ for (const [name, body] of [
   ['questions_answer', { questionId: 'q', answer: 'yes' }],
   ['connections_key_add', { connection: 'c', value: 'v', questionId: 'q' }],
 ] as const) test(`${name}: a cut reply is retried with the same body and stored once`, async () => {
-  const saved = (globalThis as any).fetch; const bodies: string[] = []; const stored = new Set<string>(); let calls = 0;
+  const saved = (globalThis as any).fetch; const bodies: string[] = []; let calls = 0;
   (globalThis as any).fetch = async (url: string, init: any) => {
-    assert.ok(url.endsWith('/' + name)); bodies.push(init.body); stored.add(init.body);
+    assert.ok(url.endsWith('/' + name)); bodies.push(init.body);
     const cut = calls++ === 0;
     return { type: 'basic', status: 200, ok: true, statusText: 'OK', json: () => cut ? Promise.reject(new TypeError('network error')) : Promise.resolve({ ok: 1 }) };
   };
   try {
     assert.deepEqual(await writeOnce(name as any, body as any, () => {}, { wait: 0 }), { ok: 1 });
-    assert.equal(bodies.length, 2); assert.equal(stored.size, 1, 'the retry is the same write');
+    assert.equal(bodies.length, 2); assert.equal(bodies[1], bodies[0], 'the retry sends the same write (same requestId), which the coordinator replays');
   } finally { (globalThis as any).fetch = saved; }
 });

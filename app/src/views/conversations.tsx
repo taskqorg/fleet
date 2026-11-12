@@ -9,7 +9,7 @@ import {
   keyConnection,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
-import { op, online, addRequestedKey, writeOnce, sendingId, OpError } from '../api.ts';
+import { op, online, addRequestedKey, writeOnce, sendingId, OpError, useAlive } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
@@ -137,13 +137,13 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
     <div class="pane">
       {!w ? <Skeleton rows={6} /> : <Thread blocks={w.blocks} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k)} onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? sel?.start.key ?? k, false), k, true)); pickFrom.current ??= k; }} showSession={!!key && 'task' in key} onOpenResult={r => go('/results/' + encodeURIComponent(r))} handle={handle} onStart={thread.older} onEnd={thread.newer}
         stopReason={off ? 'offline' : undefined} onStop={x => run(() => op('execution_stop', { executionId: x }))}
-        onAnswer={(questionId, answer) => run(() => writeOnce('questions_answer', { questionId, answer }, unknown, { signal: alive.current.signal }))} onCopyFail={copyFail} onSecret={addRequestedKey}
+        onAnswer={(questionId, answer) => run(() => writeOnce('questions_answer', { questionId, answer }, unknown, { signal: alive.current.signal }))} onCopyFail={copyFail} onSecret={(q: string, c: string, v: string) => addRequestedKey(q, c, v, alive.current.signal)}
         pending={{ count: w.fresh, onJump: () => { setMarked(null); setHits(null); thread.newest(); } }} />}
       {/* D3: steer goes to the execution and does not answer; the open question stays in sight above the composer. */}
       {openQs.map((q: any) => <DecisionBlock key={q.id} question={q.question ?? q.text} askedBy="agent" addressedTo="you" since={q.askedAt ? Date.parse(q.askedAt) || now : now} now={now}
         options={(Array.isArray(q.options) ? q.options : keyConnection(q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
         onAnswer={a => run(() => writeOnce('questions_answer', { questionId: q.id, answer: a }, unknown, { signal: alive.current.signal }))}
-        onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v) : undefined} />)}
+        onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive.current.signal) : undefined} />)}
       <div class="composer-bar">
         <span class="muted mono">{active ? `${active.id.slice(0, 8)}` : ''}</span>
         {active && <Button label="Stop" icon="pause" disabledReason={off ? 'offline' : undefined} onClick={() => run(() => op('execution_stop', { executionId: active.id }))} />}
@@ -178,12 +178,13 @@ function SwitchPanel({ sessionId, handoff, current, onDone, run }: { sessionId: 
 }
 
 function NewConversation({onDone}:{onDone:(sessionId:string)=>void}){
+ const alive=useAlive();
  const projects=useDoc<any>('conversation-projects',()=>op('project_list',{}),c=>c.kind==='definition');
  const [project,setProject]=useState(new URLSearchParams(location.search).get('project')??''),[role,setRole]=useState('pm'),[error,setError]=useState('');
  const selected=(projects.data?.projects??[]).find((p:any)=>p.id===project);
  const roles=Object.entries(selected?.roles??{}).map(([id,profile])=>({id,label:`${id} · ${String(profile)}`}));
  return <DetailSection title="New conversation"><Choice label="Project" value={project} onChange={p=>{setProject(p);setRole('pm');}} options={(projects.data?.projects??[]).map((p:any)=>({id:p.id,label:p.name}))}/>
  {project&&<Choice label="Role / configuration" value={role} onChange={setRole} options={roles}/>}
- {error&&<ErrorBanner text={error}/>}<Composer draftKey="new-project-conversation" placeholder="Describe the work for this project" disabledReason={!project||!roles.some(r=>r.id===role)?'Choose a project and a mapped role':undefined} onSend={async text=>{const scope='new:'+project;try{setError('');const r=await writeOnce('session_start',{projectId:project,role,requestId:sendingId(scope,text),text},()=>setError('unknown, retrying'));sendingId(scope,null);onDone(r.sessionId);}catch(e:any){if(!(e instanceof OpError&&e.message==='aborted'))sendingId(scope,null);setError(e.message);throw e;}}}/>
+ {error&&<ErrorBanner text={error}/>}<Composer draftKey="new-project-conversation" placeholder="Describe the work for this project" disabledReason={!project||!roles.some(r=>r.id===role)?'Choose a project and a mapped role':undefined} onSend={async text=>{const scope='new:'+project+':'+role;try{setError('');const r=await writeOnce('session_start',{projectId:project,role,requestId:sendingId(scope,text),text},()=>setError('unknown, retrying'),{signal:alive});sendingId(scope,null);onDone(r.sessionId);}catch(e:any){if(!(e instanceof OpError&&e.message==='aborted'))sendingId(scope,null);setError(e.message);throw e;}}}/>
  <Button label="Projectless conversation" icon="messages-square" onClick={()=>op('session_create',{}).then(r=>onDone(r.sessionId),e=>setError(e.message))}/></DetailSection>;
 }

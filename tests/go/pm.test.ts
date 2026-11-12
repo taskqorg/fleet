@@ -257,4 +257,5 @@ test('PM10 key request: an agent asks for a key and gets only its fingerprint; n
   // A client retry of the same answer (app writeOnce) succeeds without a second answer; another answer is a conflict.
   assert.equal(ok(await op('questions_answer', {questionId: third.id, answer: 'decline'})).state, 'answered');
   assert.equal((await op('questions_answer', {questionId: third.id, answer: 'yes'})).status, 409);
+  assert.equal((await op('questions_answer', {questionId: third.id, answer: 'decline'}, MEMBER)).status, 403, 'a replay keeps the owner-only rule');
 });
