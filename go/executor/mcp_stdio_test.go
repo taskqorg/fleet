@@ -1131,7 +1131,7 @@ func TestScriptMCPQualificationRetainsSafeFailure(t *testing.T) {
 			}
 			os.WriteFile(filepath.Join(fixture, "fixture.go"), []byte("package fixture\n"), 0600)
 			command := fmt.Sprintf("%q qualify-mcp %q %q \"$FLEET_OUTPUT_DIR/receipt.json\" fixture-account %q %q", exe(), filepath.Join(fixture, "profile.json"), fixture, filepath.Join(fixture, "registry.json"), filepath.Join(fixture, "checks.json"))
-			execution := "11111111-1111-4111-8111-111111111111"
+			execution := "a1b2c3d4-5678-4abc-8def-0123456789ab"
 			if err := e.run(M{"id": "failure-command", "executionId": execution, "sessionId": "failure-session", "kind": "script", "payload": M{"command": command}}); err != nil {
 				t.Fatal(err)
 			}

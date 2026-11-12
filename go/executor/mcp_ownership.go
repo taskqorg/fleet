@@ -671,12 +671,18 @@ func safeMCPStatus(raw M) M {
 			}
 		}
 	}
-	for _, key := range []string{"guardianIdentity", "executionId"} {
-		v := jStr(raw, key)
-		if len(v) > 0 && len(v) <= 80 && onlyBytes(v, func(b byte) bool { return b >= '0' && b <= '9' || b == '-' }) {
-			out[key] = v
+	identity := jStr(raw, "guardianIdentity")
+	if len(identity) > 0 && len(identity) <= 80 && onlyBytes(identity, func(b byte) bool { return b >= '0' && b <= '9' || b == '-' }) {
+		out["guardianIdentity"] = identity
+	}
+	execution := jStr(raw, "executionId")
+	if len(execution) == 36 && execution[8] == '-' && execution[13] == '-' && execution[18] == '-' && execution[23] == '-' {
+		hex := strings.ReplaceAll(execution, "-", "")
+		if len(hex) == 32 && onlyBytes(hex, func(b byte) bool { return b >= '0' && b <= '9' || b >= 'a' && b <= 'f' || b >= 'A' && b <= 'F' }) {
+			out["executionId"] = execution
 		}
 	}
+
 	for key, max := range map[string]float64{"guardianPid": 2147483647, "exitCode": 255, "signal": 127} {
 		if n, ok := jAt(raw, key).(float64); ok && n >= 0 && n <= max && n == float64(int64(n)) {
 			out[key] = n
