@@ -29,9 +29,16 @@ on:
         type: boolean
         default: false
       gh-token:
-        description: GH_TOKEN and GH_REPO for the script (the caller's token permissions)
+        description: GH_TOKEN and GH_REPO for the script (a contents:read token)
         type: boolean
         default: false
+      env:
+        description: KEY=VALUE lines for the script (a called workflow does not see the caller's env)
+        type: string
+        default: ''
+      timeout-minutes:
+        type: number
+        default: 30
       artifact-name:
         type: string
         default: ''
@@ -48,7 +55,7 @@ jobs:
       (github.event_name == 'merge_group' && startsWith(github.ref, 'refs/heads/gh-readonly-queue/main/'))
       || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: [self-hosted, linux, x64, fleet-pds18]
-    timeout-minutes: 30
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
     services:
@@ -64,6 +71,12 @@ jobs:
           --health-cmd "clickhouse client --user t --password t -q 'SELECT 1'"
           --health-interval 2s --health-retries 30
     steps:
+      # The runner service is no login session: with logind's RemoveIPC on, a job's PostgreSQL loses its shared memory
+      # when the last SSH login of the runner user ends (README, logins on the guest).
+      - name: Runner keeps IPC across logins
+        run: |
+          out=$(busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager RemoveIPC)
+          [ "$out" = "b false" ] || { echo "::error::logind RemoveIPC is on ($out): set RemoveIPC=no on the runner guest"; exit 1; }
       - uses: actions/checkout@v4
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
@@ -82,7 +95,9 @@ jobs:
       - name: Job-local services
         env:
           CLICKHOUSE_PORT: ${{ job.services.clickhouse.ports['8123'] }}
+          JOB_ENV: ${{ inputs.env }}
         run: |
+          [ -z "$JOB_ENV" ] || printf '%s\n' "$JOB_ENV" >> "$GITHUB_ENV"
           echo "FLEET_TRIAL_PGDATA=$RUNNER_TEMP/pg" >> "$GITHUB_ENV"
           [ -z "$CLICKHOUSE_PORT" ] || echo "FLEET_TEST_CLICKHOUSE_URL=http://127.0.0.1:$CLICKHOUSE_PORT" >> "$GITHUB_ENV"
       - name: Run

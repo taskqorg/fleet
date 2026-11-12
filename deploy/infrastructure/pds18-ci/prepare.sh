@@ -51,6 +51,6 @@ table inet fleet_ci {
 }
 RULES
 nft --check --file /etc/fleet-ci-network.nft
-install -m 0644 "$base/fleet-ci-network.service" "$base/fleet-ci-vm.service" /etc/systemd/system/
+install -m 0644 "$base/fleet-ci.slice" "$base/fleet-ci-network.service" "$base/fleet-ci-vm.service" /etc/systemd/system/
 systemctl daemon-reload
 echo 'Prepared, not started. Review firewall and units, then start fleet-ci-vm.service.'
