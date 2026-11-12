@@ -1498,12 +1498,12 @@ func init() {
 			// A call without an execution (initialize, tools/list) acts for the host's holder; never an implicit owner.
 			holder := astr(q.host["holder"])
 			d := firstString(e["directedBy"], holder)
-			if q.person = q.app.people[d]; q.person == nil {
+			if q.person = q.peopleSnapshot().person(d); q.person == nil {
 				return fail(403, "Director "+d+" is not a person of this Fleet")
 			}
 			// A host acts with its director's rights only when its holder is that director or the owner (whose hosts
 			// run taken work, people-access §5); another holder's host never borrows a director's grants.
-			if hp := q.app.people[holder]; d != holder && (hp == nil || !hp.Owner) {
+			if hp := q.peopleSnapshot().person(holder); d != holder && (hp == nil || !hp.Owner) {
 				return fail(403, "Host "+b.HostId+" is held by "+holder+", not the director "+d)
 			}
 			return nil

@@ -270,7 +270,7 @@ func definitionRows(q *Request, where string, revision int64, args ...any) ([]de
 // personOf: a person by email as replies show them; the name comes from people.json at read time.
 func personOf(q *Request, email string) *contract.Person {
 	p := contract.Person{Email: email, Name: email}
-	if x := q.app.people[email]; x != nil && x.Name != "" {
+	if x := q.peopleSnapshot().person(email); x != nil && x.Name != "" {
 		p.Name = x.Name
 	}
 	return &p

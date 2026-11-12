@@ -678,7 +678,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	if cfg != nil {
 		p.AgentConfig, p.Instructions = rawMap(cfg), ptr("")
 		if cfg["fleetOperations"] == true { // the profile opts in to every operation its director may call (fleet-pm-agent.md §1)
-			if dir := q.app.people[firstString(e["directedBy"], ownerEmail(q))]; dir != nil {
+			if dir := q.peopleSnapshot().person(firstString(e["directedBy"], ownerEmail(q))); dir != nil {
 				p.FleetOperations = rawList(fleetOperations(dir))
 			}
 		}

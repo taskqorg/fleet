@@ -295,7 +295,7 @@ func queryRows(q *Request, sql string, args ...any) ([]doc, error) {
 }
 
 func ownerEmailOf(a *App) string {
-	for _, p := range a.people {
+	for _, p := range a.peopleSnapshot().list() {
 		if p.Owner {
 			return p.Email
 		}

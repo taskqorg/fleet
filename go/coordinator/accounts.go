@@ -474,7 +474,7 @@ func accountUpdateBody(q *Request, b doc) (any, error) {
 		if !isList {
 			return nil, fail(400, "take: {projects: [ids]}")
 		}
-		holder := q.app.people[astr(a["holder"])]
+		holder := q.peopleSnapshot().person(astr(a["holder"]))
 		uniq := []any{}
 		for _, x := range ps {
 			s, isStr := x.(string)
@@ -495,7 +495,7 @@ func accountUpdateBody(q *Request, b doc) (any, error) {
 			return nil, fail(403, "Only the owner changes the holder")
 		}
 		h := strings.ToLower(astr(v))
-		if q.app.people[h] == nil {
+		if q.peopleSnapshot().person(h) == nil {
 			return nil, fail(400, "Holder is not a person")
 		}
 		set("holder", h)
@@ -703,7 +703,7 @@ func resolveAccount(q *Request, selection *string, harness, host string, directo
 	dir := astr(director)
 	// A take rule covers its projects; a director with full access (the owner, or a grant on *, as site-agents has
 	// in development) may take any subscription. Either way the execution records takenFrom, the real director.
-	takes := inList(strs(mapOf(a["take"])["projects"]), astr(projectID)) && astr(projectID) != "" || q.app.people[dir] != nil && fullAccess(q.app.people[dir])
+	takes := inList(strs(mapOf(a["take"])["projects"]), astr(projectID)) && astr(projectID) != "" || q.peopleSnapshot().person(dir) != nil && fullAccess(q.peopleSnapshot().person(dir))
 	if selection == nil && dir != "" && a["holder"] != dir && !takes {
 		return nil, nil
 	}

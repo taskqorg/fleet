@@ -31,7 +31,7 @@ func settingsEmail(q *Request, email *string) (string, error) {
 		return "", fail(403, "Only the owner reads or sets another person's settings")
 	}
 	e := strings.ToLower(*email)
-	if q.app.people[e] == nil {
+	if q.peopleSnapshot().person(e) == nil {
 		return "", fail(400, "Unknown person "+*email)
 	}
 	return e, nil

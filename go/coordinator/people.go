@@ -19,6 +19,47 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// Published projections are immutable; callers receive copies, and one request keeps one projection.
+type peopleSnapshot struct{ byEmail map[string]*Person }
+
+func copyPerson(p *Person) *Person {
+	if p == nil {
+		return nil
+	}
+	c := *p
+	c.Roles = slices.Clone(p.Roles)
+	c.Grants = slices.Clone(p.Grants)
+	return &c
+}
+func (a *App) publishPeople(people map[string]*Person) {
+	snapshot := &peopleSnapshot{byEmail: make(map[string]*Person, len(people))}
+	for email, p := range people {
+		snapshot.byEmail[email] = copyPerson(p)
+	}
+	a.people.Store(snapshot)
+}
+func (a *App) peopleSnapshot() *peopleSnapshot {
+	if snapshot := a.people.Load(); snapshot != nil {
+		return snapshot
+	}
+	return &peopleSnapshot{}
+}
+func (q *Request) peopleSnapshot() *peopleSnapshot {
+	if q.peopleView == nil {
+		q.peopleView = q.app.peopleSnapshot()
+	}
+	return q.peopleView
+}
+func (s *peopleSnapshot) person(email string) *Person { return copyPerson(s.byEmail[email]) }
+func (s *peopleSnapshot) count() int                  { return len(s.byEmail) }
+func (s *peopleSnapshot) list() []*Person {
+	out := make([]*Person, 0, len(s.byEmail))
+	for _, p := range s.byEmail {
+		out = append(out, copyPerson(p))
+	}
+	return out
+}
+
 // fullAccess: nil (hosts, timers), the owner, or a person with grant {kind: "*"} (site-agents: owner-equivalent
 // visibility and operations, distinct actor; only people_set stays the owner's).
 func fullAccess(p *Person) bool {
@@ -52,7 +93,7 @@ func mayAccessProjectID(p *Person, projectID string) bool {
 }
 
 func ownerEmail(q *Request) string {
-	for _, p := range q.app.people {
+	for _, p := range q.peopleSnapshot().list() {
 		if p.Owner {
 			return p.Email
 		}
@@ -224,7 +265,7 @@ func init() {
 func init() {
 	gatedObjOp("people_list", true, shaped[contract.PeopleListRequest, contract.PeopleListReply](func(q *Request) (any, error) {
 		out := []*Person{}
-		for _, p := range q.app.people {
+		for _, p := range q.peopleSnapshot().list() {
 			if q.person == nil || fullAccess(q.person) || p.Email == q.person.Email {
 				c := *p
 				c.AccessCommonName = "" // the service token's client ID stays in the deployed file
@@ -307,5 +348,5 @@ func peopleSet(q *Request) (any, error) {
 		q.tx = tx
 		return put(q, "setting-change", doc{"id": newID(), "target": "people", "field": "people", "previous": prev, "value": next, "actor": actor(q, "operator"), "at": nowMs()})
 	})
-	return doc{"people": len(q.app.people)}, err
+	return doc{"people": q.app.peopleSnapshot().count()}, err
 }
