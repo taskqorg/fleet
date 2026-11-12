@@ -13,14 +13,15 @@ test('R1 executions_runners lists active and recent runs with their totals, leav
       ('r-old','agent_run','succeeded','h1','claude','m1',now()-interval '40 days',now()-interval '40 days'),
       ('r-pipe','pipeline_run','running',NULL,NULL,NULL,now(),NULL);
       INSERT INTO execution_totals(execution_id,tokens_input,tokens_output,wall_ms,cpu_ms) VALUES ('r-done',100,50,3600000,1200),('r-live',10,0,NULL,NULL);
-      INSERT INTO execution(id,kind,state,host_id,started_at,ended_at) VALUES ('r-call','tool_run','succeeded','h1',now()-interval '1 minute',now());
+      INSERT INTO execution(id,kind,state,host_id,parent_execution_id,started_at,ended_at) VALUES ('r-call','tool_run','succeeded','h1','github-read:1',now()-interval '1 minute',now()),
+       ('r-call2','tool_run','succeeded','h1','github-read:2',now()-interval '1 minute',now());
       INSERT INTO execution_totals(execution_id,wall_ms) VALUES ('r-call',40);`);
     const r = await fetch(c.base + '/api/ops/executions_runners', {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json'}, body: '{}'});
     const b: any = await r.json();
     assert.equal(r.status, 200, JSON.stringify(b));
     assert.deepEqual(b.runs.map((x: any) => x.id).sort(), ['calls:h1/conn:', 'r-done', 'r-live']);
     const calls = b.runs.find((x: any) => x.id === 'calls:h1/conn:');
-    assert.deepEqual([calls.calls, calls.failedCalls, calls.state, calls.wallMs], [1, 0, 'succeeded', 40], 'tool calls summed per caller, not a row each');
+    assert.deepEqual([calls.calls, calls.failedCalls, calls.state, calls.wallMs], [2, 0, 'succeeded', 40], 'a parent id that is no run is no caller; tool calls summed per caller, not a row each');
     const done = b.runs.find((x: any) => x.id === 'r-done');
     assert.deepEqual([done.hostId, done.tokens, done.wallMs, done.cpuMs], ['h1', 150, 3600000, 1200]);
     assert.ok(done.endedAt > done.startedAt);
