@@ -542,23 +542,81 @@ func init() {
 		publish(q)
 		return out, agentPromote(q)
 	}))
+	gatedObjOp("executions_dismiss", false, typedOp(func(q *Request, r *contract.ExecutionsDismissRequest) (contract.ExecutionsDismissReply, error) {
+		out := contract.ExecutionsDismissReply{Dismissed: []string{}, Skipped: []contract.ExecutionSkipped{}}
+		if q.person != nil && !fullAccess(q.person) {
+			return out, fail(403, "Only the owner dismisses execution problems")
+		}
+		if strings.TrimSpace(r.Reason) == "" || len([]rune(r.Reason)) > 4000 {
+			return out, fail(400, "Expected reason")
+		}
+		if len(r.Ids) == 0 || len(r.Ids) > 1000 {
+			return out, fail(400, "Expected 1 to 1000 ids")
+		}
+		for _, id := range r.Ids {
+			if !idOK(id) {
+				return out, fail(400, "Expected execution ids")
+			}
+		}
+		by := actor(q, "operator")
+		for _, id := range r.Ids {
+			row, err := first(q, "SELECT state::text AS state,project_id,problem,EXISTS (SELECT 1 FROM document d WHERE d.kind='problem-dismissal' AND d.id=execution.id) AS dismissed FROM execution WHERE id=$1 FOR UPDATE", id)
+			if err != nil {
+				return out, err
+			}
+			if row == nil || !terminalTyped[astr(row["state"])] || row["problem"] == nil || row["dismissed"] == true {
+				state := "unknown"
+				if row != nil {
+					state = astr(row["state"])
+				}
+				if row != nil && row["dismissed"] == true {
+					state = "dismissed"
+				}
+				out.Skipped = append(out.Skipped, contract.ExecutionSkipped{Id: id, State: state})
+				continue
+			}
+			// Its own record: engines put execution data wholesale, which would drop a field there.
+			d := doc{"id": id, "problem": row["problem"], "reason": r.Reason, "actor": by, "at": nowMs()}
+			if err := put(q, "problem-dismissal", d); err != nil {
+				return out, err
+			}
+			if err := put(q, "setting-change", doc{"id": newID(), "target": "execution:" + id, "projectId": row["project_id"], "field": "problem", "previous": row["problem"], "value": "dismissed", "reason": r.Reason, "actor": by, "at": d["at"]}); err != nil {
+				return out, err
+			}
+			out.Dismissed = append(out.Dismissed, id)
+		}
+		publish(q)
+		return out, nil
+	}))
 	onStart(func(ctx context.Context, a *App) {
 		every(ctx, "lost", lostAfter/12, func(ctx context.Context) error {
 			return runTx(ctx, a, nil, true, "", func(q *Request) error {
-				rs, err := queryRows(q, `SELECT id FROM execution WHERE `+execKinds+` AND state IN ('preparing','running','waiting')
-				AND (observation='unconfirmed' OR (coalesce((data->>'stopRequested')::boolean,false) AND EXISTS (SELECT 1 FROM document c
+				// lostCond: still lost, re-checked under the row lock so a receipt that just arrived wins.
+				const lostCond = `state IN ('preparing','running','waiting') AND (
+				 (kind IN ('agent_run','host_job') AND (observation='unconfirmed' OR (coalesce((data->>'stopRequested')::boolean,false) AND EXISTS (SELECT 1 FROM document c
 				  WHERE c.kind='command' AND c.data->>'executionId'=execution.id AND c.data->>'kind'='stop' AND c.data->>'status' IN ('pending','unknown'))))
-				AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $1)
-				FOR UPDATE OF execution SKIP LOCKED`, lostAfter.Seconds())
+				  AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $1))
+				 OR (kind='pipeline_step' AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $1)
+				  AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)))))`
+				rs, err := queryRows(q, "SELECT id FROM execution WHERE "+lostCond, lostAfter.Seconds())
 				if err != nil {
 					return err
 				}
+				n := 0
 				for _, x := range rs {
+					still, err := has(q, "SELECT 1 FROM execution WHERE id=$2 AND "+lostCond+" FOR UPDATE SKIP LOCKED", lostAfter.Seconds(), x["id"])
+					if err != nil {
+						return err
+					}
+					if !still {
+						continue
+					}
 					if _, err := executionAbandon(q, astr(x["id"]), "no host receipt for "+lostAfter.String()+" after the host lost track or the stop went unanswered", "fleet"); err != nil {
 						return err
 					}
+					n++
 				}
-				if len(rs) == 0 {
+				if n == 0 {
 					return nil
 				}
 				publish(q)
@@ -573,9 +631,30 @@ func init() {
 // the caller promotes queued work once after its batch. It returns the state of an
 // execution it leaves alone ("unknown": not an agent run or host job), "" when it ended it.
 func executionAbandon(q *Request, id, reason, by string) (string, error) {
-	row, err := first(q, "SELECT state::text FROM execution WHERE id=$1 AND "+execKinds+" FOR UPDATE", id)
+	row, err := first(q, "SELECT state::text AS state,kind::text AS kind,project_id FROM execution WHERE id=$1 FOR UPDATE", id)
 	if err != nil || row == nil {
 		return "unknown", err
+	}
+	if k := astr(row["kind"]); k != "agent_run" && k != "host_job" {
+		// Only a pipeline step whose run row is gone: no engine will put it again, so the typed transition holds.
+		// Other kinds belong to their engine (a run's steps, child agents, tool calls) and are left alone.
+		orphan, err := has(q, "SELECT 1 FROM execution s WHERE s.id=$1 AND s.kind='pipeline_step' AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(s.parent_execution_id,split_part(s.id,':step:',1)))", id)
+		if err != nil {
+			return "", err
+		}
+		if !orphan {
+			return "unknown", nil
+		}
+		if terminalTyped[astr(row["state"])] {
+			return astr(row["state"]), nil
+		}
+		if _, err := transition(q, id, "failed"); err != nil {
+			return "", err
+		}
+		if err := exec(q, `UPDATE execution SET problem='unknown:abandoned',observation='unconfirmed',data=data||jsonb_build_object('stopDetail','abandoned','error','abandoned: '||$2::text) WHERE id=$1`, id, reason); err != nil {
+			return "", err
+		}
+		return "", put(q, "setting-change", doc{"id": newID(), "target": "execution:" + id, "projectId": row["project_id"], "field": "state", "previous": row["state"], "value": "failed", "reason": reason, "actor": by, "at": nowMs()})
 	}
 	e, err := get(q, id, "execution")
 	if err != nil {

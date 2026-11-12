@@ -408,6 +408,15 @@ func executionsList(q *Request, f contract.ExecutionsListRequest) ([]contract.Ex
 	if f.Problem != nil && *f.Problem {
 		c = append(c, "problem IS NOT NULL")
 	}
+	if f.NeedsYou != nil && *f.NeedsYou {
+		// Tool calls are per-call gateway records (a dead key asks its own question). A step shows through its run
+		// when the run carries a problem. A binding problem holds only while the execution is open.
+		c = append(c, `problem IS NOT NULL AND problem NOT IN ('unknown:abandoned','cancelled') AND kind<>'tool_run'
+		AND NOT EXISTS (SELECT 1 FROM document x WHERE x.kind='problem-dismissal' AND x.id=execution.id)
+		AND NOT (state IN ('succeeded','failed','cancelled') AND (problem LIKE 'unregistered host %' OR problem LIKE 'unregistered account %' OR problem LIKE 'no registered environment of project %'))
+		AND NOT (kind='pipeline_step' AND EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.problem IS NOT NULL AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1))))
+		AND (project_id IS NULL OR EXISTS (SELECT 1 FROM definition d WHERE d.kind='project' AND d.id=execution.project_id))`)
+	}
 	rs, err := rowsOf(q, "SELECT "+executionCols+" FROM execution"+where(c)+" ORDER BY seq", p...)
 	if err != nil {
 		return nil, err
