@@ -274,3 +274,49 @@ func TestAttemptContextPartialCloneNeverFetches(t *testing.T) {
 		t.Fatal("offline source resolution launched SSH")
 	}
 }
+
+// R1; risk: delivering a whole source tree or dropping one declared core file changes the attempt contract.
+func TestAttemptContextDeclaredTenCoreAndLinkedSelection(t *testing.T) {
+	p, root, _ := contextFixture(t)
+	paths := []string{"engineering/principles.md", "engineering/spec-first.md", "engineering/ponytail.md", "engineering/agent-workflow.md", "engineering/use-cases.md", "engineering/verification.md", "engineering/security.md", "caveman/rules/core.md", "caveman/rules/documentation.md", "caveman/rules/changes.md"}
+	core := []any{}
+	for _, path := range paths {
+		body := []byte("selected core: " + path + "\n")
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, path), body, 0600); err != nil {
+			t.Fatal(err)
+		}
+		core = append(core, M{"path": path, "sha256": sha(body)})
+	}
+	os.WriteFile(filepath.Join(root, "unselected.md"), []byte("not selected"), 0600)
+	for _, args := range [][]string{{"add", "."}, {"commit", "-qm", "ten declared core files"}} {
+		if b, e := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); e != nil {
+			t.Fatal(e, string(b))
+		}
+	}
+	pin, e := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output()
+	if e != nil {
+		t.Fatal(e)
+	}
+	source := jObj(jArr(p, "contextSources")[0])
+	source["revision"] = strings.TrimSpace(string(pin))
+	source["core"] = core
+	input := t.TempDir()
+	got, e := resolveAttemptContext(p, "h", []string{root}, nil, input)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(got.Sources) != 11 || strings.Contains(got.Core, "linked-area") || strings.Contains(got.Core, "not selected") {
+		t.Fatal(got)
+	}
+	for _, path := range paths {
+		if strings.Count(got.Core, "selected core: "+path+"\n") != 1 {
+			t.Fatal("core not delivered exactly once", path)
+		}
+	}
+	if exists(filepath.Join(input, "context-sources/specq", source["revision"].(string), "unselected.md")) {
+		t.Fatal("unselected source staged")
+	}
+}
