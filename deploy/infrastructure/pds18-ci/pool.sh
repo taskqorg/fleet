@@ -4,7 +4,8 @@
 # A missing slot needs a registration token: feed one on stdin (gh api -X POST orgs/taskqorg/actions/runners/registration-token -q .token).
 # Each slot is its own user, so one job's pkill, /dev/shm cleanup, HOME and ports-by-socket stay its own; the warm caches
 # are one group-writable tree all slots share. Toolchains stay per slot (actions/tool-cache replaces a version's
-# directory without a lock). Only new slots start; restart an existing idle slot's service to apply a changed .env.
+# directory without a lock), and so does the pnpm store (pnpm hardlinks store files into node_modules and then chmods
+# the bins, which only the file's owner may). Only new slots start; restart an existing idle slot's service to apply a changed .env.
 set -euo pipefail
 slots=${1:?slots}
 cache=/srv/ci-cache
@@ -13,7 +14,7 @@ version=2.338.2 sha=baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d555839014
 getent group cipool >/dev/null || groupadd cipool
 # The hosted image's Git (git-core PPA): Ubuntu's 2.43 lacks --no-lazy-fetch, which the executor passes.
 git -C / --no-lazy-fetch version >/dev/null 2>&1 || { add-apt-repository -y ppa:git-core/ppa && NEEDRESTART_MODE=l apt-get install -y -q git; }
-install -d -o root -g cipool -m 2775 "$cache" "$cache"/{go-build,gomod,pnpm-store,ms-playwright}
+install -d -o root -g cipool -m 2775 "$cache" "$cache"/{go-build,gomod,ms-playwright}
 # Group write through a default ACL, not the runners' umask: jobs keep umask 022, since the executor's tests (and its
 # hardening) refuse group-writable files and directories of their own.
 command -v setfacl >/dev/null || NEEDRESTART_MODE=l apt-get install -y -q acl
@@ -46,8 +47,6 @@ for n in $(seq 1 "$slots"); do
 LANG=C.UTF-8
 GOCACHE=$cache/go-build
 GOMODCACHE=$cache/gomod
-npm_config_store_dir=$cache/pnpm-store
-pnpm_config_store_dir=$cache/pnpm-store
 PLAYWRIGHT_BROWSERS_PATH=$cache/ms-playwright
 ENV
   chown "$user:$user" "$dir/.env"

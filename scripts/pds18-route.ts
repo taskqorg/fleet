@@ -33,9 +33,11 @@ export const FAMILIES = {
   release: [{part: 'release'}],
 } as const;
 type Family = keyof typeof FAMILIES;
-// By hosted duration (2026-11-12 merge queue runs): go outside 185 s, release-build 125 s, go unit 85 s, browser shards
-// about 60 s, go vet 57-90 s; app (bundle and UI unit tests, no Go since #407) is the lightest.
-const ORDER: [Family, number][] = [['go', 1], ['release', 0], ['go', 0], ['browser', 0], ['browser', 1], ['go', 2], ['app', 0]];
+// By hosted duration (2026-11-12 merge queue runs): go outside 185 s, release-build 125 s, browser shards about 60 s,
+// go vet 57-90 s; app (bundle and UI unit tests, no Go since #407) is the lightest. Go unit stays hosted: the executor's
+// MCP owned-dependency tests fail on the guest and pass on the hosted image (TestMCPOwnedDependencyNewSession,
+// TestMCPOwnedDependencyJournalRecovery: "owned dependency did not start"); route it once they pass there.
+const ORDER: [Family, number][] = [['go', 1], ['release', 0], ['browser', 0], ['browser', 1], ['go', 2], ['app', 0]];
 export type Job = {status: string, labels: string[], created_at: string, started_at?: string | null};
 
 export function plan(o: {trusted: boolean, now: number, beat: string | null, jobs: Job[], run: string[]}) {
@@ -111,8 +113,8 @@ if (process.argv.includes('--self-check')) {
   const job = (status: string, s = 10): Job => ({status, labels: ['self-hosted', 'fleet-pds18'], created_at: ago(s)});
   const p = (o: Partial<Parameters<typeof plan>[0]>) => plan({trusted: true, now, beat: ago(60), jobs: [], run: ['go', 'app', 'browser', 'release'], ...o});
   // Idle pool: the four slowest entries.
-  assert.deepEqual(p({}).out, {go_hosted: '[{"part":"vet","clickhouse":false}]', go_pds18: '[{"part":"unit","clickhouse":true},{"part":"outside-0","clickhouse":true}]',
-    app_hosted: '[{"part":"app"}]', app_pds18: '[]', browser_hosted: '[{"shard":1}]', browser_pds18: '[{"shard":0}]', release_hosted: '[]', release_pds18: '[{"part":"release"}]'});
+  assert.deepEqual(p({}).out, {go_hosted: '[{"part":"unit","clickhouse":true},{"part":"vet","clickhouse":false}]', go_pds18: '[{"part":"outside-0","clickhouse":true}]',
+    app_hosted: '[{"part":"app"}]', app_pds18: '[]', browser_hosted: '[]', browser_pds18: '[{"shard":0},{"shard":1}]', release_hosted: '[]', release_pds18: '[{"part":"release"}]'});
   assert.equal(p({jobs: [job('in_progress'), job('queued')]}).free, 2);
   assert.equal(p({jobs: [job('completed'), {...job('queued'), labels: ['ubuntu-24.04']}]}).free, 4);
   // Down, stuck, untrusted: all hosted.
