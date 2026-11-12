@@ -74,6 +74,7 @@ jobs:
           name: test-selection
           path: ${{ runner.temp }}/test-selection.json
           retention-days: 7
+          overwrite: true
           if-no-files-found: error
   # Keep the required app status as the exact-candidate qualification boundary.
   app:
@@ -105,6 +106,7 @@ jobs:
           name: test-qualification
           path: ${{ runner.temp }}/qualification/
           retention-days: 7
+          overwrite: true
           if-no-files-found: error
   go:
     needs: app
