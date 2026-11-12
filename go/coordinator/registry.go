@@ -245,7 +245,9 @@ func recsOf(vs []doc) []map[string]json.RawMessage {
 }
 func onStart(fn func(ctx context.Context, a *App)) { starters = append(starters, fn) }
 
+// runningApp is set before any starter runs: a starter's ticker goroutine may read it while later starters run.
 func startAll(ctx context.Context, a *App) {
+	runningApp = a
 	for _, fn := range starters {
 		fn(ctx, a)
 	}

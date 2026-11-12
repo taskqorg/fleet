@@ -671,7 +671,6 @@ func init() {
 	})))
 
 	onStart(func(ctx context.Context, a *App) {
-		runningApp = a
 		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 			if err := revokeSteps(q); err != nil {
 				return err
