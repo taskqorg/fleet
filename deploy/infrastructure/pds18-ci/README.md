@@ -22,6 +22,10 @@ Use the supported GitHub organization runner registration endpoint, only after t
 
 As guest user `ci`, configure URL `https://github.com/taskqorg`, group `fleet-pds18-trusted-main`, name `fleet-pds18-kvm-1`, custom label `fleet-pds18`, work directory `_work`. Feed the short-lived registration token over stdin into `ACTIONS_RUNNER_INPUT_TOKEN` for unattended configuration; no token in argv, repo, seed image, shell history or retained guest provisioning. Do not install a broad GitHub administrative credential. The runner's own scoped registration credentials are necessary runtime state. Install/start the runner service as `ci` using official `svc.sh` inside the guest. Read back exactly one runner, its group/labels/online state. Do not create a second registration on uncertain completion.
 
+## Guest state the release job keeps
+
+`~/fleet-releases/v/<version>` under the runner user holds the last 5 releases' `fleet-coordinator`, `config/` and `release.json` for the migration check ([delivery pipeline, section 5](../../../docs/designs/fleet-delivery-pipeline.md#5-compatibility-across-skipped-versions)). The release job fills and prunes it; deleting it is safe, the next run downloads again.
+
 ## Qualification and rollback
 
 First validate release build/migration actual runner name/ID/job allocation, then compare queue time plus execution against earlier runs. Unrelated full main CI/reports must not occupy this sequential release runner; exact merge-candidate qualification and the existing main fallback still authorize release through the unchanged manifest consumer. Retain test-policy qualification artifacts, count=1 and real database/race/network tests. Check site health and all active hosts after ordinary release delivery. A single pair is indicative; no invoice or speed claim from API zeros or unavailable fields.

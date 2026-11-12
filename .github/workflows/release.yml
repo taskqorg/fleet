@@ -207,15 +207,14 @@ jobs:
             t=$SECONDS; until kill -0 $pid 2>/dev/null && curl -fsS -m 3 -o "$RUNNER_TEMP/health" http://127.0.0.1:9470/api/health && grep -q "\"version\":\"$v\"" "$RUNNER_TEMP/health"; do
               kill -0 $pid 2>/dev/null || { echo "::error::$dir coordinator exited"; exit 1; }
               [ $((SECONDS - t)) -lt 120 ] || { echo "::error::$dir coordinator not healthy after 120 s"; exit 1; }; sleep 1; done
-            echo; kill $pid || { echo "::error::$dir coordinator exited after health"; exit 1; }; wait $pid || true; pid=
+            echo; kill -0 $pid || { echo "::error::$dir coordinator exited after health"; exit 1; }; stop $pid || true; pid=
           done
           # Seed the cache with this release (GitHub's asset digest is the sha256 of the uploaded bytes), so the next run
-          # downloads nothing; an entry for a version that never publishes is pruned by the sweep above.
-          file=fleet-$VERSION-linux-amd64.tgz
-          rm -rf "$cache/$VERSION.tmp"; mkdir "$cache/$VERSION.tmp"
-          tar -xzf "out/$file" -C "$cache/$VERSION.tmp" $members
-          echo "sha256:$(awk -v f="$file" '$2 == f { print $1 }' out/SHA256SUMS) $members" > "$cache/$VERSION.tmp/.digest"
-          rm -rf "${cache:?}/$VERSION"; mv "$cache/$VERSION.tmp" "$cache/$VERSION"
+          # downloads nothing; an entry for a version that never publishes is pruned by the sweep above. Best effort.
+          file=fleet-$VERSION-linux-amd64.tgz sum=$(awk -v f="$file" '$2 == f { print $1 }' out/SHA256SUMS)
+          [ -n "$sum" ] && rm -rf "$cache/$VERSION.tmp" && mkdir "$cache/$VERSION.tmp" \
+            && tar -xzf "out/$file" -C "$cache/$VERSION.tmp" $members && echo "sha256:$sum $members" > "$cache/$VERSION.tmp/.digest" \
+            && rm -rf "${cache:?}/$VERSION" && mv "$cache/$VERSION.tmp" "$cache/$VERSION" || echo "::warning::cache seed of $VERSION skipped"
       - uses: actions/upload-artifact@v4
         with:
           name: release
