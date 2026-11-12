@@ -85,7 +85,7 @@ jobs:
           if-no-files-found: error
   # Keep the required app status as the exact-candidate qualification boundary.
   app:
-    needs: [selection, thin, go-tests, app-tests, browser-tests]
+    needs: [selection, thin, go-tests, app-tests, browser-tests, release-build]
     if: always()
     runs-on: ubuntu-24.04
     permissions:
@@ -107,7 +107,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RESULTS: ${{ toJSON(needs) }}
+          RELEASE_BUILD: ${{ needs.release-build.result }}
         run: |
+          # A merge queue commit merges only when its release builds, selftests and passes the migration check.
+          [ "$GITHUB_EVENT_NAME" != merge_group ] || [ "$RELEASE_BUILD" = success ] || { echo "::error::release-build: $RELEASE_BUILD"; exit 1; }
           node -e 'const fs=require("node:fs"),r=JSON.parse(process.env.RESULTS);for(const f of ["app","go","browser"]){r[f]=r[f+"-tests"];delete r[f+"-tests"];}fs.writeFileSync(process.env.RUNNER_TEMP+"/qualification/test-results.json",JSON.stringify(r))'
           node scripts/test-selection.ts --verify "$RUNNER_TEMP/qualification/test-selection.json" "$RUNNER_TEMP/qualification/test-results.json"
       - uses: actions/upload-artifact@v4
@@ -259,8 +262,7 @@ jobs:
           PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" GORACE=halt_on_error=1 tests/go/run.sh "${PART#outside-}" "$OUTSIDE_SHARDS"
         env:
           PART: ${{ matrix.part }}
-  # App and release: contract lint, test-rule report, typecheck and bundle, UI unit tests, then the release tarballs of
-  # every target from deploy/build-release.sh, the same script and flags the release workflow uses.
+  # App: bundle and UI unit tests. The release tarballs are release-build's.
   app-tests:
     needs: selection
     if: contains(fromJSON(needs.selection.outputs.executed), 'app')
@@ -276,31 +278,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - uses: ./.github/actions/go
-      # The release binaries' build cache: a new entry when Go sources change, the newest entry restored otherwise.
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-release-${{ hashFiles('go/**') }}
-          restore-keys: go-release-
       - run: pnpm install --frozen-lockfile
       - run: pnpm run app:build
       - run: node --test tests/ui/*.test.ts
-      - name: Pack the release
-        run: |
-          mkdir release && deploy/build-release.sh HEAD release "0.0.0-${GITHUB_SHA::12}" "" linux/amd64 darwin/arm64
-          mkdir t && tar -xzf release/fleet-*-linux-amd64.tgz -C t
-          for b in t/fleet-*; do go version -m "$b" | grep -q 'CGO_ENABLED=0' || { echo "$b: cgo enabled"; exit 1; }; done
-          deploy/selftest-release.sh t
-      - uses: actions/upload-artifact@v4
-        with:
-          name: fleet-release-${{ github.sha }}
-          path: release/
-          retention-days: 1
-          overwrite: true
-          if-no-files-found: error
   # Browser: per shard, the UI bundle and the coordinator, Chromium from a cache keyed on the Playwright version, then
   # that shard's checks: filter path (fleet-view-urls-and-list-path.md §4), Conversations (fleet-conversations.md
   # "Browser check"), Lab-create. The design book and report run in reports and warn only (D6, D14).
@@ -397,11 +377,15 @@ jobs:
   # Speculative release build (docs/designs/fleet-delivery-pipeline.md#4-automatic-release): the merge queue commit is
   # the commit main moves to, and its version is a function of it (deploy/release-version.sh), so this run builds the
   # release tarballs, selftests them and runs the migration check against the current window, in parallel with the
-  # tests. The release workflow then only verifies, signs and publishes these bytes. Not a required check: a failure
-  # here only sends that release back to building itself. Hosted: the PDS18 runner admits only refs/heads/main jobs.
+  # tests. The release workflow then only verifies, signs and publishes these bytes. The required app check fails with
+  # it, so main never holds a commit whose release does not build. Hosted: the PDS18 runner admits only refs/heads/main jobs.
+  # No macOS job: the darwin binaries are CGO_ENABLED=0 cross-builds, and each Mac's fleet-update selftests the ones it
+  # runs before switching (refused: selftest), so a macOS runner only adds its queue to every release.
   release-build:
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
+    # On the queue's critical path (app waits for it): a hung check must not hold the queue.
+    timeout-minutes: 20
     permissions:
       contents: read
     env:
@@ -417,10 +401,15 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/go
+      # The release build cache of main (cache-warm saves it); this ref's own save would reach no other run.
+      - uses: actions/cache/restore@v4
         with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-release-${{ hashFiles('go/**') }}
+          restore-keys: go-release-
       - name: Version, window, build
         run: |
           set -o pipefail
@@ -435,10 +424,9 @@ jobs:
           echo "built $version, checked with: ${recent:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
           # The gate takes the artifact only with these SHA256SUMS: no other job can write this job's annotations.
           echo "::notice title=release SHA256SUMS::$(sha256sum < out/SHA256SUMS | cut -d' ' -f1)"
-      - name: Selftest linux binaries
+      - name: Selftest linux binaries, darwin binaries static
         run: |
-          mkdir new && tar -xzf out/fleet-*-linux-amd64.tgz -C new
-          deploy/selftest-release.sh new
+          deploy/verify-release.sh out new
       - name: New coordinator migrates, each recent one still serves
         if: env.RECENT != ''
         run: deploy/migrate-check.sh new out
@@ -449,17 +437,6 @@ jobs:
           retention-days: 7
           overwrite: true
           if-no-files-found: error
-  release-macos:
-    needs: release-build
-    runs-on: macos-latest
-    permissions: {}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: release
-      - run: |
-          mkdir t && tar -xzf fleet-*-darwin-arm64.tgz -C t
-          t/deploy/selftest-release.sh t
   # Caches saved on pull request and merge queue refs are invisible to other merge queue runs; only main's are shared,
   # and main's push run skips the heavy families. This job saves every part's cache from main when its key is new,
   # so each merge queue run starts warm. One job, parts in sequence: no runner slot of a queue run.
@@ -542,7 +519,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - uses: ./.github/actions/go
-      # Shares app-tests' release build cache (restore only; app-tests saves it).
+      # The release build cache of main (cache-warm saves it), restore only.
       - uses: actions/cache/restore@v4
         with:
           path: |

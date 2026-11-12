@@ -4,9 +4,9 @@ How executor files are built in CI, published and fetched by a host. Language an
 
 ## Build
 
-- The CI job `app` packs the release tarballs for linux/amd64 and darwin/arm64 with `deploy/build-release.sh`, the script the release workflow uses (`CGO_ENABLED=0`, `-trimpath`), into the workflow artifact `fleet-release-<commit sha>` with `SHA256SUMS` ([stack](fleet-go-code.md#executor-and-gateway)). The Linux binaries are static, so there is no glibc requirement.
-- The job runs on pull requests too, so a downloaded Mac binary can be checked before merge. A host uses only a successful run of a push to `main`.
-- Releases: the `app` job's tarballs are for pull request trials (version `0.0.0-<sha>`). A host runs a release from GitHub Releases, published by `.github/workflows/release.yml` on a `v*` tag; each tarball carries the executor, the gateway, the coordinator and `fleet-update` ([self-update](fleet-self-update.md)).
+- The merge queue job `release-build` packs the release tarballs for linux/amd64 and darwin/arm64 with `deploy/build-release.sh` (`CGO_ENABLED=0`, `-trimpath`, each binary checked static) into the workflow artifact `release` with `SHA256SUMS` ([delivery pipeline, section 4](fleet-delivery-pipeline.md#4-automatic-release)); those are the bytes the release signs. The Linux binaries are static, so there is no glibc requirement.
+- A trial before release downloads that artifact from the merge queue run; pull requests build no tarballs.
+- Releases: A host runs a release from GitHub Releases, published by `.github/workflows/release.yml` on a `v*` tag; each tarball carries the executor, the gateway, the coordinator and `fleet-update` ([self-update](fleet-self-update.md)).
 - PDS18 is amd64 ([PDS Codex environment](../pds-codex-environment.md)); the Mac is arm64. WSL uses the Linux file. Windows without WSL is not a target; a Windows executor is not built.
 
 ## Publication and trust
