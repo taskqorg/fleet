@@ -128,8 +128,10 @@ jobs:
         run: |
           [ "$RESULT" = success ] || exit 1
           echo 'Qualified by app; test-qualification records executed and omitted families.'
-  # Go (docs/designs/fleet-go-code.md): generated-code drift, vet, unit tests with -race, the executor's MCP adapter tests,
-  # the outside tests against a -race coordinator on the runner's PostgreSQL, a Windows compile of the coordinator.
+  # Go (docs/designs/fleet-go-code.md), split into parallel parts so the family is never the critical path:
+  # unit: generated-code drift, vet, a Windows compile of the coordinator, unit tests with -race;
+  # mcp: the executor's MCP adapter tests; outside-N: the outside tests against a -race coordinator on the runner's
+  # PostgreSQL, sharded by file (tests/go/run.sh). The go wrapper sees the matrix as one result.
   # Node only as the test runner: the outside tests import node: builtins, so no pnpm install here.
   go-tests:
     needs: selection
@@ -137,6 +139,10 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [unit, mcp, outside-0, outside-1, outside-2, outside-3]
     env:
       GOFLAGS: -mod=readonly
       # The span store for go/obs and tests/go/telemetry.test.ts live tests (docs/designs/fleet-telemetry.md); same LTS as deploy/infrastructure/fleet-clickhouse.container.
@@ -160,7 +166,7 @@ jobs:
         with:
           go-version-file: go/go.mod
           # Keep race/Windows-vet build artifacts separate from faster app/browser archive builders.
-          # setup-go hashes both inputs; dependency invalidation still includes go.sum.
+          # setup-go hashes both inputs; dependency invalidation still includes go.sum. All parts share one key.
           cache-dependency-path: |
             go/go.sum
             .github/workflows/ci.yml
@@ -168,21 +174,27 @@ jobs:
         with:
           node-version: 22
       # Generated code is committed (go/contract): regenerating must not change it.
-      - run: cd go && go generate ./... && { test -z "$(git status --porcelain)" || { git status --porcelain; git diff; exit 1; }; }
-      - run: cd go && go vet ./... && GOOS=windows GOARCH=amd64 go vet ./coordinator
+      - if: matrix.part == 'unit'
+        run: cd go && go generate ./... && { test -z "$(git status --porcelain)" || { git status --porcelain; git diff; exit 1; }; }
+      - if: matrix.part == 'unit'
+        run: cd go && go vet ./... && GOOS=windows GOARCH=amd64 go vet ./coordinator
       # -race needs cgo on Linux; release binaries stay CGO_ENABLED=0 (deploy/build-release.sh, app job).
-      - run: cd go && CGO_ENABLED=1 go test -race -count=1 ./...
-      # The outside tests run a -race coordinator; GORACE halts it at the first race, so the test of that moment fails.
-      - name: Build the test binaries
-        run: |
-          cd go
-          CGO_ENABLED=1 go build -race -o bin/fleet-coordinator ./coordinator
-          CGO_ENABLED=0 go build -o bin/fleet-executor ./executor
-      # /api/health reports vcs.modified as dirty; a build from the CI checkout must be clean (untracked files count).
-      - run: go version -m go/bin/fleet-coordinator | grep -q 'vcs.modified=false' || { git status --porcelain; exit 1; }
+      - if: matrix.part == 'unit'
+        run: cd go && CGO_ENABLED=1 go test -race -count=1 ./...
       # The executor's MCP adapter from Node against the Go binary: replayed stdio exchanges and artifact path confinement.
-      - run: FLEET_EXECUTOR_BIN="$PWD/go/bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts
-      - run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" GORACE=halt_on_error=1 tests/go/run.sh
+      - if: matrix.part == 'mcp'
+        run: |
+          cd go && CGO_ENABLED=0 go build -o bin/fleet-executor ./executor && cd ..
+          FLEET_EXECUTOR_BIN="$PWD/go/bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts
+      # The outside tests run a -race coordinator; GORACE halts it at the first race, so the test of that moment fails.
+      # /api/health reports vcs.modified as dirty; a build from the CI checkout must be clean (untracked files count).
+      - if: startsWith(matrix.part, 'outside-')
+        run: |
+          cd go && CGO_ENABLED=1 go build -race -o bin/fleet-coordinator ./coordinator && cd ..
+          go version -m go/bin/fleet-coordinator | grep -q 'vcs.modified=false' || { git status --porcelain; exit 1; }
+          PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" GORACE=halt_on_error=1 tests/go/run.sh "${PART#outside-}" 4
+        env:
+          PART: ${{ matrix.part }}
   # App and release: contract lint, test-rule report, typecheck and bundle, UI unit tests, then the release tarballs of
   # every target from deploy/build-release.sh, the same script and flags the release workflow uses.
   app-tests:

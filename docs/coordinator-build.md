@@ -48,7 +48,7 @@ The schema is `go/coordinator/schema.sql` (embedded in the binary); [fleet-data-
 
 ## Tests
 
-`tests/go/run.sh` builds nothing; build first, then it runs `tests/trial` and `tests/go` against `go/bin/fleet-coordinator` on a fresh local Postgres database per file. Go unit tests: `cd go && go test ./...`.
+`tests/go/run.sh [index total]` builds nothing (CI runs it in four file shards); build first, then it runs `tests/trial` and `tests/go` against `go/bin/fleet-coordinator` on a fresh local Postgres database per file. Go unit tests: `cd go && go test ./...`.
 
 ## Deployment
 
