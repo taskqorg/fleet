@@ -31,6 +31,16 @@ var (
 // so a slow screen (Runners reads jobs run by run) does not hold up Delivery's pass.
 func githubOnce(key string, ttl time.Duration, fetch func() ([]byte, error), keep func(error) bool) ([]byte, error) {
 	githubMu.Lock()
+	if len(githubCache) > 2000 {
+		// ponytail: run_jobs adds a key per run; drop entries past every ttl (5 min) with their locks. A lock dropped
+		// while held lets one concurrent read through twice, nothing worse.
+		for k, c := range githubCache {
+			if time.Since(c.at) > 10*time.Minute {
+				delete(githubCache, k)
+				delete(githubLocks, k)
+			}
+		}
+	}
 	l := githubLocks[key]
 	if l == nil {
 		l = &sync.Mutex{}
@@ -63,28 +73,28 @@ type githubCached struct {
 // githubConnectionOf: the connection holding the key for a repository owner, its row and whether the gateway can serve
 // it (configured, intake open, an active key). A fine-grained token has one resource owner, so another owner's
 // repositories use connection github-<owner> (lower case) when it exists, else github.
+// An owner connection that cannot serve (no active key yet, intake closed) falls back to github.
 func githubConnectionOf(q *Request, owner string) (name string, c doc, keyed bool, err error) {
-	name = "github"
+	serves := func(n string) (doc, bool, error) {
+		c, err := maybe(q, "connection:"+n, "api-connection")
+		if err != nil || c == nil || gatewayURL() == "" || c["intake"] != "all" {
+			return c, false, err
+		}
+		ks, err := connKeys(q, n)
+		for _, k := range ks {
+			if k["state"] == "active" {
+				return c, true, err
+			}
+		}
+		return c, false, err
+	}
 	if n := "github-" + strings.ToLower(owner); connName.MatchString(n) {
-		if c, err = maybe(q, "connection:"+n, "api-connection"); err != nil {
-			return
-		} else if c != nil {
-			name = n
+		if c, keyed, err = serves(n); err != nil || keyed {
+			return n, c, keyed, err
 		}
 	}
-	if c == nil {
-		if c, err = maybe(q, "connection:github", "api-connection"); err != nil || c == nil {
-			return
-		}
-	}
-	if gatewayURL() == "" || c["intake"] != "all" {
-		return
-	}
-	ks, err := connKeys(q, name)
-	for _, k := range ks {
-		keyed = keyed || k["state"] == "active"
-	}
-	return
+	c, keyed, err = serves("github")
+	return "github", c, keyed, err
 }
 
 // githubRead: the reply body of tool with args (the path fields, e.g. owner and repo) for project's access check. A
@@ -95,7 +105,7 @@ func githubRead(ctx context.Context, a *App, project, tool string, args map[stri
 		connection, _, keyed, err = githubConnectionOf(q, args["owner"])
 		return
 	}); err != nil {
-		log.Printf("github connection %s: %v", args["owner"], err)
+		return nil, false, fmt.Errorf("github connection of %s: %w", args["owner"], err)
 	}
 	path := astr(mapOf(providerTools("github")[tool])["path"])
 	if path == "" {
@@ -122,8 +132,9 @@ func githubRead(ctx context.Context, a *App, project, tool string, args map[stri
 		cacheKey = "key " + connection + " " + project + " " + path
 	}
 	public := func() ([]byte, error) {
-		// A failed public read is kept too: a rate-limited address must not ask again before the cache expires.
-		return githubOnce("public "+path, 5*time.Minute, func() ([]byte, error) { return githubPublic(ctx, path) }, func(error) bool { return true })
+		// A failed public read is kept too (a rate-limited address must not ask again before the cache expires), but
+		// not a caller that left: its cancelled read says nothing about GitHub.
+		return githubOnce("public "+path, 5*time.Minute, func() ([]byte, error) { return githubPublic(ctx, path) }, func(error) bool { return ctx.Err() == nil })
 	}
 	if !keyed {
 		body, err = public()

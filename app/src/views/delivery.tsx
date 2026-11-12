@@ -19,8 +19,8 @@ const STAGES: { id: string; label: string; icon: IconName; alert?: number }[] = 
   { id: 'merged', label: 'Merged 24h', icon: 'check-check' },
 ];
 const SHOWN = 6;
-// The stacked chart's layers, bottom up in pipeline order: the waiting stages in amber, CI in light grey, the tail in
-// green; the second stage of a pair is striped (tokens.md: four data hues, more series take a pattern).
+// The stacked chart's layers, bottom up in pipeline order: PR stages in the two greys, the merge queue in amber, the
+// release tail in green; the queue's and the tail's second stage striped (tokens.md: four data hues, never new ones).
 const LAYERS: Record<string, Pick<ChartSeries, 'tone' | 'pattern'>> = {
   pr_open: { tone: 'd2' }, pr_ci: { tone: 'd1' }, mq_wait: { tone: 'd4' }, mq_ci: { tone: 'd4', pattern: true },
   releasing: { tone: 'd3' }, installing: { tone: 'd3', pattern: true },

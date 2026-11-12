@@ -6,7 +6,7 @@
 
 **Anatomy.** A plot frame (`line` border, `bg` fill, `radius-md`, four control heights tall). Each series is a filled area in `data-1..4`: recorded at 55 % opacity, projected at 25 %. A `step` series holds its value until the next point; a reset is two points at one time, so the projected area steps up there. Day ticks are 1 px `line`; the now line is 1 px `accent`. The top-left label is the scale maximum; the axis under the plot shows the range ends with `stamp`.
 
-**Stacked.** With `stacked`, the series are layers on top of each other, the first at the bottom, drawn opaque on one scale (the maximum is the largest total); a legend under the axis names each layer with its last value. More than four layers reuse `data-1..4` with stripes (`pattern`), never new hues ([tokens](../tokens.md)). Used where the question is which part of a total grows.
+**Stacked.** With `stacked`, the series are layers on top of each other, the first at the bottom, drawn opaque on one scale (the maximum is the largest total); a legend under the axis names each layer with its last value. Layers past the four data hues, or a second layer of one hue, take stripes (`pattern`), never new hues ([tokens](../tokens.md)). Used where the question is which part of a total grows.
 
 **Drawing.** CSS only: each area is a block clipped by a `clip-path` polygon in percent of the plot. No inline SVG (OR-8), no chart library.
 
