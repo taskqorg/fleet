@@ -6,6 +6,125 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+// DeliveryItem: One pull request in its current delivery stage; since: when it entered it (RFC 3339). installed and merged are the last 24 hours only.
+type DeliveryItem struct {
+	Number    int64         `json:"number"`
+	ProjectId string        `json:"projectId"`
+	Release   *string       `json:"release,omitempty"`
+	Repo      string        `json:"repo"`
+	Since     string        `json:"since"`
+	Stage     DeliveryStage `json:"stage"`
+	Title     string        `json:"title"`
+	Url       string        `json:"url"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryItem) Validate() error {
+	if err := Check(&v.Stage, "stage"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// DeliverySample: Pull requests per stage at one read, the last 24 hours.
+type DeliverySample struct {
+	At        string           `json:"at"`
+	Counts    map[string]int64 `json:"counts"`
+	ProjectId string           `json:"projectId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliverySample) Validate() error {
+	if v.Counts == nil {
+		return Missing("counts")
+	}
+	return nil
+}
+
+type DeliverySource string
+
+const (
+	DeliverySourceKey    DeliverySource = "key"
+	DeliverySourcePublic DeliverySource = "public"
+	DeliverySourceNone   DeliverySource = "none"
+)
+
+// DeliverySourceValues lists every DeliverySource in schema order.
+var DeliverySourceValues = []DeliverySource{DeliverySourceKey, DeliverySourcePublic, DeliverySourceNone}
+
+// Valid: v is one of the schema's values.
+func (v DeliverySource) Valid() bool {
+	for _, x := range DeliverySourceValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type DeliveryStage string
+
+const (
+	DeliveryStagePrOpen     DeliveryStage = "pr_open"
+	DeliveryStagePrCi       DeliveryStage = "pr_ci"
+	DeliveryStageMqWait     DeliveryStage = "mq_wait"
+	DeliveryStageMqCi       DeliveryStage = "mq_ci"
+	DeliveryStageReleasing  DeliveryStage = "releasing"
+	DeliveryStageInstalling DeliveryStage = "installing"
+	DeliveryStageInstalled  DeliveryStage = "installed"
+	DeliveryStageMerged     DeliveryStage = "merged"
+)
+
+// DeliveryStageValues lists every DeliveryStage in schema order.
+var DeliveryStageValues = []DeliveryStage{DeliveryStagePrOpen, DeliveryStagePrCi, DeliveryStageMqWait, DeliveryStageMqCi, DeliveryStageReleasing, DeliveryStageInstalling, DeliveryStageInstalled, DeliveryStageMerged}
+
+// Valid: v is one of the schema's values.
+func (v DeliveryStage) Valid() bool {
+	for _, x := range DeliveryStageValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// DeliveryStatusReply: The last GitHub read (go/coordinator/delivery.go). source key: through the github connection; public: unauthenticated REST, the fleet repository only; none: no read yet. landing: pull requests with auto-merge on or in the merge queue, one waiting worker each.
+type DeliveryStatusReply struct {
+	Error       *string          `json:"error,omitempty"`
+	Items       []DeliveryItem   `json:"items"`
+	Landing     int64            `json:"landing"`
+	RefreshedAt *string          `json:"refreshedAt,omitempty"`
+	Samples     []DeliverySample `json:"samples"`
+	Source      DeliverySource   `json:"source"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryStatusReply) Validate() error {
+	if v.Items == nil {
+		return Missing("items")
+	}
+	for i := range v.Items {
+		if err := Check(&v.Items[i], "items"); err != nil {
+			return err
+		}
+	}
+	if v.Samples == nil {
+		return Missing("samples")
+	}
+	for i := range v.Samples {
+		if err := Check(&v.Samples[i], "samples"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Source, "source"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// DeliveryStatusRequest: All projects the caller may see. A project focus later adds projectId here.
+type DeliveryStatusRequest = map[string]json.RawMessage
+
 // DiffFile: state added, removed, unchanged or modified; textChange only for small html and css files.
 type DiffFile struct {
 	Current    *FileRef    `json:"current,omitempty"`
@@ -801,6 +920,7 @@ func (v *TextChange) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
+		"delivery_status":       {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"All projects the caller may see. A project focus later adds projectId here.\",\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
 		"execution_differences": {Read: true, Long: false, Errors: []int{403, 409, 503}, InputSchema: json.RawMessage("{\"$comment\":\"previous: the earlier execution of the same session.\",\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"previous\":{\"type\":\"string\"}},\"required\":[\"executionId\",\"previous\"],\"type\":\"object\"}")},
 		"execution_events":      {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
 		"execution_status":      {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},

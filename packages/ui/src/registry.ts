@@ -120,6 +120,7 @@ export const workspaces = [
   { id: 'conversations', label: 'Conversations', icon: 'messages-square', group: 'Operator', app: true },
   { id: 'results', label: 'Results', icon: 'file-text', group: 'Operator', app: true },
   { id: 'projects', label: 'Projects', icon: 'folder-open', group: 'Operator', app: true },
+  { id: 'delivery', label: 'Delivery', icon: 'git-merge', group: 'Operator', app: true },
   { id: 'agents', label: 'Agents', icon: 'bot', group: 'Architect', app: true },
   { id: 'pipelines', label: 'Pipelines', icon: 'network', group: 'Architect', app: true },
   { id: 'catalogue', label: 'Catalogue', icon: 'rows-3', group: 'Architect', app: true },

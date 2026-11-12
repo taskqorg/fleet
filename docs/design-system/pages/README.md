@@ -10,6 +10,7 @@ Page specs map [inventory](../inventory.md) items to patterns and controls. The 
 | Hosts, environments and stores | Architect | [hosts.md](hosts.md) |
 | Runners | Architect | [runners.md](runners.md) (app only) |
 | Conversations | Operator | [conversations.md](conversations.md) (app only) |
+| Delivery | Operator | [delivery.md](delivery.md) (app only) |
 | Laboratory | Architect | [laboratory.md](laboratory.md) |
 | Agents | Architect | [agents.md](agents.md) (mockup only) |
 | Pipelines | Architect | [pipelines.md](pipelines.md) (mockup only) |
