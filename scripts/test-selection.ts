@@ -72,6 +72,8 @@ export function execution(paths: string[] | null, previousGreen: boolean, forced
   // No family for the release archives: the merge queue's release-build builds and selftests them for every candidate,
   // and the app check of a merge group requires it (docs/designs/fleet-delivery-pipeline.md#4-automatic-release).
   const chosen = new Set(select(paths).selected);
+  // The contract keeps coordinator changes on the full fallback (fleet.md, test selection).
+  if (paths.some(p => p.startsWith('go/coordinator/'))) families.forEach(f => chosen.add(f));
   return families.filter(f => chosen.has(f));
 }
 
