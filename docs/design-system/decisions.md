@@ -326,3 +326,9 @@ Each check was proven once with `UX_INJECT=<defect>`, which produced its warning
 ## 2026-11-12 Lab draft creation
 
 Coordinator-approved bounded plan: New experiment opens a work-area form over the existing create operation, with searchable choices in the control column and explicit draft readback. A minimal shared TextField handles unsaved values; SettingField retains its applied-setting semantics. Create never launches. Lost replies retain uncertainty and cannot automatically repost; grants/actor changes clear local drafts. All existing experiment kinds and optional budget/stop settings remain available without new policy. CI owns browser checks and captured references; owner/native visual acceptance remains pending rather than inferred from source approval. Variant configuration diff and a new experiment engine are outside this slice.
+
+## 2026-11-13: Fleet browser and installation icons
+
+* **Question:** which mark identifies browser tabs and installed web apps?
+* **Choice:** reuse the existing block F from the navigation for every workspace, on the dark background with light foreground. Keep workspace-specific launch URLs.
+* **Reason:** the owner requested the existing application mark as both favicon and installed web app icon.
