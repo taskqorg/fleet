@@ -937,3 +937,13 @@ export function AreaChart(p: AreaChartProps) {
     <div class="ac-axis"><time>{stamp(p.from, p.now)}</time><span class="grow" /><time>{stamp(p.to, p.now)}</time></div>
   </div>;
 }
+
+/* ---------- Time strip: where a run sits in a time window (Runners), toned by its state ---------- */
+
+/** One run as a bar from its start to its end (to now while it runs) inside [from, to]; a run older than the window starts at its left edge. */
+export function TimeStrip({ from, to, start, end, now, state, label }: { from: number; to: number; start: number; end: number | null; now: number; state: StateOf<'execution'>; label: string }) {
+  const x = (t: number) => Math.min(100, Math.max(0, (t - from) / (to - from) * 100));
+  const a = x(start), b = x(end ?? now);
+  return <span class="tstrip" data-ui="time-strip" role="img" aria-label={label}>
+    <i class={`t-${states.execution[state].tone}${end === null ? ' live' : ''}`} style={{ left: `${a}%`, width: `max(2px, ${b - a}%)` }} /></span>;
+}
