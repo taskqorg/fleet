@@ -108,3 +108,15 @@ test('Owner archives a project only after its open work is closed; it leaves eve
  assert.equal((await op('project_update',{projectId:id,requestId:randomUUID(),baseRevision:1,content:bundle(id,'back')},owner)).status,404);
  assert.equal((await op('project_create',{id,requestId:randomUUID(),content:bundle(id)},owner)).status,409);
 });
+// R2, R3; risk: a finished pipeline run leaves unreached steps 'preparing', and they block project_archive forever.
+test('Unreached steps of a finished pipeline run do not block project_archive; a running run does',async t=>{
+ const {startCoordinator}=await import('../harness.ts');
+ const c=await startCoordinator({name:'archsteps'});t.after(()=>c.stop());
+ const call=async(name:string,body:object)=>{const r=await fetch(c.base+'/api/ops/'+name,{method:'POST',headers:{authorization:'Bearer '+c.secret,'x-fleet-person':'owner@trial.test','content-type':'application/json'},body:JSON.stringify(body)});return {status:r.status,body:await r.json() as any}};
+ const id='project-'+randomUUID();
+ ok(await call('project_create',{id,requestId:randomUUID(),content:bundle(id)}));
+ c.sql(`INSERT INTO execution(id,kind,state,project_id,data) VALUES ('run-a','pipeline_run','running','${id}','{}'),('run-a:step:1','pipeline_step','preparing','${id}','{}')`);
+ assert.equal((await call('project_archive',{projectId:id})).status,409);
+ c.sql(`UPDATE execution SET state='failed' WHERE id='run-a'`);
+ ok(await call('project_archive',{projectId:id}));
+});
