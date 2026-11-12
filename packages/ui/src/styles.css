@@ -668,4 +668,5 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .focus-list{list-style:none;margin:0;padding:0}
 .focus-list label{display:flex;align-items:center;gap:var(--space-2);height:var(--size-control);padding:0 var(--space-2);border-radius:var(--radius-md);cursor:pointer}
 .focus-list label:hover{background:var(--hover)}
+.focus-list .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.focus-list .row-check{flex:none}
 .rail.mini .focus-btn{justify-content:center;padding:0}.rail.mini .focus-btn .nm{display:none}

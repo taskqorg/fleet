@@ -621,10 +621,9 @@ var taskGroups = map[string]taskGroup{
 }
 
 // taskSorts: the second sort key inside a group (owner review P7), ascending numbers; "-" before a name is descending.
-// The default is recently changed first. ponytail: every sort is an expression no index serves (and the row facts are
-// correlated subqueries, not task_derived columns), so a page scans and sorts the filtered tasks; add expression indexes and
-// task_derived columns when task lists outgrow a scan.
-var taskSorts = map[string]string{"changed": "(extract(epoch FROM t.updated_at)*1000)::float8", "created": "t.seq::float8"}
+// The default is recently changed first. Migration 47 indexes each sort for the priority grouping and for no grouping;
+// ponytail: the other groupings sort the filtered tasks, add their indexes when those lists outgrow a scan.
+var taskSorts = map[string]string{"changed": "(extract(epoch FROM t.updated_at AT TIME ZONE 'UTC')*1000)::float8", "created": "(t.seq::float8)"}
 
 const defaultTaskSort = "-changed"
 
@@ -746,10 +745,7 @@ func projectWhere(f doc, p *[]any, col string, c []string) ([]string, error) {
 	return c, nil
 }
 
-const taskListCols = "t.id,t.code,t.project_id,t.title,t.state,t.pause_reason,t.wait_reason,t.priority,t.created_at,t.updated_at,t.seq,d.agent,d.host,d.started_at,coalesce(d.open_questions,0) AS open_questions,t.state_at,(SELECT count(*) FROM execution e WHERE e.task_id=t.id) AS executions," + lastAgentSQL + " AS last_agent"
-
-// lastAgentSQL: the harness of the task's latest execution (a row fact; the agent: search term is the running one, task_derived.agent).
-const lastAgentSQL = "(SELECT e.harness FROM execution e WHERE e.task_id=t.id ORDER BY e.seq DESC LIMIT 1)"
+const taskListCols = "t.id,t.code,t.project_id,t.title,t.state,t.pause_reason,t.wait_reason,t.priority,t.created_at,t.updated_at,t.seq,d.agent,d.host,d.started_at,coalesce(d.open_questions,0) AS open_questions,t.state_at,coalesce(d.executions,0) AS executions,d.last_agent"
 
 func taskListRow(x doc) doc {
 	return doc{"id": x["id"], "code": x["code"], "projectId": x["project_id"], "title": x["title"], "state": x["state"], "pauseReason": x["pause_reason"], "waitReason": x["wait_reason"], "priority": x["priority"], "agent": x["agent"], "host": x["host"],
@@ -856,20 +852,31 @@ func taskPage(q *Request, b doc) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// No grouping orders by the sort key alone, so the sort's own index serves it (a constant group key would not).
+	none := G.sql == taskGroups["none"].sql
 	if b["after"] != nil {
 		a, ok := b["after"].([]any)
 		if !ok || len(a) != 3 {
 			return nil, fail(400, "Invalid after")
 		}
-		p = append(p, fmt.Sprint(a[0]), num(a[1]), fmt.Sprint(a[2]))
-		c = append(c, fmt.Sprintf("(%s,%s,t.id) > ($%d,$%d::float8,$%d)", G.sql, S, len(p)-2, len(p)-1, len(p)))
+		if none {
+			p = append(p, num(a[1]), fmt.Sprint(a[2]))
+			c = append(c, fmt.Sprintf("(%s,t.id) > ($%d::float8,$%d)", S, len(p)-1, len(p)))
+		} else {
+			p = append(p, fmt.Sprint(a[0]), num(a[1]), fmt.Sprint(a[2]))
+			c = append(c, fmt.Sprintf("(%s,%s,t.id) > ($%d,$%d::float8,$%d)", G.sql, S, len(p)-2, len(p)-1, len(p)))
+		}
 	}
 	g, lim := G.sql, strconv.Itoa(limit+1)
+	order, outer := g+",", "t.g,"
+	if none {
+		order, outer = "", ""
+	}
 	var sql string
 	if G.derived {
-		sql = "SELECT " + taskListCols + "," + g + " AS g," + S + " AS sk FROM task t LEFT JOIN task_derived d ON d.task_id=t.id" + where(c) + " ORDER BY " + g + "," + S + ",t.id LIMIT " + lim
+		sql = "SELECT " + taskListCols + "," + g + " AS g," + S + " AS sk FROM task t LEFT JOIN task_derived d ON d.task_id=t.id" + where(c) + " ORDER BY " + order + S + ",t.id LIMIT " + lim
 	} else {
-		sql = "SELECT " + taskListCols + ",t.g," + S + " AS sk FROM (SELECT t.*," + g + " AS g FROM task t" + where(c) + " ORDER BY " + g + "," + S + ",t.id LIMIT " + lim + ") t LEFT JOIN task_derived d ON d.task_id=t.id ORDER BY t.g," + S + ",t.id"
+		sql = "SELECT " + taskListCols + ",t.g," + S + " AS sk FROM (SELECT t.*," + g + " AS g FROM task t" + where(c) + " ORDER BY " + order + S + ",t.id LIMIT " + lim + ") t LEFT JOIN task_derived d ON d.task_id=t.id ORDER BY " + outer + S + ",t.id"
 	}
 	rs, err := rowsOf(q, sql, p...)
 	if err != nil {

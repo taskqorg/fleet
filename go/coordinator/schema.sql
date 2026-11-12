@@ -1130,3 +1130,36 @@ ALTER TABLE task ALTER COLUMN state_at SET DEFAULT now(), ALTER COLUMN state_at 
 -- Held and paused, and each wait reason, show as their own state in the list, so a change of reason restarts the time too.
 CREATE FUNCTION fleet_task_state_at() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF (NEW.state, NEW.pause_reason, NEW.wait_reason) IS DISTINCT FROM (OLD.state, OLD.pause_reason, OLD.wait_reason) THEN NEW.state_at := now(); END IF; RETURN NEW; END $$;
 CREATE TRIGGER task_state_at BEFORE UPDATE OF state, pause_reason, wait_reason ON task FOR EACH ROW EXECUTE FUNCTION fleet_task_state_at();
+
+-- migration 47: task row facts live in task_derived (migration 10), not in per-row subqueries: executions counts every
+-- execution of the task, last_agent is the harness of its latest one (the row's agent mark and the agent: search term).
+-- A new execution changes the count, so it writes one task change, as the row shows the new count.
+-- The functions are recreated with the new columns; the backfill writes no change row per task. Sort keys of task_page
+-- (updated_at as epoch ms, seq) get indexes for the default grouping (priority) and for no grouping, both directions.
+ALTER TABLE task_derived ADD COLUMN executions integer NOT NULL DEFAULT 0, ADD COLUMN last_agent text NULL;
+DROP FUNCTION task_derived_drift();
+DROP FUNCTION fleet_task_derived(text);
+DROP FUNCTION task_derived_recompute(text);
+DROP FUNCTION task_derived_values(text);
+CREATE FUNCTION task_derived_values(p_task text) RETURNS TABLE(project_id text, agent text, host text, started_at timestamptz, open_questions integer, executions integer, last_agent text) LANGUAGE sql STABLE SET search_path = public AS $$ SELECT (SELECT t.project_id FROM task t WHERE t.id = p_task), (SELECT e.harness FROM execution e WHERE e.task_id = p_task AND e.state IN ('preparing', 'running') ORDER BY e.seq DESC LIMIT 1), (SELECT e.host_id FROM execution e WHERE e.task_id = p_task ORDER BY e.seq DESC LIMIT 1), (SELECT min(e.started_at) FROM execution e WHERE e.task_id = p_task), (SELECT count(*)::int FROM question q WHERE q.task_id = p_task AND q.state = 'open'), (SELECT count(*)::int FROM execution e WHERE e.task_id = p_task), (SELECT e.harness FROM execution e WHERE e.task_id = p_task ORDER BY e.seq DESC LIMIT 1) $$;
+REVOKE EXECUTE ON FUNCTION task_derived_values(text) FROM PUBLIC;
+CREATE FUNCTION task_derived_recompute(p_task text) RETURNS void LANGUAGE plpgsql AS $$ DECLARE v record; BEGIN IF NOT EXISTS (SELECT 1 FROM task WHERE id = p_task) THEN RETURN; END IF; PERFORM 1 FROM task_derived WHERE task_id = p_task FOR UPDATE; IF NOT FOUND THEN INSERT INTO task_derived(task_id, project_id, agent, host, started_at, open_questions, executions, last_agent) SELECT p_task, x.* FROM task_derived_values(p_task) x ON CONFLICT (task_id) DO NOTHING; IF FOUND THEN RETURN; END IF; PERFORM 1 FROM task_derived WHERE task_id = p_task FOR UPDATE; END IF; SELECT * INTO v FROM task_derived_values(p_task); UPDATE task_derived d SET project_id = v.project_id, agent = v.agent, host = v.host, started_at = v.started_at, open_questions = v.open_questions, executions = v.executions, last_agent = v.last_agent WHERE d.task_id = p_task AND (d.project_id, d.agent, d.host, d.started_at, d.open_questions, d.executions, d.last_agent) IS DISTINCT FROM (v.project_id, v.agent, v.host, v.started_at, v.open_questions, v.executions, v.last_agent); END $$;
+REVOKE EXECUTE ON FUNCTION task_derived_recompute(text) FROM PUBLIC;
+CREATE FUNCTION fleet_task_derived(p_task text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$ DECLARE prev text := current_setting('fleet.project_ids', true); BEGIN IF p_task IS NULL THEN RETURN; END IF; PERFORM set_config('fleet.project_ids', '*', true); PERFORM task_derived_recompute(p_task); PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true); END $$;
+CREATE FUNCTION task_derived_drift() RETURNS TABLE(task_id text, present boolean, stored jsonb, expected jsonb) LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$ DECLARE prev text := current_setting('fleet.project_ids', true); BEGIN PERFORM set_config('fleet.project_ids', '*', true); RETURN QUERY SELECT t.id, d.task_id IS NOT NULL, CASE WHEN d.task_id IS NULL THEN NULL ELSE jsonb_build_object('projectId', d.project_id, 'agent', d.agent, 'host', d.host, 'startedAt', d.started_at, 'openQuestions', d.open_questions, 'executions', d.executions, 'lastAgent', d.last_agent) END, jsonb_build_object('projectId', v.project_id, 'agent', v.agent, 'host', v.host, 'startedAt', v.started_at, 'openQuestions', v.open_questions, 'executions', v.executions, 'lastAgent', v.last_agent) FROM task t CROSS JOIN LATERAL task_derived_values(t.id) v LEFT JOIN task_derived d ON d.task_id = t.id WHERE (prev = '*' OR coalesce(t.project_id, '') = ANY (string_to_array(coalesce(prev, ''), ','))) AND (d.task_id IS NULL OR (d.project_id, d.agent, d.host, d.started_at, d.open_questions, d.executions, d.last_agent) IS DISTINCT FROM (v.project_id, v.agent, v.host, v.started_at, v.open_questions, v.executions, v.last_agent)) ORDER BY t.id; PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true); END $$;
+SELECT set_config('fleet.project_ids', '*', true);
+ALTER TABLE task_derived DISABLE TRIGGER task_derived_change;
+UPDATE task_derived d SET executions = x.n, last_agent = x.h FROM (SELECT e.task_id, count(*)::int AS n, (array_agg(e.harness ORDER BY e.seq DESC))[1] AS h FROM execution e WHERE e.task_id IS NOT NULL GROUP BY e.task_id) x WHERE x.task_id = d.task_id;
+ALTER TABLE task_derived ENABLE TRIGGER task_derived_change;
+-- The changed sort reads updated_at as UTC epoch ms, an immutable expression, so it is indexed directly. Every task write
+-- moves updated_at, so these indexes cost HOT updates; the list's default order needs them. task_priority_order (seq DESC)
+-- has no reader left: the created sort is (-(seq::float8)).
+DROP INDEX task_priority_order;
+CREATE INDEX task_sort_priority_changed_desc ON task((CASE priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END), (-((extract(epoch FROM updated_at AT TIME ZONE 'UTC')*1000)::float8)), id);
+CREATE INDEX task_sort_priority_changed ON task((CASE priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END), ((extract(epoch FROM updated_at AT TIME ZONE 'UTC')*1000)::float8), id);
+CREATE INDEX task_sort_priority_created_desc ON task((CASE priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END), (-(seq::float8)), id);
+CREATE INDEX task_sort_priority_created ON task((CASE priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END), (seq::float8), id);
+CREATE INDEX task_sort_changed_desc ON task((-((extract(epoch FROM updated_at AT TIME ZONE 'UTC')*1000)::float8)), id);
+CREATE INDEX task_sort_changed ON task(((extract(epoch FROM updated_at AT TIME ZONE 'UTC')*1000)::float8), id);
+CREATE INDEX task_sort_created_desc ON task((-(seq::float8)), id);
+CREATE INDEX task_sort_created ON task((seq::float8), id);

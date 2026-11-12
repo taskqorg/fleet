@@ -25,6 +25,13 @@ test('TL1 task_page sorts recently changed first, reads key:value search terms a
   assert.deepEqual(await ids({filter: {search: 'beta state:queued'}}), [b]);
   const row = (await op('task_page', {group: 'none', filter: {search: 'alpha'}})).tasks[0];
   assert.equal(row.executions, 2); assert.equal(row.lastAgent, 'claude'); assert.equal(row.host, 'mac-mini'); assert.ok(row.stateAt);
+  assert.equal((await op('task_derived_check', {})).drifted.length, 0, 'row facts in task_derived match a fresh computation');
+  // Each sort, with the priority grouping and with none, reads its own index (migration 47): no Sort node over the table.
+  const pr = "(CASE t.priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END),";
+  for (const sk of ["(-(extract(epoch FROM t.updated_at AT TIME ZONE 'UTC')*1000)::float8)", "(extract(epoch FROM t.updated_at AT TIME ZONE 'UTC')*1000)::float8", "(-(t.seq::float8))", "(t.seq::float8)"]) for (const g of [pr, '']) {
+    const plan = c.sql(`SET enable_seqscan=off; EXPLAIN SELECT t.id FROM task t ORDER BY ${g}${sk},t.id LIMIT 5`);
+    assert.match(plan, /Index Scan using task_sort_/, g + sk + ': ' + plan); assert.doesNotMatch(plan, /\bSort\b/, g + sk + ': ' + plan);
+  }
   const page = await op('task_page', {group: 'none', limit: 1, filter: {search: 'Sort'}});
   assert.deepEqual((await op('task_page', {group: 'none', limit: 1, filter: {search: 'Sort'}, after: page.nextAfter})).tasks.map((x: any) => x.id), [b], 'cursor follows the sort');
   const m = await op('list_membership', {ids: [a, b], lists: [{name: 'tasks', group: 'none', sort: 'changed', filter: {}}]});
