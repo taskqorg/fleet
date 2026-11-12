@@ -461,6 +461,58 @@ jobs:
           mkdir t && tar -xzf fleet-*-darwin-arm64.tgz -C t
           t/deploy/selftest-release.sh t
   # Diagnostics only: pull requests (comment) and main pushes (docs-order); never a merge queue run's runner slot.
+  # Caches saved on pull request and merge queue refs are invisible to other merge queue runs; only main's are shared,
+  # and main's push run skips the heavy families. This job saves every part's cache from main when its key is new,
+  # so each merge queue run starts warm. One job, parts in sequence: no runner slot of a queue run.
+  cache-warm:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      GOFLAGS: -mod=readonly
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: ./.github/actions/go
+      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/warm
+        with:
+          part: vet
+          run: cd go && go vet ./... && GOOS=windows GOARCH=amd64 go vet ./coordinator && CGO_ENABLED=0 go build -o bin/fleet-executor ./executor
+      - uses: ./.github/actions/warm
+        with:
+          part: unit
+          run: cd go && CGO_ENABLED=1 go test -race -count=1 -run '^$' ./... > /dev/null
+      - uses: ./.github/actions/warm
+        with:
+          part: outside-0
+          run: cd go && CGO_ENABLED=1 go build -race -o bin/fleet-coordinator ./coordinator
+      - uses: ./.github/actions/warm
+        with:
+          part: browser
+          run: cd go && CGO_ENABLED=0 go build -trimpath -o bin/fleet-coordinator ./coordinator
+      - uses: ./.github/actions/warm
+        with:
+          part: release
+          run: mkdir -p "$RUNNER_TEMP/release" && deploy/build-release.sh HEAD "$RUNNER_TEMP/release" "0.0.0-${GITHUB_SHA::12}" "" linux/amd64 darwin/arm64
+      - id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: chromium
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ steps.playwright.outputs.version }}-chromium
+      - if: steps.chromium.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install chromium
+      - uses: ./.github/actions/chromium-deps
   reports:
     if: github.event_name != 'merge_group'
     runs-on: ubuntu-24.04
