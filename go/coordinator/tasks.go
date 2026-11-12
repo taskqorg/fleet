@@ -747,7 +747,6 @@ func projectWhere(f doc, p *[]any, col string, c []string) ([]string, error) {
 
 const taskListCols = "t.id,t.code,t.project_id,t.title,t.state,t.pause_reason,t.wait_reason,t.priority,t.created_at,t.updated_at,t.seq,d.agent,d.host,d.started_at,coalesce(d.open_questions,0) AS open_questions,t.state_at,coalesce(d.executions,0) AS executions,d.last_agent"
 
-
 func taskListRow(x doc) doc {
 	return doc{"id": x["id"], "code": x["code"], "projectId": x["project_id"], "title": x["title"], "state": x["state"], "pauseReason": x["pause_reason"], "waitReason": x["wait_reason"], "priority": x["priority"], "agent": x["agent"], "host": x["host"],
 		"startedAt": x["started_at"], "createdAt": x["created_at"], "updatedAt": x["updated_at"], "openQuestions": x["open_questions"],
