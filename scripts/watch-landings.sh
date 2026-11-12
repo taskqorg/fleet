@@ -15,4 +15,4 @@ for n in $prs; do
   ( scripts/watch-landing.sh "$n" "${2:-45}" 2>/dev/null | tail -1 | sed "s/^/#$n /" | tee "$out/$n" ) &
 done
 wait
-! grep -L -E ' on (hosts|site) ' "$out"/* | grep -q .
+[ -z "$(grep -L -E ' on (hosts|site) ' "$out"/*)" ]
