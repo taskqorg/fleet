@@ -25,11 +25,14 @@ while :; do
     || { wait_step "queue (gh failed)"; continue; }
   read -r state merge_state sha waiting queued checks reason <<<"$line"
   [ "$state" = MERGED ] && break
-  # A conflict with main before the queue takes the entry: auto-merge stays on and nothing is removed, so name it here.
-  # Inside the queue the queue decides: right after a push or an enqueue GitHub may still report a stale DIRTY (PR #451 was
-  # DIRTY one second after joining the queue and merged five minutes later); a real conflict there is a removal with
-  # reason merge_conflict, named below.
-  [ "$state" = OPEN ] && [ "$merge_state" = DIRTY ] && [ "$queued" = "-" ] && { echo "not merged: $state, merge_conflict"; exit 1; }
+  # A conflict with main (before the queue takes the entry, auto-merge stays on and nothing is removed, so name it here).
+  # Only a DIRTY seen on two polls in a row counts: right after a push or an enqueue GitHub may still report the old head's
+  # DIRTY (PR #451 was DIRTY one second after joining the queue and merged five minutes later). Costs one poll on a real one.
+  if [ "$state" = OPEN ] && [ "$merge_state" = DIRTY ]; then
+    [ "${dirty:-0}" = 1 ] && { echo "not merged: $state, merge_conflict"; exit 1; }
+    dirty=1; wait_step "queue"; continue
+  fi
+  dirty=0
   # Out of the queue: the newest of "removed from the queue" (its reason) and "auto-merge disabled" (a veto) names why.
   [ "$state" = OPEN ] && [ "$waiting" = waiting ] || { echo "not merged: $state, $reason"; exit 1; }
   # A required check red on the head while auto-merge waits for the queue: GitHub never creates the entry and names nothing.

@@ -14,7 +14,9 @@ test('landing observations retain authoritative publication, optional site evide
     put('sleep', 'exit 0\n');
     put('git', 'case "$1" in fetch) exit 0;; tag) if [ "${WATCH_FIXTURE_UI:-0}" = 1 ]; then printf "%s\\n" v1.2.10 ui-1.2.3-v1.2.9; else echo v1.2.3; fi;; rev-parse) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;; *) exit 1;; esac\n');
     put('gh', `case "$1" in
-      api) if [ -n "\${WATCH_FIXTURE_GRAPHQL:-}" ]; then eval "filter=\\\${$#}"; printf '%s' "\${WATCH_FIXTURE_GRAPHQL}" | jq -r "\$filter"; else echo 'MERGED CLEAN 0123456789 - - - auto-merge off'; fi;;
+      api) if [ -n "\${WATCH_FIXTURE_GRAPHQL:-}" ]; then eval "filter=\\\${$#}"; answer="\${WATCH_FIXTURE_GRAPHQL}"
+        if [ -n "\${WATCH_FIXTURE_GRAPHQL_FIRST:-}" ] && [ ! -e "\${WATCH_FIXTURE_SEEN}" ]; then : > "\${WATCH_FIXTURE_SEEN}"; answer="\${WATCH_FIXTURE_GRAPHQL_FIRST}"; fi
+        printf '%s' "$answer" | jq -r "\$filter"; else echo 'MERGED CLEAN 0123456789 - - - auto-merge off'; fi;;
       release) [ "\${WATCH_FIXTURE_PUBLICATION_UNKNOWN:-0}" != 1 ] || exit 1; echo '2026-11-11T12:00:00Z';;
       *) exit 1;; esac\n`);
     put('curl', `case "$*" in
@@ -73,7 +75,8 @@ test('landing observations retain authoritative publication, optional site evide
       [pr({autoMergeRequest: null}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: 'failed_checks'}]), 'not merged: OPEN, failed_checks'],
       [pr({autoMergeRequest: null}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: null}]), 'not merged: OPEN, unknown'],
       [pr({mergeStateStatus: 'DIRTY'}), 'not merged: OPEN, merge_conflict'],
-      [pr({autoMergeRequest: null, mergeStateStatus: 'DIRTY'}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: 'merge_conflict'}]), 'not merged: OPEN, merge_conflict'],
+      [pr({autoMergeRequest: null}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: 'merge_conflict'}]), 'not merged: OPEN, merge_conflict'],
+      [pr({mergeStateStatus: 'DIRTY', mergeQueueEntry: {state: 'UNMERGEABLE'}}), 'not merged: OPEN, merge_conflict'],
       [pr({autoMergeRequest: null}, [red], [{__typename: 'AutoMergeDisabledEvent'}]), 'not merged: OPEN, auto-merge off'],
       [pr({state: 'CLOSED', autoMergeRequest: null}, [red]), 'not merged: CLOSED, auto-merge off'],
     ]) { const r = run({WATCH_FIXTURE_GRAPHQL: graphql}); assert.equal(r.status, 1, r.stderr); assert.equal(r.stdout, out + '\n'); }
@@ -86,8 +89,13 @@ test('landing observations retain authoritative publication, optional site evide
       pr({}, [red, check('go', null, null)]),
       pr({}, [check('go', 'CANCELLED', null), check('go', 'SUCCESS', '2026-11-12T10:10:00Z')]),
       pr({mergeQueueEntry: {state: 'QUEUED'}}, [red]),
-      // PR #451: DIRTY reported one second after joining the queue, merged by the queue five minutes later.
-      pr({mergeStateStatus: 'DIRTY', mergeQueueEntry: {state: 'AWAITING_CHECKS'}}),
     ]) { const r = run({WATCH_FIXTURE_GRAPHQL: graphql}, false, '0'); assert.equal(r.status, 2, r.stderr); assert.equal(r.stdout, 'timeout at: queue\n'); }
+    // PR #451: a stale DIRTY on one poll (right after joining the queue, or after a push) is not a conflict: the next poll
+    // decides. The fixture answers DIRTY once, then MERGED.
+    for (const queue of [{state: 'AWAITING_CHECKS'}, null]) {
+      const r = run({WATCH_FIXTURE_GRAPHQL_FIRST: pr({mergeStateStatus: 'DIRTY', mergeQueueEntry: queue}), WATCH_FIXTURE_SEEN: join(dir, 'seen-' + !!queue),
+        WATCH_FIXTURE_GRAPHQL: pr({state: 'MERGED', mergeStateStatus: 'UNKNOWN', mergeCommit: {oid: '0123456789'}})});
+      assert.doesNotMatch(r.stdout, /merge_conflict/); assert.match(r.stdout, /^merged 0123456789$/m);
+    }
   } finally { rmSync(dir, {recursive: true, force: true}); }
 });
