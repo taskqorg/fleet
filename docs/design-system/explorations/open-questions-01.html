@@ -290,7 +290,15 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .divider-rail{left:0}.divider-ctl{left:min(var(--size-ctl),50%)}
 .divider:hover::after,.divider:active::after{background:var(--accent);opacity:.5}
 .divider:focus-visible::after{background:var(--accent)}
-@media (pointer:coarse){.divider{width:var(--size-hit-phone);margin-left:calc(var(--space-1) - var(--size-hit-phone))}.divider-ctl{margin-left:calc(-1 * var(--space-1))}}
+/* Touch: the 44 px zone is centred on the line, and every control under it wins: rail items, list rows and their buttons,
+   the collapse toggle sit above it (the list scroller too: its paint containment is its own layer), so the zone only takes taps on empty edge space. */
+@media (pointer:coarse){
+  .divider,.divider-ctl{width:var(--size-hit-phone);margin-left:calc(-1 * var(--size-hit-phone) / 2)}
+  .divider::after,.divider-ctl::after{left:calc(50% - var(--space-2) / 2);right:auto}
+  .rail :is(a,button),.split-list :is(a,button,input,label):not(.pill){position:relative;z-index:5}
+  .vl-row,.nav-toggle{z-index:5}
+  .split-list .vl{position:relative;z-index:5}
+}
 /* Until the person's settings are first read (at most 1.5 s) the shell is laid out but not shown, so a stored width or collapsed rail never jumps in (OR-23). */
 .shell.pending{visibility:hidden}
 .rail.mini .nav-i a{padding:0 var(--space-2);position:relative}
