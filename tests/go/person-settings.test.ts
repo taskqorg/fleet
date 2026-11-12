@@ -22,7 +22,7 @@ test('P1 person_settings_set changes only the fields it names; pins keep their o
   assert.deepEqual(changes, ['order', 'pins', 'pins']);
 });
 
-test('P2 preferences (saved views, focus, focus presets, widths, row pins) are stored per person, merged by key where keyed, and leave other fields alone (requirement: owner decisions P5, P6, P13 "stored server-side per person, readable/writable by agents"; risk: a width or pin change wipes the others, or saving a view resets the pins)', async () => {
+test('P2 preferences (saved views, focus, focus presets, widths, row pins) are stored per person, merged by key where keyed, and leave other fields alone (requirement: owner rules OR-33, OR-34, OR-41 "stored server-side per person, readable/writable by agents"; risk: a width or pin change wipes the others, or saving a view resets the pins)', async () => {
   const base = await op('person_settings_set', {pins: ['tasks']});
   assert.deepEqual([base.views, base.focus, base.focusPresets, base.widths, base.rowPins], [[], [], [], {}, {}]);
   const view = {list: 'tasks', name: 'Mine', view: {view: 'tasks', state: ['failed'], group: 'agent'}};

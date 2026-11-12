@@ -61,6 +61,7 @@ A rule without a check is kept only by reading it, so each rule names its check.
 | Rendered page (mockups) | OR-17, OR-18, OR-19, OR-22 | `tests/ui/ux.check.mjs`, `tests/ui/trace.check.mjs` |
 | Source text | OR-2, OR-7, OR-8, OR-9, OR-14 (dialog markup), OR-15, OR-25 (viewport height outside the shell), OR-38 (a short UUID or a hand-made code in markup; codes issued and resolved: `tests/go/codes.test.ts`) | `RULES` in `packages/ui/scripts/check-design.mjs` |
 | Rendered page (built app) | OR-29 (Overview counters: no zero chip, total first, no host lower bound), OR-30 and OR-40 (Needs you shows 3 and `+K`), OR-39 (no empty totals in the task detail) | `tests/ui/app.check.ts` |
-| Reading only | OR-1, OR-3 to OR-6, OR-10 to OR-13, OR-16, OR-20, OR-21, OR-23, the rest of OR-28, the rest of OR-29, OR-30, OR-39 and OR-40, OR-31 to OR-37, OR-41, OR-42 (until each gets its check) | The reviewer and the owner. |
+| Unit and outside tests | OR-33, OR-34, OR-41 (stored on the server per person, never in the browser; agents write them; focus filters lists that name no project; system presets fixed) | `tests/ui/prefs.test.ts`, `tests/go/person-settings.test.ts` |
+| Reading only | OR-1, OR-3 to OR-6, OR-10 to OR-13, OR-16, OR-20, OR-21, OR-23, the rest of OR-28, the rest of OR-29, OR-30, OR-39 and OR-40, OR-31, OR-32, the controls of OR-33, OR-34 and OR-41 (one shared saved-views control, the focus multi-select, drag dividers), OR-35 to OR-37, OR-42 (until each gets its check) | The reviewer and the owner. |
 
 A new rule is added together with its check, or with a row in "Reading only".
