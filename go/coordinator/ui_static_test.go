@@ -65,6 +65,8 @@ func TestIndependentUIStatic(t *testing.T) {
 	request("/assets/old.js", "old chunk")
 	write(current, "release.json", `{"kind":"ui","backendVersion":"other"}`)
 	request("/overview", "bundled")
+	// Bundled UI selected: /ui-release.json still names it.
+	request("/ui-release.json", `{"backendVersion":"`+version+`","kind":"bundled","version":"`+version+`"}`+"\n")
 	w := httptest.NewRecorder()
 	if appScreen(w, httptest.NewRequest("GET", "/newscreen", nil)) {
 		t.Fatal("retained incompatible screen")

@@ -704,7 +704,16 @@ func appRoutes() {
 		assets.ServeHTTP(w, r)
 	})
 	publicRoute("GET /sw.js", file("sw.js", "text/javascript"))
-	publicRoute("GET /ui-release.json", file("release.json", "application/json"))
+	// The bundled UI has no release.json; it still reports itself, so a watcher sees which UI is selected.
+	publicRoute("GET /ui-release.json", func(w http.ResponseWriter, r *http.Request) {
+		if _, err := os.Stat(filepath.Join(appDir(), "release.json")); err == nil {
+			file("release.json", "application/json")(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"kind": "bundled", "version": version, "backendVersion": version})
+	})
 	manifest, icon := regexp.MustCompile(`^[a-z]+\.webmanifest$`), regexp.MustCompile(`^[a-z0-9-]+\.svg$`)
 	publicRoute("GET /manifests/{name}", func(w http.ResponseWriter, r *http.Request) {
 		if n := r.PathValue("name"); manifest.MatchString(n) {

@@ -39,6 +39,9 @@ while :; do
 done
 observed "merged sha=$sha"
 echo "merged $sha"
+# A pull request with no change (an empty diff against main before it) ships nothing: no release or host waits for it.
+git fetch -q origin main 2>/dev/null || true
+git diff --quiet "$sha^1" "$sha" 2>/dev/null && { echo "merged $sha, nothing to ship"; exit 0; }
 
 # The first release whose tagged commit contains the merge commit; a batch release may carry several merges.
 while :; do
@@ -75,7 +78,11 @@ except ValueError: sys.exit(1)
 sys.exit(0 if h.get("database")=="ok" and h.get("version")==os.environ["BACKEND"] else 1)
 '; then observed "ui_ready version=$want backend=$backend commit=$commit"; echo "on site $tag"; exit 0; fi
     fi
+    # A later native release that contains the merge supersedes the UI tag: its bundled UI is what ships.
+    native=$(git tag --contains "$sha" 'v1.*' | sort -V | head -1)
+    [ -n "$native" ] && { observed "ui_superseded native=$native"; tag=$native; break; }
     wait_step "UI site"
+    git fetch -q origin main --tags 2>/dev/null || true
   done
 fi
 want=${tag#v}
