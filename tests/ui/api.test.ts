@@ -11,6 +11,10 @@ test('a 2xx reply whose body does not read rejects instead of resolving empty', 
   try {
     reply(200, () => Promise.reject(new TypeError('network error')));
     await assert.rejects(op('thread_entries', {} as any), (e: unknown) => e instanceof OpError && e.message === 'incomplete reply');
+    const ac = new AbortController(); ac.abort();
+    await assert.rejects(op('thread_entries', {} as any, { signal: ac.signal }), (e: unknown) => e instanceof OpError && e.message === 'aborted');
+    reply(500, async () => null);
+    await assert.rejects(op('thread_entries', {} as any), (e: unknown) => e instanceof OpError && e.status === 500);
     reply(500, () => Promise.reject(new SyntaxError('not JSON')));
     await assert.rejects(op('thread_entries', {} as any), (e: unknown) => e instanceof OpError && e.status === 500);
     reply(200, async () => ({ entries: [] }));

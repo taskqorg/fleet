@@ -29,7 +29,7 @@ export async function op<K extends OpName>(name: K, body: Ops[K]['request'], opt
   // An abort while the body is read is an abort, and a 2xx body that does not read whole (a fetch cut by a navigation or a
   // dropped connection) is a failure, never an empty success: callers would render a reply without its fields.
   const data = await r.json().catch(() => { if (opts.signal?.aborted) throw new OpError('aborted', 0); if (r.ok) throw new OpError('incomplete reply', r.status); return {}; });
-  if (!r.ok) throw new OpError(data.message || r.statusText, r.status);
+  if (!r.ok) throw new OpError(data?.message || r.statusText, r.status);
   return data as Ops[K]['reply'];
 }
 
