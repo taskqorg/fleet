@@ -22,7 +22,7 @@ const sessionBase = `WITH session_messages AS MATERIALIZED (
 ), session_activity AS MATERIALIZED (
  SELECT data->>'sessionId' AS session_id,max(seq) AS last_seq
  FROM document WHERE kind IN ('message','event') GROUP BY data->>'sessionId'
-), x AS (SELECT d.id, d.data, d.project_id,
+), x AS (SELECT d.id, d.code, d.data, d.project_id,
  coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle') AS state,
  (SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) AS harness,
  m.first_message,
@@ -57,7 +57,7 @@ func sessionWhere(f doc, p *[]any, withState bool) ([]string, error) {
 	}
 	if s, ok := f["search"].(string); ok && strings.TrimSpace(s) != "" {
 		*p = append(*p, likePattern(s))
-		c = append(c, fmt.Sprintf("(lower(coalesce(x.first_message,'')) LIKE $%d OR lower(x.id) LIKE $%d)", len(*p), len(*p)))
+		c = append(c, fmt.Sprintf("(lower(coalesce(x.first_message,'')) LIKE $%d OR lower(x.id) LIKE $%d OR lower(coalesce(x.code,'')) LIKE $%d)", len(*p), len(*p), len(*p)))
 	}
 	return c, nil
 }
@@ -73,7 +73,7 @@ func sessionRow(x doc) doc {
 	if harness == nil {
 		harness = ac["harness"]
 	}
-	return doc{"id": x["id"], "title": title, "state": x["state"], "harness": harness, "profileId": ac["id"], "projectId": x["project_id"], "createdAt": d["createdAt"],
+	return doc{"id": x["id"], "code": x["code"], "title": title, "state": x["state"], "harness": harness, "profileId": ac["id"], "projectId": x["project_id"], "createdAt": d["createdAt"],
 		"openQuestions": x["open_questions"], "archivedAt": d["archivedAt"], "sortKey": []any{-num(x["last_seq"]), x["id"]}}
 }
 
@@ -175,6 +175,11 @@ func sessionGet(q *Request, sid string) (doc, error) {
 		s[k] = x
 	}
 	s["sessionId"] = sid
+	c, err := first(q, "SELECT code FROM document WHERE id=$1 AND kind='session'", sid)
+	if err != nil {
+		return nil, err
+	}
+	s["code"] = c["code"]
 	if s["delegations"], err = delegationsWhere(q, "delegation->>'parentSessionId'=$1 OR delegation->>'childSessionId'=$1", sid); err != nil {
 		return nil, err
 	}

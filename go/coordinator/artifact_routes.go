@@ -383,6 +383,9 @@ func opArtifactList(q *Request) (any, error) {
 		f.Before = &v
 	}
 	rows, err := artifactList(withTx(q), q.app, f)
+	if err == nil {
+		err = withTaskCodes(q, rows)
+	}
 	if err != nil || f.Limit == nil {
 		return doc{"artifacts": rows}, err
 	}
@@ -782,4 +785,33 @@ func operatorOnly(q *Request) error {
 		return fail(403, "Architect role required")
 	}
 	return nil
+}
+
+func taskIDOf(r doc) string {
+	if p, ok := r["taskId"].(*string); ok && p != nil {
+		return *p
+	}
+	return astr(r["taskId"])
+}
+
+// withTaskCodes: each row's task code (D17) as taskCode, in one query; null when the task has none or is out of scope.
+func withTaskCodes(q *Request, rows []doc) error {
+	ids := []string{}
+	for _, r := range rows {
+		if t := taskIDOf(r); t != "" {
+			ids = append(ids, t)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	cs, err := rowsOf(q, "SELECT id,code FROM task WHERE id=ANY($1)", ids)
+	code := map[string]any{}
+	for _, c := range cs {
+		code[astr(c["id"])] = c["code"]
+	}
+	for _, r := range rows {
+		r["taskCode"] = code[taskIDOf(r)]
+	}
+	return err
 }

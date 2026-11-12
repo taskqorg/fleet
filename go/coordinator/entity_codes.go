@@ -11,16 +11,18 @@ import (
 )
 
 // codePattern: the D17 grammar, matched case-insensitively (lookup is case-insensitive).
-var codePattern = regexp.MustCompile(`(?i)\b(?:([TQE])-([A-Z][A-Z0-9]{1,4})-([1-9][0-9]*)|S-([A-Z][A-Z0-9]{1,4})-([A-DF-PRU-Z])([1-9][0-9]*))\b`)
+var codePattern = regexp.MustCompile(`(?i)\b(?:([TQEC])-([A-Z][A-Z0-9]{1,4})-([1-9][0-9]*)|S-([A-Z][A-Z0-9]{1,4})-([A-DF-PRU-Z])([1-9][0-9]*))\b`)
 
 var projectCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9]{1,4}$`)
 
 // resolveCodes: the entities the codes name in the caller's scope (row-level security on entity_code and the entity's
 // table), by code; an unknown or forbidden code is absent, and callers report both alike.
 func resolveCodes(q *Request, codes []string) (map[string]contract.EntityCode, error) {
-	rs, err := rowsOf(q, `SELECT e.code,e.entity_id,e.type,coalesce(t.code,x.code) AS current FROM entity_code e
+	rs, err := rowsOf(q, `SELECT e.code,e.entity_id,e.type,coalesce(t.code,x.code,d.code) AS current FROM entity_code e
 	 LEFT JOIN task t ON e.type='T' AND t.id=e.entity_id LEFT JOIN question x ON e.type='Q' AND x.id=e.entity_id
-	 WHERE e.code=ANY($1) AND coalesce(t.code,x.code) IS NOT NULL`, codes)
+	 LEFT JOIN document d ON e.type='C' AND d.kind='session' AND d.id=e.entity_id
+	 WHERE e.code=ANY($1) AND coalesce(t.code,x.code,d.code) IS NOT NULL
+	 AND (e.code=coalesce(t.code,x.code,d.code) OR e.superseded_by IS NOT NULL)`, codes)
 	out := map[string]contract.EntityCode{}
 	for _, r := range rs {
 		c, cur := astr(r["code"]), astr(r["current"])
@@ -61,9 +63,12 @@ func init() {
 		if q.person == nil || (!fullAccess(q.person) && !hasRole(q.person, "operator")) { // projectWrite's gate
 			return contract.ProjectCodeSetReply{}, fail(403, "Authenticated operator required")
 		}
+		if !mayAccessProjectID(q.person, r.ProjectId) { // as project_update: another project's code is not this operator's
+			return contract.ProjectCodeSetReply{}, fail(404, "Unknown project")
+		}
 		code := strings.ToUpper(strings.TrimSpace(r.Code))
-		if !projectCodePattern.MatchString(code) || strings.ContainsAny(code, "IOSZB") || strings.Trim(code, "0123456789ABCDEF") == "" || code == "ALL" {
-			return contract.ProjectCodeSetReply{}, fail(400, "Expected a project code: 2 to 5 letters or digits, a letter first, not hex-only, no I, O, S, Z or B")
+		if !projectCodePattern.MatchString(code) || strings.ContainsAny(code, "IO") || strings.Trim(code, "0123456789ABCDEF") == "" || code == "ALL" {
+			return contract.ProjectCodeSetReply{}, fail(400, "Expected a project code: 2 to 5 letters or digits, a letter first, not hex-only, no I or O")
 		}
 		if ok, err := has(q, "SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL", r.ProjectId); err != nil || !ok {
 			if err == nil {

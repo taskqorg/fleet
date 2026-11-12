@@ -18,10 +18,10 @@ test('K1 tasks and questions carry T-/Q- codes per project; codes resolve, a ren
     const b = await op('task_create', {projectId: 'hello-world', title: 'second'});
     const other = await op('task_create', {projectId: 'fleet-hello-world', title: 'other project'});
     const none = await op('task_create', {title: 'no project'});
-    assert.match(a.code, /^T-[A-Z][A-Z0-9]{1,4}-1$/);
+    assert.equal(a.code, 'T-HW-1', 'hello-world: the initials of its words');
     const scope = a.code.split('-')[1];
     assert.equal(b.code, `T-${scope}-2`);
-    assert.match(other.code, /^T-[A-Z][A-Z0-9]{1,4}-1$/);
+    assert.equal(other.code, 'T-FHW-1');
     assert.notEqual(other.code.split('-')[1], scope, 'each project its own code');
     assert.equal(none.code, 'T-ALL-1');
     const page = await op('task_page', {filter: {projectId: ['hello-world']}});
@@ -36,7 +36,7 @@ test('K1 tasks and questions carry T-/Q- codes per project; codes resolve, a ren
     assert.equal((await raw('entity_resolve', {code: a.id})).status, 400);
     assert.throws(() => c.sql(`UPDATE task SET code='T-ZZZ-9' WHERE id='${a.id}'`), /never written/, 'a written code is refused');
 
-    assert.equal((await raw('project_code_set', {projectId: 'hello-world', code: 'ABC'})).status, 400, 'B is not allowed');
+    assert.equal((await raw('project_code_set', {projectId: 'hello-world', code: 'ABO'})).status, 400, 'O is not allowed');
     assert.equal((await raw('project_code_set', {projectId: 'hello-world', code: other.code.split('-')[1]})).status, 409, 'another project holds it');
     assert.deepEqual(await op('project_code_set', {projectId: 'hello-world', code: 'hwx'}), {projectId: 'hello-world', code: 'HWX'});
     const renamed = await op('task_get', {taskId: a.id});
@@ -51,6 +51,22 @@ test('K1 tasks and questions carry T-/Q- codes per project; codes resolve, a ren
 
     assert.deepEqual(c.sql(`SELECT fleet_project_code('fleet'), fleet_project_code('a1b2c3'), fleet_project_code('added'), fleet_project_code('fleet')`).trim().split('|'), ['FLT', 'P2', 'P3', 'FLT'], 'derived codes, hex-like ids included');
 
+    assert.deepEqual(c.sql(`SELECT fleet_project_code('hello-world-alt'), fleet_project_code('desiign')`).trim().split('|'), ['HWA', 'DSG']);
+    c.sql(`INSERT INTO document(kind,id,data,project_id) VALUES('session','sess-codes','{"id":"sess-codes"}','fleet-hello-world')`);
+    c.sql(`INSERT INTO document(kind,id,data,project_id) VALUES('session','sess-codes','{"id":"sess-codes","x":1}','fleet-hello-world') ON CONFLICT(id) DO UPDATE SET data=excluded.data`);
+    assert.equal(c.sql(`SELECT code FROM document WHERE id='sess-codes'`).trim(), 'C-FHW-1', 'a conversation gets a C- code once, also through upserts');
+    assert.equal((await op('entity_resolve', {code: 'c-fhw-1'})).id, 'sess-codes');
+    assert.equal((await op('session_get', {sessionId: 'sess-codes'})).code, 'C-FHW-1');
+
+    const own = (await raw('session_create', {}, 'member@trial.test')).body.sessionId;
+    const ownCode = (await raw('session_get', {sessionId: own}, 'member@trial.test')).body.code;
+    assert.match(ownCode, /^C-ALL-[1-9][0-9]*$/);
+    assert.equal((await raw('entity_resolve', {code: ownCode}, 'member@trial.test')).body.id, own, 'a member resolves their own projectless conversation');
+    assert.equal((await raw('entity_resolve', {code: ownCode}, 'outsider@trial.test')).status, 404);
+    for (const [who, projectId] of [['member@trial.test', 'hello-world'], ['outsider@trial.test', 'desiign']]) {
+      assert.equal((await raw('project_code_set', {projectId, code: 'QQX'}, who)).status, 404, `${who} may not recode ${projectId}`);
+    }
+    assert.equal((await raw('project_code_set', {projectId: 'desiign', code: 'DSN'}, 'member@trial.test')).status, 200, 'a member recodes a granted project');
     const outsider = await raw('entity_resolve', {code: other.code}, 'outsider@trial.test');
     assert.equal(outsider.status, 404, JSON.stringify(outsider.body));
   } finally { await c.stop(); }

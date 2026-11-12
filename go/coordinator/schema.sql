@@ -964,3 +964,113 @@ SELECT fleet_write_tokens(execution_id) FROM execution_totals t JOIN execution e
 -- run it again with every project in scope (this transaction only).
 SELECT set_config('fleet.project_ids', '*', true);
 SELECT fleet_write_tokens(execution_id) FROM execution_totals t JOIN execution e ON e.id=t.execution_id WHERE e.kind='agent_run';
+
+-- migration 42: conversations carry C- codes like tasks and questions (D17); project codes come from the name's words
+-- (fleet-hello-world -> FHW, desiign -> DSG) and avoid only I and O (owner review 2026-11-13).
+ALTER TABLE project_code DROP CONSTRAINT project_code_code_check;
+ALTER TABLE project_code ADD CONSTRAINT project_code_code_check CHECK (code ~ '^[A-Z][A-Z0-9]{1,4}$' AND code !~ '^[A-F0-9]+$' AND code !~ '[IO]' AND code <> 'ALL');
+ALTER TABLE document ADD COLUMN code text UNIQUE;
+-- A person reads the code of their own conversation without a project, as they read the conversation.
+DROP POLICY project_scope ON entity_code;
+CREATE POLICY project_scope ON entity_code USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ','))
+ OR (type = 'Q' AND EXISTS(SELECT 1 FROM question x WHERE x.id = entity_id AND x.addressed_to = current_setting('fleet.person', true)))
+ OR (type = 'C' AND project_id IS NULL AND fleet_own_projectless_session(entity_id)));
+
+-- fleet_project_code: the project's current code; derives one when it has none. Several words: their initials
+-- (hello-world-alt -> HWA), then letters of the last word; one word: its first letter and the consonants after it,
+-- three of them (fleet -> FLT). I and O are left out; then a digit, then P and a number, while taken.
+CREATE OR REPLACE FUNCTION fleet_project_code(p_project text) RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE c text; w text[]; x text; base text := ''; more text; cands text[] := '{}'; cand text; n int;
+BEGIN
+ IF p_project IS NULL OR p_project = '' THEN RETURN 'ALL'; END IF;
+ SELECT code INTO c FROM project_code WHERE project_id=p_project AND current;
+ IF c IS NOT NULL THEN RETURN c; END IF;
+ PERFORM pg_advisory_xact_lock(hashtext('fleet_project_code_derive'));
+ SELECT code INTO c FROM project_code WHERE project_id=p_project AND current;
+ IF c IS NOT NULL THEN RETURN c; END IF;
+ w := array_remove(regexp_split_to_array(translate(upper(p_project), 'IO', ''), '[^A-Z0-9]+'), '');
+ IF coalesce(array_length(w, 1), 0) = 0 THEN w := ARRAY['P']; END IF;
+ IF array_length(w, 1) >= 2 THEN
+  FOREACH x IN ARRAY w LOOP base := base || left(x, 1); END LOOP;
+  more := regexp_replace(substr(w[array_length(w, 1)], 2), '[AEUY]', '', 'g');
+  cands := ARRAY[left(base, 5), left(base || more, 4), left(base || more, 5)];
+ ELSE
+  base := left(w[1], 1) || regexp_replace(substr(w[1], 2), '[AEUY]', '', 'g');
+  cands := ARRAY[left(base, 3), left(base, 4), left(base, 5), left(base, 2)];
+ END IF;
+ IF cands[1] ~ '^[0-9]' THEN cands := ARRAY['P' || left(cands[1], 4)]; END IF;
+ FOR n IN 2..9 LOOP cands := cands || (left(cands[1], 4) || n); END LOOP;
+ FOREACH cand IN ARRAY cands LOOP
+  IF cand ~ '^[A-Z][A-Z0-9]{1,4}$' AND cand !~ '^[A-F0-9]+$' AND cand <> 'ALL' AND NOT EXISTS(SELECT 1 FROM project_code WHERE code=cand) THEN
+   INSERT INTO project_code(code, project_id) VALUES(cand, p_project); RETURN cand;
+  END IF;
+ END LOOP;
+ FOR n IN 2..9999 LOOP -- a hex-like or crowded name: P and a number
+  IF NOT EXISTS(SELECT 1 FROM project_code WHERE code='P' || n) THEN
+   INSERT INTO project_code(code, project_id) VALUES('P' || n, p_project); RETURN 'P' || n;
+  END IF;
+ END LOOP;
+ RAISE EXCEPTION 'no free project code for %', p_project;
+END $$;
+
+CREATE OR REPLACE FUNCTION fleet_entity_code() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE t text := CASE TG_TABLE_NAME WHEN 'task' THEN 'T' WHEN 'document' THEN 'C' ELSE 'Q' END; prev text;
+BEGIN
+ IF TG_OP = 'INSERT' THEN
+  prev := current_setting('fleet.project_ids', true);
+  PERFORM set_config('fleet.project_ids', '*', true);
+  IF t = 'C' AND EXISTS(SELECT 1 FROM document WHERE id=NEW.id) THEN NEW.code := NULL; ELSE NEW.code := fleet_issue_code(t, NEW.project_id, NEW.id); END IF;
+  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ ELSIF NEW.code IS NOT NULL AND NEW.code IS DISTINCT FROM OLD.code THEN
+  RAISE EXCEPTION 'codes are issued, never written (set code to NULL to reissue)';
+ ELSIF NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.code IS NULL THEN
+  IF NEW.project_id IS NOT DISTINCT FROM OLD.project_id THEN NEW.updated_at := OLD.updated_at; END IF; -- a reissue is not a change of the row
+  NEW.code := fleet_issue_code(t, NEW.project_id, NEW.id);
+  prev := current_setting('fleet.project_ids', true);
+  PERFORM set_config('fleet.project_ids', '*', true);
+  UPDATE entity_code SET superseded_by=NEW.code, project_id=nullif(NEW.project_id, '') WHERE entity_id=NEW.id AND type=t AND code<>NEW.code;
+  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ END IF;
+ RETURN NEW;
+END $$;
+-- fleet_issue_code records the code under the operator scope: the caller's scope may not list rows without a project
+-- (a member's projectless conversation), and the row itself was already checked by its own policy.
+CREATE OR REPLACE FUNCTION fleet_issue_code(p_type text, p_project text, p_entity text) RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE s text; n bigint; c text; prev text := current_setting('fleet.project_ids', true);
+BEGIN
+ PERFORM pg_advisory_xact_lock_shared(hashtext('fleet_project_code'));
+ s := fleet_project_code(p_project);
+ INSERT INTO code_counter(scope, type, next) VALUES(s, p_type, 2) ON CONFLICT(scope, type, section) DO UPDATE SET next=code_counter.next+1 RETURNING next-1 INTO n;
+ c := p_type || '-' || s || '-' || n;
+ PERFORM set_config('fleet.project_ids', '*', true);
+ INSERT INTO entity_code(code, entity_id, type, project_id) VALUES(c, p_entity, p_type, nullif(p_project, ''));
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ RETURN c;
+END $$;
+-- A session document is written by upsert: a conflicting insert of an existing row issues nothing (it becomes an update).
+-- ponytail: two concurrent first upserts of one new session both issue; the loser's code is an orphan entity_code row
+-- (superseded_by null, not the current code) that resolve ignores; lock the id if that ever matters.
+CREATE TRIGGER document_zcode BEFORE INSERT OR UPDATE OF project_id, code ON document FOR EACH ROW WHEN (NEW.kind = 'session') EXECUTE FUNCTION fleet_entity_code();
+
+CREATE OR REPLACE FUNCTION fleet_project_code_set(p_project text, p_code text) RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE r record; prev text := current_setting('fleet.project_ids', true);
+BEGIN
+ PERFORM pg_advisory_xact_lock(hashtext('fleet_project_code'));
+ IF EXISTS(SELECT 1 FROM project_code WHERE code=p_code AND project_id=p_project AND current) THEN RETURN p_code; END IF;
+ IF EXISTS(SELECT 1 FROM project_code WHERE code=p_code) THEN RAISE EXCEPTION 'project code % was used', p_code USING ERRCODE='23505'; END IF;
+ UPDATE project_code SET current=false WHERE project_id=p_project AND current;
+ INSERT INTO project_code(code, project_id) VALUES(p_code, p_project);
+ PERFORM set_config('fleet.project_ids', '*', true); -- every row of the project, whatever the caller's scope (the op checked the project)
+ FOR r IN SELECT id FROM task WHERE project_id=p_project ORDER BY created_at, id LOOP UPDATE task SET code=NULL WHERE id=r.id; END LOOP;
+ FOR r IN SELECT id FROM question WHERE project_id=p_project ORDER BY asked_at, id LOOP UPDATE question SET code=NULL WHERE id=r.id; END LOOP;
+ FOR r IN SELECT id FROM document WHERE kind='session' AND project_id=p_project ORDER BY seq LOOP UPDATE document SET code=NULL WHERE id=r.id; END LOOP;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ RETURN p_code;
+END $$;
+-- Backfill sessions in creation order, without a change row each (as migration 39).
+ALTER TABLE document DISABLE TRIGGER document_change;
+DO $$ DECLARE r record; BEGIN
+ PERFORM set_config('fleet.project_ids', '*', true);
+ FOR r IN SELECT id FROM document WHERE kind='session' AND code IS NULL ORDER BY seq LOOP UPDATE document SET code=NULL WHERE id=r.id; END LOOP;
+END $$;
+ALTER TABLE document ENABLE TRIGGER document_change;

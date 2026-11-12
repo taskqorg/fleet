@@ -20,7 +20,7 @@ Seven Goldfish lenses reviewed the concept (design, codebase details, zoom-out, 
 5. **Codes only for things people type or paste.** Code: tasks, spec rules, experiments, questions. No code: executions and artifacts (many, machine-made, reached through a parent; show parent code plus short UUID), hosts and projects (already have short names such as `mac`, `dashq`).
 6. **One visible ID (OR-17, OR-22).** The code is the only ID shown next to the title. The UUID is in a tooltip or a "copy UUID" action. Search, CLI and API accept either. One shared formatter in `packages/ui`; `packages/ui/book/open-questions.tsx:120` renders `T-{t.id}` today and must switch to it.
 7. **Storage work.** Keys are `randomUUID()` (`packages/coordinator/tasks.ts`); experiments and artifacts are still JSONB in `document`. Writes are SERIALIZABLE, so counters are per (project, type) to limit retries. Row-level security: per-project counters keep gaps from revealing hidden rows; rows without a project use reserved scope `SYS`. Unknown and forbidden codes both return `not_found`. Backfill existing rows in `created_at` order.
-8. **Copy safety.** Start with a letter and always use hyphens: git short SHAs never contain `-`, GitHub numbers start with `#`. Avoid `.`, `/`, `#` (messengers link them). Reject all-hex project codes (`FAB`, `ADD`). No zero padding. Lookup is case-insensitive; output is uppercase. Avoid I, O, S, Z, B in project codes (confusable with digits). Sort by (type, project, integer number).
+8. **Copy safety.** Start with a letter and always use hyphens: git short SHAs never contain `-`, GitHub numbers start with `#`. Avoid `.`, `/`, `#` (messengers link them). Reject all-hex project codes (`FAB`, `ADD`). No zero padding. Lookup is case-insensitive; output is uppercase. Avoid I and O in project codes (confusable with 1 and 0; owner 2026-11-13 dropped S, Z and B). Sort by (type, project, integer number).
 
 **Inventive tension.** The concept wants both "see the area" and "never change". The resolution is to separate them: the code carries only stable facts (type, project, number); mutable facts (area, state) live in chips beside it.
 
@@ -45,7 +45,7 @@ Decided by the owner on 2026-11-10:
 
 1. **Format.** `T-FLT-42`: type letter, project code, number, joined by hyphens. Uppercase output, case-insensitive lookup, no leading zeros.
 2. **Section only for spec rules, and there mandatory.** `S-FLT-D3`: type `S`, scope, section letter, number. The number counts within (scope, section). Tasks, questions and experiments carry no section; their area is a chip next to the code.
-3. **Type letters.** `T` task, `Q` question, `E` experiment, `S` spec rule. D, R, G, P, O are avoided. Any uppercase letter may be a section letter, including T, Q, E and S: positions are fixed, so `S-FLT-S5` reads unambiguously (owner, 2026-11-10: no invented rule). `S` is safe in the type position: it is always first, followed by a hyphen, and IDs render in monospace. The confusable-letter ban (I, O, S, Z, B) applies only inside project codes. Existing doc labels such as `T1…T16` (test cases) and `Q2`, `Q8` have no project segment, so they cannot be read as entity codes.
+3. **Type letters.** `T` task, `Q` question, `C` conversation (owner 2026-11-13), `E` experiment, `S` spec rule. D, R, G, P, O are avoided. Any uppercase letter may be a section letter, including T, Q, E and S: positions are fixed, so `S-FLT-S5` reads unambiguously (owner, 2026-11-10: no invented rule). `S` is safe in the type position: it is always first, followed by a hyphen, and IDs render in monospace. The confusable-letter ban (I, O, S, Z, B) applies only inside project codes. Existing doc labels such as `T1…T16` (test cases) and `Q2`, `Q8` have no project segment, so they cannot be read as entity codes.
 4. **System-wide scope.** Proposed code `ALL` for general rules and rows without a project (for example `S-ALL-C4`). It is not hex-only and avoids the confusable letters I, O, S, Z, B, unlike `SYS`. Reserved: no project may take it.
 5. **Allocation.** Only the coordinator issues codes, from a counter per (project, type), and per (scope, section) for `S`. Numbers are never reused; gaps are allowed.
 6. **Stability.** A code never changes. A moved entity, a renamed project or a changed type gets a new code; the old code stays as an alias. No move feature is built.
@@ -53,7 +53,7 @@ Decided by the owner on 2026-11-10:
 Regex:
 
 ```
-\b(?:([TQE])-([A-Z][A-Z0-9]{1,4})-([1-9][0-9]*)|S-([A-Z][A-Z0-9]{1,4})-([A-DF-PRU-Z])([1-9][0-9]*))\b
+\b(?:([TQEC])-([A-Z][A-Z0-9]{1,4})-([1-9][0-9]*)|S-([A-Z][A-Z0-9]{1,4})-([A-DF-PRU-Z])([1-9][0-9]*))\b
 ```
 
 Open for `/egm-draft`: the section letter list per scope (section letters follow the same confusable-letter rule); project code list; display formatter in `packages/ui`; `entity_code` table and backfill.

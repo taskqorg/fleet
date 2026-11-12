@@ -17,7 +17,7 @@ import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, inside, range, type Selection } from '../selection.ts';
 
 const ROW = parseInt(tokens.size['row-2']); // two-line catalogue row
-type SessionRow = { id: string; title: string | null; state: StateOf<'session'>; harness: string | null; openQuestions: number; sortKey: (string | number)[] };
+type SessionRow = { id: string; code?: string | null; title: string | null; state: StateOf<'session'>; harness: string | null; openQuestions: number; sortKey: (string | number)[] };
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
 const reqId = () => crypto.randomUUID();
 
@@ -52,7 +52,7 @@ export function Conversations({ id }: { id?: string }) {
             columns="1.25rem minmax(0,1fr) 2rem 1.25rem" rowClass={r => r.id === id ? 'sel' : ''}
             render={r => <>
               <span class="lead"><StateBadge family="session" state={r.state} compact /></span>
-              <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.title ?? 'New conversation'}</a>{isHarness(r.harness) && <HarnessMark h={r.harness} />}</span>
+              <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.title ?? 'New conversation'}</a><EntityCode code={r.code} id={r.id} />{isHarness(r.harness) && <HarnessMark h={r.harness} />}</span>
               <span class="r">{r.openQuestions ? <span class="chip-age t-attention alert" aria-label={`${r.openQuestions} open questions`}>{r.openQuestions}</span> : ''}</span>
               <RowCheck checked={sel.includes(r.id)} label={'Select ' + (r.title ?? 'conversation')} onToggle={() => toggleSel(r.id)} />
             </>} />}
@@ -120,7 +120,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   return <article class="detail conversation" data-ui="detail" tabIndex={-1} aria-label="Conversation">
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
-      <EntityCode id={id} what="Conversation" />{s.agentConfig?.id && <span class="muted mono">{s.agentConfig.id}</span>}<span class="grow" />
+      <EntityCode code={s.code} id={id} what="Conversation" />{s.agentConfig?.id && <span class="muted mono">{s.agentConfig.id}</span>}<span class="grow" />
       <SearchField label="Search thread" value={q} onInput={setQ} onSearch={search} />
       <span class="count" aria-live="polite">{hits ? `${hits.length ? hit + 1 : 0} of ${hits.length}` : w ? `${w.blocks.length.toLocaleString('en')} of ${w.total.toLocaleString('en')}` : ''}</span>
       <Button label="Previous hit" icon="arrow-up" iconOnly disabledReason={!hits || hit <= 0 ? 'no earlier hit' : undefined} onClick={() => hits && open(hits, hit - 1)} />
@@ -169,14 +169,14 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
 function SwitchPanel({ sessionId, handoff, current, onDone, run }: { sessionId: string; handoff: boolean; current?: string; onDone: (note?: string) => void; run: (fn: () => Promise<unknown>) => Promise<void> }) {
   const { data: profiles } = useDoc<any>('profiles', () => op('profiles_list', {}), () => false);
   const { data: accounts } = useDoc<any>(handoff ? 'accounts' : null, () => op('account_list', {}), c => c.kind === 'host');
-  const [profile, setProfile] = useState<string | null>(null), [account, setAccount] = useState<string | null>(null), [done, setDone] = useState<string | null>(null);
+  const [profile, setProfile] = useState<string | null>(null), [account, setAccount] = useState<string | null>(null), [done, setDone] = useState<string | null>(null), [next, setNext] = useState<string | null>(null), [, nav] = useLocation();
   const list: any[] = profiles?.profiles ?? [];
   const named: any[] = (accounts?.accounts ?? []).filter((a: any) => a.enabled);
-  const go = () => run(async () => { const r = await op('session_transition', { sessionId, profileId: profile ?? undefined, ...(account ? { account } : {}) }); setDone(`${r.transition}${r.sessionId && r.sessionId !== sessionId ? ' · new conversation' : ''}`); });
+  const go = () => run(async () => { const r = await op('session_transition', { sessionId, profileId: profile ?? undefined, ...(account ? { account } : {}) }); setDone(r.transition); setNext(r.sessionId && r.sessionId !== sessionId ? r.sessionId : null); });
   return <DetailSection title={handoff ? 'Hand off to another agent' : 'Switch profile or model'}>
     <div class="answers" role="group" aria-label="Profile">{list.map(p => <Button key={p.id} label={`${p.id} · ${p.harness ?? 'codex'}${p.model ? ` ${p.model}` : ''}`} pressed={profile === p.id} kind={p.id === current ? 'quiet' : 'default'} onClick={() => setProfile(p.id)} />)}</div>
     {handoff && <div class="answers" role="group" aria-label="Account">{named.map(a => <Button key={a.id} label={`${a.name} · ${a.harness ?? 'codex'}`} pressed={account === a.name} onClick={() => setAccount(account === a.name ? null : a.name)} />)}</div>}
-    <div class="answers"><Button label={handoff ? 'Hand off' : 'Switch'} kind="primary" disabledReason={profile ? undefined : 'pick a profile'} onClick={go} /><Button label="Close" kind="quiet" onClick={() => onDone(done ?? undefined)} />{done && <span class="muted" role="status">{done}</span>}</div>
+    <div class="answers"><Button label={handoff ? 'Hand off' : 'Switch'} kind="primary" disabledReason={profile ? undefined : 'pick a profile'} onClick={go} /><Button label="Close" kind="quiet" onClick={() => onDone(done ?? undefined)} />{done && <span class="muted" role="status">{done}</span>}{next && <a class="row-link" href={`/conversations/${encodeURIComponent(next)}`} onClick={e => { e.preventDefault(); onDone(done ?? undefined); nav(`/conversations/${encodeURIComponent(next)}`); }}>Open the new conversation</a>}</div>
   </DetailSection>;
 }
 
