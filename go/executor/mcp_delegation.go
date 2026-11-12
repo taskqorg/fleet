@@ -126,6 +126,18 @@ func mcpTools(ctx any) M {
 	return M{"tools": out}
 }
 
+// Internal launch selection comes from the same schema/context as actual discovery, including recovery tools.
+func mcpToolNames(discovery any) []any {
+	out := []any{}
+	for _, tool := range jArr(discovery, "tools") {
+		out = append(out, jStr(tool, "name"))
+	}
+	return out
+}
+func delegationServer(ctx any, journal string) M {
+	return M{"command": exe(), "args": []any{"mcp", "delegation", journal, enc(ctx)}, "tools": mcpToolNames(mcpTools(ctx))}
+}
+
 // dbError marks journal failures: they end the call with a JSON-RPC error, never a tool result.
 type dbError struct{ error }
 

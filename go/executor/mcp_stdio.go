@@ -173,12 +173,18 @@ func mcpBoundCommand(spec any) (*exec.Cmd, func(), error) {
 	cmd.Dir, _ = os.Getwd()
 	return cmd, func() {}, nil
 }
-func wrapMCPServers(servers M, socket, root string) (M, error) {
+func wrapMCPServers(servers M, socket, root string, receiptDir ...string) (M, error) {
 	wrapped := M{}
 	for name, raw := range servers {
 		server := jObj(jClone(raw))
 		if jStr(server, "command") == "" {
 			return nil, errors.New("MCP launch command missing")
+		}
+		if len(receiptDir) > 0 {
+			if err := os.Mkdir(receiptDir[0], 0700); err != nil && !os.IsExist(err) {
+				return nil, errors.New("MCP receipt directory unavailable")
+			}
+			server["receiptPath"] = filepath.Join(receiptDir[0], "mcp-lifecycle-"+sha([]byte(name)))
 		}
 		// These are already authoritative runtime specs, not commands supplied by an agent profile.
 		wrapped[name] = M{"command": exe(), "args": []any{"mcp", "stdio", socket, enc(server), root}, "tools": jAt(server, "tools"), "env": []any{"HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR", "PATH"}}
