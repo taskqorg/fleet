@@ -195,3 +195,5 @@ func (g *guard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(204)
 	}
 }
+
+// Disposable delivery timing path control; never merge this candidate.
