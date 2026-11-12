@@ -40,7 +40,8 @@ function Trend({ now }: { now: number }) {
   if (!data) return <section class="panel delivery-trend" aria-label="Delivery trend">{head}{error ? <ErrorBanner text={`Trend did not load: ${error}`} /> : <Empty text="Loading…" />}</section>;
   const days: any[] = data.b.trend;
   const from = days.length ? Date.parse(days[0].day + 'T00:00:00Z') : now - 14 * DAY;
-  const base = new Map<string, any>(data.b.rolling.stats.map((s: any) => [s.key, s]));
+  // The baseline the last check compared with (the 7 days before it, or the named snapshot), else the rolling one.
+  const base = new Map<string, any>((data.r.baseline ?? data.b.rolling).stats.map((s: any) => [s.key, s]));
   const regs: any[] = data.r.regressions;
   const label = (k: string) => TREND.find(t => t.key === k)?.label ?? k;
   return <section class="panel delivery-trend" aria-label="Delivery trend">
@@ -65,7 +66,7 @@ function Trend({ now }: { now: number }) {
         return <article key={t.key} class="panel limit-card" aria-label={t.label}>
           <header class="panel-h"><h2><Icon name={t.icon} /> {t.label}</h2><span class="grow" />
             {last && <span class={slow ? 't-danger' : undefined} data-tip="P50 and P90, the last day with values">P50 <Num m={sec(last.p50Ms)} kind="duration" /> P90 <Num m={sec(last.p90Ms)} kind="duration" /></span>}
-            {b && <span class="muted" data-tip="Rolling 7-day baseline P50">base <Num m={sec(b.p50Ms)} kind="duration" /></span>}</header>
+            {b && <span class="muted" data-tip="Baseline P50 of the regression check">base <Num m={sec(b.p50Ms)} kind="duration" /></span>}</header>
           <AreaChart label={`${t.label} per day in minutes`} from={from} to={now} now={now} value={v => `${Math.round(v)}m`}
             max={Math.max(1, ...p90.map(p => p.v), ...bl.map(p => p.v))}
             series={[{ label: 'P90', points: p90, tone: 'd2', step: true }, { label: 'P50', points: p50, tone: 'd1', step: true }, { label: 'baseline P50', points: bl, tone: 'd4', pattern: true, projected: true }]} />

@@ -49,6 +49,8 @@ type dhState struct {
 	Problem        string            `json:"problem,omitempty"`
 	CheckedRelease string            `json:"checkedRelease,omitempty"`
 	CheckedAt      string            `json:"checkedAt,omitempty"` // the pass's last check; the reply is document delivery-check
+	RetryRuns      []dhRetry         `json:"retryRuns,omitempty"` // runs whose jobs read failed, read again each pass
+	CiTried        map[string]string `json:"ciTried,omitempty"`   // pull request number to its last PR CI lookup while none was found
 }
 
 var coordinatorStarted = time.Now().UTC()
@@ -109,6 +111,14 @@ type dhPull struct {
 		Login string `json:"login"`
 	} `json:"user"`
 }
+
+// dhRetry: a run whose jobs read failed, with the failures so far; it is dropped after dhRetries.
+type dhRetry struct {
+	Run   dhRun `json:"run"`
+	Tries int   `json:"tries"`
+}
+
+const dhRetries = 5
 
 type dhRun struct {
 	ID         int64   `json:"id"`
@@ -251,6 +261,15 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	}
 	var changedRuns []contract.DeliveryRun
 	var skipped []string // single reads that failed; the pass keeps the rest
+	// A run listed while still in progress is listed again: the window holds yesterday, so at least 24 hours.
+	tries := map[int64]int{}
+	for _, x := range st.RetryRuns {
+		tries[x.Run.ID] = x.Tries
+		if !slices.ContainsFunc(runs, func(r dhRun) bool { return r.ID == x.Run.ID }) {
+			runs = append(runs, x.Run)
+		}
+	}
+	st.RetryRuns = nil
 	for _, r := range runs {
 		if r.Status != "completed" {
 			continue
@@ -262,7 +281,10 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			Jobs []ciJob `json:"jobs"`
 		}
 		if err := read(&js, "run_jobs", "run_id", strconv.FormatInt(r.ID, 10)); err != nil {
-			skipped = append(skipped, err.Error()) // read again next pass: the run is not stored
+			skipped = append(skipped, err.Error())
+			if tries[r.ID]+1 < dhRetries {
+				st.RetryRuns = append(st.RetryRuns, dhRetry{r, tries[r.ID] + 1}) // read again next pass, outside the window too
+			}
 			continue
 		}
 		dr := deliveryRunOf(r, js.Jobs)
@@ -297,12 +319,22 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	}
 	// PR CI done: the first green pull_request run of the ci workflow on the merged head, read once per pull request
 	// (and again for two days while GitHub may still be running it).
-	recent := now.Add(-48 * time.Hour).Format(time.RFC3339)
+	recent, hour := now.Add(-48*time.Hour).Format(time.RFC3339), now.Add(-time.Hour).Format(time.RFC3339)
+	tried := map[string]string{}
+	for k, v := range st.CiTried {
+		if v >= recent {
+			tried[k] = v
+		}
+	}
+	st.CiTried = tried
 	for i := range prs {
 		p := &prs[i]
-		if p.PrCiDone != nil || p.HeadSha == "" || !backfill && p.Merged < recent {
+		num := strconv.FormatInt(p.Number, 10)
+		// Read once in the backfill, then at most hourly for two days: a head without a green run stays without one.
+		if p.PrCiDone != nil || p.HeadSha == "" || !backfill && (p.Merged < recent || tried[num] >= hour) {
 			continue
 		}
+		tried[num] = now.Format(time.RFC3339)
 		var r struct {
 			Runs []dhRun `json:"workflow_runs"`
 		}
@@ -355,7 +387,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			newest, newestAt = r.Tag, r.Published
 		}
 	}
-	if backfill && len(skipped) == 0 { // a failed read outside yesterday and today is read again only by another backfill
+	if backfill {
 		st.Backfilled, st.BackfilledFrom = true, deliveryRepoStart
 	}
 	st.Through, st.RefreshedAt, st.Problem = now.Format("2006-01-02"), now.Format(time.RFC3339), ""
@@ -364,7 +396,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	}
 	// The check: after each new release and at least daily.
 	check := newest != st.CheckedRelease || st.CheckedAt < now.Add(-24*time.Hour).Format(time.RFC3339)
-	return save(func(q *Request) error {
+	err := save(func(q *Request) error {
 		for _, p := range prs {
 			if id := "delivery-pr:" + strconv.FormatInt(p.Number, 10); changed(id, p) {
 				if err := dhPut(q, "delivery-pr", id, p); err != nil {
@@ -384,11 +416,17 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 				return err
 			}
 		}
-		if !check {
-			return nil
+		if check {
+			st.CheckedRelease, st.CheckedAt = newest, now.Format(time.RFC3339)
 		}
-		st.CheckedRelease, st.CheckedAt = newest, now.Format(time.RFC3339)
-		_, err := deliveryCheck(q, prs, runList, now)
+		return nil
+	})
+	if err != nil || !check {
+		return err
+	}
+	// Its own transaction: a failed check must not undo the records just read.
+	return runTx(ctx, a, nil, true, "", func(q *Request) error {
+		_, err := deliveryCheck(q, prs, runList, now, st.InstallsFrom)
 		return err
 	})
 }
@@ -641,6 +679,31 @@ func deliveryValues(prs []contract.DeliveryPr, runs []contract.DeliveryRun, from
 	return out
 }
 
+// deliveryPending adds, for pull requests merged in [from, now) still short of a release (or of the coordinator install
+// of a release published since installsFrom), the time waited so far: a stalled release or install then raises the
+// stage's values instead of leaving it with fewer of them.
+func deliveryPending(s deliverySeries, prs []contract.DeliveryPr, from, now, installsFrom string) {
+	add := func(k string, p contract.DeliveryPr, since string) {
+		if d := msBetween(&since, &now); d != nil {
+			s[k] = append(s[k], deliveryValue{p.Merged, *d, p.Number, p.Url})
+		}
+	}
+	for _, p := range prs {
+		if p.Merged < from || p.Merged >= now {
+			continue
+		}
+		switch {
+		case p.Released == nil:
+			add("release", p, p.Merged)
+		case installsFrom != "" && *p.Released >= installsFrom && p.Installed["coordinator"] == "":
+			add("install", p, *p.Released)
+		}
+	}
+	for k := range s {
+		sort.Slice(s[k], func(i, j int) bool { return s[k][i].at < s[k][j].at })
+	}
+}
+
 func statKeyOrder(k string) string {
 	if i := slices.Index(deliveryStageKeys, k); i >= 0 {
 		return fmt.Sprintf("0%02d", i)
@@ -726,15 +789,18 @@ func deliveryCompare(prs []contract.DeliveryPr, cur deliverySeries, base contrac
 					break
 				}
 			}
+			fpn := int64(-1)
 			if r.FirstPr != nil {
-				fp := byNum[*r.FirstPr]
+				fpn = *r.FirstPr
+			}
+			if fp, ok := byNum[fpn]; ok {
 				var good *contract.DeliveryPr
 				for i := range merged {
 					if merged[i].Merged < fp.Merged {
 						good = &merged[i]
 					}
 				}
-				last := merged[len(merged)-1]
+				last := merged[len(merged)-1] // not empty: fp is one of them
 				if good != nil {
 					r.LastGoodPr = ptr(good.Number)
 					r.CompareUrl = ptr("https://github.com/" + ciOwner + "/" + ciRepo + "/compare/" + good.MergeSha + "..." + last.MergeSha)
@@ -763,7 +829,7 @@ func fmtMs(ms int64) string {
 
 // deliveryCheck: the last 24 h against the baseline (the named snapshot of the settings, else the 7 days before);
 // each regression holds the question problem:delivery:<key>:<metric>, gone ones withdraw (problemsSync).
-func deliveryCheck(q *Request, prs []contract.DeliveryPr, runs []contract.DeliveryRun, now time.Time) (contract.DeliveryRegressionsReply, error) {
+func deliveryCheck(q *Request, prs []contract.DeliveryPr, runs []contract.DeliveryRun, now time.Time, installsFrom string) (contract.DeliveryRegressionsReply, error) {
 	s, err := deliverySettingsOf(q)
 	if err != nil {
 		return contract.DeliveryRegressionsReply{}, err
@@ -783,11 +849,16 @@ func deliveryCheck(q *Request, prs []contract.DeliveryPr, runs []contract.Delive
 	}
 	f, u := day.Format(time.RFC3339), now.Format(time.RFC3339)
 	cur := deliveryValues(prs, runs, f, u)
+	deliveryPending(cur, prs, f, u, installsFrom)
 	current := deliveryWindow(prs, runs, day, now)
 	regs := deliveryCompare(prs, cur, base, s)
 	var ps []Problem
 	for _, r := range regs {
-		text := fmt.Sprintf("Delivery got slower: %s %s is %s over the last 24 h, baseline %s (×%.1f, %d values).", r.Key, strings.ToUpper(string(r.Metric)), fmtMs(r.CurrentMs), fmtMs(r.BaselineMs), r.Ratio, r.N)
+		times := ""
+		if r.Ratio > 0 {
+			times = fmt.Sprintf("×%.1f, ", r.Ratio)
+		}
+		text := fmt.Sprintf("Delivery got slower: %s %s is %s over the last 24 h, baseline %s (%s%d values).", r.Key, strings.ToUpper(string(r.Metric)), fmtMs(r.CurrentMs), fmtMs(r.BaselineMs), times, r.N)
 		if r.FirstPr != nil {
 			text += fmt.Sprintf(" First over the threshold: #%d", *r.FirstPr)
 			if r.LastGoodPr != nil {
@@ -1003,7 +1074,11 @@ func deliveryRegressionsOp(q *Request, r *contract.DeliveryRegressionsRequest) (
 			if err != nil {
 				return err
 			}
-			c, err = deliveryCheck(w, prs, runs, time.Now().UTC())
+			st, err := dhStateOf(w)
+			if err != nil {
+				return err
+			}
+			c, err = deliveryCheck(w, prs, runs, time.Now().UTC(), st.InstallsFrom)
 			return err
 		})
 		return c, err

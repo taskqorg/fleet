@@ -49,4 +49,9 @@ func TestDeliveryHistoryDeriveAndCompare(t *testing.T) {
 	if got := deliveryCompare(prs, cur, base, contract.DeliverySettings{Ratio: 1.5, MinSamples: 3, MinDeltaMs: 60e3}); len(got) != 0 {
 		t.Fatalf("too few values must not regress: %+v", got)
 	}
+	pending := deliverySeries{}
+	deliveryPending(pending, []contract.DeliveryPr{{Number: 3, Merged: "2026-11-12T11:00:00Z"}}, "2026-11-12T00:00:00Z", "2026-11-12T12:00:00Z", "")
+	if len(pending["release"]) != 1 || pending["release"][0].ms != 3600e3 {
+		t.Fatalf("a pull request waiting for its release counts its wait so far: %+v", pending)
+	}
 }
