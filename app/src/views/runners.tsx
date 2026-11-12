@@ -75,5 +75,6 @@ export function Runners() {
       </section>;
     })}
     {!data.runs.length && <Empty text="Nothing ran in the last 24 hours." />}
+    <section class="panel" aria-label="CI"><header class="panel-h"><h2>CI</h2></header><Empty text="No GitHub data yet." /></section>
   </section>;
 }
