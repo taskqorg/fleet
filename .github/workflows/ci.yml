@@ -294,7 +294,7 @@ jobs:
           mkdir release && deploy/build-release.sh HEAD release "0.0.0-${GITHUB_SHA::12}" "" linux/amd64 darwin/arm64
           mkdir t && tar -xzf release/fleet-*-linux-amd64.tgz -C t
           for b in t/fleet-*; do go version -m "$b" | grep -q 'CGO_ENABLED=0' || { echo "$b: cgo enabled"; exit 1; }; done
-          for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/t/$b" selftest); done
+          deploy/selftest-release.sh t
       - uses: actions/upload-artifact@v4
         with:
           name: fleet-release-${{ github.sha }}
@@ -437,10 +437,12 @@ jobs:
           deploy/build-release.sh "$GITHUB_SHA" out "$version" "${previous#v}" linux/amd64 darwin/arm64
           jq -nc --arg v "$version" --arg c "$GITHUB_SHA" '{version:$v,commit:$c,checkedWith:$ARGS.positional}' --args $recent > out/speculative.json
           echo "built $version, checked with: ${recent:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
+          # The gate takes the artifact only with these SHA256SUMS: no other job can write this job's annotations.
+          echo "::notice title=release SHA256SUMS::$(sha256sum < out/SHA256SUMS | cut -d' ' -f1)"
       - name: Selftest linux binaries
         run: |
           mkdir new && tar -xzf out/fleet-*-linux-amd64.tgz -C new
-          for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/new/$b" selftest); done
+          deploy/selftest-release.sh new
       - name: New coordinator migrates, each recent one still serves
         if: env.RECENT != ''
         run: deploy/migrate-check.sh new out
@@ -461,7 +463,7 @@ jobs:
           name: release
       - run: |
           mkdir t && tar -xzf fleet-*-darwin-arm64.tgz -C t
-          for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/t/$b" selftest); done
+          t/deploy/selftest-release.sh t
   # Diagnostics only: pull requests (comment) and main pushes (docs-order); never a merge queue run's runner slot.
   reports:
     if: github.event_name != 'merge_group'

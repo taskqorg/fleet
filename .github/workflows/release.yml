@@ -24,6 +24,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      checks: read
     outputs:
       release: ${{ steps.check.outputs.release }}
       sha: ${{ steps.check.outputs.sha }}
@@ -82,7 +83,8 @@ jobs:
             version=1.$day.$(( ${m:--1} + 1 ))
           fi
           # The migration check pairs the new coordinator with each of these (fleet-delivery-pipeline.md section 5).
-          eval "$(deploy/release-recent.sh)"
+          window=$(deploy/release-recent.sh)
+          eval "$window"
           { echo release=true; echo "sha=$sha"; echo "version=$version"; echo "previous=${latest#v}"; echo "recent=$recent"; echo "digests=$digests"; } >> "$GITHUB_OUTPUT"
           echo "release $version from $sha, checked with: ${recent:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v4
@@ -131,17 +133,28 @@ jobs:
           # The merge queue run's speculative build of this exact commit and version (ci.yml release-build): when both of
           # its jobs passed, publish signs those bytes; stale: a release published since, so its migration check window
           # moved and migrate runs it again on the same bytes. Anything else: build here, as before.
+          # At most 10 minutes: a slow or queued speculative job falls back to building here, not to a timed-out gate.
+          deadline=$((SECONDS + 600))
           while :; do
             jobs=$(gh run view "$id" --json jobs)
             b=$(jq -r '[.jobs[] | select(.name == "release-build")][0].conclusion // "missing"' <<< "$jobs")
             m=$(jq -r '[.jobs[] | select(.name == "release-macos")][0].conclusion // "missing"' <<< "$jobs")
             [ "$b" = missing ] && break
+            [ "$SECONDS" -lt "$deadline" ] || { b=timeout; break; }
             [ -z "$b" ] || { [ "$b" = success ] && { [ -z "$m" ] || [ "$m" = missing ]; }; } || break
             sleep 10
           done
           [ "$b/$m" != success/success ] || gh run download "$id" --name release --dir "$RUNNER_TEMP/spec" || true
           spec=$RUNNER_TEMP/spec/speculative.json
-          if [ "$b/$m" = success/success ] && [ -f "$spec" ] && jq -e --arg v "$VERSION" --arg c "$SHA" '.version == $v and .commit == $c' "$spec" >/dev/null; then
+          # The digest release-build announced in its own annotation: an artifact another job of that run uploaded under
+          # the same name does not match it.
+          announced=
+          if [ "$b/$m" = success/success ]; then
+            job=$(jq -r '[.jobs[] | select(.name == "release-build")][0].databaseId' <<< "$jobs")
+            announced=$(gh api "repos/$GH_REPO/check-runs/$job/annotations" --jq '[.[] | select(.title == "release SHA256SUMS") | .message] | first // ""')
+          fi
+          if [ -n "$RECENT" ] && [ "$b/$m" = success/success ] && [ -f "$spec" ] && [ -n "$announced" ] \
+            && [ "$(sha256sum < "$RUNNER_TEMP/spec/SHA256SUMS" | cut -d' ' -f1)" = "$announced" ] && jq -e --arg v "$VERSION" --arg c "$SHA" '.version == $v and .commit == $c' "$spec" >/dev/null; then
             stale=false; [ "$(jq -r '.checkedWith | join(" ")' "$spec")" = "$RECENT" ] || stale=true
             (cd "$RUNNER_TEMP/spec" && sha256sum -c --quiet SHA256SUMS) || { echo "::error::ci run $id: tarballs do not match SHA256SUMS"; exit 1; }
             # migrate and publish download the artifact again and take it only with these exact SHA256SUMS.
@@ -171,6 +184,12 @@ jobs:
         with:
           ref: ${{ needs.gate.outputs.sha }}
           persist-credentials: false
+      # The release scripts of this workflow's commit: a rollback drill builds a commit older than them.
+      - uses: actions/checkout@v4
+        with:
+          path: .release
+          sparse-checkout: deploy
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
       # The self-hosted runner keeps the pnpm store and the Go caches on its disk (20 MB/s); restoring GitHub's copies
       # over them only costs writes. The hosted fallback has nothing on disk and uses them.
@@ -194,7 +213,7 @@ jobs:
       - name: Selftest linux binaries
         run: |
           mkdir new && tar -xzf out/fleet-*-linux-amd64.tgz -C new
-          for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/new/$b" selftest); done
+          .release/deploy/selftest-release.sh new
       # Section 5 of fleet-delivery-pipeline.md. Same job as the build: the runner's disk is capped at 20 MB/s, so no
       # artifact round trip, and the recent coordinators stay extracted under ~/fleet-releases/v between runs.
       - name: New coordinator migrates, each recent one still serves
@@ -205,7 +224,7 @@ jobs:
           VERSION: ${{ needs.gate.outputs.version }}
           RECENT: ${{ needs.gate.outputs.recent }}
           DIGESTS: ${{ needs.gate.outputs.digests }}
-        run: deploy/migrate-check.sh new out
+        run: .release/deploy/migrate-check.sh new out
       - uses: actions/upload-artifact@v4
         with:
           name: release
@@ -238,7 +257,8 @@ jobs:
           persist-credentials: false
       - run: |
           gh run download "${{ needs.gate.outputs.spec_run }}" --name release --dir out
-          [ "$(sha256sum < out/SHA256SUMS | cut -d' ' -f1)" = "$SUMS" ] && (cd out && sha256sum -c --quiet SHA256SUMS)
+          [ -n "$SUMS" ] && [ "$(sha256sum < out/SHA256SUMS | cut -d' ' -f1)" = "$SUMS" ] || { echo "::error::SHA256SUMS changed since the gate"; exit 1; }
+          (cd out && sha256sum -c --quiet SHA256SUMS)
           mkdir new && tar -xzf out/fleet-*-linux-amd64.tgz -C new
           deploy/migrate-check.sh new out
   selftest-macos:
@@ -288,7 +308,7 @@ jobs:
         run: |
           gh run download "$SPEC_RUN" --name release --dir .
           rm speculative.json
-          [ "$(sha256sum < SHA256SUMS | cut -d' ' -f1)" = "$SUMS" ] || { echo "::error::SHA256SUMS changed since the gate"; exit 1; }
+          [ -n "$SUMS" ] && [ "$(sha256sum < SHA256SUMS | cut -d' ' -f1)" = "$SUMS" ] || { echo "::error::SHA256SUMS changed since the gate"; exit 1; }
           sha256sum -c SHA256SUMS
       # The tree the qualifying ci run browser-checked (gate); release.json binds it to version, backend and source.
       - name: UI archive
