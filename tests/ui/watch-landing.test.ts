@@ -80,6 +80,12 @@ test('landing observations retain authoritative publication, optional site evide
       [pr({autoMergeRequest: null}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: 'merge_conflict'}]), 'not merged: OPEN, merge_conflict'],
       // A veto on a DIRTY pull request is a veto, not a conflict.
       [pr({mergeStateStatus: 'DIRTY', autoMergeRequest: null}, [], [{__typename: 'AutoMergeDisabledEvent'}]), 'not merged: OPEN, auto-merge off'],
+      // Who disabled auto-merge: a person (manually_disabled) is the orchestrator's veto; GitHub's own disable names its code.
+      [pr({autoMergeRequest: null}, [], [{__typename: 'AutoMergeDisabledEvent', reasonCode: 'manually_disabled'}]), 'not merged: OPEN, auto-merge off'],
+      [pr({autoMergeRequest: null}, [], [{__typename: 'AutoMergeDisabledEvent', reasonCode: 'merge_conflict'}]), 'not merged: OPEN, auto-merge disabled by GitHub (merge_conflict)'],
+      // A DIRTY computed for the current head on two polls is a conflict (the test merge, when present, is of this head).
+      [pr({mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', headRefOid: 'h2'}), 'not merged: OPEN, merge_conflict'],
+      [pr({mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', headRefOid: 'h2', potentialMergeCommit: {parents: {nodes: [{oid: 'main'}, {oid: 'h2'}]}}}), 'not merged: OPEN, merge_conflict'],
       [pr({autoMergeRequest: null}, [red], [{__typename: 'AutoMergeDisabledEvent'}]), 'not merged: OPEN, auto-merge off'],
       [pr({state: 'CLOSED', autoMergeRequest: null}, [red]), 'not merged: CLOSED, auto-merge off'],
     ]) { const r = run({WATCH_FIXTURE_GRAPHQL: graphql}); assert.equal(r.status, 1, r.stderr); assert.equal(r.stdout, out + '\n'); }
@@ -101,6 +107,16 @@ test('landing observations retain authoritative publication, optional site evide
       const r = run({WATCH_FIXTURE_GRAPHQL_STEPS: steps.join('\n'), WATCH_FIXTURE_COUNT: join(dir, 'count-' + i), WATCH_FIXTURE_GRAPHQL: merged});
       assert.equal(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout, /^merged 0123456789$/m); assert.doesNotMatch(r.stdout, /merge_conflict/);
     }
+    // A DIRTY not computed for the current head is never a conflict: mergeability still UNKNOWN, or a test merge of a
+    // superseded head; it waits (timeout here, since every poll answers the same).
+    for (const graphql of [pr({mergeStateStatus: 'DIRTY', mergeable: 'UNKNOWN', headRefOid: 'h2'}),
+      pr({mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', headRefOid: 'h2', potentialMergeCommit: {parents: {nodes: [{oid: 'main'}, {oid: 'h1'}]}}})]) {
+      const r = run({WATCH_FIXTURE_GRAPHQL: graphql}, false, '0'); assert.equal(r.status, 2, r.stdout); assert.equal(r.stdout, 'timeout at: queue\n');
+    }
+    // DIRTY on head h1, then DIRTY on the pushed head h2: two different heads, not two polls of one; then merged.
+    const heads = run({WATCH_FIXTURE_GRAPHQL_STEPS: [pr({mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', headRefOid: 'h1'}), pr({mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', headRefOid: 'h2'})].join('\n'),
+      WATCH_FIXTURE_COUNT: join(dir, 'count-heads'), WATCH_FIXTURE_GRAPHQL: merged});
+    assert.equal(heads.status, 0, heads.stdout); assert.doesNotMatch(heads.stdout, /merge_conflict/);
     // A DIRTY seen once at the deadline may be stale: a timeout, not a conflict.
     const late = run({WATCH_FIXTURE_GRAPHQL: dirty()}, false, '0'); assert.equal(late.status, 2); assert.equal(late.stdout, 'timeout at: queue\n');
   } finally { rmSync(dir, {recursive: true, force: true}); }
