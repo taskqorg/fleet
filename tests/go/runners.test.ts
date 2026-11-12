@@ -18,8 +18,8 @@ test('R1 executions_runners lists active and recent runs with their totals, leav
     const r = await fetch(c.base + '/api/ops/executions_runners', {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json'}, body: '{}'});
     const b: any = await r.json();
     assert.equal(r.status, 200, JSON.stringify(b));
-    assert.deepEqual(b.runs.map((x: any) => x.id).sort(), ['calls:h1/host', 'r-done', 'r-live']);
-    const calls = b.runs.find((x: any) => x.id === 'calls:h1/host');
+    assert.deepEqual(b.runs.map((x: any) => x.id).sort(), ['calls:h1/conn:', 'r-done', 'r-live']);
+    const calls = b.runs.find((x: any) => x.id === 'calls:h1/conn:');
     assert.deepEqual([calls.calls, calls.failedCalls, calls.state, calls.wallMs], [1, 0, 'succeeded', 40], 'tool calls summed per caller, not a row each');
     const done = b.runs.find((x: any) => x.id === 'r-done');
     assert.deepEqual([done.hostId, done.tokens, done.wallMs, done.cpuMs], ['h1', 150, 3600000, 1200]);
@@ -44,7 +44,7 @@ test('R2 executions_runners shows a person only the runs and spend of projects t
     assert.deepEqual(member.runs.map((r: any) => r.id), ['s-mine'], JSON.stringify(member.runs));
     assert.deepEqual(member.spend.filter((s: any) => s.period === 'month').map((s: any) => [s.hostId, s.runs, s.tokens]), [['h1', 1, 5]]);
     assert.deepEqual((await as('outsider@trial.test')).runs, []);
-    assert.deepEqual((await as('owner@trial.test')).runs.map((r: any) => r.id).sort(), ['calls:/host', 's-mine', 's-other']);
+    assert.deepEqual((await as('owner@trial.test')).runs.map((r: any) => r.id).sort(), ['calls:/conn:', 's-mine', 's-other']);
   } finally { await c.stop(); }
 });
 
