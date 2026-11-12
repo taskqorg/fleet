@@ -188,9 +188,8 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		return err
 	}
 	// A refused read (the tool not granted, the key gone) says nothing about the item: stop instead of giving it up.
-	refused := func(err error) bool {
-		return strings.Contains(err.Error(), "unknown-tool") || strings.Contains(err.Error(), "no github key")
-	}
+	// GitHub's own replies arrive as http-<status> codes; any other failure is the connection's or the gateway's.
+	refused := func(err error) bool { return !strings.Contains(err.Error(), ": http-") }
 	backfill := !st.Backfilled
 	// Pull requests: the most recently updated first; after the backfill, until a page older than the last pass.
 	var pulls []dhPull
@@ -312,7 +311,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			keep = append(keep, x)
 		}
 	}
-	st.RetryRuns = keep
+	retryNext := keep // st.RetryRuns stays whole until the loop ends, so a flush keeps the runs still to retry
 	for _, r := range runs {
 		if r.Status != "completed" {
 			continue
@@ -328,7 +327,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 				return fail(err)
 			}
 			skipped = append(skipped, err.Error())
-			st.RetryRuns = append(st.RetryRuns, dhRetry{r, tries[r.ID] + 1}) // read again next pass, outside the window too
+			retryNext = append(retryNext, dhRetry{r, tries[r.ID] + 1}) // read again next pass, outside the window too
 			continue
 		}
 		dr := deliveryRunOf(r, js.Jobs)
@@ -339,6 +338,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			}
 		}
 	}
+	st.RetryRuns = retryNext
 	byNum := map[int64]*contract.DeliveryPr{}
 	for i := range prs {
 		byNum[prs[i].Number] = &prs[i]
