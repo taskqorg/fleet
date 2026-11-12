@@ -1469,7 +1469,8 @@ func init() {
 		// The director's rights, the execution as actor (docs/designs/fleet-pm-agent.md §1).
 		q.agent = "execution:" + executionID
 		q.r = q.r.WithContext(context.WithValue(q.ctx(), actorKey{}, q.agent))
-		var focus []string // nil: no focus or "*"
+		var focus []string                   // nil: no focus or "*"
+		sessionProject, focused := "", false // the calling session's own project; whether it has any focus
 		prove := func() error {
 			e := doc{}
 			if executionID != "" {
@@ -1492,7 +1493,8 @@ func init() {
 				if s, err := maybe(q, sid, "session"); err != nil {
 					return err
 				} else if s != nil {
-					focus = focusIDs(s)
+					focus, sessionProject = focusIDs(s), astr(s["projectId"])
+					_, focused = s["focus"]
 				}
 			}
 			// A call without an execution (initialize, tools/list) acts for the host's holder; never an implicit owner.
@@ -1543,6 +1545,16 @@ func init() {
 					f = doc{}
 				}
 				f["projectId"], a["filter"] = focus, f // focus filters reads without a project (§2)
+			}
+			// An operation that requires projectId, called without the key, gets the one focus project, or the session's
+			// own project when it has no focus (§2). Optional projectIds stay absent (scope-wide reads), an explicit null
+			// stays null, and the operation's own gates still refuse a project the director cannot reach.
+			if _, given := a["projectId"]; !given && projectRequired[name] {
+				if len(focus) == 1 {
+					a["projectId"] = focus[0]
+				} else if !focused && sessionProject != "" {
+					a["projectId"] = sessionProject
+				}
 			}
 			if name == "task_create" && a["projectId"] == nil && len(focus) == 1 {
 				a["projectId"] = focus[0] // one focus project is the default (§2)
@@ -1873,3 +1885,18 @@ func fleetOperations(p *Person) []doc {
 	slices.SortFunc(out, func(a, b doc) int { return strings.Compare(astr(a["name"]), astr(b["name"])) })
 	return out
 }
+
+// projectRequired: the operations whose input schema requires projectId (read once from the contract).
+var projectRequired = func() map[string]bool {
+	out := map[string]bool{}
+	for n, o := range contract.Operations {
+		var sc struct {
+			Required []string `json:"required"`
+		}
+		// a revoke must name its project: an agent never revokes access by omission.
+		if json.Unmarshal(o.InputSchema, &sc) == nil && slices.Contains(sc.Required, "projectId") && n != "project_initial_access_revoke" {
+			out[n] = true
+		}
+	}
+	return out
+}()
