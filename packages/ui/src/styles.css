@@ -601,3 +601,6 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .spot-list [role=option] .id{flex:none;white-space:nowrap}
 .spot-list [role=option].cur{background:var(--hover)}
 .spot-none{margin:0;padding:var(--space-2)}
+
+/* Entity codes never wrap (OR-38): T-FLT-42 is one token everywhere */
+[data-ui=entity-code]{white-space:nowrap;flex:none}

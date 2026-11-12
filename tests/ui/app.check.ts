@@ -79,6 +79,12 @@ try {
   await page.goto(origin + `/tasks/${running}`); await page.waitForSelector('[data-ui=detail] .detail-title');
   const empty = await page.$$eval('[data-ui=detail] .totals .b-unavailable', els => els.length);
   out.push(`task detail (OR-39): ${empty ? empty + ' EMPTY TOTALS' : 'no empty totals'}`);
+  // OR-38: an entity code is one line wherever it sits (list rows, detail title); a raw hash or UUID is never a visible name.
+  await page.setViewportSize({ width: 900, height: 900 });
+  const codes = await page.$$eval('[data-ui=entity-code]', els => els.filter(e => e.textContent && (getComputedStyle(e).whiteSpace !== 'nowrap' || e.getClientRects().length > 1)).length);
+  const hashes = await page.$$eval('[data-ui=detail] a, [data-ui=detail] .title', els => els.filter(e => /[0-9a-f]{8}-[0-9a-f]{4}-|[0-9a-f]{24,}/i.test(e.textContent ?? '')).length);
+  out.push(`entity codes (OR-38): ${codes ? codes + ' WRAP' : 'never wrap'}, ${hashes ? hashes + ' HASH NAMES' : 'no hash names'}`);
+  await page.setViewportSize({ width: 1440, height: 900 });
   // Narrow width: the rail stays, the opened item takes the place of the catalogue.
   const narrow = await b.newPage({ viewport: { width: 600, height: 900 } });
   await narrow.goto(origin + `/tasks/${waiting}`); await narrow.waitForTimeout(700);
