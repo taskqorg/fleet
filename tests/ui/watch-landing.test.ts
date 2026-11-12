@@ -15,7 +15,9 @@ test('landing observations retain authoritative publication, optional site evide
     put('git', 'case "$1" in fetch) exit 0;; tag) if [ "${WATCH_FIXTURE_UI:-0}" = 1 ]; then printf "%s\\n" v1.2.10 ui-1.2.3-v1.2.9; else echo v1.2.3; fi;; rev-parse) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;; *) exit 1;; esac\n');
     put('gh', `case "$1" in
       api) if [ -n "\${WATCH_FIXTURE_GRAPHQL:-}" ]; then eval "filter=\\\${$#}"; answer="\${WATCH_FIXTURE_GRAPHQL}"
-        if [ -n "\${WATCH_FIXTURE_GRAPHQL_FIRST:-}" ] && [ ! -e "\${WATCH_FIXTURE_SEEN}" ]; then : > "\${WATCH_FIXTURE_SEEN}"; answer="\${WATCH_FIXTURE_GRAPHQL_FIRST}"; fi
+        # WATCH_FIXTURE_GRAPHQL_STEPS: answers of the first polls, one per line, counted in WATCH_FIXTURE_COUNT; then WATCH_FIXTURE_GRAPHQL.
+        if [ -n "\${WATCH_FIXTURE_GRAPHQL_STEPS:-}" ]; then n=$(($(cat "\${WATCH_FIXTURE_COUNT}" 2>/dev/null || echo 0) + 1)); echo "$n" > "\${WATCH_FIXTURE_COUNT}"
+          step=$(printf '%s\n' "\${WATCH_FIXTURE_GRAPHQL_STEPS}" | sed -n "\${n}p"); [ -z "$step" ] || answer="$step"; fi
         printf '%s' "$answer" | jq -r "\$filter"; else echo 'MERGED CLEAN 0123456789 - - - auto-merge off'; fi;;
       release) [ "\${WATCH_FIXTURE_PUBLICATION_UNKNOWN:-0}" != 1 ] || exit 1; echo '2026-11-11T12:00:00Z';;
       *) exit 1;; esac\n`);
@@ -76,7 +78,7 @@ test('landing observations retain authoritative publication, optional site evide
       [pr({autoMergeRequest: null}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: null}]), 'not merged: OPEN, unknown'],
       [pr({mergeStateStatus: 'DIRTY'}), 'not merged: OPEN, merge_conflict'],
       [pr({autoMergeRequest: null}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: 'merge_conflict'}]), 'not merged: OPEN, merge_conflict'],
-      [pr({mergeStateStatus: 'DIRTY', mergeQueueEntry: {state: 'UNMERGEABLE'}}), 'not merged: OPEN, merge_conflict'],
+      [pr({mergeStateStatus: 'BLOCKED', mergeQueueEntry: {state: 'UNMERGEABLE'}}), 'not merged: OPEN, merge_conflict'],
       [pr({autoMergeRequest: null}, [red], [{__typename: 'AutoMergeDisabledEvent'}]), 'not merged: OPEN, auto-merge off'],
       [pr({state: 'CLOSED', autoMergeRequest: null}, [red]), 'not merged: CLOSED, auto-merge off'],
     ]) { const r = run({WATCH_FIXTURE_GRAPHQL: graphql}); assert.equal(r.status, 1, r.stderr); assert.equal(r.stdout, out + '\n'); }
@@ -90,12 +92,15 @@ test('landing observations retain authoritative publication, optional site evide
       pr({}, [check('go', 'CANCELLED', null), check('go', 'SUCCESS', '2026-11-12T10:10:00Z')]),
       pr({mergeQueueEntry: {state: 'QUEUED'}}, [red]),
     ]) { const r = run({WATCH_FIXTURE_GRAPHQL: graphql}, false, '0'); assert.equal(r.status, 2, r.stderr); assert.equal(r.stdout, 'timeout at: queue\n'); }
-    // PR #451: a stale DIRTY on one poll (right after joining the queue, or after a push) is not a conflict: the next poll
-    // decides. The fixture answers DIRTY once, then MERGED.
-    for (const queue of [{state: 'AWAITING_CHECKS'}, null]) {
-      const r = run({WATCH_FIXTURE_GRAPHQL_FIRST: pr({mergeStateStatus: 'DIRTY', mergeQueueEntry: queue}), WATCH_FIXTURE_SEEN: join(dir, 'seen-' + !!queue),
-        WATCH_FIXTURE_GRAPHQL: pr({state: 'MERGED', mergeStateStatus: 'UNKNOWN', mergeCommit: {oid: '0123456789'}})});
-      assert.doesNotMatch(r.stdout, /merge_conflict/); assert.match(r.stdout, /^merged 0123456789$/m);
+    // PR #451 and the polls around it: a DIRTY beside a healthy queue entry, or once before the queue (right after a push), is
+    // not a conflict; DIRTY, clean, DIRTY is not two in a row. Each sequence ends merged.
+    const merged = pr({state: 'MERGED', mergeStateStatus: 'UNKNOWN', mergeCommit: {oid: '0123456789'}});
+    const dirty = (queue: object | null = null) => pr({mergeStateStatus: 'DIRTY', mergeQueueEntry: queue});
+    for (const [i, steps] of [[dirty({state: 'AWAITING_CHECKS'}), dirty({state: 'AWAITING_CHECKS'}), dirty({state: 'AWAITING_CHECKS'})], [dirty()], [dirty(), pr({}), dirty()]].entries()) {
+      const r = run({WATCH_FIXTURE_GRAPHQL_STEPS: steps.join('\n'), WATCH_FIXTURE_COUNT: join(dir, 'count-' + i), WATCH_FIXTURE_GRAPHQL: merged});
+      assert.equal(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout, /^merged 0123456789$/m); assert.doesNotMatch(r.stdout, /merge_conflict/);
     }
+    // A DIRTY first seen at the deadline is named, not a timeout.
+    const late = run({WATCH_FIXTURE_GRAPHQL: dirty()}, false, '0'); assert.equal(late.status, 1); assert.equal(late.stdout, 'not merged: OPEN, merge_conflict\n');
   } finally { rmSync(dir, {recursive: true, force: true}); }
 });

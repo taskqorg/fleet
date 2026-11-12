@@ -17,19 +17,21 @@ wait_step() { [ "$(date +%s)" -lt "$deadline" ] || { echo "timeout at: $1"; exit
 q='query($n:Int!){repository(owner:"taskqorg",name:"fleet"){pullRequest(number:$n){state mergeStateStatus mergeCommit{oid} autoMergeRequest{enabledAt} mergeQueueEntry{state}
   commits(last:1){nodes{commit{statusCheckRollup{contexts(last:100){nodes{... on CheckRun{name conclusion at:startedAt isRequired(pullRequestNumber:$n)} ... on StatusContext{name:context state at:createdAt isRequired(pullRequestNumber:$n)}}}}}}}
   timelineItems(last:1,itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT,AUTO_MERGE_DISABLED_EVENT]){nodes{__typename ... on RemovedFromMergeQueueEvent{reason}}}}}}'
+dirty=0
 while :; do
   # A failed gh call (network, rate limit) is retried, never read as "not merged".
   line=$(gh api graphql -f query="$q" -F n="$pr" -q '.data.repository.pullRequest | [.state, .mergeStateStatus, (.mergeCommit.oid // "-"),
-    (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (if .mergeQueueEntry then "queued" else "-" end), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired)] | group_by(.name) | map(max_by(.at // (if .conclusion == null then "~" else "" end)) | (.conclusion // .state)) | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "STARTUP_FAILURE" or . == "CANCELLED" or . == "STALE" or . == "ACTION_REQUIRED") then "red" else "-" end),
+    (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (.mergeQueueEntry.state // "-"), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired)] | group_by(.name) | map(max_by(.at // (if .conclusion == null then "~" else "" end)) | (.conclusion // .state)) | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "STARTUP_FAILURE" or . == "CANCELLED" or . == "STALE" or . == "ACTION_REQUIRED") then "red" else "-" end),
     (if .timelineItems.nodes[0].__typename == "RemovedFromMergeQueueEvent" then (.timelineItems.nodes[0].reason // "unknown") else "auto-merge off" end)] | join(" ")') \
-    || { wait_step "queue (gh failed)"; continue; }
+    || { dirty=0; wait_step "queue (gh failed)"; continue; }
   read -r state merge_state sha waiting queued checks reason <<<"$line"
   [ "$state" = MERGED ] && break
-  # A conflict with main (before the queue takes the entry, auto-merge stays on and nothing is removed, so name it here).
-  # Only a DIRTY seen on two polls in a row counts: right after a push or an enqueue GitHub may still report the old head's
-  # DIRTY (PR #451 was DIRTY one second after joining the queue and merged five minutes later). Costs one poll on a real one.
-  if [ "$state" = OPEN ] && [ "$merge_state" = DIRTY ]; then
-    [ "${dirty:-0}" = 1 ] && { echo "not merged: $state, merge_conflict"; exit 1; }
+  # A conflict with main. In the queue, the queue decides: an UNMERGEABLE entry is one; a DIRTY beside a healthy entry is
+  # GitHub's stale answer for the old head after an enqueue (PR #451: DIRTY one second after joining the queue, merged five
+  # minutes later), and a real one ends in a removal with reason merge_conflict (named below). Before the queue (auto-merge
+  # on, nothing removed) a DIRTY counts when seen on two polls in a row, since it may also be stale right after a push.
+  if [ "$state" = OPEN ] && { [ "$queued" = UNMERGEABLE ] || { [ "$merge_state" = DIRTY ] && [ "$queued" = "-" ]; }; }; then
+    [ "$dirty" = 1 ] || [ "$queued" = UNMERGEABLE ] || [ "$(date +%s)" -ge "$deadline" ] && { echo "not merged: $state, merge_conflict"; exit 1; }
     dirty=1; wait_step "queue"; continue
   fi
   dirty=0
