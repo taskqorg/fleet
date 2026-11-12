@@ -61,20 +61,17 @@ func (u *updater) latestUI(backend string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Each line is a pkt-line "<4 hex length><sha> <ref>\n"; the answer ends with the flush "0000".
-	body = string(b)
-	if !strings.HasSuffix(body, "0000") {
-		return "", fmt.Errorf("ls-refs: not a pkt-line answer: %.80q", body)
-	}
-	var lines []string
-	if body = strings.TrimSuffix(strings.TrimSuffix(body, "0000"), "\n"); body != "" {
-		lines = strings.Split(body, "\n")
+	lines, err := pktLines(b)
+	if err != nil {
+		return "", fmt.Errorf("ls-refs: %w", err)
 	}
 	latest := ""
 	for _, line := range lines {
-		f := strings.Fields(line)
-		n, err := strconv.ParseUint(line[:min(4, len(line))], 16, 16)
-		if err != nil || int(n) != len(line)+1 || len(f) != 2 || len(f[0]) != 44 {
+		if strings.HasPrefix(line, "ERR ") {
+			return "", fmt.Errorf("ls-refs: %s", line)
+		}
+		f := strings.Fields(line) // <sha> <ref>
+		if len(f) != 2 || len(f[0]) != 40 {
 			return "", fmt.Errorf("ls-refs: unexpected line %q", line)
 		}
 		if !strings.HasPrefix(f[1], prefix) {
@@ -85,6 +82,24 @@ func (u *updater) latestUI(backend string) (string, error) {
 		}
 	}
 	return latest, nil
+}
+
+// pktLines reads git pkt-lines up to the flush packet: 4 hex digits of total length, then the payload, whose
+// trailing LF is optional and dropped.
+func pktLines(b []byte) ([]string, error) {
+	var lines []string
+	for len(b) >= 4 {
+		n, err := strconv.ParseUint(string(b[:4]), 16, 16)
+		if err != nil || n == 1 || n == 2 || n == 3 || int(n) > len(b) {
+			return nil, fmt.Errorf("not a pkt-line stream: %.80q", b)
+		}
+		if n == 0 {
+			return lines, nil
+		}
+		lines = append(lines, strings.TrimSuffix(string(b[4:n]), "\n"))
+		b = b[n:]
+	}
+	return nil, fmt.Errorf("pkt-line stream without a flush: %.80q", b)
 }
 
 // pkt is one git pkt-line: 4 hex digits of the total length, then the payload.

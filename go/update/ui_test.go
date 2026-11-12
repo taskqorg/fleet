@@ -88,8 +88,19 @@ func TestUIDiscoveryTags(t *testing.T) {
 	if got, err := u.latestUI("1.261112.0"); err != nil || got != "" {
 		t.Fatalf("%q %v", got, err)
 	}
-	for _, body = range []string{pkt("ERR upload-pack: nope\n") + "0000", "<html>",
-		"0050" + sha + " refs/tags/ui-1.261112.0-v1.261112.9\n0000"} { // the last: a length that does not frame its line
+	body = pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.6") + "0000" // the trailing LF is optional
+	if got, err := u.latestUI("1.261112.0"); err != nil || got != "1.261112.6" {
+		t.Fatalf("%q %v", got, err)
+	}
+	if _, err := u.latestUI("1.261112.0"); err != nil {
+		t.Fatal(err)
+	}
+	body = pkt("ERR upload-pack: nope") + "0000" // git writes ERR packets without LF
+	if _, err := u.latestUI("1.261112.0"); err == nil || !strings.Contains(err.Error(), "ERR upload-pack: nope") {
+		t.Fatalf("ERR packet not surfaced: %v", err)
+	}
+	for _, body = range []string{"<html>", pkt(sha + " refs/tags/ui-1.261112.0-v1.261112.9\n"), // no flush
+		"0050" + sha + " refs/tags/ui-1.261112.0-v1.261112.9\n0000", pkt("junk") + "0000"} {
 		if got, err := u.latestUI("1.261112.0"); err == nil {
 			t.Fatalf("%q accepted as %q", body, got)
 		}

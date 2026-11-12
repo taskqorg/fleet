@@ -107,7 +107,7 @@ type updater struct {
 	guardURL     string // Access origin guard /verify on PDS18; "" skips the smoke
 	dumpCmd      func(ver, file string) error
 	cacheDir     string               // conditional GET cache (ETag and body per URL); "" caches nothing
-	published    map[string]time.Time // release version -> publish time, when a fetch learned it cheaply
+	published    map[string]time.Time // release version -> publish time, when a fetch learned it cheaply (lazily made)
 }
 
 func newUpdater(key ed25519.PublicKey) *updater {
@@ -115,7 +115,7 @@ func newUpdater(key ed25519.PublicKey) *updater {
 		client: &http.Client{Timeout: 10 * time.Minute}, now: time.Now, window: 30 * time.Second, tick: time.Second,
 		coordURL: "http://127.0.0.1:9470/api/health", gatewayURL: "http://127.0.0.1:8742/healthz",
 		guardURL: "http://127.0.0.1:9471/verify",
-		dumpCmd:  pgDump, published: map[string]time.Time{}}
+		dumpCmd:  pgDump}
 }
 
 func (u *updater) result(ver, state, msg string) *Result {
@@ -443,13 +443,13 @@ func (u *updater) settle(p *part, ver string, restart bool) *Result {
 			if err := p.r.WriteFile(healthyFile, []byte(u.now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 				return u.result(ver, "error", err.Error())
 			}
-			// The first healthy marker of this release: one install line, with the publish delta when known.
+			// The first healthy marker of this release: one log line, with the publish delta when known.
 			since := ""
 			if t, ok := u.published[ver]; ok && u.now().After(t) { // skewed clocks: no negative delta
 				since = " " + u.now().Sub(t).Round(time.Second).String() + " after publish"
 			}
 			log.Printf("%s %s: installed%s", p.name, ver, since)
-			return u.result(ver, "ok", "")
+			return &Result{Version: ver, State: "ok", At: u.now().UTC().Format(time.RFC3339)}
 		case waiting:
 			return u.result(ver, "pending", "coordinator not reachable from the executor")
 		}
@@ -577,6 +577,9 @@ func (u *updater) latest() string {
 	}
 	// The asset upload time: cheap, best-effort publish time for the install log line (not kept across runs).
 	if !c.LastModified.IsZero() {
+		if u.published == nil {
+			u.published = map[string]time.Time{}
+		}
 		u.published[l.Version] = c.LastModified
 	}
 	return l.Version
