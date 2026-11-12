@@ -75,6 +75,10 @@ function App() {
   // Pinned sections and the other preferences are person settings (prefs.ts), so they follow the person to every device.
   useEffect(() => { loadPrefs(); }, []); // and again on window focus (below): agents and other devices change them too
   const [user, setUser] = useState<string | null>(null);
+  // OR-23: the shell shows once the first settings read answers, or after 1.5 s at most; a later store clear does not hide it again.
+  const [shown, setShown] = useState(false);
+  useEffect(() => { if (prefsRead.value) setShown(true); }, [prefsRead.value]);
+  useEffect(() => { const t = setTimeout(() => setShown(true), 1500); return () => clearTimeout(t); }, []);
   const pins = prefs.value.pins, savePins = (ids: string[]) => savePrefs(() => ({ pins: ids }), { pins: ids });
   useEffect(() => {
     // Identity and grants (D3): a changed grants version clears stored data. Re-read on focus too.
@@ -87,7 +91,7 @@ function App() {
     return () => { removeEventListener('focus', me); removeEventListener('focus', loadPrefs); };
   }, []);
   useEffect(() => { if (signedOut.value) clearAll(true); }, [signedOut.value]);
-  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={pins} onPins={savePins} search={search} ready={prefsRead.value}
+  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={pins} onPins={savePins} search={search} ready={shown}
     widths={prefs.value.widths} onWidth={setWidth} collapsed={prefs.value.navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
     user={user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); } } : undefined}>
