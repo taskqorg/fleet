@@ -34,34 +34,26 @@ func validateUI(dir, version, backend string) error {
 	return nil
 }
 
-// latestUI discovers the newest non-latest UI release; native latest.json is untouched.
+// latestUI discovers the newest UI release for backend from the repository's tag list (git smart HTTP advertisement):
+// api.github.com counts every unauthenticated request, 304 included, against 60 per hour, which the 1 minute timer
+// alone would exhaust. The release workflow creates the ui-<backend>-v<ver> tag when it publishes the release with
+// its assets, so a tag is a published release. Native latest.json is untouched.
 func (u *updater) latestUI(backend string) (string, error) {
-	prefix := "ui-" + backend + "-v"
+	prefix := "refs/tags/ui-" + backend + "-v"
+	c, err := u.getCached(u.refsURL)
+	if err != nil {
+		return "", err
+	}
 	latest := ""
-	for page := 1; ; page++ {
-		b, err := u.get(fmt.Sprintf("https://api.github.com/repos/taskqorg/fleet/releases?per_page=100&page=%d", page))
-		if err != nil {
-			return "", err
-		}
-		var releases []struct {
-			TagName           string `json:"tag_name"`
-			Draft, Prerelease bool
-		}
-		if err := json.Unmarshal(b, &releases); err != nil {
-			return "", err
-		}
-		for _, release := range releases {
-			if !release.Draft && !release.Prerelease && strings.HasPrefix(release.TagName, prefix) {
-				v := strings.TrimPrefix(release.TagName, prefix)
-				if newer(v, latest) {
-					latest = v
-				}
+	for _, line := range strings.Split(string(c.Body), "\n") {
+		f := strings.Fields(line) // <pkt-len><sha> refs/tags/<tag>[^{}]
+		if len(f) == 2 && strings.HasPrefix(f[1], prefix) {
+			if v := strings.TrimSuffix(strings.TrimPrefix(f[1], prefix), "^{}"); newer(v, latest) {
+				latest = v
 			}
 		}
-		if len(releases) < 100 {
-			return latest, nil
-		}
 	}
+	return latest, nil
 }
 
 // cycleUI runs under the PDS18 update lock and never restarts a native service.

@@ -96,6 +96,7 @@ type part struct {
 
 type updater struct {
 	base         string // releases URL: <base>/download/v<ver>/<file>, <base>/latest/download/latest.json
+	refsURL      string // the repository's git smart HTTP ref advertisement, read by latestUI
 	key          ed25519.PublicKey
 	target       string // <os>-<arch>
 	client       *http.Client
@@ -105,14 +106,16 @@ type updater struct {
 	gatewayURL   string
 	guardURL     string // Access origin guard /verify on PDS18; "" skips the smoke
 	dumpCmd      func(ver, file string) error
+	cacheDir     string               // conditional GET cache (ETag and body per URL); "" caches nothing
+	published    map[string]time.Time // release version -> publish time, when a fetch learned it cheaply
 }
 
 func newUpdater(key ed25519.PublicKey) *updater {
-	return &updater{base: releasesURL, key: key, target: runtime.GOOS + "-" + runtime.GOARCH,
+	return &updater{base: releasesURL, refsURL: refsURL, key: key, target: runtime.GOOS + "-" + runtime.GOARCH,
 		client: &http.Client{Timeout: 10 * time.Minute}, now: time.Now, window: 30 * time.Second, tick: time.Second,
 		coordURL: "http://127.0.0.1:9470/api/health", gatewayURL: "http://127.0.0.1:8742/healthz",
 		guardURL: "http://127.0.0.1:9471/verify",
-		dumpCmd:  pgDump}
+		dumpCmd:  pgDump, published: map[string]time.Time{}}
 }
 
 func (u *updater) result(ver, state, msg string) *Result {
@@ -416,6 +419,7 @@ func relink(r *os.Root, name, target string) error {
 // probes the running release without a restart (resume of an earlier run).
 func (u *updater) settle(p *part, ver string, restart bool) *Result {
 	startsFile, healthyFile := ver+"/starts", ver+"/healthy"
+	installed := restart
 	for {
 		if restart {
 			if err := p.restart(); err != nil {
@@ -428,6 +432,13 @@ func (u *updater) settle(p *part, ver string, restart bool) *Result {
 			p.r.Remove(startsFile)
 			if err := p.r.WriteFile(healthyFile, []byte(u.now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 				return u.result(ver, "error", err.Error())
+			}
+			if installed {
+				since := ""
+				if t, ok := u.published[ver]; ok {
+					since = " " + u.now().Sub(t).Round(time.Second).String() + " after publish"
+				}
+				log.Printf("%s %s: installed%s", p.name, ver, since)
 			}
 			return u.result(ver, "ok", "")
 		case waiting:
@@ -540,18 +551,65 @@ func (u *updater) executorHealth(signal string) func(string) probe {
 }
 
 func (u *updater) latest() string {
-	resp, err := u.client.Get(u.base + "/latest/download/latest.json")
+	c, err := u.getCached(u.base + "/latest/download/latest.json")
 	if err != nil {
 		log.Print("latest.json: ", err)
 		return ""
 	}
-	defer resp.Body.Close()
 	var l struct{ Version string }
-	json.NewDecoder(resp.Body).Decode(&l)
-	if resp.StatusCode != 200 {
-		return ""
+	json.Unmarshal(c.Body, &l)
+	if !c.LastModified.IsZero() { // the asset upload time: cheap publish time for the install log line
+		u.published[l.Version] = c.LastModified
 	}
 	return l.Version
+}
+
+// cached is one entry of the conditional GET cache: <cacheDir>/etag-<sha256(url) prefix>.json.
+type cached struct {
+	ETag         string    `json:"etag"`
+	LastModified time.Time `json:"lastModified,omitempty"`
+	Body         []byte    `json:"body"`
+}
+
+// getCached is a conditional GET (delivery pipeline, section 6): it sends If-None-Match with the ETag seen last and
+// answers a 304 from the cache, so an unchanged file costs one request without a body. Without cacheDir it is get.
+func (u *updater) getCached(url string) (cached, error) {
+	var c cached
+	file := ""
+	if u.cacheDir != "" {
+		sum := sha256.Sum256([]byte(url))
+		file = filepath.Join(u.cacheDir, "etag-"+hex.EncodeToString(sum[:8])+".json")
+		readJSON(file, &c)
+	}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return cached{}, err
+	}
+	if c.ETag != "" {
+		req.Header.Set("If-None-Match", c.ETag)
+	}
+	resp, err := u.client.Do(req)
+	if err != nil {
+		return cached{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotModified && c.ETag != "" {
+		return c, nil
+	}
+	if resp.StatusCode != 200 {
+		return cached{}, fmt.Errorf("GET %s: %s", url, resp.Status)
+	}
+	c = cached{ETag: resp.Header.Get("ETag")}
+	if c.Body, err = io.ReadAll(resp.Body); err != nil {
+		return cached{}, err
+	}
+	c.LastModified, _ = http.ParseTime(resp.Header.Get("Last-Modified"))
+	if c.ETag != "" && file != "" {
+		if err := writeJSON(file, c, 0o600); err != nil {
+			log.Print("etag cache: ", err)
+		}
+	}
+	return c, nil
 }
 
 // pgDump runs pg_dump as postgres; root writes the file (postgres cannot write /backup/fleet/pre-deploy).

@@ -65,9 +65,9 @@ func TestUICycleSignedRollbackResume(t *testing.T) {
 	f.u.client = &http.Client{Transport: uiTransport(func(r *http.Request) (*http.Response, error) {
 		body, code := "", 200
 		switch {
-		case r.URL.Host == "api.github.com":
+		case r.URL.Path == "/taskqorg/fleet.git/info/refs":
 			events = append(events, "discovery")
-			body = fmt.Sprintf(`[{"tag_name":"ui-%s-v%s"}]`, backend, candidate)
+			body = fmt.Sprintf("003f0000000000000000000000000000000000000000 refs/tags/ui-%s-v%s\n", backend, candidate)
 		case r.URL.Host == "fixture.invalid":
 			if r.Method != http.MethodGet || r.URL.Path != "/ui-release.json" || r.URL.RawQuery != "" {
 				t.Fatalf("unexpected UI health request: %s %s", r.Method, r.URL)

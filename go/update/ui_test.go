@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -62,29 +61,27 @@ type uiTransport func(*http.Request) (*http.Response, error)
 
 func (f uiTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// Requirement: native publication volume cannot hide an independent UI release.
-// Risk: only inspecting the first GitHub page silently stops UI discovery.
-func TestUIDiscoveryPages(t *testing.T) {
+// Requirement: UI discovery reads the repository tag advertisement, never api.github.com (60 unauthenticated
+// requests per hour, 304 included, which a 1 minute timer alone exhausts), and keeps the newest tag of this backend.
+func TestUIDiscoveryTags(t *testing.T) {
 	u := newUpdater(nil)
-	pages := 0
 	u.client = &http.Client{Transport: uiTransport(func(r *http.Request) (*http.Response, error) {
-		pages++
-		body := `[{"tag_name":"ui-1.261112.0-v1.261112.1"}]`
-		if pages == 1 {
-			entries := make([]string, 100)
-			for i := range entries {
-				entries[i] = `{"tag_name":"v1.261112.2"}`
-			}
-			body = "[" + strings.Join(entries, ",") + "]"
+		if r.URL.Host != "github.com" || r.URL.Path != "/taskqorg/fleet.git/info/refs" || r.URL.RawQuery != "service=git-upload-pack" {
+			t.Fatal("wrong discovery URL", r.URL)
 		}
-		if r.URL.Query().Get("page") != strconv.Itoa(pages) {
-			t.Fatal("wrong page", r.URL)
-		}
+		body := "001e# service=git-upload-pack\n0000" +
+			"0158aaaa HEAD\x00multi_ack symref=HEAD:refs/heads/main agent=git/github\n" +
+			"003daaaa refs/heads/main\n" +
+			"003faaaa refs/tags/ui-1.261112.0-v1.261112.1\n" +
+			"003faaaa refs/tags/ui-1.261112.0-v1.261112.1^{}\n" +
+			"003faaaa refs/tags/ui-1.261112.0-v1.261112.3\n" +
+			"003faaaa refs/tags/ui-1.261111.9-v1.261112.4\n" +
+			"003faaaa refs/tags/v1.261112.5\n0000"
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
 	got, err := u.latestUI("1.261112.0")
-	if err != nil || got != "1.261112.1" || pages != 2 {
-		t.Fatalf("%q %v pages=%d", got, err, pages)
+	if err != nil || got != "1.261112.3" {
+		t.Fatalf("%q %v", got, err)
 	}
 	u.client.Transport = uiTransport(func(*http.Request) (*http.Response, error) { return nil, fmt.Errorf("fixture unavailable") })
 	if _, err := u.latestUI("1.261112.0"); err == nil {

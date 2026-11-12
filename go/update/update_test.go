@@ -373,3 +373,48 @@ func TestLoadTrigger(t *testing.T) {
 		t.Fatalf("load then unchanged: %d runs, want 2", ran)
 	}
 }
+
+// Requirement: latest.json is a conditional GET (delivery pipeline, section 6): the ETag persists on disk across
+// runs, an unchanged file is answered from the cache on 304, and a changed ETag replaces it.
+func TestLatestConditionalGet(t *testing.T) {
+	etag, body, served, matched := `"one"`, `{"version":"1.261112.1"}`, 0, 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		served++
+		if r.Header.Get("If-None-Match") == etag {
+			matched++
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Last-Modified", "Thu, 12 Nov 2026 09:28:29 GMT")
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	fresh := func() *updater {
+		u := newUpdater(nil)
+		u.base, u.cacheDir = srv.URL, dir
+		return u
+	}
+	u := fresh()
+	if v := u.latest(); v != "1.261112.1" || served != 1 || matched != 0 {
+		t.Fatalf("first: %q served=%d matched=%d", v, served, matched)
+	}
+	if u.published["1.261112.1"].IsZero() {
+		t.Fatal("publish time not kept")
+	}
+	u = fresh() // a later run: the ETag comes from disk
+	if v := u.latest(); v != "1.261112.1" || served != 2 || matched != 1 {
+		t.Fatalf("cached: %q served=%d matched=%d", v, served, matched)
+	}
+	if u.published["1.261112.1"].IsZero() {
+		t.Fatal("publish time lost on 304")
+	}
+	etag, body = `"two"`, `{"version":"1.261112.2"}`
+	if v := u.latest(); v != "1.261112.2" || matched != 1 {
+		t.Fatalf("changed: %q matched=%d", v, matched)
+	}
+	if v := u.latest(); v != "1.261112.2" || matched != 2 {
+		t.Fatalf("recached: %q matched=%d", v, matched)
+	}
+}
