@@ -22,7 +22,16 @@ const css = tokensCss() + readFileSync(new URL('packages/ui/src/styles.css', roo
 const cssName = `assets/app-${createHash('sha256').update(css).digest('hex').slice(0, 10)}.css`;
 writeFileSync(new URL(cssName, out), css);
 
-const icons = JSON.parse(readFileSync(new URL('packages/ui/icons.json', root), 'utf8'));
+// Reuse the navigation's Fleet mark for browser tabs and every installed workspace.
+const brand = {};
+for (const name of ['fleet.svg', 'fleet-180.png', 'fleet-192.png', 'fleet-512.png']) {
+  const bytes = readFileSync(new URL(`packages/ui/brand/${name}`, root));
+  const dot = name.lastIndexOf('.');
+  const path = `assets/${name.slice(0, dot)}-${createHash('sha256').update(bytes).digest('hex').slice(0, 10)}${name.slice(dot)}`;
+  writeFileSync(new URL(path, out), bytes);
+  brand[name] = '/' + path;
+  files.push(path);
+}
 // The installable views are the registry workspaces marked app: true (packages/ui/src/registry.ts), read through esbuild.
 const reg = await build({ entryPoints: [new URL('packages/ui/src/registry.ts', root).pathname], bundle: true, format: 'esm', write: false, loader: { '.json': 'json' } });
 const { workspaces } = await import('data:text/javascript;base64,' + Buffer.from(reg.outputFiles[0].text).toString('base64'));
@@ -30,17 +39,20 @@ const VIEWS = Object.fromEntries(workspaces.filter(w => w.app).map(w => [w.id, [
 // The coordinator serves index.html for these screens only (go/coordinator/artifact_routes.go appRoutes).
 writeFileSync(new URL('screens.json', out), JSON.stringify(Object.keys(VIEWS)));
 const accent = tokens.color.light.accent;
-for (const [view, [name, icon]] of Object.entries(VIEWS)) {
-  const inner = icons[icon].replace(/<!--.*?-->/s, '').replace(/<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '');
-  writeFileSync(new URL(`icons/${view}.svg`, out), `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="96" fill="${accent}"/><g transform="translate(96 96) scale(13.33)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</g></svg>`);
-  writeFileSync(new URL(`manifests/${view}.webmanifest`, out), JSON.stringify({ id: `/${view}`, name, short_name: name.replace('Fleet ', ''), start_url: `/${view}`, scope: `/${view}`, display: 'standalone', background_color: tokens.color.light.bg, theme_color: accent, icons: [{ src: `/icons/${view}.svg`, sizes: 'any', type: 'image/svg+xml', purpose: 'any' }] }, null, 1));
+for (const [view, [name]] of Object.entries(VIEWS)) {
+  writeFileSync(new URL(`manifests/${view}.webmanifest`, out), JSON.stringify({ id: `/${view}`, name, short_name: name.replace('Fleet ', ''), start_url: `/${view}`, scope: `/${view}`, display: 'standalone', background_color: tokens.color.light.bg, theme_color: accent, icons: [
+    { src: brand['fleet.svg'], sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+    ...[192, 512].map(size => ({ src: brand[`fleet-${size}.png`], sizes: `${size}x${size}`, type: 'image/png', purpose: 'any' })),
+  ] }, null, 1));
 }
 
 const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Fleet</title><meta name="theme-color" content="${accent}">
 <link rel="stylesheet" href="/${cssName}">
-<script>(function(){var v=location.pathname.split('/')[1];if(!${JSON.stringify(Object.keys(VIEWS))}.includes(v))v='overview';var l=document.createElement('link');l.rel='manifest';l.href='/manifests/'+v+'.webmanifest';document.head.appendChild(l);var i=document.createElement('link');i.rel='icon';i.href='/icons/'+v+'.svg';document.head.appendChild(i)})()</script>
+<link rel="icon" type="image/svg+xml" href="${brand['fleet.svg']}">
+<link rel="apple-touch-icon" sizes="180x180" href="${brand['fleet-180.png']}">
+<script>(function(){var v=location.pathname.split('/')[1];if(!${JSON.stringify(Object.keys(VIEWS))}.includes(v))v='overview';var l=document.createElement('link');l.rel='manifest';l.href='/manifests/'+v+'.webmanifest';document.head.appendChild(l)})()</script>
 <script type="module" src="/${main}"></script>
 </head><body><div id="app"></div><noscript>Fleet needs JavaScript.</noscript></body></html>
 `;

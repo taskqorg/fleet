@@ -254,7 +254,7 @@ Kinds are always the client kinds above, never legacy kinds (design-system D15).
   * The app shows "Session expired. Sign in again" with a link to reload through Access. It disables actions and deletes IndexedDB.
   * Not built: an explicit sign-out link (`/cdn-cgi/access/logout`) that deletes IndexedDB before it navigates. Detected session expiry already clears the mirror.
 * **Manifests.**
-  * There is one manifest per view: `/manifests/<view>.webmanifest`, each with its own `id`, `name`, `start_url`, `scope` and icon.
+  * There is one manifest per view: `/manifests/<view>.webmanifest`, each with its own `id`, `name`, `start_url` and `scope`. All views share the navigation’s stylized Fleet F as their favicon and installation icon (`packages/ui/brand/`): SVG, 192/512 px PNG, and a 180 px Apple touch icon.
   * `index.html` picks the manifest by path.
 
 ### 6. Coordinator changes
