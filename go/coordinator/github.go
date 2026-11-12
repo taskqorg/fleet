@@ -24,6 +24,9 @@ var (
 	githubMu    sync.Mutex // guards githubCache and githubLocks, never held across a read
 	githubCache = map[string]githubCached{}
 	githubLocks = map[string]*sync.Mutex{}
+	// githubRefused: when the key last failed per tool (guarded by githubMu); for 5 min that tool of the public
+	// repository is read publicly, so a key without a permission does not add a failed gateway call to every read.
+	githubRefused = map[string]time.Time{}
 )
 
 // githubOnce: the cached reply of key when younger than ttl, else fetch's, stored when keep says so. Reads of one key
@@ -136,14 +139,21 @@ func githubRead(ctx context.Context, a *App, project, tool string, args map[stri
 		// not a caller that left: its cancelled read says nothing about GitHub.
 		return githubOnce("public "+path, 5*time.Minute, func() ([]byte, error) { return githubPublic(ctx, path) }, func(error) bool { return ctx.Err() == nil })
 	}
-	if !keyed {
+	githubMu.Lock()
+	refused := time.Since(githubRefused[tool]) < 5*time.Minute
+	githubMu.Unlock()
+	isPublic := strings.EqualFold(args["owner"]+"/"+args["repo"], githubPublicRepo)
+	if !keyed || refused && isPublic {
 		body, err = public()
 		return body, false, err
 	}
 	body, err = githubOnce(cacheKey, ttl, func() ([]byte, error) { return githubGateway(ctx, a, connection, project, tool, args) }, func(err error) bool { return err == nil })
-	if err != nil && strings.EqualFold(args["owner"]+"/"+args["repo"], githubPublicRepo) {
+	if err != nil && isPublic && ctx.Err() == nil {
 		// A refused key (expired, wrong lifetime for the org) must not blank the public repository.
 		log.Printf("github %s keyed: %v; read public", tool, err)
+		githubMu.Lock()
+		githubRefused[tool] = time.Now()
+		githubMu.Unlock()
 		body, err = public()
 		return body, false, err
 	}

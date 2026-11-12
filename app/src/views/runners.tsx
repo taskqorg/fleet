@@ -23,7 +23,7 @@ const hostName = (h: string | null) => h ?? 'coordinator';
 
 export function Runners() {
   const [, go] = useLocation();
-  const { data, state, error } = useDoc<any>('runners', async () => ({ ...(await op('executions_runners', {})), fetchedAt: Date.now() }), c => c.kind === 'execution', 15000);
+  const { data, state, error } = useDoc<any>('runners', async () => ({ ...(await op('executions_runners', {})), fetchedAt: Date.now() }), () => false, 15000); // timer only: gateway calls change executions many times a second
   if (!data) return <><header class="page-h"><h1>Runners</h1></header>{error ? <ErrorBanner text={`Runners did not load: ${error}`} /> : <Skeleton rows={6} />}</>;
   const now = data.serverNow + (Date.now() - data.fetchedAt), from = now - DAY;
   const hosts = [...new Set<string | null>([...data.runs.map((r: any) => r.hostId), ...data.spend.map((s: any) => s.hostId)])]
