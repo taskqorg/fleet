@@ -130,7 +130,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
       <div ref={scroller} class="vl" role="grid" aria-label={p.label} aria-rowcount={p.items.length} tabIndex={0} onScroll={() => { capture(); checkStart(); }}>
         <div class="vl-space" style={{ height: `${v.getTotalSize()}px` }}>
           {v.getVirtualItems().map(vi => (
-            <div key={vi.key} data-index={vi.index} ref={p.dynamic ? v.measureElement : undefined} role="row" aria-rowindex={vi.index + 1}
+            <div key={vi.key} data-key={String(vi.key)} data-index={vi.index} ref={p.dynamic ? v.measureElement : undefined} role="row" aria-rowindex={vi.index + 1}
               class={`vl-row${p.dynamic ? ' dyn' : ''} ${p.rowClass?.(p.items[vi.index]) ?? ''}`} style={{ transform: `translateY(${vi.start}px)`, height: p.dynamic ? undefined : `${p.rowHeight}px` }}>
               {p.render(p.items[vi.index], vi.index)}
             </div>

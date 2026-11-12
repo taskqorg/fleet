@@ -130,6 +130,9 @@ jobs:
     permissions:
       contents: read
       actions: read
+      # The required go and browser checks are commit statuses this job posts (below), not jobs of their own: a job
+      # only to aggregate waited 134 s for a hosted runner under load (merge group run 43275797443).
+      statuses: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -143,6 +146,7 @@ jobs:
           name: test-selection
           path: ${{ runner.temp }}/qualification
       - name: Validate actual full execution
+        id: validate
         env:
           GH_TOKEN: ${{ github.token }}
           RESULTS: ${{ toJSON(needs) }}
@@ -161,6 +165,20 @@ jobs:
           retention-days: 7
           overwrite: true
           if-no-files-found: error
+      # The required go and browser statuses carry this validation's outcome: both families are qualified here, and the
+      # test-qualification artifact records executed and omitted families. A fork's pull request token cannot post them;
+      # a maintainer posts them as with code-review.
+      - name: Post go and browser statuses
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          STATE: ${{ steps.validate.outcome == 'success' && 'success' || 'failure' }}
+          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          for c in go browser; do
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state="$STATE" -f context="$c" -f target_url="$URL" -f description="qualified by app: $STATE" > /dev/null
+          done
   # Thin pull request check: generated-code drift and vet; typecheck and the UI unit tests (sw.test.ts skips without a build).
 # The full families repeat both in the merge queue.
   thin:
@@ -201,30 +219,6 @@ jobs:
           cache: pnpm
       - if: matrix.part == 'app'
         run: pnpm install --frozen-lockfile && pnpm run typecheck && node --test tests/ui/*.test.ts
-  go:
-    needs: app
-    if: always()
-    runs-on: ubuntu-24.04
-    permissions: {}
-    steps:
-      - name: Require validated selection and results
-        env:
-          RESULT: ${{ needs.app.result }}
-        run: |
-          [ "$RESULT" = success ] || exit 1
-          echo 'Qualified by app; test-qualification records executed and omitted families.'
-  browser:
-    needs: app
-    if: always()
-    runs-on: ubuntu-24.04
-    permissions: {}
-    steps:
-      - name: Require validated selection and results
-        env:
-          RESULT: ${{ needs.app.result }}
-        run: |
-          [ "$RESULT" = success ] || exit 1
-          echo 'Qualified by app; test-qualification records executed and omitted families.'
   # Go (docs/designs/fleet-go-code.md), split into parallel parts so the family is never the critical path:
   # vet: generated-code drift, vet, a Windows compile of the coordinator; unit: the unit tests with -race;
   # vet also runs the executor's MCP adapter tests; outside-N: the outside tests against a -race coordinator on the runner's
