@@ -2103,7 +2103,7 @@ func runExecutor() error {
 			// A redirected poll is already signalled once by the edge state; other failures log here.
 			var r redirected
 			if !errors.As(err, &r) {
-				fmt.Fprintln(os.Stderr, "executor exchange failed; retained journal, retry pending")
+				fmt.Fprintf(os.Stderr, "executor exchange failed; retained journal, retry pending: %v\n", err)
 				status("error", "")
 			} else {
 				status("blocked", "auth") // edge login page or host token not accepted

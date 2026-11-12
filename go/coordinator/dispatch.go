@@ -7,6 +7,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fleet/contract"
 	"fmt"
 	"regexp"
@@ -538,7 +539,17 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			delete(e, "waitReason")
 			delete(e, "waitDetail")
 			if _, err := a.startCommand(q, e, best.Host, best.binding); err != nil {
-				return err
+				// A refused start ends this execution only: returning would fail the whole poll, and every later poll of
+				// this host, while the execution stays queued (PDS18 outage, 2026-11-12).
+				var he *HTTPError
+				if !errors.As(err, &he) || he.Code >= 500 {
+					return err
+				}
+				e["hostId"], e["state"], e["stopDetail"] = nil, "cancelled", "start refused: "+he.Msg
+				if err := put(q, "execution", e); err != nil {
+					return err
+				}
+				continue
 			}
 			if err := recordDecision(q, e, polling, cs, best); err != nil {
 				return err
@@ -668,8 +679,12 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	}
 	if pid := astr(s["projectId"]); pid != "" {
 		snapshot := mapOf(e["projectSnapshot"])
-		if snapshot == nil {
-			return nil, fail(409, "project_context_unknown: queued execution predates project snapshots")
+		if snapshot == nil { // queued before project snapshots: freeze the project as it is now
+			var err error
+			if snapshot, err = projectContext(q, pid); err != nil {
+				return nil, err
+			}
+			e["projectSnapshot"] = snapshot
 		}
 		st := mapOf(snapshot["settings"])
 		p.ProjectId, p.Project = &pid, rawMap(st)
