@@ -119,6 +119,29 @@ test('A9 an execution record has one state vocabulary and its real kind and harn
   assert.deepEqual([e.state, e.observation], ['running', 'unconfirmed']);
 });
 
+test('A9b a run no host will finish ends: executions_abandon fails it with one audit row, and the lost sweep ends an unconfirmed run after FLEET_LOST_AFTER_MS (requirement: Needs you shows only what still needs the owner; risk: zombie runs pile up and keep stuck questions open)', {timeout: 30_000}, async () => {
+  const h = await host('trial-host');
+  const lost = async () => {
+    const {sessionId, executionId} = await queued();
+    const command = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === executionId);
+    ok(await h('/api/hosts/receipts', {commandId: command.id, executionId, status: 'started'}));
+    ok(await h('/api/hosts/receipts', {commandId: command.id, executionId, status: 'unknown'}));
+    return {sessionId, executionId};
+  };
+  const a = await lost();
+  assert.equal((await op('executions_abandon', {ids: [a.executionId], reason: ' '})).status, 400);
+  const r = ok(await op('executions_abandon', {ids: [a.executionId, randomUUID()], reason: 'test: host lost track'}));
+  assert.deepEqual(r.abandoned, [a.executionId]); assert.equal(r.skipped[0].state, 'unknown');
+  const e = await execution(a.sessionId, a.executionId);
+  assert.deepEqual([e.state, e.stopDetail], ['failed', 'abandoned']);
+  assert.deepEqual(ok(await op('executions_abandon', {ids: [a.executionId], reason: 'again'})).skipped, [{id: a.executionId, state: 'failed'}]);
+  const audit = ok(await op('setting_changes', {target: 'execution:' + a.executionId})).changes;
+  assert.deepEqual([audit.length, audit[0].previous, audit[0].reason], [1, 'running', 'test: host lost track']);
+  const b = await lost();
+  for (let i = 0; i < 100 && (await execution(b.sessionId, b.executionId)).state !== 'failed'; i++) await new Promise(r => setTimeout(r, 200));
+  assert.equal((await execution(b.sessionId, b.executionId)).stopDetail, 'abandoned');
+});
+
 test('A10 host poll and events decode into the host-protocol types: a field of the wrong type is 400, not read as empty (requirement: contracts/host-protocol.schema.json PollRequest and HostEvents, C1; risk: a renamed or retyped field reaches the coordinator as a missing value)', {timeout: 30_000}, async () => {
   const h = await host('trial-host');
   ok(await h('/api/hosts/poll', poll));

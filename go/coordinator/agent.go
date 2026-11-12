@@ -1377,6 +1377,7 @@ var agentDescriptions = map[string]string{
 	"reply":               "Answer a question; delivered to the asker as its next message",
 	"questions":           "List questions",
 	"questions_withdraw":  "Owner or full access: withdraw open questions that no longer need anyone (ids up to 1000, reason); one audit row each; skipped lists ids not open",
+	"executions_abandon":  "Owner or full access: end unfinished agent runs or host jobs no host will finish (ids, reason): failed, problem unknown:abandoned, parent woken, one audit row each",
 	"worker_done":         "Report the current execution done (checked against the current execution; captures native session)",
 	"execution_status":    "Execution state (preparing, running, waiting, succeeded, failed, cancelled; observation unconfirmed when the host lost track), stop outcome proven|unknown, suggested next action and resume info",
 	"focus_set":           "Set a session's focus: projectIds (list in your grants) or \"*\"; with one project it is the default projectId of task_create and session_start, and task_page lists only the focus",

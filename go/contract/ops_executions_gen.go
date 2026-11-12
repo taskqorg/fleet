@@ -254,6 +254,16 @@ func (v *ExecutionEventsRequest) Validate() error {
 	return nil
 }
 
+type ExecutionSkipped struct {
+	Id    string `json:"id"`
+	State string `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionSkipped) Validate() error {
+	return nil
+}
+
 // ExecutionStatusReply: next: the suggested operation (message, session_fork, execution_status or wait_or_steer). stop only after a stop request.
 type ExecutionStatusReply struct {
 	ExecutionId string                     `json:"executionId"`
@@ -320,6 +330,41 @@ type ExecutionStopRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ExecutionStopRequest) Validate() error {
+	return nil
+}
+
+type ExecutionsAbandonReply struct {
+	Abandoned []string           `json:"abandoned"`
+	Skipped   []ExecutionSkipped `json:"skipped"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionsAbandonReply) Validate() error {
+	if v.Abandoned == nil {
+		return Missing("abandoned")
+	}
+	if v.Skipped == nil {
+		return Missing("skipped")
+	}
+	for i := range v.Skipped {
+		if err := Check(&v.Skipped[i], "skipped"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ExecutionsAbandonRequest: Owner or full access: ends unfinished agent runs and host jobs that no host will finish (failed, problem unknown:abandoned); one setting-change audit row each.
+type ExecutionsAbandonRequest struct {
+	Ids    []string `json:"ids"`
+	Reason string   `json:"reason"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionsAbandonRequest) Validate() error {
+	if v.Ids == nil {
+		return Missing("ids")
+	}
 	return nil
 }
 
@@ -1015,6 +1060,7 @@ func init() {
 		"execution_events":      {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
 		"execution_status":      {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
 		"execution_stop":        {Read: false, Long: false, Errors: []int{409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
+		"executions_abandon":    {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access: ends unfinished agent runs and host jobs that no host will finish (failed, problem unknown:abandoned); one setting-change audit row each.\",\"additionalProperties\":false,\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"ids\",\"reason\"],\"type\":\"object\"}")},
 		"executions_ci":         {Read: false, Long: true, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
 		"executions_list":       {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"Filters; problem true keeps executions with a problem.\",\"additionalProperties\":true,\"properties\":{\"parentExecutionId\":{\"type\":\"string\"},\"problem\":{\"type\":\"boolean\"},\"projectId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"executions_runners":    {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
