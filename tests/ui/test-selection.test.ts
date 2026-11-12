@@ -41,7 +41,7 @@ test('unqualified history executes full suites even when impact selection propos
 
 test('release rejects missing, failed or mismatched candidate evidence', () => {
   const plan = makePlan('push', {before: base, after: head}, head, args => args[0] === 'rev-parse' ? head : args[0] === 'diff' ? 'M\0docs/example.md\0' : '');
-  const jobs = {...Object.fromEntries(['selection', ...families].map(f => [f, {result: 'success'}])), thin: {result: 'skipped'}};
+  const jobs: Record<string, {result: string}> = {...Object.fromEntries(['selection', ...families].map(f => [f, {result: 'success'}])), thin: {result: 'skipped'}};
   assert.doesNotThrow(() => verifyEvidence(plan, head, jobs));
   assert.throws(() => verifyEvidence(plan, base, jobs));
   assert.throws(() => verifyEvidence({...plan, policy: 'unknown'}, head, jobs));
