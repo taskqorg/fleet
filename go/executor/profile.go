@@ -41,7 +41,8 @@ func profileServers(v any, root, harness, account string) (M, error) {
 	for _, grant := range jArr(v, "mcpServers") {
 		name := jStr(grant, "id")
 		if name == "design-rules" {
-			servers[name] = M{"command": exe(), "args": []any{"mcp", "design-rules", enc(jAt(grant, "data"))}, "tools": []any{"get_design_rules"}}
+			discovery, _ := designRules(M{"method": "tools/list"}, nil)
+			servers[name] = M{"command": exe(), "args": []any{"mcp", "design-rules", enc(jAt(grant, "data"))}, "tools": mcpToolNames(discovery)}
 			continue
 		}
 		binding, err := namedMCPBinding(os.Getenv("FLEET_NATIVE_ACCOUNTS"), account, name, root)

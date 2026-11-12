@@ -14,7 +14,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -940,26 +939,8 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	fleetMCP := []any{}
 	if fleetTools {
 		context := M{"hostId": e.host, "commandId": c["id"], "executionId": c["executionId"], "profiles": profiles, "projectId": p["projectId"], "workdir": work, "inputDir": inputDir, "spool": filepath.Join(e.root, "spool"), "operations": p["fleetOperations"]}
-		args := []any{"mcp", "delegation", filepath.Join(e.root, "journal.sqlite"), enc(context)}
-		server := M{"command": exe(), "args": args}
-		{
-			tools := []any{"session_start", "session_deliver", "session_transition", "session_fork", "session_resume", "session_handoffs", "message_send", "queue_list", "ask", "reply", "questions", "worker_done", "execution_status", "artifact_save", "artifact_list", "artifact_get"}
-			if len(profiles) > 0 {
-				tools = append(tools, "request_child")
-			}
-			if sp.ProjectId != nil {
-				for _, t := range projectTools {
-					tools = append(tools, t)
-				}
-			}
-			for _, o := range jArr(p, "fleetOperations") {
-				if n := jStr(o, "name"); n != "" && !slices.Contains(tools, any(n)) {
-					tools = append(tools, n)
-				}
-			}
-			server["tools"] = tools
-			fleetMCP = tools
-		}
+		server := delegationServer(context, filepath.Join(e.root, "journal.sqlite"))
+		fleetMCP = jArr(server, "tools")
 		servers["fleet"] = server
 	}
 	observed["fleetTools"], observed["collaborationTools"] = fleetTools, collaboration
@@ -1045,7 +1026,11 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 				os.RemoveAll(mcp.dir)
 			}
 		}()
-		servers, err = wrapMCPServers(servers, mcp.socket, work)
+		receiptRoot, err := canon(dir)
+		if err != nil {
+			return err
+		}
+		servers, err = wrapMCPServers(servers, mcp.socket, work, filepath.Join(receiptRoot, execution+".mcp"))
 		if err != nil {
 			return err
 		}
@@ -1650,6 +1635,11 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 			removeTrial(l.trial[0], l.trial[1])
 		}
 		return true, e.finish(l.command, "failed", l.native)
+	}
+	// Diagnostic retention must not turn an original unknown/failure into another execution outcome.
+	if err := e.artifacts(dir, []string{execution + ".mcp"}, execution, &declared); err != nil {
+		l.seq++
+		_ = e.event(l.command, l.seq, "mcp.diagnostics_unavailable", M{"reason": "safe receipt collection failed"})
 	}
 	// The coordinator holds a completed run with required artifacts still uploading as waiting.
 	e.declared = declared

@@ -480,10 +480,27 @@ func (c *mcpChild) close() {
 	<-c.done
 }
 func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, policy string, parentLease ...io.ReadCloser) (resultErr error) {
+	phase, status := "socket", safeMCPStatus(nil)
+	if prefix := jStr(spec, "receiptPath"); prefix != "" {
+		f, err := openMCPReceipt(prefix)
+		if err == nil {
+			// An interrupted sidecar leaves explicit unknown, never a fabricated exit.
+			json.NewEncoder(f).Encode(M{"phase": phase, "returnedError": nil, "status": status, "provenance": "runtime-sidecar-observation"})
+			f.Sync()
+			defer func() {
+				json.NewEncoder(f).Encode(M{"phase": phase, "returnedError": resultErr != nil, "status": safeMCPStatus(status), "provenance": "runtime-sidecar-observation"})
+				f.Sync()
+				f.Close()
+			}()
+		} else {
+			fmt.Fprintln(os.Stderr, "MCP safe diagnostic receipt unavailable")
+		}
+	}
 	if err := privateSocket(socket); err != nil {
 		return err
 	}
 	spec = jObj(jClone(spec))
+	phase = "dependency"
 	if len(jArr(spec, "ownedDependencies")) > 0 {
 		answer, connection, err := mcpOwnerCall(socket, M{"action": "prepare", "dependencies": jAt(spec, "dependencies"), "ownedDependencies": jAt(spec, "ownedDependencies")})
 		if err != nil {
@@ -493,6 +510,7 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 		jObj(spec)["generation"] = answer["generation"]
 		jObj(spec)["ownerSocket"] = socket
 	}
+	phase = "child-home"
 	direct := policy == "owned-command"
 	if !direct {
 		home, err := os.MkdirTemp(filepath.Dir(socket), "mcp-home-")
@@ -506,6 +524,7 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 		}
 		jObj(spec)["childPath"] = path
 	}
+	phase = "spawn"
 	child, err := startMCPChild(socket, spec, root, input, output, direct)
 	if err != nil {
 		return err
@@ -518,12 +537,13 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 		lease := parentLease[0]
 		defer lease.Close()
 		go func() { io.Copy(io.Discard, lease); child.control.Close() }()
-		status := readMCPStatus(child.status)
+		status = readMCPStatus(child.status)
 		if jStr(status, "outcome") != "exited" || jAt(status, "exitCode") != float64(0) {
 			return errors.Join(errors.New("owned dependency result unknown or failed; no replay"), &mcpLifecycleError{status})
 		}
 		return nil
 	}
+	phase = "transport"
 	source, ok := input.(io.ReadCloser)
 	if !ok {
 		return errors.New("MCP input must be owned and closable")
@@ -563,15 +583,58 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 		child.control.Close() // The sole private status writer exits with its guardian; descendants never inherit it.
 		<-statusDone
 		child.status.Close()
+		status = observedStatus.Load().(M)
 		if resultErr != nil {
-			resultErr = errors.Join(resultErr, &mcpLifecycleError{observedStatus.Load().(M)})
+			resultErr = errors.Join(resultErr, &mcpLifecycleError{status})
 		}
 	}()
+	phase = "forward"
 	err = filterMCP(queued, ownedOutput, child.in, child.out, root, jArr(spec, "tools"), policy)
 	if unexpectedExit.Load() {
 		return errors.Join(err, errors.New("MCP server exited or status was lost; outcome unknown; no replay"))
 	}
+	if err == nil {
+		phase = "input-eof"
+	}
 	return err
+}
+
+// Prefixes are supplied only by the execution owner; each invocation creates an exclusive private file.
+func openMCPReceipt(prefix string) (*os.File, error) {
+	invalid := errors.New("unsafe MCP diagnostic destination")
+	if !filepath.IsAbs(prefix) || filepath.Clean(prefix) != prefix {
+		return nil, invalid
+	}
+	if _, err := os.Lstat(prefix); !os.IsNotExist(err) {
+		return nil, invalid
+	}
+	parent := filepath.Dir(prefix)
+	current := string(filepath.Separator)
+	parts := strings.Split(strings.TrimPrefix(parent, current), string(filepath.Separator))
+	for _, part := range parts {
+		if part == "" {
+			return nil, invalid
+		}
+		current = filepath.Join(current, part)
+		st, err := os.Lstat(current)
+		if err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 || (owner(st) != 0 && owner(st) != os.Geteuid()) || (st.Mode().Perm()&0022 != 0 && !(owner(st) == 0 && st.Mode()&os.ModeSticky != 0)) {
+			return nil, invalid
+		}
+	}
+	st, err := os.Stat(parent)
+	if err != nil || owner(st) != os.Geteuid() || st.Mode().Perm() != 0700 {
+		return nil, invalid
+	}
+	directory, err := openInside(string(filepath.Separator), parts)
+	if err != nil {
+		return nil, invalid
+	}
+	defer directory.Close()
+	fd, err := unix.Openat(int(directory.Fd()), filepath.Base(prefix)+"-"+newUUID()+".jsonl", unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+	if err != nil {
+		return nil, invalid
+	}
+	return os.NewFile(uintptr(fd), "mcp-safe-receipt"), nil
 }
 
 // A directory name alone is insufficient authority to remove a path from the journal.
