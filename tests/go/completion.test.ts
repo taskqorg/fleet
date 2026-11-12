@@ -87,3 +87,47 @@ test('G3 a task whose last execution succeeds asks for acceptance (requirement: 
     assert.equal((await call('/api/ops/task_get', {taskId})).state, 'completed');
   } finally { await c.stop(); }
 });
+
+test('G4 a task whose run fails asks the operator, a new run withdraws it, fail task fails it (requirement: no task stays in progress without an open execution or question, and a retry stays possible; risk: task 2273393d sat in progress with a failed run and nothing showed it)', async () => {
+  const c = await startCoordinator({name: 'completion-fail'});
+  const call = async (path: string, body: unknown, auth = c.secret, person: string | null = 'owner@trial.test') => {
+    const r = await fetch(c.base + path, {method: 'POST', headers: {authorization: 'Bearer ' + auth, ...(person ? {'x-fleet-person': person} : {}), 'content-type': 'application/json'}, body: JSON.stringify(body)});
+    const text = await r.text(); let parsed: any = text; try { parsed = JSON.parse(text); } catch {}
+    assert.equal(r.status, 200, `${path}: ${text}`);
+    return parsed;
+  };
+  try {
+    const {secret} = await call('/api/ops/hosts_register', {id: 'trial-host'});
+    const task = await call('/api/ops/task_create', {projectId: 'hello-world', title: 'answer only'});
+    const taskId = task.id ?? task.taskId;
+    const {sessionId} = await call('/api/sessions', {});
+    // A task-bound session: each new run carries the task from its creation, as a worker session does.
+    c.sql(`UPDATE document SET data=data||jsonb_build_object('taskId','${taskId}') WHERE id='${sessionId}'`);
+    const run = async (status: string) => {
+      const e = await call(`/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'hello'});
+      c.sql(`UPDATE execution SET task_id='${taskId}' WHERE id='${e.id}'`);
+      await call('/api/ops/task_get', {taskId});
+      const {commands} = await call('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
+      const command = commands.find((x: any) => x.executionId === e.id);
+      await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'started'}, secret, null);
+      await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status}, secret, null);
+    };
+    const open = () => JSON.parse(c.sql(`SELECT coalesce(json_agg(kind::text),'[]') FROM question WHERE task_id='${taskId}' AND state='open'`));
+    const state = () => c.sql(`SELECT state::text FROM task WHERE id='${taskId}'`).trim();
+    await run('failed');
+    assert.deepEqual(open(), ['operator_decision']);
+    assert.equal(state(), 'waiting', 'the failed run shows as a decision');
+    await run('completed');
+    assert.deepEqual(open(), ['acceptance'], 'a new run withdraws the decision; its success asks acceptance');
+    c.sql(`UPDATE question SET state='withdrawn' WHERE task_id='${taskId}'`);
+    await run('failed');
+    const t = await call('/api/ops/task_get', {taskId});
+    const d = t.questions.find((x: any) => x.state === 'open');
+    assert.equal(d.kind, 'operator_decision', 'the run that ended last decides, not an earlier success');
+    assert.deepEqual(d.options, ['fail task', 'accept earlier result']);
+    const bad = await fetch(c.base + '/api/ops/questions_answer', {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json'}, body: JSON.stringify({questionId: d.id, answer: 'keep open'})});
+    assert.equal(bad.status, 400, 'an answer outside the options is refused, never read as keep open');
+    await call('/api/ops/questions_answer', {questionId: d.id, answer: 'fail task'});
+    assert.equal(state(), 'failed');
+  } finally { await c.stop(); }
+});
