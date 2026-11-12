@@ -78,7 +78,8 @@ func TestUIDiscoveryTags(t *testing.T) {
 	})}
 	sha := strings.Repeat("a", 40)
 	body = pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.1\n") + pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.3\n") +
-		pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.2\n") + "0000"
+		pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.2\n") + pkt(sha+" refs/tags/ui-1.261111.9-v1.261112.4\n") +
+		pkt(sha+" refs/tags/v1.261112.5\n") + "0000" // other refs: a server may answer beyond ref-prefix
 	got, err := u.latestUI("1.261112.0")
 	if err != nil || got != "1.261112.3" {
 		t.Fatalf("%q %v", got, err)
@@ -87,7 +88,7 @@ func TestUIDiscoveryTags(t *testing.T) {
 	if got, err := u.latestUI("1.261112.0"); err != nil || got != "" {
 		t.Fatalf("%q %v", got, err)
 	}
-	for _, body = range []string{pkt("ERR upload-pack: nope\n") + "0000", "<html>", pkt(sha+" refs/tags/v1.261112.9\n") + "0000",
+	for _, body = range []string{pkt("ERR upload-pack: nope\n") + "0000", "<html>",
 		"0050" + sha + " refs/tags/ui-1.261112.0-v1.261112.9\n0000"} { // the last: a length that does not frame its line
 		if got, err := u.latestUI("1.261112.0"); err == nil {
 			t.Fatalf("%q accepted as %q", body, got)

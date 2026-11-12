@@ -424,13 +424,17 @@ func TestLatestConditionalGet(t *testing.T) {
 	if v := u.latest(); v != "1.261112.2" || matched != 2 {
 		t.Fatalf("recached: %q matched=%d", v, matched)
 	}
-	// A bad body (an error page with an ETag) is neither used nor cached: the next run fetches it again in full.
+	// A bad body (an error page with an ETag) is neither used nor cached; the good entry stays for the next run.
 	etag, body = `"three"`, `<html>oops</html>`
 	if v := u.latest(); v != "" {
 		t.Fatalf("bad body used: %q", v)
 	}
+	etag, body = `"two"`, `{"version":"1.261112.2"}`
+	if v := u.latest(); v != "1.261112.2" || matched != 3 {
+		t.Fatalf("good entry lost after bad body: %q matched=%d", v, matched)
+	}
 	etag, body = `"four"`, `{"version":"1.261112.4"}`
-	if v := u.latest(); v != "1.261112.4" || matched != 2 {
+	if v := u.latest(); v != "1.261112.4" || matched != 3 {
 		t.Fatalf("after bad body: %q matched=%d", v, matched)
 	}
 	// A corrupt cache file is replaced within the same run: one conditional request, one full one.
@@ -439,13 +443,13 @@ func TestLatestConditionalGet(t *testing.T) {
 		t.Fatalf("cache files: %d", len(entries))
 	}
 	os.WriteFile(filepath.Join(dir, entries[0].Name()), []byte(`{"etag":"\"four\"","body":"bm9wZQ=="}`), 0o600)
-	if v := u.latest(); v != "1.261112.4" || matched != 3 || served != 8 {
+	if v := u.latest(); v != "1.261112.4" || matched != 4 || served != 9 {
 		t.Fatalf("corrupt cache: %q matched=%d served=%d", v, matched, served)
 	}
 	// Without an ETag nothing is cached, the stale entry goes and the next request is unconditional.
 	etag, body = "", `{"version":"1.261112.5"}`
 	u.latest()
-	if v := u.latest(); v != "1.261112.5" || matched != 3 {
+	if v := u.latest(); v != "1.261112.5" || matched != 4 {
 		t.Fatalf("no etag: %q matched=%d", v, matched)
 	}
 	if after, _ := os.ReadDir(dir); len(after) != 0 {

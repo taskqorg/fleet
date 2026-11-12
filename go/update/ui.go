@@ -74,8 +74,11 @@ func (u *updater) latestUI(backend string) (string, error) {
 	for _, line := range lines {
 		f := strings.Fields(line)
 		n, err := strconv.ParseUint(line[:min(4, len(line))], 16, 16)
-		if err != nil || int(n) != len(line)+1 || len(f) != 2 || len(f[0]) != 44 || !strings.HasPrefix(f[1], prefix) {
+		if err != nil || int(n) != len(line)+1 || len(f) != 2 || len(f[0]) != 44 {
 			return "", fmt.Errorf("ls-refs: unexpected line %q", line)
+		}
+		if !strings.HasPrefix(f[1], prefix) {
+			continue // ref-prefix is a hint; a server may answer more broadly
 		}
 		if v := strings.TrimPrefix(f[1], prefix); newer(v, latest) {
 			latest = v

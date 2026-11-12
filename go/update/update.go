@@ -575,7 +575,8 @@ func (u *updater) latest() string {
 		log.Print("latest.json: ", err)
 		return ""
 	}
-	if !c.LastModified.IsZero() { // the asset upload time: cheap publish time for the install log line
+	// The asset upload time: cheap, best-effort publish time for the install log line (not kept across runs).
+	if !c.LastModified.IsZero() {
 		u.published[l.Version] = c.LastModified
 	}
 	return l.Version
@@ -626,16 +627,16 @@ func (u *updater) getCached(url string, check func([]byte) error) (cached, error
 			return cached{}, err
 		}
 		c.LastModified, _ = http.ParseTime(resp.Header.Get("Last-Modified"))
-		if file != "" {
-			os.Remove(file) // never keep an ETag the server did not just send
-		}
-		if err := check(c.Body); err != nil {
+		if err := check(c.Body); err != nil { // the entry on disk, if any, stays: it was valid when written
 			return cached{}, fmt.Errorf("GET %s: %w", url, err)
 		}
-		if c.ETag != "" && file != "" {
-			if err := writeJSON(file, c, 0o600); err != nil {
-				log.Print("etag cache: ", err)
-			}
+		if file == "" {
+			return c, nil
+		}
+		if c.ETag == "" {
+			os.Remove(file) // never keep an ETag the server did not just send
+		} else if err := writeJSON(file, c, 0o600); err != nil {
+			log.Print("etag cache: ", err)
 		}
 		return c, nil
 	}
