@@ -165,11 +165,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
-          # Keep race/Windows-vet build artifacts separate from faster app/browser archive builders.
-          # setup-go hashes both inputs; dependency invalidation still includes go.sum. All parts share one key.
-          cache-dependency-path: |
-            go/go.sum
-            .github/workflows/ci.yml
+          cache: false
+      # One build cache per part (unit: -race tests and vet; mcp: the executor; outside: the -race coordinator), saved on
+      # every run and restored from the newest same-part entry, so -race artifacts are reused instead of rebuilt.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ startsWith(matrix.part, 'outside-') && 'outside' || matrix.part }}-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ startsWith(matrix.part, 'outside-') && 'outside' || matrix.part }}-${{ hashFiles('go/go.sum') }}-
+            go-${{ startsWith(matrix.part, 'outside-') && 'outside' || matrix.part }}-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
